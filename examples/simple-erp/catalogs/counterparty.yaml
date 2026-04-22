@@ -1,0 +1,6 @@
+name: Контрагент
+fields:
+  - name: Наименование
+    type: string
+  - name: ИНН
+    type: string

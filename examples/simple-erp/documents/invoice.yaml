@@ -1,0 +1,8 @@
+name: Счёт
+fields:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+  - name: Контрагент
+    type: reference:Контрагент
