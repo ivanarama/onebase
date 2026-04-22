@@ -1,0 +1,13 @@
+name: Списание
+fields:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+tableparts:
+  - name: Товары
+    fields:
+      - name: Номенклатура
+        type: string
+      - name: Количество
+        type: number

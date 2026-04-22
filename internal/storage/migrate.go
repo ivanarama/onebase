@@ -7,6 +7,27 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
+// MigrateRegisters creates register tables (CREATE TABLE IF NOT EXISTS + ADD COLUMN).
+func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Register) error {
+	for _, reg := range registers {
+		if _, err := db.pool.Exec(ctx, CreateRegisterSQL(reg)); err != nil {
+			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
+		}
+		table := metadata.RegisterTableName(reg.Name)
+		// ensure system column exists on pre-existing tables
+		if _, err := db.pool.Exec(ctx, AddColumnSQL(table, "period", "TIMESTAMPTZ")); err != nil {
+			return fmt.Errorf("migrate register %s.period: %w", reg.Name, err)
+		}
+		allFields := append(append([]metadata.Field{}, reg.Dimensions...), append(reg.Resources, reg.Attributes...)...)
+		for _, f := range allFields {
+			if _, err := db.pool.Exec(ctx, AddColumnSQL(table, metadata.ColumnName(f), pgType(f))); err != nil {
+				return fmt.Errorf("migrate register %s.%s: %w", reg.Name, f.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
 // Migrate applies CREATE TABLE and ADD COLUMN IF NOT EXISTS for all entities.
 // Deletions and renames are out of scope for MVP.
 func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
@@ -24,6 +45,21 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 			addSQL := AddColumnSQL(table, col, pgType(f))
 			if _, err := db.pool.Exec(ctx, addSQL); err != nil {
 				return fmt.Errorf("migrate %s.%s: %w", e.Name, f.Name, err)
+			}
+		}
+		// create tablepart tables
+		for _, tp := range e.TableParts {
+			tpSQL := CreateTablePartSQL(e, tp)
+			if _, err := db.pool.Exec(ctx, tpSQL); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
+			}
+			tpTable := metadata.TablePartTableName(e.Name, tp.Name)
+			for _, f := range tp.Fields {
+				col := metadata.ColumnName(f)
+				addSQL := AddColumnSQL(tpTable, col, pgType(f))
+				if _, err := db.pool.Exec(ctx, addSQL); err != nil {
+					return fmt.Errorf("migrate %s.%s.%s: %w", e.Name, tp.Name, f.Name, err)
+				}
 			}
 		}
 	}

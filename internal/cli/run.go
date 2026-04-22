@@ -47,9 +47,12 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
+		return fmt.Errorf("migrate registers: %w", err)
+	}
 
 	reg := runtime.NewRegistry()
-	reg.Load(proj.Entities, proj.Programs)
+	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.Reports)
 
 	interp := interpreter.New()
 	srv := api.New(reg, db, interp)

@@ -63,8 +63,12 @@ EndProcedure`
 	if !ok {
 		t.Fatal("then expr should be CallExpr")
 	}
-	if call.Callee.Literal != "Error" {
-		t.Fatalf("want Error, got %q", call.Callee.Literal)
+	ident, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		t.Fatal("callee should be Ident")
+	}
+	if ident.Tok.Literal != "Error" {
+		t.Fatalf("want Error, got %q", ident.Tok.Literal)
 	}
 }
 

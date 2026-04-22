@@ -75,6 +75,20 @@ func (l *Lexer) NextToken() token.Token {
 		return l.tok(token.LPAREN, "(", line, col)
 	case ')':
 		return l.tok(token.RPAREN, ")", line, col)
+	case '+':
+		return l.tok(token.PLUS, "+", line, col)
+	case '-':
+		return l.tok(token.MINUS, "-", line, col)
+	case '*':
+		return l.tok(token.STAR, "*", line, col)
+	case '/':
+		if l.pos < len(l.input) && l.peek() == '/' {
+			for l.pos < len(l.input) && l.peek() != '\n' {
+				l.next()
+			}
+			return l.NextToken()
+		}
+		return l.tok(token.SLASH, "/", line, col)
 	case '=':
 		return l.tok(token.ASSIGN, "=", line, col)
 	case '<':

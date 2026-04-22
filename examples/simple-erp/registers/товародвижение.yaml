@@ -1,0 +1,9 @@
+name: ТоварноеДвижение
+dimensions:
+  - name: Номенклатура
+    type: string
+resources:
+  - name: Количество
+    type: number
+  - name: Сумма
+    type: number

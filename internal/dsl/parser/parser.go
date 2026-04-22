@@ -78,10 +78,18 @@ func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
 	return &ast.ProcedureDecl{Name: nameTok, Body: body}, nil
 }
 
+// isBlockEnd returns true for tokens that end a block from the outside.
+func isBlockEnd(t token.Type) bool {
+	switch t {
+	case token.EOF, token.ELSE, token.ENDIF, token.ENDDO:
+		return true
+	}
+	return false
+}
+
 func (p *Parser) parseBlock(end token.Type) ([]ast.Stmt, error) {
 	var stmts []ast.Stmt
-	for p.cur.Type != end && p.cur.Type != token.EOF &&
-		p.cur.Type != token.ELSE && p.cur.Type != token.ENDIF {
+	for p.cur.Type != end && !isBlockEnd(p.cur.Type) {
 		stmt, err := p.parseStmt()
 		if err != nil {
 			return nil, err
@@ -95,6 +103,8 @@ func (p *Parser) parseStmt() (ast.Stmt, error) {
 	switch p.cur.Type {
 	case token.IF:
 		return p.parseIf()
+	case token.FOR:
+		return p.parseForEach()
 	case token.VAR:
 		return p.parseVarDecl()
 	default:
@@ -130,6 +140,36 @@ func (p *Parser) parseIf() (*ast.IfStmt, error) {
 	return &ast.IfStmt{Cond: cond, Then: then, Else: els}, nil
 }
 
+func (p *Parser) parseForEach() (*ast.ForEachStmt, error) {
+	p.advance() // consume For/Для
+	if _, err := p.expect(token.EACH); err != nil {
+		return nil, err
+	}
+	varTok, err := p.expect(token.IDENT)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.IN); err != nil {
+		return nil, err
+	}
+	coll, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.DO); err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock(token.ENDDO)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.ENDDO); err != nil {
+		return nil, err
+	}
+	p.consumeSemi()
+	return &ast.ForEachStmt{Var: varTok, Collection: coll, Body: body}, nil
+}
+
 func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
 	p.advance() // consume Var
 	nameTok, err := p.expect(token.IDENT)
@@ -141,10 +181,9 @@ func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {
 }
 
 // parseExprOrAssign disambiguates assignment vs expression statement.
-// In 1C, "=" means both assign (statement) and equals (condition).
-// We treat "left = right;" as assignment only when left is Ident or MemberExpr.
+// "left = right;" is assignment only when left is a simple Ident or MemberExpr.
 func (p *Parser) parseExprOrAssign() (ast.Stmt, error) {
-	left, err := p.parsePrimary()
+	left, err := p.parseMathExpr()
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +192,7 @@ func (p *Parser) parseExprOrAssign() (ast.Stmt, error) {
 		switch left.(type) {
 		case *ast.Ident, *ast.MemberExpr:
 			p.advance() // consume =
-			val, err := p.parseExpr()
+			val, err := p.parseMathExpr()
 			if err != nil {
 				return nil, err
 			}
@@ -162,11 +201,11 @@ func (p *Parser) parseExprOrAssign() (ast.Stmt, error) {
 		}
 	}
 
-	// binary expression continuation
-	for isBinaryOp(p.cur.Type) {
+	// comparison at statement level
+	for isComparisonOp(p.cur.Type) {
 		op := p.cur
 		p.advance()
-		right, err := p.parsePrimary()
+		right, err := p.parseMathExpr()
 		if err != nil {
 			return nil, err
 		}
@@ -176,13 +215,50 @@ func (p *Parser) parseExprOrAssign() (ast.Stmt, error) {
 	return &ast.ExprStmt{X: left}, nil
 }
 
-// parseExpr is used in condition contexts where "=" always means equality.
+// parseExpr parses a full expression (used in conditions: If, ForEach).
+// Comparisons have lower precedence than arithmetic.
 func (p *Parser) parseExpr() (ast.Expr, error) {
+	left, err := p.parseMathExpr()
+	if err != nil {
+		return nil, err
+	}
+	for isComparisonOp(p.cur.Type) {
+		op := p.cur
+		p.advance()
+		right, err := p.parseMathExpr()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.BinaryExpr{Left: left, Op: op, Right: right}
+	}
+	return left, nil
+}
+
+// parseMathExpr handles + and - (additive, left-to-right).
+func (p *Parser) parseMathExpr() (ast.Expr, error) {
+	left, err := p.parseTerm()
+	if err != nil {
+		return nil, err
+	}
+	for p.cur.Type == token.PLUS || p.cur.Type == token.MINUS {
+		op := p.cur
+		p.advance()
+		right, err := p.parseTerm()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.BinaryExpr{Left: left, Op: op, Right: right}
+	}
+	return left, nil
+}
+
+// parseTerm handles * and / (multiplicative, left-to-right).
+func (p *Parser) parseTerm() (ast.Expr, error) {
 	left, err := p.parsePrimary()
 	if err != nil {
 		return nil, err
 	}
-	for isBinaryOp(p.cur.Type) {
+	for p.cur.Type == token.STAR || p.cur.Type == token.SLASH {
 		op := p.cur
 		p.advance()
 		right, err := p.parsePrimary()
@@ -194,7 +270,7 @@ func (p *Parser) parseExpr() (ast.Expr, error) {
 	return left, nil
 }
 
-func isBinaryOp(t token.Type) bool {
+func isComparisonOp(t token.Type) bool {
 	switch t {
 	case token.ASSIGN, token.NEQ, token.LT, token.GT, token.LTE, token.GTE:
 		return true
@@ -215,25 +291,28 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.IDENT:
 		tok := p.cur
 		p.advance()
-		if p.cur.Type == token.LPAREN {
-			p.advance()
-			args, err := p.parseArgs()
-			if err != nil {
-				return nil, err
-			}
-			if _, err := p.expect(token.RPAREN); err != nil {
-				return nil, err
-			}
-			return &ast.CallExpr{Callee: tok, Args: args}, nil
-		}
 		var expr ast.Expr = &ast.Ident{Tok: tok}
-		for p.cur.Type == token.DOT {
-			p.advance()
-			field, err := p.expect(token.IDENT)
-			if err != nil {
-				return nil, err
+		for {
+			if p.cur.Type == token.LPAREN {
+				p.advance()
+				args, err := p.parseArgs()
+				if err != nil {
+					return nil, err
+				}
+				if _, err := p.expect(token.RPAREN); err != nil {
+					return nil, err
+				}
+				expr = &ast.CallExpr{Callee: expr, Args: args}
+			} else if p.cur.Type == token.DOT {
+				p.advance()
+				field, err := p.expect(token.IDENT)
+				if err != nil {
+					return nil, err
+				}
+				expr = &ast.MemberExpr{Object: expr, Field: field}
+			} else {
+				break
 			}
-			expr = &ast.MemberExpr{Object: expr, Field: field}
 		}
 		return expr, nil
 	default:

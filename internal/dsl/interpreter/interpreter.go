@@ -11,11 +11,14 @@ import (
 // sentinel to unwind call stack on Error()
 type dslStop struct{ err error }
 
+
 type Interpreter struct{}
 
 func New() *Interpreter { return &Interpreter{} }
 
-func (i *Interpreter) Run(proc *ast.ProcedureDecl, this This) (err error) {
+// Run executes a procedure. Optional extra vars (e.g. {"Движения": collector}) are
+// injected into the top-level environment.
+func (i *Interpreter) Run(proc *ast.ProcedureDecl, this This, extraVars ...map[string]any) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if s, ok := r.(dslStop); ok {
@@ -26,6 +29,11 @@ func (i *Interpreter) Run(proc *ast.ProcedureDecl, this This) (err error) {
 		}
 	}()
 	e := newEnv(this)
+	for _, m := range extraVars {
+		for k, v := range m {
+			e.set(k, v)
+		}
+	}
 	i.execBlock(proc.Body, e)
 	return nil
 }
@@ -45,6 +53,22 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 		} else if len(v.Else) > 0 {
 			i.execBlock(v.Else, e.child())
 		}
+	case *ast.ForEachStmt:
+		coll := i.evalExpr(v.Collection, e)
+		switch items := coll.(type) {
+		case []map[string]any:
+			for _, row := range items {
+				child := e.child()
+				child.set(v.Var.Literal, &MapThis{M: row})
+				i.execBlock(v.Body, child)
+			}
+		case []any:
+			for _, item := range items {
+				child := e.child()
+				child.set(v.Var.Literal, item)
+				i.execBlock(v.Body, child)
+			}
+		}
 	case *ast.AssignStmt:
 		val := i.evalExpr(v.Value, e)
 		i.assign(v.Target, val, e)
@@ -60,10 +84,9 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 	case *ast.Ident:
 		e.set(t.Tok.Literal, val)
 	case *ast.MemberExpr:
-		if id, ok := t.Object.(*ast.Ident); ok && id.Tok.Literal == "this" {
-			if th, ok := e.this.(This); ok {
-				th.Set(t.Field.Literal, val)
-			}
+		obj := i.evalExpr(t.Object, e)
+		if th, ok := obj.(This); ok {
+			th.Set(t.Field.Literal, val)
 		}
 	}
 }
@@ -96,7 +119,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 	l := i.evalExpr(b.Left, e)
 	r := i.evalExpr(b.Right, e)
 	switch b.Op.Type {
-	case token.ASSIGN: // used as equality in conditions
+	case token.ASSIGN: // equality in conditions
 		return equal(l, r)
 	case token.NEQ:
 		return !equal(l, r)
@@ -108,24 +131,64 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		return compare(l, r) <= 0
 	case token.GTE:
 		return compare(l, r) >= 0
+	case token.PLUS:
+		lf, lok := toFloat(l)
+		rf, rok := toFloat(r)
+		if lok && rok {
+			return lf + rf
+		}
+		return fmt.Sprintf("%v", l) + fmt.Sprintf("%v", r)
+	case token.MINUS:
+		lf, lok := toFloat(l)
+		rf, rok := toFloat(r)
+		if lok && rok {
+			return lf - rf
+		}
+	case token.STAR:
+		lf, lok := toFloat(l)
+		rf, rok := toFloat(r)
+		if lok && rok {
+			return lf * rf
+		}
+	case token.SLASH:
+		lf, lok := toFloat(l)
+		rf, rok := toFloat(r)
+		if lok && rok && rf != 0 {
+			return lf / rf
+		}
 	}
 	return nil
 }
 
 func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
-	fn, ok := builtins[c.Callee.Literal]
-	if !ok {
-		panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", c.Callee.File, c.Callee.Line, c.Callee.Literal)})
+	args := i.evalArgs(c.Args, e)
+	switch callee := c.Callee.(type) {
+	case *ast.Ident:
+		fn, ok := builtins[callee.Tok.Literal]
+		if !ok {
+			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, callee.Tok.Literal)})
+		}
+		result, err := fn(args, callee.Tok.File, callee.Tok.Line)
+		if err != nil {
+			panic(dslStop{err: err})
+		}
+		return result
+	case *ast.MemberExpr:
+		recv := i.evalExpr(callee.Object, e)
+		if mc, ok := recv.(MethodCallable); ok {
+			return mc.CallMethod(callee.Field.Literal, args)
+		}
+		return nil
 	}
-	args := make([]any, len(c.Args))
-	for idx, a := range c.Args {
+	return nil
+}
+
+func (i *Interpreter) evalArgs(exprs []ast.Expr, e *env) []any {
+	args := make([]any, len(exprs))
+	for idx, a := range exprs {
 		args[idx] = i.evalExpr(a, e)
 	}
-	result, err := fn(args, c.Callee.File, c.Callee.Line)
-	if err != nil {
-		panic(dslStop{err: err})
-	}
-	return result
+	return args
 }
 
 func truthy(v any) bool {
@@ -171,8 +234,19 @@ func compare(a, b any) int {
 }
 
 func toFloat(v any) (float64, bool) {
-	if f, ok := v.(float64); ok {
-		return f, true
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case int32:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case string:
+		if f, err := strconv.ParseFloat(t, 64); err == nil {
+			return f, true
+		}
 	}
 	return 0, false
 }

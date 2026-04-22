@@ -36,8 +36,14 @@ type AssignStmt struct {
 
 type VarDecl struct{ Name token.Token }
 
+type ForEachStmt struct {
+	Var        token.Token
+	Collection Expr
+	Body       []Stmt
+}
+
 type CallExpr struct {
-	Callee token.Token
+	Callee Expr // Ident = free function; MemberExpr = method call
 	Args   []Expr
 }
 
@@ -70,6 +76,7 @@ func (*IfStmt) nodeType() string        { return "IfStmt" }
 func (*ExprStmt) nodeType() string      { return "ExprStmt" }
 func (*AssignStmt) nodeType() string    { return "AssignStmt" }
 func (*VarDecl) nodeType() string       { return "VarDecl" }
+func (*ForEachStmt) nodeType() string   { return "ForEachStmt" }
 func (*CallExpr) nodeType() string      { return "CallExpr" }
 func (*MemberExpr) nodeType() string    { return "MemberExpr" }
 func (*Ident) nodeType() string         { return "Ident" }
@@ -77,10 +84,11 @@ func (*StringLit) nodeType() string     { return "StringLit" }
 func (*NumberLit) nodeType() string     { return "NumberLit" }
 func (*BinaryExpr) nodeType() string    { return "BinaryExpr" }
 
-func (*IfStmt) stmtNode()    {}
-func (*ExprStmt) stmtNode()  {}
-func (*AssignStmt) stmtNode() {}
-func (*VarDecl) stmtNode()   {}
+func (*IfStmt) stmtNode()      {}
+func (*ExprStmt) stmtNode()    {}
+func (*AssignStmt) stmtNode()  {}
+func (*VarDecl) stmtNode()     {}
+func (*ForEachStmt) stmtNode() {}
 
 func (*CallExpr) exprNode()   {}
 func (*MemberExpr) exprNode() {}

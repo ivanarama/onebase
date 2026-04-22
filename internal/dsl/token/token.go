@@ -17,6 +17,11 @@ const (
 	ELSE
 	ENDIF
 	VAR
+	FOR
+	EACH
+	IN
+	DO
+	ENDDO
 
 	ASSIGN // =
 	NEQ    // <>
@@ -24,6 +29,10 @@ const (
 	GT     // >
 	LTE    // <=
 	GTE    // >=
+	PLUS   // +
+	MINUS  // -
+	STAR   // *
+	SLASH  // /
 
 	DOT
 	COMMA
@@ -41,6 +50,11 @@ var keywords = map[string]Type{
 	"Else":         ELSE,
 	"EndIf":        ENDIF,
 	"Var":          VAR,
+	"For":          FOR,
+	"Each":         EACH,
+	"In":           IN,
+	"Do":           DO,
+	"EndDo":        ENDDO,
 	// Русский
 	"Процедура":      PROCEDURE,
 	"КонецПроцедуры": ENDPROCEDURE,
@@ -49,6 +63,11 @@ var keywords = map[string]Type{
 	"Иначе":          ELSE,
 	"КонецЕсли":      ENDIF,
 	"Перем":          VAR,
+	"Для":            FOR,
+	"Каждого":        EACH,
+	"Из":             IN,
+	"Цикл":           DO,
+	"КонецЦикла":     ENDDO,
 }
 
 type Token struct {
@@ -92,6 +111,16 @@ func (t Type) String() string {
 		return "EndIf"
 	case VAR:
 		return "Var"
+	case FOR:
+		return "For"
+	case EACH:
+		return "Each"
+	case IN:
+		return "In"
+	case DO:
+		return "Do"
+	case ENDDO:
+		return "EndDo"
 	case ASSIGN:
 		return "="
 	case NEQ:
@@ -104,6 +133,14 @@ func (t Type) String() string {
 		return "<="
 	case GTE:
 		return ">="
+	case PLUS:
+		return "+"
+	case MINUS:
+		return "-"
+	case STAR:
+		return "*"
+	case SLASH:
+		return "/"
 	case DOT:
 		return "."
 	case COMMA:

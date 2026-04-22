@@ -1,0 +1,19 @@
+name: Поступление
+fields:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+  - name: Поставщик
+    type: reference:Контрагент
+tableparts:
+  - name: Товары
+    fields:
+      - name: Номенклатура
+        type: string
+      - name: Количество
+        type: number
+      - name: Цена
+        type: number
+      - name: Сумма
+        type: number

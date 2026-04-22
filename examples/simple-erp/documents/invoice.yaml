@@ -6,3 +6,14 @@ fields:
     type: date
   - name: Контрагент
     type: reference:Контрагент
+tableparts:
+  - name: Товары
+    fields:
+      - name: Наименование
+        type: string
+      - name: Количество
+        type: number
+      - name: Цена
+        type: number
+      - name: Сумма
+        type: number

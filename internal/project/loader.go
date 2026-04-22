@@ -12,12 +12,15 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/report"
 )
 
 type Project struct {
-	Dir      string
-	Entities []*metadata.Entity
-	Programs map[string]*ast.Program // entity name → parsed DSL
+	Dir       string
+	Entities  []*metadata.Entity
+	Registers []*metadata.Register
+	Reports   []*report.Report
+	Programs  map[string]*ast.Program // entity name → parsed DSL
 }
 
 func Load(dir string) (*Project, error) {
@@ -63,6 +66,36 @@ func (p *Project) loadMetadata() error {
 				return err
 			}
 			p.Entities = append(p.Entities, ent)
+		}
+	}
+	// load registers
+	regDir := filepath.Join(p.Dir, "registers")
+	items, err := os.ReadDir(regDir)
+	if err == nil {
+		for _, item := range items {
+			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+				continue
+			}
+			reg, err := metadata.LoadRegisterFile(filepath.Join(regDir, item.Name()))
+			if err != nil {
+				return err
+			}
+			p.Registers = append(p.Registers, reg)
+		}
+	}
+	// load reports
+	repDir := filepath.Join(p.Dir, "reports")
+	repItems, err := os.ReadDir(repDir)
+	if err == nil {
+		for _, item := range repItems {
+			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+				continue
+			}
+			rep, err := report.LoadFile(filepath.Join(repDir, item.Name()))
+			if err != nil {
+				return err
+			}
+			p.Reports = append(p.Reports, rep)
 		}
 	}
 	return nil

@@ -24,10 +24,31 @@ type Field struct {
 	RefEntity string // non-empty when Type starts with "reference:"
 }
 
-type Entity struct {
+type TablePart struct {
 	Name   string
-	Kind   Kind
 	Fields []Field
+}
+
+type Entity struct {
+	Name       string
+	Kind       Kind
+	Fields     []Field
+	TableParts []TablePart
+}
+
+type Register struct {
+	Name       string
+	Dimensions []Field // form the grouping key for balances
+	Resources  []Field // accumulated (summed with sign based on movement type)
+	Attributes []Field // extra data, stored but not aggregated
+}
+
+func RegisterTableName(regName string) string {
+	return "рег_" + strings.ToLower(regName)
+}
+
+func TablePartTableName(entityName, tpName string) string {
+	return strings.ToLower(entityName) + "_" + strings.ToLower(tpName)
 }
 
 func IsReference(ft FieldType) bool {

@@ -6,6 +6,17 @@ type This interface {
 	Set(name string, v any)
 }
 
+// MethodCallable is implemented by objects that support obj.Method(args) calls.
+type MethodCallable interface {
+	CallMethod(method string, args []any) any
+}
+
+// MapThis wraps map[string]any as a This (used for tablepart rows and register movement records).
+type MapThis struct{ M map[string]any }
+
+func (m *MapThis) Get(name string) any { return m.M[name] }
+func (m *MapThis) Set(name string, v any) { m.M[name] = v }
+
 type env struct {
 	vars   map[string]any
 	parent *env

@@ -54,7 +54,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintln(os.Stderr, "[dev] migrate error:", err)
 			return
 		}
-		reg.Load(proj.Entities, proj.Programs)
+		if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
+			fmt.Fprintln(os.Stderr, "[dev] migrate registers error:", err)
+			return
+		}
+		reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.Reports)
 		fmt.Fprintln(os.Stdout, "[dev] reloaded")
 	}
 	load()

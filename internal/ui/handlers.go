@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/query"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
@@ -24,16 +29,22 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if entity == nil {
 		return
 	}
-	rows, err := s.store.List(r.Context(), entity.Name, entity)
+	params := parseListParams(r, entity)
+	rows, err := s.store.List(r.Context(), entity.Name, entity, params)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	s.resolveRefs(r.Context(), entity, rows)
+
+	refFilterOptions, _ := s.loadRefOptions(r.Context(), entity)
+
 	s.render(w, "page-list", map[string]any{
-		"Nav":    s.buildNav(),
-		"Entity": entity,
-		"Rows":   rows,
+		"Nav":              s.buildNav(),
+		"Entity":           entity,
+		"Rows":             rows,
+		"Params":           params,
+		"RefFilterOptions": refFilterOptions,
 	})
 }
 
@@ -44,11 +55,12 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	}
 	refOptions, _ := s.loadRefOptions(r.Context(), entity)
 	s.render(w, "page-form", map[string]any{
-		"Nav":        s.buildNav(),
-		"Entity":     entity,
-		"IsNew":      true,
-		"Values":     map[string]string{},
-		"RefOptions": refOptions,
+		"Nav":           s.buildNav(),
+		"Entity":        entity,
+		"IsNew":         true,
+		"Values":        map[string]string{},
+		"RefOptions":    refOptions,
+		"TablePartRows": map[string][]map[string]any{},
 	})
 }
 
@@ -62,20 +74,26 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := formToFields(r, entity)
+	tpRows := parseTablePartRows(r, entity)
+
 	obj := runtime.NewObject(entity.Name, entity.Kind)
 	for k, v := range fields {
 		obj.Set(k, v)
 	}
+	obj.TablePartRows = tpRows
+	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
+	setPeriodFromFields(mc, entity, fields)
 
-	if errMsg := s.runOnWrite(obj); errMsg != "" {
+	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
-			"Nav":        s.buildNav(),
-			"Entity":     entity,
-			"IsNew":      true,
-			"Error":      errMsg,
-			"Values":     formValues(r, entity),
-			"RefOptions": refOptions,
+			"Nav":           s.buildNav(),
+			"Entity":        entity,
+			"IsNew":         true,
+			"Error":         errMsg,
+			"Values":        formValues(r, entity),
+			"RefOptions":    refOptions,
+			"TablePartRows": tpRows,
 		})
 		return
 	}
@@ -84,6 +102,15 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	if err := s.saveTablePartsDirect(r.Context(), entity, obj.ID, obj.TablePartRows); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := s.saveMovements(r.Context(), entity.Name, obj.ID, mc); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 }
 
@@ -109,12 +136,22 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 			vals[f.Name] = fmt.Sprintf("%v", v)
 		}
 	}
+
+	tpRows := make(map[string][]map[string]any)
+	for _, tp := range entity.TableParts {
+		rows, err := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
+		if err == nil {
+			tpRows[tp.Name] = rows
+		}
+	}
+
 	s.render(w, "page-form", map[string]any{
-		"Nav":        s.buildNav(),
-		"Entity":     entity,
-		"IsNew":      false,
-		"Values":     vals,
-		"RefOptions": refOptions,
+		"Nav":           s.buildNav(),
+		"Entity":        entity,
+		"IsNew":         false,
+		"Values":        vals,
+		"RefOptions":    refOptions,
+		"TablePartRows": tpRows,
 	})
 }
 
@@ -133,17 +170,28 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := formToFields(r, entity)
-	obj := &runtime.Object{Type: entity.Name, Kind: entity.Kind, ID: id, Fields: fields}
+	tpRows := parseTablePartRows(r, entity)
 
-	if errMsg := s.runOnWrite(obj); errMsg != "" {
+	obj := &runtime.Object{
+		Type:          entity.Name,
+		Kind:          entity.Kind,
+		ID:            id,
+		Fields:        fields,
+		TablePartRows: tpRows,
+	}
+	mc := runtime.NewMovementsCollector(entity.Name, id)
+	setPeriodFromFields(mc, entity, fields)
+
+	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
-			"Nav":        s.buildNav(),
-			"Entity":     entity,
-			"IsNew":      false,
-			"Error":      errMsg,
-			"Values":     formValues(r, entity),
-			"RefOptions": refOptions,
+			"Nav":           s.buildNav(),
+			"Entity":        entity,
+			"IsNew":         false,
+			"Error":         errMsg,
+			"Values":        formValues(r, entity),
+			"RefOptions":    refOptions,
+			"TablePartRows": tpRows,
 		})
 		return
 	}
@@ -152,15 +200,288 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	if err := s.saveTablePartsDirect(r.Context(), entity, obj.ID, obj.TablePartRows); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := s.saveMovements(r.Context(), entity.Name, obj.ID, mc); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 }
 
-func (s *Server) runOnWrite(obj *runtime.Object) string {
+func (s *Server) saveMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
+	for regName, rows := range mc.All() {
+		reg := s.reg.GetRegister(regName)
+		if reg == nil {
+			continue
+		}
+		if err := s.store.WriteMovements(ctx, regName, docType, docID, rows, reg, mc.Period); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setPeriodFromFields sets the movements period from the first date field of the document.
+func setPeriodFromFields(mc *runtime.MovementsCollector, entity *metadata.Entity, fields map[string]any) {
+	for _, f := range entity.Fields {
+		if f.Type == metadata.FieldTypeDate {
+			if v, ok := fields[f.Name]; ok && v != nil {
+				if t, ok := v.(time.Time); ok {
+					mc.SetPeriod(t)
+				}
+			}
+			return
+		}
+	}
+}
+
+func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
+	name := capitalize(chi.URLParam(r, "name"))
+	reg := s.reg.GetRegister(name)
+	if reg == nil {
+		http.Error(w, "unknown register: "+name, 404)
+		return
+	}
+	rows, err := s.store.GetMovements(r.Context(), name, reg)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.render(w, "page-register-movements", map[string]any{
+		"Nav":      s.buildNav(),
+		"Register": reg,
+		"Rows":     rows,
+	})
+}
+
+func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
+	name := capitalize(chi.URLParam(r, "name"))
+	reg := s.reg.GetRegister(name)
+	if reg == nil {
+		http.Error(w, "unknown register: "+name, 404)
+		return
+	}
+	rows, err := s.store.GetBalances(r.Context(), name, reg)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.render(w, "page-register-balances", map[string]any{
+		"Nav":      s.buildNav(),
+		"Register": reg,
+		"Rows":     rows,
+	})
+}
+
+func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
+	rep := s.getReport(w, r)
+	if rep == nil {
+		return
+	}
+	// If report has no params, run immediately.
+	if len(rep.Params) == 0 {
+		s.runReport(w, r, rep, map[string]any{})
+		return
+	}
+	s.render(w, "page-report", map[string]any{
+		"Nav":         s.buildNav(),
+		"Report":      rep,
+		"ParamValues": map[string]any{},
+	})
+}
+
+func (s *Server) reportRun(w http.ResponseWriter, r *http.Request) {
+	rep := s.getReport(w, r)
+	if rep == nil {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	paramValues := make(map[string]any, len(rep.Params))
+	for _, p := range rep.Params {
+		val := r.FormValue(p.Name)
+		if val == "" {
+			paramValues[p.Name] = nil
+		} else {
+			paramValues[p.Name] = val
+		}
+	}
+	s.runReport(w, r, rep, paramValues)
+}
+
+func (s *Server) getReport(w http.ResponseWriter, r *http.Request) *reportpkg.Report {
+	name := chi.URLParam(r, "name")
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	rep := s.reg.GetReport(name)
+	if rep == nil {
+		http.Error(w, "unknown report: "+name, 404)
+		return nil
+	}
+	return rep
+}
+
+func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpkg.Report, paramValues map[string]any) {
+	compiled, err := query.Compile(rep.Query, paramValues)
+	if err != nil {
+		s.render(w, "page-report", map[string]any{
+			"Nav":         s.buildNav(),
+			"Report":      rep,
+			"QueryError":  err.Error(),
+			"ParamValues": paramValues,
+		})
+		return
+	}
+	rows, cols, err := s.store.RunQuery(r.Context(), compiled.SQL, compiled.Args)
+	if err != nil {
+		s.render(w, "page-report", map[string]any{
+			"Nav":         s.buildNav(),
+			"Report":      rep,
+			"QueryError":  err.Error(),
+			"ParamValues": paramValues,
+		})
+		return
+	}
+	s.render(w, "page-report", map[string]any{
+		"Nav":         s.buildNav(),
+		"Report":      rep,
+		"Cols":        cols,
+		"Rows":        rows,
+		"ParamValues": paramValues,
+	})
+}
+
+// saveTablePartsDirect persists tablepart rows from the provided map (possibly modified by DSL).
+func (s *Server) saveTablePartsDirect(ctx context.Context, entity *metadata.Entity, parentID uuid.UUID, tpRows map[string][]map[string]any) error {
+	for _, tp := range entity.TableParts {
+		rows := tpRows[tp.Name]
+		if rows == nil {
+			rows = []map[string]any{}
+		}
+		if err := s.store.UpsertTablePartRows(ctx, entity.Name, tp.Name, parentID, rows, tp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parseTablePartRows reads tp.{TpName}.{idx}.{FieldName} form values.
+func parseTablePartRows(r *http.Request, entity *metadata.Entity) map[string][]map[string]any {
+	result := make(map[string][]map[string]any)
+	for _, tp := range entity.TableParts {
+		// collect max index
+		maxIdx := -1
+		prefix := "tp." + tp.Name + "."
+		for key := range r.Form {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			rest := strings.TrimPrefix(key, prefix)
+			parts := strings.SplitN(rest, ".", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			if idx, err := strconv.Atoi(parts[0]); err == nil && idx > maxIdx {
+				maxIdx = idx
+			}
+		}
+		if maxIdx < 0 {
+			result[tp.Name] = []map[string]any{}
+			continue
+		}
+		rows := make([]map[string]any, maxIdx+1)
+		for i := range rows {
+			rows[i] = make(map[string]any)
+		}
+		for key, vals := range r.Form {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			rest := strings.TrimPrefix(key, prefix)
+			parts := strings.SplitN(rest, ".", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			idx, err := strconv.Atoi(parts[0])
+			if err != nil {
+				continue
+			}
+			fieldName := parts[1]
+			if len(vals) > 0 {
+				rows[idx][fieldName] = vals[0]
+			}
+		}
+		// filter empty rows (all fields blank) and convert types
+		var cleaned []map[string]any
+		for _, row := range rows {
+			empty := true
+			for _, f := range tp.Fields {
+				if v, ok := row[f.Name]; ok && fmt.Sprintf("%v", v) != "" {
+					empty = false
+					break
+				}
+			}
+			if !empty {
+				converted := make(map[string]any, len(row))
+				for _, f := range tp.Fields {
+					raw := fmt.Sprintf("%v", row[f.Name])
+					switch f.Type {
+					case metadata.FieldTypeNumber:
+						converted[f.Name] = raw
+					case metadata.FieldTypeBool:
+						converted[f.Name] = raw == "true"
+					default:
+						converted[f.Name] = raw
+					}
+				}
+				cleaned = append(cleaned, converted)
+			}
+		}
+		result[tp.Name] = cleaned
+	}
+	return result
+}
+
+// parseListParams reads filter and sort URL params.
+func parseListParams(r *http.Request, entity *metadata.Entity) storage.ListParams {
+	q := r.URL.Query()
+	params := storage.ListParams{
+		Filters: make(map[string]storage.FilterValue),
+		Sort:    q.Get("sort"),
+		Dir:     q.Get("dir"),
+	}
+	for _, f := range entity.Fields {
+		switch f.Type {
+		case metadata.FieldTypeDate:
+			from := q.Get("f." + f.Name + ".from")
+			to := q.Get("f." + f.Name + ".to")
+			if from != "" || to != "" {
+				params.Filters[f.Name] = storage.FilterValue{From: from, To: to}
+			}
+		default:
+			val := q.Get("f." + f.Name)
+			if val != "" {
+				params.Filters[f.Name] = storage.FilterValue{Value: val}
+			}
+		}
+	}
+	return params
+}
+
+func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector) string {
 	proc := s.reg.GetProcedure(obj.Type, "OnWrite")
 	if proc == nil {
 		return ""
 	}
-	if err := s.interp.Run(proc, obj); err != nil {
+	vars := map[string]any{"Движения": mc}
+	if err := s.interp.Run(proc, obj, vars); err != nil {
 		if dslErr, ok := err.(*interpreter.DSLError); ok {
 			return dslErr.Msg
 		}
@@ -189,7 +510,7 @@ func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (m
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.store.List(ctx, refEntity.Name, refEntity)
+		rows, err := s.store.List(ctx, refEntity.Name, refEntity, storage.ListParams{})
 		if err != nil {
 			return nil, err
 		}
@@ -307,4 +628,22 @@ func capitalize(s string) string {
 	runes := []rune(s)
 	runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
 	return string(runes)
+}
+
+// sortKeys returns map keys in sorted order (for deterministic template output).
+func sortKeys(m map[string]storage.FilterValue) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// filterValue returns the FilterValue for a field from ListParams, or empty.
+func filterValue(params storage.ListParams, fieldName string) storage.FilterValue {
+	if params.Filters == nil {
+		return storage.FilterValue{}
+	}
+	return params.Filters[fieldName]
 }

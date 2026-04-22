@@ -6,22 +6,29 @@ import (
 )
 
 type Object struct {
-	Type   string
-	Kind   metadata.Kind
-	ID     uuid.UUID
-	Fields map[string]any
+	Type          string
+	Kind          metadata.Kind
+	ID            uuid.UUID
+	Fields        map[string]any
+	TablePartRows map[string][]map[string]any
 }
 
 func NewObject(entityType string, kind metadata.Kind) *Object {
 	return &Object{
-		Type:   entityType,
-		Kind:   kind,
-		ID:     uuid.New(),
-		Fields: make(map[string]any),
+		Type:          entityType,
+		Kind:          kind,
+		ID:            uuid.New(),
+		Fields:        make(map[string]any),
+		TablePartRows: make(map[string][]map[string]any),
 	}
 }
 
 func (o *Object) Get(name string) any {
+	if o.TablePartRows != nil {
+		if rows, ok := o.TablePartRows[name]; ok {
+			return rows
+		}
+	}
 	return o.Fields[name]
 }
 
