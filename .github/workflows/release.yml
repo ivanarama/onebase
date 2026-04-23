@@ -54,6 +54,7 @@ jobs:
           $name = "onebase-${{ matrix.goos }}-${{ matrix.goarch }}"
           New-Item -ItemType Directory -Name $name
           Copy-Item onebase.exe "$name\"
+          Copy-Item "Запустить.vbs" "$name\" -ErrorAction SilentlyContinue
           Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
           Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
           Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
