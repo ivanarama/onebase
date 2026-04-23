@@ -1,3 +1,5 @@
+//go:build !webview
+
 package launcher
 
 import (
