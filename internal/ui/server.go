@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -12,13 +13,14 @@ import (
 )
 
 type Server struct {
-	reg    *runtime.Registry
-	store  *storage.DB
-	interp *interpreter.Interpreter
+	reg      *runtime.Registry
+	store    *storage.DB
+	interp   *interpreter.Interpreter
+	authRepo *auth.Repo
 }
 
-func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter) *Server {
-	return &Server{reg: reg, store: store, interp: interp}
+func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo) *Server {
+	return &Server{reg: reg, store: store, interp: interp, authRepo: authRepo}
 }
 
 func (s *Server) Mount(r chi.Router) {
@@ -33,6 +35,12 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/register/{name}/balances", s.registerBalances)
 	r.Get("/ui/report/{name}", s.reportForm)
 	r.Post("/ui/report/{name}", s.reportRun)
+
+	// Admin: user management
+	r.Get("/ui/admin/users", s.adminUsers)
+	r.Get("/ui/admin/users/new", s.adminUserNew)
+	r.Post("/ui/admin/users/new", s.adminUserCreate)
+	r.Post("/ui/admin/users/{id}/delete", s.adminUserDelete)
 }
 
 type navSection struct {

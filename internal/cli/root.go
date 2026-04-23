@@ -20,5 +20,5 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.AddCommand(initCmd, devCmd, runCmd, migrateCmd, buildCmd)
+	rootCmd.AddCommand(initCmd, devCmd, runCmd, migrateCmd, buildCmd, startCmd, ibasesCmd)
 }

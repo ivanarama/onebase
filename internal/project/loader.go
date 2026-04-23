@@ -1,6 +1,7 @@
 package project
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,11 +9,13 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/report"
+	"gopkg.in/yaml.v3"
 )
 
 type Project struct {
@@ -21,6 +24,56 @@ type Project struct {
 	Registers []*metadata.Register
 	Reports   []*report.Report
 	Programs  map[string]*ast.Program // entity name → parsed DSL
+	cleanup   func()
+}
+
+// Close releases resources (e.g., temp dirs) associated with this Project.
+func (p *Project) Close() {
+	if p.cleanup != nil {
+		p.cleanup()
+	}
+}
+
+// AppConfig holds the optional config/app.yaml metadata.
+type AppConfig struct {
+	Name    string `yaml:"name"`
+	Version string `yaml:"version"`
+}
+
+// LoadConfig reads config/app.yaml from the project directory.
+func LoadConfig(dir string) (*AppConfig, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "config", "app.yaml"))
+	if err != nil {
+		return &AppConfig{Name: filepath.Base(dir)}, nil
+	}
+	var cfg AppConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+// LoadFromDB loads project metadata from the _onebase_config table, writing
+// to a temp directory, then calling Load on it.
+func LoadFromDB(ctx context.Context, repo *configdb.Repo) (*Project, error) {
+	tmpDir, err := os.MkdirTemp("", "onebase-cfg-")
+	if err != nil {
+		return nil, fmt.Errorf("project: mktempdir: %w", err)
+	}
+
+	if err := repo.ExportToDir(ctx, tmpDir); err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("project: export from db: %w", err)
+	}
+
+	proj, err := Load(tmpDir)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, err
+	}
+
+	proj.cleanup = func() { os.RemoveAll(tmpDir) }
+	return proj, nil
 }
 
 func Load(dir string) (*Project, error) {

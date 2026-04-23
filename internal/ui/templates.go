@@ -153,6 +153,11 @@ const tplNav = `
   <div class="sec">{{.Kind}}</div>
   {{range .Items}}<a href="{{.URL}}">{{.Label}}</a>
   {{end}}{{end}}
+  <div class="sec">Администрирование</div>
+  <a href="/ui/admin/users">Пользователи</a>
+  <form method="POST" action="/logout" style="margin:6px 0 0">
+    <button type="submit" style="background:none;border:none;color:#94a3b8;font-size:14px;padding:6px 10px;cursor:pointer;width:100%;text-align:left;border-radius:6px" onmouseover="this.style.background='#334155';this.style.color='#fff'" onmouseout="this.style.background='none';this.style.color='#94a3b8'">Выйти</button>
+  </form>
 </aside>
 {{end}}
 `

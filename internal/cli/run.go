@@ -11,6 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/ivantit66/onebase/internal/api"
+	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -26,16 +28,15 @@ var runCmd = &cobra.Command{
 func init() {
 	runCmd.Flags().String("project", ".", "path to project directory")
 	runCmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
+	runCmd.Flags().Int("port", 8080, "HTTP server port")
+	runCmd.Flags().String("config-source", "file", "configuration source: file or database")
 }
 
 func runServer(cmd *cobra.Command, _ []string) error {
 	dir, _ := cmd.Flags().GetString("project")
 	dsn := dsnFromFlags(cmd)
-
-	proj, err := project.Load(dir)
-	if err != nil {
-		return fmt.Errorf("load project: %w", err)
-	}
+	port, _ := cmd.Flags().GetInt("port")
+	configSource, _ := cmd.Flags().GetString("config-source")
 
 	ctx := context.Background()
 	db, err := storage.Connect(ctx, dsn)
@@ -43,6 +44,26 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer db.Close()
+
+	authRepo := auth.NewRepo(db.Pool())
+	if err := authRepo.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("auth schema: %w", err)
+	}
+
+	var proj *project.Project
+	if configSource == "database" {
+		cfgRepo := configdb.New(db.Pool())
+		if err := cfgRepo.EnsureSchema(ctx); err != nil {
+			return fmt.Errorf("configdb schema: %w", err)
+		}
+		proj, err = project.LoadFromDB(ctx, cfgRepo)
+	} else {
+		proj, err = project.Load(dir)
+	}
+	if err != nil {
+		return fmt.Errorf("load project: %w", err)
+	}
+	defer proj.Close()
 
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -55,9 +76,9 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.Reports)
 
 	interp := interpreter.New()
-	srv := api.New(reg, db, interp)
+	srv := api.New(reg, db, interp, authRepo, port)
 
-	fmt.Fprintln(os.Stdout, "onebase running on :8080")
+	fmt.Fprintf(os.Stdout, "onebase running on :%d\n", port)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

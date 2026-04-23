@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            ext: .exe
+            archive: zip
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            ext: ''
+            archive: tar
+          - goos: darwin
+            goarch: amd64
+            runner: macos-latest
+            ext: ''
+            archive: tar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o onebase${{ matrix.ext }} ./cmd/onebase
+
+      - name: Package (Windows)
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $name = "onebase-${{ matrix.goos }}-${{ matrix.goarch }}"
+          New-Item -ItemType Directory -Name $name
+          Copy-Item onebase.exe "$name\"
+          Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
+          Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
+          echo "ASSET=${name}.zip" >> $env:GITHUB_ENV
+
+      - name: Package (Unix)
+        if: matrix.goos != 'windows'
+        run: |
+          name="onebase-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir "$name"
+          cp onebase "$name/"
+          cp README.md "$name/" 2>/dev/null || true
+          cp -r examples "$name/" 2>/dev/null || true
+          tar czf "${name}.tar.gz" "$name"
+          echo "ASSET=${name}.tar.gz" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onebase-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.ASSET }}
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Установка
+
+            ### Windows
+            1. Скачайте `onebase-windows-amd64.zip`
+            2. Распакуйте в любую папку (например `C:\onebase\`)
+            3. Добавьте папку в PATH или запускайте напрямую
+            4. Запустите `onebase start` — откроется лаунчер в браузере
+
+            ### Linux / macOS
+            ```bash
+            tar xzf onebase-linux-amd64.tar.gz
+            sudo mv onebase-linux-amd64/onebase /usr/local/bin/
+            onebase start
+            ```
+
+            ### Требования
+            - PostgreSQL 14+ (локальный или сетевой)
+            - Современный браузер (Chrome, Edge, Firefox)

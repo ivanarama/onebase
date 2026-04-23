@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/ivantit66/onebase/internal/api"
+	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/devserver"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/project"
@@ -28,11 +30,15 @@ var devCmd = &cobra.Command{
 func init() {
 	devCmd.Flags().String("project", ".", "path to project directory")
 	devCmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
+	devCmd.Flags().Int("port", 8080, "HTTP server port")
+	devCmd.Flags().String("config-source", "file", "configuration source: file or database")
 }
 
 func runDev(cmd *cobra.Command, _ []string) error {
 	dir, _ := cmd.Flags().GetString("project")
 	dsn := dsnFromFlags(cmd)
+	port, _ := cmd.Flags().GetInt("port")
+	configSource, _ := cmd.Flags().GetString("config-source")
 
 	ctx := context.Background()
 	db, err := storage.Connect(ctx, dsn)
@@ -41,15 +47,36 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 	defer db.Close()
 
+	authRepo := auth.NewRepo(db.Pool())
+	if err := authRepo.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("auth schema: %w", err)
+	}
+
 	reg := runtime.NewRegistry()
 	interp := interpreter.New()
 
+	var watchDir string
 	load := func() {
-		proj, err := project.Load(dir)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "[dev] project error:", err)
+		var proj *project.Project
+		var lerr error
+
+		if configSource == "database" {
+			cfgRepo := configdb.New(db.Pool())
+			if err := cfgRepo.EnsureSchema(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, "[dev] configdb error:", err)
+				return
+			}
+			proj, lerr = project.LoadFromDB(ctx, cfgRepo)
+		} else {
+			proj, lerr = project.Load(dir)
+			watchDir = dir
+		}
+		if lerr != nil {
+			fmt.Fprintln(os.Stderr, "[dev] project error:", lerr)
 			return
 		}
+		defer proj.Close()
+
 		if err := db.Migrate(ctx, proj.Entities); err != nil {
 			fmt.Fprintln(os.Stderr, "[dev] migrate error:", err)
 			return
@@ -63,11 +90,13 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 	load()
 
-	if err := devserver.Watch(dir, load); err != nil {
-		return fmt.Errorf("watcher: %w", err)
+	if configSource == "file" && watchDir != "" {
+		if err := devserver.Watch(watchDir, load); err != nil {
+			return fmt.Errorf("watcher: %w", err)
+		}
 	}
 
-	srv := api.New(reg, db, interp)
+	srv := api.New(reg, db, interp, authRepo, port)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -78,7 +107,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	fmt.Fprintln(os.Stdout, "onebase dev running on :8080")
+	fmt.Fprintf(os.Stdout, "onebase dev running on :%d\n", port)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
