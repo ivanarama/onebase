@@ -198,7 +198,7 @@ const tplForm = `
 <div class="form-page">
   <h2>{{if .IsNew}}Добавить информационную базу{{else}}Изменить — {{.Base.Name}}{{end}}</h2>
   {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
-  <form method="POST">
+  <form method="POST" action="{{if .IsNew}}/bases{{else}}/bases/{{.Base.ID}}{{end}}">
     <div class="fg">
       <label>Наименование</label>
       <input name="name" value="{{.Base.Name}}" required autofocus>
