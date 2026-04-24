@@ -84,7 +84,17 @@ func (r *Registry) Reports() []*report.Report {
 func (r *Registry) GetEntity(name string) *metadata.Entity {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.entities[name]
+	if e, ok := r.entities[name]; ok {
+		return e
+	}
+	// case-insensitive fallback: URL routes lowercase the entity name
+	nl := strings.ToLower(name)
+	for k, v := range r.entities {
+		if strings.ToLower(k) == nl {
+			return v
+		}
+	}
+	return nil
 }
 
 func (r *Registry) GetRegister(name string) *metadata.Register {
