@@ -412,9 +412,18 @@ go build -tags webview -ldflags="-s -w -H windowsgui" -o onebase-gui.exe ./cmd/o
 ### Тесты
 
 ```bash
-go test ./...                                          # юнит-тесты
-go test -tags=integration ./...                        # + интеграционные (нужен PostgreSQL)
+# Юнит-тесты (без PostgreSQL)
+go test ./...
+
+# Интеграционные тесты (требуют PostgreSQL)
+TEST_DATABASE_URL="postgres://localhost/onebase_test?sslmode=disable" \
+  go test -tags=integration ./...
 ```
+
+Интеграционные тесты покрывают:
+- `integration_test.go` — сквозной сценарий в file- и database-режимах
+- `internal/auth/integration_test.go` — Create/Authenticate/Middleware с реальной БД
+- `internal/configdb/repo_test.go` — Export/Import round-trip
 
 ---
 

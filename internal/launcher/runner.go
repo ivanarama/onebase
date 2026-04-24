@@ -3,10 +3,12 @@ package launcher
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type managedProc struct {
@@ -116,6 +118,24 @@ func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
 	cmd := exec.CommandContext(ctx, exe, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// WaitReady polls /health on the base's port until it responds 200 or timeout.
+func (r *Runner) WaitReady(base *Base, timeout time.Duration) error {
+	url := fmt.Sprintf("http://localhost:%d/health", base.Port)
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("сервер не ответил на порту %d за %s", base.Port, timeout)
 }
 
 func baseLogPath(id string) (string, error) {

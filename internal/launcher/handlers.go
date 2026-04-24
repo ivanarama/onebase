@@ -166,13 +166,22 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !h.runner.IsRunning(b.ID) {
+		if err := storage.EnsureDatabase(r.Context(), b.DB); err != nil {
+			writeJSON(w, 500, map[string]any{"error": "Не удалось создать БД: " + err.Error()})
+			return
+		}
 		if err := h.runner.Start(b); err != nil {
 			writeJSON(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
-		// Update last_opened
 		b.LastOpened = time.Now()
 		h.store.Update(b)
+	}
+
+	// Wait until the base server is ready before handing the URL to the browser
+	if err := h.runner.WaitReady(b, 15*time.Second); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
 	}
 
 	writeJSON(w, 200, map[string]any{"url": h.runner.BaseURL(b)})
@@ -294,6 +303,9 @@ func (h *handler) configImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) initDatabaseBase(ctx context.Context, b *Base, scaffold bool) error {
+	if err := storage.EnsureDatabase(ctx, b.DB); err != nil {
+		return fmt.Errorf("создание БД: %w", err)
+	}
 	db, err := storage.Connect(ctx, b.DB)
 	if err != nil {
 		return fmt.Errorf("подключение к БД: %w", err)

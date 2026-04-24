@@ -219,6 +219,7 @@ const tplForm = `
     <div class="fg">
       <label>Строка подключения к PostgreSQL</label>
       <input name="db" value="{{.Base.DB}}" required placeholder="postgres://localhost/mydb?sslmode=disable">
+      <div class="hint">База данных будет создана автоматически, если не существует.</div>
     </div>
     <div class="form-row">
       <div class="fg">
