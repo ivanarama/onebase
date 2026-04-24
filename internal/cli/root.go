@@ -15,7 +15,7 @@ var rootCmd = &cobra.Command{
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		showError(fmt.Sprintf("Ошибка запуска onebase:\n\n%s", err.Error()))
 		os.Exit(1)
 	}
 }
