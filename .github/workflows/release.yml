@@ -53,6 +53,7 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: |
+          go get github.com/webview/webview_go@latest
           go build -tags webview -ldflags="-s -w -H windowsgui" -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)

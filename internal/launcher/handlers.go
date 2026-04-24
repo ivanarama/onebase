@@ -97,12 +97,38 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-	} else if b.Path == "" {
-		render(w, "page-form", map[string]any{
-			"Title": "onebase — Добавить базу",
-			"IsNew": true, "Base": b, "Error": "Укажите путь к папке конфигурации",
-		})
-		return
+	} else {
+		// file mode
+		if b.Path == "" {
+			render(w, "page-form", map[string]any{
+				"Title": "onebase — Добавить базу",
+				"IsNew": true, "Base": b, "Error": "Укажите путь к папке конфигурации",
+			})
+			return
+		}
+		if scaffold {
+			if err := os.MkdirAll(b.Path, 0o755); err != nil {
+				render(w, "page-form", map[string]any{
+					"Title": "onebase — Добавить базу",
+					"IsNew": true, "Base": b, "Error": "Не удалось создать папку: " + err.Error(),
+				})
+				return
+			}
+			if err := project.Scaffold(b.Path, b.Name); err != nil {
+				render(w, "page-form", map[string]any{
+					"Title": "onebase — Добавить базу",
+					"IsNew": true, "Base": b, "Error": "Ошибка создания конфигурации: " + err.Error(),
+				})
+				return
+			}
+		}
+		if err := storage.EnsureDatabase(r.Context(), b.DB); err != nil {
+			render(w, "page-form", map[string]any{
+				"Title": "onebase — Добавить базу",
+				"IsNew": true, "Base": b, "Error": "Не удалось создать БД: " + err.Error(),
+			})
+			return
+		}
 	}
 
 	if err := h.store.Add(b); err != nil {

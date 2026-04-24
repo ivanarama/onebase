@@ -238,8 +238,8 @@ const tplForm = `
     </div>
     {{if .IsNew}}
     <div class="cbrow" id="scaffold-row">
-      <input type="checkbox" name="scaffold" id="scaffold" value="1" {{if eq .Base.ConfigSource "file"}}style="display:none"{{end}}>
-      <label for="scaffold" id="scaffold-label" {{if eq .Base.ConfigSource "file"}}style="display:none"{{end}}>Создать пустую конфигурацию (новая база)</label>
+      <input type="checkbox" name="scaffold" id="scaffold" value="1">
+      <label for="scaffold" id="scaffold-label">Создать пустую конфигурацию (новая база)</label>
     </div>
     {{end}}
     <div class="form-btns">
@@ -251,15 +251,13 @@ const tplForm = `
 <script>
 function togglePath(v) {
   var r = document.getElementById('path-row');
-  var sr = document.getElementById('scaffold-row');
-  var si = document.getElementById('scaffold');
   var sl = document.getElementById('scaffold-label');
   if (v === 'file') {
     r.style.display = '';
-    if (si) { si.style.display = 'none'; sl.style.display = 'none'; }
+    if (sl) sl.textContent = 'Создать структуру папок и пустую конфигурацию';
   } else {
     r.style.display = 'none';
-    if (si) { si.style.display = ''; sl.style.display = ''; }
+    if (sl) sl.textContent = 'Создать пустую конфигурацию (новая база)';
   }
 }
 </script>
