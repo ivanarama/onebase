@@ -18,11 +18,11 @@ var (
 )
 
 const (
-	swRestore    = 9
-	hwndTopmost  = ^uintptr(0)  // -1
+	swRestore     = 9
+	hwndTopmost   = ^uintptr(0) // -1
 	hwndNoTopmost = ^uintptr(1) // -2
-	swpNoMove    = 0x0002
-	swpNoSize    = 0x0001
+	swpNoMove     = 0x0002
+	swpNoSize     = 0x0001
 )
 
 // OpenWindow opens the launcher in a native webview window and blocks until
@@ -30,30 +30,24 @@ const (
 // MUST be called from the main goroutine — webview requires the main OS thread.
 func OpenWindow(url, title string, done <-chan struct{}) error {
 	runtime.LockOSThread()
-	w := webview.New(true)
+
+	// false = production mode; debug mode can fail silently when launched
+	// via ShellExecute (double-click from Explorer).
+	w := webview.New(false)
 	defer w.Destroy()
+
 	w.SetTitle(title)
 	w.SetSize(900, 600, webview.HintNone)
+
+	// Ask the page to focus itself once loaded.
+	w.Init(`window.addEventListener('load', function(){ window.focus(); });`)
 	w.Navigate(url)
 
-	// Bring window to foreground — required when launched via double-click
-	// (ShellExecute restricts foreground activation unlike Shell.Run).
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		w.Dispatch(func() {
-			hwnd := uintptr(w.Window())
-			if hwnd == 0 {
-				return
-			}
-			// Make topmost briefly → restore → set foreground
-			procSetWndPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize)
-			procShowWindow.Call(hwnd, swRestore)
-			procSetFgWnd.Call(hwnd)
-			procSetWndPos.Call(hwnd, hwndNoTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize)
-		})
-	}()
+	// Win32 foreground fix: when launched via double-click, Explorer restricts
+	// foreground activation. Poll for the HWND then force the window to front.
+	go bringToFront(w)
 
-	// Close window when /quit is received
+	// Close window when /quit is received from the launcher UI.
 	go func() {
 		<-done
 		w.Dispatch(func() { w.Terminate() })
@@ -61,4 +55,28 @@ func OpenWindow(url, title string, done <-chan struct{}) error {
 
 	w.Run()
 	return nil
+}
+
+// bringToFront polls until webview exposes its Win32 HWND, then raises the
+// window. Needed because double-click via ShellExecute doesn't grant
+// foreground rights automatically.
+func bringToFront(w webview.WebView) {
+	var hwnd uintptr
+	for i := 0; i < 20; i++ { // poll up to 10 s
+		time.Sleep(500 * time.Millisecond)
+		hwnd = uintptr(w.Window())
+		if hwnd != 0 {
+			break
+		}
+	}
+	if hwnd == 0 {
+		return
+	}
+	w.Dispatch(func() {
+		// Make topmost briefly, restore, bring to front, remove topmost.
+		procSetWndPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize)
+		procShowWindow.Call(hwnd, swRestore)
+		procSetFgWnd.Call(hwnd)
+		procSetWndPos.Call(hwnd, hwndNoTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize)
+	})
 }
