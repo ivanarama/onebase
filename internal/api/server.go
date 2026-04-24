@@ -40,11 +40,18 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	r.Group(func(r chi.Router) {
 		r.Use(authRepo.Middleware)
 
-		// REST API
+		// REST API — catalogs
+		r.Get("/catalogs/{entity}", h.listObjects(metadata.KindCatalog))
 		r.Post("/catalogs/{entity}", h.createObject(metadata.KindCatalog))
 		r.Get("/catalogs/{entity}/{id}", h.getObject(metadata.KindCatalog))
+		r.Put("/catalogs/{entity}/{id}", h.updateObject(metadata.KindCatalog))
+		r.Delete("/catalogs/{entity}/{id}", h.deleteObject(metadata.KindCatalog))
+		// REST API — documents
+		r.Get("/documents/{entity}", h.listObjects(metadata.KindDocument))
 		r.Post("/documents/{entity}", h.createObject(metadata.KindDocument))
 		r.Get("/documents/{entity}/{id}", h.getObject(metadata.KindDocument))
+		r.Put("/documents/{entity}/{id}", h.updateObject(metadata.KindDocument))
+		r.Delete("/documents/{entity}/{id}", h.deleteObject(metadata.KindDocument))
 
 		// Web UI
 		uiSrv := ui.New(reg, store, interp, authRepo)

@@ -34,6 +34,9 @@ type Entity struct {
 	Kind       Kind
 	Fields     []Field
 	TableParts []TablePart
+	// Posting enables 1C-style posting semantics: movements are written only
+	// when the document is explicitly posted, not on every save.
+	Posting bool
 }
 
 type Register struct {

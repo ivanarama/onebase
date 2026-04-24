@@ -49,22 +49,25 @@ func (db *DB) Upsert(ctx context.Context, entityName string, id uuid.UUID, field
 		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO UPDATE SET %s",
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "))
 	}
-	_, err := db.pool.Exec(ctx, sql, args...)
-	if err != nil {
+	if err := db.exec(ctx, sql, args...); err != nil {
 		return fmt.Errorf("upsert %s: %w", entityName, err)
 	}
 	return nil
 }
 
 // GetByID retrieves a single object by ID, returning fields as map[string]any.
+// For documents, also returns "posted" bool.
 func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, entity *metadata.Entity) (map[string]any, error) {
 	table := metadata.TableName(entityName)
 	cols := []string{"id"}
 	for _, f := range entity.Fields {
 		cols = append(cols, metadata.ColumnName(f))
 	}
+	if entity.Kind == metadata.KindDocument {
+		cols = append(cols, "posted")
+	}
 	sql := fmt.Sprintf("SELECT %s FROM %s WHERE id = $1", strings.Join(cols, ", "), table)
-	row := db.pool.QueryRow(ctx, sql, id)
+	row := db.q(ctx).QueryRow(ctx, sql, id)
 
 	dest := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
@@ -79,6 +82,9 @@ func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, enti
 	result["id"] = normalizeValue(dest[0])
 	for i, f := range entity.Fields {
 		result[f.Name] = normalizeValue(dest[i+1])
+	}
+	if entity.Kind == metadata.KindDocument {
+		result["posted"] = normalizeValue(dest[len(entity.Fields)+1])
 	}
 	return result, nil
 }
@@ -109,11 +115,15 @@ func normalizeUUID(v any) any {
 }
 
 // List returns rows for an entity with optional filtering and sorting.
+// For documents, also returns "posted" bool.
 func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) ([]map[string]any, error) {
 	table := metadata.TableName(entityName)
 	cols := []string{"id"}
 	for _, f := range entity.Fields {
 		cols = append(cols, metadata.ColumnName(f))
+	}
+	if entity.Kind == metadata.KindDocument {
+		cols = append(cols, "posted")
 	}
 
 	var whereParts []string
@@ -199,6 +209,9 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		for i, f := range entity.Fields {
 			row[f.Name] = normalizeValue(dest[i+1])
 		}
+		if entity.Kind == metadata.KindDocument {
+			row["posted"] = normalizeValue(dest[len(entity.Fields)+1])
+		}
 		result = append(result, row)
 	}
 	return result, rows.Err()
@@ -242,7 +255,7 @@ func (db *DB) GetTablePartRows(ctx context.Context, entityName, tpName string, p
 func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string, parentID uuid.UUID, rows []map[string]any, tp metadata.TablePart) error {
 	table := metadata.TablePartTableName(entityName, tpName)
 
-	if _, err := db.pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE parent_id = $1", table), parentID); err != nil {
+	if err := db.exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE parent_id = $1", table), parentID); err != nil {
 		return fmt.Errorf("delete tablepart %s.%s: %w", entityName, tpName, err)
 	}
 
@@ -257,11 +270,24 @@ func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string
 		}
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
-		if _, err := db.pool.Exec(ctx, sql, args...); err != nil {
+		if err := db.exec(ctx, sql, args...); err != nil {
 			return fmt.Errorf("insert tablepart %s.%s row %d: %w", entityName, tpName, i+1, err)
 		}
 	}
 	return nil
+}
+
+// Delete removes an entity record by id. Tablepart rows cascade automatically.
+func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error {
+	return db.exec(ctx,
+		fmt.Sprintf("DELETE FROM %s WHERE id = $1", metadata.TableName(entityName)), id)
+}
+
+// SetPosted sets the posted flag on a document.
+func (db *DB) SetPosted(ctx context.Context, entityName string, id uuid.UUID, posted bool) error {
+	return db.exec(ctx,
+		fmt.Sprintf("UPDATE %s SET posted = $1 WHERE id = $2", metadata.TableName(entityName)),
+		posted, id)
 }
 
 // fieldValue extracts the value for a field from the fields map, handling reference UUID strings.

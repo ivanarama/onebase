@@ -14,7 +14,7 @@ import (
 func (db *DB) WriteMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, reg *metadata.Register, period *time.Time) error {
 	table := metadata.RegisterTableName(regName)
 
-	if _, err := db.pool.Exec(ctx,
+	if err := db.exec(ctx,
 		fmt.Sprintf("DELETE FROM %s WHERE recorder = $1 AND recorder_type = $2", table),
 		recorderID, recorderType,
 	); err != nil {
@@ -44,7 +44,7 @@ func (db *DB) WriteMovements(ctx context.Context, regName, recorderType string, 
 		}
 
 		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", table, strings.Join(cols, ", "), strings.Join(phs, ", "))
-		if _, err := db.pool.Exec(ctx, sql, args...); err != nil {
+		if err := db.exec(ctx, sql, args...); err != nil {
 			return fmt.Errorf("write movement %s row %d: %w", regName, i+1, err)
 		}
 	}

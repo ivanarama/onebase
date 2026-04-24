@@ -22,6 +22,7 @@ type rawEntity struct {
 	Name       string         `yaml:"name"`
 	Fields     []rawField     `yaml:"fields"`
 	TableParts []rawTablePart `yaml:"tableparts"`
+	Posting    bool           `yaml:"posting"`
 }
 
 func LoadFile(path string, kind Kind) (*Entity, error) {
@@ -36,7 +37,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	if raw.Name == "" {
 		return nil, fmt.Errorf("%s: missing name", path)
 	}
-	e := &Entity{Name: raw.Name, Kind: kind}
+	e := &Entity{Name: raw.Name, Kind: kind, Posting: raw.Posting}
 	for _, rf := range raw.Fields {
 		e.Fields = append(e.Fields, parseField(rf))
 	}

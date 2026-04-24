@@ -81,8 +81,23 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		obj.Set(k, v)
 	}
 	obj.TablePartRows = tpRows
+
+	// Auto-number: fill Номер if empty for new documents
+	if entity.Kind == metadata.KindDocument {
+		for _, f := range entity.Fields {
+			if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
+				if v := fmt.Sprintf("%v", obj.Fields["Номер"]); v == "" || v == "<nil>" {
+					if n, err := s.store.NextNum(r.Context(), entity.Name); err == nil {
+						obj.Set("Номер", fmt.Sprintf("%06d", n))
+					}
+				}
+				break
+			}
+		}
+	}
+
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
-	setPeriodFromFields(mc, entity, fields)
+	setPeriodFromFields(mc, entity, obj.Fields)
 
 	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
@@ -98,15 +113,19 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Upsert(r.Context(), entity.Name, obj.ID, obj.Fields, entity); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if err := s.saveTablePartsDirect(r.Context(), entity, obj.ID, obj.TablePartRows); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if err := s.saveMovements(r.Context(), entity.Name, obj.ID, mc); err != nil {
+	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		if err := s.store.Upsert(ctx, entity.Name, obj.ID, obj.Fields, entity); err != nil {
+			return err
+		}
+		if err := s.saveTablePartsDirect(ctx, entity, obj.ID, obj.TablePartRows); err != nil {
+			return err
+		}
+		// For posting documents, movements are written only on explicit Post action
+		if !entity.Posting {
+			return s.saveMovements(ctx, entity.Name, obj.ID, mc)
+		}
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -136,6 +155,10 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 			vals[f.Name] = fmt.Sprintf("%v", v)
 		}
 	}
+	// Include posted status for documents
+	if entity.Kind == metadata.KindDocument {
+		vals["posted"] = fmt.Sprintf("%v", row["posted"])
+	}
 
 	tpRows := make(map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
@@ -152,6 +175,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"Values":        vals,
 		"RefOptions":    refOptions,
 		"TablePartRows": tpRows,
+		"ID":            id.String(),
 	})
 }
 
@@ -196,19 +220,103 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Upsert(r.Context(), entity.Name, obj.ID, obj.Fields, entity); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if err := s.saveTablePartsDirect(r.Context(), entity, obj.ID, obj.TablePartRows); err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if err := s.saveMovements(r.Context(), entity.Name, obj.ID, mc); err != nil {
+	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		if err := s.store.Upsert(ctx, entity.Name, obj.ID, obj.Fields, entity); err != nil {
+			return err
+		}
+		if err := s.saveTablePartsDirect(ctx, entity, obj.ID, obj.TablePartRows); err != nil {
+			return err
+		}
+		if !entity.Posting {
+			return s.saveMovements(ctx, entity.Name, obj.ID, mc)
+		}
+		// Posting document: clear movements on edit (must re-post explicitly)
+		for _, reg := range s.reg.Registers() {
+			if err := s.store.WriteMovements(ctx, reg.Name, entity.Name, obj.ID, nil, reg, nil); err != nil {
+				return err
+			}
+		}
+		return s.store.SetPosted(ctx, entity.Name, obj.ID, false)
+	}); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
+	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+}
+
+// postDocument posts a document: runs OnWrite, writes movements, sets posted=true.
+func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", 400)
+		return
+	}
+
+	row, err := s.store.GetByID(r.Context(), entity.Name, id, entity)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	obj := &runtime.Object{ID: id, Type: entity.Name, Kind: entity.Kind, Fields: make(map[string]any)}
+	for _, f := range entity.Fields {
+		obj.Fields[f.Name] = row[f.Name]
+	}
+	tpRows := make(map[string][]map[string]any)
+	for _, tp := range entity.TableParts {
+		rows, _ := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
+		tpRows[tp.Name] = rows
+	}
+	obj.TablePartRows = tpRows
+
+	mc := runtime.NewMovementsCollector(entity.Name, id)
+	setPeriodFromFields(mc, entity, obj.Fields)
+
+	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
+		http.Error(w, "Проведение: "+errMsg, 422)
+		return
+	}
+
+	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		if err := s.saveMovements(ctx, entity.Name, id, mc); err != nil {
+			return err
+		}
+		return s.store.SetPosted(ctx, entity.Name, id, true)
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+}
+
+// unpostDocument clears movements and sets posted=false.
+func (s *Server) unpostDocument(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", 400)
+		return
+	}
+
+	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		for _, reg := range s.reg.Registers() {
+			if err := s.store.WriteMovements(ctx, reg.Name, entity.Name, id, nil, reg, nil); err != nil {
+				return err
+			}
+		}
+		return s.store.SetPosted(ctx, entity.Name, id, false)
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 }
 

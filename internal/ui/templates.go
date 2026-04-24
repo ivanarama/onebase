@@ -224,6 +224,7 @@ const tplList = `
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
+  {{if eq (str .Entity.Kind) "document"}}<th style="width:36px">✓</th>{{end}}
   {{range .Entity.Fields}}
   <th>
     <a href="?sort={{.Name}}&dir={{nextDir $params .Name}}{{filterQuery $params}}">
@@ -234,6 +235,11 @@ const tplList = `
   <th style="width:90px"></th>
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr>
+  {{if eq (str $.Entity.Kind) "document"}}
+    <td style="text-align:center">
+      {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="Проведён">✓</span>{{else}}<span style="color:#94a3b8" title="Не проведён">—</span>{{end}}
+    </td>
+  {{end}}
   {{range $.Entity.Fields}}
     {{if eq (str .Type) "date"}}<td>{{fmtDate (index $row .Name)}}</td>
     {{else}}<td>{{index $row .Name}}</td>{{end}}
@@ -309,8 +315,28 @@ const tplForm = `
 <div style="display:flex;align-items:center;gap:16px;margin-top:16px">
   <button class="btn btn-primary" type="submit">Сохранить</button>
   <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" style="color:#64748b;font-size:14px">Отмена</a>
+  {{if and (not .IsNew) .Entity.Posting}}
+    {{if eq (index .Values "posted") "true"}}
+      <span style="color:#16a34a;font-weight:600;font-size:13px">✓ Проведён</span>
+    {{else}}
+      <span style="color:#94a3b8;font-size:13px">Не проведён</span>
+    {{end}}
+  {{end}}
 </div>
 </form>
+{{if and (not .IsNew) .Entity.Posting}}
+<div style="display:flex;gap:10px;margin-top:14px">
+  {{if eq (index .Values "posted") "true"}}
+    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/unpost">
+      <button class="btn btn-danger btn-sm" type="submit">Отменить проведение</button>
+    </form>
+  {{else}}
+    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/post">
+      <button class="btn btn-primary btn-sm" type="submit">Провести</button>
+    </form>
+  {{end}}
+</div>
+{{end}}
 </div>
 <script>
 function addTpRow(tpName, fields, numFields, idx) {

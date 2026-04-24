@@ -37,6 +37,10 @@ func CreateTableSQL(e *metadata.Entity) string {
 		sb.WriteString(" ")
 		sb.WriteString(pgType(f))
 	}
+	// posted flag for documents
+	if e.Kind == metadata.KindDocument {
+		sb.WriteString(",\n    posted BOOLEAN NOT NULL DEFAULT FALSE")
+	}
 	// foreign key constraints
 	for _, f := range e.Fields {
 		if f.RefEntity != "" {

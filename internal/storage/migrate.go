@@ -29,8 +29,12 @@ func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Regist
 }
 
 // Migrate applies CREATE TABLE and ADD COLUMN IF NOT EXISTS for all entities.
+// Also ensures system tables (_sequences) exist.
 // Deletions and renames are out of scope for MVP.
 func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
+	if err := db.EnsureSeqTable(ctx); err != nil {
+		return fmt.Errorf("migrate: sequences table: %w", err)
+	}
 	// create tables in dependency order (catalogs first, then documents)
 	ordered := orderByDependency(entities)
 	for _, e := range ordered {
@@ -40,6 +44,12 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 		}
 		// add any missing columns
 		table := metadata.TableName(e.Name)
+		// system columns for documents
+		if e.Kind == metadata.KindDocument {
+			if _, err := db.pool.Exec(ctx, AddColumnSQL(table, "posted", "BOOLEAN NOT NULL DEFAULT FALSE")); err != nil {
+				return fmt.Errorf("migrate %s.posted: %w", e.Name, err)
+			}
+		}
 		for _, f := range e.Fields {
 			col := metadata.ColumnName(f)
 			addSQL := AddColumnSQL(table, col, pgType(f))
