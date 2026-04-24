@@ -53,7 +53,6 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: |
-          go get github.com/webview/webview_go@latest
           go build -tags webview -ldflags="-s -w -H windowsgui" -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)
@@ -63,8 +62,7 @@ jobs:
           $name = "onebase-${{ matrix.goos }}-${{ matrix.goarch }}"
           New-Item -ItemType Directory -Name $name
           Copy-Item onebase.exe "$name\"
-          Copy-Item onebase-gui.exe "$name\" -ErrorAction SilentlyContinue
-          Copy-Item "Запустить.vbs" "$name\" -ErrorAction SilentlyContinue
+          Copy-Item onebase-gui.exe "$name\"
           Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
           Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
           Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
@@ -109,8 +107,8 @@ jobs:
             ### Windows
             1. Скачайте `onebase-windows-amd64.zip`
             2. Распакуйте в любую папку (например `C:\onebase\`)
-            3. Добавьте папку в PATH или запускайте напрямую
-            4. Запустите `onebase start` — откроется лаунчер в браузере
+            3. Двойной клик на **`onebase-gui.exe`** — откроется лаунчер в браузере
+            4. Или из терминала: `onebase start`
 
             ### Linux / macOS
             ```bash

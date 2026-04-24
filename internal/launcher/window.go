@@ -3,7 +3,6 @@
 package launcher
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -11,14 +10,17 @@ import (
 	"syscall"
 )
 
-// OpenWindow opens the launcher UI. Default build: opens browser and blocks until SIGINT.
-func OpenWindow(url, title string) error {
-	fmt.Fprintf(os.Stdout, "%s\nСтартер запущен: %s\n", title, url)
+// OpenWindow opens the launcher URL in the default system browser and blocks
+// until the process receives a signal or done is closed (via /quit).
+func OpenWindow(url, title string, done <-chan struct{}) error {
 	openBrowser(url)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	select {
+	case <-quit:
+	case <-done:
+	}
 	return nil
 }
 

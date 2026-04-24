@@ -33,5 +33,7 @@ func runStart(_ *cobra.Command, _ []string) error {
 		}
 	}()
 
-	return launcher.OpenWindow(srv.URL(), "onebase — Информационные базы")
+	// OpenWindow blocks until the window/browser is closed or /quit is called.
+	// For the webview build it MUST run on the main goroutine (Win32 requirement).
+	return launcher.OpenWindow(srv.URL(), "onebase — Информационные базы", srv.Done())
 }

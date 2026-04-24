@@ -10,8 +10,9 @@ import (
 
 // Server is the launcher HTTP server (list of registered bases).
 type Server struct {
-	h  *handler
-	ln net.Listener
+	h    *handler
+	ln   net.Listener
+	quit chan struct{}
 }
 
 // NewServer creates a launcher server bound to a random available port.
@@ -21,11 +22,14 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 		return nil, err
 	}
 	h := &handler{store: store, runner: runner}
-	return &Server{h: h, ln: ln}, nil
+	return &Server{h: h, ln: ln, quit: make(chan struct{})}, nil
 }
 
 // URL returns the base URL of the launcher server.
 func (s *Server) URL() string { return "http://" + s.ln.Addr().String() }
+
+// Done returns a channel that is closed when /quit is received.
+func (s *Server) Done() <-chan struct{} { return s.quit }
 
 func (s *Server) ListenAndServe() error {
 	r := chi.NewRouter()
@@ -42,6 +46,10 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/migrate", s.h.migrate)
 	r.Post("/bases/{id}/config/export", s.h.configExport)
 	r.Post("/bases/{id}/config/import", s.h.configImport)
+	r.Post("/quit", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		close(s.quit)
+	})
 
 	return http.Serve(s.ln, r)
 }
