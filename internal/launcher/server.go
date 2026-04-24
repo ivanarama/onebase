@@ -46,6 +46,8 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/migrate", s.h.migrate)
 	r.Post("/bases/{id}/config/export", s.h.configExport)
 	r.Post("/bases/{id}/config/import", s.h.configImport)
+	r.Get("/bases/{id}/configurator", s.h.configuratorPage)
+	r.Post("/bases/{id}/configurator/convert", s.h.configuratorConvert)
 	r.Post("/quit", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		close(s.quit)
