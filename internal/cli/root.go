@@ -10,6 +10,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "onebase",
 	Short: "onebase — metadata-driven business platform",
+	RunE:  runStart,
 }
 
 func Execute() {
