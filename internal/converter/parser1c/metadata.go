@@ -19,8 +19,6 @@ type xmlProperties struct {
 	// Accumulation registers
 	Dimensions []xmlAttribute `xml:"Dimensions>Dimension"`
 	Resources  []xmlAttribute `xml:"Resources>Resource"`
-	// Register attributes (extra info)
-	AddAttributes []xmlAttribute `xml:"Attributes>Attribute"`
 }
 
 type xmlLang struct {
