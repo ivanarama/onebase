@@ -315,7 +315,7 @@ func copyDir(src, dst string) error {
 
 func renderCfg(w http.ResponseWriter, data *configuratorData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := cfgTmpl.Execute(w, data); err != nil {
+	if err := cfgTmpl.ExecuteTemplate(w, "cfg-main", data); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
 }
