@@ -1,0 +1,10 @@
+name: Номенклатура
+fields:
+  - name: Наименование
+    type: string
+  - name: Артикул
+    type: string
+  - name: ЦенаПродажи
+    type: number
+  - name: ЕдиницаИзмерения
+    type: string

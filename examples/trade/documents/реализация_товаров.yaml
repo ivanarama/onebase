@@ -1,0 +1,21 @@
+name: РеализацияТоваров
+fields:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+  - name: Покупатель
+    type: reference:Контрагент
+  - name: Склад
+    type: reference:Склад
+tableparts:
+  - name: Товары
+    fields:
+      - name: Номенклатура
+        type: string
+      - name: Количество
+        type: number
+      - name: Цена
+        type: number
+      - name: Сумма
+        type: number

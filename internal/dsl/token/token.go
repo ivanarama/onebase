@@ -22,6 +22,8 @@ const (
 	IN
 	DO
 	ENDDO
+	TO     // To / По  (numeric for loop upper bound)
+	RETURN // Return / Возврат
 
 	ASSIGN // =
 	NEQ    // <>
@@ -55,6 +57,8 @@ var keywords = map[string]Type{
 	"In":           IN,
 	"Do":           DO,
 	"EndDo":        ENDDO,
+	"To":           TO,
+	"Return":       RETURN,
 	// Русский
 	"Процедура":      PROCEDURE,
 	"КонецПроцедуры": ENDPROCEDURE,
@@ -68,6 +72,8 @@ var keywords = map[string]Type{
 	"Из":             IN,
 	"Цикл":           DO,
 	"КонецЦикла":     ENDDO,
+	"По":             TO,
+	"Возврат":        RETURN,
 }
 
 type Token struct {

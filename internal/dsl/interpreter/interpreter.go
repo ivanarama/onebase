@@ -11,6 +11,9 @@ import (
 // sentinel to unwind call stack on Error()
 type dslStop struct{ err error }
 
+// sentinel to unwind call stack on Return
+type dslReturn struct{ val any }
+
 
 type Interpreter struct{}
 
@@ -21,9 +24,12 @@ func New() *Interpreter { return &Interpreter{} }
 func (i *Interpreter) Run(proc *ast.ProcedureDecl, this This, extraVars ...map[string]any) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			if s, ok := r.(dslStop); ok {
+			switch s := r.(type) {
+			case dslStop:
 				err = s.err
-			} else {
+			case dslReturn:
+				// early return from procedure — not an error
+			default:
 				panic(r)
 			}
 		}
@@ -76,6 +82,20 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 		i.evalExpr(v.X, e)
 	case *ast.VarDecl:
 		e.set(v.Name.Literal, nil)
+	case *ast.NumericForStmt:
+		start := toFloatOr0(i.evalExpr(v.Start, e))
+		end := toFloatOr0(i.evalExpr(v.End, e))
+		for counter := start; counter <= end; counter++ {
+			child := e.child()
+			child.set(v.Var.Literal, counter)
+			i.execBlock(v.Body, child)
+		}
+	case *ast.ReturnStmt:
+		var val any
+		if v.Value != nil {
+			val = i.evalExpr(v.Value, e)
+		}
+		panic(dslReturn{val: val})
 	}
 }
 
@@ -231,6 +251,11 @@ func compare(a, b any) int {
 		return 1
 	}
 	return 0
+}
+
+func toFloatOr0(v any) float64 {
+	f, _ := toFloat(v)
+	return f
 }
 
 func toFloat(v any) (float64, bool) {

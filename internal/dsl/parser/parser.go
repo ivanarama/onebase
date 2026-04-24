@@ -81,7 +81,7 @@ func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
 // isBlockEnd returns true for tokens that end a block from the outside.
 func isBlockEnd(t token.Type) bool {
 	switch t {
-	case token.EOF, token.ELSE, token.ENDIF, token.ENDDO:
+	case token.EOF, token.ELSE, token.ENDIF, token.ENDDO, token.ENDPROCEDURE:
 		return true
 	}
 	return false
@@ -104,9 +104,16 @@ func (p *Parser) parseStmt() (ast.Stmt, error) {
 	case token.IF:
 		return p.parseIf()
 	case token.FOR:
-		return p.parseForEach()
+		// Для Каждого ... → ForEach
+		// Для i = ... По ... → NumericFor
+		if p.peek.Type == token.EACH {
+			return p.parseForEach()
+		}
+		return p.parseNumericFor()
 	case token.VAR:
 		return p.parseVarDecl()
+	case token.RETURN:
+		return p.parseReturn()
 	default:
 		return p.parseExprOrAssign()
 	}
@@ -168,6 +175,60 @@ func (p *Parser) parseForEach() (*ast.ForEachStmt, error) {
 	}
 	p.consumeSemi()
 	return &ast.ForEachStmt{Var: varTok, Collection: coll, Body: body}, nil
+}
+
+// parseNumericFor разбирает: Для i = start По end Цикл ... КонецЦикла
+func (p *Parser) parseNumericFor() (*ast.NumericForStmt, error) {
+	p.advance() // consume Для/For
+	varTok, err := p.expect(token.IDENT)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.ASSIGN); err != nil {
+		return nil, err
+	}
+	start, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.TO); err != nil {
+		return nil, err
+	}
+	end, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.DO); err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock(token.ENDDO)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(token.ENDDO); err != nil {
+		return nil, err
+	}
+	p.consumeSemi()
+	return &ast.NumericForStmt{Var: varTok, Start: start, End: end, Body: body}, nil
+}
+
+// parseReturn разбирает: Возврат [expr];
+func (p *Parser) parseReturn() (*ast.ReturnStmt, error) {
+	tok := p.cur
+	p.advance() // consume Возврат/Return
+	// Нет значения если сразу ; или конец блока
+	if p.cur.Type == token.SEMICOLON || p.cur.Type == token.EOF ||
+		p.cur.Type == token.ENDIF || p.cur.Type == token.ENDDO ||
+		p.cur.Type == token.ENDPROCEDURE {
+		p.consumeSemi()
+		return &ast.ReturnStmt{Tok: tok, Value: nil}, nil
+	}
+	val, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	p.consumeSemi()
+	return &ast.ReturnStmt{Tok: tok, Value: val}, nil
 }
 
 func (p *Parser) parseVarDecl() (*ast.VarDecl, error) {

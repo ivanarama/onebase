@@ -42,6 +42,20 @@ type ForEachStmt struct {
 	Body       []Stmt
 }
 
+// NumericForStmt — числовой цикл: Для i = start По end Цикл ... КонецЦикла
+type NumericForStmt struct {
+	Var   token.Token
+	Start Expr
+	End   Expr
+	Body  []Stmt
+}
+
+// ReturnStmt — ранний выход или возврат значения: Возврат [expr];
+type ReturnStmt struct {
+	Tok   token.Token
+	Value Expr // nil для безаргументного возврата
+}
+
 type CallExpr struct {
 	Callee Expr // Ident = free function; MemberExpr = method call
 	Args   []Expr
@@ -76,7 +90,9 @@ func (*IfStmt) nodeType() string        { return "IfStmt" }
 func (*ExprStmt) nodeType() string      { return "ExprStmt" }
 func (*AssignStmt) nodeType() string    { return "AssignStmt" }
 func (*VarDecl) nodeType() string       { return "VarDecl" }
-func (*ForEachStmt) nodeType() string   { return "ForEachStmt" }
+func (*ForEachStmt) nodeType() string    { return "ForEachStmt" }
+func (*NumericForStmt) nodeType() string { return "NumericForStmt" }
+func (*ReturnStmt) nodeType() string     { return "ReturnStmt" }
 func (*CallExpr) nodeType() string      { return "CallExpr" }
 func (*MemberExpr) nodeType() string    { return "MemberExpr" }
 func (*Ident) nodeType() string         { return "Ident" }
@@ -88,7 +104,9 @@ func (*IfStmt) stmtNode()      {}
 func (*ExprStmt) stmtNode()    {}
 func (*AssignStmt) stmtNode()  {}
 func (*VarDecl) stmtNode()     {}
-func (*ForEachStmt) stmtNode() {}
+func (*ForEachStmt) stmtNode()    {}
+func (*NumericForStmt) stmtNode() {}
+func (*ReturnStmt) stmtNode()     {}
 
 func (*CallExpr) exprNode()   {}
 func (*MemberExpr) exprNode() {}

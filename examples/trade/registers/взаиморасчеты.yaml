@@ -1,0 +1,10 @@
+name: Взаиморасчеты
+dimensions:
+  - name: Контрагент
+    type: string
+resources:
+  - name: Сумма
+    type: number
+attributes:
+  - name: ТипКонтрагента
+    type: string
