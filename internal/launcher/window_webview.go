@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"syscall"
 	"time"
-	"unsafe"
 
 	webview "github.com/webview/webview_go"
 )
