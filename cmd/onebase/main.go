@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,11 +13,22 @@ import (
 
 func main() {
 	writeStartupLog()
+
+	// When launched via double-click (no args), Explorer uses ShellExecute
+	// which can prevent WebView2 from initializing properly. Re-exec with
+	// explicit 'start' arg so the child uses CreateProcess — same as VBS does.
+	if len(os.Args) == 1 {
+		exe, err := os.Executable()
+		if err == nil {
+			cmd := exec.Command(exe, "start")
+			cmd.Start()
+		}
+		return
+	}
+
 	cli.Execute()
 }
 
-// writeStartupLog записывает факт запуска в ~/.onebase/startup.log.
-// Помогает диагностировать проблемы при запуске без консоли (-H windowsgui).
 func writeStartupLog() {
 	home, err := os.UserHomeDir()
 	if err != nil {

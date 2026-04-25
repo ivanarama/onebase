@@ -123,6 +123,12 @@ pre.os-code{
   font-size:12px;padding:14px 16px;border-radius:6px;
   overflow-x:auto;white-space:pre;max-height:400px;overflow-y:auto;margin:4px 10px 0
 }
+.hl-kw{color:#c792ea;font-weight:600}
+.hl-fn{color:#82aaff}
+.hl-sp{color:#ff5370;font-weight:600}
+.hl-str{color:#c3e88d}
+.hl-num{color:#f78c6c}
+.hl-cmt{color:#546e7a;font-style:italic}
 
 /* register / report sections */
 .reg-block{padding:6px 14px 6px 48px}
@@ -181,7 +187,59 @@ const cfgHead = `
 
 const cfgFoot = `
 {{define "cfg-foot"}}
-</div></body></html>
+</div>
+<script>
+(function(){
+var KW=['Процедура','КонецПроцедуры','Если','Тогда','ИначеЕсли','Иначе','КонецЕсли',
+  'Для','Каждого','Из','Цикл','КонецЦикла','Пока','КонецПока','Возврат','Истина','Ложь',
+  'И','ИЛИ','НЕ','Не','Новый',
+  'Procedure','EndProcedure','Function','EndFunction','If','Then','ElseIf','Else','EndIf',
+  'For','Each','In','Do','EndDo','While','EndWhile','Return','True','False','New',
+  'And','Or','Not','Var','Break','Continue'];
+var FN=['Error','Ошибка','Сообщить','ФорматСтроки'];
+var SP=['this','Движения','Параметры'];
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function highlight(code){
+  var r='',i=0,n=code.length;
+  while(i<n){
+    // comment
+    if(code[i]==='/' && code[i+1]==='/'){
+      var e=code.indexOf('\n',i); if(e<0)e=n;
+      r+='<span class="hl-cmt">'+esc(code.slice(i,e))+'</span>'; i=e; continue;
+    }
+    // string
+    if(code[i]==='"'){
+      var j=i+1; while(j<n && code[j]!=='"')j++;
+      r+='<span class="hl-str">'+esc(code.slice(i,j+1))+'</span>'; i=j+1; continue;
+    }
+    // number
+    if(/[0-9]/.test(code[i])){
+      var j=i; while(j<n && /[0-9.]/.test(code[j]))j++;
+      r+='<span class="hl-num">'+esc(code.slice(i,j))+'</span>'; i=j; continue;
+    }
+    // identifier
+    if(/[а-яёА-ЯЁa-zA-Z_]/.test(code[i])){
+      var j=i; while(j<n && /[а-яёА-ЯЁa-zA-Z0-9_]/.test(code[j]))j++;
+      var w=code.slice(i,j);
+      if(KW.indexOf(w)>=0) r+='<span class="hl-kw">'+esc(w)+'</span>';
+      else if(FN.indexOf(w)>=0) r+='<span class="hl-fn">'+esc(w)+'</span>';
+      else if(SP.indexOf(w)>=0) r+='<span class="hl-sp">'+esc(w)+'</span>';
+      else r+=esc(w);
+      i=j; continue;
+    }
+    r+=esc(code[i]); i++;
+  }
+  return r;
+}
+
+document.querySelectorAll('pre.os-code').forEach(function(el){
+  el.innerHTML=highlight(el.textContent);
+});
+})();
+</script>
+</body></html>
 {{end}}
 `
 
