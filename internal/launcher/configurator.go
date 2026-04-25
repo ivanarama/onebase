@@ -333,8 +333,6 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 			saveErr = err
 		} else {
 			defer db.Close()
-			repo := configdb.New(db.Pool())
-			// Store as src/<lowercase-first>.os in configdb
 			filename := entityToFilename(entityName)
 			_, saveErr = db.Pool().Exec(r.Context(), `
 				INSERT INTO _onebase_config (path, content, updated_at)
