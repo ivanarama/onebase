@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+)
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -68,6 +69,9 @@ type configuratorData struct {
 	ConvertSrcDir  string
 	ConvertResult  string
 	ConvertApplied bool
+	// module save
+	ModuleSaved       bool
+	ModuleSavedEntity string
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -311,6 +315,60 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(target, data, 0o644)
 	})
+}
+
+func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	entityName := r.FormValue("entity")
+	source := r.FormValue("source")
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, err := storage.Connect(r.Context(), b.DB)
+		if err != nil {
+			saveErr = err
+		} else {
+			defer db.Close()
+			repo := configdb.New(db.Pool())
+			// Store as src/<lowercase-first>.os in configdb
+			filename := entityToFilename(entityName)
+			_, saveErr = db.Pool().Exec(r.Context(), `
+				INSERT INTO _onebase_config (path, content, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+			`, "src/"+filename, []byte(source))
+		}
+	} else {
+		filename := entityToFilename(entityName)
+		srcDir := filepath.Join(b.Path, "src")
+		os.MkdirAll(srcDir, 0o755)
+		saveErr = os.WriteFile(filepath.Join(srcDir, filename), []byte(source), 0o644)
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.ModuleSaved = true
+		data.ModuleSavedEntity = entityName
+	}
+	renderCfg(w, data)
+}
+
+// entityToFilename converts "ПоступлениеТоваров" → "поступлениеТоваров.os"
+// (mirrors fileNameToEntity: lower the first rune, keep the rest).
+func entityToFilename(name string) string {
+	if name == "" {
+		return ".os"
+	}
+	runes := []rune(name)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes) + ".os"
 }
 
 func renderCfg(w http.ResponseWriter, data *configuratorData) {

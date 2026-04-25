@@ -68,7 +68,7 @@ func (s *Server) buildNav() []navGroup {
 
 	var catalogs, documents []navItem
 	for _, e := range entities {
-		url := "/ui/" + strings.ToLower(string(e.Kind)) + "/" + strings.ToLower(e.Name)
+		url := "/ui/" + strings.ToLower(string(e.Kind)) + "/" + e.Name
 		item := navItem{Label: e.Name, URL: url}
 		if e.Kind == metadata.KindCatalog {
 			catalogs = append(catalogs, item)

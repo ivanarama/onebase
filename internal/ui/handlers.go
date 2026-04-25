@@ -599,10 +599,14 @@ func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector)
 }
 
 func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) *metadata.Entity {
-	name := capitalize(chi.URLParam(r, "entity"))
-	e := s.reg.GetEntity(name)
+	raw := chi.URLParam(r, "entity")
+	// Try exact name (URL preserves original case), then capitalized fallback
+	e := s.reg.GetEntity(raw)
 	if e == nil {
-		http.Error(w, "unknown entity: "+name, 404)
+		e = s.reg.GetEntity(capitalize(raw))
+	}
+	if e == nil {
+		http.Error(w, "unknown entity: "+raw, 404)
 		return nil
 	}
 	return e
