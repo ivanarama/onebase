@@ -149,5 +149,6 @@ func (h *Handlers) Bootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 func isLocalURL(s string) bool {
-	return len(s) > 0 && s[0] == '/'
+	// Must start with '/' but not '//' (protocol-relative URLs like //evil.com are unsafe)
+	return len(s) > 0 && s[0] == '/' && (len(s) < 2 || s[1] != '/')
 }
