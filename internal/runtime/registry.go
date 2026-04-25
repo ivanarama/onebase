@@ -10,26 +10,30 @@ import (
 )
 
 type Registry struct {
-	mu        sync.RWMutex
-	entities  map[string]*metadata.Entity
-	registers map[string]*metadata.Register
-	reports   map[string]*report.Report
-	procs     map[string]map[string]*ast.ProcedureDecl
+	mu          sync.RWMutex
+	entities    map[string]*metadata.Entity
+	entitySlug  map[string]*metadata.Entity // lowercase name → entity
+	registers   map[string]*metadata.Register
+	reports     map[string]*report.Report
+	procs       map[string]map[string]*ast.ProcedureDecl
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		entities:  make(map[string]*metadata.Entity),
-		registers: make(map[string]*metadata.Register),
-		reports:   make(map[string]*report.Report),
-		procs:     make(map[string]map[string]*ast.ProcedureDecl),
+		entities:   make(map[string]*metadata.Entity),
+		entitySlug: make(map[string]*metadata.Entity),
+		registers:  make(map[string]*metadata.Register),
+		reports:    make(map[string]*report.Report),
+		procs:      make(map[string]map[string]*ast.ProcedureDecl),
 	}
 }
 
 func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, reports []*report.Report) {
 	newEntities := make(map[string]*metadata.Entity, len(entities))
+	newSlugs := make(map[string]*metadata.Entity, len(entities))
 	for _, e := range entities {
 		newEntities[e.Name] = e
+		newSlugs[strings.ToLower(e.Name)] = e
 	}
 	newRegs := make(map[string]*metadata.Register, len(registers))
 	for _, reg := range registers {
@@ -49,6 +53,7 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 	}
 	r.mu.Lock()
 	r.entities = newEntities
+	r.entitySlug = newSlugs
 	r.registers = newRegs
 	r.reports = newReps
 	r.procs = newProcs
@@ -87,14 +92,14 @@ func (r *Registry) GetEntity(name string) *metadata.Entity {
 	if e, ok := r.entities[name]; ok {
 		return e
 	}
-	// case-insensitive fallback: URL routes lowercase the entity name
-	nl := strings.ToLower(name)
-	for k, v := range r.entities {
-		if strings.ToLower(k) == nl {
-			return v
-		}
-	}
-	return nil
+	return r.entitySlug[strings.ToLower(name)]
+}
+
+// GetEntityBySlug looks up by lowercase slug — O(1), URL-safe.
+func (r *Registry) GetEntityBySlug(slug string) *metadata.Entity {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.entitySlug[strings.ToLower(slug)]
 }
 
 func (r *Registry) GetRegister(name string) *metadata.Register {

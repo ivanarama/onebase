@@ -600,18 +600,10 @@ func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector)
 
 func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) *metadata.Entity {
 	raw := chi.URLParam(r, "entity")
-	nl := strings.ToLower(raw)
-	for _, e := range s.reg.Entities() {
-		if strings.ToLower(e.Name) == nl {
-			return e
-		}
+	if e := s.reg.GetEntityBySlug(raw); e != nil {
+		return e
 	}
-	// Show available names to help diagnose mismatch
-	var names []string
-	for _, e := range s.reg.Entities() {
-		names = append(names, fmt.Sprintf("%q(%d)", e.Name, len([]rune(e.Name))))
-	}
-	http.Error(w, fmt.Sprintf("unknown entity: %q len=%d\nknown: %v", raw, len([]rune(raw)), names), 404)
+	http.Error(w, "unknown entity: "+raw, 404)
 	return nil
 }
 
