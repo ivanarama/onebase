@@ -99,9 +99,10 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;background:#f0f2f5;h
 .tp-hd{padding:6px 10px;font-size:12px;font-weight:600;color:#334;background:#f0f3f8}
 
 /* ── Module editor ───────────────────────────────────── */
-.mod-view-tabs{display:flex;gap:0;border-bottom:1px solid #d8dde8;margin-bottom:8px}
-.mvt{padding:5px 14px;cursor:pointer;font-size:12px;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
-.mvt:hover{color:#1a4a80}.mvt.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}
+.code-wrap{position:relative;margin-top:8px}
+.clickable-code{cursor:text}
+.clickable-code:hover::after{content:'✎';position:absolute;top:8px;right:10px;color:#546e7a;font-size:12px}
+.edit-hint{font-size:11px;color:#94a3b8;margin-left:6px}
 .module-tabs{display:flex;gap:0;margin-top:16px;border-bottom:1px solid #d8dde8}
 .module-tab{padding:6px 14px;cursor:pointer;font-size:12px;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
 .module-tab.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}
@@ -185,12 +186,21 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
 const cfgFoot = `{{define "cfg-foot"}}
 </div>
 <script>
-// ── View/Edit toggle for module ────────────────────────────────
-function switchModView(tab, showId, hideId) {
-  tab.closest('.module-pane').querySelectorAll('.mvt').forEach(function(t){t.classList.remove('active')});
-  tab.classList.add('active');
-  document.getElementById(showId).style.display='';
-  document.getElementById(hideId).style.display='none';
+// ── Click-to-edit module ───────────────────────────────────────
+function startEdit(name) {
+  var pre = document.getElementById('pre-'+name);
+  var ta  = document.getElementById('ta-'+name);
+  ta.value = pre.textContent;
+  pre.style.display = 'none';
+  ta.style.display  = 'block';
+  ta.focus();
+}
+function endEdit(name) {
+  var pre = document.getElementById('pre-'+name);
+  var ta  = document.getElementById('ta-'+name);
+  pre.innerHTML = hl(ta.value);
+  pre.style.display = 'block';
+  ta.style.display  = 'none';
 }
 // ── Panel selection ────────────────────────────────────────────
 function selItem(el) {
@@ -437,28 +447,22 @@ const cfgTabTree = `{{define "tab-tree"}}
   </div>
 
   <div class="module-pane active" id="mp-obj-{{$e.Name}}">
-    <div class="mod-view-tabs">
-      <span class="mvt {{if $e.Source}}active{{end}}" onclick="switchModView(this,'mv-view-{{$e.Name}}','mv-edit-{{$e.Name}}')">Просмотр</span>
-      <span class="mvt {{if not $e.Source}}active{{end}}" onclick="switchModView(this,'mv-edit-{{$e.Name}}','mv-view-{{$e.Name}}')">Редактировать</span>
-    </div>
-    <div id="mv-view-{{$e.Name}}" {{if not $e.Source}}style="display:none"{{end}}>
-      {{if $e.Source}}
-      <pre class="os-code">{{$e.Source}}</pre>
-      {{else}}
-      <div class="module-empty">Модуль пуст.</div>
-      {{end}}
-    </div>
-    <div id="mv-edit-{{$e.Name}}" {{if $e.Source}}style="display:none"{{end}}>
-      <form method="POST" action="/bases/{{.BaseID}}/configurator/module">
-        <input type="hidden" name="entity" value="{{$e.Name}}">
-        <input type="hidden" name="module_type" value="object">
-        <textarea class="os-edit" name="source" placeholder="Процедура ПриЗаписи()&#10;  // ваш код&#10;КонецПроцедуры">{{$e.Source}}</textarea>
-        <div class="module-save-row">
-          <button class="btn-save" type="submit">Сохранить</button>
-          {{if and $.ModuleSaved (eq $.ModuleSavedEntity $e.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
-        </div>
-      </form>
-    </div>
+    <form method="POST" action="/bases/{{.BaseID}}/configurator/module">
+      <input type="hidden" name="entity" value="{{$e.Name}}">
+      <input type="hidden" name="module_type" value="object">
+      <div class="code-wrap" title="Кликните для редактирования">
+        <pre class="os-code clickable-code" id="pre-{{$e.Name}}"
+             onclick="startEdit('{{$e.Name}}')">{{if $e.Source}}{{$e.Source}}{{else}}// Кликните для редактирования&#10;Процедура ПриЗаписи()&#10;&#10;КонецПроцедуры{{end}}</pre>
+        <textarea class="os-edit" id="ta-{{$e.Name}}" name="source"
+                  style="display:none"
+                  onblur="endEdit('{{$e.Name}}')">{{$e.Source}}</textarea>
+      </div>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        <span class="edit-hint">✎ кликните на код для редактирования</span>
+        {{if and $.ModuleSaved (eq $.ModuleSavedEntity $e.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
   </div>
 
   <div class="module-pane" id="mp-mgr-{{$e.Name}}">
