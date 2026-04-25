@@ -358,6 +358,36 @@ func (s *Server) unpostDocument(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 }
 
+// deleteRecord removes a catalog or document record by id.
+// For posted documents, movements are cleared first (implicit unpost).
+func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", 400)
+		return
+	}
+
+	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		// For documents with posting support clear movements first.
+		if entity.Posting {
+			for _, reg := range s.reg.Registers() {
+				if err := s.store.WriteMovements(ctx, reg.Name, entity.Name, id, nil, reg, nil); err != nil {
+					return err
+				}
+			}
+		}
+		return s.store.Delete(ctx, entity.Name, id)
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+}
+
 func (s *Server) saveMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
 	for regName, rows := range mc.All() {
 		reg := s.reg.GetRegister(regName)

@@ -376,6 +376,14 @@ const tplForm = `
   {{end}}
 </div>
 {{end}}
+{{if not .IsNew}}
+<div style="margin-top:10px">
+  <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete"
+        onsubmit="return confirm('Удалить запись? Это действие нельзя отменить.')">
+    <button class="btn btn-danger btn-sm" type="submit">Удалить</button>
+  </form>
+</div>
+{{end}}
 </div>
 <script>
 window._tpRefOpts = {{jsJSON .TPRefOptions}};
