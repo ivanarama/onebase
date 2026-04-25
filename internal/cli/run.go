@@ -17,6 +17,8 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/ui"
+	"github.com/ivantit66/onebase/internal/version"
 )
 
 var runCmd = &cobra.Command{
@@ -75,8 +77,18 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	reg := runtime.NewRegistry()
 	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.Reports)
 
+	appCfg, _ := project.LoadConfig(proj.Dir)
+	uiCfg := ui.Config{
+		DSN:         dsn,
+		PlatVersion: version.String(),
+	}
+	if appCfg != nil {
+		uiCfg.AppName = appCfg.Name
+		uiCfg.AppVersion = appCfg.Version
+	}
+
 	interp := interpreter.New()
-	srv := api.New(reg, db, interp, authRepo, port)
+	srv := api.New(reg, db, interp, authRepo, port, uiCfg)
 
 	fmt.Fprintf(os.Stdout, "onebase running on :%d\n", port)
 	quit := make(chan os.Signal, 1)

@@ -92,7 +92,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return 0
 	},
-}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport))
+}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout))
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -155,6 +155,7 @@ const tplNav = `
   {{end}}{{end}}
   <div class="sec">Администрирование</div>
   <a href="/ui/admin/users">Пользователи</a>
+  <a href="/ui/about">О программе</a>
   <form method="POST" action="/logout" style="margin:6px 0 0">
     <button type="submit" style="background:none;border:none;color:#94a3b8;font-size:14px;padding:6px 10px;cursor:pointer;width:100%;text-align:left;border-radius:6px" onmouseover="this.style.background='#334155';this.style.color='#fff'" onmouseout="this.style.background='none';this.style.color='#94a3b8'">Выйти</button>
   </form>
@@ -479,3 +480,40 @@ const tplRegister = `
 </div></main></body></html>
 {{end}}
 `
+
+const tplAbout = `
+{{define "page-about"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>О программе</h2>
+<div class="card" style="max-width:560px">
+  <table style="width:100%;border-collapse:collapse">
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;width:180px;font-size:14px">Платформа</td>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-weight:600;font-size:14px">onebase {{if .Cfg.PlatVersion}}{{.Cfg.PlatVersion}}{{else}}dev{{end}}</td>
+    </tr>
+    {{if .Cfg.AppName}}
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">Конфигурация</td>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">{{.Cfg.AppName}}{{if .Cfg.AppVersion}} <span style="color:#94a3b8">v{{.Cfg.AppVersion}}</span>{{end}}</td>
+    </tr>
+    {{end}}
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">База данных</td>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#475569;word-break:break-all">{{.Cfg.DSN}}</td>
+    </tr>
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">Метаданные</td>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">
+        Справочники: {{.Catalogs}} &nbsp;·&nbsp;
+        Документы: {{.Documents}} &nbsp;·&nbsp;
+        Регистры: {{.Registers}} &nbsp;·&nbsp;
+        Отчёты: {{.Reports}}
+      </td>
+    </tr>
+  </table>
+</div>
+</main></body></html>
+{{end}}
+`
+

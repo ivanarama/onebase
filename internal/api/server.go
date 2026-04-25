@@ -20,7 +20,7 @@ type Server struct {
 	handler http.Handler
 }
 
-func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo, port int) *Server {
+func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo, port int, uiCfg ...ui.Config) *Server {
 	h := &handler{reg: reg, store: store, interp: interp}
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -54,7 +54,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		r.Delete("/documents/{entity}/{id}", h.deleteObject(metadata.KindDocument))
 
 		// Web UI
-		uiSrv := ui.New(reg, store, interp, authRepo)
+		uiSrv := ui.New(reg, store, interp, authRepo, uiCfg...)
 		uiSrv.Mount(r)
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {

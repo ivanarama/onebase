@@ -20,6 +20,26 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
+func (s *Server) about(w http.ResponseWriter, r *http.Request) {
+	entities := s.reg.Entities()
+	var catalogs, docs int
+	for _, e := range entities {
+		if e.Kind == "catalog" {
+			catalogs++
+		} else {
+			docs++
+		}
+	}
+	s.render(w, "page-about", map[string]any{
+		"Nav":        s.buildNav(),
+		"Cfg":        s.cfg,
+		"Catalogs":   catalogs,
+		"Documents":  docs,
+		"Registers":  len(s.reg.Registers()),
+		"Reports":    len(s.reg.Reports()),
+	})
+}
+
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "page-index", map[string]any{"Nav": s.buildNav()})
 }

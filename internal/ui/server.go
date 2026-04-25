@@ -12,15 +12,28 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
+// Config holds static info shown in «О программе».
+type Config struct {
+	AppName     string
+	AppVersion  string
+	DSN         string
+	PlatVersion string
+}
+
 type Server struct {
 	reg      *runtime.Registry
 	store    *storage.DB
 	interp   *interpreter.Interpreter
 	authRepo *auth.Repo
+	cfg      Config
 }
 
-func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo) *Server {
-	return &Server{reg: reg, store: store, interp: interp, authRepo: authRepo}
+func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo, cfg ...Config) *Server {
+	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo}
+	if len(cfg) > 0 {
+		s.cfg = cfg[0]
+	}
+	return s
 }
 
 func (s *Server) Mount(r chi.Router) {
@@ -45,6 +58,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/users/new", s.adminUserNew)
 	r.Post("/ui/admin/users/new", s.adminUserCreate)
 	r.Post("/ui/admin/users/{id}/delete", s.adminUserDelete)
+
+	// About
+	r.Get("/ui/about", s.about)
 }
 
 type navSection struct {

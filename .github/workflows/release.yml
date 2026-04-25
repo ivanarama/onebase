@@ -46,7 +46,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-        run: go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o onebase${{ matrix.ext }} ./cmd/onebase
+        run: go build -ldflags="-s -w -X github.com/ivantit66/onebase/internal/version.Build=${{ github.ref_name }}" -o onebase${{ matrix.ext }} ./cmd/onebase
 
       - name: Build GUI binary (Windows native window, webview)
         if: matrix.goos == 'windows'
@@ -55,7 +55,7 @@ jobs:
           CGO_ENABLED: 1
         run: |
           go get github.com/webview/webview_go@latest
-          go build -tags webview -ldflags="-s -w -H windowsgui" -o onebase-gui.exe ./cmd/onebase
+          go build -tags webview -ldflags="-s -w -H windowsgui -X github.com/ivantit66/onebase/internal/version.Build=${{ github.ref_name }}" -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)
         if: matrix.goos == 'windows'

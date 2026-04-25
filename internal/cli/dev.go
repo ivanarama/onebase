@@ -19,6 +19,8 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/ui"
+	"github.com/ivantit66/onebase/internal/version"
 )
 
 var devCmd = &cobra.Command{
@@ -96,7 +98,13 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	srv := api.New(reg, db, interp, authRepo, port)
+	appCfg, _ := project.LoadConfig(dir)
+	uiCfg := ui.Config{DSN: dsn, PlatVersion: version.String()}
+	if appCfg != nil {
+		uiCfg.AppName = appCfg.Name
+		uiCfg.AppVersion = appCfg.Version
+	}
+	srv := api.New(reg, db, interp, authRepo, port, uiCfg)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
