@@ -600,16 +600,21 @@ func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector)
 
 func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) *metadata.Entity {
 	raw := chi.URLParam(r, "entity")
-	// Try exact name (URL preserves original case), then capitalized fallback
-	e := s.reg.GetEntity(raw)
-	if e == nil {
-		e = s.reg.GetEntity(capitalize(raw))
+	// 1. exact match (works when URL preserves original case)
+	if e := s.reg.GetEntity(raw); e != nil {
+		return e
 	}
-	if e == nil {
-		http.Error(w, "unknown entity: "+raw, 404)
-		return nil
+	// 2. capitalize first rune + URL-unescape (works with lowercase URLs)
+	if e := s.reg.GetEntity(capitalize(raw)); e != nil {
+		return e
 	}
-	return e
+	// 3. list all known entities in the error for debugging
+	var known []string
+	for _, e := range s.reg.Entities() {
+		known = append(known, e.Name)
+	}
+	http.Error(w, fmt.Sprintf("unknown entity: %q  known: %v", raw, known), 404)
+	return nil
 }
 
 func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (map[string][]map[string]any, error) {

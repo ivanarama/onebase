@@ -99,6 +99,9 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;background:#f0f2f5;h
 .tp-hd{padding:6px 10px;font-size:12px;font-weight:600;color:#334;background:#f0f3f8}
 
 /* ── Module editor ───────────────────────────────────── */
+.mod-view-tabs{display:flex;gap:0;border-bottom:1px solid #d8dde8;margin-bottom:8px}
+.mvt{padding:5px 14px;cursor:pointer;font-size:12px;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
+.mvt:hover{color:#1a4a80}.mvt.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}
 .module-tabs{display:flex;gap:0;margin-top:16px;border-bottom:1px solid #d8dde8}
 .module-tab{padding:6px 14px;cursor:pointer;font-size:12px;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
 .module-tab.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}
@@ -182,6 +185,13 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
 const cfgFoot = `{{define "cfg-foot"}}
 </div>
 <script>
+// ── View/Edit toggle for module ────────────────────────────────
+function switchModView(tab, showId, hideId) {
+  tab.closest('.module-pane').querySelectorAll('.mvt').forEach(function(t){t.classList.remove('active')});
+  tab.classList.add('active');
+  document.getElementById(showId).style.display='';
+  document.getElementById(hideId).style.display='none';
+}
 // ── Panel selection ────────────────────────────────────────────
 function selItem(el) {
   document.querySelectorAll('.cfg-item').forEach(function(e){e.classList.remove('sel')});
@@ -427,21 +437,28 @@ const cfgTabTree = `{{define "tab-tree"}}
   </div>
 
   <div class="module-pane active" id="mp-obj-{{$e.Name}}">
-    <form method="POST" action="/bases/{{.BaseID}}/configurator/module">
-      <input type="hidden" name="entity" value="{{$e.Name}}">
-      <input type="hidden" name="module_type" value="object">
+    <div class="mod-view-tabs">
+      <span class="mvt {{if $e.Source}}active{{end}}" onclick="switchModView(this,'mv-view-{{$e.Name}}','mv-edit-{{$e.Name}}')">Просмотр</span>
+      <span class="mvt {{if not $e.Source}}active{{end}}" onclick="switchModView(this,'mv-edit-{{$e.Name}}','mv-view-{{$e.Name}}')">Редактировать</span>
+    </div>
+    <div id="mv-view-{{$e.Name}}" {{if not $e.Source}}style="display:none"{{end}}>
       {{if $e.Source}}
-      <pre class="os-code" id="hl-{{$e.Name}}">{{$e.Source}}</pre>
-      <textarea class="os-edit" name="source" style="margin-top:6px">{{$e.Source}}</textarea>
+      <pre class="os-code">{{$e.Source}}</pre>
       {{else}}
-      <div class="module-empty">Модуль пуст. Напишите процедуры ниже.</div>
-      <textarea class="os-edit" name="source" placeholder="Процедура ПриЗаписи()&#10;  // ваш код&#10;КонецПроцедуры"></textarea>
+      <div class="module-empty">Модуль пуст.</div>
       {{end}}
-      <div class="module-save-row">
-        <button class="btn-save" type="submit">Сохранить</button>
-        {{if and $.ModuleSaved (eq $.ModuleSavedEntity $e.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
-      </div>
-    </form>
+    </div>
+    <div id="mv-edit-{{$e.Name}}" {{if $e.Source}}style="display:none"{{end}}>
+      <form method="POST" action="/bases/{{.BaseID}}/configurator/module">
+        <input type="hidden" name="entity" value="{{$e.Name}}">
+        <input type="hidden" name="module_type" value="object">
+        <textarea class="os-edit" name="source" placeholder="Процедура ПриЗаписи()&#10;  // ваш код&#10;КонецПроцедуры">{{$e.Source}}</textarea>
+        <div class="module-save-row">
+          <button class="btn-save" type="submit">Сохранить</button>
+          {{if and $.ModuleSaved (eq $.ModuleSavedEntity $e.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+        </div>
+      </form>
+    </div>
   </div>
 
   <div class="module-pane" id="mp-mgr-{{$e.Name}}">
