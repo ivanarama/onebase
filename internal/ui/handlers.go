@@ -600,20 +600,14 @@ func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector)
 
 func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) *metadata.Entity {
 	raw := chi.URLParam(r, "entity")
-	// 1. exact match (works when URL preserves original case)
-	if e := s.reg.GetEntity(raw); e != nil {
-		return e
-	}
-	// 2. capitalize first rune + URL-unescape (works with lowercase URLs)
-	if e := s.reg.GetEntity(capitalize(raw)); e != nil {
-		return e
-	}
-	// 3. list all known entities in the error for debugging
-	var known []string
+	nl := strings.ToLower(raw)
+	// Search all entities case-insensitively — works with any URL casing.
 	for _, e := range s.reg.Entities() {
-		known = append(known, e.Name)
+		if strings.ToLower(e.Name) == nl {
+			return e
+		}
 	}
-	http.Error(w, fmt.Sprintf("unknown entity: %q  known: %v", raw, known), 404)
+	http.Error(w, "unknown entity: "+raw, 404)
 	return nil
 }
 
