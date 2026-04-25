@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"strings"
@@ -91,6 +92,13 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 			}
 		}
 		return 0
+	},
+	"jsJSON": func(v any) template.JS {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return template.JS("null")
+		}
+		return template.JS(b)
 	},
 }).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout))
 
@@ -303,7 +311,7 @@ const tplForm = `
 </div>
 {{end}}
 
-{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}
+{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}
 <h3>{{$tpName}}</h3>
 <table class="tp-table">
   <thead><tr>
@@ -314,10 +322,23 @@ const tplForm = `
   {{$existingRows := index $.TablePartRows $tpName}}
   {{range $i, $row := $existingRows}}
     <tr>
-      {{range $tp.Fields}}
-        <td><input type="text" name="tp.{{$tpName}}.{{$i}}.{{.Name}}" value="{{index $row .Name}}"
-          {{if eq (str .Type) "number"}}data-tp-num="{{.Name}}"{{end}}
-          oninput="recalcTpRow(this)"></td>
+      {{range $tp.Fields}}{{$fn := .Name}}
+        <td>
+        {{if isRef (str .Type)}}
+          <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}">
+            <option value="">— выбрать —</option>
+            {{range index $tpRef $fn}}
+            <option value="{{index . "id"}}" {{if eq (str (index . "id")) (str (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
+            {{end}}
+          </select>
+        {{else if eq (str .Type) "number"}}
+          <input type="number" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
+            data-tp-num="{{$fn}}" oninput="recalcTpRow(this)">
+        {{else}}
+          <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
+            oninput="recalcTpRow(this)">
+        {{end}}
+        </td>
       {{end}}
       <td><button type="button" class="del-btn" onclick="this.closest('tr').remove()">×</button></td>
     </tr>
@@ -357,34 +378,49 @@ const tplForm = `
 {{end}}
 </div>
 <script>
+window._tpRefOpts = {{jsJSON .TPRefOptions}};
 function addTpRow(tpName, fields, numFields, idx) {
   var tbody = document.getElementById('tp-body-' + tpName);
   var tr = document.createElement('tr');
+  var refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
   fields.forEach(function(fn) {
     var td = document.createElement('td');
-    var inp = document.createElement('input');
-    inp.type = 'text';
-    inp.name = 'tp.' + tpName + '.' + idx + '.' + fn;
-    if (numFields.indexOf(fn) !== -1) {
-      inp.setAttribute('data-tp-num', fn);
-      inp.setAttribute('oninput', 'recalcTpRow(this)');
+    if (refOpts[fn] && refOpts[fn].length > 0) {
+      var sel = document.createElement('select');
+      sel.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      var defOpt = document.createElement('option');
+      defOpt.value = ''; defOpt.textContent = '— выбрать —';
+      sel.appendChild(defOpt);
+      refOpts[fn].forEach(function(opt) {
+        var o = document.createElement('option');
+        o.value = opt.id; o.textContent = opt._label || opt.id;
+        sel.appendChild(o);
+      });
+      td.appendChild(sel);
+    } else {
+      var inp = document.createElement('input');
+      inp.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      if (numFields.indexOf(fn) !== -1) {
+        inp.type = 'number';
+        inp.setAttribute('data-tp-num', fn);
+        inp.setAttribute('oninput', 'recalcTpRow(this)');
+      } else {
+        inp.type = 'text';
+      }
+      td.appendChild(inp);
     }
-    td.appendChild(inp);
     tr.appendChild(td);
   });
-  var td = document.createElement('td');
+  var tdDel = document.createElement('td');
   var btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'del-btn';
-  btn.textContent = '×';
+  btn.type = 'button'; btn.className = 'del-btn'; btn.textContent = '×';
   btn.onclick = function(){ tr.remove(); };
-  td.appendChild(btn);
-  tr.appendChild(td);
+  tdDel.appendChild(btn);
+  tr.appendChild(tdDel);
   tbody.appendChild(tr);
 }
 
-// Recalculate: if a row has exactly 3 numeric fields (qty, price, sum),
-// set the last one to the product of the first two.
+// If a row has exactly 3 numeric fields (qty, price, sum), auto-calculate the last.
 function recalcTpRow(inp) {
   var tr = inp.closest('tr');
   var nums = tr.querySelectorAll('[data-tp-num]');
@@ -465,7 +501,7 @@ const tplRegister = `
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr>
   <td>{{$v := index $row "вид_движения"}}{{if eq (str $v) "Приход"}}<span style="color:#16a34a;font-weight:600">▲ {{$v}}</span>{{else}}<span style="color:#dc2626;font-weight:600">▼ {{$v}}</span>{{end}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{index $row "recorder_type"}}</td>
+  <td style="font-size:12px;color:#475569">{{if index $row "recorder_label"}}{{index $row "recorder_label"}}{{else}}{{index $row "recorder_type"}}{{end}}</td>
   {{range $.Register.Dimensions}}<td>{{index $row .Name}}</td>{{end}}
   {{range $.Register.Resources}}<td>{{index $row .Name}}</td>{{end}}
   {{range $.Register.Attributes}}<td>{{index $row .Name}}</td>{{end}}

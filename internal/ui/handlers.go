@@ -74,12 +74,24 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	refOptions, _ := s.loadRefOptions(r.Context(), entity)
+	tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
+	// Pre-fill date fields with current datetime for new documents
+	values := map[string]string{}
+	if entity.Kind == metadata.KindDocument {
+		now := time.Now().Format("2006-01-02T15:04")
+		for _, f := range entity.Fields {
+			if f.Type == metadata.FieldTypeDate {
+				values[f.Name] = now
+			}
+		}
+	}
 	s.render(w, "page-form", map[string]any{
 		"Nav":           s.buildNav(),
 		"Entity":        entity,
 		"IsNew":         true,
-		"Values":        map[string]string{},
+		"Values":        values,
 		"RefOptions":    refOptions,
+		"TPRefOptions":  tpRefOpts,
 		"TablePartRows": map[string][]map[string]any{},
 	})
 }
@@ -121,6 +133,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 
 	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
+		tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
 			"Nav":           s.buildNav(),
 			"Entity":        entity,
@@ -128,6 +141,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			"Error":         errMsg,
 			"Values":        formValues(r, entity),
 			"RefOptions":    refOptions,
+			"TPRefOptions":  tpRefOpts,
 			"TablePartRows": tpRows,
 		})
 		return
@@ -169,6 +183,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	refOptions, _ := s.loadRefOptions(r.Context(), entity)
+	tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
 	vals := make(map[string]string)
 	for _, f := range entity.Fields {
 		if v := row[f.Name]; v != nil {
@@ -194,6 +209,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"IsNew":         false,
 		"Values":        vals,
 		"RefOptions":    refOptions,
+		"TPRefOptions":  tpRefOpts,
 		"TablePartRows": tpRows,
 		"ID":            id.String(),
 	})
@@ -228,6 +244,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 
 	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
+		tpRefOpts2, _ := s.loadTPRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
 			"Nav":           s.buildNav(),
 			"Entity":        entity,
@@ -235,6 +252,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			"Error":         errMsg,
 			"Values":        formValues(r, entity),
 			"RefOptions":    refOptions,
+			"TPRefOptions":  tpRefOpts2,
 			"TablePartRows": tpRows,
 		})
 		return
@@ -379,6 +397,7 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	s.resolveRegisterRows(r.Context(), rows, reg)
 	s.render(w, "page-register-movements", map[string]any{
 		"Nav":      s.buildNav(),
 		"Register": reg,
@@ -398,6 +417,7 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	s.resolveRegisterRows(r.Context(), rows, reg)
 	s.render(w, "page-register-balances", map[string]any{
 		"Nav":      s.buildNav(),
 		"Register": reg,
@@ -652,6 +672,104 @@ func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (m
 		opts[f.Name] = rows
 	}
 	return opts, nil
+}
+
+// loadTPRefOptions returns select options for reference fields in all table parts.
+// Result: tpName → fieldName → [{id, _label, ...}]
+func (s *Server) loadTPRefOptions(ctx context.Context, entity *metadata.Entity) (map[string]map[string][]map[string]any, error) {
+	result := make(map[string]map[string][]map[string]any)
+	for _, tp := range entity.TableParts {
+		tpOpts := make(map[string][]map[string]any)
+		for _, f := range tp.Fields {
+			if f.RefEntity == "" {
+				continue
+			}
+			refEntity := s.reg.GetEntity(f.RefEntity)
+			if refEntity == nil {
+				continue
+			}
+			rows, err := s.store.List(ctx, refEntity.Name, refEntity, storage.ListParams{})
+			if err != nil {
+				continue
+			}
+			for _, row := range rows {
+				row["_label"] = firstStringField(row, refEntity)
+			}
+			tpOpts[f.Name] = rows
+		}
+		if len(tpOpts) > 0 {
+			result[tp.Name] = tpOpts
+		}
+	}
+	return result, nil
+}
+
+// resolveRegisterRows enriches register movement rows with human-readable values:
+// recorder_label = "TypeName №Num от Date", dimension UUID values → catalog names.
+func (s *Server) resolveRegisterRows(ctx context.Context, rows []map[string]any, reg *metadata.Register) {
+	// collect all UUID-looking strings in dimension fields
+	uuidToLabel := make(map[string]string)
+	for _, row := range rows {
+		for _, f := range reg.Dimensions {
+			if v, ok := row[f.Name].(string); ok {
+				if _, err := uuid.Parse(v); err == nil {
+					uuidToLabel[v] = "" // mark for lookup
+				}
+			}
+		}
+	}
+	// resolve UUIDs by scanning all entities
+	if len(uuidToLabel) > 0 {
+		for _, entity := range s.reg.Entities() {
+			for idStr, label := range uuidToLabel {
+				if label != "" {
+					continue // already resolved
+				}
+				id, _ := uuid.Parse(idStr)
+				refRow, err := s.store.GetByID(ctx, entity.Name, id, entity)
+				if err == nil {
+					uuidToLabel[idStr] = firstStringField(refRow, entity)
+				}
+			}
+		}
+	}
+	// enrich each row
+	for _, row := range rows {
+		// recorder label
+		recType, _ := row["recorder_type"].(string)
+		recIDStr, _ := row["recorder"].(string)
+		if recType != "" && recIDStr != "" {
+			if recID, err := uuid.Parse(recIDStr); err == nil {
+				if entity := s.reg.GetEntityBySlug(recType); entity != nil {
+					if docRow, err2 := s.store.GetByID(ctx, entity.Name, recID, entity); err2 == nil {
+						num := fmt.Sprintf("%v", docRow["Номер"])
+						date := regFmtDate(docRow["Дата"])
+						row["recorder_label"] = fmt.Sprintf("%s №%s от %s", entity.Name, num, date)
+					}
+				}
+			}
+		}
+		// dimension UUID → name
+		for _, f := range reg.Dimensions {
+			if v, ok := row[f.Name].(string); ok {
+				if label, found := uuidToLabel[v]; found && label != "" {
+					row[f.Name] = label
+				}
+			}
+		}
+	}
+}
+
+func regFmtDate(v any) string {
+	if t, ok := v.(time.Time); ok {
+		return t.Format("02.01.2006")
+	}
+	if s, ok := v.(string); ok {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t.Format("02.01.2006")
+		}
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data map[string]any) {

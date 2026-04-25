@@ -12,7 +12,8 @@ import (
 )
 
 type managedProc struct {
-	cmd *exec.Cmd
+	cmd  *exec.Cmd
+	port int
 }
 
 // Runner tracks running base processes.
@@ -31,6 +32,13 @@ func (r *Runner) Start(base *Base) error {
 
 	if _, ok := r.procs[base.ID]; ok {
 		return fmt.Errorf("база %q уже запущена", base.Name)
+	}
+
+	// check port conflict with other running bases
+	for _, mp := range r.procs {
+		if mp.port == base.Port {
+			return fmt.Errorf("порт %d уже занят другой запущенной базой", base.Port)
+		}
 	}
 
 	exe, err := os.Executable()
@@ -63,7 +71,7 @@ func (r *Runner) Start(base *Base) error {
 		return fmt.Errorf("runner: start: %w", err)
 	}
 
-	r.procs[base.ID] = &managedProc{cmd: cmd}
+	r.procs[base.ID] = &managedProc{cmd: cmd, port: base.Port}
 
 	go func() {
 		cmd.Wait()
@@ -89,6 +97,18 @@ func (r *Runner) Stop(baseID string) error {
 	}
 	delete(r.procs, baseID)
 	return nil
+}
+
+// StopAll kills all running base processes.
+func (r *Runner) StopAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, mp := range r.procs {
+		if mp.cmd.Process != nil {
+			mp.cmd.Process.Kill()
+		}
+		delete(r.procs, id)
+	}
 }
 
 func (r *Runner) IsRunning(baseID string) bool {

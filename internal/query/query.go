@@ -329,14 +329,25 @@ func translate(tokens []tok, paramValues map[string]any) (Result, error) {
 			continue
 		}
 
-		// Parameter: &Name → $N (nil value becomes SQL NULL)
+		// Parameter: &Name → $N, or NULL literal when value is nil.
+		// Emitting NULL avoids "could not determine data type of parameter $N"
+		// errors in PostgreSQL when the parameter is only used in IS NULL checks.
 		if t.kind == tParam {
 			tr.advance()
 			if _, exists := tr.params[t.val]; !exists {
-				tr.args = append(tr.args, tr.paramValues[t.val])
-				tr.params[t.val] = len(tr.args)
+				v := tr.paramValues[t.val]
+				if v == nil {
+					tr.params[t.val] = 0 // sentinel: emit NULL literal
+				} else {
+					tr.args = append(tr.args, v)
+					tr.params[t.val] = len(tr.args)
+				}
 			}
-			tr.emit(fmt.Sprintf("$%d", tr.params[t.val]))
+			if tr.params[t.val] == 0 {
+				tr.emit("NULL")
+			} else {
+				tr.emit(fmt.Sprintf("$%d", tr.params[t.val]))
+			}
 			continue
 		}
 

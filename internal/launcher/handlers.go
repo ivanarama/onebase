@@ -219,6 +219,11 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/?sel="+id, http.StatusFound)
 }
 
+func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
+	h.runner.StopAll()
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
 func (h *handler) migrate(w http.ResponseWriter, r *http.Request) {
 	b, err := h.store.Get(chi.URLParam(r, "id"))
 	if err != nil {

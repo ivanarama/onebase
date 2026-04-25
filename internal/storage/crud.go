@@ -293,12 +293,18 @@ func (db *DB) SetPosted(ctx context.Context, entityName string, id uuid.UUID, po
 // fieldValue extracts the value for a field from the fields map, handling reference UUID strings.
 func fieldValue(f metadata.Field, fields map[string]any) any {
 	v := fields[f.Name]
-	if f.RefEntity != "" && v != nil {
-		switch s := v.(type) {
-		case string:
+	if f.RefEntity != "" {
+		if v == nil {
+			return nil
+		}
+		if s, ok := v.(string); ok {
+			if s == "" {
+				return nil // empty string → NULL for UUID column
+			}
 			if id, err := uuid.Parse(s); err == nil {
 				return id
 			}
+			return nil // unparseable UUID → NULL
 		}
 	}
 	return v
