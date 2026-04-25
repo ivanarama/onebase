@@ -179,9 +179,26 @@ func (p *Project) loadDSL() error {
 			return err
 		}
 		entityName := fileNameToEntity(item.Name())
+		// Resolve to the actual entity name (case-insensitive match).
+		// Filename "поступлениетоваров.os" → "Поступлениетоваров" but the
+		// entity in YAML may be "ПоступлениеТоваров" — use the canonical name.
+		if actual := p.findEntityName(entityName); actual != "" {
+			entityName = actual
+		}
 		p.Programs[entityName] = prog
 	}
 	return nil
+}
+
+// findEntityName returns the canonical entity name matching s case-insensitively.
+func (p *Project) findEntityName(s string) string {
+	sl := strings.ToLower(s)
+	for _, e := range p.Entities {
+		if strings.ToLower(e.Name) == sl {
+			return e.Name
+		}
+	}
+	return ""
 }
 
 // fileNameToEntity converts "invoice.os" → "Invoice", "счёт.os" → "Счёт".

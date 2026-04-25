@@ -207,7 +207,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 		ev := cfgEntity{
 			Name:    e.Name,
 			Posting: e.Posting,
-			Source:  sources[e.Name],
+			Source:  sources[strings.ToLower(e.Name)],
 		}
 		if e.Kind == metadata.KindCatalog {
 			ev.Kind = "Справочник"
@@ -288,9 +288,8 @@ func readOSSources(dir string) map[string]string {
 			continue
 		}
 		base := strings.TrimSuffix(e.Name(), ".os")
-		r, size := utf8.DecodeRuneInString(base)
-		key := string(unicode.ToUpper(r)) + base[size:]
-		out[key] = string(raw)
+		// Store by lowercase so lookup works regardless of entity name case.
+		out[strings.ToLower(base)] = string(raw)
 	}
 	return out
 }

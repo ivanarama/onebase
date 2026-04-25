@@ -143,7 +143,17 @@ func (r *Registry) GetProcedure(entityName, procName string) *ast.ProcedureDecl 
 	defer r.mu.RUnlock()
 	pm, ok := r.procs[entityName]
 	if !ok {
-		return nil
+		// case-insensitive fallback: DSL filename may differ in case from entity name
+		nl := strings.ToLower(entityName)
+		for k, v := range r.procs {
+			if strings.ToLower(k) == nl {
+				pm = v
+				break
+			}
+		}
+		if pm == nil {
+			return nil
+		}
 	}
 	if p, ok := pm[procName]; ok {
 		return p
