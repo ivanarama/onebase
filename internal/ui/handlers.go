@@ -620,7 +620,12 @@ func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector)
 
 func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) *metadata.Entity {
 	raw := chi.URLParam(r, "entity")
-	if e := s.reg.GetEntityBySlug(raw); e != nil {
+	// chi may return the raw percent-encoded path segment — decode it
+	decoded, err := url.PathUnescape(raw)
+	if err != nil {
+		decoded = raw
+	}
+	if e := s.reg.GetEntityBySlug(decoded); e != nil {
 		return e
 	}
 	http.Error(w, "unknown entity: "+raw, 404)
@@ -651,6 +656,10 @@ func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (m
 
 func (s *Server) render(w http.ResponseWriter, name string, data map[string]any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Always inject Cfg so every template can access app name / version
+	if _, ok := data["Cfg"]; !ok {
+		data["Cfg"] = s.cfg
+	}
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), 500)
 	}

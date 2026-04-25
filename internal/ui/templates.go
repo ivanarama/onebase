@@ -96,15 +96,27 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
-<html lang="ru"><head><meta charset="UTF-8"><title>onebase</title><style>
+<html lang="ru"><head><meta charset="UTF-8">
+<title>{{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</title>
+<style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;display:flex;min-height:100vh;background:#f5f5f5}
-aside{width:220px;background:#1e293b;color:#fff;padding:20px;flex-shrink:0;min-height:100vh}
-aside h1{font-size:18px;font-weight:700;margin-bottom:24px;color:#7dd3fc}
-aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:16px 0 6px;letter-spacing:.05em}
-aside a{display:block;padding:6px 10px;color:#cbd5e1;text-decoration:none;border-radius:6px;font-size:14px;margin-bottom:2px}
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-height:100vh;background:#f5f5f5}
+.topbar{background:#1e293b;color:#fff;padding:0 16px;display:flex;align-items:center;height:38px;flex-shrink:0;position:sticky;top:0;z-index:100}
+.topbar-title{font-size:14px;font-weight:600;color:#7dd3fc;flex:1}
+.sys-menu{position:relative}
+.sys-btn{background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:15px;padding:6px 10px;border-radius:5px;line-height:1}
+.sys-btn:hover{background:#334155;color:#fff}
+.sys-drop{display:none;position:absolute;right:0;top:calc(100% + 4px);background:#fff;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);min-width:170px;overflow:hidden;z-index:200}
+.sys-drop.open{display:block}
+.sys-drop a,.sys-drop button{display:block;padding:10px 16px;color:#334155;text-decoration:none;font-size:14px;width:100%;text-align:left;background:none;border:none;cursor:pointer;border-bottom:1px solid #f1f5f9}
+.sys-drop a:last-child,.sys-drop button:last-child{border-bottom:none}
+.sys-drop a:hover,.sys-drop button:hover{background:#f1f5f9}
+.app-body{display:flex;flex:1;overflow:hidden}
+aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto}
+aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em}
+aside a{display:block;padding:6px 14px;color:#cbd5e1;text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px}
 aside a:hover{background:#334155;color:#fff}
-main{flex:1;padding:32px}
+main{flex:1;padding:28px;overflow-y:auto}
 h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:900px}
@@ -146,19 +158,24 @@ details[open] summary::before{content:"▼ "}
 
 const tplNav = `
 {{define "nav"}}
+<header class="topbar">
+  <span class="topbar-title">⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</span>
+  <div class="sys-menu">
+    <button class="sys-btn" onclick="var d=document.getElementById('sysd');d.classList.toggle('open')">&#9881; Система &#9660;</button>
+    <div class="sys-drop" id="sysd">
+      <a href="/ui/about">О программе</a>
+      <a href="/ui/admin/users">Пользователи</a>
+      <form method="POST" action="/logout"><button type="submit">Выйти</button></form>
+    </div>
+  </div>
+</header>
+<div class="app-body">
 <aside>
-  <h1>⚡ onebase</h1>
-  <a href="/ui">Главная</a>
+  <a href="/ui" style="display:block;padding:12px 14px 8px;color:#7dd3fc;font-weight:700;font-size:15px;text-decoration:none">Главная</a>
   {{range .Nav}}
   <div class="sec">{{.Kind}}</div>
   {{range .Items}}<a href="{{.URL}}">{{.Label}}</a>
   {{end}}{{end}}
-  <div class="sec">Администрирование</div>
-  <a href="/ui/admin/users">Пользователи</a>
-  <a href="/ui/about">О программе</a>
-  <form method="POST" action="/logout" style="margin:6px 0 0">
-    <button type="submit" style="background:none;border:none;color:#94a3b8;font-size:14px;padding:6px 10px;cursor:pointer;width:100%;text-align:left;border-radius:6px" onmouseover="this.style.background='#334155';this.style.color='#fff'" onmouseout="this.style.background='none';this.style.color='#94a3b8'">Выйти</button>
-  </form>
 </aside>
 {{end}}
 `
@@ -168,7 +185,7 @@ const tplIndex = `
 {{template "head" .}}{{template "nav" .}}
 <main><h2>Добро пожаловать</h2>
 <div class="card"><p style="color:#64748b;font-size:15px">Выберите объект в меню слева для просмотра и создания записей.</p></div>
-</main></body></html>
+</main></div></body></html>
 {{end}}
 `
 
@@ -251,7 +268,7 @@ const tplList = `
 {{else}}
 <p class="empty">Записей нет — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">создать первую</a></p>
 {{end}}
-</div></main></body></html>
+</div></main></div></body></html>
 {{end}}
 `
 
@@ -378,7 +395,7 @@ function recalcTpRow(inp) {
   }
 }
 </script>
-</main></body></html>
+</main></div></body></html>
 {{end}}
 `
 
@@ -425,7 +442,7 @@ const tplReport = `
 {{else}}<p class="empty">Нет данных</p>{{end}}
 </div>
 {{end}}
-</main></body></html>
+</main></div></body></html>
 {{end}}
 `
 
@@ -455,7 +472,7 @@ const tplRegister = `
 </tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">Движений нет</p>{{end}}
-</div></main></body></html>
+</div></main></div></body></html>
 {{end}}
 
 {{define "page-register-balances"}}
@@ -477,7 +494,7 @@ const tplRegister = `
 </tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">Остатков нет</p>{{end}}
-</div></main></body></html>
+</div></main></div></body></html>
 {{end}}
 `
 
@@ -513,7 +530,7 @@ const tplAbout = `
     </tr>
   </table>
 </div>
-</main></body></html>
+</main></div></body></html>
 {{end}}
 `
 
