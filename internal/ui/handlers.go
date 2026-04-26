@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
@@ -59,12 +60,16 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 
 	refFilterOptions, _ := s.loadRefOptions(r.Context(), entity)
 
+	user := auth.UserFromContext(r.Context())
+	isAdmin := user == nil || user.IsAdmin
+
 	s.render(w, "page-list", map[string]any{
 		"Nav":              s.buildNav(),
 		"Entity":           entity,
 		"Rows":             rows,
 		"Params":           params,
 		"RefFilterOptions": refFilterOptions,
+		"IsAdmin":          isAdmin,
 	})
 }
 
@@ -223,6 +228,9 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	editUser := auth.UserFromContext(r.Context())
+	editIsAdmin := editUser == nil || editUser.IsAdmin
+
 	s.render(w, "page-form", map[string]any{
 		"Nav":           s.buildNav(),
 		"Entity":        entity,
@@ -232,6 +240,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"TPRefOptions":  tpRefOpts,
 		"TablePartRows": tpRows,
 		"ID":            id.String(),
+		"IsAdmin":       editIsAdmin,
 	})
 }
 
@@ -391,8 +400,7 @@ func (s *Server) unpostDocument(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 }
 
-// deleteRecord removes a catalog or document record by id.
-// For posted documents, movements are cleared first (implicit unpost).
+// deleteRecord: admin → permanent delete (with ref check); non-admin → mark for deletion.
 func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
 	if entity == nil {
@@ -404,8 +412,32 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user := auth.UserFromContext(r.Context())
+	isAdmin := user == nil || user.IsAdmin // no auth configured → treat as admin
+
+	if !isAdmin {
+		// Non-admin: mark for deletion
+		if err := s.store.MarkForDeletion(r.Context(), entity.Name, id, true); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+		return
+	}
+
+	// Admin: check references before permanent delete
+	refs := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
+	if len(refs) > 0 {
+		var msg strings.Builder
+		msg.WriteString("Невозможно удалить: объект используется в:\n")
+		for _, ref := range refs {
+			fmt.Fprintf(&msg, "  • %s.%s (%d записей)\n", ref.EntityName, ref.FieldName, ref.Count)
+		}
+		http.Error(w, msg.String(), 409)
+		return
+	}
+
 	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-		// For documents with posting support clear movements first.
 		if entity.Posting {
 			for _, reg := range s.reg.Registers() {
 				if err := s.store.WriteMovements(ctx, reg.Name, entity.Name, id, nil, reg, nil); err != nil {
@@ -419,6 +451,53 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+}
+
+// deleteMarked permanently deletes all deletion_mark=true records without references.
+func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+
+	user := auth.UserFromContext(r.Context())
+	if user != nil && !user.IsAdmin {
+		http.Error(w, "доступ запрещён", 403)
+		return
+	}
+
+	marked, err := s.store.ListMarked(r.Context(), entity.Name, entity)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	deleted, skipped := 0, 0
+	for _, row := range marked {
+		idStr, _ := row["id"].(string)
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			continue
+		}
+		refs := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
+		if len(refs) > 0 {
+			skipped++
+			continue
+		}
+		s.store.WithTx(r.Context(), func(ctx context.Context) error {
+			if entity.Posting {
+				for _, reg := range s.reg.Registers() {
+					s.store.WriteMovements(ctx, reg.Name, entity.Name, id, nil, reg, nil)
+				}
+			}
+			return s.store.Delete(ctx, entity.Name, id)
+		})
+		deleted++
+	}
+
+	http.Redirect(w, r,
+		fmt.Sprintf("%s?deleted=%d&skipped=%d", listURL(entity), deleted, skipped),
+		http.StatusSeeOther)
 }
 
 func (s *Server) saveMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {

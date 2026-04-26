@@ -3,9 +3,43 @@ package storage
 import (
 	"context"
 	"fmt"
+	"unicode"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
+
+// toSnakeCase converts CamelCase (including Cyrillic) to snake_case.
+// Used to detect and rename columns created by older schema versions.
+func toSnakeCase(s string) string {
+	runes := []rune(s)
+	out := make([]rune, 0, len(runes)+4)
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) && unicode.IsLower(runes[i-1]) {
+			out = append(out, '_')
+		}
+		out = append(out, unicode.ToLower(r))
+	}
+	return string(out)
+}
+
+// renameSnakeCols renames old snake_case columns (e.g. тип_контрагента)
+// to the current lowercase style (типконтрагента) if they exist in the table.
+func (db *DB) renameSnakeCols(ctx context.Context, table string, fields []metadata.Field) {
+	for _, f := range fields {
+		newCol := metadata.ColumnName(f)
+		oldCol := toSnakeCase(f.Name)
+		if oldCol == newCol {
+			continue
+		}
+		var exists bool
+		db.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
+			table, oldCol).Scan(&exists)
+		if exists {
+			db.pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s", table, oldCol, newCol))
+		}
+	}
+}
 
 // MigrateRegisters creates register tables (CREATE TABLE IF NOT EXISTS + ADD COLUMN).
 func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Register) error {
@@ -19,6 +53,8 @@ func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Regist
 			return fmt.Errorf("migrate register %s.period: %w", reg.Name, err)
 		}
 		allFields := append(append([]metadata.Field{}, reg.Dimensions...), append(reg.Resources, reg.Attributes...)...)
+		// rename any old snake_case columns before adding new ones
+		db.renameSnakeCols(ctx, table, allFields)
 		for _, f := range allFields {
 			if _, err := db.pool.Exec(ctx, AddColumnSQL(table, metadata.ColumnName(f), pgType(f))); err != nil {
 				return fmt.Errorf("migrate register %s.%s: %w", reg.Name, f.Name, err)
@@ -50,12 +86,18 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 				return fmt.Errorf("migrate %s.posted: %w", e.Name, err)
 			}
 		}
+		// rename old snake_case columns before adding new ones
+		db.renameSnakeCols(ctx, table, e.Fields)
 		for _, f := range e.Fields {
 			col := metadata.ColumnName(f)
 			addSQL := AddColumnSQL(table, col, pgType(f))
 			if _, err := db.pool.Exec(ctx, addSQL); err != nil {
 				return fmt.Errorf("migrate %s.%s: %w", e.Name, f.Name, err)
 			}
+		}
+		// soft-delete support
+		if _, err := db.pool.Exec(ctx, AddColumnSQL(table, "deletion_mark", "BOOLEAN NOT NULL DEFAULT FALSE")); err != nil {
+			return fmt.Errorf("migrate %s.deletion_mark: %w", e.Name, err)
 		}
 		// create tablepart tables
 		for _, tp := range e.TableParts {

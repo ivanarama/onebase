@@ -206,7 +206,15 @@ const tplList = `
 <main>
 <div class="row-top">
   <h2>{{.Entity.Name}}</h2>
-  <a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">+ Создать</a>
+  <div style="display:flex;gap:8px">
+    <a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">+ Создать</a>
+    {{if .IsAdmin}}
+    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/delete-marked"
+          onsubmit="return confirm('Удалить все помеченные записи без ссылок?')">
+      <button class="btn btn-danger btn-sm" type="submit" style="padding:8px 14px">Удалить помеченные</button>
+    </form>
+    {{end}}
+  </div>
 </div>
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
@@ -263,7 +271,8 @@ const tplList = `
   {{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody>
-{{range .Rows}}{{$row := .}}<tr>
+{{range .Rows}}{{$row := .}}
+<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through"{{end}}>
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="Проведён">✓</span>{{else}}<span style="color:#94a3b8" title="Не проведён">—</span>{{end}}
@@ -385,8 +394,8 @@ const tplForm = `
 {{if not .IsNew}}
 <div style="margin-top:10px">
   <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete"
-        onsubmit="return confirm('Удалить запись? Это действие нельзя отменить.')">
-    <button class="btn btn-danger btn-sm" type="submit">Удалить</button>
+        onsubmit="return confirm('{{if .IsAdmin}}Удалить запись навсегда?{{else}}Пометить запись на удаление?{{end}}')">
+    <button class="btn btn-danger btn-sm" type="submit">{{if .IsAdmin}}Удалить{{else}}Пометить на удаление{{end}}</button>
   </form>
 </div>
 {{end}}

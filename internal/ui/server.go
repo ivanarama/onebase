@@ -53,8 +53,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/{kind}/{entity}/{id}/post", s.postDocument)
 	r.Post("/ui/{kind}/{entity}/{id}/unpost", s.unpostDocument)
 
-	// Delete record
+	// Delete record / mark for deletion
 	r.Post("/ui/{kind}/{entity}/{id}/delete", s.deleteRecord)
+	r.Post("/ui/{kind}/{entity}/delete-marked", s.deleteMarked)
 
 	// Admin: user management
 	r.Get("/ui/admin/users", s.adminUsers)

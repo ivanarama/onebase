@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -92,9 +93,7 @@ func (r *Runner) Stop(baseID string) error {
 	if !ok {
 		return nil
 	}
-	if mp.cmd.Process != nil {
-		mp.cmd.Process.Kill()
-	}
+	killProc(mp.cmd.Process)
 	delete(r.procs, baseID)
 	return nil
 }
@@ -102,13 +101,33 @@ func (r *Runner) Stop(baseID string) error {
 // StopAll kills all running base processes.
 func (r *Runner) StopAll() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	for id, mp := range r.procs {
-		if mp.cmd.Process != nil {
-			mp.cmd.Process.Kill()
-		}
-		delete(r.procs, id)
+	ids := make([]string, 0, len(r.procs))
+	for id := range r.procs {
+		ids = append(ids, id)
 	}
+	r.mu.Unlock()
+
+	for _, id := range ids {
+		r.mu.Lock()
+		mp, ok := r.procs[id]
+		if ok {
+			killProc(mp.cmd.Process)
+			delete(r.procs, id)
+		}
+		r.mu.Unlock()
+	}
+}
+
+// killProc terminates a process. On Windows uses taskkill /F /T to also kill children.
+func killProc(p *os.Process) {
+	if p == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", p.Pid)).Run()
+		return
+	}
+	p.Kill()
 }
 
 func (r *Runner) IsRunning(baseID string) bool {

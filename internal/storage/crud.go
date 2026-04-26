@@ -66,6 +66,7 @@ func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, enti
 	if entity.Kind == metadata.KindDocument {
 		cols = append(cols, "posted")
 	}
+	cols = append(cols, "deletion_mark")
 	sql := fmt.Sprintf("SELECT %s FROM %s WHERE id = $1", strings.Join(cols, ", "), table)
 	row := db.q(ctx).QueryRow(ctx, sql, id)
 
@@ -83,9 +84,12 @@ func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, enti
 	for i, f := range entity.Fields {
 		result[f.Name] = normalizeValue(dest[i+1])
 	}
+	off := len(entity.Fields) + 1
 	if entity.Kind == metadata.KindDocument {
-		result["posted"] = normalizeValue(dest[len(entity.Fields)+1])
+		result["posted"] = normalizeValue(dest[off])
+		off++
 	}
+	result["deletion_mark"] = normalizeValue(dest[off])
 	return result, nil
 }
 
@@ -125,6 +129,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	if entity.Kind == metadata.KindDocument {
 		cols = append(cols, "posted")
 	}
+	cols = append(cols, "deletion_mark")
 
 	var whereParts []string
 	var args []any
@@ -209,9 +214,12 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		for i, f := range entity.Fields {
 			row[f.Name] = normalizeValue(dest[i+1])
 		}
+		off := len(entity.Fields) + 1
 		if entity.Kind == metadata.KindDocument {
-			row["posted"] = normalizeValue(dest[len(entity.Fields)+1])
+			row["posted"] = normalizeValue(dest[off])
+			off++
 		}
+		row["deletion_mark"] = normalizeValue(dest[off])
 		result = append(result, row)
 	}
 	return result, rows.Err()
