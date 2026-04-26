@@ -137,6 +137,9 @@ tr:last-child td{border-bottom:none}
 tr:hover td{background:#f8fafc}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
+.btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
+.btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
 .btn-sm{padding:5px 12px;font-size:13px}
 .btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
 .form-group{margin-bottom:16px}
@@ -351,23 +354,26 @@ const tplForm = `
 </button>
 {{end}}
 
-<div style="display:flex;align-items:center;gap:16px;margin-top:16px">
-  <button class="btn btn-primary" type="submit">Сохранить</button>
-  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" style="color:#64748b;font-size:14px">Отмена</a>
+<div style="display:flex;align-items:center;gap:8px;margin-top:20px;flex-wrap:wrap">
+  {{if .Entity.Posting}}
+    <button class="btn btn-post" type="submit" name="_action" value="post_and_close">Провести и закрыть</button>
+  {{end}}
+  <button class="btn btn-secondary" type="submit" name="_action" value="">Записать</button>
+  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">Отмена</a>
   {{if and (not .IsNew) .Entity.Posting}}
     {{if eq (index .Values "posted") "true"}}
-      <span style="color:#16a34a;font-weight:600;font-size:13px">✓ Проведён</span>
+      <span style="color:#16a34a;font-weight:600;font-size:13px;margin-left:8px">✓ Проведён</span>
     {{else}}
-      <span style="color:#94a3b8;font-size:13px">Не проведён</span>
+      <span style="color:#94a3b8;font-size:13px;margin-left:8px">Не проведён</span>
     {{end}}
   {{end}}
 </div>
 </form>
 {{if and (not .IsNew) .Entity.Posting}}
-<div style="display:flex;gap:10px;margin-top:14px">
+<div style="display:flex;gap:8px;margin-top:10px">
   {{if eq (index .Values "posted") "true"}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/unpost">
-      <button class="btn btn-danger btn-sm" type="submit">Отменить проведение</button>
+      <button class="btn btn-sm" style="background:#e2e8f0;color:#374151" type="submit">Отменить проведение</button>
     </form>
   {{else}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/post">
@@ -393,13 +399,13 @@ function addTpRow(tpName, fields, numFields, idx) {
   var refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
   fields.forEach(function(fn) {
     var td = document.createElement('td');
-    if (refOpts[fn] && refOpts[fn].length > 0) {
+    if (refOpts[fn] !== undefined) {
       var sel = document.createElement('select');
       sel.name = 'tp.' + tpName + '.' + idx + '.' + fn;
       var defOpt = document.createElement('option');
       defOpt.value = ''; defOpt.textContent = '— выбрать —';
       sel.appendChild(defOpt);
-      refOpts[fn].forEach(function(opt) {
+      (refOpts[fn] || []).forEach(function(opt) {
         var o = document.createElement('option');
         o.value = opt.id; o.textContent = opt._label || opt.id;
         sel.appendChild(o);

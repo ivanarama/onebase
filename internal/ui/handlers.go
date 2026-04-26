@@ -147,6 +147,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	action := r.FormValue("_action")
+
 	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 		if err := s.store.Upsert(ctx, entity.Name, obj.ID, obj.Fields, entity); err != nil {
 			return err
@@ -154,9 +156,14 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		if err := s.saveTablePartsDirect(ctx, entity, obj.ID, obj.TablePartRows); err != nil {
 			return err
 		}
-		// For posting documents, movements are written only on explicit Post action
 		if !entity.Posting {
 			return s.saveMovements(ctx, entity.Name, obj.ID, mc)
+		}
+		if action == "post_and_close" {
+			if err := s.saveMovements(ctx, entity.Name, obj.ID, mc); err != nil {
+				return err
+			}
+			return s.store.SetPosted(ctx, entity.Name, obj.ID, true)
 		}
 		return nil
 	}); err != nil {
@@ -164,7 +171,12 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+	if action == "post_and_close" {
+		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+		return
+	}
+	// "Записать" — остаёмся на форме редактирования
+	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
 }
 
 func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
@@ -186,9 +198,17 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
 	vals := make(map[string]string)
 	for _, f := range entity.Fields {
-		if v := row[f.Name]; v != nil {
-			vals[f.Name] = fmt.Sprintf("%v", v)
+		v := row[f.Name]
+		if v == nil {
+			continue
 		}
+		if f.Type == metadata.FieldTypeDate {
+			if t, ok := v.(time.Time); ok {
+				vals[f.Name] = t.Format("2006-01-02T15:04")
+				continue
+			}
+		}
+		vals[f.Name] = fmt.Sprintf("%v", v)
 	}
 	// Include posted status for documents
 	if entity.Kind == metadata.KindDocument {
@@ -258,6 +278,8 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	action := r.FormValue("_action")
+
 	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 		if err := s.store.Upsert(ctx, entity.Name, obj.ID, obj.Fields, entity); err != nil {
 			return err
@@ -268,7 +290,13 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		if !entity.Posting {
 			return s.saveMovements(ctx, entity.Name, obj.ID, mc)
 		}
-		// Posting document: clear movements on edit (must re-post explicitly)
+		if action == "post_and_close" {
+			if err := s.saveMovements(ctx, entity.Name, obj.ID, mc); err != nil {
+				return err
+			}
+			return s.store.SetPosted(ctx, entity.Name, obj.ID, true)
+		}
+		// "Записать" для проводимого документа: сбрасываем проведение
 		for _, reg := range s.reg.Registers() {
 			if err := s.store.WriteMovements(ctx, reg.Name, entity.Name, obj.ID, nil, reg, nil); err != nil {
 				return err
@@ -280,7 +308,12 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+	if action == "post_and_close" {
+		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+		return
+	}
+	// "Записать" — остаёмся на форме
+	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+id.String(), http.StatusSeeOther)
 }
 
 // postDocument posts a document: runs OnWrite, writes movements, sets posted=true.
@@ -714,6 +747,8 @@ func (s *Server) loadTPRefOptions(ctx context.Context, entity *metadata.Entity) 
 			if f.RefEntity == "" {
 				continue
 			}
+			// Always mark the field as a reference (even if catalog empty or missing)
+			tpOpts[f.Name] = []map[string]any{}
 			refEntity := s.reg.GetEntity(f.RefEntity)
 			if refEntity == nil {
 				continue
@@ -727,9 +762,8 @@ func (s *Server) loadTPRefOptions(ctx context.Context, entity *metadata.Entity) 
 			}
 			tpOpts[f.Name] = rows
 		}
-		if len(tpOpts) > 0 {
-			result[tp.Name] = tpOpts
-		}
+		// Always add TP entry so JS knows which fields are references
+		result[tp.Name] = tpOpts
 	}
 	return result, nil
 }
@@ -834,9 +868,15 @@ func formToFields(r *http.Request, entity *metadata.Entity) map[string]any {
 		}
 		switch f.Type {
 		case metadata.FieldTypeDate:
-			if t, err := time.Parse("2006-01-02T15:04", val); err == nil {
-				fields[f.Name] = t
-			} else {
+			parsed := false
+			for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"} {
+				if t, err := time.Parse(layout, val); err == nil {
+					fields[f.Name] = t
+					parsed = true
+					break
+				}
+			}
+			if !parsed {
 				fields[f.Name] = val
 			}
 		case metadata.FieldTypeBool:
