@@ -11,6 +11,48 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// MigrateContent fixes known content issues in stored YAML files.
+// Currently: replaces old snake_case field references in report queries
+// (e.g. "тип_контрагента" → "ТипКонтрагента") that no longer match the DB column names.
+func (r *Repo) MigrateContent(ctx context.Context) error {
+	rows, err := r.pool.Query(ctx,
+		`SELECT path, content FROM _onebase_config WHERE path LIKE 'reports/%'`)
+	if err != nil {
+		return nil // table may not exist yet
+	}
+	defer rows.Close()
+
+	type update struct {
+		path    string
+		content []byte
+	}
+	var updates []update
+	for rows.Next() {
+		var path string
+		var content []byte
+		if err := rows.Scan(&path, &content); err != nil {
+			return err
+		}
+		text := string(content)
+		// Fix: old report had тип_контрагента (snake_case) in WHERE clause
+		// but the DB column is now типконтрагента (after ColumnName normalisation).
+		if strings.Contains(text, "тип_контрагента") {
+			text = strings.ReplaceAll(text, "тип_контрагента", "ТипКонтрагента")
+			updates = append(updates, update{path, []byte(text)})
+		}
+	}
+	rows.Close()
+
+	for _, u := range updates {
+		if _, err := r.pool.Exec(ctx,
+			`UPDATE _onebase_config SET content=$1, updated_at=now() WHERE path=$2`,
+			u.content, u.path); err != nil {
+			return fmt.Errorf("configdb: fix content %s: %w", u.path, err)
+		}
+	}
+	return nil
+}
+
 type Repo struct {
 	pool *pgxpool.Pool
 }

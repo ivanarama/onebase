@@ -453,6 +453,89 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 }
 
+// deleteMarkedAll is the global "Удалить помеченные" page accessible from the system menu.
+// GET: shows all marked records across every entity.
+// POST: deletes all marked records that have no references.
+func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		http.Error(w, "доступ запрещён", http.StatusForbidden)
+		return
+	}
+
+	type markedEntry struct {
+		EntityName string
+		Kind       string
+		ID         string
+		Label      string
+		HasRefs    bool
+	}
+
+	if r.Method == http.MethodPost {
+		deleted, skipped := 0, 0
+		for _, entity := range s.reg.Entities() {
+			marked, err := s.store.ListMarked(r.Context(), entity.Name, entity)
+			if err != nil {
+				continue
+			}
+			for _, row := range marked {
+				idStr, _ := row["id"].(string)
+				id, err := uuid.Parse(idStr)
+				if err != nil {
+					continue
+				}
+				refs := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
+				if len(refs) > 0 {
+					skipped++
+					continue
+				}
+				s.store.WithTx(r.Context(), func(ctx context.Context) error {
+					if entity.Posting {
+						for _, reg := range s.reg.Registers() {
+							s.store.WriteMovements(ctx, reg.Name, entity.Name, id, nil, reg, nil)
+						}
+					}
+					return s.store.Delete(ctx, entity.Name, id)
+				})
+				deleted++
+			}
+		}
+		http.Redirect(w, r,
+			fmt.Sprintf("/ui/delete-marked?deleted=%d&skipped=%d", deleted, skipped),
+			http.StatusSeeOther)
+		return
+	}
+
+	// GET: collect all marked records
+	var entries []markedEntry
+	for _, entity := range s.reg.Entities() {
+		rows, err := s.store.ListMarked(r.Context(), entity.Name, entity)
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			idStr, _ := row["id"].(string)
+			id, _ := uuid.Parse(idStr)
+			refs := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
+			entries = append(entries, markedEntry{
+				EntityName: entity.Name,
+				Kind:       string(entity.Kind),
+				ID:         idStr,
+				Label:      firstStringField(row, entity),
+				HasRefs:    len(refs) > 0,
+			})
+		}
+	}
+
+	deleted, _ := strconv.Atoi(r.URL.Query().Get("deleted"))
+	skipped, _ := strconv.Atoi(r.URL.Query().Get("skipped"))
+	s.render(w, "page-delete-marked", map[string]any{
+		"Nav":     s.buildNav(),
+		"Entries": entries,
+		"Deleted": deleted,
+		"Skipped": skipped,
+	})
+}
+
 // deleteMarked permanently deletes all deletion_mark=true records without references.
 func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
@@ -639,6 +722,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		})
 		return
 	}
+	s.resolveUUIDsInReport(r.Context(), rows)
 	s.render(w, "page-report", map[string]any{
 		"Nav":         s.buildNav(),
 		"Report":      rep,
@@ -646,6 +730,43 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		"Rows":        rows,
 		"ParamValues": paramValues,
 	})
+}
+
+// resolveUUIDsInReport replaces UUID-looking strings in report rows with entity display names.
+func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any) {
+	uuidToLabel := make(map[string]string)
+	for _, row := range rows {
+		for _, v := range row {
+			if str, ok := v.(string); ok {
+				if _, err := uuid.Parse(str); err == nil {
+					uuidToLabel[str] = ""
+				}
+			}
+		}
+	}
+	if len(uuidToLabel) == 0 {
+		return
+	}
+	for _, entity := range s.reg.Entities() {
+		for idStr, label := range uuidToLabel {
+			if label != "" {
+				continue
+			}
+			id, _ := uuid.Parse(idStr)
+			if refRow, err := s.store.GetByID(ctx, entity.Name, id, entity); err == nil {
+				uuidToLabel[idStr] = firstStringField(refRow, entity)
+			}
+		}
+	}
+	for _, row := range rows {
+		for col, v := range row {
+			if str, ok := v.(string); ok {
+				if label, found := uuidToLabel[str]; found && label != "" {
+					row[col] = label
+				}
+			}
+		}
+	}
 }
 
 // saveTablePartsDirect persists tablepart rows from the provided map (possibly modified by DSL).

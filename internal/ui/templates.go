@@ -100,7 +100,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return template.JS(b)
 	},
-}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout))
+}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked))
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -176,6 +176,7 @@ const tplNav = `
     <div class="sys-drop" id="sysd">
       <a href="/ui/about">О программе</a>
       <a href="/ui/admin/users">Пользователи</a>
+      <a href="/ui/delete-marked">Удалить помеченные</a>
       <form method="POST" action="/logout"><button type="submit">Выйти</button></form>
     </div>
   </div>
@@ -554,6 +555,40 @@ const tplRegister = `
 </tbody></table>
 {{else}}<p class="empty">Остатков нет</p>{{end}}
 </div></main></div></body></html>
+{{end}}
+`
+
+const tplDeleteMarked = `
+{{define "page-delete-marked"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>Удалить помеченные</h2>
+{{if .Deleted}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
+  Удалено: {{.Deleted}}{{if .Skipped}} &nbsp;·&nbsp; Пропущено (есть ссылки): {{.Skipped}}{{end}}
+</div>{{end}}
+{{if .Entries}}
+<div class="card" style="max-width:900px;margin-bottom:16px">
+<table><thead><tr>
+  <th>Объект</th><th>Наименование</th><th>Статус</th>
+</tr></thead><tbody>
+{{range .Entries}}<tr>
+  <td><a href="/ui/{{lower .Kind}}/{{lower .EntityName}}/{{.ID}}">{{.EntityName}}</a></td>
+  <td>{{.Label}}</td>
+  <td>{{if .HasRefs}}<span style="color:#ef4444">Есть ссылки — не будет удалён</span>{{else}}<span style="color:#16a34a">Будет удалён</span>{{end}}</td>
+</tr>{{end}}
+</tbody></table>
+</div>
+<form method="POST" action="/ui/delete-marked"
+      onsubmit="return confirm('Удалить все помеченные записи без ссылок?')">
+  <button class="btn btn-danger" type="submit">Удалить помеченные без ссылок</button>
+  <a class="btn btn-secondary" href="/ui" style="margin-left:8px">Отмена</a>
+</form>
+{{else}}
+<div class="card" style="max-width:600px">
+  <p class="empty">Помеченных на удаление записей нет.</p>
+</div>
+{{end}}
+</main></div></body></html>
 {{end}}
 `
 

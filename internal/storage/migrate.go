@@ -31,11 +31,25 @@ func (db *DB) renameSnakeCols(ctx context.Context, table string, fields []metada
 		if oldCol == newCol {
 			continue
 		}
-		var exists bool
+		var oldExists bool
 		db.pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
-			table, oldCol).Scan(&exists)
-		if exists {
+			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2)`,
+			table, oldCol).Scan(&oldExists)
+		if !oldExists {
+			continue
+		}
+		var newExists bool
+		db.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2)`,
+			table, newCol).Scan(&newExists)
+		if newExists {
+			// Both columns exist (old migration ran ADD COLUMN before rename could happen):
+			// copy data from old into new where new is NULL, then drop old.
+			db.pool.Exec(ctx, fmt.Sprintf(
+				"UPDATE %s SET %s = %s WHERE %s IS NOT NULL AND %s IS NULL",
+				table, newCol, oldCol, oldCol, newCol))
+			db.pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, oldCol))
+		} else {
 			db.pool.Exec(ctx, fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s", table, oldCol, newCol))
 		}
 	}

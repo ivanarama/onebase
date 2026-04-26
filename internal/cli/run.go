@@ -58,6 +58,9 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		if err := cfgRepo.EnsureSchema(ctx); err != nil {
 			return fmt.Errorf("configdb schema: %w", err)
 		}
+		if err := cfgRepo.MigrateContent(ctx); err != nil {
+			return fmt.Errorf("configdb migrate content: %w", err)
+		}
 		proj, err = project.LoadFromDB(ctx, cfgRepo)
 	} else {
 		proj, err = project.Load(dir)
