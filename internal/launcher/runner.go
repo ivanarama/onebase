@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -35,11 +36,16 @@ func (r *Runner) Start(base *Base) error {
 		return fmt.Errorf("база %q уже запущена", base.Name)
 	}
 
-	// check port conflict with other running bases
+	// check port conflict with other running bases (tracked)
 	for _, mp := range r.procs {
 		if mp.port == base.Port {
 			return fmt.Errorf("порт %d уже занят другой запущенной базой", base.Port)
 		}
+	}
+
+	// OS-level port availability check: catches leftover processes not tracked by runner
+	if !portFree(base.Port) {
+		return fmt.Errorf("порт %d уже занят другим процессом — остановите его вручную или смените порт базы", base.Port)
 	}
 
 	exe, err := os.Executable()
@@ -98,23 +104,26 @@ func (r *Runner) Stop(baseID string) error {
 	return nil
 }
 
-// StopAll kills all running base processes.
+// StopAll kills all running base processes and waits for ports to free.
 func (r *Runner) StopAll() {
 	r.mu.Lock()
-	ids := make([]string, 0, len(r.procs))
-	for id := range r.procs {
-		ids = append(ids, id)
+	type procInfo struct {
+		proc *os.Process
+		port int
+	}
+	var all []procInfo
+	for id, mp := range r.procs {
+		all = append(all, procInfo{mp.cmd.Process, mp.port})
+		delete(r.procs, id)
 	}
 	r.mu.Unlock()
 
-	for _, id := range ids {
-		r.mu.Lock()
-		mp, ok := r.procs[id]
-		if ok {
-			killProc(mp.cmd.Process)
-			delete(r.procs, id)
-		}
-		r.mu.Unlock()
+	for _, pi := range all {
+		killProc(pi.proc)
+	}
+	// Wait up to 3s for all ports to free so next Start() can proceed immediately.
+	for _, pi := range all {
+		waitPortFree(pi.port, 3*time.Second)
 	}
 }
 
@@ -128,6 +137,27 @@ func killProc(p *os.Process) {
 		return
 	}
 	p.Kill()
+}
+
+// portFree reports whether the TCP port is free on localhost.
+func portFree(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+// waitPortFree blocks until the port becomes free or timeout expires.
+func waitPortFree(port int, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if portFree(port) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (r *Runner) IsRunning(baseID string) bool {

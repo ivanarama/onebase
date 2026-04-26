@@ -220,8 +220,13 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
+	sel := r.URL.Query().Get("sel")
 	h.runner.StopAll()
-	http.Redirect(w, r, "/", http.StatusFound)
+	redirect := "/"
+	if sel != "" {
+		redirect = "/?sel=" + sel
+	}
+	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
 func (h *handler) migrate(w http.ResponseWriter, r *http.Request) {

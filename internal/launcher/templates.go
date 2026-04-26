@@ -97,7 +97,7 @@ const tplIndex = `
     <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> Добавить
   </a>
   <div style="flex:1"></div>
-  <a class="tbtn danger" href="/killall" onclick="return doPost(this)" title="Остановить все базы">
+  <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return doPost(this)" title="Остановить все базы">
     <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> Стоп всё
   </a>
   <a class="tbtn danger" href="/quit" onclick="return quitLauncher()" title="Завершить лаунчер">
@@ -184,17 +184,24 @@ function quitLauncher() {
 }
 function startBase(el, id) {
   el.preventDefault ? el.preventDefault() : (el.returnValue = false);
+  var btn = el.target || el;
+  var origText = btn.textContent || '';
+  if (btn.innerHTML) btn.innerHTML = '⏳ Запуск...';
   fetch('/bases/' + id + '/start', {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d.url) {
         window.open(d.url, '_blank');
-        setTimeout(function(){ window.location.reload(); }, 1000);
+        setTimeout(function(){ window.location.href = '/?sel=' + id; }, 800);
       } else if (d.error) {
-        alert(d.error);
+        alert('Ошибка запуска:\n' + d.error);
+        if (btn.innerHTML) btn.innerHTML = origText;
       }
     })
-    .catch(function(e){ alert('Ошибка запуска: ' + e); });
+    .catch(function(e){
+      alert('Ошибка запуска: ' + e);
+      if (btn.innerHTML) btn.innerHTML = origText;
+    });
   return false;
 }
 </script>
@@ -235,6 +242,7 @@ const tplForm = `
       <div class="fg">
         <label>Порт сервера</label>
         <input name="port" type="number" value="{{if .Base.Port}}{{.Base.Port}}{{else}}8080{{end}}" min="1024" max="65535">
+        <div class="hint">У каждой базы должен быть уникальный порт. Первая база: 8080, вторая: 8081 и т.д.</div>
       </div>
     </div>
     {{if .IsNew}}
