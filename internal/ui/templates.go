@@ -176,7 +176,9 @@ const tplNav = `
     <div class="sys-drop" id="sysd">
       <a href="/ui/about">О программе</a>
       <a href="/ui/admin/users">Пользователи</a>
+      <a href="/ui/admin/sessions">Активные пользователи</a>
       <a href="/ui/delete-marked">Удалить помеченные</a>
+      <a href="/ui/admin/cleanup">Очистка регистров</a>
       <form method="POST" action="/logout"><button type="submit">Выйти</button></form>
     </div>
   </div>

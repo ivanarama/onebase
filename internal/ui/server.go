@@ -67,6 +67,14 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/admin/users/new", s.adminUserCreate)
 	r.Post("/ui/admin/users/{id}/delete", s.adminUserDelete)
 
+	// Admin: active sessions
+	r.Get("/ui/admin/sessions", s.adminSessions)
+	r.Post("/ui/admin/sessions/{login}/kick", s.adminKickUser)
+
+	// Admin: orphan movements cleanup
+	r.Get("/ui/admin/cleanup", s.adminCleanup)
+	r.Post("/ui/admin/cleanup", s.adminCleanup)
+
 	// About
 	r.Get("/ui/about", s.about)
 }

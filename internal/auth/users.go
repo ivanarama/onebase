@@ -141,3 +141,43 @@ func (r *Repo) DeleteSession(ctx context.Context, token string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM _sessions WHERE token = $1`, token)
 	return err
 }
+
+// SessionInfo describes one active session.
+type SessionInfo struct {
+	Login     string
+	FullName  string
+	IsAdmin   bool
+	ExpiresAt time.Time
+}
+
+// ActiveSessions returns all non-expired sessions with user info.
+func (r *Repo) ActiveSessions(ctx context.Context) ([]*SessionInfo, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.login, u.full_name, u.is_admin, s.expires_at
+		FROM _sessions s
+		JOIN _users u ON u.id = s.user_id
+		WHERE s.expires_at > now()
+		ORDER BY u.login, s.expires_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []*SessionInfo
+	for rows.Next() {
+		si := &SessionInfo{}
+		if err := rows.Scan(&si.Login, &si.FullName, &si.IsAdmin, &si.ExpiresAt); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, si)
+	}
+	return sessions, rows.Err()
+}
+
+// KickUser deletes all sessions for the given login (forces re-login).
+func (r *Repo) KickUser(ctx context.Context, login string) error {
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM _sessions WHERE user_id = (SELECT id FROM _users WHERE login = $1)
+	`, login)
+	return err
+}

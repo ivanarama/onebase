@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 )
 
-var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserForm))
+var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserForm + tplAdminSessions + tplAdminCleanup))
 
 const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 <main>
@@ -164,6 +165,56 @@ func (s *Server) adminUserDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/admin/users", http.StatusFound)
 }
 
+func (s *Server) adminSessions(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if s.authRepo == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{"Sessions": nil, "NoAuth": true})
+		return
+	}
+	sessions, _ := s.authRepo.ActiveSessions(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{"Sessions": sessions})
+}
+
+func (s *Server) adminKickUser(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	login := chi.URLParam(r, "login")
+	if s.authRepo != nil {
+		s.authRepo.KickUser(r.Context(), login)
+	}
+	http.Redirect(w, r, "/ui/admin/sessions", http.StatusFound)
+}
+
+func (s *Server) adminCleanup(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	registers := s.reg.Registers()
+	entities := s.reg.Entities()
+
+	if r.Method == http.MethodPost {
+		deleted := s.store.DeleteOrphanMovements(r.Context(), registers, entities)
+		http.Redirect(w, r, fmt.Sprintf("/ui/admin/cleanup?deleted=%d", deleted), http.StatusFound)
+		return
+	}
+
+	stats := s.store.OrphanMovements(r.Context(), registers, entities)
+	deletedStr := r.URL.Query().Get("deleted")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	adminTmpl.ExecuteTemplate(w, "admin-cleanup", map[string]any{
+		"Stats":   stats,
+		"Deleted": deletedStr,
+	})
+}
+
 // isAdmin returns true if the current request has an admin user in context,
 // or if no auth is configured (open access).
 func (s *Server) isAdmin(r *http.Request) bool {
@@ -177,3 +228,82 @@ func (s *Server) isAdmin(r *http.Request) bool {
 	u := auth.UserFromContext(r.Context())
 	return u != nil && u.IsAdmin
 }
+
+const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
+<main>
+<div class="row-top" style="max-width:700px">
+  <h2>Активные пользователи</h2>
+  <a class="btn" href="/ui/admin/sessions" style="background:#e2e8f0;color:#475569;font-size:13px">Обновить</a>
+</div>
+{{if .NoAuth}}
+<div class="card" style="max-width:700px">
+  <p class="empty">Авторизация не настроена — пользователей нет.</p>
+</div>
+{{else if .Sessions}}
+<div class="card" style="max-width:700px">
+<table>
+<thead><tr>
+  <th>Логин</th><th>Имя</th><th>Роль</th><th>Сессия до</th><th style="width:100px"></th>
+</tr></thead>
+<tbody>
+{{range .Sessions}}<tr>
+  <td><strong>{{.Login}}</strong></td>
+  <td>{{.FullName}}</td>
+  <td>{{if .IsAdmin}}<span style="color:#3b82f6">Администратор</span>{{else}}Пользователь{{end}}</td>
+  <td style="font-size:12px;color:#94a3b8">{{.ExpiresAt.Format "02.01.2006 15:04"}}</td>
+  <td>
+    <form method="POST" action="/ui/admin/sessions/{{.Login}}/kick"
+          onsubmit="return confirm('Принудительно завершить все сессии {{.Login}}?')">
+      <button class="btn btn-sm btn-danger" type="submit">Выгнать</button>
+    </form>
+  </td>
+</tr>{{end}}
+</tbody>
+</table>
+</div>
+{{else}}
+<div class="card" style="max-width:700px">
+  <p class="empty">Активных сессий нет.</p>
+</div>
+{{end}}
+</main></body></html>
+{{end}}`
+
+const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
+<main>
+<h2>Очистка регистров</h2>
+<p style="color:#64748b;font-size:14px;margin-bottom:20px">
+  Осиротевшие движения — строки в регистрах, документ которых уже удалён.
+</p>
+{{if .Deleted}}
+<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
+  Удалено строк: {{.Deleted}}
+</div>
+{{end}}
+{{if .Stats}}
+<div class="card" style="max-width:700px;margin-bottom:20px">
+<table>
+<thead><tr>
+  <th>Регистр</th><th>Вид регистратора</th><th style="text-align:right">Строк</th>
+</tr></thead>
+<tbody>
+{{range .Stats}}<tr>
+  <td>{{.RegisterName}}</td>
+  <td>{{.RecorderType}}</td>
+  <td style="text-align:right;color:#ef4444;font-weight:600">{{.Count}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+</div>
+<form method="POST" action="/ui/admin/cleanup"
+      onsubmit="return confirm('Удалить все осиротевшие движения?')">
+  <button class="btn btn-danger" type="submit">Удалить осиротевшие движения</button>
+  <a class="btn" href="/ui" style="background:#e2e8f0;color:#475569;margin-left:8px">Отмена</a>
+</form>
+{{else}}
+<div class="card" style="max-width:600px">
+  <p class="empty">Осиротевших движений не найдено — регистры чисты.</p>
+</div>
+{{end}}
+</main></body></html>
+{{end}}`
