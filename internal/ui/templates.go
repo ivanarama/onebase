@@ -272,6 +272,7 @@ const tplList = `
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   onclick="listRowClick(event,this)"
   oncontextmenu="listCtxMenu(event,this)"
+  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
   data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}">
   {{if eq (str $.Entity.Kind) "document"}}
@@ -306,11 +307,12 @@ function listCtxMenu(e,tr){
   var old=document.getElementById('_lctx');if(old)old.remove();
   var m=document.createElement('div');
   m.id='_lctx';
-  m.style.cssText='position:fixed;z-index:999;background:#fff;border:1px solid #c8d0de;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:180px;font-size:13px';
+  m.style.cssText='position:fixed;z-index:999;background:#fff;border:1px solid #c8d0de;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:190px;font-size:13px';
   m.style.left=e.clientX+'px';m.style.top=e.clientY+'px';
-  [{label:'Открыть',fn:function(){window.location.href=tr.dataset.openUrl;}},
-   {label:(_isAdmin?'Удалить навсегда':'Пометить на удаление'),danger:true,fn:function(){listMarkDel(tr);}}
-  ].forEach(function(item){
+  var items=[{label:'Открыть',fn:function(){window.location.href=tr.dataset.openUrl;}}];
+  items.push({label:'Пометить на удаление',danger:true,fn:function(){listSubmit(tr.dataset.markUrl,'Пометить на удаление?');}});
+  if(_isAdmin)items.push({label:'Удалить навсегда',danger:true,fn:function(){listSubmit(tr.dataset.delUrl,'Удалить запись навсегда?');}});
+  items.forEach(function(item){
     var mi=document.createElement('div');
     mi.textContent=item.label;
     mi.style.cssText='padding:8px 14px;cursor:pointer'+(item.danger?';color:#dc2626':'');
@@ -324,12 +326,13 @@ function listCtxMenu(e,tr){
     document.addEventListener('click',function h(){m.remove();document.removeEventListener('click',h);},{once:true});
   },0);
 }
-function listMarkDel(tr){
-  if(!tr||!tr.dataset.delUrl)return;
-  var msg=_isAdmin?'Удалить запись навсегда?':'Пометить на удаление?';
-  if(confirm(msg)){var f=document.createElement('form');f.method='POST';f.action=tr.dataset.delUrl;document.body.appendChild(f);f.submit();}
+function listSubmit(url,msg){
+  if(!url)return;
+  if(confirm(msg)){var f=document.createElement('form');f.method='POST';f.action=url;document.body.appendChild(f);f.submit();}
 }
-document.addEventListener('keydown',function(e){if(e.key==='Delete'&&_listSel)listMarkDel(_listSel);});
+document.addEventListener('keydown',function(e){
+  if(e.key==='Delete'&&_listSel)listSubmit(_listSel.dataset.markUrl,'Пометить на удаление?');
+});
 </script>
 </div></body></html>
 {{end}}
@@ -339,7 +342,10 @@ const tplForm = `
 {{define "page-form"}}
 {{template "head" .}}{{template "nav" .}}
 <main>
-<h2>{{if .IsNew}}Создать{{else}}Редактировать{{end}} — {{.Entity.Name}}</h2>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:900px">
+  <h2 style="margin-bottom:0">{{if .IsNew}}Создать{{else}}Редактировать{{end}} — {{.Entity.Name}}</h2>
+  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" title="Закрыть" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+</div>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 <div class="card">
 <form method="POST">

@@ -414,9 +414,10 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 
 	user := auth.UserFromContext(r.Context())
 	isAdmin := user == nil || user.IsAdmin // no auth configured → treat as admin
+	markOnly := r.URL.Query().Get("mark") == "1"
 
-	if !isAdmin {
-		// Non-admin: mark for deletion
+	if !isAdmin || markOnly {
+		// Non-admin or explicit mark-only: mark for deletion
 		if err := s.store.MarkForDeletion(r.Context(), entity.Name, id, true); err != nil {
 			http.Error(w, err.Error(), 500)
 			return

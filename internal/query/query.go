@@ -3,6 +3,7 @@ package query
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -346,7 +347,7 @@ func translate(tokens []tok, paramValues map[string]any) (Result, error) {
 			if tr.params[t.val] == 0 {
 				tr.emit("NULL")
 			} else {
-				tr.emit(fmt.Sprintf("$%d", tr.params[t.val]))
+				tr.emit(fmt.Sprintf("$%d%s", tr.params[t.val], pgCast(tr.paramValues[t.val])))
 			}
 			continue
 		}
@@ -388,4 +389,15 @@ func translate(tokens []tok, paramValues map[string]any) (Result, error) {
 		tr.advance()
 	}
 	return Result{SQL: tr.build(), Args: tr.args}, nil
+}
+
+// pgCast returns a PostgreSQL explicit cast suffix for v so that PostgreSQL
+// can determine the parameter type even when the parameter appears in an
+// "IS NULL" expression (e.g. "$1::timestamptz IS NULL OR col <= $1::timestamptz").
+func pgCast(v any) string {
+	switch v.(type) {
+	case time.Time:
+		return "::timestamptz"
+	}
+	return ""
 }
