@@ -100,7 +100,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return template.JS(b)
 	},
-}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked))
+}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked + tplInfoReg))
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -672,6 +672,74 @@ const tplAbout = `
   </table>
 </div>
 </main></div></body></html>
+{{end}}
+`
+
+const tplInfoReg = `
+{{define "page-inforeg-list"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<div class="row-top">
+  <h2>{{.InfoReg.Name}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">(периодический)</span>{{end}}</h2>
+  <a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ Добавить запись</a>
+</div>
+<div class="card">
+{{if .Rows}}
+<table><thead><tr>
+  {{if .InfoReg.Periodic}}<th>Период</th>{{end}}
+  {{range .InfoReg.Dimensions}}<th>{{.Name}}</th>{{end}}
+  {{range .InfoReg.Resources}}<th>{{.Name}}</th>{{end}}
+  <th></th>
+</tr></thead><tbody>
+{{range .Rows}}{{$row := .}}<tr>
+  {{if $.InfoReg.Periodic}}<td>{{index $row "period"}}</td>{{end}}
+  {{range $.InfoReg.Dimensions}}<td>{{index $row .Name}}</td>{{end}}
+  {{range $.InfoReg.Resources}}<td style="font-weight:600">{{index $row .Name}}</td>{{end}}
+  <td>
+    <form method="POST" action="/ui/inforeg/{{lower $.InfoReg.Name}}/delete" style="display:inline"
+          onsubmit="return confirm('Удалить запись?')">
+      {{if $.InfoReg.Periodic}}<input type="hidden" name="period" value="{{index $row "period"}}">{{end}}
+      {{range $.InfoReg.Dimensions}}<input type="hidden" name="{{.Name}}" value="{{index $row .Name}}">{{end}}
+      <button class="btn btn-danger btn-sm" type="submit">×</button>
+    </form>
+  </td>
+</tr>{{end}}
+</tbody></table>
+{{else}}<p class="empty">Записей нет</p>{{end}}
+</div></main></div></body></html>
+{{end}}
+
+{{define "page-inforeg-form"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>{{.InfoReg.Name}} — новая запись</h2>
+{{if .Error}}<div style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Error}}</div>{{end}}
+<div class="card" style="max-width:560px">
+<form method="POST">
+  {{if .InfoReg.Periodic}}
+  <div class="form-row">
+    <label>Период</label>
+    <input type="date" name="period" value="{{index .Values "period"}}" required>
+  </div>
+  {{end}}
+  {{range .InfoReg.Dimensions}}
+  <div class="form-row">
+    <label>{{.Name}} <span style="color:#94a3b8;font-size:11px">[измерение]</span></label>
+    <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
+  </div>
+  {{end}}
+  {{range .InfoReg.Resources}}
+  <div class="form-row">
+    <label>{{.Name}}</label>
+    <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
+  </div>
+  {{end}}
+  <div style="margin-top:20px;display:flex;gap:8px">
+    <button class="btn" type="submit">Записать</button>
+    <a class="btn btn-secondary" href="/ui/inforeg/{{lower .InfoReg.Name}}">Отмена</a>
+  </div>
+</form>
+</div></main></div></body></html>
 {{end}}
 `
 

@@ -83,6 +83,35 @@ func LoadRegisterFile(path string) (*Register, error) {
 	return reg, nil
 }
 
+type rawInfoRegister struct {
+	Name       string     `yaml:"name"`
+	Periodic   bool       `yaml:"periodic"`
+	Dimensions []rawField `yaml:"dimensions"`
+	Resources  []rawField `yaml:"resources"`
+}
+
+func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw rawInfoRegister
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if raw.Name == "" {
+		return nil, fmt.Errorf("%s: missing name", path)
+	}
+	ir := &InfoRegister{Name: raw.Name, Periodic: raw.Periodic}
+	for _, rf := range raw.Dimensions {
+		ir.Dimensions = append(ir.Dimensions, parseField(rf))
+	}
+	for _, rf := range raw.Resources {
+		ir.Resources = append(ir.Resources, parseField(rf))
+	}
+	return ir, nil
+}
+
 func parseField(rf rawField) Field {
 	f := Field{Name: rf.Name, Type: FieldType(rf.Type)}
 	if strings.HasPrefix(rf.Type, "reference:") {

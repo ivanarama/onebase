@@ -1187,3 +1187,157 @@ func filterValue(params storage.ListParams, fieldName string) storage.FilterValu
 	}
 	return params.Filters[fieldName]
 }
+
+func (s *Server) getInfoReg(w http.ResponseWriter, r *http.Request) *metadata.InfoRegister {
+	name := capitalize(chi.URLParam(r, "name"))
+	ir := s.reg.GetInfoRegister(name)
+	if ir == nil {
+		http.Error(w, "unknown info register: "+name, 404)
+	}
+	return ir
+}
+
+func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
+	ir := s.getInfoReg(w, r)
+	if ir == nil {
+		return
+	}
+	rows, err := s.store.InfoRegList(r.Context(), ir)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.render(w, "page-inforeg-list", map[string]any{
+		"Nav":      s.buildNav(),
+		"InfoReg":  ir,
+		"Rows":     rows,
+	})
+}
+
+func (s *Server) infoRegForm(w http.ResponseWriter, r *http.Request) {
+	ir := s.getInfoReg(w, r)
+	if ir == nil {
+		return
+	}
+	now := time.Now().Format("2006-01-02")
+	s.render(w, "page-inforeg-form", map[string]any{
+		"Nav":     s.buildNav(),
+		"InfoReg": ir,
+		"Values":  map[string]string{"period": now},
+		"Error":   "",
+	})
+}
+
+func (s *Server) infoRegSubmit(w http.ResponseWriter, r *http.Request) {
+	ir := s.getInfoReg(w, r)
+	if ir == nil {
+		return
+	}
+	r.ParseForm()
+
+	var periodPtr *time.Time
+	if ir.Periodic {
+		pStr := r.FormValue("period")
+		if pStr == "" {
+			s.render(w, "page-inforeg-form", map[string]any{
+				"Nav": s.buildNav(), "InfoReg": ir,
+				"Values": formValuesFromRequest(r, ir),
+				"Error":  "Период обязателен для периодического регистра",
+			})
+			return
+		}
+		for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"} {
+			if t, err := time.Parse(layout, pStr); err == nil {
+				periodPtr = &t
+				break
+			}
+		}
+		if periodPtr == nil {
+			s.render(w, "page-inforeg-form", map[string]any{
+				"Nav": s.buildNav(), "InfoReg": ir,
+				"Values": formValuesFromRequest(r, ir),
+				"Error":  "Неверный формат даты периода",
+			})
+			return
+		}
+	}
+
+	dims := parseInfoRegFields(r, ir.Dimensions)
+	resources := parseInfoRegFields(r, ir.Resources)
+
+	if err := s.store.InfoRegSet(r.Context(), ir, dims, resources, periodPtr); err != nil {
+		s.render(w, "page-inforeg-form", map[string]any{
+			"Nav": s.buildNav(), "InfoReg": ir,
+			"Values": formValuesFromRequest(r, ir),
+			"Error":  err.Error(),
+		})
+		return
+	}
+	http.Redirect(w, r, "/ui/inforeg/"+strings.ToLower(ir.Name), http.StatusFound)
+}
+
+func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
+	ir := s.getInfoReg(w, r)
+	if ir == nil {
+		return
+	}
+	r.ParseForm()
+
+	var periodPtr *time.Time
+	if ir.Periodic {
+		if pStr := r.FormValue("period"); pStr != "" {
+			for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"} {
+				if t, err := time.Parse(layout, pStr); err == nil {
+					periodPtr = &t
+					break
+				}
+			}
+		}
+	}
+	dims := parseInfoRegFields(r, ir.Dimensions)
+	if err := s.store.InfoRegDelete(r.Context(), ir, dims, periodPtr); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	http.Redirect(w, r, "/ui/inforeg/"+strings.ToLower(ir.Name), http.StatusFound)
+}
+
+func parseInfoRegFields(r *http.Request, fields []metadata.Field) map[string]any {
+	result := make(map[string]any, len(fields))
+	for _, f := range fields {
+		val := r.FormValue(f.Name)
+		if val == "" {
+			result[f.Name] = nil
+			continue
+		}
+		result[f.Name] = parseInfoRegFieldValue(f, val)
+	}
+	return result
+}
+
+func parseInfoRegFieldValue(f metadata.Field, val string) any {
+	switch f.Type {
+	case metadata.FieldTypeDate:
+		for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"} {
+			if t, err := time.Parse(layout, val); err == nil {
+				return t
+			}
+		}
+		return val
+	case metadata.FieldTypeBool:
+		return val == "true" || val == "on"
+	default:
+		return val
+	}
+}
+
+func formValuesFromRequest(r *http.Request, ir *metadata.InfoRegister) map[string]string {
+	vals := map[string]string{"period": r.FormValue("period")}
+	for _, f := range ir.Dimensions {
+		vals[f.Name] = r.FormValue(f.Name)
+	}
+	for _, f := range ir.Resources {
+		vals[f.Name] = r.FormValue(f.Name)
+	}
+	return vals
+}

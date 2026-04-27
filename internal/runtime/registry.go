@@ -14,6 +14,7 @@ type Registry struct {
 	entities    map[string]*metadata.Entity
 	entitySlug  map[string]*metadata.Entity // lowercase name → entity
 	registers   map[string]*metadata.Register
+	inforegs    map[string]*metadata.InfoRegister
 	reports     map[string]*report.Report
 	procs       map[string]map[string]*ast.ProcedureDecl
 }
@@ -23,12 +24,13 @@ func NewRegistry() *Registry {
 		entities:   make(map[string]*metadata.Entity),
 		entitySlug: make(map[string]*metadata.Entity),
 		registers:  make(map[string]*metadata.Register),
+		inforegs:   make(map[string]*metadata.InfoRegister),
 		reports:    make(map[string]*report.Report),
 		procs:      make(map[string]map[string]*ast.ProcedureDecl),
 	}
 }
 
-func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, reports []*report.Report) {
+func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, inforegs []*metadata.InfoRegister, reports []*report.Report) {
 	newEntities := make(map[string]*metadata.Entity, len(entities))
 	newSlugs := make(map[string]*metadata.Entity, len(entities))
 	for _, e := range entities {
@@ -38,6 +40,10 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 	newRegs := make(map[string]*metadata.Register, len(registers))
 	for _, reg := range registers {
 		newRegs[reg.Name] = reg
+	}
+	newInfoRegs := make(map[string]*metadata.InfoRegister, len(inforegs))
+	for _, ir := range inforegs {
+		newInfoRegs[ir.Name] = ir
 	}
 	newReps := make(map[string]*report.Report, len(reports))
 	for _, rep := range reports {
@@ -55,6 +61,7 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 	r.entities = newEntities
 	r.entitySlug = newSlugs
 	r.registers = newRegs
+	r.inforegs = newInfoRegs
 	r.reports = newReps
 	r.procs = newProcs
 	r.mu.Unlock()
@@ -124,6 +131,31 @@ func (r *Registry) Registers() []*metadata.Register {
 	out := make([]*metadata.Register, 0, len(r.registers))
 	for _, reg := range r.registers {
 		out = append(out, reg)
+	}
+	return out
+}
+
+func (r *Registry) GetInfoRegister(name string) *metadata.InfoRegister {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if ir, ok := r.inforegs[name]; ok {
+		return ir
+	}
+	nl := strings.ToLower(name)
+	for k, v := range r.inforegs {
+		if strings.ToLower(k) == nl {
+			return v
+		}
+	}
+	return nil
+}
+
+func (r *Registry) InfoRegisters() []*metadata.InfoRegister {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*metadata.InfoRegister, 0, len(r.inforegs))
+	for _, ir := range r.inforegs {
+		out = append(out, ir)
 	}
 	return out
 }

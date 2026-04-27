@@ -203,7 +203,7 @@ const cfgFoot = `{{define "cfg-foot"}}
 </div>
 <script>
 // ── New object form ────────────────────────────────────────────
-var _cfgNewTitles = {catalog:'Новый справочник', document:'Новый документ', register:'Новый регистр'};
+var _cfgNewTitles = {catalog:'Новый справочник', document:'Новый документ', register:'Новый регистр', inforeg:'Новый регистр сведений'};
 function cfgNewObj(kind) {
   var f = document.getElementById('cfg-new-form');
   document.getElementById('cfg-new-title').textContent = _cfgNewTitles[kind] || 'Новый объект';
@@ -359,6 +359,16 @@ const cfgTabTree = `{{define "tab-tree"}}
   </div>
   {{end}}
 
+  <div class="cfg-group cfg-group-hd">
+    <span>Регистры сведений</span>
+    <span class="cfg-add-btn" onclick="cfgNewObj('inforeg')" title="Добавить регистр сведений">+</span>
+  </div>
+  {{range .InfoRegisters}}
+  <div class="cfg-item" data-id="ir-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">{{if .Periodic}}⏱{{else}}📋{{end}}</span>{{.Name}}
+  </div>
+  {{end}}
+
   {{if .Reports}}
   <div class="cfg-group">Отчёты</div>
   {{range .Reports}}
@@ -384,7 +394,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 {{/* ── Right panel ── */}}
 <div class="cfg-right">
 
-  {{if not (or .Catalogs .Docs .Registers .Reports)}}
+  {{if not (or .Catalogs .Docs .Registers .InfoRegisters .Reports)}}
   <div style="color:#aaa;padding:60px 20px;text-align:center">
     <div style="font-size:36px;margin-bottom:10px">📭</div>
     <div>Используйте «+» слева для добавления объектов конфигурации.</div>
@@ -418,6 +428,26 @@ const cfgTabTree = `{{define "tab-tree"}}
     <div class="panel-title">📊 {{.Name}}</div>
     <div class="panel-kind">Регистр накопления</div>
     {{template "register-detail" (dict "Register" . "BaseID" $.Base.ID "AllEntityNames" $.AllEntityNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity)}}
+  </div>
+  {{end}}
+
+  {{/* InfoRegisters */}}
+  {{range .InfoRegisters}}
+  <div class="cfg-panel" id="ir-{{.Name}}">
+    <div class="panel-title">{{if .Periodic}}⏱{{else}}📋{{end}} {{.Name}}</div>
+    <div class="panel-kind">Регистр сведений{{if .Periodic}} (периодический){{end}}</div>
+    <div class="section-hd">Измерения</div>
+    {{if .Dimensions}}
+    <div class="fields-table">
+      {{range .Dimensions}}<div class="field-row"><span class="fn">{{.Name}}</span><span class="ft {{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</span></div>{{end}}
+    </div>
+    {{else}}<div style="color:#aaa;font-size:12px;padding:4px 0">Нет измерений</div>{{end}}
+    <div class="section-hd" style="margin-top:10px">Ресурсы</div>
+    {{if .Resources}}
+    <div class="fields-table">
+      {{range .Resources}}<div class="field-row"><span class="fn">{{.Name}}</span><span class="ft {{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</span></div>{{end}}
+    </div>
+    {{else}}<div style="color:#aaa;font-size:12px;padding:4px 0">Нет ресурсов</div>{{end}}
   </div>
   {{end}}
 

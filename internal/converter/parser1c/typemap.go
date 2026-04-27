@@ -9,15 +9,17 @@ func MapType(t FieldType1C) (onebaseType string, note string) {
 		return "string", "составной тип → string"
 	}
 
-	p := t.Primary
+	// Strip cfg: namespace prefix from v8.3 MDClasses format
+	p := strings.TrimPrefix(t.Primary, "cfg:")
+
 	switch {
-	case p == "String" || p == "Строка":
+	case p == "String" || p == "Строка" || p == "xs:string":
 		return "string", ""
-	case p == "Number" || p == "Число":
+	case p == "Number" || p == "Число" || p == "xs:decimal" || p == "xs:int" || p == "xs:integer" || p == "xs:float" || p == "xs:double":
 		return "number", ""
-	case p == "Date" || p == "Дата":
+	case p == "Date" || p == "Дата" || p == "xs:dateTime" || p == "xs:date":
 		return "date", ""
-	case p == "Boolean" || p == "Булево":
+	case p == "Boolean" || p == "Булево" || p == "xs:boolean":
 		return "bool", ""
 	case p == "ValueStorage" || p == "ХранилищеЗначения":
 		return "string", "ХранилищеЗначения → string"
@@ -38,7 +40,7 @@ func MapType(t FieldType1C) (onebaseType string, note string) {
 	case p == "":
 		return "string", ""
 	default:
-		return "string", "неизвестный тип " + p + " → string"
+		return "string", "неизвестный тип " + t.Primary + " → string"
 	}
 }
 

@@ -46,8 +46,19 @@ type Register struct {
 	Attributes []Field // extra data, stored but not aggregated
 }
 
+type InfoRegister struct {
+	Name       string
+	Periodic   bool    // if true, (period, dim...) is PK; otherwise just (dim...)
+	Dimensions []Field // key fields
+	Resources  []Field // value fields
+}
+
 func RegisterTableName(regName string) string {
 	return "рег_" + strings.ToLower(regName)
+}
+
+func InfoRegTableName(regName string) string {
+	return "инфо_" + strings.ToLower(regName)
 }
 
 func TablePartTableName(entityName, tpName string) string {

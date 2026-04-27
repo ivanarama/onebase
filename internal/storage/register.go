@@ -113,7 +113,7 @@ func (db *DB) WriteMovements(ctx context.Context, regName, recorderType string, 
 		}
 		cols := []string{"id", "recorder", "recorder_type", "line_number", "period", "вид_движения"}
 		phs := []string{"$1", "$2", "$3", "$4", "$5", "$6"}
-		var periodVal any
+		periodVal := any(time.Now())
 		if period != nil {
 			periodVal = *period
 		}

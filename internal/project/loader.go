@@ -19,12 +19,13 @@ import (
 )
 
 type Project struct {
-	Dir       string
-	Entities  []*metadata.Entity
-	Registers []*metadata.Register
-	Reports   []*report.Report
-	Programs  map[string]*ast.Program // entity name → parsed DSL
-	cleanup   func()
+	Dir          string
+	Entities     []*metadata.Entity
+	Registers    []*metadata.Register
+	InfoRegisters []*metadata.InfoRegister
+	Reports      []*report.Report
+	Programs     map[string]*ast.Program // entity name → parsed DSL
+	cleanup      func()
 }
 
 // Close releases resources (e.g., temp dirs) associated with this Project.
@@ -134,6 +135,21 @@ func (p *Project) loadMetadata() error {
 				return err
 			}
 			p.Registers = append(p.Registers, reg)
+		}
+	}
+	// load info registers
+	irDir := filepath.Join(p.Dir, "inforegs")
+	irItems, err := os.ReadDir(irDir)
+	if err == nil {
+		for _, item := range irItems {
+			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+				continue
+			}
+			ir, err := metadata.LoadInfoRegisterFile(filepath.Join(irDir, item.Name()))
+			if err != nil {
+				return err
+			}
+			p.InfoRegisters = append(p.InfoRegisters, ir)
 		}
 	}
 	// load reports

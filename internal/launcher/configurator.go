@@ -82,6 +82,13 @@ type cfgReport struct {
 	Params []string
 }
 
+type cfgInfoRegister struct {
+	Name       string
+	Periodic   bool
+	Dimensions []cfgField
+	Resources  []cfgField
+}
+
 type configuratorData struct {
 	Base      *Base
 	AppName   string
@@ -90,6 +97,7 @@ type configuratorData struct {
 	Catalogs  []cfgEntity
 	Docs      []cfgEntity
 	Registers []cfgRegister
+	InfoRegisters []cfgInfoRegister
 	Reports   []cfgReport
 	Error     string
 	// all entity names for reference picker
@@ -286,6 +294,17 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 			rv.Attributes = append(rv.Attributes, toCfgField(f))
 		}
 		data.Registers = append(data.Registers, rv)
+	}
+
+	for _, ir := range proj.InfoRegisters {
+		rv := cfgInfoRegister{Name: ir.Name, Periodic: ir.Periodic}
+		for _, f := range ir.Dimensions {
+			rv.Dimensions = append(rv.Dimensions, toCfgField(f))
+		}
+		for _, f := range ir.Resources {
+			rv.Resources = append(rv.Resources, toCfgField(f))
+		}
+		data.InfoRegisters = append(data.InfoRegisters, rv)
 	}
 
 	for _, rep := range proj.Reports {
@@ -806,6 +825,8 @@ func newObjectContent(kind, name string) (subdir, content string) {
 		return "documents", "name: " + name + "\nfields:\n  - name: Дата\n    type: date\n"
 	case "register":
 		return "registers", "name: " + name + "\ndimensions:\n  - name: Измерение1\n    type: string\nresources:\n  - name: Ресурс1\n    type: number\n"
+	case "inforeg":
+		return "inforegs", "name: " + name + "\nperiodic: false\ndimensions:\n  - name: Ключ\n    type: string\nresources:\n  - name: Значение\n    type: string\n"
 	}
 	return "", ""
 }

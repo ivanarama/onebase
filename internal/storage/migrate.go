@@ -78,6 +78,25 @@ func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Regist
 	return nil
 }
 
+// MigrateInfoRegisters creates tables for info registers (CREATE TABLE IF NOT EXISTS + ADD COLUMN).
+func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoRegister) error {
+	for _, ir := range regs {
+		if _, err := db.pool.Exec(ctx, CreateInfoRegisterSQL(ir)); err != nil {
+			return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
+		}
+		table := metadata.InfoRegTableName(ir.Name)
+		if _, err := db.pool.Exec(ctx, AddColumnSQL(table, "updated_at", "TIMESTAMPTZ")); err != nil {
+			return fmt.Errorf("migrate info register %s.updated_at: %w", ir.Name, err)
+		}
+		for _, f := range ir.Resources {
+			if _, err := db.pool.Exec(ctx, AddColumnSQL(table, metadata.ColumnName(f), pgType(f))); err != nil {
+				return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
 // Migrate applies CREATE TABLE and ADD COLUMN IF NOT EXISTS for all entities.
 // Also ensures system tables (_sequences) exist.
 // Deletions and renames are out of scope for MVP.

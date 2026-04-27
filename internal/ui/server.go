@@ -46,6 +46,10 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/{kind}/{entity}/{id}", s.submitEdit)
 	r.Get("/ui/register/{name}", s.registerMovements)
 	r.Get("/ui/register/{name}/balances", s.registerBalances)
+	r.Get("/ui/inforeg/{name}", s.infoRegList)
+	r.Get("/ui/inforeg/{name}/new", s.infoRegForm)
+	r.Post("/ui/inforeg/{name}/new", s.infoRegSubmit)
+	r.Post("/ui/inforeg/{name}/delete", s.infoRegDelete)
 	r.Get("/ui/report/{name}", s.reportForm)
 	r.Post("/ui/report/{name}", s.reportRun)
 
@@ -132,6 +136,23 @@ func (s *Server) buildNav() []navGroup {
 	}
 	if len(regItems) > 0 {
 		nav = append(nav, navGroup{Kind: "Регистры", Items: regItems})
+	}
+
+	inforegs := s.reg.InfoRegisters()
+	sort.Slice(inforegs, func(i, j int) bool { return inforegs[i].Name < inforegs[j].Name })
+	var inforegItems []navItem
+	for _, ir := range inforegs {
+		label := ir.Name
+		if ir.Periodic {
+			label += " (периодический)"
+		}
+		inforegItems = append(inforegItems, navItem{
+			Label: label,
+			URL:   "/ui/inforeg/" + strings.ToLower(ir.Name),
+		})
+	}
+	if len(inforegItems) > 0 {
+		nav = append(nav, navGroup{Kind: "Регистры сведений", Items: inforegItems})
 	}
 
 	reps := s.reg.Reports()

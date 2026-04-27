@@ -56,6 +56,9 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
 		return err
 	}
+	if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
+		return err
+	}
 	fmt.Fprintln(os.Stdout, "migration complete")
 	return nil
 }

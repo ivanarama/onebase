@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// xmlProperties — корневой элемент Metadata.xml 1С
+// xmlProperties — корневой элемент Metadata.xml 1С (старый формат)
 type xmlProperties struct {
 	XMLName xml.Name `xml:"Properties"`
 	Name    string   `xml:"Name"`
@@ -39,6 +39,75 @@ type xmlTabularSection struct {
 
 type xmlType struct {
 	Types []string `xml:"Types>Type"`
+}
+
+// v8.3 MDClasses XML structures (sibling .xml files, MetaDataObject root)
+type xmlV8Root struct {
+	Catalog  *xmlV8Obj `xml:"Catalog"`
+	Document *xmlV8Obj `xml:"Document"`
+	AccReg   *xmlV8Obj `xml:"AccumulationRegister"`
+}
+
+type xmlV8Obj struct {
+	Props        xmlV8ObjProps `xml:"Properties"`
+	ChildObjects xmlV8Children `xml:"ChildObjects"`
+}
+
+type xmlV8ObjProps struct {
+	Name string `xml:"Name"`
+}
+
+type xmlV8Children struct {
+	Attributes      []xmlV8Attr    `xml:"Attribute"`
+	Dimensions      []xmlV8Attr    `xml:"Dimension"`
+	Resources       []xmlV8Attr    `xml:"Resource"`
+	TabularSections []xmlV8TabSect `xml:"TabularSection"`
+}
+
+type xmlV8Attr struct {
+	Props xmlV8AttrProps `xml:"Properties"`
+}
+
+type xmlV8AttrProps struct {
+	Name string    `xml:"Name"`
+	Type xmlV8Type `xml:"Type"`
+}
+
+type xmlV8Type struct {
+	Types []string `xml:"http://v8.1c.ru/8.1/data/core Type"`
+}
+
+type xmlV8TabSect struct {
+	Props        xmlV8ObjProps `xml:"Properties"`
+	ChildObjects xmlV8Children `xml:"ChildObjects"`
+}
+
+// parseV83File пробует прочитать файл как v8.3 MDClasses XML.
+// Возвращает nil, nil если файл не существует или не является v8.3 форматом.
+func parseV83File(path string) (*xmlV8Root, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	var root xmlV8Root
+	if err := xml.Unmarshal(data, &root); err != nil {
+		return nil, nil
+	}
+	if root.Catalog == nil && root.Document == nil && root.AccReg == nil {
+		return nil, nil
+	}
+	return &root, nil
+}
+
+func convertV83Attrs(attrs []xmlV8Attr) []Attribute {
+	var result []Attribute
+	for _, a := range attrs {
+		result = append(result, Attribute{
+			Name: a.Props.Name,
+			Type: parseType(a.Props.Type.Types),
+		})
+	}
+	return result
 }
 
 // ParseDir читает директорию выгрузки конфигурации 1С и возвращает ConfigDump.
@@ -106,23 +175,30 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 		if !e.IsDir() {
 			continue
 		}
-		metaFile := filepath.Join(dir, e.Name(), "Ext", "Metadata.xml")
+		name := e.Name()
+
+		if v8, _ := parseV83File(filepath.Join(dir, name+".xml")); v8 != nil && v8.Catalog != nil {
+			result = append(result, &CatalogMeta{
+				Name:       orDefault(v8.Catalog.Props.Name, name),
+				Attributes: convertV83Attrs(v8.Catalog.ChildObjects.Attributes),
+			})
+			continue
+		}
+
+		metaFile := filepath.Join(dir, name, "Ext", "Metadata.xml")
 		if _, err := os.Stat(metaFile); os.IsNotExist(err) {
-			// попробуем прямо Metadata.xml
-			metaFile = filepath.Join(dir, e.Name(), "Metadata.xml")
+			metaFile = filepath.Join(dir, name, "Metadata.xml")
 		}
 		props, err := parseMetaFile(metaFile)
 		if err != nil {
-			// нет файла — используем имя папки
-			result = append(result, &CatalogMeta{Name: e.Name()})
+			result = append(result, &CatalogMeta{Name: name})
 			continue
 		}
-		cat := &CatalogMeta{
-			Name:       orDefault(props.Name, e.Name()),
+		result = append(result, &CatalogMeta{
+			Name:       orDefault(props.Name, name),
 			Synonym:    props.Synonym.Content,
 			Attributes: convertAttrs(props.Attributes),
-		}
-		result = append(result, cat)
+		})
 	}
 	return result, nil
 }
@@ -137,17 +213,35 @@ func parseDocuments(dir string) ([]*DocumentMeta, error) {
 		if !e.IsDir() {
 			continue
 		}
-		metaFile := filepath.Join(dir, e.Name(), "Ext", "Metadata.xml")
+		name := e.Name()
+
+		if v8, _ := parseV83File(filepath.Join(dir, name+".xml")); v8 != nil && v8.Document != nil {
+			obj := v8.Document
+			doc := &DocumentMeta{
+				Name:       orDefault(obj.Props.Name, name),
+				Attributes: convertV83Attrs(obj.ChildObjects.Attributes),
+			}
+			for _, ts := range obj.ChildObjects.TabularSections {
+				doc.TabularSections = append(doc.TabularSections, TabularSection{
+					Name:       ts.Props.Name,
+					Attributes: convertV83Attrs(ts.ChildObjects.Attributes),
+				})
+			}
+			result = append(result, doc)
+			continue
+		}
+
+		metaFile := filepath.Join(dir, name, "Ext", "Metadata.xml")
 		if _, err := os.Stat(metaFile); os.IsNotExist(err) {
-			metaFile = filepath.Join(dir, e.Name(), "Metadata.xml")
+			metaFile = filepath.Join(dir, name, "Metadata.xml")
 		}
 		props, err := parseMetaFile(metaFile)
 		if err != nil {
-			result = append(result, &DocumentMeta{Name: e.Name()})
+			result = append(result, &DocumentMeta{Name: name})
 			continue
 		}
 		doc := &DocumentMeta{
-			Name:       orDefault(props.Name, e.Name()),
+			Name:       orDefault(props.Name, name),
 			Synonym:    props.Synonym.Content,
 			Attributes: convertAttrs(props.Attributes),
 		}
@@ -173,23 +267,35 @@ func parseRegisters(dir string) ([]*RegisterMeta, error) {
 		if !e.IsDir() {
 			continue
 		}
-		metaFile := filepath.Join(dir, e.Name(), "Ext", "Metadata.xml")
+		name := e.Name()
+
+		if v8, _ := parseV83File(filepath.Join(dir, name+".xml")); v8 != nil && v8.AccReg != nil {
+			obj := v8.AccReg
+			result = append(result, &RegisterMeta{
+				Name:       orDefault(obj.Props.Name, name),
+				Dimensions: convertV83Attrs(obj.ChildObjects.Dimensions),
+				Resources:  convertV83Attrs(obj.ChildObjects.Resources),
+				Attributes: convertV83Attrs(obj.ChildObjects.Attributes),
+			})
+			continue
+		}
+
+		metaFile := filepath.Join(dir, name, "Ext", "Metadata.xml")
 		if _, err := os.Stat(metaFile); os.IsNotExist(err) {
-			metaFile = filepath.Join(dir, e.Name(), "Metadata.xml")
+			metaFile = filepath.Join(dir, name, "Metadata.xml")
 		}
 		props, err := parseMetaFile(metaFile)
 		if err != nil {
-			result = append(result, &RegisterMeta{Name: e.Name()})
+			result = append(result, &RegisterMeta{Name: name})
 			continue
 		}
-		reg := &RegisterMeta{
-			Name:       orDefault(props.Name, e.Name()),
+		result = append(result, &RegisterMeta{
+			Name:       orDefault(props.Name, name),
 			Synonym:    props.Synonym.Content,
 			Dimensions: convertAttrs(props.Dimensions),
 			Resources:  convertAttrs(props.Resources),
 			Attributes: convertAttrs(props.Attributes),
-		}
-		result = append(result, reg)
+		})
 	}
 	return result, nil
 }
@@ -236,9 +342,10 @@ func parseType(types []string) FieldType1C {
 	}
 	t := types[0]
 	ft := FieldType1C{Primary: t}
-	// Извлечь имя объекта из ссылки
-	if strings.Contains(t, ".") {
-		parts := strings.SplitN(t, ".", 2)
+	// Извлечь имя объекта из ссылки (CatalogRef.X, cfg:CatalogRef.X, DocumentRef.X)
+	bare := strings.TrimPrefix(t, "cfg:")
+	if strings.Contains(bare, ".") && !strings.HasPrefix(bare, "xs:") {
+		parts := strings.SplitN(bare, ".", 2)
 		if len(parts) == 2 {
 			ft.RefObject = parts[1]
 		}

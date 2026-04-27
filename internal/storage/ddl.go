@@ -83,6 +83,28 @@ func CreateRegisterSQL(reg *metadata.Register) string {
 	return sb.String()
 }
 
+func CreateInfoRegisterSQL(ir *metadata.InfoRegister) string {
+	var cols, pkParts []string
+	if ir.Periodic {
+		cols = append(cols, "period TIMESTAMPTZ NOT NULL")
+		pkParts = append(pkParts, "period")
+	}
+	for _, f := range ir.Dimensions {
+		col := metadata.ColumnName(f)
+		cols = append(cols, col+" "+pgType(f)+" NOT NULL")
+		pkParts = append(pkParts, col)
+	}
+	for _, f := range ir.Resources {
+		cols = append(cols, metadata.ColumnName(f)+" "+pgType(f))
+	}
+	cols = append(cols, "updated_at TIMESTAMPTZ")
+	if len(pkParts) > 0 {
+		cols = append(cols, "PRIMARY KEY ("+strings.Join(pkParts, ", ")+")")
+	}
+	return "CREATE TABLE IF NOT EXISTS " + metadata.InfoRegTableName(ir.Name) +
+		" (\n    " + strings.Join(cols, ",\n    ") + "\n)"
+}
+
 func AddColumnSQL(table, col, pgtype string) string {
 	return "ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS " + col + " " + pgtype
 }
