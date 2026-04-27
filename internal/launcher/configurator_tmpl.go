@@ -94,6 +94,9 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;background:#f0f2f5;h
 .fields-tbl tr:last-child td{border-bottom:none}
 .fields-tbl tr:hover td{background:#f8f9fc}
 .ft-str{color:#059669}.ft-num{color:#7c3aed}.ft-date{color:#b45309}.ft-bool{color:#0284c7}.ft-ref{color:#1a4a80;font-weight:500}
+.fields-tbl select{padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px;background:#fff;color:#333}
+.fields-tbl select:focus{border-color:#1a4a80;outline:none}
+.success-box{background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:10px 14px;margin:10px;border-radius:5px;font-size:13px}
 
 .tp-block{margin-bottom:8px;background:#f8f9fc;border:1px solid #e8ecf4;border-radius:5px;overflow:hidden}
 .tp-hd{padding:6px 10px;font-size:12px;font-weight:600;color:#334;background:#f0f3f8}
@@ -181,11 +184,17 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
 </div>
 <div class="cfg-body">
 {{if .Error}}<div class="err-box">{{.Error}}</div>{{end}}
+{{if .FieldsSaved}}<div class="success-box">✓ Типы полей для «{{.FieldsSavedEntity}}» сохранены. Перезапустите базу, чтобы изменения вступили в силу.</div>{{end}}
 {{end}}`
 
 const cfgFoot = `{{define "cfg-foot"}}
 </div>
 <script>
+// ── Reference picker toggle ────────────────────────────────────
+function cfgToggleRef(sel, refId) {
+  var r = document.getElementById(refId);
+  if (r) r.style.display = sel.value === 'reference' ? '' : 'none';
+}
 // ── Click-to-edit module ───────────────────────────────────────
 function startEdit(name) {
   var pre = document.getElementById('pre-'+name);
@@ -340,7 +349,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="e-{{.Name}}">
     <div class="panel-title">📄 {{.Name}}</div>
     <div class="panel-kind">Справочник</div>
-    {{template "entity-detail" (dict "Entity" . "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity)}}
+    {{template "entity-detail" (dict "Entity" . "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity "AllEntityNames" $.AllEntityNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity)}}
   </div>
   {{end}}
 
@@ -352,7 +361,7 @@ const cfgTabTree = `{{define "tab-tree"}}
       {{if .Posting}}<span style="background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px">проводится</span>{{end}}
     </div>
     <div class="panel-kind">Документ</div>
-    {{template "entity-detail" (dict "Entity" . "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity)}}
+    {{template "entity-detail" (dict "Entity" . "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity "AllEntityNames" $.AllEntityNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity)}}
   </div>
   {{end}}
 
@@ -416,27 +425,78 @@ const cfgTabTree = `{{define "tab-tree"}}
 
 {{define "entity-detail"}}
 {{$e := .Entity}}
+{{$baseID := .BaseID}}
+{{$allEntities := .AllEntityNames}}
+{{$fSaved := .FieldsSaved}}
+{{$fSavedEnt := .FieldsSavedEntity}}
+
+<form method="POST" action="/bases/{{$baseID}}/configurator/fields">
+<input type="hidden" name="entity" value="{{$e.Name}}">
+{{range $e.TableParts}}<input type="hidden" name="tp_names" value="{{.Name}}">{{end}}
+
 {{if $e.Fields}}
 <div class="section-hd">Реквизиты</div>
 <table class="fields-tbl">
-<tr><th>Поле</th><th>Тип</th></tr>
-{{range $e.Fields}}
-<tr><td>{{.Name}}</td><td class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</td></tr>
+<tr><th>Поле</th><th>Тип</th><th style="min-width:150px">Объект</th></tr>
+{{range $i, $f := $e.Fields}}
+<input type="hidden" name="field.{{$i}}.name" value="{{$f.Name}}">
+<tr>
+  <td>{{$f.Name}}</td>
+  <td>
+    <select name="field.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$e.Name}}-f{{$i}}')">
+      <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>строка</option>
+      <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>число</option>
+      <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>дата</option>
+      <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>булево</option>
+      <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>ссылка →</option>
+    </select>
+  </td>
+  <td>
+    <select name="field.{{$i}}.ref" id="cfr-{{$e.Name}}-f{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+      <option value="">— выбрать —</option>
+      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </td>
+</tr>
 {{end}}
 </table>
 {{end}}
 
-{{range $e.TableParts}}
-<div class="section-hd">📋 {{.Name}} (табличная часть)</div>
+{{range $j, $tp := $e.TableParts}}
+<div class="section-hd">📋 {{$tp.Name}} (табличная часть)</div>
 <div class="tp-block">
 <table class="fields-tbl">
-<tr><th>Поле</th><th>Тип</th></tr>
-{{range .Fields}}
-<tr><td>{{.Name}}</td><td class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</td></tr>
+<tr><th>Поле</th><th>Тип</th><th style="min-width:150px">Объект</th></tr>
+{{range $i, $f := $tp.Fields}}
+<input type="hidden" name="tp.{{$tp.Name}}.field.{{$i}}.name" value="{{$f.Name}}">
+<tr>
+  <td>{{$f.Name}}</td>
+  <td>
+    <select name="tp.{{$tp.Name}}.field.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$e.Name}}-tp{{$j}}f{{$i}}')">
+      <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>строка</option>
+      <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>число</option>
+      <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>дата</option>
+      <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>булево</option>
+      <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>ссылка →</option>
+    </select>
+  </td>
+  <td>
+    <select name="tp.{{$tp.Name}}.field.{{$i}}.ref" id="cfr-{{$e.Name}}-tp{{$j}}f{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+      <option value="">— выбрать —</option>
+      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </td>
+</tr>
 {{end}}
 </table>
 </div>
 {{end}}
+
+<div class="module-save-row" style="margin-bottom:14px">
+  <button class="btn-save" type="submit">Сохранить типы полей</button>
+  {{if and $fSaved (eq $fSavedEnt $e.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+</div>
+</form>
 
 {{/* Module section */}}
 <div class="section-hd">Модули</div>

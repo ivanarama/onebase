@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,7 +16,27 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
+	"gopkg.in/yaml.v3"
 )
+
+// ── YAML save structs ────────────────────────────────────────────────────────
+
+type saveField struct {
+	Name string `yaml:"name"`
+	Type string `yaml:"type"`
+}
+
+type saveTP struct {
+	Name   string      `yaml:"name"`
+	Fields []saveField `yaml:"fields"`
+}
+
+type saveEntity struct {
+	Name       string      `yaml:"name"`
+	Posting    bool        `yaml:"posting,omitempty"`
+	Fields     []saveField `yaml:"fields"`
+	TableParts []saveTP    `yaml:"tableparts,omitempty"`
+}
 
 // ── view types ────────────────────────────────────────────────────────────────
 
@@ -54,15 +75,17 @@ type cfgReport struct {
 }
 
 type configuratorData struct {
-	Base     *Base
-	AppName  string
-	Tab      string // "tree" | "convert" | "files"
-	Entities []cfgEntity
-	Catalogs []cfgEntity
-	Docs     []cfgEntity
+	Base      *Base
+	AppName   string
+	Tab       string // "tree" | "convert" | "files"
+	Entities  []cfgEntity
+	Catalogs  []cfgEntity
+	Docs      []cfgEntity
 	Registers []cfgRegister
-	Reports  []cfgReport
-	Error    string
+	Reports   []cfgReport
+	Error     string
+	// all entity names for reference picker
+	AllEntityNames []string
 	// converter
 	ConvertSrcDir  string
 	ConvertResult  string
@@ -70,6 +93,9 @@ type configuratorData struct {
 	// module save
 	ModuleSaved       bool
 	ModuleSavedEntity string
+	// fields save
+	FieldsSaved       bool
+	FieldsSavedEntity string
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -230,6 +256,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 		return data.Entities[i].Name < data.Entities[j].Name
 	})
 	for _, e := range data.Entities {
+		data.AllEntityNames = append(data.AllEntityNames, e.Name)
 		if e.Kind == "Справочник" {
 			data.Catalogs = append(data.Catalogs, e)
 		} else {
@@ -364,6 +391,185 @@ func entityToFilename(name string) string {
 	runes := []rune(name)
 	runes[0] = unicode.ToLower(runes[0])
 	return string(runes) + ".os"
+}
+
+// ── field-type save ───────────────────────────────────────────────────────────
+
+func findEntityFilePath(dir, entityName string) (string, error) {
+	for _, sub := range []string{"catalogs", "documents"} {
+		items, _ := os.ReadDir(filepath.Join(dir, sub))
+		for _, item := range items {
+			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+				continue
+			}
+			p := filepath.Join(dir, sub, item.Name())
+			data, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			var hdr struct {
+				Name string `yaml:"name"`
+			}
+			if yaml.Unmarshal(data, &hdr) == nil && hdr.Name == entityName {
+				return p, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("entity %q not found", entityName)
+}
+
+func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField) {
+	ent.Fields = fields
+	for i, tp := range ent.TableParts {
+		if f, ok := tpFields[tp.Name]; ok {
+			ent.TableParts[i].Fields = f
+		}
+	}
+}
+
+func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields map[string][]saveField) error {
+	filePath, err := findEntityFilePath(dir, entityName)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	var ent saveEntity
+	if err := yaml.Unmarshal(raw, &ent); err != nil {
+		return err
+	}
+	applyFieldEdits(&ent, fields, tpFields)
+	out, err := yaml.Marshal(&ent)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filePath, out, 0o644)
+}
+
+func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName string, fields []saveField, tpFields map[string][]saveField) error {
+	db, err := storage.Connect(ctx, b.DB)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Pool().Query(ctx,
+		`SELECT path, content FROM _onebase_config WHERE path LIKE 'catalogs/%.yaml' OR path LIKE 'documents/%.yaml'`)
+	if err != nil {
+		return fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	var targetPath string
+	var ent saveEntity
+	for rows.Next() {
+		var p string
+		var content []byte
+		if err := rows.Scan(&p, &content); err != nil {
+			continue
+		}
+		var e saveEntity
+		if yaml.Unmarshal(content, &e) == nil && e.Name == entityName {
+			targetPath = p
+			ent = e
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	if targetPath == "" {
+		return fmt.Errorf("entity %q not found in DB config", entityName)
+	}
+
+	applyFieldEdits(&ent, fields, tpFields)
+	out, err := yaml.Marshal(&ent)
+	if err != nil {
+		return err
+	}
+	_, err = db.Pool().Exec(ctx, `
+		INSERT INTO _onebase_config (path, content, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+	`, targetPath, out)
+	return err
+}
+
+func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	entityName := r.FormValue("entity")
+	tpNames := r.Form["tp_names"]
+
+	var fields []saveField
+	for i := 0; i < 500; i++ {
+		name := r.FormValue(fmt.Sprintf("field.%d.name", i))
+		if name == "" {
+			break
+		}
+		typ := r.FormValue(fmt.Sprintf("field.%d.type", i))
+		ref := r.FormValue(fmt.Sprintf("field.%d.ref", i))
+		if typ == "reference" {
+			if ref == "" {
+				data := h.loadCfgData(r.Context(), b, "tree")
+				data.Error = fmt.Sprintf("Поле «%s»: выберите объект для ссылки", name)
+				renderCfg(w, data)
+				return
+			}
+			typ = "reference:" + ref
+		}
+		fields = append(fields, saveField{Name: name, Type: typ})
+	}
+
+	tpFields := make(map[string][]saveField)
+	for _, tpName := range tpNames {
+		var f []saveField
+		for i := 0; i < 500; i++ {
+			name := r.FormValue(fmt.Sprintf("tp.%s.field.%d.name", tpName, i))
+			if name == "" {
+				break
+			}
+			typ := r.FormValue(fmt.Sprintf("tp.%s.field.%d.type", tpName, i))
+			ref := r.FormValue(fmt.Sprintf("tp.%s.field.%d.ref", tpName, i))
+			if typ == "reference" {
+				if ref == "" {
+					data := h.loadCfgData(r.Context(), b, "tree")
+					data.Error = fmt.Sprintf("Поле «%s.%s»: выберите объект для ссылки", tpName, name)
+					renderCfg(w, data)
+					return
+				}
+				typ = "reference:" + ref
+			}
+			f = append(f, saveField{Name: name, Type: typ})
+		}
+		tpFields[tpName] = f
+	}
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		saveErr = h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields)
+	} else {
+		saveErr = saveEntityFieldsToFile(b.Path, entityName, fields, tpFields)
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = entityName
+	}
+	renderCfg(w, data)
 }
 
 func renderCfg(w http.ResponseWriter, data *configuratorData) {
