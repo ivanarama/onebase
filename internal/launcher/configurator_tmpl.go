@@ -24,6 +24,8 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 			return "булево"
 		case "reference":
 			return "→ " + ref
+		case "enum":
+			return "перечисление"
 		default:
 			return typ
 		}
@@ -38,6 +40,8 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 			return "ft-date"
 		case "bool":
 			return "ft-bool"
+		case "enum":
+			return "ft-ref"
 		default:
 			return "ft-str"
 		}
@@ -203,7 +207,7 @@ const cfgFoot = `{{define "cfg-foot"}}
 </div>
 <script>
 // ── New object form ────────────────────────────────────────────
-var _cfgNewTitles = {catalog:'Новый справочник', document:'Новый документ', register:'Новый регистр', inforeg:'Новый регистр сведений'};
+var _cfgNewTitles = {catalog:'Новый справочник', document:'Новый документ', register:'Новый регистр', inforeg:'Новый регистр сведений', enum:'Новое перечисление'};
 function cfgNewObj(kind) {
   var f = document.getElementById('cfg-new-form');
   document.getElementById('cfg-new-title').textContent = _cfgNewTitles[kind] || 'Новый объект';
@@ -369,6 +373,27 @@ const cfgTabTree = `{{define "tab-tree"}}
   </div>
   {{end}}
 
+  {{if .Enums}}
+  <div class="cfg-group cfg-group-hd">
+    <span>Перечисления</span>
+    <span class="cfg-add-btn" onclick="cfgNewObj('enum')" title="Добавить перечисление">+</span>
+  </div>
+  {{range .Enums}}
+  <div class="cfg-item" data-id="en-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">🔢</span>{{.Name}}
+  </div>
+  {{end}}
+  {{end}}
+
+  {{if .Constants}}
+  <div class="cfg-group">Константы</div>
+  {{range .Constants}}
+  <div class="cfg-item" data-id="cn-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">⚙</span>{{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}
+  </div>
+  {{end}}
+  {{end}}
+
   {{if .Reports}}
   <div class="cfg-group">Отчёты</div>
   {{range .Reports}}
@@ -394,7 +419,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 {{/* ── Right panel ── */}}
 <div class="cfg-right">
 
-  {{if not (or .Catalogs .Docs .Registers .InfoRegisters .Reports)}}
+  {{if not (or .Catalogs .Docs .Registers .InfoRegisters .Enums .Constants .Reports)}}
   <div style="color:#aaa;padding:60px 20px;text-align:center">
     <div style="font-size:36px;margin-bottom:10px">📭</div>
     <div>Используйте «+» слева для добавления объектов конфигурации.</div>
@@ -448,6 +473,27 @@ const cfgTabTree = `{{define "tab-tree"}}
       {{range .Resources}}<div class="field-row"><span class="fn">{{.Name}}</span><span class="ft {{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</span></div>{{end}}
     </div>
     {{else}}<div style="color:#aaa;font-size:12px;padding:4px 0">Нет ресурсов</div>{{end}}
+  </div>
+  {{end}}
+
+  {{/* Enums */}}
+  {{range .Enums}}
+  <div class="cfg-panel" id="en-{{.Name}}">
+    <div class="panel-title">🔢 {{.Name}}</div>
+    <div class="panel-kind">Перечисление</div>
+    <div class="section-hd">Значения</div>
+    {{if .Values}}
+    {{range .Values}}<div style="font-size:13px;padding:3px 0 3px 8px;color:#334155">• {{.}}</div>{{end}}
+    {{else}}<div style="color:#aaa;font-size:12px;padding:4px 0">Нет значений</div>{{end}}
+  </div>
+  {{end}}
+
+  {{/* Constants */}}
+  {{range .Constants}}
+  <div class="cfg-panel" id="cn-{{.Name}}">
+    <div class="panel-title">⚙ {{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}</div>
+    <div class="panel-kind">Константа · <span class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</span></div>
+    {{if .Default}}<div style="font-size:12px;color:#64748b;margin-top:8px">По умолчанию: <b>{{.Default}}</b></div>{{end}}
   </div>
   {{end}}
 

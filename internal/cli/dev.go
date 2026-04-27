@@ -91,7 +91,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintln(os.Stderr, "[dev] migrate info registers error:", err)
 			return
 		}
-		reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Reports)
+		if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
+			fmt.Fprintln(os.Stderr, "[dev] migrate constants error:", err)
+			return
+		}
+		reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports)
 		fmt.Fprintln(os.Stdout, "[dev] reloaded")
 	}
 	load()

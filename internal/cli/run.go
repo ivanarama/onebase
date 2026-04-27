@@ -79,9 +79,12 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
 		return fmt.Errorf("migrate info registers: %w", err)
 	}
+	if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
+		return fmt.Errorf("migrate constants: %w", err)
+	}
 
 	reg := runtime.NewRegistry()
-	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Reports)
+	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports)
 
 	appCfg, _ := project.LoadConfig(proj.Dir)
 	uiCfg := ui.Config{

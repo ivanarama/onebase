@@ -112,10 +112,70 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 	return ir, nil
 }
 
+type rawEnum struct {
+	Name   string   `yaml:"name"`
+	Values []string `yaml:"values"`
+}
+
+func LoadEnumFile(path string) (*Enum, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw rawEnum
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if raw.Name == "" {
+		return nil, fmt.Errorf("%s: missing name", path)
+	}
+	return &Enum{Name: raw.Name, Values: raw.Values}, nil
+}
+
+type rawConstant struct {
+	Name    string `yaml:"name"`
+	Type    string `yaml:"type"`
+	Default string `yaml:"default"`
+	Label   string `yaml:"label"`
+}
+
+type rawConstantsFile struct {
+	Constants []rawConstant `yaml:"constants"`
+}
+
+func LoadConstantsFile(path string) ([]*Constant, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw rawConstantsFile
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	var result []*Constant
+	for _, rc := range raw.Constants {
+		c := &Constant{
+			Name:    rc.Name,
+			Type:    FieldType(rc.Type),
+			Default: rc.Default,
+			Label:   rc.Label,
+		}
+		if strings.HasPrefix(rc.Type, "reference:") {
+			c.RefEntity = strings.TrimPrefix(rc.Type, "reference:")
+		} else if strings.HasPrefix(rc.Type, "enum:") {
+			c.EnumName = strings.TrimPrefix(rc.Type, "enum:")
+		}
+		result = append(result, c)
+	}
+	return result, nil
+}
+
 func parseField(rf rawField) Field {
 	f := Field{Name: rf.Name, Type: FieldType(rf.Type)}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
+	} else if strings.HasPrefix(rf.Type, "enum:") {
+		f.EnumName = strings.TrimPrefix(rf.Type, "enum:")
 	}
 	return f
 }

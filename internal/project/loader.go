@@ -19,13 +19,15 @@ import (
 )
 
 type Project struct {
-	Dir          string
-	Entities     []*metadata.Entity
-	Registers    []*metadata.Register
+	Dir           string
+	Entities      []*metadata.Entity
+	Registers     []*metadata.Register
 	InfoRegisters []*metadata.InfoRegister
-	Reports      []*report.Report
-	Programs     map[string]*ast.Program // entity name → parsed DSL
-	cleanup      func()
+	Enums         []*metadata.Enum
+	Constants     []*metadata.Constant
+	Reports       []*report.Report
+	Programs      map[string]*ast.Program // entity name → parsed DSL
+	cleanup       func()
 }
 
 // Close releases resources (e.g., temp dirs) associated with this Project.
@@ -85,7 +87,7 @@ func Load(dir string) (*Project, error) {
 	if err := p.loadMetadata(); err != nil {
 		return nil, err
 	}
-	if err := metadata.Validate(p.Entities); err != nil {
+	if err := metadata.Validate(p.Entities, p.Enums); err != nil {
 		return nil, err
 	}
 	if err := p.loadDSL(); err != nil {
@@ -150,6 +152,36 @@ func (p *Project) loadMetadata() error {
 				return err
 			}
 			p.InfoRegisters = append(p.InfoRegisters, ir)
+		}
+	}
+	// load enums
+	enumDir := filepath.Join(p.Dir, "enums")
+	enumItems, err := os.ReadDir(enumDir)
+	if err == nil {
+		for _, item := range enumItems {
+			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+				continue
+			}
+			e, err := metadata.LoadEnumFile(filepath.Join(enumDir, item.Name()))
+			if err != nil {
+				return err
+			}
+			p.Enums = append(p.Enums, e)
+		}
+	}
+	// load constants (all .yaml files from constants/)
+	constDir := filepath.Join(p.Dir, "constants")
+	constItems, err := os.ReadDir(constDir)
+	if err == nil {
+		for _, item := range constItems {
+			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+				continue
+			}
+			consts, err := metadata.LoadConstantsFile(filepath.Join(constDir, item.Name()))
+			if err != nil {
+				return err
+			}
+			p.Constants = append(p.Constants, consts...)
 		}
 	}
 	// load reports

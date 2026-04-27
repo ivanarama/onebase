@@ -80,6 +80,7 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	}
 	refOptions, _ := s.loadRefOptions(r.Context(), entity)
 	tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
+	enumOpts := s.loadEnumOptions(entity)
 	// Pre-fill date fields with current datetime for new documents
 	values := map[string]string{}
 	if entity.Kind == metadata.KindDocument {
@@ -96,6 +97,7 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		"IsNew":         true,
 		"Values":        values,
 		"RefOptions":    refOptions,
+		"EnumOptions":   enumOpts,
 		"TPRefOptions":  tpRefOpts,
 		"TablePartRows": map[string][]map[string]any{},
 	})
@@ -136,7 +138,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	setPeriodFromFields(mc, entity, obj.Fields)
 
-	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
+	if errMsg := s.runOnWriteCtx(r.Context(), obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
 		tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
@@ -146,6 +148,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			"Error":         errMsg,
 			"Values":        formValues(r, entity),
 			"RefOptions":    refOptions,
+			"EnumOptions":   s.loadEnumOptions(entity),
 			"TPRefOptions":  tpRefOpts,
 			"TablePartRows": tpRows,
 		})
@@ -201,6 +204,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	refOptions, _ := s.loadRefOptions(r.Context(), entity)
 	tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
+	enumOpts := s.loadEnumOptions(entity)
 	vals := make(map[string]string)
 	for _, f := range entity.Fields {
 		v := row[f.Name]
@@ -237,6 +241,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"IsNew":         false,
 		"Values":        vals,
 		"RefOptions":    refOptions,
+		"EnumOptions":   enumOpts,
 		"TPRefOptions":  tpRefOpts,
 		"TablePartRows": tpRows,
 		"ID":            id.String(),
@@ -271,7 +276,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	mc := runtime.NewMovementsCollector(entity.Name, id)
 	setPeriodFromFields(mc, entity, fields)
 
-	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
+	if errMsg := s.runOnWriteCtx(r.Context(), obj, mc); errMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
 		tpRefOpts2, _ := s.loadTPRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
@@ -281,6 +286,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			"Error":         errMsg,
 			"Values":        formValues(r, entity),
 			"RefOptions":    refOptions,
+			"EnumOptions":   s.loadEnumOptions(entity),
 			"TPRefOptions":  tpRefOpts2,
 			"TablePartRows": tpRows,
 		})
@@ -357,7 +363,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	mc := runtime.NewMovementsCollector(entity.Name, id)
 	setPeriodFromFields(mc, entity, obj.Fields)
 
-	if errMsg := s.runOnWrite(obj, mc); errMsg != "" {
+	if errMsg := s.runOnWriteCtx(r.Context(), obj, mc); errMsg != "" {
 		http.Error(w, "Проведение: "+errMsg, 422)
 		return
 	}
@@ -903,11 +909,33 @@ func parseListParams(r *http.Request, entity *metadata.Entity) storage.ListParam
 }
 
 func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector) string {
+	return s.runOnWriteCtx(context.Background(), obj, mc)
+}
+
+func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) string {
 	proc := s.reg.GetProcedure(obj.Type, "OnWrite")
 	if proc == nil {
 		return ""
 	}
-	vars := map[string]any{"Движения": mc}
+	// Перечисления: nested map where Перечисления.Имя.Значение → строку
+	enumsMap := make(map[string]any)
+	for _, e := range s.reg.Enums() {
+		inner := make(map[string]any, len(e.Values))
+		for _, v := range e.Values {
+			inner[v] = v
+		}
+		enumsMap[e.Name] = &interpreter.MapThis{M: inner}
+	}
+	// Константы: values from DB
+	constsMap := make(map[string]any)
+	if vals, err := s.store.ListConstants(ctx); err == nil {
+		constsMap = vals
+	}
+	vars := map[string]any{
+		"Движения":      mc,
+		"Перечисления":  &interpreter.MapThis{M: enumsMap},
+		"Константы":     &interpreter.MapThis{M: constsMap},
+	}
 	if err := s.interp.Run(proc, obj, vars); err != nil {
 		if dslErr, ok := err.(*interpreter.DSLError); ok {
 			return dslErr.Msg
@@ -929,6 +957,22 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) *metadata.Ent
 	}
 	http.Error(w, "unknown entity: "+raw, 404)
 	return nil
+}
+
+// loadEnumOptions returns enum values for each enum-type field of the entity.
+func (s *Server) loadEnumOptions(entity *metadata.Entity) map[string][]string {
+	opts := make(map[string][]string)
+	for _, f := range entity.Fields {
+		if f.EnumName == "" {
+			continue
+		}
+		en := s.reg.GetEnum(f.EnumName)
+		if en == nil {
+			continue
+		}
+		opts[f.Name] = en.Values
+	}
+	return opts
 }
 
 func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (map[string][]map[string]any, error) {
@@ -1329,6 +1373,68 @@ func parseInfoRegFieldValue(f metadata.Field, val string) any {
 	default:
 		return val
 	}
+}
+
+func (s *Server) constantsList(w http.ResponseWriter, r *http.Request) {
+	consts := s.reg.Constants()
+	sort.Slice(consts, func(i, j int) bool { return consts[i].Name < consts[j].Name })
+
+	values, _ := s.store.ListConstants(r.Context())
+	valStrs := make(map[string]string, len(values))
+	for k, v := range values {
+		valStrs[k] = fmt.Sprintf("%v", v)
+	}
+
+	// ref options for reference-type constants
+	refOpts := make(map[string][]map[string]any)
+	for _, c := range consts {
+		if c.RefEntity == "" {
+			continue
+		}
+		refEntity := s.reg.GetEntity(c.RefEntity)
+		if refEntity == nil {
+			continue
+		}
+		rows, err := s.store.List(r.Context(), refEntity.Name, refEntity, storage.ListParams{})
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			row["_label"] = firstStringField(row, refEntity)
+		}
+		refOpts[c.Name] = rows
+	}
+
+	msg := r.URL.Query().Get("saved")
+	s.render(w, "page-constants", map[string]any{
+		"Nav":       s.buildNav(),
+		"Constants": consts,
+		"Values":    valStrs,
+		"RefOpts":   refOpts,
+		"Saved":     msg == "1",
+	})
+}
+
+func (s *Server) constantsSave(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	consts := s.reg.Constants()
+	for _, c := range consts {
+		val := r.FormValue(c.Name)
+		var v any
+		if val == "" {
+			v = nil
+		} else {
+			v = val
+		}
+		if err := s.store.SetConstant(r.Context(), c.Name, v); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+	}
+	http.Redirect(w, r, "/ui/constants?saved=1", http.StatusSeeOther)
 }
 
 func formValuesFromRequest(r *http.Request, ir *metadata.InfoRegister) map[string]string {

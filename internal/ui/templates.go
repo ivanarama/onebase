@@ -13,7 +13,8 @@ import (
 var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 	"lower": strings.ToLower,
 	"str":   func(v any) string { return fmt.Sprintf("%v", v) },
-	"isRef": func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "reference:") },
+	"isRef":  func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "reference:") },
+	"isEnum": func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "enum:") },
 	"fmtDate": func(v any) string {
 		if t, ok := v.(time.Time); ok {
 			return t.Format("02.01.2006")
@@ -100,7 +101,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return template.JS(b)
 	},
-}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked + tplInfoReg))
+}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants))
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -357,6 +358,13 @@ const tplForm = `
       <option value="">— выбрать —</option>
       {{range index $.RefOptions $fn}}
       <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
+      {{end}}
+    </select>
+  {{else if isEnum (str .Type)}}
+    <select name="{{$fn}}">
+      <option value="">— выбрать —</option>
+      {{range index $.EnumOptions $fn}}
+      <option value="{{.}}" {{if eq . (index $.Values $fn)}}selected{{end}}>{{.}}</option>
       {{end}}
     </select>
   {{else if eq (str .Type) "date"}}
@@ -738,6 +746,48 @@ const tplInfoReg = `
     <button class="btn" type="submit">Записать</button>
     <a class="btn btn-secondary" href="/ui/inforeg/{{lower .InfoReg.Name}}">Отмена</a>
   </div>
+</form>
+</div></main></div></body></html>
+{{end}}
+`
+
+const tplConstants = `
+{{define "page-constants"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>Константы</h2>
+{{if .Saved}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">✓ Константы сохранены</div>{{end}}
+<div class="card" style="max-width:700px">
+<form method="POST" action="/ui/constants">
+{{range .Constants}}{{$c := .}}
+<div class="form-group">
+  <label>{{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}</label>
+  {{if .RefEntity}}
+    <select name="{{.Name}}">
+      <option value="">— не выбрано —</option>
+      {{range index $.RefOpts .Name}}
+      <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
+      {{end}}
+    </select>
+  {{else if eq (str .Type) "date"}}
+    <input type="date" name="{{.Name}}" value="{{index $.Values .Name}}">
+  {{else if eq (str .Type) "bool"}}
+    <select name="{{.Name}}">
+      <option value="false" {{if eq (index $.Values .Name) "false"}}selected{{end}}>Нет</option>
+      <option value="true"  {{if eq (index $.Values .Name) "true"}}selected{{end}}>Да</option>
+    </select>
+  {{else}}
+    <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}" placeholder="{{.Name}}">
+  {{end}}
+</div>
+{{end}}
+{{if not .Constants}}
+<p class="empty">Нет констант в конфигурации</p>
+{{else}}
+<div style="margin-top:20px">
+  <button class="btn btn-primary" type="submit">Сохранить</button>
+</div>
+{{end}}
 </form>
 </div></main></div></body></html>
 {{end}}

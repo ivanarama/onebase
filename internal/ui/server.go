@@ -79,6 +79,10 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/cleanup", s.adminCleanup)
 	r.Post("/ui/admin/cleanup", s.adminCleanup)
 
+	// Constants
+	r.Get("/ui/constants", s.constantsList)
+	r.Post("/ui/constants", s.constantsSave)
+
 	// About
 	r.Get("/ui/about", s.about)
 }
@@ -170,6 +174,12 @@ func (s *Server) buildNav() []navGroup {
 	}
 	if len(repItems) > 0 {
 		nav = append(nav, navGroup{Kind: "Отчёты", Items: repItems})
+	}
+
+	if len(s.reg.Constants()) > 0 {
+		nav = append(nav, navGroup{Kind: "Настройки", Items: []navItem{
+			{Label: "Константы", URL: "/ui/constants"},
+		}})
 	}
 	return nav
 }

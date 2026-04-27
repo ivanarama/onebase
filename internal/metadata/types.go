@@ -22,6 +22,21 @@ type Field struct {
 	Name      string
 	Type      FieldType
 	RefEntity string // non-empty when Type starts with "reference:"
+	EnumName  string // non-empty when Type starts with "enum:"
+}
+
+type Enum struct {
+	Name   string
+	Values []string
+}
+
+type Constant struct {
+	Name      string
+	Type      FieldType
+	RefEntity string
+	EnumName  string
+	Default   string
+	Label     string
 }
 
 type TablePart struct {
@@ -71,6 +86,14 @@ func IsReference(ft FieldType) bool {
 
 func RefName(ft FieldType) string {
 	return strings.TrimPrefix(string(ft), "reference:")
+}
+
+func IsEnum(ft FieldType) bool {
+	return strings.HasPrefix(string(ft), "enum:")
+}
+
+func EnumTypeName(ft FieldType) string {
+	return strings.TrimPrefix(string(ft), "enum:")
 }
 
 func TableName(entityName string) string {

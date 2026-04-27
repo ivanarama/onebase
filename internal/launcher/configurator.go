@@ -52,6 +52,20 @@ type cfgField struct {
 	Name      string
 	Type      string
 	RefEntity string
+	EnumName  string
+}
+
+type cfgEnum struct {
+	Name   string
+	Values []string
+}
+
+type cfgConstant struct {
+	Name      string
+	Type      string
+	RefEntity string
+	Default   string
+	Label     string
 }
 
 type cfgTablePart struct {
@@ -98,6 +112,8 @@ type configuratorData struct {
 	Docs      []cfgEntity
 	Registers []cfgRegister
 	InfoRegisters []cfgInfoRegister
+	Enums     []cfgEnum
+	Constants []cfgConstant
 	Reports   []cfgReport
 	Error     string
 	// all entity names for reference picker
@@ -307,6 +323,24 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 		data.InfoRegisters = append(data.InfoRegisters, rv)
 	}
 
+	for _, en := range proj.Enums {
+		data.Enums = append(data.Enums, cfgEnum{Name: en.Name, Values: en.Values})
+	}
+
+	for _, c := range proj.Constants {
+		typ := string(c.Type)
+		if c.RefEntity != "" {
+			typ = "reference"
+		}
+		data.Constants = append(data.Constants, cfgConstant{
+			Name:      c.Name,
+			Type:      typ,
+			RefEntity: c.RefEntity,
+			Default:   c.Default,
+			Label:     c.Label,
+		})
+	}
+
 	for _, rep := range proj.Reports {
 		rv := cfgReport{Name: rep.Name, Title: rep.Title, Query: rep.Query}
 		for _, p := range rep.Params {
@@ -324,8 +358,10 @@ func toCfgField(f metadata.Field) cfgField {
 	typ := string(f.Type)
 	if f.RefEntity != "" {
 		typ = "reference"
+	} else if f.EnumName != "" {
+		typ = "enum"
 	}
-	return cfgField{Name: f.Name, Type: typ, RefEntity: f.RefEntity}
+	return cfgField{Name: f.Name, Type: typ, RefEntity: f.RefEntity, EnumName: f.EnumName}
 }
 
 func readOSSources(dir string) map[string]string {
@@ -827,6 +863,8 @@ func newObjectContent(kind, name string) (subdir, content string) {
 		return "registers", "name: " + name + "\ndimensions:\n  - name: Измерение1\n    type: string\nresources:\n  - name: Ресурс1\n    type: number\n"
 	case "inforeg":
 		return "inforegs", "name: " + name + "\nperiodic: false\ndimensions:\n  - name: Ключ\n    type: string\nresources:\n  - name: Значение\n    type: string\n"
+	case "enum":
+		return "enums", "name: " + name + "\nvalues:\n  - Значение1\n  - Значение2\n"
 	}
 	return "", ""
 }

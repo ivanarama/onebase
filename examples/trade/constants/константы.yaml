@@ -1,0 +1,8 @@
+constants:
+  - name: НашаОрганизация
+    type: reference:Контрагент
+    label: Наша организация
+  - name: ОсновнаяВалюта
+    type: string
+    default: "RUB"
+    label: Основная валюта учёта

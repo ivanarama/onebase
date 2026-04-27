@@ -15,6 +15,8 @@ type Registry struct {
 	entitySlug  map[string]*metadata.Entity // lowercase name → entity
 	registers   map[string]*metadata.Register
 	inforegs    map[string]*metadata.InfoRegister
+	enums       map[string]*metadata.Enum
+	constants   map[string]*metadata.Constant
 	reports     map[string]*report.Report
 	procs       map[string]map[string]*ast.ProcedureDecl
 }
@@ -25,12 +27,14 @@ func NewRegistry() *Registry {
 		entitySlug: make(map[string]*metadata.Entity),
 		registers:  make(map[string]*metadata.Register),
 		inforegs:   make(map[string]*metadata.InfoRegister),
+		enums:      make(map[string]*metadata.Enum),
+		constants:  make(map[string]*metadata.Constant),
 		reports:    make(map[string]*report.Report),
 		procs:      make(map[string]map[string]*ast.ProcedureDecl),
 	}
 }
 
-func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, inforegs []*metadata.InfoRegister, reports []*report.Report) {
+func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, inforegs []*metadata.InfoRegister, enums []*metadata.Enum, constants []*metadata.Constant, reports []*report.Report) {
 	newEntities := make(map[string]*metadata.Entity, len(entities))
 	newSlugs := make(map[string]*metadata.Entity, len(entities))
 	for _, e := range entities {
@@ -44,6 +48,14 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 	newInfoRegs := make(map[string]*metadata.InfoRegister, len(inforegs))
 	for _, ir := range inforegs {
 		newInfoRegs[ir.Name] = ir
+	}
+	newEnums := make(map[string]*metadata.Enum, len(enums))
+	for _, e := range enums {
+		newEnums[e.Name] = e
+	}
+	newConsts := make(map[string]*metadata.Constant, len(constants))
+	for _, c := range constants {
+		newConsts[c.Name] = c
 	}
 	newReps := make(map[string]*report.Report, len(reports))
 	for _, rep := range reports {
@@ -62,6 +74,8 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 	r.entitySlug = newSlugs
 	r.registers = newRegs
 	r.inforegs = newInfoRegs
+	r.enums = newEnums
+	r.constants = newConsts
 	r.reports = newReps
 	r.procs = newProcs
 	r.mu.Unlock()
@@ -156,6 +170,38 @@ func (r *Registry) InfoRegisters() []*metadata.InfoRegister {
 	out := make([]*metadata.InfoRegister, 0, len(r.inforegs))
 	for _, ir := range r.inforegs {
 		out = append(out, ir)
+	}
+	return out
+}
+
+func (r *Registry) GetEnum(name string) *metadata.Enum {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.enums[name]
+}
+
+func (r *Registry) Enums() []*metadata.Enum {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*metadata.Enum, 0, len(r.enums))
+	for _, e := range r.enums {
+		out = append(out, e)
+	}
+	return out
+}
+
+func (r *Registry) GetConstantMeta(name string) *metadata.Constant {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.constants[name]
+}
+
+func (r *Registry) Constants() []*metadata.Constant {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*metadata.Constant, 0, len(r.constants))
+	for _, c := range r.constants {
+		out = append(out, c)
 	}
 	return out
 }
