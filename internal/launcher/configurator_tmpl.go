@@ -42,7 +42,7 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 			return "ft-str"
 		}
 	},
-}).Parse(cfgCSS + cfgHead + cfgMain + cfgTabTree + cfgTabConvert + cfgTabFiles + cfgFoot))
+}).Parse(cfgCSS + cfgHead + cfgMain + cfgTabTree + cfgRegDetail + cfgTabConvert + cfgTabFiles + cfgFoot))
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 
@@ -141,6 +141,18 @@ pre.os-code{
 .hl-num{color:#f78c6c}
 .hl-cmt{color:#546e7a;font-style:italic}
 
+/* ── New object form ─────────────────────────────────── */
+.cfg-group-hd{display:flex;justify-content:space-between;align-items:center;padding-right:6px}
+.cfg-add-btn{cursor:pointer;color:#1a4a80;font-size:17px;line-height:1;padding:0 4px;border-radius:3px;font-weight:400;opacity:.7}
+.cfg-add-btn:hover{background:#e0e8ff;opacity:1}
+.cfg-new-form{padding:8px 10px 10px;border-top:1px solid #d8dde8;margin-top:4px}
+.cfg-new-form input[type=text]{width:100%;padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px;margin-bottom:6px;box-sizing:border-box}
+.cfg-new-form input[type=text]:focus{border-color:#1a4a80;outline:none}
+.cfg-new-form .row{display:flex;gap:4px}
+.cfg-new-form .btn-create{flex:1;padding:5px;background:#1a4a80;color:#fff;border:none;border-radius:3px;font-size:12px;cursor:pointer}
+.cfg-new-form .btn-create:hover{background:#15396a}
+.cfg-new-form .btn-cancel{padding:5px 8px;background:#e8ecf2;border:1px solid #ccd0d8;border-radius:3px;font-size:12px;cursor:pointer}
+
 /* ── Converter / Files ───────────────────────────────── */
 .pad{padding:16px}
 .convert-form,.file-card{background:#fff;border:1px solid #d8dde8;border-radius:6px;padding:18px;margin-bottom:14px}
@@ -190,6 +202,20 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
 const cfgFoot = `{{define "cfg-foot"}}
 </div>
 <script>
+// ── New object form ────────────────────────────────────────────
+var _cfgNewTitles = {catalog:'Новый справочник', document:'Новый документ', register:'Новый регистр'};
+function cfgNewObj(kind) {
+  var f = document.getElementById('cfg-new-form');
+  document.getElementById('cfg-new-title').textContent = _cfgNewTitles[kind] || 'Новый объект';
+  document.getElementById('cfg-new-kind-inp').value = kind;
+  document.getElementById('cfg-new-name').value = '';
+  f.style.display = 'block';
+  document.getElementById('cfg-new-name').focus();
+}
+function cfgHideNew() {
+  document.getElementById('cfg-new-form').style.display = 'none';
+}
+
 // ── Reference picker toggle ────────────────────────────────────
 function cfgToggleRef(sel, refId) {
   var r = document.getElementById(refId);
@@ -299,36 +325,38 @@ const cfgMain = `{{define "cfg-main"}}
 // ── Tree tab ──────────────────────────────────────────────────────────────────
 
 const cfgTabTree = `{{define "tab-tree"}}
-{{if or .Catalogs .Docs .Registers .Reports}}
 <div class="cfg-split">
 
 {{/* ── Left panel ── */}}
 <div class="cfg-left">
-  {{if .Catalogs}}
-  <div class="cfg-group">Справочники</div>
+  <div class="cfg-group cfg-group-hd">
+    <span>Справочники</span>
+    <span class="cfg-add-btn" onclick="cfgNewObj('catalog')" title="Добавить справочник">+</span>
+  </div>
   {{range .Catalogs}}
   <div class="cfg-item" data-id="e-{{.Name}}" onclick="selItem(this)">
     <span class="ic">📄</span>{{.Name}}
   </div>
   {{end}}
-  {{end}}
 
-  {{if .Docs}}
-  <div class="cfg-group">Документы</div>
+  <div class="cfg-group cfg-group-hd">
+    <span>Документы</span>
+    <span class="cfg-add-btn" onclick="cfgNewObj('document')" title="Добавить документ">+</span>
+  </div>
   {{range .Docs}}
   <div class="cfg-item" data-id="e-{{.Name}}" onclick="selItem(this)">
     <span class="ic">📃</span>{{.Name}}{{if .Posting}}<span class="bp">✓</span>{{end}}
   </div>
   {{end}}
-  {{end}}
 
-  {{if .Registers}}
-  <div class="cfg-group">Регистры</div>
+  <div class="cfg-group cfg-group-hd">
+    <span>Регистры</span>
+    <span class="cfg-add-btn" onclick="cfgNewObj('register')" title="Добавить регистр">+</span>
+  </div>
   {{range .Registers}}
   <div class="cfg-item" data-id="r-{{.Name}}" onclick="selItem(this)">
     <span class="ic">📊</span>{{.Name}}
   </div>
-  {{end}}
   {{end}}
 
   {{if .Reports}}
@@ -339,10 +367,29 @@ const cfgTabTree = `{{define "tab-tree"}}
   </div>
   {{end}}
   {{end}}
+
+  <div id="cfg-new-form" class="cfg-new-form" style="display:none">
+    <div id="cfg-new-title" style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px"></div>
+    <form method="POST" action="/bases/{{$.Base.ID}}/configurator/new">
+      <input type="hidden" name="kind" id="cfg-new-kind-inp" value="">
+      <input type="text" name="name" id="cfg-new-name" placeholder="Имя объекта" autocomplete="off">
+      <div class="row">
+        <button type="submit" class="btn-create">Создать</button>
+        <button type="button" class="btn-cancel" onclick="cfgHideNew()">✕</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 {{/* ── Right panel ── */}}
 <div class="cfg-right">
+
+  {{if not (or .Catalogs .Docs .Registers .Reports)}}
+  <div style="color:#aaa;padding:60px 20px;text-align:center">
+    <div style="font-size:36px;margin-bottom:10px">📭</div>
+    <div>Используйте «+» слева для добавления объектов конфигурации.</div>
+  </div>
+  {{end}}
 
   {{/* Catalogs */}}
   {{range .Catalogs}}
@@ -370,27 +417,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="r-{{.Name}}">
     <div class="panel-title">📊 {{.Name}}</div>
     <div class="panel-kind">Регистр накопления</div>
-    {{if .Dimensions}}
-    <div class="section-hd">Измерения</div>
-    <table class="fields-tbl">
-      <tr><th>Поле</th><th>Тип</th></tr>
-      {{range .Dimensions}}<tr><td>{{.Name}}</td><td class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</td></tr>{{end}}
-    </table>
-    {{end}}
-    {{if .Resources}}
-    <div class="section-hd">Ресурсы</div>
-    <table class="fields-tbl">
-      <tr><th>Поле</th><th>Тип</th></tr>
-      {{range .Resources}}<tr><td>{{.Name}}</td><td class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</td></tr>{{end}}
-    </table>
-    {{end}}
-    {{if .Attributes}}
-    <div class="section-hd">Реквизиты</div>
-    <table class="fields-tbl">
-      <tr><th>Поле</th><th>Тип</th></tr>
-      {{range .Attributes}}<tr><td>{{.Name}}</td><td class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</td></tr>{{end}}
-    </table>
-    {{end}}
+    {{template "register-detail" (dict "Register" . "BaseID" $.Base.ID "AllEntityNames" $.AllEntityNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity)}}
   </div>
   {{end}}
 
@@ -412,15 +439,6 @@ const cfgTabTree = `{{define "tab-tree"}}
 
 </div>{{/* cfg-right */}}
 </div>{{/* cfg-split */}}
-
-{{else}}
-<div class="pad">
-  <div style="background:#fff;border:1px solid #d8dde8;border-radius:6px;padding:40px;text-align:center;color:#999">
-    <div style="font-size:32px;margin-bottom:10px">📭</div>
-    <div>Конфигурация пуста или не загружена.</div>
-  </div>
-</div>
-{{end}}
 {{end}}
 
 {{define "entity-detail"}}
@@ -529,6 +547,109 @@ const cfgTabTree = `{{define "tab-tree"}}
     <div class="module-empty" style="padding:12px 0">Модуль менеджера — в разработке.</div>
   </div>
 </div>
+{{end}}`
+
+// ── Register detail (editable) ────────────────────────────────────────────────
+
+const cfgRegDetail = `{{define "register-detail"}}
+{{$rg := .Register}}
+{{$baseID := .BaseID}}
+{{$allEntities := .AllEntityNames}}
+{{$fSaved := .FieldsSaved}}
+{{$fSavedEnt := .FieldsSavedEntity}}
+
+<form method="POST" action="/bases/{{$baseID}}/configurator/register-fields">
+<input type="hidden" name="register" value="{{$rg.Name}}">
+
+{{if $rg.Dimensions}}
+<div class="section-hd">Измерения</div>
+<table class="fields-tbl">
+<tr><th>Поле</th><th>Тип</th><th style="min-width:150px">Объект</th></tr>
+{{range $i, $f := $rg.Dimensions}}
+<input type="hidden" name="dim.{{$i}}.name" value="{{$f.Name}}">
+<tr>
+  <td>{{$f.Name}}</td>
+  <td>
+    <select name="dim.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$rg.Name}}-d{{$i}}')">
+      <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>строка</option>
+      <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>число</option>
+      <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>дата</option>
+      <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>булево</option>
+      <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>ссылка →</option>
+    </select>
+  </td>
+  <td>
+    <select name="dim.{{$i}}.ref" id="cfr-{{$rg.Name}}-d{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+      <option value="">— выбрать —</option>
+      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </td>
+</tr>
+{{end}}
+</table>
+{{end}}
+
+{{if $rg.Resources}}
+<div class="section-hd">Ресурсы</div>
+<table class="fields-tbl">
+<tr><th>Поле</th><th>Тип</th><th style="min-width:150px">Объект</th></tr>
+{{range $i, $f := $rg.Resources}}
+<input type="hidden" name="res.{{$i}}.name" value="{{$f.Name}}">
+<tr>
+  <td>{{$f.Name}}</td>
+  <td>
+    <select name="res.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$rg.Name}}-r{{$i}}')">
+      <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>строка</option>
+      <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>число</option>
+      <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>дата</option>
+      <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>булево</option>
+      <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>ссылка →</option>
+    </select>
+  </td>
+  <td>
+    <select name="res.{{$i}}.ref" id="cfr-{{$rg.Name}}-r{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+      <option value="">— выбрать —</option>
+      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </td>
+</tr>
+{{end}}
+</table>
+{{end}}
+
+{{if $rg.Attributes}}
+<div class="section-hd">Реквизиты</div>
+<table class="fields-tbl">
+<tr><th>Поле</th><th>Тип</th><th style="min-width:150px">Объект</th></tr>
+{{range $i, $f := $rg.Attributes}}
+<input type="hidden" name="attr.{{$i}}.name" value="{{$f.Name}}">
+<tr>
+  <td>{{$f.Name}}</td>
+  <td>
+    <select name="attr.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$rg.Name}}-a{{$i}}')">
+      <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>строка</option>
+      <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>число</option>
+      <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>дата</option>
+      <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>булево</option>
+      <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>ссылка →</option>
+    </select>
+  </td>
+  <td>
+    <select name="attr.{{$i}}.ref" id="cfr-{{$rg.Name}}-a{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+      <option value="">— выбрать —</option>
+      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </td>
+</tr>
+{{end}}
+</table>
+{{end}}
+
+<div class="module-save-row" style="margin-bottom:14px">
+  <button class="btn-save" type="submit">Сохранить типы полей</button>
+  {{if and $fSaved (eq $fSavedEnt $rg.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+</div>
+</form>
 {{end}}`
 
 // ── Converter tab ─────────────────────────────────────────────────────────────

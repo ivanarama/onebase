@@ -221,7 +221,16 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("sel")
-	h.runner.StopAll()
+
+	// Collect all known base ports so we can kill processes even if not tracked.
+	var ports []int
+	if bases, err := h.store.List(); err == nil {
+		for _, b := range bases {
+			ports = append(ports, b.Port)
+		}
+	}
+	h.runner.StopAll(ports)
+
 	redirect := "/"
 	if sel != "" {
 		redirect = "/?sel=" + sel

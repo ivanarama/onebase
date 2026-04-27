@@ -39,6 +39,13 @@ type saveEntity struct {
 	TableParts []saveTP    `yaml:"tableparts,omitempty"`
 }
 
+type saveRegister struct {
+	Name       string      `yaml:"name"`
+	Dimensions []saveField `yaml:"dimensions,omitempty"`
+	Resources  []saveField `yaml:"resources,omitempty"`
+	Attributes []saveField `yaml:"attributes,omitempty"`
+}
+
 // ── view types ────────────────────────────────────────────────────────────────
 
 type cfgField struct {
@@ -580,4 +587,229 @@ func renderCfg(w http.ResponseWriter, data *configuratorData) {
 	if err := cfgTmpl.ExecuteTemplate(w, "cfg-main", data); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
+}
+
+// ── Register field save ───────────────────────────────────────────────────────
+
+func findRegisterFilePath(dir, regName string) (string, error) {
+	items, _ := os.ReadDir(filepath.Join(dir, "registers"))
+	for _, item := range items {
+		if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
+			continue
+		}
+		p := filepath.Join(dir, "registers", item.Name())
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var hdr struct {
+			Name string `yaml:"name"`
+		}
+		if yaml.Unmarshal(data, &hdr) == nil && hdr.Name == regName {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("register %q not found", regName)
+}
+
+func saveRegisterFieldsToFile(dir, regName string, dims, res, attrs []saveField) error {
+	filePath, err := findRegisterFilePath(dir, regName)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	var reg saveRegister
+	if err := yaml.Unmarshal(raw, &reg); err != nil {
+		return err
+	}
+	reg.Dimensions = dims
+	reg.Resources = res
+	reg.Attributes = attrs
+	out, err := yaml.Marshal(&reg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filePath, out, 0o644)
+}
+
+func (h *handler) saveRegisterFieldsToDB(ctx context.Context, b *Base, regName string, dims, res, attrs []saveField) error {
+	db, err := storage.Connect(ctx, b.DB)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Pool().Query(ctx,
+		`SELECT path, content FROM _onebase_config WHERE path LIKE 'registers/%.yaml'`)
+	if err != nil {
+		return fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	var targetPath string
+	var reg saveRegister
+	for rows.Next() {
+		var p string
+		var content []byte
+		if err := rows.Scan(&p, &content); err != nil {
+			continue
+		}
+		var r saveRegister
+		if yaml.Unmarshal(content, &r) == nil && r.Name == regName {
+			targetPath = p
+			reg = r
+			break
+		}
+	}
+	rows.Close()
+	if targetPath == "" {
+		return fmt.Errorf("register %q not found in DB config", regName)
+	}
+
+	reg.Dimensions = dims
+	reg.Resources = res
+	reg.Attributes = attrs
+	out, err := yaml.Marshal(&reg)
+	if err != nil {
+		return err
+	}
+	_, err = db.Pool().Exec(ctx, `
+		INSERT INTO _onebase_config (path, content, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+	`, targetPath, out)
+	return err
+}
+
+func (h *handler) configuratorSaveRegisterFields(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	regName := r.FormValue("register")
+
+	parseSection := func(prefix string) []saveField {
+		var fields []saveField
+		for i := 0; i < 500; i++ {
+			name := r.FormValue(fmt.Sprintf("%s.%d.name", prefix, i))
+			if name == "" {
+				break
+			}
+			typ := r.FormValue(fmt.Sprintf("%s.%d.type", prefix, i))
+			ref := r.FormValue(fmt.Sprintf("%s.%d.ref", prefix, i))
+			if typ == "reference" && ref != "" {
+				typ = "reference:" + ref
+			}
+			fields = append(fields, saveField{Name: name, Type: typ})
+		}
+		return fields
+	}
+
+	dims := parseSection("dim")
+	res := parseSection("res")
+	attrs := parseSection("attr")
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		saveErr = h.saveRegisterFieldsToDB(r.Context(), b, regName, dims, res, attrs)
+	} else {
+		saveErr = saveRegisterFieldsToFile(b.Path, regName, dims, res, attrs)
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = regName
+	}
+	renderCfg(w, data)
+}
+
+// ── New object creation ───────────────────────────────────────────────────────
+
+func (h *handler) configuratorNewObject(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	kind := r.FormValue("kind")
+	name := strings.TrimSpace(r.FormValue("name"))
+
+	if name == "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = "Укажите имя объекта"
+		renderCfg(w, data)
+		return
+	}
+
+	subdir, content := newObjectContent(kind, name)
+	if subdir == "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = "Неизвестный тип объекта: " + kind
+		renderCfg(w, data)
+		return
+	}
+
+	filename := nameToFilename(name) + ".yaml"
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, cerr := storage.Connect(r.Context(), b.DB)
+		if cerr != nil {
+			saveErr = cerr
+		} else {
+			defer db.Close()
+			repo := configdb.New(db.Pool())
+			repo.EnsureSchema(r.Context())
+			path := subdir + "/" + filename
+			_, saveErr = db.Pool().Exec(r.Context(), `
+				INSERT INTO _onebase_config (path, content, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+			`, path, []byte(content))
+		}
+	} else {
+		dir := filepath.Join(b.Path, subdir)
+		os.MkdirAll(dir, 0o755)
+		saveErr = os.WriteFile(filepath.Join(dir, filename), []byte(content), 0o644)
+	}
+
+	if saveErr != nil {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = "Ошибка создания: " + saveErr.Error()
+		renderCfg(w, data)
+		return
+	}
+	http.Redirect(w, r, "/bases/"+b.ID+"/configurator?tab=tree", http.StatusFound)
+}
+
+func newObjectContent(kind, name string) (subdir, content string) {
+	switch kind {
+	case "catalog":
+		return "catalogs", "name: " + name + "\nfields:\n  - name: Наименование\n    type: string\n"
+	case "document":
+		return "documents", "name: " + name + "\nfields:\n  - name: Дата\n    type: date\n"
+	case "register":
+		return "registers", "name: " + name + "\ndimensions:\n  - name: Измерение1\n    type: string\nresources:\n  - name: Ресурс1\n    type: number\n"
+	}
+	return "", ""
+}
+
+func nameToFilename(name string) string {
+	return strings.ToLower(name)
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -104,8 +105,9 @@ func (r *Runner) Stop(baseID string) error {
 	return nil
 }
 
-// StopAll kills all running base processes and waits for ports to free.
-func (r *Runner) StopAll() {
+// StopAll kills all running base processes (tracked + any still listening on extraPorts)
+// and waits for ports to free.
+func (r *Runner) StopAll(extraPorts []int) {
 	r.mu.Lock()
 	type procInfo struct {
 		proc *os.Process
@@ -121,9 +123,64 @@ func (r *Runner) StopAll() {
 	for _, pi := range all {
 		killProc(pi.proc)
 	}
-	// Wait up to 3s for all ports to free so next Start() can proceed immediately.
+
+	// Kill any processes still occupying the ports (survived launcher restart or are untracked).
+	seen := make(map[int]bool)
 	for _, pi := range all {
-		waitPortFree(pi.port, 3*time.Second)
+		seen[pi.port] = true
+	}
+	for _, port := range extraPorts {
+		if !seen[port] {
+			killByPort(port)
+			seen[port] = true
+		}
+	}
+	// Also try port-based kill for tracked ports in case killProc was not enough.
+	for _, pi := range all {
+		killByPort(pi.port)
+	}
+
+	for port := range seen {
+		waitPortFree(port, 3*time.Second)
+	}
+}
+
+// killByPort finds and kills any process listening on the given TCP port.
+func killByPort(port int) {
+	target := fmt.Sprintf(":%d", port)
+	switch runtime.GOOS {
+	case "windows":
+		out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
+		if err != nil {
+			return
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if !strings.Contains(line, target) || !strings.Contains(line, "LISTENING") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 5 {
+				exec.Command("taskkill", "/F", "/T", "/PID", fields[len(fields)-1]).Run()
+			}
+		}
+	case "darwin":
+		out, _ := exec.Command("lsof", "-ti", target).Output()
+		if pid := strings.TrimSpace(string(out)); pid != "" {
+			for _, p := range strings.Fields(pid) {
+				exec.Command("kill", "-9", p).Run()
+			}
+		}
+	case "linux":
+		// ss output: State Recv-Q Send-Q Local pid=NNN,fd=M
+		out, _ := exec.Command("sh", "-c", fmt.Sprintf("ss -tlnp 2>/dev/null | grep '%s '", target)).Output()
+		for _, line := range strings.Split(string(out), "\n") {
+			if idx := strings.Index(line, "pid="); idx >= 0 {
+				rest := line[idx+4:]
+				if end := strings.IndexAny(rest, ",\n "); end > 0 {
+					exec.Command("kill", "-9", rest[:end]).Run()
+				}
+			}
+		}
 	}
 }
 

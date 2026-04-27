@@ -41,12 +41,22 @@ jobs:
           go-version: '1.23'
           cache: true
 
+      - name: Compute version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "ver=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "ver=build-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-        run: go build -ldflags="-s -w -X github.com/ivantit66/onebase/internal/version.Build=${{ github.ref_name }}" -o onebase${{ matrix.ext }} ./cmd/onebase
+        run: go build -ldflags="-s -w -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }}" -o onebase${{ matrix.ext }} ./cmd/onebase
 
       - name: Build GUI binary (Windows native window, webview)
         if: matrix.goos == 'windows'
@@ -55,7 +65,7 @@ jobs:
           CGO_ENABLED: 1
         run: |
           go get github.com/webview/webview_go@latest
-          go build -tags webview -ldflags="-s -w -H windowsgui -X github.com/ivantit66/onebase/internal/version.Build=${{ github.ref_name }}" -o onebase-gui.exe ./cmd/onebase
+          go build -tags webview -ldflags="-s -w -H windowsgui -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }}" -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)
         if: matrix.goos == 'windows'
@@ -86,6 +96,31 @@ jobs:
           name: onebase-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ env.ASSET }}
           retention-days: 7
+
+  dev-release:
+    name: Dev Pre-Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Pre-Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: build-${{ github.run_number }}
+          prerelease: true
+          files: dist/*
+          body: |
+            Автосборка из ветки `main`.
+            Коммит: `${{ github.sha }}`
+            Версия платформы: `build-${{ github.run_number }}`
+
+            Для идентификации: в конфигураторе в шапке отображается `платформа build-${{ github.run_number }}`.
 
   release:
     name: Create GitHub Release
