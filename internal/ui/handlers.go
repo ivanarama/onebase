@@ -164,7 +164,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		if !entity.Posting {
 			return s.saveMovements(ctx, entity.Name, obj.ID, mc)
 		}
-		if action == "post_and_close" {
+		if action == "post_and_close" || action == "post" {
 			if err := s.saveMovements(ctx, entity.Name, obj.ID, mc); err != nil {
 				return err
 			}
@@ -180,7 +180,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
 		return
 	}
-	// "Записать" — остаёмся на форме редактирования
+	// "post" / "Записать" — остаёмся на форме
 	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
 }
 
@@ -299,7 +299,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		if !entity.Posting {
 			return s.saveMovements(ctx, entity.Name, obj.ID, mc)
 		}
-		if action == "post_and_close" {
+		if action == "post_and_close" || action == "post" {
 			if err := s.saveMovements(ctx, entity.Name, obj.ID, mc); err != nil {
 				return err
 			}
@@ -702,7 +702,22 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) *reportpkg.Re
 }
 
 func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpkg.Report, paramValues map[string]any) {
-	compiled, err := query.Compile(rep.Query, paramValues)
+	// Build query params: convert date strings to time.Time for proper PG type inference.
+	// Keep paramValues unchanged so the form repopulates with the original strings.
+	queryValues := make(map[string]any, len(paramValues))
+	for k, v := range paramValues {
+		queryValues[k] = v
+	}
+	for _, p := range rep.Params {
+		if p.Type == "date" {
+			if str, ok := queryValues[p.Name].(string); ok && str != "" {
+				if t, err2 := time.Parse("2006-01-02", str); err2 == nil {
+					queryValues[p.Name] = t
+				}
+			}
+		}
+	}
+	compiled, err := query.Compile(rep.Query, queryValues)
 	if err != nil {
 		s.render(w, "page-report", map[string]any{
 			"Nav":         s.buildNav(),

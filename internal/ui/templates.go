@@ -211,12 +211,6 @@ const tplList = `
   <h2>{{.Entity.Name}}</h2>
   <div style="display:flex;gap:8px">
     <a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">+ Создать</a>
-    {{if .IsAdmin}}
-    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/delete-marked"
-          onsubmit="return confirm('Удалить все помеченные записи без ссылок?')">
-      <button class="btn btn-danger btn-sm" type="submit" style="padding:8px 14px">Удалить помеченные</button>
-    </form>
-    {{end}}
   </div>
 </div>
 
@@ -275,7 +269,11 @@ const tplList = `
   <th style="width:90px"></th>
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}
-<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through"{{end}}>
+<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
+  onclick="listRowClick(event,this)"
+  oncontextmenu="listCtxMenu(event,this)"
+  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
+  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}">
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="Проведён">✓</span>{{else}}<span style="color:#94a3b8" title="Не проведён">—</span>{{end}}
@@ -291,7 +289,49 @@ const tplList = `
 {{else}}
 <p class="empty">Записей нет — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">создать первую</a></p>
 {{end}}
-</div></main></div></body></html>
+</div></main>
+<script>
+var _isAdmin={{if .IsAdmin}}true{{else}}false{{end}};
+var _listSel=null;
+function listRowClick(e,tr){
+  if(e.target.closest('a,button'))return;
+  if(_listSel)_listSel.querySelectorAll('td').forEach(function(td){td.style.background='';});
+  _listSel=tr;
+  tr.querySelectorAll('td').forEach(function(td){td.style.background='#dbeafe';});
+}
+function listCtxMenu(e,tr){
+  if(e.target.closest('a,button'))return;
+  e.preventDefault();
+  listRowClick(e,tr);
+  var old=document.getElementById('_lctx');if(old)old.remove();
+  var m=document.createElement('div');
+  m.id='_lctx';
+  m.style.cssText='position:fixed;z-index:999;background:#fff;border:1px solid #c8d0de;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:180px;font-size:13px';
+  m.style.left=e.clientX+'px';m.style.top=e.clientY+'px';
+  [{label:'Открыть',fn:function(){window.location.href=tr.dataset.openUrl;}},
+   {label:(_isAdmin?'Удалить навсегда':'Пометить на удаление'),danger:true,fn:function(){listMarkDel(tr);}}
+  ].forEach(function(item){
+    var mi=document.createElement('div');
+    mi.textContent=item.label;
+    mi.style.cssText='padding:8px 14px;cursor:pointer'+(item.danger?';color:#dc2626':'');
+    mi.onmouseenter=function(){mi.style.background='#f8fafc';};
+    mi.onmouseleave=function(){mi.style.background='';};
+    mi.onclick=function(){m.remove();item.fn();};
+    m.appendChild(mi);
+  });
+  document.body.appendChild(m);
+  setTimeout(function(){
+    document.addEventListener('click',function h(){m.remove();document.removeEventListener('click',h);},{once:true});
+  },0);
+}
+function listMarkDel(tr){
+  if(!tr||!tr.dataset.delUrl)return;
+  var msg=_isAdmin?'Удалить запись навсегда?':'Пометить на удаление?';
+  if(confirm(msg)){var f=document.createElement('form');f.method='POST';f.action=tr.dataset.delUrl;document.body.appendChild(f);f.submit();}
+}
+document.addEventListener('keydown',function(e){if(e.key==='Delete'&&_listSel)listMarkDel(_listSel);});
+</script>
+</div></body></html>
 {{end}}
 `
 
@@ -369,6 +409,13 @@ const tplForm = `
 <div style="display:flex;align-items:center;gap:8px;margin-top:20px;flex-wrap:wrap">
   {{if .Entity.Posting}}
     <button class="btn btn-post" type="submit" name="_action" value="post_and_close">Провести и закрыть</button>
+    {{if not .IsNew}}
+      {{if eq (index .Values "posted") "true"}}
+        <button class="btn btn-sm" style="background:#e2e8f0;color:#374151" form="form-unpost" type="submit">Отменить проведение</button>
+      {{else}}
+        <button class="btn btn-primary" type="submit" name="_action" value="post">Провести</button>
+      {{end}}
+    {{end}}
   {{end}}
   <button class="btn btn-secondary" type="submit" name="_action" value="">Записать</button>
   <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">Отмена</a>
@@ -382,17 +429,9 @@ const tplForm = `
 </div>
 </form>
 {{if and (not .IsNew) .Entity.Posting}}
-<div style="display:flex;gap:8px;margin-top:10px">
-  {{if eq (index .Values "posted") "true"}}
-    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/unpost">
-      <button class="btn btn-sm" style="background:#e2e8f0;color:#374151" type="submit">Отменить проведение</button>
-    </form>
-  {{else}}
-    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/post">
-      <button class="btn btn-primary btn-sm" type="submit">Провести</button>
-    </form>
-  {{end}}
-</div>
+{{if eq (index .Values "posted") "true"}}
+<form id="form-unpost" method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/unpost"></form>
+{{end}}
 {{end}}
 {{if not .IsNew}}
 <div style="margin-top:10px">

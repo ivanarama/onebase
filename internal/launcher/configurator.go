@@ -16,6 +16,7 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/version"
 	"gopkg.in/yaml.v3"
 )
 
@@ -96,6 +97,8 @@ type configuratorData struct {
 	// fields save
 	FieldsSaved       bool
 	FieldsSavedEntity string
+	// platform version
+	PlatformVer string
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -189,7 +192,7 @@ func (h *handler) configuratorConvert(w http.ResponseWriter, r *http.Request) {
 // ── data loading ──────────────────────────────────────────────────────────────
 
 func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configuratorData {
-	data := &configuratorData{Base: b, Tab: tab}
+	data := &configuratorData{Base: b, Tab: tab, PlatformVer: version.String()}
 
 	var proj *project.Project
 	var err error

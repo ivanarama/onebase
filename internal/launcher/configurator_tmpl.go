@@ -175,7 +175,7 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
 <div class="topbar">
   <a href="/?sel={{.Base.ID}}">← Лаунчер</a>
   <h1>Конфигуратор — {{if .AppName}}{{.AppName}}{{else}}{{.Base.Name}}{{end}}</h1>
-  <span style="font-size:11px;color:#7aa8d8">{{.Base.DB}} · :{{.Base.Port}}</span>
+  <span style="font-size:11px;color:#7aa8d8">{{.Base.DB}} · :{{.Base.Port}} · платформа {{.PlatformVer}}</span>
 </div>
 <div class="tabs">
   <a class="tab {{if eq .Tab "tree"}}active{{end}}" href="/bases/{{.Base.ID}}/configurator?tab=tree">🌳 Дерево</a>

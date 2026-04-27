@@ -170,13 +170,17 @@ func (s *Server) adminSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if s.authRepo == nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{"Sessions": nil, "NoAuth": true})
+		return
+	}
+	hasUsers, _ := s.authRepo.HasUsers(r.Context())
+	if !hasUsers {
 		adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{"Sessions": nil, "NoAuth": true})
 		return
 	}
 	sessions, _ := s.authRepo.ActiveSessions(r.Context())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{"Sessions": sessions})
 }
 
