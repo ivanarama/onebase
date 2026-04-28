@@ -106,9 +106,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;background:#f0f2f5;h
 .tp-hd{padding:6px 10px;font-size:12px;font-weight:600;color:#334;background:#f0f3f8}
 
 /* ── Module editor ───────────────────────────────────── */
-.code-wrap{position:relative;margin-top:8px}
-.clickable-code{cursor:text}
-.clickable-code:hover::after{content:'✎';position:absolute;top:8px;right:10px;color:#546e7a;font-size:12px}
+.code-wrap{position:relative;margin-top:8px;border-radius:6px;overflow:hidden}
 .edit-hint{font-size:11px;color:#94a3b8;margin-left:6px}
 .module-tabs{display:flex;gap:0;margin-top:16px;border-bottom:1px solid #d8dde8}
 .module-tab{padding:6px 14px;cursor:pointer;font-size:12px;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -121,16 +119,19 @@ pre.os-code{
   background:#1e1e2e;color:#cdd6f4;
   font-family:'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
   font-size:12px;line-height:1.6;padding:14px 16px;border-radius:6px;
-  overflow:auto;white-space:pre;max-height:340px;tab-size:2
+  overflow:auto;white-space:pre;min-height:100px;tab-size:2;margin:0;cursor:text
 }
 .os-edit{
-  width:100%;min-height:220px;max-height:340px;
-  background:#1e1e2e;color:#cdd6f4;
+  /* overlay mode: transparent text over highlighted pre */
+  position:absolute;inset:0;width:100%;height:100%;
+  color:transparent;caret-color:#cdd6f4;
+  background:transparent;
   font-family:'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
-  font-size:12px;line-height:1.6;padding:14px 16px;border-radius:6px;
-  border:none;resize:vertical;outline:none;tab-size:2
+  font-size:12px;line-height:1.6;padding:14px 16px;
+  border:none;resize:none;outline:none;tab-size:2;
+  white-space:pre;overflow:auto;z-index:1
 }
-.os-edit:focus{box-shadow:0 0 0 2px #3070d840}
+.os-edit:focus{box-shadow:inset 0 0 0 2px #3070d840}
 .module-save-row{margin-top:8px;display:flex;align-items:center;gap:10px}
 .btn-save{background:#1a4a80;color:#fff;border:none;padding:7px 16px;border-radius:4px;cursor:pointer;font-size:12px}
 .btn-save:hover{background:#15396a}
@@ -230,16 +231,26 @@ function startEdit(name) {
   var pre = document.getElementById('pre-'+name);
   var ta  = document.getElementById('ta-'+name);
   ta.value = pre.textContent;
-  pre.style.display = 'none';
-  ta.style.display  = 'block';
+  pre.style.pointerEvents = 'none';
+  ta.style.display = 'block';
+  // sync scroll
+  ta.addEventListener('scroll', function(){ pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
   ta.focus();
 }
 function endEdit(name) {
   var pre = document.getElementById('pre-'+name);
   var ta  = document.getElementById('ta-'+name);
   pre.innerHTML = hl(ta.value);
-  pre.style.display = 'block';
-  ta.style.display  = 'none';
+  pre.style.pointerEvents = '';
+  ta.style.display = 'none';
+}
+function hlLive(name) {
+  var pre = document.getElementById('pre-'+name);
+  var ta  = document.getElementById('ta-'+name);
+  pre.innerHTML = hl(ta.value);
+  // grow container so pre stays at least as tall as textarea content
+  var h = ta.scrollHeight;
+  if (h > pre.offsetHeight) { pre.style.minHeight = h + 'px'; }
 }
 // ── Panel selection ────────────────────────────────────────────
 function selItem(el) {
@@ -609,7 +620,7 @@ const cfgTabTree = `{{define "tab-tree"}}
              onclick="startEdit('{{$e.Name}}')">{{if $e.Source}}{{$e.Source}}{{else}}// Кликните для редактирования&#10;Процедура ПриЗаписи()&#10;&#10;КонецПроцедуры{{end}}</pre>
         <textarea class="os-edit" id="ta-{{$e.Name}}" name="source"
                   style="display:none"
-                  onblur="endEdit('{{$e.Name}}')">{{$e.Source}}</textarea>
+                  oninput="hlLive('{{$e.Name}}')">{{$e.Source}}</textarea>
       </div>
       <div class="module-save-row">
         <button class="btn-save" type="submit">Сохранить</button>
