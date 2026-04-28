@@ -18,6 +18,7 @@ type User struct {
 	FullName  string
 	IsAdmin   bool
 	CreatedAt time.Time
+	Roles     []*Role // loaded by middleware after session lookup
 }
 
 type Repo struct {
@@ -49,6 +50,9 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 		)`)
 	if err != nil {
 		return fmt.Errorf("auth: create _sessions: %w", err)
+	}
+	if err := r.EnsureRolesSchema(ctx); err != nil {
+		return err
 	}
 	return nil
 }

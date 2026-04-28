@@ -75,6 +75,15 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/sessions", s.adminSessions)
 	r.Post("/ui/admin/sessions/{login}/kick", s.adminKickUser)
 
+	// Admin: roles
+	r.Get("/ui/admin/roles", s.adminRoles)
+	r.Get("/ui/admin/users/{id}/roles", s.adminUserRoles)
+	r.Post("/ui/admin/users/{id}/roles", s.adminUserRolesUpdate)
+
+	// Admin: audit log
+	r.Get("/ui/admin/audit", s.adminAudit)
+	r.Get("/ui/{kind}/{entity}/{id}/history", s.recordHistory)
+
 	// Admin: orphan movements cleanup
 	r.Get("/ui/admin/cleanup", s.adminCleanup)
 	r.Post("/ui/admin/cleanup", s.adminCleanup)
@@ -82,6 +91,9 @@ func (s *Server) Mount(r chi.Router) {
 	// Constants
 	r.Get("/ui/constants", s.constantsList)
 	r.Post("/ui/constants", s.constantsSave)
+
+	// Print forms
+	r.Get("/ui/{kind}/{entity}/{id}/print/{form}", s.printDocument)
 
 	// About
 	r.Get("/ui/about", s.about)

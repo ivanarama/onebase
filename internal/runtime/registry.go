@@ -6,6 +6,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/report"
 )
 
@@ -18,6 +19,7 @@ type Registry struct {
 	enums       map[string]*metadata.Enum
 	constants   map[string]*metadata.Constant
 	reports     map[string]*report.Report
+	printForms  map[string][]*printform.PrintForm // lowercase entity name → forms
 	procs       map[string]map[string]*ast.ProcedureDecl
 }
 
@@ -30,11 +32,12 @@ func NewRegistry() *Registry {
 		enums:      make(map[string]*metadata.Enum),
 		constants:  make(map[string]*metadata.Constant),
 		reports:    make(map[string]*report.Report),
+		printForms: make(map[string][]*printform.PrintForm),
 		procs:      make(map[string]map[string]*ast.ProcedureDecl),
 	}
 }
 
-func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, inforegs []*metadata.InfoRegister, enums []*metadata.Enum, constants []*metadata.Constant, reports []*report.Report) {
+func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Program, registers []*metadata.Register, inforegs []*metadata.InfoRegister, enums []*metadata.Enum, constants []*metadata.Constant, reports []*report.Report, forms ...[]*printform.PrintForm) {
 	newEntities := make(map[string]*metadata.Entity, len(entities))
 	newSlugs := make(map[string]*metadata.Entity, len(entities))
 	for _, e := range entities {
@@ -69,6 +72,14 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 		}
 		newProcs[entityName] = pm
 	}
+	newPrintForms := make(map[string][]*printform.PrintForm)
+	if len(forms) > 0 {
+		for _, pf := range forms[0] {
+			key := strings.ToLower(pf.Document)
+			newPrintForms[key] = append(newPrintForms[key], pf)
+		}
+	}
+
 	r.mu.Lock()
 	r.entities = newEntities
 	r.entitySlug = newSlugs
@@ -77,8 +88,16 @@ func (r *Registry) Load(entities []*metadata.Entity, programs map[string]*ast.Pr
 	r.enums = newEnums
 	r.constants = newConsts
 	r.reports = newReps
+	r.printForms = newPrintForms
 	r.procs = newProcs
 	r.mu.Unlock()
+}
+
+// GetPrintForms returns all print forms registered for an entity name (case-insensitive).
+func (r *Registry) GetPrintForms(entityName string) []*printform.PrintForm {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.printForms[strings.ToLower(entityName)]
 }
 
 func (r *Registry) GetReport(name string) *report.Report {

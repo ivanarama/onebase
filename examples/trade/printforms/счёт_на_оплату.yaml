@@ -1,0 +1,44 @@
+name: СчётНаОплату
+document: РеализацияТоваров
+title: "Счёт на оплату № {{Номер}} от {{Дата | date}}"
+
+header: |
+  ## {{Константы.НашаОрганизация}}
+
+  **Покупатель**: {{Покупатель.Наименование}}
+
+  **Дата документа**: {{Дата | date}}
+
+table:
+  source: Товары
+  columns:
+    - field: "@row"
+      label: "№"
+      width: 40px
+    - field: Номенклатура.Наименование
+      label: Товар
+    - field: Количество
+      label: Кол-во
+      align: right
+      format: "number:0"
+    - field: Цена
+      label: Цена
+      align: right
+      format: "number:2"
+    - field: Сумма
+      label: Сумма
+      align: right
+      format: "number:2"
+  totals:
+    - field: Количество
+      sum: true
+    - field: Сумма
+      sum: true
+      label: "Итого"
+
+footer: |
+  ___
+
+  Руководитель: _________________________ /________________________/
+
+  МП

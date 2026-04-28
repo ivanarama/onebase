@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -35,8 +36,14 @@ input:focus{border-color:#1a5fa8;box-shadow:0 0 0 2px rgba(26,95,168,.15)}
 </div>
 </body></html>`))
 
+// AuditLogger is implemented by storage.DB to log auth events.
+type AuditLogger interface {
+	LogAction(ctx context.Context, action, kind, entityName, recordID, userID, userLogin, ip string)
+}
+
 type Handlers struct {
-	Repo *Repo
+	Repo   *Repo
+	Auditor AuditLogger // optional, set by api.New
 }
 
 func (h *Handlers) LoginPage(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +68,11 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+
+	if h.Auditor != nil {
+		ip := r.RemoteAddr
+		h.Auditor.LogAction(r.Context(), "login", "", "", "", user.ID, user.Login, ip)
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -109,6 +121,11 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("onebase_session"); err == nil {
+		if h.Auditor != nil {
+			if user, err2 := h.Repo.LookupSession(r.Context(), cookie.Value); err2 == nil {
+				h.Auditor.LogAction(r.Context(), "logout", "", "", "", user.ID, user.Login, r.RemoteAddr)
+			}
+		}
 		h.Repo.DeleteSession(r.Context(), cookie.Value)
 	}
 	http.SetCookie(w, &http.Cookie{

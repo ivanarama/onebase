@@ -53,6 +53,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("auth schema: %w", err)
 	}
+	if err := db.EnsureAuditSchema(ctx); err != nil {
+		return fmt.Errorf("audit schema: %w", err)
+	}
 
 	reg := runtime.NewRegistry()
 	interp := interpreter.New()
@@ -95,7 +98,10 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintln(os.Stderr, "[dev] migrate constants error:", err)
 			return
 		}
-		reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports)
+		if roles, err2 := auth.LoadRolesYAML(proj.Dir + "/roles"); err2 == nil && len(roles) > 0 {
+			_ = authRepo.SyncRoles(ctx, roles)
+		}
+		reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports, proj.PrintForms)
 		fmt.Fprintln(os.Stdout, "[dev] reloaded")
 	}
 	load()

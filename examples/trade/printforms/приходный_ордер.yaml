@@ -1,0 +1,42 @@
+name: ПриходныйОрдер
+document: ПоступлениеТоваров
+title: "Приходный ордер № {{Номер}} от {{Дата | date}}"
+
+header: |
+  **Организация**: {{Константы.НашаОрганизация}}
+
+  **Поставщик**: {{Поставщик.Наименование}}
+
+  **Склад**: {{Склад.Наименование}}
+
+table:
+  source: Товары
+  columns:
+    - field: "@row"
+      label: "№"
+      width: 40px
+    - field: Номенклатура.Наименование
+      label: Наименование
+    - field: Количество
+      label: Количество
+      align: right
+      format: "number:0"
+    - field: Цена
+      label: Цена
+      align: right
+      format: "number:2"
+    - field: Сумма
+      label: Сумма
+      align: right
+      format: "number:2"
+  totals:
+    - field: Количество
+      sum: true
+    - field: Сумма
+      sum: true
+      label: "Итого"
+
+footer: |
+  ___
+
+  Принял: _________________________ Сдал: _________________________

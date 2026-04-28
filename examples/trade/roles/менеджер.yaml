@@ -1,0 +1,14 @@
+name: Менеджер
+description: Менеджер по продажам
+permissions:
+  catalogs:
+    Контрагент: [read, write]
+    Номенклатура: [read]
+    Склад: [read]
+  documents:
+    РеализацияТоваров: [read, write, post, unpost]
+    ПоступлениеТоваров: [read]
+  registers:
+    Взаиморасчеты: [read]
+  reports:
+    ОстаткиТоваров: [run]

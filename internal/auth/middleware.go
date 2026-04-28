@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 type contextKey string
@@ -32,7 +34,14 @@ func (r *Repo) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Load roles for this user (best-effort — don't fail if table missing yet)
+		if roles, err2 := r.GetRolesForUser(ctx, user.ID); err2 == nil {
+			user.Roles = roles
+		}
+
 		ctx = context.WithValue(ctx, userKey, user)
+		// Inject audit user info for storage layer
+		ctx = storage.WithAuditUser(ctx, user.ID, user.Login)
 		next.ServeHTTP(w, req.WithContext(ctx))
 	})
 }

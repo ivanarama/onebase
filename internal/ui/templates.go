@@ -101,7 +101,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return template.JS(b)
 	},
-}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants))
+}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory))
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -177,7 +177,9 @@ const tplNav = `
     <div class="sys-drop" id="sysd">
       <a href="/ui/about">О программе</a>
       <a href="/ui/admin/users">Пользователи</a>
+      <a href="/ui/admin/roles">Роли и права</a>
       <a href="/ui/admin/sessions">Активные пользователи</a>
+      <a href="/ui/admin/audit">Журнал изменений</a>
       <a href="/ui/delete-marked">Удалить помеченные</a>
       <a href="/ui/admin/cleanup">Очистка регистров</a>
       <form method="POST" action="/logout"><button type="submit">Выйти</button></form>
@@ -448,11 +450,23 @@ const tplForm = `
 {{end}}
 {{end}}
 {{if not .IsNew}}
-<div style="margin-top:10px">
+<div style="margin-top:10px;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
   <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete"
         onsubmit="return confirm('{{if .IsAdmin}}Удалить запись навсегда?{{else}}Пометить запись на удаление?{{end}}')">
     <button class="btn btn-danger btn-sm" type="submit">{{if .IsAdmin}}Удалить{{else}}Пометить на удаление{{end}}</button>
   </form>
+  <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">История</a>
+  {{if .PrintForms}}
+  <div style="position:relative">
+    <button type="button" class="btn btn-sm btn-secondary" onclick="var d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none'">Печать ▾</button>
+    <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:160px;z-index:50;margin-top:4px">
+      {{range .PrintForms}}
+      <a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}" target="_blank"
+         style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.Name}}</a>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
 </div>
 {{end}}
 </div>
@@ -790,6 +804,39 @@ const tplConstants = `
 {{end}}
 </form>
 </div></main></div></body></html>
+{{end}}
+`
+
+const tplHistory = `
+{{define "page-history"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:900px">
+  <h2 style="margin-bottom:0">История изменений — {{.EntityName}}</h2>
+  <a href="{{.BackURL}}" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+</div>
+<div class="card" style="max-width:900px">
+{{if .Entries}}
+<table style="font-size:13px">
+<thead><tr>
+  <th>Время</th><th>Пользователь</th><th>Действие</th><th>Поле</th><th>Было</th><th>Стало</th>
+</tr></thead>
+<tbody>
+{{range .Entries}}<tr>
+  <td style="white-space:nowrap;color:#94a3b8">{{.At.Format "02.01.2006 15:04:05"}}</td>
+  <td>{{.UserLogin}}</td>
+  <td><span style="font-family:monospace;font-size:11px;background:#f1f5f9;padding:2px 6px;border-radius:4px">{{.Action}}</span></td>
+  <td style="font-family:monospace;font-size:12px">{{.Field}}</td>
+  <td style="color:#dc2626;font-size:12px">{{.OldValue}}</td>
+  <td style="color:#16a34a;font-size:12px">{{.NewValue}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="empty">История изменений пуста.</p>
+{{end}}
+</div>
+</main></div></body></html>
 {{end}}
 `
 

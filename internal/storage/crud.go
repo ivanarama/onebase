@@ -26,6 +26,15 @@ type FilterValue struct {
 
 // Upsert inserts or updates the object fields.
 func (db *DB) Upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
+	// Read old value for audit diff (best-effort, ignore errors)
+	var oldRow map[string]any
+	isNew := false
+	if existing, err := db.GetByID(ctx, entityName, id, entity); err != nil {
+		isNew = true
+	} else {
+		oldRow = existing
+	}
+
 	table := metadata.TableName(entityName)
 	cols := []string{"id"}
 	placeholders := []string{"$1"}
@@ -51,6 +60,17 @@ func (db *DB) Upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	}
 	if err := db.exec(ctx, sql, args...); err != nil {
 		return fmt.Errorf("upsert %s: %w", entityName, err)
+	}
+
+	// Audit (best-effort, non-blocking)
+	kind := string(entity.Kind)
+	if isNew {
+		db.logCreate(ctx, kind, entityName, id)
+	} else if oldRow != nil {
+		changes := AuditDiff(oldRow, fields, entity)
+		if len(changes) > 0 {
+			db.logUpdate(ctx, kind, entityName, id, changes)
+		}
 	}
 	return nil
 }
@@ -287,15 +307,44 @@ func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string
 
 // Delete removes an entity record by id. Tablepart rows cascade automatically.
 func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error {
-	return db.exec(ctx,
+	err := db.exec(ctx,
 		fmt.Sprintf("DELETE FROM %s WHERE id = $1", metadata.TableName(entityName)), id)
+	if err == nil {
+		if u, ok := auditUserFromCtx(ctx); ok {
+			_ = db.Log(ctx, &AuditEntry{
+				UserID:     u.UserID,
+				UserLogin:  u.UserLogin,
+				Action:     "delete",
+				EntityName: entityName,
+				RecordID:   id.String(),
+			})
+		}
+	}
+	return err
 }
 
 // SetPosted sets the posted flag on a document.
 func (db *DB) SetPosted(ctx context.Context, entityName string, id uuid.UUID, posted bool) error {
-	return db.exec(ctx,
+	err := db.exec(ctx,
 		fmt.Sprintf("UPDATE %s SET posted = $1 WHERE id = $2", metadata.TableName(entityName)),
 		posted, id)
+	if err == nil {
+		if u, ok := auditUserFromCtx(ctx); ok {
+			action := "post"
+			if !posted {
+				action = "unpost"
+			}
+			_ = db.Log(ctx, &AuditEntry{
+				UserID:     u.UserID,
+				UserLogin:  u.UserLogin,
+				Action:     action,
+				EntityKind: "document",
+				EntityName: entityName,
+				RecordID:   id.String(),
+			})
+		}
+	}
+	return err
 }
 
 // fieldValue extracts the value for a field from the fields map, handling reference UUID strings.

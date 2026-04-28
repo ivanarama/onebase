@@ -15,6 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -253,6 +254,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"TablePartRows": tpRows,
 		"ID":            id.String(),
 		"IsAdmin":       editIsAdmin,
+		"PrintForms":    s.reg.GetPrintForms(entity.Name),
 	})
 }
 
@@ -1225,6 +1227,95 @@ func (s *Server) resolveRefs(ctx context.Context, entity *metadata.Entity, rows 
 			}
 		}
 	}
+}
+
+// printDocument renders a print form for a specific document/catalog record.
+func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", 400)
+		return
+	}
+	formName := chi.URLParam(r, "form")
+	if dec, err2 := url.PathUnescape(formName); err2 == nil {
+		formName = dec
+	}
+
+	forms := s.reg.GetPrintForms(entity.Name)
+	var form *printform.PrintForm
+	for _, f := range forms {
+		if strings.EqualFold(f.Name, formName) {
+			form = f
+			break
+		}
+	}
+	if form == nil {
+		http.Error(w, "print form not found: "+formName, 404)
+		return
+	}
+
+	row, err := s.store.GetByID(r.Context(), entity.Name, id, entity)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+
+	tpRows := make(map[string][]map[string]any)
+	for _, tp := range entity.TableParts {
+		rows, _ := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
+		tpRows[tp.Name] = rows
+	}
+
+	refs := s.buildPrintRefs(r.Context(), row, entity)
+
+	constants, _ := s.store.ListConstants(r.Context())
+
+	ctx := &printform.RenderContext{
+		Document:   row,
+		TableParts: tpRows,
+		Constants:  constants,
+		Refs:       refs,
+	}
+	html, err := printform.Render(form, ctx)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
+}
+
+// buildPrintRefs returns a map of UUID → {fields...} for all reference fields in the entity.
+func (s *Server) buildPrintRefs(ctx context.Context, row map[string]any, entity *metadata.Entity) map[string]map[string]any {
+	refs := make(map[string]map[string]any)
+	for _, f := range entity.Fields {
+		if f.RefEntity == "" {
+			continue
+		}
+		refEntity := s.reg.GetEntity(f.RefEntity)
+		if refEntity == nil {
+			continue
+		}
+		idStr, _ := row[f.Name].(string)
+		if idStr == "" {
+			continue
+		}
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			continue
+		}
+		refRow, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
+		if err != nil {
+			continue
+		}
+		refs[idStr] = refRow
+	}
+	// also resolve refs in table part rows
+	return refs
 }
 
 func listURL(entity *metadata.Entity) string {

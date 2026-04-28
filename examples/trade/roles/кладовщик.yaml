@@ -1,0 +1,12 @@
+name: Кладовщик
+description: Работа со складом и поступлениями
+permissions:
+  catalogs:
+    Номенклатура: [read, write]
+    Склад: [read]
+    Контрагент: [read]
+  documents:
+    ПоступлениеТоваров: [read, write, post, unpost]
+    РеализацияТоваров: [read]
+  registers:
+    Взаиморасчеты: [read]

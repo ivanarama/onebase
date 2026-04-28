@@ -82,9 +82,17 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
 		return fmt.Errorf("migrate constants: %w", err)
 	}
+	if err := db.EnsureAuditSchema(ctx); err != nil {
+		return fmt.Errorf("audit schema: %w", err)
+	}
+
+	// Sync roles from YAML
+	if roles, err2 := auth.LoadRolesYAML(proj.Dir + "/roles"); err2 == nil && len(roles) > 0 {
+		_ = authRepo.SyncRoles(ctx, roles)
+	}
 
 	reg := runtime.NewRegistry()
-	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports)
+	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports, proj.PrintForms)
 
 	appCfg, _ := project.LoadConfig(proj.Dir)
 	uiCfg := ui.Config{

@@ -27,7 +27,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	r.Use(middleware.Recoverer)
 
 	// Public auth routes (no authentication required)
-	authH := &auth.Handlers{Repo: authRepo}
+	authH := &auth.Handlers{Repo: authRepo, Auditor: store}
 	r.Get("/login", authH.LoginPage)
 	r.Post("/login", authH.LoginSubmit)
 	r.Post("/logout", authH.Logout)

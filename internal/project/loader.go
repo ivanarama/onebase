@@ -14,6 +14,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/report"
 	"gopkg.in/yaml.v3"
 )
@@ -26,6 +27,7 @@ type Project struct {
 	Enums         []*metadata.Enum
 	Constants     []*metadata.Constant
 	Reports       []*report.Report
+	PrintForms    []*printform.PrintForm
 	Programs      map[string]*ast.Program // entity name → parsed DSL
 	cleanup       func()
 }
@@ -93,7 +95,19 @@ func Load(dir string) (*Project, error) {
 	if err := p.loadDSL(); err != nil {
 		return nil, err
 	}
+	if err := p.loadPrintForms(); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+func (p *Project) loadPrintForms() error {
+	forms, err := printform.LoadDir(filepath.Join(p.Dir, "printforms"))
+	if err != nil {
+		return fmt.Errorf("project: load printforms: %w", err)
+	}
+	p.PrintForms = forms
+	return nil
 }
 
 func (p *Project) loadMetadata() error {
