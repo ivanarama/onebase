@@ -74,12 +74,13 @@ type cfgTablePart struct {
 }
 
 type cfgEntity struct {
-	Name       string
-	Kind       string // "Справочник" / "Документ"
-	Posting    bool
-	Fields     []cfgField
-	TableParts []cfgTablePart
-	Source     string // raw .os content, empty if none
+	Name          string
+	Kind          string // "Справочник" / "Документ"
+	Posting       bool
+	Fields        []cfgField
+	TableParts    []cfgTablePart
+	Source        string // raw .os content (object module)
+	PostingSource string // raw .posting.os content (ОбработкаПроведения)
 }
 
 type cfgRegister struct {
@@ -260,13 +261,14 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 		data.AppName = appCfg.Name
 	}
 
-	sources := readOSSources(proj.Dir)
+	sources, postingSources := readOSSources(proj.Dir)
 
 	for _, e := range proj.Entities {
 		ev := cfgEntity{
-			Name:    e.Name,
-			Posting: e.Posting,
-			Source:  sources[strings.ToLower(e.Name)],
+			Name:          e.Name,
+			Posting:       e.Posting,
+			Source:        sources[strings.ToLower(e.Name)],
+			PostingSource: postingSources[strings.ToLower(e.Name)],
 		}
 		if e.Kind == metadata.KindCatalog {
 			ev.Kind = "Справочник"
@@ -364,11 +366,12 @@ func toCfgField(f metadata.Field) cfgField {
 	return cfgField{Name: f.Name, Type: typ, RefEntity: f.RefEntity, EnumName: f.EnumName}
 }
 
-func readOSSources(dir string) map[string]string {
-	out := make(map[string]string)
+func readOSSources(dir string) (sources, postingSources map[string]string) {
+	sources = make(map[string]string)
+	postingSources = make(map[string]string)
 	entries, err := os.ReadDir(filepath.Join(dir, "src"))
 	if err != nil {
-		return out
+		return
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".os") {
@@ -378,11 +381,16 @@ func readOSSources(dir string) map[string]string {
 		if err != nil {
 			continue
 		}
-		base := strings.TrimSuffix(e.Name(), ".os")
-		// Store by lowercase so lookup works regardless of entity name case.
-		out[strings.ToLower(base)] = string(raw)
+		name := e.Name()
+		if strings.HasSuffix(name, ".posting.os") {
+			base := strings.ToLower(strings.TrimSuffix(name, ".posting.os"))
+			postingSources[base] = string(raw)
+		} else {
+			base := strings.ToLower(strings.TrimSuffix(name, ".os"))
+			sources[base] = string(raw)
+		}
 	}
-	return out
+	return
 }
 
 func copyDir(src, dst string) error {
@@ -414,7 +422,15 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 	}
 	r.ParseForm()
 	entityName := r.FormValue("entity")
+	moduleType := r.FormValue("module_type")
 	source := r.FormValue("source")
+
+	var filename string
+	if moduleType == "posting" {
+		filename = entityToPostingFilename(entityName)
+	} else {
+		filename = entityToFilename(entityName)
+	}
 
 	var saveErr error
 	if b.ConfigSource == "database" {
@@ -423,7 +439,6 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 			saveErr = err
 		} else {
 			defer db.Close()
-			filename := entityToFilename(entityName)
 			_, saveErr = db.Pool().Exec(r.Context(), `
 				INSERT INTO _onebase_config (path, content, updated_at)
 				VALUES ($1, $2, now())
@@ -431,7 +446,6 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 			`, "src/"+filename, []byte(source))
 		}
 	} else {
-		filename := entityToFilename(entityName)
 		srcDir := filepath.Join(b.Path, "src")
 		os.MkdirAll(srcDir, 0o755)
 		saveErr = os.WriteFile(filepath.Join(srcDir, filename), []byte(source), 0o644)
@@ -448,7 +462,6 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 }
 
 // entityToFilename converts "ПоступлениеТоваров" → "поступлениеТоваров.os"
-// (mirrors fileNameToEntity: lower the first rune, keep the rest).
 func entityToFilename(name string) string {
 	if name == "" {
 		return ".os"
@@ -456,6 +469,16 @@ func entityToFilename(name string) string {
 	runes := []rune(name)
 	runes[0] = unicode.ToLower(runes[0])
 	return string(runes) + ".os"
+}
+
+// entityToPostingFilename converts "ПоступлениеТоваров" → "поступлениеТоваров.posting.os"
+func entityToPostingFilename(name string) string {
+	if name == "" {
+		return ".posting.os"
+	}
+	runes := []rune(name)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes) + ".posting.os"
 }
 
 // ── field-type save ───────────────────────────────────────────────────────────
@@ -871,4 +894,305 @@ func newObjectContent(kind, name string) (subdir, content string) {
 
 func nameToFilename(name string) string {
 	return strings.ToLower(name)
+}
+
+// ── Enum save ─────────────────────────────────────────────────────────────────
+
+func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	enumName := r.FormValue("enum_name")
+	rawValues := r.FormValue("values")
+
+	var values []string
+	for _, line := range strings.Split(rawValues, "\n") {
+		v := strings.TrimSpace(line)
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+
+	type saveEnum struct {
+		Name   string   `yaml:"name"`
+		Values []string `yaml:"values"`
+	}
+	out, _ := yaml.Marshal(saveEnum{Name: enumName, Values: values})
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, cerr := storage.Connect(r.Context(), b.DB)
+		if cerr != nil {
+			saveErr = cerr
+		} else {
+			defer db.Close()
+			path := "enums/" + nameToFilename(enumName) + ".yaml"
+			_, saveErr = db.Pool().Exec(r.Context(), `
+				INSERT INTO _onebase_config (path, content, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+			`, path, out)
+		}
+	} else {
+		dir := filepath.Join(b.Path, "enums")
+		os.MkdirAll(dir, 0o755)
+		// find existing file by name field, fallback to name-based filename
+		files, _ := os.ReadDir(dir)
+		targetFile := filepath.Join(dir, nameToFilename(enumName)+".yaml")
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
+				continue
+			}
+			p := filepath.Join(dir, f.Name())
+			raw, _ := os.ReadFile(p)
+			var hdr struct{ Name string `yaml:"name"` }
+			if yaml.Unmarshal(raw, &hdr) == nil && hdr.Name == enumName {
+				targetFile = p
+				break
+			}
+		}
+		saveErr = os.WriteFile(targetFile, out, 0o644)
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = enumName
+	}
+	renderCfg(w, data)
+}
+
+// ── Constant save ─────────────────────────────────────────────────────────────
+
+func (h *handler) configuratorSaveConstant(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	constName := r.FormValue("const_name")
+	label := strings.TrimSpace(r.FormValue("label"))
+	typ := strings.TrimSpace(r.FormValue("type"))
+	ref := strings.TrimSpace(r.FormValue("ref"))
+	def := strings.TrimSpace(r.FormValue("default"))
+	if typ == "reference" && ref != "" {
+		typ = "reference:" + ref
+	}
+
+	type rawConst struct {
+		Name    string `yaml:"name"`
+		Type    string `yaml:"type"`
+		Default string `yaml:"default,omitempty"`
+		Label   string `yaml:"label,omitempty"`
+	}
+	type rawConstsFile struct {
+		Constants []rawConst `yaml:"constants"`
+	}
+
+	updateConstantsFile := func(raw []byte) ([]byte, error) {
+		var cf rawConstsFile
+		if err := yaml.Unmarshal(raw, &cf); err != nil {
+			return nil, err
+		}
+		for i, c := range cf.Constants {
+			if c.Name == constName {
+				cf.Constants[i].Label = label
+				cf.Constants[i].Type = typ
+				cf.Constants[i].Default = def
+				break
+			}
+		}
+		return yaml.Marshal(&cf)
+	}
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, cerr := storage.Connect(r.Context(), b.DB)
+		if cerr != nil {
+			saveErr = cerr
+		} else {
+			defer db.Close()
+			rows, _ := db.Pool().Query(r.Context(),
+				`SELECT path, content FROM _onebase_config WHERE path LIKE 'constants/%.yaml'`)
+			var targetPath string
+			var targetContent []byte
+			for rows.Next() {
+				var p string
+				var content []byte
+				rows.Scan(&p, &content)
+				var cf rawConstsFile
+				if yaml.Unmarshal(content, &cf) == nil {
+					for _, c := range cf.Constants {
+						if c.Name == constName {
+							targetPath = p
+							targetContent = content
+							break
+						}
+					}
+				}
+				if targetPath != "" {
+					break
+				}
+			}
+			rows.Close()
+			if targetPath != "" {
+				if out, err := updateConstantsFile(targetContent); err == nil {
+					_, saveErr = db.Pool().Exec(r.Context(), `
+						INSERT INTO _onebase_config (path, content, updated_at)
+						VALUES ($1, $2, now())
+						ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+					`, targetPath, out)
+				}
+			}
+		}
+	} else {
+		dir := filepath.Join(b.Path, "constants")
+		files, _ := os.ReadDir(dir)
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
+				continue
+			}
+			p := filepath.Join(dir, f.Name())
+			raw, _ := os.ReadFile(p)
+			var cf rawConstsFile
+			if yaml.Unmarshal(raw, &cf) != nil {
+				continue
+			}
+			found := false
+			for _, c := range cf.Constants {
+				if c.Name == constName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+			out, err := updateConstantsFile(raw)
+			if err == nil {
+				saveErr = os.WriteFile(p, out, 0o644)
+			} else {
+				saveErr = err
+			}
+			break
+		}
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = constName
+	}
+	renderCfg(w, data)
+}
+
+// ── Report save ───────────────────────────────────────────────────────────────
+
+func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	repName := r.FormValue("report_name")
+	query := r.FormValue("query")
+	title := strings.TrimSpace(r.FormValue("title"))
+
+	type saveParam struct {
+		Name  string `yaml:"name"`
+		Type  string `yaml:"type"`
+		Label string `yaml:"label,omitempty"`
+	}
+	type saveReport struct {
+		Name   string      `yaml:"name"`
+		Title  string      `yaml:"title,omitempty"`
+		Params []saveParam `yaml:"params,omitempty"`
+		Query  string      `yaml:"query"`
+	}
+
+	updateReportFile := func(raw []byte) ([]byte, error) {
+		var rep saveReport
+		if err := yaml.Unmarshal(raw, &rep); err != nil {
+			return nil, err
+		}
+		rep.Query = query
+		if title != "" {
+			rep.Title = title
+		}
+		return yaml.Marshal(&rep)
+	}
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, cerr := storage.Connect(r.Context(), b.DB)
+		if cerr != nil {
+			saveErr = cerr
+		} else {
+			defer db.Close()
+			rows, _ := db.Pool().Query(r.Context(),
+				`SELECT path, content FROM _onebase_config WHERE path LIKE 'reports/%.yaml'`)
+			var targetPath string
+			var targetContent []byte
+			for rows.Next() {
+				var p string
+				var content []byte
+				rows.Scan(&p, &content)
+				var rep saveReport
+				if yaml.Unmarshal(content, &rep) == nil && rep.Name == repName {
+					targetPath = p
+					targetContent = content
+					break
+				}
+			}
+			rows.Close()
+			if targetPath != "" {
+				if out, err := updateReportFile(targetContent); err == nil {
+					_, saveErr = db.Pool().Exec(r.Context(), `
+						INSERT INTO _onebase_config (path, content, updated_at)
+						VALUES ($1, $2, now())
+						ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+					`, targetPath, out)
+				}
+			}
+		}
+	} else {
+		dir := filepath.Join(b.Path, "reports")
+		files, _ := os.ReadDir(dir)
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".yaml") {
+				continue
+			}
+			p := filepath.Join(dir, f.Name())
+			raw, _ := os.ReadFile(p)
+			var rep saveReport
+			if yaml.Unmarshal(raw, &rep) != nil || rep.Name != repName {
+				continue
+			}
+			out, err := updateReportFile(raw)
+			if err == nil {
+				saveErr = os.WriteFile(p, out, 0o644)
+			} else {
+				saveErr = err
+			}
+			break
+		}
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = repName
+	}
+	renderCfg(w, data)
 }

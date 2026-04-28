@@ -215,6 +215,7 @@ func (p *Project) loadDSL() error {
 		if item.IsDir() || !strings.HasSuffix(item.Name(), ".os") {
 			continue
 		}
+		isPosting := strings.HasSuffix(item.Name(), ".posting.os")
 		fullPath := filepath.Join(srcDir, item.Name())
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
@@ -226,14 +227,28 @@ func (p *Project) loadDSL() error {
 		if err != nil {
 			return err
 		}
-		entityName := fileNameToEntity(item.Name())
-		// Resolve to the actual entity name (case-insensitive match).
-		// Filename "поступлениетоваров.os" → "Поступлениетоваров" but the
-		// entity in YAML may be "ПоступлениеТоваров" — use the canonical name.
+		var entityName string
+		if isPosting {
+			// "поступлениеТоваров.posting.os" → strip ".posting.os"
+			base := strings.TrimSuffix(item.Name(), ".posting.os")
+			entityName = fileNameToEntityBase(base)
+		} else {
+			entityName = fileNameToEntity(item.Name())
+		}
+		// Resolve to the actual canonical entity name (case-insensitive match).
 		if actual := p.findEntityName(entityName); actual != "" {
 			entityName = actual
 		}
-		p.Programs[entityName] = prog
+		if isPosting {
+			// Merge posting procedures into the entity's existing program.
+			if existing, ok := p.Programs[entityName]; ok {
+				existing.Procedures = append(existing.Procedures, prog.Procedures...)
+			} else {
+				p.Programs[entityName] = prog
+			}
+		} else {
+			p.Programs[entityName] = prog
+		}
 	}
 	return nil
 }
@@ -251,7 +266,11 @@ func (p *Project) findEntityName(s string) string {
 
 // fileNameToEntity converts "invoice.os" → "Invoice", "счёт.os" → "Счёт".
 func fileNameToEntity(name string) string {
-	base := strings.TrimSuffix(name, ".os")
+	return fileNameToEntityBase(strings.TrimSuffix(name, ".os"))
+}
+
+// fileNameToEntityBase capitalises the first rune of a bare name (no extension).
+func fileNameToEntityBase(base string) string {
 	if base == "" {
 		return base
 	}

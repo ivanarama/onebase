@@ -51,6 +51,9 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/configurator/module", s.h.configuratorSaveModule)
 	r.Post("/bases/{id}/configurator/fields", s.h.configuratorSaveFields)
 	r.Post("/bases/{id}/configurator/register-fields", s.h.configuratorSaveRegisterFields)
+	r.Post("/bases/{id}/configurator/enum", s.h.configuratorSaveEnum)
+	r.Post("/bases/{id}/configurator/constant", s.h.configuratorSaveConstant)
+	r.Post("/bases/{id}/configurator/report", s.h.configuratorSaveReport)
 	r.Post("/bases/{id}/configurator/new", s.h.configuratorNewObject)
 	r.Post("/killall", s.h.killAll)
 	r.Post("/quit", func(w http.ResponseWriter, r *http.Request) {

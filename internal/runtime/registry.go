@@ -219,6 +219,7 @@ func (r *Registry) Entities() []*metadata.Entity {
 // eventAliases maps canonical English event names to their Russian equivalents.
 var eventAliases = map[string]string{
 	"OnWrite": "ПриЗаписи",
+	"OnPost":  "ОбработкаПроведения",
 }
 
 func (r *Registry) GetProcedure(entityName, procName string) *ast.ProcedureDecl {

@@ -492,19 +492,56 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="en-{{.Name}}">
     <div class="panel-title">🔢 {{.Name}}</div>
     <div class="panel-kind">Перечисление</div>
-    <div class="section-hd">Значения</div>
-    {{if .Values}}
-    {{range .Values}}<div style="font-size:13px;padding:3px 0 3px 8px;color:#334155">• {{.}}</div>{{end}}
-    {{else}}<div style="color:#aaa;font-size:12px;padding:4px 0">Нет значений</div>{{end}}
+    <div class="section-hd">Значения <span class="edit-hint">(каждое значение — отдельная строка)</span></div>
+    <form method="POST" action="/bases/{{$.Base.ID}}/configurator/enum">
+      <input type="hidden" name="enum_name" value="{{.Name}}">
+      <textarea name="values" rows="8" style="width:100%;font-size:13px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;resize:vertical;font-family:inherit">{{range .Values}}{{.}}&#10;{{end}}</textarea>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        {{if and $.FieldsSaved (eq $.FieldsSavedEntity .Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
   </div>
   {{end}}
 
   {{/* Constants */}}
   {{range .Constants}}
+  {{$cn := .}}
   <div class="cfg-panel" id="cn-{{.Name}}">
     <div class="panel-title">⚙ {{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}</div>
     <div class="panel-kind">Константа · <span class="{{fieldTypeClass .Type}}">{{fieldTypeLabel .Type .RefEntity}}</span></div>
-    {{if .Default}}<div style="font-size:12px;color:#64748b;margin-top:8px">По умолчанию: <b>{{.Default}}</b></div>{{end}}
+    <form method="POST" action="/bases/{{$.Base.ID}}/configurator/constant" style="margin-top:12px">
+      <input type="hidden" name="const_name" value="{{.Name}}">
+      <div class="fg">
+        <label>Заголовок</label>
+        <input type="text" name="label" value="{{.Label}}" placeholder="Отображаемое имя">
+      </div>
+      <div class="fg" style="margin-top:8px">
+        <label>Тип</label>
+        <select name="type" onchange="cfgToggleRef(this,'cnref-{{.Name}}')">
+          <option value="string" {{if eq .Type "string"}}selected{{end}}>Строка</option>
+          <option value="number" {{if eq .Type "number"}}selected{{end}}>Число</option>
+          <option value="date" {{if eq .Type "date"}}selected{{end}}>Дата</option>
+          <option value="boolean" {{if eq .Type "boolean"}}selected{{end}}>Булево</option>
+          <option value="reference" {{if eq .Type "reference"}}selected{{end}}>Ссылка</option>
+        </select>
+      </div>
+      <div id="cnref-{{.Name}}" class="fg" style="margin-top:8px;{{if ne .Type "reference"}}display:none{{end}}">
+        <label>Объект</label>
+        <select name="ref">
+          <option value="">— выбрать —</option>
+          {{range $.AllEntityNames}}<option value="{{.}}" {{if eq . $cn.RefEntity}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </div>
+      <div class="fg" style="margin-top:8px">
+        <label>По умолчанию</label>
+        <input type="text" name="default" value="{{.Default}}" placeholder="Значение по умолчанию">
+      </div>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        {{if and $.FieldsSaved (eq $.FieldsSavedEntity .Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
   </div>
   {{end}}
 
@@ -513,14 +550,29 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="rep-{{.Name}}">
     <div class="panel-title">📈 {{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</div>
     <div class="panel-kind">Отчёт</div>
-    {{if .Params}}
-    <div class="section-hd">Параметры</div>
-    {{range .Params}}<div style="font-size:12px;padding:3px 0;color:#555">{{.}}</div>{{end}}
-    {{end}}
-    {{if .Query}}
-    <div class="section-hd">Запрос</div>
-    <pre class="os-code">{{.Query}}</pre>
-    {{end}}
+    <form method="POST" action="/bases/{{$.Base.ID}}/configurator/report">
+      <input type="hidden" name="report_name" value="{{.Name}}">
+      <div class="fg" style="margin-top:8px">
+        <label>Заголовок</label>
+        <input type="text" name="title" value="{{.Title}}" placeholder="Название отчёта">
+      </div>
+      {{if .Params}}
+      <div class="section-hd" style="margin-top:12px">Параметры</div>
+      {{range .Params}}<div style="font-size:12px;padding:2px 0;color:#555">{{.}}</div>{{end}}
+      {{end}}
+      <div class="section-hd" style="margin-top:12px">Запрос</div>
+      <div class="code-wrap" title="Кликните для редактирования">
+        <pre class="os-code clickable-code" id="pre-rep-{{.Name}}"
+             onclick="startEdit('rep-{{.Name}}')">{{if .Query}}{{.Query}}{{else}}ВЫБРАТЬ&#10;  *&#10;ИЗ РегистрНакопления.ИмяРегистра{{end}}</pre>
+        <textarea class="os-edit" id="ta-rep-{{.Name}}" name="query"
+                  style="display:none"
+                  oninput="hlLive('rep-{{.Name}}')">{{.Query}}</textarea>
+      </div>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        {{if and $.FieldsSaved (eq $.FieldsSavedEntity .Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
   </div>
   {{end}}
 
@@ -608,6 +660,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 <div class="module-editor-wrap">
   <div class="module-tabs">
     <div class="module-tab active" onclick="modTab(this,'mp-obj-{{$e.Name}}')">📝 Модуль объекта</div>
+    {{if $e.Posting}}<div class="module-tab" onclick="modTab(this,'mp-post-{{$e.Name}}')">✅ ОбработкаПроведения</div>{{end}}
     <div class="module-tab" onclick="modTab(this,'mp-mgr-{{$e.Name}}')">📋 Модуль менеджера</div>
   </div>
 
@@ -629,6 +682,28 @@ const cfgTabTree = `{{define "tab-tree"}}
       </div>
     </form>
   </div>
+
+  {{if $e.Posting}}
+  <div class="module-pane" id="mp-post-{{$e.Name}}">
+    <div style="font-size:11px;color:#64748b;margin-bottom:6px">Процедура <b>ОбработкаПроведения()</b> — вызывается при нажатии «Провести». Здесь пишите движения регистров.</div>
+    <form method="POST" action="/bases/{{.BaseID}}/configurator/module">
+      <input type="hidden" name="entity" value="{{$e.Name}}">
+      <input type="hidden" name="module_type" value="posting">
+      <div class="code-wrap" title="Кликните для редактирования">
+        <pre class="os-code clickable-code" id="pre-post-{{$e.Name}}"
+             onclick="startEdit('post-{{$e.Name}}')">{{if $e.PostingSource}}{{$e.PostingSource}}{{else}}Процедура ОбработкаПроведения()&#10;  // Движения.ИмяРегистра.Добавить(...)&#10;КонецПроцедуры{{end}}</pre>
+        <textarea class="os-edit" id="ta-post-{{$e.Name}}" name="source"
+                  style="display:none"
+                  oninput="hlLive('post-{{$e.Name}}')">{{$e.PostingSource}}</textarea>
+      </div>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        <span class="edit-hint">✎ кликните на код для редактирования</span>
+        {{if and $.ModuleSaved (eq $.ModuleSavedEntity $e.Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
+  </div>
+  {{end}}
 
   <div class="module-pane" id="mp-mgr-{{$e.Name}}">
     <div class="module-empty" style="padding:12px 0">Модуль менеджера — в разработке.</div>

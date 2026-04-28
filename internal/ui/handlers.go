@@ -138,14 +138,23 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	setPeriodFromFields(mc, entity, obj.Fields)
 
-	if errMsg := s.runOnWriteCtx(r.Context(), obj, mc); errMsg != "" {
+	action := r.FormValue("_action")
+	isPosting := entity.Posting && (action == "post" || action == "post_and_close")
+
+	var dslErrMsg string
+	if isPosting {
+		dslErrMsg = s.runOnPostCtx(r.Context(), obj, mc)
+	} else {
+		dslErrMsg = s.runOnWriteCtx(r.Context(), obj, mc)
+	}
+	if dslErrMsg != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
 		tpRefOpts, _ := s.loadTPRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
 			"Nav":           s.buildNav(),
 			"Entity":        entity,
 			"IsNew":         true,
-			"Error":         errMsg,
+			"Error":         dslErrMsg,
 			"Values":        formValues(r, entity),
 			"RefOptions":    refOptions,
 			"EnumOptions":   s.loadEnumOptions(entity),
@@ -154,8 +163,6 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
-	action := r.FormValue("_action")
 
 	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 		if err := s.store.Upsert(ctx, entity.Name, obj.ID, obj.Fields, entity); err != nil {
@@ -276,14 +283,23 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	mc := runtime.NewMovementsCollector(entity.Name, id)
 	setPeriodFromFields(mc, entity, fields)
 
-	if errMsg := s.runOnWriteCtx(r.Context(), obj, mc); errMsg != "" {
+	action := r.FormValue("_action")
+	isPostingAct := entity.Posting && (action == "post" || action == "post_and_close")
+
+	var dslErr2 string
+	if isPostingAct {
+		dslErr2 = s.runOnPostCtx(r.Context(), obj, mc)
+	} else {
+		dslErr2 = s.runOnWriteCtx(r.Context(), obj, mc)
+	}
+	if dslErr2 != "" {
 		refOptions, _ := s.loadRefOptions(r.Context(), entity)
 		tpRefOpts2, _ := s.loadTPRefOptions(r.Context(), entity)
 		s.render(w, "page-form", map[string]any{
 			"Nav":           s.buildNav(),
 			"Entity":        entity,
 			"IsNew":         false,
-			"Error":         errMsg,
+			"Error":         dslErr2,
 			"Values":        formValues(r, entity),
 			"RefOptions":    refOptions,
 			"EnumOptions":   s.loadEnumOptions(entity),
@@ -292,8 +308,6 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
-	action := r.FormValue("_action")
 
 	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 		if err := s.store.Upsert(ctx, entity.Name, obj.ID, obj.Fields, entity); err != nil {
@@ -331,7 +345,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+id.String(), http.StatusSeeOther)
 }
 
-// postDocument posts a document: runs OnWrite, writes movements, sets posted=true.
+// postDocument posts a document: runs ОбработкаПроведения, writes movements, sets posted=true.
 func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
 	if entity == nil {
@@ -363,7 +377,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	mc := runtime.NewMovementsCollector(entity.Name, id)
 	setPeriodFromFields(mc, entity, obj.Fields)
 
-	if errMsg := s.runOnWriteCtx(r.Context(), obj, mc); errMsg != "" {
+	if errMsg := s.runOnPostCtx(r.Context(), obj, mc); errMsg != "" {
 		http.Error(w, "Проведение: "+errMsg, 422)
 		return
 	}
@@ -912,12 +926,7 @@ func (s *Server) runOnWrite(obj *runtime.Object, mc *runtime.MovementsCollector)
 	return s.runOnWriteCtx(context.Background(), obj, mc)
 }
 
-func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) string {
-	proc := s.reg.GetProcedure(obj.Type, "OnWrite")
-	if proc == nil {
-		return ""
-	}
-	// Перечисления: nested map where Перечисления.Имя.Значение → строку
+func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollector) map[string]any {
 	enumsMap := make(map[string]any)
 	for _, e := range s.reg.Enums() {
 		inner := make(map[string]any, len(e.Values))
@@ -926,17 +935,37 @@ func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *run
 		}
 		enumsMap[e.Name] = &interpreter.MapThis{M: inner}
 	}
-	// Константы: values from DB
 	constsMap := make(map[string]any)
 	if vals, err := s.store.ListConstants(ctx); err == nil {
 		constsMap = vals
 	}
-	vars := map[string]any{
-		"Движения":      mc,
-		"Перечисления":  &interpreter.MapThis{M: enumsMap},
-		"Константы":     &interpreter.MapThis{M: constsMap},
+	return map[string]any{
+		"Движения":     mc,
+		"Перечисления": &interpreter.MapThis{M: enumsMap},
+		"Константы":    &interpreter.MapThis{M: constsMap},
 	}
-	if err := s.interp.Run(proc, obj, vars); err != nil {
+}
+
+func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) string {
+	proc := s.reg.GetProcedure(obj.Type, "OnWrite")
+	if proc == nil {
+		return ""
+	}
+	if err := s.interp.Run(proc, obj, s.buildDSLVars(ctx, mc)); err != nil {
+		if dslErr, ok := err.(*interpreter.DSLError); ok {
+			return dslErr.Msg
+		}
+		return err.Error()
+	}
+	return ""
+}
+
+func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) string {
+	proc := s.reg.GetProcedure(obj.Type, "OnPost")
+	if proc == nil {
+		return ""
+	}
+	if err := s.interp.Run(proc, obj, s.buildDSLVars(ctx, mc)); err != nil {
 		if dslErr, ok := err.(*interpreter.DSLError); ok {
 			return dslErr.Msg
 		}
