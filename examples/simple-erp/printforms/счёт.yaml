@@ -1,0 +1,48 @@
+name: СчётПечать
+document: Счёт
+title: "Счёт № {{Номер}} от {{Дата | date}}"
+
+header: |
+  ## Счёт на оплату № {{Номер}} от {{Дата | date}}
+
+  **Покупатель**: {{Контрагент.Наименование}}
+
+  ___
+
+table:
+  source: Товары
+  columns:
+    - field: "@row"
+      label: "№"
+      width: 36px
+      align: center
+    - field: Наименование
+      label: Наименование товара
+    - field: Количество
+      label: Кол-во
+      align: right
+      width: 70px
+      format: "number:0"
+    - field: Цена
+      label: Цена, руб.
+      align: right
+      width: 90px
+      format: "number:2"
+    - field: Сумма
+      label: Сумма, руб.
+      align: right
+      width: 100px
+      format: "number:2"
+  totals:
+    - field: Сумма
+      sum: true
+      label: "Итого к оплате"
+
+footer: |
+  ___
+
+  Руководитель: _________________________ /________________________/
+
+  Бухгалтер: _____________________________ /________________________/
+
+  МП

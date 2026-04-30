@@ -1,0 +1,48 @@
+name: ПриходнаяНакладная
+document: Поступление
+title: "Приходная накладная № {{Номер}} от {{Дата | date}}"
+
+header: |
+  ## Приходная накладная № {{Номер}} от {{Дата | date}}
+
+  **Поставщик**: {{Поставщик.Наименование}}
+
+  ___
+
+table:
+  source: Товары
+  columns:
+    - field: "@row"
+      label: "№"
+      width: 36px
+      align: center
+    - field: Номенклатура
+      label: Наименование товара
+    - field: Количество
+      label: Кол-во
+      align: right
+      width: 70px
+      format: "number:0"
+    - field: Цена
+      label: Цена, руб.
+      align: right
+      width: 90px
+      format: "number:2"
+    - field: Сумма
+      label: Сумма, руб.
+      align: right
+      width: 100px
+      format: "number:2"
+  totals:
+    - field: Количество
+      sum: true
+    - field: Сумма
+      sum: true
+      label: "Итого"
+
+footer: |
+  ___
+
+  Принял: ________________________________ /________________________/
+
+  Сдал: __________________________________ /________________________/
