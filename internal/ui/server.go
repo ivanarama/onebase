@@ -52,6 +52,8 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/inforeg/{name}/delete", s.infoRegDelete)
 	r.Get("/ui/report/{name}", s.reportForm)
 	r.Post("/ui/report/{name}", s.reportRun)
+	r.Get("/ui/processor/{name}", s.processorForm)
+	r.Post("/ui/processor/{name}", s.processorRun)
 
 	// Document posting
 	r.Post("/ui/{kind}/{entity}/{id}/post", s.postDocument)
@@ -186,6 +188,23 @@ func (s *Server) buildNav() []navGroup {
 	}
 	if len(repItems) > 0 {
 		nav = append(nav, navGroup{Kind: "Отчёты", Items: repItems})
+	}
+
+	procs := s.reg.Processors()
+	sort.Slice(procs, func(i, j int) bool { return procs[i].Name < procs[j].Name })
+	var procItems []navItem
+	for _, proc := range procs {
+		label := proc.Title
+		if label == "" {
+			label = proc.Name
+		}
+		procItems = append(procItems, navItem{
+			Label: label,
+			URL:   "/ui/processor/" + strings.ToLower(proc.Name),
+		})
+	}
+	if len(procItems) > 0 {
+		nav = append(nav, navGroup{Kind: "Обработки", Items: procItems})
 	}
 
 	if len(s.reg.Constants()) > 0 {

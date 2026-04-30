@@ -15,6 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/printform"
+	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report"
 	"gopkg.in/yaml.v3"
 )
@@ -28,7 +29,9 @@ type Project struct {
 	Constants     []*metadata.Constant
 	Reports       []*report.Report
 	PrintForms    []*printform.PrintForm
-	Programs      map[string]*ast.Program // entity name → parsed DSL
+	Programs      map[string]*ast.Program  // entity name → parsed DSL
+	Processors    []*processor.Processor
+	Modules       map[string]*ast.Program  // module name → parsed procs
 	cleanup       func()
 }
 
@@ -85,6 +88,7 @@ func Load(dir string) (*Project, error) {
 	p := &Project{
 		Dir:      dir,
 		Programs: make(map[string]*ast.Program),
+		Modules:  make(map[string]*ast.Program),
 	}
 	if err := p.loadMetadata(); err != nil {
 		return nil, err
@@ -98,7 +102,19 @@ func Load(dir string) (*Project, error) {
 	if err := p.loadPrintForms(); err != nil {
 		return nil, err
 	}
+	if err := p.loadProcessors(); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+func (p *Project) loadProcessors() error {
+	procs, err := processor.LoadDir(filepath.Join(p.Dir, "processors"))
+	if err != nil {
+		return fmt.Errorf("project: load processors: %w", err)
+	}
+	p.Processors = procs
+	return nil
 }
 
 func (p *Project) loadPrintForms() error {
@@ -229,8 +245,12 @@ func (p *Project) loadDSL() error {
 		if item.IsDir() || !strings.HasSuffix(item.Name(), ".os") {
 			continue
 		}
-		isPosting := strings.HasSuffix(item.Name(), ".posting.os")
-		fullPath := filepath.Join(srcDir, item.Name())
+		name := item.Name()
+		isModule := strings.HasSuffix(name, ".module.os")
+		isProc := strings.HasSuffix(name, ".proc.os")
+		isPosting := strings.HasSuffix(name, ".posting.os")
+
+		fullPath := filepath.Join(srcDir, name)
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
 			return err
@@ -241,20 +261,32 @@ func (p *Project) loadDSL() error {
 		if err != nil {
 			return err
 		}
+
+		if isModule {
+			base := strings.TrimSuffix(name, ".module.os")
+			moduleName := fileNameToEntityBase(base)
+			p.Modules[moduleName] = prog
+			continue
+		}
+
+		if isProc {
+			base := strings.TrimSuffix(name, ".proc.os")
+			entityName := fileNameToEntityBase(base)
+			p.Programs[entityName] = prog
+			continue
+		}
+
 		var entityName string
 		if isPosting {
-			// "поступлениеТоваров.posting.os" → strip ".posting.os"
-			base := strings.TrimSuffix(item.Name(), ".posting.os")
+			base := strings.TrimSuffix(name, ".posting.os")
 			entityName = fileNameToEntityBase(base)
 		} else {
-			entityName = fileNameToEntity(item.Name())
+			entityName = fileNameToEntity(name)
 		}
-		// Resolve to the actual canonical entity name (case-insensitive match).
 		if actual := p.findEntityName(entityName); actual != "" {
 			entityName = actual
 		}
 		if isPosting {
-			// Merge posting procedures into the entity's existing program.
 			if existing, ok := p.Programs[entityName]; ok {
 				existing.Procedures = append(existing.Procedures, prog.Procedures...)
 			} else {

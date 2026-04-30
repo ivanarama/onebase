@@ -17,8 +17,9 @@ type Program struct {
 }
 
 type ProcedureDecl struct {
-	Name token.Token
-	Body []Stmt
+	Name   token.Token
+	Params []token.Token
+	Body   []Stmt
 }
 
 type IfStmt struct {

@@ -15,7 +15,9 @@ type dslStop struct{ err error }
 type dslReturn struct{ val any }
 
 
-type Interpreter struct{}
+type Interpreter struct {
+	LookupProc func(name string) *ast.ProcedureDecl
+}
 
 func New() *Interpreter { return &Interpreter{} }
 
@@ -184,9 +186,24 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	args := i.evalArgs(c.Args, e)
 	switch callee := c.Callee.(type) {
 	case *ast.Ident:
-		fn, ok := builtins[callee.Tok.Literal]
+		fnName := callee.Tok.Literal
+		if val, ok := e.get(fnName); ok {
+			if bf, ok2 := val.(BuiltinFunc); ok2 {
+				result, err := bf(args, callee.Tok.File, callee.Tok.Line)
+				if err != nil {
+					panic(dslStop{err: err})
+				}
+				return result
+			}
+		}
+		if i.LookupProc != nil {
+			if proc := i.LookupProc(fnName); proc != nil {
+				return i.callUserProc(proc, e, args)
+			}
+		}
+		fn, ok := builtins[fnName]
 		if !ok {
-			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, callee.Tok.Literal)})
+			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, fnName)})
 		}
 		result, err := fn(args, callee.Tok.File, callee.Tok.Line)
 		if err != nil {
@@ -200,6 +217,29 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		}
 		return nil
 	}
+	return nil
+}
+
+func (i *Interpreter) callUserProc(proc *ast.ProcedureDecl, callEnv *env, args []any) (retVal any) {
+	defer func() {
+		if r := recover(); r != nil {
+			switch s := r.(type) {
+			case dslReturn:
+				retVal = s.val
+			default:
+				panic(r)
+			}
+		}
+	}()
+	child := &env{vars: make(map[string]any), parent: callEnv, this: callEnv.this}
+	for idx, param := range proc.Params {
+		if idx < len(args) {
+			child.set(param.Literal, args[idx])
+		} else {
+			child.set(param.Literal, nil)
+		}
+	}
+	i.execBlock(proc.Body, child)
 	return nil
 }
 

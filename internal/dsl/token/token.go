@@ -12,6 +12,8 @@ const (
 
 	PROCEDURE
 	ENDPROCEDURE
+	FUNCTION
+	ENDFUNCTION
 	IF
 	THEN
 	ELSE
@@ -47,6 +49,8 @@ var keywords = map[string]Type{
 	// English
 	"Procedure":    PROCEDURE,
 	"EndProcedure": ENDPROCEDURE,
+	"Function":     FUNCTION,
+	"EndFunction":  ENDFUNCTION,
 	"If":           IF,
 	"Then":         THEN,
 	"Else":         ELSE,
@@ -62,6 +66,8 @@ var keywords = map[string]Type{
 	// Русский
 	"Процедура":      PROCEDURE,
 	"КонецПроцедуры": ENDPROCEDURE,
+	"Функция":        FUNCTION,
+	"КонецФункции":   ENDFUNCTION,
 	"Если":           IF,
 	"Тогда":          THEN,
 	"Иначе":          ELSE,
@@ -107,6 +113,10 @@ func (t Type) String() string {
 		return "Procedure"
 	case ENDPROCEDURE:
 		return "EndProcedure"
+	case FUNCTION:
+		return "Function"
+	case ENDFUNCTION:
+		return "EndFunction"
 	case IF:
 		return "If"
 	case THEN:

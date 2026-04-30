@@ -93,6 +93,8 @@ func runServer(cmd *cobra.Command, _ []string) error {
 
 	reg := runtime.NewRegistry()
 	reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports, proj.PrintForms)
+	reg.LoadModules(proj.Modules)
+	reg.LoadProcessors(proj.Processors)
 
 	appCfg, _ := project.LoadConfig(proj.Dir)
 	uiCfg := ui.Config{
@@ -105,6 +107,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	}
 
 	interp := interpreter.New()
+	interp.LookupProc = reg.GetModuleProc
 	srv := api.New(reg, db, interp, authRepo, port, uiCfg)
 
 	fmt.Fprintf(os.Stdout, "onebase running on :%d\n", port)

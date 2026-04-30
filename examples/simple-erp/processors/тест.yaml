@@ -1,0 +1,6 @@
+name: Тест
+title: Тестовая обработка
+params:
+  - name: Сообщение
+    type: string
+    label: Текст сообщения
