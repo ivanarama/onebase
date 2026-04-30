@@ -16,6 +16,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/printform"
+	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -768,6 +769,105 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		"Rows":        rows,
 		"ParamValues": paramValues,
 	})
+}
+
+func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
+	proc := s.getProcessor(w, r)
+	if proc == nil {
+		return
+	}
+	s.render(w, "page-processor", map[string]any{
+		"Nav":         s.buildNav(),
+		"Processor":   proc,
+		"ParamValues": map[string]any{},
+	})
+}
+
+func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
+	proc := s.getProcessor(w, r)
+	if proc == nil {
+		return
+	}
+	r.ParseForm()
+	paramValues := map[string]any{}
+	for _, p := range proc.Params {
+		paramValues[p.Name] = parseParamValue(r.FormValue(p.Name), p.Type)
+	}
+
+	procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
+	if procDecl == nil {
+		s.render(w, "page-processor", map[string]any{
+			"Nav":         s.buildNav(),
+			"Processor":   proc,
+			"ParamValues": paramValues,
+			"RunError":    "Процедура Выполнить() не найдена в src/" + strings.ToLower(string([]rune(proc.Name)[:1])) + string([]rune(proc.Name)[1:]) + ".proc.os",
+		})
+		return
+	}
+
+	var messages []string
+	msgFunc := interpreter.BuiltinFunc(func(args []any, file string, line int) (any, error) {
+		if len(args) > 0 {
+			messages = append(messages, fmt.Sprintf("%v", args[0]))
+		}
+		return nil, nil
+	})
+
+	paramsThis := &interpreter.MapThis{M: paramValues}
+	err := s.interp.Run(procDecl, paramsThis, map[string]any{
+		"Параметры": paramsThis,
+		"Сообщить":  msgFunc,
+		"Message":   msgFunc,
+	})
+
+	var runErr string
+	if err != nil {
+		runErr = err.Error()
+	}
+
+	s.render(w, "page-processor", map[string]any{
+		"Nav":         s.buildNav(),
+		"Processor":   proc,
+		"ParamValues": paramValues,
+		"Messages":    messages,
+		"RunError":    runErr,
+		"Ran":         true,
+	})
+}
+
+func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processorpkg.Processor {
+	name := chi.URLParam(r, "name")
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	proc := s.reg.GetProcessor(name)
+	if proc == nil {
+		http.Error(w, "unknown processor: "+name, 404)
+		return nil
+	}
+	return proc
+}
+
+func parseParamValue(s, typ string) any {
+	if s == "" {
+		return nil
+	}
+	switch typ {
+	case "date":
+		for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t
+			}
+		}
+		return s
+	case "number":
+		if f, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", "."), 64); err == nil {
+			return f
+		}
+		return s
+	default:
+		return s
+	}
 }
 
 // resolveUUIDsInReport replaces UUID-looking strings in report rows with entity display names.

@@ -450,6 +450,24 @@ const cfgTabTree = `{{define "tab-tree"}}
   {{end}}
   {{end}}
 
+  {{if .Modules}}
+  <div class="cfg-group">Общие модули</div>
+  {{range .Modules}}
+  <div class="cfg-item" data-id="mod-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">📦</span>{{.Name}}
+  </div>
+  {{end}}
+  {{end}}
+
+  {{if .Processors}}
+  <div class="cfg-group">Обработки</div>
+  {{range .Processors}}
+  <div class="cfg-item" data-id="proc-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">⚙</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}
+  </div>
+  {{end}}
+  {{end}}
+
   <div id="cfg-new-form" class="cfg-new-form" style="display:none">
     <div id="cfg-new-title" style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px"></div>
     <form method="POST" action="/bases/{{$.Base.ID}}/configurator/new">
@@ -643,6 +661,79 @@ const cfgTabTree = `{{define "tab-tree"}}
         <textarea class="os-edit" id="ta-rep-{{.Name}}" name="query"
                   style="display:none"
                   oninput="hlLive('rep-{{.Name}}')">{{.Query}}</textarea>
+      </div>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        {{if and $.FieldsSaved (eq $.FieldsSavedEntity .Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
+  </div>
+  {{end}}
+
+  {{/* Modules */}}
+  {{range .Modules}}
+  {{$mn := .Name}}
+  <div class="cfg-panel" id="mod-{{.Name}}">
+    <div class="panel-title">📦 {{.Name}}</div>
+    <div class="panel-kind">Общий модуль</div>
+    <form method="POST" action="/bases/{{$.Base.ID}}/configurator/common-module">
+      <input type="hidden" name="module_name" value="{{.Name}}">
+      <div class="section-hd">Исходный код <span class="edit-hint">(кликните для редактирования)</span></div>
+      <div class="module-editor-wrap">
+        <div class="code-wrap">
+          <pre class="os-code" id="pre-mod-{{$mn}}" onclick="startEdit('mod-{{$mn}}')">{{if .Source}}{{.Source}}{{else}}Функция ИмяФункции(Параметр)&#10;    Возврат Параметр&#10;КонецФункции{{end}}</pre>
+          <textarea class="os-edit" id="ta-mod-{{$mn}}" name="source"
+                    style="display:none"
+                    oninput="hlLive('mod-{{$mn}}')">{{.Source}}</textarea>
+        </div>
+      </div>
+      <div class="module-save-row">
+        <button class="btn-save" type="submit">Сохранить</button>
+        {{if and $.ModuleSaved (eq $.ModuleSavedEntity .Name)}}<span class="save-ok">✓ Сохранено</span>{{end}}
+      </div>
+    </form>
+  </div>
+  {{end}}
+
+  {{/* Processors */}}
+  {{range .Processors}}
+  {{$pn := .Name}}
+  <div class="cfg-panel" id="proc-{{.Name}}">
+    <div class="panel-title">⚙ {{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</div>
+    <div class="panel-kind">Обработка</div>
+    <form method="POST" action="/bases/{{$.Base.ID}}/configurator/processor">
+      <input type="hidden" name="processor_name" value="{{.Name}}">
+      <div class="fg" style="margin-top:8px">
+        <label>Заголовок</label>
+        <input type="text" name="title" value="{{.Title}}" placeholder="Название обработки">
+      </div>
+      <div class="section-hd" style="margin-top:12px">
+        Параметры
+        <button type="button" class="cfg-add-btn" style="font-size:14px;margin-left:8px" onclick="repAddParam('pparams-{{$pn}}')">+</button>
+      </div>
+      <table class="fields-tbl" id="pparams-{{$pn}}">
+        <tr><th>Имя (&amp;Параметры.*)</th><th>Тип</th><th>Заголовок</th><th></th></tr>
+        {{range $i, $p := .Params}}
+        <tr>
+          <td><input type="text" name="param.{{$i}}.name" value="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
+          <td>
+            <select name="param.{{$i}}.type" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+              <option value="string" {{if eq $p.Type "string"}}selected{{end}}>строка</option>
+              <option value="date"   {{if eq $p.Type "date"}}selected{{end}}>дата</option>
+              <option value="number" {{if eq $p.Type "number"}}selected{{end}}>число</option>
+            </select>
+          </td>
+          <td><input type="text" name="param.{{$i}}.label" value="{{$p.Label}}" placeholder="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
+          <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest('tr').remove();repReindex('pparams-{{$pn}}')">✕</button></td>
+        </tr>
+        {{end}}
+      </table>
+      <div class="section-hd" style="margin-top:12px">Исходный код (Процедура Выполнить()) <span class="edit-hint">(кликните для редактирования)</span></div>
+      <div class="code-wrap">
+        <pre class="os-code" id="pre-proc-{{$pn}}" onclick="startEdit('proc-{{$pn}}')">{{if .Source}}{{.Source}}{{else}}Процедура Выполнить()&#10;    Сообщить("Привет!")&#10;КонецПроцедуры{{end}}</pre>
+        <textarea class="os-edit" id="ta-proc-{{$pn}}" name="source"
+                  style="display:none"
+                  oninput="hlLive('proc-{{$pn}}')">{{.Source}}</textarea>
       </div>
       <div class="module-save-row">
         <button class="btn-save" type="submit">Сохранить</button>

@@ -103,6 +103,18 @@ type cfgReport struct {
 	Params []cfgParam
 }
 
+type cfgModule struct {
+	Name   string
+	Source string
+}
+
+type cfgProcessor struct {
+	Name   string
+	Title  string
+	Source string
+	Params []cfgParam
+}
+
 type cfgInfoRegister struct {
 	Name       string
 	Periodic   bool
@@ -123,6 +135,8 @@ type configuratorData struct {
 	Enums     []cfgEnum
 	Constants []cfgConstant
 	Reports   []cfgReport
+	Modules    []cfgModule
+	Processors []cfgProcessor
 	Error     string
 	// all entity names for reference picker
 	AllEntityNames []string
@@ -359,6 +373,29 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 		data.Reports = append(data.Reports, rv)
 	}
 
+	moduleSources, procSources := readModuleAndProcSources(proj.Dir)
+
+	for name := range proj.Modules {
+		data.Modules = append(data.Modules, cfgModule{
+			Name:   name,
+			Source: moduleSources[strings.ToLower(name)],
+		})
+	}
+	sort.Slice(data.Modules, func(i, j int) bool { return data.Modules[i].Name < data.Modules[j].Name })
+
+	for _, proc := range proj.Processors {
+		rv := cfgProcessor{
+			Name:   proc.Name,
+			Title:  proc.Title,
+			Source: procSources[strings.ToLower(proc.Name)],
+		}
+		for _, p := range proc.Params {
+			rv.Params = append(rv.Params, cfgParam{Name: p.Name, Type: p.Type, Label: p.Label})
+		}
+		data.Processors = append(data.Processors, rv)
+	}
+	sort.Slice(data.Processors, func(i, j int) bool { return data.Processors[i].Name < data.Processors[j].Name })
+
 	return data
 }
 
@@ -393,9 +430,38 @@ func readOSSources(dir string) (sources, postingSources map[string]string) {
 		if strings.HasSuffix(name, ".posting.os") {
 			base := strings.ToLower(strings.TrimSuffix(name, ".posting.os"))
 			postingSources[base] = string(raw)
+		} else if strings.HasSuffix(name, ".module.os") || strings.HasSuffix(name, ".proc.os") {
+			// skip — handled by readModuleAndProcSources
 		} else {
 			base := strings.ToLower(strings.TrimSuffix(name, ".os"))
 			sources[base] = string(raw)
+		}
+	}
+	return
+}
+
+func readModuleAndProcSources(dir string) (moduleSources, procSources map[string]string) {
+	moduleSources = make(map[string]string)
+	procSources = make(map[string]string)
+	entries, err := os.ReadDir(filepath.Join(dir, "src"))
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".os") {
+			continue
+		}
+		name := e.Name()
+		raw, err := os.ReadFile(filepath.Join(dir, "src", name))
+		if err != nil {
+			continue
+		}
+		if strings.HasSuffix(name, ".module.os") {
+			base := strings.ToLower(strings.TrimSuffix(name, ".module.os"))
+			moduleSources[base] = string(raw)
+		} else if strings.HasSuffix(name, ".proc.os") {
+			base := strings.ToLower(strings.TrimSuffix(name, ".proc.os"))
+			procSources[base] = string(raw)
 		}
 	}
 	return
@@ -1216,6 +1282,151 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 		data.FieldsSavedEntity = repName
 	}
 	renderCfg(w, data)
+}
+
+// ── Common module save ────────────────────────────────────────────────────────
+
+func (h *handler) configuratorSaveCommonModule(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	moduleName := r.FormValue("module_name")
+	source := r.FormValue("source")
+
+	filename := moduleNameToFilename(moduleName)
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, err := storage.Connect(r.Context(), b.DB)
+		if err != nil {
+			saveErr = err
+		} else {
+			defer db.Close()
+			_, saveErr = db.Pool().Exec(r.Context(), `
+				INSERT INTO _onebase_config (path, content, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+			`, "src/"+filename, []byte(source))
+		}
+	} else {
+		srcDir := filepath.Join(b.Path, "src")
+		os.MkdirAll(srcDir, 0o755)
+		saveErr = os.WriteFile(filepath.Join(srcDir, filename), []byte(source), 0o644)
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.ModuleSaved = true
+		data.ModuleSavedEntity = moduleName
+	}
+	renderCfg(w, data)
+}
+
+func moduleNameToFilename(name string) string {
+	if name == "" {
+		return ".module.os"
+	}
+	runes := []rune(name)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes) + ".module.os"
+}
+
+// ── Processor save ────────────────────────────────────────────────────────────
+
+func (h *handler) configuratorSaveProcessor(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	procName := r.FormValue("processor_name")
+	title := strings.TrimSpace(r.FormValue("title"))
+	source := r.FormValue("source")
+
+	type saveParam struct {
+		Name  string `yaml:"name"`
+		Type  string `yaml:"type"`
+		Label string `yaml:"label,omitempty"`
+	}
+	type saveProcessor struct {
+		Name   string      `yaml:"name"`
+		Title  string      `yaml:"title,omitempty"`
+		Params []saveParam `yaml:"params,omitempty"`
+	}
+
+	var newParams []saveParam
+	for i := 0; i < 50; i++ {
+		pname := strings.TrimSpace(r.FormValue(fmt.Sprintf("param.%d.name", i)))
+		if pname == "" {
+			break
+		}
+		ptype := r.FormValue(fmt.Sprintf("param.%d.type", i))
+		plabel := strings.TrimSpace(r.FormValue(fmt.Sprintf("param.%d.label", i)))
+		newParams = append(newParams, saveParam{Name: pname, Type: ptype, Label: plabel})
+	}
+
+	yamlData, _ := yaml.Marshal(saveProcessor{Name: procName, Title: title, Params: newParams})
+	yamlFilename := "processors/" + nameToFilename(procName) + ".yaml"
+	srcFilename := "src/" + processorSrcFilename(procName)
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, cerr := storage.Connect(r.Context(), b.DB)
+		if cerr != nil {
+			saveErr = cerr
+		} else {
+			defer db.Close()
+			if _, err := db.Pool().Exec(r.Context(), `
+				INSERT INTO _onebase_config (path, content, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+			`, yamlFilename, yamlData); err != nil {
+				saveErr = err
+			}
+			if saveErr == nil {
+				_, saveErr = db.Pool().Exec(r.Context(), `
+					INSERT INTO _onebase_config (path, content, updated_at)
+					VALUES ($1, $2, now())
+					ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+				`, srcFilename, []byte(source))
+			}
+		}
+	} else {
+		procDir := filepath.Join(b.Path, "processors")
+		os.MkdirAll(procDir, 0o755)
+		if err := os.WriteFile(filepath.Join(b.Path, yamlFilename), yamlData, 0o644); err != nil {
+			saveErr = err
+		}
+		if saveErr == nil {
+			srcDir := filepath.Join(b.Path, "src")
+			os.MkdirAll(srcDir, 0o755)
+			saveErr = os.WriteFile(filepath.Join(b.Path, srcFilename), []byte(source), 0o644)
+		}
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = procName
+	}
+	renderCfg(w, data)
+}
+
+func processorSrcFilename(name string) string {
+	if name == "" {
+		return ".proc.os"
+	}
+	runes := []rune(name)
+	runes[0] = unicode.ToLower(runes[0])
+	return string(runes) + ".proc.os"
 }
 
 // ── App config save ───────────────────────────────────────────────────────────

@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// BuiltinFunc is a callable value that can be injected via extraVars (e.g. Сообщить).
+type BuiltinFunc func(args []any, file string, line int) (any, error)
+
 // DSLError is returned by Error() built-in; stops execution and cancels Save.
 type DSLError struct {
 	File string
@@ -20,6 +23,10 @@ func (e *DSLError) Error() string {
 }
 
 var builtins = map[string]func(args []any, file string, line int) (any, error){
+
+	// ─── Сообщения ────────────────────────────────────────────────────────
+	"Сообщить": func(args []any, file string, line int) (any, error) { return nil, nil },
+	"Message":  func(args []any, file string, line int) (any, error) { return nil, nil },
 
 	// ─── Ошибки ───────────────────────────────────────────────────────────
 	"Error": func(args []any, file string, line int) (any, error) {

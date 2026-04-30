@@ -7,6 +7,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/printform"
+	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report"
 )
 
@@ -21,19 +22,23 @@ type Registry struct {
 	reports     map[string]*report.Report
 	printForms  map[string][]*printform.PrintForm // lowercase entity name → forms
 	procs       map[string]map[string]*ast.ProcedureDecl
+	moduleProcs map[string]*ast.ProcedureDecl // flat: proc name → decl
+	processors  map[string]*processor.Processor
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		entities:   make(map[string]*metadata.Entity),
-		entitySlug: make(map[string]*metadata.Entity),
-		registers:  make(map[string]*metadata.Register),
-		inforegs:   make(map[string]*metadata.InfoRegister),
-		enums:      make(map[string]*metadata.Enum),
-		constants:  make(map[string]*metadata.Constant),
-		reports:    make(map[string]*report.Report),
-		printForms: make(map[string][]*printform.PrintForm),
-		procs:      make(map[string]map[string]*ast.ProcedureDecl),
+		entities:    make(map[string]*metadata.Entity),
+		entitySlug:  make(map[string]*metadata.Entity),
+		registers:   make(map[string]*metadata.Register),
+		inforegs:    make(map[string]*metadata.InfoRegister),
+		enums:       make(map[string]*metadata.Enum),
+		constants:   make(map[string]*metadata.Constant),
+		reports:     make(map[string]*report.Report),
+		printForms:  make(map[string][]*printform.PrintForm),
+		procs:       make(map[string]map[string]*ast.ProcedureDecl),
+		moduleProcs: make(map[string]*ast.ProcedureDecl),
+		processors:  make(map[string]*processor.Processor),
 	}
 }
 
@@ -239,6 +244,59 @@ func (r *Registry) Entities() []*metadata.Entity {
 var eventAliases = map[string]string{
 	"OnWrite": "ПриЗаписи",
 	"OnPost":  "ОбработкаПроведения",
+}
+
+func (r *Registry) LoadModules(modules map[string]*ast.Program) {
+	flat := make(map[string]*ast.ProcedureDecl)
+	for _, prog := range modules {
+		for _, p := range prog.Procedures {
+			flat[p.Name.Literal] = p
+		}
+	}
+	r.mu.Lock()
+	r.moduleProcs = flat
+	r.mu.Unlock()
+}
+
+func (r *Registry) LoadProcessors(procs []*processor.Processor) {
+	m := make(map[string]*processor.Processor, len(procs))
+	for _, p := range procs {
+		m[p.Name] = p
+	}
+	r.mu.Lock()
+	r.processors = m
+	r.mu.Unlock()
+}
+
+func (r *Registry) GetModuleProc(name string) *ast.ProcedureDecl {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.moduleProcs[name]
+}
+
+func (r *Registry) Processors() []*processor.Processor {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*processor.Processor, 0, len(r.processors))
+	for _, p := range r.processors {
+		out = append(out, p)
+	}
+	return out
+}
+
+func (r *Registry) GetProcessor(name string) *processor.Processor {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if p, ok := r.processors[name]; ok {
+		return p
+	}
+	nl := strings.ToLower(name)
+	for k, v := range r.processors {
+		if strings.ToLower(k) == nl {
+			return v
+		}
+	}
+	return nil
 }
 
 func (r *Registry) GetProcedure(entityName, procName string) *ast.ProcedureDecl {

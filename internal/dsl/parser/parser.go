@@ -45,8 +45,8 @@ func (p *Parser) consumeSemi() {
 func (p *Parser) ParseProgram() (*ast.Program, error) {
 	prog := &ast.Program{}
 	for p.cur.Type != token.EOF {
-		if p.cur.Type != token.PROCEDURE {
-			return nil, fmt.Errorf("%s:%d:%d: expected Procedure, got %q",
+		if p.cur.Type != token.PROCEDURE && p.cur.Type != token.FUNCTION {
+			return nil, fmt.Errorf("%s:%d:%d: expected Procedure or Function, got %q",
 				p.cur.File, p.cur.Line, p.cur.Col, p.cur.Literal)
 		}
 		proc, err := p.parseProcedure()
@@ -59,7 +59,8 @@ func (p *Parser) ParseProgram() (*ast.Program, error) {
 }
 
 func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
-	p.advance() // consume Procedure
+	isFunc := p.cur.Type == token.FUNCTION
+	p.advance() // consume Procedure/Function
 	nameTok, err := p.expect(token.IDENT)
 	if err != nil {
 		return nil, err
@@ -67,21 +68,36 @@ func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
 	if _, err := p.expect(token.LPAREN); err != nil {
 		return nil, err
 	}
+	var params []token.Token
+	for p.cur.Type != token.RPAREN && p.cur.Type != token.EOF {
+		paramTok, err := p.expect(token.IDENT)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, paramTok)
+		if p.cur.Type == token.COMMA {
+			p.advance()
+		}
+	}
 	if _, err := p.expect(token.RPAREN); err != nil {
 		return nil, err
 	}
-	body, err := p.parseBlock(token.ENDPROCEDURE)
+	endTok := token.ENDPROCEDURE
+	if isFunc {
+		endTok = token.ENDFUNCTION
+	}
+	body, err := p.parseBlock(endTok)
 	if err != nil {
 		return nil, err
 	}
-	p.advance() // consume EndProcedure
-	return &ast.ProcedureDecl{Name: nameTok, Body: body}, nil
+	p.advance() // consume EndProcedure/EndFunction
+	return &ast.ProcedureDecl{Name: nameTok, Params: params, Body: body}, nil
 }
 
 // isBlockEnd returns true for tokens that end a block from the outside.
 func isBlockEnd(t token.Type) bool {
 	switch t {
-	case token.EOF, token.ELSE, token.ENDIF, token.ENDDO, token.ENDPROCEDURE:
+	case token.EOF, token.ELSE, token.ENDIF, token.ENDDO, token.ENDPROCEDURE, token.ENDFUNCTION:
 		return true
 	}
 	return false

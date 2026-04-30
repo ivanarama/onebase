@@ -59,6 +59,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 
 	reg := runtime.NewRegistry()
 	interp := interpreter.New()
+	interp.LookupProc = reg.GetModuleProc
 
 	var watchDir string
 	load := func() {
@@ -102,6 +103,8 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			_ = authRepo.SyncRoles(ctx, roles)
 		}
 		reg.Load(proj.Entities, proj.Programs, proj.Registers, proj.InfoRegisters, proj.Enums, proj.Constants, proj.Reports, proj.PrintForms)
+		reg.LoadModules(proj.Modules)
+		reg.LoadProcessors(proj.Processors)
 		fmt.Fprintln(os.Stdout, "[dev] reloaded")
 	}
 	load()

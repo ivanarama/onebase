@@ -101,7 +101,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return template.JS(b)
 	},
-}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory))
+}).Parse(tplHead + tplNav + tplIndex + tplList + tplForm + tplRegister + tplReport + tplProcessor + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory))
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -655,6 +655,55 @@ const tplDeleteMarked = `
 {{else}}
 <div class="card" style="max-width:600px">
   <p class="empty">Помеченных на удаление записей нет.</p>
+</div>
+{{end}}
+</main></div></body></html>
+{{end}}
+`
+
+const tplProcessor = `
+{{define "page-processor"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>{{if .Processor.Title}}{{.Processor.Title}}{{else}}{{.Processor.Name}}{{end}}</h2>
+{{if .Processor.Params}}
+<div class="card" style="margin-bottom:16px">
+<form method="POST">
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+  {{range .Processor.Params}}{{$pname := .Name}}
+    <div class="form-group" style="margin-bottom:0">
+      <label>{{.DisplayLabel}}</label>
+      {{if eq .Type "date"}}
+        <input type="date" name="{{$pname}}" value="{{index $.ParamValues $pname}}">
+      {{else if eq .Type "number"}}
+        <input type="number" name="{{$pname}}" value="{{index $.ParamValues $pname}}">
+      {{else}}
+        <input type="text" name="{{$pname}}" value="{{index $.ParamValues $pname}}">
+      {{end}}
+    </div>
+  {{end}}
+  </div>
+  <button class="btn btn-primary" type="submit">Выполнить</button>
+</form>
+</div>
+{{else}}
+<div class="card" style="margin-bottom:16px">
+<form method="POST">
+  <button class="btn btn-primary" type="submit">Выполнить</button>
+</form>
+</div>
+{{end}}
+{{if .Ran}}
+<div class="card">
+{{if .RunError}}
+  <div class="error">{{.RunError}}</div>
+{{else if .Messages}}
+  <table><tbody>
+  {{range .Messages}}<tr><td style="font-family:monospace;font-size:13px;padding:6px 12px;border-bottom:1px solid #f1f5f9">{{.}}</td></tr>{{end}}
+  </tbody></table>
+{{else}}
+  <p class="empty">Выполнено без сообщений</p>
+{{end}}
 </div>
 {{end}}
 </main></div></body></html>

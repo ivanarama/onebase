@@ -54,6 +54,8 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/configurator/enum", s.h.configuratorSaveEnum)
 	r.Post("/bases/{id}/configurator/constant", s.h.configuratorSaveConstant)
 	r.Post("/bases/{id}/configurator/report", s.h.configuratorSaveReport)
+	r.Post("/bases/{id}/configurator/common-module", s.h.configuratorSaveCommonModule)
+	r.Post("/bases/{id}/configurator/processor", s.h.configuratorSaveProcessor)
 	r.Post("/bases/{id}/configurator/new", s.h.configuratorNewObject)
 	r.Post("/bases/{id}/configurator/app", s.h.configuratorSaveApp)
 	r.Post("/killall", s.h.killAll)
