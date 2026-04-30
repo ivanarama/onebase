@@ -55,6 +55,7 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/configurator/constant", s.h.configuratorSaveConstant)
 	r.Post("/bases/{id}/configurator/report", s.h.configuratorSaveReport)
 	r.Post("/bases/{id}/configurator/new", s.h.configuratorNewObject)
+	r.Post("/bases/{id}/configurator/app", s.h.configuratorSaveApp)
 	r.Post("/killall", s.h.killAll)
 	r.Post("/quit", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

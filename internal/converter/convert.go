@@ -58,8 +58,11 @@ func Convert(opts Options) (*writer.ConversionReport, error) {
 		return nil, fmt.Errorf("convert: write dsl stubs: %w", err)
 	}
 
-	// app.yaml
-	appName := filepath.Base(opts.OutDir)
+	// app.yaml — use source dir name (the 1C config folder), not the temp workspace dir
+	appName := filepath.Base(opts.SourceDir)
+	if appName == "" || appName == "." {
+		appName = filepath.Base(opts.OutDir)
+	}
 	if err := writeAppYAML(opts.OutDir, appName); err != nil {
 		return nil, err
 	}

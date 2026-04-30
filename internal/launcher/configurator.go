@@ -111,9 +111,10 @@ type cfgInfoRegister struct {
 }
 
 type configuratorData struct {
-	Base      *Base
-	AppName   string
-	Tab       string // "tree" | "convert" | "files"
+	Base       *Base
+	AppName    string
+	AppVersion string
+	Tab        string // "tree" | "convert" | "files"
 	Entities  []cfgEntity
 	Catalogs  []cfgEntity
 	Docs      []cfgEntity
@@ -265,6 +266,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 
 	if appCfg, _ := project.LoadConfig(proj.Dir); appCfg != nil {
 		data.AppName = appCfg.Name
+		data.AppVersion = appCfg.Version
 	}
 
 	sources, postingSources := readOSSources(proj.Dir)
@@ -1212,6 +1214,59 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = repName
+	}
+	renderCfg(w, data)
+}
+
+// ── App config save ───────────────────────────────────────────────────────────
+
+func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.ParseForm()
+	newName := strings.TrimSpace(r.FormValue("app_name"))
+	newVersion := strings.TrimSpace(r.FormValue("app_version"))
+	if newName == "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = "Имя конфигурации не может быть пустым"
+		renderCfg(w, data)
+		return
+	}
+
+	type saveAppConfig struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version,omitempty"`
+	}
+	out, _ := yaml.Marshal(saveAppConfig{Name: newName, Version: newVersion})
+
+	var saveErr error
+	if b.ConfigSource == "database" {
+		db, cerr := storage.Connect(r.Context(), b.DB)
+		if cerr != nil {
+			saveErr = cerr
+		} else {
+			defer db.Close()
+			_, saveErr = db.Pool().Exec(r.Context(), `
+				INSERT INTO _onebase_config (path, content, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (path) DO UPDATE SET content=EXCLUDED.content, updated_at=now()
+			`, "config/app.yaml", out)
+		}
+	} else {
+		dir := filepath.Join(b.Path, "config")
+		os.MkdirAll(dir, 0o755)
+		saveErr = os.WriteFile(filepath.Join(dir, "app.yaml"), out, 0o644)
+	}
+
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if saveErr != nil {
+		data.Error = "Ошибка сохранения: " + saveErr.Error()
+	} else {
+		data.FieldsSaved = true
+		data.FieldsSavedEntity = "__app__"
 	}
 	renderCfg(w, data)
 }

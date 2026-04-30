@@ -375,6 +375,11 @@ const cfgTabTree = `{{define "tab-tree"}}
 
 {{/* ── Left panel ── */}}
 <div class="cfg-left">
+  <div class="cfg-group">Конфигурация</div>
+  <div class="cfg-item" data-id="panel-app" onclick="selItem(this)">
+    <span class="ic">⚙</span>{{if .AppName}}{{.AppName}}{{else}}Без названия{{end}}
+  </div>
+
   <div class="cfg-group cfg-group-hd">
     <span>Справочники</span>
     <span class="cfg-add-btn" onclick="cfgNewObj('catalog')" title="Добавить справочник">+</span>
@@ -460,6 +465,27 @@ const cfgTabTree = `{{define "tab-tree"}}
 
 {{/* ── Right panel ── */}}
 <div class="cfg-right">
+
+  {{/* App config */}}
+  <div class="cfg-panel" id="panel-app">
+    <div class="panel-title">⚙ Конфигурация</div>
+    <div class="panel-kind">Общие параметры приложения</div>
+    <form method="POST" action="/bases/{{.Base.ID}}/configurator/app" style="margin-top:12px">
+      <div class="fg">
+        <label>Название конфигурации</label>
+        <input type="text" name="app_name" value="{{.AppName}}" placeholder="Моя конфигурация" autofocus>
+        <div class="hint">Отображается в заголовке окна и навигации пользовательского режима</div>
+      </div>
+      <div class="fg" style="margin-top:10px">
+        <label>Версия</label>
+        <input type="text" name="app_version" value="{{.AppVersion}}" placeholder="1.0">
+      </div>
+      <div class="module-save-row" style="margin-top:12px">
+        <button class="btn-save" type="submit">Сохранить</button>
+        {{if and .FieldsSaved (eq .FieldsSavedEntity "__app__")}}<span class="save-ok">✓ Сохранено — перезапустите базу</span>{{end}}
+      </div>
+    </form>
+  </div>
 
   {{if not (or .Catalogs .Docs .Registers .InfoRegisters .Enums .Constants .Reports)}}
   <div style="color:#aaa;padding:60px 20px;text-align:center">
