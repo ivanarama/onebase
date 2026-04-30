@@ -90,11 +90,17 @@ type cfgRegister struct {
 	Attributes []cfgField
 }
 
+type cfgParam struct {
+	Name  string
+	Type  string
+	Label string
+}
+
 type cfgReport struct {
 	Name   string
 	Title  string
 	Query  string
-	Params []string
+	Params []cfgParam
 }
 
 type cfgInfoRegister struct {
@@ -346,7 +352,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string) *configu
 	for _, rep := range proj.Reports {
 		rv := cfgReport{Name: rep.Name, Title: rep.Title, Query: rep.Query}
 		for _, p := range rep.Params {
-			rv.Params = append(rv.Params, p.DisplayLabel()+" ["+p.Type+"]")
+			rv.Params = append(rv.Params, cfgParam{Name: p.Name, Type: p.Type, Label: p.Label})
 		}
 		data.Reports = append(data.Reports, rv)
 	}
@@ -1119,6 +1125,18 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 		Query  string      `yaml:"query"`
 	}
 
+	// Parse params from form: param.0.name, param.0.type, param.0.label, ...
+	var newParams []saveParam
+	for i := 0; i < 50; i++ {
+		pname := strings.TrimSpace(r.FormValue(fmt.Sprintf("param.%d.name", i)))
+		if pname == "" {
+			break
+		}
+		ptype := r.FormValue(fmt.Sprintf("param.%d.type", i))
+		plabel := strings.TrimSpace(r.FormValue(fmt.Sprintf("param.%d.label", i)))
+		newParams = append(newParams, saveParam{Name: pname, Type: ptype, Label: plabel})
+	}
+
 	updateReportFile := func(raw []byte) ([]byte, error) {
 		var rep saveReport
 		if err := yaml.Unmarshal(raw, &rep); err != nil {
@@ -1128,6 +1146,7 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 		if title != "" {
 			rep.Title = title
 		}
+		rep.Params = newParams
 		return yaml.Marshal(&rep)
 	}
 

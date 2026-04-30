@@ -392,12 +392,19 @@ func translate(tokens []tok, paramValues map[string]any) (Result, error) {
 }
 
 // pgCast returns a PostgreSQL explicit cast suffix for v so that PostgreSQL
-// can determine the parameter type even when the parameter appears in an
-// "IS NULL" expression (e.g. "$1::timestamptz IS NULL OR col <= $1::timestamptz").
+// can determine the parameter type even when context alone is insufficient.
 func pgCast(v any) string {
 	switch v.(type) {
 	case time.Time:
 		return "::timestamptz"
+	case string:
+		return "::text"
+	case float64, float32:
+		return "::numeric"
+	case int, int32, int64, uint, uint32, uint64:
+		return "::bigint"
+	case bool:
+		return "::boolean"
 	}
 	return ""
 }

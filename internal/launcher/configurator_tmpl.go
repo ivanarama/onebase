@@ -323,6 +323,37 @@ document.querySelectorAll('pre.os-code').forEach(function(el){
   el.innerHTML=hl(el.textContent);
 });
 })();
+
+// ── Report params ──────────────────────────────────────────────
+function repReindex(tableId) {
+  var tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  var rows = tbl.querySelectorAll('tbody tr, tr:not(:first-child)');
+  // skip header row (first tr), iterate data rows
+  var dataRows = Array.from(tbl.querySelectorAll('tr')).filter(function(r){ return r.querySelector('input[type=text]'); });
+  dataRows.forEach(function(tr, i) {
+    tr.querySelectorAll('input,select').forEach(function(el) {
+      el.name = el.name.replace(/param\.\d+\./, 'param.' + i + '.');
+    });
+    var btn = tr.querySelector('button[type=button]');
+    if (btn) btn.setAttribute('onclick', 'this.closest(\'tr\').remove();repReindex(\'' + tableId + '\')');
+  });
+}
+function repAddParam(tableId) {
+  var tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  var dataRows = Array.from(tbl.querySelectorAll('tr')).filter(function(r){ return r.querySelector('input[type=text]'); });
+  var i = dataRows.length;
+  var tr = document.createElement('tr');
+  tr.innerHTML = '<td><input type="text" name="param.' + i + '.name" value="" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="ИмяПараметра"></td>'
+    + '<td><select name="param.' + i + '.type" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">'
+    + '<option value="string">строка</option><option value="date">дата</option><option value="number">число</option><option value="select">список</option>'
+    + '</select></td>'
+    + '<td><input type="text" name="param.' + i + '.label" value="" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="Заголовок"></td>'
+    + '<td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest(\'tr\').remove();repReindex(\'' + tableId + '\')">✕</button></td>';
+  tbl.appendChild(tr);
+  tr.querySelector('input[type=text]').focus();
+}
 </script>
 </body></html>
 {{end}}`
@@ -547,6 +578,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 
   {{/* Reports */}}
   {{range .Reports}}
+  {{$rn := .Name}}
   <div class="cfg-panel" id="rep-{{.Name}}">
     <div class="panel-title">📈 {{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</div>
     <div class="panel-kind">Отчёт</div>
@@ -556,10 +588,28 @@ const cfgTabTree = `{{define "tab-tree"}}
         <label>Заголовок</label>
         <input type="text" name="title" value="{{.Title}}" placeholder="Название отчёта">
       </div>
-      {{if .Params}}
-      <div class="section-hd" style="margin-top:12px">Параметры</div>
-      {{range .Params}}<div style="font-size:12px;padding:2px 0;color:#555">{{.}}</div>{{end}}
-      {{end}}
+      <div class="section-hd" style="margin-top:12px">
+        Параметры
+        <button type="button" class="cfg-add-btn" style="font-size:14px;margin-left:8px" onclick="repAddParam('params-{{$rn}}')">+</button>
+      </div>
+      <table class="fields-tbl" id="params-{{$rn}}">
+        <tr><th>Имя (&amp;Параметр)</th><th>Тип</th><th>Заголовок</th><th></th></tr>
+        {{range $i, $p := .Params}}
+        <tr>
+          <td><input type="text" name="param.{{$i}}.name" value="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
+          <td>
+            <select name="param.{{$i}}.type" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+              <option value="string" {{if eq $p.Type "string"}}selected{{end}}>строка</option>
+              <option value="date"   {{if eq $p.Type "date"}}selected{{end}}>дата</option>
+              <option value="number" {{if eq $p.Type "number"}}selected{{end}}>число</option>
+              <option value="select" {{if eq $p.Type "select"}}selected{{end}}>список</option>
+            </select>
+          </td>
+          <td><input type="text" name="param.{{$i}}.label" value="{{$p.Label}}" placeholder="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
+          <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest('tr').remove();repReindex('params-{{$rn}}')">✕</button></td>
+        </tr>
+        {{end}}
+      </table>
       <div class="section-hd" style="margin-top:12px">Запрос</div>
       <div class="code-wrap" title="Кликните для редактирования">
         <pre class="os-code clickable-code" id="pre-rep-{{.Name}}"
