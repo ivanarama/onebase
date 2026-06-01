@@ -554,11 +554,14 @@ window.__obWidgetCharts = window.__obWidgetCharts || {};
     var nodes=document.querySelectorAll('.w-chart-canvas[data-widget]');
     for(var i=0;i<nodes.length;i++){
       var node=nodes[i];
+      if(node.getAttribute('data-ob-init'))continue; // не переинициализировать → нет повторного «моргания»
       var name=node.getAttribute('data-widget');
       var opt=window.__obWidgetCharts[name];
       if(!opt)continue;
+      node.setAttribute('data-ob-init','1');
       try{
         var c=echarts.init(node);
+        opt.animation=false; // мгновенная отрисовка без анимации входа (библиотека грузится с задержкой)
         if(opt.yAxis&&opt.yAxis.type==="value"){opt.yAxis.axisLabel={formatter:function(v){if(Math.abs(v)>=1e6)return(v/1e6).toFixed(1)+"M";if(Math.abs(v)>=1e3)return(v/1e3).toFixed(1)+"k";return v%1===0?v:v.toFixed(2)}};}
         c.setOption(opt);
         (function(c){window.addEventListener('resize',function(){c.resize();});})(c);
@@ -1458,7 +1461,7 @@ const tplReport = `
 <script>
 (function(){
   var c=echarts.init(document.getElementById('ob-chart'));
-  var _o={{jsJSON .ChartOption}};if(_o.yAxis&&_o.yAxis.type==="value"){_o.yAxis.axisLabel={formatter:function(v){if(Math.abs(v)>=1e6)return(v/1e6).toFixed(1)+"M";if(Math.abs(v)>=1e3)return(v/1e3).toFixed(1)+"k";return v%1===0?v:v.toFixed(2)}};}
+  var _o={{jsJSON .ChartOption}};_o.animation=false;if(_o.yAxis&&_o.yAxis.type==="value"){_o.yAxis.axisLabel={formatter:function(v){if(Math.abs(v)>=1e6)return(v/1e6).toFixed(1)+"M";if(Math.abs(v)>=1e3)return(v/1e3).toFixed(1)+"k";return v%1===0?v:v.toFixed(2)}};}
   c.setOption(_o);
   window.addEventListener('resize',function(){c.resize()});
 })();
