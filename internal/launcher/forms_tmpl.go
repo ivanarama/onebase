@@ -56,7 +56,6 @@ const tplFormsBase = `
 <head>
 <meta charset="utf-8">
 <title>Управляемые формы — {{.Base.Name}}</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/editor/editor.main.min.css">
 <style>
 * {box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:13px;color:#334;background:#f4f6fb}
@@ -256,20 +255,52 @@ const tplFormsEditor = `
   <div id="warn-items"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
 <script>
-require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
-require(['vs/editor/editor.main'], function () {
-  window.yamlEditor = monaco.editor.create(document.getElementById('yaml-editor'), {
-    value: {{jsString .EditingForm.YAML}},
-    language: 'yaml', theme: 'vs-light', automaticLayout: true, minimap: { enabled: false }, fontSize: 12
-  });
-  window.osEditor = monaco.editor.create(document.getElementById('os-editor'), {
-    value: {{jsString .EditingForm.OS}},
-    language: 'plaintext', theme: 'vs-light', automaticLayout: true, minimap: { enabled: false }, fontSize: 12
-  });
+// Самохостинг Monaco: web-воркер из встроенного /vendor/monaco/ (тот же origin).
+window.MonacoEnvironment = { getWorkerUrl: function () {
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    "self.MonacoEnvironment={baseUrl:'" + location.origin + "/vendor/monaco/'};" +
+    "importScripts('" + location.origin + "/vendor/monaco/vs/base/worker/workerMain.js');");
+}};
+var _initialYAML = {{jsString .EditingForm.YAML}};
+var _initialOS   = {{jsString .EditingForm.OS}};
+
+function buildFallback() {
+  // Monaco не загрузился — деградируем в textarea, чтобы форма всё равно
+  // редактировалась и сохранялась (в т.ч. полностью офлайн).
+  function ta(host, val) {
+    var t = document.createElement('textarea');
+    t.value = val;
+    t.style.cssText = 'width:100%;height:100%;border:0;outline:0;resize:none;font-family:Consolas,monospace;font-size:12px;padding:8px;box-sizing:border-box';
+    var h = document.getElementById(host);
+    h.innerHTML = ''; h.appendChild(t);
+    return t;
+  }
+  window._yamlTA = ta('yaml-editor', _initialYAML);
+  window._osTA   = ta('os-editor', _initialOS);
   refreshPreview();
-});
+}
+
+if (typeof require === 'undefined') {
+  buildFallback();
+} else {
+  require.config({ paths: { vs: '/vendor/monaco/vs' }});
+  require(['vs/editor/editor.main'], function () {
+    window.yamlEditor = monaco.editor.create(document.getElementById('yaml-editor'), {
+      value: _initialYAML,
+      language: 'yaml', theme: 'vs-light', automaticLayout: true, minimap: { enabled: false }, fontSize: 12
+    });
+    window.osEditor = monaco.editor.create(document.getElementById('os-editor'), {
+      value: _initialOS,
+      language: 'plaintext', theme: 'vs-light', automaticLayout: true, minimap: { enabled: false }, fontSize: 12
+    });
+    refreshPreview();
+  });
+}
+
+// Единые геттеры — прозрачно работают и с Monaco, и с textarea-fallback.
+function getYAML() { return window.yamlEditor ? window.yamlEditor.getValue() : (window._yamlTA ? window._yamlTA.value : ''); }
+function getOS()   { return window.osEditor ? window.osEditor.getValue() : (window._osTA ? window._osTA.value : ''); }
 
 function switchTab(name) {
   document.querySelectorAll('.editor-tab').forEach(function (el) { el.classList.toggle('active', el.dataset.tab === name); });
@@ -280,15 +311,14 @@ function switchTab(name) {
 }
 
 function saveForm() {
-  document.getElementById('yaml-hidden').value = window.yamlEditor.getValue();
-  document.getElementById('os-hidden').value = window.osEditor.getValue();
+  document.getElementById('yaml-hidden').value = getYAML();
+  document.getElementById('os-hidden').value = getOS();
   document.getElementById('save-form').submit();
 }
 
 function refreshPreview() {
-  if (!window.yamlEditor) return;
   var body = new URLSearchParams();
-  body.append('yaml', window.yamlEditor.getValue());
+  body.append('yaml', getYAML());
   body.append('entity', '{{.EditingForm.Entity}}');
   fetch('/bases/{{.Base.ID}}/configurator/forms/preview', { method: 'POST', body: body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }})
     .then(function (r) { return r.text(); })

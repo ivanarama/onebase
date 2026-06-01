@@ -91,6 +91,8 @@ const tplQueryConsole = `
 <!-- Monaco editor -->
 <div class="card" style="margin-bottom:12px">
 <div id="qc-editor" style="height:260px;border:1px solid #e2e8f0;border-radius:6px"></div>
+<textarea id="qc-textarea" style="display:none;width:100%;height:260px;font-family:Consolas,monospace;font-size:14px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;box-sizing:border-box;resize:vertical">ВЫБРАТЬ *
+ИЗ </textarea>
 </div>
 
 <!-- Parameters (always visible) -->
@@ -122,13 +124,27 @@ const tplQueryConsole = `
 
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52/min/vs/loader.js"></script>
+<script>
+// Самохостинг Monaco: web-воркер из встроенного /vendor/monaco/ (тот же origin).
+window.MonacoEnvironment = { getWorkerUrl: function () {
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    "self.MonacoEnvironment={baseUrl:'" + location.origin + "/vendor/monaco/'};" +
+    "importScripts('" + location.origin + "/vendor/monaco/vs/base/worker/workerMain.js');");
+}};
+</script>
+<script src="/vendor/monaco/vs/loader.js"
+  onerror="document.getElementById('qc-editor').style.display='none';document.getElementById('qc-textarea').style.display='block'"></script>
 <script>
 var _schema = {{.Schema}};
 var _srcMap = {};
 _schema.forEach(function(s){ _srcMap[s.id] = s; });
 
-require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52/min/vs' }});
+// Единые геттер/сеттер — прозрачно работают с Monaco и с textarea-fallback.
+function qcGetValue() { return window.qcEditor ? window.qcEditor.getValue() : document.getElementById('qc-textarea').value; }
+function qcSetValue(v) { if (window.qcEditor) window.qcEditor.setValue(v); else document.getElementById('qc-textarea').value = v; }
+
+if (typeof require !== 'undefined') {
+require.config({ paths: { 'vs': '/vendor/monaco/vs' }});
 require(['vs/editor/editor.main'], function() {
   monaco.languages.register({ id: 'onebase-query' });
   monaco.languages.setMonarchTokensProvider('onebase-query', {
@@ -154,6 +170,7 @@ require(['vs/editor/editor.main'], function() {
     scrollBeyondLastLine: false
   });
 });
+}
 
 function qcToggleBuilder() {
   var el = document.getElementById('qc-builder');
@@ -178,7 +195,7 @@ function qcParseQueryToBuilder() {
   if(dbgEl) dbgEl.textContent = '';
   try {
   dbg('1. start');
-  var code = window.qcEditor ? window.qcEditor.getValue() : '';
+  var code = qcGetValue();
   if (!code.trim()) { dbg('empty code'); return; }
   var norm = code.replace(/\s+/g, ' ').trim();
   dbg('2. norm=' + norm.substring(0, 80));
@@ -360,7 +377,7 @@ function splitTopLevel(str, sep) {
 }
 
 function qcExec() {
-  var code = window.qcEditor.getValue();
+  var code = qcGetValue();
   // Auto-detect params from query if panel is empty
   var hasParams = document.querySelectorAll('.qc-param-row').length > 0;
   if (!hasParams) qcDetectParams();
@@ -423,14 +440,14 @@ function qcExec() {
 }
 
 function qcClear() {
-  if (window.qcEditor) window.qcEditor.setValue('ВЫБРАТЬ *\nИЗ ');
+  qcSetValue('ВЫБРАТЬ *\nИЗ ');
   document.getElementById('qc-results-card').style.display = 'none';
   document.getElementById('qc-error').style.display = 'none';
   document.getElementById('qc-params').innerHTML = '<span style="color:#94a3b8">Нажмите «Заполнить из запроса» или введите вручную</span>';
 }
 
 function qcDetectParams() {
-  var code = window.qcEditor.getValue();
+  var code = qcGetValue();
   var re = /&([А-Яа-яёЁA-Za-z_][А-Яа-яёЁA-Za-z_0-9]*)/g;
   var found = {};
   var m;
@@ -796,8 +813,8 @@ function qbGenerate(){
 }
 
 function qbApplyToEditor(){
-  if(window._qbGeneratedQuery && window.qcEditor){
-    window.qcEditor.setValue(window._qbGeneratedQuery);
+  if(window._qbGeneratedQuery){
+    qcSetValue(window._qbGeneratedQuery);
   }
 }
 
@@ -968,11 +985,19 @@ const tplCodeConsole = `
 
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52/min/vs/loader.js"
+<script>
+// Самохостинг Monaco: web-воркер из встроенного /vendor/monaco/ (тот же origin).
+window.MonacoEnvironment = { getWorkerUrl: function () {
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    "self.MonacoEnvironment={baseUrl:'" + location.origin + "/vendor/monaco/'};" +
+    "importScripts('" + location.origin + "/vendor/monaco/vs/base/worker/workerMain.js');");
+}};
+</script>
+<script src="/vendor/monaco/vs/loader.js"
   onerror="document.getElementById('cc-editor').style.display='none';document.getElementById('cc-textarea').style.display='block'"></script>
 <script>
 if(typeof require !== 'undefined') {
-  require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52/min/vs' }});
+  require.config({ paths: { 'vs': '/vendor/monaco/vs' }});
   require(['vs/editor/editor.main'], function() {
     monaco.languages.register({ id: 'onebase-dsl' });
     monaco.languages.setMonarchTokensProvider('onebase-dsl', {

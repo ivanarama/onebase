@@ -383,7 +383,16 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52/min/vs/loader.js" crossorigin="anonymous" onerror="window._monacoLoadErr='loader.js failed'"></script>
+<script>
+// Самохостинг Monaco: web-воркер грузится из встроенного /vendor/monaco/
+// (тот же origin), иначе AMD-воркер не знает baseUrl и падает.
+window.MonacoEnvironment = { getWorkerUrl: function () {
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    "self.MonacoEnvironment={baseUrl:'" + location.origin + "/vendor/monaco/'};" +
+    "importScripts('" + location.origin + "/vendor/monaco/vs/base/worker/workerMain.js');");
+}};
+</script>
+<script src="/vendor/monaco/vs/loader.js" onerror="window._monacoLoadErr='loader.js failed'"></script>
 <script>{{.InlineJSYaml}}</script>
 <title>{{t $.Lang "Конфигуратор"}} — {{if .AppName}}{{.AppName}}{{else}}{{.Base.Name}}{{end}}</title>
 {{template "css" .}}
@@ -1754,7 +1763,7 @@ document.querySelectorAll('pre.os-code').forEach(function(el){
 // ── Monaco Editor initialization ────────────────────────────────
 (function(){
 if (typeof require === 'undefined') { window._monacoReady = false; document.getElementById('monaco-status').textContent='Monaco:FAIL(no require)'; return; }
-require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52/min/vs' }});
+require.config({ paths: { 'vs': '/vendor/monaco/vs' }});
 require(['vs/editor/editor.main'], function() {
   // Register OneBase DSL language
   monaco.languages.register({ id: 'onebase-dsl' });

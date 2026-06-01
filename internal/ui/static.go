@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/webassets"
 )
 
 // Встроенные сторонние ассеты пользовательского режима. Самохостинг вместо CDN:
@@ -29,4 +30,7 @@ func mountStatic(r chi.Router) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fileSrv.ServeHTTP(w, req)
 	})
+	// Monaco editor (общий встроенный пакет) — инструменты разработчика
+	// (консоль кода/запросов, отладчик) грузят его офлайн вместо CDN.
+	r.Handle("/vendor/monaco/*", http.StripPrefix("/vendor/monaco/", webassets.MonacoHandler()))
 }

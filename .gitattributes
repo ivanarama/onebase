@@ -2,3 +2,7 @@
 # тестах. Без -text Windows autocrlf конвертирует в CRLF при checkout и
 # roundtrip-тесты падают на «expected LF, got CRLF».
 internal/onec_forms/fixtures/* -text
+
+# Вендоренный Monaco — минифицированные ассеты, храним байт-в-байт без
+# нормализации EOL, чтобы апгрейд версии давал чистый предсказуемый diff.
+internal/webassets/monaco/** -text
