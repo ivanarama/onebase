@@ -416,7 +416,10 @@ func (h *handler) configuratorReorder(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
+	// Клиент шлёт FormData (multipart/form-data). Нельзя ограничиться ParseForm:
+	// для multipart он не читает тело, а после него FormValue/r.Form уже не
+	// триггерят ParseMultipartForm (r.Form != nil) → group и name приходят пустыми.
+	if err := r.ParseMultipartForm(32 << 20); err != nil && err != http.ErrNotMultipart {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
