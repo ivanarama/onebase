@@ -112,6 +112,7 @@ func (s *Server) tr(lang, key string) string {
 }
 
 func (s *Server) Mount(r chi.Router) {
+	mountStatic(r)
 	r.Get("/ui", s.index)
 	r.Get("/ui/", s.index)
 	r.Get("/ui/{kind}/{entity}", s.list)

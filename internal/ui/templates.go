@@ -546,7 +546,7 @@ window.__obWidgetCharts = window.__obWidgetCharts || {};
 {{range .WidgetResults}}{{if and (eq .Type "chart") .Chart}}window.__obWidgetCharts["{{.Name}}"] = {{echartsJSON .Chart}};
 {{end}}{{end}}
 </script>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script src="/static/vendor/echarts.min.js"></script>
 <script>
 (function(){
   function initCharts(){
@@ -1457,7 +1457,7 @@ const tplReport = `
 <div class="card" style="margin-bottom:16px">
   <div id="ob-chart" style="width:100%;min-height:400px"></div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="/static/vendor/echarts.min.js"></script>
 <script>
 (function(){
   var c=echarts.init(document.getElementById('ob-chart'));
