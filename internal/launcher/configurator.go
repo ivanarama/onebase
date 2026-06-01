@@ -310,10 +310,13 @@ type configuratorData struct {
 	PrintForms       []cfgPrintForm
 	DSLPrintForms    []cfgDSLPrintForm
 	// План 37, этап 4: управляемые формы.
-	ManagedForms  []cfgManagedForm
-	EditingForm   *cfgManagedForm
-	Subsystems    []cfgSubsystem
-	Widgets       []cfgWidget
+	ManagedForms []cfgManagedForm
+	EditingForm  *cfgManagedForm
+	Subsystems   []cfgSubsystem
+	Widgets      []cfgWidget
+	// GroupOrder — пользовательский порядок групп дерева (ключи data-group/data-gid)
+	// для клиентской перестановки; пусто — порядок по умолчанию из шаблона.
+	GroupOrder    []string
 	WidgetOptions []widgetOption // имя+заголовок всех виджетов для drag-конструктора
 	HomePageYAML  string         // verbatim config/home_page.yaml — для «Расширенно (YAML)»
 	GlobalHome    cfgHomePage
@@ -504,7 +507,13 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 	if startedAt, ok := h.runner.StartedAt(b.ID); ok {
 		data.IsRunning = true
 		if b.ConfigSource == "file" {
-			data.ConfigDirty = configDirtyAfter(b.Path, startedAt)
+			// Звёздочка означает «БД/сессия отстала от метаданных»: сравниваем с
+			// моментом последней миграции, а при её отсутствии — с моментом запуска.
+			threshold := startedAt
+			if t, ok := migratedAt(b.ID); ok && t.After(threshold) {
+				threshold = t
+			}
+			data.ConfigDirty = configDirtyAfter(b.Path, threshold)
 		}
 	}
 
@@ -896,6 +905,10 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 			data.ManagedForms = forms
 		}
 	}
+
+	// Пользовательский порядок объектов и групп в дереве (ручное перемещение,
+	// как в 1С) — одинаково для file- и database-режимов.
+	applyTreeOrder(data, h.loadTreeOrderFor(ctx, b))
 
 	return data
 }
@@ -1363,7 +1376,10 @@ func entityToManagerFilename(name string) string {
 // ── field-type save ───────────────────────────────────────────────────────────
 
 func findEntityFilePath(dir, entityName string) (string, error) {
-	for _, sub := range []string{"catalogs", "documents"} {
+	// Сканируем все папки с YAML-объектами, чтобы контекстное удаление работало
+	// не только для справочников/документов, но и для регистров, перечислений,
+	// отчётов и подсистем (раньше находились лишь catalogs/documents).
+	for _, sub := range []string{"catalogs", "documents", "registers", "inforegisters", "accountregisters", "enums", "reports", "subsystems"} {
 		items, _ := os.ReadDir(filepath.Join(dir, sub))
 		for _, item := range items {
 			if item.IsDir() || !strings.HasSuffix(item.Name(), ".yaml") {
@@ -1892,9 +1908,10 @@ func (h *handler) deleteEntityFromDB(ctx context.Context, b *Base, entityName st
 	defer db.Close()
 	repo := configdb.New(db)
 
-	// Find and delete the entity YAML file by scanning all catalog/document paths
+	// Scan all YAML-object folders so deletion works for catalogs, documents,
+	// registers, enums, reports and subsystems alike (not just catalogs/documents).
 	rows, err := db.Query(ctx,
-		`SELECT path, content FROM _onebase_config WHERE path LIKE 'catalogs/%.yaml' OR path LIKE 'documents/%.yaml'`)
+		`SELECT path, content FROM _onebase_config WHERE path LIKE 'catalogs/%.yaml' OR path LIKE 'documents/%.yaml' OR path LIKE 'registers/%.yaml' OR path LIKE 'inforegisters/%.yaml' OR path LIKE 'accountregisters/%.yaml' OR path LIKE 'enums/%.yaml' OR path LIKE 'reports/%.yaml' OR path LIKE 'subsystems/%.yaml'`)
 	if err != nil {
 		return err
 	}
@@ -1918,6 +1935,30 @@ func (h *handler) deleteEntityFromDB(ctx context.Context, b *Base, entityName st
 func renderCfg(w http.ResponseWriter, r *http.Request, data *configuratorData) {
 	if data.Lang == "" {
 		data.Lang = resolveLang(r)
+	}
+	// AJAX-сохранение форм редактирования объектов: вместо полной перерисовки
+	// страницы возвращаем компактный JSON, который клиент показывает тостом. Это
+	// убирает полностраничную перезагрузку (и связанный с ней «разрыв кадра» в
+	// WebView2) и позволяет иметь единую кнопку «Сохранить» в шапке.
+	if r != nil && r.Header.Get("X-Onebase-Ajax") == "1" {
+		entity := data.FieldsSavedEntity
+		if entity == "" {
+			entity = data.ModuleSavedEntity
+		}
+		msg := tr(data.Lang, "Сохранено")
+		switch {
+		case entity == "" || entity == "panel-backup" || entity == "__app__":
+			// generic
+		default:
+			msg = "✓ " + entity + " — " + tr(data.Lang, "сохранено")
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      data.Error == "",
+			"error":   data.Error,
+			"message": msg,
+			"running": data.IsRunning,
+		})
+		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := cfgTmpl.ExecuteTemplate(w, "cfg-main", data); err != nil {
@@ -2904,13 +2945,22 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	subName := r.FormValue("subsystem_name")
+	subName := strings.TrimSpace(r.FormValue("subsystem_name"))
 	title := r.FormValue("title")
 	icon := r.FormValue("icon")
 	orderStr := r.FormValue("order")
 	var order int
 	if orderStr != "" {
 		fmt.Sscanf(orderStr, "%d", &order)
+	}
+
+	// Без имени подсистему не сохраняем — иначе на диске появляется битый
+	// файл «.yaml» с пустым name (пустая подсистема в дереве).
+	if subName == "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Укажите имя подсистемы")
+		renderCfg(w, r, data)
+		return
 	}
 
 	if title == "" {
@@ -3015,12 +3065,6 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 	data.FieldsSaved = true
 	data.FieldsSavedEntity = subName
 	renderCfg(w, r, data)
-
-	// reload tree to reflect changes
-	fresh := h.loadCfgData(r.Context(), b, "tree")
-	fresh.FieldsSaved = true
-	fresh.FieldsSavedEntity = subName
-	renderCfg(w, r, fresh)
 }
 
 // ── App config save ───────────────────────────────────────────────────────────

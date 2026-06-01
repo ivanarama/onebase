@@ -78,6 +78,19 @@ func (r *Repo) SaveFile(ctx context.Context, path string, content []byte) error 
 	return err
 }
 
+// ReadFile возвращает содержимое одного файла конфигурации. Второе значение
+// false — записи нет (это не ошибка для опциональных файлов вроде tree_order.yaml).
+func (r *Repo) ReadFile(ctx context.Context, path string) ([]byte, bool, error) {
+	ph := r.db.Dialect().Placeholder(1)
+	var content []byte
+	err := r.db.QueryRow(ctx, `SELECT content FROM _onebase_config WHERE path = `+ph, path).Scan(&content)
+	if err != nil {
+		// Запись отсутствует (или таблица ещё пуста) — трактуем как «нет файла».
+		return nil, false, nil
+	}
+	return content, true, nil
+}
+
 func (r *Repo) DeleteFile(ctx context.Context, path string) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM _onebase_config WHERE path = `+r.db.Dialect().Placeholder(1), path)
 	return err

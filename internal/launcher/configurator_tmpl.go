@@ -142,6 +142,9 @@ body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;background:#f0f2f5;h
 .cfg-item.sel{background:#e8eeff;color:#1a4a80;font-weight:600;border-left-color:#1a4a80}
 .cfg-item .ic{font-size:14px;flex-shrink:0;width:20px;text-align:center;line-height:1}
 .cfg-item .bp{background:#dbeafe;color:#1d4ed8;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:2px}
+.cfg-item[draggable=true]{cursor:grab}
+.cfg-item[draggable=true]:active{cursor:grabbing}
+summary.cfg-group-hd[draggable=true]{cursor:grab}
 .cfg-dirty{color:#e8b400;font-weight:700;margin-left:4px;font-size:14px;cursor:help}
 
 .cfg-right{flex:1;overflow-y:auto;padding:16px}
@@ -299,6 +302,9 @@ pre.convert-out{background:#f5f7fa;border:1px solid #e2e6ed;padding:12px;border-
 .dbg-topbar-btn:hover{background:rgba(255,255,255,.22)}
 .dbg-topbar-btn.dbg-on{background:#16a34a;border-color:#22c55e}
 .dbg-topbar-btn.dbg-paused{background:#d97706;border-color:#f59e0b}
+.cfg-save-topbar{background:#16a34a;border:1px solid #22c55e;color:#fff;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;transition:background .2s,opacity .2s;flex-shrink:0}
+.cfg-save-topbar:hover{background:#15803d}
+.cfg-save-topbar:disabled{opacity:.6;cursor:default}
 
 .cfg-menu-wrap{position:relative}
 .cfg-menu-btn{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px}
@@ -399,6 +405,7 @@ const cfgHead = `{{define "cfg-head"}}<!DOCTYPE html>
   <a href="/?sel={{.Base.ID}}">← {{t $.Lang "Лаунчер"}}</a>
   <h1>{{t $.Lang "Конфигуратор"}} — {{if .AppName}}{{.AppName}}{{else}}{{.Base.Name}}{{end}}</h1>
   <span style="font-size:11px;color:#7aa8d8">{{.DSNMasked}} · :{{.Base.Port}} · {{t $.Lang "платформа"}} {{.PlatformVer}}</span>
+  <button id="cfg-save-topbar" onclick="cfgSaveActive()" title="{{t $.Lang "Сохранить (Ctrl+S)"}}" class="cfg-save-topbar">&#128190; {{t $.Lang "Сохранить"}}</button>
   <button onclick="launchEnterprise()" title="{{t $.Lang "Запустить предприятие"}}" class="run-enterprise-btn"><svg viewBox="0 0 24 24" fill="#333"><polygon points="6,3 20,12 6,21"/></svg></button>
   <button id="dbg-toggle" class="dbg-topbar-btn" onclick="dbgToggle()">&#128027; {{t $.Lang "Отладка: ВЫКЛ"}}</button>
   <span id="monaco-status" style="font-size:9px;color:#94a3b8">Monaco:...</span>
@@ -1099,6 +1106,228 @@ function cfgSelectPanel(id) {
   var el = document.querySelector('[data-id="' + id + '"]');
   if (el) selItem(el);
 }
+// ── AJAX-сохранение форм + единая кнопка «Сохранить» в шапке ────────────────
+function cfgToast(msg, isError) {
+  var t = document.getElementById('cfg-toast');
+  if (!t) { t = document.createElement('div'); t.id = 'cfg-toast'; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:10001;padding:10px 18px;border-radius:6px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.25);color:#fff;max-width:70vw;background:' + (isError ? '#dc2626' : '#16a34a');
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(function(){ t.style.display = 'none'; }, isError ? 6000 : 2500);
+}
+
+// Является ли форма редактированием объекта (её сохраняем через AJAX).
+// Формы создания/удаления меняют дерево и идут обычным сабмитом (перезагрузка).
+function cfgIsAjaxForm(form) {
+  if (!form || form.tagName !== 'FORM') return false;
+  if (!form.closest('.cfg-panel')) return false;
+  var a = form.getAttribute('action') || '';
+  if (/\/(widget-delete|entity-delete|new|new-printform)$/.test(a)) return false;
+  return a.indexOf('/configurator/') >= 0;
+}
+
+function cfgAjaxSubmit(form) {
+  var saveBtn = document.getElementById('cfg-save-topbar');
+  if (saveBtn) { saveBtn.disabled = true; }
+  var submitBtns = form.querySelectorAll('button[type="submit"],input[type="submit"]');
+  submitBtns.forEach(function(b){ b.disabled = true; });
+  var done = function(){
+    if (saveBtn) saveBtn.disabled = false;
+    submitBtns.forEach(function(b){ b.disabled = false; });
+  };
+  fetch(form.getAttribute('action'), {
+    method: 'POST',
+    headers: { 'X-Onebase-Ajax': '1' },
+    body: new FormData(form)
+  })
+    .then(function(r){ return r.json().catch(function(){ return { ok:false, error:'Некорректный ответ сервера' }; }); })
+    .then(function(d){
+      done();
+      if (d && d.ok) {
+        cfgToast(d.message || 'Сохранено', false);
+        cfgMarkDirtyStar(d.running);
+      } else {
+        cfgToast((d && d.error) || 'Ошибка сохранения', true);
+      }
+    })
+    .catch(function(err){ done(); cfgToast('Ошибка: ' + err.message, true); });
+}
+
+// Сохранить объект, открытый в правой панели (единая кнопка в шапке, Ctrl+S).
+function cfgSaveActive() {
+  var panel = document.querySelector('.cfg-panel.active');
+  if (!panel) { cfgToast('Нет открытого объекта для сохранения', true); return; }
+  var target = null;
+  panel.querySelectorAll('form').forEach(function(f){
+    if (!target && cfgIsAjaxForm(f)) target = f;
+  });
+  if (!target) { cfgToast('В этом разделе нечего сохранять', true); return; }
+  if (typeof target.requestSubmit === 'function') target.requestSubmit();
+  else target.submit();
+}
+
+// После сохранения файла конфигурации, если база запущена, помечаем дерево
+// звёздочкой «требуется перезапуск» — как при серверном рендере ConfigDirty.
+function cfgMarkDirtyStar(running) {
+  if (!running) return;
+  var title = '{{t $.Lang "Конфигурация на диске изменилась с момента запуска базы. Перезапустите базу, чтобы изменения применились."}}';
+  var targets = [];
+  var grp = document.querySelector('#cfg-sidebar .cfg-group');
+  if (grp) targets.push(grp);
+  var app = document.querySelector('.cfg-item[data-id="panel-app"]');
+  if (app) targets.push(app);
+  targets.forEach(function(el){
+    if (el.querySelector('.cfg-dirty')) return;
+    var s = document.createElement('span');
+    s.className = 'cfg-dirty';
+    s.title = title;
+    s.textContent = '*';
+    el.appendChild(s);
+  });
+}
+
+// Глобальный перехват сабмита форм редактирования объектов.
+document.addEventListener('submit', function(e) {
+  var form = e.target;
+  if (!cfgIsAjaxForm(form)) return;
+  e.preventDefault();
+  cfgAjaxSubmit(form);
+}, false);
+
+// ── Перемещение объектов метаданных мышью (drag-and-drop, как в 1С) ─────────
+var _treeDrag = null;
+var _groupDrag = null;
+function cfgGid(det) { return (det && (det.dataset.group || det.dataset.gid)) || ''; }
+function initTreeDnd() {
+  // объекты внутри групп — перетаскиваемы (порядок объектов)
+  document.querySelectorAll('#cfg-sidebar details[data-group]').forEach(function(d) {
+    d.querySelectorAll(':scope > .cfg-item').forEach(function(it) { it.setAttribute('draggable', 'true'); });
+  });
+  // сами группы — перетаскиваемы за заголовок (порядок групп)
+  document.querySelectorAll('#cfg-sidebar details.cfg-tree').forEach(function(d) {
+    var sum = d.querySelector(':scope > summary');
+    if (sum) sum.setAttribute('draggable', 'true');
+  });
+}
+// Применить сохранённый порядок групп при загрузке (клиентская перестановка).
+function applyGroupOrder() {
+  if (!window._treeGroupOrder || !_treeGroupOrder.length) return;
+  var sb = document.getElementById('cfg-sidebar');
+  if (!sb) return;
+  var groups = Array.prototype.slice.call(sb.querySelectorAll(':scope > details.cfg-tree'));
+  if (groups.length < 2) return;
+  var byId = {};
+  groups.forEach(function(d) { var id = cfgGid(d); if (id) byId[id] = d; });
+  var ordered = [];
+  _treeGroupOrder.forEach(function(id) { if (byId[id]) { ordered.push(byId[id]); delete byId[id]; } });
+  groups.forEach(function(d) { var id = cfgGid(d); if (byId[id]) ordered.push(d); });
+  var stop = groups[groups.length - 1].nextSibling;
+  ordered.forEach(function(d) { sb.insertBefore(d, stop); });
+}
+document.addEventListener('dragstart', function(e) {
+  // перетаскивание группы — старт на заголовке
+  var sum = e.target.closest ? e.target.closest('summary.cfg-group-hd') : null;
+  if (sum && sum.parentElement && sum.parentElement.matches('details.cfg-tree')) {
+    _groupDrag = sum.parentElement; _treeDrag = null;
+    _groupDrag.style.opacity = '0.5';
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', cfgGid(_groupDrag)); } catch (_) {} }
+    return;
+  }
+  // перетаскивание объекта внутри группы
+  var it = e.target.closest ? e.target.closest('.cfg-item') : null;
+  if (!it || !it.parentElement || !it.parentElement.matches('details[data-group]')) return;
+  _treeDrag = it; _groupDrag = null;
+  it.style.opacity = '0.4';
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', it.dataset.id || ''); } catch (_) {} }
+});
+document.addEventListener('dragend', function() {
+  if (_treeDrag) { _treeDrag.style.opacity = ''; _treeDrag = null; }
+  if (_groupDrag) { _groupDrag.style.opacity = ''; _groupDrag = null; }
+});
+document.addEventListener('dragover', function(e) {
+  if (_groupDrag) {
+    var os = e.target.closest ? e.target.closest('summary.cfg-group-hd') : null;
+    var det = os ? os.parentElement : null;
+    if (!det || det === _groupDrag || !det.matches('details.cfg-tree') || det.parentElement !== _groupDrag.parentElement) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    var rg = det.getBoundingClientRect();
+    var beforeG = (e.clientY - rg.top) < rg.height / 2;
+    det.parentElement.insertBefore(_groupDrag, beforeG ? det : det.nextSibling);
+    return;
+  }
+  if (!_treeDrag) return;
+  var it = e.target.closest ? e.target.closest('.cfg-item') : null;
+  if (!it || it === _treeDrag || it.parentElement !== _treeDrag.parentElement) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  var r = it.getBoundingClientRect();
+  var before = (e.clientY - r.top) < r.height / 2;
+  it.parentElement.insertBefore(_treeDrag, before ? it : it.nextSibling);
+});
+document.addEventListener('drop', function(e) {
+  if (_groupDrag) {
+    var sb = _groupDrag.parentElement;
+    e.preventDefault();
+    var ids = [];
+    sb.querySelectorAll(':scope > details.cfg-tree').forEach(function(d) { var id = cfgGid(d); if (id) ids.push(id); });
+    cfgSaveOrder('groups', ids);
+    return;
+  }
+  if (!_treeDrag) return;
+  var parent = _treeDrag.parentElement;
+  if (!parent || !parent.matches('details[data-group]')) return;
+  e.preventDefault();
+  var group = parent.dataset.group;
+  var names = [];
+  parent.querySelectorAll(':scope > .cfg-item').forEach(function(it) {
+    names.push((it.dataset.id || '').replace(/^[a-z]+-/, ''));
+  });
+  cfgSaveOrder(group, names);
+});
+function cfgSaveOrder(group, names) {
+  var fd = new FormData();
+  fd.append('group', group);
+  names.forEach(function(n) { fd.append('name', n); });
+  fetch('/bases/' + _dbgBase + '/configurator/reorder', { method: 'POST', headers: { 'X-Onebase-Ajax': '1' }, body: fd })
+    .then(function(r){ return r.json().catch(function(){ return { ok:false }; }); })
+    .then(function(d){ if (!d || !d.ok) cfgToast((d && d.error) || 'Не удалось сохранить порядок', true); else cfgToast('Порядок сохранён', false); })
+    .catch(function(err){ cfgToast('Ошибка: ' + err.message, true); });
+}
+function initTree() { applyGroupOrder(); initTreeDnd(); }
+initTree();
+document.addEventListener('DOMContentLoaded', initTree);
+
+// ── Поиск/фильтр по дереву метаданных (как в 1С) ───────────────────────────
+function filterTree(q) {
+  q = (q || '').trim().toLowerCase();
+  var sidebar = document.getElementById('cfg-sidebar');
+  if (!sidebar) return;
+  sidebar.querySelectorAll('.cfg-item').forEach(function(it) {
+    var txt = (it.textContent || '').toLowerCase();
+    it.style.display = (!q || txt.indexOf(q) >= 0) ? '' : 'none';
+  });
+  sidebar.querySelectorAll('details.cfg-tree').forEach(function(d) {
+    var items = d.querySelectorAll('.cfg-item');
+    var visible = 0;
+    items.forEach(function(it){ if (it.style.display !== 'none') visible++; });
+    d.style.display = (!q || visible > 0) ? '' : 'none';
+    if (q && visible > 0) d.open = true;
+  });
+}
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S' || e.key === 'ы' || e.key === 'Ы')) {
+    e.preventDefault(); cfgSaveActive(); return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А')) {
+    var s = document.getElementById('cfg-tree-search');
+    if (s) { e.preventDefault(); s.focus(); s.select(); }
+  } else if (e.key === 'Escape') {
+    var s2 = document.getElementById('cfg-tree-search');
+    if (s2 && document.activeElement === s2 && s2.value) { s2.value = ''; filterTree(''); }
+  }
+});
 (function(){
   var directId='{{.SelectedTreeID}}';
   var saved='{{.FieldsSavedEntity}}'?'{{.FieldsSavedEntity}}':'{{.ModuleSavedEntity}}';
@@ -2143,6 +2372,7 @@ function mqbGen(){
 var _dbgBase = '{{.Base.ID}}'; // base ID for debug proxy
 var _basePort = {{.Base.Port}};
 var _sessionToken = '{{.SessionToken}}';
+var _treeGroupOrder = [{{range $i, $g := .GroupOrder}}{{if $i}},{{end}}'{{$g}}'{{end}}]; // пользовательский порядок групп дерева
 var _dbgEnabled = false;
 var _dbgPollTimer = null;
 var _dbgPollCount = 0;
@@ -2210,17 +2440,107 @@ document.addEventListener('click', function(e) {
   }
 });
 
-function launchEnterprise() {
-  var btn = document.querySelector('.run-enterprise-btn');
-  btn.style.background = '#a3a3a3';
-  var url = _sessionToken
+function _enterpriseURL() {
+  return _sessionToken
     ? 'http://localhost:' + _basePort + '/ui?_tk=' + encodeURIComponent(_sessionToken)
     : 'http://localhost:' + _basePort + '/ui';
-  fetch('/bases/' + _dbgBase + '/start', {method:'POST'}).then(function(){
-    setTimeout(function(){ window.open(url, '_blank'); btn.style.background = ''; }, 1500);
-  }).catch(function(){
-    window.open(url, '_blank'); btn.style.background = '';
-  });
+}
+
+// Запускает (restart=false) или перезапускает (restart=true) базу и открывает
+// пользовательский режим. Дожидается готовности сервера перед открытием окна.
+function _doLaunch(restart) {
+  var btn = document.querySelector('.run-enterprise-btn');
+  if (btn) btn.style.background = '#a3a3a3';
+  var url = _enterpriseURL();
+  var endpoint = restart
+    ? '/bases/' + _dbgBase + '/configurator/restart'
+    : '/bases/' + _dbgBase + '/start';
+  fetch(endpoint, {method:'POST'})
+    .then(function(r){ return r.json().catch(function(){ return {}; }); })
+    .then(function(d){
+      if (btn) btn.style.background = '';
+      if (d && d.error) { alert('Не удалось запустить базу: ' + d.error); return; }
+      window.open(url, '_blank');
+    })
+    .catch(function(){
+      if (btn) btn.style.background = '';
+      window.open(url, '_blank');
+    });
+}
+
+// Точка входа жёлтой ▶: проверяет, отстала ли БД от конфигурации (как F5 в 1С),
+// и при необходимости предлагает обновить структуру БД перед запуском.
+function launchEnterprise() {
+  fetch('/bases/' + _dbgBase + '/configurator/launch-state')
+    .then(function(r){ return r.json(); })
+    .then(function(st){
+      if (st && st.configChanged) {
+        _showLaunchDialog(!!(st && st.running));
+      } else {
+        _doLaunch(false);
+      }
+    })
+    .catch(function(){ _doLaunch(false); });
+}
+
+function _closeLaunchDialog() {
+  var ov = document.getElementById('launch-dialog-overlay');
+  if (ov) ov.remove();
+}
+
+function _showLaunchDialog(running) {
+  _closeLaunchDialog();
+  var rv = running ? 'true' : 'false';
+  var ov = document.createElement('div');
+  ov.id = 'launch-dialog-overlay';
+  ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:10000';
+  var box = document.createElement('div');
+  box.className = 'cfg-modal-box';
+  box.style.maxWidth = '470px';
+  box.innerHTML =
+      '<div class="cfg-modal-hd"><span style="font-weight:600;font-size:13px">Запуск предприятия</span>'
+    + '<button onclick="_closeLaunchDialog()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666">×</button></div>'
+    + '<div style="padding:16px 18px;font-size:13px;color:#334;line-height:1.5">'
+    + 'Конфигурация изменена с момента последнего обновления базы данных.<br>Обновить структуру БД и запустить?'
+    + '<div id="launch-dialog-msg" style="display:none;margin-top:10px;font-size:11px;padding:8px;border-radius:4px;max-height:140px;overflow-y:auto;white-space:pre-wrap"></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1px solid #e2e8f0;flex-wrap:wrap">'
+    + '<button id="ld-cancel" onclick="_closeLaunchDialog()" style="padding:7px 14px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;font-size:12px">Отмена</button>'
+    + '<button id="ld-nomigrate" onclick="_launchNoMigrate(' + rv + ')" style="padding:7px 14px;background:#fff;border:1px solid #1a4a80;color:#1a4a80;border-radius:4px;cursor:pointer;font-size:12px">Запустить без обновления</button>'
+    + '<button id="ld-migrate" onclick="_launchWithMigrate(' + rv + ')" style="padding:7px 14px;background:#1a4a80;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">Обновить БД и запустить</button>'
+    + '</div>';
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+}
+
+function _launchNoMigrate(running) {
+  _closeLaunchDialog();
+  _doLaunch(running);
+}
+
+function _launchWithMigrate(running) {
+  var msg = document.getElementById('launch-dialog-msg');
+  var mb = document.getElementById('ld-migrate');
+  var nb = document.getElementById('ld-nomigrate');
+  if (mb) { mb.disabled = true; mb.textContent = 'Обновление БД...'; }
+  if (nb) nb.disabled = true;
+  fetch('/bases/' + _dbgBase + '/configurator/migrate', {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d && d.error) {
+        if (mb) { mb.disabled = false; mb.textContent = 'Обновить БД и запустить'; }
+        if (nb) nb.disabled = false;
+        if (msg) { msg.style.display='block'; msg.style.background='#fff0f0'; msg.style.color='#c00'; msg.textContent = d.error + (d.output ? '\n' + d.output : ''); }
+        return;
+      }
+      _closeLaunchDialog();
+      _doLaunch(running);
+    })
+    .catch(function(e){
+      if (mb) { mb.disabled = false; mb.textContent = 'Обновить БД и запустить'; }
+      if (nb) nb.disabled = false;
+      if (msg) { msg.style.display='block'; msg.style.background='#fff0f0'; msg.style.color='#c00'; msg.textContent = 'Ошибка: ' + e.message; }
+    });
 }
 
 function runMigrate() {
@@ -2917,6 +3237,10 @@ const cfgTabTree = `{{define "tab-tree"}}
 {{/* ── Left panel ── */}}
 <div class="cfg-left" id="cfg-sidebar">
 <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="{{t $.Lang "Свернуть дерево"}}">◀</button>
+  <div style="padding:4px 8px 6px 8px">
+    <input id="cfg-tree-search" type="search" placeholder="{{t $.Lang "Поиск метаданных…"}}" autocomplete="off" oninput="filterTree(this.value)"
+      style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #ccd0d8;border-radius:4px;font-size:12px;background:#fff;color:#333">
+  </div>
   <div class="cfg-group">{{t $.Lang "Конфигурация"}}{{if .ConfigDirty}}<span class="cfg-dirty" title="{{t $.Lang "Конфигурация на диске изменилась с момента запуска базы. Перезапустите базу, чтобы изменения применились."}}">*</span>{{end}}</div>
   <div class="cfg-item" data-id="panel-app" onclick="selItem(this)">
     <span class="ic">⚙</span>{{if .AppName}}{{.AppName}}{{else}}{{t $.Lang "Без названия"}}{{end}}{{if .ConfigDirty}}<span class="cfg-dirty" title="{{t $.Lang "Конфигурация на диске изменилась с момента запуска базы. Перезапустите базу, чтобы изменения применились."}}">*</span>{{end}}
@@ -2925,71 +3249,7 @@ const cfgTabTree = `{{define "tab-tree"}}
     <span class="ic">🏠</span>Главная страница
   </div>
 
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Справочники"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('catalog')" title="{{t $.Lang "Добавить справочник"}}">+</span></summary>
-  {{range .Catalogs}}
-  <div class="cfg-item" data-id="e-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">📕</span>{{.Name}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Документы"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('document')" title="{{t $.Lang "Добавить документ"}}">+</span></summary>
-  {{range .Docs}}
-  <div class="cfg-item" data-id="e-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">📄</span>{{.Name}}{{if .Posting}}<span class="bp">✓</span>{{end}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Регистры"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('register')" title="{{t $.Lang "Добавить регистр"}}">+</span></summary>
-  {{range .Registers}}
-  <div class="cfg-item" data-id="r-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">📊</span>{{.Name}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Регистры сведений"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('inforeg')" title="{{t $.Lang "Добавить регистр сведений"}}">+</span></summary>
-  {{range .InfoRegisters}}
-  <div class="cfg-item" data-id="ir-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">{{if .Periodic}}⏱{{else}}📋{{end}}</span>{{.Name}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Регистры бухгалтерии"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('accountreg')" title="{{t $.Lang "Добавить регистр бухгалтерии"}}">+</span></summary>
-  {{range .AccountRegisters}}
-  <div class="cfg-item" data-id="ar-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">⚖</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Перечисления"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('enum')" title="{{t $.Lang "Добавить перечисление"}}">+</span></summary>
-  {{range .Enums}}
-  <div class="cfg-item" data-id="en-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">🔢</span>{{.Name}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Константы"}}</span></summary>
-  {{range .Constants}}
-  <div class="cfg-item" data-id="cn-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">🔒</span>{{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Отчёты"}}</span></summary>
-  {{range .Reports}}
-  <div class="cfg-item" data-id="rep-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">📈</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Общие модули"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('module')" title="{{t $.Lang "Добавить общий модуль"}}">+</span></summary>
+  <details open class="cfg-tree" data-group="modules"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Общие модули"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('module')" title="{{t $.Lang "Добавить общий модуль"}}">+</span></summary>
   {{range .Modules}}
   <div class="cfg-item" data-id="mod-{{.Name}}" onclick="selItem(this)">
     <span class="ic">📦</span>{{.Name}}
@@ -2997,7 +3257,79 @@ const cfgTabTree = `{{define "tab-tree"}}
   {{end}}
   </details>
 
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Обработки"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('processor')" title="{{t $.Lang "Добавить обработку"}}">+</span></summary>
+  <details open class="cfg-tree" data-group="subsystems"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Подсистемы"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('subsystem')" title="{{t $.Lang "Добавить подсистему"}}">+</span></summary>
+  {{range .Subsystems}}
+  <div class="cfg-item" data-id="sub-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">🗂</span>{{.Title}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="catalogs"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Справочники"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('catalog')" title="{{t $.Lang "Добавить справочник"}}">+</span></summary>
+  {{range .Catalogs}}
+  <div class="cfg-item" data-id="e-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">📕</span>{{.Name}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="documents"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Документы"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('document')" title="{{t $.Lang "Добавить документ"}}">+</span></summary>
+  {{range .Docs}}
+  <div class="cfg-item" data-id="e-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">📄</span>{{.Name}}{{if .Posting}}<span class="bp">✓</span>{{end}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="registers"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Регистры"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('register')" title="{{t $.Lang "Добавить регистр"}}">+</span></summary>
+  {{range .Registers}}
+  <div class="cfg-item" data-id="r-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">📊</span>{{.Name}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="inforegisters"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Регистры сведений"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('inforeg')" title="{{t $.Lang "Добавить регистр сведений"}}">+</span></summary>
+  {{range .InfoRegisters}}
+  <div class="cfg-item" data-id="ir-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">{{if .Periodic}}⏱{{else}}📋{{end}}</span>{{.Name}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="accountregisters"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Регистры бухгалтерии"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('accountreg')" title="{{t $.Lang "Добавить регистр бухгалтерии"}}">+</span></summary>
+  {{range .AccountRegisters}}
+  <div class="cfg-item" data-id="ar-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">⚖</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="enums"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Перечисления"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('enum')" title="{{t $.Lang "Добавить перечисление"}}">+</span></summary>
+  {{range .Enums}}
+  <div class="cfg-item" data-id="en-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">🔢</span>{{.Name}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="constants"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Константы"}}</span></summary>
+  {{range .Constants}}
+  <div class="cfg-item" data-id="cn-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">🔒</span>{{if .Label}}{{.Label}}{{else}}{{.Name}}{{end}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="reports"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Отчёты"}}</span></summary>
+  {{range .Reports}}
+  <div class="cfg-item" data-id="rep-{{.Name}}" onclick="selItem(this)">
+    <span class="ic">📈</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}
+  </div>
+  {{end}}
+  </details>
+
+  <details open class="cfg-tree" data-group="processors"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Обработки"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('processor')" title="{{t $.Lang "Добавить обработку"}}">+</span></summary>
   {{range .Processors}}
   <div class="cfg-item" data-id="proc-{{.Name}}" onclick="selItem(this)">
     <span class="ic">⚙</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}
@@ -3005,7 +3337,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   {{end}}
   </details>
 
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Печатные формы"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('printform')" title="{{t $.Lang "Добавить печатную форму"}}">+</span></summary>
+  <details open class="cfg-tree" data-gid="printforms"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Печатные формы"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('printform')" title="{{t $.Lang "Добавить печатную форму"}}">+</span></summary>
   {{range .PrintForms}}
   <div class="cfg-item{{if .Shadowed}} cfg-item-shadowed{{end}}" data-id="pf-{{.Name}}" onclick="selItem(this)"{{if .Shadowed}} title="Эту YAML-форму перебивает одноимённая .os — в runtime используется DSL-вариант (см. замечание #10)"{{end}}>
     <span class="ic">🖨</span>{{if .Shadowed}}<span style="color:#d97706" title="Перебивается .os">⚠️ </span>{{end}}{{.Name}}<span style="color:#aaa;font-size:10px;margin-left:4px">→{{.Document}}{{if .Shadowed}} (скрыта .os){{end}}</span>
@@ -3023,7 +3355,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   {{end}}
   </details>
 
-  <details open class="cfg-tree">
+  <details open class="cfg-tree" data-gid="managedforms">
     <summary class="cfg-group cfg-group-hd">
       <span class="tree-toggle">▾</span><span><a href="/bases/{{.Base.ID}}/configurator/forms" style="color:inherit;text-decoration:none" title="{{t $.Lang "Все управляемые формы"}}">◇ {{t $.Lang "Управляемые формы"}}</a></span>
     </summary>
@@ -3036,15 +3368,7 @@ const cfgTabTree = `{{define "tab-tree"}}
     {{end}}
   </details>
 
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Подсистемы"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('subsystem')" title="{{t $.Lang "Добавить подсистему"}}">+</span></summary>
-  {{range .Subsystems}}
-  <div class="cfg-item" data-id="sub-{{.Name}}" onclick="selItem(this)">
-    <span class="ic">🗂</span>{{.Title}}
-  </div>
-  {{end}}
-  </details>
-
-  <details open class="cfg-tree"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Виджеты"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('widget')" title="{{t $.Lang "Добавить виджет"}}">+</span></summary>
+  <details open class="cfg-tree" data-group="widgets"><summary class="cfg-group cfg-group-hd"><span class="tree-toggle">▾</span><span>{{t $.Lang "Виджеты"}}</span><span class="cfg-add-btn" onclick="event.stopPropagation();cfgNewObj('widget')" title="{{t $.Lang "Добавить виджет"}}">+</span></summary>
   {{range .Widgets}}
   <div class="cfg-item" data-id="wdg-{{.Name}}" onclick="selItem(this)">
     <span class="ic">🧩</span>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}<span style="color:#aaa;font-size:10px;margin-left:4px">[{{.Type}}]</span>

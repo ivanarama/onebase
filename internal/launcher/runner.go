@@ -287,7 +287,19 @@ func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
 	cmd := exec.CommandContext(ctx, exe, args...)
 	noWindow(cmd)
 	out, err := cmd.CombinedOutput()
+	if err == nil {
+		touchMigrateMarker(base.ID)
+	}
 	return string(out), err
+}
+
+// Restart останавливает базу (если запущена), дожидается освобождения порта и
+// запускает её заново. Используется, чтобы запущенная сессия Предприятия
+// подхватила изменения конфигурации без ручного захода в лаунчер.
+func (r *Runner) Restart(base *Base) error {
+	r.Stop(base.ID)
+	waitPortFree(base.Port, 3*time.Second)
+	return r.Start(base)
 }
 
 // WaitReady polls /health on the base's port until it responds 200 or timeout.
@@ -318,4 +330,45 @@ func baseLogPath(id string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, id+".log"), nil
+}
+
+// migrateMarkerPath возвращает путь к файлу-метке времени последней успешной
+// миграции базы. Метка лежит в служебной папке лаунчера (а не в каталоге
+// конфигурации), чтобы не попадать в скан .os/.yaml и в git.
+func migrateMarkerPath(id string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".onebase", "state")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "migrate_"+id+".stamp"), nil
+}
+
+// touchMigrateMarker обновляет mtime метки последней миграции на текущее время.
+func touchMigrateMarker(id string) {
+	p, err := migrateMarkerPath(id)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	if err := os.WriteFile(p, []byte(now.Format(time.RFC3339)), 0o644); err == nil {
+		os.Chtimes(p, now, now)
+	}
+}
+
+// migratedAt возвращает время последней успешной миграции базы (mtime метки).
+// Второе значение false, если миграция ещё ни разу не выполнялась.
+func migratedAt(id string) (time.Time, bool) {
+	p, err := migrateMarkerPath(id)
+	if err != nil {
+		return time.Time{}, false
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return info.ModTime(), true
 }

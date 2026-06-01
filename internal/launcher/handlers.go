@@ -408,6 +408,84 @@ func (h *handler) configuratorMigrate(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"output": out, "error": ""})
 }
 
+// configuratorReorder сохраняет пользовательский порядок объектов одной группы
+// дерева (ручное перемещение, как в 1С). Тело: group=<ключ>, name=<имя> (повтор).
+func (h *handler) configuratorReorder(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	group := r.FormValue("group")
+	// "groups" — спец-ключ: порядок самих групп дерева.
+	if group != "groups" && !treeOrderGroups[group] {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "Неизвестная группа: " + group})
+		return
+	}
+	names := r.Form["name"]
+	if err := h.saveTreeOrderGroupFor(r.Context(), b, group, names); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// configuratorLaunchState сообщает, нужно ли при запуске Предприятия предложить
+// обновить БД: запущена ли база и изменилась ли конфигурация с момента последней
+// миграции (аналог проверки реструктуризации в 1С при F5).
+func (h *handler) configuratorLaunchState(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	configChanged := false
+	if b.ConfigSource == "file" {
+		if t, ok := migratedAt(b.ID); ok {
+			configChanged = configDirtyAfter(b.Path, t)
+		} else {
+			// БД ещё ни разу не синхронизирована из этой инсталляции лаунчера.
+			configChanged = true
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"running":       h.runner.IsRunning(b.ID),
+		"configChanged": configChanged,
+	})
+}
+
+// configuratorRestart останавливает и заново запускает базу, чтобы запущенная
+// сессия Предприятия подхватила изменения конфигурации.
+func (h *handler) configuratorRestart(w http.ResponseWriter, r *http.Request) {
+	b, err := h.store.Get(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"error": "not found"})
+		return
+	}
+	lang := resolveLang(r)
+	if b.DBType != "sqlite" {
+		if err := storage.EnsureDatabase(r.Context(), b.DB); err != nil {
+			writeJSON(w, 500, map[string]any{"error": tr(lang, "Не удалось создать БД") + ": " + err.Error()})
+			return
+		}
+	}
+	if err := h.runner.Restart(b); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	b.LastOpened = time.Now()
+	h.store.Update(b)
+	if err := h.runner.WaitReady(b, 15*time.Second); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"url": h.runner.BaseURL(b)})
+}
+
 func (h *handler) configExport(w http.ResponseWriter, r *http.Request) {
 	b, err := h.store.Get(chi.URLParam(r, "id"))
 	if err != nil {
