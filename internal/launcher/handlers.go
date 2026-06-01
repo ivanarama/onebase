@@ -431,6 +431,12 @@ func (h *handler) configuratorReorder(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// Подсистемы в пользовательском режиме сортируются по полю order, а не по
+	// tree_order.yaml — поэтому при их перетаскивании синхронизируем order, чтобы
+	// порядок совпал и в Предприятии.
+	if group == "subsystems" {
+		h.applySubsystemOrder(r.Context(), b, names)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

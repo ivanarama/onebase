@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -91,6 +93,65 @@ func (h *handler) saveTreeOrderGroupFor(ctx context.Context, b *Base, group stri
 		return configdb.New(db).SaveFile(ctx, treeOrderFile, raw)
 	}
 	return os.WriteFile(treeOrderPath(b.Path), raw, 0o644)
+}
+
+// readConfigFileRaw читает один файл конфигурации в обоих режимах хранения.
+// Второе значение false — файла нет (не ошибка).
+func (h *handler) readConfigFileRaw(ctx context.Context, b *Base, relPath string) ([]byte, bool) {
+	if b.ConfigSource == "database" {
+		db, err := OpenDB(ctx, b)
+		if err != nil {
+			return nil, false
+		}
+		defer db.Close()
+		raw, ok, _ := configdb.New(db).ReadFile(ctx, relPath)
+		return raw, ok
+	}
+	raw, err := os.ReadFile(filepath.Join(b.Path, filepath.FromSlash(relPath)))
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
+// orderLineRe находит верхнеуровневую строку «order: N» в YAML подсистемы.
+var orderLineRe = regexp.MustCompile(`(?m)^order:[ \t]*[0-9]+`)
+
+// setYAMLOrder заменяет значение поля order, сохраняя остальное содержимое и
+// концы строк нетронутыми. Если поля нет — вставляет его после первой строки.
+func setYAMLOrder(raw []byte, order int) []byte {
+	repl := "order: " + strconv.Itoa(order)
+	if orderLineRe.Match(raw) {
+		return orderLineRe.ReplaceAll(raw, []byte(repl))
+	}
+	nl := strings.IndexByte(string(raw), '\n')
+	if nl < 0 {
+		return append(append([]byte{}, raw...), []byte("\n"+repl)...)
+	}
+	out := make([]byte, 0, len(raw)+len(repl)+1)
+	out = append(out, raw[:nl+1]...)
+	out = append(out, []byte(repl+"\n")...)
+	out = append(out, raw[nl+1:]...)
+	return out
+}
+
+// applySubsystemOrder переписывает поле order в YAML каждой подсистемы так, чтобы
+// порядок в пользовательском режиме (метаданные сортируются по order, см.
+// metadata.LoadSubsystems) совпал с ручным порядком в дереве конфигуратора. Шаг
+// 10 оставляет зазоры для будущих вставок — как принято в 1С.
+func (h *handler) applySubsystemOrder(ctx context.Context, b *Base, names []string) {
+	for i, name := range names {
+		relPath := "subsystems/" + nameToFilename(name) + ".yaml"
+		raw, ok := h.readConfigFileRaw(ctx, b, relPath)
+		if !ok {
+			continue
+		}
+		updated := setYAMLOrder(raw, (i+1)*10)
+		if updated == nil {
+			continue
+		}
+		_ = h.saveConfigFile(ctx, b, relPath, updated)
+	}
 }
 
 // reorderByName стабильно переставляет items: перечисленные в order идут первыми
