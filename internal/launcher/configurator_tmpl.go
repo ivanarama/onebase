@@ -1241,9 +1241,30 @@ document.addEventListener('dragstart', function(e) {
   it.style.opacity = '0.4';
   if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', it.dataset.id || ''); } catch (_) {} }
 });
+// Сохраняем порядок в dragend, а не в drop: dragend срабатывает всегда после
+// перетаскивания (даже если отпустили мимо валидной цели/в пустой области), —
+// это устраняет случай, когда «перетащил в конец, но не сохранилось».
 document.addEventListener('dragend', function() {
-  if (_treeDrag) { _treeDrag.style.opacity = ''; _treeDrag = null; }
-  if (_groupDrag) { _groupDrag.style.opacity = ''; _groupDrag = null; }
+  if (_treeDrag) {
+    var parent = _treeDrag.parentElement;
+    if (parent && parent.matches('details[data-group]')) {
+      var names = [];
+      parent.querySelectorAll(':scope > .cfg-item').forEach(function(it) {
+        names.push((it.dataset.id || '').replace(/^[a-z]+-/, ''));
+      });
+      cfgSaveOrder(parent.dataset.group, names);
+    }
+    _treeDrag.style.opacity = ''; _treeDrag = null;
+  }
+  if (_groupDrag) {
+    var sb = _groupDrag.parentElement;
+    if (sb) {
+      var ids = [];
+      sb.querySelectorAll(':scope > details.cfg-tree').forEach(function(d) { var id = cfgGid(d); if (id) ids.push(id); });
+      cfgSaveOrder('groups', ids);
+    }
+    _groupDrag.style.opacity = ''; _groupDrag = null;
+  }
 });
 document.addEventListener('dragover', function(e) {
   if (_groupDrag) {
@@ -1258,33 +1279,31 @@ document.addEventListener('dragover', function(e) {
     return;
   }
   if (!_treeDrag) return;
+  var det = _treeDrag.parentElement;
   var it = e.target.closest ? e.target.closest('.cfg-item') : null;
-  if (!it || it === _treeDrag || it.parentElement !== _treeDrag.parentElement) return;
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-  var r = it.getBoundingClientRect();
-  var before = (e.clientY - r.top) < r.height / 2;
-  it.parentElement.insertBefore(_treeDrag, before ? it : it.nextSibling);
-});
-document.addEventListener('drop', function(e) {
-  if (_groupDrag) {
-    var sb = _groupDrag.parentElement;
+  if (it && it !== _treeDrag && it.parentElement === det) {
     e.preventDefault();
-    var ids = [];
-    sb.querySelectorAll(':scope > details.cfg-tree').forEach(function(d) { var id = cfgGid(d); if (id) ids.push(id); });
-    cfgSaveOrder('groups', ids);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    var r = it.getBoundingClientRect();
+    var before = (e.clientY - r.top) < r.height / 2;
+    det.insertBefore(_treeDrag, before ? it : it.nextSibling);
     return;
   }
-  if (!_treeDrag) return;
-  var parent = _treeDrag.parentElement;
-  if (!parent || !parent.matches('details[data-group]')) return;
-  e.preventDefault();
-  var group = parent.dataset.group;
-  var names = [];
-  parent.querySelectorAll(':scope > .cfg-item').forEach(function(it) {
-    names.push((it.dataset.id || '').replace(/^[a-z]+-/, ''));
-  });
-  cfgSaveOrder(group, names);
+  // Над пустой областью группы (ниже последнего элемента) — разрешаем дроп и
+  // двигаем элемент в конец, иначе перемещение «на последнее место» не работает:
+  // без preventDefault здесь событие drop не сработало бы.
+  if (e.target.closest && e.target.closest('summary')) return; // над заголовком — игнор
+  var inDet = e.target.closest ? e.target.closest('details[data-group]') : null;
+  if (inDet === det) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    if (det.lastElementChild !== _treeDrag) det.appendChild(_treeDrag);
+  }
+});
+// drop только подавляет действие браузера по умолчанию; само сохранение — в
+// dragend (срабатывает надёжнее). Так избегаем и двойного POST.
+document.addEventListener('drop', function(e) {
+  if (_treeDrag || _groupDrag) e.preventDefault();
 });
 function cfgSaveOrder(group, names) {
   var fd = new FormData();
