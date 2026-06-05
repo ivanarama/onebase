@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/converter/parser1c"
 	"github.com/ivantit66/onebase/internal/converter/writer"
+	"github.com/ivantit66/onebase/internal/onec_forms"
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,6 +95,16 @@ func Convert(opts Options) (*writer.ConversionReport, error) {
 		return nil, fmt.Errorf("convert: write processors: %w", err)
 	}
 
+	// Управляемые формы справочников и документов
+	if err := writeForms(dump, opts.OutDir, report); err != nil {
+		return nil, fmt.Errorf("convert: write forms: %w", err)
+	}
+
+	// Шаблоны (макеты) → заготовки печатных форм
+	if err := writer.WriteTemplates(opts.SourceDir, opts.OutDir, report); err != nil {
+		return nil, fmt.Errorf("convert: write templates: %w", err)
+	}
+
 	// DSL-заглушки
 	if err := writer.WriteDSLStubs(dump.Documents, opts.SourceDir, opts.OutDir, report); err != nil {
 		return nil, fmt.Errorf("convert: write dsl stubs: %w", err)
@@ -117,6 +129,60 @@ func Convert(opts Options) (*writer.ConversionReport, error) {
 	os.WriteFile(reportPath, []byte(report.String()), 0o644)
 
 	return report, nil
+}
+
+// writeForms импортирует управляемые формы справочников и документов через
+// пакет onec_forms (issue #26 п.4). Формы пишутся в out/forms/<entity>/.
+func writeForms(dump *parser1c.ConfigDump, outDir string, report *writer.ConversionReport) error {
+	var all []parser1c.FormSource
+	for _, c := range dump.Catalogs {
+		all = append(all, c.Forms...)
+	}
+	for _, d := range dump.Documents {
+		all = append(all, d.Forms...)
+	}
+
+	for _, f := range all {
+		entityDir := strings.ToLower(strings.ReplaceAll(f.Entity, " ", "_"))
+		formBase := strings.ToLower(strings.ReplaceAll(f.FormName, " ", "_"))
+		dstYAML := filepath.Join(outDir, "forms", entityDir, formBase+".form.yaml")
+		dstOS := filepath.Join(outDir, "forms", entityDir, formBase+".form.os")
+		dstRes := filepath.Join(outDir, "forms", entityDir, formBase, "_resources")
+
+		bsl := filepath.Join(f.ExtDir, "Form", "Module.bsl")
+		if _, err := os.Stat(bsl); err != nil {
+			bsl = ""
+		}
+		items := filepath.Join(f.ExtDir, "Form", "Items")
+		if _, err := os.Stat(items); err != nil {
+			items = ""
+		}
+
+		rep, err := onec_forms.ImportFromOneC(onec_forms.ImportOptions{
+			XMLPath:         filepath.Join(f.ExtDir, "Form.xml"),
+			BSLPath:         bsl,
+			ItemsDir:        items,
+			EntityName:      f.Entity,
+			FormName:        f.FormName,
+			DstYAMLPath:     dstYAML,
+			DstOSPath:       dstOS,
+			DstResourcesDir: dstRes,
+		})
+		if err != nil {
+			report.FormWarnings = append(report.FormWarnings,
+				fmt.Sprintf("%s/%s: %v", f.Entity, f.FormName, err))
+			continue
+		}
+		report.Forms++
+		for _, w := range rep.Warnings {
+			if w.Severity == onec_forms.SeverityInfo {
+				continue
+			}
+			report.FormWarnings = append(report.FormWarnings,
+				fmt.Sprintf("%s/%s: %s", f.Entity, f.FormName, w.String()))
+		}
+	}
+	return nil
 }
 
 type appConfig struct {

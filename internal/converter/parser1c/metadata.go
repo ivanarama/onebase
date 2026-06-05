@@ -246,12 +246,7 @@ func ParseDir(dir string) (*ConfigDump, error) {
 			// ресурсы оформления/интеграции — не прикладные данные. Раньше они
 			// попадали в default-ветку и конвертировались в справочники
 			// (issue #16: «логотип» из CommonPictures становился справочником).
-			objects, _ := os.ReadDir(subDir)
-			for _, obj := range objects {
-				if obj.IsDir() {
-					dump.SkippedDirs = append(dump.SkippedDirs, SkippedItem{Kind: kind, Name: obj.Name()})
-				}
-			}
+			collectSkipped(subDir, kind, dump)
 
 		case "CommonModules":
 			mods, err := parseCommonModules(subDir)
@@ -267,7 +262,7 @@ func ParseDir(dir string) (*ConfigDump, error) {
 			}
 			dump.Processors = append(dump.Processors, procs...)
 
-		case "Tasks", "BusinessProcesses",
+		case "Subsystems", "Tasks", "BusinessProcesses",
 			"ExchangePlans", "ChartsOfCharacteristicTypes",
 			"ChartsOfCalculationTypes", "FilterCriteria",
 			"SettingsStorages", "FunctionalOptions",
@@ -277,26 +272,16 @@ func ParseDir(dir string) (*ConfigDump, error) {
 			"CommonAttributes", "EventSubscriptions",
 			"SequenceRegisters", "Recalculations",
 			"CalculationRegisters", "ExternalDataSources":
-			// конвертируем как справочники (каталоги)
-			cats, err := parseCatalogs(subDir)
-			if err != nil {
-				return nil, err
-			}
-			dump.Catalogs = append(dump.Catalogs, cats...)
+			// Не прикладные данные (подсистемы, роли, общие формы/макеты, планы
+			// обмена и т.п.). Раньше они конвертировались в справочники — отсюда
+			// «лишние» справочники из подсистемы/логотипа (issue #26 п.1, #16 п.4).
+			// Теперь только помечаем как пропущенные.
+			collectSkipped(subDir, kind, dump)
 
 		default:
-			// пробуем конвертировать неизвестные разделы как справочники
-			cats, err := parseCatalogs(subDir)
-			if err == nil && len(cats) > 0 {
-				dump.Catalogs = append(dump.Catalogs, cats...)
-			} else {
-				objects, _ := os.ReadDir(subDir)
-				for _, obj := range objects {
-					if obj.IsDir() {
-						dump.SkippedDirs = append(dump.SkippedDirs, SkippedItem{Kind: kind, Name: obj.Name()})
-					}
-				}
-			}
+			// Неизвестный раздел. Никогда не конвертируем «вслепую» в справочник —
+			// помечаем как пропущенный, чтобы не плодить фантомные объекты.
+			collectSkipped(subDir, kind, dump)
 		}
 	}
 
@@ -321,10 +306,18 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 			if obj == nil { obj = v8.DataProcessor }
 			if obj == nil { obj = v8.BusinessProcess }
 			if obj != nil {
-				result = append(result, &CatalogMeta{
+				cat := &CatalogMeta{
 					Name:       orDefault(obj.Props.Name, name),
 					Attributes: convertV83Attrs(obj.ChildObjects.Attributes),
-				})
+				}
+				for _, ts := range obj.ChildObjects.TabularSections {
+					cat.TabularSections = append(cat.TabularSections, TabularSection{
+						Name:       ts.Props.Name,
+						Attributes: convertV83Attrs(ts.ChildObjects.Attributes),
+					})
+				}
+				cat.Forms = scanForms(filepath.Join(dir, name), cat.Name)
+				result = append(result, cat)
 				continue
 			}
 		}
@@ -338,11 +331,20 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 			result = append(result, &CatalogMeta{Name: name})
 			continue
 		}
-		result = append(result, &CatalogMeta{
+		cat := &CatalogMeta{
 			Name:       orDefault(props.Name, name),
 			Synonym:    props.Synonym.Content,
 			Attributes: convertAttrs(props.Attributes),
-		})
+		}
+		for _, ts := range props.TabularSections {
+			cat.TabularSections = append(cat.TabularSections, TabularSection{
+				Name:       ts.Name,
+				Synonym:    ts.Synonym.Content,
+				Attributes: convertAttrs(ts.Attributes),
+			})
+		}
+		cat.Forms = scanForms(filepath.Join(dir, name), cat.Name)
+		result = append(result, cat)
 	}
 	return result, nil
 }
@@ -371,6 +373,7 @@ func parseDocuments(dir string) ([]*DocumentMeta, error) {
 					Attributes: convertV83Attrs(ts.ChildObjects.Attributes),
 				})
 			}
+			doc.Forms = scanForms(filepath.Join(dir, name), doc.Name)
 			result = append(result, doc)
 			continue
 		}
@@ -396,6 +399,7 @@ func parseDocuments(dir string) ([]*DocumentMeta, error) {
 				Attributes: convertAttrs(ts.Attributes),
 			})
 		}
+		doc.Forms = scanForms(filepath.Join(dir, name), doc.Name)
 		result = append(result, doc)
 	}
 	return result, nil
@@ -495,6 +499,40 @@ func parseType(types []string) FieldType {
 		}
 	}
 	return ft
+}
+
+// collectSkipped помечает все подкаталоги раздела как пропущенные (не
+// конвертируемые в прикладные объекты). Используется для служебных разделов
+// выгрузки 1С (подсистемы, роли, картинки, общие формы и т.п.).
+func collectSkipped(subDir, kind string, dump *ConfigDump) {
+	objects, _ := os.ReadDir(subDir)
+	for _, obj := range objects {
+		if obj.IsDir() {
+			dump.SkippedDirs = append(dump.SkippedDirs, SkippedItem{Kind: kind, Name: obj.Name()})
+		}
+	}
+}
+
+// scanForms ищет управляемые формы объекта в каталоге <ownerDir>/Forms/<X>/Ext/Form.xml.
+// Возвращает источники форм для последующего импорта через onec_forms.
+func scanForms(ownerDir, entity string) []FormSource {
+	formsDir := filepath.Join(ownerDir, "Forms")
+	entries, err := os.ReadDir(formsDir)
+	if err != nil {
+		return nil
+	}
+	var out []FormSource
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		extDir := filepath.Join(formsDir, e.Name(), "Ext")
+		if _, err := os.Stat(filepath.Join(extDir, "Form.xml")); err != nil {
+			continue
+		}
+		out = append(out, FormSource{Entity: entity, FormName: e.Name(), ExtDir: extDir})
+	}
+	return out
 }
 
 func orDefault(s, def string) string {

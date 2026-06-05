@@ -179,11 +179,10 @@ func TestParseDirEnumerations(t *testing.T) {
 	}
 }
 
-// Неизвестные/непарсящиеся объекты не должны валить разбор — они уходят в
-// SkippedDirs или конвертируются как справочники (поведение по умолчанию).
+// Неизвестные/непарсящиеся разделы не должны валить разбор и НЕ должны
+// превращаться в справочники (issue #26 п.1) — они уходят в SkippedDirs.
 func TestParseDirUnknownSection(t *testing.T) {
 	src := t.TempDir()
-	// Раздел, которого нет в switch и без распознаваемого XML.
 	junk := filepath.Join(src, "ОченьСтранныйРаздел", "Объект1")
 	if err := os.MkdirAll(junk, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -193,7 +192,122 @@ func TestParseDirUnknownSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseDir не должен падать на неизвестном разделе: %v", err)
 	}
-	// Объект попал в Catalogs (как пустой) либо в SkippedDirs — оба варианта
-	// корректны; главное — без ошибки и без паники.
-	_ = dump
+	if len(dump.Catalogs) != 0 {
+		t.Fatalf("неизвестный раздел не должен давать справочников, получено %d", len(dump.Catalogs))
+	}
+	if len(dump.SkippedDirs) == 0 {
+		t.Fatalf("неизвестный раздел должен попасть в SkippedDirs")
+	}
+}
+
+// Подсистемы и общие картинки (логотип) — не прикладные данные и не должны
+// становиться справочниками (issue #26 п.1, #16 п.4).
+func TestParseDirSkipsNonApplied(t *testing.T) {
+	src := t.TempDir()
+	writeV83(t, filepath.Join(src, "Catalogs"), "Контрагенты", catalogXML)
+	// Подсистема одним файлом + папкой.
+	subDir := filepath.Join(src, "Subsystems", "MasterData")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subsystem: %v", err)
+	}
+	// Логотип в CommonPictures.
+	picDir := filepath.Join(src, "CommonPictures", "Логотип")
+	if err := os.MkdirAll(picDir, 0o755); err != nil {
+		t.Fatalf("mkdir picture: %v", err)
+	}
+
+	dump, err := ParseDir(src)
+	if err != nil {
+		t.Fatalf("ParseDir: %v", err)
+	}
+	if len(dump.Catalogs) != 1 || dump.Catalogs[0].Name != "Контрагенты" {
+		t.Fatalf("ожидался ровно 1 справочник (Контрагенты), получено %+v", dump.Catalogs)
+	}
+	var skippedNames []string
+	for _, s := range dump.SkippedDirs {
+		skippedNames = append(skippedNames, s.Kind+"/"+s.Name)
+	}
+	wantSkipped := map[string]bool{"Subsystems/MasterData": false, "CommonPictures/Логотип": false}
+	for _, n := range skippedNames {
+		if _, ok := wantSkipped[n]; ok {
+			wantSkipped[n] = true
+		}
+	}
+	for n, seen := range wantSkipped {
+		if !seen {
+			t.Errorf("ожидался пропущенный объект %q, skipped=%v", n, skippedNames)
+		}
+	}
+}
+
+const catalogWithTSXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject>
+  <Catalog>
+    <Properties><Name>Номенклатура</Name></Properties>
+    <ChildObjects>
+      <Attribute><Properties>
+        <Name>Артикул</Name>
+        <Type><Type xmlns="http://v8.1c.ru/8.1/data/core">xs:string</Type></Type>
+      </Properties></Attribute>
+      <TabularSection>
+        <Properties><Name>ЦеныПоставщиков</Name></Properties>
+        <ChildObjects>
+          <Attribute><Properties>
+            <Name>Цена</Name>
+            <Type><Type xmlns="http://v8.1c.ru/8.1/data/core">xs:decimal</Type></Type>
+          </Properties></Attribute>
+        </ChildObjects>
+      </TabularSection>
+    </ChildObjects>
+  </Catalog>
+</MetaDataObject>`
+
+// Справочник в 1С может иметь табличную часть — она должна разбираться
+// (issue #26 п.2).
+func TestParseDirCatalogTabularSection(t *testing.T) {
+	src := t.TempDir()
+	writeV83(t, filepath.Join(src, "Catalogs"), "Номенклатура", catalogWithTSXML)
+
+	dump, err := ParseDir(src)
+	if err != nil {
+		t.Fatalf("ParseDir: %v", err)
+	}
+	if len(dump.Catalogs) != 1 {
+		t.Fatalf("ожидался 1 справочник, получено %d", len(dump.Catalogs))
+	}
+	cat := dump.Catalogs[0]
+	if len(cat.TabularSections) != 1 || cat.TabularSections[0].Name != "ЦеныПоставщиков" {
+		t.Fatalf("табличная часть справочника разобрана неверно: %+v", cat.TabularSections)
+	}
+	ts := cat.TabularSections[0]
+	if len(ts.Attributes) != 1 || ts.Attributes[0].Name != "Цена" {
+		t.Fatalf("реквизиты ТЧ справочника разобраны неверно: %+v", ts.Attributes)
+	}
+}
+
+// scanForms находит управляемые формы объекта в Forms/<X>/Ext/Form.xml
+// (issue #26 п.4).
+func TestParseDirFindsForms(t *testing.T) {
+	src := t.TempDir()
+	writeV83(t, filepath.Join(src, "Catalogs"), "Контрагенты", catalogXML)
+	extDir := filepath.Join(src, "Catalogs", "Контрагенты", "Forms", "ФормаЭлемента", "Ext")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatalf("mkdir form: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(extDir, "Form.xml"), []byte("<Form/>"), 0o644); err != nil {
+		t.Fatalf("write form xml: %v", err)
+	}
+
+	dump, err := ParseDir(src)
+	if err != nil {
+		t.Fatalf("ParseDir: %v", err)
+	}
+	cat := dump.Catalogs[0]
+	if len(cat.Forms) != 1 {
+		t.Fatalf("ожидалась 1 форма, получено %d", len(cat.Forms))
+	}
+	f := cat.Forms[0]
+	if f.Entity != "Контрагенты" || f.FormName != "ФормаЭлемента" {
+		t.Errorf("источник формы разобран неверно: %+v", f)
+	}
 }

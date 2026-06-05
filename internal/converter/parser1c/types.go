@@ -2,10 +2,11 @@ package parser1c
 
 // CatalogMeta — справочник из Metadata.xml
 type CatalogMeta struct {
-	Name       string
-	Synonym    string
-	Attributes []Attribute
-	Forms      []string // пропускаются при конвертации
+	Name            string
+	Synonym         string
+	Attributes      []Attribute
+	TabularSections []TabularSection
+	Forms           []FormSource // управляемые формы объекта (Forms/<X>/Ext/Form.xml)
 }
 
 // DocumentMeta — документ из Metadata.xml
@@ -14,7 +15,15 @@ type DocumentMeta struct {
 	Synonym         string
 	Attributes      []Attribute
 	TabularSections []TabularSection
-	Forms           []string
+	Forms           []FormSource
+}
+
+// FormSource — управляемая форма объекта, найденная в выгрузке 1С.
+// Импортируется отдельным шагом через пакет onec_forms.
+type FormSource struct {
+	Entity   string // имя объекта-владельца OneBase (справочник/документ)
+	FormName string // имя формы (имя каталога Forms/<FormName>)
+	ExtDir   string // путь к каталогу Ext (содержит Form.xml, Form/Module.bsl, Form/Items)
 }
 
 // RegisterMeta — регистр накопления из Metadata.xml

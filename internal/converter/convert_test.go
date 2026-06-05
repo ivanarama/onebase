@@ -72,6 +72,16 @@ func TestConvertEndToEnd(t *testing.T) {
 	if !strings.Contains(catYAML, "ИНН") {
 		t.Errorf("в catalogs/контрагенты.yaml нет реквизита ИНН:\n%s", catYAML)
 	}
+	// Стандартные реквизиты справочника 1С (issue #26 п.2).
+	if !strings.Contains(catYAML, "Код") || !strings.Contains(catYAML, "Наименование") {
+		t.Errorf("в справочнике нет стандартных Код/Наименование:\n%s", catYAML)
+	}
+
+	// Отчёт не должен показывать фантомную константу (issue #26 п.5).
+	rep := readFile(t, filepath.Join(out, "conversion_report.txt"))
+	if !strings.Contains(rep, "Констант:              0 → 0 YAML") {
+		t.Errorf("отчёт показывает неверное число констант:\n%s", rep)
+	}
 
 	// Файл документа создан.
 	docYAML := readFile(t, filepath.Join(out, "documents", "реализациятоваров.yaml"))
@@ -85,6 +95,73 @@ func TestConvertEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "conversion_report.txt")); err != nil {
 		t.Errorf("не создан conversion_report.txt: %v", err)
+	}
+}
+
+// Макеты 1С импортируются как заготовки печатных форм (issue #26 п.3).
+func TestConvertTemplatesScaffold(t *testing.T) {
+	src := t.TempDir()
+	out := filepath.Join(t.TempDir(), "result")
+	writeV83(t, filepath.Join(src, "Catalogs"), "Контрагенты", catalogXML)
+	// Макет объекта: Catalogs/Контрагенты/Templates/Карточка/Ext/Template.xml
+	tmplExt := filepath.Join(src, "Catalogs", "Контрагенты", "Templates", "Карточка", "Ext")
+	if err := os.MkdirAll(tmplExt, 0o755); err != nil {
+		t.Fatalf("mkdir template: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmplExt, "Template.xml"), []byte("<Spreadsheet/>"), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	report, err := converter.Convert(converter.Options{SourceDir: src, OutDir: out})
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if report.Templates != 1 {
+		t.Fatalf("ожидался 1 импортированный макет, получено %d", report.Templates)
+	}
+	pf := readFile(t, filepath.Join(out, "printforms", "контрагенты_карточка.yaml"))
+	if !strings.Contains(pf, "name: Карточка") || !strings.Contains(pf, "document: Контрагенты") {
+		t.Errorf("заготовка печатной формы некорректна:\n%s", pf)
+	}
+	// Исходник макета скопирован рядом.
+	if _, err := os.Stat(filepath.Join(out, "printforms", "контрагенты_карточка.src.xml")); err != nil {
+		t.Errorf("не скопирован исходник макета: %v", err)
+	}
+}
+
+const minimalFormXML = `<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" version="2.20">
+  <Attributes>
+    <Attribute name="Объект" id="1">
+      <Type><v8:Type>cfg:DocumentRef.РеализацияТоваров</v8:Type></Type>
+      <MainAttribute>true</MainAttribute>
+    </Attribute>
+  </Attributes>
+</Form>`
+
+// Управляемые формы объектов импортируются bulk-конвертером через onec_forms
+// (issue #26 п.4).
+func TestConvertImportsForms(t *testing.T) {
+	src := t.TempDir()
+	out := filepath.Join(t.TempDir(), "result")
+	writeV83(t, filepath.Join(src, "Documents"), "РеализацияТоваров", documentXML)
+	extDir := filepath.Join(src, "Documents", "РеализацияТоваров", "Forms", "ФормаДокумента", "Ext")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatalf("mkdir form: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(extDir, "Form.xml"), []byte(minimalFormXML), 0o644); err != nil {
+		t.Fatalf("write form xml: %v", err)
+	}
+
+	report, err := converter.Convert(converter.Options{SourceDir: src, OutDir: out})
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if report.Forms != 1 {
+		t.Fatalf("ожидалась 1 импортированная форма, получено %d (warnings=%v)", report.Forms, report.FormWarnings)
+	}
+	if _, err := os.Stat(filepath.Join(out, "forms", "реализациятоваров", "формадокумента.form.yaml")); err != nil {
+		t.Errorf("не создан .form.yaml формы: %v", err)
 	}
 }
 

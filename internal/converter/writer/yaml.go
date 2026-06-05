@@ -21,9 +21,10 @@ type yamlTablePart struct {
 }
 
 type yamlCatalog struct {
-	Name   string      `yaml:"name"`
-	Title  string      `yaml:"title,omitempty"`
-	Fields []yamlField `yaml:"fields"`
+	Name       string          `yaml:"name"`
+	Title      string          `yaml:"title,omitempty"`
+	Fields     []yamlField     `yaml:"fields"`
+	TableParts []yamlTablePart `yaml:"tableparts,omitempty"`
 }
 
 type yamlDocument struct {
@@ -50,7 +51,13 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 		obj := yamlCatalog{
 			Name:   cat.Name,
 			Title:  synonymTitle(cat.Name, cat.Synonym),
-			Fields: convertFields(cat.Attributes, notes),
+			Fields: withStandardCatalogFields(convertFields(cat.Attributes, notes)),
+		}
+		for _, ts := range cat.TabularSections {
+			obj.TableParts = append(obj.TableParts, yamlTablePart{
+				Name:   ts.Name,
+				Fields: convertFields(ts.Attributes, notes),
+			})
 		}
 		if err := writeYAML(filepath.Join(dir, fileName(cat.Name)+".yaml"), obj); err != nil {
 			return err
@@ -296,6 +303,29 @@ func synonymTitle(name, synonym string) string {
 		return ""
 	}
 	return synonym
+}
+
+// withStandardCatalogFields добавляет стандартные реквизиты справочника 1С
+// (Код и Наименование) в начало списка полей. В выгрузке 1С они хранятся вне
+// секции <Attributes>, поэтому при конвертации терялись (issue #26 п.2).
+// Если пользовательский реквизит уже носит такое имя — не дублируем.
+func withStandardCatalogFields(fields []yamlField) []yamlField {
+	has := func(name string) bool {
+		for _, f := range fields {
+			if strings.EqualFold(f.Name, name) {
+				return true
+			}
+		}
+		return false
+	}
+	var std []yamlField
+	if !has("Код") {
+		std = append(std, yamlField{Name: "Код", Type: "string"})
+	}
+	if !has("Наименование") {
+		std = append(std, yamlField{Name: "Наименование", Type: "string"})
+	}
+	return append(std, fields...)
 }
 
 func convertFields(attrs []parser1c.Attribute, notes *ConversionReport) []yamlField {
