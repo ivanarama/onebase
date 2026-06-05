@@ -205,22 +205,22 @@ func (db *DB) JournalQuery(
 	)
 	dataArgs := append(args, limit, offset)
 
-	pgRows, err := db.q(ctx).Query(ctx, dataSQL, dataArgs...)
+	rows2, err := db.Query(ctx, dataSQL, dataArgs...)
 	if err != nil {
 		return nil, 0, colRefMap, fmt.Errorf("journal query: %w", err)
 	}
-	defer pgRows.Close()
+	defer rows2.Close()
 
 	// Scan results: [_doc_kind, id, col0, col1, ...]
 	var rows []map[string]any
-	for pgRows.Next() {
+	for rows2.Next() {
 		n := len(j.Columns) + 2 // _doc_kind + id + columns
 		dest := make([]any, n)
 		ptrs := make([]any, n)
 		for i := range dest {
 			ptrs[i] = &dest[i]
 		}
-		if err := pgRows.Scan(ptrs...); err != nil {
+		if err := rows2.Scan(ptrs...); err != nil {
 			return nil, 0, colRefMap, fmt.Errorf("journal scan: %w", err)
 		}
 		row := make(map[string]any, n)
@@ -231,5 +231,5 @@ func (db *DB) JournalQuery(
 		}
 		rows = append(rows, row)
 	}
-	return rows, total, colRefMap, pgRows.Err()
+	return rows, total, colRefMap, rows2.Err()
 }

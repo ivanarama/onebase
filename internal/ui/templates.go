@@ -1891,10 +1891,11 @@ const tplJournal = `
     <div>
       <label>{{.Field}}</label>
       {{if index $.FilterOptions .Field}}
-      <select name="f.{{.Field}}">
+      {{$f := .Field}}
+      <select name="f.{{$f}}">
         <option value="">{{t $.Lang "— все —"}}</option>
-        {{range index $.FilterOptions .Field}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params .Field).Value}}selected{{end}}>{{index . "_label"}}</option>
+        {{range index $.FilterOptions $f}}
+        <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       {{else}}
