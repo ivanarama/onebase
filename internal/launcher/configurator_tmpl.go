@@ -4367,6 +4367,71 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
   }
 })();
 </script>
+<button id="cfggen-btn" title="Генерация каркаса ИИ" style="display:none;position:fixed;right:18px;bottom:78px;z-index:9000;width:48px;height:48px;border-radius:50%;background:#0ea5e9;color:#fff;border:none;cursor:pointer;font-size:22px;box-shadow:0 4px 14px rgba(14,165,233,.4)">&#x1F3D7;&#xFE0F;</button>
+<div id="cfggen-panel" style="display:none;position:fixed;right:18px;bottom:18px;z-index:9001;width:460px;max-width:calc(100vw - 24px);height:600px;max-height:calc(100vh - 40px);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.22);flex-direction:column;overflow:hidden;font-family:system-ui,sans-serif">
+  <div style="background:#0ea5e9;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px">&#x1F3D7;&#xFE0F; Генерация каркаса<span style="flex:1"></span><button type="button" id="cfggen-close" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px">x</button></div>
+  <textarea id="cfggen-prompt" placeholder="Опишите, что создать. Напр.: справочник Клиенты и документ Заявка с табличной частью Товары" style="margin:10px;height:70px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:13px;font-family:inherit"></textarea>
+  <div style="margin:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cfggen-send" type="button" style="background:#0ea5e9;color:#fff;border:none;border-radius:8px;padding:6px 16px;cursor:pointer;font-size:13px">Сгенерировать</button><button id="cfggen-apply" type="button" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:6px 16px;cursor:pointer;font-size:13px;display:none">Применить</button><button id="cfggen-reject" type="button" style="background:#e2e8f0;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;display:none">Отклонить</button><span id="cfggen-msg" style="font-size:11px"></span></div>
+  <div id="cfggen-out" style="flex:1;overflow:auto;margin:0 10px 10px;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px;font-size:12px"></div>
+</div>
+<script>
+(function(){
+  if(window.__cfgGenInit)return;window.__cfgGenInit=true;
+  var base='{{.Base.ID}}';
+  fetch('/bases/'+base+'/configurator/ai-enabled').then(function(r){return r.json();}).then(function(d){if(d&&d.enabled)init();}).catch(function(){});
+  function init(){
+    var btn=document.getElementById('cfggen-btn'),panel=document.getElementById('cfggen-panel');
+    var prompt=document.getElementById('cfggen-prompt'),send=document.getElementById('cfggen-send'),out=document.getElementById('cfggen-out');
+    var msg=document.getElementById('cfggen-msg'),applyBtn=document.getElementById('cfggen-apply'),rejectBtn=document.getElementById('cfggen-reject');
+    var pending=null;
+    btn.style.display='';
+    btn.addEventListener('click',function(){panel.style.display='flex';btn.style.display='none';prompt.focus();});
+    document.getElementById('cfggen-close').addEventListener('click',function(){panel.style.display='none';btn.style.display='';});
+    function renderDiff(changes){
+      out.textContent='';
+      changes.forEach(function(ch){
+        var box=document.createElement('div');box.style.marginBottom='8px';
+        var head=document.createElement('div');head.style.fontWeight='600';head.style.fontSize='12px';head.style.color='#7dd3fc';
+        head.textContent=(ch.kind||'')+' '+ch.path;
+        var pre=document.createElement('pre');pre.style.margin='4px 0 0';pre.style.whiteSpace='pre-wrap';pre.style.wordBreak='break-word';pre.style.fontSize='11px';
+        pre.textContent=ch.newContent||'';
+        box.appendChild(head);box.appendChild(pre);out.appendChild(box);
+      });
+    }
+    send.addEventListener('click',function(){
+      var p=prompt.value.trim();if(!p){msg.textContent='Введите ТЗ';msg.style.color='#c00';return;}
+      msg.textContent='Генерация...';msg.style.color='#666';out.textContent='';applyBtn.style.display='none';rejectBtn.style.display='none';send.disabled=true;pending=null;
+      fetch('/bases/'+base+'/configurator/ai-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p})})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.changes&&d.changes.length){
+            pending=d.changes;renderDiff(d.changes);
+            msg.textContent='Предложено объектов: '+d.changes.length;msg.style.color='#16a34a';
+            applyBtn.style.display='';rejectBtn.style.display='';
+          }else{
+            out.textContent=(d&&d.text)||(d&&d.error)||'Модель не предложила объектов';
+            msg.textContent=(d&&d.error)?'Ошибка':'Готово';msg.style.color=(d&&d.error)?'#c00':'#666';
+          }
+        })
+        .catch(function(){msg.textContent='Ошибка сети';msg.style.color='#c00';})
+        .finally(function(){send.disabled=false;});
+    });
+    rejectBtn.addEventListener('click',function(){pending=null;out.textContent='';applyBtn.style.display='none';rejectBtn.style.display='none';msg.textContent='Отклонено';msg.style.color='#666';});
+    applyBtn.addEventListener('click',function(){
+      if(!pending)return;
+      applyBtn.disabled=true;msg.textContent='Применение...';msg.style.color='#666';
+      fetch('/bases/'+base+'/configurator/ai-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({changes:pending})})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(d&&d.ok){msg.textContent='Применено: '+(d.applied||0)+'. Обновление...';msg.style.color='#16a34a';setTimeout(function(){location.reload();},800);}
+          else{msg.textContent=(d&&d.error)||'Ошибка применения';msg.style.color='#c00';}
+        })
+        .catch(function(){msg.textContent='Ошибка сети';msg.style.color='#c00';})
+        .finally(function(){applyBtn.disabled=false;});
+    });
+  }
+})();
+</script>
 </body></html>
 {{end}}`
 
