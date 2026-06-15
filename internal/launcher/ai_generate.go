@@ -63,7 +63,9 @@ func safeFileName(name string) (string, error) {
 	if n == "" {
 		return "", fmt.Errorf("пустое имя объекта")
 	}
-	if n == "." || strings.ContainsAny(n, "/\\") || strings.Contains(n, "..") {
+	// «:» блокируем тоже: на Windows-NTFS «имя:поток» пишет в alternate data
+	// stream, а не в обычный .yaml — неожиданное поведение при записи в конфиг.
+	if n == "." || strings.ContainsAny(n, "/\\:") || strings.Contains(n, "..") {
 		return "", fmt.Errorf("недопустимое имя объекта: %q", name)
 	}
 	return strings.ToLower(n) + ".yaml", nil
