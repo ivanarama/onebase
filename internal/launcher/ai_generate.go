@@ -65,7 +65,7 @@ func safeFileName(name string) (string, error) {
 	}
 	// «:» блокируем тоже: на Windows-NTFS «имя:поток» пишет в alternate data
 	// stream, а не в обычный .yaml — неожиданное поведение при записи в конфиг.
-	if n == "." || strings.ContainsAny(n, "/\\:") || strings.Contains(n, "..") {
+	if n == "." || strings.ContainsAny(n, "/\\:\x00") || strings.Contains(n, "..") {
 		return "", fmt.Errorf("недопустимое имя объекта: %q", name)
 	}
 	return strings.ToLower(n) + ".yaml", nil
