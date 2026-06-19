@@ -13,6 +13,10 @@ type Expr interface {
 }
 
 type Program struct {
+	// ModuleVars — раздел объявления переменных модуля (Перем … [Экспорт];),
+	// идущий в начале модуля до процедур и функций (как в 1С). Модули объекта
+	// из выгрузок 1С часто начинаются с него (issue #115).
+	ModuleVars []*VarDecl
 	Procedures []*ProcedureDecl
 }
 
@@ -46,7 +50,12 @@ type AssignStmt struct {
 	Value  Expr
 }
 
-type VarDecl struct{ Names []token.Token }
+// VarDecl — объявление переменных: Перем а, б, в [Экспорт];. Exported отражает
+// модификатор «Экспорт» (значим для переменных модуля, см. ast.Program.ModuleVars).
+type VarDecl struct {
+	Names    []token.Token
+	Exported bool
+}
 
 type ForEachStmt struct {
 	Var        token.Token

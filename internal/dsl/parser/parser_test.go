@@ -67,6 +67,48 @@ func TestParser_VarDeclCommaList(t *testing.T) {
 	}
 }
 
+func TestParser_ModuleVarSection(t *testing.T) {
+	// issue #115: модуль объекта обработки из выгрузки 1С начинается с раздела
+	// объявления переменных модуля (Перем … [Экспорт];) до процедур. Парсер не
+	// должен падать с «expected Procedure or Function, got "Перем"».
+	src := `Перем НастройкиСервиса Экспорт;
+Перем КэшТокена, ВремяОбновления;
+
+Процедура ПолучитьТокен() Экспорт
+КонецПроцедуры`
+
+	prog := parse(t, src)
+	if len(prog.ModuleVars) != 2 {
+		t.Fatalf("want 2 module var decls, got %d", len(prog.ModuleVars))
+	}
+	if !prog.ModuleVars[0].Exported {
+		t.Fatalf("first module var must be Exported (Перем … Экспорт)")
+	}
+	if got := prog.ModuleVars[0].Names[0].Literal; got != "НастройкиСервиса" {
+		t.Fatalf("module var name: want НастройкиСервиса, got %q", got)
+	}
+	if n := len(prog.ModuleVars[1].Names); n != 2 {
+		t.Fatalf("second decl: want 2 names, got %d", n)
+	}
+	if prog.ModuleVars[1].Exported {
+		t.Fatalf("second module var must not be Exported")
+	}
+	if len(prog.Procedures) != 1 {
+		t.Fatalf("want 1 procedure, got %d", len(prog.Procedures))
+	}
+}
+
+func TestParser_ModuleVarsOnly(t *testing.T) {
+	// Модуль из одних объявлений переменных, без процедур — тоже валиден.
+	prog := parse(t, "Перем А;\nПерем Б;\n")
+	if len(prog.ModuleVars) != 2 {
+		t.Fatalf("want 2 module var decls, got %d", len(prog.ModuleVars))
+	}
+	if len(prog.Procedures) != 0 {
+		t.Fatalf("want 0 procedures, got %d", len(prog.Procedures))
+	}
+}
+
 func TestParser_OnWriteProcedure(t *testing.T) {
 	src := `Procedure OnWrite()
   If this.Number = "" Then
