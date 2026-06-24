@@ -4108,10 +4108,15 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
         var title=document.createElement('span');title.style.cssText='min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';title.textContent=(ch.kind||'')+': '+ch.path;
         h.appendChild(cb);h.appendChild(title);wrap.appendChild(h);
         if(ch.oldContent){
-          var details=document.createElement('details');details.style.cssText='border-top:1px solid #e2e8f0;background:#fff';
-          var summary=document.createElement('summary');summary.style.cssText='padding:6px 8px;cursor:pointer;color:#475569;font-size:11px';summary.textContent='Было';
-          var oldPre=document.createElement('pre');oldPre.style.cssText='margin:0;padding:8px;background:#fff7ed;border-top:1px solid #fed7aa;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto';oldPre.textContent=ch.oldContent||'';
-          details.appendChild(summary);details.appendChild(oldPre);wrap.appendChild(details);
+          var diff=document.createElement('div');diff.className='cfggen-diff';diff.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));border-top:1px solid #e2e8f0';
+          var oldBox=document.createElement('div');oldBox.style.cssText='min-width:0;border-right:1px solid #e2e8f0';
+          var oldLbl=document.createElement('div');oldLbl.style.cssText='padding:5px 8px;background:#fff7ed;color:#9a3412;font-size:11px;font-weight:600';oldLbl.textContent='Было';
+          var oldPre=document.createElement('pre');oldPre.style.cssText='margin:0;padding:8px;background:#fff7ed;font-size:11px;white-space:pre-wrap;word-break:break-word;min-height:150px;max-height:260px;overflow:auto';oldPre.textContent=ch.oldContent||'';
+          oldBox.appendChild(oldLbl);oldBox.appendChild(oldPre);
+          var newBox=document.createElement('div');newBox.style.cssText='min-width:0';
+          var newLbl=document.createElement('div');newLbl.style.cssText='padding:5px 8px;background:#ecfdf5;color:#166534;font-size:11px;font-weight:600';newLbl.textContent='Стало';
+          var ta=document.createElement('textarea');ta.className='cfggen-editor';ta.spellcheck=false;ta.value=ch.newContent||'';ta.style.cssText='display:block;width:100%;box-sizing:border-box;min-height:150px;border:0;border-top:1px solid #bbf7d0;padding:8px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;white-space:pre;tab-size:2';
+          newBox.appendChild(newLbl);newBox.appendChild(ta);diff.appendChild(oldBox);diff.appendChild(newBox);wrap.appendChild(diff);out.appendChild(wrap);return;
         }
         var ta=document.createElement('textarea');ta.className='cfggen-editor';ta.spellcheck=false;ta.value=ch.newContent||'';ta.style.cssText='display:block;width:100%;box-sizing:border-box;min-height:150px;border:0;border-top:1px solid #e2e8f0;padding:8px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;white-space:pre;tab-size:2';
         wrap.appendChild(ta);out.appendChild(wrap);

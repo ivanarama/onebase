@@ -152,6 +152,16 @@
 - UI генерации показывает trace в collapsible блоке `Ход генерации`, чтобы было
   видно, какие файлы модель создала/читала и какой check запускала.
 
+## Выполнено в девятом срезе
+
+Дата реализации: 2026-06-24.
+
+- Для изменённых файлов в UI генерации добавлен адаптивный side-by-side diff:
+  - слева старое содержимое `Было`;
+  - справа редактируемое `Стало`;
+  - на узкой панели layout автоматически складывается в один столбец.
+- Новые файлы по-прежнему показываются как редактируемый `newContent`.
+
 ## Что мешает сейчас
 
 ### 1. Контракту не хватает графа зависимостей
@@ -186,8 +196,7 @@ full-check, но UX и agent loop всё ещё выглядят как MVP.
 Осталось:
 
 - миграционного dry-run после apply;
-- цикла самокоррекции по структурированным ошибкам;
-- полноценного side-by-side diff viewer.
+- цикла самокоррекции по структурированным ошибкам.
 
 ### 4. Headless-команды есть, но их можно усилить
 
@@ -462,13 +471,12 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. UX генерации: side-by-side diff viewer.
-2. Self-correction loop генератора: structured check errors, retry/fix rounds, final check summary.
-3. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
-4. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
-5. `impact` и refactoring helpers.
-6. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
-7. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
+1. Self-correction loop генератора: structured check errors, retry/fix rounds, final check summary.
+2. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
+3. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
+4. `impact` и refactoring helpers.
+5. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
+6. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
 
 Обоснование: машинный контракт, формат, schema и быстрый headless feedback уже закрыты.
 Теперь максимальная отдача — дать генератору право создавать полноценный вертикальный
@@ -493,7 +501,8 @@ Tools:
 12. [x] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
 13. [x] Добавить UX генерации: partial apply и inline edit перед apply.
 14. [x] Добавить visible tool/check trace.
-15. [ ] Добавить side-by-side diff viewer.
+15. [x] Добавить side-by-side diff viewer.
+16. [ ] Добавить self-correction loop генератора.
 
 ## Риски
 
@@ -564,6 +573,16 @@ go test ./...
 ```bash
 node --check internal/launcher/static/configurator.js
 go test ./internal/launcher
+go test ./...
+```
+
+Результат: PASS.
+
+После девятого среза дополнительно проверено:
+
+```bash
+node --check internal/launcher/static/configurator.js
+go test ./internal/launcher -run 'TestConfigurator_GeneratePanelWired'
 go test ./...
 ```
 
