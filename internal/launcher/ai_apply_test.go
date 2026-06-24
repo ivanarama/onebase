@@ -56,6 +56,7 @@ func TestWriteConfigFileRaw_File(t *testing.T) {
 	b := &Base{ConfigSource: "file", Path: t.TempDir()}
 	ctx := context.Background()
 	content := []byte("name: Клиент\nfields:\n  - {name: Наименование, type: string}\n")
+	want := "name: Клиент\nfields:\n  - name: Наименование\n    type: string\n"
 
 	// подкаталог ещё не существует — writer обязан его создать
 	if err := h.writeConfigFileRaw(ctx, b, "catalogs/клиент.yaml", content); err != nil {
@@ -65,13 +66,13 @@ func TestWriteConfigFileRaw_File(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл не создан под b.Path: %v", err)
 	}
-	if string(got) != string(content) {
+	if string(got) != want {
 		t.Errorf("содержимое не совпало: %q", got)
 	}
 
 	// и должен читаться обратно симметричным readConfigFileRaw
 	raw, ok := h.readConfigFileRaw(ctx, b, "catalogs/клиент.yaml")
-	if !ok || string(raw) != string(content) {
+	if !ok || string(raw) != want {
 		t.Errorf("readConfigFileRaw вернул ok=%v raw=%q", ok, raw)
 	}
 }

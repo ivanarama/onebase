@@ -29,6 +29,10 @@ func TestSaveConfigFiles_FileMode(t *testing.T) {
 		{relPath: "src/Сводка.page.os", content: []byte("Процедура ПриФормировании()")},
 		{relPath: "pages/Сводка.yaml", content: []byte("name: Сводка")},
 	}
+	wantContent := map[string][]byte{
+		"src/Сводка.page.os": []byte("Процедура ПриФормировании()"),
+		"pages/Сводка.yaml":  []byte("name: Сводка\n"),
+	}
 	if err := saveConfigFiles(req, h, b, files); err != nil {
 		t.Fatalf("saveConfigFiles: %v", err)
 	}
@@ -37,7 +41,7 @@ func TestSaveConfigFiles_FileMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", f.relPath, err)
 		}
-		if !bytes.Equal(got, f.content) {
+		if !bytes.Equal(got, wantContent[f.relPath]) {
 			t.Fatalf("%s: содержимое %q", f.relPath, got)
 		}
 	}
@@ -65,6 +69,10 @@ func TestSaveConfigFiles_DBMode(t *testing.T) {
 		{relPath: "src/Сводка.page.os", content: []byte("src")},
 		{relPath: "pages/Сводка.yaml", content: []byte("name: Сводка")},
 	}
+	wantContent := map[string][]byte{
+		"src/Сводка.page.os": []byte("src"),
+		"pages/Сводка.yaml":  []byte("name: Сводка\n"),
+	}
 	if err := saveConfigFiles(req, h, b, files); err != nil {
 		t.Fatalf("saveConfigFiles(db): %v", err)
 	}
@@ -80,7 +88,7 @@ func TestSaveConfigFiles_DBMode(t *testing.T) {
 		if err != nil || !ok {
 			t.Fatalf("ReadFile %s: ok=%v err=%v", f.relPath, ok, err)
 		}
-		if !bytes.Equal(content, f.content) {
+		if !bytes.Equal(content, wantContent[f.relPath]) {
 			t.Fatalf("%s: содержимое %q", f.relPath, content)
 		}
 	}

@@ -142,6 +142,22 @@ func TestRepoVersions_SaveFilesCreatesSingleVersion(t *testing.T) {
 	}
 }
 
+func TestRepoVersions_SaveFileFormatsYAML(t *testing.T) {
+	repo, _, ctx := newSQLiteRepo(t)
+	raw := []byte("fields:\n  - {type: string, name: Наименование}\nname: Клиент\n")
+	if err := repo.SaveFile(ctx, "catalogs/клиент.yaml", raw); err != nil {
+		t.Fatalf("SaveFile: %v", err)
+	}
+	content, ok, err := repo.ReadFile(ctx, "catalogs/клиент.yaml")
+	if err != nil || !ok {
+		t.Fatalf("ReadFile: ok=%v err=%v", ok, err)
+	}
+	want := "name: Клиент\nfields:\n  - name: Наименование\n    type: string\n"
+	if string(content) != want {
+		t.Fatalf("formatted content:\n%s\nwant:\n%s", content, want)
+	}
+}
+
 func TestRepoVersions_DeleteFilesCreatesSingleVersion(t *testing.T) {
 	repo, _, ctx := newSQLiteRepo(t)
 	if err := repo.SaveFiles(ctx, []configdb.ConfigFile{

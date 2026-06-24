@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/configfmt"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -151,13 +152,17 @@ func (r *Repo) saveFileNoVersion(ctx context.Context, path string, content []byt
 	if err := ValidatePath(path); err != nil {
 		return fmt.Errorf("configdb: unsafe path %q: %w", path, err)
 	}
+	formatted, err := configfmt.FormatConfigContent(path, content)
+	if err != nil {
+		return fmt.Errorf("configdb: format %s: %w", path, err)
+	}
 	d := r.db.Dialect()
 	if _, err := r.db.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO _onebase_config (path, content, updated_at)
 			VALUES (%s, %s, %s)
 			ON CONFLICT (path) DO UPDATE SET content = EXCLUDED.content, updated_at = %s`,
 		d.Placeholder(1), d.Placeholder(2), d.Now(), d.Now()),
-		path, content); err != nil {
+		path, formatted); err != nil {
 		return err
 	}
 	return nil

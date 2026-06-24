@@ -141,6 +141,10 @@ func (h *handler) writeConfigFileRaw(ctx context.Context, b *Base, relPath strin
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
+	content, err = formatConfigContent(relPath, content)
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(full, content, 0o644)
 }
 

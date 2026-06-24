@@ -249,6 +249,10 @@ func atomicWriteConfigFile(basePath, relPath string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
+	content, err = formatConfigContent(relPath, content)
+	if err != nil {
+		return err
+	}
 	tmp := full + ".tmp"
 	if err := os.WriteFile(tmp, content, 0o644); err != nil {
 		return err
