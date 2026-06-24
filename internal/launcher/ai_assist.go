@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ivantit66/onebase/internal/aicontext"
+	"github.com/ivantit66/onebase/internal/aicontract"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/llm"
 	"github.com/ivantit66/onebase/internal/project"
@@ -38,27 +38,7 @@ var aiAssistSystem = "Ты — помощник разработчика кон�
 
 // projectSchemaText строит текстовый срез конфигурации из загруженного проекта.
 func projectSchemaText(proj *project.Project) string {
-	reports := make([]aicontext.NamedTitle, 0, len(proj.Reports))
-	for _, rp := range proj.Reports {
-		reports = append(reports, aicontext.NamedTitle{Name: rp.Name, Title: rp.Title})
-	}
-	procs := make([]aicontext.NamedTitle, 0, len(proj.Processors))
-	for _, p := range proj.Processors {
-		procs = append(procs, aicontext.NamedTitle{Name: p.Name, Title: p.Title})
-	}
-	return aicontext.SchemaText(aicontext.Input{
-		Entities:         proj.Entities,
-		Registers:        proj.Registers,
-		InfoRegisters:    proj.InfoRegisters,
-		AccountRegisters: proj.AccountRegisters,
-		ChartsOfAccounts: proj.ChartsOfAccounts,
-		Enums:            proj.Enums,
-		Constants:        proj.Constants,
-		Reports:          reports,
-		Processors:       procs,
-		Journals:         proj.Journals,
-		Subsystems:       proj.Subsystems,
-	})
+	return aicontract.ProjectSchemaText(proj)
 }
 
 // configSchemaText грузит метаданные базы и строит срез для системного промпта.
