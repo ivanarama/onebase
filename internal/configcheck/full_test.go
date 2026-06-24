@@ -26,6 +26,12 @@ fields:
 	}
 	for _, is := range res.Issues {
 		if is.Kind == "Имя таблицы" && strings.Contains(is.Message, "коллизия имён") {
+			if is.Code != CodeNameCollision {
+				t.Fatalf("name collision code = %q, want %q", is.Code, CodeNameCollision)
+			}
+			if is.SuggestedFix == "" {
+				t.Fatalf("name collision suggestedFix пустой: %+v", is)
+			}
 			return
 		}
 	}

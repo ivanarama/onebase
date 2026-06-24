@@ -491,10 +491,14 @@ function runCheck(kind, key, name) {
       } else {
         result.className = 'check-result check-err';
         var lines = (d.issues || []).map(function(i){
-          var txt = escapeHtml('• ' + i.message);
+          var main = '• ' + (i.code ? '[' + i.code + '] ' : '') + i.message;
+          var txt = escapeHtml(main);
           if (i.line) {
             var pos = ' (стр. ' + i.line + (i.column ? ', поз. ' + i.column : '') + ')';
-            return '<a href="#" onclick="return jumpToError(\'' + key + '\',' + i.line + ',' + (i.column || 1) + ')" style="color:inherit;text-decoration:underline;cursor:pointer">' + txt + escapeHtml(pos) + '</a>';
+            txt = '<a href="#" onclick="return jumpToError(\'' + key + '\',' + i.line + ',' + (i.column || 1) + ')" style="color:inherit;text-decoration:underline;cursor:pointer">' + txt + escapeHtml(pos) + '</a>';
+          }
+          if (i.suggestedFix) {
+            txt += '<br><span style="color:#7f1d1d">fix: ' + escapeHtml(i.suggestedFix) + '</span>';
           }
           return txt;
         });
@@ -667,13 +671,20 @@ function runCheckAll() {
       }
       var renderIssueRow = function(i, isWarn) {
         var html = '<div class="check-row">';
-        if (i.kind || i.object) {
+        if (i.code || i.kind || i.object) {
+          var meta = [];
+          if (i.code) meta.push(i.code);
+          if (i.kind) meta.push(i.kind);
+          if (i.object) meta.push(i.object);
           html += '<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em">' +
-                  (i.kind || '') + (i.object ? ' · ' + i.object : '') + '</div>';
+                  escapeHtml(meta.join(' · ')) + '</div>';
         }
         var color = isWarn ? '#92400e' : '#c00';
         var prefix = isWarn ? '[предупреждение] ' : '';
         html += '<div style="color:' + color + '">' + prefix + escapeHtml(i.message) + '</div>';
+        if (i.suggestedFix) {
+          html += '<div style="font-size:11px;color:#7f1d1d;margin-top:3px">fix: ' + escapeHtml(i.suggestedFix) + '</div>';
+        }
         if (i.file) {
           html += '<div style="font-size:10px;color:#aaa;font-family:Consolas,monospace">' + i.file +
                   (i.line ? ':' + i.line : '') + '</div>';

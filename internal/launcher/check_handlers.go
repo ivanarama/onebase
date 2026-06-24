@@ -58,11 +58,7 @@ func (h *handler) configuratorCheckAll(w http.ResponseWriter, r *http.Request) {
 
 	dir, cleanup, err := materializeProject(r.Context(), h, b)
 	if err != nil {
-		writeJSON(w, http.StatusOK, configcheck.Result{
-			OK:     false,
-			Total:  1,
-			Issues: []configcheck.Issue{{Message: tr(lang, "не удалось получить конфигурацию") + ": " + err.Error()}},
-		})
+		writeJSON(w, http.StatusOK, configcheck.NewResult([]configcheck.Issue{{Message: tr(lang, "не удалось получить конфигурацию") + ": " + err.Error()}}))
 		return
 	}
 	if cleanup != nil {

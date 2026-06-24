@@ -196,13 +196,13 @@ full-check, но UX и agent loop всё ещё выглядят как MVP.
 Осталось:
 
 - миграционного dry-run после apply;
-- structured error codes/suggested fixes для более точных repair-подсказок.
+- явные per-validator коды вместо общего классификатора там, где понадобится точнее.
 
 ### 4. Headless-команды есть, но их можно усилить
 
 Быстрый цикл `query/eval/widget explain/report explain` закрыт. Следующие улучшения:
 
-- machine-readable error codes и suggested fixes;
+- более детальные per-validator error codes поверх базового классификатора;
 - `query --dry-schema` на временной схеме без реальных данных;
 - более подробный ECharts/report composition summary;
 - общий JSON envelope для MCP.
@@ -471,11 +471,11 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
-2. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
-3. `impact` и refactoring helpers.
-4. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
-5. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
+1. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
+2. `impact` и refactoring helpers.
+3. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
+4. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
+5. Точечное усиление `check`: per-validator codes и staging/full-check API refinements.
 
 Обоснование: машинный контракт, формат, schema и быстрый headless feedback уже закрыты.
 Теперь максимальная отдача — дать генератору право создавать полноценный вертикальный
@@ -496,7 +496,7 @@ Tools:
 8. [x] Вынести общий `aicontract` для `describe`, `aicontext` и UI prompts.
 9. [x] Добавить `onebase schema [kind]`.
 10. [x] Добавить `onebase query`, `onebase eval`, `widget explain`, `report explain`.
-11. [ ] Добавить structured error codes/suggested fixes в `check`.
+11. [x] Добавить structured error codes/suggested fixes в `check`.
 12. [x] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
 13. [x] Добавить UX генерации: partial apply и inline edit перед apply.
 14. [x] Добавить visible tool/check trace.

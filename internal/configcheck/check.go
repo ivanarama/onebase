@@ -33,12 +33,14 @@ import (
 // Issue is a single error/warning. Line and column are 1-based; zero means the
 // parser could not pinpoint a position.
 type Issue struct {
-	File    string `json:"file,omitempty"`
-	Object  string `json:"object,omitempty"`
-	Kind    string `json:"kind,omitempty"`
-	Message string `json:"message"`
-	Line    int    `json:"line,omitempty"`
-	Column  int    `json:"column,omitempty"`
+	File         string `json:"file,omitempty"`
+	Object       string `json:"object,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	Code         string `json:"code,omitempty"`
+	Message      string `json:"message"`
+	SuggestedFix string `json:"suggestedFix,omitempty"`
+	Line         int    `json:"line,omitempty"`
+	Column       int    `json:"column,omitempty"`
 }
 
 // Result is the machine-readable check outcome: ok=true means clean.
@@ -57,6 +59,8 @@ func NewResult(issues []Issue, warnings ...[]Issue) Result {
 	for _, w := range warnings {
 		ws = append(ws, w...)
 	}
+	issues = NormalizeIssues(issues)
+	ws = NormalizeIssues(ws)
 	return Result{OK: len(issues) == 0, Total: len(issues), Issues: issues, Warnings: ws}
 }
 

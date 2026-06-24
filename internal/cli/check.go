@@ -66,10 +66,16 @@ func printIssuesText(res configcheck.Result) {
 				loc = fmt.Sprintf("%s:%d:%d", loc, is.Line, is.Column)
 			}
 			prefix := ""
+			if is.Code != "" {
+				prefix += "[" + is.Code + "] "
+			}
 			if is.Kind != "" {
-				prefix = "[" + is.Kind + "] "
+				prefix += "[" + is.Kind + "] "
 			}
 			fmt.Fprintf(os.Stdout, "%s: %s%s\n", loc, prefix, is.Message)
+			if is.SuggestedFix != "" {
+				fmt.Fprintf(os.Stdout, "  fix: %s\n", is.SuggestedFix)
+			}
 		}
 	}
 

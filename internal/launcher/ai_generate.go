@@ -245,6 +245,8 @@ func (g *genSession) runFullCheck() (configcheck.Result, string) {
 }
 
 func renderGenCheckText(issues, warnings []configcheck.Issue) string {
+	issues = configcheck.NormalizeIssues(issues)
+	warnings = configcheck.NormalizeIssues(warnings)
 	if len(issues) == 0 && len(warnings) == 0 {
 		return "Нет ошибок."
 	}
@@ -273,15 +275,22 @@ func writeGenIssue(b *strings.Builder, is configcheck.Issue) {
 		obj = strings.ToUpper(string(r)) + obj[size:]
 	}
 	label := strings.TrimSpace(strings.TrimSpace(is.Kind + " " + obj))
+	msg := is.Message
+	if is.Code != "" {
+		msg = "[" + is.Code + "] " + msg
+	}
 	switch {
 	case is.File != "" && label != "":
-		fmt.Fprintf(b, "- %s (%s): %s\n", label, is.File, is.Message)
+		fmt.Fprintf(b, "- %s (%s): %s\n", label, is.File, msg)
 	case is.File != "":
-		fmt.Fprintf(b, "- %s: %s\n", is.File, is.Message)
+		fmt.Fprintf(b, "- %s: %s\n", is.File, msg)
 	case label != "":
-		fmt.Fprintf(b, "- %s: %s\n", label, is.Message)
+		fmt.Fprintf(b, "- %s: %s\n", label, msg)
 	default:
-		fmt.Fprintf(b, "- %s\n", is.Message)
+		fmt.Fprintf(b, "- %s\n", msg)
+	}
+	if is.SuggestedFix != "" {
+		fmt.Fprintf(b, "  fix: %s\n", is.SuggestedFix)
 	}
 }
 
