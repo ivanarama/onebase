@@ -64,38 +64,73 @@
 `onebase fmt --check examples` сейчас показывает большой механический churn, его
 лучше делать отдельным commit/PR.
 
+## Выполнено в третьем срезе
+
+Дата реализации: 2026-06-24.
+
+- Добавлен общий пакет `internal/aicontract` для машинного контракта конфигурации.
+- `onebase describe` теперь использует этот контракт:
+  - по умолчанию печатает полный JSON `schemaVersion: 2`;
+  - `--compact` печатает короткий prompt-срез;
+  - `--full` явно фиксирует поведение полного JSON.
+- `internal/aicontext` оставлен совместимым wrapper-слоем поверх `aicontract`.
+- Конфигураторный AI prompt (`projectSchemaText`) переведён на общий `aicontract`,
+  чтобы `describe`, `aicontext` и UI не расходились.
+
+## Выполнено в четвёртом срезе
+
+Дата реализации: 2026-06-24.
+
+- Добавлен пакет `internal/configschema` с JSON Schema для основных YAML-kind:
+  `app`, `home-page`, `catalog`, `document`, `register`, `inforeg`, `account`,
+  `accountreg`, `enum`, `constants`, `report`, `processor`, `widget`, `form`,
+  `page`, `service`, `role`, `subsystem`, `journal`, `scheduled`.
+- Добавлена команда `onebase schema [kind]` и `onebase schema --list`.
+- `ai-guide` обновлён ссылками на `describe --compact`, `examples`, `schema` и `fmt`.
+
+## Выполнено в пятом срезе
+
+Дата реализации: 2026-06-24.
+
+- Добавлена команда `onebase query`:
+  - компиляция OneBase query в SQL/args/sources через `--sql`;
+  - выполнение на выбранной базе через `--sqlite`, `--db` или `--id`;
+  - `--params JSON`, `--limit`, чтение query из аргумента, `--file` или stdin.
+- Добавлена команда `onebase eval`:
+  - выполнение выражения, `--code` или `--file`;
+  - запуск через `interpreter.RestrictedProfile()`;
+  - JSON-вывод результата.
+- Добавлены `onebase widget explain <name>` и `onebase report explain <name>`:
+  - раскрытие YAML-полей;
+  - компиляция query в SQL/args/sources;
+  - `--sample N` для первых строк из реальной БД.
+- `ai-guide` обновлён новыми headless-командами, тестами закреплена их видимость.
+
 ## Что мешает сейчас
 
-### 1. `describe` слабее реальных знаний платформы
+### 1. Контракту не хватает графа зависимостей
 
-Фактически `internal/cli/describe.go` всё ещё отдаёт часть объектов строками:
-`reports`, `subsystems`, `journals`, `widgets`. Модули содержат только имена процедур,
-без параметров, export-флага, source location. Builtins в `describe` — только строки,
-хотя богатый `langref` уже есть.
+Базовый `describe v2` и общий `aicontract` закрыты. Следующий уровень — не просто список
+объектов, а граф влияния.
 
 Не хватает:
 
-- `schemaVersion` контракта;
-- source `{file,line}` для объектов, процедур, запросов;
-- сигнатур процедур и функций;
-- форм, ролей, страниц, scheduled jobs, services, printforms/layouts;
-- полной структуры виджетов/отчётов/журналов/подсистем;
 - графа зависимостей: кто читает/пишет какие объекты, движения документов по регистрам,
   ввод на основании, формы, обработчики событий;
-- режима `--compact` для промпта и `--full` для tooling/MCP.
+- field-level references в query/form/report/widget/module sources;
+- machine-readable impact summary для будущего `onebase impact`;
+- security-filtered режим контракта для внешних read-only агентов.
 
-### 2. Нет детерминированного writer/formatter
+### 2. Formatter есть, но нужен отдельный mechanical cleanup
 
-Нет `onebase fmt`. Конфигуратор, генераторы и ручная правка могут писать YAML в разных
-стилях. Для ИИ это критично: шумные diff'ы ухудшают ревью и мешают безопасному apply.
+`onebase fmt` и интеграция в save paths закрыты. Осталось решить, когда отдельно
+переформатировать исторические примеры.
 
-Нужен единый canonical writer для YAML и, по возможности, `.os`:
+Осталось:
 
-- фиксированный порядок ключей;
-- стабильные отступы;
-- идемпотентность;
-- `--check` для CI;
-- использование того же writer'а в конфигураторе и AI apply.
+- отдельный mechanical commit/PR для `examples/`;
+- подумать, нужен ли formatter для `.os` или достаточно YAML canonical writer;
+- включить `onebase fmt --check` в CI после mechanical cleanup.
 
 ### 3. AI-генератор пока создаёт только минимальный YAML-каркас
 
@@ -113,17 +148,14 @@ catalogs/documents/registers/inforegs/enums/accounts/accountregs. Это хор�
 - цикла самокоррекции по структурированным ошибкам;
 - частичного apply: выбрать файлы/объекты, редактировать предложенный YAML до применения.
 
-### 4. Нет headless sandbox-команд для гипотез
+### 4. Headless-команды есть, но их можно усилить
 
-`procrun` есть, но нет быстрых:
+Быстрый цикл `query/eval/widget explain/report explain` закрыт. Следующие улучшения:
 
-- `onebase eval` — выполнить выражение/фрагмент DSL;
-- `onebase query` — выполнить запрос OneBase на реальной базе/тестовой схеме;
-- `onebase widget explain` — объяснить виджет: запрос, колонки, ось X, серии, sample rows;
-- `onebase report explain` — то же для отчёта/композиции.
-
-Без этого ИИ не может быстро проверять малые гипотезы. Ему приходится создавать обработку
-или просить пользователя идти в UI.
+- machine-readable error codes и suggested fixes;
+- `query --dry-schema` на временной схеме без реальных данных;
+- более подробный ECharts/report composition summary;
+- общий JSON envelope для MCP.
 
 ### 5. Нет MCP-сервера
 
@@ -151,17 +183,15 @@ Tools:
 
 По умолчанию MCP должен быть read-only. Любая запись — только с явным подтверждением.
 
-### 6. Нет JSON Schema для YAML-конфигурации
+### 6. JSON Schema есть, но её нужно сделать ближе к loader-структурам
 
-Редакторы, MCP-клиенты и модели не получают строгой машинной схемы объектов. Сейчас модель
-опирается на текстовую подсказку `metadataFormatGuide`, но это не заменяет schema contract.
+`onebase schema` закрывает базовый machine-readable contract для YAML-kind.
 
-Нужно:
+Осталось:
 
-- `onebase schema [--kind]`;
-- schema для catalog/document/register/inforeg/report/widget/form/role/page/service/etc.;
 - `$schema` hints для новых файлов;
-- тесты, что schema соответствует реальным loader-структурам.
+- расширить golden tests на реальные примеры;
+- постепенно ужесточать поля там, где это не ломает существующие конфигурации.
 
 ### 7. Не хватает анализа влияния
 
@@ -219,7 +249,7 @@ Tools:
 
 Цель: снизить число ошибок модели без изменения UX.
 
-1. Расширить `describe` до v2:
+1. [x] Расширить `describe` до v2:
    - добавить `schemaVersion`;
    - заменить строки отчётов/виджетов/журналов/подсистем на структуры;
    - добавить forms/roles/pages/scheduled/services/printforms/homePage;
@@ -227,17 +257,18 @@ Tools:
    - добавить `source:{file,line}`;
    - встроить `langref` descriptors вместо `[]string builtins`.
 
-2. Вынести общий `aicontract` слой:
+2. [x] Вынести общий `aicontract` слой:
    - один источник для `describe`, `aicontext`, MCP resources и конфигураторных prompts;
-   - режимы `compact`, `full`, `security-filtered`.
+   - режимы `compact`, `full`;
+   - `security-filtered` оставить для MCP/внешних агентов.
 
-3. Реализовать `onebase fmt`:
+3. [x] Реализовать `onebase fmt`:
    - YAML canonical writer;
    - `--check`;
    - идемпотентность;
    - интеграция в конфигураторные save paths и AI apply.
 
-4. Реализовать `onebase schema`:
+4. [x] Реализовать `onebase schema`:
    - JSON Schema для всех YAML-kind;
    - golden tests;
    - ссылка из `ai-guide`.
@@ -246,38 +277,37 @@ Tools:
 
 - `describe --full` покрывает все основные виды объектов и source locations.
 - `describe --compact` помещается в prompt и используется конфигуратором.
-- `onebase fmt --check examples/...` стабилен.
+- `onebase fmt --check examples/...` станет стабильным после отдельного mechanical cleanup.
 - `ai-guide`, `describe`, UI langref используют один и тот же справочник языка.
 
 ### Фаза 2. Быстрая обратная связь для ИИ
 
 Цель: дать ИИ headless-цикл "предположил → проверил → исправил".
 
-1. `onebase query`:
+1. [x] `onebase query`:
    - compile + execute;
    - `--project`, `--id`, `--sqlite`, `--db`;
    - `--params JSON`;
    - `--limit`;
    - read-only by construction.
 
-2. `onebase eval`:
+2. [x] `onebase eval`:
    - expression/procedure snippet;
-   - sandbox profile by default;
-   - explicit `--commit` для мутаций, если потребуется.
+   - sandbox profile by default.
 
-3. `onebase widget explain <name>`:
+3. [x] `onebase widget explain <name>`:
    - query compile;
    - sample rows;
    - resolved chart mapping;
-   - ECharts option summary;
+   - ECharts option summary оставить для следующего усиления;
    - JSON output for MCP.
 
-4. `onebase report explain <name>`:
+4. [x] `onebase report explain <name>`:
    - query/composition;
    - fields, groups, indicators, chart mapping;
    - sample rows.
 
-5. Усилить `check`:
+5. [ ] Усилить `check`:
    - structured codes для типовых ошибок;
    - warning/lint rules для AI-ошибок;
    - `--fix` только для безопасных правок;
@@ -391,17 +421,18 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. `describe v2` + общий `aicontract`.
-2. `onebase fmt`.
-3. `onebase query` и `widget/report explain`.
-4. `onebase schema`.
-5. Генератор 2.0: `.os`, формы, отчёты, виджеты, full check.
-6. MCP.
-7. `impact` и refactoring helpers.
+1. Генератор 2.0: `.os`, формы, отчёты, виджеты, full check и self-correction loop.
+2. UX генерации: diff viewer, partial apply, inline edit, visible tool/check trace.
+3. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
+4. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
+5. `impact` и refactoring helpers.
+6. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
+7. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
 
-Обоснование: сначала надо дать ИИ точные знания и стабильный формат. Потом дать быструю
-проверку гипотез. Только после этого расширять генерацию и открывать MCP, иначе внешний
-агент будет быстрее делать больше неточных изменений.
+Обоснование: машинный контракт, формат, schema и быстрый headless feedback уже закрыты.
+Теперь максимальная отдача — дать генератору право создавать полноценный вертикальный
+срез и проверять его теми же инструментами до apply. MCP имеет смысл делать после этого
+как оболочку над зрелым циклом, а `impact` нужен перед рискованными refactoring-сценариями.
 
 ## Быстрые задачи на 1-2 дня
 
@@ -413,16 +444,23 @@ Tools:
    `.os` код.
 5. [ ] Добавить UI-настройку `ai.daily_token_cap` и `ai.max_tool_rounds` в форму ИИ.
 6. [x] Добавить `onebase examples <kind>` как низкорисковую команду с canonical snippets.
+7. [x] Добавить `onebase fmt --check` и интегрировать formatter в save paths.
+8. [x] Вынести общий `aicontract` для `describe`, `aicontext` и UI prompts.
+9. [x] Добавить `onebase schema [kind]`.
+10. [x] Добавить `onebase query`, `onebase eval`, `widget explain`, `report explain`.
+11. [ ] Добавить structured error codes/suggested fixes в `check`.
+12. [ ] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
 
 ## Риски
 
 - Генерация `.os` без полноценного sandbox/check loop быстро приведёт к опасным или
   неработающим предложениям. Сначала execution boundary и structured errors.
-- `fmt` должен стать единым writer'ом для конфигуратора, иначе команда будет бороться
-  с UI, а не помогать.
+- `fmt` уже стал единым writer'ом для YAML save paths; риск теперь в большом
+  mechanical churn при отдельном форматировании исторических `examples/`.
 - MCP нельзя делать отдельной реализацией логики. Только thin wrapper над CLI/пакетами,
   иначе появится второй, расходящийся контракт.
-- `describe v2` нужно версионировать сразу: внешние агенты и MCP начнут зависеть от JSON.
+- `describe v2` уже версионирован; следующие изменения контракта нужно делать
+  совместимо или через новый `schemaVersion`.
 
 ## Проверка текущего анализа
 
@@ -441,6 +479,19 @@ go test ./internal/cli ./internal/launcher ./internal/llm ./internal/aicontext .
 go run ./cmd/onebase examples --list
 go run ./cmd/onebase examples document
 go run ./cmd/onebase describe --project examples/minimal
+```
+
+Результат: PASS.
+
+После пятого среза дополнительно проверено:
+
+```bash
+go test ./...
+go run ./cmd/onebase query --project examples/minimal --sql 'ВЫБРАТЬ 1 КАК X'
+tmp=$(mktemp); go run ./cmd/onebase query --project examples/minimal --sqlite "$tmp" --limit 1 'ВЫБРАТЬ 1 КАК X'; rm -f "$tmp"
+go run ./cmd/onebase eval '1 + 2'
+go run ./cmd/onebase widget explain КоличествоЗадач --project examples/tasks
+go run ./cmd/onebase report explain СводкаПоСпринту --project examples/tasks
 ```
 
 Результат: PASS.

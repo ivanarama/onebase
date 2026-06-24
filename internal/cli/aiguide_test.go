@@ -13,6 +13,10 @@ func TestGenerateAIGuide_HasSignaturesAndSections(t *testing.T) {
 		"### Язык запросов",
 		"СтрЗаменить(",     // сигнатура функции
 		"Запрос.Выполнить", // метод объекта
+		"onebase query --project <dir> --sql",
+		"onebase eval",
+		"onebase widget explain",
+		"onebase report explain",
 	} {
 		if !strings.Contains(g, want) {
 			t.Errorf("в guide нет ожидаемого фрагмента: %q", want)

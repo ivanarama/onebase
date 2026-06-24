@@ -109,6 +109,10 @@ src/*.os                модули DSL (логика объектов, обр�
 | ` + "`onebase examples [kind]`" + ` | Канонические короткие YAML/DSL-примеры: ` + "`document`, `report`, `form`, `role`, `query`, `posting`" + `. |
 | ` + "`onebase schema [kind]`" + ` | JSON Schema для YAML-kind (` + "`document`, `form`, `role`, `service`" + ` и т.д.). ` + "`--list`" + ` показывает доступные виды. |
 | ` + "`onebase fmt --project <dir> --check`" + ` | Проверить canonical YAML-формат без записи. Без ` + "`--check`" + ` форматирует файлы. |
+| ` + "`onebase query --project <dir> --sql \"ВЫБРАТЬ ...\"`" + ` | Скомпилировать запрос в SQL/args без БД. Без ` + "`--sql`" + ` выполняет запрос и печатает JSON rows; параметры через ` + "`--params '{\"Период\":\"2026-06-24\"}'`" + `. |
+| ` + "`onebase eval \"1 + 2\"`" + ` | Выполнить DSL-выражение или фрагмент (` + "`--code`, `--file`" + `) в restricted sandbox и вывести JSON-результат. |
+| ` + "`onebase widget explain --project <dir> <Имя>`" + ` | Показать YAML-поля виджета, скомпилированный SQL/args/sources; ` + "`--sample N`" + ` добавляет первые строки из БД. |
+| ` + "`onebase report explain --project <dir> <Имя>`" + ` | Показать параметры, компоновку, варианты, SQL/args/sources отчёта; ` + "`--sample N`" + ` добавляет первые строки из БД. |
 | ` + "`onebase procrun --project <dir> --proc <Имя> --set К=З --file П=путь`" + ` | Запуск обработки офлайн, печать ` + "`Сообщить()`" + `. Отладка прикладной логики. |
 | ` + "`onebase run --project <dir> --sqlite <файл> --port N`" + ` | Поднять сервер (UI + REST). |
 
