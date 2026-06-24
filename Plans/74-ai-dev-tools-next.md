@@ -196,7 +196,7 @@ full-check, но UX и agent loop всё ещё выглядят как MVP.
 Осталось:
 
 - миграционного dry-run после apply;
-- цикла самокоррекции по структурированным ошибкам.
+- structured error codes/suggested fixes для более точных repair-подсказок.
 
 ### 4. Headless-команды есть, но их можно усилить
 
@@ -471,12 +471,11 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. Self-correction loop генератора: structured check errors, retry/fix rounds, final check summary.
-2. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
-3. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
-4. `impact` и refactoring helpers.
-5. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
-6. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
+1. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
+2. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
+3. `impact` и refactoring helpers.
+4. Observability/limits для конфигураторного ИИ: token cap, tool-round budget, trace.
+5. Mechanical cleanup: форматировать `examples/`, ужесточать `configschema` golden tests.
 
 Обоснование: машинный контракт, формат, schema и быстрый headless feedback уже закрыты.
 Теперь максимальная отдача — дать генератору право создавать полноценный вертикальный
@@ -502,7 +501,7 @@ Tools:
 13. [x] Добавить UX генерации: partial apply и inline edit перед apply.
 14. [x] Добавить visible tool/check trace.
 15. [x] Добавить side-by-side diff viewer.
-16. [ ] Добавить self-correction loop генератора.
+16. [x] Добавить self-correction loop генератора.
 
 ## Риски
 

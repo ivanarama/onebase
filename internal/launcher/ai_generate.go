@@ -45,9 +45,22 @@ type genSession struct {
 const (
 	genReadFileLimit    = 40000
 	genListFileLimit    = 300
+	genRepairCheckLimit = 10000
 	genTraceValueLimit  = 600
 	genTraceResultLimit = 2000
+	genMaxRepairRounds  = 2
 )
+
+type genLLMRunner interface {
+	RunWithTools(ctx context.Context, task string, req llm.ChatRequest, tools []llm.Tool, exec llm.ToolExecutor) (llm.ChatResponse, error)
+}
+
+type genRunResult struct {
+	Response     llm.ChatResponse
+	Check        configcheck.Result
+	CheckText    string
+	RepairRounds int
+}
 
 // kindSubdir сопоставляет тип объекта подкаталогу конфигурации (как в
 // configcheck.CheckDir). Регистронезависимо, по синонимам.
@@ -222,8 +235,13 @@ func (g *genSession) check() string {
 }
 
 func (g *genSession) checkFull() string {
+	_, text := g.runFullCheck()
+	return text
+}
+
+func (g *genSession) runFullCheck() (configcheck.Result, string) {
 	res := configcheck.RunFull(g.overlay)
-	return renderGenCheckText(res.Issues, res.Warnings)
+	return res, renderGenCheckText(res.Issues, res.Warnings)
 }
 
 func renderGenCheckText(issues, warnings []configcheck.Issue) string {
@@ -497,6 +515,55 @@ var aiGenerateSystem = "Ты — генератор каркаса конфиг�
 	"Имена и типы полей бери реальные; не выдумывай несуществующие типы. Известные функции: " + builtinReference +
 	"\n\n" + metadataFormatGuide
 
+func runGenWithCorrections(ctx context.Context, runner genLLMRunner, system, prompt string, tools []llm.Tool, exec llm.ToolExecutor, g *genSession) (genRunResult, error) {
+	var out genRunResult
+	resp, err := runner.RunWithTools(ctx, "конфигуратор", llm.ChatRequest{
+		System:   system,
+		Messages: []llm.Message{llm.UserText(prompt)},
+	}, tools, exec)
+	out.Response = resp
+	out.Check, out.CheckText = g.runFullCheck()
+	if err != nil {
+		return out, err
+	}
+	for out.RepairRounds < genMaxRepairRounds && !out.Check.OK && len(g.diff()) > 0 {
+		out.RepairRounds++
+		resp, err = runner.RunWithTools(ctx, "конфигуратор", llm.ChatRequest{
+			System:   system,
+			Messages: []llm.Message{llm.UserText(genRepairPrompt(prompt, out.CheckText, g.diff(), out.RepairRounds))},
+		}, tools, exec)
+		if resp.Text != "" || resp.Model != "" {
+			out.Response = resp
+		}
+		out.Check, out.CheckText = g.runFullCheck()
+		if err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+func genRepairPrompt(original, checkText string, changes []GenChange, round int) string {
+	var files []string
+	for _, ch := range changes {
+		files = append(files, ch.Path)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Раунд исправления %d.\n\n", round)
+	b.WriteString("Исходное ТЗ:\n")
+	b.WriteString(strings.TrimSpace(original))
+	b.WriteString("\n\nПолная проверка staging нашла ошибки:\n")
+	b.WriteString(truncateRunes(checkText, genRepairCheckLimit))
+	if len(files) > 0 {
+		b.WriteString("\n\nФайлы, которые уже изменены в staging:\n")
+		for _, f := range files {
+			b.WriteString("- " + f + "\n")
+		}
+	}
+	b.WriteString("\nИсправь существующий staging через инструменты. Не создавай дубли объектов; перед изменением существующего файла прочитай его. После исправлений вызови «проверить_конфигурацию» с полная=true.")
+	return b.String()
+}
+
 // cfgAIGenerate — генерация каркаса конфигурации по ТЗ в staging-черновик.
 // Возвращает предложенный diff; рабочую конфигурацию НЕ меняет (применение — этап 2b).
 func (h *handler) cfgAIGenerate(w http.ResponseWriter, r *http.Request) {
@@ -557,19 +624,32 @@ func (h *handler) cfgAIGenerate(w http.ResponseWriter, r *http.Request) {
 
 	tools, exec := g.tools()
 	runner := llm.New(cfg, nil)
-	resp, err := runner.RunWithTools(ctx, "конфигуратор", llm.ChatRequest{
-		System:   system,
-		Messages: []llm.Message{llm.UserText(req.Prompt)},
-	}, tools, exec)
+	result, err := runGenWithCorrections(ctx, runner, system, req.Prompt, tools, exec, g)
 	if err != nil {
 		// Отдаём уже созданные черновики даже при ошибке/исчерпании раундов —
 		// иначе частичная работа модели теряется (по финальному ревью).
-		writeJSON(w, 200, map[string]any{"error": llm.SafeErr(err), "changes": g.diff(), "trace": g.trace})
+		writeJSON(w, 200, map[string]any{
+			"error":        llm.SafeErr(err),
+			"changes":      g.diff(),
+			"trace":        g.trace,
+			"check":        result.Check,
+			"checkText":    result.CheckText,
+			"repairRounds": result.RepairRounds,
+		})
 		return
 	}
 	changes := g.diff()
-	logCfgAI(r.Context(), db, cfg, cfgLogin(r.Context()), "конфигуратор-генерация", req.Prompt, genResponseSummary(resp.Text, changes), resp)
-	writeJSON(w, 200, map[string]any{"ok": true, "text": resp.Text, "model": resp.Model, "changes": changes, "trace": g.trace})
+	logCfgAI(r.Context(), db, cfg, cfgLogin(r.Context()), "конфигуратор-генерация", req.Prompt, genResponseSummary(result.Response.Text, changes), result.Response)
+	writeJSON(w, 200, map[string]any{
+		"ok":           true,
+		"text":         result.Response.Text,
+		"model":        result.Response.Model,
+		"changes":      changes,
+		"trace":        g.trace,
+		"check":        result.Check,
+		"checkText":    result.CheckText,
+		"repairRounds": result.RepairRounds,
+	})
 }
 
 // copyTree рекурсивно копирует содержимое src в dst.

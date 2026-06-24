@@ -4095,10 +4095,25 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
       });
       out.appendChild(details);
     }
-    function renderChanges(changes,note,trace){
+    function renderCheck(check,checkText,repairRounds){
+      if(!check&&!checkText)return;
+      var ok=check&&check.ok;
+      var box=document.createElement('div');box.className='cfggen-check';box.style.cssText='margin-bottom:8px;border:1px solid '+(ok?'#bbf7d0':'#fecaca')+';border-radius:8px;background:'+(ok?'#f0fdf4':'#fef2f2')+';overflow:hidden';
+      var head=document.createElement('div');head.style.cssText='padding:7px 8px;font-size:12px;font-weight:600;color:'+(ok?'#166534':'#991b1b');
+      head.textContent=ok?'Проверка: OK':'Проверка: ошибки '+((check&&check.total)||'');
+      if(repairRounds){head.textContent+='; исправлений: '+repairRounds;}
+      box.appendChild(head);
+      if(checkText){
+        var pre=document.createElement('pre');pre.style.cssText='margin:0;border-top:1px solid '+(ok?'#bbf7d0':'#fecaca')+';padding:7px 8px;font-size:11px;white-space:pre-wrap;word-break:break-word;color:#111827;background:rgba(255,255,255,.55)';pre.textContent=checkText;
+        box.appendChild(pre);
+      }
+      out.appendChild(box);
+    }
+    function renderChanges(changes,note,trace,check,checkText,repairRounds){
       lastChanges=changes||[];
       out.innerHTML='';
       if(note){var n=document.createElement('div');n.style.cssText='color:#475569;font-size:12px;margin-bottom:6px;white-space:pre-wrap';n.textContent=note;out.appendChild(n);}
+      renderCheck(check,checkText,repairRounds||0);
       renderTrace(trace||[]);
       if(!lastChanges.length){var e=document.createElement('div');e.style.cssText='color:#94a3b8;font-size:12px';e.textContent='Модель не предложила объектов.';out.appendChild(e);apply.style.display='none';return;}
       lastChanges.forEach(function(ch,idx){
@@ -4141,8 +4156,8 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
       fetch('/bases/'+base+'/configurator/ai-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p})})
         .then(function(r){return r.json();})
         .then(function(d){
-          if(d&&d.ok){msg.textContent='Модель: '+(d.model||'');msg.style.color='#16a34a';renderChanges(d.changes,d.text,d.trace);}
-          else{msg.textContent='Ошибка';msg.style.color='#c00';renderChanges((d&&d.changes)||[],(d&&d.error)||'Ошибка',(d&&d.trace)||[]);}
+          if(d&&d.ok){msg.textContent='Модель: '+(d.model||'');msg.style.color='#16a34a';renderChanges(d.changes,d.text,d.trace,d.check,d.checkText,d.repairRounds);}
+          else{msg.textContent='Ошибка';msg.style.color='#c00';renderChanges((d&&d.changes)||[],(d&&d.error)||'Ошибка',(d&&d.trace)||[],d&&d.check,d&&d.checkText,d&&d.repairRounds);}
         })
         .catch(function(){msg.textContent='Ошибка сети';msg.style.color='#c00';})
         .finally(function(){send.disabled=false;});
