@@ -4081,10 +4081,25 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
     var lastChanges=null;
     btn.addEventListener('click',function(){openPanel('cfggen-panel');prompt.focus();});
     document.getElementById('cfggen-close').addEventListener('click',function(){closePanel('cfggen-panel');});
-    function renderChanges(changes,note){
+    function renderTrace(trace){
+      if(!trace||!trace.length)return;
+      var details=document.createElement('details');details.className='cfggen-trace';details.style.cssText='margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc';
+      var summary=document.createElement('summary');summary.style.cssText='padding:7px 8px;cursor:pointer;font-size:12px;font-weight:600;color:#334155';summary.textContent='Ход генерации';
+      details.appendChild(summary);
+      trace.forEach(function(t){
+        var item=document.createElement('div');item.style.cssText='border-top:1px solid #e2e8f0;padding:7px 8px';
+        var title=document.createElement('div');title.style.cssText='font-size:11px;font-weight:600;color:'+(t.error?'#b91c1c':'#0f172a');title.textContent=(t.error?'Ошибка: ':'')+(t.tool||'tool');
+        var input=document.createElement('pre');input.style.cssText='margin:4px 0 0;color:#475569;font-size:11px;white-space:pre-wrap;word-break:break-word';input.textContent=t.input?JSON.stringify(t.input,null,2):'{}';
+        var result=document.createElement('pre');result.style.cssText='margin:4px 0 0;color:#111827;font-size:11px;white-space:pre-wrap;word-break:break-word';result.textContent=t.result||'';
+        item.appendChild(title);item.appendChild(input);item.appendChild(result);details.appendChild(item);
+      });
+      out.appendChild(details);
+    }
+    function renderChanges(changes,note,trace){
       lastChanges=changes||[];
       out.innerHTML='';
       if(note){var n=document.createElement('div');n.style.cssText='color:#475569;font-size:12px;margin-bottom:6px;white-space:pre-wrap';n.textContent=note;out.appendChild(n);}
+      renderTrace(trace||[]);
       if(!lastChanges.length){var e=document.createElement('div');e.style.cssText='color:#94a3b8;font-size:12px';e.textContent='Модель не предложила объектов.';out.appendChild(e);apply.style.display='none';return;}
       lastChanges.forEach(function(ch,idx){
         var wrap=document.createElement('div');wrap.className='cfggen-change';wrap.setAttribute('data-idx',String(idx));wrap.style.cssText='margin-bottom:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff';
@@ -4121,8 +4136,8 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
       fetch('/bases/'+base+'/configurator/ai-generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:p})})
         .then(function(r){return r.json();})
         .then(function(d){
-          if(d&&d.ok){msg.textContent='Модель: '+(d.model||'');msg.style.color='#16a34a';renderChanges(d.changes,d.text);}
-          else{msg.textContent='Ошибка';msg.style.color='#c00';renderChanges((d&&d.changes)||[],(d&&d.error)||'Ошибка');}
+          if(d&&d.ok){msg.textContent='Модель: '+(d.model||'');msg.style.color='#16a34a';renderChanges(d.changes,d.text,d.trace);}
+          else{msg.textContent='Ошибка';msg.style.color='#c00';renderChanges((d&&d.changes)||[],(d&&d.error)||'Ошибка',(d&&d.trace)||[]);}
         })
         .catch(function(){msg.textContent='Ошибка сети';msg.style.color='#c00';})
         .finally(function(){send.disabled=false;});

@@ -200,6 +200,9 @@ func TestGenTools_Dispatch(t *testing.T) {
 	if read.IsError || !strings.Contains(read.Content, "Процедура Тест") {
 		t.Fatalf("прочитать_файл вернул неверно: %+v", read)
 	}
+	if len(g.trace) != 4 || g.trace[0].Tool != "создать_объект" || g.trace[3].Tool != "прочитать_файл" {
+		t.Fatalf("trace не записал вызовы инструментов: %+v", g.trace)
+	}
 }
 
 func TestGenerateSystemPrompt_HasMetadataFormat(t *testing.T) {

@@ -139,6 +139,19 @@
 - Текст apply теперь говорит о файлах, а не только об объектах, и не обещает
   миграцию там, где менялись только `.os`/формы.
 
+## Выполнено в восьмом срезе
+
+Дата реализации: 2026-06-24.
+
+- `ai-generate` теперь возвращает `trace` по tool-use раундам:
+  - имя инструмента;
+  - краткий input;
+  - обрезанный result;
+  - признак ошибки.
+- Trace возвращается и при ошибке/исчерпании tool rounds вместе с частичным diff.
+- UI генерации показывает trace в collapsible блоке `Ход генерации`, чтобы было
+  видно, какие файлы модель создала/читала и какой check запускала.
+
 ## Что мешает сейчас
 
 ### 1. Контракту не хватает графа зависимостей
@@ -174,8 +187,7 @@ full-check, но UX и agent loop всё ещё выглядят как MVP.
 
 - миграционного dry-run после apply;
 - цикла самокоррекции по структурированным ошибкам;
-- полноценного side-by-side diff viewer;
-- visible tool/check trace генерации.
+- полноценного side-by-side diff viewer.
 
 ### 4. Headless-команды есть, но их можно усилить
 
@@ -450,7 +462,7 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. UX генерации: side-by-side diff viewer и visible tool/check trace.
+1. UX генерации: side-by-side diff viewer.
 2. Self-correction loop генератора: structured check errors, retry/fix rounds, final check summary.
 3. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
 4. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
@@ -480,7 +492,8 @@ Tools:
 11. [ ] Добавить structured error codes/suggested fixes в `check`.
 12. [x] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
 13. [x] Добавить UX генерации: partial apply и inline edit перед apply.
-14. [ ] Добавить side-by-side diff viewer и visible tool/check trace.
+14. [x] Добавить visible tool/check trace.
+15. [ ] Добавить side-by-side diff viewer.
 
 ## Риски
 
@@ -537,6 +550,16 @@ go test ./...
 Результат: PASS.
 
 После седьмого среза дополнительно проверено:
+
+```bash
+node --check internal/launcher/static/configurator.js
+go test ./internal/launcher
+go test ./...
+```
+
+Результат: PASS.
+
+После восьмого среза дополнительно проверено:
 
 ```bash
 node --check internal/launcher/static/configurator.js

@@ -27,16 +27,26 @@ type GenChange struct {
 	OldContent string `json:"oldContent,omitempty"`
 }
 
+type GenTraceEntry struct {
+	Tool   string         `json:"tool"`
+	Input  map[string]any `json:"input,omitempty"`
+	Result string         `json:"result"`
+	Error  bool           `json:"error,omitempty"`
+}
+
 // genSession — staging-оверлей конфигурации + накопленные изменения одной генерации.
 type genSession struct {
 	srcDir  string
 	overlay string
 	changed map[string]bool // относительные пути (slash) созданных/изменённых файлов
+	trace   []GenTraceEntry
 }
 
 const (
-	genReadFileLimit = 40000
-	genListFileLimit = 300
+	genReadFileLimit    = 40000
+	genListFileLimit    = 300
+	genTraceValueLimit  = 600
+	genTraceResultLimit = 2000
 )
 
 // kindSubdir сопоставляет тип объекта подкаталогу конфигурации (как в
@@ -312,6 +322,43 @@ func boolInput(call llm.ToolCall, key string) bool {
 	return ok && b
 }
 
+func (g *genSession) recordTool(call llm.ToolCall, res llm.ToolResult) {
+	g.trace = append(g.trace, GenTraceEntry{
+		Tool:   call.Name,
+		Input:  summarizeToolInput(call.Input),
+		Result: truncateRunes(res.Content, genTraceResultLimit),
+		Error:  res.IsError,
+	})
+}
+
+func summarizeToolInput(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for k, v := range input {
+		switch tv := v.(type) {
+		case bool:
+			out[k] = tv
+		case float64:
+			out[k] = tv
+		case string:
+			out[k] = truncateRunes(tv, genTraceValueLimit)
+		default:
+			out[k] = truncateRunes(fmt.Sprintf("%v", v), genTraceValueLimit)
+		}
+	}
+	return out
+}
+
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "..."
+}
+
 // tools формирует инструменты записи в staging для RunWithTools.
 func (g *genSession) tools() ([]llm.Tool, llm.ToolExecutor) {
 	tools := []llm.Tool{
@@ -377,7 +424,8 @@ func (g *genSession) tools() ([]llm.Tool, llm.ToolExecutor) {
 			Schema:      map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 	}
-	exec := func(_ context.Context, call llm.ToolCall) llm.ToolResult {
+	exec := func(_ context.Context, call llm.ToolCall) (res llm.ToolResult) {
+		defer func() { g.recordTool(call, res) }()
 		switch call.Name {
 		case "создать_объект":
 			if err := g.createObject(strInput(call, "тип"), strInput(call, "имя"), strInput(call, "yaml")); err != nil {
@@ -516,12 +564,12 @@ func (h *handler) cfgAIGenerate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Отдаём уже созданные черновики даже при ошибке/исчерпании раундов —
 		// иначе частичная работа модели теряется (по финальному ревью).
-		writeJSON(w, 200, map[string]any{"error": llm.SafeErr(err), "changes": g.diff()})
+		writeJSON(w, 200, map[string]any{"error": llm.SafeErr(err), "changes": g.diff(), "trace": g.trace})
 		return
 	}
 	changes := g.diff()
 	logCfgAI(r.Context(), db, cfg, cfgLogin(r.Context()), "конфигуратор-генерация", req.Prompt, genResponseSummary(resp.Text, changes), resp)
-	writeJSON(w, 200, map[string]any{"ok": true, "text": resp.Text, "model": resp.Model, "changes": changes})
+	writeJSON(w, 200, map[string]any{"ok": true, "text": resp.Text, "model": resp.Model, "changes": changes, "trace": g.trace})
 }
 
 // copyTree рекурсивно копирует содержимое src в dst.
