@@ -105,7 +105,10 @@ src/*.os                модули DSL (логика объектов, обр�
 | Команда | Назначение |
 |---------|-----------|
 | ` + "`onebase check --project <dir>`" + ` | Валидация: синтаксис .os, неизвестные функции, YAML-схема, компиляция и исполнение запросов. Выводит ` + "`file:line:col: message`" + `, exit code ≠ 0 при ошибках. Запускай после каждой правки. |
-| ` + "`onebase describe --project <dir>`" + ` | Вся структура конфигурации + список builtins в JSON. «Рентген» для понимания базы. |
+| ` + "`onebase describe --project <dir>`" + ` | Вся структура конфигурации + список builtins в JSON. «Рентген» для понимания базы. Добавь ` + "`--compact`" + ` для короткого prompt-среза. |
+| ` + "`onebase examples [kind]`" + ` | Канонические короткие YAML/DSL-примеры: ` + "`document`, `report`, `form`, `role`, `query`, `posting`" + `. |
+| ` + "`onebase schema [kind]`" + ` | JSON Schema для YAML-kind (` + "`document`, `form`, `role`, `service`" + ` и т.д.). ` + "`--list`" + ` показывает доступные виды. |
+| ` + "`onebase fmt --project <dir> --check`" + ` | Проверить canonical YAML-формат без записи. Без ` + "`--check`" + ` форматирует файлы. |
 | ` + "`onebase procrun --project <dir> --proc <Имя> --set К=З --file П=путь`" + ` | Запуск обработки офлайн, печать ` + "`Сообщить()`" + `. Отладка прикладной логики. |
 | ` + "`onebase run --project <dir> --sqlite <файл> --port N`" + ` | Поднять сервер (UI + REST). |
 
