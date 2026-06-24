@@ -158,6 +158,15 @@ func (h *handler) configImportZip(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
+	if _, err := repo.CreateVersion(r.Context(), configdb.VersionOptions{
+		AuthorLogin: cfgLogin(r.Context()),
+		Message:     "import from zip",
+	}); err != nil {
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = "Version error: " + err.Error()
+		renderCfg(w, r, data)
+		return
+	}
 
 	// Migrate after import
 	h.runner.MigrateBase(r.Context(), b)

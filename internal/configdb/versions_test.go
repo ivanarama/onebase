@@ -117,3 +117,91 @@ func TestRepoVersions_DeleteMissingDoesNotCreateVersion(t *testing.T) {
 		t.Fatalf("versions after no-op delete = %+v", versions)
 	}
 }
+
+func TestRepoVersions_SaveFilesCreatesSingleVersion(t *testing.T) {
+	repo, _, ctx := newSQLiteRepo(t)
+	files := []configdb.ConfigFile{
+		{Path: "forms/order/form.form.yaml", Content: []byte("kind: object\n")},
+		{Path: "forms/order/form.form.os", Content: []byte("Процедура X()\nКонецПроцедуры\n")},
+	}
+	if err := repo.SaveFiles(ctx, files, configdb.VersionOptions{Message: "save managed form"}); err != nil {
+		t.Fatalf("SaveFiles: %v", err)
+	}
+	versions, err := repo.ListVersions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 1 || versions[0].Message != "save managed form" {
+		t.Fatalf("versions = %+v, want one custom message", versions)
+	}
+	for _, f := range files {
+		content, ok, err := repo.ReadFile(ctx, f.Path)
+		if err != nil || !ok || !bytes.Equal(content, f.Content) {
+			t.Fatalf("ReadFile(%s): ok=%v err=%v content=%q", f.Path, ok, err, content)
+		}
+	}
+}
+
+func TestRepoVersions_DeleteFilesCreatesSingleVersion(t *testing.T) {
+	repo, _, ctx := newSQLiteRepo(t)
+	if err := repo.SaveFiles(ctx, []configdb.ConfigFile{
+		{Path: "forms/order/form.form.yaml", Content: []byte("kind: object\n")},
+		{Path: "forms/order/form.form.os", Content: []byte("Процедура X()\nКонецПроцедуры\n")},
+	}, configdb.VersionOptions{Message: "seed"}); err != nil {
+		t.Fatalf("SaveFiles seed: %v", err)
+	}
+	if err := repo.DeleteFiles(ctx, []string{
+		"forms/order/form.form.yaml",
+		"forms/order/form.form.os",
+		"forms/order/missing.txt",
+	}, configdb.VersionOptions{Message: "delete managed form"}); err != nil {
+		t.Fatalf("DeleteFiles: %v", err)
+	}
+	versions, err := repo.ListVersions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 2 || versions[0].Message != "delete managed form" {
+		t.Fatalf("versions = %+v, want seed + one delete", versions)
+	}
+	if _, ok, err := repo.ReadFile(ctx, "forms/order/form.form.yaml"); err != nil || ok {
+		t.Fatalf("yaml should be deleted: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := repo.ReadFile(ctx, "forms/order/form.form.os"); err != nil || ok {
+		t.Fatalf("os should be deleted: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRepoVersions_ApplyFilesCreatesSingleVersion(t *testing.T) {
+	repo, _, ctx := newSQLiteRepo(t)
+	if err := repo.SaveFiles(ctx, []configdb.ConfigFile{
+		{Path: "config/app.yaml", Content: []byte("name: old\nlogo: config/old.png\n")},
+		{Path: "config/old.png", Content: []byte("old logo")},
+	}, configdb.VersionOptions{Message: "seed"}); err != nil {
+		t.Fatalf("SaveFiles seed: %v", err)
+	}
+	if err := repo.ApplyFiles(ctx, []configdb.ConfigFile{
+		{Path: "config/app.yaml", Content: []byte("name: new\nlogo: config/new.png\n")},
+		{Path: "config/new.png", Content: []byte("new logo")},
+	}, []string{"config/old.png", "config/missing.png"}, configdb.VersionOptions{Message: "save app settings"}); err != nil {
+		t.Fatalf("ApplyFiles: %v", err)
+	}
+	versions, err := repo.ListVersions(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 2 || versions[0].Message != "save app settings" {
+		t.Fatalf("versions = %+v, want seed + one apply", versions)
+	}
+	content, ok, err := repo.ReadFile(ctx, "config/app.yaml")
+	if err != nil || !ok || !bytes.Contains(content, []byte("name: new")) {
+		t.Fatalf("ReadFile app: ok=%v err=%v content=%q", ok, err, content)
+	}
+	content, ok, err = repo.ReadFile(ctx, "config/new.png")
+	if err != nil || !ok || !bytes.Equal(content, []byte("new logo")) {
+		t.Fatalf("ReadFile new logo: ok=%v err=%v content=%q", ok, err, content)
+	}
+	if _, ok, err := repo.ReadFile(ctx, "config/old.png"); err != nil || ok {
+		t.Fatalf("old logo should be deleted: ok=%v err=%v", ok, err)
+	}
+}

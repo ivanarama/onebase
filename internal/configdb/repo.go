@@ -72,17 +72,8 @@ func (r *Repo) ImportFromDir(ctx context.Context, dir string) error {
 
 // SaveFile upserts a single config file entry.
 func (r *Repo) SaveFile(ctx context.Context, path string, content []byte) error {
-	if err := ValidatePath(path); err != nil {
-		return fmt.Errorf("configdb: unsafe path %q: %w", path, err)
-	}
 	save := func(txCtx context.Context) error {
-		d := r.db.Dialect()
-		if _, err := r.db.Exec(txCtx, fmt.Sprintf(`
-			INSERT INTO _onebase_config (path, content, updated_at)
-			VALUES (%s, %s, %s)
-			ON CONFLICT (path) DO UPDATE SET content = EXCLUDED.content, updated_at = %s`,
-			d.Placeholder(1), d.Placeholder(2), d.Now(), d.Now()),
-			path, content); err != nil {
+		if err := r.saveFileNoVersion(txCtx, path, content); err != nil {
 			return err
 		}
 		_, err := r.CreateVersion(txCtx, VersionOptions{Message: "save " + path})
@@ -92,6 +83,84 @@ func (r *Repo) SaveFile(ctx context.Context, path string, content []byte) error 
 		return save(ctx)
 	}
 	return r.db.WithTx(ctx, save)
+}
+
+// SaveFiles upserts several config files and creates one configuration version
+// after all writes. Use it for UI actions that logically save one object backed
+// by multiple files, e.g. form YAML + form module or AI apply with several YAMLs.
+func (r *Repo) SaveFiles(ctx context.Context, files []ConfigFile, opts VersionOptions) error {
+	if len(files) == 0 {
+		return nil
+	}
+	save := func(txCtx context.Context) error {
+		for _, f := range files {
+			if err := r.saveFileNoVersion(txCtx, f.Path, f.Content); err != nil {
+				return err
+			}
+		}
+		if opts.Message == "" {
+			opts.Message = saveFilesMessage(files)
+		}
+		_, err := r.CreateVersion(txCtx, opts)
+		return err
+	}
+	if storage.HasTx(ctx) {
+		return save(ctx)
+	}
+	return r.db.WithTx(ctx, save)
+}
+
+// ApplyFiles removes and upserts config files in one transaction, then creates
+// at most one configuration version. Missing delete paths are ignored.
+func (r *Repo) ApplyFiles(ctx context.Context, saves []ConfigFile, deletes []string, opts VersionOptions) error {
+	if len(saves) == 0 && len(deletes) == 0 {
+		return nil
+	}
+	apply := func(txCtx context.Context) error {
+		var deleted []string
+		for _, p := range deletes {
+			ok, err := r.deleteFileNoVersion(txCtx, p)
+			if err != nil {
+				return err
+			}
+			if ok {
+				deleted = append(deleted, p)
+			}
+		}
+		for _, f := range saves {
+			if err := r.saveFileNoVersion(txCtx, f.Path, f.Content); err != nil {
+				return err
+			}
+		}
+		if len(saves) == 0 && len(deleted) == 0 {
+			return nil
+		}
+		if opts.Message == "" {
+			opts.Message = applyFilesMessage(saves, deleted)
+		}
+		_, err := r.CreateVersion(txCtx, opts)
+		return err
+	}
+	if storage.HasTx(ctx) {
+		return apply(ctx)
+	}
+	return r.db.WithTx(ctx, apply)
+}
+
+func (r *Repo) saveFileNoVersion(ctx context.Context, path string, content []byte) error {
+	if err := ValidatePath(path); err != nil {
+		return fmt.Errorf("configdb: unsafe path %q: %w", path, err)
+	}
+	d := r.db.Dialect()
+	if _, err := r.db.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO _onebase_config (path, content, updated_at)
+			VALUES (%s, %s, %s)
+			ON CONFLICT (path) DO UPDATE SET content = EXCLUDED.content, updated_at = %s`,
+		d.Placeholder(1), d.Placeholder(2), d.Now(), d.Now()),
+		path, content); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ReadFile возвращает содержимое одного файла конфигурации. Второе значение
@@ -111,16 +180,10 @@ func (r *Repo) ReadFile(ctx context.Context, path string) ([]byte, bool, error) 
 }
 
 func (r *Repo) DeleteFile(ctx context.Context, path string) error {
-	if err := ValidatePath(path); err != nil {
-		return fmt.Errorf("configdb: unsafe path %q: %w", path, err)
-	}
 	del := func(txCtx context.Context) error {
-		tag, err := r.db.Exec(txCtx, `DELETE FROM _onebase_config WHERE path = `+r.db.Dialect().Placeholder(1), path)
-		if err != nil {
+		deleted, err := r.deleteFileNoVersion(txCtx, path)
+		if err != nil || !deleted {
 			return err
-		}
-		if tag.RowsAffected == 0 {
-			return nil
 		}
 		_, err = r.CreateVersion(txCtx, VersionOptions{Message: "delete " + path})
 		return err
@@ -129,6 +192,49 @@ func (r *Repo) DeleteFile(ctx context.Context, path string) error {
 		return del(ctx)
 	}
 	return r.db.WithTx(ctx, del)
+}
+
+// DeleteFiles removes several config files and creates at most one version.
+// Missing files are ignored; when none are deleted, no version is created.
+func (r *Repo) DeleteFiles(ctx context.Context, paths []string, opts VersionOptions) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	del := func(txCtx context.Context) error {
+		var deleted []string
+		for _, p := range paths {
+			ok, err := r.deleteFileNoVersion(txCtx, p)
+			if err != nil {
+				return err
+			}
+			if ok {
+				deleted = append(deleted, p)
+			}
+		}
+		if len(deleted) == 0 {
+			return nil
+		}
+		if opts.Message == "" {
+			opts.Message = deleteFilesMessage(deleted)
+		}
+		_, err := r.CreateVersion(txCtx, opts)
+		return err
+	}
+	if storage.HasTx(ctx) {
+		return del(ctx)
+	}
+	return r.db.WithTx(ctx, del)
+}
+
+func (r *Repo) deleteFileNoVersion(ctx context.Context, path string) (bool, error) {
+	if err := ValidatePath(path); err != nil {
+		return false, fmt.Errorf("configdb: unsafe path %q: %w", path, err)
+	}
+	tag, err := r.db.Exec(ctx, `DELETE FROM _onebase_config WHERE path = `+r.db.Dialect().Placeholder(1), path)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected > 0, nil
 }
 
 func (r *Repo) ExportToDir(ctx context.Context, dir string) error {
@@ -164,6 +270,38 @@ func (r *Repo) ExportToDir(ctx context.Context, dir string) error {
 type ConfigFile struct {
 	Path    string
 	Content []byte
+}
+
+func saveFilesMessage(files []ConfigFile) string {
+	if len(files) == 1 {
+		return "save " + files[0].Path
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	return fmt.Sprintf("save %d files: %s", len(files), strings.Join(paths, ", "))
+}
+
+func deleteFilesMessage(paths []string) string {
+	if len(paths) == 1 {
+		return "delete " + paths[0]
+	}
+	return fmt.Sprintf("delete %d files: %s", len(paths), strings.Join(paths, ", "))
+}
+
+func applyFilesMessage(saves []ConfigFile, deletes []string) string {
+	if len(deletes) == 0 {
+		return saveFilesMessage(saves)
+	}
+	if len(saves) == 0 {
+		return deleteFilesMessage(deletes)
+	}
+	savePaths := make([]string, 0, len(saves))
+	for _, f := range saves {
+		savePaths = append(savePaths, f.Path)
+	}
+	return fmt.Sprintf("apply %d file changes: save %s; delete %s", len(saves)+len(deletes), strings.Join(savePaths, ", "), strings.Join(deletes, ", "))
 }
 
 // ListByPrefix возвращает все файлы конфигурации, чьи path начинаются

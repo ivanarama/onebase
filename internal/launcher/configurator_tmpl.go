@@ -176,6 +176,7 @@ try{if(localStorage.getItem('cfgTitlesOn')==='1')document.documentElement.classL
       <a href="#" onclick="cfgAdmin('sessions');return false">{{t $.Lang "Активные пользователи"}}</a>
       <a href="#" onclick="cfgAdmin('audit');return false">{{t $.Lang "Журнал регистрации"}}</a>
       <a href="#" onclick="cfgAdmin('settings');return false">{{t $.Lang "Параметры базы"}}</a>
+      <a href="#" onclick="cfgAdmin('config-history');return false">{{t $.Lang "История конфигурации"}}</a>
       <a href="#" onclick="cfgAdmin('rollup');return false">{{t $.Lang "Свёртка базы"}}</a>
       <a href="#" onclick="cfgAdmin('ai');return false">{{t $.Lang "ИИ-помощник"}}</a>
       <a href="#" onclick="cfgAdmin('ai-history');return false">{{t $.Lang "История ИИ"}}</a>

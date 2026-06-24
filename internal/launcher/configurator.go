@@ -2550,37 +2550,23 @@ func (h *handler) configuratorNewObject(w http.ResponseWriter, r *http.Request) 
 		filename = name + ".yaml"
 	}
 
-	var saveErr error
-	if b.ConfigSource == "database" {
-		db, cerr := OpenDB(r.Context(), b)
-		if cerr != nil {
-			saveErr = cerr
-		} else {
-			defer db.Close()
-			repo := configdb.New(db)
-			repo.EnsureSchema(r.Context())
-			path := subdir + "/" + filename
-			saveErr = cfgUpsert(r.Context(), db, path, []byte(content))
+	path := subdir + "/" + filename
+	files := []configFileEntry{{relPath: path, content: []byte(content)}}
+	if kind == "page" {
+		// Страница — это пара файлов: сначала обработчик, затем метаданные, чтобы
+		// файловый watcher при reload по .yaml уже видел готовый .os.
+		files = []configFileEntry{
+			{relPath: pageSrcRelPath(name), content: []byte(newPageOSSkeleton(name))},
+			{relPath: path, content: []byte(content)},
 		}
-	} else {
-		saveErr = h.writeConfigFileRaw(r.Context(), b, subdir+"/"+filename, []byte(content))
 	}
+	saveErr := saveConfigFiles(r, h, b, files)
 
 	if saveErr != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")
 		data.Error = tr(lang, "Ошибка создания") + ": " + saveErr.Error()
 		renderCfg(w, r, data)
 		return
-	}
-	// Страница — это пара файлов: вслед за метаданными создаём обработчик
-	// src/<имя>.page.os со скелетом ПриФормировании (план 66).
-	if kind == "page" {
-		if serr := saveConfigFile(r, h, b, pageSrcRelPath(name), []byte(newPageOSSkeleton(name))); serr != nil {
-			data := h.loadCfgData(r.Context(), b, "tree")
-			data.Error = tr(lang, "Ошибка создания") + ": " + serr.Error()
-			renderCfg(w, r, data)
-			return
-		}
 	}
 	data := h.loadCfgData(r.Context(), b, "tree")
 	data.FieldsSavedEntity = name
@@ -3735,20 +3721,24 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 		logoPath = ""
 	}
 
-	// Handle uploaded logo file
-	var logoSaveErr error
+	// Handle uploaded logo file. The write itself is delayed so app.yaml and
+	// logo changes become one config version in database mode.
+	var (
+		logoData      []byte
+		hasLogoUpload bool
+	)
 	file, header, ferr := r.FormFile("app_logo_file")
 	if ferr == nil {
 		defer file.Close()
 		// Read file content
-		logoData, rerr := io.ReadAll(file)
+		data, rerr := io.ReadAll(file)
 		if rerr != nil {
 			data := h.loadCfgData(r.Context(), b, "tree")
 			data.Error = tr(lang, "Ошибка чтения логотипа") + ": " + rerr.Error()
 			renderCfg(w, r, data)
 			return
 		}
-		if len(logoData) > 2<<20 {
+		if len(data) > 2<<20 {
 			data := h.loadCfgData(r.Context(), b, "tree")
 			data.Error = tr(lang, "Логотип слишком большой (максимум 2 МБ)")
 			renderCfg(w, r, data)
@@ -3760,50 +3750,8 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 			ext = ".png"
 		}
 		logoPath = "config/logo" + ext
-
-		// Save logo file
-		if b.ConfigSource == "database" {
-			db, cerr := OpenDB(r.Context(), b)
-			if cerr != nil {
-				logoSaveErr = cerr
-			} else {
-				defer db.Close()
-				logoSaveErr = cfgUpsert(r.Context(), db, logoPath, logoData)
-			}
-		} else {
-			logoSaveErr = h.writeConfigFileRaw(r.Context(), b, logoPath, logoData)
-		}
-	}
-	if logoSaveErr != nil {
-		data := h.loadCfgData(r.Context(), b, "tree")
-		data.Error = tr(lang, "Ошибка сохранения логотипа") + ": " + logoSaveErr.Error()
-		renderCfg(w, r, data)
-		return
-	}
-
-	// Remove old logo file if changed
-	if removeLogo && existingLogo != "" {
-		if b.ConfigSource == "database" {
-			db, cerr := OpenDB(r.Context(), b)
-			if cerr == nil {
-				defer db.Close()
-				if err := configdb.New(db).DeleteFile(r.Context(), existingLogo); err != nil {
-					data := h.loadCfgData(r.Context(), b, "tree")
-					data.Error = tr(lang, "Ошибка удаления логотипа") + ": " + err.Error()
-					renderCfg(w, r, data)
-					return
-				}
-			}
-		} else {
-			full, err := configdb.SafeJoin(b.Path, existingLogo)
-			if err != nil {
-				data := h.loadCfgData(r.Context(), b, "tree")
-				data.Error = tr(lang, "Ошибка удаления логотипа") + ": " + err.Error()
-				renderCfg(w, r, data)
-				return
-			}
-			os.Remove(full)
-		}
+		logoData = data
+		hasLogoUpload = true
 	}
 
 	type saveAppConfig struct {
@@ -3827,10 +3775,39 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 			saveErr = cerr
 		} else {
 			defer db.Close()
-			saveErr = cfgUpsert(r.Context(), db, "config/app.yaml", out)
+			repo := configdb.New(db)
+			if err := repo.EnsureSchema(r.Context()); err != nil {
+				saveErr = err
+			} else {
+				saves := []configdb.ConfigFile{{Path: "config/app.yaml", Content: out}}
+				if hasLogoUpload {
+					saves = append([]configdb.ConfigFile{{Path: logoPath, Content: logoData}}, saves...)
+				}
+				var deletes []string
+				if removeLogo && existingLogo != "" {
+					deletes = append(deletes, existingLogo)
+				}
+				saveErr = repo.ApplyFiles(r.Context(), saves, deletes, configdb.VersionOptions{
+					AuthorLogin: cfgLogin(r.Context()),
+					Message:     "save app settings",
+				})
+			}
 		}
 	} else {
-		saveErr = h.writeConfigFileRaw(r.Context(), b, "config/app.yaml", out)
+		if removeLogo && existingLogo != "" {
+			full, err := configdb.SafeJoin(b.Path, existingLogo)
+			if err != nil {
+				saveErr = err
+			} else if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+				saveErr = err
+			}
+		}
+		if saveErr == nil && hasLogoUpload {
+			saveErr = h.writeConfigFileRaw(r.Context(), b, logoPath, logoData)
+		}
+		if saveErr == nil {
+			saveErr = h.writeConfigFileRaw(r.Context(), b, "config/app.yaml", out)
+		}
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")

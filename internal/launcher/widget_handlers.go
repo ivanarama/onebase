@@ -1,7 +1,6 @@
 package launcher
 
 import (
-	"context"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -213,6 +212,10 @@ func saveConfigFile(r *http.Request, h *handler, b *Base, relPath string, conten
 //	          вызывающий передаёт сначала исходник, затем метаданные, чтобы reload
 //	          по записи .yaml уже видел готовый .os.
 func saveConfigFiles(r *http.Request, h *handler, b *Base, files []configFileEntry) error {
+	return saveConfigFilesWithVersion(r, h, b, files, configdb.VersionOptions{AuthorLogin: cfgLogin(r.Context())})
+}
+
+func saveConfigFilesWithVersion(r *http.Request, h *handler, b *Base, files []configFileEntry, opts configdb.VersionOptions) error {
 	if b.ConfigSource == "database" {
 		db, err := OpenDB(r.Context(), b)
 		if err != nil {
@@ -223,14 +226,10 @@ func saveConfigFiles(r *http.Request, h *handler, b *Base, files []configFileEnt
 		if err := repo.EnsureSchema(r.Context()); err != nil {
 			return err
 		}
-		return db.WithTx(r.Context(), func(ctx context.Context) error {
-			for _, f := range files {
-				if err := repo.SaveFile(ctx, f.relPath, f.content); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		if opts.AuthorLogin == "" {
+			opts.AuthorLogin = cfgLogin(r.Context())
+		}
+		return repo.SaveFiles(r.Context(), configDBFiles(files), opts)
 	}
 	for _, f := range files {
 		if err := atomicWriteConfigFile(b.Path, f.relPath, f.content); err != nil {
@@ -265,6 +264,10 @@ func deleteConfigFile(r *http.Request, h *handler, b *Base, relPath string) erro
 // database: в одной транзакции; file: последовательно (отсутствие файла — не ошибка).
 // Вызывающий передаёт пути в порядке, безопасном для reload (сначала метаданные).
 func deleteConfigFiles(r *http.Request, h *handler, b *Base, relPaths []string) error {
+	return deleteConfigFilesWithVersion(r, h, b, relPaths, configdb.VersionOptions{AuthorLogin: cfgLogin(r.Context())})
+}
+
+func deleteConfigFilesWithVersion(r *http.Request, h *handler, b *Base, relPaths []string, opts configdb.VersionOptions) error {
 	if b.ConfigSource == "database" {
 		db, err := OpenDB(r.Context(), b)
 		if err != nil {
@@ -272,14 +275,10 @@ func deleteConfigFiles(r *http.Request, h *handler, b *Base, relPaths []string) 
 		}
 		defer db.Close()
 		repo := configdb.New(db)
-		return db.WithTx(r.Context(), func(ctx context.Context) error {
-			for _, p := range relPaths {
-				if err := repo.DeleteFile(ctx, p); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		if opts.AuthorLogin == "" {
+			opts.AuthorLogin = cfgLogin(r.Context())
+		}
+		return repo.DeleteFiles(r.Context(), relPaths, opts)
 	}
 	for _, p := range relPaths {
 		full, err := configdb.SafeJoin(b.Path, p)
@@ -291,4 +290,12 @@ func deleteConfigFiles(r *http.Request, h *handler, b *Base, relPaths []string) 
 		}
 	}
 	return nil
+}
+
+func configDBFiles(files []configFileEntry) []configdb.ConfigFile {
+	out := make([]configdb.ConfigFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, configdb.ConfigFile{Path: f.relPath, Content: f.content})
+	}
+	return out
 }

@@ -1,11 +1,13 @@
 # План 60 — Версионирование конфигурации в БД + marketplace
 
-**Статус:** 🟡 Часть A начата (2026-06-24): добавлено ядро истории
-конфигурации в `internal/configdb` — таблица `_config_versions`, gzip(JSON)
-снимки `_onebase_config`, авто-снимок после `SaveFile`/`DeleteFile`,
-`ListVersions`/`GetVersion`/`DiffVersions`/`RollbackToVersion`, SQLite-тесты
-и релизный снимок в `onebase deploy --message`. UI истории, группировка
-batch-сохранений в одну версию и marketplace ещё не реализованы.
+**Статус:** 🟢 Часть A реализована (2026-06-24): ядро истории
+конфигурации в `internal/configdb` (`_config_versions`, gzip(JSON)-снимки,
+`ListVersions`/`GetVersion`/`DiffVersions`/`RollbackToVersion`), авто-снимки
+после сохранений/удалений, группировка batch-сохранений через
+`SaveFiles`/`DeleteFiles`/`ApplyFiles`, релизный снимок в `onebase deploy --message`,
+UI истории в конфигураторе (список, diff между любыми двумя версиями, rollback
+новой версией, экспорт ZIP и config-only `.obz`). Часть B marketplace ещё не
+реализована.
 **Источник:** `АнализПроекта-2026-06-10.md` §4.5 (marketplace) + §4.6 (версионирование).
 **Приоритет:** 🟢 Экосистемный — превращает инструмент в платформу. Объединены: обе фичи про «конфигурация как актив».
 

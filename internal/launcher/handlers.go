@@ -580,6 +580,16 @@ func (h *handler) configImport(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if _, err := repo.CreateVersion(r.Context(), configdb.VersionOptions{
+		AuthorLogin: cfgLogin(r.Context()),
+		Message:     "import from " + srcDir,
+	}); err != nil {
+		render(w, r, "page-config-result", map[string]any{
+			"Title": tr(lang, "onebase — Загрузка конфигурации"), "Message": "",
+			"Error": tr(lang, "Ошибка версии конфигурации") + ": " + err.Error(),
+		})
+		return
+	}
 
 	// Migrate after import
 	out, _ := h.runner.MigrateBase(r.Context(), b)
@@ -623,6 +633,9 @@ func (h *handler) initDatabaseBase(ctx context.Context, b *Base, scaffold bool) 
 		}
 		if err := repo.ImportFromDir(ctx, tmpDir); err != nil {
 			return i18nerr.Wrapf(err, "загрузка конфигурации")
+		}
+		if _, err := repo.CreateVersion(ctx, configdb.VersionOptions{Message: "initial scaffold"}); err != nil {
+			return i18nerr.Wrapf(err, "снимок конфигурации")
 		}
 	}
 	return nil

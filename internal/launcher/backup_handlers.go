@@ -656,6 +656,12 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 				defer db.Close()
 				repo := configdb.New(db)
 				configErr = repo.ImportFromDir(r.Context(), configDir)
+				if configErr == nil {
+					_, configErr = repo.CreateVersion(r.Context(), configdb.VersionOptions{
+						AuthorLogin: cfgLogin(r.Context()),
+						Message:     "full backup config import",
+					})
+				}
 			}
 		} else {
 			configErr = filepath.WalkDir(configDir, func(path string, d os.DirEntry, err error) error {

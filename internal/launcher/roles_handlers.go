@@ -367,14 +367,15 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 
 	// On edit, remove any stale role file(s) for the original name (handles
 	// rename and non-canonical filenames) before writing the new one.
+	var stalePaths []string
 	if origName != "" {
 		for path, rname := range h.roleConfigFiles(r.Context(), b) {
 			if rname == origName && path != targetPath {
-				h.deleteConfigFile(r.Context(), b, path)
+				stalePaths = append(stalePaths, path)
 			}
 		}
 	}
-	if err := h.saveConfigFile(r.Context(), b, targetPath, content); err != nil {
+	if err := h.saveRoleConfigFile(r.Context(), b, targetPath, content, stalePaths, cfgLogin(r.Context()), name); err != nil {
 		writeJSON(w, 500, map[string]any{"error": tr(lang, "Ошибка сохранения") + ": " + err.Error()})
 		return
 	}
@@ -415,10 +416,15 @@ func (h *handler) cfgAdminRoleDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "empty name"})
 		return
 	}
+	var paths []string
 	for path, rname := range h.roleConfigFiles(r.Context(), b) {
 		if rname == req.Name {
-			h.deleteConfigFile(r.Context(), b, path)
+			paths = append(paths, path)
 		}
+	}
+	if err := h.deleteRoleConfigFiles(r.Context(), b, paths, cfgLogin(r.Context()), req.Name); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
@@ -574,6 +580,30 @@ func (h *handler) saveConfigFile(ctx context.Context, b *Base, relPath string, c
 	return os.WriteFile(full, content, 0o644)
 }
 
+func (h *handler) saveRoleConfigFile(ctx context.Context, b *Base, relPath string, content []byte, stalePaths []string, author, roleName string) error {
+	if b.ConfigSource == "database" {
+		db, err := OpenDB(ctx, b)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		repo := configdb.New(db)
+		if err := repo.EnsureSchema(ctx); err != nil {
+			return err
+		}
+		return repo.ApplyFiles(ctx, []configdb.ConfigFile{{Path: relPath, Content: content}}, stalePaths, configdb.VersionOptions{
+			AuthorLogin: author,
+			Message:     "save role " + roleName,
+		})
+	}
+	for _, p := range stalePaths {
+		if err := h.deleteConfigFile(ctx, b, p); err != nil {
+			return err
+		}
+	}
+	return h.saveConfigFile(ctx, b, relPath, content)
+}
+
 func (h *handler) deleteConfigFile(ctx context.Context, b *Base, relPath string) error {
 	if b.ConfigSource == "database" {
 		db, err := OpenDB(ctx, b)
@@ -589,6 +619,33 @@ func (h *handler) deleteConfigFile(ctx context.Context, b *Base, relPath string)
 	}
 	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return nil
+}
+
+func (h *handler) deleteRoleConfigFiles(ctx context.Context, b *Base, relPaths []string, author, roleName string) error {
+	if len(relPaths) == 0 {
+		return nil
+	}
+	if b.ConfigSource == "database" {
+		db, err := OpenDB(ctx, b)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		repo := configdb.New(db)
+		if err := repo.EnsureSchema(ctx); err != nil {
+			return err
+		}
+		return repo.DeleteFiles(ctx, relPaths, configdb.VersionOptions{
+			AuthorLogin: author,
+			Message:     "delete role " + roleName,
+		})
+	}
+	for _, p := range relPaths {
+		if err := h.deleteConfigFile(ctx, b, p); err != nil {
+			return err
+		}
 	}
 	return nil
 }

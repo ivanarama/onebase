@@ -494,15 +494,14 @@ func saveManagedForm(r *http.Request, b *Base, entity, name string, yamlBody, os
 		}
 		defer db.Close()
 		repo := configdb.New(db)
-		if err := repo.SaveFile(r.Context(), yamlPath, yamlBody); err != nil {
-			return err
-		}
+		files := []configdb.ConfigFile{{Path: yamlPath, Content: yamlBody}}
 		if len(osBody) > 0 {
-			if err := repo.SaveFile(r.Context(), osPath, osBody); err != nil {
-				return err
-			}
+			files = append(files, configdb.ConfigFile{Path: osPath, Content: osBody})
 		}
-		return nil
+		return repo.SaveFiles(r.Context(), files, configdb.VersionOptions{
+			AuthorLogin: cfgLogin(r.Context()),
+			Message:     "save managed form " + entity + "." + name,
+		})
 	}
 	// FS
 	yp, err := configdb.SafeJoin(b.Path, yamlPath)
@@ -573,12 +572,14 @@ func deleteManagedForm(r *http.Request, b *Base, entity, name string) error {
 		if err != nil {
 			return err
 		}
+		paths := make([]string, 0, len(files))
 		for _, f := range files {
-			if err := repo.DeleteFile(r.Context(), f.Path); err != nil {
-				return err
-			}
+			paths = append(paths, f.Path)
 		}
-		return nil
+		return repo.DeleteFiles(r.Context(), paths, configdb.VersionOptions{
+			AuthorLogin: cfgLogin(r.Context()),
+			Message:     "delete managed form " + entity + "." + name,
+		})
 	}
 	yp, op := formFiles(b, entity, name)
 	_ = os.Remove(yp)

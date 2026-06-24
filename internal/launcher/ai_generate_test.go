@@ -14,6 +14,19 @@ import (
 
 const validCatalogYAML = "name: Клиент\nfields:\n  - {name: Наименование, type: string}\n"
 
+type fakeGenRunner struct {
+	calls int
+	run   func(call int, ctx context.Context, task string, req llm.ChatRequest, tools []llm.Tool, exec llm.ToolExecutor) (llm.ChatResponse, error)
+}
+
+func (f *fakeGenRunner) RunWithTools(ctx context.Context, task string, req llm.ChatRequest, tools []llm.Tool, exec llm.ToolExecutor) (llm.ChatResponse, error) {
+	f.calls++
+	if f.run != nil {
+		return f.run(f.calls, ctx, task, req, tools, exec)
+	}
+	return llm.ChatResponse{Text: "ok", Model: "fake"}, nil
+}
+
 func newTestGenSession(t *testing.T) *genSession {
 	t.Helper()
 	src := t.TempDir()
@@ -132,6 +145,75 @@ func TestGenTools_Dispatch(t *testing.T) {
 	fmtRes := exec(context.Background(), llm.ToolCall{ID: "3", Name: "форматировать", Input: map[string]any{}})
 	if fmtRes.IsError || !strings.Contains(fmtRes.Content, "YAML") && !strings.Contains(fmtRes.Content, "Отформатировано") {
 		t.Errorf("форматировать вернул неожиданный результат: %+v", fmtRes)
+	}
+}
+
+func TestGenSelfCorrectionRetriesUntilCheckOK(t *testing.T) {
+	g := newTestGenSession(t)
+	tools, exec := g.tools()
+	runner := &fakeGenRunner{run: func(call int, ctx context.Context, task string, req llm.ChatRequest, tools []llm.Tool, exec llm.ToolExecutor) (llm.ChatResponse, error) {
+		if call == 1 {
+			res := exec(ctx, llm.ToolCall{
+				ID:    "bad",
+				Name:  "создать_файл",
+				Input: map[string]any{"путь": "documents/заявка.yaml", "содержимое": "fields:\n  - name: Номер\n    type: string\n"},
+			})
+			if res.IsError {
+				t.Fatalf("создать_файл bad: %s", res.Content)
+			}
+			return llm.ChatResponse{Text: "draft", Model: "fake"}, nil
+		}
+		res := exec(ctx, llm.ToolCall{
+			ID:    "fix",
+			Name:  "создать_файл",
+			Input: map[string]any{"путь": "documents/заявка.yaml", "содержимое": "name: Заявка\nfields:\n  - name: Номер\n    type: string\n"},
+		})
+		if res.IsError {
+			t.Fatalf("создать_файл fix: %s", res.Content)
+		}
+		return llm.ChatResponse{Text: "fixed", Model: "fake"}, nil
+	}}
+
+	out, err := runGenWithCorrections(context.Background(), runner, "system", "создай документ", tools, exec, g)
+	if err != nil {
+		t.Fatalf("runGenWithCorrections: %v", err)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("ожидалось 2 вызова модели, получено %d", runner.calls)
+	}
+	if out.RepairRounds != 1 {
+		t.Fatalf("ожидался 1 раунд исправления, получено %d", out.RepairRounds)
+	}
+	if !out.Check.OK {
+		t.Fatalf("после исправления check должен быть OK:\n%s", out.CheckText)
+	}
+	changes := g.diff()
+	if len(changes) != 1 || !strings.Contains(changes[0].NewContent, "name: Заявка") {
+		t.Fatalf("исправленный diff неверный: %+v", changes)
+	}
+}
+
+func TestGenSelfCorrectionReturnsCheckOnRunnerError(t *testing.T) {
+	g := newTestGenSession(t)
+	tools, exec := g.tools()
+	runner := &fakeGenRunner{run: func(call int, ctx context.Context, task string, req llm.ChatRequest, tools []llm.Tool, exec llm.ToolExecutor) (llm.ChatResponse, error) {
+		res := exec(ctx, llm.ToolCall{
+			ID:    "bad",
+			Name:  "создать_файл",
+			Input: map[string]any{"путь": "documents/заявка.yaml", "содержимое": "fields:\n  - name: Номер\n    type: string\n"},
+		})
+		if res.IsError {
+			t.Fatalf("создать_файл bad: %s", res.Content)
+		}
+		return llm.ChatResponse{Text: "partial", Model: "fake"}, context.Canceled
+	}}
+
+	out, err := runGenWithCorrections(context.Background(), runner, "system", "создай документ", tools, exec, g)
+	if err == nil {
+		t.Fatal("ожидалась ошибка модели")
+	}
+	if out.Check.OK || !strings.Contains(out.CheckText, "Найдены ошибки") {
+		t.Fatalf("ожидался красный итоговый check, got ok=%v text:\n%s", out.Check.OK, out.CheckText)
 	}
 }
 
