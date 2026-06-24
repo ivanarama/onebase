@@ -34,6 +34,11 @@ type genSession struct {
 	changed map[string]bool // относительные пути (slash) созданных/изменённых файлов
 }
 
+const (
+	genReadFileLimit = 40000
+	genListFileLimit = 300
+)
+
 // kindSubdir сопоставляет тип объекта подкаталогу конфигурации (как в
 // configcheck.CheckDir). Регистронезависимо, по синонимам.
 func kindSubdir(kind string) (string, bool) {
@@ -100,7 +105,15 @@ func (g *genSession) createObject(kind, name, yamlText string) error {
 		return err
 	}
 	rel := subdir + "/" + fname
-	full := filepath.Join(g.overlay, subdir, fname)
+	return g.createFile(rel, yamlText)
+}
+
+func (g *genSession) createFile(rel, content string) error {
+	rel = strings.TrimSpace(rel)
+	if err := safeConfigPath(rel); err != nil {
+		return err
+	}
+	full := filepath.Join(g.overlay, filepath.FromSlash(rel))
 	cleanOverlay := filepath.Clean(g.overlay)
 	if !strings.HasPrefix(filepath.Clean(full), cleanOverlay+string(os.PathSeparator)) {
 		return fmt.Errorf("путь вне overlay: %q", rel)
@@ -108,41 +121,140 @@ func (g *genSession) createObject(kind, name, yamlText string) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(yamlText), 0o644); err != nil {
+	data, err := formatConfigContent(rel, []byte(content))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(full, data, 0o644); err != nil {
 		return err
 	}
 	g.changed[rel] = true
 	return nil
 }
 
-// check валидирует overlay без исполнения кода: CheckDir (парс YAML) + project.Load
-// (кросс-ссылки; модули парсятся, не исполняются). CheckQueries НЕ зовём — он
-// исполняет запросы. Возвращает человекочитаемый текст для модели.
+func (g *genSession) readFile(rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if err := safeConfigPath(rel); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(g.overlay, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", err
+	}
+	text := string(data)
+	runes := []rune(text)
+	if len(runes) > genReadFileLimit {
+		return string(runes[:genReadFileLimit]) + "\n... [файл обрезан]", nil
+	}
+	return text, nil
+}
+
+func (g *genSession) listFiles() string {
+	var rels []string
+	_ = filepath.WalkDir(g.overlay, func(full string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(g.overlay, full)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if safeConfigPath(rel) == nil {
+			rels = append(rels, rel)
+		}
+		return nil
+	})
+	sort.Strings(rels)
+	total := len(rels)
+	if total > genListFileLimit {
+		rels = append(rels[:genListFileLimit], fmt.Sprintf("... ещё %d файлов", total-genListFileLimit))
+	}
+	if len(rels) == 0 {
+		return "Нет файлов в разрешённых путях."
+	}
+	return strings.Join(rels, "\n")
+}
+
+func (g *genSession) formatChanged() (int, error) {
+	var changed int
+	for rel := range g.changed {
+		full := filepath.Join(g.overlay, filepath.FromSlash(rel))
+		before, err := os.ReadFile(full)
+		if err != nil {
+			return changed, err
+		}
+		after, err := formatConfigContent(rel, before)
+		if err != nil {
+			return changed, err
+		}
+		if string(before) == string(after) {
+			continue
+		}
+		if err := os.WriteFile(full, after, 0o644); err != nil {
+			return changed, err
+		}
+		changed++
+	}
+	return changed, nil
+}
+
+// check валидирует overlay без исполнения пользовательского кода. Возвращает
+// человекочитаемый текст для модели.
 func (g *genSession) check() string {
-	issues, _ := configcheck.CheckDir(g.overlay)
+	issues, warnings := configcheck.CheckDir(g.overlay)
 	if proj, err := project.Load(g.overlay); err == nil {
 		proj.Close()
 	} else if !configcheck.AlreadyReported(issues, err.Error()) {
 		issues = append(issues, configcheck.Issue{Message: "Project.Load: " + err.Error()})
 	}
-	if len(issues) == 0 {
+	return renderGenCheckText(issues, warnings)
+}
+
+func (g *genSession) checkFull() string {
+	res := configcheck.RunFull(g.overlay)
+	return renderGenCheckText(res.Issues, res.Warnings)
+}
+
+func renderGenCheckText(issues, warnings []configcheck.Issue) string {
+	if len(issues) == 0 && len(warnings) == 0 {
 		return "Нет ошибок."
 	}
 	var b strings.Builder
-	b.WriteString("Найдены ошибки:\n")
-	for _, is := range issues {
-		// Capitalize object name for readability (e.g. "заявка" → "Заявка").
-		obj := is.Object
-		if r, size := utf8.DecodeRuneInString(obj); size > 0 {
-			obj = strings.ToUpper(string(r)) + obj[size:]
+	writeList := func(title string, list []configcheck.Issue) {
+		if len(list) == 0 {
+			return
 		}
-		if is.File != "" {
-			fmt.Fprintf(&b, "- %s %s (%s): %s\n", is.Kind, obj, is.File, is.Message)
-		} else {
-			fmt.Fprintf(&b, "- %s\n", is.Message)
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(title)
+		b.WriteByte('\n')
+		for _, is := range list {
+			writeGenIssue(&b, is)
 		}
 	}
+	writeList("Найдены ошибки:", issues)
+	writeList("Предупреждения:", warnings)
 	return b.String()
+}
+
+func writeGenIssue(b *strings.Builder, is configcheck.Issue) {
+	obj := is.Object
+	if r, size := utf8.DecodeRuneInString(obj); size > 0 {
+		obj = strings.ToUpper(string(r)) + obj[size:]
+	}
+	label := strings.TrimSpace(strings.TrimSpace(is.Kind + " " + obj))
+	switch {
+	case is.File != "" && label != "":
+		fmt.Fprintf(b, "- %s (%s): %s\n", label, is.File, is.Message)
+	case is.File != "":
+		fmt.Fprintf(b, "- %s: %s\n", is.File, is.Message)
+	case label != "":
+		fmt.Fprintf(b, "- %s: %s\n", label, is.Message)
+	default:
+		fmt.Fprintf(b, "- %s\n", is.Message)
+	}
 }
 
 // showObject возвращает YAML существующего объекта (ищет по имени во всех
@@ -191,6 +303,15 @@ func strInput(call llm.ToolCall, key string) string {
 	return ""
 }
 
+func boolInput(call llm.ToolCall, key string) bool {
+	v, ok := call.Input[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
+}
+
 // tools формирует инструменты записи в staging для RunWithTools.
 func (g *genSession) tools() ([]llm.Tool, llm.ToolExecutor) {
 	tools := []llm.Tool{
@@ -209,8 +330,11 @@ func (g *genSession) tools() ([]llm.Tool, llm.ToolExecutor) {
 		},
 		{
 			Name:        "проверить_конфигурацию",
-			Description: "Проверить черновик конфигурации (валидность YAML и ссылки). Вызывай после создания объектов и исправляй найденные ошибки.",
-			Schema:      map[string]any{"type": "object", "properties": map[string]any{}},
+			Description: "Проверить черновик конфигурации. полная=true включает полный check: cross-refs, query compile/prepare, pages/services/layout checks.",
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"полная": map[string]any{"type": "boolean"}},
+			},
 		},
 		{
 			Name:        "показать_объект",
@@ -221,6 +345,37 @@ func (g *genSession) tools() ([]llm.Tool, llm.ToolExecutor) {
 				"required":   []any{"имя"},
 			},
 		},
+		{
+			Name:        "создать_файл",
+			Description: "Создать или изменить файл конфигурации в staging. Разрешены YAML-метаданные, forms/*.form.yaml, forms/*.form.os и src/*.os. Путь задавай slash-форматом, например reports/Продажи.yaml или src/Заказ.posting.os.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"путь":       map[string]any{"type": "string"},
+					"содержимое": map[string]any{"type": "string"},
+				},
+				"required": []any{"путь", "содержимое"},
+			},
+		},
+		{
+			Name:        "прочитать_файл",
+			Description: "Прочитать существующий файл конфигурации из staging по slash-пути.",
+			Schema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"путь": map[string]any{"type": "string"}},
+				"required":   []any{"путь"},
+			},
+		},
+		{
+			Name:        "список_файлов",
+			Description: "Показать список доступных файлов конфигурации в разрешённых путях.",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			Name:        "форматировать",
+			Description: "Отформатировать изменённые YAML-файлы в staging canonical formatter'ом.",
+			Schema:      map[string]any{"type": "object", "properties": map[string]any{}},
+		},
 	}
 	exec := func(_ context.Context, call llm.ToolCall) llm.ToolResult {
 		switch call.Name {
@@ -230,9 +385,31 @@ func (g *genSession) tools() ([]llm.Tool, llm.ToolExecutor) {
 			}
 			return llm.ToolResult{ID: call.ID, Content: "создан объект " + strInput(call, "имя")}
 		case "проверить_конфигурацию":
+			if boolInput(call, "полная") {
+				return llm.ToolResult{ID: call.ID, Content: g.checkFull()}
+			}
 			return llm.ToolResult{ID: call.ID, Content: g.check()}
 		case "показать_объект":
 			return llm.ToolResult{ID: call.ID, Content: g.showObject(strInput(call, "имя"))}
+		case "создать_файл":
+			if err := g.createFile(strInput(call, "путь"), strInput(call, "содержимое")); err != nil {
+				return llm.ToolResult{ID: call.ID, Content: "ошибка: " + err.Error(), IsError: true}
+			}
+			return llm.ToolResult{ID: call.ID, Content: "записан файл " + strInput(call, "путь")}
+		case "прочитать_файл":
+			content, err := g.readFile(strInput(call, "путь"))
+			if err != nil {
+				return llm.ToolResult{ID: call.ID, Content: "ошибка: " + err.Error(), IsError: true}
+			}
+			return llm.ToolResult{ID: call.ID, Content: content}
+		case "список_файлов":
+			return llm.ToolResult{ID: call.ID, Content: g.listFiles()}
+		case "форматировать":
+			n, err := g.formatChanged()
+			if err != nil {
+				return llm.ToolResult{ID: call.ID, Content: "ошибка: " + err.Error(), IsError: true}
+			}
+			return llm.ToolResult{ID: call.ID, Content: fmt.Sprintf("отформатировано файлов: %d", n)}
 		default:
 			return llm.ToolResult{ID: call.ID, Content: "неизвестный инструмент: " + call.Name, IsError: true}
 		}
@@ -262,11 +439,13 @@ const metadataFormatGuide = `Формат объекта метаданных (�
 
 // aiGenerateSystem — роль генератора каркаса конфигурации.
 var aiGenerateSystem = "Ты — генератор каркаса конфигурации OneBase (платформа учёта, похожая на 1С). " +
-	"По описанию задачи на русском создавай объекты метаданных через инструмент «создать_объект»: " +
-	"справочники, документы (с табличными частями), регистры, перечисления. Только метаданные YAML — " +
-	"без модулей .os (проводки/обработчики на этом шаге не генерируются). " +
-	"После создания набора объектов обязательно вызывай «проверить_конфигурацию» и исправляй ошибки. " +
-	"Используй существующие объекты (через «показать_объект») вместо дублирования. " +
+	"По описанию задачи на русском создавай рабочий вертикальный срез конфигурации. " +
+	"Для простых метаданных можно использовать «создать_объект»; для отчётов, виджетов, форм, страниц, ролей, сервисов и DSL-модулей используй «создать_файл». " +
+	"Разрешённые пути: catalogs/documents/registers/inforegs/enums/constants/accounts/accountregs/reports/processors/widgets/pages/services/subsystems/roles/scheduled/journals/*.yaml, " +
+	"forms/*.form.yaml, forms/*/*.form.yaml, forms/*.form.os, forms/*/*.form.os, src/*.os, config/app.yaml, config/home_page.yaml. " +
+	"Перед изменением существующего файла прочитай его через «прочитать_файл» или найди через «список_файлов». " +
+	"После создания набора файлов обязательно вызывай «проверить_конфигурацию» с полная=true и исправляй ошибки. " +
+	"Используй существующие объекты (через «показать_объект»/«прочитать_файл») вместо дублирования. " +
 	"Имена и типы полей бери реальные; не выдумывай несуществующие типы. Известные функции: " + builtinReference +
 	"\n\n" + metadataFormatGuide
 

@@ -19,8 +19,24 @@ func TestSafeConfigPath_Valid(t *testing.T) {
 		"registers/продажи.yaml",
 		"inforegs/курс.yaml",
 		"enums/статус.yaml",
+		"constants/настройки.yaml",
 		"accounts/основной.yaml",
 		"accountregs/хозрасчётный.yaml",
+		"reports/продажи.yaml",
+		"widgets/выручка.yaml",
+		"processors/импорт.yaml",
+		"pages/панель.yaml",
+		"services/api.yaml",
+		"subsystems/продажи.yaml",
+		"roles/оператор.yaml",
+		"scheduled/ночная.yaml",
+		"journals/документы.yaml",
+		"src/заказ.posting.os",
+		"forms/Заказ.form.yaml",
+		"forms/Заказ.form.os",
+		"forms/контрагент/объекта.form.yaml",
+		"config/app.yaml",
+		"config/home_page.yaml",
 	} {
 		if err := safeConfigPath(ok); err != nil {
 			t.Errorf("ожидался валидный путь %q, получена ошибка: %v", ok, err)
@@ -32,7 +48,6 @@ func TestSafeConfigPath_Rejects(t *testing.T) {
 	for _, bad := range []string{
 		"",                      // пустой
 		"клиент.yaml",           // нет подкаталога
-		"src/модуль.os",         // не-whitelist подкаталог
 		"secrets/x.yaml",        // не-whitelist подкаталог
 		"catalogs/../evil.yaml", // обход через ..
 		"../catalogs/x.yaml",    // обход через ..
@@ -41,7 +56,13 @@ func TestSafeConfigPath_Rejects(t *testing.T) {
 		"catalogs/CON.yaml",     // зарезервированное имя Windows (регистр)
 		"catalogs/com1.yaml",    // зарезервированное имя Windows
 		"catalogs/x.txt",        // не .yaml
+		"catalogs/x.YAML",       // loader'ы ожидают точное .yaml
 		"catalogs/sub/x.yaml",   // вложенность (>2 сегментов)
+		"src/модуль.yaml",       // src только .os
+		"src/sub/модуль.os",     // src без вложенности
+		"forms/a.txt",           // forms только .form.yaml/.form.os
+		"forms/a/b/c.form.yaml", // forms max 3 сегмента
+		"config/llm.yaml",       // config только разрешённые файлы
 		"catalogs/",             // пустое имя файла
 		"catalogs/a:b.yaml",     // недопустимый символ Windows
 	} {

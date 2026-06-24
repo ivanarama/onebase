@@ -106,6 +106,26 @@
   - `--sample N` для первых строк из реальной БД.
 - `ai-guide` обновлён новыми headless-командами, тестами закреплена их видимость.
 
+## Выполнено в шестом срезе
+
+Дата реализации: 2026-06-24.
+
+- Генератор конфигуратора получил generic file tools поверх staging overlay:
+  - `создать_файл(путь, содержимое)`;
+  - `прочитать_файл(путь)`;
+  - `список_файлов()`;
+  - `форматировать()`.
+- Старый `создать_объект` оставлен совместимым, но теперь пишет через общий
+  staging writer и canonical YAML formatter.
+- `проверить_конфигурацию` получил опцию `полная=true`, которая запускает
+  `configcheck.RunFull` на overlay: cross-refs, query compile/prepare, pages/services/layout checks.
+- `ai-apply` whitelist расширен с MVP-метаданных до безопасного vertical slice:
+  YAML-kind директории, `forms/*.form.yaml`, `forms/*.form.os`, `src/*.os`,
+  `config/app.yaml`, `config/home_page.yaml`.
+- Prompt генератора обновлён: модель может создавать отчёты, виджеты, формы,
+  страницы, роли, сервисы и DSL-модули, но обязана читать существующие файлы и
+  запускать full-check перед ответом.
+
 ## Что мешает сейчас
 
 ### 1. Контракту не хватает графа зависимостей
@@ -134,17 +154,12 @@
 
 ### 3. AI-генератор пока создаёт только минимальный YAML-каркас
 
-`cfgAIGenerate` поддерживает `создать_объект` для ограниченного набора метаданных:
-catalogs/documents/registers/inforegs/enums/accounts/accountregs. Это хорошо как MVP,
-но не закрывает сильные пользовательские сценарии.
+`cfgAIGenerate` уже умеет писать произвольные разрешённые файлы в staging и запускать
+full-check, но UX и agent loop всё ещё выглядят как MVP.
 
-Не хватает генерации:
+Осталось:
 
-- `.os` модулей: проведение, обработчики форм, процедуры обработок, отчёты;
-- управляемых форм;
-- отчётов, виджетов, страниц, подсистем, ролей, scheduled jobs, services;
 - миграционного dry-run после apply;
-- полного `check` на staging, включая executable queries, а не только облегчённый check;
 - цикла самокоррекции по структурированным ошибкам;
 - частичного apply: выбрать файлы/объекты, редактировать предложенный YAML до применения.
 
@@ -421,8 +436,8 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. Генератор 2.0: `.os`, формы, отчёты, виджеты, full check и self-correction loop.
-2. UX генерации: diff viewer, partial apply, inline edit, visible tool/check trace.
+1. UX генерации: diff viewer, partial apply, inline edit, visible tool/check trace.
+2. Self-correction loop генератора: structured check errors, retry/fix rounds, final check summary.
 3. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
 4. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
 5. `impact` и refactoring helpers.
@@ -449,7 +464,8 @@ Tools:
 9. [x] Добавить `onebase schema [kind]`.
 10. [x] Добавить `onebase query`, `onebase eval`, `widget explain`, `report explain`.
 11. [ ] Добавить structured error codes/suggested fixes в `check`.
-12. [ ] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
+12. [x] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
+13. [ ] Добавить UX генерации: diff viewer, partial apply, inline edit, visible check trace.
 
 ## Риски
 
@@ -492,6 +508,15 @@ tmp=$(mktemp); go run ./cmd/onebase query --project examples/minimal --sqlite "$
 go run ./cmd/onebase eval '1 + 2'
 go run ./cmd/onebase widget explain КоличествоЗадач --project examples/tasks
 go run ./cmd/onebase report explain СводкаПоСпринту --project examples/tasks
+```
+
+Результат: PASS.
+
+После шестого среза дополнительно проверено:
+
+```bash
+go test ./internal/launcher
+go test ./...
 ```
 
 Результат: PASS.

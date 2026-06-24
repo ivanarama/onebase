@@ -10,7 +10,7 @@ import (
 	"github.com/ivantit66/onebase/internal/llm"
 )
 
-const validCatalogYAML = "name: Клиент\nfields:\n  - {name: Наименование, type: string}\n"
+const validCatalogYAML = "name: Клиент\nfields:\n  - name: Наименование\n    type: string\n"
 
 func newTestGenSession(t *testing.T) *genSession {
 	t.Helper()
@@ -40,6 +40,35 @@ func TestGenCreateObject_WritesToOverlay(t *testing.T) {
 	}
 }
 
+func TestGenCreateFile_WritesAllowedFiles(t *testing.T) {
+	g := newTestGenSession(t)
+	if err := g.createFile("reports/Продажи.yaml", "query: \"ВЫБРАТЬ 1 КАК Сумма\"\nname: Продажи\n"); err != nil {
+		t.Fatalf("createFile report: %v", err)
+	}
+	if err := g.createFile("src/Продажи.rep.os", "Процедура Сформировать() Экспорт\nКонецПроцедуры\n"); err != nil {
+		t.Fatalf("createFile os: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(g.overlay, "reports", "Продажи.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "name: Продажи\nquery: ВЫБРАТЬ 1 КАК Сумма\n" {
+		t.Fatalf("report YAML не отформатирован:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(g.overlay, "src", "Продажи.rep.os")); err != nil {
+		t.Fatalf("os-файл не создан: %v", err)
+	}
+}
+
+func TestGenCreateFile_RejectsUnsafePath(t *testing.T) {
+	g := newTestGenSession(t)
+	for _, bad := range []string{"../evil.yaml", "secrets/x.yaml", "src/x.yaml", "forms/a.txt"} {
+		if err := g.createFile(bad, "x"); err == nil {
+			t.Fatalf("ожидалась ошибка для %q", bad)
+		}
+	}
+}
+
 func TestGenCreateObject_UnknownKind(t *testing.T) {
 	g := newTestGenSession(t)
 	if err := g.createObject("ракета", "X", "name: X\n"); err == nil {
@@ -56,10 +85,10 @@ func TestGenCreateObject_BadName(t *testing.T) {
 	}
 }
 
-func TestGenCheck_ReportsBadYAML(t *testing.T) {
+func TestGenCheck_ReportsInvalidMetadata(t *testing.T) {
 	g := newTestGenSession(t)
-	if err := g.createObject("документ", "Заявка", "name: Заявка\nfields: [oops"); err != nil {
-		t.Fatalf("createObject: %v", err)
+	if err := g.createFile("documents/заявка.yaml", "fields:\n  - name: Номер\n    type: string\n"); err != nil {
+		t.Fatalf("createFile: %v", err)
 	}
 	out := g.check()
 	if !strings.Contains(out, "Заявка") {
@@ -106,11 +135,39 @@ func TestGenShowObject_ReadsExisting(t *testing.T) {
 	}
 }
 
+func TestGenReadAndListFiles(t *testing.T) {
+	g := newTestGenSession(t)
+	if err := g.createFile("widgets/Выручка.yaml", "name: Выручка\ntype: kpi\n"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := g.readFile("widgets/Выручка.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "name: Выручка") {
+		t.Fatalf("readFile вернул неверный контент: %q", content)
+	}
+	if list := g.listFiles(); !strings.Contains(list, "widgets/Выручка.yaml") {
+		t.Fatalf("listFiles не содержит виджет:\n%s", list)
+	}
+}
+
+func TestGenCheckFullReportsQueryErrors(t *testing.T) {
+	g := newTestGenSession(t)
+	if err := g.createFile("reports/Плохой.yaml", "name: Плохой\nquery: \"ВЫБРАТЬ * ИЗ Неизвестный.Источник\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	out := g.checkFull()
+	if !strings.Contains(out, "Найдены ошибки") {
+		t.Fatalf("full check должен вернуть ошибку запроса, got:\n%s", out)
+	}
+}
+
 func TestGenTools_Dispatch(t *testing.T) {
 	g := newTestGenSession(t)
 	tools, exec := g.tools()
-	if len(tools) != 3 {
-		t.Fatalf("ожидалось 3 инструмента, получено %d", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("ожидалось 7 инструментов, получено %d", len(tools))
 	}
 	res := exec(context.Background(), llm.ToolCall{
 		ID:    "1",
@@ -127,10 +184,26 @@ func TestGenTools_Dispatch(t *testing.T) {
 	if chk.IsError {
 		t.Errorf("проверить_конфигурацию не должен быть ошибкой: %s", chk.Content)
 	}
+	file := exec(context.Background(), llm.ToolCall{
+		ID:    "3",
+		Name:  "создать_файл",
+		Input: map[string]any{"путь": "src/Клиент.manager.os", "содержимое": "Процедура Тест() Экспорт\nКонецПроцедуры\n"},
+	})
+	if file.IsError {
+		t.Fatalf("создать_файл вернул ошибку: %s", file.Content)
+	}
+	read := exec(context.Background(), llm.ToolCall{
+		ID:    "4",
+		Name:  "прочитать_файл",
+		Input: map[string]any{"путь": "src/Клиент.manager.os"},
+	})
+	if read.IsError || !strings.Contains(read.Content, "Процедура Тест") {
+		t.Fatalf("прочитать_файл вернул неверно: %+v", read)
+	}
 }
 
 func TestGenerateSystemPrompt_HasMetadataFormat(t *testing.T) {
-	for _, want := range []string{"tableparts", "reference:", "type: number", "posting: true"} {
+	for _, want := range []string{"tableparts", "reference:", "type: number", "posting: true", "создать_файл", "src/*.os", "полная=true"} {
 		if !strings.Contains(aiGenerateSystem, want) {
 			t.Errorf("системный промпт генератора не содержит %q", want)
 		}

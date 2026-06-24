@@ -11,17 +11,27 @@ import (
 	"github.com/ivantit66/onebase/internal/configdb"
 )
 
-// applyableSubdirs — подкаталоги метаданных, куда разрешено применять
-// сгенерированный каркас. Совпадает с целевыми подкаталогами kindSubdir
-// (ai_generate.go): на этапе генерации каркаса создаются только метаданные.
+// applyableSubdirs — однофайловые YAML-подкаталоги конфигурации, куда разрешено
+// применять AI-generated changes. Более сложные семейства (src/forms/config)
+// проверяются отдельными правилами в safeConfigPath.
 var applyableSubdirs = map[string]bool{
 	"catalogs":    true,
 	"documents":   true,
 	"registers":   true,
 	"inforegs":    true,
 	"enums":       true,
+	"constants":   true,
 	"accounts":    true,
 	"accountregs": true,
+	"reports":     true,
+	"processors":  true,
+	"widgets":     true,
+	"pages":       true,
+	"services":    true,
+	"subsystems":  true,
+	"roles":       true,
+	"scheduled":   true,
+	"journals":    true,
 }
 
 // winReservedNames — зарезервированные имена устройств Windows (без расширения,
@@ -35,33 +45,51 @@ var winReservedNames = map[string]bool{
 }
 
 // safeConfigPath проверяет относительный slash-путь объекта каркаса перед
-// записью в реальную конфигурацию: ровно «подкаталог/имя.yaml», подкаталог из
-// белого списка, без обхода каталогов и без проблемных для Windows имён.
+// записью в реальную конфигурацию: путь из белого списка, без обхода каталогов
+// и без проблемных для Windows имён.
 func safeConfigPath(rel string) error {
 	if strings.TrimSpace(rel) == "" {
 		return fmt.Errorf("пустой путь")
 	}
-	if rel != path.Clean(rel) || strings.Contains(rel, "..") ||
+	if rel != path.Clean(rel) || path.IsAbs(rel) || strings.Contains(rel, "..") ||
 		strings.ContainsRune(rel, '\\') || strings.ContainsRune(rel, 0) {
 		return fmt.Errorf("недопустимый путь: %q", rel)
 	}
 	parts := strings.Split(rel, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return fmt.Errorf("ожидался путь вида «подкаталог/имя.yaml»: %q", rel)
+	for _, part := range parts {
+		if part == "" || strings.ContainsAny(part, `:*?"<>|`) {
+			return fmt.Errorf("недопустимый сегмент пути: %q", part)
+		}
+		stem := strings.ToLower(strings.TrimSuffix(part, path.Ext(part)))
+		if winReservedNames[stem] {
+			return fmt.Errorf("зарезервированное имя файла: %q", part)
+		}
 	}
-	subdir, fname := parts[0], parts[1]
-	if !applyableSubdirs[subdir] {
+	subdir := parts[0]
+	fname := parts[len(parts)-1]
+	switch {
+	case applyableSubdirs[subdir]:
+		if len(parts) != 2 {
+			return fmt.Errorf("ожидался путь вида «%s/имя.yaml»: %q", subdir, rel)
+		}
+		if !strings.HasSuffix(fname, ".yaml") {
+			return fmt.Errorf("ожидался .yaml-файл: %q", fname)
+		}
+	case subdir == "src":
+		if len(parts) != 2 || !strings.HasSuffix(fname, ".os") {
+			return fmt.Errorf("ожидался путь вида «src/имя.os»: %q", rel)
+		}
+	case subdir == "forms":
+		if len(parts) < 2 || len(parts) > 3 ||
+			!(strings.HasSuffix(fname, ".form.yaml") || strings.HasSuffix(fname, ".form.os")) {
+			return fmt.Errorf("ожидался путь forms/*.form.yaml, forms/*/*.form.yaml или .form.os: %q", rel)
+		}
+	case subdir == "config":
+		if len(parts) != 2 || (fname != "app.yaml" && fname != "home_page.yaml") {
+			return fmt.Errorf("разрешены только config/app.yaml и config/home_page.yaml: %q", rel)
+		}
+	default:
 		return fmt.Errorf("недопустимый подкаталог: %q", subdir)
-	}
-	if !strings.HasSuffix(strings.ToLower(fname), ".yaml") {
-		return fmt.Errorf("ожидался .yaml-файл: %q", fname)
-	}
-	if strings.ContainsAny(fname, `:*?"<>|`) {
-		return fmt.Errorf("недопустимое имя файла: %q", fname)
-	}
-	stem := strings.ToLower(strings.TrimSuffix(fname, path.Ext(fname)))
-	if winReservedNames[stem] {
-		return fmt.Errorf("зарезервированное имя файла: %q", fname)
 	}
 	return nil
 }
