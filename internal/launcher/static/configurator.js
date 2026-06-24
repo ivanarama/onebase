@@ -4086,13 +4086,34 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
       out.innerHTML='';
       if(note){var n=document.createElement('div');n.style.cssText='color:#475569;font-size:12px;margin-bottom:6px;white-space:pre-wrap';n.textContent=note;out.appendChild(n);}
       if(!lastChanges.length){var e=document.createElement('div');e.style.cssText='color:#94a3b8;font-size:12px';e.textContent='Модель не предложила объектов.';out.appendChild(e);apply.style.display='none';return;}
-      lastChanges.forEach(function(ch){
-        var wrap=document.createElement('div');wrap.style.cssText='margin-bottom:8px';
-        var h=document.createElement('div');h.style.cssText='font-weight:600;font-size:12px;color:#0f172a';h.textContent=(ch.kind||'')+': '+ch.path;
-        var pre=document.createElement('pre');pre.style.cssText='margin:2px 0 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px;font-size:11px;white-space:pre-wrap;word-break:break-word';pre.textContent=ch.newContent||'';
-        wrap.appendChild(h);wrap.appendChild(pre);out.appendChild(wrap);
+      lastChanges.forEach(function(ch,idx){
+        var wrap=document.createElement('div');wrap.className='cfggen-change';wrap.setAttribute('data-idx',String(idx));wrap.style.cssText='margin-bottom:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff';
+        var h=document.createElement('label');h.style.cssText='display:flex;align-items:center;gap:8px;font-weight:600;font-size:12px;color:#0f172a;background:#f8fafc;padding:7px 8px;cursor:pointer';
+        var cb=document.createElement('input');cb.type='checkbox';cb.className='cfggen-include';cb.checked=true;
+        var title=document.createElement('span');title.style.cssText='min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';title.textContent=(ch.kind||'')+': '+ch.path;
+        h.appendChild(cb);h.appendChild(title);wrap.appendChild(h);
+        if(ch.oldContent){
+          var details=document.createElement('details');details.style.cssText='border-top:1px solid #e2e8f0;background:#fff';
+          var summary=document.createElement('summary');summary.style.cssText='padding:6px 8px;cursor:pointer;color:#475569;font-size:11px';summary.textContent='Было';
+          var oldPre=document.createElement('pre');oldPre.style.cssText='margin:0;padding:8px;background:#fff7ed;border-top:1px solid #fed7aa;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto';oldPre.textContent=ch.oldContent||'';
+          details.appendChild(summary);details.appendChild(oldPre);wrap.appendChild(details);
+        }
+        var ta=document.createElement('textarea');ta.className='cfggen-editor';ta.spellcheck=false;ta.value=ch.newContent||'';ta.style.cssText='display:block;width:100%;box-sizing:border-box;min-height:150px;border:0;border-top:1px solid #e2e8f0;padding:8px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;white-space:pre;tab-size:2';
+        wrap.appendChild(ta);out.appendChild(wrap);
       });
       apply.style.display='';
+    }
+    function selectedChanges(){
+      var selected=[];
+      if(!lastChanges||!lastChanges.length)return selected;
+      out.querySelectorAll('.cfggen-change').forEach(function(wrap){
+        var idx=parseInt(wrap.getAttribute('data-idx')||'-1',10);
+        var ch=lastChanges[idx];if(!ch)return;
+        var cb=wrap.querySelector('.cfggen-include');if(cb&&!cb.checked)return;
+        var ta=wrap.querySelector('.cfggen-editor');
+        selected.push({path:ch.path,kind:ch.kind||'',oldContent:ch.oldContent||'',newContent:ta?ta.value:(ch.newContent||'')});
+      });
+      return selected;
     }
     send.addEventListener('click',function(){
       var p=prompt.value.trim();if(!p){msg.textContent='Введите описание';msg.style.color='#c00';return;}
@@ -4107,12 +4128,13 @@ document.querySelectorAll('details.cfg-tree').forEach(function(d){
         .finally(function(){send.disabled=false;});
     });
     apply.addEventListener('click',function(){
-      if(!lastChanges||!lastChanges.length)return;
+      var changes=selectedChanges();
+      if(!changes.length){msg.textContent='Выберите файлы для применения';msg.style.color='#c00';return;}
       msg.textContent='Применение…';msg.style.color='#666';apply.disabled=true;
-      fetch('/bases/'+base+'/configurator/ai-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({changes:lastChanges})})
+      fetch('/bases/'+base+'/configurator/ai-apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({changes:changes})})
         .then(function(r){return r.json();})
         .then(function(d){
-          if(d&&d.ok){msg.textContent='Применено объектов: '+d.applied+'. Выполните миграцию базы, чтобы создать таблицы. Обновление…';msg.style.color='#16a34a';setTimeout(function(){location.reload();},1800);}
+          if(d&&d.ok){msg.textContent='Применено файлов: '+d.applied+'. Выполните миграцию базы, если меняли метаданные. Обновление…';msg.style.color='#16a34a';setTimeout(function(){location.reload();},1800);}
           else{msg.textContent=(d&&d.error)||'Ошибка применения';msg.style.color='#c00';}
         })
         .catch(function(){msg.textContent='Ошибка сети';msg.style.color='#c00';})

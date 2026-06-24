@@ -126,6 +126,19 @@
   страницы, роли, сервисы и DSL-модули, но обязана читать существующие файлы и
   запускать full-check перед ответом.
 
+## Выполнено в седьмом срезе
+
+Дата реализации: 2026-06-24.
+
+- UI генерации в конфигураторе больше не применяет весь diff вслепую:
+  - каждый предложенный файл имеет checkbox;
+  - `Применить` отправляет только выбранные файлы;
+  - `newContent` можно отредактировать прямо перед apply.
+- Для изменённых файлов показывается collapsible `Было`, чтобы сравнить старое
+  содержимое с редактируемым новым.
+- Текст apply теперь говорит о файлах, а не только об объектах, и не обещает
+  миграцию там, где менялись только `.os`/формы.
+
 ## Что мешает сейчас
 
 ### 1. Контракту не хватает графа зависимостей
@@ -161,7 +174,8 @@ full-check, но UX и agent loop всё ещё выглядят как MVP.
 
 - миграционного dry-run после apply;
 - цикла самокоррекции по структурированным ошибкам;
-- частичного apply: выбрать файлы/объекты, редактировать предложенный YAML до применения.
+- полноценного side-by-side diff viewer;
+- visible tool/check trace генерации.
 
 ### 4. Headless-команды есть, но их можно усилить
 
@@ -436,7 +450,7 @@ Tools:
 
 Рекомендуемый порядок:
 
-1. UX генерации: diff viewer, partial apply, inline edit, visible tool/check trace.
+1. UX генерации: side-by-side diff viewer и visible tool/check trace.
 2. Self-correction loop генератора: structured check errors, retry/fix rounds, final check summary.
 3. Усилить `check`: structured codes, suggested fixes, staging/full-check API.
 4. MCP как thin wrapper над уже готовыми `describe/schema/fmt/query/eval/check`.
@@ -465,7 +479,8 @@ Tools:
 10. [x] Добавить `onebase query`, `onebase eval`, `widget explain`, `report explain`.
 11. [ ] Добавить structured error codes/suggested fixes в `check`.
 12. [x] Начать generator 2.0 с tool-use `создать_файл/прочитать_файл/проверить_конфигурацию`.
-13. [ ] Добавить UX генерации: diff viewer, partial apply, inline edit, visible check trace.
+13. [x] Добавить UX генерации: partial apply и inline edit перед apply.
+14. [ ] Добавить side-by-side diff viewer и visible tool/check trace.
 
 ## Риски
 
@@ -515,6 +530,16 @@ go run ./cmd/onebase report explain СводкаПоСпринту --project exa
 После шестого среза дополнительно проверено:
 
 ```bash
+go test ./internal/launcher
+go test ./...
+```
+
+Результат: PASS.
+
+После седьмого среза дополнительно проверено:
+
+```bash
+node --check internal/launcher/static/configurator.js
 go test ./internal/launcher
 go test ./...
 ```

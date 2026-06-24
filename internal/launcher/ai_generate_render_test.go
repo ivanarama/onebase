@@ -26,6 +26,7 @@ func TestConfigurator_GeneratePanelWired(t *testing.T) {
 	js := configuratorJS(t)
 	for _, sub := range []string{
 		"configurator/ai-generate", "configurator/ai-apply",
+		"cfggen-editor", "cfggen-include", "selectedChanges",
 	} {
 		if !strings.Contains(js, sub) {
 			t.Errorf("в configurator.js нет %q — панель генерации не подключена", sub)
