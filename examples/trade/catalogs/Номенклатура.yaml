@@ -30,3 +30,7 @@ fields:
     type: number
   - name: Активный
     type: bool
+activity:
+  field: Активный
+  default_scope: active
+  hide_from_choice: true

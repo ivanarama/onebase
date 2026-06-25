@@ -77,16 +77,18 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.resolveRefs(r.Context(), entity, rows)
+	markActivityRows(entity, rows)
 
 	// For tree view: fetch ALL items and build hierarchical order with depth info
 	var treeRows []map[string]any
 	if treeView {
-		allRows, _ := s.store.List(r.Context(), entity.Name, entity, storage.ListParams{})
+		allRows, _ := s.store.List(r.Context(), entity.Name, entity, storage.ListParams{ActivityScope: metadata.ActivityScopeAll})
 		s.resolveRefs(r.Context(), entity, allRows)
+		markActivityRows(entity, allRows)
 		treeRows = buildCatalogTree(allRows)
 	}
 
-	refFilterOptions, _ := s.loadRefOptions(r.Context(), entity)
+	refFilterOptions, _ := s.loadRefFilterOptions(r.Context(), entity)
 
 	user := auth.UserFromContext(r.Context())
 	isAdmin := user == nil || user.IsAdmin
@@ -150,6 +152,33 @@ func buildCatalogTree(rows []map[string]any) []map[string]any {
 	}
 	walk("", 0)
 	return result
+}
+
+func markActivityRows(entity *metadata.Entity, rows []map[string]any) {
+	if entity == nil || entity.Activity == nil {
+		return
+	}
+	for _, row := range rows {
+		row["_activity_inactive"] = explicitFalse(row[entity.Activity.Field])
+	}
+}
+
+func explicitFalse(v any) bool {
+	if v == nil {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return !t
+	case int:
+		return t == 0
+	case int64:
+		return t == 0
+	case string:
+		s := strings.TrimSpace(strings.ToLower(t))
+		return s == "false" || s == "0" || s == "нет"
+	}
+	return false
 }
 
 // buildEnumLabels строит карту имя_поля → значение → перевод(lang) для
@@ -239,6 +268,9 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 				values[f.Name] = now
 			}
 		}
+	}
+	if entity.Activity != nil {
+		values[entity.Activity.Field] = "true"
 	}
 	tablePartRows := map[string][]map[string]any{}
 	var fillError string
@@ -713,7 +745,20 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
+		if f.Type == metadata.FieldTypeBool {
+			if asBool(v) {
+				vals[f.Name] = "true"
+			} else {
+				vals[f.Name] = "false"
+			}
+			continue
+		}
 		vals[f.Name] = fmt.Sprintf("%v", v)
+	}
+	if entity.Activity != nil {
+		if vals[entity.Activity.Field] == "" {
+			vals[entity.Activity.Field] = "true"
+		}
 	}
 	// Include posted status + deletion mark for documents
 	if entity.Kind == metadata.KindDocument {
@@ -1055,6 +1100,49 @@ func (s *Server) unpostDocument(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+}
+
+func (s *Server) setRecordActivity(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+	if entity.Activity == nil {
+		http.Error(w, "activity is not configured", http.StatusBadRequest)
+		return
+	}
+	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "write") {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", 400)
+		return
+	}
+	active := r.URL.Query().Get("active") == "1" || strings.EqualFold(r.URL.Query().Get("active"), "true")
+	if err := s.store.SetActivity(r.Context(), entity, id, active); err != nil {
+		http.Error(w, s.errText(r, err), 500)
+		return
+	}
+	http.Redirect(w, r, safeBackURL(r, listURL(entity)), http.StatusSeeOther)
+}
+
+func safeBackURL(r *http.Request, fallback string) string {
+	ref := strings.TrimSpace(r.Referer())
+	if ref == "" {
+		return fallback
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return fallback
+	}
+	if u.IsAbs() && u.Host != r.Host {
+		return fallback
+	}
+	if !u.IsAbs() && !strings.HasPrefix(ref, "/") {
+		return fallback
+	}
+	return ref
 }
 
 // deleteRecord: admin → permanent delete (with ref check); non-admin → mark for deletion.
@@ -1553,8 +1641,23 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 	}
 	params.Limit = limit
 	params.Offset = (page - 1) * limit
+	if entity.Activity != nil {
+		scope := strings.ToLower(strings.TrimSpace(q.Get("activity")))
+		switch scope {
+		case metadata.ActivityScopeActive, metadata.ActivityScopeInactive, metadata.ActivityScopeAll:
+			params.ActivityScope = scope
+		default:
+			params.ActivityScope = entity.Activity.DefaultScope
+			if params.ActivityScope == "" {
+				params.ActivityScope = metadata.ActivityScopeActive
+			}
+		}
+	}
 
 	for _, f := range entity.Fields {
+		if entity.Activity != nil && f.Name == entity.Activity.Field {
+			continue
+		}
 		switch f.Type {
 		case metadata.FieldTypeDate:
 			from := q.Get("f." + f.Name + ".from")

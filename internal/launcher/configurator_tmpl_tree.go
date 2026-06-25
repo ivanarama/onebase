@@ -1419,6 +1419,36 @@ const cfgTabTree = `{{define "tab-tree"}}
     После включения требуется миграция БД: появятся колонки <code>is_folder</code> и <code>parent_id</code>.
   </div>
 </div>
+<details {{if $e.Activity}}open{{end}} style="margin-bottom:10px">
+  <summary class="section-hd" style="cursor:pointer">Активность</summary>
+  <input type="hidden" name="activity_present" value="1">
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:6px 0">
+    <input type="checkbox" name="activity_enabled" value="1" {{if $e.Activity}}checked{{end}}>
+    <span>Использовать скрытие элементов справочника</span>
+  </label>
+  <div style="display:grid;grid-template-columns:minmax(140px,180px) minmax(180px,280px);gap:8px 12px;align-items:center;font-size:12px;margin-left:24px">
+    <label style="color:#475569">Реквизит активности</label>
+    <select name="activity_field" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+      <option value="">— выбрать bool-реквизит —</option>
+      {{range $f := $e.Fields}}{{if eq $f.Type "bool"}}
+      <option value="{{$f.Name}}" {{if and $e.Activity (eq $e.Activity.Field $f.Name)}}selected{{end}}>{{$f.Name}}</option>
+      {{end}}{{end}}
+    </select>
+    <label style="color:#475569">Список по умолчанию</label>
+    <select name="activity_default_scope" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+      <option value="active" {{if or (not $e.Activity) (eq $e.Activity.DefaultScope "active")}}selected{{end}}>Активные</option>
+      <option value="all" {{if and $e.Activity (eq $e.Activity.DefaultScope "all")}}selected{{end}}>Все</option>
+    </select>
+    <span></span>
+    <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+      <input type="checkbox" name="activity_hide_from_choice" value="1" {{if or (not $e.Activity) $e.Activity.HideFromChoice}}checked{{end}}>
+      <span>Скрывать неактивные из выбора ссылок</span>
+    </label>
+  </div>
+  <div style="color:#94a3b8;font-size:11px;margin-left:24px;margin-top:6px">
+    В пользовательском режиме появятся фильтры «Активные / Скрытые / Все». Неактивные элементы не удаляются и остаются доступными в отчётах и отборах.
+  </div>
+</details>
 {{end}}
 
 {{if $e.Fields}}

@@ -215,6 +215,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/{kind}/{entity}/{id}/unpost", s.unpostDocument)
 
 	// Delete record / mark for deletion
+	r.Post("/ui/{kind}/{entity}/{id}/activity", s.setRecordActivity)
 	r.Post("/ui/{kind}/{entity}/{id}/delete", s.deleteRecord)
 	r.Post("/ui/{kind}/{entity}/delete-marked", s.deleteMarked)
 

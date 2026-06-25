@@ -15,13 +15,14 @@ import (
 
 // ListParams controls filtering, search, sorting and pagination for List queries.
 type ListParams struct {
-	Filters   map[string]FilterValue
-	Sort      string // field Name (empty = default sort by id)
-	Dir       string // "asc" or "desc"
-	ParentStr string // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
-	Search    string // full-text search: ILIKE across all string fields
-	Limit     int    // 0 = no limit
-	Offset    int    // for pagination
+	Filters       map[string]FilterValue
+	Sort          string // field Name (empty = default sort by id)
+	Dir           string // "asc" or "desc"
+	ParentStr     string // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
+	Search        string // full-text search: ILIKE across all string fields
+	ActivityScope string // "", "active", "inactive", "all"; applied only for opt-in catalogs
+	Limit         int    // 0 = no limit
+	Offset        int    // for pagination
 }
 
 // FilterValue holds a filter for one field.
@@ -275,6 +276,22 @@ func dateUpperBound(to string) (string, string) {
 	return to, "<="
 }
 
+func activityWhere(d Dialect, entity *metadata.Entity, scope string) string {
+	if entity == nil || entity.Activity == nil || scope == "" || scope == metadata.ActivityScopeAll {
+		return ""
+	}
+	col := metadata.ColumnName(metadata.Field{Name: entity.Activity.Field})
+	falseLit := boolFalseLit(d)
+	switch scope {
+	case metadata.ActivityScopeActive:
+		return fmt.Sprintf("(%s IS NULL OR %s <> %s)", col, col, falseLit)
+	case metadata.ActivityScopeInactive:
+		return fmt.Sprintf("%s = %s", col, falseLit)
+	default:
+		return ""
+	}
+}
+
 func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) ([]map[string]any, error) {
 	d := db.dialect
 	table := metadata.TableName(entityName)
@@ -307,6 +324,9 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			args = append(args, idArg(d, pID))
 			argIdx++
 		}
+	}
+	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
+		whereParts = append(whereParts, cond)
 	}
 
 	for _, f := range entity.Fields {
@@ -467,6 +487,9 @@ func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata
 			args = append(args, idArg(d, pID))
 			argIdx++
 		}
+	}
+	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
+		whereParts = append(whereParts, cond)
 	}
 
 	for _, f := range entity.Fields {

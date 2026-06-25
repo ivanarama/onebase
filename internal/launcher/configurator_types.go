@@ -54,6 +54,12 @@ type savePredefined struct {
 	Fields map[string]any `yaml:"fields,omitempty"`
 }
 
+type saveActivity struct {
+	Field          string `yaml:"field"`
+	DefaultScope   string `yaml:"default_scope,omitempty"`
+	HideFromChoice *bool  `yaml:"hide_from_choice,omitempty"`
+}
+
 // saveEntity отражает все верхнеуровневые ключи rawEntity (см.
 // metadata/yaml.go). Раньше структура содержала только Name/Posting/Fields/
 // TableParts — поэтому редактирование полей справочника через UI ВЫТИРАЛО
@@ -72,6 +78,7 @@ type saveEntity struct {
 	Predefined    []savePredefined  `yaml:"predefined,omitempty"`
 	ListForm      []string          `yaml:"list_form,omitempty"`
 	ItemForm      []string          `yaml:"item_form,omitempty"`
+	Activity      *saveActivity     `yaml:"activity,omitempty"`
 	Fields        []saveField       `yaml:"fields"`
 	TableParts    []saveTP          `yaml:"tableparts,omitempty"`
 }
@@ -197,6 +204,12 @@ type cfgTablePart struct {
 	Fields []cfgField
 }
 
+type cfgActivity struct {
+	Field          string
+	DefaultScope   string
+	HideFromChoice bool
+}
+
 type cfgEntity struct {
 	Name             string
 	Kind             string // "Справочник" / "Документ"
@@ -212,6 +225,7 @@ type cfgEntity struct {
 	LinkedPrintForms []cfgPrintForm
 	Predefined       []cfgPredefined
 	Titles           map[string]string // переводы синонима объекта
+	Activity         *cfgActivity
 }
 
 type cfgRegister struct {

@@ -34,6 +34,12 @@ fields:
     type: string
   - name: Поставщик
     type: reference:Контрагент
+  - name: Активный
+    type: bool
+activity:
+  field: Активный
+  default_scope: active
+  hide_from_choice: true
 tableparts:
   - name: Цены
     fields:
@@ -62,6 +68,10 @@ tableparts:
 		"Артикул: SERV",
 		"- name: Наименование",
 		"- name: Поставщик",
+		"activity:",
+		"field: Активный",
+		"default_scope: active",
+		"hide_from_choice: true",
 		"tableparts:",
 		"- name: Цены",
 	} {
@@ -81,7 +91,7 @@ func TestApplyFieldEdits_HierarchicalToggle(t *testing.T) {
 		Fields:        []saveField{{Name: "Наименование", Type: "string"}},
 	}
 	off := false
-	applyFieldEdits(ent, ent.Fields, nil, nil, &off, nil)
+	applyFieldEdits(ent, ent.Fields, nil, nil, &off, nil, nil)
 	if ent.Hierarchical {
 		t.Errorf("после off-toggle Hierarchical=true, ожидалось false")
 	}
@@ -90,7 +100,7 @@ func TestApplyFieldEdits_HierarchicalToggle(t *testing.T) {
 	}
 
 	on := true
-	applyFieldEdits(ent, ent.Fields, nil, nil, &on, nil)
+	applyFieldEdits(ent, ent.Fields, nil, nil, &on, nil, nil)
 	if !ent.Hierarchical {
 		t.Errorf("после on-toggle Hierarchical=false, ожидалось true")
 	}
@@ -105,7 +115,7 @@ func TestApplyFieldEdits_NilPtrPreserves(t *testing.T) {
 		Posting:      false,
 		Fields:       []saveField{{Name: "X", Type: "string"}},
 	}
-	applyFieldEdits(ent, ent.Fields, nil, nil, nil, nil)
+	applyFieldEdits(ent, ent.Fields, nil, nil, nil, nil, nil)
 	if !ent.Hierarchical {
 		t.Errorf("nil hierarchical-ptr перетёр поле в false")
 	}
@@ -126,21 +136,21 @@ func TestApplyFieldEdits_BasedOn(t *testing.T) {
 	}
 
 	// nil basedOn-ptr → сохраняется как было.
-	applyFieldEdits(ent, ent.Fields, nil, nil, nil, nil)
+	applyFieldEdits(ent, ent.Fields, nil, nil, nil, nil, nil)
 	if len(ent.BasedOn) != 2 {
 		t.Errorf("nil basedOn-ptr изменил поле, ожидалось 2 элемента, получено %v", ent.BasedOn)
 	}
 
 	// Явный пустой slice → очистка based_on.
 	empty := []string{}
-	applyFieldEdits(ent, ent.Fields, nil, nil, nil, &empty)
+	applyFieldEdits(ent, ent.Fields, nil, nil, nil, &empty, nil)
 	if len(ent.BasedOn) != 0 {
 		t.Errorf("пустой slice не очистил BasedOn: %v", ent.BasedOn)
 	}
 
 	// Новый список перетирает старый.
 	newList := []string{"ОдинТолько"}
-	applyFieldEdits(ent, ent.Fields, nil, nil, nil, &newList)
+	applyFieldEdits(ent, ent.Fields, nil, nil, nil, &newList, nil)
 	if len(ent.BasedOn) != 1 || ent.BasedOn[0] != "ОдинТолько" {
 		t.Errorf("BasedOn не обновился: %v", ent.BasedOn)
 	}

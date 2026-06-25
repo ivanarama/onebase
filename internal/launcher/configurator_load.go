@@ -137,6 +137,13 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		} else {
 			ev.Kind = "Документ"
 		}
+		if e.Activity != nil {
+			ev.Activity = &cfgActivity{
+				Field:          e.Activity.Field,
+				DefaultScope:   e.Activity.DefaultScope,
+				HideFromChoice: e.Activity.HideFromChoice,
+			}
+		}
 		for _, f := range e.Fields {
 			ev.Fields = append(ev.Fields, toCfgField(f))
 		}

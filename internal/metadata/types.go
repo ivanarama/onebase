@@ -152,6 +152,21 @@ type PredefinedItem struct {
 	Fields map[string]any // initial field values
 }
 
+const (
+	ActivityScopeActive   = "active"
+	ActivityScopeInactive = "inactive"
+	ActivityScopeAll      = "all"
+)
+
+// ActivityConfig describes opt-in catalog activity semantics. The referenced
+// bool field remains a normal requisit; the platform only standardizes list
+// scopes and reference-choice filtering when this block is configured.
+type ActivityConfig struct {
+	Field          string
+	DefaultScope   string
+	HideFromChoice bool
+}
+
 type Entity struct {
 	Name string
 	// Title — человекочитаемое представление (аналог «Синонима» в 1С).
@@ -179,6 +194,9 @@ type Entity struct {
 	// catalog или document. Проверяются Validate. Пустой/nil — ввод на
 	// основании запрещён.
 	BasedOn []string
+	// Activity — opt-in механизм активности справочника. Nil означает, что
+	// справочник не получает специальных фильтров и скрытия из выбора.
+	Activity *ActivityConfig
 	// ListMode — режим загрузки списка по умолчанию: "" / "pages" (постранично)
 	// или "feed" (лента с догрузкой по скроллу, как динамический список 1С).
 	// Пользователь может переопределить тумблером (запоминается per-сущность).

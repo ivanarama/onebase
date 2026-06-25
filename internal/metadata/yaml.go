@@ -37,6 +37,12 @@ type rawPredefined struct {
 	Fields map[string]interface{} `yaml:"fields"`
 }
 
+type rawActivity struct {
+	Field          string `yaml:"field"`
+	DefaultScope   string `yaml:"default_scope"`
+	HideFromChoice *bool  `yaml:"hide_from_choice"`
+}
+
 type rawEntity struct {
 	Name          string            `yaml:"name"`
 	Title         string            `yaml:"title"`
@@ -51,6 +57,7 @@ type rawEntity struct {
 	ListForm      []string          `yaml:"list_form"`
 	ItemForm      []string          `yaml:"item_form"`
 	BasedOn       []string          `yaml:"based_on"`
+	Activity      *rawActivity      `yaml:"activity"`
 	ListMode      string            `yaml:"list_mode"`
 	TileView      *rawTileView      `yaml:"tile_view"`
 }
@@ -84,6 +91,21 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	e.ListForm = raw.ListForm
 	e.ItemForm = raw.ItemForm
 	e.BasedOn = raw.BasedOn
+	if raw.Activity != nil {
+		hide := true
+		if raw.Activity.HideFromChoice != nil {
+			hide = *raw.Activity.HideFromChoice
+		}
+		scope := strings.ToLower(strings.TrimSpace(raw.Activity.DefaultScope))
+		if scope == "" {
+			scope = ActivityScopeActive
+		}
+		e.Activity = &ActivityConfig{
+			Field:          strings.TrimSpace(raw.Activity.Field),
+			DefaultScope:   scope,
+			HideFromChoice: hide,
+		}
+	}
 	// Нормализуем: «Feed», «FEED», « feed » → «feed». Иначе resolveListMode
 	// (сравнение с точной строкой "feed") молча откатывался бы на постранично.
 	e.ListMode = strings.ToLower(strings.TrimSpace(raw.ListMode))

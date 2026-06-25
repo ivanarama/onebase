@@ -20,7 +20,6 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/runtime"
-	"github.com/ivantit66/onebase/internal/storage"
 	"golang.org/x/text/encoding/charmap"
 )
 
@@ -93,13 +92,9 @@ func (s *Server) loadProcessorRefOpts(ctx context.Context, params []processorpkg
 		if entity == nil {
 			continue
 		}
-		rows, err := s.store.List(ctx, entity.Name, entity, storage.ListParams{})
+		rows, err := s.referenceOptions(ctx, entity, refOptionsChoice)
 		if err != nil {
 			continue
-		}
-		rows = filterOutFolders(rows)
-		for _, row := range rows {
-			row["_label"] = firstStringField(row, entity)
 		}
 		opts[p.Name] = rows
 	}

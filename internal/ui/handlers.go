@@ -115,7 +115,45 @@ func (s *Server) usersForSelection(ctx context.Context) []map[string]any {
 	return rows
 }
 
+type refOptionsMode int
+
+const (
+	refOptionsChoice refOptionsMode = iota
+	refOptionsFilter
+)
+
+func (s *Server) refListParamsForMode(refEntity *metadata.Entity, mode refOptionsMode) storage.ListParams {
+	params := storage.ListParams{}
+	if mode == refOptionsChoice && refEntity != nil && refEntity.Activity != nil && refEntity.Activity.HideFromChoice {
+		params.ActivityScope = metadata.ActivityScopeActive
+	}
+	return params
+}
+
+func (s *Server) referenceOptions(ctx context.Context, refEntity *metadata.Entity, mode refOptionsMode) ([]map[string]any, error) {
+	if refEntity == nil {
+		return nil, nil
+	}
+	rows, err := s.store.List(ctx, refEntity.Name, refEntity, s.refListParamsForMode(refEntity, mode))
+	if err != nil {
+		return nil, err
+	}
+	rows = filterOutFolders(rows)
+	for _, row := range rows {
+		row["_label"] = firstStringField(row, refEntity)
+	}
+	return rows, nil
+}
+
 func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (map[string][]map[string]any, error) {
+	return s.loadRefOptionsWithMode(ctx, entity, refOptionsChoice)
+}
+
+func (s *Server) loadRefFilterOptions(ctx context.Context, entity *metadata.Entity) (map[string][]map[string]any, error) {
+	return s.loadRefOptionsWithMode(ctx, entity, refOptionsFilter)
+}
+
+func (s *Server) loadRefOptionsWithMode(ctx context.Context, entity *metadata.Entity, mode refOptionsMode) (map[string][]map[string]any, error) {
 	opts := make(map[string][]map[string]any)
 	for _, f := range entity.Fields {
 		if f.RefEntity == "" {
@@ -130,13 +168,9 @@ func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (m
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.store.List(ctx, refEntity.Name, refEntity, storage.ListParams{})
+		rows, err := s.referenceOptions(ctx, refEntity, mode)
 		if err != nil {
 			return nil, err
-		}
-		rows = filterOutFolders(rows)
-		for _, row := range rows {
-			row["_label"] = firstStringField(row, refEntity)
 		}
 		opts[f.Name] = rows
 	}
@@ -159,13 +193,9 @@ func (s *Server) loadTPRefOptions(ctx context.Context, entity *metadata.Entity) 
 			if refEntity == nil {
 				continue
 			}
-			rows, err := s.store.List(ctx, refEntity.Name, refEntity, storage.ListParams{})
+			rows, err := s.referenceOptions(ctx, refEntity, refOptionsChoice)
 			if err != nil {
 				continue
-			}
-			rows = filterOutFolders(rows)
-			for _, row := range rows {
-				row["_label"] = firstStringField(row, refEntity)
 			}
 			tpOpts[f.Name] = rows
 		}

@@ -23,6 +23,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateTileView(e); err != nil {
 			return err
 		}
+		if err := validateActivity(e); err != nil {
+			return err
+		}
 		for _, tp := range e.TableParts {
 			for _, f := range tp.Fields {
 				if IsRichText(f.Type) {
@@ -38,6 +41,31 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: based_on references unknown entity %s", e.Name, src)
 			}
 		}
+	}
+	return nil
+}
+
+func validateActivity(e *Entity) error {
+	if e == nil || e.Activity == nil {
+		return nil
+	}
+	if e.Kind != KindCatalog {
+		return fmt.Errorf("entity %s: activity is supported only for catalogs", e.Name)
+	}
+	if e.Activity.Field == "" {
+		return fmt.Errorf("entity %s: activity.field is required", e.Name)
+	}
+	f := findEntityField(e, e.Activity.Field)
+	if f == nil {
+		return fmt.Errorf("entity %s: activity.field references unknown field %s", e.Name, e.Activity.Field)
+	}
+	if f.Type != FieldTypeBool || f.RefEntity != "" {
+		return fmt.Errorf("entity %s: activity.field %s must have type bool", e.Name, e.Activity.Field)
+	}
+	switch e.Activity.DefaultScope {
+	case "", ActivityScopeActive, ActivityScopeAll:
+	default:
+		return fmt.Errorf("entity %s: activity.default_scope must be active or all", e.Name)
 	}
 	return nil
 }

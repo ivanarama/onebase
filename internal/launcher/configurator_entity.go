@@ -126,7 +126,7 @@ func findEntityFilePath(dir, entityName string) (string, error) {
 	return "", fmt.Errorf("entity %q not found", entityName)
 }
 
-func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField, posting *bool, hierarchical *bool, basedOn *[]string) {
+func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField, posting *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity) {
 	ent.Fields = fields
 	existingTP := make(map[string]bool, len(ent.TableParts))
 	for i, tp := range ent.TableParts {
@@ -170,9 +170,12 @@ func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]
 			ent.BasedOn = append([]string(nil), (*basedOn)...)
 		}
 	}
+	if activity != nil {
+		ent.Activity = *activity
+	}
 }
 
-func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, hierarchical *bool, basedOn *[]string, objTitles *map[string]string) error {
+func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, objTitles *map[string]string) error {
 	filePath, err := findEntityFilePath(dir, entityName)
 	if err != nil {
 		return err
@@ -185,7 +188,7 @@ func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields
 	if err := yaml.Unmarshal(raw, &ent); err != nil {
 		return err
 	}
-	applyFieldEdits(&ent, fields, tpFields, posting, hierarchical, basedOn)
+	applyFieldEdits(&ent, fields, tpFields, posting, hierarchical, basedOn, activity)
 	if objTitles != nil {
 		ent.Titles = *objTitles
 	}
@@ -196,7 +199,7 @@ func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields
 	return os.WriteFile(filePath, out, 0o644)
 }
 
-func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, hierarchical *bool, basedOn *[]string, objTitles *map[string]string) error {
+func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, objTitles *map[string]string) error {
 	db, err := OpenDB(ctx, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -233,7 +236,7 @@ func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName 
 		return fmt.Errorf("entity %q not found in DB config", entityName)
 	}
 
-	applyFieldEdits(&ent, fields, tpFields, posting, hierarchical, basedOn)
+	applyFieldEdits(&ent, fields, tpFields, posting, hierarchical, basedOn, activity)
 	if objTitles != nil {
 		ent.Titles = *objTitles
 	}
@@ -528,6 +531,15 @@ func buildTPSaveField(r *http.Request, lang, keyBase, tpName, name string) (save
 	return sf, ""
 }
 
+func saveFieldsHasBool(fields []saveField, name string) bool {
+	for _, f := range fields {
+		if f.Name == name && f.Type == "bool" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request) {
 	b, err := h.store.Get(chi.URLParam(r, "id"))
 	if err != nil {
@@ -637,6 +649,33 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 		fields = append(fields, saveField{Name: name, Type: typ, Titles: parseMapForm(r, fmt.Sprintf("new_field.%d.titles", i))})
 	}
 
+	var activity **saveActivity
+	if entityKind == "Справочник" && r.FormValue("activity_present") == "1" {
+		var target *saveActivity
+		if r.FormValue("activity_enabled") == "1" {
+			fieldName := strings.TrimSpace(r.FormValue("activity_field"))
+			if fieldName == "" {
+				data := h.loadCfgData(r.Context(), b, "tree")
+				data.Error = tr(lang, "Выберите булевый реквизит активности")
+				renderCfg(w, r, data)
+				return
+			}
+			if !saveFieldsHasBool(fields, fieldName) {
+				data := h.loadCfgData(r.Context(), b, "tree")
+				data.Error = fmt.Sprintf(tr(lang, "Реквизит активности «%s» должен иметь тип bool"), fieldName)
+				renderCfg(w, r, data)
+				return
+			}
+			scope := strings.ToLower(strings.TrimSpace(r.FormValue("activity_default_scope")))
+			if scope != "all" {
+				scope = "active"
+			}
+			hide := r.FormValue("activity_hide_from_choice") == "1"
+			target = &saveActivity{Field: fieldName, DefaultScope: scope, HideFromChoice: &hide}
+		}
+		activity = &target
+	}
+
 	tpFields := make(map[string][]saveField)
 	for _, tpName := range tpNames {
 		var f []saveField
@@ -727,9 +766,9 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 
 	var saveErr error
 	if b.ConfigSource == "database" {
-		saveErr = h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields, posting, hierarchical, basedOn, objTitles)
+		saveErr = h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields, posting, hierarchical, basedOn, activity, objTitles)
 	} else {
-		saveErr = saveEntityFieldsToFile(b.Path, entityName, fields, tpFields, posting, hierarchical, basedOn, objTitles)
+		saveErr = saveEntityFieldsToFile(b.Path, entityName, fields, tpFields, posting, hierarchical, basedOn, activity, objTitles)
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")

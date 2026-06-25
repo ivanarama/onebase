@@ -337,17 +337,72 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"hasFilter": func(params storage.ListParams) bool {
 			return len(params.Filters) > 0
 		},
-		"filterQuery": func(params storage.ListParams) string {
+		"isActivityField": func(e *metadata.Entity, f metadata.Field) bool {
+			return e != nil && e.Activity != nil && f.Name == e.Activity.Field
+		},
+		"activityQuery": func(params storage.ListParams, scope string) string {
 			var parts []string
+			parts = append(parts, "activity="+url.QueryEscape(scope))
+			if params.Search != "" {
+				parts = append(parts, "q="+url.QueryEscape(params.Search))
+			}
+			if params.Sort != "" {
+				parts = append(parts, "sort="+url.QueryEscape(params.Sort))
+				if params.Dir != "" {
+					parts = append(parts, "dir="+url.QueryEscape(params.Dir))
+				}
+			}
 			for k, v := range params.Filters {
 				if v.From != "" {
-					parts = append(parts, "f."+k+".from="+v.From)
+					parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
 				}
 				if v.To != "" {
-					parts = append(parts, "f."+k+".to="+v.To)
+					parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
 				}
 				if v.Value != "" {
-					parts = append(parts, "f."+k+"="+v.Value)
+					parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
+				}
+			}
+			return strings.Join(parts, "&")
+		},
+		"listQuerySuffix": func(params storage.ListParams) string {
+			var parts []string
+			if params.ActivityScope != "" {
+				parts = append(parts, "activity="+url.QueryEscape(params.ActivityScope))
+			}
+			if params.Search != "" {
+				parts = append(parts, "q="+url.QueryEscape(params.Search))
+			}
+			for k, v := range params.Filters {
+				if v.From != "" {
+					parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
+				}
+				if v.To != "" {
+					parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
+				}
+				if v.Value != "" {
+					parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
+				}
+			}
+			if len(parts) == 0 {
+				return ""
+			}
+			return "?" + strings.Join(parts, "&")
+		},
+		"filterQuery": func(params storage.ListParams) string {
+			var parts []string
+			if params.ActivityScope != "" {
+				parts = append(parts, "activity="+url.QueryEscape(params.ActivityScope))
+			}
+			for k, v := range params.Filters {
+				if v.From != "" {
+					parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
+				}
+				if v.To != "" {
+					parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
+				}
+				if v.Value != "" {
+					parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
 				}
 			}
 			if len(parts) == 0 {
@@ -1152,10 +1207,17 @@ const tplList = `
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <div class="view-switch">
-      <a class="view-btn{{if and (not .TreeView) (not .TilesView)}} active{{end}}" href="?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}{{if $.CurrentSubsystem}}subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Список"}}">☰</a>
-      <a class="view-btn{{if .TilesView}} active{{end}}" href="?view=tiles{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Плитка"}}">▦</a>
+      <a class="view-btn{{if and (not .TreeView) (not .TilesView)}} active{{end}}" href="?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}{{if $.CurrentSubsystem}}subsystem={{$.CurrentSubsystem}}{{end}}{{filterQuery .Params}}" title="{{t $.Lang "Список"}}">☰</a>
+      <a class="view-btn{{if .TilesView}} active{{end}}" href="?view=tiles{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{filterQuery .Params}}" title="{{t $.Lang "Плитка"}}">▦</a>
       {{if .Entity.Hierarchical}}<a class="view-btn{{if .TreeView}} active{{end}}" href="?view=tree{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Дерево"}}">📂</a>{{end}}
     </div>
+    {{if and .Entity.Activity (not .TreeView)}}
+    <div class="view-switch" title="{{t $.Lang "Активность"}}">
+      <a class="view-btn{{if eq .Params.ActivityScope "active"}} active{{end}}" href="?{{activityQuery .Params "active"}}{{if .TilesView}}&view=tiles{{end}}{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Активные"}}</a>
+      <a class="view-btn{{if eq .Params.ActivityScope "inactive"}} active{{end}}" href="?{{activityQuery .Params "inactive"}}{{if .TilesView}}&view=tiles{{end}}{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Скрытые"}}</a>
+      <a class="view-btn{{if eq .Params.ActivityScope "all"}} active{{end}}" href="?{{activityQuery .Params "all"}}{{if .TilesView}}&view=tiles{{end}}{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Все"}}</a>
+    </div>
+    {{end}}
     {{if not .TreeView}}
       {{if .Feed}}<a class="btn btn-secondary btn-sm" href="?lm=pages{{if .TilesView}}&view=tiles{{end}}{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if .Params.Search}}&q={{.Params.Search}}{{end}}{{filterQuery .Params}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Показывать постранично"}}">▤ {{t $.Lang "Страницы"}}</a>
       {{else}}<a class="btn btn-secondary btn-sm" href="?lm=feed{{if .TilesView}}&view=tiles{{end}}{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if .Params.Search}}&q={{.Params.Search}}{{end}}{{filterQuery .Params}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Лента с догрузкой по скроллу"}}">≣ {{t $.Lang "Лента"}}</a>{{end}}
@@ -1170,12 +1232,13 @@ const tplList = `
       {{if .CanWrite}}<a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" onclick="listActionsBtnClick(event)" title="{{t $.Lang "Команды для выбранной строки"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
-    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{filterQuery .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
+    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
   <input type="text" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" oninput="clearTimeout(window._srch);window._srch=setTimeout(()=>this.form.submit(),320)">
   {{if .Params.Search}}<a class="btn btn-sm" href="?" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
+  {{if .Entity.Activity}}<input type="hidden" name="activity" value="{{.Params.ActivityScope}}">{{end}}
   {{if $.CurrentSubsystem}}<input type="hidden" name="subsystem" value="{{$.CurrentSubsystem}}">{{end}}
 </form>
 {{if .Breadcrumbs}}
@@ -1191,6 +1254,8 @@ const tplList = `
   <form method="GET" action="">
   <div class="filter-body">
   {{range $entity.Fields}}{{$f := .}}
+    {{if isActivityField $entity .}}
+    {{else}}
     {{if eq (str .Type) "date"}}
       <div>
         <label>{{.DisplayName $.Lang}} {{t $.Lang "с"}}</label>
@@ -1216,12 +1281,14 @@ const tplList = `
         <input type="text" name="f.{{.Name}}" value="{{(filterVal $params .Name).Value}}">
       </div>
     {{end}}
+    {{end}}
   {{end}}
   </div>
   <div class="filter-actions">
     <button class="btn btn-primary btn-sm" type="submit">{{t $.Lang "Применить"}}</button>
     <a class="btn btn-sm" href="?" style="background:#e2e8f0;color:#475569">{{t $.Lang "Сбросить"}}</a>
   </div>
+  {{if $entity.Activity}}<input type="hidden" name="activity" value="{{$params.ActivityScope}}">{{end}}
   {{if $params.Sort}}<input type="hidden" name="sort" value="{{$params.Sort}}"><input type="hidden" name="dir" value="{{$params.Dir}}">{{end}}
   {{if $.CurrentSubsystem}}<input type="hidden" name="subsystem" value="{{$.CurrentSubsystem}}">{{end}}
   </form>
@@ -1252,6 +1319,10 @@ const tplList = `
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
   data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
   data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
+  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+  data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
+  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
+  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
   {{range $.Entity.Fields}}
     {{if eq .Name "Наименование"}}
@@ -1301,6 +1372,10 @@ const tplList = `
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
   data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
   data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
+  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+  data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
+  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
+  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
@@ -1355,6 +1430,10 @@ const tplList = `
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
   data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
   data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
+  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+  data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
+  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
+  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
@@ -1403,6 +1482,7 @@ const tplList = `
 </main>
 <script>
 var _isAdmin={{if .IsAdmin}}true{{else}}false{{end}};
+var _canWrite={{if .CanWrite}}true{{else}}false{{end}};
 var _canDelete={{if .CanDelete}}true{{else}}false{{end}};
 var _canUnpost={{if .CanUnpost}}true{{else}}false{{end}};
 var _listSel=null;
@@ -1457,6 +1537,10 @@ function listMenuItems(tr){
     items.push({label:'{{t $.Lang "Редактировать"}}',fn:function(){listOpen(tr.dataset.openUrl);}});
   } else {
     items.push({label:'{{t $.Lang "Открыть"}}',fn:function(){listOpen(tr.dataset.openUrl);}});
+  }
+  if(_canWrite&&tr.dataset.activityEnabled==='1'){
+    if(tr.dataset.activityInactive==='1')items.push({label:'{{t $.Lang "Вернуть в выбор"}}',fn:function(){listSubmit(tr.dataset.activityShowUrl,'{{t $.Lang "Вернуть в выбор?"}}');}});
+    else items.push({label:'{{t $.Lang "Скрыть из выбора"}}',fn:function(){listSubmit(tr.dataset.activityHideUrl,'{{t $.Lang "Скрыть из выбора?"}}');}});
   }
   if(_canDelete){
     if(!isPredefined)items.push({label:'{{t $.Lang "Пометить на удаление"}}',danger:true,fn:function(){listSubmit(tr.dataset.markUrl,'Пометить на удаление?');}});
