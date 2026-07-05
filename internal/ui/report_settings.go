@@ -86,10 +86,16 @@ func requestFormValue(r *http.Request, name string) (string, bool) {
 }
 
 func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report) reportSettingsRequest {
+	if !reportSupportsRuntimeSettings(rep) {
+		return reportSettingsRequest{}
+	}
 	presetID, hasPreset := requestFormValue(r, "__preset")
 	if settings := readReportSettings(r); settings != nil {
 		settings = reportSettingsWithRequestVariant(r, settings)
 		return reportSettingsRequest{Settings: settings, ActivePresetID: presetID}
+	}
+	if s.store == nil {
+		return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil), ActivePresetID: presetID}
 	}
 
 	user := currentUserLogin(r)
@@ -118,6 +124,21 @@ func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report
 		return reportSettingsRequest{Settings: settings}
 	}
 	return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil)}
+}
+
+func reportSupportsRuntimeSettings(rep *reportpkg.Report) bool {
+	if rep == nil {
+		return false
+	}
+	if rep.Composition != nil {
+		return true
+	}
+	for i := range rep.Variants {
+		if rep.Variants[i].Composition != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func loadReportPresets(ctx context.Context, store *storage.DB, report, user string) []storage.ReportPreset {
@@ -164,6 +185,9 @@ func effectiveComposition(rep *reportpkg.Report, s *reportpkg.UserReportSettings
 		variant = s.Variant
 	}
 	base := rep.ActiveComposition(variant)
+	if base == nil {
+		return nil
+	}
 	if s == nil || s.Composition == nil {
 		return base
 	}
@@ -187,11 +211,11 @@ func reportSettingsPanelJSON(rep *reportpkg.Report, s *reportpkg.UserReportSetti
 }
 
 func reportSettingsPanelState(rep *reportpkg.Report, s *reportpkg.UserReportSettings) *reportpkg.UserReportSettings {
-	if rep == nil {
+	if !reportSupportsRuntimeSettings(rep) {
 		return nil
 	}
 	comp := effectiveComposition(rep, s)
-	if comp == nil && s == nil {
+	if comp == nil {
 		return nil
 	}
 	out := &reportpkg.UserReportSettings{}
@@ -262,9 +286,9 @@ func panelMeasures(in []reportpkg.Measure) []reportpkg.Measure {
 // DetailEntity. Они НИКОГДА не берутся из пользовательского ввода.
 func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition {
 	if base == nil {
-		// Нет доверенной базы (отчёт без composition) — не исполняем ничего из
-		// пользовательского ввода: возвращаем пустую презентационную компоновку.
-		base = &reportpkg.Composition{}
+		// Нет доверенной базы (отчёт без composition) — пользовательский ввод не
+		// должен переводить плоский отчёт в режим СКД.
+		return nil
 	}
 	// Доверенные показатели и поля по имени (регистронезависимо, как DSL).
 	// Expr всегда наследуется только отсюда; презентационные поля служат

@@ -2740,7 +2740,7 @@ const tplReport = `
 </form>
 </details>
 {{end}}
-{{if .ReportCols}}
+{{if and .ReportCols .ReportSettingsJSON}}
 <details class="card report-block" data-block="settings" style="margin-bottom:16px">
 <summary>{{t $.Lang "Настройка отчёта"}}{{if .UserSettings}} <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
 <form method="POST" onsubmit="return rsBeforeSubmit(event)">

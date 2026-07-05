@@ -15,6 +15,16 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
+func reportSettingsTestReport(name string) *reportpkg.Report {
+	return &reportpkg.Report{
+		Name: name,
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
+}
+
 func TestEffectiveComposition(t *testing.T) {
 	main := &reportpkg.Composition{Groupings: []string{"Основной"}}
 	variantComp := &reportpkg.Composition{Groupings: []string{"Вариант"}}
@@ -37,6 +47,24 @@ func TestEffectiveComposition(t *testing.T) {
 	// 3) settings == nil → основной composition.
 	if got := effectiveComposition(rep, nil); got != main {
 		t.Fatalf("main: %+v", got)
+	}
+}
+
+func TestEffectiveCompositionRequiresTrustedBase(t *testing.T) {
+	rep := &reportpkg.Report{Name: "plain"}
+	settings := &reportpkg.UserReportSettings{
+		Composition: &reportpkg.Composition{
+			Groupings:  []string{},
+			Measures:   []reportpkg.Measure{},
+			Appearance: reportpkg.Appearance{Lines: "both"},
+		},
+		Filters: []reportpkg.Filter{{Field: "Сумма", Op: "gt", Value: "100"}},
+	}
+	if got := effectiveComposition(rep, settings); got != nil {
+		t.Fatalf("отчёт без YAML-composition не должен переходить в режим СКД: %+v", got)
+	}
+	if raw := reportSettingsPanelJSON(rep, settings); raw != "" {
+		t.Fatalf("панель настроек для плоского отчёта должна быть скрыта, got %s", raw)
 	}
 }
 
@@ -82,7 +110,7 @@ func TestReportSettingsForRequestPresetKeepsPresetVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	rep := &reportpkg.Report{Name: "Продажи"}
+	rep := reportSettingsTestReport("Продажи")
 	id, err := db.SaveReportPreset(ctx, storage.ReportPreset{
 		Report:       "Продажи",
 		User:         "",
@@ -318,25 +346,34 @@ func TestReportSettingsPanelJSONUsesBaseComposition(t *testing.T) {
 // TestReportSettingsPanel: панель «Настройки» рендерится при наличии ReportCols,
 // содержит чекбоксы доступных полей и скрытое поле __settings.
 func TestReportSettingsPanel(t *testing.T) {
-	rep := &reportpkg.Report{Name: "sales", Title: "Продажи"}
+	rep := &reportpkg.Report{
+		Name:  "sales",
+		Title: "Продажи",
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
 	preset := storage.ReportPreset{ID: "p1", Name: "Мой вариант", IsDefault: true}
+	settings := &reportpkg.UserReportSettings{
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
 	var buf bytes.Buffer
 	data := map[string]any{
-		"Report":         rep,
-		"ParamValues":    map[string]any{},
-		"ReportParams":   []reportParamUI{},
-		"ReportCols":     []string{"Товар", "Сумма"},
-		"ReportPresets":  []storage.ReportPreset{preset},
-		"ActivePresetID": "p1",
-		"ActivePreset":   &preset,
-		"UserSettings": &reportpkg.UserReportSettings{
-			Composition: &reportpkg.Composition{
-				Groupings: []string{"Товар"},
-				Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
-			},
-		},
-		"Cfg":  Config{},
-		"Lang": "ru",
+		"Report":             rep,
+		"ParamValues":        map[string]any{},
+		"ReportParams":       []reportParamUI{},
+		"ReportCols":         []string{"Товар", "Сумма"},
+		"ReportPresets":      []storage.ReportPreset{preset},
+		"ActivePresetID":     "p1",
+		"ActivePreset":       &preset,
+		"UserSettings":       settings,
+		"ReportSettingsJSON": reportSettingsPanelJSON(rep, settings),
+		"Cfg":                Config{},
+		"Lang":               "ru",
 	}
 	if err := tmpl.ExecuteTemplate(&buf, "page-report", data); err != nil {
 		t.Fatalf("execute page-report: %v", err)
@@ -467,15 +504,23 @@ func TestReportParamsFormKeepsActiveSettings(t *testing.T) {
 // TestReportSettingsPanelAppearance: панель «Настройки» содержит контролы
 // оформления (линии сетки + зебра), через которые пользователь задаёт вид себе.
 func TestReportSettingsPanelAppearance(t *testing.T) {
-	rep := &reportpkg.Report{Name: "sales", Title: "Продажи"}
+	rep := &reportpkg.Report{
+		Name:  "sales",
+		Title: "Продажи",
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
 	var buf bytes.Buffer
 	data := map[string]any{
-		"Report":       rep,
-		"ParamValues":  map[string]any{},
-		"ReportParams": []reportParamUI{},
-		"ReportCols":   []string{"Товар", "Сумма"},
-		"Cfg":          Config{},
-		"Lang":         "ru",
+		"Report":             rep,
+		"ParamValues":        map[string]any{},
+		"ReportParams":       []reportParamUI{},
+		"ReportCols":         []string{"Товар", "Сумма"},
+		"ReportSettingsJSON": reportSettingsPanelJSON(rep, nil),
+		"Cfg":                Config{},
+		"Lang":               "ru",
 	}
 	if err := tmpl.ExecuteTemplate(&buf, "page-report", data); err != nil {
 		t.Fatalf("execute page-report: %v", err)
@@ -488,17 +533,25 @@ func TestReportSettingsPanelAppearance(t *testing.T) {
 	}
 }
 
-// TestReportSettingsPanelHidden: без ReportCols панель не рендерится
-// (обратная совместимость с отчётами без компоновки).
+// TestReportSettingsPanelHidden: без ReportCols или без composition панель не
+// рендерится (обратная совместимость с плоскими отчётами).
 func TestReportSettingsPanelHidden(t *testing.T) {
-	rep := &reportpkg.Report{Name: "plain", Title: "Простой"}
+	rep := &reportpkg.Report{
+		Name:  "skd",
+		Title: "СКД",
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
 	var buf bytes.Buffer
 	data := map[string]any{
-		"Report":       rep,
-		"ParamValues":  map[string]any{},
-		"ReportParams": []reportParamUI{},
-		"Cfg":          Config{},
-		"Lang":         "ru",
+		"Report":             rep,
+		"ParamValues":        map[string]any{},
+		"ReportParams":       []reportParamUI{},
+		"ReportSettingsJSON": reportSettingsPanelJSON(rep, nil),
+		"Cfg":                Config{},
+		"Lang":               "ru",
 	}
 	if err := tmpl.ExecuteTemplate(&buf, "page-report", data); err != nil {
 		t.Fatalf("execute page-report: %v", err)
@@ -506,23 +559,50 @@ func TestReportSettingsPanelHidden(t *testing.T) {
 	if strings.Contains(buf.String(), `data-block="settings"`) {
 		t.Errorf("панель настроек не должна рендериться без ReportCols")
 	}
+
+	plain := &reportpkg.Report{Name: "plain", Title: "Простой"}
+	buf.Reset()
+	data = map[string]any{
+		"Report":             plain,
+		"ParamValues":        map[string]any{},
+		"ReportParams":       []reportParamUI{},
+		"ReportCols":         []string{"Товар", "Сумма"},
+		"ReportSettingsJSON": reportSettingsPanelJSON(plain, &reportpkg.UserReportSettings{Composition: &reportpkg.Composition{Appearance: reportpkg.Appearance{Lines: "both"}}}),
+		"Cfg":                Config{},
+		"Lang":               "ru",
+	}
+	if err := tmpl.ExecuteTemplate(&buf, "page-report", data); err != nil {
+		t.Fatalf("execute plain page-report: %v", err)
+	}
+	if strings.Contains(buf.String(), `data-block="settings"`) {
+		t.Errorf("панель настроек не должна рендериться у плоского отчёта даже при наличии ReportCols")
+	}
 }
 
 // TestReportSettingsFilters: сохранённые отборы предзаполняют строки панели —
 // select поля, select оператора (с выбранным gt) и значение.
 func TestReportSettingsFilters(t *testing.T) {
-	rep := &reportpkg.Report{Name: "sales", Title: "Продажи"}
+	rep := &reportpkg.Report{
+		Name:  "sales",
+		Title: "Продажи",
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
+	settings := &reportpkg.UserReportSettings{
+		Filters: []reportpkg.Filter{{Field: "Сумма", Op: "gt", Value: "100"}},
+	}
 	var buf bytes.Buffer
 	data := map[string]any{
-		"Report":       rep,
-		"ParamValues":  map[string]any{},
-		"ReportParams": []reportParamUI{},
-		"ReportCols":   []string{"Товар", "Сумма"},
-		"UserSettings": &reportpkg.UserReportSettings{
-			Filters: []reportpkg.Filter{{Field: "Сумма", Op: "gt", Value: "100"}},
-		},
-		"Cfg":  Config{},
-		"Lang": "ru",
+		"Report":             rep,
+		"ParamValues":        map[string]any{},
+		"ReportParams":       []reportParamUI{},
+		"ReportCols":         []string{"Товар", "Сумма"},
+		"UserSettings":       settings,
+		"ReportSettingsJSON": reportSettingsPanelJSON(rep, settings),
+		"Cfg":                Config{},
+		"Lang":               "ru",
 	}
 	if err := tmpl.ExecuteTemplate(&buf, "page-report", data); err != nil {
 		t.Fatalf("execute page-report: %v", err)
@@ -555,7 +635,7 @@ func TestReportSettingsSaveReset(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep := &reportpkg.Report{Name: "Продажи"}
+	rep := reportSettingsTestReport("Продажи")
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
 	s := &Server{store: db, reg: registry}
@@ -568,8 +648,8 @@ func TestReportSettingsSaveReset(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("save: ожидался 303, получен %d", w.Code)
 	}
-	if got, _ := db.GetReportUserSettings(ctx, "Продажи", ""); got != raw {
-		t.Fatalf("save: хотели %q, получили %q", raw, got)
+	if got, _ := db.GetReportUserSettings(ctx, "Продажи", ""); !strings.Contains(got, `"variant":"X"`) || !strings.Contains(got, "Товар") {
+		t.Fatalf("save: настройки должны сохраниться в каноничном виде, получили %q", got)
 	}
 
 	r2 := reqWithChi("POST", "/ui/report/Продажи/settings/reset", url.Values{}, map[string]string{"name": "Продажи"})
@@ -591,7 +671,7 @@ func TestReportSettingsSaveNamedPreset(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	rep := &reportpkg.Report{Name: "Продажи"}
+	rep := reportSettingsTestReport("Продажи")
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
 	s := &Server{store: db, reg: registry}
@@ -667,6 +747,10 @@ func TestReportSettingsSaveFromStandardCreatesReachablePreset(t *testing.T) {
 	rep := &reportpkg.Report{
 		Name:   "Продажи",
 		Params: []reportpkg.Param{{Name: "Начало", Type: "date"}},
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
 	}
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
@@ -751,7 +835,7 @@ func TestReportSettingsSaveDuplicatePresetNameReturnsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep := &reportpkg.Report{Name: "Продажи"}
+	rep := reportSettingsTestReport("Продажи")
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
 	s := &Server{store: db, reg: registry}
@@ -850,7 +934,7 @@ func TestReportSettingsSaveRejectsLargeAndInvalid(t *testing.T) {
 	if err := db.EnsureSettingsSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rep := &reportpkg.Report{Name: "Продажи"}
+	rep := reportSettingsTestReport("Продажи")
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
 	s := &Server{store: db, reg: registry}
@@ -920,14 +1004,22 @@ func TestLoadUserSettings(t *testing.T) {
 // TestReportSettingsIndicator: при активных настройках панель показывает
 // пометку «изменено», а кнопка сброса активна; без настроек — кнопка disabled.
 func TestReportSettingsIndicator(t *testing.T) {
-	rep := &reportpkg.Report{Name: "sales", Title: "Продажи"}
+	rep := &reportpkg.Report{
+		Name:  "sales",
+		Title: "Продажи",
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Товар"},
+			Measures:  []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		},
+	}
 	base := map[string]any{
-		"Report":       rep,
-		"ParamValues":  map[string]any{},
-		"ReportParams": []reportParamUI{},
-		"ReportCols":   []string{"Товар", "Сумма"},
-		"Cfg":          Config{},
-		"Lang":         "ru",
+		"Report":             rep,
+		"ParamValues":        map[string]any{},
+		"ReportParams":       []reportParamUI{},
+		"ReportCols":         []string{"Товар", "Сумма"},
+		"ReportSettingsJSON": reportSettingsPanelJSON(rep, nil),
+		"Cfg":                Config{},
+		"Lang":               "ru",
 	}
 
 	// С активными настройками.
@@ -935,7 +1027,9 @@ func TestReportSettingsIndicator(t *testing.T) {
 	for k, v := range base {
 		withSettings[k] = v
 	}
-	withSettings["UserSettings"] = &reportpkg.UserReportSettings{Variant: "X"}
+	settings := &reportpkg.UserReportSettings{Variant: "X"}
+	withSettings["UserSettings"] = settings
+	withSettings["ReportSettingsJSON"] = reportSettingsPanelJSON(rep, settings)
 	var b1 bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&b1, "page-report", withSettings); err != nil {
 		t.Fatalf("execute: %v", err)

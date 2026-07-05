@@ -38,9 +38,13 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUserLogin(r)
-	presets := loadReportPresets(r.Context(), s.store, rep.Name, user)
+	supportsSettings := reportSupportsRuntimeSettings(rep)
+	var presets []storage.ReportPreset
+	if supportsSettings {
+		presets = loadReportPresets(r.Context(), s.store, rep.Name, user)
+	}
 	activePresetID := r.FormValue("__preset")
-	if activePresetID == "" {
+	if supportsSettings && s.store != nil && activePresetID == "" {
 		if p, err := s.store.GetDefaultReportPreset(r.Context(), rep.Name, user); err == nil && p != nil {
 			activePresetID = p.ID
 		}
@@ -108,7 +112,10 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	// Выбранный вариант компоновки (параметр __variant); пусто → основной.
 	variant := r.FormValue("__variant")
 	user := currentUserLogin(r)
-	presets := loadReportPresets(r.Context(), s.store, rep.Name, user)
+	var presets []storage.ReportPreset
+	if reportSupportsRuntimeSettings(rep) {
+		presets = loadReportPresets(r.Context(), s.store, rep.Name, user)
+	}
 	rs := s.reportSettingsForRequest(r, rep)
 	settings := rs.Settings
 	activePreset := activeReportPreset(presets, rs.ActivePresetID)
@@ -183,7 +190,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	s.resolveUUIDsInReport(r.Context(), rows, detailLinkCol)
 
 	// Пользовательские отборы применяются к строкам до компоновки (план 70).
-	if settings != nil && len(settings.Filters) > 0 {
+	if comp != nil && settings != nil && len(settings.Filters) > 0 {
 		rows = compose.ApplyFilters(rows, settings.Filters)
 	}
 
@@ -519,7 +526,7 @@ func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (heade
 	s.resolveUUIDsInReport(r.Context(), data, detailLinkCol)
 
 	// Пользовательские отборы (план 70) — до компоновки, как в runReport.
-	if settings != nil && len(settings.Filters) > 0 {
+	if comp != nil && settings != nil && len(settings.Filters) > 0 {
 		data = compose.ApplyFilters(data, settings.Filters)
 	}
 
