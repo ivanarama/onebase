@@ -19,15 +19,12 @@ import (
 )
 
 func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if dec, err := url.PathUnescape(name); err == nil {
-		name = dec
-	}
-	j := s.reg.GetJournal(name)
+	j := s.getJournal(w, r)
 	if j == nil {
-		http.Error(w, "unknown journal: "+name, 404)
 		return
 	}
+	settings := loadJournalSettings(s.store, r, j)
+	visibleColumns := effectiveJournalColumns(j, settings)
 
 	// Build docs map
 	docs := make(map[string]*metadata.Entity, len(j.Documents))
@@ -88,6 +85,50 @@ func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compute column formats from entity metadata
+	colFormats := journalColumnFormats(j, docs)
+
+	hasNext := offset+pageSize < total
+	hasPrev := offset > 0
+	prevOffset := offset - pageSize
+	if prevOffset < 0 {
+		prevOffset = 0
+	}
+
+	s.render(w, r, "page-journal", map[string]any{
+		"Journal":                j,
+		"JournalColumns":         visibleColumns,
+		"JournalSettingsColumns": journalSettingsColumns(j, settings),
+		"JournalSettingsJSON":    journalSettingsJSON(j, settings),
+		"JournalSettingsActive":  settings != nil,
+		"Rows":                   rows,
+		"Total":                  total,
+		"Params":                 params,
+		"FilterOptions":          filterOpts,
+		"ColFormats":             colFormats,
+		"Offset":                 offset,
+		"Limit":                  pageSize,
+		"HasPrev":                hasPrev,
+		"HasNext":                hasNext,
+		"PrevOffset":             prevOffset,
+		"NextOffset":             offset + pageSize,
+		"RequestURI":             r.URL.RequestURI(),
+	})
+}
+
+func (s *Server) getJournal(w http.ResponseWriter, r *http.Request) *metadata.Journal {
+	name := chi.URLParam(r, "name")
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	j := s.reg.GetJournal(name)
+	if j == nil {
+		http.Error(w, "unknown journal: "+name, 404)
+		return nil
+	}
+	return j
+}
+
+func journalColumnFormats(j *metadata.Journal, docs map[string]*metadata.Entity) map[string]string {
 	colFormats := make(map[string]string)
 	for _, jcol := range j.Columns {
 		if jcol.Format != "" {
@@ -111,28 +152,7 @@ func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
 		}
 	nextCol:
 	}
-
-	hasNext := offset+pageSize < total
-	hasPrev := offset > 0
-	prevOffset := offset - pageSize
-	if prevOffset < 0 {
-		prevOffset = 0
-	}
-
-	s.render(w, r, "page-journal", map[string]any{
-		"Journal":       j,
-		"Rows":          rows,
-		"Total":         total,
-		"Params":        params,
-		"FilterOptions": filterOpts,
-		"ColFormats":    colFormats,
-		"Offset":        offset,
-		"Limit":         pageSize,
-		"HasPrev":       hasPrev,
-		"HasNext":       hasNext,
-		"PrevOffset":    prevOffset,
-		"NextOffset":    offset + pageSize,
-	})
+	return colFormats
 }
 
 // resolveJournalRefs resolves UUID values in reference journal columns to display labels.
@@ -186,15 +206,11 @@ func (s *Server) resolveJournalRefs(ctx context.Context, j *metadata.Journal, co
 
 // journalExcel exports a journal as XLSX.
 func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if dec, err := url.PathUnescape(name); err == nil {
-		name = dec
-	}
-	j := s.reg.GetJournal(name)
+	j := s.getJournal(w, r)
 	if j == nil {
-		http.Error(w, "unknown journal: "+name, 404)
 		return
 	}
+	visibleColumns := effectiveJournalColumns(j, loadJournalSettings(s.store, r, j))
 
 	docs := make(map[string]*metadata.Entity, len(j.Documents))
 	for _, docName := range j.Documents {
@@ -223,9 +239,9 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.resolveJournalRefs(r.Context(), j, colRefMap, rows)
 
-	cols := make([]string, 0, len(j.Columns)+2)
+	cols := make([]string, 0, len(visibleColumns)+2)
 	cols = append(cols, "Дата", "Вид")
-	for _, jcol := range j.Columns {
+	for _, jcol := range visibleColumns {
 		cols = append(cols, jcol.Label)
 	}
 
@@ -234,7 +250,7 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 		cells := make([]any, len(cols))
 		cells[0] = row["date"]
 		cells[1] = row["doc_type"]
-		for ji, jcol := range j.Columns {
+		for ji, jcol := range visibleColumns {
 			cells[2+ji] = row[jcol.Field]
 		}
 		xlsRows[i] = cells

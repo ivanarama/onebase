@@ -3730,11 +3730,62 @@ const tplJournal = `
   </form>
 </details>
 
+<details class="card report-block" data-block="journal-settings" style="margin-bottom:16px">
+  <summary>{{t $.Lang "Настройка списка"}}{{if .JournalSettingsActive}} <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
+  <form method="POST" action="/ui/journal/{{lower .Journal.Name}}/settings/save" onsubmit="return jlBeforeSubmit(event)">
+    <input type="hidden" name="__return" value="{{.RequestURI}}">
+    <input type="hidden" name="__journal_settings" id="jl-settings-json" value="{{.JournalSettingsJSON}}">
+    <table style="width:auto;margin-bottom:12px">
+      <thead><tr>
+        <th style="text-align:left">{{t $.Lang "Поле"}}</th>
+        <th style="padding:0 10px">{{t $.Lang "Показывать"}}</th>
+        <th style="width:120px"></th>
+      </tr></thead>
+      <tbody id="jl-columns">
+      {{range .JournalSettingsColumns}}
+        <tr class="jl-col-row" data-field="{{.Column.Field}}">
+          <td>{{.Column.DisplayLabel $.Lang}}</td>
+          <td style="text-align:center"><input type="checkbox" class="jl-visible" {{if .Visible}}checked{{end}}></td>
+          <td style="white-space:nowrap;text-align:right">
+            <button type="button" class="btn btn-sm" onclick="jlMove(this,-1)" title="{{t $.Lang "Вверх"}}">↑</button>
+            <button type="button" class="btn btn-sm" onclick="jlMove(this,1)" title="{{t $.Lang "Вниз"}}">↓</button>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" type="submit">{{t $.Lang "Сохранить"}}</button>
+      <button class="btn" type="submit" formaction="/ui/journal/{{lower .Journal.Name}}/settings/reset"{{if not .JournalSettingsActive}} disabled{{end}}>{{t $.Lang "Стандартные настройки"}}</button>
+    </div>
+  </form>
+  <script>
+  (function(){
+    window.jlMove=function(btn,dir){
+      var tr=btn&&btn.closest?btn.closest('tr'):null;if(!tr||!tr.parentNode)return;
+      if(dir<0&&tr.previousElementSibling)tr.parentNode.insertBefore(tr,tr.previousElementSibling);
+      if(dir>0&&tr.nextElementSibling)tr.parentNode.insertBefore(tr.nextElementSibling,tr);
+    };
+    window.jlCollect=function(){
+      var rows=document.querySelectorAll('#jl-columns .jl-col-row');
+      var cols=[];
+      rows.forEach(function(row){
+        var cb=row.querySelector('.jl-visible');
+        cols.push({field:row.getAttribute('data-field')||'',visible:!!(cb&&cb.checked)});
+      });
+      var hidden=document.getElementById('jl-settings-json');
+      if(hidden)hidden.value=JSON.stringify({columns:cols});
+    };
+    window.jlBeforeSubmit=function(){jlCollect();return true;};
+  })();
+  </script>
+</details>
+
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
   <th>{{t $.Lang "Документ"}}</th>
-  {{range $j.Columns}}<th>{{.Label}}</th>{{end}}
+  {{range .JournalColumns}}<th>{{.DisplayLabel $.Lang}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead>
 <tbody>
@@ -3743,7 +3794,7 @@ const tplJournal = `
   onclick="if(event.target.tagName!=='A'&&event.target.tagName!=='BUTTON'){window.location='/ui/document/'+encodeURIComponent('{{lower (str (index . "_doc_kind"))}}')+'/'+'{{str (index . "id")}}'}"
 >
   <td>{{index . "_doc_kind"}}</td>
-  {{range $j.Columns}}
+  {{range $.JournalColumns}}
     {{$v := index $row .Field}}
     {{if eq (index $fmts .Field) "date"}}<td>{{fmtDate $v}}</td>
     {{else}}<td>{{$v}}</td>{{end}}

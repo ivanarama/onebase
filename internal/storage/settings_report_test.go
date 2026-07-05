@@ -97,6 +97,52 @@ func TestReportSettingsKeyNoCollision(t *testing.T) {
 	}
 }
 
+func TestJournalUserSettings(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "journal-settings.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		t.Fatalf("EnsureSettingsSchema: %v", err)
+	}
+
+	if got, err := db.GetJournalUserSettings(ctx, "Входящие", "alice"); err != nil || got != "" {
+		t.Fatalf("empty journal settings: got %q err=%v", got, err)
+	}
+	raw := `{"columns":[{"field":"Номер","visible":true}]}`
+	if err := db.SaveJournalUserSettings(ctx, "Входящие", "alice", raw); err != nil {
+		t.Fatalf("SaveJournalUserSettings: %v", err)
+	}
+	if got, err := db.GetJournalUserSettings(ctx, "Входящие", "alice"); err != nil || got != raw {
+		t.Fatalf("GetJournalUserSettings: got %q err=%v", got, err)
+	}
+	if err := db.SaveJournalUserSettings(ctx, "Входящие", "bob", `{"columns":[]}`); err != nil {
+		t.Fatalf("SaveJournalUserSettings bob: %v", err)
+	}
+	if got, _ := db.GetJournalUserSettings(ctx, "Входящие", "alice"); got != raw {
+		t.Fatalf("alice settings overwritten by bob: %q", got)
+	}
+	if err := db.DeleteJournalUserSettings(ctx, "Входящие", "alice"); err != nil {
+		t.Fatalf("DeleteJournalUserSettings: %v", err)
+	}
+	if got, _ := db.GetJournalUserSettings(ctx, "Входящие", "alice"); got != "" {
+		t.Fatalf("journal settings after delete: %q", got)
+	}
+	if got, _ := db.GetJournalUserSettings(ctx, "Входящие", "bob"); got == "" {
+		t.Fatal("DeleteJournalUserSettings(alice) must not delete bob settings")
+	}
+}
+
+func TestJournalSettingsKeyNoCollision(t *testing.T) {
+	k1 := journalSettingsKey("a.b", "c")
+	k2 := journalSettingsKey("a", "b.c")
+	if k1 == k2 {
+		t.Fatalf("journal settings keys collided: %q == %q", k1, k2)
+	}
+}
+
 func TestReportPresets(t *testing.T) {
 	ctx := context.Background()
 	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "presets.db"))

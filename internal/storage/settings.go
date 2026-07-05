@@ -466,6 +466,10 @@ func reportSettingsKey(report, user string) string {
 	return fmt.Sprintf("report.settings.%d:%s.%d:%s", len(report), report, len(user), user)
 }
 
+func journalSettingsKey(journal, user string) string {
+	return fmt.Sprintf("journal.settings.%d:%s.%d:%s", len(journal), journal, len(user), user)
+}
+
 // GetReportUserSettings возвращает сырой JSON рантайм-настроек отчёта для
 // пользователя. Отсутствие ключа/таблицы — не ошибка (как GetLLMConfig):
 // возвращается ("", nil), что означает «использовать стандартный вид».
@@ -506,6 +510,49 @@ func (db *DB) DeleteReportUserSettings(ctx context.Context, report, user string)
 		`DELETE FROM _settings WHERE key = `+d.Placeholder(1),
 		reportSettingsKey(report, user)); err != nil {
 		return fmt.Errorf("settings: delete report settings: %w", err)
+	}
+	return nil
+}
+
+// GetJournalUserSettings возвращает сырой JSON пользовательских настроек
+// журнала документов. Отсутствие ключа/таблицы — не ошибка.
+func (db *DB) GetJournalUserSettings(ctx context.Context, journal, user string) (string, error) {
+	d := db.dialect
+	var v string
+	err := db.QueryRow(ctx,
+		`SELECT value FROM _settings WHERE key = `+d.Placeholder(1),
+		journalSettingsKey(journal, user)).Scan(&v)
+	if err != nil {
+		return "", nil
+	}
+	return v, nil
+}
+
+// SaveJournalUserSettings сохраняет пользовательские настройки журнала одним
+// JSON-значением (upsert). Конфигурацию (YAML) не трогает.
+func (db *DB) SaveJournalUserSettings(ctx context.Context, journal, user, raw string) error {
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		return err
+	}
+	d := db.dialect
+	q := fmt.Sprintf(
+		`INSERT INTO _settings (key, value) VALUES (%s, %s)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		d.Placeholder(1), d.Placeholder(2))
+	if _, err := db.Exec(ctx, q, journalSettingsKey(journal, user), raw); err != nil {
+		return fmt.Errorf("settings: save journal settings: %w", err)
+	}
+	return nil
+}
+
+// DeleteJournalUserSettings удаляет пользовательские настройки журнала —
+// сброс к стандартному виду из YAML.
+func (db *DB) DeleteJournalUserSettings(ctx context.Context, journal, user string) error {
+	d := db.dialect
+	if _, err := db.Exec(ctx,
+		`DELETE FROM _settings WHERE key = `+d.Placeholder(1),
+		journalSettingsKey(journal, user)); err != nil {
+		return fmt.Errorf("settings: delete journal settings: %w", err)
 	}
 	return nil
 }

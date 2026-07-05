@@ -209,6 +209,8 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/report/{name}/settings/save", s.reportSettingsSave)
 	r.Post("/ui/report/{name}/settings/delete", s.reportPresetDelete)
 	r.Post("/ui/report/{name}/settings/reset", s.reportSettingsReset)
+	r.Post("/ui/journal/{name}/settings/save", s.journalSettingsSave)
+	r.Post("/ui/journal/{name}/settings/reset", s.journalSettingsReset)
 	r.Get("/ui/processor/{name}", s.processorForm)
 	r.Post("/ui/processor/{name}", s.processorRun)
 	r.Post("/ui/processor/{name}/form-event", s.handleProcessorFormEvent)
