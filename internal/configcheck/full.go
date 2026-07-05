@@ -37,6 +37,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 	if proj, err := project.Load(dir); err == nil {
 		issues = append(issues, CheckQueries(proj)...)
 		issues = append(issues, CheckReportComposition(proj)...)
+		issues = append(issues, CheckJournalConditional(proj)...)
 		issues = append(issues, CheckReportOutputFormat(proj)...)
 		roles, _ := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
 		issues = append(issues, CheckCrossRefs(proj, roles)...)

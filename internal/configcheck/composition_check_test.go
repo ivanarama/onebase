@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/report"
 )
@@ -146,5 +147,19 @@ func TestCompositionBad(t *testing.T) {
 	iss := CheckReportComposition(projWith(c))
 	if len(iss) < 3 {
 		t.Fatalf("ожидали несколько проблем, получили %d: %+v", len(iss), iss)
+	}
+}
+
+func TestJournalConditionalValidation(t *testing.T) {
+	proj := &project.Project{Journals: []*metadata.Journal{{
+		Name: "Ж",
+		Conditional: []metadata.JournalCondRule{
+			{When: "Сумма < 0"},
+			{When: "Сумма < "},
+		},
+	}}}
+	iss := CheckJournalConditional(proj)
+	if len(iss) != 1 || !strings.Contains(iss[0].Message, "Сумма < ") {
+		t.Fatalf("ожидали одну ошибку условия журнала, got %+v", iss)
 	}
 }

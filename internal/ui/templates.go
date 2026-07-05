@@ -31,7 +31,9 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return fmt.Sprintf("%v", v)
 		},
-		"add": func(a, b int) int { return a + b },
+		"journalRowStyle":  journalRowStyle,
+		"journalCellStyle": journalCellStyle,
+		"add":              func(a, b int) int { return a + b },
 		// lucideIcon рендерит инлайн-SVG иконки навигации по имени Lucide (план 72).
 		"lucideIcon": LucideIcon,
 		"t": func(lang, key string) string {
@@ -469,7 +471,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"reportGroupChecked":   reportGroupChecked,
 		"reportMeasureChecked": reportMeasureChecked,
-		"mul": func(a, b int) int { return a * b },
+		"mul":                  func(a, b int) int { return a * b },
 		"int": func(v any) int {
 			switch t := v.(type) {
 			case int:
@@ -3781,6 +3783,7 @@ const tplJournal = `
   </script>
 </details>
 
+{{if .JournalWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
@@ -3790,14 +3793,14 @@ const tplJournal = `
 </tr></thead>
 <tbody>
 {{range .Rows}}{{$row := .}}
-<tr style="cursor:pointer"
+<tr style="cursor:pointer;{{journalRowStyle .}}"
   onclick="if(event.target.tagName!=='A'&&event.target.tagName!=='BUTTON'){window.location='/ui/document/'+encodeURIComponent('{{lower (str (index . "_doc_kind"))}}')+'/'+'{{str (index . "id")}}'}"
 >
-  <td>{{index . "_doc_kind"}}</td>
+  <td style="{{journalCellStyle $row "_doc_kind"}}">{{index . "_doc_kind"}}</td>
   {{range $.JournalColumns}}
     {{$v := index $row .Field}}
-    {{if eq (index $fmts .Field) "date"}}<td>{{fmtDate $v}}</td>
-    {{else}}<td>{{$v}}</td>{{end}}
+    {{if eq (index $fmts .Field) "date"}}<td style="{{journalCellStyle $row .Field}}">{{fmtDate $v}}</td>
+    {{else}}<td style="{{journalCellStyle $row .Field}}">{{$v}}</td>{{end}}
   {{end}}
   <td><a class="btn btn-sm btn-primary" href="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}">{{t $.Lang "Открыть"}}</a></td>
 </tr>

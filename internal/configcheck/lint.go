@@ -306,10 +306,17 @@ func journalYAMLSchema() *yamlLintSchema {
 		"labels": freeMap(),
 		"map":    freeMap(),
 	})
+	style := obj("color", "background", "bold", "italic")
+	conditional := with(obj("when", "field"), map[string]*yamlLintSchema{
+		"style": style,
+		"then":  style,
+	})
 	return with(obj("name", "title", "documents"), map[string]*yamlLintSchema{
-		"titles":  freeMap(),
-		"columns": seq(column),
-		"filters": seq(obj("field", "type")),
+		"titles":                 freeMap(),
+		"columns":                seq(column),
+		"filters":                seq(obj("field", "type")),
+		"conditional":            seq(conditional),
+		"conditional_formatting": seq(conditional),
 	})
 }
 

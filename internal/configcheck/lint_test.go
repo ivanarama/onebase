@@ -91,6 +91,29 @@ activity:
 	}
 }
 
+func TestLintYAML_JournalConditionalKnown(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "journals", "ж.yaml"), `name: Ж
+documents: [Док]
+columns:
+  - field: Сумма
+conditional:
+  - when: Сумма < 0
+    field: Сумма
+    style:
+      color: "#c00"
+conditional_formatting:
+  - when: Документ = "Док"
+    then:
+      background: yellow
+`)
+	for _, is := range CheckLintYAML(dir) {
+		if is.Code == "metadata.unvalidated-key" {
+			t.Fatalf("условное оформление журнала должно быть известно линту, получено: %+v", is)
+		}
+	}
+}
+
 func TestLintCrossScopeRead(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, filepath.Join(dir, "processors", "касса.yaml"), `name: Касса

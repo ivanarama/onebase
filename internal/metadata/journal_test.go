@@ -86,3 +86,40 @@ columns:
 		t.Errorf("default label: got %q", j.Columns[0].Label)
 	}
 }
+
+func TestLoadJournalFile_Conditional(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `name: Тест
+documents: [Д1]
+columns:
+  - field: Сумма
+conditional:
+  - when: Сумма < 0
+    style:
+      color: "#c00"
+      bold: true
+conditional_formatting:
+  - when: Документ = "Д1"
+    field: Сумма
+    then:
+      background: yellow
+      italic: true
+`
+	path := filepath.Join(dir, "тест.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+	j, err := LoadJournalFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(j.Conditional) != 2 {
+		t.Fatalf("conditional: got %d", len(j.Conditional))
+	}
+	if j.Conditional[0].Style.Color != "#c00" || !j.Conditional[0].Style.Bold {
+		t.Fatalf("style not loaded: %+v", j.Conditional[0])
+	}
+	if j.Conditional[1].Field != "Сумма" || j.Conditional[1].Style.Background != "yellow" || !j.Conditional[1].Style.Italic {
+		t.Fatalf("then/style alias not loaded: %+v", j.Conditional[1])
+	}
+}

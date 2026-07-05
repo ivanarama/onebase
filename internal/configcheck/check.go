@@ -555,8 +555,7 @@ func CheckReportComposition(proj *project.Project) []Issue {
 			measures[m.Field] = true
 			if m.Expr != "" {
 				// Вычисляемый показатель: агрегат необязателен, но выражение валидируем.
-				src := "Функция __cond()\nВозврат (" + m.Expr + ");\nКонецФункции\n"
-				if _, err := parser.New(lexer.New(src, "cond.os")).ParseProgram(); err != nil {
+				if err := parseReturnExpr(m.Expr); err != nil {
 					add(repName, prefix+"ошибка выражения показателя \""+m.Field+"\": "+err.Error())
 				}
 			} else if !aggs[m.Agg] {
@@ -588,8 +587,7 @@ func CheckReportComposition(proj *project.Project) []Issue {
 			}
 		}
 		for _, cr := range c.Conditional {
-			src := "Функция __cond()\nВозврат (" + cr.When + ");\nКонецФункции\n"
-			if _, err := parser.New(lexer.New(src, "cond.os")).ParseProgram(); err != nil {
+			if err := parseReturnExpr(cr.When); err != nil {
 				add(repName, prefix+"ошибка выражения условия \""+cr.When+"\": "+err.Error())
 			}
 		}
@@ -617,6 +615,28 @@ func CheckReportComposition(proj *project.Project) []Issue {
 		}
 	}
 	return issues
+}
+
+// CheckJournalConditional валидирует DSL-выражения условного оформления журналов.
+func CheckJournalConditional(proj *project.Project) []Issue {
+	var issues []Issue
+	add := func(name, msg string) {
+		issues = append(issues, Issue{File: "journals/" + name + ".yaml", Object: name, Kind: "Журнал", Message: msg})
+	}
+	for _, j := range proj.Journals {
+		for _, cr := range j.Conditional {
+			if err := parseReturnExpr(cr.When); err != nil {
+				add(j.Name, "ошибка выражения условия \""+cr.When+"\": "+err.Error())
+			}
+		}
+	}
+	return issues
+}
+
+func parseReturnExpr(expr string) error {
+	src := "Функция __cond()\nВозврат (" + expr + ");\nКонецФункции\n"
+	_, err := parser.New(lexer.New(src, "cond.os")).ParseProgram()
+	return err
 }
 
 // AlreadyReported reports whether msg overlaps an existing issue message.

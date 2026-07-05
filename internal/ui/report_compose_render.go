@@ -92,17 +92,21 @@ func (h *htmlComposeSink) grand(grand map[string]any) {
 }
 
 func cssOf(s report.CellStyle) string {
+	return cssStyle(s.Color, s.Background, s.Bold, s.Italic)
+}
+
+func cssStyle(color, background string, bold, italic bool) string {
 	var p []string
-	if c := csssafe.Color(s.Color); c != "" {
+	if c := csssafe.Color(color); c != "" {
 		p = append(p, "color:"+c)
 	}
-	if c := csssafe.Color(s.Background); c != "" {
+	if c := csssafe.Color(background); c != "" {
 		p = append(p, "background:"+c)
 	}
-	if s.Bold {
+	if bold {
 		p = append(p, "font-weight:bold")
 	}
-	if s.Italic {
+	if italic {
 		p = append(p, "font-style:italic")
 	}
 	return strings.Join(p, ";")

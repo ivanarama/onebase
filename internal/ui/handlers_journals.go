@@ -62,6 +62,10 @@ func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve ref columns
 	s.resolveJournalRefs(r.Context(), j, colRefMap, rows)
+	var journalWarnings []string
+	if s.interp != nil {
+		journalWarnings = applyJournalConditionalStyles(rows, j.Conditional, newInterpEvaluator(s.interp))
+	}
 
 	// Load filter options for reference filters
 	filterOpts := make(map[string][]map[string]any)
@@ -101,6 +105,7 @@ func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
 		"JournalSettingsJSON":    journalSettingsJSON(j, settings),
 		"JournalSettingsActive":  settings != nil,
 		"Rows":                   rows,
+		"JournalWarnings":        journalWarnings,
 		"Total":                  total,
 		"Params":                 params,
 		"FilterOptions":          filterOpts,

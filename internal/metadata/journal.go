@@ -9,12 +9,13 @@ import (
 )
 
 type Journal struct {
-	Name      string
-	Title     string
-	Titles    map[string]string
-	Documents []string
-	Columns   []JournalColumn
-	Filters   []JournalFilter
+	Name        string
+	Title       string
+	Titles      map[string]string
+	Documents   []string
+	Columns     []JournalColumn
+	Filters     []JournalFilter
+	Conditional []JournalCondRule
 }
 
 // DisplayName возвращает заголовок журнала документов с учётом языка.
@@ -43,8 +44,8 @@ type JournalColumn struct {
 	//   3. UI может показывать tooltip «в документе X это поле называется Y».
 	// Если Map[doc] есть — используется он, fallback не применяется. Если
 	// не задан — работает старый fallback-механизм (back compat).
-	Map      map[string]string
-	Format   string // "date" | "number" | "" (auto)
+	Map    map[string]string
+	Format string // "date" | "number" | "" (auto)
 }
 
 // DisplayLabel возвращает подпись колонки журнала с учётом языка.
@@ -65,6 +66,19 @@ type JournalFilter struct {
 	Type  string // "date_range" | "reference:X" | "string"
 }
 
+type JournalCondRule struct {
+	When  string
+	Field string // "" = вся строка
+	Style JournalCellStyle
+}
+
+type JournalCellStyle struct {
+	Color      string
+	Background string
+	Bold       bool
+	Italic     bool
+}
+
 type rawJournal struct {
 	Name      string            `yaml:"name"`
 	Title     string            `yaml:"title"`
@@ -82,6 +96,15 @@ type rawJournal struct {
 		Field string `yaml:"field"`
 		Type  string `yaml:"type"`
 	} `yaml:"filters"`
+	Conditional           []rawJournalCondRule `yaml:"conditional"`
+	ConditionalFormatting []rawJournalCondRule `yaml:"conditional_formatting"`
+}
+
+type rawJournalCondRule struct {
+	When  string           `yaml:"when"`
+	Field string           `yaml:"field"`
+	Style JournalCellStyle `yaml:"style"`
+	Then  JournalCellStyle `yaml:"then"`
 }
 
 func LoadJournalFile(path string) (*Journal, error) {
@@ -100,10 +123,11 @@ func LoadJournalFile(path string) (*Journal, error) {
 		raw.Title = raw.Name
 	}
 	j := &Journal{
-		Name:      raw.Name,
-		Title:     raw.Title,
-		Titles:    raw.Titles,
-		Documents: raw.Documents,
+		Name:        raw.Name,
+		Title:       raw.Title,
+		Titles:      raw.Titles,
+		Documents:   raw.Documents,
+		Conditional: rawJournalConditional(raw),
 	}
 	for _, rc := range raw.Columns {
 		label := rc.Label
@@ -127,6 +151,24 @@ func LoadJournalFile(path string) (*Journal, error) {
 		j.Filters = append(j.Filters, JournalFilter{Field: rf.Field, Type: ft})
 	}
 	return j, nil
+}
+
+func rawJournalConditional(raw rawJournal) []JournalCondRule {
+	rawRules := append([]rawJournalCondRule{}, raw.Conditional...)
+	rawRules = append(rawRules, raw.ConditionalFormatting...)
+	out := make([]JournalCondRule, 0, len(rawRules))
+	for _, rr := range rawRules {
+		style := rr.Style
+		if journalStyleZero(style) {
+			style = rr.Then
+		}
+		out = append(out, JournalCondRule{When: rr.When, Field: rr.Field, Style: style})
+	}
+	return out
+}
+
+func journalStyleZero(s JournalCellStyle) bool {
+	return s.Color == "" && s.Background == "" && !s.Bold && !s.Italic
 }
 
 func LoadJournalDir(dir string) ([]*Journal, error) {

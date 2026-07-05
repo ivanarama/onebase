@@ -92,7 +92,12 @@ fields:
 documents: [Реализация]
 columns:
   - field: Дата
-  - field: НетПоля`)
+  - field: НетПоля
+conditional:
+  - when: Дата <> ""
+    field: Документ
+  - when: Дата <> ""
+    field: НетКолонкиУсловие`)
 	// печатная форма: Сумма есть в ТЧ, НетКолонки — нет; @row допустимо
 	mkFile(t, filepath.Join(dir, "printforms", "накладная.yaml"), `name: Накладная
 document: Реализация
@@ -113,11 +118,15 @@ table:
 	defer proj.Close()
 
 	issues := CheckCrossRefs(proj, nil)
-	var jBad, jGood, pfBad, pfGood, pfRow bool
+	var jBad, jGood, jCondBad, jCondGood, pfBad, pfGood, pfRow bool
 	for _, i := range issues {
 		switch {
 		case i.Kind == "Журнал" && strings.Contains(i.Message, "НетПоля"):
 			jBad = true
+		case i.Kind == "Журнал" && strings.Contains(i.Message, "НетКолонкиУсловие"):
+			jCondBad = true
+		case i.Kind == "Журнал" && strings.Contains(i.Message, "Документ"):
+			jCondGood = true
 		case i.Kind == "Журнал" && strings.Contains(i.Message, `"Дата"`):
 			jGood = true
 		case i.Kind == "Печатная форма" && strings.Contains(i.Message, "НетКолонки"):
@@ -133,6 +142,12 @@ table:
 	}
 	if jGood {
 		t.Errorf("колонка Дата резолвится — ошибки быть не должно: %+v", issues)
+	}
+	if !jCondBad {
+		t.Errorf("ожидалась ошибка журнала о поле условного оформления: %+v", issues)
+	}
+	if jCondGood {
+		t.Errorf("служебная колонка Документ валидна — ошибки быть не должно: %+v", issues)
 	}
 	if !pfBad {
 		t.Errorf("ожидалась ошибка печатной формы о колонке НетКолонки: %+v", issues)

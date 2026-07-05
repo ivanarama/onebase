@@ -104,6 +104,11 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 				add("journals", j.Name, "Журнал", fmt.Sprintf("фильтр %q не найден ни в одном документе журнала", f.Field))
 			}
 		}
+		for _, cr := range j.Conditional {
+			if cr.Field != "" && !journalOutputFieldExists(j, cr.Field) {
+				add("journals", j.Name, "Журнал", fmt.Sprintf("условное оформление: поле %q не является колонкой журнала", cr.Field))
+			}
+		}
 	}
 
 	// Подсистемы → объекты в contents.
@@ -308,6 +313,27 @@ func journalFieldResolves(field string, fieldMap map[string]string, fallback []s
 		}
 	}
 	return false
+}
+
+func journalOutputFieldExists(j *metadata.Journal, field string) bool {
+	if field == "" || isJournalDocKindField(field) {
+		return true
+	}
+	for _, c := range j.Columns {
+		if strings.EqualFold(c.Field, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func isJournalDocKindField(field string) bool {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "_doc_kind", "документ", "document":
+		return true
+	default:
+		return false
+	}
 }
 
 // tpFieldExists проверяет, что поле таблицы печатной формы существует в
