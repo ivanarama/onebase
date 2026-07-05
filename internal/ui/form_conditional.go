@@ -16,7 +16,15 @@ const (
 )
 
 func applyManagedFormConditionalStyles(form *metadata.FormModule, rowsByName map[string][]map[string]any, header map[string]any, ev compose.Evaluator) []string {
-	if form == nil || len(form.Conditional) == 0 || len(rowsByName) == 0 || ev == nil {
+	if form == nil {
+		clearFormConditionalStyles(rowsByName)
+		return nil
+	}
+	return applyManagedFormConditionalRules(form, rowsByName, header, form.Conditional, ev)
+}
+
+func applyManagedFormConditionalRules(form *metadata.FormModule, rowsByName map[string][]map[string]any, header map[string]any, rules []metadata.FormCondRule, ev compose.Evaluator) []string {
+	if form == nil || len(rules) == 0 || len(rowsByName) == 0 || ev == nil {
 		clearFormConditionalStyles(rowsByName)
 		return nil
 	}
@@ -24,7 +32,7 @@ func applyManagedFormConditionalStyles(form *metadata.FormModule, rowsByName map
 	aliases := formConditionalTargetAliases(form)
 	wc := &formWarnCollector{}
 	applied := map[string]map[int]map[string]bool{}
-	for _, rule := range form.Conditional {
+	for _, rule := range rules {
 		style := cssOfForm(rule.Style)
 		if style == "" {
 			continue
@@ -99,12 +107,19 @@ func cssOfForm(s metadata.FormCellStyle) string {
 }
 
 func formConditionalCSS(form *metadata.FormModule) string {
-	if form == nil || len(form.Conditional) == 0 {
+	if form == nil {
+		return ""
+	}
+	return formConditionalRulesCSS(form.Conditional)
+}
+
+func formConditionalRulesCSS(rules []metadata.FormCondRule) string {
+	if len(rules) == 0 {
 		return ""
 	}
 	seen := map[string]bool{}
 	var styles []string
-	for _, rule := range form.Conditional {
+	for _, rule := range rules {
 		style := cssOfForm(rule.Style)
 		if style == "" || seen[style] {
 			continue

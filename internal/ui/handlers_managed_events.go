@@ -39,12 +39,13 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
-	OK         bool                        `json:"ok"`
-	Values     map[string]any              `json:"values,omitempty"`
-	TableParts map[string][]map[string]any `json:"tableparts,omitempty"`
-	FormTables map[string][]map[string]any `json:"formTables,omitempty"`
-	Messages   []string                    `json:"messages,omitempty"`
-	Error      string                      `json:"error,omitempty"`
+	OK             bool                        `json:"ok"`
+	Values         map[string]any              `json:"values,omitempty"`
+	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
+	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
+	ConditionalCSS string                      `json:"conditionalCss"`
+	Messages       []string                    `json:"messages,omitempty"`
+	Error          string                      `json:"error,omitempty"`
 	// PickerData != nil — обработчик фазы 1 вызвал ПоказатьПодбор: клиент
 	// открывает модальный диалог мультивыбора вместо применения ТЧ (план 46).
 	PickerData *pickerPayload `json:"pickerData,omitempty"`
@@ -194,6 +195,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	vars["ДобавитьЗначениеСписка"] = choiceFn
 	vars["AddChoiceItem"] = choiceFn
 
+	condRuntime := newFormConditionalRuntime(form)
+	for k, v := range condRuntime.builtins() {
+		vars[k] = v
+	}
+
 	// Фаза 2: результат диалога приходит как _pick_result (JSON) → переменная
 	// ПодборРезультат (Массив структур) для обработчика события Выбор.
 	if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
@@ -213,43 +219,46 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-		values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, entity, obj, msgs)
+		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 		enc.Encode(formEventResponse{
-			OK:         false,
-			Values:     values,
-			TableParts: tableParts,
-			FormTables: formTables,
-			Messages:   outMsgs,
-			Error:      runErr.Error(),
-			PickerData: picker,
+			OK:             false,
+			Values:         values,
+			TableParts:     tableParts,
+			FormTables:     formTables,
+			ConditionalCSS: conditionalCSS,
+			Messages:       outMsgs,
+			Error:          runErr.Error(),
+			PickerData:     picker,
 		})
 		return
 	}
 
-	values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, entity, obj, msgs)
+	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 	enc.Encode(formEventResponse{
-		OK:         true,
-		Values:     values,
-		TableParts: tableParts,
-		Messages:   outMsgs,
-		FormTables: formTables,
-		PickerData: picker,
-		ChoiceList: choiceItems,
+		OK:             true,
+		Values:         values,
+		TableParts:     tableParts,
+		Messages:       outMsgs,
+		FormTables:     formTables,
+		ConditionalCSS: conditionalCSS,
+		PickerData:     picker,
+		ChoiceList:     choiceItems,
 	})
 }
 
-func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, []string) {
+func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
+	conditionalCSS := formConditionalRulesCSS(rules)
 	if obj == nil {
-		return nil, nil, nil, msgs
+		return nil, nil, nil, conditionalCSS, msgs
 	}
 	values := serializeFieldsForEntity(obj.Fields, entity)
 	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity)
 	if s.interp != nil {
-		if warnings := applyManagedFormConditionalStyles(form, tableParts, values, newInterpEvaluator(s.interp)); len(warnings) > 0 {
+		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
 		}
 	}
-	return values, tableParts, formTablesFromRows(tableParts, form), msgs
+	return values, tableParts, formTablesFromRows(tableParts, form), conditionalCSS, msgs
 }
 
 // selectedTPRows читает _tp (имя ТЧ) и _tp_selected (CSV индексов отмеченных
@@ -737,33 +746,39 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				pickerFn := newPickerBuiltin(&picker)
 				vars["ПоказатьПодбор"] = pickerFn
 				vars["ShowPicker"] = pickerFn
+				condRuntime := newFormConditionalRuntime(form)
+				for k, v := range condRuntime.builtins() {
+					vars[k] = v
+				}
 				if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
 					vars["ПодборРезультат"] = pr
 					vars["PickResult"] = pr
 				}
 
 				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-					values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, msgs)
+					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
 					enc.Encode(formEventResponse{
-						OK:         false,
-						Values:     values,
-						TableParts: tableParts,
-						FormTables: formTables,
-						Messages:   outMsgs,
-						Error:      runErr.Error(),
-						PickerData: picker,
+						OK:             false,
+						Values:         values,
+						TableParts:     tableParts,
+						FormTables:     formTables,
+						ConditionalCSS: conditionalCSS,
+						Messages:       outMsgs,
+						Error:          runErr.Error(),
+						PickerData:     picker,
 					})
 					return
 				}
 
-				values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, msgs)
+				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
 				enc.Encode(formEventResponse{
-					OK:         true,
-					Values:     values,
-					TableParts: tableParts,
-					FormTables: formTables,
-					Messages:   outMsgs,
-					PickerData: picker,
+					OK:             true,
+					Values:         values,
+					TableParts:     tableParts,
+					FormTables:     formTables,
+					ConditionalCSS: conditionalCSS,
+					Messages:       outMsgs,
+					PickerData:     picker,
 				})
 				return
 			}

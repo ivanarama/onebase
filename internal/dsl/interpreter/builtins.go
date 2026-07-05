@@ -444,6 +444,8 @@ func KnownBuiltinNames() map[string]struct{} {
 		"выполнитькоманду", "executecommand",
 		"ссылканаобъект", "objectref",
 		"сохранитькартинку", "putimage",
+		"добавитьправилооформления", "addformattingrule",
+		"очиститьоформление", "clearformatting",
 	} {
 		names[k] = struct{}{}
 	}

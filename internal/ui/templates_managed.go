@@ -662,6 +662,17 @@ window._tpEnumOrder = {{jsJSON .TPEnumOrder}};
     }
     return '';
   }
+  function applyFormConditionalCSS(css) {
+    var id = 'ob-form-conditional-runtime-css';
+    var el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('style');
+      el.id = id;
+      document.head.appendChild(el);
+    }
+    el.textContent = css || '';
+  }
+  window.applyFormConditionalCSS = applyFormConditionalCSS;
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -932,6 +943,7 @@ window._tpEnumOrder = {{jsJSON .TPEnumOrder}};
         openItemPicker(data.pickerData, elementName);
         return;
       }
+      if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       window.applyTableParts(data.tableparts);
       applyValues(data.values);
       applyChoiceList(elementName, data.choiceList);
