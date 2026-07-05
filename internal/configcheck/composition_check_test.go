@@ -163,3 +163,21 @@ func TestJournalConditionalValidation(t *testing.T) {
 		t.Fatalf("ожидали одну ошибку условия журнала, got %+v", iss)
 	}
 }
+
+func TestFormConditionalValidation(t *testing.T) {
+	proj := &project.Project{Entities: []*metadata.Entity{{
+		Name: "Заказ",
+		Forms: []*metadata.FormModule{{
+			Name:       "ФормаОбъекта",
+			LayoutKind: metadata.FormLayoutManaged,
+			Conditional: []metadata.FormCondRule{
+				{When: "Сумма < 0"},
+				{When: "Сумма < "},
+			},
+		}},
+	}}}
+	iss := CheckFormConditional(proj)
+	if len(iss) != 1 || !strings.Contains(iss[0].Message, "Сумма < ") {
+		t.Fatalf("ожидали одну ошибку условия формы, got %+v", iss)
+	}
+}

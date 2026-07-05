@@ -213,27 +213,43 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
+		values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, entity, obj, msgs)
 		enc.Encode(formEventResponse{
 			OK:         false,
-			Values:     serializeFieldsForEntity(obj.Fields, entity),
-			TableParts: serializeTablePartRowsForEntity(obj.TablePartRows, entity),
-			FormTables: formTablesFromObj(obj, form),
-			Messages:   msgs,
+			Values:     values,
+			TableParts: tableParts,
+			FormTables: formTables,
+			Messages:   outMsgs,
 			Error:      runErr.Error(),
 			PickerData: picker,
 		})
 		return
 	}
 
+	values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, entity, obj, msgs)
 	enc.Encode(formEventResponse{
 		OK:         true,
-		Values:     serializeFieldsForEntity(obj.Fields, entity),
-		TableParts: serializeTablePartRowsForEntity(obj.TablePartRows, entity),
-		Messages:   msgs,
-		FormTables: formTablesFromObj(obj, form),
+		Values:     values,
+		TableParts: tableParts,
+		Messages:   outMsgs,
+		FormTables: formTables,
 		PickerData: picker,
 		ChoiceList: choiceItems,
 	})
+}
+
+func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, []string) {
+	if obj == nil {
+		return nil, nil, nil, msgs
+	}
+	values := serializeFieldsForEntity(obj.Fields, entity)
+	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity)
+	if s.interp != nil {
+		if warnings := applyManagedFormConditionalStyles(form, tableParts, values, newInterpEvaluator(s.interp)); len(warnings) > 0 {
+			msgs = append(msgs, warnings...)
+		}
+	}
+	return values, tableParts, formTablesFromRows(tableParts, form), msgs
 }
 
 // selectedTPRows читает _tp (имя ТЧ) и _tp_selected (CSV индексов отмеченных
@@ -727,22 +743,26 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				}
 
 				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
+					values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, msgs)
 					enc.Encode(formEventResponse{
 						OK:         false,
-						Values:     serializeFieldsForEntity(obj.Fields, virtEntity),
-						TableParts: serializeTablePartRowsForEntity(obj.TablePartRows, virtEntity),
-						Messages:   msgs,
+						Values:     values,
+						TableParts: tableParts,
+						FormTables: formTables,
+						Messages:   outMsgs,
 						Error:      runErr.Error(),
 						PickerData: picker,
 					})
 					return
 				}
 
+				values, tableParts, formTables, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, msgs)
 				enc.Encode(formEventResponse{
 					OK:         true,
-					Values:     serializeFieldsForEntity(obj.Fields, virtEntity),
-					TableParts: serializeTablePartRowsForEntity(obj.TablePartRows, virtEntity),
-					Messages:   msgs,
+					Values:     values,
+					TableParts: tableParts,
+					FormTables: formTables,
+					Messages:   outMsgs,
 					PickerData: picker,
 				})
 				return
@@ -805,18 +825,13 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	enc.Encode(formEventResponse{OK: true})
 }
 
-// formTablesFromObj extracts ValueTable rows from obj.TablePartRows by filtering
-// out keys that belong to entity tabular parts. Returns nil if no VT data.
-func formTablesFromObj(obj *runtime.Object, form *metadata.FormModule) map[string][]map[string]any {
-	if obj == nil || obj.TablePartRows == nil || form == nil {
+func formTablesFromRows(rows map[string][]map[string]any, form *metadata.FormModule) map[string][]map[string]any {
+	if rows == nil || form == nil {
 		return nil
 	}
-	// Collect entity TP names for exclusion.
-	// form is attached to an entity via form.EntityName, but we don't have
-	// the entity here. Instead, check all form attributes for ValueTable.
 	vtNames := map[string]bool{}
 	for _, attr := range form.Attributes {
-		if strings.EqualFold(attr.TypeRef, "ValueTable") {
+		if attr != nil && strings.EqualFold(attr.TypeRef, "ValueTable") {
 			vtNames[attr.Name] = true
 		}
 	}
@@ -824,7 +839,7 @@ func formTablesFromObj(obj *runtime.Object, form *metadata.FormModule) map[strin
 		return nil
 	}
 	result := make(map[string][]map[string]any)
-	for k, v := range obj.TablePartRows {
+	for k, v := range rows {
 		if vtNames[k] && len(v) > 0 {
 			result[k] = v
 		}

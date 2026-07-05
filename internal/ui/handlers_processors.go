@@ -47,7 +47,7 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 		for k, v := range processorEnumOptions(proc) {
 			enumOpts[k] = v
 		}
-		s.render(w, r, "page-managed-form", map[string]any{
+		data := map[string]any{
 			"Entity":        virtEntity,
 			"Form":          mf,
 			"IsNew":         true,
@@ -61,7 +61,9 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TablePartRows": map[string][]map[string]any{},
 			"IsProcessor":   true,
 			"Processor":     proc,
-		})
+		}
+		s.prepareManagedFormData(data, mf)
+		s.render(w, r, "page-managed-form", data)
 		return
 	}
 
@@ -225,7 +227,7 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 	for k, v := range paramValues {
 		strValues[k] = fmt.Sprintf("%v", v)
 	}
-	s.render(w, r, "page-managed-form", map[string]any{
+	data := map[string]any{
 		"Entity":        virtEntity,
 		"Form":          proc.ManagedForm(),
 		"IsNew":         true,
@@ -242,7 +244,9 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"Messages":      messages,
 		"RunError":      runErr,
 		"Ran":           true,
-	})
+	}
+	s.prepareManagedFormData(data, proc.ManagedForm())
+	s.render(w, r, "page-managed-form", data)
 }
 
 func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processorpkg.Processor {

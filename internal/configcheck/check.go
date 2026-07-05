@@ -633,6 +633,29 @@ func CheckJournalConditional(proj *project.Project) []Issue {
 	return issues
 }
 
+// CheckFormConditional валидирует DSL-выражения условного оформления форм.
+func CheckFormConditional(proj *project.Project) []Issue {
+	var issues []Issue
+	for _, ent := range proj.Entities {
+		for _, form := range ent.Forms {
+			if form == nil || !form.IsManaged() {
+				continue
+			}
+			for _, cr := range form.Conditional {
+				if err := parseReturnExpr(cr.When); err != nil {
+					issues = append(issues, Issue{
+						File:    formFileLabel(ent, form),
+						Object:  form.Name,
+						Kind:    "Управляемая форма",
+						Message: "ошибка выражения условия \"" + cr.When + "\": " + err.Error(),
+					})
+				}
+			}
+		}
+	}
+	return issues
+}
+
 func parseReturnExpr(expr string) error {
 	src := "Функция __cond()\nВозврат (" + expr + ");\nКонецФункции\n"
 	_, err := parser.New(lexer.New(src, "cond.os")).ParseProgram()

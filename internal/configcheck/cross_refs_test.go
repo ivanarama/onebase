@@ -110,6 +110,28 @@ table:
   totals:
     - field: Сумма
       sum: true`)
+	mkFile(t, filepath.Join(dir, "forms", "реализация", "ФормаОбъекта.form.yaml"), `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Реализация
+elements:
+  - kind: ТабличнаяЧасть
+    name: ТаблицаТовары
+    data_path: Объект.Товары
+conditional:
+  - target: ТаблицаТовары
+    when: Сумма > 0
+    field: Сумма
+    then: { background: "#eef" }
+  - target: ТаблицаТовары
+    when: Сумма > 0
+    field: НетКолонкиФормы
+    then: { background: "#fee" }
+  - target: НетТакойТЧ
+    when: Сумма > 0
+    then: { background: "#fee" }
+`)
 
 	proj, err := project.Load(dir)
 	if err != nil {
@@ -118,7 +140,7 @@ table:
 	defer proj.Close()
 
 	issues := CheckCrossRefs(proj, nil)
-	var jBad, jGood, jCondBad, jCondGood, pfBad, pfGood, pfRow bool
+	var jBad, jGood, jCondBad, jCondGood, pfBad, pfGood, pfRow, formBadTarget, formBadField, formGood bool
 	for _, i := range issues {
 		switch {
 		case i.Kind == "Журнал" && strings.Contains(i.Message, "НетПоля"):
@@ -135,6 +157,12 @@ table:
 			pfGood = true
 		case i.Kind == "Печатная форма" && strings.Contains(i.Message, "@row"):
 			pfRow = true
+		case i.Kind == "Управляемая форма" && strings.Contains(i.Message, "НетТакойТЧ"):
+			formBadTarget = true
+		case i.Kind == "Управляемая форма" && strings.Contains(i.Message, "НетКолонкиФормы"):
+			formBadField = true
+		case i.Kind == "Управляемая форма" && strings.Contains(i.Message, `"Сумма"`):
+			formGood = true
 		}
 	}
 	if !jBad {
@@ -154,6 +182,15 @@ table:
 	}
 	if pfGood || pfRow {
 		t.Errorf("Сумма и @row валидны — ошибки быть не должно: %+v", issues)
+	}
+	if !formBadTarget {
+		t.Errorf("ожидалась ошибка формы о цели НетТакойТЧ: %+v", issues)
+	}
+	if !formBadField {
+		t.Errorf("ожидалась ошибка формы о колонке НетКолонкиФормы: %+v", issues)
+	}
+	if formGood {
+		t.Errorf("колонка Сумма в форме валидна — ошибки быть не должно: %+v", issues)
 	}
 }
 

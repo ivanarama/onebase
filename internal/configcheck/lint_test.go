@@ -114,6 +114,36 @@ conditional_formatting:
 	}
 }
 
+func TestLintYAML_FormConditionalKnown(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "forms", "заказ", "объекта.form.yaml"), `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+elements:
+  - kind: ТабличнаяЧасть
+    name: ТаблицаТовары
+    data_path: Объект.Товары
+conditional:
+  - target: Товары
+    when: Количество < 0
+    field: Сумма
+    style:
+      color: "#c00"
+conditional_formatting:
+  - element: ТаблицаТовары
+    when: Сумма < 0
+    then:
+      background: yellow
+`)
+	for _, is := range CheckLintYAML(dir) {
+		if is.Code == "metadata.unvalidated-key" {
+			t.Fatalf("условное оформление формы должно быть известно линту, получено: %+v", is)
+		}
+	}
+}
+
 func TestLintCrossScopeRead(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, filepath.Join(dir, "processors", "касса.yaml"), `name: Касса

@@ -111,6 +111,16 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 		}
 	}
 
+	// Управляемые формы → цели и поля условного оформления табличных частей.
+	for _, ent := range proj.Entities {
+		for _, form := range ent.Forms {
+			if form == nil || !form.IsManaged() || len(form.Conditional) == 0 {
+				continue
+			}
+			checkFormConditionalRefs(ent, form, add)
+		}
+	}
+
 	// Подсистемы → объекты в contents.
 	for _, s := range proj.Subsystems {
 		c := s.Contents
@@ -353,6 +363,119 @@ func tpFieldExists(field string, tp *metadata.TablePart) bool {
 		}
 	}
 	return false
+}
+
+type formCondTarget struct {
+	name   string
+	fields map[string]bool
+}
+
+func checkFormConditionalRefs(ent *metadata.Entity, form *metadata.FormModule, add func(file, object, kind, msg string)) {
+	targets := formConditionalRefTargets(ent, form)
+	file := formFileLabel(ent, form)
+	for _, cr := range form.Conditional {
+		targetName := strings.TrimSpace(cr.Target)
+		fieldName := strings.TrimSpace(cr.Field)
+		if targetName == "" {
+			if fieldName == "" {
+				continue
+			}
+			found := false
+			for _, target := range targets {
+				if target.fields[strings.ToLower(fieldName)] {
+					found = true
+					break
+				}
+			}
+			if !found {
+				add(file, form.Name, "Управляемая форма", fmt.Sprintf("условное оформление: поле %q не найдено ни в одной табличной части формы", fieldName))
+			}
+			continue
+		}
+		target := targets[strings.ToLower(targetName)]
+		if target.name == "" {
+			add(file, form.Name, "Управляемая форма", fmt.Sprintf("условное оформление: цель %q не найдена среди табличных частей формы", targetName))
+			continue
+		}
+		if fieldName != "" && !target.fields[strings.ToLower(fieldName)] {
+			add(file, form.Name, "Управляемая форма", fmt.Sprintf("условное оформление: поле %q не найдено в табличной части %q", fieldName, target.name))
+		}
+	}
+}
+
+func formConditionalRefTargets(ent *metadata.Entity, form *metadata.FormModule) map[string]formCondTarget {
+	targets := map[string]formCondTarget{}
+	addTarget := func(alias, name string, fields []string) {
+		alias = strings.TrimSpace(alias)
+		name = strings.TrimSpace(name)
+		if alias == "" || name == "" {
+			return
+		}
+		set := map[string]bool{}
+		for _, f := range fields {
+			if f != "" {
+				set[strings.ToLower(f)] = true
+			}
+		}
+		targets[strings.ToLower(alias)] = formCondTarget{name: name, fields: set}
+	}
+	if ent != nil {
+		for i := range ent.TableParts {
+			tp := &ent.TableParts[i]
+			fields := make([]string, 0, len(tp.Fields))
+			for _, f := range tp.Fields {
+				fields = append(fields, f.Name)
+			}
+			addTarget(tp.Name, tp.Name, fields)
+		}
+	}
+	if form != nil {
+		for _, attr := range form.Attributes {
+			if attr == nil || !strings.EqualFold(attr.TypeRef, "ValueTable") {
+				continue
+			}
+			fields := make([]string, 0, len(attr.Columns))
+			for _, c := range attr.Columns {
+				if c != nil {
+					fields = append(fields, c.Name)
+				}
+			}
+			addTarget(attr.Name, attr.Name, fields)
+		}
+		form.Walk(func(el *metadata.FormElement) bool {
+			if el == nil || el.Kind != metadata.FormElementTablePart {
+				return true
+			}
+			name := formDataPathField(el.DataPath)
+			if name == "" {
+				name = el.TablePart
+			}
+			if name == "" {
+				name = el.Name
+			}
+			if target := targets[strings.ToLower(name)]; target.name != "" {
+				addTarget(el.Name, target.name, targetFieldNames(target))
+			}
+			return true
+		})
+	}
+	return targets
+}
+
+func targetFieldNames(target formCondTarget) []string {
+	out := make([]string, 0, len(target.fields))
+	for f := range target.fields {
+		out = append(out, f)
+	}
+	return out
+}
+
+func formDataPathField(path string) string {
+	path = strings.TrimSpace(path)
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		return path[i+1:]
+	}
+	return path
 }
 
 // checkLayoutForm валидирует binding декларативной печатной формы v2 (макет

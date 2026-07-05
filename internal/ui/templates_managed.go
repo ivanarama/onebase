@@ -209,10 +209,10 @@ const tplManagedForm = `
     </thead>
     <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}">
     {{range $i, $row := $tpRows}}
-      <tr>
+      <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
         {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"></td>{{end}}
         {{range $f := $tpMeta.Fields}}
-        <td>
+        <td{{with formCellClass $row $f.Name}} class="{{.}}"{{end}}>
           {{$v := index $row $f.Name}}
           {{if isRef (str $f.Type)}}
             <div style="display:flex;gap:4px;align-items:center">
@@ -272,9 +272,9 @@ const tplManagedForm = `
     </thead>
     <tbody id="vt-body-{{$tpName}}" data-vt-fields="{{range $i, $c := $vtCols}}{{if $i}},{{end}}{{$c.Name}}|{{$c.TypeRef}}{{end}}">
     {{range $i, $row := $vtRows}}
-      <tr>
+      <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
         {{range $c := $vtCols}}
-        <td>
+        <td{{with formCellClass $row $c.Name}} class="{{.}}"{{end}}>
           {{$v := index $row $c.Name}}
           {{if eq (lower $c.TypeRef) "number"}}
             <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}">
@@ -382,6 +382,7 @@ const tplManagedForm = `
 .ob-grid .ob-ref:hover{text-decoration:underline}
 </style>
 {{end}}
+{{if .FormConditionalCSS}}<style>{{.FormConditionalCSS}}</style>{{end}}
 <main>
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
   <h2 style="margin-bottom:0">
@@ -397,6 +398,7 @@ const tplManagedForm = `
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 {{if .RunError}}<div class="error">{{.RunError}}</div>{{end}}
 {{if .Messages}}{{range .Messages}}<div class="msg-info">{{.}}</div>{{end}}{{end}}
+{{if .FormWarnings}}{{range .FormWarnings}}<div class="msg-info">{{.}}</div>{{end}}{{end}}
 
 {{if not .IsPopup}}
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
@@ -645,6 +647,21 @@ window._tpEnumOrder = {{jsJSON .TPEnumOrder}};
       window._obListChoiceBusy[elName] = false;
     });
   };
+  function obFormRowClass(row) {
+    return row && row._form_row_class ? String(row._form_row_class) : '';
+  }
+  function obFormCellClass(row, field) {
+    var cc = row && row._form_cell_classes;
+    if (!cc || !field) return '';
+    if (cc[field]) return String(cc[field]);
+    var want = String(field).toLowerCase();
+    for (var k in cc) {
+      if (Object.prototype.hasOwnProperty.call(cc, k) && String(k).toLowerCase() === want) {
+        return cc[k] ? String(cc[k]) : '';
+      }
+    }
+    return '';
+  }
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -671,6 +688,7 @@ window._tpEnumOrder = {{jsJSON .TPEnumOrder}};
       tbody.innerHTML = '';
       rows.forEach(function(row, idx){
         const tr = document.createElement('tr');
+        tr.className = obFormRowClass(row);
         if (hasCmd) {
           const tdSel = document.createElement('td');
           tdSel.style.textAlign = 'center';
@@ -681,6 +699,7 @@ window._tpEnumOrder = {{jsJSON .TPEnumOrder}};
         }
         fieldsMeta.forEach(function(f){
           const td = document.createElement('td');
+          td.className = obFormCellClass(row, f.name);
           const v = row[f.name];
           const isRef = f.type === 'reference' || f.type.indexOf('reference') === 0;
           const isEnum = f.type === 'enum' || f.type.indexOf('enum') === 0;
@@ -776,8 +795,10 @@ window._tpEnumOrder = {{jsJSON .TPEnumOrder}};
       tbody.innerHTML = '';
       rows.forEach(function(row, idx){
         var tr = document.createElement('tr');
+        tr.className = obFormRowClass(row);
         fieldsMeta.forEach(function(f){
           var td = document.createElement('td');
+          td.className = obFormCellClass(row, f.name);
           var v = row[f.name];
           var inp = document.createElement('input');
           inp.name = 'vt.' + vtName + '.' + idx + '.' + f.name;
@@ -1369,6 +1390,32 @@ function addVtRow(vtName, fields) {
     return (v == null) ? "" : String(v);
   }
 
+  function copyFormGridStyleKeys(source, item) {
+    item._obRowClass = source && source._form_row_class ? String(source._form_row_class) : "";
+    item._obCellClasses = source && source._form_cell_classes ? source._form_cell_classes : {};
+    return item;
+  }
+
+  function formGridItemMetadata(row) {
+    var item = this.getItem(row);
+    if (!item) return null;
+    var meta = null;
+    if (item._obRowClass) {
+      meta = meta || {};
+      meta.cssClasses = item._obRowClass;
+    }
+    var cc = item._obCellClasses || {};
+    var columns = {};
+    Object.keys(cc).forEach(function(field) {
+      if (cc[field]) columns[field] = {cssClass: String(cc[field])};
+    });
+    if (Object.keys(columns).length) {
+      meta = meta || {};
+      meta.columns = columns;
+    }
+    return meta;
+  }
+
   // Serialize all grid data into hidden inputs (for form submit / obFire)
   window.obGridSync = function() {
     var grids = window._obGrids || {};
@@ -1495,6 +1542,7 @@ function addVtRow(vtName, fields) {
         var item = {id: idx, _ord: idx};
         // == null (не || "") — иначе число 0 / false терялись бы как пустая строка.
         for (var i = 0; i < cols.length; i++) item[cols[i].id] = (r[cols[i].id] == null ? "" : r[cols[i].id]);
+        copyFormGridStyleKeys(r, item);
         return item;
       });
       g.dataView.setItems(items);
@@ -1534,10 +1582,12 @@ function addVtRow(vtName, fields) {
       var item = {id: idx, _ord: idx};
       // == null (не || "") — иначе сохранённое числовое 0 грузилось бы пустым.
       for (var i = 0; i < colsRaw.length; i++) item[colsRaw[i].id] = (r[colsRaw[i].id] == null ? "" : r[colsRaw[i].id]);
+      copyFormGridStyleKeys(r, item);
       return item;
     });
 
     var dataView = new Slick.Data.DataView();
+    dataView.getItemMetadata = formGridItemMetadata;
     dataView.setItems(items);
 
     var readOnly = div.getAttribute("data-sg-ro") === "1";

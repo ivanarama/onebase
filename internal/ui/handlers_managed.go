@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"html/template"
 	"net/http"
 	"strings"
 
@@ -46,8 +47,47 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// полях сущности, поэтому собираем их из самой managed-формы. Единая
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
 		data["ChoiceOptions"] = loadChoiceOptions(managed, s.resolveLang(r))
+		s.prepareManagedFormData(data, managed)
 		s.render(w, r, "page-managed-form", data)
 		return
 	}
 	s.render(w, r, "page-form", data)
+}
+
+func (s *Server) prepareManagedFormData(data map[string]any, form *metadata.FormModule) {
+	if form == nil || data == nil {
+		return
+	}
+	if css := formConditionalCSS(form); css != "" {
+		data["FormConditionalCSS"] = template.CSS(css)
+	}
+	rows, _ := data["TablePartRows"].(map[string][]map[string]any)
+	if len(rows) == 0 || len(form.Conditional) == 0 || s.interp == nil {
+		return
+	}
+	warnings := applyManagedFormConditionalStyles(form, rows, managedFormHeaderValues(data["Values"]), newInterpEvaluator(s.interp))
+	if len(warnings) > 0 {
+		data["FormWarnings"] = appendManagedFormWarnings(data["FormWarnings"], warnings)
+	}
+}
+
+func managedFormHeaderValues(v any) map[string]any {
+	out := map[string]any{}
+	switch m := v.(type) {
+	case map[string]string:
+		for k, val := range m {
+			out[k] = val
+		}
+	case map[string]any:
+		for k, val := range m {
+			out[k] = val
+		}
+	}
+	return out
+}
+
+func appendManagedFormWarnings(existing any, warnings []string) []string {
+	out, _ := existing.([]string)
+	out = append(out, warnings...)
+	return out
 }

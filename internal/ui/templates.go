@@ -33,6 +33,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"journalRowStyle":  journalRowStyle,
 		"journalCellStyle": journalCellStyle,
+		"formRowClass":     formRowClass,
+		"formCellClass":    formCellClass,
 		"add":              func(a, b int) int { return a + b },
 		// lucideIcon рендерит инлайн-SVG иконки навигации по имени Lucide (план 72).
 		"lucideIcon": LucideIcon,

@@ -167,6 +167,54 @@ actions:
 	}
 }
 
+func TestManagedFormLoader_ParseConditionalFormatting(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ.form.yaml")
+	doc := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+conditional:
+  - target: Товары
+    when: Количество < 0
+    field: Сумма
+    style:
+      color: "#991b1b"
+conditional_formatting:
+  - element: ТаблицаТовары
+    when: Сумма < 0
+    then:
+      background: "#fee2e2"
+      bold: true
+  - table_part: Услуги
+    when: Цена = 0
+    field: Цена
+    then:
+      italic: true
+`
+	if err := os.WriteFile(yamlPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mfl := NewManagedFormLoader()
+	form, err := mfl.LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	if len(form.Conditional) != 3 {
+		t.Fatalf("Conditional = %d, want 3", len(form.Conditional))
+	}
+	if got := form.Conditional[0]; got.Target != "Товары" || got.Field != "Сумма" || got.Style.Color != "#991b1b" {
+		t.Fatalf("conditional[0] = %+v", got)
+	}
+	if got := form.Conditional[1]; got.Target != "ТаблицаТовары" || got.Style.Background != "#fee2e2" || !got.Style.Bold {
+		t.Fatalf("conditional_formatting then/element = %+v", got)
+	}
+	if got := form.Conditional[2]; got.Target != "Услуги" || got.Field != "Цена" || !got.Style.Italic {
+		t.Fatalf("conditional_formatting table_part = %+v", got)
+	}
+}
+
 // Реквизит со списком значений (ПолеСписка + choices) должен разбираться из
 // .form.yaml в FormElement.Choices с локализованными подписями.
 func TestManagedFormLoader_ParseChoices(t *testing.T) {

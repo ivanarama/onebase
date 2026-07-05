@@ -402,17 +402,24 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
 		"title": freeMap(),
 	})
+	style := obj("color", "background", "bold", "italic")
+	conditional := with(obj("when", "target", "element", "table_part", "field"), map[string]*yamlLintSchema{
+		"style": style,
+		"then":  style,
+	})
 
 	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
-		"form":        formHeader,
-		"title":       freeMap(),
-		"events":      freeMap(),
-		"elements":    seq(element),
-		"actions":     freeMap(),
-		"attributes":  seq(attr),
-		"commands":    seq(command),
-		"command_bar": commandBar,
-		"oneC_meta":   freeMap(),
+		"form":                   formHeader,
+		"title":                  freeMap(),
+		"events":                 freeMap(),
+		"elements":               seq(element),
+		"actions":                freeMap(),
+		"attributes":             seq(attr),
+		"commands":               seq(command),
+		"command_bar":            commandBar,
+		"conditional":            seq(conditional),
+		"conditional_formatting": seq(conditional),
+		"oneC_meta":              freeMap(),
 	})
 }
 

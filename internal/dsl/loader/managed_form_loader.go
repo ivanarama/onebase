@@ -103,13 +103,25 @@ type formYAMLDoc struct {
 		AutoSaveDataInSettings bool              `yaml:"auto_save_settings"`
 		VerticalScroll         string            `yaml:"vertical_scroll"`
 	} `yaml:"form"`
-	Attributes []*metadata.FormAttribute       `yaml:"attributes"`
-	Commands   []*metadata.FormCommand         `yaml:"commands"`
-	CommandBar *metadata.FormCommandBar        `yaml:"command_bar"`
-	Elements   []*metadata.FormElement         `yaml:"elements"`
-	Events     map[string]string               `yaml:"events"`
-	Actions    map[string]*metadata.FormAction `yaml:"actions"`
-	OneCMeta   map[string]any                  `yaml:"oneC_meta"`
+	Attributes            []*metadata.FormAttribute       `yaml:"attributes"`
+	Commands              []*metadata.FormCommand         `yaml:"commands"`
+	CommandBar            *metadata.FormCommandBar        `yaml:"command_bar"`
+	Elements              []*metadata.FormElement         `yaml:"elements"`
+	Events                map[string]string               `yaml:"events"`
+	Actions               map[string]*metadata.FormAction `yaml:"actions"`
+	Conditional           []rawFormCondRule               `yaml:"conditional"`
+	ConditionalFormatting []rawFormCondRule               `yaml:"conditional_formatting"`
+	OneCMeta              map[string]any                  `yaml:"oneC_meta"`
+}
+
+type rawFormCondRule struct {
+	When      string                 `yaml:"when"`
+	Target    string                 `yaml:"target"`
+	Element   string                 `yaml:"element"`
+	TablePart string                 `yaml:"table_part"`
+	Field     string                 `yaml:"field"`
+	Style     metadata.FormCellStyle `yaml:"style"`
+	Then      metadata.FormCellStyle `yaml:"then"`
 }
 
 func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) (*metadata.FormModule, error) {
@@ -145,6 +157,7 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		Elements:               doc.Elements,
 		Handlers:               toEventMap(doc.Events),
 		Actions:                doc.Actions,
+		Conditional:            rawFormConditional(doc),
 		Procedures:             make(map[string]*metadata.FormProcedure),
 		OneCMeta:               doc.OneCMeta,
 	}
@@ -157,6 +170,36 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 	}
 
 	return form, nil
+}
+
+func rawFormConditional(doc formYAMLDoc) []metadata.FormCondRule {
+	rawRules := append([]rawFormCondRule{}, doc.Conditional...)
+	rawRules = append(rawRules, doc.ConditionalFormatting...)
+	out := make([]metadata.FormCondRule, 0, len(rawRules))
+	for _, rr := range rawRules {
+		style := rr.Style
+		if formStyleZero(style) {
+			style = rr.Then
+		}
+		target := rr.Target
+		if target == "" {
+			target = rr.Element
+		}
+		if target == "" {
+			target = rr.TablePart
+		}
+		out = append(out, metadata.FormCondRule{
+			When:   rr.When,
+			Target: target,
+			Field:  rr.Field,
+			Style:  style,
+		})
+	}
+	return out
+}
+
+func formStyleZero(s metadata.FormCellStyle) bool {
+	return s.Color == "" && s.Background == "" && !s.Bold && !s.Italic
 }
 
 // attachProcedures парсит .form.os и наполняет form.Procedures / form.Handlers.

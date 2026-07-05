@@ -127,8 +127,8 @@ type FormElement struct {
 	// явно предупредить об этом, а не молча проглатывать неизвестный ключ.
 	Format        string `yaml:"format,omitempty"`
 	DisplayFormat string `yaml:"display_format,omitempty"`
-	Type            string            `yaml:"type,omitempty"`           // "file" для файлового поля, и т.п.
-	Choice          bool              `yaml:"choice,omitempty"`         // включена кнопка выбора у InputField
+	Type          string `yaml:"type,omitempty"`   // "file" для файлового поля, и т.п.
+	Choice        bool   `yaml:"choice,omitempty"` // включена кнопка выбора у InputField
 	// Choices — декларативный список значений для выбора (аналог 1С СписокВыбора).
 	// Задаётся в .form.yaml на элементе kind: ПолеСписка; рендерер показывает
 	// <select> с этими значениями, а выбор дёргает событие ПриИзменении.
@@ -204,6 +204,24 @@ type FormAction struct {
 	Visible *bool `yaml:"visible,omitempty"`
 }
 
+// FormCondRule описывает декларативное условное оформление строк и ячеек
+// табличных частей managed-формы. Target — имя табличной части/ValueTable или
+// элемента формы. Пустой Field означает оформление всей строки.
+type FormCondRule struct {
+	When   string
+	Target string
+	Field  string
+	Style  FormCellStyle
+}
+
+// FormCellStyle — безопасное подмножество CSS-оформления ячейки формы.
+type FormCellStyle struct {
+	Color      string
+	Background string
+	Bold       bool
+	Italic     bool
+}
+
 // FormModule represents a form module with event handlers
 type FormModule struct {
 	EntityName string                    `yaml:"entity,omitempty"`
@@ -219,6 +237,10 @@ type FormModule struct {
 	// процессор. Платформенное удаление и так пишется в _audit и закрыто правом
 	// delete — это про управление UI-кнопкой.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
+
+	// Conditional — декларативное условное оформление табличных частей формы.
+	// YAML-загрузчик принимает ключи conditional и conditional_formatting.
+	Conditional []FormCondRule `yaml:"conditional,omitempty"`
 
 	// Поля, добавленные планом 37 для управляемых форм.
 	LayoutKind             string            `yaml:"layout_kind,omitempty"`      // "managed"|"autogen" (пусто=autogen)
