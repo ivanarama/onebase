@@ -111,14 +111,14 @@
     {
       "id": "dsl-real-world",
       "plan": "Plans/34-dsl-real-world.md",
-      "status": "in_progress",
-      "bucket": "next",
-      "progress": 80,
+      "status": "done",
+      "bucket": "done",
+      "progress": 100,
       "track": { "ru": "DSL", "en": "DSL" },
       "title": { "ru": "DSL для реальных конфигураций", "en": "DSL for real-world configurations" },
       "summary": {
-        "ru": "Реально есть `ИначеЕсли`, тернарный оператор, compound assign, строки/даты/формат/тип, `ТаблицаЗначений`, общие модули, `Документы.X.Создать()` и write-hooks. Основной остаток — автодоступ к полям ссылок.",
-        "en": "`ElseIf`, ternary, compound assignment, string/date/format/type builtins, `ValueTable`, common modules, `Documents.X.Create()`, and write hooks are implemented. Main remaining item: automatic reference field dereferencing."
+        "ru": "Реально есть `ИначеЕсли`, тернарный оператор, compound assign, строки/даты/формат/тип, `ТаблицаЗначений`, общие модули, `Документы.X.Создать()`, write-hooks и безопасный single-hop автодоступ к реквизитам ссылок `this.X.Y` / `Стр.X.Y`.",
+        "en": "`ElseIf`, ternary, compound assignment, string/date/format/type builtins, `ValueTable`, common modules, `Documents.X.Create()`, write hooks, and safe single-hop automatic reference attribute access via `this.X.Y` / `Row.X.Y` are implemented."
       }
     },
     {
