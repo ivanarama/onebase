@@ -91,6 +91,14 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// работают без cookie, а защищённые проверяют свой механизм внутри.
 	uiSrv.MountServices(r)
 
+	// REST API v2 accepts either an integration Bearer token or the existing
+	// browser session cookie. Keep it outside the UI/session-only group so
+	// headless clients do not need a cookie.
+	r.Group(func(r chi.Router) {
+		r.Use(authRepo.APITokenOrSessionMiddleware)
+		h.mountV2(r)
+	})
+
 	// Protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(authRepo.Middleware)
@@ -109,9 +117,6 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		r.Delete("/documents/{entity}/{id}", h.deleteObject(metadata.KindDocument))
 		// Posting/un-posting документа (аналог UI-кнопки «Провести»).
 		r.Post("/documents/{entity}/{id}/post", h.postDocument())
-
-		// REST API v2 — envelope/meta, page/filter[] and OpenAPI contract.
-		h.mountV2(r)
 
 		// Web UI
 		uiSrv.Mount(r)
@@ -157,8 +162,17 @@ func csrfExceptServices(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if (r.URL.Path == "/api/v2" || strings.HasPrefix(r.URL.Path, "/api/v2/")) && hasBearerAuthorization(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		protected.ServeHTTP(w, r)
 	})
+}
+
+func hasBearerAuthorization(r *http.Request) bool {
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	return len(parts) > 0 && strings.EqualFold(parts[0], "Bearer")
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }

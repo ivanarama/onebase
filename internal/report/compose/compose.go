@@ -29,15 +29,15 @@ type Evaluator interface {
 const DefaultMaxRows = 50000
 
 type Result struct {
-	Columns  []string
-	Groups   []*Group
-	Grand    map[string]any
-	RowCount int
-	Capped   bool
+	Columns  []string       `json:"columns"`
+	Groups   []*Group       `json:"groups"`
+	Grand    map[string]any `json:"grand"`
+	RowCount int            `json:"row_count"`
+	Capped   bool           `json:"capped"`
 	// Warnings — runtime-проблемы компоновки (ошибки исполнения вычисляемых
 	// показателей и условий оформления, циклы зависимостей). Дедуплицированы:
 	// одна и та же ошибка повторяется для каждой группы/итога. Пусто — всё ок.
-	Warnings []string
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // warnCollector копит дедуплицированные предупреждения компоновки. Одно и то же
@@ -63,18 +63,18 @@ func (w *warnCollector) add(msg string) {
 }
 
 type Group struct {
-	Field     string
-	Key       any
-	Subtotals map[string]any
-	Count     int
-	Children  []*Group
-	Details   []DetailRow
-	Styles    map[string]report.CellStyle // условное оформление по подытогам; ключ "" = вся строка
+	Field     string                      `json:"field"`
+	Key       any                         `json:"key"`
+	Subtotals map[string]any              `json:"subtotals"`
+	Count     int                         `json:"count"`
+	Children  []*Group                    `json:"children,omitempty"`
+	Details   []DetailRow                 `json:"details,omitempty"`
+	Styles    map[string]report.CellStyle `json:"styles,omitempty"` // условное оформление по подытогам; ключ "" = вся строка
 }
 
 type DetailRow struct {
-	Values map[string]any
-	Styles map[string]report.CellStyle // ключ "" = стиль на всю строку
+	Values map[string]any              `json:"values"`
+	Styles map[string]report.CellStyle `json:"styles,omitempty"` // ключ "" = стиль на всю строку
 }
 
 func Compose(rows []Row, spec report.Composition, ev Evaluator) (*Result, error) {

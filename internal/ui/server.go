@@ -266,6 +266,11 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/sessions", s.adminSessions)
 	r.Post("/ui/admin/sessions/{login}/kick", s.adminKickUser)
 
+	// Admin: REST API v2 integration tokens
+	r.Get("/ui/admin/api-tokens", s.adminAPITokens)
+	r.Post("/ui/admin/api-tokens", s.adminAPITokenCreate)
+	r.Post("/ui/admin/api-tokens/{id}/revoke", s.adminAPITokenRevoke)
+
 	// Admin: roles
 	r.Get("/ui/admin/roles", s.adminRoles)
 	r.Get("/ui/admin/users/{id}/roles", s.adminUserRoles)

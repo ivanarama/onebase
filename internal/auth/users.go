@@ -62,6 +62,9 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 	if err := r.EnsureRolesSchema(ctx); err != nil {
 		return err
 	}
+	if err := r.EnsureAPITokenSchema(ctx); err != nil {
+		return err
+	}
 	// idempotent migrations: add columns if missing
 	r.db.Exec(ctx, fmt.Sprintf(`ALTER TABLE _users ADD COLUMN deny_passwd_change %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)))
 	r.db.Exec(ctx, fmt.Sprintf(`ALTER TABLE _users ADD COLUMN show_in_list %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)))
@@ -180,6 +183,9 @@ func scanBool(v any) bool {
 }
 
 func scanTime(v any) time.Time {
+	if t := storage.ParseDBTime(v); !t.IsZero() {
+		return t
+	}
 	if t, ok := v.(time.Time); ok {
 		return t
 	}

@@ -654,7 +654,15 @@ func TestAPIV2_OpenAPIIncludesPathsAndSchemas(t *testing.T) {
 	if reportGet["operationId"] != "runReport" {
 		t.Fatalf("report operationId = %#v", reportGet["operationId"])
 	}
+	reportParams := reportGet["parameters"].([]any)
+	if !openAPIHasQueryParam(reportParams, "composition") || !openAPIHasQueryParam(reportParams, "variant") {
+		t.Fatalf("report parameters must include composition and variant: %#v", reportParams)
+	}
 	components := spec["components"].(map[string]any)
+	securitySchemes := components["securitySchemes"].(map[string]any)
+	if _, ok := securitySchemes["bearerAuth"]; !ok {
+		t.Fatalf("missing bearerAuth security scheme: %#v", securitySchemes)
+	}
 	schemas := components["schemas"].(map[string]any)
 	schema := schemas["catalog_Товар"].(map[string]any)
 	props := schema["properties"].(map[string]any)
@@ -670,6 +678,16 @@ func TestAPIV2_OpenAPIIncludesPathsAndSchemas(t *testing.T) {
 	if _, err := json.Marshal(spec); err != nil {
 		t.Fatalf("openapi spec must be JSON-serializable: %v", err)
 	}
+}
+
+func openAPIHasQueryParam(params []any, name string) bool {
+	for _, p := range params {
+		pm, ok := p.(map[string]any)
+		if ok && pm["name"] == name && pm["in"] == "query" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAPIV2_ReportRunsQueryEnvelope(t *testing.T) {
@@ -754,6 +772,143 @@ func TestAPIV2_ReportParamsAndRBAC(t *testing.T) {
 	}
 	if len(resp.Data) != 1 || resp.Data[0]["значение"] == nil {
 		t.Fatalf("bad report data: %#v", resp.Data)
+	}
+}
+
+func TestAPIV2_ReportUsesBearerTokenRBAC(t *testing.T) {
+	rep := &reportpkg.Report{
+		Name: "Сумма",
+		Params: []reportpkg.Param{
+			{Name: "Значение", Type: "number"},
+		},
+		Query: `ВЫБРАТЬ &Значение КАК Значение`,
+	}
+	h, ctx := newAPITestHandlerWithReports(t, nil, []*reportpkg.Report{rep}, nil)
+	authRepo := auth.NewRepo(h.store)
+	if err := authRepo.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	allowedUser, _ := authRepo.Create(ctx, "runner", "pass", "", false)
+	deniedUser, _ := authRepo.Create(ctx, "reader", "pass", "", false)
+	role := []*auth.Role{{
+		Name: "report-runner",
+		Permissions: auth.Permission{
+			Reports: map[string][]string{"Сумма": {"run"}},
+		},
+	}}
+	if err := authRepo.SyncRoles(ctx, role); err != nil {
+		t.Fatal(err)
+	}
+	if err := authRepo.AssignRole(ctx, allowedUser.ID, role[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	_, allowedRaw, err := authRepo.CreateAPIToken(ctx, "allowed", allowedUser.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, deniedRaw, err := authRepo.CreateAPIToken(ctx, "denied", deniedUser.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	router := chi.NewRouter()
+	router.Use(authRepo.APITokenOrSessionMiddleware)
+	h.mountV2(router)
+	target := "/api/v2/report/" + url.PathEscape("Сумма") + "?Значение=7"
+
+	noAuth := httptest.NewRecorder()
+	router.ServeHTTP(noAuth, httptest.NewRequest(http.MethodGet, target, nil))
+	if noAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth expected 401, got %d: %s", noAuth.Code, noAuth.Body.String())
+	}
+
+	deniedReq := httptest.NewRequest(http.MethodGet, target, nil)
+	deniedReq.Header.Set("Authorization", "Bearer "+deniedRaw)
+	deniedRec := httptest.NewRecorder()
+	router.ServeHTTP(deniedRec, deniedReq)
+	if deniedRec.Code != http.StatusForbidden {
+		t.Fatalf("denied token expected 403, got %d: %s", deniedRec.Code, deniedRec.Body.String())
+	}
+
+	allowedReq := httptest.NewRequest(http.MethodGet, target, nil)
+	allowedReq.Header.Set("Authorization", "Bearer "+allowedRaw)
+	allowedRec := httptest.NewRecorder()
+	router.ServeHTTP(allowedRec, allowedReq)
+	if allowedRec.Code != http.StatusOK {
+		t.Fatalf("allowed token expected 200, got %d: %s", allowedRec.Code, allowedRec.Body.String())
+	}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(allowedRec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0]["значение"] == nil {
+		t.Fatalf("bad report data: %#v", resp.Data)
+	}
+}
+
+func TestAPIV2_ReportCompositionEnvelope(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "Товар",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Категория", Type: metadata.FieldTypeString},
+			{Name: "Количество", Type: metadata.FieldTypeNumber},
+		},
+	}
+	rep := &reportpkg.Report{
+		Name:  "Свод",
+		Query: `ВЫБРАТЬ Категория, Количество ИЗ Справочник.Товар УПОРЯДОЧИТЬ ПО Категория`,
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Категория"},
+			Measures:  []reportpkg.Measure{{Field: "Количество", Agg: "sum"}},
+			Detail:    true,
+		},
+	}
+	h, ctx := newAPITestHandlerWithReports(t, []*metadata.Entity{cat}, []*reportpkg.Report{rep}, nil)
+	for _, row := range []map[string]any{
+		{"Категория": "Инструмент", "Количество": 2},
+		{"Категория": "Инструмент", "Количество": 3},
+	} {
+		if err := h.store.Upsert(ctx, "Товар", uuid.New(), row, cat); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := reqWithEntity("GET", "/api/v2/report/Свод?composition=1", nil, map[string]string{"name": "Свод"}, nil)
+	w := httptest.NewRecorder()
+	h.runReportV2().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Kind   string `json:"kind"`
+			Result struct {
+				Groups []struct {
+					Field     string         `json:"field"`
+					Key       any            `json:"key"`
+					Subtotals map[string]any `json:"subtotals"`
+					Details   []any          `json:"details"`
+				} `json:"groups"`
+				RowCount int `json:"row_count"`
+			} `json:"result"`
+		} `json:"data"`
+		Meta restV2Meta `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Kind != "tree" || !resp.Meta.Composed || resp.Meta.Kind != "tree" {
+		t.Fatalf("bad composition markers: data=%+v meta=%+v", resp.Data, resp.Meta)
+	}
+	if len(resp.Data.Result.Groups) != 1 || resp.Data.Result.Groups[0].Field != "Категория" || resp.Data.Result.Groups[0].Key != "Инструмент" {
+		t.Fatalf("bad composition groups: %+v", resp.Data.Result.Groups)
+	}
+	if resp.Data.Result.RowCount != 2 || len(resp.Data.Result.Groups[0].Details) != 2 {
+		t.Fatalf("bad composition row/detail counts: %+v", resp.Data.Result)
 	}
 }
 

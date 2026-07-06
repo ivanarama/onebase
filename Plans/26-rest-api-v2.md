@@ -1,6 +1,6 @@
 # Этап 26 — REST API v2 (фильтры, пагинация, OpenAPI)
 
-**Статус:** 🟨 Частично реализовано
+**Статус:** ✅ Реализовано
 
 **Актуализация 2026-07-06:** первый PR v2 берёт стабильный HTTP-контракт
 `/api/v2/catalog|document/...`: envelope `{data, meta}`, `page/limit`,
@@ -12,7 +12,12 @@ session/RBAC guardrails и `entityservice.Save`. Bearer API-токены, admin 
 **Актуализация 2026-07-07:** добавлен `GET /api/v2/report/{name}` для плоского
 JSON-результата отчёта, расширен OpenAPI (`operationId`, report path, error/
 envelope schemas) и добавлена пользовательская документация `docs/rest-api-v2.md`.
-Новая auth-модель на Bearer-токенах по-прежнему остаётся отдельным этапом.
+
+**Актуализация 2026-07-07:** добавлены Bearer API-токены для `/api/v2`,
+админская страница `Система -> API-токены`, отзыв/истечение токенов, OpenAPI
+security scheme `bearerAuth`, тесты auth/RBAC и опциональная JSON-композиция
+отчётов (`composition=1`, `variant=...`). Старые UI/session маршруты не
+переведены на Bearer; мультисессионность находится в отдельной работе.
 
 **Актуализация 2026-06-25:** перед полноценным v2 нужно закрыть guardrails из
 плана 76: RBAC в текущем REST API, дефолтные лимиты/пагинацию, caps на размер
@@ -75,28 +80,30 @@ API-токен в заголовке: `Authorization: Bearer <token>`
 
 ```sql
 CREATE TABLE _api_tokens (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id         UUID PRIMARY KEY,
     name       TEXT NOT NULL,
-    token_hash TEXT NOT NULL,
-    user_id    UUID REFERENCES _users(id),
-    created_at TIMESTAMPTZ DEFAULT now(),
-    last_used  TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ
+    token_hash TEXT UNIQUE NOT NULL,
+    user_id    UUID NOT NULL REFERENCES _users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
 );
 ```
 
 ## Изменения в коде
 
-**`internal/api/v2/`** (новый пакет):
-- `router.go` — chi-роутер `/api/v2/...`
-- `catalog.go` — CRUD-хэндлеры для справочников
-- `document.go` — CRUD + post/unpost
-- `report.go` — запуск отчёта → JSON
-- `openapi.go` — генерация OpenAPI-спецификации из метаданных
-- `auth.go` — middleware проверки Bearer-токена
+**`internal/api/v2.go`**:
+- chi-роутер `/api/v2/...`
+- CRUD-хэндлеры для справочников и документов
+- `post/unpost`
+- запуск отчёта → плоский JSON или композиция
+- генерация OpenAPI-спецификации из метаданных
 
-**`internal/storage/tokens.go`**:
-- `CreateToken`, `ValidateToken`, `RevokeToken`
+**`internal/auth/api_tokens.go`**:
+- `CreateAPIToken`, `LookupAPIToken`, `ListAPITokens`, `RevokeAPIToken`
+- хранение только SHA-256 хеша токена
+- привязка токена к пользователю и его RBAC-ролям
 
 **`internal/ui/server.go`**:
 - Маунт `/api/v2/` → новый роутер

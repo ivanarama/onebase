@@ -42,16 +42,63 @@ func (r *Repo) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Load roles for this user (best-effort — don't fail if table missing yet)
-		if roles, err2 := r.GetRolesForUser(ctx, user.ID); err2 == nil {
-			user.Roles = roles
+		next.ServeHTTP(w, req.WithContext(r.contextWithUser(ctx, user)))
+	})
+}
+
+// APITokenOrSessionMiddleware accepts REST API Bearer tokens first and falls
+// back to the regular session cookie middleware. It is intentionally separate
+// from Middleware so UI routes keep their cookie-only authentication behavior.
+func (r *Repo) APITokenOrSessionMiddleware(next http.Handler) http.Handler {
+	session := r.Middleware(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
+		hasUsers, err := r.HasUsers(ctx)
+		if err != nil || !hasUsers {
+			next.ServeHTTP(w, req)
+			return
 		}
 
-		ctx = context.WithValue(ctx, userKey, user)
-		// Inject audit user info for storage layer
-		ctx = storage.WithAuditUser(ctx, user.ID, user.Login)
-		next.ServeHTTP(w, req.WithContext(ctx))
+		token, present := bearerToken(req)
+		if !present {
+			session.ServeHTTP(w, req)
+			return
+		}
+		if token == "" {
+			writeUnauthorizedJSON(w)
+			return
+		}
+		user, err := r.LookupAPIToken(ctx, token)
+		if err != nil {
+			writeUnauthorizedJSON(w)
+			return
+		}
+		next.ServeHTTP(w, req.WithContext(r.contextWithUser(ctx, user)))
 	})
+}
+
+func bearerToken(req *http.Request) (string, bool) {
+	h := strings.TrimSpace(req.Header.Get("Authorization"))
+	if h == "" {
+		return "", false
+	}
+	parts := strings.Fields(h)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1], true
+	}
+	if len(parts) > 0 && strings.EqualFold(parts[0], "Bearer") {
+		return "", true
+	}
+	return "", false
+}
+
+func (r *Repo) contextWithUser(ctx context.Context, user *User) context.Context {
+	// Load roles for this user (best-effort — don't fail if table missing yet).
+	if roles, err := r.GetRolesForUser(ctx, user.ID); err == nil {
+		user.Roles = roles
+	}
+	ctx = context.WithValue(ctx, userKey, user)
+	return storage.WithAuditUser(ctx, user.ID, user.Login)
 }
 
 func redirectToLogin(w http.ResponseWriter, req *http.Request) {
@@ -59,6 +106,10 @@ func redirectToLogin(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, "/login?return="+req.URL.RequestURI(), http.StatusFound)
 		return
 	}
+	writeUnauthorizedJSON(w)
+}
+
+func writeUnauthorizedJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 }

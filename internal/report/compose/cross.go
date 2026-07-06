@@ -19,13 +19,13 @@ import (
 // (для многоуровневых колонок) плюс показатель. При нескольких показателях один
 // путь даёт по колонке на каждый показатель.
 type CrossCol struct {
-	Path    []any  // значения по spec.Columns; len == len(spec.Columns)
-	Measure string // Field показателя (для подписи/формата)
+	Path    []any  `json:"path"`    // значения по spec.Columns; len == len(spec.Columns)
+	Measure string `json:"measure"` // Field показателя (для подписи/формата)
 	// MeasureIdx — индекс показателя в spec.Measures. Колонка/ячейка ключуются
 	// по индексу, а не по Field (issue #17): два показателя с одинаковым Field,
 	// но разным Agg/Expr (например sum(Сумма) и avg(Сумма)) — это РАЗНЫЕ колонки;
 	// при ключевании по Field второй затирал бы первый.
-	MeasureIdx int
+	MeasureIdx int `json:"measure_idx"`
 }
 
 // Key — стабильный строковый ключ колонки (ключ в CrossRow.Cells / RowTotal).
@@ -35,26 +35,26 @@ func (c CrossCol) Key() string { return colKey(c.Path, c.MeasureIdx) }
 // агрегаты показателей по каждой колонке (ключ = CrossCol.Key()). Промежуточный
 // узел несёт подытоги по своему поддереву и Children; лист — только Cells.
 type CrossRow struct {
-	Field    string
-	Key      any
-	Count    int
-	Cells    map[string]any
-	Styles   map[string]report.CellStyle // ключ = CrossCol.Key() → оформление ячейки
-	Children []*CrossRow
+	Field    string                      `json:"field"`
+	Key      any                         `json:"key"`
+	Count    int                         `json:"count"`
+	Cells    map[string]any              `json:"cells"`
+	Styles   map[string]report.CellStyle `json:"styles,omitempty"` // ключ = CrossCol.Key() → оформление ячейки
+	Children []*CrossRow                 `json:"children,omitempty"`
 }
 
 // CrossResult — результат компоновки в режиме кросс-таблицы.
 type CrossResult struct {
-	Columns  []string       // имена измерений-колонок (spec.Columns) — для шапки
-	Cols     []CrossCol     // упорядоченные колонки (путь × показатель)
-	Rows     []*CrossRow    // дерево строк (верхний уровень)
-	RowTotal map[string]any // итог по каждой колонке (ключ = CrossCol.Key())
-	RowCount int
-	Capped   bool
+	Columns  []string       `json:"columns"`   // имена измерений-колонок (spec.Columns) — для шапки
+	Cols     []CrossCol     `json:"cols"`      // упорядоченные колонки (путь × показатель)
+	Rows     []*CrossRow    `json:"rows"`      // дерево строк (верхний уровень)
+	RowTotal map[string]any `json:"row_total"` // итог по каждой колонке (ключ = CrossCol.Key())
+	RowCount int            `json:"row_count"`
+	Capped   bool           `json:"capped"`
 	// Warnings — runtime-проблемы компоновки (ошибки вычисляемых показателей и
 	// условий оформления), как в обычном своде Result.Warnings (issue #26).
 	// Прежде кросс-режим их молча терял. Дедуплицированы.
-	Warnings []string
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ComposeCross строит кросс-таблицу: измерения spec.Groupings — в строки,

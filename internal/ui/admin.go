@@ -15,7 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserCard + tplAdminUserForm + tplAdminPasswd + tplAdminSessions + tplAdminCleanup + tplAdminRoles + tplAdminUserRoles + tplAdminAudit + tplAdminWebhooks))
+var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserCard + tplAdminUserForm + tplAdminPasswd + tplAdminSessions + tplAdminAPITokens + tplAdminCleanup + tplAdminRoles + tplAdminUserRoles + tplAdminAudit + tplAdminWebhooks))
 
 const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 <main>
@@ -184,7 +184,7 @@ tr:last-child td{border-bottom:none}
 .btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
 .form-group{margin-bottom:16px}
 label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:#475569}
-input[type=text],input[type=password]{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px}
+input[type=text],input[type=password],input[type=date],select{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;background:#fff}
 input:focus{border-color:#3b82f6;outline:none}
 .error{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px;border-radius:7px;margin-bottom:16px;font-size:14px}
 .empty{color:#94a3b8;text-align:center;padding:32px;font-size:14px}
@@ -461,6 +461,88 @@ func (s *Server) adminKickUser(w http.ResponseWriter, r *http.Request) {
 		s.authRepo.KickUser(r.Context(), login)
 	}
 	http.Redirect(w, r, "/ui/admin/sessions", http.StatusFound)
+}
+
+func (s *Server) adminAPITokens(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	s.renderAdminAPITokens(w, r, nil)
+}
+
+func (s *Server) adminAPITokenCreate(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	if s.authRepo == nil {
+		http.Error(w, "auth not configured", 500)
+		return
+	}
+	lang := s.resolveLang(r)
+	if err := r.ParseForm(); err != nil {
+		s.renderAdminAPITokens(w, r, map[string]any{"Error": s.errText(r, err)})
+		return
+	}
+	expiresAt, err := parseAPITokenExpiresAt(r.FormValue("expires_at"))
+	if err != nil {
+		s.renderAdminAPITokens(w, r, map[string]any{"Error": s.tr(lang, "Некорректная дата истечения")})
+		return
+	}
+	_, raw, err := s.authRepo.CreateAPIToken(r.Context(), r.FormValue("name"), r.FormValue("user_id"), expiresAt)
+	if err != nil {
+		s.renderAdminAPITokens(w, r, map[string]any{"Error": s.errText(r, err)})
+		return
+	}
+	s.renderAdminAPITokens(w, r, map[string]any{"CreatedToken": raw})
+}
+
+func (s *Server) adminAPITokenRevoke(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	if s.authRepo != nil {
+		_ = s.authRepo.RevokeAPIToken(r.Context(), chi.URLParam(r, "id"))
+	}
+	http.Redirect(w, r, "/ui/admin/api-tokens", http.StatusFound)
+}
+
+func (s *Server) renderAdminAPITokens(w http.ResponseWriter, r *http.Request, extra map[string]any) {
+	if s.authRepo == nil {
+		http.Error(w, "auth not configured", 500)
+		return
+	}
+	users, err := s.authRepo.List(r.Context())
+	if err != nil {
+		http.Error(w, s.errText(r, err), 500)
+		return
+	}
+	tokens, err := s.authRepo.ListAPITokens(r.Context())
+	if err != nil {
+		http.Error(w, s.errText(r, err), 500)
+		return
+	}
+	data := map[string]any{"Users": users, "Tokens": tokens}
+	for k, v := range extra {
+		data[k] = v
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	adminTmpl.ExecuteTemplate(w, "admin-api-tokens", data)
+}
+
+func parseAPITokenExpiresAt(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+	if err != nil {
+		return nil, err
+	}
+	end := t.Add(24*time.Hour - time.Second)
+	return &end, nil
 }
 
 func (s *Server) adminCleanup(w http.ResponseWriter, r *http.Request) {
@@ -762,6 +844,78 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
   <p class="empty">Активных сессий нет.</p>
 </div>
 {{end}}
+</main></body></html>
+{{end}}`
+
+const tplAdminAPITokens = `{{define "admin-api-tokens"}}` + adminHead + `
+<main>
+<div class="row-top" style="max-width:1000px">
+  <h2>API-токены</h2>
+  <a class="btn" href="/ui/admin/api-tokens" style="background:#e2e8f0;color:#475569;font-size:13px">Обновить</a>
+</div>
+{{if .Error}}<div class="error" style="max-width:1000px">{{.Error}}</div>{{end}}
+{{if .CreatedToken}}
+<div style="background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:14px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">
+  <div style="font-weight:700;margin-bottom:8px">Токен создан. Скопируйте его сейчас: позже он не будет показан.</div>
+  <input type="text" value="{{.CreatedToken}}" readonly onclick="this.select()" style="font-family:monospace">
+</div>
+{{end}}
+
+<div class="card" style="max-width:1000px;margin-bottom:18px">
+<h3 style="margin-bottom:16px">Создать токен</h3>
+{{if .Users}}
+<form method="POST" action="/ui/admin/api-tokens" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end">
+  <div class="form-group" style="margin-bottom:0">
+    <label>Название</label>
+    <input type="text" name="name" required placeholder="Интеграция склада">
+  </div>
+  <div class="form-group" style="margin-bottom:0">
+    <label>Пользователь</label>
+    <select name="user_id" required>
+      {{range .Users}}<option value="{{.ID}}">{{.Login}}{{if .FullName}} — {{.FullName}}{{end}}</option>{{end}}
+    </select>
+  </div>
+  <div class="form-group" style="margin-bottom:0">
+    <label>Действует до</label>
+    <input type="date" name="expires_at">
+  </div>
+  <button class="btn btn-primary" type="submit">Создать</button>
+</form>
+{{else}}
+<p class="empty">Сначала создайте пользователя. API-токен всегда привязан к пользователю и его ролям.</p>
+{{end}}
+</div>
+
+<div class="card" style="max-width:1000px">
+{{if .Tokens}}
+<table>
+<thead><tr>
+  <th>Название</th><th>Пользователь</th><th>Создан</th><th>Последнее использование</th><th>Срок</th><th>Статус</th><th style="width:90px"></th>
+</tr></thead>
+<tbody>
+{{range .Tokens}}<tr>
+  <td><strong>{{.Name}}</strong></td>
+  <td>{{.UserLogin}}</td>
+  <td style="font-size:12px;color:#94a3b8">{{.CreatedAt.Format "02.01.2006 15:04"}}</td>
+  <td style="font-size:12px;color:#94a3b8">{{if .LastUsedAt}}{{.LastUsedAt.Format "02.01.2006 15:04"}}{{else}}—{{end}}</td>
+  <td style="font-size:12px;color:#94a3b8">{{if .ExpiresAt}}{{.ExpiresAt.Format "02.01.2006 15:04"}}{{else}}без срока{{end}}</td>
+  <td>{{if .RevokedAt}}<span style="color:#dc2626">отозван</span>{{else if .Expired}}<span style="color:#f59e0b">истёк</span>{{else}}<span style="color:#16a34a">активен</span>{{end}}</td>
+  <td>
+    {{if .RevokedAt}}
+    <span style="color:#cbd5e1">—</span>
+    {{else}}
+    <form method="POST" action="/ui/admin/api-tokens/{{.ID}}/revoke" onsubmit="return confirm('Отозвать API-токен {{.Name}}?')" style="margin:0">
+      <button class="btn btn-sm btn-danger" type="submit">Отозвать</button>
+    </form>
+    {{end}}
+  </td>
+</tr>{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="empty">API-токенов ещё нет.</p>
+{{end}}
+</div>
 </main></body></html>
 {{end}}`
 

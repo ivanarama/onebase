@@ -1197,6 +1197,7 @@ const tplNav = `
       <a href="/ui/admin/users">{{t $.Lang "Пользователи"}}</a>
       <a href="/ui/admin/roles">{{t $.Lang "Роли и права"}}</a>
       <a href="/ui/admin/sessions">{{t $.Lang "Активные пользователи"}}</a>
+      <a href="/ui/admin/api-tokens">{{t $.Lang "API-токены"}}</a>
       <a href="/ui/admin/audit">{{t $.Lang "Журнал изменений"}}</a>
       <a href="/ui/admin/webhooks">{{t $.Lang "Журнал веб-хуков"}}</a>
       <a href="/ui/admin/scheduled">{{t $.Lang "Регламентные задания"}}</a>

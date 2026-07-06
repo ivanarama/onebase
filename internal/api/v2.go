@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -32,6 +33,14 @@ type restV2Meta struct {
 	TotalPages int      `json:"total_pages"`
 	Columns    []string `json:"columns,omitempty"`
 	Truncated  bool     `json:"truncated,omitempty"`
+	Composed   bool     `json:"composed,omitempty"`
+	Variant    string   `json:"variant,omitempty"`
+	Kind       string   `json:"kind,omitempty"`
+}
+
+type restV2ReportComposition struct {
+	Kind   string `json:"kind"`
+	Result any    `json:"result"`
 }
 
 func (h *handler) mountV2(r chi.Router) {
@@ -335,6 +344,37 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 			return
 		}
+		if wantsReportComposition(r.URL.Query()) {
+			variant := r.URL.Query().Get("variant")
+			if variant == "" {
+				variant = r.URL.Query().Get("__variant")
+			}
+			comp := rep.ActiveComposition(variant)
+			if comp == nil {
+				writeError(w, http.StatusBadRequest, "report has no composition", "", 0)
+				return
+			}
+			kind, data, err := h.composeReportV2(rows, comp)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "report composition error: "+err.Error(), "", 0)
+				return
+			}
+			writeJSONV2(w, http.StatusOK, restV2Envelope{
+				Data: data,
+				Meta: &restV2Meta{
+					Total:      len(rows),
+					Page:       1,
+					Limit:      limit,
+					TotalPages: 1,
+					Columns:    cols,
+					Truncated:  truncated,
+					Composed:   true,
+					Variant:    variant,
+					Kind:       kind,
+				},
+			})
+			return
+		}
 		writeJSONV2(w, http.StatusOK, restV2Envelope{
 			Data: rows,
 			Meta: &restV2Meta{
@@ -347,6 +387,16 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			},
 		})
 	}
+}
+
+func (h *handler) composeReportV2(rows []map[string]any, spec *reportpkg.Composition) (string, restV2ReportComposition, error) {
+	ev := newReportEvaluator(h.interp)
+	if len(spec.Columns) > 0 {
+		cr, err := compose.ComposeCross(rows, *spec, ev)
+		return "cross", restV2ReportComposition{Kind: "cross", Result: cr}, err
+	}
+	res, err := compose.Compose(rows, *spec, ev)
+	return "tree", restV2ReportComposition{Kind: "tree", Result: res}, err
 }
 
 func (h *handler) documentPostPayload(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, entityName string, id uuid.UUID) (map[string]any, map[string][]map[string]any, bool) {
@@ -591,6 +641,14 @@ func parseReportBool(raw string) bool {
 	}
 }
 
+func wantsReportComposition(q url.Values) bool {
+	raw := q.Get("composition")
+	if raw == "" {
+		raw = q.Get("composed")
+	}
+	return parseReportBool(raw)
+}
+
 func (h *handler) openapiV2() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSONV2(w, http.StatusOK, buildOpenAPIV2(h.reg.Entities(), h.reg.Reports()))
@@ -618,6 +676,9 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 					"total_pages": map[string]any{"type": "integer"},
 					"columns":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 					"truncated":   map[string]any{"type": "boolean"},
+					"composed":    map[string]any{"type": "boolean"},
+					"variant":     map[string]any{"type": "string"},
+					"kind":        map[string]any{"type": "string", "enum": []string{"tree", "cross"}},
 				},
 			},
 			"ListEnvelope": map[string]any{
@@ -650,7 +711,10 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 			"ReportEnvelope": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"data": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+					"data": map[string]any{"oneOf": []any{
+						map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+						map[string]any{"type": "object"},
+					}},
 					"meta": map[string]any{"$ref": "#/components/schemas/ReportMeta"},
 				},
 			},
@@ -665,6 +729,7 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 		},
 		"securitySchemes": map[string]any{
 			"sessionCookie": map[string]any{"type": "apiKey", "in": "cookie", "name": "onebase_session"},
+			"bearerAuth":    map[string]any{"type": "http", "scheme": "bearer"},
 		},
 	}
 	schemas := components["schemas"].(map[string]any)
@@ -681,6 +746,7 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 		"servers": []any{map[string]any{"url": "/"}},
 		"security": []any{
 			map[string]any{"sessionCookie": []any{}},
+			map[string]any{"bearerAuth": []any{}},
 		},
 		"paths":      openAPIV2Paths(),
 		"components": components,
@@ -811,12 +877,24 @@ func reportPath(nameParam, okEnvelope map[string]any, errors map[string]any) map
 		"description": "Maximum rows to return; report parameters are also passed as query parameters by name.",
 		"schema":      map[string]any{"type": "integer", "minimum": 1, "maximum": restMaxLimit},
 	}
+	compositionParam := map[string]any{
+		"name":        "composition",
+		"in":          "query",
+		"description": "Set to 1/true to return the YAML report composition instead of a flat row array.",
+		"schema":      map[string]any{"type": "boolean"},
+	}
+	variantParam := map[string]any{
+		"name":        "variant",
+		"in":          "query",
+		"description": "Report composition variant name. Empty or unknown falls back to the base composition.",
+		"schema":      map[string]any{"type": "string"},
+	}
 	return map[string]any{
 		"get": map[string]any{
 			"operationId": "runReport",
 			"summary":     "Run report",
 			"tags":        []string{"report"},
-			"parameters":  []any{nameParam, limitParam},
+			"parameters":  []any{nameParam, limitParam, compositionParam, variantParam},
 			"responses":   mergeResponses(map[string]any{"200": okEnvelope}, errors),
 		},
 	}

@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -125,6 +127,73 @@ func TestSessionsLifecycle(t *testing.T) {
 	}
 	if count, err := repo.ActiveSessionCount(ctx); err != nil || count != 0 {
 		t.Fatalf("ActiveSessionCount after delete = %d, %v; want 0, nil", count, err)
+	}
+}
+
+func TestAPITokensLifecycle(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	user, _ := repo.Create(ctx, "api", "pass", "API User", false)
+	role := []*auth.Role{{
+		Name: "API runner",
+		Permissions: auth.Permission{
+			Reports: map[string][]string{"Остатки": {"run"}},
+		},
+	}}
+	if err := repo.SyncRoles(ctx, role); err != nil {
+		t.Fatalf("SyncRoles: %v", err)
+	}
+	if err := repo.AssignRole(ctx, user.ID, role[0].ID); err != nil {
+		t.Fatalf("AssignRole: %v", err)
+	}
+
+	expires := time.Now().Add(time.Hour)
+	token, raw, err := repo.CreateAPIToken(ctx, "warehouse", user.ID, &expires)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	if token.ID == "" || raw == "" || !strings.HasPrefix(raw, "ob_") {
+		t.Fatalf("bad token create result: token=%+v raw=%q", token, raw)
+	}
+
+	looked, err := repo.LookupAPIToken(ctx, raw)
+	if err != nil {
+		t.Fatalf("LookupAPIToken: %v", err)
+	}
+	if looked.ID != user.ID || looked.Login != "api" {
+		t.Fatalf("LookupAPIToken returned wrong user: %+v", looked)
+	}
+	if len(looked.Roles) != 1 || !looked.Has("report", "Остатки", "run") {
+		t.Fatalf("LookupAPIToken must load roles, got %+v", looked.Roles)
+	}
+
+	tokens, err := repo.ListAPITokens(ctx)
+	if err != nil {
+		t.Fatalf("ListAPITokens: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].Name != "warehouse" || tokens[0].UserLogin != "api" {
+		t.Fatalf("bad token list: %+v", tokens)
+	}
+	if tokens[0].LastUsedAt == nil {
+		t.Fatalf("last_used_at must be set after lookup: %+v", tokens[0])
+	}
+
+	if _, err := repo.LookupAPIToken(ctx, raw+"x"); err == nil {
+		t.Fatal("LookupAPIToken with invalid secret must fail")
+	}
+	if err := repo.RevokeAPIToken(ctx, token.ID); err != nil {
+		t.Fatalf("RevokeAPIToken: %v", err)
+	}
+	if _, err := repo.LookupAPIToken(ctx, raw); err == nil {
+		t.Fatal("revoked API token must not authenticate")
+	}
+
+	expired := time.Now().Add(-time.Hour)
+	_, expiredRaw, err := repo.CreateAPIToken(ctx, "expired", user.ID, &expired)
+	if err != nil {
+		t.Fatalf("CreateAPIToken expired: %v", err)
+	}
+	if _, err := repo.LookupAPIToken(ctx, expiredRaw); err == nil {
+		t.Fatal("expired API token must not authenticate")
 	}
 }
 
@@ -311,6 +380,56 @@ func TestMiddlewareRequiresSessionWhenUsersExist(t *testing.T) {
 	handler.ServeHTTP(rr2, req)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("с валидной сессией ожидался 200, получено %d", rr2.Code)
+	}
+}
+
+func TestAPITokenOrSessionMiddleware(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+	user, _ := repo.Create(ctx, "guard", "pass", "", false)
+	rawToken := ""
+	_, rawToken, err := repo.CreateAPIToken(ctx, "integration", user.ID, nil)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := auth.UserFromContext(r.Context())
+		if u == nil || u.Login != "guard" {
+			t.Fatalf("expected authenticated guard user, got %+v", u)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := repo.APITokenOrSessionMiddleware(next)
+
+	rrNoAuth := httptest.NewRecorder()
+	handler.ServeHTTP(rrNoAuth, httptest.NewRequest(http.MethodGet, "/api/v2/openapi.json", nil))
+	if rrNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("without token expected 401, got %d", rrNoAuth.Code)
+	}
+
+	reqBad := httptest.NewRequest(http.MethodGet, "/api/v2/openapi.json", nil)
+	reqBad.Header.Set("Authorization", "Bearer wrong")
+	rrBad := httptest.NewRecorder()
+	handler.ServeHTTP(rrBad, reqBad)
+	if rrBad.Code != http.StatusUnauthorized {
+		t.Fatalf("bad bearer expected 401, got %d", rrBad.Code)
+	}
+
+	reqBearer := httptest.NewRequest(http.MethodGet, "/api/v2/openapi.json", nil)
+	reqBearer.Header.Set("Authorization", "Bearer "+rawToken)
+	rrBearer := httptest.NewRecorder()
+	handler.ServeHTTP(rrBearer, reqBearer)
+	if rrBearer.Code != http.StatusOK {
+		t.Fatalf("valid bearer expected 200, got %d", rrBearer.Code)
+	}
+
+	sessionToken, _ := repo.CreateSession(ctx, user.ID)
+	reqCookie := httptest.NewRequest(http.MethodGet, "/api/v2/openapi.json", nil)
+	reqCookie.AddCookie(&http.Cookie{Name: "onebase_session", Value: sessionToken})
+	rrCookie := httptest.NewRecorder()
+	handler.ServeHTTP(rrCookie, reqCookie)
+	if rrCookie.Code != http.StatusOK {
+		t.Fatalf("valid cookie session expected 200, got %d", rrCookie.Code)
 	}
 }
 

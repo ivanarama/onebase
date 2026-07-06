@@ -108,7 +108,7 @@
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
-| 26 | [26-rest-api-v2.md](26-rest-api-v2.md) | REST API v2 (фильтры, пагинация, OpenAPI) | 5–7 дней | ⬜ Не начато |
+| 26 | [26-rest-api-v2.md](26-rest-api-v2.md) | REST API v2 (фильтры, пагинация, OpenAPI) | 5–7 дней | ✅ Реализовано: CRUD v2, отчёты JSON/композиция, OpenAPI, Bearer API-токены + admin UI |
 | 27 | [27-web-configurator.md](27-web-configurator.md) | Веб-конфигуратор (редактирование схемы в браузере) | 5–6 дней | ✅ Реализовано (в `internal/launcher/`, `/bases/{id}/configurator/` — перекрыт сверх плана) |
 | 28 | [28-auto-backup.md](28-auto-backup.md) | Автобэкап по расписанию с ротацией | 3 дня | 🟡 Ядро реализовано: `backup:` в `app.yaml`, задание `AutoBackup`, ротация `keep_last`, атомарная запись дампов; отдельная `_backups`-таблица не вводилась |
 | 29 | [29-webhooks.md](29-webhooks.md) | Webhook-уведомления на события | 4–5 дней | ✅ Реализовано |
