@@ -112,6 +112,19 @@ func TestLockManager_NoDeadlockOnDifferentOrder(t *testing.T) {
 	}
 }
 
+func TestLockManager_DeduplicatesKeys(t *testing.T) {
+	mgr := NewLockManager()
+	keys := []string{"A", "A", "", "B", "A"}
+	mgr.Acquire(keys)
+	mgr.Release(keys)
+	mgr.mu.Lock()
+	n := len(mgr.locks)
+	mgr.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("ожидали пустую карту после Release дубликатов, осталось %d записей", n)
+	}
+}
+
 // LockObject — DSL-сценарий: Добавить, УстановитьЗначение, Заблокировать,
 // Разблокировать.
 func TestLockObject_DSLScenario(t *testing.T) {
@@ -160,5 +173,30 @@ func TestLockManager_ReleaseCleansUp(t *testing.T) {
 	mgr.mu.Unlock()
 	if n != 0 {
 		t.Errorf("ожидали пустую карту после Release, осталось %d записей", n)
+	}
+}
+
+func TestLockCollectorTracksKeysAndReleasesHeldObjects(t *testing.T) {
+	mgr := NewLockManager()
+	collector := NewLockCollector()
+	lo := NewLockObjectWithCollector(mgr, collector)
+	el := lo.CallMethod("добавить", []any{"РегистрНакопления.Остатки"})
+	le, ok := el.(*LockElement)
+	if !ok {
+		t.Fatalf("Добавить вернул %T", el)
+	}
+	le.CallMethod("установитьзначение", []any{"Номенклатура", "Тумбочка"})
+	lo.CallMethod("заблокировать", nil)
+
+	keys := collector.Keys()
+	if len(keys) != 1 || keys[0] != "РегистрНакопления.Остатки|номенклатура=Тумбочка" {
+		t.Fatalf("collector keys = %v", keys)
+	}
+	collector.ReleaseAll()
+	mgr.mu.Lock()
+	n := len(mgr.locks)
+	mgr.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("collector.ReleaseAll did not release process locks, left %d", n)
 	}
 }

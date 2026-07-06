@@ -158,6 +158,9 @@ type SaveResult struct {
 func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID)
 	SetPeriodFromFields(mc, req.Entity, req.Fields)
+	lockCollector := runtime.NewLockCollector()
+	hookCtx := runtime.ContextWithLockCollector(ctx, lockCollector)
+	defer lockCollector.ReleaseAll()
 
 	obj := &runtime.Object{
 		Type:          req.Entity.Name,
@@ -220,11 +223,11 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	if proc != nil {
 		var vars map[string]any
 		if s.BuildVars != nil {
-			vars = s.BuildVars(ctx, mc, &msgs)
+			vars = s.BuildVars(hookCtx, mc, &msgs)
 		}
 		var thisVal interpreter.This = obj
 		if s.MakeThis != nil {
-			thisVal = s.MakeThis(ctx, obj, req.Entity)
+			thisVal = s.MakeThis(hookCtx, obj, req.Entity)
 		}
 		if err := s.Interp.Run(proc, thisVal, vars); err != nil {
 			// DSL-ошибка (бизнес-правило), а не технический сбой: отдаём текст
@@ -236,6 +239,9 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 
 	// Транзакция: upsert + ТЧ + движения + проведение.
 	err := s.Store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.Store.AdvisoryXactLock(ctx, lockCollector.Keys()); err != nil {
+			return err
+		}
 		if req.IsNew || req.ExpectedVersion == nil {
 			if err := s.Store.Upsert(ctx, req.Entity.Name, req.ID, obj.Fields, req.Entity); err != nil {
 				return err

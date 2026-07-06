@@ -30,9 +30,9 @@
 
 1. **План 76:** остатки не-сессионных guardrails нагрузки. Уже закрыты REST
    RBAC/list limits, optimistic locking, индексы, server-side reference picker,
-   bounded parent-folder options, runtime limits/backpressure и metrics.
-   Остались PostgreSQL advisory locks, background export UX и нагрузочная
-   валидация на PostgreSQL.
+   bounded parent-folder options, runtime limits/backpressure, metrics и
+   PostgreSQL advisory locks для Save-хуков. Остались background export UX и
+   нагрузочная валидация на PostgreSQL.
 2. **План 60B:** marketplace конфигураций. Часть A (история/diff/rollback/UI)
    уже реализована, shipped examples/templates проходят CI lint-gate.
 3. **План 55, этап 3:** разбор монолитных UI templates/JS.

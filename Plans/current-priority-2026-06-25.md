@@ -8,9 +8,9 @@
    Мультисессионность пока вынесена из очереди и делается отдельно. Закрыты
    REST RBAC/list limits, атомарная optimistic locking запись, declarative
    indexes + tablepart/register indexes, server-side reference picker,
-   bounded parent-folder options, runtime limits/backpressure и metrics. В
-   очереди остаются PostgreSQL advisory locks для `БлокировкаДанных`,
-   background export UX поверх уже ограниченного экспорта, нагрузочная
+   bounded parent-folder options, runtime limits/backpressure, metrics и
+   PostgreSQL advisory locks для `БлокировкаДанных` в Save-хуках. В очереди
+   остаются background export UX поверх уже ограниченного экспорта, нагрузочная
    валидация на PostgreSQL и документирование остаточных лимитов.
 
 2. **План 60B — marketplace конфигураций.**

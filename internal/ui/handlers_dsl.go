@@ -72,7 +72,7 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	// #2 managed locks: builtin БлокировкаДанных() возвращает свежий LockObject,
 	// привязанный к глобальному менеджеру server'а.
 	lockFactory := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
-		return runtime.NewLockObject(s.lockMgr), nil
+		return runtime.NewLockObjectWithCollector(s.lockMgr, runtime.LockCollectorFromContext(ctx)), nil
 	})
 
 	// API текущего пользователя для персональных настроек.
