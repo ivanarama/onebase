@@ -783,34 +783,46 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 		if refEntity == nil {
 			continue
 		}
-		// collect unique IDs
-		seen := map[string]bool{}
+		idsByString := map[string]uuid.UUID{}
 		for _, row := range rows {
-			if v := row[f.Name]; v != nil {
-				seen[fmt.Sprintf("%v", v)] = true
+			if _, v, ok := lookupMapCI(row, f.Name); ok {
+				idStr, id, ok := uuidFromValue(v)
+				if ok {
+					idsByString[idStr] = id
+				}
 			}
 		}
-		// resolve each unique ID to a display label
-		labels := make(map[string]string, len(seen))
-		for idStr := range seen {
-			id, err := uuid.Parse(idStr)
-			if err != nil {
-				continue
-			}
-			refRow, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
-			if err != nil {
-				continue
-			}
+		if len(idsByString) == 0 {
+			continue
+		}
+		ids := make([]uuid.UUID, 0, len(idsByString))
+		for _, id := range idsByString {
+			ids = append(ids, id)
+		}
+		refRows, err := s.store.GetFieldsByIDs(ctx, refEntity, ids, displayField(refEntity))
+		if err != nil {
+			continue
+		}
+		labels := make(map[string]string, len(refRows))
+		for idStr, refRow := range refRows {
 			labels[idStr] = firstStringField(refRow, refEntity)
 		}
 		// replace plain UUID strings with *interpreter.Ref{UUID, Name, Manager}
 		mgr := s.refManagerFor(refEntity, ctx)
 		for _, row := range rows {
-			if v := row[f.Name]; v != nil {
-				idStr := fmt.Sprintf("%v", v)
-				if name, ok := labels[idStr]; ok {
-					row[f.Name] = &interpreter.Ref{UUID: idStr, Name: name, Type: refEntity.Name, Manager: mgr}
-				}
+			matchKey, v, ok := lookupMapCI(row, f.Name)
+			if !ok || v == nil {
+				continue
+			}
+			if _, isRef := v.(*interpreter.Ref); isRef {
+				continue
+			}
+			idStr, _, ok := uuidFromValue(v)
+			if !ok {
+				continue
+			}
+			if name, ok := labels[idStr]; ok {
+				row[matchKey] = &interpreter.Ref{UUID: idStr, Name: name, Type: refEntity.Name, Manager: mgr}
 			}
 		}
 	}
@@ -855,8 +867,12 @@ func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, 
 		if err != nil {
 			continue
 		}
-		refRow, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
+		refRows, err := s.store.GetFieldsByIDs(ctx, refEntity, []uuid.UUID{id}, displayField(refEntity))
 		if err != nil {
+			continue
+		}
+		refRow := refRows[id.String()]
+		if refRow == nil {
 			continue
 		}
 		obj.Fields[matchKey] = &interpreter.Ref{

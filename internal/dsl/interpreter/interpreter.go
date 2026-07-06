@@ -325,6 +325,13 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 					break
 				}
 			}
+		case interface{ IterateThis() []This }:
+			for _, item := range items.IterateThis() {
+				e.set(v.Var.Literal, item)
+				if !i.execLoopBody(v.Body, e) {
+					break
+				}
+			}
 		default:
 			// Поддержка прокси-объектов вроде *formTpProxy: если у значения
 			// есть метод IterateRows() — итерируемся по нему. Без этого

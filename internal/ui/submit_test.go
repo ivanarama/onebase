@@ -62,6 +62,9 @@ func newSubmitTestServer(t *testing.T, entities []*metadata.Entity) (*Server, co
 		PrepareHook:  s.enrichHeaderRefs,
 		EnrichTPRows: s.enrichTPRowsWithRefs,
 		BuildVars:    s.buildDSLVarsWithMessages,
+		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return s.newFormObjectThis(ctx, obj, e, nil)
+		},
 	}
 	return s, ctx
 }

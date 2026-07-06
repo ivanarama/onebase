@@ -167,7 +167,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string
 	vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-	thisObj := &formObjectThis{obj: obj, entity: entity, form: form}
+	thisObj := s.newFormObjectThis(r.Context(), obj, entity, form)
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
@@ -726,7 +726,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				mc := runtime.NewMovementsCollector("processor", uuid.Nil)
 				var msgs []string
 				vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-				thisObj := &formObjectThis{obj: obj, entity: virtEntity}
+				thisObj := s.newFormObjectThis(r.Context(), obj, virtEntity, nil)
 				vars["Объект"] = thisObj
 				vars["ЭтотОбъект"] = thisObj
 				vars["Параметры"] = thisObj

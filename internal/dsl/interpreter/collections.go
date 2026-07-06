@@ -21,6 +21,14 @@ type RefManager interface {
 	LoadObject(uuidStr string) (any, error)
 }
 
+// RefAttrResolver is an optional, host-provided resolver for object attributes
+// addressed through a reference value. It deliberately lives in interpreter to
+// avoid importing ui/storage here; concrete implementations are supplied by
+// callers that know how to read metadata-backed objects.
+type RefAttrResolver interface {
+	ResolveRefAttr(ref *Ref, field string) (any, bool)
+}
+
 // Ref represents a DSL reference value: UUID for identity/SQL, Name for display.
 // Строка(ref) returns Name; SQL parameter expansion uses UUID.
 type Ref struct {
@@ -32,6 +40,10 @@ type Ref struct {
 	// Manager — менеджер объекта; задаётся при создании ссылки и позволяет
 	// Ссылка.Удалить() работать. nil → метод поднимет понятную ошибку.
 	Manager RefManager
+	// AttrResolver enables safe host-side single-hop attribute reads such as
+	// Ссылка.Артикул. It is optional; bare references still expose only display
+	// name, UUID and methods.
+	AttrResolver RefAttrResolver
 }
 
 func (r *Ref) String() string     { return r.Name }
@@ -85,6 +97,11 @@ func (r *Ref) Get(field string) any {
 		return r
 	case "уникальныйидентификатор", "уидентификатор", "uuid", "ид", "id":
 		return r.UUID
+	}
+	if r.AttrResolver != nil {
+		if v, ok := r.AttrResolver.ResolveRefAttr(r, field); ok {
+			return v
+		}
 	}
 	return nil
 }
@@ -178,11 +195,11 @@ func (a *Array) SetIndex(i int, val any) {
 	}
 }
 
-func (a *Array) Iterate() []any { return a.items }
-func (a *Array) String() string  { return fmt.Sprintf("Массив[%d]", len(a.items)) }
+func (a *Array) Iterate() []any   { return a.items }
+func (a *Array) String() string   { return fmt.Sprintf("Массив[%d]", len(a.items)) }
 func (a *Array) TypeName() string { return "Массив" }
 
-func (m *Map) Keys() []any            { return m.keys }
+func (m *Map) Keys() []any { return m.keys }
 func (m *Map) Get(key any) any {
 	if idx := m.findIdx(key); idx >= 0 {
 		return m.vals[idx]
@@ -234,8 +251,8 @@ func (s *Struct) Set(field string, v any) {
 	}
 	s.vals[key] = v
 }
-func (s *Struct) String() string          { return fmt.Sprintf("Структура[%d]", len(s.keys)) }
-func (s *Struct) TypeName() string        { return "Структура" }
+func (s *Struct) String() string   { return fmt.Sprintf("Структура[%d]", len(s.keys)) }
+func (s *Struct) TypeName() string { return "Структура" }
 
 func (s *Struct) CallMethod(name string, args []any) any {
 	switch name {
@@ -364,7 +381,7 @@ func (kv *KeyValue) Get(field string) any {
 }
 
 func (kv *KeyValue) Set(field string, val any) {}
-func (kv *KeyValue) TypeName() string           { return "КлючИЗначение" }
+func (kv *KeyValue) TypeName() string          { return "КлючИЗначение" }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 

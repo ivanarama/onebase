@@ -26,12 +26,16 @@ func TestObjectAttributeValue(t *testing.T) {
 
 	контрагент := &metadata.Entity{
 		Name: "Контрагент", Kind: metadata.KindCatalog,
-		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "ИНН", Type: metadata.FieldTypeString},
+		},
 	}
 	номенклатура := &metadata.Entity{
 		Name: "Номенклатура", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Артикул", Type: metadata.FieldTypeString},
 			{Name: "СтавкаНДС", Type: metadata.FieldTypeNumber},
 			{Name: "Поставщик", Type: "reference:Контрагент", RefEntity: "Контрагент"},
 		},
@@ -55,9 +59,10 @@ func TestObjectAttributeValue(t *testing.T) {
 		return w.CallMethod("записать", nil).(*interpreter.Ref)
 	}
 
-	постРеф := create("Контрагент", map[string]any{"Наименование": "ООО Поставщик"})
+	постРеф := create("Контрагент", map[string]any{"Наименование": "ООО Поставщик", "ИНН": "7701234567"})
 	номРеф := create("Номенклатура", map[string]any{
 		"Наименование": "Стул",
+		"Артикул":      "A-1",
 		"СтавкаНДС":    float64(20),
 		"Поставщик":    постРеф,
 	})
@@ -140,6 +145,46 @@ func TestObjectAttributeValue(t *testing.T) {
 	}
 	if result != "ООО Поставщик" {
 		t.Errorf("DSL sample result = %v, ожидалось ООО Поставщик", result)
+	}
+
+	doc := &metadata.Entity{
+		Name: "ЗаказПокупателя", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "ОсновнаяНоменклатура", Type: "reference:Номенклатура", RefEntity: "Номенклатура"},
+		},
+		TableParts: []metadata.TablePart{{
+			Name: "Товары",
+			Fields: []metadata.Field{
+				{Name: "Номенклатура", Type: "reference:Номенклатура", RefEntity: "Номенклатура"},
+			},
+		}},
+	}
+	obj := runtime.NewObject(doc.Name, doc.Kind)
+	obj.Fields["ОсновнаяНоменклатура"] = номРеф
+	obj.TablePartRows["Товары"] = []map[string]any{{"Номенклатура": номРеф}}
+	thisObj := s.newFormObjectThis(ctx, obj, doc, nil)
+	src = `Функция Тест()
+  Рез = Объект.ОсновнаяНоменклатура.Артикул;
+  Для Каждого Стр Из Объект.Товары Цикл
+    Рез = Рез + "|" + Стр.Номенклатура.Артикул;
+    Если Стр.Номенклатура.Поставщик.ИНН <> Неопределено Тогда
+      Рез = "double-deref";
+    КонецЕсли;
+  КонецЦикла;
+  Возврат Рез;
+КонецФункции`
+	l = lexer.New(src, "test.os")
+	p = parser.New(l)
+	prog, err = p.ParseProgram()
+	if err != nil {
+		t.Fatalf("parse DSL ref attr sample: %v", err)
+	}
+	result = nil
+	if err := interp.RunWithResult(prog.Procedures[0], thisObj, &result, map[string]any{"Объект": thisObj}); err != nil {
+		t.Fatalf("run DSL ref attr sample: %v", err)
+	}
+	if result != "A-1|A-1" {
+		t.Errorf("DSL ref attr sample result = %v, ожидалось A-1|A-1", result)
 	}
 
 	// Неизвестный реквизит → ошибка, а не тихий nil.

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 	"sort"
@@ -112,8 +113,8 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		// MakeThis — обёртка над *runtime.Object с поддержкой методов ТЧ
 		// (this.Товары.Добавить() и т.п.). Без неё ОбработкаЗаполнения не
 		// смогла бы построить строки табличной части в приёмнике.
-		MakeThis: func(obj *runtime.Object, e *metadata.Entity) interpreter.This {
-			return &formObjectThis{obj: obj, entity: e}
+		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return s.newFormObjectThis(ctx, obj, e, nil)
 		},
 		// Исходящие веб-хуки (план 29): save/post диспетчеризуются из Save.
 		Hooks: cfg.Webhooks,

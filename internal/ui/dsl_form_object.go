@@ -27,11 +27,11 @@ import (
 // `Объект.Поле`, а в обработках OnPost — `ЭтотОбъект.Поле`. Делаем оба
 // варианта рабочими.
 type formObjectThis struct {
-	obj    *runtime.Object
-	entity *metadata.Entity
-	form    *metadata.FormModule
+	obj         *runtime.Object
+	entity      *metadata.Entity
+	form        *metadata.FormModule
+	refResolver *dslRefAttrResolver
 }
-
 
 func (f *formObjectThis) Get(name string) any {
 	if f == nil || f.obj == nil {
@@ -41,23 +41,32 @@ func (f *formObjectThis) Get(name string) any {
 	// Сначала — табличные части. Возвращаем прокси даже если slice ещё nil,
 	// чтобы .Добавить() мог создать первую строку.
 	if f.entity != nil {
-		for _, tp := range f.entity.TableParts {
+		for i := range f.entity.TableParts {
+			tp := &f.entity.TableParts[i]
 			if strings.ToLower(tp.Name) == nameLower {
-				return &formTpProxy{obj: f.obj, tpName: tp.Name}
+				return &formTpProxy{obj: f.obj, tpName: tp.Name, tp: tp, refResolver: f.refResolver}
 			}
 		}
 	}
-		// Формовые атрибуты-таблицы (ValueTable). Если имя не найдено среди ТЧ сущности,
-		// ищем формовый атрибут ValueTable и возвращаем для него тот же formTpProxy.
-		if f.form != nil {
-			for _, attr := range f.form.Attributes {
-				if strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
-					return &formTpProxy{obj: f.obj, tpName: attr.Name}
-				}
+	// Формовые атрибуты-таблицы (ValueTable). Если имя не найдено среди ТЧ сущности,
+	// ищем формовый атрибут ValueTable и возвращаем для него тот же formTpProxy.
+	if f.form != nil {
+		for _, attr := range f.form.Attributes {
+			if strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
+				return &formTpProxy{obj: f.obj, tpName: attr.Name, refResolver: f.refResolver}
 			}
 		}
+	}
 	// Дальше — обычные поля (через Object.Get который ищет в Fields).
 	v := f.obj.Get(name)
+	if ref, ok := v.(*interpreter.Ref); ok && f.refResolver != nil {
+		if fd := entityField(f.entity, name); fd != nil && fd.RefEntity != "" {
+			return f.refResolver.attachRef(ref, fd.RefEntity)
+		}
+		if f.entity != nil && (strings.EqualFold(name, "Ссылка") || strings.EqualFold(name, "Reference")) {
+			return f.refResolver.attachRef(ref, f.entity.Name)
+		}
+	}
 	// Дефолты по типу: пустой numeric → 0, иначе `Объект.Сумма + 100` в DSL
 	// даст concat-строку «<nil>100» (DSL `+` для nil-операнда склеивает
 	// строкой), потом форма попытается записать её в PostgreSQL numeric →
@@ -91,8 +100,10 @@ func (f *formObjectThis) Set(name string, v any) {
 // docWriter — потому что в обработчиках формы документ ещё не записан и нет
 // открытой транзакции записи.
 type formTpProxy struct {
-	obj    *runtime.Object
-	tpName string
+	obj         *runtime.Object
+	tpName      string
+	tp          *metadata.TablePart
+	refResolver *dslRefAttrResolver
 }
 
 func (t *formTpProxy) Get(_ string) any    { return nil }
@@ -109,7 +120,7 @@ func (t *formTpProxy) CallMethod(method string, args []any) any {
 		}
 		row := map[string]any{}
 		t.obj.TablePartRows[t.tpName] = append(t.obj.TablePartRows[t.tpName], row)
-		return &interpreter.MapThis{M: row}
+		return newRefAwareMapThis(row, t.tp, t.refResolver)
 	case "очистить", "clear":
 		if t.obj.TablePartRows != nil {
 			t.obj.TablePartRows[t.tpName] = nil
@@ -131,4 +142,25 @@ func (t *formTpProxy) IterateRows() []map[string]any {
 		return nil
 	}
 	return t.obj.TablePartRows[t.tpName]
+}
+
+func (t *formTpProxy) IterateThis() []interpreter.This {
+	rows := t.IterateRows()
+	out := make([]interpreter.This, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, newRefAwareMapThis(row, t.tp, t.refResolver))
+	}
+	return out
+}
+
+func entityField(entity *metadata.Entity, name string) *metadata.Field {
+	if entity == nil {
+		return nil
+	}
+	for i := range entity.Fields {
+		if strings.EqualFold(entity.Fields[i].Name, name) {
+			return &entity.Fields[i]
+		}
+	}
+	return nil
 }

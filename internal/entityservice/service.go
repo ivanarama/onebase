@@ -70,12 +70,12 @@ type Service struct {
 	// Справочники и т.п. в нём не будут работать).
 	BuildVars func(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any
 
-	// MakeThis оборачивает (obj, entity) в this для интерпретатора так, чтобы
+	// MakeThis оборачивает (ctx, obj, entity) в this для интерпретатора так, чтобы
 	// внутри DSL-хука работали методы табличных частей: this.Товары.Добавить(),
 	// this.Товары.Количество(), `Для Каждого Стр Из this.Товары`. Реализация
 	// живёт в ui-слое (formObjectThis), здесь только хук. Если nil — Run
 	// получает obj напрямую, что для документов без ТЧ тоже работает.
-	MakeThis func(obj *runtime.Object, entity *metadata.Entity) interpreter.This
+	MakeThis func(ctx context.Context, obj *runtime.Object, entity *metadata.Entity) interpreter.This
 
 	// Hooks — диспетчер исходящих веб-хуков (план 29). nil = веб-хуки не
 	// настроены. Событие отправляется ПОСЛЕ успешной транзакции (асинхронно):
@@ -222,7 +222,11 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		if s.BuildVars != nil {
 			vars = s.BuildVars(ctx, mc, &msgs)
 		}
-		if err := s.Interp.Run(proc, obj, vars); err != nil {
+		var thisVal interpreter.This = obj
+		if s.MakeThis != nil {
+			thisVal = s.MakeThis(ctx, obj, req.Entity)
+		}
+		if err := s.Interp.Run(proc, thisVal, vars); err != nil {
 			// DSL-ошибка (бизнес-правило), а не технический сбой: отдаём текст
 			// в DSLError, БД не трогаем. И *interpreter.DSLError, и обычная
 			// ошибка форматируются одинаково через Error().
@@ -437,7 +441,7 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	// фабрику; иначе — голый *Object (для документов без ТЧ всё равно работает).
 	var thisVal interpreter.This = recvObj
 	if s.MakeThis != nil {
-		thisVal = s.MakeThis(recvObj, req.Receiver)
+		thisVal = s.MakeThis(ctx, recvObj, req.Receiver)
 	}
 	if err := s.Interp.Run(proc, thisVal, vars); err != nil {
 		normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)

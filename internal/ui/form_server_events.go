@@ -105,7 +105,7 @@ func (s *Server) runFormReadHook(ctx context.Context, entity *metadata.Entity, f
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string
 	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
-	thisObj := &formObjectThis{obj: obj, entity: entity, form: form}
+	thisObj := s.newFormObjectThis(ctx, obj, entity, form)
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
@@ -150,7 +150,7 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	vars := s.buildDSLVarsWithMessages(ctx, mc, msgs)
-	thisObj := &formObjectThis{obj: obj, entity: entity, form: form}
+	thisObj := s.newFormObjectThis(ctx, obj, entity, form)
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
