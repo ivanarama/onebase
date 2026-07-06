@@ -11,6 +11,7 @@ import (
 type rawField struct {
 	Name   string            `yaml:"name"`
 	Title  string            `yaml:"title"`
+	Label  string            `yaml:"label"`
 	Titles map[string]string `yaml:"titles"`
 	Type   string            `yaml:"type"`
 	// AllowInlineCreate — pointer to differ unset from explicit false. nil
@@ -51,6 +52,7 @@ type rawIndex struct {
 type rawEntity struct {
 	Name          string            `yaml:"name"`
 	Title         string            `yaml:"title"`
+	Description   string            `yaml:"description"`
 	Titles        map[string]string `yaml:"titles"`
 	Fields        []rawField        `yaml:"fields"`
 	TableParts    []rawTablePart    `yaml:"tableparts"`
@@ -87,7 +89,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	if raw.Name == "" {
 		return nil, fmt.Errorf("%s: missing name", path)
 	}
-	e := &Entity{Name: raw.Name, Title: raw.Title, Titles: raw.Titles, Kind: kind, Posting: raw.Posting, Hierarchical: raw.Hierarchical}
+	e := &Entity{Name: raw.Name, Title: raw.Title, Description: raw.Description, Titles: raw.Titles, Kind: kind, Posting: raw.Posting, Hierarchical: raw.Hierarchical}
 	if raw.Hierarchical {
 		e.HierarchyKind = raw.HierarchyKind
 		if e.HierarchyKind == "" {
@@ -355,7 +357,11 @@ func LoadConstantsFile(path string) ([]*Constant, error) {
 }
 
 func parseField(rf rawField) Field {
-	f := Field{Name: rf.Name, Title: rf.Title, Titles: rf.Titles, Type: FieldType(rf.Type), AllowInlineCreate: rf.AllowInlineCreate}
+	title := rf.Title
+	if title == "" {
+		title = rf.Label
+	}
+	f := Field{Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type), AllowInlineCreate: rf.AllowInlineCreate}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

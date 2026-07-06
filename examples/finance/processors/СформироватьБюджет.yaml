@@ -3,8 +3,6 @@ title: Сформировать бюджет
 params:
   - name: Месяц
     type: date
-    required: true
   - name: КопироватьИзПредыдущего
     type: bool
-    required: false
     default: false

@@ -1,38 +1,5 @@
 name: Администратор
-title: Администратор
-titles:
-  en: Administrator
-  de: Administrator
-  sr: Администратор
-  az: Administrator
-  es: Administrador
-  fr: Administrateur
-  hy: Ադմինիստրատոր
-  ka: ადმინისტრატორი
-  kk: Әкімші
-  pt: Administrador
-  ro: Administrator
-  tr: Yönetici
-  uk: Адміністратор
-  uz: Administrator
-  zh: 管理员
 description: Полный доступ ко всем объектам
-descriptions:
-  en: Full access to all objects
-  de: Vollzugriff auf alle Objekte
-  sr: Пун приступ свим објектима
-  az: Bütün obyektlərə tam giriş
-  es: Acceso completo a todos los objetos
-  fr: Accès complet à tous les objets
-  hy: Ամբողջական հասանելիություն բոլոր օբյեկտներին
-  ka: სრული წვდომა ყველა ობიექტზე
-  kk: Барлық нысандарға толық қатынас
-  pt: Acesso completo a todos os objetos
-  ro: Acces complet la toate obiectele
-  tr: Tüm nesnelere tam erişim
-  uk: Повний доступ до всіх об'єктів
-  uz: Barcha ob'yektlarga to'liq kirish
-  zh: 所有对象的完全访问权限
 permissions:
   catalogs:
     Проект: [read, write]
@@ -47,6 +14,8 @@ permissions:
   registers:
     ЗадачиПоСтатусам: [read]
     ЗатраченноеВремя: [read]
+  inforegs:
+    ИсторияСтатусов: [read]
   reports:
     ЗадачиПоПроектам: [run]
     ЗадачиПоИсполнителю: [run]
@@ -59,3 +28,4 @@ permissions:
     НазначитьИсполнителя: [run]
     ЗакрытьСпринт: [run]
     УведомлениеПросроченных: [run]
+    ЗаполнитьТестовуюБазу: [run]

@@ -72,6 +72,23 @@ query: SELECT 1`)
 	}
 }
 
+func TestLoadWidgetFile_ChartTypeAlias(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.yaml")
+	writeFile(t, path, `name: Динамика
+type: chart
+title: Динамика
+query: SELECT 1
+chart_type: line`)
+	w, err := LoadWidgetFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if w.ChartKind != "line" {
+		t.Errorf("chart_type alias = %q, want line", w.ChartKind)
+	}
+}
+
 func TestLoadWidgetFile_UnknownType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")

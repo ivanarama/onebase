@@ -3,9 +3,5 @@ title: Бюджет
 params:
   - name: Месяц
     type: date
-    required: true
-    default: start_of_month
   - name: ЧленСемьи
-    type: ref
-    ref_entity: ЧленСемьи
-    required: false
+    type: reference:ЧленСемьи

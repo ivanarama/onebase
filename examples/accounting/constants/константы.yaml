@@ -1,5 +1,4 @@
-name: константы
-fields:
+constants:
   - name: Организация
     type: reference:Организация
     label: Организация по умолчанию

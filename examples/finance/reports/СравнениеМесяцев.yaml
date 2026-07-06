@@ -3,5 +3,3 @@ title: Сравнение месяцев
 params:
   - name: КоличествоМесяцев
     type: number
-    required: true
-    default: 6

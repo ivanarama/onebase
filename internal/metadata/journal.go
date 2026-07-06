@@ -62,8 +62,23 @@ func (c JournalColumn) DisplayLabel(lang string) string {
 }
 
 type JournalFilter struct {
-	Field string
-	Type  string // "date_range" | "reference:X" | "string"
+	Field  string
+	Label  string
+	Labels map[string]string
+	Type   string // "date_range" | "reference:X" | "string"
+}
+
+// DisplayLabel возвращает подпись фильтра журнала с учётом языка.
+func (f JournalFilter) DisplayLabel(lang string) string {
+	if lang != "" {
+		if v, ok := f.Labels[lang]; ok && v != "" {
+			return v
+		}
+	}
+	if f.Label != "" {
+		return f.Label
+	}
+	return f.Field
 }
 
 type JournalCondRule struct {
@@ -93,8 +108,10 @@ type rawJournal struct {
 		Format   string            `yaml:"format"`
 	} `yaml:"columns"`
 	Filters []struct {
-		Field string `yaml:"field"`
-		Type  string `yaml:"type"`
+		Field  string            `yaml:"field"`
+		Label  string            `yaml:"label"`
+		Labels map[string]string `yaml:"labels"`
+		Type   string            `yaml:"type"`
 	} `yaml:"filters"`
 	Conditional           []rawJournalCondRule `yaml:"conditional"`
 	ConditionalFormatting []rawJournalCondRule `yaml:"conditional_formatting"`
@@ -148,7 +165,7 @@ func LoadJournalFile(path string) (*Journal, error) {
 		if ft == "" {
 			ft = "string"
 		}
-		j.Filters = append(j.Filters, JournalFilter{Field: rf.Field, Type: ft})
+		j.Filters = append(j.Filters, JournalFilter{Field: rf.Field, Label: rf.Label, Labels: rf.Labels, Type: ft})
 	}
 	return j, nil
 }

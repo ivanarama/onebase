@@ -1,5 +1,4 @@
 name: ЧленСемьи
-title: Член семьи
 description: Ограниченный доступ к справочникам, создание и проведение документов
 permissions:
   catalogs:
@@ -19,4 +18,5 @@ permissions:
     ОстаткиПоСчетам: [read]
     ДвижениеСредств: [read]
     НакопленияПоЦелям: [read]
-  printforms: [run]
+  inforegs:
+    КурсыВалют: [read]

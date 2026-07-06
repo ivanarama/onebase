@@ -3,4 +3,3 @@ title: Закрыть месяц
 params:
   - name: Месяц
     type: date
-    required: true

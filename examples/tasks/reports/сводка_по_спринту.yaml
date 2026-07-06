@@ -36,7 +36,6 @@ params:
       uk: Спринт
       uz: Sprint
       zh: 冲刺
-    required: true
 query: |
   ВЫБРАТЬ
     Заголовок,

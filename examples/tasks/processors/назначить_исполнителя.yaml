@@ -36,7 +36,6 @@ params:
       uk: Список завдань (через кому)
       uz: Vazifalar ro'yxati (vergul bilan ajratilgan)
       zh: 任务列表（逗号分隔）
-    required: true
   - name: Исполнитель
     type: reference:Исполнитель
     label: Исполнитель
@@ -56,4 +55,3 @@ params:
       uk: Виконавець
       uz: Ijrochi
       zh: 执行人
-    required: true

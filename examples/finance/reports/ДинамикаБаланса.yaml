@@ -3,13 +3,7 @@ title: Динамика баланса
 params:
   - name: Начало
     type: date
-    required: true
-    default: start_of_month
   - name: Конец
     type: date
-    required: true
-    default: today
   - name: Счёт
-    type: ref
-    ref_entity: Счёт
-    required: false
+    type: reference:Счёт

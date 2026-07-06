@@ -36,7 +36,6 @@ params:
       uk: Список завдань (через кому)
       uz: Vazifalar ro'yxati (vergul bilan ajratilgan)
       zh: 任务列表（逗号分隔）
-    required: true
   - name: НовыйСтатус
     type: enum:СтатусЗадачи
     label: Новый статус
@@ -56,7 +55,6 @@ params:
       uk: Новий статус
       uz: Yangi holat
       zh: 新状态
-    required: true
   - name: Комментарий
     type: string
     label: Комментарий к изменению

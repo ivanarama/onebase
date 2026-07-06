@@ -3,8 +3,5 @@ title: Импорт операций
 params:
   - name: ФайлJSON
     type: string
-    required: true
   - name: Счёт
-    type: ref
-    ref_entity: Счёт
-    required: true
+    type: reference:Счёт

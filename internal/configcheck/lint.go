@@ -180,7 +180,7 @@ func with(base *yamlLintSchema, nested map[string]*yamlLintSchema) *yamlLintSche
 }
 
 func fieldYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "title", "type", "allow_inline_create"), map[string]*yamlLintSchema{
+	return with(obj("name", "title", "label", "type", "allow_inline_create"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 	})
 }
@@ -197,7 +197,7 @@ func indexYAMLSchema() *yamlLintSchema {
 }
 
 func entityYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "title", "posting", "hierarchical", "hierarchy_kind", "list_form", "item_form", "based_on", "list_mode"), map[string]*yamlLintSchema{
+	return with(obj("name", "title", "description", "posting", "hierarchical", "hierarchy_kind", "list_form", "item_form", "based_on", "list_mode"), map[string]*yamlLintSchema{
 		"titles":     freeMap(),
 		"fields":     seq(fieldYAMLSchema()),
 		"tableparts": seq(tablePartYAMLSchema()),
@@ -239,7 +239,7 @@ func constantsYAMLSchema() *yamlLintSchema {
 }
 
 func widgetYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "x_field", "y_fields", "entities", "scope"), map[string]*yamlLintSchema{
+	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		"params": freeMap(),
 		"columns": seq(with(obj("field", "label", "format", "align"), map[string]*yamlLintSchema{
@@ -320,7 +320,7 @@ func journalYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "documents"), map[string]*yamlLintSchema{
 		"titles":                 freeMap(),
 		"columns":                seq(column),
-		"filters":                seq(obj("field", "type")),
+		"filters":                seq(with(obj("field", "label", "type"), map[string]*yamlLintSchema{"labels": freeMap()})),
 		"conditional":            seq(conditional),
 		"conditional_formatting": seq(conditional),
 	})
@@ -375,7 +375,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"id", "name", "kind", "field", "table_part", "visible", "enabled", "required",
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
 		"halign", "valign", "readonly", "use_grid", "no_grid", "auto_sum", "hint", "mask",
-		"format", "display_format", "type", "choice", "unknown_xml", "view",
+		"multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
 	} {
 		element.keys[k] = nil
 	}

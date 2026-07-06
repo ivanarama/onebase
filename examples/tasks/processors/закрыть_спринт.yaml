@@ -36,7 +36,6 @@ params:
       uk: Спринт для закриття
       uz: Yopiladigan sprint
       zh: 要关闭的冲刺
-    required: true
   - name: СледующийСпринт
     type: reference:Спринт
     label: Следующий спринт (для переноса)

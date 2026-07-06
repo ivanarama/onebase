@@ -3,5 +3,3 @@ title: Обязательные расходы
 params:
   - name: Месяц
     type: date
-    required: true
-    default: start_of_month

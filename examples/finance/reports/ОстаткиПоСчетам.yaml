@@ -3,5 +3,3 @@ title: Остатки по счетам
 params:
   - name: НаДату
     type: date
-    required: true
-    default: today

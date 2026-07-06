@@ -109,6 +109,51 @@ fields:
 	}
 }
 
+func TestLoadFile_FieldLabelAliasesTitle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cat.yaml")
+	yaml := `name: Оператор
+fields:
+  - name: Логин
+    type: string
+    label: Логин пользователя onebase
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := LoadFile(path, KindCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Fields) != 1 {
+		t.Fatalf("fields len = %d, want 1", len(e.Fields))
+	}
+	if e.Fields[0].Title != "Логин пользователя onebase" {
+		t.Errorf("Field.Title = %q, want label", e.Fields[0].Title)
+	}
+}
+
+func TestLoadFile_Description(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cat.yaml")
+	yaml := `name: Очередь
+description: Очередь колл-центра
+fields:
+  - name: Наименование
+    type: string
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := LoadFile(path, KindCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Description != "Очередь колл-центра" {
+		t.Errorf("Description = %q, want YAML description", e.Description)
+	}
+}
+
 func TestLoadFile_BasedOn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "doc.yaml")

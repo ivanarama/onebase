@@ -1,5 +1,4 @@
 name: Владелец
-title: Владелец
 description: Полный доступ ко всем объектам конфигурации
 permissions:
   catalogs:
@@ -19,6 +18,8 @@ permissions:
     ОстаткиПоСчетам: [read]
     ДвижениеСредств: [read]
     НакопленияПоЦелям: [read]
+  inforegs:
+    КурсыВалют: [read, write]
   reports:
     ОстаткиПоСчетам: [run]
     ДвижениеСредств: [run]
@@ -30,4 +31,3 @@ permissions:
     РасходыПоКонтрагентам: [run]
     СравнениеМесяцев: [run]
     ОбязательныеРасходы: [run]
-  printforms: [run]

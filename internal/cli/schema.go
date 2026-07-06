@@ -114,6 +114,7 @@ func allSchemas() map[string]map[string]any {
 		"properties": map[string]any{
 			"name":                stringSchema("Имя реквизита"),
 			"title":               stringSchema("Синоним"),
+			"label":               stringSchema("Алиас синонима"),
 			"titles":              stringMapSchema(),
 			"type":                stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
 			"allow_inline_create": map[string]any{"type": "boolean"},
@@ -152,6 +153,7 @@ func allSchemas() map[string]map[string]any {
 			"properties": map[string]any{
 				"name":           stringSchema("Имя объекта"),
 				"title":          stringSchema("Синоним"),
+				"description":    stringSchema("Описание объекта"),
 				"titles":         stringMapSchema(),
 				"fields":         arrayOf(field),
 				"tableparts":     arrayOf(tablePart),
@@ -245,7 +247,7 @@ func allSchemas() map[string]map[string]any {
 				"name": stringSchema("Имя"), "type": enumSchema("kpi", "list", "chart", "actions", "recent"), "title": stringSchema("Заголовок"), "titles": stringMapSchema(),
 				"query": stringSchema("Запрос"), "params": stringMapSchema(), "format": stringSchema("money|number|percent"), "compare_to": stringSchema("prev_period"), "limit": map[string]any{"type": "integer"},
 				"columns":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"field": stringSchema("Поле"), "label": stringSchema("Подпись"), "labels": stringMapSchema(), "format": stringSchema("Формат"), "align": stringSchema("left|right|center")}}),
-				"chart_kind": stringSchema("bar|line|pie"), "x_field": stringSchema("Поле X"), "y_fields": arrayOf(stringSchema("Поле Y")),
+				"chart_kind": stringSchema("bar|line|pie"), "chart_type": stringSchema("legacy alias: bar|line|pie"), "x_field": stringSchema("Поле X"), "y_fields": arrayOf(stringSchema("Поле Y")),
 				"items":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"label": stringSchema("Подпись"), "labels": stringMapSchema(), "entity": stringSchema("Объект"), "url": stringSchema("URL")}}),
 				"entities": arrayOf(stringSchema("Объект")), "scope": stringSchema("current_user|all"),
 			},

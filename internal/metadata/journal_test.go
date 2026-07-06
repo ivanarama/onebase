@@ -21,8 +21,11 @@ columns:
     fallback: [Поставщик, Покупатель]
 filters:
   - field: Дата
+    label: Период
     type: date_range
   - field: Контрагент
+    labels:
+      en: Counterparty
     type: reference:Контрагент
 `
 	path := filepath.Join(dir, "всеоперации.yaml")
@@ -56,6 +59,12 @@ filters:
 	}
 	if j.Filters[1].Type != "reference:Контрагент" {
 		t.Errorf("filter[1].type: got %q", j.Filters[1].Type)
+	}
+	if got := j.Filters[0].DisplayLabel("ru"); got != "Период" {
+		t.Errorf("filter[0].label: got %q", got)
+	}
+	if got := j.Filters[1].DisplayLabel("en"); got != "Counterparty" {
+		t.Errorf("filter[1].label en: got %q", got)
 	}
 }
 

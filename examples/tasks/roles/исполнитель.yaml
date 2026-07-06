@@ -1,37 +1,5 @@
 name: Исполнитель
-title: Исполнитель
-titles:
-  en: Assignee
-  de: Bearbeiter
-  sr: Извођач
-  az: İcraçı
-  es: Ejecutor
-  fr: Exécutant
-  hy: Կատարող
-  ka: შემსრულებელი
-  kk: Орындаушы
-  pt: Executor
-  ro: Executant
-  tr: Uygulayıcı
-  uk: Виконавець
-  uz: Ijrochi
-  zh: 执行人
 description: Работа со своими задачами и учёт времени
-descriptions:
-  en: Work with own tasks and time tracking
-  de: Arbeit mit eigenen Aufgaben und Zeiterfassung
-  sr: Рад са сопственим задацима и евиденција времена
-  az: Öz tapşırıqları ilə iş və vaxt uçotu
-  es: Trabajar con tareas propias y registro de tiempo
-  fr: Travail avec ses propres tâches et suivi du temps
-  hy: Աշխատանք սեփական առաջադրանքներով և ժամանակի հաշվառմամբ
-  ka: საკუთარი დავალებებით მუშაობა და დროის აღრიცხვა
-  kk: Өз тапсырмаларымен жұмыс және уақыт есебі
-  pt: Trabalhar com tarefas próprias e registro de tempo
-  ro: Lucru cu sarcinile proprii și evidența timpului
-  tr: Kendi görevleriyle çalışma ve zaman takibi
-  uk: Робота зі своїми завданнями та облік часу
-  uz: O'z vazifalari bilan ishlash va vaqt hisobi
 permissions:
   catalogs:
     Проект: [read]
@@ -46,6 +14,8 @@ permissions:
   registers:
     ЗадачиПоСтатусам: [read]
     ЗатраченноеВремя: [read]
+  inforegs:
+    ИсторияСтатусов: [read]
   reports:
     ЗадачиПоИсполнителю: [run]
     ЗатраченноеВремяОтчёт: [run]

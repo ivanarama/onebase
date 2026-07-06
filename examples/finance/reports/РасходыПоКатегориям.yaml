@@ -3,13 +3,7 @@ title: Расходы по категориям
 params:
   - name: Начало
     type: date
-    required: true
-    default: start_of_month
   - name: Конец
     type: date
-    required: true
-    default: today
   - name: ЧленСемьи
-    type: ref
-    ref_entity: ЧленСемьи
-    required: false
+    type: reference:ЧленСемьи

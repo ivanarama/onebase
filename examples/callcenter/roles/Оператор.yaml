@@ -1,5 +1,4 @@
 name: Оператор
-title: Оператор колл-центра
 description: Доступ к панели телефонии, клиентам и журналу звонков
 permissions:
   catalogs:
@@ -8,3 +7,8 @@ permissions:
     Очередь: [read]
   documents:
     Звонок: [read, write]
+  inforegs:
+    СтатусОператора: [read, write]
+  processors:
+    ЗаполнитьДемоданные: [run]
+    ТестВходящийЗвонок: [run]

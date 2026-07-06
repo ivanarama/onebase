@@ -121,6 +121,7 @@ type FormElement struct {
 	AutoSum         bool              `yaml:"auto_sum,omitempty"`       // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
 	Hint            string            `yaml:"hint,omitempty"`           // всплывающая подсказка
 	Mask            string            `yaml:"mask,omitempty"`           // маска ввода
+	Multiline       bool              `yaml:"multiline,omitempty"`      // обычное поле ввода рендерится как textarea
 	// Format/DisplayFormat распознаются, но для kind: ПолеДаты НЕ применяются в
 	// рантайме: нативный <input type=date> показывает дату по локали браузера, а
 	// значение всегда ISO (issue #219). Поля заведены, чтобы onebase check мог

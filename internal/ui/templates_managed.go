@@ -98,6 +98,8 @@ const tplManagedForm = `
           <input type="file" id="file-pick-{{$fn}}" style="display:none" onchange="obFilePick(this,'file-path-{{$fn}}','file-content-{{$fn}}')">
           <button type="button" onclick="document.getElementById('file-pick-{{$fn}}').click()" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
         </div>
+      {{else if $el.Multiline}}
+        <textarea name="{{$fn}}" rows="5" style="width:100%"{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} onchange="obFire('{{$el.Name}}','ПриИзменении')"{{end}}>{{index $ctx.Values $fn}}</textarea>
       {{else}}
         <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}"{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} onchange="obFire('{{$el.Name}}','ПриИзменении')"{{end}}>
       {{end}}

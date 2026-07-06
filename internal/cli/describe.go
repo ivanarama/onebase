@@ -70,6 +70,7 @@ type descForm struct {
 type descEntity struct {
 	Name         string          `json:"name"`
 	Title        string          `json:"title,omitempty"`
+	Description  string          `json:"description,omitempty"`
 	Hierarchical bool            `json:"hierarchical,omitempty"`
 	Posting      bool            `json:"posting,omitempty"`
 	Fields       []descField     `json:"fields"`
@@ -347,7 +348,7 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 			subdir = "documents"
 		}
 		de := descEntity{
-			Name: e.Name, Title: e.Title,
+			Name: e.Name, Title: e.Title, Description: e.Description,
 			Hierarchical: e.Hierarchical, Posting: e.Posting,
 			Fields:   toDescFields(e.Fields),
 			BasedOn:  e.BasedOn,

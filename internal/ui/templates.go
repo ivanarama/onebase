@@ -4058,16 +4058,16 @@ const tplJournal = `
   {{range $j.Filters}}
     {{if eq .Type "date_range"}}
     <div>
-      <label>{{.Field}} {{t $.Lang "с"}}</label>
+      <label>{{.DisplayLabel $.Lang}} {{t $.Lang "с"}}</label>
       <input type="date" name="f.{{.Field}}.from" value="{{(filterVal $params .Field).From}}">
     </div>
     <div>
-      <label>{{.Field}} {{t $.Lang "по"}}</label>
+      <label>{{.DisplayLabel $.Lang}} {{t $.Lang "по"}}</label>
       <input type="date" name="f.{{.Field}}.to" value="{{(filterVal $params .Field).To}}">
     </div>
     {{else}}
     <div>
-      <label>{{.Field}}</label>
+      <label>{{.DisplayLabel $.Lang}}</label>
       {{if index $.FilterOptions .Field}}
       {{$f := .Field}}
       <div style="display:flex;gap:4px;align-items:center">

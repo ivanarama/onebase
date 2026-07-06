@@ -73,6 +73,7 @@ type Widget struct {
 	Limit     int               `yaml:"limit"`      // list / recent
 	Columns   []WidgetColumn    `yaml:"columns"`    // list
 	ChartKind string            `yaml:"chart_kind"` // chart: bar | line | pie
+	ChartType string            `yaml:"chart_type"` // legacy alias for chart_kind
 	XField    string            `yaml:"x_field"`    // chart
 	YFields   []string          `yaml:"y_fields"`   // chart
 	Items     []WidgetAction    `yaml:"items"`      // actions
@@ -111,6 +112,9 @@ func LoadWidgetFile(path string) (*Widget, error) {
 	}
 	if w.Limit <= 0 && (w.Type == WidgetTypeList || w.Type == WidgetTypeRecent) {
 		w.Limit = 10
+	}
+	if w.ChartKind == "" {
+		w.ChartKind = w.ChartType
 	}
 	if w.ChartKind == "" && w.Type == WidgetTypeChart {
 		w.ChartKind = "bar"

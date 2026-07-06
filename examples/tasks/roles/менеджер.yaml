@@ -1,38 +1,5 @@
 name: Менеджер
-title: Менеджер проектов
-titles:
-  en: Project manager
-  de: Projektmanager
-  sr: Менаџер пројекта
-  az: Layihə meneceri
-  es: Gerente de proyecto
-  fr: Chef de projet
-  hy: Նախագծի մենեջեր
-  ka: პროექტის მენეჯერი
-  kk: Жоба менеджері
-  pt: Gerente de projeto
-  ro: Manager de proiect
-  tr: Proje yöneticisi
-  uk: Менеджер проєктів
-  uz: Loyiha menejeri
-  zh: 项目经理
 description: Управление проектами и задачами
-descriptions:
-  en: Project and task management
-  de: Projekt- und Aufgabenverwaltung
-  sr: Управљање пројектима и задацима
-  az: Layihə və tapşırıq idarəetməsi
-  es: Gestión de proyectos y tareas
-  fr: Gestion de projets et tâches
-  hy: Նախագծերի և առաջադրանքների կառավարում
-  ka: პროექტებისა და დავალებების მართვა
-  kk: Жоба мен тапсырмаларды басқару
-  pt: Gestão de projetos e tarefas
-  ro: Managementul proiectelor și sarcinilor
-  tr: Proje ve görev yönetimi
-  uk: Управління проєктами та завданнями
-  uz: Loyiha va vazifalarni boshqarish
-  zh: 项目和任务管理
 permissions:
   catalogs:
     Проект: [read, write]
@@ -47,6 +14,8 @@ permissions:
   registers:
     ЗадачиПоСтатусам: [read]
     ЗатраченноеВремя: [read]
+  inforegs:
+    ИсторияСтатусов: [read]
   reports:
     ЗадачиПоПроектам: [run]
     ЗадачиПоИсполнителю: [run]

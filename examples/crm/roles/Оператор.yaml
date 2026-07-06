@@ -1,5 +1,4 @@
 name: Оператор
-title: Оператор
 description: Ввод данных по клиентам и взаимодействиям
 permissions:
   catalogs:
@@ -17,4 +16,3 @@ permissions:
     ВзаимодействияПоКлиентам: [run]
     ВоронкаПродаж: [run]
     СделкиПоМенеджерам: [run]
-  printforms: [run]
