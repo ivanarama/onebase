@@ -1,6 +1,13 @@
 # Этап 26 — REST API v2 (фильтры, пагинация, OpenAPI)
 
-**Статус:** ⬜ Не начато
+**Статус:** 🟨 Частично реализовано
+
+**Актуализация 2026-07-06:** первый PR v2 берёт стабильный HTTP-контракт
+`/api/v2/catalog|document/...`: envelope `{data, meta}`, `page/limit`,
+`filter[F]`, CRUD, `post/unpost` и `openapi.json`, переиспользуя текущие
+session/RBAC guardrails и `entityservice.Save`. Bearer API-токены, admin UI
+токенов и JSON-исполнение отчётов остаются отдельными PR, чтобы не смешивать
+контракт API с новой моделью аутентификации и runtime отчётов.
 
 **Актуализация 2026-06-25:** перед полноценным v2 нужно закрыть guardrails из
 плана 76: RBAC в текущем REST API, дефолтные лимиты/пагинацию, caps на размер

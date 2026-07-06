@@ -110,6 +110,9 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		// Posting/un-posting документа (аналог UI-кнопки «Провести»).
 		r.Post("/documents/{entity}/{id}/post", h.postDocument())
 
+		// REST API v2 — envelope/meta, page/filter[] and OpenAPI contract.
+		h.mountV2(r)
+
 		// Web UI
 		uiSrv.Mount(r)
 

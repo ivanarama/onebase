@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -440,6 +441,208 @@ func TestAPI_List_InvalidLimit(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPIV2_ListEnvelopePageAndFilter(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "Товар",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{cat}, nil)
+	for _, name := range []string{"Молоток 1", "Молоток 2", "Гвоздь"} {
+		if err := h.store.Upsert(ctx, "Товар", uuid.New(), map[string]any{"Наименование": name}, cat); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	target := "/api/v2/catalog/Товар?limit=1&page=2&sort=" + url.QueryEscape("Наименование") +
+		"&filter%5B" + url.QueryEscape("Наименование") + "%5D=" + url.QueryEscape("Молоток")
+	r := reqWithEntity("GET", target, nil, map[string]string{"name": "Товар"}, nil)
+	w := httptest.NewRecorder()
+	h.listObjectsV2(metadata.KindCatalog).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+		Meta restV2Meta       `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1: %#v", len(resp.Data), resp.Data)
+	}
+	if resp.Data[0]["Наименование"] != "Молоток 2" {
+		t.Fatalf("second page row = %#v, want Молоток 2", resp.Data[0])
+	}
+	if resp.Meta.Total != 2 || resp.Meta.Page != 2 || resp.Meta.Limit != 1 || resp.Meta.TotalPages != 2 {
+		t.Fatalf("bad meta: %+v", resp.Meta)
+	}
+}
+
+func TestAPIV2_CRUDRoundTripEnvelope(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "Товар",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{cat}, nil)
+
+	createReq := reqWithEntity("POST", "/api/v2/catalog/Товар", []byte(`{"Наименование":"Молоток"}`), map[string]string{"name": "Товар"}, nil)
+	createRec := httptest.NewRecorder()
+	h.createObjectV2(metadata.KindCatalog).ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("create: expected 200, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Data.ID == "" {
+		t.Fatal("create returned empty id")
+	}
+
+	getReq := reqWithEntity("GET", "/api/v2/catalog/Товар/"+created.Data.ID, nil, map[string]string{"name": "Товар", "id": created.Data.ID}, nil)
+	getRec := httptest.NewRecorder()
+	h.getObjectV2(metadata.KindCatalog).ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	var got struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Data["Наименование"] != "Молоток" {
+		t.Fatalf("get data = %#v", got.Data)
+	}
+
+	updateReq := reqWithEntity("PUT", "/api/v2/catalog/Товар/"+created.Data.ID, []byte(`{"Наименование":"Дрель"}`), map[string]string{"name": "Товар", "id": created.Data.ID}, nil)
+	updateRec := httptest.NewRecorder()
+	h.updateObjectV2(metadata.KindCatalog).ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+
+	id := uuid.MustParse(created.Data.ID)
+	row, err := h.store.GetByID(ctx, "Товар", id, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Наименование"] != "Дрель" {
+		t.Fatalf("stored name = %#v", row)
+	}
+
+	deleteReq := reqWithEntity("DELETE", "/api/v2/catalog/Товар/"+created.Data.ID, nil, map[string]string{"name": "Товар", "id": created.Data.ID}, nil)
+	deleteRec := httptest.NewRecorder()
+	h.deleteObjectV2(metadata.KindCatalog).ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("delete: expected 204, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	if _, err := h.store.GetByID(ctx, "Товар", id, cat); err == nil {
+		t.Fatal("deleted object is still readable")
+	}
+}
+
+func TestAPIV2_RBAC_DeniesListWithoutRead(t *testing.T) {
+	cat := &metadata.Entity{
+		Name:   "Товар",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{cat}, nil)
+	if err := h.store.Upsert(ctx, "Товар", uuid.New(), map[string]any{"Наименование": "Молоток"}, cat); err != nil {
+		t.Fatal(err)
+	}
+	user := apiUser("writer", auth.Permission{
+		Catalogs: map[string][]string{"Товар": {"write"}},
+	})
+
+	r := reqWithEntity("GET", "/api/v2/catalog/Товар", nil, map[string]string{"name": "Товар"}, nil)
+	r = withUser(r, user)
+	w := httptest.NewRecorder()
+	h.listObjectsV2(metadata.KindCatalog).ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPIV2_UnpostDocument(t *testing.T) {
+	doc := &metadata.Entity{
+		Name:    "Поступление",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields:  []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{doc}, nil)
+	id := uuid.New()
+	if err := h.store.Upsert(ctx, "Поступление", id, map[string]any{"Номер": "1"}, doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetPosted(ctx, "Поступление", id, true); err != nil {
+		t.Fatal(err)
+	}
+
+	r := reqWithEntity("POST", "/api/v2/document/Поступление/"+id.String()+"/unpost", nil, map[string]string{"name": "Поступление", "id": id.String()}, nil)
+	w := httptest.NewRecorder()
+	h.unpostDocumentV2().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	row, err := h.store.GetByID(ctx, "Поступление", id, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["posted"] != false {
+		t.Fatalf("posted = %#v, want false; row=%#v", row["posted"], row)
+	}
+}
+
+func TestAPIV2_OpenAPIIncludesPathsAndSchemas(t *testing.T) {
+	cat := &metadata.Entity{
+		Name:   "Товар",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	doc := &metadata.Entity{
+		Name:    "Поступление",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields:  []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	spec := buildOpenAPIV2([]*metadata.Entity{cat, doc})
+
+	if spec["openapi"] != "3.0.3" {
+		t.Fatalf("openapi = %#v", spec["openapi"])
+	}
+	paths := spec["paths"].(map[string]any)
+	if _, ok := paths["/api/v2/catalog/{name}"]; !ok {
+		t.Fatalf("missing catalog path: %#v", paths)
+	}
+	if _, ok := paths["/api/v2/document/{name}/{id}/unpost"]; !ok {
+		t.Fatalf("missing unpost path: %#v", paths)
+	}
+	components := spec["components"].(map[string]any)
+	schemas := components["schemas"].(map[string]any)
+	schema := schemas["catalog_Товар"].(map[string]any)
+	props := schema["properties"].(map[string]any)
+	if _, ok := props["Наименование"]; !ok {
+		t.Fatalf("catalog schema lacks field: %#v", props)
 	}
 }
 
