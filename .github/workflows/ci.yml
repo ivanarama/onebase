@@ -31,6 +31,35 @@ jobs:
       - name: i18n translations check
         run: go run ./tools/i18ncheck
 
+      - name: Lint shipped example/template configurations
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          go build -o "$tmp/onebase" ./cmd/onebase
+
+          failed=0
+          for project in examples/* templates/*; do
+            [ -d "$project" ] || continue
+            echo "::group::$project"
+            out="$("$tmp/onebase" lint --project "$project" --json)"
+            issues="$(printf '%s' "$out" | jq '(.issues // []) | length')"
+            warnings="$(printf '%s' "$out" | jq '(.warnings // []) | length')"
+            if [ "$issues" -ne 0 ] || [ "$warnings" -ne 0 ]; then
+              echo "::error::$project has $issues issue(s) and $warnings warning(s)"
+              printf '%s' "$out" | jq -r '
+                (.issues // []), (.warnings // [])
+                | .[]
+                | "\(.file // "(конфигурация)"):\(.line // 0):\(.column // 0): [\(.kind // "")] [\(.code // "")] \(.message)"
+              '
+              failed=1
+            else
+              echo "$project: lint clean"
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
       - name: go vet
         run: go vet ./...
 
