@@ -26,9 +26,9 @@ type xmlLang struct {
 }
 
 type xmlAttribute struct {
-	Name    string   `xml:"Properties>Name"`
-	Synonym xmlLang  `xml:"Properties>Synonym"`
-	Type    xmlType  `xml:"Properties>Type"`
+	Name    string  `xml:"Properties>Name"`
+	Synonym xmlLang `xml:"Properties>Synonym"`
+	Type    xmlType `xml:"Properties>Type"`
 }
 
 type xmlTabularSection struct {
@@ -43,18 +43,19 @@ type xmlType struct {
 
 // v8.3 MDClasses XML structures (sibling .xml files, MetaDataObject root)
 type xmlV8Root struct {
-	Catalog          *xmlV8Obj      `xml:"Catalog"`
-	Document         *xmlV8Obj      `xml:"Document"`
-	Task             *xmlV8Obj      `xml:"Task"`
-	DataProcessor    *xmlV8Obj      `xml:"DataProcessor"`
-	BusinessProcess  *xmlV8Obj      `xml:"BusinessProcess"`
-	AccReg           *xmlV8Obj      `xml:"AccumulationRegister"`
-	InfoReg          *xmlV8Obj      `xml:"InformationRegister"`
-	AcctReg          *xmlV8Obj      `xml:"AccountingRegister"`
-	Enum             *xmlV8Enum     `xml:"Enumeration"`
-	Constant         *xmlV8Const    `xml:"Constant"`
-	ChartOfAccounts  *xmlV8Obj      `xml:"ChartOfAccounts"`
-	ScheduledJob     *xmlV8SchedJob `xml:"ScheduledJob"`
+	Catalog         *xmlV8Obj      `xml:"Catalog"`
+	Document        *xmlV8Obj      `xml:"Document"`
+	Task            *xmlV8Obj      `xml:"Task"`
+	DataProcessor   *xmlV8Obj      `xml:"DataProcessor"`
+	BusinessProcess *xmlV8Obj      `xml:"BusinessProcess"`
+	AccReg          *xmlV8Obj      `xml:"AccumulationRegister"`
+	InfoReg         *xmlV8Obj      `xml:"InformationRegister"`
+	AcctReg         *xmlV8Obj      `xml:"AccountingRegister"`
+	Enum            *xmlV8Enum     `xml:"Enumeration"`
+	EnumAlias       *xmlV8Enum     `xml:"Enum"`
+	Constant        *xmlV8Const    `xml:"Constant"`
+	ChartOfAccounts *xmlV8Obj      `xml:"ChartOfAccounts"`
+	ScheduledJob    *xmlV8SchedJob `xml:"ScheduledJob"`
 }
 
 type xmlV8Obj struct {
@@ -112,8 +113,8 @@ type xmlV8Const struct {
 }
 
 type xmlV8SchedJobProps struct {
-	Name     string `xml:"Name"`
-	Schedule string `xml:"Schedule"`
+	Name       string `xml:"Name"`
+	Schedule   string `xml:"Schedule"`
 	MethodName string `xml:"MethodName"`
 }
 
@@ -139,11 +140,21 @@ func parseV83File(path string) (*xmlV8Root, error) {
 	if root.Catalog == nil && root.Document == nil && root.Task == nil &&
 		root.DataProcessor == nil && root.BusinessProcess == nil &&
 		root.AccReg == nil && root.InfoReg == nil && root.AcctReg == nil &&
-		root.Enum == nil && root.Constant == nil && root.ChartOfAccounts == nil &&
+		root.enumObject() == nil && root.Constant == nil && root.ChartOfAccounts == nil &&
 		root.ScheduledJob == nil {
 		return nil, nil
 	}
 	return &root, nil
+}
+
+func (r *xmlV8Root) enumObject() *xmlV8Enum {
+	if r == nil {
+		return nil
+	}
+	if r.Enum != nil {
+		return r.Enum
+	}
+	return r.EnumAlias
 }
 
 func convertV83Attrs(attrs []xmlV8Attr) []Attribute {
@@ -195,7 +206,7 @@ func ParseDir(dir string) (*ConfigDump, error) {
 			}
 			dump.Registers = append(dump.Registers, regs...)
 
-		case "Enumerations":
+		case "Enumerations", "Enums":
 			enums, err := parseEnumerations(subDir)
 			if err != nil {
 				return nil, err
@@ -323,9 +334,15 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 
 		if v8, _ := parseV83File(filepath.Join(dir, name+".xml")); v8 != nil {
 			obj := v8.Catalog
-			if obj == nil { obj = v8.Task }
-			if obj == nil { obj = v8.DataProcessor }
-			if obj == nil { obj = v8.BusinessProcess }
+			if obj == nil {
+				obj = v8.Task
+			}
+			if obj == nil {
+				obj = v8.DataProcessor
+			}
+			if obj == nil {
+				obj = v8.BusinessProcess
+			}
 			if obj != nil {
 				cat := &CatalogMeta{
 					Name:       orDefault(obj.Props.Name, name),
@@ -550,9 +567,10 @@ func orDefault(s, def string) string {
 func parseEnumerations(dir string) ([]*EnumMeta, error) {
 	var result []*EnumMeta
 	for _, name := range objectNames(dir) {
-		if v8, _ := parseV83File(filepath.Join(dir, name+".xml")); v8 != nil && v8.Enum != nil {
-			em := &EnumMeta{Name: orDefault(v8.Enum.Props.Name, name)}
-			for _, v := range v8.Enum.ChildObjects.Values {
+		if v8, _ := parseV83File(filepath.Join(dir, name+".xml")); v8 != nil && v8.enumObject() != nil {
+			enumObj := v8.enumObject()
+			em := &EnumMeta{Name: orDefault(enumObj.Props.Name, name)}
+			for _, v := range enumObj.ChildObjects.Values {
 				em.Values = append(em.Values, v.Props.Name)
 			}
 			result = append(result, em)

@@ -247,6 +247,73 @@ func TestConvertEnumFieldResolution(t *testing.T) {
 	}
 }
 
+func TestConvertEnumAliasSectionResolution(t *testing.T) {
+	src := t.TempDir()
+	out := t.TempDir()
+
+	catXML := `<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject>
+  <Catalog>
+    <Properties><Name>Currency</Name></Properties>
+    <ChildObjects>
+      <Attribute><Properties>
+        <Name>RateType</Name>
+        <Type><Type xmlns="http://v8.1c.ru/8.1/data/core">cfg:EnumRef.RateType</Type></Type>
+      </Properties></Attribute>
+    </ChildObjects>
+  </Catalog>
+</MetaDataObject>`
+	enumXML := `<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject>
+  <Enum>
+    <Properties><Name>RateType</Name></Properties>
+    <ChildObjects>
+      <EnumValue><Properties><Name>Fixed</Name></Properties></EnumValue>
+      <EnumValue><Properties><Name>Floating</Name></Properties></EnumValue>
+    </ChildObjects>
+  </Enum>
+</MetaDataObject>`
+
+	if err := os.MkdirAll(filepath.Join(src, "Catalogs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "Catalogs", "Currency.xml"), []byte(catXML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "Enums"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "Enums", "RateType.xml"), []byte(enumXML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := converter.Convert(converter.Options{SourceDir: src, OutDir: out})
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if report.Enums != 1 {
+		t.Fatalf("converted enums = %d, want 1", report.Enums)
+	}
+
+	catData, err := os.ReadFile(filepath.Join(out, "catalogs", "currency.yaml"))
+	if err != nil {
+		t.Fatalf("каталог не записан: %v", err)
+	}
+	if y := string(catData); !strings.Contains(y, "type: enum:RateType") {
+		t.Fatalf("enum reference degraded, yaml:\n%s", y)
+	}
+	enumData, err := os.ReadFile(filepath.Join(out, "enums", "ratetype.yaml"))
+	if err != nil {
+		t.Fatalf("перечисление не записано: %v", err)
+	}
+	enumYAML := string(enumData)
+	for _, want := range []string{"name: RateType", "- Fixed", "- Floating"} {
+		if !strings.Contains(enumYAML, want) {
+			t.Fatalf("enum yaml does not contain %q:\n%s", want, enumYAML)
+		}
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

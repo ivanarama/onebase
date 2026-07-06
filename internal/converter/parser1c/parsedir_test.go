@@ -149,6 +149,17 @@ const enumXML = `<?xml version="1.0" encoding="UTF-8"?>
   </Enumeration>
 </MetaDataObject>`
 
+const enumAliasXML = `<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject>
+  <Enum>
+    <Properties><Name>RateType</Name></Properties>
+    <ChildObjects>
+      <EnumValue><Properties><Name>Fixed</Name></Properties></EnumValue>
+      <EnumValue><Properties><Name>Floating</Name></Properties></EnumValue>
+    </ChildObjects>
+  </Enum>
+</MetaDataObject>`
+
 // Перечисление в выгрузке 1С часто лежит ОДНИМ файлом «Имя.xml» без папки.
 // Раньше parseEnumerations перебирал только подкаталоги и пропускал такой enum
 // (issue #16: «Перечислений: 0 → 0»). Проверяем оба представления.
@@ -175,6 +186,32 @@ func TestParseDirEnumerations(t *testing.T) {
 		t.Errorf("имя перечисления: %q", em.Name)
 	}
 	if len(em.Values) != 2 || em.Values[0] != "ЮрЛицо" || em.Values[1] != "ФизЛицо" {
+		t.Fatalf("значения перечисления разобраны неверно: %+v", em.Values)
+	}
+}
+
+func TestParseDirEnumsAliasSectionAndTag(t *testing.T) {
+	src := t.TempDir()
+	enumsDir := filepath.Join(src, "Enums")
+	if err := os.MkdirAll(enumsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(enumsDir, "RateType.xml"), []byte(enumAliasXML), 0o644); err != nil {
+		t.Fatalf("write enum xml: %v", err)
+	}
+
+	dump, err := ParseDir(src)
+	if err != nil {
+		t.Fatalf("ParseDir: %v", err)
+	}
+	if len(dump.Enums) != 1 {
+		t.Fatalf("ожидалось 1 перечисление из Enums/<Enum>, получено %d", len(dump.Enums))
+	}
+	em := dump.Enums[0]
+	if em.Name != "RateType" {
+		t.Errorf("имя перечисления: %q", em.Name)
+	}
+	if len(em.Values) != 2 || em.Values[0] != "Fixed" || em.Values[1] != "Floating" {
 		t.Fatalf("значения перечисления разобраны неверно: %+v", em.Values)
 	}
 }
