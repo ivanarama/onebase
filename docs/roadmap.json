@@ -72,14 +72,40 @@
     {
       "id": "multi-user-scale-readiness",
       "plan": "Plans/76-multi-user-scale-readiness.md",
+      "status": "in_progress",
+      "bucket": "next",
+      "progress": 60,
+      "track": { "ru": "Эксплуатация", "en": "Operations" },
+      "title": { "ru": "Готовность к многопользовательской нагрузке", "en": "Multi-user scale readiness" },
+      "summary": {
+        "ru": "Первый срез готов: REST RBAC, лимиты и пагинация list, атомарная запись, metadata/tablepart indexes и server-side reference picker. Остаток: лимиты отчётов/экспорта, backpressure, slow metrics и путь к нескольким экземплярам.",
+        "en": "The first slice is done: REST RBAC, list limits and pagination, atomic writes, metadata/tablepart indexes, and server-side reference picker. Remaining: report/export limits, backpressure, slow metrics, and a path to multiple app instances."
+      }
+    },
+    {
+      "id": "runtime-limits-backpressure-observability",
+      "plan": "Plans/79-runtime-limits-backpressure-observability.md",
       "status": "planned",
       "bucket": "now",
       "progress": 0,
       "track": { "ru": "Эксплуатация", "en": "Operations" },
-      "title": { "ru": "Готовность к многопользовательской нагрузке", "en": "Multi-user scale readiness" },
+      "title": { "ru": "Runtime-лимиты и slow operations", "en": "Runtime limits and slow operations" },
       "summary": {
-        "ru": "План на 100+ активных пользователей: REST RBAC, лимиты и пагинация, атомарная запись, индексы, server-side reference picker, лимиты отчётов/экспорта, observability и путь к нескольким экземплярам.",
-        "en": "Plan for 100+ active users: REST RBAC, limits and pagination, atomic writes, indexes, server-side reference picker, report/export limits, observability, and a path to multiple app instances."
+        "ru": "Детализация 76 E/F: таймауты, max rows, semaphores/backpressure, slow logs и operation metrics для отчётов, export, обработок и HTTP-сервисов без поломки существующего поведения без `limits:`.",
+        "en": "Detailed 76 E/F plan: timeouts, max rows, semaphores/backpressure, slow logs, and operation metrics for reports, exports, processors, and HTTP services without breaking existing behavior when `limits:` is absent."
+      }
+    },
+    {
+      "id": "multi-session-isolated-enterprise-windows",
+      "plan": "Plans/78-multi-session-isolated-enterprise-windows.md",
+      "status": "planned",
+      "bucket": "next",
+      "progress": 0,
+      "track": { "ru": "Эксплуатация", "en": "Operations" },
+      "title": { "ru": "Параллельные сессии и изолированные окна", "en": "Parallel sessions and isolated enterprise windows" },
+      "summary": {
+        "ru": "Разрешить несколько активных сессий одного пользователя и запускать пользовательский режим в отдельном браузерном профиле, чтобы разные пользователи одной базы не перетирали cookie.",
+        "en": "Allow multiple active sessions for one user and launch enterprise mode in a separate browser profile so different users of one base do not overwrite each other's cookies."
       }
     },
     {
@@ -111,14 +137,27 @@
     {
       "id": "dsl-real-world",
       "plan": "Plans/34-dsl-real-world.md",
-      "status": "in_progress",
-      "bucket": "next",
-      "progress": 80,
+      "status": "done",
+      "bucket": "done",
+      "progress": 100,
       "track": { "ru": "DSL", "en": "DSL" },
       "title": { "ru": "DSL для реальных конфигураций", "en": "DSL for real-world configurations" },
       "summary": {
-        "ru": "Реально есть `ИначеЕсли`, тернарный оператор, compound assign, строки/даты/формат/тип, `ТаблицаЗначений`, общие модули, `Документы.X.Создать()` и write-hooks. Основной остаток — автодоступ к полям ссылок.",
-        "en": "`ElseIf`, ternary, compound assignment, string/date/format/type builtins, `ValueTable`, common modules, `Documents.X.Create()`, and write hooks are implemented. Main remaining item: automatic reference field dereferencing."
+        "ru": "Реализованы `ИначеЕсли`, тернарный оператор, compound assign, строки/даты/формат/тип, `ТаблицаЗначений`, общие модули, `Документы.X.Создать()` и write-hooks. Скрытый автодоступ к полям ссылок снят, вместо него отдельный явный batch-план.",
+        "en": "`ElseIf`, ternary, compound assignment, string/date/format/type builtins, `ValueTable`, common modules, `Documents.X.Create()`, and write hooks are implemented. Hidden reference field dereferencing is dropped and replaced by a separate explicit batch plan."
+      }
+    },
+    {
+      "id": "dsl-bulk-reference-requisites",
+      "plan": "Plans/80-dsl-bulk-reference-requisites.md",
+      "status": "planned",
+      "bucket": "next",
+      "progress": 0,
+      "track": { "ru": "DSL", "en": "DSL" },
+      "title": { "ru": "Batch-реквизиты ссылок", "en": "Bulk reference requisites" },
+      "summary": {
+        "ru": "Явная функция `ЗначенияРеквизитовОбъектов(Ссылки, ИмяОбъекта, Поля)` для массового чтения реквизитов ссылок одним batch-запросом вместо скрытого `X.Y`.",
+        "en": "An explicit `ЗначенияРеквизитовОбъектов(Refs, ObjectName, Fields)` function for bulk reading reference fields with one batch query instead of hidden `X.Y` dereferencing."
       }
     },
     {

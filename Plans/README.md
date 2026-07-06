@@ -18,25 +18,28 @@
 > **57** (ИИ-конфигуратор, этапы 0–3) — тоже реализованы, хотя были помечены ⬜.
 > Сверка 2026-06-25: **43.2** (graceful shutdown scheduler), **60A** (UI истории
 > конфигурации), **65** (richtext), **74** (AI/dev tools 2.0) фактически закрыты.
+> Сверка 2026-07-06: lint-clean `examples/`/`templates` закрыт; в **76**
+> реализован первый срез многопользовательских guardrails: REST RBAC, лимиты
+> REST list, metadata `indexes:`, индексы табличных частей, server-side reference
+> picker и атомарная optimistic locking запись.
 
-## Текущий приоритет, 2026-06-25
+## Текущий приоритет, 2026-07-06
 
-Источник: [`current-priority-2026-06-25.md`](current-priority-2026-06-25.md).
+Источник: [`current-priority-2026-07-06.md`](current-priority-2026-07-06.md).
 
-1. **Стабилизационный спринт: lint-clean shipped examples/templates.** Новый
-   `onebase lint` показывает предупреждения в поставляемых конфигурациях; до
-   включения общего lint-gate нужно привести examples/templates к нулю
-   предупреждений или явно поддержать нужные YAML-алиасы.
-2. **План 76:** готовность к многопользовательской нагрузке. Первый срез:
-   REST RBAC, лимиты/пагинация REST list, атомарная optimistic locking запись,
-   индексы под табличные части/списки и server-side reference picker.
-3. **План 34 F3:** автодоступ к полям ссылок (`this.X.Y`, `Стр.X.Y`). Это
-   закрывает разрыв между ожидаемой 1С-подобной моделью и текущим обходным
-   `ЗначениеРеквизитаОбъекта(...)`.
-4. **План 60B:** marketplace конфигураций. Часть A (история/diff/rollback/UI)
-   уже реализована; marketplace лучше делать после lint-clean examples/templates.
-5. **План 26:** REST API v2 после guardrails из плана 76, чтобы v2 сразу
+1. **План 79 / 76 E-F:** runtime-лимиты, backpressure и slow operations для
+   отчётов, export, обработок и HTTP-сервисов. Делать additive: без `limits:`
+   существующие конфигурации должны работать как раньше.
+2. **План 78:** параллельные сессии и изолированные окна Предприятия. Сейчас
+   повторный вход тем же логином инвалидирует старую сессию, а разные пользователи
+   в одном браузерном профиле конфликтуют через cookie.
+3. **План 80:** безопасный batch-доступ к реквизитам ссылок
+   (`ЗначенияРеквизитовОбъектов`). Скрытое `this.X.Y` не делаем, чтобы не
+   получить неявные запросы в циклах.
+4. **План 26:** REST API v2 после guardrails из плана 76, чтобы v2 сразу
    наследовал RBAC, токены, пагинацию, OpenAPI и лимиты.
+5. **План 60B:** marketplace конфигураций. Часть A (история/diff/rollback/UI)
+   уже реализована; `examples/` и `templates/` сейчас проходят `onebase lint`.
 
 Ниже по очереди: `55` этап 3 (inline-JS из `ui/templates.go`) делать при
 следующей работе с этим фронтом; `46` store wrapper и остатки i18n/PWA — скорее
@@ -159,7 +162,9 @@
 | 56 | [56-techdebt-ci-observability.md](56-techdebt-ci-observability.md) | CI с `-race`/coverage, `golangci-lint`, RBAC вложений, slog + `/metrics`, `onebase lint`, чистка репозитория | 5.5–7.5 дней | ✅ Реализовано |
 | 62 | [62-network-safety-switch.md](62-network-safety-switch.md) | Предохранитель сети: галочка `net.enabled` лочит хуки/HTTP/сервисы/email; сброс при restore | 0.5 дня | ✅ Реализовано |
 | 67 | [67-exec-command.md](67-exec-command.md) | Выполнение команд ОС из DSL (`ВыполнитьКоманду`) за флагом `AllowExec` (выкл. по умолчанию, без shell, таймаут, аудит) | 1–1.5 дня | ✅ Реализовано |
-| 76 | [76-multi-user-scale-readiness.md](76-multi-user-scale-readiness.md) | Готовность к 100+ активным пользователям: REST RBAC, лимиты, индексы, reference picker, атомарная запись, observability и путь к горизонтальному масштабированию | 2–4 недели по этапам | ⬜ Запланировано |
+| 76 | [76-multi-user-scale-readiness.md](76-multi-user-scale-readiness.md) | Готовность к 100+ активным пользователям: REST RBAC, лимиты, индексы, reference picker, атомарная запись, observability и путь к горизонтальному масштабированию | 2–4 недели по этапам | 🟡 Первый срез реализован: REST RBAC/list caps, `indexes:`, индексы табличных частей, reference picker, optimistic locking; остаются тяжёлые операции/observability/горизонтальный путь |
+| 79 | [79-runtime-limits-backpressure-observability.md](79-runtime-limits-backpressure-observability.md) | Runtime-лимиты, backpressure и slow operations для 76 E/F | 4.5–6 дней | ⬜ Запланировано |
+| 80 | [80-dsl-bulk-reference-requisites.md](80-dsl-bulk-reference-requisites.md) | Явный batch-доступ к реквизитам ссылок в DSL без скрытого `X.Y` | 2.5–4 дня | ⬜ Запланировано |
 
 ### Направление Г — Интеграции и экосистема (продолжение)
 

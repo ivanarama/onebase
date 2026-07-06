@@ -148,6 +148,8 @@ Acceptance:
 
 ### Этап E — тяжёлые операции, таймауты и backpressure (3-5 дней)
 
+Детальный implementation plan: [`79-runtime-limits-backpressure-observability.md`](79-runtime-limits-backpressure-observability.md).
+
 1. Ввести runtime-настройки `limits:`:
    ```yaml
    limits:
@@ -172,6 +174,8 @@ Acceptance:
 - экспорт 200k строк не держит HTTP handler до бесконечности.
 
 ### Этап F — наблюдаемость и эксплуатация (2-3 дня)
+
+Детальный implementation plan: [`79-runtime-limits-backpressure-observability.md`](79-runtime-limits-backpressure-observability.md).
 
 1. Дополнить `/metrics`:
    - активные сессии;
@@ -236,6 +240,8 @@ Acceptance:
 
 - План 26 — REST API v2. Его лучше делать после этапа A, чтобы v2 сразу
   наследовал правильный RBAC, лимиты и токены.
+- План 79 — детализация этапов E/F: runtime-лимиты, backpressure, slow logs и
+  operation metrics.
 - План 56 — `onebase lint`, CI и наблюдаемость. Этапы B/F используют lint и slog.
 - План 43.3 — точечный `slog`-контур.
 - План 74 realtime — уже реализован как однопроцессный hub; этап G описывает
