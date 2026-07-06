@@ -20,24 +20,24 @@
 > конфигурации), **65** (richtext), **74** (AI/dev tools 2.0) фактически закрыты.
 > Сверка 2026-07-07: **34 F3** (автодоступ к реквизитам ссылок `this.X.Y` /
 > `Стр.X.Y`) закрыт PR #261 через безопасный single-hop доступ с предзагрузкой
-> и кэшем; мультисессионность из плана 76 пока отложена.
+> и кэшем; **76 A/B/C/D1/E/F core** закрыты серией PR до #264, кроме
+> межпроцессных locks/background export UX/future horizontal scale;
+> мультисессионность из плана 76 пока отложена.
 
 ## Текущий приоритет, 2026-07-07
 
 Источник: [`current-priority-2026-06-25.md`](current-priority-2026-06-25.md).
 
-1. **Стабилизационный спринт: lint-clean shipped examples/templates.** Новый
-   `onebase lint` показывает предупреждения в поставляемых конфигурациях; до
-   включения общего lint-gate нужно привести examples/templates к нулю
-   предупреждений или явно поддержать нужные YAML-алиасы.
-2. **План 76:** не-сессионные guardrails нагрузки. Мультисессионность пока
-   отложена; в работе остаются REST RBAC, лимиты/пагинация REST list,
-   атомарная optimistic locking запись, индексы под табличные части/списки,
-   server-side reference picker и лимиты отчётов/экспорта.
-3. **План 60B:** marketplace конфигураций. Часть A (история/diff/rollback/UI)
-   уже реализована; marketplace лучше делать после lint-clean examples/templates.
-4. **План 26:** REST API v2 после guardrails из плана 76, чтобы v2 сразу
-   наследовал RBAC, токены, пагинацию, OpenAPI и лимиты.
+1. **План 76:** остатки не-сессионных guardrails нагрузки. Уже закрыты REST
+   RBAC/list limits, optimistic locking, индексы, server-side reference picker,
+   bounded parent-folder options, runtime limits/backpressure и metrics.
+   Остались PostgreSQL advisory locks, background export UX и нагрузочная
+   валидация на PostgreSQL.
+2. **План 60B:** marketplace конфигураций. Часть A (история/diff/rollback/UI)
+   уже реализована, shipped examples/templates проходят CI lint-gate.
+3. **План 55, этап 3:** разбор монолитных UI templates/JS.
+4. **Row-level access plan:** отдельная модель строковых ограничений поверх
+   объектного RBAC.
 
 Ниже по очереди: `55` этап 3 (inline-JS из `ui/templates.go`) делать при
 следующей работе с этим фронтом; `46` store wrapper и остатки i18n/PWA — скорее

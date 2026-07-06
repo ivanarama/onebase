@@ -72,14 +72,14 @@
     {
       "id": "multi-user-scale-readiness",
       "plan": "Plans/76-multi-user-scale-readiness.md",
-      "status": "planned",
+      "status": "in_progress",
       "bucket": "now",
-      "progress": 0,
+      "progress": 75,
       "track": { "ru": "Эксплуатация", "en": "Operations" },
       "title": { "ru": "Готовность к многопользовательской нагрузке", "en": "Multi-user scale readiness" },
       "summary": {
-        "ru": "План на 100+ активных пользователей: REST RBAC, лимиты и пагинация, атомарная запись, индексы, server-side reference picker, лимиты отчётов/экспорта, observability и путь к нескольким экземплярам.",
-        "en": "Plan for 100+ active users: REST RBAC, limits and pagination, atomic writes, indexes, server-side reference picker, report/export limits, observability, and a path to multiple app instances."
+        "ru": "Core guardrails реализованы: REST RBAC/list limits, атомарная запись, индексы, server-side reference picker, bounded folder options, runtime limits и observability. Остались advisory locks, background export UX и future horizontal scale.",
+        "en": "Core guardrails are implemented: REST RBAC/list limits, atomic writes, indexes, server-side reference picker, bounded folder options, runtime limits, and observability. Remaining work: advisory locks, background export UX, and future horizontal scale."
       }
     },
     {
