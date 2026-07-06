@@ -24,6 +24,7 @@ type ListParams struct {
 	Limit          int    // 0 = no limit
 	Offset         int    // for pagination
 	ExcludeFolders bool   // for hierarchical catalogs: only non-folder elements
+	OnlyFolders    bool   // for hierarchical catalogs: only folder elements
 }
 
 // FilterValue holds a filter for one field.
@@ -293,8 +294,14 @@ func activityWhere(d Dialect, entity *metadata.Entity, scope string) string {
 	}
 }
 
-func excludeFoldersWhere(d Dialect, entity *metadata.Entity, exclude bool) string {
-	if entity == nil || !entity.Hierarchical || !exclude {
+func folderScopeWhere(d Dialect, entity *metadata.Entity, onlyFolders, excludeFolders bool) string {
+	if entity == nil || !entity.Hierarchical {
+		return ""
+	}
+	if onlyFolders {
+		return fmt.Sprintf("is_folder = %s", boolTrueLit(d))
+	}
+	if !excludeFolders {
 		return ""
 	}
 	return fmt.Sprintf("(is_folder IS NULL OR is_folder = %s)", boolFalseLit(d))
@@ -336,7 +343,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
 		whereParts = append(whereParts, cond)
 	}
-	if cond := excludeFoldersWhere(d, entity, params.ExcludeFolders); cond != "" {
+	if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
 		whereParts = append(whereParts, cond)
 	}
 
@@ -502,7 +509,7 @@ func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata
 	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
 		whereParts = append(whereParts, cond)
 	}
-	if cond := excludeFoldersWhere(d, entity, params.ExcludeFolders); cond != "" {
+	if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
 		whereParts = append(whereParts, cond)
 	}
 

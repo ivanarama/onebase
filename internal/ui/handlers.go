@@ -726,6 +726,13 @@ func formValues(r *http.Request, entity *metadata.Entity) map[string]string {
 	for _, f := range entity.Fields {
 		vals[f.Name] = r.FormValue(f.Name)
 	}
+	if entity.Hierarchical {
+		vals["parent_id"] = r.FormValue("parent_id")
+		vals["is_folder"] = "false"
+		if r.FormValue("is_folder") == "true" {
+			vals["is_folder"] = "true"
+		}
+	}
 	return vals
 }
 
@@ -908,9 +915,12 @@ func (s *Server) buildHierarchyBreadcrumbs(ctx context.Context, entity *metadata
 	return crumbs
 }
 
-// loadFolderOptions returns all folder items for a hierarchical catalog (for parent select).
-func (s *Server) loadFolderOptions(ctx context.Context, entity *metadata.Entity) []map[string]any {
-	rows, err := s.store.List(ctx, entity.Name, entity, storage.ListParams{})
+// loadFolderOptions returns a bounded folder list for a hierarchical catalog parent select.
+func (s *Server) loadFolderOptions(ctx context.Context, entity *metadata.Entity, selected ...string) []map[string]any {
+	rows, err := s.store.List(ctx, entity.Name, entity, storage.ListParams{
+		Limit:       refPickerDefaultLimit,
+		OnlyFolders: true,
+	})
 	if err != nil {
 		return nil
 	}
@@ -921,7 +931,34 @@ func (s *Server) loadFolderOptions(ctx context.Context, entity *metadata.Entity)
 			folders = append(folders, row)
 		}
 	}
-	return folders
+	return s.appendSelectedFolderOptions(ctx, folders, entity, selected)
+}
+
+func (s *Server) appendSelectedFolderOptions(ctx context.Context, rows []map[string]any, entity *metadata.Entity, selected []string) []map[string]any {
+	seen := make(map[string]bool, len(rows)+len(selected))
+	for _, row := range rows {
+		if id := refValueString(row["id"]); id != "" {
+			seen[id] = true
+		}
+	}
+	for _, idStr := range selected {
+		idStr = strings.TrimSpace(idStr)
+		if idStr == "" || seen[idStr] {
+			continue
+		}
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			continue
+		}
+		row, err := s.store.GetByID(ctx, entity.Name, id, entity)
+		if err != nil || row == nil || !asBool(row["is_folder"]) {
+			continue
+		}
+		row["_label"] = firstStringField(row, entity)
+		rows = append(rows, row)
+		seen[idStr] = true
+	}
+	return rows
 }
 
 func listURL(entity *metadata.Entity) string {

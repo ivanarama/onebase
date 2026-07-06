@@ -288,13 +288,13 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	}
 	var folderOpts []map[string]any
 	if entity.Hierarchical {
-		folderOpts = s.loadFolderOptions(r.Context(), entity)
 		values["parent_id"] = r.URL.Query().Get("parent")
 		if r.URL.Query().Get("is_folder") == "true" {
 			values["is_folder"] = "true"
 		} else {
 			values["is_folder"] = "false"
 		}
+		folderOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
 	}
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
@@ -494,10 +494,10 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		"TPRefMeta":     tpRefMeta(entity),
 		"TablePartRows": tablePartRows,
 	}
+	if entity.Hierarchical {
+		data["FolderOptions"] = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
+	}
 	if isNew {
-		if entity.Hierarchical {
-			data["FolderOptions"] = s.loadFolderOptions(r.Context(), entity)
-		}
 		data["IsPopup"] = r.FormValue("_popup") == "1"
 	}
 	s.renderEntityForm(w, r, "object", data)
@@ -541,7 +541,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		langErr := s.resolveLang(r)
 		var fOpts []map[string]any
 		if entity.Hierarchical {
-			fOpts = s.loadFolderOptions(r.Context(), entity)
+			fOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
 		}
 		s.renderEntityForm(w, r, "object", map[string]any{
 			"Entity":       entity,
@@ -1008,7 +1008,6 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 
 	var folderOptsEdit []map[string]any
 	if entity.Hierarchical {
-		folderOptsEdit = s.loadFolderOptions(r.Context(), entity)
 		if v, ok := row["is_folder"]; ok {
 			if asBool(v) {
 				vals["is_folder"] = "true"
@@ -1021,6 +1020,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		if v, ok := row["parent_id"]; ok && v != nil {
 			vals["parent_id"] = fmt.Sprintf("%v", v)
 		}
+		folderOptsEdit = s.loadFolderOptions(r.Context(), entity, vals["parent_id"])
 	}
 
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, vals)
@@ -1146,6 +1146,10 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
 		langSubmit := s.resolveLang(r)
+		var fOpts []map[string]any
+		if entity.Hierarchical {
+			fOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
+		}
 		s.renderEntityForm(w, r, "object", map[string]any{
 			"Entity":       entity,
 			"IsNew":        false,
@@ -1160,6 +1164,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			// См. submit: проведение могло обогатить tpRows до *Ref —
 			// сериализуем к UUID-строкам, иначе грид покажет «[object Object]».
 			"TablePartRows": tablePartRows,
+			"FolderOptions": fOpts,
 		})
 		return
 	}

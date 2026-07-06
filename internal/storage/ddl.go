@@ -42,6 +42,13 @@ func boolFalseLit(d Dialect) string {
 	return "FALSE"
 }
 
+func boolTrueLit(d Dialect) string {
+	if d.Name() == "sqlite" {
+		return "1"
+	}
+	return "TRUE"
+}
+
 func CreateTablePartSQL(d Dialect, e *metadata.Entity, tp metadata.TablePart) string {
 	var sb strings.Builder
 	table := metadata.TablePartTableName(e.Name, tp.Name)

@@ -305,6 +305,67 @@ func TestLoadRefOptionsCapsLegacyHelper(t *testing.T) {
 	}
 }
 
+func TestLoadFolderOptionsCapsAndIncludesSelectedOutsideFirstPage(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ent := &metadata.Entity{
+		Name:         "Группы",
+		Kind:         metadata.KindCatalog,
+		Hierarchical: true,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= refPickerDefaultLimit; i++ {
+		id := uuid.MustParse("00000000-0000-0000-0000-" + fmt12(i))
+		if err := db.Upsert(ctx, ent.Name, id, map[string]any{
+			"Наименование": fmt.Sprintf("Папка %03d", i),
+			"is_folder":    true,
+		}, ent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i <= 5; i++ {
+		id := uuid.MustParse("10000000-0000-0000-0000-" + fmt12(i))
+		if err := db.Upsert(ctx, ent.Name, id, map[string]any{
+			"Наименование": fmt.Sprintf("Элемент %03d", i),
+			"is_folder":    false,
+		}, ent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selected := uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
+	if err := db.Upsert(ctx, ent.Name, selected, map[string]any{
+		"Наименование": "Папка 999",
+		"is_folder":    true,
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{store: db}
+	opts := s.loadFolderOptions(ctx, ent, selected.String())
+
+	if got := len(opts); got != refPickerDefaultLimit+1 {
+		t.Fatalf("loadFolderOptions loaded %d rows, want capped %d plus selected", got, refPickerDefaultLimit)
+	}
+	if !hasOptionWithLabel(opts, selected.String(), "Папка 999") {
+		t.Fatalf("selected folder %s was not added to options: %#v", selected, opts)
+	}
+	for _, row := range opts {
+		if !asBool(row["is_folder"]) {
+			t.Fatalf("non-folder leaked into folder options: %#v", row)
+		}
+	}
+}
+
 func TestLoadInitialTPRefOptionsIncludesSelectedOutsideFirstPage(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
