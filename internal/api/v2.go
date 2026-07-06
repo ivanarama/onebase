@@ -4,14 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/query"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -21,10 +26,12 @@ type restV2Envelope struct {
 }
 
 type restV2Meta struct {
-	Total      int `json:"total"`
-	Page       int `json:"page"`
-	Limit      int `json:"limit"`
-	TotalPages int `json:"total_pages"`
+	Total      int      `json:"total"`
+	Page       int      `json:"page"`
+	Limit      int      `json:"limit"`
+	TotalPages int      `json:"total_pages"`
+	Columns    []string `json:"columns,omitempty"`
+	Truncated  bool     `json:"truncated,omitempty"`
 }
 
 func (h *handler) mountV2(r chi.Router) {
@@ -44,6 +51,8 @@ func (h *handler) mountV2(r chi.Router) {
 		r.Delete("/document/{name}/{id}", h.deleteObjectV2(metadata.KindDocument))
 		r.Post("/document/{name}/{id}/post", h.postDocumentV2())
 		r.Post("/document/{name}/{id}/unpost", h.unpostDocumentV2())
+
+		r.Get("/report/{name}", h.runReportV2())
 	})
 }
 
@@ -286,6 +295,60 @@ func (h *handler) unpostDocumentV2() http.HandlerFunc {
 	}
 }
 
+func (h *handler) runReportV2() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rep, ok := h.reportFromV2Route(w, r)
+		if !ok {
+			return
+		}
+		if !canREST(r.Context(), "report", rep.Name, "run") {
+			writeError(w, http.StatusForbidden, "forbidden", "", 0)
+			return
+		}
+		limit, err := parsePositiveInt(r.URL.Query().Get("limit"), restDefaultLimit)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid limit", "", 0)
+			return
+		}
+		if limit > restMaxLimit {
+			limit = restMaxLimit
+		}
+		params, err := reportParamsFromQuery(r.URL.Query(), rep)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
+			return
+		}
+		compiled, err := query.Compile(rep.Query, query.CompileOpts{
+			Entities:    h.reg.Entities(),
+			Params:      params,
+			Registers:   h.reg.Registers(),
+			InfoRegs:    h.reg.InfoRegisters(),
+			AccountRegs: h.reg.AccountRegisters(),
+			Dialect:     h.store.Dialect(),
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "query compile error: "+err.Error(), "", 0)
+			return
+		}
+		rows, cols, truncated, err := h.store.RunQueryLimit(r.Context(), compiled.SQL, compiled.Args, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		writeJSONV2(w, http.StatusOK, restV2Envelope{
+			Data: rows,
+			Meta: &restV2Meta{
+				Total:      len(rows),
+				Page:       1,
+				Limit:      limit,
+				TotalPages: 1,
+				Columns:    cols,
+				Truncated:  truncated,
+			},
+		})
+	}
+}
+
 func (h *handler) documentPostPayload(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, entityName string, id uuid.UUID) (map[string]any, map[string][]map[string]any, bool) {
 	if r.ContentLength > 0 {
 		if !requireRESTPerm(w, r, metadata.KindDocument, entityName, "write") {
@@ -344,6 +407,19 @@ func (h *handler) entityFromV2Route(w http.ResponseWriter, r *http.Request, kind
 		return nil, entityName, false
 	}
 	return entity, entity.Name, true
+}
+
+func (h *handler) reportFromV2Route(w http.ResponseWriter, r *http.Request) (*reportpkg.Report, bool) {
+	name := chi.URLParam(r, "name")
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	rep := h.reg.GetReport(name)
+	if rep == nil {
+		writeError(w, http.StatusNotFound, "unknown report: "+name, "", 0)
+		return nil, false
+	}
+	return rep, true
 }
 
 func ensureDocumentNumber(ctx context.Context, store *storage.DB, entity *metadata.Entity, fields map[string]any) {
@@ -464,13 +540,64 @@ func totalPages(total, limit int) int {
 	return (total + limit - 1) / limit
 }
 
-func (h *handler) openapiV2() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSONV2(w, http.StatusOK, buildOpenAPIV2(h.reg.Entities()))
+func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any, error) {
+	params := make(map[string]any, len(rep.Params))
+	for _, p := range rep.Params {
+		raw := q.Get(p.Name)
+		if raw == "" {
+			if p.Type == "bool" {
+				params[p.Name] = false
+			} else {
+				params[p.Name] = nil
+			}
+			continue
+		}
+		v, err := parseReportParamValue(raw, p.Type)
+		if err != nil {
+			return nil, fmt.Errorf("invalid report parameter %s: %w", p.Name, err)
+		}
+		params[p.Name] = v
+	}
+	return params, nil
+}
+
+func parseReportParamValue(raw, typ string) (any, error) {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "date":
+		t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+		if err != nil {
+			return nil, errors.New("expected date YYYY-MM-DD")
+		}
+		return t, nil
+	case "bool", "boolean":
+		return parseReportBool(raw), nil
+	case "number":
+		n, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, errors.New("expected number")
+		}
+		return n, nil
+	default:
+		return raw, nil
 	}
 }
 
-func buildOpenAPIV2(entities []*metadata.Entity) map[string]any {
+func parseReportBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on", "да", "истина":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *handler) openapiV2() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSONV2(w, http.StatusOK, buildOpenAPIV2(h.reg.Entities(), h.reg.Reports()))
+	}
+}
+
+func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) map[string]any {
 	components := map[string]any{
 		"schemas": map[string]any{
 			"ListMeta": map[string]any{
@@ -482,11 +609,57 @@ func buildOpenAPIV2(entities []*metadata.Entity) map[string]any {
 					"total_pages": map[string]any{"type": "integer"},
 				},
 			},
-			"Envelope": map[string]any{
+			"ReportMeta": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"data": map[string]any{},
+					"total":       map[string]any{"type": "integer"},
+					"page":        map[string]any{"type": "integer"},
+					"limit":       map[string]any{"type": "integer"},
+					"total_pages": map[string]any{"type": "integer"},
+					"columns":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"truncated":   map[string]any{"type": "boolean"},
+				},
+			},
+			"ListEnvelope": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"data": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
 					"meta": map[string]any{"$ref": "#/components/schemas/ListMeta"},
+				},
+			},
+			"ObjectEnvelope": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"data": map[string]any{"type": "object"},
+				},
+			},
+			"MutationResult": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":       map[string]any{"type": "string", "format": "uuid"},
+					"posted":   map[string]any{"type": "boolean"},
+					"messages": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+			},
+			"MutationEnvelope": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"data": map[string]any{"$ref": "#/components/schemas/MutationResult"},
+				},
+			},
+			"ReportEnvelope": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"data": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+					"meta": map[string]any{"$ref": "#/components/schemas/ReportMeta"},
+				},
+			},
+			"Error": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"error": map[string]any{"type": "string"},
+					"file":  map[string]any{"type": "string"},
+					"line":  map[string]any{"type": "integer"},
 				},
 			},
 		},
@@ -497,6 +670,9 @@ func buildOpenAPIV2(entities []*metadata.Entity) map[string]any {
 	schemas := components["schemas"].(map[string]any)
 	for _, e := range entities {
 		schemas[entitySchemaName(e)] = entityOpenAPISchema(e)
+	}
+	for _, rep := range reports {
+		schemas[reportSchemaName(rep)] = reportOpenAPISchema(rep)
 	}
 
 	doc := map[string]any{
@@ -533,47 +709,67 @@ func openAPIV2Paths() map[string]any {
 	okEnvelope := map[string]any{
 		"description": "OK",
 		"content": map[string]any{
-			"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/Envelope"}},
+			"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/ObjectEnvelope"}},
 		},
+	}
+	openAPIResponse := map[string]any{
+		"description": "OK",
+		"content": map[string]any{
+			"application/json": map[string]any{"schema": map[string]any{"type": "object"}},
+		},
+	}
+	listEnvelope := responseWithSchema("OK", "#/components/schemas/ListEnvelope")
+	mutationEnvelope := responseWithSchema("OK", "#/components/schemas/MutationEnvelope")
+	reportEnvelope := responseWithSchema("OK", "#/components/schemas/ReportEnvelope")
+	errorResponses := map[string]any{
+		"400": responseWithSchema("Bad Request", "#/components/schemas/Error"),
+		"403": responseWithSchema("Forbidden", "#/components/schemas/Error"),
+		"404": responseWithSchema("Not Found", "#/components/schemas/Error"),
+		"500": responseWithSchema("Internal Server Error", "#/components/schemas/Error"),
 	}
 	noContent := map[string]any{"description": "No Content"}
 	crud := func(tag string) map[string]any {
 		return map[string]any{
 			"get": map[string]any{
-				"summary":    "List " + tag,
-				"tags":       []string{tag},
-				"parameters": listParams,
-				"responses":  map[string]any{"200": okEnvelope},
+				"operationId": "list" + titleAPIName(tag),
+				"summary":     "List " + tag,
+				"tags":        []string{tag},
+				"parameters":  listParams,
+				"responses":   mergeResponses(map[string]any{"200": listEnvelope}, errorResponses),
 			},
 			"post": map[string]any{
+				"operationId": "create" + titleAPIName(tag),
 				"summary":     "Create " + tag,
 				"tags":        []string{tag},
 				"parameters":  []any{nameParam},
 				"requestBody": jsonBody,
-				"responses":   map[string]any{"200": okEnvelope},
+				"responses":   mergeResponses(map[string]any{"200": mutationEnvelope}, errorResponses),
 			},
 		}
 	}
 	item := func(tag string) map[string]any {
 		return map[string]any{
 			"get": map[string]any{
-				"summary":    "Get " + tag,
-				"tags":       []string{tag},
-				"parameters": []any{nameParam, idParam},
-				"responses":  map[string]any{"200": okEnvelope},
+				"operationId": "get" + titleAPIName(tag),
+				"summary":     "Get " + tag,
+				"tags":        []string{tag},
+				"parameters":  []any{nameParam, idParam},
+				"responses":   mergeResponses(map[string]any{"200": okEnvelope}, errorResponses),
 			},
 			"put": map[string]any{
+				"operationId": "update" + titleAPIName(tag),
 				"summary":     "Update " + tag,
 				"tags":        []string{tag},
 				"parameters":  []any{nameParam, idParam},
 				"requestBody": jsonBody,
-				"responses":   map[string]any{"200": okEnvelope},
+				"responses":   mergeResponses(map[string]any{"200": mutationEnvelope}, errorResponses),
 			},
 			"delete": map[string]any{
-				"summary":    "Delete " + tag,
-				"tags":       []string{tag},
-				"parameters": []any{nameParam, idParam},
-				"responses":  map[string]any{"204": noContent},
+				"operationId": "delete" + titleAPIName(tag),
+				"summary":     "Delete " + tag,
+				"tags":        []string{tag},
+				"parameters":  []any{nameParam, idParam},
+				"responses":   mergeResponses(map[string]any{"204": noContent}, errorResponses),
 			},
 		}
 	}
@@ -582,27 +778,75 @@ func openAPIV2Paths() map[string]any {
 		"/api/v2/catalog/{name}/{id}":         item("catalog"),
 		"/api/v2/document/{name}":             crud("document"),
 		"/api/v2/document/{name}/{id}":        item("document"),
-		"/api/v2/document/{name}/{id}/post":   actionPath("Post document", nameParam, idParam, okEnvelope),
-		"/api/v2/document/{name}/{id}/unpost": actionPath("Unpost document", nameParam, idParam, okEnvelope),
+		"/api/v2/document/{name}/{id}/post":   actionPath("postDocument", "Post document", nameParam, idParam, mutationEnvelope, errorResponses),
+		"/api/v2/document/{name}/{id}/unpost": actionPath("unpostDocument", "Unpost document", nameParam, idParam, mutationEnvelope, errorResponses),
+		"/api/v2/report/{name}":               reportPath(nameParam, reportEnvelope, errorResponses),
 		"/api/v2/openapi.json": map[string]any{
 			"get": map[string]any{
-				"summary":   "OpenAPI document",
-				"tags":      []string{"openapi"},
-				"responses": map[string]any{"200": okEnvelope},
+				"operationId": "getOpenAPI",
+				"summary":     "OpenAPI document",
+				"tags":        []string{"openapi"},
+				"responses":   mergeResponses(map[string]any{"200": openAPIResponse}, errorResponses),
 			},
 		},
 	}
 }
 
-func actionPath(summary string, nameParam, idParam, okEnvelope map[string]any) map[string]any {
+func actionPath(operationID, summary string, nameParam, idParam, okEnvelope map[string]any, errors map[string]any) map[string]any {
 	return map[string]any{
 		"post": map[string]any{
-			"summary":    summary,
-			"tags":       []string{"document"},
-			"parameters": []any{nameParam, idParam},
-			"responses":  map[string]any{"200": okEnvelope},
+			"operationId": operationID,
+			"summary":     summary,
+			"tags":        []string{"document"},
+			"parameters":  []any{nameParam, idParam},
+			"responses":   mergeResponses(map[string]any{"200": okEnvelope}, errors),
 		},
 	}
+}
+
+func reportPath(nameParam, okEnvelope map[string]any, errors map[string]any) map[string]any {
+	limitParam := map[string]any{
+		"name":        "limit",
+		"in":          "query",
+		"description": "Maximum rows to return; report parameters are also passed as query parameters by name.",
+		"schema":      map[string]any{"type": "integer", "minimum": 1, "maximum": restMaxLimit},
+	}
+	return map[string]any{
+		"get": map[string]any{
+			"operationId": "runReport",
+			"summary":     "Run report",
+			"tags":        []string{"report"},
+			"parameters":  []any{nameParam, limitParam},
+			"responses":   mergeResponses(map[string]any{"200": okEnvelope}, errors),
+		},
+	}
+}
+
+func responseWithSchema(description, ref string) map[string]any {
+	return map[string]any{
+		"description": description,
+		"content": map[string]any{
+			"application/json": map[string]any{"schema": map[string]any{"$ref": ref}},
+		},
+	}
+}
+
+func mergeResponses(base map[string]any, extras map[string]any) map[string]any {
+	out := make(map[string]any, len(base)+len(extras))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range extras {
+		out[k] = v
+	}
+	return out
+}
+
+func titleAPIName(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func entityOpenAPISchema(e *metadata.Entity) map[string]any {
@@ -656,4 +900,34 @@ func fieldOpenAPISchema(f metadata.Field) map[string]any {
 
 func entitySchemaName(e *metadata.Entity) string {
 	return string(e.Kind) + "_" + e.Name
+}
+
+func reportOpenAPISchema(rep *reportpkg.Report) map[string]any {
+	props := map[string]any{}
+	for _, p := range rep.Params {
+		props[p.Name] = reportParamOpenAPISchema(p)
+	}
+	return map[string]any{"type": "object", "properties": props}
+}
+
+func reportParamOpenAPISchema(p reportpkg.Param) map[string]any {
+	switch strings.ToLower(p.Type) {
+	case "date":
+		return map[string]any{"type": "string", "format": "date"}
+	case "number":
+		return map[string]any{"type": "number"}
+	case "bool", "boolean":
+		return map[string]any{"type": "boolean"}
+	case "select":
+		return map[string]any{"type": "string", "enum": p.Options}
+	default:
+		if strings.HasPrefix(strings.ToLower(p.Type), "reference:") {
+			return map[string]any{"type": "string", "format": "uuid"}
+		}
+		return map[string]any{"type": "string"}
+	}
+}
+
+func reportSchemaName(rep *reportpkg.Report) string {
+	return "report_" + rep.Name
 }

@@ -59,6 +59,7 @@ docs/*
 !docs/ai-assistant.md
 !docs/features.md
 !docs/mcp.md
+!docs/rest-api-v2.md
 !docs/roadmap.json
 !docs/users-load-limits.md
 !docs/release-template.md

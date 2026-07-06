@@ -21,6 +21,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dslvars"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -30,6 +31,10 @@ import (
 // через JSON, optimistic locking через If-Match, проведение через /post.
 
 func newAPITestHandler(t *testing.T, entities []*metadata.Entity, programs map[string]*ast.Program) (*handler, context.Context) {
+	return newAPITestHandlerWithReports(t, entities, nil, programs)
+}
+
+func newAPITestHandlerWithReports(t *testing.T, entities []*metadata.Entity, reports []*reportpkg.Report, programs map[string]*ast.Program) (*handler, context.Context) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
@@ -43,7 +48,7 @@ func newAPITestHandler(t *testing.T, entities []*metadata.Entity, programs map[s
 	}
 
 	registry := runtime.NewRegistry()
-	registry.Load(runtime.LoadOptions{Entities: entities, Programs: programs})
+	registry.Load(runtime.LoadOptions{Entities: entities, Reports: reports, Programs: programs})
 
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
@@ -625,7 +630,14 @@ func TestAPIV2_OpenAPIIncludesPathsAndSchemas(t *testing.T) {
 		Posting: true,
 		Fields:  []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
 	}
-	spec := buildOpenAPIV2([]*metadata.Entity{cat, doc})
+	rep := &reportpkg.Report{
+		Name:  "Остатки",
+		Query: "ВЫБРАТЬ 1 КАК Количество",
+		Params: []reportpkg.Param{
+			{Name: "НаДату", Type: "date"},
+		},
+	}
+	spec := buildOpenAPIV2([]*metadata.Entity{cat, doc}, []*reportpkg.Report{rep})
 
 	if spec["openapi"] != "3.0.3" {
 		t.Fatalf("openapi = %#v", spec["openapi"])
@@ -637,12 +649,111 @@ func TestAPIV2_OpenAPIIncludesPathsAndSchemas(t *testing.T) {
 	if _, ok := paths["/api/v2/document/{name}/{id}/unpost"]; !ok {
 		t.Fatalf("missing unpost path: %#v", paths)
 	}
+	reportPath := paths["/api/v2/report/{name}"].(map[string]any)
+	reportGet := reportPath["get"].(map[string]any)
+	if reportGet["operationId"] != "runReport" {
+		t.Fatalf("report operationId = %#v", reportGet["operationId"])
+	}
 	components := spec["components"].(map[string]any)
 	schemas := components["schemas"].(map[string]any)
 	schema := schemas["catalog_Товар"].(map[string]any)
 	props := schema["properties"].(map[string]any)
 	if _, ok := props["Наименование"]; !ok {
 		t.Fatalf("catalog schema lacks field: %#v", props)
+	}
+	reportSchema := schemas["report_Остатки"].(map[string]any)
+	reportProps := reportSchema["properties"].(map[string]any)
+	param := reportProps["НаДату"].(map[string]any)
+	if param["format"] != "date" {
+		t.Fatalf("report param schema = %#v", param)
+	}
+	if _, err := json.Marshal(spec); err != nil {
+		t.Fatalf("openapi spec must be JSON-serializable: %v", err)
+	}
+}
+
+func TestAPIV2_ReportRunsQueryEnvelope(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "Товар",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	rep := &reportpkg.Report{
+		Name:  "СписокТоваров",
+		Query: `ВЫБРАТЬ Наименование ИЗ Справочник.Товар УПОРЯДОЧИТЬ ПО Наименование`,
+	}
+	h, ctx := newAPITestHandlerWithReports(t, []*metadata.Entity{cat}, []*reportpkg.Report{rep}, nil)
+	for _, name := range []string{"Дрель", "Молоток"} {
+		if err := h.store.Upsert(ctx, "Товар", uuid.New(), map[string]any{"Наименование": name}, cat); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := reqWithEntity("GET", "/api/v2/report/СписокТоваров?limit=1", nil, map[string]string{"name": "СписокТоваров"}, nil)
+	w := httptest.NewRecorder()
+	h.runReportV2().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+		Meta restV2Meta       `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0]["наименование"] != "Дрель" {
+		t.Fatalf("bad report data: %#v", resp.Data)
+	}
+	if resp.Meta.Total != 1 || resp.Meta.Limit != 1 || !resp.Meta.Truncated {
+		t.Fatalf("bad report meta: %+v", resp.Meta)
+	}
+	if len(resp.Meta.Columns) != 1 || resp.Meta.Columns[0] != "наименование" {
+		t.Fatalf("columns = %#v", resp.Meta.Columns)
+	}
+}
+
+func TestAPIV2_ReportParamsAndRBAC(t *testing.T) {
+	rep := &reportpkg.Report{
+		Name: "Сумма",
+		Params: []reportpkg.Param{
+			{Name: "Значение", Type: "number"},
+		},
+		Query: `ВЫБРАТЬ &Значение КАК Значение`,
+	}
+	h, _ := newAPITestHandlerWithReports(t, nil, []*reportpkg.Report{rep}, nil)
+	user := apiUser("reader", auth.Permission{
+		Reports: map[string][]string{"Другой": {"run"}},
+	})
+
+	deniedReq := reqWithEntity("GET", "/api/v2/report/Сумма?Значение=7", nil, map[string]string{"name": "Сумма"}, nil)
+	deniedReq = withUser(deniedReq, user)
+	deniedRec := httptest.NewRecorder()
+	h.runReportV2().ServeHTTP(deniedRec, deniedReq)
+	if deniedRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", deniedRec.Code, deniedRec.Body.String())
+	}
+
+	allowedReq := reqWithEntity("GET", "/api/v2/report/Сумма?Значение=7", nil, map[string]string{"name": "Сумма"}, nil)
+	allowedReq = withUser(allowedReq, apiUser("runner", auth.Permission{
+		Reports: map[string][]string{"Сумма": {"run"}},
+	}))
+	allowedRec := httptest.NewRecorder()
+	h.runReportV2().ServeHTTP(allowedRec, allowedReq)
+	if allowedRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", allowedRec.Code, allowedRec.Body.String())
+	}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(allowedRec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0]["значение"] == nil {
+		t.Fatalf("bad report data: %#v", resp.Data)
 	}
 }
 
