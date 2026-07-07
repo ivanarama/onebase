@@ -13,18 +13,18 @@ const tplQueryBuilder = `
 <!-- Source -->
 <div class="card" style="margin-bottom:12px">
 <h3 style="margin-top:0">{{t $.Lang "Источник данных"}}</h3>
-<select id="qb-src" onchange="qbSetSource(this.value)" style="width:100%;margin-bottom:8px">
+<select id="qb-src" data-ob-qb-source style="width:100%;margin-bottom:8px">
   <option value="">{{t $.Lang "— выбрать —"}}</option>
 </select>
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
   <span style="font-size:12px;color:#64748b;flex-shrink:0;width:70px">{{t $.Lang "Псевдоним:"}}</span>
-  <input id="qb-main-alias" type="text" placeholder="{{t $.Lang "напр. Прод"}}" oninput="qbRebuildAllFields()"
+  <input id="qb-main-alias" type="text" placeholder="{{t $.Lang "напр. Прод"}}" data-ob-qb-main-alias
     style="width:110px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 6px">
   <span style="font-size:11px;color:#94a3b8">({{t $.Lang "обязателен при JOIN"}})</span>
 </div>
 <div id="qb-vt-param" style="display:none;margin-top:4px">
   <label style="font-size:12px;color:#64748b">{{t $.Lang "Параметры виртуальной таблицы"}}</label>
-  <input id="qb-vt-param-val" type="text" style="width:100%;margin-top:4px" placeholder="{{t $.Lang "например: &НаДату"}}">
+  <input id="qb-vt-param-val" type="text" data-ob-qb-vt-param style="width:100%;margin-top:4px" placeholder="{{t $.Lang "например: &НаДату"}}">
 </div>
 </div>
 
@@ -32,7 +32,7 @@ const tplQueryBuilder = `
 <div class="card" style="margin-bottom:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Соединения (JOIN)"}}</h3>
-  <button class="btn btn-sm" onclick="qbAddJoin()"
+  <button class="btn btn-sm" data-ob-qb-action="add-join"
     style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;font-size:12px">{{t $.Lang "+ Соединение"}}</button>
 </div>
 <div id="qb-joins">
@@ -45,8 +45,8 @@ const tplQueryBuilder = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Поля (ВЫБРАТЬ)"}}</h3>
   <div style="display:flex;gap:4px">
-    <button class="btn btn-sm" onclick="qbAllFields(true)"  style="background:#e2e8f0;color:#475569;padding:2px 8px;font-size:12px">{{t $.Lang "Все"}}</button>
-    <button class="btn btn-sm" onclick="qbAllFields(false)" style="background:#e2e8f0;color:#475569;padding:2px 8px;font-size:12px">{{t $.Lang "Сбросить"}}</button>
+    <button class="btn btn-sm" data-ob-qb-action="all-fields" data-ob-qb-all-fields="true" style="background:#e2e8f0;color:#475569;padding:2px 8px;font-size:12px">{{t $.Lang "Все"}}</button>
+    <button class="btn btn-sm" data-ob-qb-action="all-fields" data-ob-qb-all-fields="false" style="background:#e2e8f0;color:#475569;padding:2px 8px;font-size:12px">{{t $.Lang "Сбросить"}}</button>
   </div>
 </div>
 <div id="qb-fields-list" style="max-height:260px;overflow-y:auto"></div>
@@ -56,7 +56,7 @@ const tplQueryBuilder = `
 <div class="card" style="margin-bottom:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Условия (ГДЕ)"}}</h3>
-  <button class="btn btn-sm" onclick="qbAddCond()"
+  <button class="btn btn-sm" data-ob-qb-action="add-cond"
     style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;font-size:12px">{{t $.Lang "+ Условие"}}</button>
 </div>
 <div id="qb-conds"></div>
@@ -66,7 +66,7 @@ const tplQueryBuilder = `
 <div class="card" style="margin-bottom:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Сортировка"}}</h3>
-  <button class="btn btn-sm" onclick="qbAddOrder()"
+  <button class="btn btn-sm" data-ob-qb-action="add-order"
     style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;font-size:12px">{{t $.Lang "+ Поле"}}</button>
 </div>
 <div id="qb-orders"></div>
@@ -85,7 +85,7 @@ const tplQueryBuilder = `
 <div class="card" style="margin-bottom:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Текст запроса"}}</h3>
-  <button onclick="qbCopyQuery()"
+  <button data-ob-qb-action="copy-query"
     style="background:#dcfce7;color:#166534;border:none;border-radius:5px;padding:3px 12px;cursor:pointer;font-size:12px">{{t $.Lang "Копировать"}}</button>
 </div>
 <textarea id="qb-query-out" rows="16" readonly
@@ -95,7 +95,7 @@ const tplQueryBuilder = `
 <div class="card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "DSL-фрагмент (вставить в модуль)"}}</h3>
-  <button onclick="qbCopyDSL()"
+  <button data-ob-qb-action="copy-dsl"
     style="background:#dcfce7;color:#166534;border:none;border-radius:5px;padding:3px 12px;cursor:pointer;font-size:12px">{{t $.Lang "Копировать"}}</button>
 </div>
 <textarea id="qb-dsl-out" rows="14" readonly
@@ -262,7 +262,7 @@ function qbAddJoin(){
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
   del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px';
-  del.onclick = function(){
+  del.addEventListener('click', function(){
     div.remove();
     _joins = _joins.filter(function(j){ return j.id !== jid; });
     if(!_joins.length){
@@ -270,7 +270,7 @@ function qbAddJoin(){
         '<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
     }
     qbRebuildAllFields();
-  };
+  });
 
   row1.appendChild(typeSel); row1.appendChild(srcSel);
   row1.appendChild(aliasInp); row1.appendChild(del);
@@ -294,17 +294,17 @@ function qbAddJoin(){
   _joins.push(jdata);
 
   // Auto-fill alias from source name
-  srcSel.onchange = function(){
+  srcSel.addEventListener('change', function(){
     var src = _srcMap[srcSel.value];
     if(src && !aliasInp.value.trim()){
       var parts = src.label.split('.');
       aliasInp.value = parts.length >= 2 ? parts[1].replace(/\(.*$/,'') : parts[0];
     }
     qbRebuildAllFields();
-  };
-  typeSel.onchange = function(){ qbGenerate(); };
-  aliasInp.oninput = function(){ qbRebuildAllFields(); };
-  onInp.oninput   = function(){ qbGenerate(); };
+  });
+  typeSel.addEventListener('change', function(){ qbGenerate(); });
+  aliasInp.addEventListener('input', function(){ qbRebuildAllFields(); });
+  onInp.addEventListener('input', function(){ qbGenerate(); });
 
   // Trigger alias rebuild since main alias was possibly set
   qbRebuildAllFields();
@@ -337,11 +337,11 @@ function renderFields(){
 
     var chk = document.createElement('input');
     chk.type='checkbox'; chk.checked=!!_selFields[f.name]; chk.dataset.field=f.name;
-    chk.onchange = function(){
+    chk.addEventListener('change', function(){
       if(chk.checked) _selFields[f.name]={alias:'',agg:''};
       else delete _selFields[f.name];
       qbGenerate();
-    };
+    });
 
     var lbl = document.createElement('label');
     // Show only field part (after dot) as label, full name as title
@@ -349,7 +349,7 @@ function renderFields(){
     lbl.textContent = displayName;
     lbl.title = f.name;
     lbl.style.cssText = 'flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-    lbl.onclick = function(){ chk.click(); };
+    lbl.addEventListener('click', function(){ chk.click(); });
 
     var aggSel = document.createElement('select');
     aggSel.style.cssText = 'font-size:11px;padding:1px 3px;border:1px solid #e2e8f0;border-radius:4px;width:90px';
@@ -358,19 +358,19 @@ function renderFields(){
       aggSel.appendChild(o);
     });
     if(_selFields[f.name]) aggSel.value = _selFields[f.name].agg || '';
-    aggSel.onchange = function(){
+    aggSel.addEventListener('change', function(){
       if(_selFields[f.name]) _selFields[f.name].agg = aggSel.value;
       qbGenerate();
-    };
+    });
 
     var aliasInp = document.createElement('input');
     aliasInp.type='text'; aliasInp.placeholder='КАК';
     aliasInp.style.cssText = 'font-size:11px;width:70px;padding:1px 4px;border:1px solid #e2e8f0;border-radius:4px';
     if(_selFields[f.name]) aliasInp.value = _selFields[f.name].alias || '';
-    aliasInp.oninput = function(){
+    aliasInp.addEventListener('input', function(){
       if(_selFields[f.name]) _selFields[f.name].alias = aliasInp.value.trim();
       qbGenerate();
-    };
+    });
 
     row.appendChild(chk); row.appendChild(lbl); row.appendChild(aggSel); row.appendChild(aliasInp);
     div.appendChild(row);
@@ -407,17 +407,18 @@ function qbAddCond(){
   valInp.type='text'; valInp.placeholder='&Параметр или значение';
   valInp.style.cssText = 'flex:1;min-width:80px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
 
-  opSel.onchange = function(){
+  opSel.addEventListener('change', function(){
     var noVal = opSel.value==='ЕСТЬ ПУСТО'||opSel.value==='НЕ ЕСТЬ ПУСТО';
     valInp.style.display = noVal ? 'none' : '';
     qbGenerate();
-  };
-  fsel.onchange = valInp.oninput = function(){ qbGenerate(); };
+  });
+  fsel.addEventListener('change', function(){ qbGenerate(); });
+  valInp.addEventListener('input', function(){ qbGenerate(); });
 
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
   del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
-  del.onclick = function(){ div.remove(); qbGenerate(); };
+  del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
 
   div.appendChild(fsel); div.appendChild(opSel); div.appendChild(valInp); div.appendChild(del);
   document.getElementById('qb-conds').appendChild(div);
@@ -444,9 +445,10 @@ function qbAddOrder(){
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
   del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
-  del.onclick = function(){ div.remove(); qbGenerate(); };
+  del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
 
-  fsel.onchange = dirSel.onchange = function(){ qbGenerate(); };
+  fsel.addEventListener('change', function(){ qbGenerate(); });
+  dirSel.addEventListener('change', function(){ qbGenerate(); });
   div.appendChild(fsel); div.appendChild(dirSel); div.appendChild(del);
   document.getElementById('qb-orders').appendChild(div);
   qbGenerate();
@@ -579,7 +581,31 @@ function qbGenerate(){
 
 function qbCopyQuery(){ var t=document.getElementById('qb-query-out'); t.select(); document.execCommand('copy'); }
 function qbCopyDSL()  { var t=document.getElementById('qb-dsl-out');   t.select(); document.execCommand('copy'); }
-document.getElementById('qb-vt-param-val').oninput = qbGenerate;
+function qbRunAction(action, el) {
+  if (action === 'add-join') qbAddJoin();
+  else if (action === 'all-fields') qbAllFields(el.getAttribute('data-ob-qb-all-fields') === 'true');
+  else if (action === 'add-cond') qbAddCond();
+  else if (action === 'add-order') qbAddOrder();
+  else if (action === 'copy-query') qbCopyQuery();
+  else if (action === 'copy-dsl') qbCopyDSL();
+}
+function qbInitDelegates() {
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest && e.target.closest('[data-ob-qb-action]');
+    if (!btn) return;
+    e.preventDefault();
+    qbRunAction(btn.getAttribute('data-ob-qb-action') || '', btn);
+  });
+  document.addEventListener('change', function(e) {
+    if (e.target.matches && e.target.matches('[data-ob-qb-source]')) qbSetSource(e.target.value);
+  });
+  document.addEventListener('input', function(e) {
+    if (!e.target.matches) return;
+    if (e.target.matches('[data-ob-qb-main-alias]')) qbRebuildAllFields();
+    if (e.target.matches('[data-ob-qb-vt-param]')) qbGenerate();
+  });
+}
+qbInitDelegates();
 </script>
 </div></body></html>
 {{end}}

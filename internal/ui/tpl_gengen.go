@@ -14,7 +14,7 @@ const tplGengen = `
   <textarea id="gg-prompt" rows="4" style="width:100%;font-size:14px;border:1px solid #e2e8f0;border-radius:6px;padding:10px;resize:vertical"
     placeholder="Например: конфигурация для хранения текстов и переводов. Текст содержит ссылку на событие, дату события, наименование, язык оригинала. Перевод содержит ссылку на текст-основание, текст перевода, язык перевода, количество символов"></textarea>
   <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
-    <button onclick="ggAnalyze()" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px">Анализировать</button>
+    <button data-ob-gg-action="analyze" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px">Анализировать</button>
     <span id="gg-status" style="font-size:13px;color:#64748b"></span>
   </div>
 </div>
@@ -34,9 +34,9 @@ const tplGengen = `
   </div>
   <div id="gg-ambiguous" style="display:none;background:#fef3c7;color:#92400e;padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:10px"></div>
   <div style="display:flex;gap:8px">
-    <button onclick="ggGenerate()" class="btn" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px">Сгенерировать</button>
+    <button data-ob-gg-action="generate" class="btn" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px">Сгенерировать</button>
     <label style="font-size:13px;color:#64748b;display:flex;align-items:center;gap:4px">
-      <input type="checkbox" id="gg-override" onchange="ggToggleOverride()"> Переопределить YAML
+      <input type="checkbox" id="gg-override" data-ob-gg-toggle-override> Переопределить YAML
     </label>
   </div>
 </div>
@@ -56,7 +56,7 @@ const tplGengen = `
   <h3 style="margin-top:0">Шаг 4: Сгенерированные файлы</h3>
   <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
     <span id="gg-output-path" style="font-size:13px;color:#64748b;font-family:monospace"></span>
-    <button onclick="ggCopyPath()" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px">Копировать путь</button>
+    <button data-ob-gg-action="copy-path" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px">Копировать путь</button>
   </div>
   <div id="gg-file-tabs" style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap"></div>
   <pre id="gg-file-content" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;font-size:13px;overflow-x:auto;max-height:500px;overflow-y:auto;white-space:pre-wrap"></pre>
@@ -82,7 +82,7 @@ const tplGengen = `
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
     <input id="gg-merge-dir" type="text" style="flex:1;font-size:14px;border:1px solid #e2e8f0;border-radius:6px;padding:8px"
       placeholder="Путь к проекту, напр. /home/dev/projects/trade">
-    <button onclick="ggMerge()" class="btn" style="background:#8b5cf6;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px">Добавить</button>
+    <button data-ob-gg-action="merge" class="btn" style="background:#8b5cf6;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px">Добавить</button>
   </div>
   <div id="gg-merge-result" style="display:none">
     <h4 style="margin:10px 0 6px">Результат:</h4>
@@ -171,11 +171,11 @@ function ggGenerate() {
       btn.textContent = name;
       btn.className = 'gg-tab';
       btn.style.cssText = 'background:' + (first ? '#3b82f6;color:#fff' : '#e2e8f0;color:#475569') + ';border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px';
-      btn.onclick = () => {
+      btn.addEventListener('click', () => {
         document.querySelectorAll('.gg-tab').forEach(t => t.style.cssText = 'background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px');
         btn.style.cssText = 'background:#3b82f6;color:#fff;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px';
         document.getElementById('gg-file-content').textContent = content;
-      };
+      });
       tabs.appendChild(btn);
       if (first) {
         document.getElementById('gg-file-content').textContent = content;
@@ -206,7 +206,7 @@ function ggRenderYamlTabs() {
     const btn = document.createElement('button');
     btn.textContent = name;
     btn.style.cssText = 'background:' + (first ? '#3b82f6;color:#fff' : '#e2e8f0;color:#475569') + ';border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px';
-    btn.onclick = () => {
+    btn.addEventListener('click', () => {
       // Save current tab content
       if (ggActiveYamlTab) {
         ggYamlFiles[ggActiveYamlTab] = document.getElementById('gg-yaml-content').value;
@@ -217,7 +217,7 @@ function ggRenderYamlTabs() {
       // замыкания — иначе переключение вкладок затирало бы изменения.
       document.getElementById('gg-yaml-content').value = ggYamlFiles[name];
       ggActiveYamlTab = name;
-    };
+    });
     tabs.appendChild(btn);
     if (first) {
       document.getElementById('gg-yaml-content').value = content;
@@ -227,10 +227,9 @@ function ggRenderYamlTabs() {
   }
 }
 
-function ggCopyPath() {
+function ggCopyPath(btn) {
   const path = document.getElementById('gg-output-path').textContent;
   navigator.clipboard.writeText(path).then(() => {
-    const btn = event.target;
     const orig = btn.textContent;
     btn.textContent = 'Скопировано!';
     setTimeout(() => btn.textContent = orig, 1500);
@@ -289,6 +288,24 @@ function ggMerge() {
   })
   .catch(err => { alert('Ошибка: ' + err); });
 }
+
+function ggRunAction(action, el) {
+  if (action === 'analyze') ggAnalyze();
+  else if (action === 'generate') ggGenerate();
+  else if (action === 'copy-path') ggCopyPath(el);
+  else if (action === 'merge') ggMerge();
+}
+
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest && e.target.closest('[data-ob-gg-action]');
+  if (!btn) return;
+  e.preventDefault();
+  ggRunAction(btn.getAttribute('data-ob-gg-action') || '', btn);
+});
+
+document.addEventListener('change', function(e) {
+  if (e.target.matches && e.target.matches('[data-ob-gg-toggle-override]')) ggToggleOverride();
+});
 </script>
 {{end}}
 `

@@ -6,13 +6,13 @@ const tplAllFunctions = `
 <main style="max-width:900px">
 <h2>{{t $.Lang "Все функции"}}</h2>
 <div style="margin-bottom:14px">
-  <input id="af-search" type="text" placeholder="{{t $.Lang "Поиск по имени объекта..."}}" autofocus
+  <input id="af-search" type="text" placeholder="{{t $.Lang "Поиск по имени объекта..."}}" autofocus data-ob-af-search
     style="width:100%;padding:9px 14px;border:1px solid #d0d7e3;border-radius:6px;font-size:14px">
 </div>
 
 {{if .Catalogs}}
 <div class="af-group" data-group="Справочники">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Справочники"}} <span class="af-cnt">{{len .Catalogs}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Справочники"}} <span class="af-cnt">{{len .Catalogs}}</span></div>
   <div class="af-group-body">
   {{range .Catalogs}}<a class="af-link" href="/ui/catalog/{{lower .Name}}" data-name="{{.Name}}">{{.Name}}</a>{{end}}
   </div>
@@ -21,7 +21,7 @@ const tplAllFunctions = `
 
 {{if .Documents}}
 <div class="af-group" data-group="Документы">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Документы"}} <span class="af-cnt">{{len .Documents}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Документы"}} <span class="af-cnt">{{len .Documents}}</span></div>
   <div class="af-group-body">
   {{range .Documents}}<a class="af-link" href="/ui/document/{{lower .Name}}" data-name="{{.Name}}">{{.Name}}</a>{{end}}
   </div>
@@ -30,7 +30,7 @@ const tplAllFunctions = `
 
 {{if .Registers}}
 <div class="af-group" data-group="Регистры накопления">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Регистры накопления"}} <span class="af-cnt">{{len .Registers}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Регистры накопления"}} <span class="af-cnt">{{len .Registers}}</span></div>
   <div class="af-group-body">
   {{range .Registers}}<a class="af-link" href="/ui/register/{{lower .Name}}" data-name="{{.Name}}">{{.Name}}</a>{{end}}
   </div>
@@ -39,7 +39,7 @@ const tplAllFunctions = `
 
 {{if .InfoRegisters}}
 <div class="af-group" data-group="Регистры сведений">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Регистры сведений"}} <span class="af-cnt">{{len .InfoRegisters}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Регистры сведений"}} <span class="af-cnt">{{len .InfoRegisters}}</span></div>
   <div class="af-group-body">
   {{range .InfoRegisters}}<a class="af-link" href="/ui/inforeg/{{lower .Name}}" data-name="{{.Name}}">{{.Name}}</a>{{end}}
   </div>
@@ -48,7 +48,7 @@ const tplAllFunctions = `
 
 {{if .Enums}}
 <div class="af-group" data-group="Перечисления">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Перечисления"}} <span class="af-cnt">{{len .Enums}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Перечисления"}} <span class="af-cnt">{{len .Enums}}</span></div>
   <div class="af-group-body">
   {{range .Enums}}<div class="af-link" data-name="{{.Name}}">{{.Name}}: {{range $i, $v := .Values}}{{if $i}}, {{end}}{{$v}}{{end}}</div>{{end}}
   </div>
@@ -57,7 +57,7 @@ const tplAllFunctions = `
 
 {{if .Reports}}
 <div class="af-group" data-group="Отчёты">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Отчёты"}} <span class="af-cnt">{{len .Reports}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Отчёты"}} <span class="af-cnt">{{len .Reports}}</span></div>
   <div class="af-group-body">
   {{range .Reports}}<a class="af-link" href="/ui/report/{{lower .Name}}" data-name="{{.Name}}">{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</a>{{end}}
   </div>
@@ -66,7 +66,7 @@ const tplAllFunctions = `
 
 {{if .Processors}}
 <div class="af-group" data-group="Обработки">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Обработки"}} <span class="af-cnt">{{len .Processors}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Обработки"}} <span class="af-cnt">{{len .Processors}}</span></div>
   <div class="af-group-body">
   {{range .Processors}}<a class="af-link" href="/ui/processor/{{lower .Name}}" data-name="{{.Name}}">{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</a>{{end}}
   </div>
@@ -75,7 +75,7 @@ const tplAllFunctions = `
 
 {{if .Constants}}
 <div class="af-group" data-group="Константы">
-  <div class="af-group-hd" onclick="afToggle(this)">{{t $.Lang "Константы"}} <span class="af-cnt">{{len .Constants}}</span></div>
+  <div class="af-group-hd" data-ob-af-toggle>{{t $.Lang "Константы"}} <span class="af-cnt">{{len .Constants}}</span></div>
   <div class="af-group-body">
   {{range .Constants}}<a class="af-link" href="/ui/constants" data-name="{{.Name}}">{{.DisplayLabel $.Lang}}</a>{{end}}
   </div>
@@ -102,8 +102,8 @@ function afToggle(hd){
   hd.closest('.af-group').classList.toggle('open');
 }
 
-document.getElementById('af-search').oninput=function(){
-  var q=this.value.toLowerCase().trim();
+function afFilter(value){
+  var q=value.toLowerCase().trim();
   document.querySelectorAll('.af-group').forEach(function(g){
     var any=false;
     g.querySelectorAll('.af-link').forEach(function(a){
@@ -115,7 +115,17 @@ document.getElementById('af-search').oninput=function(){
     g.style.display=any?'':'none';
     if(q&&any)g.classList.add('open');
   });
-};
+}
+
+document.addEventListener('click', function(e) {
+  var hd = e.target.closest && e.target.closest('[data-ob-af-toggle]');
+  if (!hd) return;
+  afToggle(hd);
+});
+
+document.addEventListener('input', function(e) {
+  if (e.target.matches && e.target.matches('[data-ob-af-search]')) afFilter(e.target.value);
+});
 </script>
 </div></body></html>
 {{end}}

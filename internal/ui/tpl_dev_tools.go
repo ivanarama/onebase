@@ -7,9 +7,9 @@ const tplQueryConsole = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
   <h2 style="margin:0">{{t $.Lang "Консоль запросов"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">
-    <button onclick="qcExec()" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
-    <button onclick="qcToggleBuilder()" class="btn" style="background:#e2e8f0;color:#475569;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px" id="qc-builder-btn">{{t $.Lang "Конструктор"}}</button>
-    <button onclick="qcClear()" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:#64748b">{{t $.Lang "Очистить"}}</button>
+    <button data-ob-qc-action="exec" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
+    <button data-ob-qc-action="toggle-builder" class="btn" style="background:#e2e8f0;color:#475569;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px" id="qc-builder-btn">{{t $.Lang "Конструктор"}}</button>
+    <button data-ob-qc-action="clear" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:#64748b">{{t $.Lang "Очистить"}}</button>
     <span id="qc-status" style="font-size:12px;color:#64748b"></span>
   </div>
 </div>
@@ -22,24 +22,24 @@ const tplQueryConsole = `
 <div>
 <div class="card" style="margin-bottom:10px">
 <h3 style="margin-top:0">{{t $.Lang "Источник данных"}}</h3>
-<select id="qb-src" onchange="qbSetSource(this.value)" style="width:100%;margin-bottom:8px">
+<select id="qb-src" data-ob-qb-source style="width:100%;margin-bottom:8px">
   <option value="">{{t $.Lang "— выбрать —"}}</option>
 </select>
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
   <span style="font-size:12px;color:#64748b;flex-shrink:0;width:70px">{{t $.Lang "Псевдоним:"}}</span>
-  <input id="qb-main-alias" type="text" placeholder="{{t $.Lang "напр. Прод"}}" oninput="qbRebuildAllFields()"
+  <input id="qb-main-alias" type="text" placeholder="{{t $.Lang "напр. Прод"}}" data-ob-qb-main-alias
     style="width:110px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 6px">
 </div>
 <div id="qb-vt-param" style="display:none;margin-top:4px">
   <label style="font-size:12px;color:#64748b">{{t $.Lang "Параметры виртуальной таблицы"}}</label>
-  <input id="qb-vt-param-val" type="text" style="width:100%;margin-top:4px" placeholder="{{t $.Lang "например: &НаДату"}}">
+  <input id="qb-vt-param-val" type="text" data-ob-qb-vt-param style="width:100%;margin-top:4px" placeholder="{{t $.Lang "например: &НаДату"}}">
 </div>
 </div>
 
 <div class="card" style="margin-bottom:10px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Соединения"}}</h3>
-  <button onclick="qbAddJoin()" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Добавить"}}</button>
+  <button data-ob-qb-action="add-join" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Добавить"}}</button>
 </div>
 <div id="qb-joins"><p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">{{t $.Lang "Нет соединений"}}</p></div>
 </div>
@@ -48,8 +48,8 @@ const tplQueryConsole = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Поля (ВЫБРАТЬ)"}}</h3>
   <div style="display:flex;gap:4px">
-    <button onclick="qbAllFields(true)" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Все"}}</button>
-    <button onclick="qbAllFields(false)" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Сброс"}}</button>
+    <button data-ob-qb-action="all-fields" data-ob-qb-all-fields="true" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Все"}}</button>
+    <button data-ob-qb-action="all-fields" data-ob-qb-all-fields="false" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Сброс"}}</button>
   </div>
 </div>
 <div id="qb-fields-list" style="max-height:200px;overflow-y:auto"></div>
@@ -58,7 +58,7 @@ const tplQueryConsole = `
 <div class="card" style="margin-bottom:10px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Условия (ГДЕ)"}}</h3>
-  <button onclick="qbAddCond()" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Условие"}}</button>
+  <button data-ob-qb-action="add-cond" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Условие"}}</button>
 </div>
 <div id="qb-conds"></div>
 </div>
@@ -66,7 +66,7 @@ const tplQueryConsole = `
 <div class="card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Сортировка"}}</h3>
-  <button onclick="qbAddOrder()" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Поле"}}</button>
+  <button data-ob-qb-action="add-order" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Поле"}}</button>
 </div>
 <div id="qb-orders"></div>
 </div>
@@ -79,7 +79,7 @@ const tplQueryConsole = `
 <p style="font-size:12px;color:#64748b;margin-bottom:8px">{{t $.Lang "Значения &Параметров для выполнения"}}</p>
 <div id="qb-params" style="font-size:13px">—</div>
 <div style="margin-top:12px">
-  <button onclick="qbApplyToEditor()" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "Применить к редактору"}}</button>
+  <button data-ob-qb-action="apply-editor" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "Применить к редактору"}}</button>
 </div>
 </div>
 </div>
@@ -99,7 +99,7 @@ const tplQueryConsole = `
 <div class="card" style="margin-bottom:12px" id="qc-params-card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Параметры"}}</h3>
-  <button onclick="qcDetectParams()" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px">{{t $.Lang "Заполнить из запроса"}}</button>
+  <button data-ob-qc-action="detect-params" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px">{{t $.Lang "Заполнить из запроса"}}</button>
 </div>
 <div id="qc-params" style="font-size:13px"><span style="color:#94a3b8">{{t $.Lang "Нажмите «Заполнить из запроса» или введите вручную"}}</span></div>
 </div>
@@ -490,7 +490,7 @@ function qcDetectParams() {
           + '<input class="qc-pv" type="hidden" value="'+escHtml(prev)+'">'
           + '<div class="qc-suggest-list" style="display:none;position:absolute;top:100%;left:0;right:0;border:1px solid #e2e8f0;border-radius:4px;background:#fff;z-index:100;max-height:180px;overflow-y:auto;box-shadow:0 4px 8px rgba(0,0,0,.12)"></div>'
           + '</div>'
-          + '<button type="button" onclick="qcOpenPicker(this,\''+escHtml(entityType)+'\')" title="Выбрать из справочника" style="padding:4px 8px;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;background:#f8fafc;cursor:pointer;white-space:nowrap">...</button>'
+          + '<button type="button" data-ob-qc-open-picker data-ob-qc-picker-entity="'+escHtml(entityType)+'" title="Выбрать из справочника" style="padding:4px 8px;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;background:#f8fafc;cursor:pointer;white-space:nowrap">...</button>'
           + '</div>';
       } else {
         html += '<input class="qc-pv" value="'+escHtml(prev)+'" placeholder="значение" style="flex:1;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px">';
@@ -620,11 +620,11 @@ function qbAddJoin(){
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
   del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px';
-  del.onclick = function(){
+  del.addEventListener('click', function(){
     div.remove(); _joins=_joins.filter(function(j){ return j.id!==jid; });
     if(!_joins.length) document.getElementById('qb-joins').innerHTML='<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
     qbRebuildAllFields();
-  };
+  });
   row1.appendChild(typeSel); row1.appendChild(srcSel); row1.appendChild(aliasInp); row1.appendChild(del);
   var row2 = document.createElement('div');
   row2.style.cssText = 'display:flex;gap:6px;align-items:center';
@@ -636,13 +636,13 @@ function qbAddJoin(){
   document.getElementById('qb-joins').appendChild(div);
   var jdata = {id:jid, el:div, typeSel:typeSel, srcSel:srcSel, aliasInp:aliasInp, onInp:onInp};
   _joins.push(jdata);
-  srcSel.onchange = function(){
+  srcSel.addEventListener('change', function(){
     var src=_srcMap[srcSel.value]; if(src&&!aliasInp.value.trim()){ var parts=src.label.split('.'); aliasInp.value=parts.length>=2?parts[1].replace(/\(.*$/,''):parts[0]; }
     qbRebuildAllFields();
-  };
-  typeSel.onchange = function(){ qbGenerate(); };
-  aliasInp.oninput = function(){ qbRebuildAllFields(); };
-  onInp.oninput = function(){ qbGenerate(); };
+  });
+  typeSel.addEventListener('change', function(){ qbGenerate(); });
+  aliasInp.addEventListener('input', function(){ qbRebuildAllFields(); });
+  onInp.addEventListener('input', function(){ qbGenerate(); });
   qbRebuildAllFields();
 }
 
@@ -664,22 +664,22 @@ function renderFields(){
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:13px;padding:1px 0';
     var chk = document.createElement('input'); chk.type='checkbox'; chk.checked=!!_selFields[f.name]; chk.dataset.field=f.name;
-    chk.onchange = function(){ if(chk.checked) _selFields[f.name]={alias:'',agg:''}; else delete _selFields[f.name]; qbGenerate(); };
+    chk.addEventListener('change', function(){ if(chk.checked) _selFields[f.name]={alias:'',agg:''}; else delete _selFields[f.name]; qbGenerate(); });
     var lbl = document.createElement('label');
     lbl.textContent = dotIdx>=0 ? f.name.substring(dotIdx+1) : f.name;
     lbl.title = f.name; lbl.style.cssText='flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-    lbl.onclick = function(){ chk.click(); };
+    lbl.addEventListener('click', function(){ chk.click(); });
     var aggSel = document.createElement('select');
     aggSel.style.cssText = 'font-size:11px;padding:1px 3px;border:1px solid #e2e8f0;border-radius:4px;width:90px';
     ['','СУММА','КОЛИЧЕСТВО','МИНИМУМ','МАКСИМУМ','СРЕДНЕЕ'].forEach(function(a){
       var o=document.createElement('option'); o.value=a; o.textContent=a||'— нет —'; aggSel.appendChild(o);
     });
     if(_selFields[f.name]) aggSel.value=_selFields[f.name].agg||'';
-    aggSel.onchange = function(){ if(_selFields[f.name]) _selFields[f.name].agg=aggSel.value; qbGenerate(); };
+    aggSel.addEventListener('change', function(){ if(_selFields[f.name]) _selFields[f.name].agg=aggSel.value; qbGenerate(); });
     var aliasInp = document.createElement('input'); aliasInp.type='text'; aliasInp.placeholder='КАК';
     aliasInp.style.cssText='font-size:11px;width:70px;padding:1px 4px;border:1px solid #e2e8f0;border-radius:4px';
     if(_selFields[f.name]) aliasInp.value=_selFields[f.name].alias||'';
-    aliasInp.oninput = function(){ if(_selFields[f.name]) _selFields[f.name].alias=aliasInp.value.trim(); qbGenerate(); };
+    aliasInp.addEventListener('input', function(){ if(_selFields[f.name]) _selFields[f.name].alias=aliasInp.value.trim(); qbGenerate(); });
     row.appendChild(chk); row.appendChild(lbl); row.appendChild(aggSel); row.appendChild(aliasInp);
     div.appendChild(row);
   });
@@ -706,11 +706,12 @@ function qbAddCond(){
   });
   var valInp = document.createElement('input'); valInp.type='text'; valInp.placeholder='&Параметр или значение';
   valInp.style.cssText = 'flex:1;min-width:80px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
-  opSel.onchange = function(){ var noVal=opSel.value==='ЕСТЬ ПУСТО'||opSel.value==='НЕ ЕСТЬ ПУСТО'; valInp.style.display=noVal?'none':''; qbGenerate(); };
-  fsel.onchange = valInp.oninput = function(){ qbGenerate(); };
+  opSel.addEventListener('change', function(){ var noVal=opSel.value==='ЕСТЬ ПУСТО'||opSel.value==='НЕ ЕСТЬ ПУСТО'; valInp.style.display=noVal?'none':''; qbGenerate(); });
+  fsel.addEventListener('change', function(){ qbGenerate(); });
+  valInp.addEventListener('input', function(){ qbGenerate(); });
   var del = document.createElement('button'); del.type='button'; del.textContent='×';
   del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
-  del.onclick = function(){ div.remove(); qbGenerate(); };
+  del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
   div.appendChild(fsel); div.appendChild(opSel); div.appendChild(valInp); div.appendChild(del);
   document.getElementById('qb-conds').appendChild(div);
   qbGenerate();
@@ -727,8 +728,9 @@ function qbAddOrder(){
   [['ВОЗР','↑ ВОЗР'],['УБЫВ','↓ УБЫВ']].forEach(function(x){ var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; dirSel.appendChild(o); });
   var del = document.createElement('button'); del.type='button'; del.textContent='×';
   del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
-  del.onclick = function(){ div.remove(); qbGenerate(); };
-  fsel.onchange = dirSel.onchange = function(){ qbGenerate(); };
+  del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
+  fsel.addEventListener('change', function(){ qbGenerate(); });
+  dirSel.addEventListener('change', function(){ qbGenerate(); });
   div.appendChild(fsel); div.appendChild(dirSel); div.appendChild(del);
   document.getElementById('qb-orders').appendChild(div);
   qbGenerate();
@@ -818,7 +820,58 @@ function qbApplyToEditor(){
   }
 }
 
-document.getElementById('qb-vt-param-val').oninput = qbGenerate;
+function qbRunAction(action, el) {
+  if (action === 'add-join') qbAddJoin();
+  else if (action === 'all-fields') qbAllFields(el.getAttribute('data-ob-qb-all-fields') === 'true');
+  else if (action === 'add-cond') qbAddCond();
+  else if (action === 'add-order') qbAddOrder();
+  else if (action === 'apply-editor') qbApplyToEditor();
+}
+
+function qcRunAction(action) {
+  if (action === 'exec') qcExec();
+  else if (action === 'toggle-builder') qcToggleBuilder();
+  else if (action === 'clear') qcClear();
+  else if (action === 'detect-params') qcDetectParams();
+}
+
+function obInitQueryConsoleDelegates() {
+  document.addEventListener('click', function(e) {
+    var picker = e.target.closest && e.target.closest('[data-ob-qc-open-picker]');
+    if (picker) {
+      e.preventDefault();
+      qcOpenPicker(picker, picker.getAttribute('data-ob-qc-picker-entity') || '');
+      return;
+    }
+    var close = e.target.closest && e.target.closest('[data-ob-qc-picker-close]');
+    if (close) {
+      e.preventDefault();
+      var modal = document.getElementById('qc-picker-modal');
+      if (modal) modal.style.display = 'none';
+      return;
+    }
+    var qcBtn = e.target.closest && e.target.closest('[data-ob-qc-action]');
+    if (qcBtn) {
+      e.preventDefault();
+      qcRunAction(qcBtn.getAttribute('data-ob-qc-action') || '');
+      return;
+    }
+    var qbBtn = e.target.closest && e.target.closest('[data-ob-qb-action]');
+    if (qbBtn) {
+      e.preventDefault();
+      qbRunAction(qbBtn.getAttribute('data-ob-qb-action') || '', qbBtn);
+    }
+  });
+  document.addEventListener('change', function(e) {
+    if (e.target.matches && e.target.matches('[data-ob-qb-source]')) qbSetSource(e.target.value);
+  });
+  document.addEventListener('input', function(e) {
+    if (!e.target.matches) return;
+    if (e.target.matches('[data-ob-qb-main-alias]')) qbRebuildAllFields();
+    if (e.target.matches('[data-ob-qb-vt-param]')) qbGenerate();
+  });
+}
+obInitQueryConsoleDelegates();
 
 // ─── Reference picker helpers ─────────────────────────────────────────────────
 function qcItemLabel(item) {
@@ -891,13 +944,13 @@ function qcOpenPicker(btn, entityType) {
     modal.innerHTML = '<div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column">'
       + '<div style="padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;align-items:center">'
       + '<input id="qc-picker-q" placeholder="Поиск..." autocomplete="off" style="flex:1;font-size:14px;border:1px solid #e2e8f0;border-radius:4px;padding:6px 10px">'
-      + '<button onclick="document.getElementById(\'qc-picker-modal\').style.display=\'none\'" style="background:none;border:none;font-size:18px;cursor:pointer;color:#94a3b8;padding:0 4px">&times;</button>'
+      + '<button type="button" data-ob-qc-picker-close style="background:none;border:none;font-size:18px;cursor:pointer;color:#94a3b8;padding:0 4px">&times;</button>'
       + '</div>'
       + '<div id="qc-picker-list" style="overflow-y:auto;flex:1;min-height:80px"></div>'
       + '</div>';
     document.body.appendChild(modal);
     document.getElementById('qc-picker-q').addEventListener('input', function() {
-      qcPickerSearch(entityType, this.value);
+      qcPickerSearch(this.getAttribute('data-ob-qc-picker-entity') || '', this.value);
     });
     modal.addEventListener('click', function(e) {
       if (e.target === modal) modal.style.display = 'none';
@@ -905,8 +958,8 @@ function qcOpenPicker(btn, entityType) {
   } else {
     modal.style.display = 'flex';
     document.getElementById('qc-picker-q').value = '';
-    document.getElementById('qc-picker-q').oninput = function() { qcPickerSearch(entityType, this.value); };
   }
+  document.getElementById('qc-picker-q').setAttribute('data-ob-qc-picker-entity', entityType);
   document.getElementById('qc-picker-list').innerHTML = '<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">Загрузка...</div>';
   qcPickerSearch(entityType, '');
 }
@@ -963,8 +1016,8 @@ const tplCodeConsole = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
   <h2 style="margin:0">{{t $.Lang "Консоль кода"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">
-    <button onclick="ccExec()" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
-    <button onclick="ccClear()" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:#64748b">{{t $.Lang "Очистить"}}</button>
+    <button data-ob-cc-action="exec" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
+    <button data-ob-cc-action="clear" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:#64748b">{{t $.Lang "Очистить"}}</button>
   </div>
 </div>
 
@@ -978,7 +1031,7 @@ const tplCodeConsole = `
 <div class="card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Результат"}}</h3>
-  <button onclick="document.getElementById('cc-output').innerHTML=''" style="background:none;border:1px solid #e2e8f0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;color:#64748b">{{t $.Lang "Очистить"}}</button>
+  <button data-ob-cc-action="clear-output" style="background:none;border:1px solid #e2e8f0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;color:#64748b">{{t $.Lang "Очистить"}}</button>
 </div>
 <div id="cc-output" style="background:#1e293b;color:#e2e8f0;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:12px 16px;border-radius:6px;min-height:120px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
 </div>
@@ -1059,6 +1112,19 @@ function ccClear() {
   if(window.ccEditor) window.ccEditor.setValue('// Введите DSL-код\n');
   document.getElementById('cc-output').innerHTML = '';
 }
+
+function ccRunAction(action) {
+  if (action === 'exec') ccExec();
+  else if (action === 'clear') ccClear();
+  else if (action === 'clear-output') document.getElementById('cc-output').innerHTML = '';
+}
+
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest && e.target.closest('[data-ob-cc-action]');
+  if (!btn) return;
+  e.preventDefault();
+  ccRunAction(btn.getAttribute('data-ob-cc-action') || '');
+});
 
 function escHtml(s) {
   var d = document.createElement('div'); d.textContent = s; return d.innerHTML;
