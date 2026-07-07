@@ -2461,7 +2461,7 @@ const tplJournal = `
           <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
           {{end}}
         </select>
-        <button type="button" onclick="openRefPicker('jflt-{{$f}}')" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+        <button type="button" data-ob-ref-picker="jflt-{{$f}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
       </div>
       {{else}}
       <input type="text" name="f.{{.Field}}" value="{{(filterVal $params .Field).Value}}">
@@ -2480,7 +2480,7 @@ const tplJournal = `
 
 <details class="card report-block" data-block="journal-settings" style="margin-bottom:16px">
   <summary>{{t $.Lang "Настройка списка"}}{{if .JournalSettingsActive}} <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
-  <form method="POST" action="/ui/journal/{{lower .Journal.Name}}/settings/save" onsubmit="return jlBeforeSubmit(event)">
+  <form method="POST" action="/ui/journal/{{lower .Journal.Name}}/settings/save" data-ob-jl-before-submit>
     <input type="hidden" name="__return" value="{{.RequestURI}}">
     <input type="hidden" name="__journal_settings" id="jl-settings-json" value="{{.JournalSettingsJSON}}">
     <table style="width:auto;margin-bottom:12px">
@@ -2495,8 +2495,8 @@ const tplJournal = `
           <td>{{.Column.DisplayLabel $.Lang}}</td>
           <td style="text-align:center"><input type="checkbox" class="jl-visible" {{if .Visible}}checked{{end}}></td>
           <td style="white-space:nowrap;text-align:right">
-            <button type="button" class="btn btn-sm" onclick="jlMove(this,-1)" title="{{t $.Lang "Вверх"}}">↑</button>
-            <button type="button" class="btn btn-sm" onclick="jlMove(this,1)" title="{{t $.Lang "Вниз"}}">↓</button>
+            <button type="button" class="btn btn-sm" data-ob-jl-move="-1" title="{{t $.Lang "Вверх"}}">↑</button>
+            <button type="button" class="btn btn-sm" data-ob-jl-move="1" title="{{t $.Lang "Вниз"}}">↓</button>
           </td>
         </tr>
       {{end}}
@@ -2507,26 +2507,6 @@ const tplJournal = `
       <button class="btn" type="submit" formaction="/ui/journal/{{lower .Journal.Name}}/settings/reset"{{if not .JournalSettingsActive}} disabled{{end}}>{{t $.Lang "Стандартные настройки"}}</button>
     </div>
   </form>
-  <script>
-  (function(){
-    window.jlMove=function(btn,dir){
-      var tr=btn&&btn.closest?btn.closest('tr'):null;if(!tr||!tr.parentNode)return;
-      if(dir<0&&tr.previousElementSibling)tr.parentNode.insertBefore(tr,tr.previousElementSibling);
-      if(dir>0&&tr.nextElementSibling)tr.parentNode.insertBefore(tr.nextElementSibling,tr);
-    };
-    window.jlCollect=function(){
-      var rows=document.querySelectorAll('#jl-columns .jl-col-row');
-      var cols=[];
-      rows.forEach(function(row){
-        var cb=row.querySelector('.jl-visible');
-        cols.push({field:row.getAttribute('data-field')||'',visible:!!(cb&&cb.checked)});
-      });
-      var hidden=document.getElementById('jl-settings-json');
-      if(hidden)hidden.value=JSON.stringify({columns:cols});
-    };
-    window.jlBeforeSubmit=function(){jlCollect();return true;};
-  })();
-  </script>
 </details>
 
 {{if .JournalWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
@@ -2539,9 +2519,7 @@ const tplJournal = `
 </tr></thead>
 <tbody>
 {{range .Rows}}{{$row := .}}
-<tr style="cursor:pointer;{{journalRowStyle .}}"
-  onclick="if(event.target.tagName!=='A'&&event.target.tagName!=='BUTTON'){window.location='/ui/document/'+encodeURIComponent('{{lower (str (index . "_doc_kind"))}}')+'/'+'{{str (index . "id")}}'}"
->
+<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-journal-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}">
   <td style="{{journalCellStyle $row "_doc_kind"}}">{{index . "_doc_kind"}}</td>
   {{range $.JournalColumns}}
     {{$v := index $row .Field}}

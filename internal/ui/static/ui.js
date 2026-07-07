@@ -511,8 +511,60 @@ function obInitReportBlocks() {
   } catch (e) {}
 }
 
+function jlMove(btn, dir) {
+  var tr = btn && btn.closest ? btn.closest('tr') : null;
+  if (!tr || !tr.parentNode) return;
+  if (dir < 0 && tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+  if (dir > 0 && tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+}
+
+function jlCollect() {
+  var rows = document.querySelectorAll('#jl-columns .jl-col-row');
+  var cols = [];
+  rows.forEach(function (row) {
+    var cb = row.querySelector('.jl-visible');
+    cols.push({ field: row.getAttribute('data-field') || '', visible: !!(cb && cb.checked) });
+  });
+  var hidden = document.getElementById('jl-settings-json');
+  if (hidden) hidden.value = JSON.stringify({ columns: cols });
+}
+
+function jlBeforeSubmit() {
+  jlCollect();
+  return true;
+}
+
+window.jlMove = jlMove;
+window.jlCollect = jlCollect;
+window.jlBeforeSubmit = jlBeforeSubmit;
+
+function obInitJournalDelegates() {
+  if (window.__obJournalDelegates) return;
+  window.__obJournalDelegates = true;
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var move = e.target.closest('[data-ob-jl-move]');
+    if (move) {
+      e.preventDefault();
+      jlMove(move, parseInt(move.getAttribute('data-ob-jl-move') || '0', 10));
+      return;
+    }
+    var row = e.target.closest('[data-ob-journal-open-url]');
+    if (row) {
+      if (e.target.closest('a,button')) return;
+      window.location.href = row.getAttribute('data-ob-journal-open-url') || '#';
+    }
+  });
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || !form.matches || !form.matches('[data-ob-jl-before-submit]')) return;
+    if (jlBeforeSubmit() === false) e.preventDefault();
+  }, true);
+}
+
 obReady(function () {
   obInitReportDelegates();
+  obInitJournalDelegates();
   obPresetReportSettings();
   obInitReportCompositionControls();
   obInitReportBlocks();

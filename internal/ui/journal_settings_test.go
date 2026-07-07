@@ -95,9 +95,26 @@ func TestJournalSettingsPanelRender(t *testing.T) {
 		t.Fatalf("execute page-journal: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{`data-block="journal-settings"`, `name="__journal_settings"`, `id="jl-columns"`, `data-field="Номер"`, "изменено"} {
+	for _, want := range []string{`data-block="journal-settings"`, `name="__journal_settings"`, `id="jl-columns"`, `data-field="Номер"`, `data-ob-jl-before-submit`, `data-ob-jl-move="-1"`, `data-ob-journal-open-url="/ui/document/%d0%b4%d0%be%d0%ba/1"`, "изменено"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("journal settings panel missing %q:\n%s", want, out)
+		}
+	}
+	for _, old := range []string{
+		`onsubmit="return jlBeforeSubmit(event)"`,
+		`onclick="jlMove(this,-1)"`,
+		`onclick="jlMove(this,1)"`,
+		`window.jlMove=function`,
+		`window.jlBeforeSubmit=function`,
+		`onclick="if(event.target.tagName`,
+	} {
+		if strings.Contains(out, old) {
+			t.Fatalf("journal template still contains inline handler/runtime %q:\n%s", old, out)
+		}
+	}
+	for _, want := range []string{"function jlCollect", "function obInitJournalDelegates"} {
+		if !strings.Contains(string(uiJS), want) {
+			t.Fatalf("/static/ui.js does not contain %q", want)
 		}
 	}
 	if !strings.Contains(out, `<th>Сумма</th>`) {
@@ -105,6 +122,37 @@ func TestJournalSettingsPanelRender(t *testing.T) {
 	}
 	if strings.Contains(out, `<th>Номер</th>`) {
 		t.Fatalf("hidden column should not be rendered in data table:\n%s", out)
+	}
+}
+
+func TestJournalFilterDelegatedRefPicker(t *testing.T) {
+	j := testJournal()
+	j.Filters = []metadata.JournalFilter{{Field: "Контрагент", Type: "reference:Контрагент"}}
+	var buf bytes.Buffer
+	data := map[string]any{
+		"Journal":                j,
+		"JournalColumns":         effectiveJournalColumns(j, nil),
+		"JournalSettingsColumns": journalSettingsColumns(j, nil),
+		"JournalSettingsJSON":    journalSettingsJSON(j, nil),
+		"Rows":                   []map[string]any{},
+		"Total":                  0,
+		"Params":                 storage.ListParams{Filters: map[string]storage.FilterValue{}},
+		"FilterOptions":          map[string][]map[string]any{"Контрагент": {{"id": "c1", "_label": "Ромашка"}}},
+		"FilterRefEntities":      map[string]string{"Контрагент": "Контрагент"},
+		"ColFormats":             map[string]string{},
+		"RequestURI":             "/ui/journal/журнал",
+		"Cfg":                    Config{},
+		"Lang":                   "ru",
+	}
+	if err := tmpl.ExecuteTemplate(&buf, "page-journal", data); err != nil {
+		t.Fatalf("execute page-journal: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, `data-ob-ref-picker="jflt-Контрагент"`) {
+		t.Fatalf("journal filter missing delegated ref picker:\n%s", out)
+	}
+	if strings.Contains(out, `onclick="openRefPicker('jflt-`) {
+		t.Fatalf("journal filter still contains inline ref picker:\n%s", out)
 	}
 }
 
