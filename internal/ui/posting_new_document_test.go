@@ -156,6 +156,62 @@ func TestSaveNewDocument_HookChildAndFailureRollBackTogether(t *testing.T) {
 	}
 }
 
+// A Save called from an already open DSL transaction owns a savepoint. A hook
+// failure must roll back its provisional parent and child writes without
+// poisoning or rolling back unrelated work in the caller's transaction.
+func TestSaveNewDocument_BorrowedTransactionHookFailureUsesSavepoint(t *testing.T) {
+	ctx, db, s, doc, cat := newSelfRefPostingServer(t)
+	failing := `Процедура ОбработкаПроведения()
+  Соб = Справочники.СобытиеПрибора.Создать();
+  Соб.Прибор = ЭтотОбъект.Ссылка;
+  Соб.Записать();
+  ВызватьИсключение("откатить внутреннюю запись");
+КонецПроцедуры`
+	s.reg.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{doc, cat},
+		Programs: map[string]*ast.Program{"Прибор": mustParse(t, failing)},
+	})
+
+	outerChildID := uuid.New()
+	if err := db.WithTx(ctx, func(outerCtx context.Context) error {
+		if err := db.Upsert(outerCtx, cat.Name, outerChildID, map[string]any{}, cat); err != nil {
+			return err
+		}
+		result, err := s.entitySvc.Save(outerCtx, entityservice.SaveRequest{
+			Entity: doc, ID: uuid.New(), IsNew: true,
+			Fields: map[string]any{"Номер": "П-SAVEPOINT"}, Action: "post",
+		})
+		if err != nil {
+			return err
+		}
+		if result.DSLError == "" {
+			return fmt.Errorf("expected hook DSLError")
+		}
+		parents, err := db.List(outerCtx, doc.Name, doc, storage.ListParams{})
+		if err != nil {
+			return err
+		}
+		children, err := db.List(outerCtx, cat.Name, cat, storage.ListParams{})
+		if err != nil {
+			return err
+		}
+		if len(parents) != 0 || len(children) != 1 {
+			return fmt.Errorf("savepoint rollback left parent=%d children=%d", len(parents), len(children))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	children, err := db.List(ctx, cat.Name, cat, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || refValueString(children[0]["id"]) != outerChildID.String() {
+		t.Fatalf("outer transaction result = %#v, want only unrelated child", children)
+	}
+}
+
 // Регрессия issue #381: ссылка в шапке обогащалась до открытия транзакции
 // проведения и сохраняла нетранзакционный context. Поэтому
 // this.Счётчик.ПолучитьОбъект().Записать() из OnPost пытался открыть вторую

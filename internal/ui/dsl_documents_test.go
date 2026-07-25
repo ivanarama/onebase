@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -186,6 +187,159 @@ func TestDocsRoot_CreateWritePost(t *testing.T) {
 	}
 	if len(pkg.Objects) != 1 || !pkg.Objects[0].Posted || pkg.Objects[0].Version != version {
 		t.Fatalf("DSL-проведение не попало в пакет: %+v", pkg.Objects)
+	}
+}
+
+func TestDocsRoot_DirectPostCreatesSingleVersion(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "version.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	doc := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument, Posting: true,
+		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
+		t.Fatal(err)
+	}
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
+	s := &Server{store: db, reg: registry, interp: interpreter.New(), lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+
+	writer := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy).
+		CallMethod("создать", nil).(*docWriter)
+	writer.Set("Номер", "З-1")
+	if err := writer.conduct(); err != nil {
+		t.Fatal(err)
+	}
+	if version, err := db.EntityVersion(ctx, doc.Name, writer.obj.ID); err != nil || version != 1 {
+		t.Fatalf("new direct post version = %d, err=%v, want 1", version, err)
+	}
+
+	writer.Set("Номер", "З-2")
+	if err := writer.conduct(); err != nil {
+		t.Fatal(err)
+	}
+	if version, err := db.EntityVersion(ctx, doc.Name, writer.obj.ID); err != nil || version != 2 {
+		t.Fatalf("second logical post version = %d, err=%v, want 2", version, err)
+	}
+}
+
+func TestDocsRoot_PostRollsBackOnPostSideEffectsWhenFinalWriteFails(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "post-atomic.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	doc := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument, Posting: true,
+		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	child := &metadata.Entity{
+		Name: "Событие", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	missingRegister := &metadata.Register{
+		Name:      "НеСозданныйРегистр",
+		Resources: []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	// Deliberately do not migrate the register: saving its movement fails after
+	// OnPost has already created a child catalog record.
+	if err := db.Migrate(ctx, []*metadata.Entity{doc, child}); err != nil {
+		t.Fatal(err)
+	}
+	onPost := `Процедура ОбработкаПроведения()
+  Соб = Справочники.Событие.Создать();
+  Соб.Наименование = "побочная запись";
+  Соб.Записать();
+  Дв = Движения.НеСозданныйРегистр.Добавить();
+  Дв.Количество = 1;
+КонецПроцедуры`
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{
+		Entities:  []*metadata.Entity{doc, child},
+		Programs:  map[string]*ast.Program{doc.Name: mustParse(t, onPost)},
+		Registers: []*metadata.Register{missingRegister},
+	})
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
+
+	writer := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy).
+		CallMethod("создать", nil).(*docWriter)
+	writer.Set("Номер", "З-FAIL")
+	if err := writer.conduct(); err == nil {
+		t.Fatal("post unexpectedly succeeded without register table")
+	}
+	parents, err := db.List(ctx, doc.Name, doc, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	children, err := db.List(ctx, child.Name, child, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parents) != 0 || len(children) != 0 {
+		t.Fatalf("failed post left parent=%d child=%d", len(parents), len(children))
+	}
+	if writer.saved || writer.expectedVersion != nil {
+		t.Fatalf("rolled-back writer state: saved=%v version=%v", writer.saved, writer.expectedVersion)
+	}
+}
+
+func TestDocsRoot_LoadedWritersUseOptimisticLock(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "dsl-lock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	task := &metadata.Entity{
+		Name: "Задача", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+			{Name: "Состояние", Type: metadata.FieldTypeString},
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{task}); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.New()
+	if err := db.Upsert(ctx, task.Name, id, map[string]any{"Номер": "ЗД-1", "Состояние": "Открыта"}, task); err != nil {
+		t.Fatal(err)
+	}
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{task}})
+	s := &Server{store: db, reg: registry, interp: interpreter.New(), lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	proxy := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(task.Name).(*docProxy)
+
+	firstAny, err := proxy.LoadObject(id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAny, err := proxy.LoadObject(id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := firstAny.(*docWriter), secondAny.(*docWriter)
+	first.Set("Состояние", "Выполнена")
+	if err := first.write(); err != nil {
+		t.Fatal(err)
+	}
+	second.Set("Состояние", "Отклонена")
+	if err := second.write(); !errors.Is(err, storage.ErrVersionConflict) {
+		t.Fatalf("stale DSL writer error = %v, want ErrVersionConflict", err)
+	}
+	row, err := db.GetByID(ctx, task.Name, id, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Состояние"] != "Выполнена" {
+		t.Fatalf("stale writer overwrote task: %#v", row)
 	}
 }
 

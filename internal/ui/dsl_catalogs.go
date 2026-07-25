@@ -78,7 +78,14 @@ func (f *catFactory) LoadCatalogObject(entity *metadata.Entity, uuidStr string) 
 	if err != nil {
 		return nil, err
 	}
-	return &catWriter{s: f.s, ctxSrc: f.ctxSrc, entity: entity, obj: obj, loaded: true}, nil
+	version, err := f.s.store.EntityVersion(ctx, entity.Name, id)
+	if err != nil {
+		return nil, err
+	}
+	return &catWriter{
+		s: f.s, ctxSrc: f.ctxSrc, entity: entity, obj: obj, loaded: true,
+		expectedVersion: &version,
+	}, nil
 }
 
 func (f *catFactory) ctx() context.Context {
@@ -102,8 +109,9 @@ type catWriter struct {
 	obj    *runtime.Object
 	// loaded — объект получен из БД (Ссылка.ПолучитьОбъект), а не создан.
 	// saved — объект уже записан в этой сессии. Оба используются ЭтоНовый().
-	loaded bool
-	saved  bool
+	loaded          bool
+	saved           bool
+	expectedVersion *int64
 }
 
 func (w *catWriter) ctx() context.Context {
@@ -175,11 +183,12 @@ func (w *catWriter) write() error {
 		return err
 	}
 	result, err := w.s.entitySvc.Save(ctx, entityservice.SaveRequest{
-		Entity:        w.entity,
-		ID:            w.obj.ID,
-		IsNew:         isNew,
-		Fields:        w.obj.Fields,
-		TablePartRows: w.obj.TablePartRows,
+		Entity:          w.entity,
+		ID:              w.obj.ID,
+		IsNew:           isNew,
+		Fields:          w.obj.Fields,
+		TablePartRows:   w.obj.TablePartRows,
+		ExpectedVersion: w.expectedVersion,
 	})
 	if err != nil {
 		return err
@@ -187,11 +196,17 @@ func (w *catWriter) write() error {
 	if result.DSLError != "" {
 		return fmt.Errorf("%s", result.DSLError)
 	}
-	wasSaved := w.saved
-	w.saved = true
-	if !wasSaved {
-		storage.DeferUntilTxRollback(ctx, func() { w.saved = false })
+	version, err := w.s.store.EntityVersion(ctx, w.entity.Name, w.obj.ID)
+	if err != nil {
+		return err
 	}
+	wasSaved, previousVersion := w.saved, w.expectedVersion
+	w.saved = true
+	w.expectedVersion = &version
+	storage.DeferUntilTxRollback(ctx, func() {
+		w.saved = wasSaved
+		w.expectedVersion = previousVersion
+	})
 	return nil
 }
 
@@ -215,6 +230,11 @@ func (w *catWriter) read() error {
 		return err
 	}
 	w.obj = obj
+	version, err := w.s.store.EntityVersion(w.ctx(), w.entity.Name, w.obj.ID)
+	if err != nil {
+		return err
+	}
+	w.expectedVersion = &version
 	w.loaded = true
 	return nil
 }

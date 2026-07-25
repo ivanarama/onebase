@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 )
 
 type txKey struct{}
+
+var txScopeSequence atomic.Uint64
 
 // IsNotFound reports the portable no-row condition for both storage drivers.
 func IsNotFound(err error) bool {
@@ -28,6 +32,48 @@ func (db *DB) WithTxIfNeeded(ctx context.Context, fn func(context.Context) error
 		return fn(ctx)
 	}
 	return db.WithTx(ctx, fn)
+}
+
+// WithTxScope makes fn atomic even when ctx already carries a transaction.
+// A top-level call owns a regular transaction; a nested/borrowed call owns a
+// savepoint, so returning an error cannot leave provisional rows or hook side
+// effects in the caller's transaction.
+func (db *DB) WithTxScope(ctx context.Context, fn func(context.Context) error) (err error) {
+	if !HasTx(ctx) {
+		return db.WithTx(ctx, fn)
+	}
+
+	savepoint := fmt.Sprintf("onebase_scope_%d", txScopeSequence.Add(1))
+	if _, err := db.Exec(ctx, "SAVEPOINT "+savepoint); err != nil {
+		return fmt.Errorf("create savepoint %s: %w", savepoint, err)
+	}
+	PushTxHookScope(ctx)
+
+	rollback := func() error {
+		_, rollbackErr := db.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepoint)
+		_, releaseErr := db.Exec(ctx, "RELEASE SAVEPOINT "+savepoint)
+		RollbackTxHookScope(ctx)
+		return errors.Join(rollbackErr, releaseErr)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = rollback()
+			panic(p)
+		}
+	}()
+
+	if err = fn(ctx); err != nil {
+		if rollbackErr := rollback(); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback savepoint %s: %w", savepoint, rollbackErr))
+		}
+		return err
+	}
+	if _, err = db.Exec(ctx, "RELEASE SAVEPOINT "+savepoint); err != nil {
+		RollbackTxHookScope(ctx)
+		return fmt.Errorf("release savepoint %s: %w", savepoint, err)
+	}
+	CommitTxHookScope(ctx)
+	return nil
 }
 
 // WithTx runs fn inside a transaction. On fn error the transaction is rolled

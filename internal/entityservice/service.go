@@ -235,7 +235,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// шапка, ТЧ, движения и проведение. Для нового объекта сначала вставляется
 	// полноценная шапка: FK-ссылки из создаваемых хуком объектов уже валидны, но
 	// при любой последующей ошибке откатываются вместе с родителем.
-	err := s.Store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
 		if req.Entity.Posting && !req.IsNew && !isPosting {
 			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
 			if err != nil {
@@ -438,7 +438,7 @@ func (s *Service) Unpost(ctx context.Context, entity *metadata.Entity, id uuid.U
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
 
-	err := s.Store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
 		return s.unpostInTx(txCtx, entity, id, result.Movements, &result.DSLMessages, lockCollector)
 	})
 	if err != nil {

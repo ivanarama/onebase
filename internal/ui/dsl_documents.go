@@ -371,12 +371,17 @@ func (p *docProxy) LoadObject(uuidStr string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	version, err := p.s.store.EntityVersion(p.ctx(), p.entity.Name, id)
+	if err != nil {
+		return nil, err
+	}
 	return &docWriter{
-		s:      p.s,
-		ctxSrc: p.ctxSrc,
-		entity: p.entity,
-		obj:    obj,
-		loaded: true,
+		s:               p.s,
+		ctxSrc:          p.ctxSrc,
+		entity:          p.entity,
+		obj:             obj,
+		loaded:          true,
+		expectedVersion: &version,
 	}, nil
 }
 
@@ -395,8 +400,9 @@ type docWriter struct {
 	obj    *runtime.Object
 	// loaded — объект получен из БД (Ссылка.ПолучитьОбъект), а не создан.
 	// saved — объект уже записан в этой сессии. Оба используются ЭтоНовый().
-	loaded bool
-	saved  bool
+	loaded          bool
+	saved           bool
+	expectedVersion *int64
 }
 
 func (w *docWriter) ctx() context.Context {
@@ -439,10 +445,7 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 		if err := w.s.checkDSLRowAccess(w.ctx(), w.entity, "post", w.accessID(), w.obj.Fields); err != nil {
 			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
 		}
-		if err := w.write(); err != nil {
-			interpreter.RaiseUserError("Провести/Записать(" + w.entity.Name + "): " + err.Error())
-		}
-		if err := w.post(); err != nil {
+		if err := w.conduct(); err != nil {
 			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
 		}
 		return w.ref()
@@ -502,6 +505,11 @@ func (w *docWriter) read() error {
 	for _, tp := range w.entity.TableParts {
 		w.s.enrichTPRowsWithRefs(w.ctx(), tp, tpRows[tp.Name])
 	}
+	version, err := w.s.store.EntityVersion(w.ctx(), w.entity.Name, w.obj.ID)
+	if err != nil {
+		return err
+	}
+	w.expectedVersion = &version
 	w.loaded = true
 	return nil
 }
@@ -582,7 +590,7 @@ func (w *docWriter) autoNumber(ctx context.Context) {
 // Использует живой ctx, поэтому при открытой DSL-транзакции запись
 // участвует в ней; иначе автокоммит.
 func (w *docWriter) write() error {
-	return w.s.store.WithTxIfNeeded(w.ctx(), w.writeInContext)
+	return w.s.store.WithTxScope(w.ctx(), w.writeInContext)
 }
 
 func (w *docWriter) writeInContext(ctx context.Context) error {
@@ -600,8 +608,14 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 	if errMsg, _ := w.s.runOnWriteCtx(ctx, w.obj, mc); errMsg != "" {
 		return fmt.Errorf("%s", errMsg)
 	}
-	if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
-		return err
+	if w.expectedVersion == nil {
+		if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+			return err
+		}
+	} else {
+		if err := w.s.store.UpsertVersioned(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity, w.expectedVersion); err != nil {
+			return err
+		}
 	}
 	if err := w.s.saveTablePartsDirect(ctx, w.entity, w.obj.ID, w.obj.TablePartRows); err != nil {
 		return err
@@ -618,11 +632,17 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 			return err
 		}
 	}
-	wasSaved := w.saved
-	w.saved = true
-	if !wasSaved {
-		storage.DeferUntilTxRollback(ctx, func() { w.saved = false })
+	version, err := w.s.store.EntityVersion(ctx, w.entity.Name, w.obj.ID)
+	if err != nil {
+		return err
 	}
+	wasSaved, previousVersion := w.saved, w.expectedVersion
+	w.saved = true
+	w.expectedVersion = &version
+	storage.DeferUntilTxRollback(ctx, func() {
+		w.saved = wasSaved
+		w.expectedVersion = previousVersion
+	})
 	return nil
 }
 
@@ -633,10 +653,24 @@ func (w *docWriter) accessID() uuid.UUID {
 	return uuid.Nil
 }
 
-// post запускает OnPost, собирает движения и фиксирует проведение —
-// та же логика, что в postDocument (UI-проведение).
+// conduct performs the implicit write and posting as one atomic operation.
+// OnWrite, OnPost and all nested DSL writes share the same transaction/scope.
+func (w *docWriter) conduct() error {
+	return w.s.store.WithTxScope(w.ctx(), func(ctx context.Context) error {
+		if err := w.writeInContext(ctx); err != nil {
+			return err
+		}
+		return w.postInContext(ctx)
+	})
+}
+
 func (w *docWriter) post() error {
-	ctx := w.ctx()
+	return w.s.store.WithTxScope(w.ctx(), w.postInContext)
+}
+
+// postInContext запускает OnPost, собирает движения и фиксирует проведение —
+// та же логика, что в postDocument (UI-проведение).
+func (w *docWriter) postInContext(ctx context.Context) error {
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.obj.ID, w.obj.Fields); err != nil {
 		return err
 	}
@@ -659,21 +693,19 @@ func (w *docWriter) post() error {
 		return fmt.Errorf("%s", errMsg)
 	}
 	// OnPost мог изменить реквизиты шапки (расчётные поля) — персистим их upsert'ом
-	// после хука, как это делает entityservice.Save при проведении. Финальный Upsert
-	// повышает _version, поэтому очередь обмена обязательно перерегистрируется в
-	// этой же транзакции: RegisterExchangeChange — idempotent upsert, это не эхо.
-	return w.s.store.WithTxIfNeeded(ctx, func(ctx context.Context) error {
-		if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
-			return err
-		}
-		if err := w.s.saveMovements(ctx, w.entity.Name, w.obj.ID, mc); err != nil {
-			return err
-		}
-		if err := w.s.store.SetPosted(ctx, w.entity.Name, w.obj.ID, true); err != nil {
-			return err
-		}
-		return exchange.RegisterOnSave(ctx, w.s.store, w.s.reg.ExchangePlans(), w.entity, w.obj.ID, false)
-	})
+	// после хука, как это делает entityservice.Save при проведении. writeInContext
+	// уже создал ровно одну логическую версию этой операции, поэтому сохраняем
+	// hook-поля без второго инкремента _version.
+	if err := w.s.store.UpsertPreserveVersion(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+		return err
+	}
+	if err := w.s.saveMovements(ctx, w.entity.Name, w.obj.ID, mc); err != nil {
+		return err
+	}
+	if err := w.s.store.SetPosted(ctx, w.entity.Name, w.obj.ID, true); err != nil {
+		return err
+	}
+	return exchange.RegisterOnSave(ctx, w.s.store, w.s.reg.ExchangePlans(), w.entity, w.obj.ID, false)
 }
 
 // ensureSelfRef устанавливает псевдо-реквизит «Ссылка» самого документа, чтобы
