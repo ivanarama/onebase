@@ -390,7 +390,7 @@ func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any
 			}
 			id, _ := uuid.Parse(idStr)
 			if refRow, err := s.store.GetByID(ctx, entity.Name, id, entity); err == nil {
-				uuidToLabel[idStr] = firstStringField(refRow, entity)
+				uuidToLabel[idStr] = s.maskedRecordLabel(ctx, entity, refRow)
 			}
 		}
 	}

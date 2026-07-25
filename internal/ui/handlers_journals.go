@@ -218,7 +218,7 @@ func (s *Server) resolveJournalRefs(ctx context.Context, j *metadata.Journal, co
 			if err != nil {
 				continue
 			}
-			labels[idStr] = firstStringField(refRow, refEntity)
+			labels[idStr] = s.maskedRecordLabel(ctx, refEntity, refRow)
 		}
 		// Replace in rows
 		for _, row := range rows {

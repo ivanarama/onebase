@@ -119,7 +119,7 @@ func (s *Server) objectAttributeValues(ctx context.Context, args []any) (any, er
 			continue
 		}
 		if ref.key.Name == "" || ref.key.Name == ref.key.UUID {
-			ref.key.Name = firstStringField(row, entity)
+			ref.key.Name = s.maskedRecordLabel(ctx, entity, row)
 		}
 		vals := make(map[string]any, len(fields))
 		for _, f := range fields {
@@ -330,7 +330,7 @@ func (s *Server) bulkReferenceNames(ctx context.Context, rows map[string]map[str
 		}
 		names[entityName] = make(map[string]string, len(refRows))
 		for idStr, row := range refRows {
-			names[entityName][idStr] = firstStringField(row, refEntity)
+			names[entityName][idStr] = s.maskedRecordLabel(ctx, refEntity, row)
 		}
 	}
 	return names
@@ -392,7 +392,7 @@ func (s *Server) refFromValue(ctx context.Context, refEntityName string, raw any
 		if id, err := uuid.Parse(idStr); err == nil {
 			if err := s.checkDSLRowAccess(ctx, refEntity, "read", id, nil); err == nil {
 				if rr, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity); err == nil && rr != nil {
-					name = firstStringField(rr, refEntity)
+					name = s.maskedRecordLabel(ctx, refEntity, rr)
 				}
 			}
 		}

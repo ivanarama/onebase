@@ -444,7 +444,7 @@ func (s *Server) resolveRefColumns(ctx context.Context, rows []map[string]any, c
 			for _, entity := range entities {
 				refRow, err := s.store.GetByID(ctx, entity.Name, id, entity)
 				if err == nil {
-					uuidToLabel[idStr] = firstStringField(refRow, entity)
+					uuidToLabel[idStr] = s.maskedRecordLabel(ctx, entity, refRow)
 					break
 				}
 			}
@@ -880,7 +880,7 @@ func (s *Server) resolveRefs(ctx context.Context, entity *metadata.Entity, rows 
 			if err != nil {
 				continue
 			}
-			labels[idStr] = firstStringField(refRow, refEntity)
+			labels[idStr] = s.maskedRecordLabel(ctx, refEntity, refRow)
 		}
 		// replace UUIDs with labels in all rows
 		for _, row := range rows {
@@ -927,7 +927,7 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 		}
 		labels := make(map[string]string, len(refRows))
 		for idStr, refRow := range refRows {
-			labels[idStr] = firstStringField(refRow, refEntity)
+			labels[idStr] = s.maskedRecordLabel(ctx, refEntity, refRow)
 		}
 		// replace plain UUID strings with *interpreter.Ref{UUID, Name, Manager}
 		mgr := s.refManagerFor(refEntity, ctx)
@@ -999,7 +999,7 @@ func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, 
 		}
 		obj.Fields[matchKey] = &interpreter.Ref{
 			UUID:    idStr,
-			Name:    firstStringField(refRow, refEntity),
+			Name:    s.maskedRecordLabel(ctx, refEntity, refRow),
 			Type:    refEntity.Name,
 			Manager: s.refManagerFor(refEntity, ctx),
 		}
@@ -1024,7 +1024,7 @@ func (s *Server) buildHierarchyBreadcrumbs(ctx context.Context, entity *metadata
 		}
 		crumbs = append(crumbs, map[string]string{
 			"ID":    ancestorID.String(),
-			"Label": firstStringField(row, entity),
+			"Label": s.maskedRecordLabel(ctx, entity, row),
 		})
 	}
 	return crumbs
@@ -1046,7 +1046,7 @@ func (s *Server) loadFolderOptions(ctx context.Context, entity *metadata.Entity,
 	var folders []map[string]any
 	for _, row := range rows {
 		if asBool(row["is_folder"]) {
-			row["_label"] = firstStringField(row, entity)
+			row["_label"] = s.maskedRecordLabel(ctx, entity, row)
 			folders = append(folders, row)
 		}
 	}
@@ -1076,7 +1076,7 @@ func (s *Server) appendSelectedFolderOptions(ctx context.Context, rows []map[str
 		if !s.rowAllowsSelected(ctx, entity, row) {
 			continue
 		}
-		row["_label"] = firstStringField(row, entity)
+		row["_label"] = s.maskedRecordLabel(ctx, entity, row)
 		rows = append(rows, row)
 		seen[idStr] = true
 	}

@@ -1617,7 +1617,7 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 				EntityName: entity.Name,
 				Kind:       string(entity.Kind),
 				ID:         idStr,
-				Label:      firstStringField(row, entity),
+				Label:      s.maskedRecordLabel(r.Context(), entity, row),
 				HasRefs:    len(refs) > 0,
 			})
 		}

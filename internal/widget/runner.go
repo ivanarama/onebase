@@ -437,6 +437,7 @@ func (r *Runner) resolveUUIDs(ctx context.Context, rows []map[string]any) {
 				continue
 			}
 			if refRow, err := r.Store.GetByID(ctx, entity.Name, id, entity); err == nil {
+				r.maskRecord(entity, refRow)
 				for _, f := range entity.Fields {
 					if s, ok := refRow[f.Name].(string); ok && strings.TrimSpace(s) != "" {
 						uuidToLabel[idStr] = s
@@ -707,6 +708,7 @@ func recordPresentation(ctx context.Context, r *Runner, entityName, idStr string
 	if err != nil || row == nil {
 		return shortID(idStr)
 	}
+	r.maskRecord(ent, row)
 	if ent.Kind == metadata.KindDocument {
 		num := fmt.Sprintf("%v", firstNonEmpty(row, "Номер", "Number"))
 		dateRaw := firstNonEmpty(row, "Дата", "Date")
@@ -728,6 +730,15 @@ func recordPresentation(ctx context.Context, r *Runner, entityName, idStr string
 		}
 	}
 	return shortID(idStr)
+}
+
+// maskRecord applies the same field-level policy as UI read paths before a
+// UUID-derived label enters a widget result (and potentially its cache).
+func (r *Runner) maskRecord(entity *metadata.Entity, row map[string]any) {
+	if entity == nil {
+		return
+	}
+	access.MaskRecord(access.FieldDecisions(r.User, string(entity.Kind), entity.Name, entity), row)
 }
 
 func firstNonEmpty(row map[string]any, keys ...string) any {

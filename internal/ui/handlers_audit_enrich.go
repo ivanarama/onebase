@@ -58,7 +58,7 @@ func (s *Server) enrichAuditEntries(ctx context.Context, entity *metadata.Entity
 			if err != nil {
 				continue
 			}
-			refLabels[key] = firstStringField(refRow, refEntity)
+			refLabels[key] = s.maskedRecordLabel(ctx, refEntity, refRow)
 		}
 	}
 	for _, e := range entries {
@@ -152,7 +152,7 @@ func (s *Server) enrichAuditEntriesGlobal(ctx context.Context, entries []*storag
 			if err != nil {
 				continue
 			}
-			refLabels[key] = firstStringField(refRow, refEntity)
+			refLabels[key] = s.maskedRecordLabel(ctx, refEntity, refRow)
 		}
 		if e.OldValue != nil {
 			if idStr := extractUUIDFromAuditVal(e.OldValue); idStr != "" {
