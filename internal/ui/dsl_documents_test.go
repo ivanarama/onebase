@@ -755,10 +755,14 @@ func TestDocsRoot_AutoNumberOnWrite(t *testing.T) {
 	// Два документа без явного номера → автонумерация.
 	dp.CallMethod("создать", nil).(*docWriter).CallMethod("записать", nil)
 	dp.CallMethod("создать", nil).(*docWriter).CallMethod("записать", nil)
-	// Третий — с явно заданным номером, он должен сохраниться без изменений.
-	w3 := dp.CallMethod("создать", nil).(*docWriter)
-	w3.Set("Номер", "РУЧНОЙ-1")
-	w3.CallMethod("записать", nil)
+	// Пробельный номер тоже считается пустым.
+	wWhitespace := dp.CallMethod("создать", nil).(*docWriter)
+	wWhitespace.Set("Номер", " \t ")
+	wWhitespace.CallMethod("записать", nil)
+	// Явно заданный номер сохраняется без изменений.
+	wManual := dp.CallMethod("создать", nil).(*docWriter)
+	wManual.Set("Номер", "РУЧНОЙ-1")
+	wManual.CallMethod("записать", nil)
 
 	rows, err := db.QueryAll(ctx, "SELECT номер FROM заявка")
 	if err != nil {
@@ -768,7 +772,7 @@ func TestDocsRoot_AutoNumberOnWrite(t *testing.T) {
 	for _, row := range rows {
 		got[fmt.Sprint(row["номер"])] = true
 	}
-	for _, want := range []string{"ЗВ-0001", "ЗВ-0002", "РУЧНОЙ-1"} {
+	for _, want := range []string{"ЗВ-0001", "ЗВ-0002", "ЗВ-0003", "РУЧНОЙ-1"} {
 		if !got[want] {
 			t.Errorf("ожидался номер %q, получены: %v", want, got)
 		}

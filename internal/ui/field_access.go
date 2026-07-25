@@ -35,12 +35,6 @@ func (s *Server) maskRecords(ctx context.Context, entity *metadata.Entity, rows 
 	access.MaskRecords(s.fieldDecisions(ctx, entity), rows)
 }
 
-// fieldMaskRestricted reports whether reading entity masks any field for the
-// request user (used by the storage chokepoint / diagnostics).
-func (s *Server) fieldMaskRestricted(ctx context.Context, entity *metadata.Entity) bool {
-	return len(s.fieldDecisions(ctx, entity)) > 0
-}
-
 // deniedMaskedColumn is the fail-closed report/AI gate (план 88D): cols are
 // logical fields from query.Result.ProjectionFields, before output aliases.
 func (s *Server) deniedMaskedColumn(ctx context.Context, sources []query.SourceRef, cols []string) string {

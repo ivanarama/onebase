@@ -24,6 +24,7 @@ import (
 type Server struct {
 	srv     *http.Server
 	handler http.Handler
+	uiSrv   *ui.Server
 }
 
 // New строит HTTP-сервер базы. host «» = 127.0.0.1 (см. addr.go): наружу
@@ -150,7 +151,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		mountMetrics(r, debugToken, metricsReg, store)
 	}
 
-	return &Server{handler: r, srv: &http.Server{
+	return &Server{handler: r, uiSrv: uiSrv, srv: &http.Server{
 		Addr:    listenAddr(host, port),
 		Handler: r,
 		// Slowloris-защита: обрываем клиента, который медленно шлёт заголовки,
@@ -161,6 +162,14 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}}
+}
+
+// InvalidateWidgetCache makes metadata hot reload immediately visible on the
+// dashboard instead of waiting for the widget TTL.
+func (s *Server) InvalidateWidgetCache() {
+	if s != nil && s.uiSrv != nil {
+		s.uiSrv.InvalidateWidgetCache()
+	}
 }
 
 // healthzHandler — readiness-проба: 200, только если БД отвечает, иначе 503.

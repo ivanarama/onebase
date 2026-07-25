@@ -368,6 +368,44 @@ func TestCallcenterApproval_SubmitAndApprove(t *testing.T) {
 	}
 }
 
+func TestCallcenterApproval_EnforcesSeparationOfDuties(t *testing.T) {
+	f := newValidationFixture(t)
+	request := f.saveRequest(time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC), "Тверская", "79990000000", "")
+	if request.DSLError != "" {
+		t.Fatalf("create request: %s", request.DSLError)
+	}
+
+	vars := f.server.buildDSLVars(f.ctx, nil)
+	requestRef := f.documentRef(vars, "Заявка", request.ID)
+	if _, err := f.callApproval(vars, "ОтправитьНаСогласование", requestRef, "operator", "operator"); err == nil ||
+		!strings.Contains(err.Error(), "собственную заявку") {
+		t.Fatalf("self-approval must be rejected, got %v", err)
+	}
+
+	taskValue, err := f.callApproval(vars, "ОтправитьНаСогласование", requestRef, "operator", "supervisor")
+	if err != nil {
+		t.Fatalf("submit for approval: %v", err)
+	}
+	taskRef := taskValue.(*interpreter.Ref)
+	if _, err := f.callApproval(vars, "ВыполнитьЗадачу", taskRef, "operator", "Утверждено", "self"); err == nil ||
+		!strings.Contains(err.Error(), "только её адресат") {
+		t.Fatalf("non-addressee completion must be rejected, got %v", err)
+	}
+
+	requestRow, err := f.db.GetByID(f.ctx, "Заявка", request.ID, f.entity("Заявка"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := uuid.MustParse(taskRef.UUID)
+	taskRow, err := f.db.GetByID(f.ctx, "Задача", taskID, f.entity("Задача"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestRow["Состояние"] != "НаСогласовании" || taskRow["Состояние"] != "Открыта" {
+		t.Fatalf("rejected completion changed state: request=%#v task=%#v", requestRow, taskRow)
+	}
+}
+
 func TestCallcenterApproval_RejectCreatesReworkTask(t *testing.T) {
 	f := newValidationFixture(t)
 	request := f.saveRequest(time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC), "Тверская", "79990000000", "")

@@ -282,6 +282,9 @@ func lessRestrictive(a, b FieldDecision) bool {
 	if ra != rb {
 		return ra < rb
 	}
+	// Keep is meaningful only for mask_tail: keeping more trailing characters
+	// reveals more. For other equal strategies it is ignored by masking, and
+	// this tie-break merely keeps multi-role resolution deterministic.
 	return a.Keep > b.Keep
 }
 

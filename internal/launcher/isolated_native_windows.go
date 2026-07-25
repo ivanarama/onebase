@@ -24,7 +24,7 @@ func nativeIsolatedCommand(profileDir, url string) (*exec.Cmd, bool) {
 		return nil, false
 	}
 	cmd := exec.Command(exe, "window", "--url", url, "--title", "onebase — Предприятие")
-	cmd.Env = os.Environ()
+	cmd.Env = environmentWithout(os.Environ(), "ONEBASE_WEBVIEW_PROFILE")
 	if profileDir != "" {
 		cmd.Env = append(cmd.Env, "ONEBASE_WEBVIEW_PROFILE="+profileDir)
 	}

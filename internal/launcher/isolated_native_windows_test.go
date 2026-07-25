@@ -11,6 +11,7 @@ import (
 )
 
 func TestNativeIsolatedCommand(t *testing.T) {
+	t.Setenv("ONEBASE_WEBVIEW_PROFILE", `C:\profiles\inherited`)
 	if !nativeIsolatedSupported() {
 		t.Fatal("GUI-сборка под Windows обязана поддерживать нативные окна")
 	}
@@ -24,13 +25,29 @@ func TestNativeIsolatedCommand(t *testing.T) {
 			t.Errorf("аргументы не содержат %q: %v", want, cmd.Args)
 		}
 	}
-	found := false
+	found, inherited := 0, false
 	for _, e := range cmd.Env {
 		if e == `ONEBASE_WEBVIEW_PROFILE=C:\profiles\p1` {
-			found = true
+			found++
+		}
+		if e == `ONEBASE_WEBVIEW_PROFILE=C:\profiles\inherited` {
+			inherited = true
 		}
 	}
-	if !found {
+	if found != 1 || inherited {
 		t.Errorf("в окружении нет ONEBASE_WEBVIEW_PROFILE: %v", cmd.Env)
+	}
+}
+
+func TestNativeSharedProfileDoesNotInheritIsolatedProfile(t *testing.T) {
+	t.Setenv("ONEBASE_WEBVIEW_PROFILE", `C:\profiles\inherited`)
+	cmd, ok := nativeIsolatedCommand("", "http://localhost:8080/ui")
+	if !ok {
+		t.Fatal("nativeIsolatedCommand должен вернуть команду")
+	}
+	for _, e := range cmd.Env {
+		if strings.HasPrefix(strings.ToUpper(e), "ONEBASE_WEBVIEW_PROFILE=") {
+			t.Fatalf("общее окно унаследовало изолированный профиль: %q", e)
+		}
 	}
 }

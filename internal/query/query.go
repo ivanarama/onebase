@@ -481,7 +481,7 @@ type translator struct {
 	rowsScoped  bool                          // true после внедрения rowFilters в outer WHERE
 	rowApplied  []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
 	parenDepth  int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
-	sourceCtx   sourceContext                 // тип основного источника и квалификаторов для системных колонок регистра
+	sourceCtx   sourceContext                 // scoped-типы источников для системных колонок регистра
 }
 
 type sourceClass uint8
@@ -493,8 +493,24 @@ const (
 )
 
 type sourceContext struct {
+	scopes     []sourceScope
+	tokenScope []int
+}
+
+type sourceScope struct {
 	main       sourceClass
 	qualifiers map[string]sourceClass
+}
+
+func (ctx sourceContext) scopeAt(tokenPos int) (sourceScope, bool) {
+	if tokenPos < 0 || tokenPos >= len(ctx.tokenScope) {
+		return sourceScope{}, false
+	}
+	scopeID := ctx.tokenScope[tokenPos]
+	if scopeID < 0 || scopeID >= len(ctx.scopes) {
+		return sourceScope{}, false
+	}
+	return ctx.scopes[scopeID], true
 }
 
 type pendingRowFilter struct {
@@ -2187,40 +2203,93 @@ func preScanMainTable(tokens []tok) string {
 	return ""
 }
 
-// preScanSourceContext определяет, какие квалификаторы относятся к регистрам,
-// а какие — к документам/справочникам. Это нужно до основного прохода, потому
-// что SELECT транслируется раньше FROM, а русские имена системных колонок
-// регистра (Период, Регистратор, ...) совпадают с допустимыми прикладными
-// полями сущностей.
+// preScanSourceContext определяет по каждому SELECT-scope, какие квалификаторы
+// относятся к регистрам, а какие — к документам/справочникам. Это нужно до
+// основного прохода, потому что SELECT транслируется раньше FROM, а русские
+// имена системных колонок регистра (Период, Регистратор, ...) совпадают с
+// допустимыми прикладными полями сущностей. Scope привязан к токенам, а не
+// только к глубине скобок: Период внутри Год(Период) остаётся в родительском
+// SELECT, а SELECT-подзапрос получает собственный main/aliases.
 func preScanSourceContext(tokens []tok) sourceContext {
-	ctx := sourceContext{qualifiers: map[string]sourceClass{}}
-	for i := 0; i+2 < len(tokens); i++ {
+	ctx := sourceContext{tokenScope: make([]int, len(tokens))}
+	for i := range ctx.tokenScope {
+		ctx.tokenScope[i] = -1
+	}
+	type scopeFrame struct {
+		id    int
+		depth int
+	}
+	var active []scopeFrame
+	depth := 0
+
+	for i := 0; i < len(tokens); i++ {
+		t := tokens[i]
+		if t.kind == tIdent {
+			if kw, ok := sqlKW(t.val); ok && kw == "SELECT" {
+				// UNION starts a sibling SELECT at the same depth; nested SELECT
+				// keeps every shallower parent frame active.
+				for len(active) > 0 && active[len(active)-1].depth >= depth {
+					active = active[:len(active)-1]
+				}
+				scopeID := len(ctx.scopes)
+				ctx.scopes = append(ctx.scopes, sourceScope{qualifiers: map[string]sourceClass{}})
+				active = append(active, scopeFrame{id: scopeID, depth: depth})
+			}
+		}
+		if len(active) > 0 {
+			ctx.tokenScope[i] = active[len(active)-1].id
+		}
+
+		if i+2 >= len(tokens) {
+			if t.kind == tLParen {
+				depth++
+			} else if t.kind == tRParen {
+				for len(active) > 0 && active[len(active)-1].depth >= depth {
+					active = active[:len(active)-1]
+				}
+				if depth > 0 {
+					depth--
+				}
+			}
+			continue
+		}
 		if tokens[i].kind != tIdent {
+			if t.kind == tLParen {
+				depth++
+			} else if t.kind == tRParen {
+				for len(active) > 0 && active[len(active)-1].depth >= depth {
+					active = active[:len(active)-1]
+				}
+				if depth > 0 {
+					depth--
+				}
+			}
 			continue
 		}
 		typeUpper := strings.ToUpper(tokens[i].val)
-		if !isSourceType(typeUpper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if len(active) == 0 || !isSourceType(typeUpper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
+		scope := &ctx.scopes[active[len(active)-1].id]
 
 		class := sourceClassEntity
 		if isAccumRegType(typeUpper) || isInfoRegType(typeUpper) || isAccountRegType(typeUpper) {
 			class = sourceClassRegister
 		}
-		if ctx.main == sourceClassUnknown {
-			ctx.main = class
+		if scope.main == sourceClassUnknown {
+			scope.main = class
 		}
 
 		entityName := strings.ToLower(tokens[i+2].val)
-		ctx.qualifiers[entityName] = class
-		ctx.qualifiers[sourceToTable(typeUpper, tokens[i+2].val)] = class
+		scope.qualifiers[entityName] = class
+		scope.qualifiers[sourceToTable(typeUpper, tokens[i+2].val)] = class
 
 		// У обычного источника КАК/AS следует сразу за именем сущности.
 		aliasPos := i + 3
 		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
 			aliasUpper := strings.ToUpper(tokens[aliasPos].val)
 			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-				ctx.qualifiers[strings.ToLower(tokens[aliasPos+1].val)] = class
+				scope.qualifiers[strings.ToLower(tokens[aliasPos+1].val)] = class
 				continue
 			}
 		}
@@ -2242,7 +2311,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 					if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
 						aliasUpper := strings.ToUpper(tokens[aliasPos].val)
 						if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-							ctx.qualifiers[strings.ToLower(tokens[aliasPos+1].val)] = class
+							scope.qualifiers[strings.ToLower(tokens[aliasPos+1].val)] = class
 						}
 					}
 					j = len(tokens)
@@ -2261,18 +2330,22 @@ func (tr *translator) systemColumnAlias(name string, prevDot bool) (string, bool
 	if !ok {
 		return "", false
 	}
+	scope, hasScope := tr.sourceCtx.scopeAt(tr.pos - 1)
+	if !hasScope {
+		return "", false
+	}
 	if prevDot && tr.pos >= 3 {
 		qualifier := strings.ToLower(tr.tokens[tr.pos-3].val)
+		if class, known := scope.qualifiers[qualifier]; known {
+			return col, class == sourceClassRegister
+		}
 		// Обращение через ссылочное поле регистра ведёт к документу или
 		// справочнику, поэтому Регистр.Документ.Период — не системный period.
 		if tr.findRefDim(qualifier) != nil {
 			return "", false
 		}
-		if class, known := tr.sourceCtx.qualifiers[qualifier]; known {
-			return col, class == sourceClassRegister
-		}
 	}
-	return col, tr.sourceCtx.main == sourceClassRegister
+	return col, scope.main == sourceClassRegister
 }
 
 // projectionFieldNames extracts identifiers used by SELECT expressions before

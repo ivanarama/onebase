@@ -338,12 +338,12 @@ func (h *handler) deleteObject(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 		if err := h.store.WithTx(r.Context(), func(ctx context.Context) error {
-			// Clear movements for documents before deleting
+			// Recorder columns intentionally have no FK: register rows may
+			// reference different document tables. Every delete path must
+			// therefore clear all movement kinds explicitly in this transaction.
 			if kind == metadata.KindDocument {
-				for _, reg := range h.reg.Registers() {
-					if err := h.store.WriteMovements(ctx, reg.Name, entityName, id, nil, reg, nil); err != nil {
-						return err
-					}
+				if err := h.clearMovements(ctx, entityName, id); err != nil {
+					return err
 				}
 			}
 			if err := exchange.RegisterOnDelete(ctx, h.store, h.reg.ExchangePlans(), entity, id); err != nil {

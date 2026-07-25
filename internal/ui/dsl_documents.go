@@ -567,7 +567,7 @@ func (w *docWriter) autoNumber(ctx context.Context) {
 		if !strings.EqualFold(f.Name, "Номер") || f.Type != metadata.FieldTypeString {
 			continue
 		}
-		if cur := w.obj.Get("Номер"); cur == nil || fmt.Sprint(cur) == "" {
+		if cur := w.obj.Get("Номер"); cur == nil || strings.TrimSpace(fmt.Sprint(cur)) == "" {
 			w.obj.Set("Номер", w.s.generateNumber(ctx, w.entity, w.obj.Fields))
 		}
 		return

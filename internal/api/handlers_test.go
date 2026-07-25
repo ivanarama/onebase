@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -1421,6 +1422,17 @@ func TestAPI_PostDocument_WritesMovements(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("post response is not JSON: %v", err)
+	}
+	for key := range response {
+		switch key {
+		case "id", "posted", "messages":
+		default:
+			t.Fatalf("post response leaked entity field %q: %s", key, w.Body.String())
+		}
+	}
 
 	// Проверим что движения реально записались.
 	rows, err := db.GetMovements(ctx, "Остатки", reg, storage.RegFilter{})
@@ -1429,6 +1441,52 @@ func TestAPI_PostDocument_WritesMovements(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("ожидалось 1 движение, получено %d: %v", len(rows), rows)
+	}
+}
+
+func TestAPI_DeleteDocumentClearsInfoRegisterMovements(t *testing.T) {
+	doc := &metadata.Entity{
+		Name:    "УстановкаЦен",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields:  []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	ir := &metadata.InfoRegister{
+		Name:       "Цены",
+		Periodic:   true,
+		Dimensions: []metadata.Field{{Name: "Товар", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Цена", Type: metadata.FieldTypeNumber}},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{doc}, nil)
+	if err := h.store.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatal(err)
+	}
+	h.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}, InfoRegs: []*metadata.InfoRegister{ir}})
+
+	id := uuid.New()
+	if err := h.store.Upsert(ctx, doc.Name, id, map[string]any{"Номер": "1"}, doc); err != nil {
+		t.Fatal(err)
+	}
+	period := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	if err := h.store.WriteInfoMovements(ctx, ir.Name, doc.Name, id, []map[string]any{{
+		"Товар": "Молоток", "Цена": float64(100),
+	}}, ir, &period); err != nil {
+		t.Fatal(err)
+	}
+
+	r := reqWithEntity("DELETE", "/documents/"+doc.Name+"/"+id.String(), nil,
+		map[string]string{"entity": doc.Name, "id": id.String()}, nil)
+	w := httptest.NewRecorder()
+	h.deleteObject(metadata.KindDocument).ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete: expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+	rows, err := h.store.InfoRegList(ctx, ir, storage.RegFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("delete left %d orphan info-register movements: %v", len(rows), rows)
 	}
 }
 

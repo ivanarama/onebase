@@ -220,7 +220,7 @@ func TestSubmit_NewDocument_AutoNumber(t *testing.T) {
 	}
 	s, ctx := newSubmitTestServer(t, []*metadata.Entity{doc})
 
-	form := url.Values{} // Номер пустой — должен сгенерироваться
+	form := url.Values{"Номер": {" \t "}} // Пробельный Номер тоже пустой.
 	r := reqWithChi("POST", "/ui/document/Заявка/new", form, map[string]string{"entity": "Заявка"})
 	w := httptest.NewRecorder()
 	s.submit(w, r)

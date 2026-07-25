@@ -80,6 +80,8 @@ func (c *Cache) Invalidate() {
 }
 
 func cacheKey(widgetName, user, security string) string {
+	// NUL cannot occur in widget names or logins and cannot occur in the hex
+	// security fingerprint, so unlike a printable delimiter it is unambiguous.
 	return widgetName + "\x00" + user + "\x00" + security
 }
 

@@ -467,6 +467,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 			next.LoadWidgets(newProj.Widgets)
 			next.LoadHomePage(newProj.HomePage)
 			reg.ReplaceProjectFrom(next)
+			srv.InvalidateWidgetCache()
 			// LoadFromDB may materialise form/layout resources in a temporary
 			// directory. Keep successful reload projects alive until shutdown.
 			reloadProjects = append(reloadProjects, newProj)

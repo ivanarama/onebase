@@ -110,6 +110,9 @@ func (r *NumeratorsRoot) nextNumber(args []any) any {
 			for field, value := range fields {
 				if strings.EqualFold(field, num.Scope) && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" {
 					fields[num.Scope] = value
+					if field != num.Scope {
+						delete(fields, field)
+					}
 					hasScope = true
 					break
 				}
@@ -137,5 +140,7 @@ func (r *NumeratorsRoot) nextNumber(args []any) any {
 	for len(s) < 6 {
 		s = "0" + s
 	}
+	// Legacy-нумератор задаёт минимальную ширину, а не ограничение диапазона:
+	// после 999999 номер естественно становится семизначным.
 	return s
 }

@@ -230,11 +230,19 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	proc := s.Reg.GetProcedure(req.Entity.Name, hookName)
 
 	var msgs []string
+	wasPosted := false
 	// Хук и все его DB-побочные записи выполняются в той же транзакции, что
 	// шапка, ТЧ, движения и проведение. Для нового объекта сначала вставляется
 	// полноценная шапка: FK-ссылки из создаваемых хуком объектов уже валидны, но
 	// при любой последующей ошибке откатываются вместе с родителем.
 	err := s.Store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		if req.Entity.Posting && !req.IsNew && !isPosting {
+			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
+			if err != nil {
+				return err
+			}
+			wasPosted, _ = stored["posted"].(bool)
+		}
 		if proc != nil {
 			if req.IsNew {
 				if err := s.Store.UpsertProvisional(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity); err != nil {
@@ -315,7 +323,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			// прежнюю семантику: это полноценная отмена проведения. Поэтому
 			// недостаточно снять флаг и очистить движения — должен выполниться
 			// OnUnpost в той же транзакции.
-			if !req.IsNew {
+			if !req.IsNew && wasPosted {
 				unpostMovements := runtime.NewMovementsCollector(req.Entity.Name, req.ID)
 				SetPeriodFromFields(unpostMovements, req.Entity, obj.Fields)
 				return s.unpostInTx(txCtx, req.Entity, req.ID, unpostMovements, &msgs, lockCollector)

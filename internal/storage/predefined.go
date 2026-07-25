@@ -259,7 +259,8 @@ func topoSortPredefined(items []*metadata.PredefinedItem, selfRefFields map[stri
 		}
 		color[name] = gray
 		for _, dep := range deps[name] {
-			if err := visit(dep, append(path, name)); err != nil {
+			nextPath := append(append([]string(nil), path...), name)
+			if err := visit(dep, nextPath); err != nil {
 				return err
 			}
 		}

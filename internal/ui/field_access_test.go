@@ -49,6 +49,7 @@ func TestUI_QueryProjectionMaskGateRejectsAliasAndExpression(t *testing.T) {
 	for _, text := range []string{
 		`ВЫБРАТЬ Телефон КАК Контакт ИЗ Справочник.Клиент`,
 		`ВЫБРАТЬ Строка(Телефон) КАК Контакт ИЗ Справочник.Клиент`,
+		`ВЫБРАТЬ Телефон + " " + Наименование КАК Контакт ИЗ Справочник.Клиент`,
 		`ВЫБРАТЬ * ИЗ Справочник.Клиент`,
 	} {
 		compiled, err := s.compileQueryWithRowAccess(ctx, text, nil)

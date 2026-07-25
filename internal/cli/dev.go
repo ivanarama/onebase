@@ -89,6 +89,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 
 	var watchDir string
 	var appCfg *project.AppConfig
+	var srv *api.Server
 	load := func() {
 		var proj *project.Project
 		var lerr error
@@ -205,6 +206,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 				devLog.Warn("auto backup job registration failed", "err", err)
 			}
 		}
+		if srv != nil {
+			srv.InvalidateWidgetCache()
+		}
 		fmt.Fprintln(os.Stdout, "[dev] reloaded")
 	}
 	load()
@@ -261,7 +265,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 	uiCfg.Bundle = bundle
 	// dev-сервер — всегда loopback (план 53: secure-by-default bind)
-	srv := api.New(reg, db, interp, authRepo, "127.0.0.1", port, uiCfg, sched)
+	srv = api.New(reg, db, interp, authRepo, "127.0.0.1", port, uiCfg, sched)
 
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	defer schedCancel()

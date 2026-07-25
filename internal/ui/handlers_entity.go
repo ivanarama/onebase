@@ -467,7 +467,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		if entity.Kind == metadata.KindDocument {
 			for _, f := range entity.Fields {
 				if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
-					if v := fmt.Sprintf("%v", obj.Get("Номер")); v == "" || v == "<nil>" {
+					if v := fmt.Sprintf("%v", obj.Get("Номер")); v == "<nil>" || strings.TrimSpace(v) == "" {
 						obj.Set("Номер", s.generateNumber(r.Context(), entity, obj.Fields))
 					}
 					break

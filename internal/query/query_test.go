@@ -316,6 +316,42 @@ func TestCompile_SystemColsUseQualifiedSourceType(t *testing.T) {
 	}
 }
 
+func TestCompile_SystemColsAreScopedToNestedSelect(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "outer register inner document",
+			src: `ВЫБРАТЬ Период,
+    (ВЫБРАТЬ Период ИЗ Документ.НачислениеВзноса КАК Д) КАК ПериодДокумента
+ИЗ РегистрНакопления.Взносы КАК Р`,
+			want: []string{"SELECT period,", "(SELECT период FROM начислениевзноса AS д)"},
+		},
+		{
+			name: "outer document inner register",
+			src: `ВЫБРАТЬ Период,
+    (ВЫБРАТЬ Период ИЗ РегистрНакопления.Взносы КАК Р) КАК ПериодРегистра
+ИЗ Документ.НачислениеВзноса КАК Д`,
+			want: []string{"SELECT период,", "(SELECT period FROM рег_взносы AS р)"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := query.Compile(tt.src, query.CompileOpts{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(r.SQL, want) {
+					t.Errorf("ожидалось %q, получили: %s", want, r.SQL)
+				}
+			}
+		})
+	}
+}
+
 // Поле сущности, прочитанное через ссылочное измерение регистра, также не
 // должно ошибочно считаться системной колонкой самого регистра.
 func TestCompile_SystemColNameThroughReferenceRemainsEntityField(t *testing.T) {

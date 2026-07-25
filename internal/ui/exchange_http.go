@@ -2,7 +2,9 @@ package ui
 
 // Приёмные HTTP-эндпоинты онлайн-обмена (план 86, фаза 2). Монтируются ВНЕ
 // session-middleware (как HTTP-сервисы): базы аутентифицируются общим Bearer-
-// токеном плана (_settings exchange.token.<план>), не cookie.
+// токеном плана (_settings exchange.token.<план>), не cookie. Это
+// trusted-cooperative модель: FromNode/параметр peer нужны для маршрутизации и
+// bookkeeping, но не являются криптографически подтверждённой identity узла.
 //
 //	POST /exchange/{plan}/push       — принять пакет и загрузить в эту базу;
 //	GET  /exchange/{plan}/pull?to=X  — собрать и отдать пакет для узла X.
