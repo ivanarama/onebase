@@ -183,6 +183,22 @@ func TestCatWriter_ExplicitTransactionCommitAndRollback(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("rollback left %d catalog rows", count)
 	}
+	if got := rolledBack.CallMethod("ЭтоНовый", nil); got != true {
+		t.Fatalf("после rollback ЭтоНовый = %v, ожидалось true", got)
+	}
+
+	// Тот же writer должен снова пройти путь создания. Иначе ПриЗаписи видит
+	// ЭтоНовый=false, а созданные им FK-строки не находят provisional parent.
+	rolledBack.Set("Наименование", "Повтор после отката")
+	callTx("НачатьТранзакцию")
+	rolledBack.CallMethod("записать", nil)
+	callTx("ЗафиксироватьТранзакцию")
+	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM клиенты").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("повторная запись после rollback оставила %d строк, ожидалась 1", count)
+	}
 
 	callTx("НачатьТранзакцию")
 	committed := proxy.CallMethod("создать", nil).(*catWriter)
@@ -192,8 +208,8 @@ func TestCatWriter_ExplicitTransactionCommitAndRollback(t *testing.T) {
 	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM клиенты").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("commit left %d catalog rows, want 1", count)
+	if count != 2 {
+		t.Fatalf("commit left %d catalog rows, want 2", count)
 	}
 }
 

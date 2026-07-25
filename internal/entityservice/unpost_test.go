@@ -55,6 +55,34 @@ func TestUnpostHookErrorRollsBackFlagAndMovements(t *testing.T) {
 	assertUnpostState(t, db, ctx, doc, reg, id, true, 1)
 }
 
+func TestSaveExistingPostedDocumentRunsUnpostHook(t *testing.T) {
+	svc, db, ctx, doc, reg, id := newUnpostFixture(t, `
+Процедура ОбработкаУдаленияПроведения()
+  Если ЭтотОбъект.Posted Тогда
+    ВызватьИсключение("хук увидел проведённый документ");
+  КонецЕсли;
+  Сообщить("обычная запись вызвала отмену");
+КонецПроцедуры`)
+
+	result, err := svc.Save(ctx, SaveRequest{
+		Entity: doc,
+		ID:     id,
+		IsNew:  false,
+		Fields: map[string]any{"Номер": "2"},
+		Action: "",
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if result.DSLError != "" {
+		t.Fatalf("неожиданная DSL-ошибка: %s", result.DSLError)
+	}
+	if len(result.DSLMessages) != 1 || result.DSLMessages[0] != "обычная запись вызвала отмену" {
+		t.Fatalf("сообщения хука = %v", result.DSLMessages)
+	}
+	assertUnpostState(t, db, ctx, doc, reg, id, false, 0)
+}
+
 func newUnpostFixture(t *testing.T, hookSource string) (*Service, *storage.DB, context.Context, *metadata.Entity, *metadata.Register, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()

@@ -416,7 +416,8 @@ func parseTimeStr(s string) time.Time {
 	return time.Time{}
 }
 
-// execAudit runs a statement on the pool directly (audit inserts bypass tx).
+// execAudit follows the transaction in ctx, so rolled-back business changes do
+// not leave committed audit records.
 func (db *DB) execAudit(ctx context.Context, sql string, args ...any) error {
 	_, err := db.Exec(ctx, sql, args...)
 	return err
@@ -424,8 +425,8 @@ func (db *DB) execAudit(ctx context.Context, sql string, args ...any) error {
 
 // ActiveUserInfo represents a user seen recently in the audit log.
 type ActiveUserInfo struct {
-	Login     string
-	LastSeen  time.Time
+	Login    string
+	LastSeen time.Time
 }
 
 // ActiveUsersFromAudit returns distinct user_logins from _audit in the

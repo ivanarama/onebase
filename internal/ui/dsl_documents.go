@@ -618,7 +618,11 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 			return err
 		}
 	}
+	wasSaved := w.saved
 	w.saved = true
+	if !wasSaved {
+		storage.DeferUntilTxRollback(ctx, func() { w.saved = false })
+	}
 	return nil
 }
 

@@ -391,6 +391,57 @@ func TestDocWriter_IsNewAndRead(t *testing.T) {
 	}
 }
 
+func TestDocWriter_RollbackRestoresIsNew(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	doc := &metadata.Entity{
+		Name:   "Заметка",
+		Kind:   metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
+		t.Fatal(err)
+	}
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
+	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	txState := interpreter.NewTxState(ctx)
+	root := newDocsRoot(s, txState)
+	dp := root.Get("Заметка").(*docProxy)
+	txFns := interpreter.NewTxFunctions(txState, db)
+	callTx := func(name string) {
+		t.Helper()
+		if _, err := txFns[name].(interpreter.BuiltinFunc)(nil, "", 0); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+
+	w := dp.CallMethod("создать", nil).(*docWriter)
+	w.Set("Номер", "ОТКАТ")
+	callTx("НачатьТранзакцию")
+	w.CallMethod("записать", nil)
+	callTx("ОтменитьТранзакцию")
+	if got := w.CallMethod("этоновый", nil); got != true {
+		t.Fatalf("после rollback ЭтоНовый = %v, ожидалось true", got)
+	}
+
+	callTx("НачатьТранзакцию")
+	w.CallMethod("записать", nil)
+	callTx("ЗафиксироватьТранзакцию")
+	var count int
+	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM заметка").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("повторная запись после rollback оставила %d строк, ожидалась 1", count)
+	}
+}
+
 // Ссылка.ПолучитьОбъект() для существующего документа возвращает docWriter
 // с загруженной шапкой и табличными частями: можно прочитать значения,
 // изменить и Записать() — обновится та же запись по UUID, ТЧ перезапишется.

@@ -38,19 +38,36 @@ type FilterValue struct {
 
 // Upsert inserts or updates the object fields.
 func (db *DB) Upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
-	return db.upsert(ctx, entityName, id, fields, entity, true)
+	return db.upsert(ctx, entityName, id, fields, entity, true, upsertAuditAuto)
+}
+
+// UpsertProvisional inserts a transaction-local parent row without writing an
+// audit event. entityservice uses it before a new-object hook so FK children can
+// refer to the parent. The final UpsertPreserveVersion writes the single
+// externally visible create event after the hook and all final fields succeed.
+func (db *DB) UpsertProvisional(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
+	return db.upsert(ctx, entityName, id, fields, entity, true, upsertAuditSkip)
 }
 
 // UpsertPreserveVersion updates fields without advancing _version on conflict.
 // It is intentionally narrow: entityservice uses it only for the final write of
 // a new row provisionally inserted earlier in the SAME transaction so a hook can
-// create FK children. The externally visible committed object still starts at
-// version 1. Ordinary callers must use Upsert.
+// create FK children. It records one create event for the final object state;
+// the provisional insert deliberately does not audit. The externally visible
+// committed object still starts at version 1. Ordinary callers must use Upsert.
 func (db *DB) UpsertPreserveVersion(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
-	return db.upsert(ctx, entityName, id, fields, entity, false)
+	return db.upsert(ctx, entityName, id, fields, entity, false, upsertAuditCreate)
 }
 
-func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool) error {
+type upsertAuditMode uint8
+
+const (
+	upsertAuditAuto upsertAuditMode = iota
+	upsertAuditSkip
+	upsertAuditCreate
+)
+
+func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
 	d := db.dialect
 	// Read old value for audit diff (best-effort, ignore errors)
 	var oldRow map[string]any
@@ -141,9 +158,15 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 
 	// Audit (best-effort, non-blocking)
 	kind := string(entity.Kind)
-	if isNew {
+	switch {
+	case auditMode == upsertAuditSkip:
+		// A provisional row is not externally visible and is followed by the
+		// final create audit in the same transaction.
+	case auditMode == upsertAuditCreate:
 		db.logCreate(ctx, kind, entityName, id)
-	} else if oldRow != nil {
+	case isNew:
+		db.logCreate(ctx, kind, entityName, id)
+	case oldRow != nil:
 		changes := AuditDiff(oldRow, fields, entity)
 		if len(changes) > 0 {
 			db.logUpdate(ctx, kind, entityName, id, changes)

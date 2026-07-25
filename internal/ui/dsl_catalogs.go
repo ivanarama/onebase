@@ -11,6 +11,7 @@ import (
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/webhook"
 )
 
@@ -186,7 +187,11 @@ func (w *catWriter) write() error {
 	if result.DSLError != "" {
 		return fmt.Errorf("%s", result.DSLError)
 	}
+	wasSaved := w.saved
 	w.saved = true
+	if !wasSaved {
+		storage.DeferUntilTxRollback(ctx, func() { w.saved = false })
+	}
 	return nil
 }
 
