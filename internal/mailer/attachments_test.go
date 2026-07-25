@@ -89,6 +89,27 @@ func TestSanitizeHeaderValue(t *testing.T) {
 	}
 }
 
+func TestBuildMsg_HeaderValuesCannotInjectNewHeaders(t *testing.T) {
+	msg := buildMsg(
+		"from@example.com\r\nBcc: attacker@example.com",
+		"to@example.com\r\nCc: attacker@example.com",
+		"Тема\r\nReply-To: attacker@example.com",
+		"body",
+		"",
+	)
+	for _, injected := range []string{"\r\nBcc:", "\r\nCc:", "\r\nReply-To:"} {
+		if bytes.Contains(msg, []byte(injected)) {
+			t.Fatalf("в сообщение попал внедрённый заголовок %q:\n%s", injected, msg)
+		}
+	}
+}
+
+func TestSafeMediaTypeRejectsHeaderInjection(t *testing.T) {
+	if got := safeMediaType("text/plain\r\nX-Evil: 1"); got != "application/octet-stream" {
+		t.Fatalf("safeMediaType = %q", got)
+	}
+}
+
 // --- test helpers ---
 
 func newBufReader(b []byte) *bufio.Reader { return bufio.NewReader(bytes.NewReader(b)) }

@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"mime"
+	"net/mail"
 	"net/smtp"
 	"os"
 	"strings"
@@ -45,18 +47,17 @@ func (m *Mailer) SendWithAttachments(to, subject, textBody, htmlBody string, fil
 	if !m.Configured() {
 		return fmt.Errorf("email не настроен — добавьте секцию email в config/app.yaml")
 	}
+	headers, err := normalizeMessageHeaders(m.cfg, to, subject, textBody, htmlBody, files)
+	if err != nil {
+		return err
+	}
 	port := m.cfg.SMTPPort
 	if port == 0 {
 		port = 587
 	}
 	addr := fmt.Sprintf("%s:%d", m.cfg.SMTPHost, port)
 
-	from := m.cfg.FromAddress
-	if m.cfg.FromName != "" {
-		from = fmt.Sprintf("%s <%s>", m.cfg.FromName, m.cfg.FromAddress)
-	}
-
-	msg := buildMsgWithFiles(from, to, subject, textBody, htmlBody, files)
+	msg := buildMsgWithFiles(headers.from, headers.to, headers.subject, textBody, htmlBody, files)
 
 	var auth smtp.Auth
 	if m.cfg.SMTPUser != "" {
@@ -64,9 +65,62 @@ func (m *Mailer) SendWithAttachments(to, subject, textBody, htmlBody string, fil
 	}
 
 	if port == 465 {
-		return sendTLS(addr, m.cfg.SMTPHost, auth, m.cfg.FromAddress, to, msg)
+		return sendTLS(addr, m.cfg.SMTPHost, auth, headers.envelopeFrom, headers.envelopeTo, msg)
 	}
-	return smtp.SendMail(addr, auth, m.cfg.FromAddress, []string{to}, msg)
+	return smtp.SendMail(addr, auth, headers.envelopeFrom, []string{headers.envelopeTo}, msg)
+}
+
+type messageHeaders struct {
+	from         string
+	to           string
+	subject      string
+	envelopeFrom string
+	envelopeTo   string
+}
+
+func normalizeMessageHeaders(cfg Config, to, subject, textBody, htmlBody string, files []interpreter.EmailAttachment) (messageHeaders, error) {
+	if err := interpreter.ValidateEmailMessage(to, subject, textBody, htmlBody, files); err != nil {
+		return messageHeaders{}, fmt.Errorf("email: %w", err)
+	}
+	if len(cfg.FromAddress) > interpreter.MaxEmailRecipientBytes || headerHasControl(cfg.FromAddress) {
+		return messageHeaders{}, fmt.Errorf("email: адрес отправителя содержит недопустимое значение")
+	}
+	parsedFrom, err := mail.ParseAddress(strings.TrimSpace(cfg.FromAddress))
+	if err != nil {
+		return messageHeaders{}, fmt.Errorf("email: неверный адрес отправителя: %w", err)
+	}
+	if len(cfg.FromName) > interpreter.MaxEmailRecipientBytes || headerHasControl(cfg.FromName) {
+		return messageHeaders{}, fmt.Errorf("email: имя отправителя содержит недопустимое значение")
+	}
+	parsedTo, err := mail.ParseAddress(strings.TrimSpace(to))
+	if err != nil {
+		return messageHeaders{}, fmt.Errorf("email: неверный адрес получателя: %w", err)
+	}
+
+	fromName := parsedFrom.Name
+	if cfg.FromName != "" {
+		fromName = cfg.FromName
+	}
+	return messageHeaders{
+		from:         formatAddressHeader(fromName, parsedFrom.Address),
+		to:           formatAddressHeader(parsedTo.Name, parsedTo.Address),
+		subject:      subject,
+		envelopeFrom: parsedFrom.Address,
+		envelopeTo:   parsedTo.Address,
+	}, nil
+}
+
+func formatAddressHeader(name, address string) string {
+	if name == "" {
+		return address
+	}
+	return (&mail.Address{Name: name, Address: address}).String()
+}
+
+func headerHasControl(value string) bool {
+	return strings.IndexFunc(value, func(r rune) bool {
+		return r < 0x20 || r == 0x7f
+	}) >= 0
 }
 
 func (m *Mailer) password() string {
@@ -112,9 +166,9 @@ func buildMsg(from, to, subject, textBody, htmlBody string) []byte {
 
 func buildMsgWithFiles(from, to, subject, textBody, htmlBody string, files []interpreter.EmailAttachment) []byte {
 	var b strings.Builder
-	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("From: " + stripHeaderControls(from) + "\r\n")
+	b.WriteString("To: " + stripHeaderControls(to) + "\r\n")
+	b.WriteString("Subject: " + stripHeaderControls(subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 
 	if len(files) > 0 {
@@ -125,10 +179,7 @@ func buildMsgWithFiles(from, to, subject, textBody, htmlBody string, files []int
 		writeBodyPart(&b, textBody, htmlBody)
 		// Файлы — base64 с переносом строк по RFC 2045.
 		for _, f := range files {
-			mt := f.MimeType
-			if mt == "" {
-				mt = "application/octet-stream"
-			}
+			mt := safeMediaType(f.MimeType)
 			b.WriteString("--" + mixed + "\r\n")
 			b.WriteString("Content-Type: " + mt + "; name=\"" + sanitizeHeaderValue(f.Name) + "\"\r\n")
 			b.WriteString("Content-Disposition: attachment; filename=\"" + sanitizeHeaderValue(f.Name) + "\"\r\n")
@@ -167,8 +218,28 @@ func writeBodyPart(b *strings.Builder, textBody, htmlBody string) {
 
 // sanitizeHeaderValue убирает из имени файла символы, ломающие MIME-заголовок.
 func sanitizeHeaderValue(s string) string {
-	s = strings.NewReplacer("\r", "", "\n", "", "\"", "'").Replace(s)
+	s = strings.NewReplacer("\r", "", "\n", "", "\"", "'").Replace(stripHeaderControls(s))
 	return s
+}
+
+func stripHeaderControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func safeMediaType(value string) string {
+	if value == "" {
+		return "application/octet-stream"
+	}
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil || mediaType == "" || headerHasControl(mediaType) {
+		return "application/octet-stream"
+	}
+	return mediaType
 }
 
 // writeBase64Wrapped пишет данные в base64 строками по 76 символов (RFC 2045).

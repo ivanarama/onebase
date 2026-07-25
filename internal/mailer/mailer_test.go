@@ -3,6 +3,7 @@ package mailer_test
 import (
 	"bufio"
 	"net"
+	"net/mail"
 	"strings"
 	"sync"
 	"testing"
@@ -130,7 +131,11 @@ func TestSend_HTML(t *testing.T) {
 	assert.Contains(t, payload, "multipart/alternative")
 	assert.Contains(t, payload, "text/html")
 	assert.Contains(t, payload, "<p>Текст</p>")
-	assert.Contains(t, payload, "Мой Склад")
+	message, err := mail.ReadMessage(strings.NewReader(payload))
+	require.NoError(t, err)
+	from, err := mail.ParseAddress(message.Header.Get("From"))
+	require.NoError(t, err)
+	assert.Equal(t, "Мой Склад", from.Name)
 }
 
 func TestConfigured_False(t *testing.T) {
@@ -139,4 +144,45 @@ func TestConfigured_False(t *testing.T) {
 	err := m.Send("x@y.com", "s", "b", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "не настроен")
+}
+
+func TestSend_RejectsHeaderInjectionBeforeSMTP(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     mailer.Config
+		to      string
+		subject string
+	}{
+		{
+			name:    "recipient",
+			cfg:     mailer.Config{SMTPHost: "127.0.0.1", SMTPPort: 1, FromAddress: "from@example.com"},
+			to:      "victim@example.com\r\nBcc: attacker@example.com",
+			subject: "ok",
+		},
+		{
+			name:    "subject",
+			cfg:     mailer.Config{SMTPHost: "127.0.0.1", SMTPPort: 1, FromAddress: "from@example.com"},
+			to:      "victim@example.com",
+			subject: "ok\r\nBcc: attacker@example.com",
+		},
+		{
+			name:    "from name",
+			cfg:     mailer.Config{SMTPHost: "127.0.0.1", SMTPPort: 1, FromAddress: "from@example.com", FromName: "Sender\r\nBcc: attacker@example.com"},
+			to:      "victim@example.com",
+			subject: "ok",
+		},
+		{
+			name:    "from address",
+			cfg:     mailer.Config{SMTPHost: "127.0.0.1", SMTPPort: 1, FromAddress: "from@example.com\r\nBcc: attacker@example.com"},
+			to:      "victim@example.com",
+			subject: "ok",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mailer.New(tt.cfg).Send(tt.to, tt.subject, "body", "")
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "connect")
+		})
+	}
 }

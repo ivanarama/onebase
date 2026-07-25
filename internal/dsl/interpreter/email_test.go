@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -78,6 +79,41 @@ func TestEmailNotConfigured(t *testing.T) {
 	require.True(t, ok, fmt.Sprintf("expected string, got %T", result))
 	assert.Contains(t, msg, "caught:")
 	assert.Contains(t, msg, "не настроен")
+}
+
+func TestValidateEmailMessageRejectsHeaderInjection(t *testing.T) {
+	tests := []struct {
+		name    string
+		to      string
+		subject string
+	}{
+		{name: "recipient", to: "victim@example.com\r\nBcc: attacker@example.com", subject: "ok"},
+		{name: "subject", to: "victim@example.com", subject: "ok\r\nBcc: attacker@example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := interpreter.ValidateEmailMessage(tt.to, tt.subject, "body", "", nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "управляющий символ")
+		})
+	}
+	require.NoError(t, interpreter.ValidateEmailMessage(
+		"Получатель <client@example.com>", "Обычная тема", "body", "", nil,
+	))
+}
+
+func TestEmailObjectRejectsOversizedSubjectAtAssignment(t *testing.T) {
+	stub := &stubSender{}
+	subject := strings.Repeat("x", interpreter.MaxEmailSubjectBytes+1)
+	src := fmt.Sprintf(`Процедура Тест()
+  Письмо = Новый ПисьмоEmail;
+  Письмо.Кому = "client@example.com";
+  Письмо.Тема = "%s";
+КонецПроцедуры`, subject)
+	err := runHTTPSrcErr(t, src, interpreter.NewEmailFunctions(stub, nil))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "превышает")
+	assert.Equal(t, 0, stub.calls)
 }
 
 // attachStubSender реализует и EmailSender, и EmailAttachmentSender.
