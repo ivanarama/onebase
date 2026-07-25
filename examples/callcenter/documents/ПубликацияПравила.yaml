@@ -28,3 +28,9 @@ fields:
   - name: Основание
     type: string
     label: Основание/решение (приказ, тикет)
+  - name: ИдентификаторРешения
+    type: string
+    label: Идентификатор решения
+  - name: Опубликовал
+    type: string
+    label: Автор публикации

@@ -117,6 +117,20 @@ func TestAuditSearch_RoundTrip(t *testing.T) {
 	if len(byRec) != 1 {
 		t.Errorf("AuditByRecord: ожидалась 1 запись, получили %d", len(byRec))
 	}
+
+	decisionRec := uuid.New()
+	if err := db.LogDecisionAction(ctx, "publish", "document", "ПубликацияПравила",
+		decisionRec.String(), "DECISION-42", "publisher"); err != nil {
+		t.Fatalf("LogDecisionAction: %v", err)
+	}
+	decisions, err := db.AuditSearch(ctx, AuditFilter{Action: "publish"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions) != 1 || decisions[0].DecisionID != "DECISION-42" ||
+		decisions[0].UserLogin != "publisher" {
+		t.Fatalf("decision audit round-trip = %+v", decisions)
+	}
 }
 
 // При выключенном журнале аудит не пишется.

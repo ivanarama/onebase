@@ -2,6 +2,9 @@ package ui
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -53,6 +57,9 @@ func newValidationFixture(t *testing.T) *validationFixture {
 	}
 	if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
 		t.Fatalf("Migrate constants: %v", err)
+	}
+	if err := db.EnsureAuditSchema(ctx); err != nil {
+		t.Fatalf("EnsureAuditSchema: %v", err)
 	}
 
 	reg := runtime.NewRegistry()
@@ -171,6 +178,8 @@ func (f *validationFixture) publish(ruleID string, date time.Time, number, level
 			"Текст":     text,
 			"Статус":    "Опубликовано",
 			"Основание": "Автотест плана 89",
+			"ИдентификаторРешения": "TEST-" + number,
+			"Опубликовал":          "test-suite",
 		},
 	})
 	if err != nil {
@@ -198,6 +207,27 @@ func TestCallcenterValidation_EffectiveDatingAndSeedRecovery(t *testing.T) {
 	if got := f.versionCount(); got != 2 {
 		t.Fatalf("seed must recover missing publication and create 2 versions, got %d", got)
 	}
+	var anonymous int
+	if err := f.db.QueryRow(f.ctx,
+		`SELECT COUNT(*) FROM инфо_действующиеправила WHERE опубликовал IS NULL OR опубликовал = ''`,
+	).Scan(&anonymous); err != nil {
+		t.Fatal(err)
+	}
+	if anonymous != 0 {
+		t.Fatalf("headless seed left %d anonymous publication rows", anonymous)
+	}
+	auditEntries, err := f.db.AuditSearch(f.ctx, storage.AuditFilter{Action: "publish"}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(auditEntries) != 2 {
+		t.Fatalf("publish audit entries = %d, want 2", len(auditEntries))
+	}
+	for _, entry := range auditEntries {
+		if entry.UserLogin != "system:ЗаполнитьПравилаВалидации" || entry.DecisionID == "" {
+			t.Fatalf("incomplete publish audit entry: %+v", entry)
+		}
+	}
 	f.seedRules()
 	if got := f.versionCount(); got != 2 {
 		t.Fatalf("repeated seed must be idempotent, got %d versions", got)
@@ -210,6 +240,88 @@ func TestCallcenterValidation_EffectiveDatingAndSeedRecovery(t *testing.T) {
 	after := f.saveRequest(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), "", "79990000000", "")
 	if !strings.Contains(after.DSLError, "[REQ-STREET]") {
 		t.Fatalf("active BLOCK must reject request with stable rule code, got %q", after.DSLError)
+	}
+}
+
+func TestCallcenterValidation_UnknownLegacyFieldWarnsAndSkips(t *testing.T) {
+	f := newValidationFixture(t)
+	ruleID, err := f.db.WriteCatalogRecord(f.ctx, f.entity("ПравилаВалидации"), "", map[string]any{
+		"Наименование":     "Устаревшее правило",
+		"Код":              "LEGACY-FIELD",
+		"ОбъектМетаданных": "Заявка",
+		"Поле":             "УдалённоеПоле",
+		"ВидПроверки":      "НеПусто",
+		"Владелец":         "migration",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rules *metadata.InfoRegister
+	for _, candidate := range f.proj.InfoRegisters {
+		if candidate.Name == "ДействующиеПравила" {
+			rules = candidate
+			break
+		}
+	}
+	if rules == nil {
+		t.Fatal("ДействующиеПравила metadata not found")
+	}
+	effective := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := f.db.InfoRegSet(f.ctx, rules,
+		map[string]any{"Правило": ruleID},
+		map[string]any{
+			"Уровень": "Блокирующее", "Текст": "legacy", "Статус": "Опубликовано",
+			"Опубликовал": "migration", "Основание": "legacy import",
+		}, &effective); err != nil {
+		t.Fatal(err)
+	}
+
+	result := f.saveRequest(time.Date(2026, 7, 22, 0, 0, 0, 0, time.UTC), "Тверская", "79990000000", "")
+	if result.DSLError != "" {
+		t.Fatalf("unknown legacy field blocked request: %s", result.DSLError)
+	}
+	if len(result.DSLMessages) != 1 || !strings.Contains(result.DSLMessages[0], "LEGACY-FIELD") ||
+		!strings.Contains(result.DSLMessages[0], "пропускается") {
+		t.Fatalf("warning messages = %v", result.DSLMessages)
+	}
+}
+
+func TestCallcenterValidation_PublicationRBACFromShippedRoles(t *testing.T) {
+	f := newValidationFixture(t)
+	roles, err := auth.LoadRolesYAML(filepath.Join(f.proj.Dir, "roles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operator, supervisor *auth.Role
+	for _, role := range roles {
+		switch role.Name {
+		case "Оператор":
+			operator = role
+		case "Супервизор":
+			supervisor = role
+		}
+	}
+	if operator == nil || supervisor == nil {
+		t.Fatalf("shipped roles missing: operator=%v supervisor=%v", operator, supervisor)
+	}
+
+	form := url.Values{"_action": {"post"}}
+	request := reqWithChi("POST", "/ui/document/ПубликацияПравила/new", form,
+		map[string]string{"kind": "document", "entity": "ПубликацияПравила"})
+	request = request.WithContext(auth.ContextWithUser(request.Context(), &auth.User{
+		Login: "operator", Roles: []*auth.Role{operator},
+	}))
+	response := httptest.NewRecorder()
+	f.server.submit(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("operator publication status = %d, want 403", response.Code)
+	}
+
+	supervisorRequest := request.Clone(auth.ContextWithUser(request.Context(), &auth.User{
+		Login: "supervisor", Roles: []*auth.Role{supervisor},
+	}))
+	if !f.server.can(supervisorRequest, "document", "ПубликацияПравила", "post") {
+		t.Fatal("supervisor shipped role must allow publication")
 	}
 }
 

@@ -53,8 +53,9 @@ type AuditEntry struct {
 	IP         string
 	// Reason — обоснование действия (план 88): заполняется при action=disclose
 	// (раскрытие замаскированного поля ПДн). Для остальных действий пустое.
-	Reason string
-	At     time.Time
+	Reason     string
+	DecisionID string
+	At         time.Time
 }
 
 // AuditFilter for querying audit log.
@@ -84,6 +85,7 @@ func (db *DB) EnsureAuditSchema(ctx context.Context) error {
 			new_value %s,
 			ip TEXT NOT NULL DEFAULT '',
 			reason TEXT NOT NULL DEFAULT '',
+			decision_id TEXT NOT NULL DEFAULT '',
 			at %s NOT NULL DEFAULT %s
 		)`, d.TypeUUID(), d.TypeUUID(), d.TypeUUID(), d.TypeJSON(), d.TypeJSON(),
 		d.TypeTimestamp(), d.CurrentTimestampTZ())
@@ -93,6 +95,9 @@ func (db *DB) EnsureAuditSchema(ctx context.Context) error {
 	// reason — колонка добавлена планом 88; для баз, созданных раньше, дотягиваем
 	// её ALTER-ом (existing rows → NULL, читаем через COALESCE).
 	_ = db.AddColumnIfMissing(ctx, "_audit", "reason", "TEXT")
+	// decision_id связывает привилегированное lifecycle-событие с решением,
+	// которым оно санкционировано (CC-RULE-005).
+	_ = db.AddColumnIfMissing(ctx, "_audit", "decision_id", "TEXT NOT NULL DEFAULT ''")
 	_, _ = db.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_audit_record ON _audit (entity_name, record_id)`)
 	_, _ = db.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_audit_user ON _audit (user_id, at DESC)`)
 	_, _ = db.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_audit_at ON _audit (at DESC)`)
@@ -129,15 +134,16 @@ func (db *DB) Log(ctx context.Context, e *AuditEntry) error {
 	}
 
 	q := fmt.Sprintf(`
-		INSERT INTO _audit (id, user_id, user_login, action, entity_kind, entity_name, record_id, field, old_value, new_value, ip, reason)
-		VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s%s, %s%s, %s, %s)`,
+		INSERT INTO _audit (id, user_id, user_login, action, entity_kind, entity_name, record_id, field, old_value, new_value, ip, reason, decision_id)
+		VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s%s, %s%s, %s, %s, %s)`,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4),
 		d.Placeholder(5), d.Placeholder(6), d.Placeholder(7), d.Placeholder(8),
-		d.Placeholder(9), d.JSONCast(), d.Placeholder(10), d.JSONCast(), d.Placeholder(11), d.Placeholder(12))
+		d.Placeholder(9), d.JSONCast(), d.Placeholder(10), d.JSONCast(), d.Placeholder(11), d.Placeholder(12),
+		d.Placeholder(13))
 	err := db.execAudit(ctx, q,
 		uuid.NewString(),
 		userID, e.UserLogin, e.Action, e.EntityKind, e.EntityName, recordID, e.Field,
-		oldVal, newVal, e.IP, e.Reason)
+		oldVal, newVal, e.IP, e.Reason, e.DecisionID)
 	return err
 }
 
@@ -145,7 +151,7 @@ func (db *DB) Log(ctx context.Context, e *AuditEntry) error {
 func (db *DB) AuditByRecord(ctx context.Context, entityName string, recordID uuid.UUID) ([]*AuditEntry, error) {
 	d := db.dialect
 	q := fmt.Sprintf(`
-		SELECT id, user_id, user_login, action, entity_kind, entity_name, record_id, field, old_value, new_value, ip, COALESCE(reason,''), at
+		SELECT id, user_id, user_login, action, entity_kind, entity_name, record_id, field, old_value, new_value, ip, COALESCE(reason,''), COALESCE(decision_id,''), at
 		FROM _audit
 		WHERE entity_name = %s AND record_id = %s
 		ORDER BY at DESC`, d.Placeholder(1), d.Placeholder(2))
@@ -194,7 +200,7 @@ func (db *DB) AuditSearch(ctx context.Context, filter AuditFilter, limit, offset
 		idx++
 	}
 
-	q := `SELECT id, user_id, user_login, action, entity_kind, entity_name, record_id, field, old_value, new_value, ip, COALESCE(reason,''), at FROM _audit`
+	q := `SELECT id, user_id, user_login, action, entity_kind, entity_name, record_id, field, old_value, new_value, ip, COALESCE(reason,''), COALESCE(decision_id,''), at FROM _audit`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -331,6 +337,26 @@ func (db *DB) LogDisclose(ctx context.Context, kind, entityName, recordID, field
 	})
 }
 
+// LogDecisionAction records an auditable privileged lifecycle decision
+// (publish/rollback). It is unconditional, like LogDisclose: disabling the
+// general registration journal must not erase governance events.
+func (db *DB) LogDecisionAction(ctx context.Context, action, kind, entityName, recordID, decisionID, author string) error {
+	u, _ := auditUserFromCtx(ctx)
+	if author != "" && author != u.UserLogin {
+		u.UserID = ""
+		u.UserLogin = author
+	}
+	return db.Log(ctx, &AuditEntry{
+		UserID:     u.UserID,
+		UserLogin:  u.UserLogin,
+		Action:     action,
+		EntityKind: kind,
+		EntityName: entityName,
+		RecordID:   recordID,
+		DecisionID: decisionID,
+	})
+}
+
 type auditRowsScanner interface {
 	Next() bool
 	Scan(dest ...any) error
@@ -354,7 +380,7 @@ func scanAuditRows(rows auditRowsScanner) ([]*AuditEntry, error) {
 		if err := rows.Scan(
 			&auditID, &userID, &e.UserLogin, &e.Action,
 			&e.EntityKind, &e.EntityName, &recordID,
-			&e.Field, &oldVal, &newVal, &e.IP, &e.Reason, &at,
+			&e.Field, &oldVal, &newVal, &e.IP, &e.Reason, &e.DecisionID, &at,
 		); err != nil {
 			return nil, err
 		}

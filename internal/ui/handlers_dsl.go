@@ -116,6 +116,36 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	userNameFn := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
 		return curUserLogin, nil
 	})
+	auditDecisionFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		if len(args) < 5 {
+			return nil, fmt.Errorf("ЗаписатьСобытиеАудита: нужны действие, вид, объект, ссылка и идентификатор решения")
+		}
+		action := strings.ToLower(strings.TrimSpace(fmt.Sprint(args[0])))
+		if action != "publish" && action != "rollback" {
+			return nil, fmt.Errorf("ЗаписатьСобытиеАудита: действие должно быть publish или rollback")
+		}
+		kind := strings.TrimSpace(fmt.Sprint(args[1]))
+		entityName := strings.TrimSpace(fmt.Sprint(args[2]))
+		recordID := refValueString(args[3])
+		if _, err := uuid.Parse(recordID); err != nil {
+			return nil, fmt.Errorf("ЗаписатьСобытиеАудита: некорректная ссылка записи")
+		}
+		decisionID := strings.TrimSpace(fmt.Sprint(args[4]))
+		if decisionID == "" {
+			return nil, fmt.Errorf("ЗаписатьСобытиеАудита: идентификатор решения обязателен")
+		}
+		author := curUserLogin
+		if len(args) > 5 && strings.TrimSpace(fmt.Sprint(args[5])) != "" {
+			author = strings.TrimSpace(fmt.Sprint(args[5]))
+		}
+		if author == "" {
+			return nil, fmt.Errorf("ЗаписатьСобытиеАудита: автор обязателен")
+		}
+		if err := s.store.LogDecisionAction(txState.Ctx(), action, kind, entityName, recordID, decisionID, author); err != nil {
+			return nil, fmt.Errorf("ЗаписатьСобытиеАудита: %w", err)
+		}
+		return nil, nil
+	})
 
 	// ЗначениеРеквизитаОбъекта(Ссылка, "Реквизит") — чтение реквизита по
 	// ссылке (ссылка несёт лишь UUID/наименование). Использует txState.Ctx(),
@@ -196,6 +226,8 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	vars["CurrentUser"] = currentUserFn
 	vars["ИмяПользователя"] = userNameFn
 	vars["UserName"] = userNameFn
+	vars["ЗаписатьСобытиеАудита"] = auditDecisionFn
+	vars["WriteAuditDecision"] = auditDecisionFn
 	vars["ЗначениеРеквизитаОбъекта"] = attrValueFn
 	vars["ObjectAttributeValue"] = attrValueFn
 	vars["ЗначенияРеквизитовОбъектов"] = attrValuesFn
