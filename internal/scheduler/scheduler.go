@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +22,19 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-// ErrNetworkLocked — отказ предохранителя сети (план 62) для DSL заданий.
-var ErrNetworkLocked = errors.New("сетевые возможности отключены предохранителем — включите «Разрешить сетевые операции» в конфигураторе")
+var (
+	// ErrNetworkLocked — отказ предохранителя сети (план 62) для DSL заданий.
+	ErrNetworkLocked = errors.New("сетевые возможности отключены предохранителем — включите «Разрешить сетевые операции» в конфигураторе")
+	// ErrJobAlreadyRunning is returned when a cron tick or manual start tries
+	// to overlap another execution of the same logical job.
+	ErrJobAlreadyRunning = errors.New("scheduled job is already running")
+	ErrSchedulerStopping = errors.New("scheduler is stopping")
+)
 
 type Scheduler struct {
 	cron    *cronlib.Cron
 	jobs    []*metadata.ScheduledJob
+	goJobs  map[string]func(context.Context) error
 	db      *storage.DB
 	reg     *runtime.Registry
 	interp  *interpreter.Interpreter
@@ -45,6 +53,7 @@ type Scheduler struct {
 	rootCancel context.CancelFunc
 	wg         sync.WaitGroup
 	activeRuns map[uuid.UUID]*activeRun
+	activeJobs map[string]struct{}
 }
 
 const (
@@ -66,109 +75,240 @@ type activeRun struct {
 
 // SetMessageSink hooks Сообщить() output into an external store (e.g. UI message panel).
 // userID is empty string for scheduler context (anonymous/system).
-func (s *Scheduler) SetMessageSink(f func(userID, text string)) { s.msgSink = f }
+func (s *Scheduler) SetMessageSink(f func(userID, text string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.msgSink = f
+}
 
 // VarsBuilder строит DSL-окружение для запуска обработки задания.
 type VarsBuilder func(ctx context.Context, mc *runtime.MovementsCollector) map[string]any
 
 // SetVarsBuilder подключает внешний сборщик DSL-окружения (см. поле varsBuilder).
-func (s *Scheduler) SetVarsBuilder(b VarsBuilder) { s.varsBuilder = b }
+func (s *Scheduler) SetVarsBuilder(b VarsBuilder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.varsBuilder = b
+}
 
 func New(db *storage.DB, reg *runtime.Registry, interp *interpreter.Interpreter) *Scheduler {
 	return &Scheduler{
-		cron:   cronlib.New(),
-		db:     db,
-		reg:    reg,
-		interp: interp,
-		log:    oblog.Component("scheduler"),
+		cron:       cronlib.New(),
+		goJobs:     make(map[string]func(context.Context) error),
+		db:         db,
+		reg:        reg,
+		interp:     interp,
+		log:        oblog.Component("scheduler"),
+		activeRuns: make(map[uuid.UUID]*activeRun),
+		activeJobs: make(map[string]struct{}),
 	}
 }
 
 func (s *Scheduler) SetMailer(m *mailer.Mailer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.mailer = m
 }
 
 // RegisterGoJob добавляет нативное Go-задание в планировщик.
 // Результат записывается в _scheduled_runs как обычное задание.
 func (s *Scheduler) RegisterGoJob(name, title, schedule string, fn func(ctx context.Context) error) error {
-	_, err := s.cron.AddFunc(schedule, func() {
-		ctx, done, ok := s.beginJob()
-		if !ok {
-			return
-		}
-		defer done()
-		s.executeGoJob(ctx, name, fn)
-	})
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("scheduler: Go job name is required")
+	}
+	if fn == nil {
+		return fmt.Errorf("scheduler: Go job %s has no function", name)
+	}
+	key := jobKey(name)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return ErrSchedulerStopping
+	}
+	if s.jobByKeyLocked(key) != nil {
+		return fmt.Errorf("scheduler: duplicate job name %q", name)
+	}
+	_, err := s.cron.AddFunc(schedule, s.goJobCallback(name, fn))
 	if err != nil {
 		return fmt.Errorf("scheduler: RegisterGoJob %s: %w", name, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.jobs = append(s.jobs, &metadata.ScheduledJob{
+	s.goJobs[key] = fn
+	s.jobs = append(s.jobs, cloneScheduledJob(&metadata.ScheduledJob{
 		Name:     name,
 		Title:    title,
 		Schedule: schedule,
 		Enabled:  true,
-	})
+	}))
 	return nil
 }
 
 func (s *Scheduler) LoadJobs(jobs []*metadata.ScheduledJob) error {
+	return s.replaceJobs(jobs)
+}
+
+// Reload validates and builds the complete replacement before publishing it.
+// If validation fails, the running cron and visible job list stay untouched.
+// Native Go jobs are intentionally replaced too; callers register the native
+// jobs for the new application configuration after a successful reload.
+func (s *Scheduler) Reload(jobs []*metadata.ScheduledJob) error {
+	return s.replaceJobs(jobs)
+}
+
+func (s *Scheduler) replaceJobs(jobs []*metadata.ScheduledJob) error {
+	nextCron, nextJobs, err := s.buildCron(jobs)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
-	s.jobs = jobs
+	if s.stopping {
+		s.mu.Unlock()
+		return ErrSchedulerStopping
+	}
+	oldCron := s.cron
+	running := s.running
+	s.cron = nextCron
+	s.jobs = nextJobs
+	s.goJobs = make(map[string]func(context.Context) error)
+	if running {
+		nextCron.Start()
+	}
 	s.mu.Unlock()
-	for _, job := range jobs {
-		if !job.Enabled {
-			continue
-		}
-		j := job // capture
-		_, err := s.cron.AddFunc(j.Schedule, func() {
-			ctx, done, ok := s.beginJob()
-			if !ok {
-				return
-			}
-			defer done()
-			if j.Timeout > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, time.Duration(j.Timeout)*time.Second)
-				defer cancel()
-			}
-			s.executeJob(ctx, j)
-		})
-		if err != nil {
-			return fmt.Errorf("scheduler: invalid schedule for %s: %w", job.Name, err)
-		}
+
+	if oldCron != nil {
+		oldCron.Stop()
 	}
 	return nil
 }
 
-// Reload stops the current cron, replaces jobs, and restarts it.
-func (s *Scheduler) Reload(jobs []*metadata.ScheduledJob) error {
-	s.mu.Lock()
-	oldCron := s.cron
-	s.cron = cronlib.New()
-	running := s.running
-	s.mu.Unlock()
+func (s *Scheduler) buildCron(jobs []*metadata.ScheduledJob) (*cronlib.Cron, []*metadata.ScheduledJob, error) {
+	nextCron := cronlib.New()
+	nextJobs := make([]*metadata.ScheduledJob, 0, len(jobs))
+	names := make(map[string]struct{}, len(jobs))
 
-	oldCron.Stop()
-	if err := s.LoadJobs(jobs); err != nil {
-		return err
+	for _, source := range jobs {
+		if source == nil {
+			return nil, nil, errors.New("scheduler: nil job")
+		}
+		job := cloneScheduledJob(source)
+		job.Name = strings.TrimSpace(job.Name)
+		if job.Name == "" {
+			return nil, nil, errors.New("scheduler: job name is required")
+		}
+		key := jobKey(job.Name)
+		if _, duplicate := names[key]; duplicate {
+			return nil, nil, fmt.Errorf("scheduler: duplicate job name %q", job.Name)
+		}
+		names[key] = struct{}{}
+		nextJobs = append(nextJobs, job)
+		if !job.Enabled {
+			continue
+		}
+		if _, err := nextCron.AddFunc(job.Schedule, s.scheduledJobCallback(job)); err != nil {
+			return nil, nil, fmt.Errorf("scheduler: invalid schedule for %s: %w", job.Name, err)
+		}
 	}
-	if running {
-		s.cron.Start()
+	return nextCron, nextJobs, nil
+}
+
+func (s *Scheduler) scheduledJobCallback(job *metadata.ScheduledJob) func() {
+	return func() {
+		ctx, done, err := s.beginJob(job.Name)
+		if err != nil {
+			s.logSkippedJob(job.Name, err)
+			return
+		}
+		defer done()
+		s.runScheduledJob(ctx, job)
 	}
-	return nil
+}
+
+func (s *Scheduler) goJobCallback(name string, fn func(context.Context) error) func() {
+	return func() {
+		ctx, done, err := s.beginJob(name)
+		if err != nil {
+			s.logSkippedJob(name, err)
+			return
+		}
+		defer done()
+		s.executeGoJob(ctx, name, fn)
+	}
+}
+
+func (s *Scheduler) logSkippedJob(name string, err error) {
+	if errors.Is(err, ErrJobAlreadyRunning) {
+		s.log.Warn("scheduler: overlapping run skipped", "job", name)
+		return
+	}
+	s.log.Debug("scheduler: trigger ignored", "job", name, "err", err)
+}
+
+func jobKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func cloneScheduledJob(job *metadata.ScheduledJob) *metadata.ScheduledJob {
+	if job == nil {
+		return nil
+	}
+	cloned := *job
+	if job.Titles != nil {
+		cloned.Titles = make(map[string]string, len(job.Titles))
+		for key, value := range job.Titles {
+			cloned.Titles[key] = value
+		}
+	}
+	if job.Params != nil {
+		cloned.Params = make(map[string]any, len(job.Params))
+		for key, value := range job.Params {
+			cloned.Params[key] = cloneScheduledValue(value)
+		}
+	}
+	return &cloned
+}
+
+func cloneScheduledValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		cloned := make(map[string]any, len(typed))
+		for key, item := range typed {
+			cloned[key] = cloneScheduledValue(item)
+		}
+		return cloned
+	case map[string]string:
+		cloned := make(map[string]string, len(typed))
+		for key, item := range typed {
+			cloned[key] = item
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(typed))
+		for i, item := range typed {
+			cloned[i] = cloneScheduledValue(item)
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		s.log.Warn("scheduler: start ignored while shutdown is in progress")
+		return
+	}
 	s.ensureRootLocked()
-	s.stopping = false
 	s.running = true
 	cron := s.cron
+	cron.Start()
 	s.mu.Unlock()
 
-	cron.Start()
 	<-ctx.Done()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
@@ -216,6 +356,13 @@ func (s *Scheduler) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		s.cancelActiveJobs()
 		s.interruptActiveRuns("scheduler shutdown interrupted")
+		// Shutdown has already stopped future cron triggers. Let the final
+		// active job transition the scheduler out of stopping asynchronously,
+		// so a timed-out shutdown does not poison all later manual starts.
+		go func() {
+			<-done
+			s.finishShutdown()
+		}()
 		return ctx.Err()
 	}
 }
@@ -228,27 +375,51 @@ func (s *Scheduler) ensureRootLocked() {
 	if s.activeRuns == nil {
 		s.activeRuns = make(map[uuid.UUID]*activeRun)
 	}
+	if s.activeJobs == nil {
+		s.activeJobs = make(map[string]struct{})
+	}
 }
 
-func (s *Scheduler) beginJob() (context.Context, func(), bool) {
+func (s *Scheduler) beginJob(jobName string) (context.Context, func(), error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.stopping {
-		return nil, nil, false
+		s.mu.Unlock()
+		return nil, nil, ErrSchedulerStopping
+	}
+	key := jobKey(jobName)
+	if key == "" {
+		s.mu.Unlock()
+		return nil, nil, errors.New("scheduled job name is required")
+	}
+	if _, running := s.activeJobs[key]; running {
+		s.mu.Unlock()
+		return nil, nil, fmt.Errorf("%w: %s", ErrJobAlreadyRunning, jobName)
 	}
 	s.ensureRootLocked()
 	ctx, cancel := context.WithCancel(s.rootCtx)
+	s.activeJobs[key] = struct{}{}
 	s.wg.Add(1)
+	s.mu.Unlock()
+
+	var once sync.Once
 	done := func() {
-		cancel()
-		s.wg.Done()
+		once.Do(func() {
+			cancel()
+			s.mu.Lock()
+			delete(s.activeJobs, key)
+			s.mu.Unlock()
+			s.wg.Done()
+		})
 	}
-	return ctx, done, true
+	return ctx, done, nil
 }
 
 func (s *Scheduler) finishShutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.stopping {
+		return
+	}
 	if s.rootCancel != nil {
 		s.rootCancel()
 	}
@@ -269,14 +440,27 @@ func (s *Scheduler) cancelActiveJobs() {
 
 func (s *Scheduler) trackActiveRun(id uuid.UUID, jobName string, startedAt time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.activeRuns == nil {
 		s.activeRuns = make(map[uuid.UUID]*activeRun)
 	}
-	s.activeRuns[id] = &activeRun{
+	run := &activeRun{
 		id:        id,
 		jobName:   jobName,
 		startedAt: startedAt,
+	}
+	// A forced shutdown can race with the INSERT that creates the run row.
+	// If cancellation won before this row became visible in activeRuns, mark
+	// it interrupted here so it cannot remain "running" forever.
+	if s.rootCtx != nil && s.rootCtx.Err() != nil {
+		run.finalized = true
+	}
+	s.activeRuns[id] = run
+	interrupted := run.finalized
+	interruptedRun := *run
+	s.mu.Unlock()
+
+	if interrupted {
+		s.markRunInterrupted(interruptedRun, "scheduler shutdown interrupted")
 	}
 }
 
@@ -307,21 +491,28 @@ func (s *Scheduler) interruptActiveRuns(reason string) {
 	s.mu.Unlock()
 
 	for _, run := range runs {
-		durationMs := time.Since(run.startedAt).Milliseconds()
-		ctx, cancel := context.WithTimeout(context.Background(), interruptUpdateTimeout)
-		if err := s.db.UpdateScheduledRun(ctx, run.id, runStatusInterrupted, "", reason, durationMs); err != nil {
-			s.log.Warn("scheduler: mark interrupted run failed", "job", run.jobName, "run_id", run.id.String(), "err", err)
-		}
-		cancel()
-		s.log.Warn("scheduler: active job interrupted", "job", run.jobName, "run_id", run.id.String())
+		s.markRunInterrupted(run, reason)
 	}
+}
+
+func (s *Scheduler) markRunInterrupted(run activeRun, reason string) {
+	durationMs := time.Since(run.startedAt).Milliseconds()
+	ctx, cancel := context.WithTimeout(context.Background(), interruptUpdateTimeout)
+	err := s.db.UpdateScheduledRun(ctx, run.id, runStatusInterrupted, "", reason, durationMs)
+	cancel()
+	if err != nil {
+		s.log.Warn("scheduler: mark interrupted run failed", "job", run.jobName, "run_id", run.id.String(), "err", err)
+	}
+	s.log.Warn("scheduler: active job interrupted", "job", run.jobName, "run_id", run.id.String())
 }
 
 func (s *Scheduler) Jobs() []*metadata.ScheduledJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := make([]*metadata.ScheduledJob, len(s.jobs))
-	copy(result, s.jobs)
+	for i, job := range s.jobs {
+		result[i] = cloneScheduledJob(job)
+	}
 	return result
 }
 
@@ -336,36 +527,60 @@ func (s *Scheduler) ActiveRunCount() int {
 }
 
 func (s *Scheduler) GetJob(name string) *metadata.ScheduledJob {
-	nl := strings.ToLower(name)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, j := range s.jobs {
-		if strings.ToLower(j.Name) == nl {
-			return j
+	if job := s.jobByKeyLocked(jobKey(name)); job != nil {
+		return cloneScheduledJob(job)
+	}
+	return nil
+}
+
+func (s *Scheduler) jobByKeyLocked(key string) *metadata.ScheduledJob {
+	for _, job := range s.jobs {
+		if jobKey(job.Name) == key {
+			return job
 		}
 	}
 	return nil
 }
 
-func (s *Scheduler) RunNow(ctx context.Context, jobName string) error {
-	job := s.GetJob(jobName)
+func (s *Scheduler) RunNow(_ context.Context, jobName string) error {
+	key := jobKey(jobName)
+	s.mu.Lock()
+	job := cloneScheduledJob(s.jobByKeyLocked(key))
+	goJob := s.goJobs[key]
+	s.mu.Unlock()
 	if job == nil {
 		return fmt.Errorf("job not found: %s", jobName)
 	}
 	// Use background context: request context will be cancelled after redirect
-	jobCtx, done, ok := s.beginJob()
-	if !ok {
-		return errors.New("scheduler is stopping")
+	jobCtx, done, err := s.beginJob(job.Name)
+	if err != nil {
+		return err
 	}
 	go func() {
 		defer done()
-		s.executeJob(jobCtx, job)
+		if goJob != nil {
+			s.executeGoJob(jobCtx, job.Name, goJob)
+			return
+		}
+		s.runScheduledJob(jobCtx, job)
 	}()
 	return nil
 }
 
 func (s *Scheduler) Runs(ctx context.Context, jobName string, limit int) ([]storage.ScheduledRun, error) {
 	return s.db.ScheduledRuns(ctx, jobName, limit)
+}
+
+func (s *Scheduler) runScheduledJob(ctx context.Context, job *metadata.ScheduledJob) {
+	if job.Timeout <= 0 {
+		s.executeJob(ctx, job)
+		return
+	}
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(job.Timeout)*time.Second)
+	defer cancel()
+	s.executeJob(timeoutCtx, job)
 }
 
 func (s *Scheduler) executeJob(ctx context.Context, job *metadata.ScheduledJob) {
@@ -377,16 +592,23 @@ func (s *Scheduler) executeJob(ctx context.Context, job *metadata.ScheduledJob) 
 	}
 	s.trackActiveRun(runID, job.Name, startedAt)
 
-	output, runErr := s.runProcessor(ctx, job)
+	var output, status, errText string
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			runErr := fmt.Errorf("panic: %v", recovered)
+			status, errText = scheduledRunStatus(ctx, runErr)
+			s.log.Error("scheduler: job panic", "job", job.Name, "panic", recovered, "stack", string(debug.Stack()))
+		}
+		durationMs := time.Since(startedAt).Milliseconds()
+		if s.finishActiveRun(runID) {
+			s.updateRun(ctx, runID, status, output, errText, durationMs)
+		}
+		s.log.Info("scheduler: job finished", "job", job.Name, "status", status, "duration_ms", durationMs)
+	}()
 
-	status, errText := scheduledRunStatus(ctx, runErr)
-
-	durationMs := time.Since(startedAt).Milliseconds()
-	if s.finishActiveRun(runID) {
-		s.updateRun(ctx, runID, status, output, errText, durationMs)
-	}
-
-	s.log.Info("scheduler: job finished", "job", job.Name, "status", status, "duration_ms", durationMs)
+	var runErr error
+	output, runErr = s.runProcessor(ctx, job)
+	status, errText = scheduledRunStatus(ctx, runErr)
 }
 
 func (s *Scheduler) executeGoJob(ctx context.Context, name string, fn func(ctx context.Context) error) {
@@ -398,17 +620,25 @@ func (s *Scheduler) executeGoJob(ctx context.Context, name string, fn func(ctx c
 	}
 	s.trackActiveRun(runID, name, startedAt)
 
-	runErr := fn(ctx)
-	durationMs := time.Since(startedAt).Milliseconds()
-	status, errText := scheduledRunStatus(ctx, runErr)
-	if s.finishActiveRun(runID) {
-		s.updateRun(ctx, runID, status, "", errText, durationMs)
-	}
-	if runErr != nil {
-		s.log.Error("go job failed", "job", name, "status", status, "err", runErr)
-		return
-	}
-	s.log.Info("go job done", "job", name, "status", status, "ms", durationMs)
+	var status, errText string
+	var runErr error
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			runErr = fmt.Errorf("panic: %v", recovered)
+			s.log.Error("scheduler: Go job panic", "job", name, "panic", recovered, "stack", string(debug.Stack()))
+		}
+		status, errText = scheduledRunStatus(ctx, runErr)
+		durationMs := time.Since(startedAt).Milliseconds()
+		if s.finishActiveRun(runID) {
+			s.updateRun(ctx, runID, status, "", errText, durationMs)
+		}
+		if runErr != nil {
+			s.log.Error("scheduler: Go job failed", "job", name, "status", status, "err", runErr, "duration_ms", durationMs)
+			return
+		}
+		s.log.Info("scheduler: Go job done", "job", name, "status", status, "duration_ms", durationMs)
+	}()
+	runErr = fn(ctx)
 }
 
 func scheduledRunStatus(ctx context.Context, runErr error) (status, errText string) {
@@ -429,9 +659,14 @@ func scheduledRunStatus(ctx context.Context, runErr error) (status, errText stri
 
 func (s *Scheduler) updateRun(ctx context.Context, runID uuid.UUID, status, output, errText string, durationMs int64) {
 	if err := s.db.UpdateScheduledRun(ctx, runID, status, output, errText, durationMs); err != nil {
-		// Use background ctx in case the original was cancelled
-		bgCtx := context.Background()
-		_ = s.db.UpdateScheduledRun(bgCtx, runID, status, output, errText, durationMs)
+		// Use a bounded background context in case the job context was
+		// cancelled; run finalization must not hang scheduler shutdown forever.
+		bgCtx, cancel := context.WithTimeout(context.Background(), interruptUpdateTimeout)
+		retryErr := s.db.UpdateScheduledRun(bgCtx, runID, status, output, errText, durationMs)
+		cancel()
+		if retryErr != nil {
+			s.log.Error("scheduler: update run status failed", "run_id", runID.String(), "status", status, "err", retryErr)
+		}
 	}
 }
 
@@ -447,14 +682,18 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	}
 
 	resolvedParams := resolveParamTemplates(job.Params)
+	s.mu.Lock()
+	msgSink := s.msgSink
+	varsBuilder := s.varsBuilder
+	s.mu.Unlock()
 
 	var messages []string
 	msgFunc := interpreter.BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		if len(args) > 0 {
 			text := fmt.Sprintf("%v", args[0])
 			messages = append(messages, text)
-			if s.msgSink != nil {
-				s.msgSink("", text)
+			if msgSink != nil {
+				msgSink("", text)
 			}
 		}
 		return nil, nil
@@ -472,10 +711,13 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	// Полное DSL-окружение (Справочники/Документы/вложения/транзакции) строит
 	// внешний VarsBuilder (ui), если подключён; иначе — базовый набор Common.
 	var dslVars map[string]any
-	if s.varsBuilder != nil {
-		dslVars = s.varsBuilder(ctx, mc)
+	if varsBuilder != nil {
+		dslVars = varsBuilder(ctx, mc)
 	} else {
 		dslVars = s.buildDSLVars(ctx, mc)
+	}
+	if dslVars == nil {
+		dslVars = make(map[string]any)
 	}
 	dslVars["Параметры"] = paramsThis
 	dslVars["Сообщить"] = msgFunc
@@ -488,6 +730,9 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 }
 
 func (s *Scheduler) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollector) map[string]any {
+	s.mu.Lock()
+	schedulerMailer := s.mailer
+	s.mu.Unlock()
 	// Базовый набор переменных совпадает с тем, что UI handlers инжектируют
 	// для обработчиков OnWrite/OnPost. Caller-specific переменные (Параметры,
 	// Сообщить с привязкой к log задания) добавляются в runScheduledJob сверху.
@@ -495,7 +740,7 @@ func (s *Scheduler) buildDSLVars(ctx context.Context, mc *runtime.MovementsColle
 		Ctx:       ctx,
 		Reg:       s.reg,
 		Store:     s.db,
-		Mailer:    s.mailer,
+		Mailer:    schedulerMailer,
 		Movements: mc,
 		Interp:    s.interp, // hook-правило конфликта в ПланыОбмена.ЗагрузитьПакет
 		// Предохранитель сети (план 62): регламентные задания тоже инициируют

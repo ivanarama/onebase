@@ -65,8 +65,14 @@ func (db *DB) UpdateScheduledRun(ctx context.Context, id uuid.UUID, status, outp
 		`UPDATE _scheduled_runs SET finished_at=%s, status=%s, output=%s, error=%s, duration_ms=%s WHERE id=%s`,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4),
 		d.Placeholder(5), d.Placeholder(6))
-	_, err := db.Exec(ctx, q, now, status, output, errText, durationMs, id.String())
-	return err
+	tag, err := db.Exec(ctx, q, now, status, output, errText, durationMs, id.String())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected != 1 {
+		return fmt.Errorf("update scheduled run %s: run not found", id)
+	}
+	return nil
 }
 
 func (db *DB) ScheduledRuns(ctx context.Context, jobName string, limit int) ([]ScheduledRun, error) {

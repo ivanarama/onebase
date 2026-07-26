@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/scheduler"
 )
 
 func (s *Server) scheduledList(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +62,13 @@ func (s *Server) scheduledRunNow(w http.ResponseWriter, r *http.Request) {
 		name = dec
 	}
 	if err := s.sched.RunNow(r.Context(), name); err != nil {
-		http.Error(w, s.errText(r, err), 400)
+		status := http.StatusBadRequest
+		if errors.Is(err, scheduler.ErrJobAlreadyRunning) {
+			status = http.StatusConflict
+		} else if errors.Is(err, scheduler.ErrSchedulerStopping) {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, s.errText(r, err), status)
 		return
 	}
 	http.Redirect(w, r, "/ui/admin/scheduled/"+url.PathEscape(name), http.StatusSeeOther)
