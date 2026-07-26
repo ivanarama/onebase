@@ -439,6 +439,7 @@ func KnownBuiltinNames() map[string]struct{} {
 		"блокировкаданных", "datalock",
 		"текущийпользователь", "currentuser",
 		"имяпользователя", "username",
+		"записатьсобытиеаудита", "writeauditdecision",
 		"справочники", "catalogs",
 		"документы", "documents",
 		"регистрынакопления", "accumulationregisters",
