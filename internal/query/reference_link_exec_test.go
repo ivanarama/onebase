@@ -364,6 +364,85 @@ func TestBareReference_WithReferenceJoin_ExecuteSQLite(t *testing.T) {
 			t.Fatalf("derived register lost system-column semantics:\n%s", res.SQL)
 		}
 
+		for _, tt := range []struct {
+			name      string
+			src       string
+			wantStart string
+		}{
+			{
+				name:      "qualified without outer register join",
+				src:       `ВЫБРАТЬ П.Период ИЗ (ВЫБРАТЬ Период ИЗ РегистрНакопления.Остатки КАК В) КАК П`,
+				wantStart: "SELECT п.period FROM",
+			},
+			{
+				name:      "bare without outer register join",
+				src:       `ВЫБРАТЬ Период ИЗ (ВЫБРАТЬ Период ИЗ РегистрНакопления.Остатки КАК В) КАК П`,
+				wantStart: "SELECT period FROM",
+			},
+			{
+				name: "nested derived chain",
+				src: `ВЫБРАТЬ К.Период
+					ИЗ (ВЫБРАТЬ П.Период
+						ИЗ (ВЫБРАТЬ Период ИЗ РегистрНакопления.Остатки КАК В) КАК П
+					) КАК К`,
+				wantStart: "SELECT к.period FROM",
+			},
+			{
+				name:      "wildcard projection",
+				src:       `ВЫБРАТЬ П.Период ИЗ (ВЫБРАТЬ * ИЗ РегистрНакопления.Остатки КАК Р) КАК П`,
+				wantStart: "SELECT п.period FROM",
+			},
+			{
+				name:      "qualified wildcard projection",
+				src:       `ВЫБРАТЬ П.Период ИЗ (ВЫБРАТЬ Р.* ИЗ РегистрНакопления.Остатки КАК Р) КАК П`,
+				wantStart: "SELECT п.period FROM",
+			},
+			{
+				name:      "parenthesized projection",
+				src:       `ВЫБРАТЬ П.Период ИЗ (ВЫБРАТЬ (Период) ИЗ РегистрНакопления.Остатки КАК Р) КАК П`,
+				wantStart: "SELECT п.period FROM",
+			},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				derivedRes, err := query.Compile(tt.src, query.CompileOpts{
+					Registers: []*metadata.Register{reg},
+					Dialect:   storage.SQLiteDialect{},
+				})
+				if err != nil {
+					t.Fatalf("compile: %v", err)
+				}
+				if err := db.QueryRow(ctx, derivedRes.SQL, derivedRes.Args...).Scan(&got); err != nil {
+					t.Fatalf("execute %q\nSQL: %s\nerror: %v", tt.src, derivedRes.SQL, err)
+				}
+				if !strings.HasPrefix(derivedRes.SQL, tt.wantStart) {
+					t.Fatalf("derived register lost system-column semantics:\n%s", derivedRes.SQL)
+				}
+			})
+		}
+
+		allSystemSrc := `ВЫБРАТЬ П.Период, П.ВидДвижения, П.Регистратор, П.НомерСтроки
+			ИЗ (ВЫБРАТЬ Период, ВидДвижения, Регистратор, НомерСтроки
+				ИЗ РегистрНакопления.Остатки КАК В
+			) КАК П`
+		allSystemRes, err := query.Compile(allSystemSrc, query.CompileOpts{
+			Registers: []*metadata.Register{reg},
+			Dialect:   storage.SQLiteDialect{},
+		})
+		if err != nil {
+			t.Fatalf("compile all system columns: %v", err)
+		}
+		var movement, recorder, line any
+		if err := db.QueryRow(ctx, allSystemRes.SQL, allSystemRes.Args...).
+			Scan(&got, &movement, &recorder, &line); err != nil {
+			t.Fatalf("execute %q\nSQL: %s\nerror: %v", allSystemSrc, allSystemRes.SQL, err)
+		}
+		if !strings.HasPrefix(
+			allSystemRes.SQL,
+			"SELECT п.period, п.вид_движения, п.recorder, п.line_number FROM",
+		) {
+			t.Fatalf("derived table lost register system columns:\n%s", allSystemRes.SQL)
+		}
+
 		entityFieldSrc := `ВЫБРАТЬ П.Период ИЗ (ВЫБРАТЬ Д.Период ИЗ РегистрНакопления.Остатки КАК Р ЛЕВОЕ СОЕДИНЕНИЕ Документ.Расход КАК Д ПО 1 = 0) КАК П`
 		entityFieldRes, err := query.Compile(entityFieldSrc, query.CompileOpts{
 			Registers: []*metadata.Register{reg},

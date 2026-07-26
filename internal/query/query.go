@@ -500,14 +500,16 @@ type sourceContext struct {
 	scopes       []sourceScope
 	tokenScope   []int
 	tokenSection []querySection
+	tokenDepth   []int
 }
 
 type sourceScope struct {
-	main        sourceClass
-	mainTable   string
-	sourceCount int
-	qualifiers  map[string]sourceClass
-	refAliases  map[string]struct{}
+	main           sourceClass
+	mainTable      string
+	sourceCount    int
+	qualifiers     map[string]sourceClass
+	derivedAliases map[string]int
+	refAliases     map[string]struct{}
 }
 
 func (ctx sourceContext) scopeAt(tokenPos int) (sourceScope, bool) {
@@ -2281,6 +2283,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 	ctx := sourceContext{
 		tokenScope:   make([]int, len(tokens)),
 		tokenSection: make([]querySection, len(tokens)),
+		tokenDepth:   make([]int, len(tokens)),
 	}
 	for i := range ctx.tokenScope {
 		ctx.tokenScope[i] = -1
@@ -2296,6 +2299,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
+		ctx.tokenDepth[i] = depth
 		if t.kind == tIdent {
 			if kw, ok := sqlKW(t.val); ok && kw == "SELECT" {
 				// UNION starts a sibling SELECT at the same depth; nested SELECT
@@ -2305,8 +2309,9 @@ func preScanSourceContext(tokens []tok) sourceContext {
 				}
 				scopeID := len(ctx.scopes)
 				ctx.scopes = append(ctx.scopes, sourceScope{
-					qualifiers: map[string]sourceClass{},
-					refAliases: map[string]struct{}{},
+					qualifiers:     map[string]sourceClass{},
+					derivedAliases: map[string]int{},
+					refAliases:     map[string]struct{}{},
 				})
 				sections = append(sections, sectionSelect)
 				active = append(active, scopeFrame{id: scopeID, depth: depth})
@@ -2483,7 +2488,214 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			}
 		}
 	}
+	linkDerivedSourceScopes(tokens, &ctx)
 	return ctx
+}
+
+func linkDerivedSourceScopes(tokens []tok, ctx *sourceContext) {
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tLParen || tokens[i+2].kind != tIdent {
+			continue
+		}
+		kw, ok := sqlKW(tokens[i].val)
+		if !ok || (kw != "FROM" && kw != "JOIN") {
+			continue
+		}
+		nestedKW, ok := sqlKW(tokens[i+2].val)
+		if !ok || nestedKW != "SELECT" {
+			continue
+		}
+		parentID, parentOK := ctx.scopeIDAt(i)
+		childID, childOK := ctx.scopeIDAt(i + 2)
+		if !parentOK || !childOK || parentID == childID {
+			continue
+		}
+
+		nesting := 0
+		for j := i + 1; j < len(tokens); j++ {
+			switch tokens[j].kind {
+			case tLParen:
+				nesting++
+			case tRParen:
+				nesting--
+				if nesting != 0 {
+					continue
+				}
+				aliasPos := j + 1
+				if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
+					aliasKW, aliasOK := sqlKW(tokens[aliasPos].val)
+					if aliasOK && aliasKW == "AS" && tokens[aliasPos+1].kind == tIdent {
+						alias := strings.ToLower(tokens[aliasPos+1].val)
+						ctx.scopes[parentID].derivedAliases[alias] = childID
+					}
+				}
+				j = len(tokens)
+			}
+		}
+	}
+}
+
+func (ctx sourceContext) scopeProjectsSystemColumn(tokens []tok, scopeID int, name string, seen map[int]bool) bool {
+	if scopeID < 0 || scopeID >= len(ctx.scopes) || seen[scopeID] {
+		return false
+	}
+	seen[scopeID] = true
+	defer delete(seen, scopeID)
+
+	selectPos := -1
+	baseDepth := 0
+	for i, t := range tokens {
+		id, ok := ctx.scopeIDAt(i)
+		if !ok || id != scopeID || t.kind != tIdent {
+			continue
+		}
+		if kw, ok := sqlKW(t.val); ok && kw == "SELECT" {
+			selectPos = i
+			baseDepth = ctx.tokenDepth[i]
+			break
+		}
+	}
+	if selectPos < 0 {
+		return false
+	}
+
+	end := len(tokens)
+	for i := selectPos + 1; i < len(tokens); i++ {
+		id, ok := ctx.scopeIDAt(i)
+		if !ok || id != scopeID || ctx.tokenDepth[i] != baseDepth || tokens[i].kind != tIdent {
+			continue
+		}
+		if kw, ok := sqlKW(tokens[i].val); ok && kw == "FROM" {
+			end = i
+			break
+		}
+	}
+
+	exprStart := selectPos + 1
+	for i := exprStart; i <= end; i++ {
+		if i < end && (tokens[i].kind != tComma || ctx.tokenDepth[i] != baseDepth) {
+			continue
+		}
+		if ctx.projectionIsSystemColumn(tokens, scopeID, baseDepth, exprStart, i, name, seen) {
+			return true
+		}
+		exprStart = i + 1
+	}
+	return false
+}
+
+func (ctx sourceContext) projectionIsSystemColumn(
+	tokens []tok,
+	scopeID, baseDepth, start, end int,
+	name string,
+	seen map[int]bool,
+) bool {
+	for start < end && tokens[start].kind == tIdent {
+		if kw, ok := sqlKW(tokens[start].val); ok && (kw == "DISTINCT" || kw == "ALL") {
+			start++
+			continue
+		}
+		break
+	}
+	if start >= end {
+		return false
+	}
+
+	for i := start; i+1 < end; i++ {
+		id, ok := ctx.scopeIDAt(i)
+		if !ok || id != scopeID || ctx.tokenDepth[i] != baseDepth || tokens[i].kind != tIdent {
+			continue
+		}
+		if kw, ok := sqlKW(tokens[i].val); ok && kw == "AS" && tokens[i+1].kind == tIdent {
+			if !strings.EqualFold(tokens[i+1].val, name) {
+				return false
+			}
+			return ctx.systemColumnIdentifierAt(tokens, i+1, seen)
+		}
+	}
+
+	start, end = trimProjectionParentheses(tokens, start, end)
+	if end-start == 1 && tokens[start].kind == tStar {
+		scope := ctx.scopes[scopeID]
+		if childID, derived := scope.derivedAliases[scope.mainTable]; derived {
+			return ctx.scopeProjectsSystemColumn(tokens, childID, name, seen)
+		}
+		return scope.main == sourceClassRegister
+	}
+	if end-start == 3 && tokens[start].kind == tIdent && tokens[start+1].kind == tDot &&
+		tokens[start+2].kind == tStar {
+		scope := ctx.scopes[scopeID]
+		qualifier := strings.ToLower(tokens[start].val)
+		if class, known := scope.qualifiers[qualifier]; known {
+			return class == sourceClassRegister
+		}
+		if childID, derived := scope.derivedAliases[qualifier]; derived {
+			return ctx.scopeProjectsSystemColumn(tokens, childID, name, seen)
+		}
+		return false
+	}
+	if end-start == 1 && tokens[start].kind == tIdent && strings.EqualFold(tokens[start].val, name) {
+		return ctx.systemColumnIdentifierAt(tokens, start, seen)
+	}
+	if end-start == 3 && tokens[start].kind == tIdent && tokens[start+1].kind == tDot &&
+		tokens[start+2].kind == tIdent && strings.EqualFold(tokens[start+2].val, name) {
+		return ctx.systemColumnIdentifierAt(tokens, start+2, seen)
+	}
+	return false
+}
+
+func trimProjectionParentheses(tokens []tok, start, end int) (int, int) {
+	for end-start >= 2 && tokens[start].kind == tLParen && tokens[end-1].kind == tRParen {
+		nesting := 0
+		match := -1
+		for i := start; i < end; i++ {
+			switch tokens[i].kind {
+			case tLParen:
+				nesting++
+			case tRParen:
+				nesting--
+				if nesting == 0 {
+					match = i
+					i = end
+				}
+			}
+		}
+		if match != end-1 {
+			break
+		}
+		start++
+		end--
+	}
+	return start, end
+}
+
+func (ctx sourceContext) systemColumnIdentifierAt(tokens []tok, tokenPos int, seen map[int]bool) bool {
+	if tokenPos < 0 || tokenPos >= len(tokens) || tokens[tokenPos].kind != tIdent {
+		return false
+	}
+	name := tokens[tokenPos].val
+	if _, ok := systemColAlias(name); !ok {
+		return false
+	}
+	scopeID, ok := ctx.scopeIDAt(tokenPos)
+	if !ok {
+		return false
+	}
+	scope := ctx.scopes[scopeID]
+	if tokenPos >= 2 && tokens[tokenPos-1].kind == tDot {
+		qualifier := strings.ToLower(tokens[tokenPos-2].val)
+		if class, known := scope.qualifiers[qualifier]; known {
+			return class == sourceClassRegister
+		}
+		if childID, derived := scope.derivedAliases[qualifier]; derived {
+			return ctx.scopeProjectsSystemColumn(tokens, childID, name, seen)
+		}
+		return false
+	}
+	if childID, derived := scope.derivedAliases[scope.mainTable]; derived {
+		return ctx.scopeProjectsSystemColumn(tokens, childID, name, seen)
+	}
+	return scope.main == sourceClassRegister
 }
 
 // rewriteGroupingReferenceAliases разворачивает зарезервированный выходной
@@ -2613,11 +2825,27 @@ func (tr *translator) systemColumnAlias(name string, prevDot bool) (string, bool
 		if class, known := scope.qualifiers[qualifier]; known {
 			return col, class == sourceClassRegister
 		}
+		if childID, derived := scope.derivedAliases[qualifier]; derived {
+			return col, tr.sourceCtx.scopeProjectsSystemColumn(
+				tr.tokens,
+				childID,
+				name,
+				map[int]bool{},
+			)
+		}
 		// Обращение через ссылочное поле регистра ведёт к документу или
 		// справочнику, поэтому Регистр.Документ.Период — не системный period.
 		if tr.findRefDim(qualifier) != nil {
 			return "", false
 		}
+	}
+	if childID, derived := scope.derivedAliases[scope.mainTable]; derived {
+		return col, tr.sourceCtx.scopeProjectsSystemColumn(
+			tr.tokens,
+			childID,
+			name,
+			map[int]bool{},
+		)
 	}
 	return col, scope.main == sourceClassRegister
 }
