@@ -205,6 +205,92 @@ func TestBareReference_WithReferenceJoin_ExecuteSQLite(t *testing.T) {
 		}
 	})
 
+	t.Run("reference output alias is usable in having", func(t *testing.T) {
+		src := `SELECT SUM(Сумма) AS Reference, Проект
+			FROM Document.Расход
+			GROUP BY Проект
+			HAVING Reference > 50`
+		res, err := query.Compile(src, query.CompileOpts{
+			Entities: entities,
+			Dialect:  storage.SQLiteDialect{},
+		})
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+
+		var total float64
+		var display string
+		if err := db.QueryRow(ctx, res.SQL, res.Args...).Scan(&total, &display); err != nil {
+			t.Fatalf("execute %q\nSQL: %s\nerror: %v", src, res.SQL, err)
+		}
+		if total != 100 || display != "Казначейство" {
+			t.Fatalf("row = (%v, %q), want (100, Казначейство)", total, display)
+		}
+		if !strings.Contains(res.SQL, "HAVING(SUM(CAST(расход.сумма AS NUMERIC))) > 50") {
+			t.Fatalf("HAVING did not expand the reserved output alias:\n%s", res.SQL)
+		}
+
+		pgRes, err := query.Compile(src, query.CompileOpts{
+			Entities: entities,
+			Dialect:  storage.PgDialect{},
+		})
+		if err != nil {
+			t.Fatalf("compile PostgreSQL: %v", err)
+		}
+		if !strings.Contains(pgRes.SQL, "HAVING(SUM(расход.сумма)) > 50") ||
+			strings.Contains(pgRes.SQL, "HAVING id") {
+			t.Fatalf("PostgreSQL HAVING still references the SELECT alias:\n%s", pgRes.SQL)
+		}
+	})
+
+	t.Run("reference output alias is usable in group by", func(t *testing.T) {
+		src := `SELECT Сумма AS Reference, Проект
+			FROM Document.Расход
+			GROUP BY Reference, Проект`
+		res, err := query.Compile(src, query.CompileOpts{
+			Entities: entities,
+			Dialect:  storage.SQLiteDialect{},
+		})
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+
+		var amount float64
+		var display string
+		if err := db.QueryRow(ctx, res.SQL, res.Args...).Scan(&amount, &display); err != nil {
+			t.Fatalf("execute %q\nSQL: %s\nerror: %v", src, res.SQL, err)
+		}
+		if amount != 100 || display != "Казначейство" {
+			t.Fatalf("row = (%v, %q), want (100, Казначейство)", amount, display)
+		}
+		if !strings.Contains(res.SQL, "GROUP BY(расход.сумма),") {
+			t.Fatalf("GROUP BY did not expand the reserved output alias:\n%s", res.SQL)
+		}
+	})
+
+	t.Run("select all modifier is not copied into group by", func(t *testing.T) {
+		src := `SELECT ALL Сумма AS Reference, Проект
+			FROM Document.Расход
+			GROUP BY Reference, Проект`
+		res, err := query.Compile(src, query.CompileOpts{
+			Entities: entities,
+			Dialect:  storage.SQLiteDialect{},
+		})
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		if strings.Contains(res.SQL, "GROUP BY(ALL ") ||
+			!strings.Contains(res.SQL, "GROUP BY(расход.сумма),") {
+			t.Fatalf("SELECT ALL leaked into the grouped expression:\n%s", res.SQL)
+		}
+
+		var amount float64
+		var display string
+		if err := db.QueryRow(ctx, res.SQL, res.Args...).Scan(&amount, &display); err != nil {
+			t.Fatalf("execute %q\nSQL: %s\nerror: %v", src, res.SQL, err)
+		}
+	})
+
 	t.Run("output alias does not leak into references", func(t *testing.T) {
 		src := `ВЫБРАТЬ Сумма КАК Ссылка, Р.Ссылка, (ВЫБРАТЬ Ссылка ИЗ Справочник.Участник) КАК Вложенная ИЗ Документ.Расход КАК Р`
 		res, err := query.Compile(src, query.CompileOpts{
@@ -396,8 +482,8 @@ func TestBareReference_WithReferenceJoin_ExecuteSQLite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("compile: %v", err)
 		}
-		if !strings.Contains(res.SQL, "AS id") || !strings.Contains(res.SQL, "GROUP BY id,") {
-			t.Fatalf("English GROUP BY did not resolve the reserved alias:\n%s", res.SQL)
+		if !strings.Contains(res.SQL, "AS id") || !strings.Contains(res.SQL, "GROUP BY(расход.сумма),") {
+			t.Fatalf("English GROUP BY did not expand the reserved alias:\n%s", res.SQL)
 		}
 	})
 }

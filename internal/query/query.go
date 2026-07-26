@@ -2486,6 +2486,116 @@ func preScanSourceContext(tokens []tok) sourceContext {
 	return ctx
 }
 
+// rewriteGroupingReferenceAliases разворачивает зарезервированный выходной
+// алиас Ссылка/Reference/Ref обратно в выражение SELECT при обращении из
+// GROUP BY/HAVING. PostgreSQL не разрешает SELECT-алиасы в HAVING, а при
+// авто-JOIN оба диалекта могут трактовать id как неоднозначную входную колонку.
+// ORDER BY оставляем без изменений: там выходной алиас имеет нужный приоритет.
+func rewriteGroupingReferenceAliases(tokens []tok) []tok {
+	ctx := preScanSourceContext(tokens)
+	expressions := make(map[int][]tok)
+
+	for i := 0; i+1 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tIdent {
+			continue
+		}
+		kw, ok := sqlKW(tokens[i].val)
+		if !ok || kw != "AS" || !isReferenceName(strings.ToLower(tokens[i+1].val)) {
+			continue
+		}
+		scopeID, ok := ctx.scopeIDAt(i)
+		if !ok || ctx.sectionAt(i) != sectionSelect {
+			continue
+		}
+		start := selectExpressionStart(tokens, ctx, scopeID, i)
+		if start >= i {
+			continue
+		}
+		expressions[scopeID] = copyGroupingAliasExpression(tokens, ctx, start, i)
+	}
+	if len(expressions) == 0 {
+		return tokens
+	}
+
+	out := make([]tok, 0, len(tokens))
+	for i, t := range tokens {
+		section := ctx.sectionAt(i)
+		if t.kind == tIdent && isReferenceName(strings.ToLower(t.val)) &&
+			(section == sectionGroupBy || section == sectionHaving) &&
+			(i == 0 || tokens[i-1].kind != tDot) {
+			if scopeID, ok := ctx.scopeIDAt(i); ok {
+				if expr := expressions[scopeID]; len(expr) > 0 {
+					out = append(out, tok{kind: tLParen, val: "("})
+					out = append(out, expr...)
+					out = append(out, tok{kind: tRParen, val: ")"})
+					continue
+				}
+			}
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+func selectExpressionStart(tokens []tok, ctx sourceContext, scopeID, aliasPos int) int {
+	nesting := 0
+	for i := aliasPos - 1; i >= 0; i-- {
+		switch tokens[i].kind {
+		case tRParen:
+			nesting++
+			continue
+		case tLParen:
+			if nesting > 0 {
+				nesting--
+				continue
+			}
+		}
+		if nesting != 0 {
+			continue
+		}
+		if id, ok := ctx.scopeIDAt(i); !ok || id != scopeID {
+			continue
+		}
+		if tokens[i].kind == tComma {
+			return i + 1
+		}
+		if tokens[i].kind == tIdent {
+			if kw, ok := sqlKW(tokens[i].val); ok && kw == "SELECT" {
+				start := i + 1
+				if start < aliasPos && tokens[start].kind == tIdent {
+					if kw, ok := sqlKW(tokens[start].val); ok && (kw == "DISTINCT" || kw == "ALL") {
+						start++
+					}
+				}
+				return start
+			}
+		}
+	}
+	return aliasPos
+}
+
+func copyGroupingAliasExpression(tokens []tok, ctx sourceContext, start, end int) []tok {
+	expr := make([]tok, 0, end-start)
+	for i := start; i < end; i++ {
+		t := tokens[i]
+		if t.kind == tIdent && isReferenceName(strings.ToLower(t.val)) &&
+			(i == start || tokens[i-1].kind != tDot) {
+			prevAlias := i > start && tokens[i-1].kind == tIdent &&
+				(strings.EqualFold(tokens[i-1].val, "КАК") || strings.EqualFold(tokens[i-1].val, "AS"))
+			if !prevAlias && !ctx.isReferenceAliasAt(i, strings.ToLower(t.val)) {
+				if scope, ok := ctx.scopeAt(i); ok && scope.mainTable != "" {
+					expr = append(expr,
+						tok{kind: tIdent, val: scope.mainTable},
+						tok{kind: tDot, val: "."},
+					)
+				}
+			}
+		}
+		expr = append(expr, t)
+	}
+	return expr
+}
+
 // systemColumnAlias разрешает русское имя системной колонки только в контексте
 // регистра. Для документов и справочников такое имя является обычным
 // прикладным полем и должно остаться кириллическим.
@@ -2630,6 +2740,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		opts.Params = map[string]any{}
 	}
 	projectionFields := projectionFieldNames(tokens)
+	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
 	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect))
@@ -2964,6 +3075,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.section = sectionSelect
 				case "FROM":
 					tr.section = sectionFrom
+				case "GROUP":
+					tr.section = sectionGroupBy
 				case "HAVING":
 					tr.section = sectionHaving
 				case "ORDER":
