@@ -90,13 +90,16 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	var watchDir string
 	var appCfg *project.AppConfig
 	var srv *api.Server
+	var loadErr error
 	load := func() {
+		loadErr = nil
 		var proj *project.Project
 		var lerr error
 
 		if configSource == "database" {
 			cfgRepo := configdb.New(db)
 			if err := cfgRepo.EnsureSchema(ctx); err != nil {
+				loadErr = fmt.Errorf("configdb schema: %w", err)
 				devLog.Warn("configdb schema failed", "err", err)
 				return
 			}
@@ -106,42 +109,66 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			watchDir = dir
 		}
 		if lerr != nil {
+			loadErr = fmt.Errorf("load project: %w", lerr)
 			devLog.Warn("project load failed", "err", lerr)
 			return
 		}
 		defer proj.Close()
-		appCfg, _ = project.LoadConfig(proj.Dir)
+		nextAppCfg, err := project.LoadConfig(proj.Dir)
+		if err != nil {
+			loadErr = fmt.Errorf("load app config: %w", err)
+			devLog.Warn("app config load failed", "err", err)
+			return
+		}
+		appCfg = nextAppCfg
 
 		if err := db.Migrate(ctx, proj.Entities); err != nil {
+			loadErr = fmt.Errorf("migrate: %w", err)
 			devLog.Warn("migrate failed", "err", err)
 			return
 		}
 		if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
+			loadErr = fmt.Errorf("migrate registers: %w", err)
 			devLog.Warn("migrate registers failed", "err", err)
 			return
 		}
 		if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
+			loadErr = fmt.Errorf("migrate info registers: %w", err)
 			devLog.Warn("migrate info registers failed", "err", err)
 			return
 		}
 		if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
+			loadErr = fmt.Errorf("migrate constants: %w", err)
 			devLog.Warn("migrate constants failed", "err", err)
 			return
 		}
 		if err := db.EnsureAccountsTable(ctx); err != nil {
+			loadErr = fmt.Errorf("accounts table: %w", err)
 			devLog.Warn("accounts table ensure failed", "err", err)
 			return
 		}
 		if err := db.SyncAccounts(ctx, proj.ChartsOfAccounts); err != nil {
+			loadErr = fmt.Errorf("sync accounts: %w", err)
 			devLog.Warn("sync accounts failed", "err", err)
 			return
 		}
 		if err := db.MigrateAccountRegisters(ctx, proj.AccountRegisters); err != nil {
+			loadErr = fmt.Errorf("migrate account registers: %w", err)
 			devLog.Warn("migrate account registers failed", "err", err)
 			return
 		}
-		if roles, err2 := auth.LoadRolesYAML(proj.Dir + "/roles"); err2 == nil && len(roles) > 0 {
-			_ = authRepo.SyncRoles(ctx, roles)
+		roles, err := auth.LoadRolesYAML(filepath.Join(proj.Dir, "roles"))
+		if err != nil {
+			loadErr = fmt.Errorf("load roles: %w", err)
+			devLog.Warn("roles load failed", "err", err)
+			return
+		}
+		if len(roles) > 0 {
+			if err := authRepo.SyncRoles(ctx, roles); err != nil {
+				loadErr = fmt.Errorf("sync roles: %w", err)
+				devLog.Warn("roles sync failed", "err", err)
+				return
+			}
 		}
 		reg.Load(runtime.LoadOptions{
 			Entities:        proj.Entities,
@@ -195,8 +222,10 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		} else {
 			reg.SetExternalProcessors(extProcs, extPrograms)
 		}
-		if loadErr := sched.Reload(proj.ScheduledJobs); loadErr != nil {
-			devLog.Warn("scheduler reload failed", "err", loadErr)
+		if schedErr := sched.Reload(proj.ScheduledJobs); schedErr != nil {
+			loadErr = fmt.Errorf("scheduler reload: %w", schedErr)
+			devLog.Warn("scheduler reload failed", "err", schedErr)
+			return
 		}
 		if appCfg != nil && appCfg.Backup != nil {
 			if err := backup.RegisterAutoBackup(appCfg.Backup, backup.AutoTarget{
@@ -212,6 +241,12 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stdout, "[dev] reloaded")
 	}
 	load()
+	if loadErr != nil {
+		return loadErr
+	}
+	if appCfg == nil {
+		return errors.New("initial project load did not complete")
+	}
 	interp.StrictLexicalScope = appDSLStrictLexicalScope(appCfg)
 
 	if configSource == "file" && watchDir != "" {

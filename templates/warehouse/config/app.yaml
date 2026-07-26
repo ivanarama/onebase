@@ -1,10 +1,2 @@
 name: warehouse
-description: Складской учёт — товары, ячейки, инвентаризация
 version: "1.0"
-database:
-  type: sqlite
-  path: warehouse.db
-modules:
-  - catalogs
-  - documents
-  - reports

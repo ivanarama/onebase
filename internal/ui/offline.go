@@ -41,7 +41,11 @@ func RunProcessorOffline(ctx context.Context, proj *project.Project, db *storage
 	interp.LookupProc = reg.GetModuleProc
 	interp.LookupSiblingProc = reg.GetSiblingProc
 	interp.LookupModuleProc = reg.GetModuleNamespacedProc
-	if appCfg, _ := project.LoadConfig(proj.Dir); appCfg != nil && appCfg.DSL != nil {
+	appCfg, err := project.LoadConfig(proj.Dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load app config: %w", err)
+	}
+	if appCfg.DSL != nil {
 		interp.StrictLexicalScope = appCfg.DSL.StrictLexicalScope
 	}
 

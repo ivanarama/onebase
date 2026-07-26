@@ -1,10 +1,2 @@
 name: texts
-description: Тексты и переводы — учёт текстов, событий и переводов
 version: "1.0"
-database:
-  type: sqlite
-  path: texts.db
-modules:
-  - catalogs
-  - documents
-  - reports

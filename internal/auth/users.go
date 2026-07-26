@@ -91,11 +91,19 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 	if err := r.EnsureAPITokenSchema(ctx); err != nil {
 		return err
 	}
-	// idempotent migrations: add columns if missing
-	r.db.Exec(ctx, fmt.Sprintf(`ALTER TABLE _users ADD COLUMN deny_passwd_change %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)))
-	r.db.Exec(ctx, fmt.Sprintf(`ALTER TABLE _users ADD COLUMN show_in_list %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)))
-	r.db.Exec(ctx, `ALTER TABLE _users ADD COLUMN lang TEXT NOT NULL DEFAULT ''`)
-	r.db.Exec(ctx, fmt.Sprintf(`ALTER TABLE _users ADD COLUMN ai_data_access %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)))
+	// Idempotent user migrations. Ignore only an actual duplicate-column error:
+	// swallowing SQLITE_BUSY, permission, or connection errors leaves a partially
+	// migrated schema that fails later on unrelated requests.
+	for _, ddl := range []string{
+		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN deny_passwd_change %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
+		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN show_in_list %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
+		`ALTER TABLE _users ADD COLUMN lang TEXT NOT NULL DEFAULT ''`,
+		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN ai_data_access %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
+	} {
+		if _, err := r.db.Exec(ctx, ddl); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("auth: migrate _users: %w", err)
+		}
+	}
 	// Мультисессии (план 78): служебные метаданные сессии. Колонки nullable без
 	// DEFAULT — SQLite не разрешает ни UNIQUE, ни CURRENT_TIMESTAMP в ADD COLUMN;
 	// уникальность public_id обеспечивает отдельный индекс. EnsureSchema зовётся

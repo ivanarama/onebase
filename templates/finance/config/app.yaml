@@ -1,10 +1,2 @@
 name: finance
-description: Финансы — доходы, расходы, бюджет
 version: "1.0"
-database:
-  type: sqlite
-  path: finance.db
-modules:
-  - catalogs
-  - documents
-  - reports

@@ -1,10 +1,2 @@
 name: tasks
-description: Управление задачами и проектами
 version: "1.0"
-database:
-  type: sqlite
-  path: tasks.db
-modules:
-  - catalogs
-  - documents
-  - reports

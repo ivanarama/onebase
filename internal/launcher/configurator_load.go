@@ -106,7 +106,12 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		data.ConfigFileTree = h.buildConfigFileTree(ctx, b, proj)
 	}
 
-	if appCfg, _ := project.LoadConfig(proj.Dir); appCfg != nil {
+	appCfg, cfgErr := project.LoadConfig(proj.Dir)
+	if cfgErr != nil {
+		data.Error = tr(l, "Ошибка config/app.yaml") + ": " + cfgErr.Error()
+		return data
+	}
+	if appCfg != nil {
 		data.AppName = appCfg.Name
 		data.AppVersion = appCfg.Version
 		data.AppLogo = appCfg.Logo

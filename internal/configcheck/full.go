@@ -33,15 +33,22 @@ func RunFullWithOptions(dir string, opts Options) Result {
 	if opts.Lint {
 		warnings = append(warnings, CheckLintYAML(dir)...)
 	}
+	appCfg, appCfgErr := project.LoadConfig(dir)
+	if appCfgErr != nil && !AlreadyReported(issues, appCfgErr.Error()) {
+		issues = append(issues, Issue{Message: "config/app.yaml: " + appCfgErr.Error()})
+	}
 
 	if proj, err := project.Load(dir); err == nil {
-		strictLexicalScope := strictLexicalScopeEnabled(dir)
+		strictLexicalScope := appCfgErr == nil && appCfg != nil && appCfg.DSL != nil && appCfg.DSL.StrictLexicalScope
 		issues = append(issues, CheckQueries(proj)...)
 		issues = append(issues, CheckReportComposition(proj)...)
 		issues = append(issues, CheckJournalConditional(proj)...)
 		issues = append(issues, CheckFormConditional(proj)...)
 		issues = append(issues, CheckReportOutputFormat(proj)...)
-		roles, _ := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
+		roles, rolesErr := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
+		if rolesErr != nil && !AlreadyReported(issues, rolesErr.Error()) {
+			issues = append(issues, Issue{Message: "roles: " + rolesErr.Error()})
+		}
 		issues = append(issues, CheckCrossRefs(proj, roles)...)
 		warnings = append(warnings, CheckLayoutWarnings(proj)...)
 		warnings = append(warnings, CheckFormFieldFormat(proj)...)
@@ -74,12 +81,6 @@ func RunFullWithOptions(dir string, opts Options) Result {
 
 	return NewResult(issues, warnings)
 }
-
-func strictLexicalScopeEnabled(dir string) bool {
-	cfg, err := project.LoadConfig(dir)
-	return err == nil && cfg != nil && cfg.DSL != nil && cfg.DSL.StrictLexicalScope
-}
-
 func excludeIssueCode(in []Issue, code string) []Issue {
 	if len(in) == 0 {
 		return in

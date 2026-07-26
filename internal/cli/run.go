@@ -140,6 +140,11 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	}
 	defer proj.Close()
 
+	appCfg, err := project.LoadConfig(proj.Dir)
+	if err != nil {
+		return fmt.Errorf("load app config: %w", err)
+	}
+
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -159,9 +164,16 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("exchange schema: %w", err)
 	}
 
-	// Sync roles from YAML
-	if roles, err2 := auth.LoadRolesYAML(proj.Dir + "/roles"); err2 == nil && len(roles) > 0 {
-		_ = authRepo.SyncRoles(ctx, roles)
+	// Sync roles from YAML. Malformed or unreadable role files must not leave
+	// stale permissions active while startup appears successful.
+	roles, err := auth.LoadRolesYAML(filepath.Join(proj.Dir, "roles"))
+	if err != nil {
+		return fmt.Errorf("load roles: %w", err)
+	}
+	if len(roles) > 0 {
+		if err := authRepo.SyncRoles(ctx, roles); err != nil {
+			return fmt.Errorf("sync roles: %w", err)
+		}
 	}
 
 	if err := db.EnsureAccountsTable(ctx); err != nil {
@@ -231,7 +243,6 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		reg.SetExternalProcessors(extProcs, extPrograms)
 	}
 
-	appCfg, _ := project.LoadConfig(proj.Dir)
 	// app.yaml может задавать конфиг ИИ-помощника (llm, ключи через ${env:...})
 	// и non-secret policy-настройки (ai). Применяем их к базе при старте:
 	// таблица _settings не входит в .obz, поэтому для демо/прод это способ
