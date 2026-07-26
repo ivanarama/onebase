@@ -361,6 +361,7 @@ var kwMap = map[string]string{
 	"ЕСТЬ":          "IS",
 	"ПУСТО":         "NULL",
 	"В":             "IN",
+	"МЕЖДУ":         "BETWEEN",
 	"ОБЪЕДИНИТЬ":    "UNION",
 	"ВСЕ":           "ALL",
 	// JOIN keywords (Russian)
@@ -393,6 +394,7 @@ var kwMap = map[string]string{
 	"IS":       "IS",
 	"NULL":     "NULL",
 	"IN":       "IN",
+	"BETWEEN":  "BETWEEN",
 	"UNION":    "UNION",
 	"ALL":      "ALL",
 	// JOIN keywords (English pass-through)

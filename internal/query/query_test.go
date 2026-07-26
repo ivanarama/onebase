@@ -3,6 +3,7 @@ package query_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
@@ -54,6 +55,38 @@ func TestCompile_WithParam(t *testing.T) {
 	}
 	if len(r.Args) != 1 || r.Args[0] != "Приход" {
 		t.Errorf("expected args=[Приход], got %v", r.Args)
+	}
+}
+
+func TestCompile_Between(t *testing.T) {
+	src := `ВЫБРАТЬ id ИЗ Документ.ЗаЧас ГДЕ Дата МЕЖДУ &ДатаНачала И &ДатаОкончания`
+	params := map[string]any{
+		"ДатаНачала":    time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC),
+		"ДатаОкончания": time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC),
+	}
+
+	tests := []struct {
+		name    string
+		dialect storage.Dialect
+		want    string
+	}{
+		{name: "postgres", want: "WHERE дата BETWEEN $1::timestamptz AND $2::timestamptz"},
+		{name: "sqlite", dialect: storage.SQLiteDialect{}, want: "WHERE дата BETWEEN ? AND ?"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := query.Compile(src, query.CompileOpts{Params: params, Dialect: tt.dialect})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(r.SQL, tt.want) {
+				t.Fatalf("expected %q, got: %s", tt.want, r.SQL)
+			}
+			if len(r.Args) != 2 {
+				t.Fatalf("expected 2 args, got %d: %v", len(r.Args), r.Args)
+			}
+		})
 	}
 }
 

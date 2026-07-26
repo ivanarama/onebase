@@ -95,6 +95,13 @@ var queryDescriptors = []Descriptor{
 		Example:   "ГДЕ Склад В (&СписокСкладов)",
 	},
 	{
+		Name: "между", Display: "МЕЖДУ", Aliases: []string{"BETWEEN"},
+		Kind: KindQuery, Group: "Запрос",
+		Signature: "<поле> МЕЖДУ <начало> И <конец>",
+		Doc:       "Проверяет, входит ли значение в указанный диапазон, включая обе границы.",
+		Example:   "ГДЕ Дата МЕЖДУ &ДатаНачала И &ДатаОкончания",
+	},
+	{
 		Name: "есть", Display: "ЕСТЬ", Aliases: []string{"IS"},
 		Kind: KindQuery, Group: "Запрос",
 		Signature: "<поле> ЕСТЬ ПУСТО",
