@@ -1062,5 +1062,6 @@
   "неполная запись архива: %s": "incomplete archive entry: %s",
   "повторяющаяся запись в архиве: %s": "duplicate archive entry: %s",
   "распакованный архив превышает допустимый размер": "the expanded archive exceeds the allowed size",
-  "слишком много записей в архиве: %d": "too many archive entries: %d"
+  "слишком много записей в архиве: %d": "too many archive entries: %d",
+  "Ошибка config/app.yaml": "config/app.yaml error"
 }
