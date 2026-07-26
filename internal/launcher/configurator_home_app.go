@@ -227,7 +227,7 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 	const maxLogoBytes = int64(2 << 20)
 	r.Body = http.MaxBytesReader(w, r.Body, maxLogoBytes+(1<<20))
 	if err := r.ParseMultipartForm(maxLogoBytes); err != nil {
-		http.Error(w, tr(lang, "Ошибка чтения формы")+": "+err.Error(), requestBodyErrorStatus(err))
+		http.Error(w, tr(lang, "Ошибка разбора формы")+": "+err.Error(), requestBodyErrorStatus(err))
 		return
 	}
 	newName := strings.TrimSpace(r.FormValue("app_name"))

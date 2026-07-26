@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -57,4 +58,8 @@ func uploadErrorStatus(err error) int {
 		return http.StatusRequestEntityTooLarge
 	}
 	return http.StatusBadRequest
+}
+
+func (s *Server) uploadTooLargeText(lang string, limit int64) string {
+	return fmt.Sprintf(s.tr(lang, "файл превышает максимальный размер %d МБ"), limit>>20)
 }

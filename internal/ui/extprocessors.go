@@ -44,7 +44,7 @@ func (s *Server) adminExtProcessorUpload(w http.ResponseWriter, r *http.Request)
 	maxSize := s.limitMultipartRequest(w, r)
 	if err := parseBoundedForm(r, 32<<20); err != nil {
 		if uploadErrorStatus(err) == http.StatusRequestEntityTooLarge {
-			http.Error(w, s.tr(lang, "файл слишком большой"), http.StatusRequestEntityTooLarge)
+			http.Error(w, s.uploadTooLargeText(lang, maxSize), http.StatusRequestEntityTooLarge)
 			return
 		}
 		s.extProcRedirect(w, r, "", s.tr(lang, "не удалось прочитать файл")+": "+s.errText(r, err))
@@ -59,7 +59,7 @@ func (s *Server) adminExtProcessorUpload(w http.ResponseWriter, r *http.Request)
 	data, err := readUploadedBytes(file, maxSize)
 	if err != nil {
 		if errors.Is(err, errUploadTooLarge) {
-			http.Error(w, s.tr(lang, "файл слишком большой"), http.StatusRequestEntityTooLarge)
+			http.Error(w, s.uploadTooLargeText(lang, maxSize), http.StatusRequestEntityTooLarge)
 			return
 		}
 		s.extProcRedirect(w, r, "", s.tr(lang, "ошибка чтения файла")+": "+s.errText(r, err))

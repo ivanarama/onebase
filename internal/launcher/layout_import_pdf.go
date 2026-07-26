@@ -43,7 +43,7 @@ func (h *handler) configuratorImportPDFLayout(w http.ResponseWriter, r *http.Req
 	r.Body = http.MaxBytesReader(w, r.Body, maxPDFUpload)
 	if err := r.ParseMultipartForm(maxPDFUpload); err != nil {
 		if requestBodyErrorStatus(err) == http.StatusRequestEntityTooLarge {
-			http.Error(w, tr(lang, "Файл слишком большой"), http.StatusRequestEntityTooLarge)
+			http.Error(w, tr(lang, "Файл слишком большой или форма повреждена"), http.StatusRequestEntityTooLarge)
 			return
 		}
 		h.layoutCreateError(w, r, b, lang, tr(lang, "Файл слишком большой или форма повреждена"))

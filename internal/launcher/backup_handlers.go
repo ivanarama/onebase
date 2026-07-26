@@ -361,7 +361,7 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 	file, header, err := r.FormFile("backup_file")
 	if err != nil {
 		if requestBodyErrorStatus(err) == http.StatusRequestEntityTooLarge {
-			http.Error(w, tr(lang, "Файл слишком большой"), http.StatusRequestEntityTooLarge)
+			http.Error(w, fmt.Sprintf(tr(lang, "файл превышает максимальный размер %d МБ"), maxFullArchiveUpload>>20), http.StatusRequestEntityTooLarge)
 			return
 		}
 		data := h.loadCfgData(r.Context(), b, "backup")
