@@ -4,7 +4,9 @@ package webhook
 // retry с экспоненциальной задержкой, журналирование.
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -260,5 +262,202 @@ func TestDispatcher_NegativeRetryStillFiresOnce(t *testing.T) {
 
 	if rec.count() != 1 {
 		t.Fatalf("при retry=-1 ожидалась 1 отправка, получено %d", rec.count())
+	}
+}
+
+func TestDispatcher_BoundedQueueDropsAndLogsOverflow(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var mu sync.Mutex
+	var logs []LogEntry
+	d := NewWithOptions([]Config{{
+		Name: "bounded", On: "document.save", URL: srv.URL,
+	}}, func(entry LogEntry) {
+		mu.Lock()
+		logs = append(logs, entry)
+		mu.Unlock()
+	}, Options{Workers: 1, QueueSize: 1})
+
+	d.Dispatch(Event{Name: "document.save", ID: "1"})
+	<-started                                         // worker is occupied by the first delivery
+	d.Dispatch(Event{Name: "document.save", ID: "2"}) // fills the queue
+	d.Dispatch(Event{Name: "document.save", ID: "3"}) // must be dropped
+	close(release)
+	d.Wait()
+
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("HTTP requests = %d, want 2", got)
+	}
+	metrics := d.Metrics()
+	if metrics.Inflight != 0 || metrics.Dispatched != 3 || metrics.Dropped != 1 || metrics.Failed != 1 {
+		t.Fatalf("metrics = %+v, want dispatched=3 dropped=1 failed=1 inflight=0", metrics)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var overflow bool
+	for _, entry := range logs {
+		if strings.Contains(entry.Error, "переполнена") && entry.Attempts == 0 {
+			overflow = true
+		}
+	}
+	if !overflow {
+		t.Fatalf("overflow was not journalled: %+v", logs)
+	}
+	closeDispatcher(t, d)
+}
+
+func TestDispatcher_RedactsSecretsFromURLAndErrors(t *testing.T) {
+	t.Run("successful request", func(t *testing.T) {
+		logged := make(chan LogEntry, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer srv.Close()
+		d := New([]Config{{
+			Name: "secret", On: "document.post",
+			URL: srv.URL + "/botSUPERSECRET/send?token=QUERYSECRET",
+		}}, func(entry LogEntry) { logged <- entry })
+
+		d.Dispatch(Event{Name: "document.post"})
+		d.Wait()
+		entry := <-logged
+		if strings.Contains(entry.URL, "SUPERSECRET") || strings.Contains(entry.URL, "QUERYSECRET") {
+			t.Fatalf("secret leaked into URL log: %q", entry.URL)
+		}
+		if want := srv.URL + "/<redacted>?<redacted>"; entry.URL != want {
+			t.Fatalf("redacted URL = %q, want %q", entry.URL, want)
+		}
+		closeDispatcher(t, d)
+	})
+
+	t.Run("network error", func(t *testing.T) {
+		logged := make(chan LogEntry, 1)
+		d := New([]Config{{
+			Name: "secret", On: "document.post",
+			URL: "http://127.0.0.1:1/botSUPERSECRET/send?token=QUERYSECRET",
+		}}, func(entry LogEntry) { logged <- entry })
+
+		d.Dispatch(Event{Name: "document.post"})
+		d.Wait()
+		entry := <-logged
+		combined := entry.URL + " " + entry.Error
+		if strings.Contains(combined, "SUPERSECRET") || strings.Contains(combined, "QUERYSECRET") {
+			t.Fatalf("secret leaked into failure log: %+v", entry)
+		}
+		if entry.Error == "" {
+			t.Fatalf("network failure was not logged: %+v", entry)
+		}
+		closeDispatcher(t, d)
+	})
+}
+
+func TestRedactURL_RemovesUserInfoPathQueryAndFragment(t *testing.T) {
+	raw := "https://user:SUPERSECRET@example.com/botPATHSECRET/send?token=QUERYSECRET#FRAGMENTSECRET"
+	got := RedactURL(raw)
+	if got != "https://example.com/<redacted>?<redacted>" {
+		t.Fatalf("RedactURL = %q", got)
+	}
+	for _, secret := range []string{"SUPERSECRET", "PATHSECRET", "QUERYSECRET", "FRAGMENTSECRET", "user"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("RedactURL leaked %q in %q", secret, got)
+		}
+	}
+	if got := RedactURL("not a valid endpoint SUPERSECRET"); got != "<redacted>" {
+		t.Fatalf("invalid URL redaction = %q", got)
+	}
+}
+
+func TestDispatcher_CloseDrainsQueuedDeliveries(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	d := NewWithOptions([]Config{{Name: "drain", On: "catalog.save", URL: srv.URL}},
+		nil, Options{Workers: 1, QueueSize: 2})
+	d.Dispatch(Event{Name: "catalog.save", ID: "1"})
+	<-started
+	d.Dispatch(Event{Name: "catalog.save", ID: "2"})
+
+	closed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		closed <- d.Close(ctx)
+	}()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before active delivery completed: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	if err := <-closed; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("Close delivered %d requests, want 2", got)
+	}
+}
+
+func TestDispatcher_CloseDeadlineCancelsRetryBackoff(t *testing.T) {
+	firstAttempt := make(chan struct{}, 1)
+	logged := make(chan LogEntry, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case firstAttempt <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	d := New([]Config{{
+		Name: "cancel", On: "document.save", URL: srv.URL, Retry: 10,
+	}}, func(entry LogEntry) { logged <- entry })
+	d.retryBase = time.Hour
+	d.Dispatch(Event{Name: "document.save"})
+	<-firstAttempt
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := d.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close error = %v, want context deadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Close did not cancel retry backoff promptly: %v", elapsed)
+	}
+	entry := <-logged
+	if !strings.Contains(entry.Error, "отменена") {
+		t.Fatalf("cancelled delivery log = %+v", entry)
+	}
+}
+
+func closeDispatcher(t *testing.T, d *Dispatcher) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := d.Close(ctx); err != nil {
+		t.Fatalf("Close dispatcher: %v", err)
 	}
 }

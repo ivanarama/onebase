@@ -403,7 +403,9 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	if appCfg != nil && len(appCfg.Webhooks) > 0 {
 		dbRef := db
 		d := webhook.New(appCfg.Webhooks, func(e webhook.LogEntry) {
-			dbRef.LogWebhook(context.Background(), storage.WebhookLogEntry{
+			logCtx, logCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer logCancel()
+			dbRef.LogWebhook(logCtx, storage.WebhookLogEntry{
 				Webhook: e.Webhook, Event: e.Event, Entity: e.Entity, RecordID: e.RecordID,
 				URL: e.URL, StatusCode: e.StatusCode, Error: e.Error,
 				Duration: e.Duration, Attempts: e.Attempts,

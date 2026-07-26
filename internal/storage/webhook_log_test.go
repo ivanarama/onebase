@@ -5,6 +5,7 @@ package storage
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,7 +48,42 @@ func TestWebhookLog_WriteAndList(t *testing.T) {
 	if e1.StatusCode != 200 || e1.DurationMs != 120 || e1.Webhook != "tg" {
 		t.Fatalf("неожиданная запись: %+v", e1)
 	}
+	if e1.URL != "" || e2.URL != "" {
+		t.Fatalf("webhook endpoint URLs must not be persisted: %q / %q", e1.URL, e2.URL)
+	}
 	if e1.At.IsZero() {
 		t.Fatal("время не заполнено")
+	}
+}
+
+func TestWebhookLog_ScrubsLegacyEndpointURLs(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "legacy-wh.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	if err := db.EnsureWebhookLogSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO _webhook_log
+		(id, webhook_name, url, error) VALUES (?, ?, ?, ?)`,
+		"legacy-id", "telegram",
+		"https://api.telegram.org/botSUPERSECRET/sendMessage?token=QUERYSECRET",
+		`Post "https://api.telegram.org/botSUPERSECRET/sendMessage?token=QUERYSECRET": connection refused`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate reopening a database created by an older process.
+	webhookURLScrubbed.Delete(db)
+	if err := db.EnsureWebhookLogSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var storedURL, storedError string
+	if err := db.QueryRow(ctx, `SELECT url, error FROM _webhook_log WHERE id = ?`, "legacy-id").Scan(&storedURL, &storedError); err != nil {
+		t.Fatal(err)
+	}
+	if storedURL != "" || strings.Contains(storedError, "SUPERSECRET") || strings.Contains(storedError, "QUERYSECRET") {
+		t.Fatalf("legacy webhook secrets were not scrubbed: url=%q error=%q", storedURL, storedError)
 	}
 }

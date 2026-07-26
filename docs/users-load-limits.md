@@ -263,7 +263,7 @@ docker compose -f loadtest/docker-compose.yml run --rm --service-ports \
   `onebase_active_scheduled_jobs`, `onebase_active_operations`,
   `onebase_operation_duration_seconds`, `onebase_slow_operation_total`,
   `onebase_limited_operation_total`, `onebase_webhook_inflight`,
-  `onebase_webhook_retry_total`.
+  `onebase_webhook_retry_total`, `onebase_webhook_dropped_total`.
 - PostgreSQL pool: `onebase_db_pool_acquired_conns`,
   `onebase_db_pool_max_conns`, `onebase_db_pool_empty_acquire_total`,
   `onebase_db_pool_canceled_acquire_total`.

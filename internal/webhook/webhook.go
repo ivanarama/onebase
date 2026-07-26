@@ -8,9 +8,12 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -60,37 +63,94 @@ type Metrics struct {
 	Dispatched uint64
 	Retries    uint64
 	Failed     uint64
+	Dropped    uint64
 }
 
-// Dispatcher проверяет фильтры и отправляет HTTP-запросы асинхронно.
+const (
+	DefaultWorkers   = 4
+	DefaultQueueSize = 256
+)
+
+// Options controls the bounded delivery pool. Zero values use safe defaults.
+type Options struct {
+	Workers   int
+	QueueSize int
+}
+
+type delivery struct {
+	hook  Config
+	event Event
+}
+
+var errInvalidWebhookURL = errors.New("некорректный URL веб-хука")
+
+// Dispatcher проверяет фильтры и отправляет HTTP-запросы через ограниченную
+// очередь worker-ов. Close must be called during application shutdown.
 type Dispatcher struct {
 	hooks      []Config
 	client     *http.Client
 	logFn      func(LogEntry) // best-effort журнал; может быть nil
-	guard      func() bool    // предохранитель сети (план 62): true = сеть разрешена; nil = без ограничений
-	wg         sync.WaitGroup
+	guardMu    sync.RWMutex
+	guard      func() bool   // предохранитель сети (план 62): true = сеть разрешена; nil = без ограничений
 	retryBase  time.Duration // база экспоненциальной задержки (тесты ускоряют)
+	ctx        context.Context
+	cancel     context.CancelFunc
+	queue      chan delivery
+	gate       sync.RWMutex
+	closed     bool
+	pending    sync.WaitGroup
+	workers    sync.WaitGroup
+	closeOnce  sync.Once
+	closeDone  chan struct{}
 	inflight   atomic.Int64
 	dispatched atomic.Uint64
 	retries    atomic.Uint64
 	failed     atomic.Uint64
+	dropped    atomic.Uint64
 }
 
 // New строит диспетчер. logFn вызывается после завершения каждого вызова
 // (включая неудачные) — обычно это запись в _webhook_log.
 func New(hooks []Config, logFn func(LogEntry)) *Dispatcher {
-	return &Dispatcher{
-		hooks:     hooks,
+	return NewWithOptions(hooks, logFn, Options{})
+}
+
+// NewWithOptions builds a dispatcher with an explicit bounded worker pool.
+func NewWithOptions(hooks []Config, logFn func(LogEntry), opts Options) *Dispatcher {
+	if opts.Workers <= 0 {
+		opts.Workers = DefaultWorkers
+	}
+	if opts.QueueSize <= 0 {
+		opts.QueueSize = DefaultQueueSize
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	d := &Dispatcher{
+		hooks:     append([]Config(nil), hooks...),
 		client:    &http.Client{},
 		logFn:     logFn,
 		retryBase: time.Second,
+		ctx:       ctx,
+		cancel:    cancel,
+		queue:     make(chan delivery, opts.QueueSize),
+		closeDone: make(chan struct{}),
 	}
+	if len(hooks) > 0 {
+		d.workers.Add(opts.Workers)
+		for i := 0; i < opts.Workers; i++ {
+			go d.worker()
+		}
+	}
+	return d
 }
 
 // SetGuard задаёт предохранитель сети (план 62): когда guard() == false,
 // исходящие веб-хуки не отправляются, а в журнал пишется запись со статусом
 // «заблокировано» — отказ виден, а не молчалив.
-func (d *Dispatcher) SetGuard(guard func() bool) { d.guard = guard }
+func (d *Dispatcher) SetGuard(guard func() bool) {
+	d.guardMu.Lock()
+	d.guard = guard
+	d.guardMu.Unlock()
+}
 
 // Enabled сообщает, настроен ли хотя бы один веб-хук.
 func (d *Dispatcher) Enabled() bool { return d != nil && len(d.hooks) > 0 }
@@ -105,17 +165,19 @@ func (d *Dispatcher) Metrics() Metrics {
 		Dispatched: d.dispatched.Load(),
 		Retries:    d.retries.Load(),
 		Failed:     d.failed.Load(),
+		Dropped:    d.dropped.Load(),
 	}
 }
 
-// Dispatch запускает подходящие веб-хуки асинхронно: вызов не блокирует
-// сохранение документа (сетевые задержки и ретраи — в фоне).
+// Dispatch ставит подходящие веб-хуки в bounded queue и не блокирует
+// сохранение документа. При переполнении доставка явно журналируется как
+// неудачная вместо неограниченного создания goroutine.
 func (d *Dispatcher) Dispatch(e Event) {
 	if d == nil {
 		return
 	}
 	for i := range d.hooks {
-		h := &d.hooks[i]
+		h := d.hooks[i]
 		if h.On != e.Name {
 			continue
 		}
@@ -123,26 +185,138 @@ func (d *Dispatcher) Dispatch(e Event) {
 			continue
 		}
 		d.dispatched.Add(1)
-		d.inflight.Add(1)
-		d.wg.Add(1)
-		go func(h *Config) {
-			defer d.wg.Done()
-			defer d.inflight.Add(-1)
-			d.fire(h, e)
-		}(h)
+		d.enqueue(delivery{hook: h, event: e})
 	}
 }
 
-// Wait дожидается завершения всех запущенных вызовов (graceful shutdown, тесты).
-func (d *Dispatcher) Wait() { d.wg.Wait() }
+func (d *Dispatcher) enqueue(item delivery) {
+	d.gate.RLock()
+	if d.closed {
+		d.gate.RUnlock()
+		d.reject(item, "диспетчер веб-хуков уже остановлен")
+		return
+	}
+	d.pending.Add(1)
+	d.inflight.Add(1)
+	select {
+	case d.queue <- item:
+		d.gate.RUnlock()
+	default:
+		d.inflight.Add(-1)
+		d.pending.Done()
+		d.gate.RUnlock()
+		d.reject(item, "очередь веб-хуков переполнена")
+	}
+}
+
+func (d *Dispatcher) worker() {
+	defer d.workers.Done()
+	for {
+		select {
+		case item := <-d.queue:
+			d.handle(item)
+		case <-d.ctx.Done():
+			d.drainCanceled()
+			return
+		}
+	}
+}
+
+func (d *Dispatcher) handle(item delivery) {
+	defer d.pending.Done()
+	defer d.inflight.Add(-1)
+	if d.ctx.Err() != nil {
+		d.reject(item, "доставка отменена при завершении работы")
+		return
+	}
+	d.fire(d.ctx, &item.hook, item.event)
+}
+
+func (d *Dispatcher) drainCanceled() {
+	for {
+		select {
+		case item := <-d.queue:
+			d.handle(item)
+		default:
+			return
+		}
+	}
+}
+
+func (d *Dispatcher) reject(item delivery, reason string) {
+	d.failed.Add(1)
+	d.dropped.Add(1)
+	entry := d.logEntry(item.hook, item.event)
+	entry.Error = reason
+	d.log(entry, time.Now())
+}
+
+// Wait дожидается всех уже поставленных доставок. Worker-ы остаются готовы
+// принимать следующие события; для завершения приложения используйте Close.
+func (d *Dispatcher) Wait() {
+	_ = d.WaitContext(context.Background())
+}
+
+func (d *Dispatcher) WaitContext(ctx context.Context) error {
+	if d == nil {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		d.pending.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close stops accepting events, drains the queue, and terminates workers. If
+// ctx expires, active HTTP requests/backoff timers are cancelled and queued
+// deliveries are journalled as cancelled.
+func (d *Dispatcher) Close(ctx context.Context) error {
+	if d == nil {
+		return nil
+	}
+	select {
+	case <-d.closeDone:
+		return nil
+	default:
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	d.closeOnce.Do(func() {
+		d.gate.Lock()
+		d.closed = true
+		d.gate.Unlock()
+		go func() {
+			d.pending.Wait()
+			d.cancel()
+			d.workers.Wait()
+			close(d.closeDone)
+		}()
+	})
+	select {
+	case <-d.closeDone:
+		return nil
+	case <-ctx.Done():
+		d.cancel()
+		<-d.closeDone
+		return ctx.Err()
+	}
+}
 
 // fire выполняет один веб-хук: шаблон тела → HTTP-запрос → retry → журнал.
-func (d *Dispatcher) fire(h *Config, e Event) {
+func (d *Dispatcher) fire(ctx context.Context, h *Config, e Event) {
 	start := time.Now()
-	entry := LogEntry{Webhook: h.Name, Event: e.Name, Entity: e.Entity, RecordID: e.ID, URL: h.URL}
+	entry := d.logEntry(*h, e)
 
 	// Предохранитель сети (план 62): не отправляем, но фиксируем отказ в журнале.
-	if d.guard != nil && !d.guard() {
+	if !d.networkAllowed() {
 		entry.Error = "заблокировано предохранителем сети (net.enabled выкл.)"
 		entry.Attempts = 0
 		d.failed.Add(1)
@@ -183,20 +357,23 @@ func (d *Dispatcher) fire(h *Config, e Event) {
 	}
 	attempts := retry + 1
 	for try := 0; try < attempts; try++ {
-		entry.Attempts = try + 1
 		if try > 0 {
-			d.retries.Add(1)
 			// экспоненциальная задержка с потолком: base, 2*base, 4*base, …, maxBackoff.
 			delay := d.retryBase << (try - 1)
 			if delay <= 0 || delay > maxBackoff {
 				delay = maxBackoff
 			}
-			time.Sleep(delay)
+			if !waitContext(ctx, delay) {
+				entry.Error = "доставка отменена при завершении работы"
+				break
+			}
+			d.retries.Add(1)
 		}
-		code, err := d.send(method, h, body, timeout)
+		entry.Attempts = try + 1
+		code, err := d.send(ctx, method, h, body, timeout)
 		entry.StatusCode = code
 		if err != nil {
-			entry.Error = err.Error()
+			entry.Error = safeDeliveryError(err)
 			continue
 		}
 		if code >= 200 && code < 300 {
@@ -211,12 +388,12 @@ func (d *Dispatcher) fire(h *Config, e Event) {
 	d.log(entry, start)
 }
 
-func (d *Dispatcher) send(method string, h *Config, body string, timeout time.Duration) (int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func (d *Dispatcher) send(parent context.Context, method string, h *Config, body string, timeout time.Duration) (int, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, h.URL, strings.NewReader(body))
 	if err != nil {
-		return 0, err
+		return 0, errInvalidWebhookURL
 	}
 	for k, v := range h.Headers {
 		req.Header.Set(k, v)
@@ -231,6 +408,71 @@ func (d *Dispatcher) send(method string, h *Config, body string, timeout time.Du
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10)) // дренируем для keep-alive
 	return resp.StatusCode, nil
+}
+
+func (d *Dispatcher) networkAllowed() bool {
+	d.guardMu.RLock()
+	guard := d.guard
+	d.guardMu.RUnlock()
+	return guard == nil || guard()
+}
+
+func (d *Dispatcher) logEntry(h Config, e Event) LogEntry {
+	return LogEntry{
+		Webhook: h.Name, Event: e.Name, Entity: e.Entity, RecordID: e.ID,
+		URL: RedactURL(h.URL),
+	}
+}
+
+func waitContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func safeDeliveryError(err error) string {
+	switch {
+	case errors.Is(err, errInvalidWebhookURL):
+		return errInvalidWebhookURL.Error()
+	case errors.Is(err, context.DeadlineExceeded):
+		return "таймаут HTTP-запроса"
+	case errors.Is(err, context.Canceled):
+		return "HTTP-запрос отменён"
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return "ошибка HTTP-запроса к " + RedactURL(urlErr.URL)
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return "сетевая ошибка HTTP-запроса"
+	}
+	return "ошибка HTTP-запроса"
+}
+
+// RedactURL returns a diagnostic URL that cannot expose credentials expanded
+// into userinfo, path, or query parameters. The webhook name remains available
+// in the log for identifying the configured endpoint.
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "<redacted>"
+	}
+	out := u.Scheme + "://" + u.Host
+	if u.Path != "" && u.Path != "/" {
+		out += "/<redacted>"
+	} else if u.Path == "/" {
+		out += "/"
+	}
+	if u.RawQuery != "" || u.ForceQuery {
+		out += "?<redacted>"
+	}
+	return out
 }
 
 func (d *Dispatcher) log(entry LogEntry, start time.Time) {

@@ -84,6 +84,7 @@ func (db *DB) FilesDir() string { return db.filesDir }
 func (db *DB) SetFilesDir(dir string) { db.filesDir = dir }
 
 func (db *DB) Close() {
+	webhookURLScrubbed.Delete(db)
 	if db.pool != nil {
 		db.pool.Close()
 	}

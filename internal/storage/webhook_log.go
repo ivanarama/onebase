@@ -6,10 +6,13 @@ package storage
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+var webhookURLScrubbed sync.Map // map[*DB]struct{}, once per opened database
 
 // WebhookLogEntry — одна запись журнала веб-хуков.
 type WebhookLogEntry struct {
@@ -47,6 +50,18 @@ func (db *DB) EnsureWebhookLogSchema(ctx context.Context) error {
 	if _, err := db.Exec(ctx, ddl); err != nil {
 		return fmt.Errorf("webhook_log: create: %w", err)
 	}
+	// Older versions stored the fully expanded endpoint, including Telegram bot
+	// tokens and query credentials. URLs are not shown by the admin UI and the
+	// webhook name is the stable diagnostic identifier, so scrub legacy values
+	// and never persist endpoint URLs again.
+	if _, ok := webhookURLScrubbed.Load(db); !ok {
+		if _, err := db.Exec(ctx, `UPDATE _webhook_log
+			SET url = '', error = CASE WHEN error <> '' THEN 'legacy error redacted' ELSE '' END
+			WHERE url <> ''`); err != nil {
+			return fmt.Errorf("webhook_log: scrub legacy urls: %w", err)
+		}
+		webhookURLScrubbed.Store(db, struct{}{})
+	}
 	return nil
 }
 
@@ -63,7 +78,7 @@ func (db *DB) LogWebhook(ctx context.Context, e WebhookLogEntry) {
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5),
 		d.Placeholder(6), d.Placeholder(7), d.Placeholder(8), d.Placeholder(9), d.Placeholder(10))
 	_, _ = db.Exec(ctx, q,
-		uuid.NewString(), e.Webhook, e.Event, e.Entity, e.RecordID, e.URL,
+		uuid.NewString(), e.Webhook, e.Event, e.Entity, e.RecordID, "",
 		e.StatusCode, e.Error, int(e.Duration.Milliseconds()), e.Attempts)
 }
 

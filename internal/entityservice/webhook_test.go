@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -60,6 +61,11 @@ func newWebhookSvc(t *testing.T, entities []*metadata.Entity, hooks []webhook.Co
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: entities})
 	d := webhook.New(hooks, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = d.Close(ctx)
+	})
 	return &Service{Store: db, Reg: registry, Interp: interpreter.New(), Hooks: d}, d
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/version"
+	"github.com/ivantit66/onebase/internal/webhook"
 	"github.com/ivantit66/onebase/internal/websec"
 )
 
@@ -26,6 +28,7 @@ type Server struct {
 	srv     *http.Server
 	handler http.Handler
 	uiSrv   *ui.Server
+	hooks   *webhook.Dispatcher
 }
 
 // New строит HTTP-сервер базы. host «» = 127.0.0.1 (см. addr.go): наружу
@@ -153,7 +156,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		mountMetrics(r, debugToken, metricsReg, store)
 	}
 
-	return &Server{handler: r, uiSrv: uiSrv, srv: &http.Server{
+	return &Server{handler: r, uiSrv: uiSrv, hooks: uiCfg.Webhooks, srv: &http.Server{
 		Addr:    listenAddr(host, port),
 		Handler: r,
 		// Slowloris-защита: обрываем клиента, который медленно шлёт заголовки,
@@ -232,5 +235,7 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.srv.Shutdown(ctx)
+	httpErr := s.srv.Shutdown(ctx)
+	hookErr := s.hooks.Close(ctx)
+	return errors.Join(httpErr, hookErr)
 }

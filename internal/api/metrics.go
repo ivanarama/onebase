@@ -59,6 +59,9 @@ func registerRuntimeMetrics(reg *metrics.Registry, authRepo *auth.Repo, uiSrv *u
 		reg.RegisterCounterFunc("onebase_webhook_failed_total", "Webhook-вызовы, завершившиеся ошибкой.", func() float64 {
 			return float64(hooks.Metrics().Failed)
 		})
+		reg.RegisterCounterFunc("onebase_webhook_dropped_total", "Webhook-вызовы, не принятые из-за переполнения очереди или остановки.", func() float64 {
+			return float64(hooks.Metrics().Dropped)
+		})
 	}
 }
 
