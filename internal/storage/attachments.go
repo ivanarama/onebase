@@ -125,7 +125,7 @@ func (db *DB) ListAttachments(ctx context.Context, ownerKind, ownerName string, 
 		WHERE owner_kind=%s AND owner_name=%s AND owner_id=%s
 		ORDER BY uploaded_at DESC
 	`, d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
-	rows, err := db.Query(ctx, q, ownerKind, ownerName, ownerID.String())
+	rows, err := db.Query(ctx, q, ownerKind, ownerName, idArg(d, ownerID))
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string,
 		`, d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4),
 		d.Placeholder(5), d.Placeholder(6), d.Placeholder(7), d.Placeholder(8))
 	if _, err := db.Exec(ctx, q,
-		id.String(), ownerKind, ownerName, ownerID.String(), filename, mimeType, n, uploadedBy,
+		idArg(d, id), ownerKind, ownerName, idArg(d, ownerID), filename, mimeType, n, uploadedBy,
 	); err != nil {
 		os.Remove(filePath)
 		return Attachment{}, err
@@ -208,7 +208,7 @@ func (db *DB) GetAttachment(ctx context.Context, id uuid.UUID) (*Attachment, err
 		SELECT id, owner_kind, owner_name, owner_id, filename, mime_type, size_bytes, uploaded_at, uploaded_by
 		FROM _attachments WHERE id=%s
 	`, d.Placeholder(1))
-	row := db.QueryRow(ctx, q, id.String())
+	row := db.QueryRow(ctx, q, idArg(d, id))
 	return scanAttachment(row)
 }
 
@@ -237,7 +237,7 @@ func (db *DB) DeleteAttachment(ctx context.Context, id uuid.UUID) error {
 	}
 	filePath := filepath.Join(db.filesDir, a.OwnerName, id.String())
 	q := fmt.Sprintf(`DELETE FROM _attachments WHERE id=%s`, d.Placeholder(1))
-	if _, err = db.Exec(ctx, q, id.String()); err != nil {
+	if _, err = db.Exec(ctx, q, idArg(d, id)); err != nil {
 		return err
 	}
 	removeFile := func() { _ = os.Remove(filePath) }

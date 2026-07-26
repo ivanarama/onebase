@@ -28,9 +28,9 @@ func requestWithBaseID(req *http.Request, id string) *http.Request {
 // configurator-cookie, иначе следующий AJAX-запрос загрузит форму входа внутрь
 // панели, а её submit уйдёт POST-запросом на GET-only /configurator (HTTP 405).
 func TestCfgAdminUserCreate_FirstAdminStartsConfiguratorSession(t *testing.T) {
-	t.Cleanup(CloseAuthPools)
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "first-admin.db")
+	t.Cleanup(CloseAuthPools)
 	db, err := storage.ConnectSQLite(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -78,9 +78,9 @@ func TestCfgAdminUserCreate_FirstAdminStartsConfiguratorSession(t *testing.T) {
 }
 
 func TestCfgAdminUserCreate_FirstUserMustBeAdmin(t *testing.T) {
-	t.Cleanup(CloseAuthPools)
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "first-user.db")
+	t.Cleanup(CloseAuthPools)
 	db, err := storage.ConnectSQLite(ctx, dbPath)
 	if err != nil {
 		t.Fatal(err)

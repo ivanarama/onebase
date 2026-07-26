@@ -192,7 +192,7 @@ func (r *CatalogsRoot) WithObjectFactory(f CatalogObjectFactory) *CatalogsRoot {
 
 func (r *CatalogsRoot) Get(entityName string) any {
 	entity := r.lookup.GetEntity(entityName)
-	if entity == nil {
+	if entity == nil || entity.Kind != metadata.KindCatalog {
 		return nil
 	}
 	return &CatalogProxy{entity: entity, db: r.db, ctxSrc: r.ctxSrc, caller: r.caller, access: r.access, registrar: r.registrar, objFactory: r.objFactory}

@@ -96,6 +96,12 @@ func (r *NumeratorsRoot) nextNumber(args []any) any {
 					fields[k] = unwrapRef(value)
 				}
 			}
+		case *Struct:
+			if v != nil {
+				for _, k := range v.Fields() {
+					fields[k] = unwrapRef(v.Get(k))
+				}
+			}
 		default:
 			explicitScope = unwrapRef(v)
 		}

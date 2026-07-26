@@ -96,6 +96,21 @@ func TestNumeratorsRoot_ScopeRequiredAndSeparated(t *testing.T) {
 	if got := root.CallMethod("СледующийНомер", []any{"Заявка", &MapThis{M: map[string]any{"Дата": y2026, "организация": "org-b"}}}); got != "0001" {
 		t.Fatalf("org-b first = %v", got)
 	}
+	if got := root.CallMethod("СледующийНомер", []any{"Заявка", NewStructFromMap(map[string]any{"Дата": y2026, "Организация": "org-c"})}); got != "0001" {
+		t.Fatalf("Struct org-c first = %v", got)
+	}
+	orgRef := &Ref{UUID: "11111111-1111-1111-1111-111111111111", Name: "org-ref"}
+	if got := root.CallMethod("СледующийНомер", []any{"Заявка", y2026, orgRef}); got != "0001" {
+		t.Fatalf("explicit Ref scope first = %v", got)
+	}
+	if got := root.CallMethod("СледующийНомер", []any{"Заявка", y2026, orgRef}); got != "0002" {
+		t.Fatalf("explicit Ref scope second = %v", got)
+	}
+	assertPanics(t, "empty Ref scope in Struct", func() {
+		root.CallMethod("СледующийНомер", []any{"Заявка", NewStructFromMap(map[string]any{
+			"Дата": y2026, "Организация": &Ref{},
+		})})
+	})
 	if got := root.CallMethod("СледующийНомер", []any{"Заявка", y2026, "org-a"}); got != "0002" {
 		t.Fatalf("org-a second = %v", got)
 	}

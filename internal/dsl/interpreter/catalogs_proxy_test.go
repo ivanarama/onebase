@@ -176,6 +176,14 @@ func TestCatalogProxy_CreateUnknownEntity(t *testing.T) {
 	}
 }
 
+func TestCatalogsRoot_RejectsNonCatalogEntity(t *testing.T) {
+	root, _, lookup := newCatalogsTestEnv()
+	lookup.m["Заказ"] = &metadata.Entity{Name: "Заказ", Kind: metadata.KindDocument}
+	if v := root.Get("Заказ"); v != nil {
+		t.Fatalf("Справочники.Заказ → %T, want nil for document entity", v)
+	}
+}
+
 // Справочники.X.ИмяПредопределённой должно возвращать Ref.
 func TestCatalogProxy_PredefinedAccess(t *testing.T) {
 	root, _, _ := newCatalogsTestEnv()
