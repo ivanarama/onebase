@@ -240,19 +240,22 @@ func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 
 		db, err := getAuthDB(r.Context(), b)
 		if err != nil {
-			// Cannot connect to DB — let request through (base may not exist yet)
-			next.ServeHTTP(w, r)
+			http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
 		repo := auth.NewRepo(db)
 		if err := repo.EnsureSchema(r.Context()); err != nil {
-			next.ServeHTTP(w, r)
+			http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
 		hasUsers, err := repo.HasUsers(r.Context())
-		if err != nil || !hasUsers {
+		if err != nil {
+			http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !hasUsers {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -283,32 +286,32 @@ func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// cfgAdminAuthorized повторяет проверку cfgAuthMiddleware, но возвращает bool
-// вместо 302-редиректа — для API-эндпоинтов (debug-прокси), которые зовёт JS:
-// им нужен 401 JSON, а не HTML логина. Passthrough-кейсы (БД недоступна, нет
-// схемы, нет пользователей) совпадают с cfgAuthMiddleware, чтобы поведение
-// первого запуска не отличалось. Жёсткая защита всё равно на app-стороне:
-// процесс базы требует X-OneBase-Debug-Token.
-func (h *handler) cfgAdminAuthorized(r *http.Request, b *Base) bool {
+// cfgAdminAuthorized повторяет проверку cfgAuthMiddleware, но возвращает ошибку
+// отдельно от отказа в доступе. Только успешно подтверждённое отсутствие
+// пользователей включает first-run режим; сбой БД должен закрывать доступ.
+func (h *handler) cfgAdminAuthorized(r *http.Request, b *Base) (bool, error) {
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		return true
+		return false, err
 	}
 	repo := auth.NewRepo(db)
 	if err := repo.EnsureSchema(r.Context()); err != nil {
-		return true
+		return false, err
 	}
 	hasUsers, err := repo.HasUsers(r.Context())
-	if err != nil || !hasUsers {
-		return true
+	if err != nil {
+		return false, err
+	}
+	if !hasUsers {
+		return true, nil
 	}
 	cookie, err := r.Cookie("onebase_session")
 	if err != nil {
-		return false
+		return false, nil
 	}
 	user, err := repo.LookupSession(r.Context(), cookie.Value)
 	if err != nil || user == nil || !user.IsAdmin {
-		return false
+		return false, nil
 	}
-	return true
+	return true, nil
 }

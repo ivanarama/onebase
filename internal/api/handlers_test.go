@@ -115,7 +115,8 @@ func reqWithEntity(method, target string, body []byte, params map[string]string,
 	for k, v := range params {
 		rctx.URLParams.Add(k, v)
 	}
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	ctx := auth.ContextWithOpenAccess(r.Context())
+	return r.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
 }
 
 func withUser(r *http.Request, u *auth.User) *http.Request {
@@ -130,6 +131,16 @@ func apiUser(login string, permissions auth.Permission) *auth.User {
 			Name:        "role-" + login,
 			Permissions: permissions,
 		}},
+	}
+}
+
+func TestRESTAnonymousAccessRequiresExplicitBootstrapContext(t *testing.T) {
+	if canREST(context.Background(), string(metadata.KindCatalog), "Товар", "read") {
+		t.Fatal("missing auth context must not imply unrestricted REST access")
+	}
+	ctx := auth.ContextWithOpenAccess(context.Background())
+	if !canREST(ctx, string(metadata.KindCatalog), "Товар", "read") {
+		t.Fatal("confirmed first-run context must retain open access")
 	}
 }
 

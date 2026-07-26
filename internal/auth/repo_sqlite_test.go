@@ -8,6 +8,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -683,6 +684,9 @@ func TestMiddlewareRequiresSessionWhenUsersExist(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth.UserFromContext(r.Context()) == nil && !auth.OpenAccessFromContext(r.Context()) {
+			t.Fatal("anonymous pass-through must be explicitly marked as open access")
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	handler := repo.Middleware(next)
@@ -713,6 +717,71 @@ func TestMiddlewareRequiresSessionWhenUsersExist(t *testing.T) {
 	handler.ServeHTTP(rr2, req)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("с валидной сессией ожидался 200, получено %d", rr2.Code)
+	}
+}
+
+func TestMiddlewareFailsClosedWhenAuthDatabaseErrors(t *testing.T) {
+	repo, db, _ := newTestRepoDB(t)
+	db.Close()
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	for name, handler := range map[string]http.Handler{
+		"session": repo.Middleware(next),
+		"api":     repo.APITokenOrSessionMiddleware(next),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/protected", nil))
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if called {
+				t.Fatal("protected handler was called after auth database error")
+			}
+		})
+	}
+}
+
+func TestManagedUserInvariants(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+
+	if _, err := repo.CreateManaged(ctx, "user", "pass", "", false); !errors.Is(err, auth.ErrFirstUserMustBeAdmin) {
+		t.Fatalf("first non-admin error=%v, want ErrFirstUserMustBeAdmin", err)
+	}
+	admin1, err := repo.CreateManaged(ctx, "admin1", "pass", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := repo.CreateManaged(ctx, "user", "pass", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.Update(ctx, admin1.ID, "", false, false, false, false); !errors.Is(err, auth.ErrLastAdmin) {
+		t.Fatalf("demote last admin error=%v, want ErrLastAdmin", err)
+	}
+	if err := repo.Delete(ctx, admin1.ID); !errors.Is(err, auth.ErrLastAdmin) {
+		t.Fatalf("delete last admin error=%v, want ErrLastAdmin", err)
+	}
+	if err := repo.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("delete ordinary user: %v", err)
+	}
+	if err := repo.Delete(ctx, admin1.ID); !errors.Is(err, auth.ErrLastUser) {
+		t.Fatalf("delete final user error=%v, want ErrLastUser", err)
+	}
+
+	admin2, err := repo.CreateManaged(ctx, "admin2", "pass", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Update(ctx, admin1.ID, "", false, false, false, false); err != nil {
+		t.Fatalf("demote admin while another remains: %v", err)
+	}
+	if err := repo.Delete(ctx, admin2.ID); !errors.Is(err, auth.ErrLastAdmin) {
+		t.Fatalf("delete sole remaining admin error=%v, want ErrLastAdmin", err)
 	}
 }
 

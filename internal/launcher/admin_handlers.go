@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -274,7 +275,7 @@ func (h *handler) cfgAdminUserCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": tr(lang, "Первый пользователь должен быть администратором")})
 		return
 	}
-	user, err := repo.Create(r.Context(), req.Login, req.Password, req.FullName, req.IsAdmin)
+	user, err := repo.CreateManaged(r.Context(), req.Login, req.Password, req.FullName, req.IsAdmin)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
 		return
@@ -315,7 +316,11 @@ func (h *handler) cfgAdminUserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	repo := auth.NewRepo(db)
 	if err := repo.Delete(r.Context(), req.ID); err != nil {
-		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, auth.ErrLastAdmin) || errors.Is(err, auth.ErrLastUser) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]any{"error": err.Error()})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})

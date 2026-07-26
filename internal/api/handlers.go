@@ -480,7 +480,7 @@ func requireRESTPerm(w http.ResponseWriter, r *http.Request, kind metadata.Kind,
 func canREST(ctx context.Context, kind, entity, op string) bool {
 	u := auth.UserFromContext(ctx)
 	if u == nil {
-		return true
+		return auth.OpenAccessFromContext(ctx)
 	}
 	return u.Has(kind, entity, op)
 }

@@ -164,7 +164,12 @@ func (h *handler) oneTimeCodeProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]string{"error": "base not found"})
 		return
 	}
-	if !h.cfgAdminAuthorized(r, b) {
+	authorized, authErr := h.cfgAdminAuthorized(r, b)
+	if authErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Сервис аутентификации недоступен"})
+		return
+	}
+	if !authorized {
 		writeJSON(w, 401, map[string]string{"error": "Требуется вход администратора"})
 		return
 	}
@@ -209,7 +214,12 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Требуем сессию админа конфигуратора. 401 JSON (не 302), т.к. это API для JS.
-	if !h.cfgAdminAuthorized(r, b) {
+	authorized, authErr := h.cfgAdminAuthorized(r, b)
+	if authErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Сервис аутентификации недоступен"})
+		return
+	}
+	if !authorized {
 		writeJSON(w, 401, map[string]string{"error": "Требуется вход администратора"})
 		return
 	}

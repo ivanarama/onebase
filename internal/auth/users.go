@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -33,6 +34,12 @@ type Repo struct {
 	db *storage.DB
 }
 
+var (
+	ErrFirstUserMustBeAdmin = errors.New("первый пользователь должен быть администратором")
+	ErrLastAdmin            = errors.New("нельзя удалить или разжаловать последнего администратора")
+	ErrLastUser             = errors.New("нельзя удалить последнего пользователя; авторизация должна отключаться отдельным действием")
+)
+
 // NewRepo wires the auth repository to the storage layer. Internally Exec/
 // Query/QueryRow are routed to PostgreSQL or SQLite via the DB abstraction.
 func NewRepo(db *storage.DB) *Repo {
@@ -52,6 +59,16 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 		)`, d.TypeUUID(), d.TypeBytes(), d.TypeBool(), boolFalseFor(d), d.TypeTimestamp(), d.CurrentTimestampTZ())
 	if _, err := r.db.Exec(ctx, usersDDL); err != nil {
 		return fmt.Errorf("auth: create _users: %w", err)
+	}
+	// Единственная строка служит переносимым mutex для инвариантов пользователей:
+	// UPDATE берёт write-lock в SQLite и row-lock в PostgreSQL.
+	if _, err := r.db.Exec(ctx, `CREATE TABLE IF NOT EXISTS _auth_user_guard (
+		id INTEGER PRIMARY KEY CHECK (id = 1)
+	)`); err != nil {
+		return fmt.Errorf("auth: create user guard: %w", err)
+	}
+	if _, err := r.db.Exec(ctx, `INSERT INTO _auth_user_guard (id) VALUES (1) ON CONFLICT (id) DO NOTHING`); err != nil {
+		return fmt.Errorf("auth: seed user guard: %w", err)
 	}
 	sessionsDDL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS _sessions (
@@ -182,11 +199,27 @@ func (r *Repo) GetByID(ctx context.Context, userID string) (*User, error) {
 
 // Update saves editable fields on a user.
 func (r *Repo) Update(ctx context.Context, userID, fullName string, isAdmin, denyPasswdChange, showInList, aiDataAccess bool) error {
-	d := r.db.Dialect()
-	q := fmt.Sprintf(`UPDATE _users SET full_name=%s, is_admin=%s, deny_passwd_change=%s, show_in_list=%s, ai_data_access=%s WHERE id=%s`,
-		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5), d.Placeholder(6))
-	_, err := r.db.Exec(ctx, q, fullName, isAdmin, denyPasswdChange, showInList, aiDataAccess, userID)
-	return err
+	return r.withUserInvariantLock(ctx, func(txCtx context.Context) error {
+		d := r.db.Dialect()
+		var currentAdmin any
+		qCurrent := fmt.Sprintf(`SELECT is_admin FROM _users WHERE id = %s`, d.Placeholder(1))
+		if err := r.db.QueryRow(txCtx, qCurrent, userID).Scan(&currentAdmin); err != nil {
+			return err
+		}
+		if scanBool(currentAdmin) && !isAdmin {
+			admins, err := r.adminCount(txCtx)
+			if err != nil {
+				return err
+			}
+			if admins <= 1 {
+				return ErrLastAdmin
+			}
+		}
+		q := fmt.Sprintf(`UPDATE _users SET full_name=%s, is_admin=%s, deny_passwd_change=%s, show_in_list=%s, ai_data_access=%s WHERE id=%s`,
+			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5), d.Placeholder(6))
+		_, err := r.db.Exec(txCtx, q, fullName, isAdmin, denyPasswdChange, showInList, aiDataAccess, userID)
+		return err
+	})
 }
 
 // SetShowInList toggles the show_in_list flag for a user.
@@ -258,11 +291,71 @@ func (r *Repo) Create(ctx context.Context, login, password, fullName string, isA
 	return &User{ID: id, Login: login, FullName: fullName, IsAdmin: isAdmin}, nil
 }
 
+// CreateManaged is the user-management entry point. Unlike low-level Create,
+// it enforces that authentication can only be enabled by an administrator.
+func (r *Repo) CreateManaged(ctx context.Context, login, password, fullName string, isAdmin bool) (*User, error) {
+	if !isAdmin {
+		err := r.withUserInvariantLock(ctx, func(txCtx context.Context) error {
+			hasUsers, err := r.HasUsers(txCtx)
+			if err != nil {
+				return err
+			}
+			if !hasUsers {
+				return ErrFirstUserMustBeAdmin
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r.Create(ctx, login, password, fullName, isAdmin)
+}
+
 func (r *Repo) Delete(ctx context.Context, id string) error {
-	d := r.db.Dialect()
-	q := fmt.Sprintf(`DELETE FROM _users WHERE id = %s`, d.Placeholder(1))
-	_, err := r.db.Exec(ctx, q, id)
-	return err
+	return r.withUserInvariantLock(ctx, func(txCtx context.Context) error {
+		d := r.db.Dialect()
+		var targetAdmin any
+		qTarget := fmt.Sprintf(`SELECT is_admin FROM _users WHERE id = %s`, d.Placeholder(1))
+		if err := r.db.QueryRow(txCtx, qTarget, id).Scan(&targetAdmin); err != nil {
+			return err
+		}
+		var users int
+		if err := r.db.QueryRow(txCtx, `SELECT count(*) FROM _users`).Scan(&users); err != nil {
+			return err
+		}
+		if users <= 1 {
+			return ErrLastUser
+		}
+		if scanBool(targetAdmin) {
+			admins, err := r.adminCount(txCtx)
+			if err != nil {
+				return err
+			}
+			if admins <= 1 {
+				return ErrLastAdmin
+			}
+		}
+		q := fmt.Sprintf(`DELETE FROM _users WHERE id = %s`, d.Placeholder(1))
+		_, err := r.db.Exec(txCtx, q, id)
+		return err
+	})
+}
+
+func (r *Repo) withUserInvariantLock(ctx context.Context, fn func(context.Context) error) error {
+	return r.db.WithTxScope(ctx, func(txCtx context.Context) error {
+		if _, err := r.db.Exec(txCtx, `UPDATE _auth_user_guard SET id = 1 WHERE id = 1`); err != nil {
+			return fmt.Errorf("auth: lock user invariants: %w", err)
+		}
+		return fn(txCtx)
+	})
+}
+
+func (r *Repo) adminCount(ctx context.Context) (int, error) {
+	var count int
+	q := fmt.Sprintf(`SELECT count(*) FROM _users WHERE is_admin = %s`, r.db.Dialect().Placeholder(1))
+	err := r.db.QueryRow(ctx, q, true).Scan(&count)
+	return count, err
 }
 
 func (r *Repo) Authenticate(ctx context.Context, login, password string) (*User, error) {

@@ -11,62 +11,78 @@ import (
 
 type contextKey string
 
-const userKey contextKey = "auth_user"
+const (
+	userKey       contextKey = "auth_user"
+	openAccessKey contextKey = "auth_open_access"
+)
 
 func (r *Repo) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 
 		hasUsers, err := r.HasUsers(ctx)
-		if err != nil || !hasUsers {
-			next.ServeHTTP(w, req)
-			return
-		}
-
-		// Сессия принимается только из cookie. Токен в query (?_tk=) больше
-		// не поддерживается: он утекал в stdout-лог (middleware.Logger пишет
-		// полный RequestURI), Referer и историю браузера — план 53, этап 1.
-		// Конфигуратор передаёт сессию через /auth/bootstrap?code=<одноразовый>.
-		var token string
-		if cookie, err := req.Cookie("onebase_session"); err == nil {
-			token = cookie.Value
-		}
-
-		if token == "" {
-			redirectToLogin(w, req)
-			return
-		}
-
-		user, err := r.LookupSession(ctx, token)
 		if err != nil {
-			redirectToLogin(w, req)
+			writeAuthUnavailable(w, false)
+			return
+		}
+		if !hasUsers {
+			next.ServeHTTP(w, req.WithContext(ContextWithOpenAccess(ctx)))
 			return
 		}
 
-		// last_seen_at для админки сессий (план 78); троттлится внутри,
-		// ошибка не критична.
-		r.TouchSession(ctx, token, time.Now())
-
-		next.ServeHTTP(w, req.WithContext(r.contextWithUser(ctx, user)))
+		r.serveWithSession(next, w, req)
 	})
+}
+
+func (r *Repo) serveWithSession(next http.Handler, w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
+	// Сессия принимается только из cookie. Токен в query (?_tk=) больше
+	// не поддерживается: он утекал в stdout-лог (middleware.Logger пишет
+	// полный RequestURI), Referer и историю браузера — план 53, этап 1.
+	// Конфигуратор передаёт сессию через /auth/bootstrap?code=<одноразовый>.
+	var token string
+	if cookie, err := req.Cookie("onebase_session"); err == nil {
+		token = cookie.Value
+	}
+
+	if token == "" {
+		redirectToLogin(w, req)
+		return
+	}
+
+	user, err := r.LookupSession(ctx, token)
+	if err != nil {
+		redirectToLogin(w, req)
+		return
+	}
+
+	// last_seen_at для админки сессий (план 78); троттлится внутри,
+	// ошибка не критична.
+	r.TouchSession(ctx, token, time.Now())
+
+	next.ServeHTTP(w, req.WithContext(r.contextWithUser(ctx, user)))
 }
 
 // APITokenOrSessionMiddleware accepts REST API Bearer tokens first and falls
 // back to the regular session cookie middleware. It is intentionally separate
 // from Middleware so UI routes keep their cookie-only authentication behavior.
 func (r *Repo) APITokenOrSessionMiddleware(next http.Handler) http.Handler {
-	session := r.Middleware(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 		hasUsers, err := r.HasUsers(ctx)
-		if err != nil || !hasUsers {
-			next.ServeHTTP(w, req)
+		if err != nil {
+			writeAuthUnavailable(w, true)
+			return
+		}
+		if !hasUsers {
+			next.ServeHTTP(w, req.WithContext(ContextWithOpenAccess(ctx)))
 			return
 		}
 
 		token, present := bearerToken(req)
 		if !present {
-			session.ServeHTTP(w, req)
+			r.serveWithSession(next, w, req)
 			return
 		}
 		if token == "" {
@@ -119,6 +135,15 @@ func writeUnauthorizedJSON(w http.ResponseWriter) {
 	http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 }
 
+func writeAuthUnavailable(w http.ResponseWriter, jsonResponse bool) {
+	if jsonResponse {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"authentication service unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
+}
+
 func UserFromContext(ctx context.Context) *User {
 	if u, ok := ctx.Value(userKey).(*User); ok {
 		return u
@@ -132,4 +157,18 @@ func UserFromContext(ctx context.Context) *User {
 // с Basic-аутом — чтобы ТекущийПользователь()/аудит видели вызывающего).
 func ContextWithUser(ctx context.Context, u *User) context.Context {
 	return context.WithValue(ctx, userKey, u)
+}
+
+// ContextWithOpenAccess marks the explicit bootstrap mode where the repository
+// was reachable and confirmed to contain no users. A missing user alone must
+// never imply unrestricted access: it may also mean middleware was bypassed or
+// the authentication database failed.
+func ContextWithOpenAccess(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAccessKey, true)
+}
+
+// OpenAccessFromContext reports the bootstrap decision made by auth middleware.
+func OpenAccessFromContext(ctx context.Context) bool {
+	open, _ := ctx.Value(openAccessKey).(bool)
+	return open
 }

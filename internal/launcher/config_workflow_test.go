@@ -112,6 +112,30 @@ func TestCfgAdminUserCreate_FirstUserMustBeAdmin(t *testing.T) {
 	}
 }
 
+func TestCfgAuthMiddlewareFailsClosedWhenDatabaseCannotOpen(t *testing.T) {
+	store := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	base := &Base{ID: "broken-auth", Name: "Broken auth", DBType: "unsupported"}
+	if err := store.save([]*Base{base}); err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{store: store, runner: NewRunner()}
+	called := false
+	protected := h.cfgAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+
+	req := requestWithBaseID(httptest.NewRequest(http.MethodGet, "/bases/broken-auth/configurator", nil), base.ID)
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("protected configurator handler was called after auth database error")
+	}
+}
+
 // Пустая/неверная папка не должна очищать _onebase_config. Раньше
 // ImportFromDir сначала делал DELETE, а пустой workspace считался успешным
 // импортом нулевой конфигурации.

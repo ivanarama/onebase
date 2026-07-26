@@ -296,7 +296,7 @@ func (s *Server) adminUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := s.authRepo.Create(r.Context(), login, password, fullName, isAdmin)
+	u, err := s.authRepo.CreateManaged(r.Context(), login, password, fullName, isAdmin)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		adminTmpl.ExecuteTemplate(w, "admin-user-form", map[string]any{"Error": s.errText(r, err)})
@@ -452,7 +452,10 @@ func (s *Server) adminUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	s.authRepo.Delete(r.Context(), id)
+	if err := s.authRepo.Delete(r.Context(), id); err != nil {
+		http.Error(w, s.errText(r, err), http.StatusConflict)
+		return
+	}
 	http.Redirect(w, r, "/ui/admin/users", http.StatusFound)
 }
 
@@ -890,18 +893,23 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// isAdmin returns true if the current request has an admin user in context,
-// or if no auth is configured (open access).
+// isAdmin returns true for an authenticated administrator or for the explicit
+// first-run mode where auth middleware confirmed that the reachable database
+// contains no users. Database errors must never turn into administrator access.
 func (s *Server) isAdmin(r *http.Request) bool {
 	if s.authRepo == nil {
 		return true
 	}
-	hasUsers, err := s.authRepo.HasUsers(r.Context())
-	if err != nil || !hasUsers {
-		return true // no auth configured
+	if u := auth.UserFromContext(r.Context()); u != nil {
+		return u.IsAdmin
 	}
-	u := auth.UserFromContext(r.Context())
-	return u != nil && u.IsAdmin
+	if auth.OpenAccessFromContext(r.Context()) {
+		return true
+	}
+	// Direct handler tests and a few internal call sites do not pass through the
+	// middleware. Preserve bootstrap behavior only after a successful query.
+	hasUsers, err := s.authRepo.HasUsers(r.Context())
+	return err == nil && !hasUsers
 }
 
 const tplAdminPasswd = `{{define "admin-passwd"}}` + adminHead + `
