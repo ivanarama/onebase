@@ -2,9 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"net/http"
 	"net/url"
 
@@ -41,7 +41,12 @@ func (s *Server) adminExtProcessorUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := s.resolveLang(r)
-	if err := r.ParseMultipartForm(s.maxFileSizeBytes); err != nil {
+	maxSize := s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		if uploadErrorStatus(err) == http.StatusRequestEntityTooLarge {
+			http.Error(w, s.tr(lang, "файл слишком большой"), http.StatusRequestEntityTooLarge)
+			return
+		}
 		s.extProcRedirect(w, r, "", s.tr(lang, "не удалось прочитать файл")+": "+s.errText(r, err))
 		return
 	}
@@ -51,8 +56,12 @@ func (s *Server) adminExtProcessorUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, s.maxFileSizeBytes))
+	data, err := readUploadedBytes(file, maxSize)
 	if err != nil {
+		if errors.Is(err, errUploadTooLarge) {
+			http.Error(w, s.tr(lang, "файл слишком большой"), http.StatusRequestEntityTooLarge)
+			return
+		}
 		s.extProcRedirect(w, r, "", s.tr(lang, "ошибка чтения файла")+": "+s.errText(r, err))
 		return
 	}

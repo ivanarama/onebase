@@ -153,7 +153,7 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 		limitRESTBody(w, r)
-		body, err := decodeBody(r)
+		body, err := decodeBodyForEntity(r, entity)
 		if err != nil {
 			writeDecodeError(w, err)
 			return
@@ -209,8 +209,17 @@ func (h *handler) updateObjectV2(kind metadata.Kind) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid id", "", 0)
 			return
 		}
+		expectedVersion, err := parseIfMatch(r, true)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errIfMatchRequired) {
+				status = http.StatusPreconditionRequired
+			}
+			writeError(w, status, err.Error(), "", 0)
+			return
+		}
 		limitRESTBody(w, r)
-		body, err := decodeBody(r)
+		body, err := decodeBodyForEntity(r, entity)
 		if err != nil {
 			writeDecodeError(w, err)
 			return
@@ -225,13 +234,6 @@ func (h *handler) updateObjectV2(kind metadata.Kind) http.HandlerFunc {
 		if kind == metadata.KindDocument && isPostAction(body.Action) && !h.rowAllowedUpdate(r.Context(), entity, "post", id, body.Fields) {
 			writeError(w, http.StatusForbidden, "forbidden", "", 0)
 			return
-		}
-
-		var expectedVersion *int64
-		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
-			if v, perr := strconv.ParseInt(strings.Trim(ifMatch, `"`), 10, 64); perr == nil {
-				expectedVersion = &v
-			}
 		}
 
 		// План 88: масковый пользователь не перезаписывает реальное значение.
@@ -467,14 +469,14 @@ func (h *handler) composeReportV2(rows []map[string]any, spec *reportpkg.Composi
 }
 
 func (h *handler) documentPostPayload(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, entityName string, id uuid.UUID) (map[string]any, map[string][]map[string]any, bool) {
-	if r.ContentLength > 0 {
+	limitRESTBody(w, r)
+	body, hasBody, err := decodeOptionalBodyForEntity(r, entity)
+	if err != nil {
+		writeDecodeError(w, err)
+		return nil, nil, false
+	}
+	if hasBody {
 		if !requireRESTPerm(w, r, metadata.KindDocument, entityName, "write") {
-			return nil, nil, false
-		}
-		limitRESTBody(w, r)
-		body, err := decodeBody(r)
-		if err != nil {
-			writeDecodeError(w, err)
 			return nil, nil, false
 		}
 		if !h.rowAllowedUpdate(r.Context(), entity, "write", id, body.Fields) ||
@@ -879,7 +881,7 @@ func openAPIV2Paths() map[string]any {
 	ifMatchParam := map[string]any{
 		"name":        "If-Match",
 		"in":          "header",
-		"required":    false,
+		"required":    true,
 		"description": "Expected _version for optimistic locking.",
 		"schema":      map[string]any{"type": "integer", "minimum": 0},
 	}
@@ -894,7 +896,7 @@ func openAPIV2Paths() map[string]any {
 	}
 	jsonBody := func(ref string) map[string]any {
 		return map[string]any{
-			"required": false,
+			"required": true,
 			"content": map[string]any{
 				"application/json": map[string]any{"schema": map[string]any{"$ref": ref}},
 			},
@@ -912,6 +914,10 @@ func openAPIV2Paths() map[string]any {
 		"400": responseWithSchema("Bad Request", "#/components/schemas/Error"),
 		"403": responseWithSchema("Forbidden", "#/components/schemas/Error"),
 		"404": responseWithSchema("Not Found", "#/components/schemas/Error"),
+		"409": responseWithSchema("Conflict", "#/components/schemas/Error"),
+		"413": responseWithSchema("Request Entity Too Large", "#/components/schemas/Error"),
+		"422": responseWithSchema("Unprocessable Entity", "#/components/schemas/Error"),
+		"428": responseWithSchema("Precondition Required", "#/components/schemas/Error"),
 		"500": responseWithSchema("Internal Server Error", "#/components/schemas/Error"),
 	}
 	noContent := map[string]any{"description": "No Content"}
@@ -1108,15 +1114,20 @@ func titleAPIName(s string) string {
 
 func entityOpenAPISchema(e *metadata.Entity) map[string]any {
 	props := map[string]any{
-		"id":            map[string]any{"type": "string", "format": "uuid"},
-		"deletion_mark": map[string]any{"type": "boolean"},
+		"id":            map[string]any{"type": "string", "format": "uuid", "readOnly": true},
+		"deletion_mark": map[string]any{"type": "boolean", "readOnly": true},
+		"_version":      map[string]any{"type": "integer", "readOnly": true},
 	}
 	if e.Kind == metadata.KindDocument {
-		props["posted"] = map[string]any{"type": "boolean"}
+		props["posted"] = map[string]any{"type": "boolean", "readOnly": true}
 		props["__action"] = map[string]any{"type": "string", "enum": []string{"post", "post_and_close"}}
 	}
 	for _, f := range e.Fields {
 		props[f.Name] = fieldOpenAPISchema(f)
+	}
+	if e.Hierarchical {
+		props["parent_id"] = map[string]any{"type": "string", "format": "uuid", "nullable": true}
+		props["is_folder"] = map[string]any{"type": "boolean"}
 	}
 	if len(e.TableParts) > 0 {
 		tpProps := map[string]any{}
@@ -1127,12 +1138,12 @@ func entityOpenAPISchema(e *metadata.Entity) map[string]any {
 			}
 			tpProps[tp.Name] = map[string]any{
 				"type":  "array",
-				"items": map[string]any{"type": "object", "properties": rowProps},
+				"items": map[string]any{"type": "object", "properties": rowProps, "additionalProperties": false},
 			}
 		}
-		props["__tableparts"] = map[string]any{"type": "object", "properties": tpProps}
+		props["__tableparts"] = map[string]any{"type": "object", "properties": tpProps, "additionalProperties": false}
 	}
-	return map[string]any{"type": "object", "properties": props}
+	return map[string]any{"type": "object", "properties": props, "additionalProperties": false}
 }
 
 func fieldOpenAPISchema(f metadata.Field) map[string]any {

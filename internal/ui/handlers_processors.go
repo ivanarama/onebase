@@ -6,7 +6,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -158,18 +157,26 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	opStatus := "ok"
 	defer func() { finish(opStatus, 0, false) }()
 
-	r.ParseMultipartForm(32 << 20) // 32 MB max
+	maxSize := s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		opStatus = "error"
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 	paramValues := map[string]any{}
 	for _, p := range proc.Params {
 		if p.Type == "file" {
 			file, _, err := r.FormFile(p.Name)
 			if err == nil {
-				data, err := io.ReadAll(file)
+				data, err := readUploadedBytes(file, maxSize)
 				file.Close()
-				if err == nil {
-					paramValues[p.Name] = decodeUploadText(data)
-					continue
+				if err != nil {
+					opStatus = "error"
+					http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+					return
 				}
+				paramValues[p.Name] = decodeUploadText(data)
+				continue
 			}
 			paramValues[p.Name] = ""
 			continue

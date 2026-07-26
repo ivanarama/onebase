@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const maxDSLHTTPResponseBytes int64 = 16 << 20
+
 // ─── dslHTTPConnection ────────────────────────────────────────────────────────
 
 type dslHTTPConnection struct {
@@ -65,7 +67,7 @@ func (c *dslHTTPConnection) do(req *dslHTTPRequest, method string) *dslHTTPRespo
 		panic(userError{Msg: "HTTPСоединение: " + err.Error()})
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes := readDSLHTTPResponse(resp.Body, "HTTPСоединение")
 	return &dslHTTPResponse{
 		statusCode: resp.StatusCode,
 		headers:    resp.Header,
@@ -153,8 +155,8 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 	m := map[string]any{
 		"__factory_HTTPСоединение": newHTTPConnFactory(guard),
 		"__factory_HTTPConnection": newHTTPConnFactory(guard),
-		"__factory_HTTPЗапрос":    newHTTPReqFactory(),
-		"__factory_HTTPRequest":   newHTTPReqFactory(),
+		"__factory_HTTPЗапрос":     newHTTPReqFactory(),
+		"__factory_HTTPRequest":    newHTTPReqFactory(),
 	}
 
 	httpGet := BuiltinFunc(func(args []any, file string, line int) (any, error) {
@@ -166,7 +168,7 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 			panic(userError{Msg: "HTTPПолучить: " + err.Error()})
 		}
 		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
+		b := readDSLHTTPResponse(resp.Body, "HTTPПолучить")
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})
 
@@ -181,7 +183,7 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 			panic(userError{Msg: "HTTPОтправить: " + err.Error()})
 		}
 		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
+		b := readDSLHTTPResponse(resp.Body, "HTTPОтправить")
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})
 
@@ -190,6 +192,17 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 	m["HTTPОтправить"] = httpPost
 	m["HTTPPost"] = httpPost
 	return m
+}
+
+func readDSLHTTPResponse(body io.Reader, caller string) []byte {
+	data, err := io.ReadAll(io.LimitReader(body, maxDSLHTTPResponseBytes+1))
+	if err != nil {
+		panic(userError{Msg: caller + ": ошибка чтения ответа: " + err.Error()})
+	}
+	if int64(len(data)) > maxDSLHTTPResponseBytes {
+		panic(userError{Msg: fmt.Sprintf("%s: ответ превышает лимит %d MiB", caller, maxDSLHTTPResponseBytes>>20)})
+	}
+	return data
 }
 
 func newHTTPConnFactory(guard NetGuard) func([]any) any {

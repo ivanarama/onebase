@@ -60,13 +60,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		// ParseMultipartForm обрабатывает и URL-encoded, и multipart;
-		// fallback на ParseForm для GET/простых POST.
-		if err := r.ParseForm(); err != nil {
-			enc.Encode(formEventResponse{Error: "bad form: " + err.Error()})
-			return
-		}
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		w.WriteHeader(uploadErrorStatus(err))
+		enc.Encode(formEventResponse{Error: "bad form: " + err.Error()})
+		return
 	}
 
 	entityName := chi.URLParam(r, "entity")
@@ -658,11 +656,11 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		if err := r.ParseForm(); err != nil {
-			enc.Encode(formEventResponse{Error: "bad form: " + err.Error()})
-			return
-		}
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		w.WriteHeader(uploadErrorStatus(err))
+		enc.Encode(formEventResponse{Error: "bad form: " + err.Error()})
+		return
 	}
 
 	procName := chi.URLParam(r, "name")

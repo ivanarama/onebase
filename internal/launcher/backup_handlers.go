@@ -357,8 +357,13 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 	os.MkdirAll(dir, 0o755)
 
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFullArchiveUpload)
 	file, header, err := r.FormFile("backup_file")
 	if err != nil {
+		if requestBodyErrorStatus(err) == http.StatusRequestEntityTooLarge {
+			http.Error(w, tr(lang, "Файл слишком большой"), http.StatusRequestEntityTooLarge)
+			return
+		}
 		data := h.loadCfgData(r.Context(), b, "backup")
 		data.Error = tr(lang, "Ошибка загрузки") + ": " + err.Error()
 		renderCfg(w, r, data)
@@ -374,15 +379,34 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	f, err := os.Create(outPath)
+	f, err := os.CreateTemp(dir, ".backup-upload-*")
 	if err != nil {
 		data := h.loadCfgData(r.Context(), b, "backup")
 		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
 		renderCfg(w, r, data)
 		return
 	}
-	defer f.Close()
-	io.Copy(f, file)
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(f, file); err != nil {
+		_ = f.Close()
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
+		renderCfg(w, r, data)
+		return
+	}
+	if err := f.Close(); err != nil {
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
+		renderCfg(w, r, data)
+		return
+	}
+	if err := os.Rename(tmpPath, outPath); err != nil {
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
+		renderCfg(w, r, data)
+		return
+	}
 
 	data := h.loadCfgData(r.Context(), b, "backup")
 	data.FieldsSaved = true

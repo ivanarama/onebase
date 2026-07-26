@@ -222,9 +222,14 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Parse multipart form (up to 2MB for logo)
+	// Parse multipart form (up to 2 MiB for the logo plus framing).
 	lang := resolveLang(r)
-	r.ParseMultipartForm(2 << 20)
+	const maxLogoBytes = int64(2 << 20)
+	r.Body = http.MaxBytesReader(w, r.Body, maxLogoBytes+(1<<20))
+	if err := r.ParseMultipartForm(maxLogoBytes); err != nil {
+		http.Error(w, tr(lang, "Ошибка чтения формы")+": "+err.Error(), requestBodyErrorStatus(err))
+		return
+	}
 	newName := strings.TrimSpace(r.FormValue("app_name"))
 	newVersion := strings.TrimSpace(r.FormValue("app_version"))
 	newLang := strings.TrimSpace(r.FormValue("app_lang"))
@@ -256,15 +261,14 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 	file, header, ferr := r.FormFile("app_logo_file")
 	if ferr == nil {
 		defer file.Close()
-		// Read file content
-		data, rerr := io.ReadAll(file)
+		data, rerr := io.ReadAll(io.LimitReader(file, maxLogoBytes+1))
 		if rerr != nil {
 			data := h.loadCfgData(r.Context(), b, "tree")
 			data.Error = tr(lang, "Ошибка чтения логотипа") + ": " + rerr.Error()
 			renderCfg(w, r, data)
 			return
 		}
-		if len(data) > 2<<20 {
+		if int64(len(data)) > maxLogoBytes {
 			data := h.loadCfgData(r.Context(), b, "tree")
 			data.Error = tr(lang, "Логотип слишком большой (максимум 2 МБ)")
 			renderCfg(w, r, data)

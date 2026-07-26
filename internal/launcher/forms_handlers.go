@@ -708,7 +708,7 @@ func (h *handler) configuratorFormsImport1C(w http.ResponseWriter, r *http.Reque
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormArchiveUpload)
 	if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB in memory; the rest spills to a bounded temp file
-		http.Error(w, err.Error(), 400)
+		http.Error(w, err.Error(), requestBodyErrorStatus(err))
 		return
 	}
 	lang := resolveLang(r)

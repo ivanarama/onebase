@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -124,6 +125,32 @@ func TestBlobOwnerRoundtrip(t *testing.T) {
 	}
 	if got2.OwnerKind != "" || got2.OwnerEntity != "" {
 		t.Fatalf("ожидался пустой владелец, получено kind=%q entity=%q", got2.OwnerKind, got2.OwnerEntity)
+	}
+}
+
+func TestPutBlobReportsSizeLimit(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := ConnectSQLite(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.filesDir = filepath.Join(dir, "files")
+	if err := db.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range []string{FileStorageDisk, FileStorageDB} {
+		t.Run(mode, func(t *testing.T) {
+			if err := db.SaveFileStorageMode(ctx, mode); err != nil {
+				t.Fatal(err)
+			}
+			_, err := db.PutBlob(ctx, "image/png", bytes.NewReader([]byte("12345")), 4, BlobOwner{})
+			if !errors.Is(err, ErrBlobTooLarge) {
+				t.Fatalf("error = %v, want ErrBlobTooLarge", err)
+			}
+		})
 	}
 }
 

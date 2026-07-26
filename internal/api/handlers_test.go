@@ -729,6 +729,7 @@ func TestAPIV2_CRUDRoundTripEnvelope(t *testing.T) {
 	}
 
 	updateReq := reqWithEntity("PUT", "/api/v2/catalog/Товар/"+created.Data.ID, []byte(`{"Наименование":"Дрель"}`), map[string]string{"name": "Товар", "id": created.Data.ID}, nil)
+	updateReq.Header.Set("If-Match", "1")
 	updateRec := httptest.NewRecorder()
 	h.updateObjectV2(metadata.KindCatalog).ServeHTTP(updateRec, updateReq)
 	if updateRec.Code != http.StatusOK {
@@ -902,6 +903,12 @@ func TestAPIV2_OpenAPIIncludesPathsAndSchemas(t *testing.T) {
 	catalogPut := paths["/api/v2/catalog/{name}/{id}"].(map[string]any)["put"].(map[string]any)
 	if !openAPIHasHeaderParam(catalogPut["parameters"].([]any), "If-Match") {
 		t.Fatalf("PUT parameters must include If-Match: %#v", catalogPut["parameters"])
+	}
+	for _, p := range catalogPut["parameters"].([]any) {
+		pm, ok := p.(map[string]any)
+		if ok && pm["name"] == "If-Match" && pm["required"] != true {
+			t.Fatalf("If-Match must be required: %#v", pm)
+		}
 	}
 	components := spec["components"].(map[string]any)
 	securitySchemes := components["securitySchemes"].(map[string]any)
@@ -1363,6 +1370,124 @@ func TestAPI_Update_IfMatchVersionConflict(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409 Conflict, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDecodeBody_StrictSingleObject(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "null", body: `null`},
+		{name: "trailing document", body: `{"Наименование":"A"} {"Наименование":"B"}`},
+		{name: "invalid action type", body: `{"__action":true}`},
+		{name: "unknown metadata", body: `{"__actoin":"post"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			if _, err := decodeBody(r); err == nil {
+				t.Fatalf("decodeBody(%s) succeeded", tt.body)
+			}
+		})
+	}
+}
+
+func TestValidateRESTBody_NormalizesAndRejectsUnknownFields(t *testing.T) {
+	entity := &metadata.Entity{
+		Name:    "Поступление",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields:  []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+		TableParts: []metadata.TablePart{{
+			Name:   "Товары",
+			Fields: []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+		}},
+	}
+	body := createUpdateBody{
+		Fields: map[string]any{"номер": "1"},
+		TablePartRows: map[string][]map[string]any{
+			"товары": {{"количество": float64(2)}},
+		},
+		Action: " POST ",
+	}
+	if err := validateRESTBody(&body, entity); err != nil {
+		t.Fatal(err)
+	}
+	if body.Fields["Номер"] != "1" || body.Action != "post" {
+		t.Fatalf("body was not normalized: %#v", body)
+	}
+	if _, ok := body.TablePartRows["Товары"][0]["Количество"]; !ok {
+		t.Fatalf("table part was not normalized: %#v", body.TablePartRows)
+	}
+
+	body.Fields["Опечатка"] = true
+	if err := validateRESTBody(&body, entity); err == nil {
+		t.Fatal("unknown field must be rejected")
+	}
+}
+
+func TestAPIV2_UpdateRequiresValidIfMatch(t *testing.T) {
+	entity := &metadata.Entity{
+		Name:   "Товар",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	h, _ := newAPITestHandler(t, []*metadata.Entity{entity}, nil)
+	id := uuid.New().String()
+
+	for _, tt := range []struct {
+		name   string
+		header string
+		status int
+	}{
+		{name: "missing", status: http.StatusPreconditionRequired},
+		{name: "invalid", header: `W/"1"`, status: http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := reqWithEntity(http.MethodPut, "/api/v2/catalog/Товар/"+id,
+				[]byte(`{"Наименование":"Новое"}`),
+				map[string]string{"name": "Товар", "id": id}, nil)
+			if tt.header != "" {
+				r.Header.Set("If-Match", tt.header)
+			}
+			w := httptest.NewRecorder()
+			h.updateObjectV2(metadata.KindCatalog).ServeHTTP(w, r)
+			if w.Code != tt.status {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tt.status, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAPI_PostDocumentReadsChunkedBody(t *testing.T) {
+	entity := &metadata.Entity{
+		Name:    "Поступление",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields:  []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{entity}, nil)
+	id := uuid.New()
+	if err := h.store.Upsert(ctx, entity.Name, id, map[string]any{"Номер": "1"}, entity); err != nil {
+		t.Fatal(err)
+	}
+
+	r := reqWithEntity(http.MethodPost, "/documents/Поступление/"+id.String()+"/post",
+		[]byte(`{"Номер":"2"}`),
+		map[string]string{"entity": entity.Name, "id": id.String()}, nil)
+	r.ContentLength = -1
+	w := httptest.NewRecorder()
+	h.postDocument().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	row, err := h.store.GetByID(ctx, entity.Name, id, entity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Номер"] != "2" || row["posted"] != true {
+		t.Fatalf("chunked body was ignored: %#v", row)
 	}
 }
 

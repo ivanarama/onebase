@@ -5,6 +5,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -59,15 +60,11 @@ func (s *Server) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxSize := s.maxFileSizeBytes
-	if maxSize == 0 {
-		maxSize = 50 * 1024 * 1024
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxSize+1024)
+	maxSize := s.limitMultipartRequest(w, r)
 
 	lang := s.resolveLang(r)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, s.tr(lang, "Ошибка разбора формы")+": "+s.errText(r, err), 400)
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		http.Error(w, s.tr(lang, "Ошибка разбора формы")+": "+s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -96,7 +93,11 @@ func (s *Server) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	_, err = s.store.UploadAttachment(r.Context(), string(entity.Kind), entity.Name, id,
 		filename, mimeType, uploadedBy, file, maxSize)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrAttachmentTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		http.Error(w, s.errText(r, err), status)
 		return
 	}
 

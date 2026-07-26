@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -31,15 +32,11 @@ func (s *Server) imageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxSize := s.maxFileSizeBytes
-	if maxSize == 0 {
-		maxSize = 50 * 1024 * 1024
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxSize+1024)
+	maxSize := s.limitMultipartRequest(w, r)
 
 	lang := s.resolveLang(r)
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, s.tr(lang, "Ошибка разбора формы")+": "+s.errText(r, err), 400)
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		http.Error(w, s.tr(lang, "Ошибка разбора формы")+": "+s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
 	file, _, err := r.FormFile("file")
@@ -72,7 +69,11 @@ func (s *Server) imageUpload(w http.ResponseWriter, r *http.Request) {
 	owner := storage.BlobOwner{Kind: string(entity.Kind), Entity: entity.Name}
 	b, err := s.store.PutBlob(r.Context(), mimeType, body, maxSize, owner)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrBlobTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		http.Error(w, s.errText(r, err), status)
 		return
 	}
 

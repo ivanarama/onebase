@@ -9,6 +9,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,6 +49,8 @@ type BlobOwner struct {
 
 // blobsDirName — подкаталог filesDir для дискового режима хранения.
 const blobsDirName = "_blobs"
+
+var ErrBlobTooLarge = errors.New("blob exceeds maximum size")
 
 // EnsureBlobTable создаёт таблицу _blobs (метаданные + данные для db-режима).
 // Колонка data заполняется только в режиме FileStorageDB; на диске она NULL.
@@ -112,7 +115,8 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 			return Blob{}, err
 		}
 		if int64(len(data)) > maxSizeBytes {
-			return Blob{}, i18nerr.Errorf("файл превышает максимальный размер %d МБ", maxSizeBytes/(1024*1024))
+			return Blob{}, fmt.Errorf("%w: %s", ErrBlobTooLarge,
+				i18nerr.Errorf("файл превышает максимальный размер %d МБ", maxSizeBytes/(1024*1024)))
 		}
 		q := fmt.Sprintf(`INSERT INTO _blobs (id, mime, size, data, owner_kind, owner_entity, created_at, dsl_managed) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)`,
 			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5), d.Placeholder(6), d.Placeholder(7), d.Placeholder(8))
@@ -140,7 +144,8 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 	}
 	if n > maxSizeBytes {
 		os.Remove(fp)
-		return Blob{}, i18nerr.Errorf("файл превышает максимальный размер %d МБ", maxSizeBytes/(1024*1024))
+		return Blob{}, fmt.Errorf("%w: %s", ErrBlobTooLarge,
+			i18nerr.Errorf("файл превышает максимальный размер %d МБ", maxSizeBytes/(1024*1024)))
 	}
 	q := fmt.Sprintf(`INSERT INTO _blobs (id, mime, size, owner_kind, owner_entity, created_at, dsl_managed) VALUES (%s,%s,%s,%s,%s,%s,%s)`,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5), d.Placeholder(6), d.Placeholder(7))
