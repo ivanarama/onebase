@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -31,7 +32,8 @@ type User struct {
 }
 
 type Repo struct {
-	db *storage.DB
+	db             *storage.DB
+	passwordPolicy PasswordPolicy
 }
 
 var (
@@ -43,7 +45,7 @@ var (
 // NewRepo wires the auth repository to the storage layer. Internally Exec/
 // Query/QueryRow are routed to PostgreSQL or SQLite via the DB abstraction.
 func NewRepo(db *storage.DB) *Repo {
-	return &Repo{db: db}
+	return &Repo{db: db, passwordPolicy: passwordPolicyFromEnv()}
 }
 
 func (r *Repo) EnsureSchema(ctx context.Context) error {
@@ -73,6 +75,7 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 	sessionsDDL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS _sessions (
 			token TEXT PRIMARY KEY,
+			token_hash TEXT NOT NULL,
 			user_id %s NOT NULL REFERENCES _users(id) ON DELETE CASCADE,
 			expires_at %s NOT NULL,
 			public_id TEXT,
@@ -111,6 +114,7 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 	// есть» — молча проглоченный SQLITE_BUSY оставил бы колонку несозданной и
 	// сломал INSERT сессий.
 	for _, ddl := range []string{
+		`ALTER TABLE _sessions ADD COLUMN token_hash TEXT`,
 		`ALTER TABLE _sessions ADD COLUMN public_id TEXT`,
 		`ALTER TABLE _sessions ADD COLUMN kind TEXT`,
 		fmt.Sprintf(`ALTER TABLE _sessions ADD COLUMN created_at %s`, d.TypeTimestamp()),
@@ -122,7 +126,11 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("auth: migrate _sessions: %w", err)
 		}
 	}
+	if err := r.migrateSessionTokens(ctx); err != nil {
+		return fmt.Errorf("auth: hash legacy session tokens: %w", err)
+	}
 	for _, ddl := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS ix_sessions_token_hash ON _sessions(token_hash)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS ix_sessions_public_id ON _sessions(public_id)`,
 		`CREATE INDEX IF NOT EXISTS ix_sessions_user_id ON _sessions(user_id)`,
 		`CREATE INDEX IF NOT EXISTS ix_sessions_expires_at ON _sessions(expires_at)`,
@@ -284,6 +292,9 @@ func scanTime(v any) time.Time {
 }
 
 func (r *Repo) Create(ctx context.Context, login, password, fullName string, isAdmin bool) (*User, error) {
+	if err := r.passwordPolicy.validate(password); err != nil {
+		return nil, err
+	}
 	d := r.db.Dialect()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -411,14 +422,61 @@ func (r *Repo) CreateSession(ctx context.Context, userID string, meta SessionMet
 		return "", err
 	}
 	token := hex.EncodeToString(b)
+	tokenHash := sessionTokenHash(token)
 	now := time.Now()
 	expires := now.Add(24 * time.Hour)
-	q := fmt.Sprintf(`INSERT INTO _sessions (token, user_id, expires_at, public_id, kind, created_at, last_seen_at, ip, user_agent)
-		VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)`,
+	q := fmt.Sprintf(`INSERT INTO _sessions (token, token_hash, user_id, expires_at, public_id, kind, created_at, last_seen_at, ip, user_agent)
+		VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5),
-		d.Placeholder(6), d.Placeholder(7), d.Placeholder(8), d.Placeholder(9))
-	_, err := r.db.Exec(ctx, q, token, userID, expires, uuid.New().String(), meta.Kind, now, now, meta.IP, meta.UserAgent)
+		d.Placeholder(6), d.Placeholder(7), d.Placeholder(8), d.Placeholder(9), d.Placeholder(10))
+	_, err := r.db.Exec(ctx, q, tokenHash, tokenHash, userID, expires, uuid.New().String(), meta.Kind, now, now, meta.IP, meta.UserAgent)
 	return token, err
+}
+
+const sessionTokenHashPrefix = "sha256:"
+
+func sessionTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return sessionTokenHashPrefix + hex.EncodeToString(sum[:])
+}
+
+// migrateSessionTokens replaces legacy plaintext bearer tokens in-place with
+// one-way digests. The new token_hash column is also the idempotence marker:
+// if startup is interrupted after ADD COLUMN, the next startup resumes the
+// backfill. Existing browser cookies continue to work because lookups hash the
+// cookie before querying.
+func (r *Repo) migrateSessionTokens(ctx context.Context) error {
+	return r.db.WithTxScope(ctx, func(txCtx context.Context) error {
+		rows, err := r.db.Query(txCtx, `SELECT token FROM _sessions WHERE token_hash IS NULL OR token_hash = ''`)
+		if err != nil {
+			return err
+		}
+		var legacyTokens []string
+		for rows.Next() {
+			var token string
+			if err := rows.Scan(&token); err != nil {
+				rows.Close()
+				return err
+			}
+			legacyTokens = append(legacyTokens, token)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		d := r.db.Dialect()
+		q := fmt.Sprintf(`UPDATE _sessions SET token = %s, token_hash = %s
+			WHERE token = %s AND (token_hash IS NULL OR token_hash = '')`,
+			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+		for _, token := range legacyTokens {
+			digest := sessionTokenHash(token)
+			if _, err := r.db.Exec(txCtx, q, digest, digest, token); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // enforceSessionLimit применяет политику `auth.max_sessions_per_user`
@@ -478,10 +536,11 @@ const touchInterval = 5 * time.Minute
 // SQLite single-writer, а лаунчер и процесс базы пишут в один файл — лишние
 // записи ни к чему. now передаётся параметром ради детерминизма в тестах.
 func (r *Repo) TouchSession(ctx context.Context, token string, now time.Time) error {
-	if last, ok := touchThrottle.Load(token); ok && now.Sub(last.(time.Time)) < touchInterval {
+	tokenHash := sessionTokenHash(token)
+	if last, ok := touchThrottle.Load(tokenHash); ok && now.Sub(last.(time.Time)) < touchInterval {
 		return nil
 	}
-	touchThrottle.Store(token, now)
+	touchThrottle.Store(tokenHash, now)
 	// Попутная уборка записей умерших сессий (не чаще реальных touch'ей).
 	touchThrottle.Range(func(k, v any) bool {
 		if now.Sub(v.(time.Time)) > 24*time.Hour {
@@ -490,8 +549,8 @@ func (r *Repo) TouchSession(ctx context.Context, token string, now time.Time) er
 		return true
 	})
 	d := r.db.Dialect()
-	q := fmt.Sprintf(`UPDATE _sessions SET last_seen_at = %s WHERE token = %s`, d.Placeholder(1), d.Placeholder(2))
-	_, err := r.db.Exec(ctx, q, now, token)
+	q := fmt.Sprintf(`UPDATE _sessions SET last_seen_at = %s WHERE token_hash = %s`, d.Placeholder(1), d.Placeholder(2))
+	_, err := r.db.Exec(ctx, q, now, tokenHash)
 	return err
 }
 
@@ -502,9 +561,9 @@ func (r *Repo) LookupSession(ctx context.Context, token string) (*User, error) {
 	q := fmt.Sprintf(`
 		SELECT u.id, u.login, u.full_name, u.is_admin, u.deny_passwd_change, u.ai_data_access, u.lang
 		FROM _sessions s JOIN _users u ON u.id = s.user_id
-		WHERE s.token = %s AND s.expires_at > %s
+		WHERE s.token_hash = %s AND s.expires_at > %s
 	`, d.Placeholder(1), d.Now())
-	err := r.db.QueryRow(ctx, q, token).Scan(&u.ID, &u.Login, &u.FullName, &u.IsAdmin, &u.DenyPasswdChange, &aiData, &u.Lang)
+	err := r.db.QueryRow(ctx, q, sessionTokenHash(token)).Scan(&u.ID, &u.Login, &u.FullName, &u.IsAdmin, &u.DenyPasswdChange, &aiData, &u.Lang)
 	if err != nil {
 		return nil, err
 	}
@@ -514,8 +573,8 @@ func (r *Repo) LookupSession(ctx context.Context, token string) (*User, error) {
 
 func (r *Repo) DeleteSession(ctx context.Context, token string) error {
 	d := r.db.Dialect()
-	q := fmt.Sprintf(`DELETE FROM _sessions WHERE token = %s`, d.Placeholder(1))
-	_, err := r.db.Exec(ctx, q, token)
+	q := fmt.Sprintf(`DELETE FROM _sessions WHERE token_hash = %s`, d.Placeholder(1))
+	_, err := r.db.Exec(ctx, q, sessionTokenHash(token))
 	return err
 }
 
@@ -629,6 +688,9 @@ func (r *Repo) SetDenyPasswdChange(ctx context.Context, userID string, deny bool
 
 // UpdatePassword sets a new bcrypt-hashed password for the given user ID.
 func (r *Repo) UpdatePassword(ctx context.Context, userID, newPassword string) error {
+	if err := r.passwordPolicy.validate(newPassword); err != nil {
+		return err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -672,8 +734,15 @@ func (r *Repo) KickSession(ctx context.Context, publicID string) error {
 // «выйти со всех устройств кроме этого» (план 78).
 func (r *Repo) KickOtherSessions(ctx context.Context, userID, currentToken string) error {
 	d := r.db.Dialect()
-	q := fmt.Sprintf(`DELETE FROM _sessions WHERE user_id = %s AND token <> %s`,
+	q := fmt.Sprintf(`DELETE FROM _sessions WHERE user_id = %s AND token_hash <> %s`,
 		d.Placeholder(1), d.Placeholder(2))
-	_, err := r.db.Exec(ctx, q, userID, currentToken)
+	_, err := r.db.Exec(ctx, q, userID, sessionTokenHash(currentToken))
 	return err
+}
+
+// PasswordPolicy reports the policy captured when this repository was
+// created. Handlers use it only for UI hints; validation always happens in
+// Create and UpdatePassword.
+func (r *Repo) PasswordPolicy() PasswordPolicy {
+	return r.passwordPolicy
 }

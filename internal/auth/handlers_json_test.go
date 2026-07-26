@@ -54,3 +54,44 @@ func TestLoginJSONSetsSessionCookieAndDoesNotReturnToken(t *testing.T) {
 		t.Fatalf("unexpected response user: %v", body["user"])
 	}
 }
+
+func TestLoginJSONSetsSecureCookieForTLSOrExplicitProxyPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target string
+		force  bool
+	}{
+		{name: "direct TLS", target: "https://example.test/auth/login"},
+		{name: "trusted HTTPS terminator", target: "http://127.0.0.1/auth/login", force: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, ctx := newTestRepo(t)
+			if _, err := repo.Create(ctx, "ivan", "secret123", "Иван", false); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			h := &auth.Handlers{Repo: repo, SecureCookies: tc.force}
+			req := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(`{"login":"ivan","password":"secret123"}`))
+			rec := httptest.NewRecorder()
+			h.LoginJSON(rec, req)
+
+			cookies := rec.Result().Cookies()
+			if len(cookies) != 1 || !cookies[0].Secure {
+				t.Fatalf("session cookie is not Secure: %+v", cookies)
+			}
+		})
+	}
+}
+
+func TestStatusFailsClosedWhenUserStoreIsUnavailable(t *testing.T) {
+	repo, db, ctx := newTestRepoDB(t)
+	db.Close()
+	h := &auth.Handlers{Repo: repo}
+	req := httptest.NewRequest(http.MethodGet, "/auth/status", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.Status(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Status = %d, want 503", rec.Code)
+	}
+}

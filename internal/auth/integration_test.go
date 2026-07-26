@@ -64,7 +64,7 @@ func TestRepo_CreateAndAuthenticate(t *testing.T) {
 	}
 
 	// Unknown user
-	_, err = repo.Authenticate(ctx, "nobody", "pass")
+	_, err = repo.Authenticate(ctx, "nobody", "password")
 	if err == nil {
 		t.Fatal("Authenticate with unknown user should return error")
 	}
@@ -80,7 +80,7 @@ func TestRepo_Sessions(t *testing.T) {
 	db.Exec(ctx, `DELETE FROM _sessions`)
 	db.Exec(ctx, `DELETE FROM _users WHERE login = 'sesstest'`)
 
-	user, _ := repo.Create(ctx, "sesstest", "pass", "", false)
+	user, _ := repo.Create(ctx, "sesstest", "password", "", false)
 
 	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindEnterprise})
 	if err != nil {
@@ -144,7 +144,7 @@ func TestMiddleware_WithUsers_RequiresSession(t *testing.T) {
 
 	db.Exec(ctx, `DELETE FROM _sessions`)
 	db.Exec(ctx, `DELETE FROM _users WHERE login = 'mwtest'`)
-	repo.Create(ctx, "mwtest", "pass", "", false)
+	repo.Create(ctx, "mwtest", "password", "", false)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -162,7 +162,7 @@ func TestMiddleware_WithUsers_RequiresSession(t *testing.T) {
 	}
 
 	// Valid session → pass through
-	user, _ := repo.Authenticate(ctx, "mwtest", "pass")
+	user, _ := repo.Authenticate(ctx, "mwtest", "password")
 	token, _ := repo.CreateSession(ctx, user.ID, auth.SessionMeta{})
 	req2 := httptest.NewRequest(http.MethodGet, "/ui", nil)
 	req2.AddCookie(&http.Cookie{Name: "onebase_session", Value: token})

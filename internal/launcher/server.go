@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/webassets"
 	"github.com/ivantit66/onebase/internal/websec"
@@ -68,7 +69,10 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &handler{store: store, runner: runner, isoBrowser: systemBrowser{}}
+	h := &handler{
+		store: store, runner: runner, isoBrowser: systemBrowser{},
+		cfgLoginLimit: auth.NewLoginLimiter(5, time.Minute),
+	}
 	if b, err := i18n.Load(i18n.EmbeddedLocales, ""); err == nil {
 		launcherBundle = b
 	}

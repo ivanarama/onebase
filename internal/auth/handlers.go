@@ -44,10 +44,11 @@ type AuditLogger interface {
 }
 
 type Handlers struct {
-	Repo       *Repo
-	Auditor    AuditLogger   // optional, set by api.New
-	Codes      *OneTimeCodes // одноразовые bootstrap-коды (план 53); optional
-	LoginLimit *LoginLimiter // rate-limit попыток входа (план 53); optional
+	Repo          *Repo
+	Auditor       AuditLogger   // optional, set by api.New
+	Codes         *OneTimeCodes // одноразовые bootstrap-коды (план 53); optional
+	LoginLimit    *LoginLimiter // rate-limit попыток входа (план 53); optional
+	SecureCookies bool          // force Secure behind a trusted HTTPS terminator
 }
 
 // sessionMetaFromRequest собирает мету сессии пользовательского режима.
@@ -55,12 +56,13 @@ func sessionMetaFromRequest(r *http.Request) SessionMeta {
 	return SessionMeta{Kind: SessionKindEnterprise, IP: r.RemoteAddr, UserAgent: r.UserAgent()}
 }
 
-func setSessionCookie(w http.ResponseWriter, token string) {
+func (h *Handlers) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "onebase_session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   h.SecureCookies || r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -70,7 +72,7 @@ func (h *Handlers) limitExceeded(w http.ResponseWriter, r *http.Request, login s
 	if h.LoginLimit == nil {
 		return false
 	}
-	ok, retry := h.LoginLimit.Allow(loginKey(r, login))
+	ok, retry := h.LoginLimit.Allow(LoginKey(r, login))
 	if ok {
 		return false
 	}
@@ -144,13 +146,13 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Repo.Authenticate(r.Context(), login, password)
 	if err != nil {
 		if h.LoginLimit != nil {
-			h.LoginLimit.Fail(loginKey(r, login))
+			h.LoginLimit.Fail(LoginKey(r, login))
 		}
 		renderErr(w, r, http.StatusUnauthorized, "Неверное имя пользователя или пароль")
 		return
 	}
 	if h.LoginLimit != nil {
-		h.LoginLimit.Reset(loginKey(r, login))
+		h.LoginLimit.Reset(LoginKey(r, login))
 	}
 
 	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
@@ -164,7 +166,7 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		h.Auditor.LogAction(r.Context(), "login", "", "", "", user.ID, user.Login, ip)
 	}
 
-	setSessionCookie(w, token)
+	h.setSessionCookie(w, r, token)
 
 	returnURL := r.URL.Query().Get("return")
 	if returnURL == "" || !isLocalURL(returnURL) {
@@ -190,13 +192,13 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Repo.Authenticate(r.Context(), req.Login, req.Password)
 	if err != nil {
 		if h.LoginLimit != nil {
-			h.LoginLimit.Fail(loginKey(r, req.Login))
+			h.LoginLimit.Fail(LoginKey(r, req.Login))
 		}
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
 	if h.LoginLimit != nil {
-		h.LoginLimit.Reset(loginKey(r, req.Login))
+		h.LoginLimit.Reset(LoginKey(r, req.Login))
 	}
 
 	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
@@ -209,7 +211,7 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 		h.Auditor.LogAction(r.Context(), "login", "", "", "", user.ID, user.Login, r.RemoteAddr)
 	}
 
-	setSessionCookie(w, token)
+	h.setSessionCookie(w, r, token)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"ok":   true,
@@ -227,18 +229,26 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		h.Repo.DeleteSession(r.Context(), cookie.Value)
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:   "onebase_session",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "onebase_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.SecureCookies || r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
 	})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 func (h *Handlers) Status(w http.ResponseWriter, r *http.Request) {
-	hasUsers, _ := h.Repo.HasUsers(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"requires_auth": hasUsers})
+	hasUsers, err := h.Repo.HasUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication service unavailable"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"requires_auth": hasUsers})
 }
 
 // Bootstrap sets the session cookie from a one-time code and redirects.
@@ -270,7 +280,7 @@ func (h *Handlers) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	setSessionCookie(w, token)
+	h.setSessionCookie(w, r, token)
 	http.Redirect(w, r, returnURL, http.StatusFound)
 }
 

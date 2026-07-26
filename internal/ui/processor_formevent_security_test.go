@@ -57,7 +57,7 @@ func TestProcessorFormEvent_TrustGate(t *testing.T) {
 	}
 	// Создаём пользователя → HasUsers()==true, поэтому isAdmin(запрос без
 	// пользователя в контексте) == false (как в ai_tools_test).
-	if _, err := authRepo.Create(ctx, "clerk", "pw", "Клерк", false); err != nil {
+	if _, err := authRepo.Create(ctx, "clerk", "password", "Клерк", false); err != nil {
 		t.Fatal(err)
 	}
 

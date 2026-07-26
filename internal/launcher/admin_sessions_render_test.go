@@ -36,7 +36,7 @@ func newSessionsFixture(t *testing.T, baseID string) (*handler, *Base, *auth.Rep
 	if err := repo.EnsureSchema(ctx); err != nil {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
-	user, err := repo.Create(ctx, "admin", "pass", "Админ", true)
+	user, err := repo.Create(ctx, "admin", "password", "Админ", true)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

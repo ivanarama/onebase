@@ -204,7 +204,7 @@ func TestService_Index(t *testing.T) {
 
 func TestService_BasicAuth(t *testing.T) {
 	s, ctx := newServiceTestServer(t)
-	if _, err := s.authRepo.Create(ctx, "ivan", "pass", "Иван", false); err != nil {
+	if _, err := s.authRepo.Create(ctx, "ivan", "password", "Иван", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -221,7 +221,7 @@ func TestService_BasicAuth(t *testing.T) {
 	// С верными учётными данными — 200, тело = логин (ТекущийПользователь виден).
 	w = httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/hs/secure", nil)
-	r.SetBasicAuth("ivan", "pass")
+	r.SetBasicAuth("ivan", "password")
 	s.serviceDispatch(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("good creds: status=%d body=%s", w.Code, w.Body.String())
@@ -278,17 +278,17 @@ func TestService_CORS_Preflight(t *testing.T) {
 
 func TestService_RolesGate(t *testing.T) {
 	s, ctx := newServiceTestServer(t)
-	if _, err := s.authRepo.Create(ctx, "clerk", "pw", "Клерк", false); err != nil {
+	if _, err := s.authRepo.Create(ctx, "clerk", "password", "Клерк", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.authRepo.Create(ctx, "boss", "pw", "Босс", true); err != nil { // админ
+	if _, err := s.authRepo.Create(ctx, "boss", "password", "Босс", true); err != nil { // админ
 		t.Fatal(err)
 	}
 
 	// Пользователь без нужной роли — 403.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/hs/rg", nil)
-	r.SetBasicAuth("clerk", "pw")
+	r.SetBasicAuth("clerk", "password")
 	s.serviceDispatch(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("clerk: status=%d, want 403", w.Code)
@@ -297,7 +297,7 @@ func TestService_RolesGate(t *testing.T) {
 	// Администратор проходит ролевой гейт.
 	w = httptest.NewRecorder()
 	r = httptest.NewRequest("GET", "/hs/rg", nil)
-	r.SetBasicAuth("boss", "pw")
+	r.SetBasicAuth("boss", "password")
 	s.serviceDispatch(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("boss: status=%d body=%s, want 200", w.Code, w.Body.String())
@@ -354,7 +354,7 @@ func TestService_Docs(t *testing.T) {
 	}
 
 	// Появился пользователь → docs требуют админ-сессии → без сессии редирект на /login.
-	if _, err := s.authRepo.Create(ctx, "u1", "pw", "U", false); err != nil {
+	if _, err := s.authRepo.Create(ctx, "u1", "password", "U", false); err != nil {
 		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()

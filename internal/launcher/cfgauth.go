@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -158,6 +159,13 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	login := r.FormValue("login")
 	password := r.FormValue("password")
+	limiter := h.configuratorLoginLimiter()
+	loginKey := auth.LoginKey(r, login)
+	if ok, retry := limiter.Allow(loginKey); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		renderErr(http.StatusTooManyRequests, tr(lang, "Слишком много попыток входа — повторите позже"))
+		return
+	}
 
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
@@ -173,6 +181,7 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	user, err := repo.Authenticate(r.Context(), login, password)
 	if err != nil {
+		limiter.Fail(loginKey)
 		renderErr(401, tr(lang, "Неверное имя пользователя или пароль"))
 		return
 	}
@@ -181,6 +190,7 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		renderErr(403, tr(lang, "Доступ запрещён. Только для администраторов."))
 		return
 	}
+	limiter.Reset(loginKey)
 
 	token, err := repo.CreateSession(r.Context(), user.ID, auth.SessionMeta{
 		Kind: auth.SessionKindConfigurator, IP: r.RemoteAddr, UserAgent: r.UserAgent(),
@@ -193,6 +203,15 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	setConfiguratorSessionCookie(w, token)
 
 	http.Redirect(w, r, "/bases/"+id+"/configurator", http.StatusFound)
+}
+
+func (h *handler) configuratorLoginLimiter() *auth.LoginLimiter {
+	h.cfgLoginOnce.Do(func() {
+		if h.cfgLoginLimit == nil {
+			h.cfgLoginLimit = auth.NewLoginLimiter(5, time.Minute)
+		}
+	})
+	return h.cfgLoginLimit
 }
 
 // setConfiguratorSessionCookie starts the dedicated configurator session in

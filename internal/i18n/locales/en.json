@@ -1063,5 +1063,7 @@
   "повторяющаяся запись в архиве: %s": "duplicate archive entry: %s",
   "распакованный архив превышает допустимый размер": "the expanded archive exceeds the allowed size",
   "слишком много записей в архиве: %d": "too many archive entries: %d",
-  "Ошибка config/app.yaml": "config/app.yaml error"
+  "Ошибка config/app.yaml": "config/app.yaml error",
+  "Логин обязателен": "Login is required",
+  "Слишком много попыток входа — повторите позже": "Too many login attempts — try again later"
 }

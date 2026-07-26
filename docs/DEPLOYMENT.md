@@ -143,6 +143,27 @@ C:\onebase\bin\onebase.exe service uninstall --name onebase-docflow
 > `service install --db "postgres://…" --port 8080 --name onebase-docflow`
 > или `service install --sqlite C:\onebase\data\docflow.db --project C:\onebase\project --config-source file --port 8080 --name onebase-docflow`.
 
+### Параметры безопасности окружения
+
+Для production-службы задайте переменные на уровне машины до её запуска:
+
+```powershell
+# OneBase стоит за настроенным HTTPS reverse proxy.
+[Environment]::SetEnvironmentVariable("ONEBASE_SECURE_COOKIES", "true", "Machine")
+
+# Необязательно: изменить минимальную длину новых паролей (по умолчанию 8 символов).
+[Environment]::SetEnvironmentVariable("ONEBASE_MIN_PASSWORD_LENGTH", "12", "Machine")
+```
+
+`ONEBASE_SECURE_COOKIES=true` нужен при завершении TLS на reverse proxy: OneBase
+не доверяет клиентскому `X-Forwarded-Proto` без конфигурации доверенных proxy.
+При прямом TLS атрибут `Secure` устанавливается автоматически.
+
+Пустые пароли по умолчанию запрещены во всех интерфейсах и API. Для явно
+изолированного kiosk-режима их можно разрешить
+`ONEBASE_ALLOW_EMPTY_PASSWORDS=true`; не используйте этот режим для сервера,
+доступного из сети. После изменения переменных перезапустите службу.
+
 ---
 
 ## 5. Smoke-тест

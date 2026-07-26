@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,9 +73,10 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 
 	// Public auth routes (no authentication required)
 	authH := &auth.Handlers{
-		Repo:    authRepo,
-		Auditor: store,
-		Codes:   auth.NewOneTimeCodes(30 * time.Second),
+		Repo:          authRepo,
+		Auditor:       store,
+		Codes:         auth.NewOneTimeCodes(30 * time.Second),
+		SecureCookies: envBool("ONEBASE_SECURE_COOKIES"),
 		// 5 неудач с одного IP по одному логину → блок на минуту (план 53).
 		// Общий с basic-auth HTTP-сервисов (см. uiCfg.LoginLimit).
 		LoginLimit: loginLimit,
@@ -162,6 +164,11 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}}
+}
+
+func envBool(name string) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(name)))
+	return err == nil && v
 }
 
 // InvalidateWidgetCache makes metadata hot reload immediately visible on the

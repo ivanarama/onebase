@@ -76,7 +76,7 @@ func TestAgentSettings_ForbiddenForNonAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Непустой список пользователей → isAdmin(запрос без пользователя)==false.
-	if _, err := authRepo.Create(ctx, "clerk", "pw", "Клерк", false); err != nil {
+	if _, err := authRepo.Create(ctx, "clerk", "password", "Клерк", false); err != nil {
 		t.Fatal(err)
 	}
 	s := &Server{store: db, reg: runtime.NewRegistry(), authRepo: authRepo, messages: NewMessageStore()}

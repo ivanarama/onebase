@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
@@ -71,8 +73,10 @@ func sanitizeFileName(name string) string {
 }
 
 type handler struct {
-	store  *Store
-	runner *Runner
+	store         *Store
+	runner        *Runner
+	cfgLoginLimit *auth.LoginLimiter
+	cfgLoginOnce  sync.Once
 	// isoBrowser запускает изолированные окна Предприятия (план 78);
 	// в тестах подменяется фейком.
 	isoBrowser isolatedBrowser

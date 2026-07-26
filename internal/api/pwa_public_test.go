@@ -29,7 +29,7 @@ func newServerWithUser(t *testing.T) *Server {
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authRepo.Create(ctx, "admin", "secret", "Админ", true); err != nil {
+	if _, err := authRepo.Create(ctx, "admin", "secret123", "Админ", true); err != nil {
 		t.Fatal(err)
 	}
 	if has, err := authRepo.HasUsers(ctx); err != nil || !has {

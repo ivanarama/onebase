@@ -84,10 +84,10 @@ func (l *LoginLimiter) purgeLocked(now time.Time) {
 	}
 }
 
-// loginKey строит ключ лимитера (IP, login). X-Forwarded-For намеренно не
+// LoginKey строит ключ лимитера (IP, login). X-Forwarded-For намеренно не
 // используется: без доверенного прокси заголовок подделывается и позволил бы
 // обходить лимит (или блокировать чужие IP).
-func loginKey(r *http.Request, login string) string {
+func LoginKey(r *http.Request, login string) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
