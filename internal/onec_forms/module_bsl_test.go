@@ -161,6 +161,7 @@ func TestReadBSL_RealFile(t *testing.T) {
 	}
 	if pd == nil {
 		t.Skip("ПолучитьДанные не найдена — у этой версии формы может быть другая структура")
+		return
 	}
 	if pd.Directive != "&НаКлиенте" {
 		t.Errorf("ПолучитьДанные.Directive = %q, ожидается &НаКлиенте", pd.Directive)

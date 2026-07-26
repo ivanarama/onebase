@@ -72,6 +72,7 @@ func TestToFormModule_Minimal(t *testing.T) {
 	fm := ToFormModule(form)
 	if fm == nil {
 		t.Fatal("ToFormModule = nil")
+		return
 	}
 	if fm.LayoutKind != metadata.FormLayoutManaged {
 		t.Errorf("LayoutKind = %q", fm.LayoutKind)

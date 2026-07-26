@@ -165,8 +165,8 @@ func TestAPI_Create_OnWriteHasDSLVars(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.createObject(metadata.KindCatalog).ServeHTTP(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		ID       string   `json:"id"`
@@ -347,7 +347,7 @@ func TestAPI_RowAccessAutoFillsOwnerOnCreate(t *testing.T) {
 	req := withUser(reqWithEntity(http.MethodPost, "/catalogs/Товар", []byte(`{"Наименование":"A"}`), map[string]string{"entity": cat.Name}, nil), user)
 	rec := httptest.NewRecorder()
 	h.createObject(metadata.KindCatalog)(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	var res map[string]string
@@ -1314,8 +1314,8 @@ func TestAPI_Create_WithTableParts(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.createObject(metadata.KindDocument).ServeHTTP(w, r)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var resp struct {
 		ID string `json:"id"`
@@ -1690,8 +1690,8 @@ func TestAPI_PostDocument_EmptyBody_KeepsTableParts(t *testing.T) {
 	rc := reqWithEntity("POST", "/documents/Поступление", body, map[string]string{"entity": "Поступление"}, nil)
 	wc := httptest.NewRecorder()
 	h.createObject(metadata.KindDocument).ServeHTTP(wc, rc)
-	if wc.Code != http.StatusOK {
-		t.Fatalf("create: ожидалось 200, получено %d: %s", wc.Code, wc.Body.String())
+	if wc.Code != http.StatusCreated {
+		t.Fatalf("create: ожидалось 201, получено %d: %s", wc.Code, wc.Body.String())
 	}
 	var created struct {
 		ID string `json:"id"`

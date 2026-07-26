@@ -133,6 +133,7 @@ func TestReadFormXML_Minimal(t *testing.T) {
 	}
 	if form == nil {
 		t.Fatal("form is nil")
+		return
 	}
 	if form.Version != "2.20" {
 		t.Errorf("Version = %q", form.Version)
@@ -270,6 +271,7 @@ func TestReadFormXML_RealFile(t *testing.T) {
 	}
 	if form == nil {
 		t.Fatal("form is nil")
+		return
 	}
 	t.Logf("Version=%q AutoSave=%v VerticalScroll=%q", form.Version, form.AutoSaveDataInSettings, form.VerticalScroll)
 	t.Logf("AutoCommandBar buttons: %d", len(form.AutoCommandBar.Buttons))

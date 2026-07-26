@@ -349,7 +349,7 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 
 	// Показатели: презентация — из пользовательского ввода, Expr — только из
 	// доверенной компоновки (по совпадению Field), иначе обнуляем.
-	if u.Measures != nil && len(u.Measures) > 0 && !invalidEmptyComposition {
+	if len(u.Measures) > 0 && !invalidEmptyComposition {
 		measures := make([]reportpkg.Measure, 0, len(u.Measures))
 		for _, m := range u.Measures {
 			baseMeasure := trustedMeasure[strings.ToLower(m.Field)]

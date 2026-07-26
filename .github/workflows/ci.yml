@@ -122,8 +122,13 @@ jobs:
           cache: true
       - name: PostgreSQL integration tests
         run: |
-          go test -tags integration ./internal/storage
-          go test -tags integration ./internal/configdb
+          set -euo pipefail
+          # Run packages sequentially: tagged suites share the service database
+          # and some deliberately verify bootstrap/no-user state.
+          go test -count=1 -timeout 5m -tags integration .
+          go test -count=1 -timeout 5m -tags integration ./internal/auth
+          go test -count=1 -timeout 5m -tags integration ./internal/storage
+          go test -count=1 -timeout 5m -tags integration ./internal/configdb
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck

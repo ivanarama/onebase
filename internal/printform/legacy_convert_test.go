@@ -46,6 +46,7 @@ func TestConvertLegacy_Title(t *testing.T) {
 	title := areaByName(lt, "Заголовок")
 	if title == nil {
 		t.Fatal("нет области Заголовок")
+		return
 	}
 	if len(title.Rows) != 1 || len(title.Rows[0].Cells) != 1 {
 		t.Fatalf("Заголовок должен быть 1 ячейка, got rows=%d", len(title.Rows))
@@ -84,6 +85,7 @@ func TestConvertLegacy_Header(t *testing.T) {
 	h := areaByName(lt, "Шапка")
 	if h == nil {
 		t.Fatal("нет области Шапка")
+		return
 	}
 	// **Продавец**... → bold-строка, пустая, **Покупатель**... → bold-строка.
 	// Каждая строка — одна ячейка colspan на ширину.
@@ -118,6 +120,7 @@ func TestConvertLegacy_TableAreas(t *testing.T) {
 	thead := areaByName(lt, "ШапкаТаблицы")
 	if thead == nil {
 		t.Fatal("нет области ШапкаТаблицы")
+		return
 	}
 	if len(thead.Rows) != 1 || len(thead.Rows[0].Cells) != 5 {
 		t.Fatalf("ШапкаТаблицы: ожидалось 5 ячеек-меток, got rows=%d", len(thead.Rows))
@@ -137,6 +140,7 @@ func TestConvertLegacy_TableAreas(t *testing.T) {
 	rowArea := areaByName(lt, "Строка")
 	if rowArea == nil {
 		t.Fatal("нет области Строка")
+		return
 	}
 	if len(rowArea.Rows) != 1 || len(rowArea.Rows[0].Cells) != 5 {
 		t.Fatalf("Строка: ожидалось 5 ячеек-параметров, got rows=%d", len(rowArea.Rows))
@@ -160,6 +164,7 @@ func TestConvertLegacy_Totals(t *testing.T) {
 	totals := areaByName(lt, "Итоги")
 	if totals == nil {
 		t.Fatal("нет области Итоги")
+		return
 	}
 	// Итог с меткой («Итого») → интерполируемый текст с Итог.Товары.Сумма,
 	// сохраняющий метку (как в legacy «Итого: 650.00»).
@@ -230,6 +235,7 @@ func TestConvertLegacy_MoneyMappedToNumber(t *testing.T) {
 	footer := areaByName(lt, "Подвал")
 	if footer == nil {
 		t.Fatal("нет области Подвал")
+		return
 	}
 	var allText string
 	for _, row := range footer.Rows {
@@ -251,6 +257,7 @@ func TestConvertLegacy_FooterHr(t *testing.T) {
 	footer := areaByName(lt, "Подвал")
 	if footer == nil {
 		t.Fatal("нет области Подвал")
+		return
 	}
 	foundBorder := false
 	for _, row := range footer.Rows {

@@ -50,7 +50,6 @@ func newDict() Value {
 // points to Unicode code points.
 //
 // There is no support for executable blocks, among other limitations.
-//
 func Interpret(strm Value, do func(stk *Stack, op string)) {
 	rd := strm.Reader()
 	b := newBuffer(rd, 0)
@@ -70,15 +69,6 @@ Reading:
 			switch kw {
 			case "null", "[", "]", "<<", ">>":
 				break
-			default:
-				for i := len(dicts) - 1; i >= 0; i-- {
-					if v, ok := dicts[i][name(kw)]; ok {
-						stk.Push(Value{nil, objptr{}, v})
-						continue Reading
-					}
-				}
-				do(&stk, string(kw))
-				continue
 			case "dict":
 				stk.Pop()
 				stk.Push(Value{nil, objptr{}, make(dict)})
@@ -115,6 +105,15 @@ Reading:
 				continue
 			case "pop":
 				stk.Pop()
+				continue
+			default:
+				for i := len(dicts) - 1; i >= 0; i-- {
+					if v, ok := dicts[i][name(kw)]; ok {
+						stk.Push(Value{nil, objptr{}, v})
+						continue Reading
+					}
+				}
+				do(&stk, string(kw))
 				continue
 			}
 		}

@@ -117,14 +117,7 @@ type layoutTemplateMarshal struct {
 
 // MarshalYAML пишет макет в новом формате: areas — sequence элементов с name.
 func (lt LayoutTemplate) MarshalYAML() (any, error) {
-	return layoutTemplateMarshal{
-		Name:     lt.Name,
-		Document: lt.Document,
-		Page:     lt.Page,
-		Columns:  lt.Columns,
-		Areas:    lt.Areas,
-		Binding:  lt.Binding,
-	}, nil
+	return layoutTemplateMarshal(lt), nil
 }
 
 // UnmarshalYAML принимает оба формата областей:
@@ -279,17 +272,17 @@ func (lt *LayoutTemplate) PreviewHTML() string {
 	var sb strings.Builder
 	sb.WriteString(`<div style="font-family:Arial,sans-serif;font-size:12px">`)
 	for _, area := range lt.Areas {
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&sb,
 			`<div style="margin-bottom:16px"><div style="font-weight:bold;color:#4a9;margin-bottom:4px">%s</div>`,
 			html.EscapeString(area.Name),
-		))
+		)
 		sb.WriteString(`<table style="border-collapse:collapse">`)
 		// <colgroup> for column widths.
 		if len(lt.Columns) > 0 {
 			sb.WriteString("<colgroup>")
 			for _, c := range lt.Columns {
 				if width := csssafe.Length(c.Width); width != "" {
-					sb.WriteString(fmt.Sprintf(`<col style="width:%s">`, html.EscapeString(width)))
+					fmt.Fprintf(&sb, `<col style="width:%s">`, html.EscapeString(width))
 				} else {
 					sb.WriteString("<col>")
 				}
@@ -298,7 +291,7 @@ func (lt *LayoutTemplate) PreviewHTML() string {
 		}
 		for _, row := range area.Rows {
 			if height := csssafe.Length(row.Height); height != "" {
-				sb.WriteString(fmt.Sprintf(`<tr style="height:%s">`, html.EscapeString(height)))
+				fmt.Fprintf(&sb, `<tr style="height:%s">`, html.EscapeString(height))
 			} else {
 				sb.WriteString("<tr>")
 			}
@@ -351,7 +344,7 @@ func (lt *LayoutTemplate) PreviewHTML() string {
 				} else {
 					text = "&nbsp;"
 				}
-				sb.WriteString(fmt.Sprintf(`<td style="%s"%s>%s</td>`, style, attrs, text))
+				fmt.Fprintf(&sb, `<td style="%s"%s>%s</td>`, style, attrs, text)
 			}
 			sb.WriteString("</tr>")
 		}

@@ -20,6 +20,7 @@ rows:
 	}
 	if hp == nil {
 		t.Fatal("hp is nil")
+		return
 	}
 	if hp.Title != "Главная" || hp.Layout != "rows" {
 		t.Errorf("unexpected hp: %+v", hp)

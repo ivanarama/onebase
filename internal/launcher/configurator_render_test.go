@@ -210,7 +210,7 @@ func TestConfigurator_JSExternalized(t *testing.T) {
 	if iBoot < 0 {
 		t.Fatal("нет bootstrap window.__cfg в рендере")
 	}
-	if !(iBoot < iSrc) {
+	if iBoot >= iSrc {
 		t.Errorf("bootstrap window.__cfg (%d) должен идти раньше <script src> (%d)", iBoot, iSrc)
 	}
 }

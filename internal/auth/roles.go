@@ -496,17 +496,7 @@ func marshalPermissions(p Permission) (string, error) {
 		RowAccess    RowAccess           `json:"row_access,omitempty"`
 		FieldAccess  FieldAccess         `json:"field_access,omitempty"`
 	}
-	b, err := jsonMarshal(permJSON{
-		AIDataAccess: p.AIDataAccess,
-		Catalogs:     p.Catalogs,
-		Documents:    p.Documents,
-		Registers:    p.Registers,
-		InfoRegs:     p.InfoRegs,
-		Reports:      p.Reports,
-		Processors:   p.Processors,
-		RowAccess:    p.RowAccess,
-		FieldAccess:  p.FieldAccess,
-	})
+	b, err := jsonMarshal(permJSON(p))
 	if err != nil {
 		return "{}", err
 	}

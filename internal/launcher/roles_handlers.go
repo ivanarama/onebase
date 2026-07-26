@@ -137,8 +137,8 @@ func (h *handler) cfgAdminRoles(w http.ResponseWriter, r *http.Request) {
 		if i%2 == 1 {
 			bg = ` style="background:#f9fafb"`
 		}
-		sb.WriteString(fmt.Sprintf(`<tr%s><td style="padding:5px 8px;font-weight:600">%s</td><td style="padding:5px 8px;color:#555">%s</td><td style="padding:5px 8px;color:#888">%s</td><td style="padding:5px 8px;white-space:nowrap"><button onclick="cfgRoleEdit('%s')" style="background:#2563eb;color:#fff;border:none;padding:3px 10px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">Изменить</button><button onclick="cfgRoleDel('%s')" style="color:#c00;background:none;border:none;cursor:pointer;font-size:11px" title="Удалить">✕</button></td></tr>`,
-			bg, escHTML(role.Name), escHTML(role.Description), escHTML(permSummary(role.Permissions)), escAttrJS(role.Name), escAttrJS(role.Name)))
+		fmt.Fprintf(&sb, `<tr%s><td style="padding:5px 8px;font-weight:600">%s</td><td style="padding:5px 8px;color:#555">%s</td><td style="padding:5px 8px;color:#888">%s</td><td style="padding:5px 8px;white-space:nowrap"><button onclick="cfgRoleEdit('%s')" style="background:#2563eb;color:#fff;border:none;padding:3px 10px;border-radius:3px;cursor:pointer;font-size:11px;margin-right:4px">Изменить</button><button onclick="cfgRoleDel('%s')" style="color:#c00;background:none;border:none;cursor:pointer;font-size:11px" title="Удалить">✕</button></td></tr>`,
+			bg, escHTML(role.Name), escHTML(role.Description), escHTML(permSummary(role.Permissions)), escAttrJS(role.Name), escAttrJS(role.Name))
 	}
 	if len(roles) == 0 {
 		sb.WriteString(`<tr><td colspan="4" style="padding:20px;text-align:center;color:#999">Ролей пока нет</td></tr>`)
@@ -262,12 +262,12 @@ func roleMatrixHTML(data *configuratorData) string {
 			continue
 		}
 		any = true
-		sb.WriteString(fmt.Sprintf(`<details style="margin-bottom:6px"><summary style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0">%s (%d)</summary>`, escHTML(sec.Title), len(list)))
+		fmt.Fprintf(&sb, `<details style="margin-bottom:6px"><summary style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0">%s (%d)</summary>`, escHTML(sec.Title), len(list))
 		sb.WriteString(`<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11px;margin:4px 0 8px">`)
 		sb.WriteString(`<tr style="background:#eef2f7"><th style="text-align:left;padding:3px 8px;font-weight:600">Объект</th>`)
 		for _, op := range sec.Ops {
-			sb.WriteString(fmt.Sprintf(`<th style="padding:3px 8px;font-weight:600;text-align:center">%s<br><input type="checkbox" data-colsel="1" data-sec="%s" data-op="%s" onclick="cfgRoleCol(this)" title="Выделить столбец"></th>`,
-				escHTML(op.Label), sec.Kind, op.Op))
+			fmt.Fprintf(&sb, `<th style="padding:3px 8px;font-weight:600;text-align:center">%s<br><input type="checkbox" data-colsel="1" data-sec="%s" data-op="%s" onclick="cfgRoleCol(this)" title="Выделить столбец"></th>`,
+				escHTML(op.Label), sec.Kind, op.Op)
 		}
 		sb.WriteString(`</tr>`)
 		for ri, ent := range list {
@@ -275,10 +275,10 @@ func roleMatrixHTML(data *configuratorData) string {
 			if ri%2 == 1 {
 				bg = ` style="background:#fafafa"`
 			}
-			sb.WriteString(fmt.Sprintf(`<tr%s><td style="padding:3px 8px">%s</td>`, bg, escHTML(ent)))
+			fmt.Fprintf(&sb, `<tr%s><td style="padding:3px 8px">%s</td>`, bg, escHTML(ent))
 			for _, op := range sec.Ops {
 				val := sec.Kind + "|" + ent + "|" + op.Op
-				sb.WriteString(fmt.Sprintf(`<td style="text-align:center;padding:3px 8px"><input type="checkbox" name="perm" value="%s"></td>`, escHTML(val)))
+				fmt.Fprintf(&sb, `<td style="text-align:center;padding:3px 8px"><input type="checkbox" name="perm" value="%s"></td>`, escHTML(val))
 			}
 			sb.WriteString(`</tr>`)
 		}
@@ -489,8 +489,8 @@ func (h *handler) cfgAdminUserRoles(w http.ResponseWriter, r *http.Request) {
 			if assigned[role.ID] {
 				chk = " checked"
 			}
-			sb.WriteString(fmt.Sprintf(`<tr%s><td style="padding:5px 8px;text-align:center"><input type="checkbox" name="role" value="%s"%s></td><td style="padding:5px 8px;font-weight:600">%s</td><td style="padding:5px 8px;color:#888">%s</td></tr>`,
-				bg, escHTML(role.ID), chk, escHTML(role.Name), escHTML(role.Description)))
+			fmt.Fprintf(&sb, `<tr%s><td style="padding:5px 8px;text-align:center"><input type="checkbox" name="role" value="%s"%s></td><td style="padding:5px 8px;font-weight:600">%s</td><td style="padding:5px 8px;color:#888">%s</td></tr>`,
+				bg, escHTML(role.ID), chk, escHTML(role.Name), escHTML(role.Description))
 		}
 		sb.WriteString(`</table></form>
 		<div style="margin-top:12px;display:flex;gap:8px;align-items:center">

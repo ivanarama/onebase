@@ -73,7 +73,7 @@ type rwTransport interface {
 type tcpTransport struct{ net.Conn }
 
 func (t tcpTransport) SetReadTimeout(d time.Duration) error {
-	return t.Conn.SetReadDeadline(time.Now().Add(d))
+	return t.SetReadDeadline(time.Now().Add(d))
 }
 
 // serialTransport: serial.Port уже реализует Read/Write/Close и SetReadTimeout,

@@ -75,6 +75,7 @@ form:
 	}
 	if obj == nil {
 		t.Fatal("форма «объекта» не найдена")
+		return
 	}
 	if !obj.HasOS {
 		t.Error("HasOS должен быть true (есть .form.os)")

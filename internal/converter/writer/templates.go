@@ -74,9 +74,9 @@ func WriteTemplates(sourceDir, outDir string, notes *ConversionReport) error {
 		var sb strings.Builder
 		sb.WriteString("# Заготовка печатной формы из макета 1С.\n")
 		sb.WriteString("# TODO: перенесите оформление макета из 1С вручную (см. *.src.* рядом).\n")
-		sb.WriteString(fmt.Sprintf("name: %s\n", t.Name))
-		sb.WriteString(fmt.Sprintf("document: %s\n", owner))
-		sb.WriteString(fmt.Sprintf("title: %q\n", t.Name))
+		fmt.Fprintf(&sb, "name: %s\n", t.Name)
+		fmt.Fprintf(&sb, "document: %s\n", owner)
+		fmt.Fprintf(&sb, "title: %q\n", t.Name)
 		sb.WriteString("header: |\n  TODO: оформление макета 1С не конвертируется автоматически.\n")
 		if err := os.WriteFile(filepath.Join(dir, base+".yaml"), []byte(sb.String()), 0o644); err != nil {
 			return err

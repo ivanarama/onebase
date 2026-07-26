@@ -65,7 +65,7 @@ elements:
 	}
 	// Порядок ключей формы сохранён: name → kind → entity.
 	iName, iKind, iEntity := strings.Index(got, "name:"), strings.Index(got, "kind:"), strings.Index(got, "entity:")
-	if !(iName >= 0 && iName < iKind && iKind < iEntity) {
+	if iName < 0 || iName >= iKind || iKind >= iEntity {
 		t.Errorf("порядок ключей формы нарушен (name=%d kind=%d entity=%d):\n%s", iName, iKind, iEntity, got)
 	}
 }

@@ -161,6 +161,7 @@ indexes:
 	}
 	if found == nil {
 		t.Fatalf("metadata.list-field-without-index not found; got %+v", lint.Warnings)
+		return
 	}
 	if !strings.Contains(found.Message, "Артикул") {
 		t.Fatalf("warning should point to Артикул, got %+v", found)

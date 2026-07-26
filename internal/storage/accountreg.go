@@ -170,8 +170,8 @@ func (db *DB) WriteAccountMovements(ctx context.Context, regName, docType string
 			p = &now
 		}
 
-		dtRaw, _ := row["счётдт"]
-		ktRaw, _ := row["счёткт"]
+		dtRaw := row["счётдт"]
+		ktRaw := row["счёткт"]
 		dtCode := fmt.Sprintf("%v", dtRaw)
 		ktCode := fmt.Sprintf("%v", ktRaw)
 

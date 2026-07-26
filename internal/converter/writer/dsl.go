@@ -61,13 +61,13 @@ func buildStub(doc *parser1c.DocumentMeta, srcDir1C string) string {
 	sb.WriteString("  //\n")
 	sb.WriteString("  // Доступные реквизиты документа:\n")
 	for _, f := range doc.Attributes {
-		sb.WriteString(fmt.Sprintf("  //   this.%s\n", f.Name))
+		fmt.Fprintf(&sb, "  //   this.%s\n", f.Name)
 	}
 	for _, ts := range doc.TabularSections {
-		sb.WriteString(fmt.Sprintf("  //\n  // Табличная часть %s:\n", ts.Name))
-		sb.WriteString(fmt.Sprintf("  //   Для Каждого Строка Из this.%s Цикл\n", ts.Name))
+		fmt.Fprintf(&sb, "  //\n  // Табличная часть %s:\n", ts.Name)
+		fmt.Fprintf(&sb, "  //   Для Каждого Строка Из this.%s Цикл\n", ts.Name)
 		for _, f := range ts.Attributes {
-			sb.WriteString(fmt.Sprintf("  //     Строка.%s\n", f.Name))
+			fmt.Fprintf(&sb, "  //     Строка.%s\n", f.Name)
 		}
 		sb.WriteString("  //   КонецЦикла;\n")
 	}

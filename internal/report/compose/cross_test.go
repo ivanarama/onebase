@@ -37,6 +37,7 @@ func TestCrossBasic(t *testing.T) {
 	}
 	if rowA == nil {
 		t.Fatal("строка «А» не найдена")
+		return
 	}
 	decEq(t, rowA.Cells[colKey([]any{"Янв"}, 0)], "100")
 	decEq(t, rowA.Cells[colKey([]any{"Фев"}, 0)], "200")
@@ -158,6 +159,7 @@ func TestCrossNestedRows(t *testing.T) {
 	}
 	if sever == nil || yug == nil {
 		t.Fatal("не найдены группы Север/Юг")
+		return
 	}
 	// Подытог Севера по Янв = 100+30, по Фев = 200.
 	decEq(t, sever.Cells[colKey([]any{"Янв"}, 0)], "130")

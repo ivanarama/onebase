@@ -36,6 +36,7 @@ func TestLoadDir(t *testing.T) {
 	}
 	if panel == nil {
 		t.Fatal("страница «Панель» не загружена")
+		return
 	}
 	if got := panel.DisplayName("en"); got != "Manager" {
 		t.Errorf("DisplayName(en) = %q", got)
@@ -52,6 +53,7 @@ func TestLoadDir(t *testing.T) {
 	// Имя берётся из имени файла, заголовок — из YAML.
 	if noname == nil {
 		t.Fatal("страница без name не получила имя из файла")
+		return
 	}
 	if noname.Title != "Без имени" {
 		t.Errorf("noname.Title = %q", noname.Title)

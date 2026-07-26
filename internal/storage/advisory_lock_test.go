@@ -20,10 +20,12 @@ func TestAdvisoryXactLock_SQLiteNoop(t *testing.T) {
 }
 
 func TestAdvisoryLockKeyStable(t *testing.T) {
-	if advisoryLockKey("A") != advisoryLockKey("A") {
+	first := advisoryLockKey("A")
+	second := advisoryLockKey("A")
+	if first != second {
 		t.Fatal("advisoryLockKey must be stable")
 	}
-	if advisoryLockKey("A") == advisoryLockKey("B") {
+	if first == advisoryLockKey("B") {
 		t.Fatal("different keys should not collide in this smoke test")
 	}
 }

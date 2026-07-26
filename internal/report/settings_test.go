@@ -21,6 +21,7 @@ func TestUserSettingsRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("got nil")
+		return
 	}
 	if got.Variant != "По складам" {
 		t.Fatalf("variant: %q", got.Variant)

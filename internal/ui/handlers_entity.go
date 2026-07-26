@@ -1511,7 +1511,7 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		for _, ref := range refs {
 			fmt.Fprintf(&msg, "  • %s.%s (%d %s)\n", ref.EntityName, ref.FieldName, ref.Count, recordsWord)
 		}
-		http.Error(w, msg.String(), 409)
+		http.Error(w, msg.String(), http.StatusConflict)
 		return
 	}
 

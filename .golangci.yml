@@ -2,8 +2,8 @@
 #
 # Стратегия — прогрессивное ужесточение: включено то, что проходит на текущем
 # коде (CI остаётся зелёным), остальное включается по мере чистки baseline.
-# Снимок находок на 2026-06-10 (golangci-lint 2.12.2, дефолтный набор):
-#   errcheck: 50, staticcheck: 27, unused: 24 — план чистки в Plans/56.
+# Staticcheck включён после закрытия baseline в 2026-07.
+# Оставшаяся очередь: errcheck, unused, gosec, bodyclose.
 # После чистки соответствующего линтера — переносить его в enable.
 version: "2"
 
@@ -12,7 +12,7 @@ linters:
   enable:
     - govet
     - ineffassign
-  # очередь на включение (см. выше): errcheck, staticcheck, unused, gosec, bodyclose
+    - staticcheck
 
 run:
   timeout: 10m

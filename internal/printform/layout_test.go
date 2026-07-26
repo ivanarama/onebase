@@ -83,6 +83,7 @@ func TestLayoutRoundTrip(t *testing.T) {
 	area := got.Area("Шапка")
 	if area == nil {
 		t.Fatalf("area Шапка missing")
+		return
 	}
 	if len(area.Rows) != 1 || area.Rows[0].Height != "20px" {
 		t.Fatalf("row height lost: %+v", area.Rows)

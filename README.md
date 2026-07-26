@@ -137,7 +137,7 @@ onebase start
 
 ## Сборка из исходников
 
-Требуется Go 1.23+.
+Требуется Go 1.26.5 (версия зафиксирована в `.go-version`).
 
 ```bash
 # Консольная версия (без CGo)
@@ -153,7 +153,11 @@ go test ./...
 
 # Интеграционные тесты (требуется PostgreSQL)
 export TEST_DATABASE_URL=postgres://localhost/onebase_test
-go test -tags=integration ./...
+# Наборы используют общую тестовую БД, поэтому запускаются последовательно.
+go test -count=1 -tags=integration .
+go test -count=1 -tags=integration ./internal/auth
+go test -count=1 -tags=integration ./internal/storage
+go test -count=1 -tags=integration ./internal/configdb
 ```
 
 ---

@@ -294,7 +294,7 @@ func collectRefactorFiles(root string) ([]string, error) {
 			return nil
 		}
 		low := strings.ToLower(path)
-		if !(strings.HasSuffix(low, ".yaml") || strings.HasSuffix(low, ".yml") || strings.HasSuffix(low, ".os")) {
+		if !strings.HasSuffix(low, ".yaml") && !strings.HasSuffix(low, ".yml") && !strings.HasSuffix(low, ".os") {
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)

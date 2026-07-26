@@ -81,7 +81,7 @@ func TestHarness_RunSmoke(t *testing.T) {
 	if res.Throughput <= 0 {
 		t.Error("throughput должен быть > 0")
 	}
-	if !(res.P50 <= res.P95 && res.P95 <= res.P99) {
+	if res.P50 > res.P95 || res.P95 > res.P99 {
 		t.Errorf("перцентили не упорядочены: p50=%v p95=%v p99=%v", res.P50, res.P95, res.P99)
 	}
 

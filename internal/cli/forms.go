@@ -197,7 +197,7 @@ func runFormsConvertFrom(cmd *cobra.Command, _ []string) error {
 		if _, e2 := os.Stat(alt); e2 == nil {
 			xmlPath = alt
 		} else {
-			return fmt.Errorf("Form.xml не найден ни в %s, ни в %s", xmlPath, alt)
+			return fmt.Errorf("файл Form.xml не найден ни в %s, ни в %s", xmlPath, alt)
 		}
 	}
 	bslPath := filepath.Join(filepath.Dir(xmlPath), "Form", "Module.bsl")

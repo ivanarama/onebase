@@ -343,6 +343,7 @@ func TestActiveSessionsMultiRowsAndMeta(t *testing.T) {
 	ent, cfg := kinds[auth.SessionKindEnterprise], kinds[auth.SessionKindConfigurator]
 	if ent == nil || cfg == nil {
 		t.Fatalf("ожидались kind enterprise и configurator, получено %v", kinds)
+		return
 	}
 	if ent.IP != "127.0.0.1:5555" || cfg.IP != "127.0.0.1:6666" {
 		t.Fatalf("IP не сохранился: %q / %q", ent.IP, cfg.IP)

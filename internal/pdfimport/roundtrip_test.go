@@ -78,6 +78,7 @@ func TestImportRoundtripCyrillic(t *testing.T) {
 	}
 	if tpl == nil {
 		t.Fatal("nil template")
+		return
 	}
 	if len(tpl.Areas) != 1 {
 		t.Fatalf("ожидалась 1 область, получено %d", len(tpl.Areas))

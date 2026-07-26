@@ -1106,13 +1106,18 @@ gcc --version
 go test ./...
 
 # Интеграционные тесты (требуют PostgreSQL)
-TEST_DATABASE_URL="postgres://localhost/onebase_test?sslmode=disable" \
-  go test -tags=integration ./...
+export TEST_DATABASE_URL="postgres://localhost/onebase_test?sslmode=disable"
+# Наборы используют общую тестовую БД, поэтому запускаются последовательно.
+go test -count=1 -tags=integration .
+go test -count=1 -tags=integration ./internal/auth
+go test -count=1 -tags=integration ./internal/storage
+go test -count=1 -tags=integration ./internal/configdb
 ```
 
 Интеграционные тесты покрывают:
-- `integration_test.go` — сквозной сценарий в file- и database-режимах
+- `integration_test.go` — сквозной REST/DSL-сценарий в file- и database-режимах
 - `internal/auth/integration_test.go` — Create/Authenticate/Middleware с реальной БД
+- `internal/storage/*_test.go` — PostgreSQL-специфичные storage-инварианты
 - `internal/configdb/repo_test.go` — Export/Import round-trip
 
 ---

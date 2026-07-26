@@ -297,7 +297,7 @@ func (h *handler) createObject(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":       result.ID.String(),
 			"messages": result.DSLMessages,

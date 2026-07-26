@@ -90,11 +90,11 @@ func safeGeneratedRelPath(rel string) (string, error) {
 	low := strings.ToLower(fname)
 	switch subdir {
 	case "src":
-		if !(strings.HasSuffix(low, ".os") || strings.HasSuffix(low, ".layout.yaml")) {
+		if !strings.HasSuffix(low, ".os") && !strings.HasSuffix(low, ".layout.yaml") {
 			return "", fmt.Errorf("в src разрешены только .os и .layout.yaml: %q", fname)
 		}
 	case "forms":
-		if !(strings.HasSuffix(low, ".form.yaml") || strings.HasSuffix(low, ".form.os")) {
+		if !strings.HasSuffix(low, ".form.yaml") && !strings.HasSuffix(low, ".form.os") {
 			return "", fmt.Errorf("в forms разрешены только .form.yaml и .form.os: %q", fname)
 		}
 	default:

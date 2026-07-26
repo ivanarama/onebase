@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -64,7 +65,7 @@ func (fl *FormLoader) LoadEntityForms(srcDir, entityName string) ([]*metadata.Fo
 		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
 			formName := strings.TrimPrefix(name, prefix)
 			formName = strings.TrimSuffix(formName, suffix)
-			formName = strings.Title(formName)
+			formName = upperFirst(formName)
 
 			if !metadata.IsStandardForm(formName) {
 				fullPath := filepath.Join(srcDir, name)
@@ -76,6 +77,14 @@ func (fl *FormLoader) LoadEntityForms(srcDir, entityName string) ([]*metadata.Fo
 	}
 
 	return forms, nil
+}
+
+func upperFirst(s string) string {
+	runes := []rune(s)
+	if len(runes) > 0 {
+		runes[0] = unicode.ToUpper(runes[0])
+	}
+	return string(runes)
 }
 
 // LoadFormModuleFromSource loads form module from DSL source

@@ -76,6 +76,7 @@ func seedRealizationDoc(t *testing.T, h *handler, b *Base, dir string) {
 	var ent = h.findEntity(httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx), b, "Реализация")
 	if ent == nil {
 		t.Fatal("сущность Реализация не найдена")
+		return
 	}
 
 	id := uuid.New()

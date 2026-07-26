@@ -380,6 +380,7 @@ func TestExprMeasureNested(t *testing.T) {
 	}
 	if sever == nil || yug == nil {
 		t.Fatalf("не найдены ожидаемые группы, получили: %v, %v", res.Groups[0].Key, res.Groups[1].Key)
+		return
 	}
 
 	// Верхний уровень (Север): Сумма=120, X=240
@@ -404,6 +405,7 @@ func TestExprMeasureNested(t *testing.T) {
 	}
 	if ivanov == nil {
 		t.Fatal("не найдена вложенная группа Иванов")
+		return
 	}
 	decEq(t, ivanov.Subtotals["Сумма"], "100")
 	decEq(t, ivanov.Subtotals["X"], "200") // ← упадёт, если ev=nil на вложенном уровне
@@ -418,6 +420,7 @@ func TestExprMeasureNested(t *testing.T) {
 	}
 	if petrov == nil {
 		t.Fatal("не найдена вложенная группа Петров")
+		return
 	}
 	decEq(t, petrov.Subtotals["Сумма"], "20")
 	decEq(t, petrov.Subtotals["X"], "40")

@@ -491,9 +491,7 @@ func numericToString(n pgtype.Numeric) string {
 		intPart := s[:len(s)-exp]
 		fracPart := s[len(s)-exp:]
 		result = intPart + "." + strings.TrimRight(fracPart, "0")
-		if strings.HasSuffix(result, ".") {
-			result = result[:len(result)-1]
-		}
+		result = strings.TrimSuffix(result, ".")
 	}
 	if negative {
 		result = "-" + result
@@ -986,7 +984,7 @@ func importSafeSettings(ctx context.Context, db *storage.DB, filePath string, in
 			return n, fmt.Errorf("parse row %d: %w", n+1, err)
 		}
 		isExchangeNode := strings.HasPrefix(strings.ToLower(row.Key), "exchange.this_node.")
-		if !safeSettingKeys[row.Key] && !(includeExchangeNode && isExchangeNode) {
+		if !safeSettingKeys[row.Key] && (!includeExchangeNode || !isExchangeNode) {
 			continue
 		}
 		if _, err := db.Exec(ctx, q, row.Key, row.Value); err != nil {

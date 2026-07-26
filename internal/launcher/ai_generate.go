@@ -399,7 +399,7 @@ func (g *genSession) impact(object, field, procedure string) string {
 			return err
 		}
 		lowPath := strings.ToLower(p)
-		if !(strings.HasSuffix(lowPath, ".yaml") || strings.HasSuffix(lowPath, ".yml") || strings.HasSuffix(lowPath, ".os")) {
+		if !strings.HasSuffix(lowPath, ".yaml") && !strings.HasSuffix(lowPath, ".yml") && !strings.HasSuffix(lowPath, ".os") {
 			return nil
 		}
 		data, err := os.ReadFile(p)

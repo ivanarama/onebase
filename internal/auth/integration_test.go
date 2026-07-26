@@ -27,6 +27,13 @@ func connectTestDB(t *testing.T) *storage.DB {
 	return db
 }
 
+func mustExec(t *testing.T, db *storage.DB, ctx context.Context, query string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(ctx, query, args...); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
 func TestRepo_CreateAndAuthenticate(t *testing.T) {
 	db := connectTestDB(t)
 	ctx := context.Background()
@@ -37,8 +44,8 @@ func TestRepo_CreateAndAuthenticate(t *testing.T) {
 	}
 
 	// Clean up
-	db.Exec(ctx, `DELETE FROM _sessions`)
-	db.Exec(ctx, `DELETE FROM _users WHERE login = 'testuser'`)
+	mustExec(t, db, ctx, `DELETE FROM _sessions`)
+	mustExec(t, db, ctx, `DELETE FROM _users WHERE login = 'testuser'`)
 
 	user, err := repo.Create(ctx, "testuser", "secret123", "Тестовый Юзер", false)
 	if err != nil {
@@ -75,12 +82,17 @@ func TestRepo_Sessions(t *testing.T) {
 	ctx := context.Background()
 
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(ctx)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
 
-	db.Exec(ctx, `DELETE FROM _sessions`)
-	db.Exec(ctx, `DELETE FROM _users WHERE login = 'sesstest'`)
+	mustExec(t, db, ctx, `DELETE FROM _sessions`)
+	mustExec(t, db, ctx, `DELETE FROM _users WHERE login = 'sesstest'`)
 
-	user, _ := repo.Create(ctx, "sesstest", "password", "", false)
+	user, err := repo.Create(ctx, "sesstest", "password", "", false)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindEnterprise})
 	if err != nil {
@@ -114,10 +126,12 @@ func TestMiddleware_NoUsers_PassThrough(t *testing.T) {
 	ctx := context.Background()
 
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(ctx)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
 	// Ensure empty _users
-	db.Exec(ctx, `DELETE FROM _sessions`)
-	db.Exec(ctx, `DELETE FROM _users`)
+	mustExec(t, db, ctx, `DELETE FROM _sessions`)
+	mustExec(t, db, ctx, `DELETE FROM _users`)
 
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,11 +154,15 @@ func TestMiddleware_WithUsers_RequiresSession(t *testing.T) {
 	ctx := context.Background()
 
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(ctx)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
 
-	db.Exec(ctx, `DELETE FROM _sessions`)
-	db.Exec(ctx, `DELETE FROM _users WHERE login = 'mwtest'`)
-	repo.Create(ctx, "mwtest", "password", "", false)
+	mustExec(t, db, ctx, `DELETE FROM _sessions`)
+	mustExec(t, db, ctx, `DELETE FROM _users WHERE login = 'mwtest'`)
+	if _, err := repo.Create(ctx, "mwtest", "password", "", false); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -162,8 +180,14 @@ func TestMiddleware_WithUsers_RequiresSession(t *testing.T) {
 	}
 
 	// Valid session → pass through
-	user, _ := repo.Authenticate(ctx, "mwtest", "password")
-	token, _ := repo.CreateSession(ctx, user.ID, auth.SessionMeta{})
+	user, err := repo.Authenticate(ctx, "mwtest", "password")
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
 	req2 := httptest.NewRequest(http.MethodGet, "/ui", nil)
 	req2.AddCookie(&http.Cookie{Name: "onebase_session", Value: token})
 	rr2 := httptest.NewRecorder()

@@ -52,10 +52,12 @@ func TestCache_NilSafe(t *testing.T) {
 }
 
 func TestCacheKey(t *testing.T) {
-	if cacheKey("A", "u1", "s") == cacheKey("A", "u2", "s") {
+	first := cacheKey("A", "u1", "s")
+	if first == cacheKey("A", "u2", "s") {
 		t.Fatal("different users must produce different keys")
 	}
-	if cacheKey("A", "u1", "s") != cacheKey("A", "u1", "s") {
+	second := cacheKey("A", "u1", "s")
+	if first != second {
 		t.Fatal("same inputs must produce same key")
 	}
 }

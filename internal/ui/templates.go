@@ -447,11 +447,9 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			type param interface{ GetName() string }
 			// Use reflection-free approach: just iterate over values map
 			parts := []string{}
-			if values != nil {
-				for k, v := range values {
-					if v != nil && fmt.Sprintf("%v", v) != "" {
-						parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
-					}
+			for k, v := range values {
+				if v != nil && fmt.Sprintf("%v", v) != "" {
+					parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
 				}
 			}
 			if len(parts) == 0 {

@@ -22,6 +22,7 @@ func TestUserFromContext_WithUser(t *testing.T) {
 	got := UserFromContext(ctx)
 	if got == nil {
 		t.Fatal("should return user")
+		return
 	}
 	if got.ID != "abc" || got.Login != "admin" || !got.IsAdmin {
 		t.Fatalf("unexpected user: %+v", got)

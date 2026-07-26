@@ -126,7 +126,7 @@ func aiScopeOptions(cur string) string {
 		if o.val == cur {
 			sel = " selected"
 		}
-		sb.WriteString(fmt.Sprintf(`<option value="%s"%s>%s</option>`, o.val, sel, html.EscapeString(o.label)))
+		fmt.Fprintf(&sb, `<option value="%s"%s>%s</option>`, o.val, sel, html.EscapeString(o.label))
 	}
 	return sb.String()
 }

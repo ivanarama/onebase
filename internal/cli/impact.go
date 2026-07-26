@@ -111,7 +111,7 @@ func scanImpact(root, object, field, procedure string) (impactReport, error) {
 			return nil
 		}
 		low := strings.ToLower(path)
-		if !(strings.HasSuffix(low, ".yaml") || strings.HasSuffix(low, ".yml") || strings.HasSuffix(low, ".os")) {
+		if !strings.HasSuffix(low, ".yaml") && !strings.HasSuffix(low, ".yml") && !strings.HasSuffix(low, ".os") {
 			return nil
 		}
 		matches, err := scanImpactFile(root, path, needles)

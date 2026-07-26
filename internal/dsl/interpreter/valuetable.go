@@ -234,7 +234,7 @@ func (t *ValueTable) collapse(groupSpec, sumSpec string) {
 	for _, r := range t.rows {
 		var kb strings.Builder
 		for _, gc := range groupCols {
-			kb.WriteString(fmt.Sprintf("%v\x00", r[strings.ToLower(gc)]))
+			fmt.Fprintf(&kb, "%v\x00", r[strings.ToLower(gc)])
 		}
 		gk := kb.String()
 		g, ok := groups[gk]

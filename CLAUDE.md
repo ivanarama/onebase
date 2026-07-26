@@ -26,7 +26,10 @@ go test ./internal/storage/ -run TestAccountReg # один пакет / один
 
 # Интеграционные (нужен PostgreSQL):
 export TEST_DATABASE_URL=postgres://localhost/onebase_test
-go test -tags=integration ./...
+go test -count=1 -tags=integration .
+go test -count=1 -tags=integration ./internal/auth
+go test -count=1 -tags=integration ./internal/storage
+go test -count=1 -tags=integration ./internal/configdb
 ```
 Большинство storage/query-тестов используют SQLite через `ConnectSQLite(ctx, tmpfile)`
 и не требуют PostgreSQL.

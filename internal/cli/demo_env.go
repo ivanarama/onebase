@@ -16,7 +16,7 @@ func checkDemoEnv(env string) error {
 	return fmt.Errorf(
 		"demo.enabled=true в app.yaml, но ONEBASE_ENV=%q. "+
 			"Чтобы запустить демо-режим, установите ONEBASE_ENV=demo. "+
-			"Для прода — отключите блок demo: в app.yaml.",
+			"Для прода — отключите блок demo: в app.yaml",
 		env,
 	)
 }

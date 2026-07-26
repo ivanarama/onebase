@@ -119,7 +119,7 @@ func (w *dslTextWriter) CallMethod(name string, args []any) any {
 			panic(userError{Msg: "ЗаписьТекста.Записать: файл не открыт"})
 		}
 		if len(args) > 0 {
-			w.buf.WriteString(fmt.Sprintf("%v", args[0]))
+			fmt.Fprintf(&w.buf, "%v", args[0])
 		}
 		return nil
 	case "записатьстроку", "writeline":
@@ -127,7 +127,7 @@ func (w *dslTextWriter) CallMethod(name string, args []any) any {
 			panic(userError{Msg: "ЗаписьТекста.ЗаписатьСтроку: файл не открыт"})
 		}
 		if len(args) > 0 {
-			w.buf.WriteString(fmt.Sprintf("%v", args[0]))
+			fmt.Fprintf(&w.buf, "%v", args[0])
 		}
 		w.buf.WriteByte('\n')
 		return nil

@@ -141,9 +141,9 @@ tr:nth-child(even) td{background:#f8fafc}
 			}
 
 			if attrs != "" || style != "" {
-				sb.WriteString(fmt.Sprintf("<td%s style=\"%s\">%s</td>", attrs, style, text))
+				fmt.Fprintf(&sb, "<td%s style=\"%s\">%s</td>", attrs, style, text)
 			} else {
-				sb.WriteString(fmt.Sprintf("<td>%s</td>", text))
+				fmt.Fprintf(&sb, "<td>%s</td>", text)
 			}
 		}
 		sb.WriteString("</tr>\n")

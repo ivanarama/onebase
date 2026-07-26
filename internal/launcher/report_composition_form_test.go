@@ -32,6 +32,7 @@ func TestParseCompositionForm(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("composition nil")
+		return
 	}
 	if len(c.Groupings) != 2 || c.Groupings[1] != "Клиент" {
 		t.Fatalf("groupings: %v", c.Groupings)
@@ -233,6 +234,7 @@ func TestParseCompositionFormDetailLink(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("composition nil")
+		return
 	}
 	if c.DetailLink != "Регистратор" {
 		t.Fatalf("DetailLink: хотели %q, получили %q", "Регистратор", c.DetailLink)

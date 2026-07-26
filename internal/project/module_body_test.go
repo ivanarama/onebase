@@ -42,6 +42,7 @@ func TestModuleBody_ProcessorSynthesizesExecute(t *testing.T) {
 	}
 	if exec == nil {
 		t.Fatalf("тело модуля обработки не превратилось в процедуру Выполнить; процедур=%d", len(prog.Procedures))
+		return
 	}
 	// Тело Выполнить должно содержать операторы из тела модуля (присваивание + вызов),
 	// с объявлением переменной модуля впереди.

@@ -1596,7 +1596,7 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 	// границы — даты-значения, нет отбора (args[2]) и активной строковой политики;
 	// иначе обычный расчёт ниже.
 	if reg.TotalsUsable() && tr.sourceRowFilter("register", reg.Name) == nil &&
-		!(len(args) > 2 && len(args[2]) > 0) && len(args) >= 2 {
+		(len(args) <= 2 || len(args[2]) == 0) && len(args) >= 2 {
 		if start, ok1 := tr.firstArgDate(args[0]); ok1 {
 			if end, ok2 := tr.firstArgDate(args[1]); ok2 {
 				// Обратный диапазон оставляем обычному пути: его историческая
@@ -2241,9 +2241,10 @@ func preScanSourceContext(tokens []tok) sourceContext {
 		}
 
 		if i+2 >= len(tokens) {
-			if t.kind == tLParen {
+			switch t.kind {
+			case tLParen:
 				depth++
-			} else if t.kind == tRParen {
+			case tRParen:
 				for len(active) > 0 && active[len(active)-1].depth >= depth {
 					active = active[:len(active)-1]
 				}
@@ -2254,9 +2255,10 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			continue
 		}
 		if tokens[i].kind != tIdent {
-			if t.kind == tLParen {
+			switch t.kind {
+			case tLParen:
 				depth++
-			} else if t.kind == tRParen {
+			case tRParen:
 				for len(active) > 0 && active[len(active)-1].depth >= depth {
 					active = active[:len(active)-1]
 				}
@@ -3061,13 +3063,13 @@ func isUUID(s string) bool {
 		return false
 	}
 	for i, c := range s {
-		switch {
-		case i == 8 || i == 13 || i == 18 || i == 23:
+		switch i {
+		case 8, 13, 18, 23:
 			if c != '-' {
 				return false
 			}
 		default:
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 				return false
 			}
 		}

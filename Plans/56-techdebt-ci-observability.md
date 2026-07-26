@@ -1,12 +1,13 @@
 # План 56 — Техдолг, CI и наблюдаемость
 
-**Статус:** ✅ Реализовано. Этапы 1, 2, 4 — 2026-06-10 (ветка `feature/ci-race-lint`); этап 3 (RBAC вложений) — 2026-06-19 (`fix/review-2day-followups`); `/metrics` есть (PR #19); этапы 5 (`slog`) и 6 (`onebase lint`) — 2026-06-25.
+**Статус:** ✅ Реализовано. Этапы 1, 2, 4 — 2026-06-10 (ветка `feature/ci-race-lint`); baseline `staticcheck` закрыт и линтер включён в блокирующий CI в 2026-07; этап 3 (RBAC вложений) — 2026-06-19 (`fix/review-2day-followups`); `/metrics` есть (PR #19); этапы 5 (`slog`) и 6 (`onebase lint`) — 2026-06-25.
 
 > **Как реализовано.** Этап 1: CI гоняет `go test -race -coverprofile` на
 > ubuntu (первый улов — гонка Add/Wait в `locks_test.go`), coverage —
-> артефактом. Этап 2: `.golangci.yml` — стартово govet+ineffassign (3 находки
-> ineffassign починены); baseline для прогрессивного включения зафиксирован в
-> конфиге: errcheck 50, staticcheck 27, unused 24 (2026-06-10). Этап 4:
+> артефактом. Этап 2: `.golangci.yml` блокирует PR по `govet`, `ineffassign`
+> и `staticcheck`; baseline `staticcheck` закрыт в 2026-07. В очереди
+> прогрессивного включения остаются `errcheck`, `unused`, `gosec` и
+> `bodyclose`. Этап 4:
 > планы 52-60 и анализ-источник закоммичены, `demo/` в .gitignore, локальные
 > заметки перенесены в `docs/`, `improvement-roadmap.md` помечен архивным,
 > go-version CI поднят до 1.26.x. Этап 5: общий `internal/logging` на `slog`
@@ -35,9 +36,9 @@
 
 ## Этап 2 — `golangci-lint`
 
-Подключить с набором: `errcheck`, `ineffassign`, `gosec`, `govet`, `staticcheck`,
-`bodyclose`. Конфиг `.golangci.yml`. Запуск в CI (отдельный job, не блокирующий на старте —
-сначала зафиксировать baseline, затем ужесточать).
+CI использует `.golangci.yml`; `govet`, `ineffassign` и `staticcheck` уже
+блокируют merge. Следующие кандидаты для поэтапного включения: `errcheck`,
+`unused`, `gosec`, `bodyclose`.
 
 Ожидаемые находки (уже видны вручную):
 - **90 проглоченных ошибок** `_ = ...` в не-тестовом коде. Большинство безобидны

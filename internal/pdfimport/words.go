@@ -171,11 +171,7 @@ func collapseInlineSpaces(s string) string {
 		lines[i] = collapseSpaces(ln)
 	}
 	// Убираем пустые хвостовые/ведущие строки.
-	out := make([]string, 0, len(lines))
-	for _, ln := range lines {
-		out = append(out, ln)
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // findRegion возвращает регион, содержащий точку (x,y) в top-down координатах,

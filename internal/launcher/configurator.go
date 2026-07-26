@@ -124,10 +124,7 @@ func renderCfg(w http.ResponseWriter, r *http.Request, data *configuratorData) {
 			entity = data.ModuleSavedEntity
 		}
 		msg := tr(data.Lang, "Сохранено")
-		switch {
-		case entity == "" || entity == "panel-backup" || entity == "__app__":
-			// generic
-		default:
+		if entity != "" && entity != "panel-backup" && entity != "__app__" {
 			msg = "✓ " + entity + " — " + tr(data.Lang, "сохранено")
 		}
 		writeJSON(w, http.StatusOK, map[string]any{

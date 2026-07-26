@@ -35,6 +35,7 @@ func TestMaketGetArea_NewFields(t *testing.T) {
 	area := m.getArea("Шапка")
 	if area == nil {
 		t.Fatal("area is nil")
+		return
 	}
 	cell, ok := area.Area.Cells["0,0"]
 	if !ok {

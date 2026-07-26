@@ -100,7 +100,7 @@ func TestBuildConfigFileTree(t *testing.T) {
 	for i, c := range tree {
 		rank[c.Name] = i
 	}
-	if !(rank["Справочники"] < rank["Документы"] && rank["Документы"] < rank["Обработки"] && rank["Обработки"] < rank["Конфигурация"]) {
+	if rank["Справочники"] >= rank["Документы"] || rank["Документы"] >= rank["Обработки"] || rank["Обработки"] >= rank["Конфигурация"] {
 		t.Errorf("неверный порядок разделов: %v", rank)
 	}
 }
