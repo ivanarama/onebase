@@ -26,7 +26,10 @@ func TestLatestConfigVersionID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if id := latestConfigVersionID(ctx, repo); id != "" {
+	if id, err := latestConfigVersionID(ctx, repo); err != nil || id != "" {
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Fatalf("пустая история: ждали \"\", получили %q", id)
 	}
 
@@ -34,7 +37,10 @@ func TestLatestConfigVersionID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id := latestConfigVersionID(ctx, repo); id != v1.ID {
+	if id, err := latestConfigVersionID(ctx, repo); err != nil || id != v1.ID {
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Fatalf("после v1: ждали %s, получили %s", v1.ID, id)
 	}
 
@@ -42,7 +48,10 @@ func TestLatestConfigVersionID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id := latestConfigVersionID(ctx, repo); id != v2.ID {
+	if id, err := latestConfigVersionID(ctx, repo); err != nil || id != v2.ID {
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Fatalf("после v2: ждали новейшую %s, получили %s", v2.ID, id)
 	}
 }
@@ -52,13 +61,12 @@ func TestLatestConfigVersionID(t *testing.T) {
 // срабатывает.
 func TestWatchConfigVersions_FiresOnNewVersion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "cfg.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(db.Close)
 	repo := configdb.New(db)
 	if err := repo.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
@@ -69,8 +77,19 @@ func TestWatchConfigVersions_FiresOnNewVersion(t *testing.T) {
 	}
 
 	fired := make(chan struct{}, 4)
-	initial := latestConfigVersionID(ctx, repo)
-	go watchConfigVersions(ctx, repo, initial, 10*time.Millisecond, func() error { fired <- struct{}{}; return nil })
+	initial, err := latestConfigVersionID(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchConfigVersions(ctx, repo, initial, 10*time.Millisecond, func() error { fired <- struct{}{}; return nil })
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 
 	// Без новой версии onChange не должен срабатывать.
 	select {
@@ -92,12 +111,11 @@ func TestWatchConfigVersions_FiresOnNewVersion(t *testing.T) {
 
 func TestWatchConfigVersions_RetriesFailedReload(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "cfg.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(db.Close)
 	repo := configdb.New(db)
 	if err := repo.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
@@ -106,15 +124,26 @@ func TestWatchConfigVersions_RetriesFailedReload(t *testing.T) {
 	failed := make(chan struct{}, 1)
 	succeeded := make(chan struct{}, 1)
 	attempts := 0
-	initial := latestConfigVersionID(ctx, repo)
-	go watchConfigVersions(ctx, repo, initial, 10*time.Millisecond, func() error {
-		attempts++
-		if attempts == 1 {
-			failed <- struct{}{}
-			return context.DeadlineExceeded
-		}
-		succeeded <- struct{}{}
-		return nil
+	initial, err := latestConfigVersionID(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchConfigVersions(ctx, repo, initial, 10*time.Millisecond, func() error {
+			attempts++
+			if attempts == 1 {
+				failed <- struct{}{}
+				return context.DeadlineExceeded
+			}
+			succeeded <- struct{}{}
+			return nil
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
 	})
 	_, _ = repo.CreateVersion(ctx, configdb.VersionOptions{Message: "v2"})
 	select {

@@ -232,6 +232,54 @@ func TestReloadInvalidSchedulePreservesCurrentPlan(t *testing.T) {
 	}
 }
 
+func TestReloadProjectJobsPreservesNativeJobs(t *testing.T) {
+	db, _ := openSchedulerTestDB(t)
+	sched := New(db, nil, nil)
+	assert.NoError(t, sched.LoadJobs([]*metadata.ScheduledJob{{
+		Name: "Before", Schedule: "@every 1h", Enabled: true,
+	}}))
+	nativeRan := make(chan struct{}, 1)
+	assert.NoError(t, sched.RegisterGoJob("Native", "Native", "@every 2h", func(context.Context) error {
+		nativeRan <- struct{}{}
+		return nil
+	}))
+
+	after := []*metadata.ScheduledJob{{
+		Name: "After", Schedule: "@every 3h", Enabled: true,
+	}}
+	assert.NoError(t, sched.ValidateProjectJobs(after))
+	assert.NoError(t, sched.ReloadProjectJobs(after))
+
+	assert.Nil(t, sched.GetJob("Before"))
+	assert.NotNil(t, sched.GetJob("After"))
+	assert.NotNil(t, sched.GetJob("Native"))
+	assert.NoError(t, sched.RunNow(context.Background(), "native"))
+	select {
+	case <-nativeRan:
+	case <-time.After(time.Second):
+		t.Fatal("preserved native callback was not executed")
+	}
+	assert.NoError(t, sched.Shutdown(context.Background()))
+}
+
+func TestValidateProjectJobsRejectsNativeNameCollisionWithoutMutation(t *testing.T) {
+	db, _ := openSchedulerTestDB(t)
+	sched := New(db, nil, nil)
+	assert.NoError(t, sched.LoadJobs([]*metadata.ScheduledJob{{
+		Name: "Before", Schedule: "@every 1h", Enabled: true,
+	}}))
+	assert.NoError(t, sched.RegisterGoJob("AutoBackup", "Backup", "@every 2h", func(context.Context) error {
+		return nil
+	}))
+
+	err := sched.ValidateProjectJobs([]*metadata.ScheduledJob{{
+		Name: "autobackup", Schedule: "@every 3h", Enabled: true,
+	}})
+	assert.ErrorContains(t, err, "duplicate job name")
+	assert.NotNil(t, sched.GetJob("Before"))
+	assert.NotNil(t, sched.GetJob("AutoBackup"))
+}
+
 func TestReloadRunningSchedulerSwapsCompletePlan(t *testing.T) {
 	db, _ := openSchedulerTestDB(t)
 	sched := New(db, nil, nil)

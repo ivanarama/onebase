@@ -64,7 +64,9 @@ func newReportExportTestServer(t *testing.T, rep *reportpkg.Report) *Server {
 
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
-	return &Server{store: db, reg: registry}
+	s := &Server{store: db, reg: registry}
+	t.Cleanup(s.Close)
+	return s
 }
 
 // reportPDF-маршрут отдаёт реальный бинарный PDF с корректными заголовками.

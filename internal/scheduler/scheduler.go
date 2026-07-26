@@ -156,16 +156,65 @@ func (s *Scheduler) Reload(jobs []*metadata.ScheduledJob) error {
 	return s.replaceJobs(jobs)
 }
 
-func (s *Scheduler) replaceJobs(jobs []*metadata.ScheduledJob) error {
-	nextCron, nextJobs, err := s.buildCron(jobs)
-	if err != nil {
-		return err
+// ValidateProjectJobs checks a project-owned job set together with the
+// currently registered native Go jobs. It does not change the running
+// scheduler. Hot reload uses this before publishing a new metadata registry,
+// so an invalid cron or a name collision cannot leave a partial generation.
+func (s *Scheduler) ValidateProjectJobs(jobs []*metadata.ScheduledJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return ErrSchedulerStopping
 	}
+	combined, native := s.projectJobsWithNativeLocked(jobs)
+	candidate, _, err := s.buildCron(combined, native)
+	if candidate != nil {
+		candidate.Stop()
+	}
+	return err
+}
 
+// ReloadProjectJobs replaces project-owned scheduled jobs while preserving
+// native Go jobs registered by runtime features such as automatic backup and
+// demo reset.
+func (s *Scheduler) ReloadProjectJobs(jobs []*metadata.ScheduledJob) error {
 	s.mu.Lock()
 	if s.stopping {
 		s.mu.Unlock()
 		return ErrSchedulerStopping
+	}
+	combined, native := s.projectJobsWithNativeLocked(jobs)
+	nextCron, nextJobs, err := s.buildCron(combined, native)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	oldCron := s.cron
+	running := s.running
+	s.cron = nextCron
+	s.jobs = nextJobs
+	s.goJobs = native
+	if running {
+		nextCron.Start()
+	}
+	s.mu.Unlock()
+
+	if oldCron != nil {
+		oldCron.Stop()
+	}
+	return nil
+}
+
+func (s *Scheduler) replaceJobs(jobs []*metadata.ScheduledJob) error {
+	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return ErrSchedulerStopping
+	}
+	nextCron, nextJobs, err := s.buildCron(jobs, nil)
+	if err != nil {
+		s.mu.Unlock()
+		return err
 	}
 	oldCron := s.cron
 	running := s.running
@@ -183,7 +232,22 @@ func (s *Scheduler) replaceJobs(jobs []*metadata.ScheduledJob) error {
 	return nil
 }
 
-func (s *Scheduler) buildCron(jobs []*metadata.ScheduledJob) (*cronlib.Cron, []*metadata.ScheduledJob, error) {
+func (s *Scheduler) projectJobsWithNativeLocked(jobs []*metadata.ScheduledJob) ([]*metadata.ScheduledJob, map[string]func(context.Context) error) {
+	combined := make([]*metadata.ScheduledJob, 0, len(jobs)+len(s.goJobs))
+	combined = append(combined, jobs...)
+	native := make(map[string]func(context.Context) error, len(s.goJobs))
+	for key, fn := range s.goJobs {
+		native[key] = fn
+	}
+	for _, job := range s.jobs {
+		if _, ok := native[jobKey(job.Name)]; ok {
+			combined = append(combined, job)
+		}
+	}
+	return combined, native
+}
+
+func (s *Scheduler) buildCron(jobs []*metadata.ScheduledJob, goJobs map[string]func(context.Context) error) (*cronlib.Cron, []*metadata.ScheduledJob, error) {
 	nextCron := cronlib.New()
 	nextJobs := make([]*metadata.ScheduledJob, 0, len(jobs))
 	names := make(map[string]struct{}, len(jobs))
@@ -206,7 +270,11 @@ func (s *Scheduler) buildCron(jobs []*metadata.ScheduledJob) (*cronlib.Cron, []*
 		if !job.Enabled {
 			continue
 		}
-		if _, err := nextCron.AddFunc(job.Schedule, s.scheduledJobCallback(job)); err != nil {
+		callback := s.scheduledJobCallback(job)
+		if fn, native := goJobs[key]; native {
+			callback = s.goJobCallback(job.Name, fn)
+		}
+		if _, err := nextCron.AddFunc(job.Schedule, callback); err != nil {
 			return nil, nil, fmt.Errorf("scheduler: invalid schedule for %s: %w", job.Name, err)
 		}
 	}

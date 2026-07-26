@@ -13,6 +13,7 @@ import (
 
 func TestExportJobStoreLifecycleAndCleanup(t *testing.T) {
 	store := newExportJobStore(time.Minute)
+	t.Cleanup(store.Close)
 	job := store.create("ivan", "report", "Продажи", "excel")
 	if job.Status != exportJobQueued {
 		t.Fatalf("новая задача должна быть queued, получено %q", job.Status)

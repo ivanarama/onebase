@@ -189,3 +189,25 @@ func TestHub_Publish_NonBlockingWhenBufferFull(t *testing.T) {
 		t.Fatal("Publish заблокировался на медленном (не читающем) подписчике")
 	}
 }
+
+func TestHubCloseDisconnectsAndRejectsSubscribers(t *testing.T) {
+	h := NewHub()
+	_, ch, cancel := h.Subscribe("u1", "ivan", nil)
+
+	h.Close()
+	h.Close()
+	cancel()
+
+	if _, open := <-ch; open {
+		t.Fatal("existing subscriber channel remained open")
+	}
+	if got := h.SubscriberCount(); got != 0 {
+		t.Fatalf("subscriber count after close = %d", got)
+	}
+	_, after, afterCancel := h.Subscribe("u2", "petr", nil)
+	defer afterCancel()
+	if _, open := <-after; open {
+		t.Fatal("subscription after close returned an open channel")
+	}
+	h.Publish("*", Event{Name: "ignored"})
+}

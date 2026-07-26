@@ -12,6 +12,7 @@ import (
 
 func TestRunReportExportJobRecoversPanic(t *testing.T) {
 	s := &Server{}
+	t.Cleanup(s.Close)
 	jobs := s.exportJobStore()
 	job := jobs.create("tester", "report", "Сломанный", "excel")
 
@@ -35,6 +36,7 @@ func TestRunReportExportJobRecoversPanic(t *testing.T) {
 // Sweeper стора экспортов убирает просроченные джобы без обращений к API стора.
 func TestExportJobStoreSweeper(t *testing.T) {
 	jobs := newExportJobStore(50 * time.Millisecond)
+	t.Cleanup(jobs.Close)
 	job := jobs.create("tester", "report", "R", "pdf")
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -48,4 +50,24 @@ func TestExportJobStoreSweeper(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("sweeper не убрал просроченную джобу за 5 секунд")
+}
+
+func TestExportJobStoreCloseStopsSweeperAndClearsPayloads(t *testing.T) {
+	jobs := newExportJobStore(time.Minute)
+	job := jobs.create("tester", "report", "R", "pdf")
+	jobs.markDone(job.ID, reportExportFile{Data: []byte("large payload")})
+
+	jobs.Close()
+	jobs.Close()
+
+	select {
+	case <-jobs.done:
+	default:
+		t.Fatal("sweeper did not stop")
+	}
+	jobs.mu.Lock()
+	defer jobs.mu.Unlock()
+	if len(jobs.jobs) != 0 {
+		t.Fatalf("jobs retained after close: %d", len(jobs.jobs))
+	}
 }

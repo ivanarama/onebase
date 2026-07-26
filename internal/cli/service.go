@@ -50,7 +50,7 @@ func init() {
 	serviceInstallCmd.Flags().String("project", "", "project directory (for file config-source)")
 	serviceInstallCmd.Flags().String("user", "", "system user to run the service (Linux only, default: current user)")
 	serviceInstallCmd.Flags().Bool("print", false, "print the unit file instead of installing it")
-	serviceInstallCmd.Flags().Bool("watch", false, "запускать сервер с --watch (hot reload конфигурации без рестарта)")
+	serviceInstallCmd.Flags().Bool("watch", false, "запускать сервер с --watch (hot reload metadata/DSL/scheduled без рестарта)")
 
 	serviceUninstallCmd.Flags().String("name", "onebase", "service name to remove")
 

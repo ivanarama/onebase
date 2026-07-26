@@ -87,173 +87,149 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("blobs table: %w", err)
 	}
 
-	var watchDir string
+	var cfgRepo *configdb.Repo
+	var loadedConfigVersionID string
+	if configSource == "database" {
+		cfgRepo = configdb.New(db)
+		if err := cfgRepo.EnsureSchema(ctx); err != nil {
+			return fmt.Errorf("configdb schema: %w", err)
+		}
+		if err := cfgRepo.MigrateContent(ctx); err != nil {
+			return fmt.Errorf("configdb migrate content: %w", err)
+		}
+		loadedConfigVersionID, err = latestConfigVersionID(ctx, cfgRepo)
+		if err != nil {
+			return fmt.Errorf("read current config version: %w", err)
+		}
+	}
+
 	var appCfg *project.AppConfig
+	var appBundle *i18n.Bundle
 	var srv *api.Server
-	var loadErr error
-	load := func() {
-		loadErr = nil
+	load := func(loadCtx context.Context, initial bool) error {
 		var proj *project.Project
 		var lerr error
 
 		if configSource == "database" {
-			cfgRepo := configdb.New(db)
-			if err := cfgRepo.EnsureSchema(ctx); err != nil {
-				loadErr = fmt.Errorf("configdb schema: %w", err)
-				devLog.Warn("configdb schema failed", "err", err)
-				return
-			}
-			proj, lerr = project.LoadFromDB(ctx, cfgRepo)
+			proj, lerr = project.LoadFromDB(loadCtx, cfgRepo)
 		} else {
 			proj, lerr = project.Load(dir)
-			watchDir = dir
 		}
 		if lerr != nil {
-			loadErr = fmt.Errorf("load project: %w", lerr)
 			devLog.Warn("project load failed", "err", lerr)
-			return
+			return fmt.Errorf("load project: %w", lerr)
 		}
 		defer proj.Close()
 		nextAppCfg, err := project.LoadConfig(proj.Dir)
 		if err != nil {
-			loadErr = fmt.Errorf("load app config: %w", err)
 			devLog.Warn("app config load failed", "err", err)
-			return
+			return fmt.Errorf("load app config: %w", err)
 		}
-		appCfg = nextAppCfg
+		if err := sched.ValidateProjectJobs(proj.ScheduledJobs); err != nil {
+			devLog.Warn("scheduled jobs validation failed", "err", err)
+			return fmt.Errorf("validate scheduled jobs: %w", err)
+		}
 
-		if err := db.Migrate(ctx, proj.Entities); err != nil {
-			loadErr = fmt.Errorf("migrate: %w", err)
+		if err := db.Migrate(loadCtx, proj.Entities); err != nil {
 			devLog.Warn("migrate failed", "err", err)
-			return
+			return fmt.Errorf("migrate: %w", err)
 		}
-		if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
-			loadErr = fmt.Errorf("migrate registers: %w", err)
+		if err := db.MigrateRegisters(loadCtx, proj.Registers); err != nil {
 			devLog.Warn("migrate registers failed", "err", err)
-			return
+			return fmt.Errorf("migrate registers: %w", err)
 		}
-		if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
-			loadErr = fmt.Errorf("migrate info registers: %w", err)
+		if err := db.MigrateInfoRegisters(loadCtx, proj.InfoRegisters); err != nil {
 			devLog.Warn("migrate info registers failed", "err", err)
-			return
+			return fmt.Errorf("migrate info registers: %w", err)
 		}
-		if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
-			loadErr = fmt.Errorf("migrate constants: %w", err)
+		if err := db.MigrateConstants(loadCtx, proj.Constants); err != nil {
 			devLog.Warn("migrate constants failed", "err", err)
-			return
+			return fmt.Errorf("migrate constants: %w", err)
 		}
-		if err := db.EnsureAccountsTable(ctx); err != nil {
-			loadErr = fmt.Errorf("accounts table: %w", err)
+		if err := db.EnsureAccountsTable(loadCtx); err != nil {
 			devLog.Warn("accounts table ensure failed", "err", err)
-			return
+			return fmt.Errorf("accounts table: %w", err)
 		}
-		if err := db.SyncAccounts(ctx, proj.ChartsOfAccounts); err != nil {
-			loadErr = fmt.Errorf("sync accounts: %w", err)
+		if err := db.SyncAccounts(loadCtx, proj.ChartsOfAccounts); err != nil {
 			devLog.Warn("sync accounts failed", "err", err)
-			return
+			return fmt.Errorf("sync accounts: %w", err)
 		}
-		if err := db.MigrateAccountRegisters(ctx, proj.AccountRegisters); err != nil {
-			loadErr = fmt.Errorf("migrate account registers: %w", err)
+		if err := db.MigrateAccountRegisters(loadCtx, proj.AccountRegisters); err != nil {
 			devLog.Warn("migrate account registers failed", "err", err)
-			return
+			return fmt.Errorf("migrate account registers: %w", err)
 		}
 		roles, err := auth.LoadRolesYAML(filepath.Join(proj.Dir, "roles"))
 		if err != nil {
-			loadErr = fmt.Errorf("load roles: %w", err)
 			devLog.Warn("roles load failed", "err", err)
-			return
+			return fmt.Errorf("load roles: %w", err)
 		}
 		if len(roles) > 0 {
-			if err := authRepo.SyncRoles(ctx, roles); err != nil {
-				loadErr = fmt.Errorf("sync roles: %w", err)
+			if err := authRepo.SyncRoles(loadCtx, roles); err != nil {
 				devLog.Warn("roles sync failed", "err", err)
-				return
+				return fmt.Errorf("sync roles: %w", err)
 			}
 		}
-		reg.Load(runtime.LoadOptions{
-			Entities:        proj.Entities,
-			Programs:        proj.Programs,
-			ManagerPrograms: proj.ManagerPrograms,
-			ServicePrograms: proj.ServicePrograms,
-			PagePrograms:    proj.PagePrograms,
-			Registers:       proj.Registers,
-			InfoRegs:        proj.InfoRegisters,
-			Enums:           proj.Enums,
-			Constants:       proj.Constants,
-			Reports:         proj.Reports,
-			PrintForms:      proj.PrintForms,
-		})
-		reg.LoadDSLPrintForms(proj.DSLPrintForms)
-		reg.LoadLayoutForms(proj.LayoutForms)
-		reg.LoadModules(proj.Modules)
-		reg.LoadProcessors(proj.Processors)
-		reg.LoadHTTPServices(proj.HTTPServices)
-		reg.LoadPages(proj.Pages)
-		reg.LoadExchangePlans(proj.ExchangePlans)
-		reg.LoadSubsystems(proj.Subsystems)
-		reg.LoadJournals(proj.Journals)
-		reg.LoadAccountRegisters(proj.AccountRegisters, proj.ChartsOfAccounts)
-		reg.LoadWidgets(proj.Widgets)
-		reg.LoadHomePage(proj.HomePage)
+		if err := reloadProjectRuntime(reg, sched, srv, proj); err != nil {
+			devLog.Warn("runtime reload failed", "err", err)
+			return err
+		}
 
 		// Внешний контур: печатные формы и отчёты из БД (вне конфигурации проекта).
 		extRepo := extform.New(db)
-		if err := extRepo.EnsureSchema(ctx); err != nil {
+		if err := extRepo.EnsureSchema(loadCtx); err != nil {
 			devLog.Warn("extform schema failed", "err", err)
-		} else if extForms, extLayouts, err := extRepo.LoadEnabledPrintForms(ctx); err != nil {
+		} else if extForms, extLayouts, err := extRepo.LoadEnabledPrintForms(loadCtx); err != nil {
 			devLog.Warn("external print forms load failed", "err", err)
 		} else {
 			reg.SetExternalPrintForms(extForms)
 			reg.SetExternalLayoutForms(extLayouts)
 		}
 		extRepRepo := extform.NewReports(db)
-		if err := extRepRepo.EnsureSchema(ctx); err != nil {
+		if err := extRepRepo.EnsureSchema(loadCtx); err != nil {
 			devLog.Warn("extform reports schema failed", "err", err)
-		} else if extReps, err := extRepRepo.LoadEnabledReports(ctx); err != nil {
+		} else if extReps, err := extRepRepo.LoadEnabledReports(loadCtx); err != nil {
 			devLog.Warn("external reports load failed", "err", err)
 		} else {
 			reg.SetExternalReports(extReps)
 		}
 		extProcRepo := extform.NewProcessors(db)
-		if err := extProcRepo.EnsureSchema(ctx); err != nil {
+		if err := extProcRepo.EnsureSchema(loadCtx); err != nil {
 			devLog.Warn("extform processors schema failed", "err", err)
-		} else if extProcs, extPrograms, err := extProcRepo.LoadEnabled(ctx); err != nil {
+		} else if extProcs, extPrograms, err := extProcRepo.LoadEnabled(loadCtx); err != nil {
 			devLog.Warn("external processors load failed", "err", err)
 		} else {
 			reg.SetExternalProcessors(extProcs, extPrograms)
 		}
-		if schedErr := sched.Reload(proj.ScheduledJobs); schedErr != nil {
-			loadErr = fmt.Errorf("scheduler reload: %w", schedErr)
-			devLog.Warn("scheduler reload failed", "err", schedErr)
-			return
+		if initial {
+			appCfg = nextAppCfg
+			bundle, err := i18n.Load(i18n.EmbeddedLocales, filepath.Join(proj.Dir, "locales"))
+			if err != nil {
+				devLog.Warn("i18n load failed", "err", err)
+			}
+			appBundle = bundle
 		}
-		if appCfg != nil && appCfg.Backup != nil {
-			if err := backup.RegisterAutoBackup(appCfg.Backup, backup.AutoTarget{
+		if initial && nextAppCfg.Backup != nil {
+			if err := backup.RegisterAutoBackup(nextAppCfg.Backup, backup.AutoTarget{
 				DSN:        dsn,
 				ProjectDir: dir,
 			}, sched); err != nil {
 				devLog.Warn("auto backup job registration failed", "err", err)
 			}
 		}
-		if srv != nil {
-			srv.InvalidateWidgetCache()
+		if initial {
+			fmt.Fprintln(os.Stdout, "[dev] loaded")
+		} else {
+			fmt.Fprintln(os.Stdout, "[dev] metadata/DSL/scheduled reloaded; app.yaml runtime settings require restart")
 		}
-		fmt.Fprintln(os.Stdout, "[dev] reloaded")
+		return nil
 	}
-	load()
-	if loadErr != nil {
-		return loadErr
+	if err := load(ctx, true); err != nil {
+		return err
 	}
 	if appCfg == nil {
 		return errors.New("initial project load did not complete")
 	}
 	interp.StrictLexicalScope = appDSLStrictLexicalScope(appCfg)
-
-	if configSource == "file" && watchDir != "" {
-		if err := devserver.Watch(watchDir, load); err != nil {
-			return fmt.Errorf("watcher: %w", err)
-		}
-	}
 
 	uiCfg := ui.Config{
 		DSN:              dsn,
@@ -294,13 +270,56 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			sched.SetMailer(m)
 		}
 	}
-	bundle, err2 := i18n.Load(i18n.EmbeddedLocales, filepath.Join(dir, "locales"))
-	if err2 != nil {
-		devLog.Warn("i18n load failed", "err", err2)
-	}
-	uiCfg.Bundle = bundle
+	uiCfg.Bundle = appBundle
 	// dev-сервер — всегда loopback (план 53: secure-by-default bind)
 	srv = api.New(reg, db, interp, authRepo, "127.0.0.1", port, uiCfg, sched)
+
+	var stopWatch func()
+	switch configSource {
+	case "file":
+		watchCtx, watchCancel := context.WithCancel(ctx)
+		watchDone, watchErr := devserver.WatchProjectContext(watchCtx, dir, func() {
+			if err := load(watchCtx, false); err != nil {
+				devLog.Warn("hot reload failed", "err", err)
+			}
+		})
+		if watchErr != nil {
+			watchCancel()
+			return fmt.Errorf("watcher: %w", watchErr)
+		}
+		var stopOnce sync.Once
+		stopWatch = func() {
+			stopOnce.Do(func() {
+				watchCancel()
+				<-watchDone
+			})
+		}
+	case "database":
+		watchCtx, watchCancel := context.WithCancel(ctx)
+		watchDone := make(chan struct{})
+		go func() {
+			defer close(watchDone)
+			watchConfigVersions(watchCtx, cfgRepo, loadedConfigVersionID, configReloadInterval, func() error {
+				if err := load(watchCtx, false); err != nil {
+					devLog.Warn("database hot reload failed", "err", err)
+					return err
+				}
+				return nil
+			})
+		}()
+		var stopOnce sync.Once
+		stopWatch = func() {
+			stopOnce.Do(func() {
+				watchCancel()
+				<-watchDone
+			})
+		}
+	}
+	defer func() {
+		if stopWatch != nil {
+			stopWatch()
+		}
+	}()
 
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	defer schedCancel()
@@ -322,7 +341,12 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "onebase dev running on :%d\n", port)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
 	<-quit
+	if stopWatch != nil {
+		stopWatch()
+		stopWatch = nil
+	}
 	schedCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()

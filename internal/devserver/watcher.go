@@ -2,10 +2,13 @@ package devserver
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -16,36 +19,89 @@ func watcherLog() *slog.Logger {
 	return oblog.Component("devserver.watcher")
 }
 
-// Watch watches dir and all its subdirectories, calling onChange after a
-// debounce period. fsnotify is not recursive, so every subdirectory is added
+// WatchContext watches dir and all its subdirectories, calling onChange after
+// a debounce period. fsnotify is not recursive, so every subdirectory is added
 // explicitly; directories created later are picked up on the fly.
-func Watch(dir string, onChange func()) error {
-	_, err := WatchContext(context.Background(), dir, onChange)
-	return err
+//
+// done is closed after the watcher goroutine and any running callback have
+// stopped, so callers can safely release resources referenced by onChange.
+func WatchContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
+	return watchContext(ctx, dir, nil, onChange)
 }
 
-// WatchContext is Watch with explicit lifecycle control. done is closed after
-// the watcher goroutine has stopped, so callers can safely release resources
-// referenced by onChange.
-func WatchContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
+// WatchProjectContext watches only source/config files that can affect a
+// loaded project. Generated backups, databases and editor artifacts inside the
+// project tree therefore do not cause pointless reloads.
+func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
+	projectDirs := map[string]struct{}{
+		"accountregs": {}, "accounts": {}, "catalogs": {}, "config": {},
+		"constants": {}, "documents": {}, "enums": {}, "exchange": {},
+		"inforegs": {}, "journals": {}, "locales": {}, "pages": {},
+		"printforms": {}, "processors": {}, "registers": {}, "reports": {},
+		"roles": {}, "scheduled": {}, "services": {}, "src": {},
+		"subsystems": {}, "widgets": {},
+	}
+	return watchContext(ctx, dir, func(path string, isDir bool) bool {
+		if isDir {
+			rel, err := filepath.Rel(dir, path)
+			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+				return false
+			}
+			top := strings.ToLower(strings.Split(filepath.ToSlash(rel), "/")[0])
+			_, ok := projectDirs[top]
+			return ok
+		}
+		lower := strings.ToLower(path)
+		return strings.HasSuffix(lower, ".yaml") ||
+			strings.HasSuffix(lower, ".yml") ||
+			strings.HasSuffix(lower, ".os")
+	}, onChange)
+}
+
+func watchContext(ctx context.Context, dir string, accept func(string, bool) bool, onChange func()) (<-chan struct{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if onChange == nil {
+		return nil, fmt.Errorf("devserver: onChange callback is nil")
+	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
+	watchedDirs := make(map[string]struct{})
 	// addTree рекурсивно добавляет root и все его подкаталоги в наблюдение.
-	addTree := func(root string) {
-		filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-			if walkErr == nil && d.IsDir() {
-				_ = w.Add(path)
+	addTree := func(root string) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				if err := w.Add(path); err != nil {
+					return fmt.Errorf("watch %s: %w", path, err)
+				}
+				watchedDirs[filepath.Clean(path)] = struct{}{}
 			}
 			return nil
 		})
 	}
-	addTree(dir)
+	if err := addTree(dir); err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("devserver: watch tree: %w", err)
+	}
 
 	debounce := time.NewTimer(0)
 	<-debounce.C // drain initial tick
+	resetDebounce := func() {
+		if !debounce.Stop() {
+			select {
+			case <-debounce.C:
+			default:
+			}
+		}
+		debounce.Reset(300 * time.Millisecond)
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -62,13 +118,31 @@ func WatchContext(ctx context.Context, dir string, onChange func()) (<-chan stru
 				}
 				// Новый подкаталог — начинаем следить и за ним, иначе
 				// файлы внутри него не отслеживались бы.
+				eventPath := filepath.Clean(event.Name)
+				_, wasDir := watchedDirs[eventPath]
+				isDir := wasDir
 				if event.Has(fsnotify.Create) {
 					if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
-						addTree(event.Name)
+						isDir = true
+						if err := addTree(event.Name); err != nil {
+							watcherLog().Warn("watch new directory failed", "path", event.Name, "err", err)
+						}
 					}
 				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) {
-					debounce.Reset(300 * time.Millisecond)
+				if wasDir && (event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) {
+					prefix := eventPath + string(filepath.Separator)
+					for watched := range watchedDirs {
+						if watched == eventPath || strings.HasPrefix(watched, prefix) {
+							delete(watchedDirs, watched)
+						}
+					}
+				}
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
+					event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+					if accept != nil && !accept(event.Name, isDir) {
+						continue
+					}
+					resetDebounce()
 				}
 			case err, ok := <-w.Errors:
 				if !ok {
@@ -76,7 +150,17 @@ func WatchContext(ctx context.Context, dir string, onChange func()) (<-chan stru
 				}
 				watcherLog().Warn("watcher error", "err", err)
 			case <-debounce.C:
-				onChange()
+				func() {
+					defer func() {
+						if recovered := recover(); recovered != nil {
+							watcherLog().Error("reload callback panic",
+								"panic", recovered,
+								"stack", string(debug.Stack()),
+							)
+						}
+					}()
+					onChange()
+				}()
 			}
 		}
 	}()

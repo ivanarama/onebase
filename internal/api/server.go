@@ -235,7 +235,14 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.uiSrv != nil {
+		s.uiSrv.BeginShutdown()
+	}
 	httpErr := s.srv.Shutdown(ctx)
+	var uiErr error
+	if s.uiSrv != nil {
+		uiErr = s.uiSrv.Shutdown(ctx)
+	}
 	hookErr := s.hooks.Close(ctx)
-	return errors.Join(httpErr, hookErr)
+	return errors.Join(httpErr, uiErr, hookErr)
 }

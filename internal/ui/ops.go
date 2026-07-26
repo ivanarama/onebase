@@ -130,17 +130,17 @@ func (s *Server) beginQueuedOperation(r *http.Request, kind, name string) (conte
 	if s.ops == nil {
 		s.ops = newOperationLimiter()
 	}
-	base := context.WithoutCancel(r.Context())
-	ctx := base
-	cancel := func() {}
+	ctx, cancelLifecycle := s.backgroundRequestContext(r.Context())
+	cancelTimeout := func() {}
 	if timeout := s.operationTimeout(kind); timeout > 0 {
-		ctx, cancel = context.WithTimeout(base, timeout)
+		ctx, cancelTimeout = context.WithTimeout(ctx, timeout)
 	}
 
 	limit := s.operationConcurrency(kind)
 	release, ok := s.ops.acquire(ctx, kind, limit)
 	if !ok {
-		cancel()
+		cancelTimeout()
+		cancelLifecycle()
 		if s.cfg.Metrics != nil {
 			s.cfg.Metrics.OperationLimited(kind, "concurrency")
 		}
@@ -153,7 +153,8 @@ func (s *Server) beginQueuedOperation(r *http.Request, kind, name string) (conte
 	}
 	logReq := r.WithContext(ctx)
 	return ctx, func(status string, rows int, truncated bool, extra ...slog.Attr) {
-		cancel()
+		cancelTimeout()
+		cancelLifecycle()
 		release()
 		d := time.Since(start)
 		slow := s.isSlowOperation(d)

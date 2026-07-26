@@ -45,6 +45,7 @@ type Hub struct {
 	subs   map[string]*subscriber
 	seq    int64
 	recent []recentEvent
+	closed bool
 }
 
 type recentEvent struct {
@@ -71,6 +72,11 @@ func (h *Hub) Subscribe(userID, login string, roles []string) (id string, ch <-c
 func (h *Hub) SubscribeSince(userID, login string, roles []string, lastID int64) (id string, ch <-chan Event, cancel func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		closed := make(chan Event)
+		close(closed)
+		return "", closed, func() {}
+	}
 	h.seq++
 	id = "s" + strconv.FormatInt(h.seq, 10)
 	s := &subscriber{id: id, login: login, roles: roles, ch: make(chan Event, subscriberBuffer)}
@@ -101,6 +107,9 @@ func (h *Hub) unsubscribe(id string) {
 func (h *Hub) Publish(target string, ev Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
 	h.seq++
 	ev.ID = h.seq
 	now := time.Now()
@@ -117,6 +126,25 @@ func (h *Hub) Publish(target string, ev Event) {
 			}
 		}
 	}
+}
+
+// Close disconnects every subscriber and prevents new subscriptions. Closing
+// the SSE channels lets http.Server.Shutdown drain long-lived event streams.
+func (h *Hub) Close() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	h.closed = true
+	for id, sub := range h.subs {
+		delete(h.subs, id)
+		close(sub.ch)
+	}
+	h.recent = nil
 }
 
 func (h *Hub) appendRecentLocked(target string, ev Event, now time.Time) {

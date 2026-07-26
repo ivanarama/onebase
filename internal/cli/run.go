@@ -24,7 +24,6 @@ import (
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/mailer"
 	"github.com/ivantit66/onebase/internal/project"
-	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/ui"
@@ -50,7 +49,7 @@ func init() {
 	runCmd.Flags().String("config-source", "file", "configuration source: file or database")
 	// hot reload .os/.yaml без перезапуска. По умолчанию off,
 	// для прода обычно не нужен. Включается флагом --watch.
-	runCmd.Flags().Bool("watch", false, "reload project metadata when files change (.os/.yaml)")
+	runCmd.Flags().Bool("watch", false, "reload project metadata, DSL and scheduled jobs when configuration changes")
 	// Демо-режим через флаги — работает независимо от источника конфигурации.
 	// Удобно для --config-source database, где app.yaml не лежит файлом и
 	// блок demo: некуда вписать. Флаги имеют приоритет над app.yaml.
@@ -130,7 +129,10 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		}
 		// Capture the version before loading. If deploy lands between this read
 		// and watcher startup, the watcher will still observe and apply it.
-		loadedConfigVersionID = latestConfigVersionID(ctx, cfgRepo)
+		loadedConfigVersionID, err = latestConfigVersionID(ctx, cfgRepo)
+		if err != nil {
+			return fmt.Errorf("read current config version: %w", err)
+		}
 		proj, err = project.LoadFromDB(ctx, cfgRepo)
 	} else {
 		proj, err = project.Load(dir)
@@ -186,32 +188,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("migrate account registers: %w", err)
 	}
 
-	reg := runtime.NewRegistry()
-	reg.Load(runtime.LoadOptions{
-		Entities:        proj.Entities,
-		Programs:        proj.Programs,
-		ManagerPrograms: proj.ManagerPrograms,
-		ServicePrograms: proj.ServicePrograms,
-		PagePrograms:    proj.PagePrograms,
-		Registers:       proj.Registers,
-		InfoRegs:        proj.InfoRegisters,
-		Enums:           proj.Enums,
-		Constants:       proj.Constants,
-		Reports:         proj.Reports,
-		PrintForms:      proj.PrintForms,
-	})
-	reg.LoadDSLPrintForms(proj.DSLPrintForms)
-	reg.LoadLayoutForms(proj.LayoutForms)
-	reg.LoadModules(proj.Modules)
-	reg.LoadProcessors(proj.Processors)
-	reg.LoadHTTPServices(proj.HTTPServices)
-	reg.LoadPages(proj.Pages)
-	reg.LoadExchangePlans(proj.ExchangePlans)
-	reg.LoadSubsystems(proj.Subsystems)
-	reg.LoadJournals(proj.Journals)
-	reg.LoadAccountRegisters(proj.AccountRegisters, proj.ChartsOfAccounts)
-	reg.LoadWidgets(proj.Widgets)
-	reg.LoadHomePage(proj.HomePage)
+	reg := registryFromProject(proj)
 
 	// Внешний контур: печатные формы и отчёты из БД (вне конфигурации проекта).
 	extRepo := extform.New(db)
@@ -435,55 +412,29 @@ func runServer(cmd *cobra.Command, _ []string) error {
 
 	srv := api.New(reg, db, interp, authRepo, host, port, uiCfg, sched)
 
-	// Опциональный hot reload (см. --watch). Перечитываем ТОЛЬКО метаданные
-	// (reg.Load*), DDL-миграции не повторяем — они единоразовы и потенциально
-	// опасны.
+	// Опциональный hot reload (см. --watch). Перечитываем project metadata/DSL
+	// и scheduled jobs. Статические app.yaml-настройки, роли, локали и DDL не
+	// меняем в живом процессе: для них нужен restart/deploy.
 	//   file     → fsnotify по каталогу проекта (.yaml/.os).
 	//   database → опрос _config_versions: после `onebase deploy`/rollback
 	//              появляется новая версия. Схему трогать не нужно — миграции
 	//              выполняет deploy ДО создания версии конфигурации.
+	var stopWatch func()
+	defer func() {
+		if stopWatch != nil {
+			stopWatch()
+		}
+	}()
 	if watchEnabled, _ := cmd.Flags().GetBool("watch"); watchEnabled {
 		var reloadMu sync.Mutex
-		var reloadProjects []*project.Project
-		defer func() {
-			for _, loaded := range reloadProjects {
-				loaded.Close()
-			}
-		}()
-		applyProject := func(newProj *project.Project) {
+		applyProject := func(newProj *project.Project) error {
+			defer newProj.Close()
 			reloadMu.Lock()
 			defer reloadMu.Unlock()
-			next := runtime.NewRegistry()
-			next.Load(runtime.LoadOptions{
-				Entities:        newProj.Entities,
-				Programs:        newProj.Programs,
-				ManagerPrograms: newProj.ManagerPrograms,
-				ServicePrograms: newProj.ServicePrograms,
-				PagePrograms:    newProj.PagePrograms,
-				Registers:       newProj.Registers,
-				InfoRegs:        newProj.InfoRegisters,
-				Enums:           newProj.Enums,
-				Constants:       newProj.Constants,
-				Reports:         newProj.Reports,
-				PrintForms:      newProj.PrintForms,
-			})
-			next.LoadDSLPrintForms(newProj.DSLPrintForms)
-			next.LoadLayoutForms(newProj.LayoutForms)
-			next.LoadModules(newProj.Modules)
-			next.LoadProcessors(newProj.Processors)
-			next.LoadHTTPServices(newProj.HTTPServices)
-			next.LoadPages(newProj.Pages)
-			next.LoadExchangePlans(newProj.ExchangePlans)
-			next.LoadSubsystems(newProj.Subsystems)
-			next.LoadJournals(newProj.Journals)
-			next.LoadAccountRegisters(newProj.AccountRegisters, newProj.ChartsOfAccounts)
-			next.LoadWidgets(newProj.Widgets)
-			next.LoadHomePage(newProj.HomePage)
-			reg.ReplaceProjectFrom(next)
-			srv.InvalidateWidgetCache()
-			// LoadFromDB may materialise form/layout resources in a temporary
-			// directory. Keep successful reload projects alive until shutdown.
-			reloadProjects = append(reloadProjects, newProj)
+			if _, err := project.LoadConfig(newProj.Dir); err != nil {
+				return fmt.Errorf("validate app config: %w", err)
+			}
+			return reloadProjectRuntime(reg, sched, srv, newProj)
 		}
 
 		switch configSource {
@@ -495,19 +446,25 @@ func runServer(cmd *cobra.Command, _ []string) error {
 					runLog.Warn("watch reload failed", "err", err)
 					return
 				}
-				applyProject(newProj)
-				fmt.Fprintln(os.Stdout, "[watch] метаданные перезагружены")
+				if err := applyProject(newProj); err != nil {
+					runLog.Warn("watch publish failed", "err", err)
+					return
+				}
+				fmt.Fprintln(os.Stdout, "[watch] метаданные и расписания перезагружены; app.yaml/roles/locales требуют рестарта")
 			}
-			watchDone, err := devserver.WatchContext(watchCtx, dir, reload)
+			watchDone, err := devserver.WatchProjectContext(watchCtx, dir, reload)
 			if err != nil {
 				watchCancel()
 				runLog.Warn("watch init failed", "err", err)
 			} else {
-				defer func() {
-					watchCancel()
-					<-watchDone
-				}()
-				fmt.Fprintf(os.Stdout, "[watch] отслеживаем %s — изменения .yaml/.os подхватятся без рестарта\n", dir)
+				var stopOnce sync.Once
+				stopWatch = func() {
+					stopOnce.Do(func() {
+						watchCancel()
+						<-watchDone
+					})
+				}
+				fmt.Fprintf(os.Stdout, "[watch] отслеживаем %s — metadata/DSL/scheduled подхватятся без рестарта\n", dir)
 			}
 		case "database":
 			reloadCtx, reloadCancel := context.WithCancel(ctx)
@@ -520,15 +477,21 @@ func runServer(cmd *cobra.Command, _ []string) error {
 						runLog.Warn("db watch reload failed", "err", err)
 						return err
 					}
-					applyProject(newProj)
-					fmt.Fprintln(os.Stdout, "[watch] конфигурация перезагружена из БД (новая версия)")
+					if err := applyProject(newProj); err != nil {
+						runLog.Warn("db watch publish failed", "err", err)
+						return err
+					}
+					fmt.Fprintln(os.Stdout, "[watch] metadata/DSL/scheduled перезагружены из БД; app.yaml/roles/locales требуют рестарта")
 					return nil
 				})
 			}()
-			defer func() {
-				reloadCancel()
-				<-reloadDone
-			}()
+			var stopOnce sync.Once
+			stopWatch = func() {
+				stopOnce.Do(func() {
+					reloadCancel()
+					<-reloadDone
+				})
+			}
 			fmt.Fprintln(os.Stdout, "[watch] отслеживаем версии конфигурации в БД — deploy подхватится без рестарта")
 		}
 	}
@@ -544,12 +507,17 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "onebase running on %s:%d\n", host, port)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			runLog.Error("server failed", "err", err)
 		}
 	}()
 	<-quit
+	if stopWatch != nil {
+		stopWatch()
+		stopWatch = nil
+	}
 	schedCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
@@ -562,14 +530,17 @@ func runServer(cmd *cobra.Command, _ []string) error {
 // database-режиме при --watch.
 const configReloadInterval = 5 * time.Second
 
-// latestConfigVersionID возвращает ID самой свежей версии конфигурации или ""
-// (нет версий либо ошибка чтения — тогда hot reload просто не срабатывает).
-func latestConfigVersionID(ctx context.Context, cfgRepo *configdb.Repo) string {
+// latestConfigVersionID возвращает ID самой свежей версии конфигурации или "",
+// если история пока пуста.
+func latestConfigVersionID(ctx context.Context, cfgRepo *configdb.Repo) (string, error) {
 	vs, err := cfgRepo.ListVersions(ctx, 1)
-	if err != nil || len(vs) == 0 {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return vs[0].ID
+	if len(vs) == 0 {
+		return "", nil
+	}
+	return vs[0].ID, nil
 }
 
 // watchConfigVersions опрашивает историю версий конфигурации раз в interval и
@@ -584,7 +555,11 @@ func watchConfigVersions(ctx context.Context, cfgRepo *configdb.Repo, last strin
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cur := latestConfigVersionID(ctx, cfgRepo)
+			cur, err := latestConfigVersionID(ctx, cfgRepo)
+			if err != nil {
+				oblog.Component("cli.hotreload").Warn("config version poll failed", "err", err)
+				continue
+			}
 			if cur != "" && cur != last {
 				if err := onChange(); err == nil {
 					last = cur

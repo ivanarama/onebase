@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -55,13 +56,20 @@ type Project struct {
 	Widgets          []*metadata.Widget
 	HomePage         *metadata.HomePage
 	cleanup          func()
+	cleanupOnce      sync.Once
 }
 
 // Close releases resources (e.g., temp dirs) associated with this Project.
 func (p *Project) Close() {
-	if p.cleanup != nil {
-		p.cleanup()
+	if p == nil {
+		return
 	}
+	p.cleanupOnce.Do(func() {
+		if p.cleanup != nil {
+			p.cleanup()
+			p.cleanup = nil
+		}
+	})
 }
 
 // EmailConfig holds SMTP configuration from app.yaml section "email".

@@ -44,16 +44,24 @@ type exportJob struct {
 }
 
 type exportJobStore struct {
-	mu   sync.Mutex
-	jobs map[string]*exportJob
-	ttl  time.Duration
+	mu        sync.Mutex
+	jobs      map[string]*exportJob
+	ttl       time.Duration
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newExportJobStore(ttl time.Duration) *exportJobStore {
 	if ttl <= 0 {
 		ttl = defaultExportJobTTL
 	}
-	s := &exportJobStore{jobs: make(map[string]*exportJob), ttl: ttl}
+	s := &exportJobStore{
+		jobs: make(map[string]*exportJob),
+		ttl:  ttl,
+		stop: make(chan struct{}),
+		done: make(chan struct{}),
+	}
 	// Готовые файлы лежат в памяти (Data []byte), а уборка раньше происходила
 	// только при create/get: если к джобе никто не обращался, большой экспорт
 	// висел в RAM бессрочно. Фоновый sweeper снимает это ограничение.
@@ -62,15 +70,36 @@ func newExportJobStore(ttl time.Duration) *exportJobStore {
 		interval = time.Second
 	}
 	go func() {
+		defer close(s.done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
-		for range t.C {
-			s.mu.Lock()
-			s.cleanupLocked(time.Now())
-			s.mu.Unlock()
+		for {
+			select {
+			case <-s.stop:
+				return
+			case <-t.C:
+				s.mu.Lock()
+				s.cleanupLocked(time.Now())
+				s.mu.Unlock()
+			}
 		}
 	}()
 	return s
+}
+
+// Close stops the background sweeper and releases completed export payloads.
+// It is safe to call more than once.
+func (s *exportJobStore) Close() {
+	if s == nil {
+		return
+	}
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		<-s.done
+		s.mu.Lock()
+		clear(s.jobs)
+		s.mu.Unlock()
+	})
 }
 
 func (s *exportJobStore) create(owner, kind, name, format string) exportJob {
@@ -169,10 +198,18 @@ func (s *Server) reportExportJobStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown export format", http.StatusNotFound)
 		return
 	}
+	backgroundDone, ok := s.beginBackgroundJob()
+	if !ok {
+		http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
+		return
+	}
 	jobs := s.exportJobStore()
 	job := jobs.create(currentUserLogin(r), "report", rep.Name, format)
 	req := r.Clone(context.WithoutCancel(r.Context()))
-	go s.runReportExportJob(req, job.ID, rep, format)
+	go func() {
+		defer backgroundDone()
+		s.runReportExportJob(req, job.ID, rep, format)
+	}()
 	http.Redirect(w, r, "/ui/export-jobs/"+job.ID, http.StatusSeeOther)
 }
 
@@ -257,6 +294,8 @@ func (s *Server) exportJobForRequest(w http.ResponseWriter, r *http.Request) (ex
 }
 
 func (s *Server) exportJobStore() *exportJobStore {
+	s.exportJobsMu.Lock()
+	defer s.exportJobsMu.Unlock()
 	if s.exportJobs == nil {
 		s.exportJobs = newExportJobStore(defaultExportJobTTL)
 	}
