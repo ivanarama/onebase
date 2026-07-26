@@ -484,6 +484,8 @@ type translator struct {
 	rowApplied  []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
 	parenDepth  int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
 	sourceCtx   sourceContext                 // scoped-типы источников для системных колонок регистра
+	unionDepths map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
+	unionOrders map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 }
 
 type sourceClass uint8
@@ -495,24 +497,55 @@ const (
 )
 
 type sourceContext struct {
-	scopes     []sourceScope
-	tokenScope []int
+	scopes       []sourceScope
+	tokenScope   []int
+	tokenSection []querySection
 }
 
 type sourceScope struct {
 	main       sourceClass
+	mainTable  string
 	qualifiers map[string]sourceClass
+	refAliases map[string]struct{}
 }
 
 func (ctx sourceContext) scopeAt(tokenPos int) (sourceScope, bool) {
-	if tokenPos < 0 || tokenPos >= len(ctx.tokenScope) {
-		return sourceScope{}, false
-	}
-	scopeID := ctx.tokenScope[tokenPos]
-	if scopeID < 0 || scopeID >= len(ctx.scopes) {
+	scopeID, ok := ctx.scopeIDAt(tokenPos)
+	if !ok {
 		return sourceScope{}, false
 	}
 	return ctx.scopes[scopeID], true
+}
+
+func (ctx sourceContext) scopeIDAt(tokenPos int) (int, bool) {
+	if tokenPos < 0 || tokenPos >= len(ctx.tokenScope) {
+		return 0, false
+	}
+	scopeID := ctx.tokenScope[tokenPos]
+	if scopeID < 0 || scopeID >= len(ctx.scopes) {
+		return 0, false
+	}
+	return scopeID, true
+}
+
+func (ctx sourceContext) sectionAt(tokenPos int) querySection {
+	if tokenPos < 0 || tokenPos >= len(ctx.tokenSection) {
+		return sectionOther
+	}
+	return ctx.tokenSection[tokenPos]
+}
+
+func (ctx sourceContext) isReferenceAliasAt(tokenPos int, lower string) bool {
+	section := ctx.sectionAt(tokenPos)
+	if section != sectionGroupBy && section != sectionOrderBy && section != sectionHaving {
+		return false
+	}
+	scope, ok := ctx.scopeAt(tokenPos)
+	if !ok {
+		return false
+	}
+	_, ok = scope.refAliases[lower]
+	return ok
 }
 
 type pendingRowFilter struct {
@@ -2145,11 +2178,38 @@ func (tr *translator) qualifyOwn(col, lower string) string {
 		return col // алиас вывода, не колонка таблицы
 	}
 	if len(tr.refDims) > 0 && tr.mainTable != "" {
-		if _, own := tr.colTypes[lower]; own {
+		_, own := tr.colTypes[lower]
+		if own {
 			return tr.mainTable + "." + col
 		}
 	}
 	return col
+}
+
+// qualifyReference квалифицирует виртуальное поле Ссылка/Reference/Ref по
+// основному источнику именно текущего SELECT-scope. Выходные алиасы обрабатываются
+// отдельно: глобальная tr.aliases не должна влиять на вложенные/UNION SELECT.
+func (tr *translator) qualifyReference(col string) string {
+	if len(tr.refDims) == 0 || tr.mainTable == "" || tr.inUnionOrder() {
+		return col
+	}
+	if scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1); ok && scope.mainTable != "" {
+		return scope.mainTable + "." + col
+	}
+	return col
+}
+
+func (tr *translator) inUnionOrder() bool {
+	for depth := tr.parenDepth; depth >= 0; depth-- {
+		if tr.unionOrders[depth] {
+			return true
+		}
+	}
+	return false
+}
+
+func isReferenceName(lower string) bool {
+	return lower == "ссылка" || lower == "reference" || lower == "ref"
 }
 
 // emitOwnColumn эмитит неквалифицированную собственную колонку с учётом п.48/п.49.
@@ -2213,15 +2273,20 @@ func preScanMainTable(tokens []tok) string {
 // только к глубине скобок: Период внутри Год(Период) остаётся в родительском
 // SELECT, а SELECT-подзапрос получает собственный main/aliases.
 func preScanSourceContext(tokens []tok) sourceContext {
-	ctx := sourceContext{tokenScope: make([]int, len(tokens))}
+	ctx := sourceContext{
+		tokenScope:   make([]int, len(tokens)),
+		tokenSection: make([]querySection, len(tokens)),
+	}
 	for i := range ctx.tokenScope {
 		ctx.tokenScope[i] = -1
+		ctx.tokenSection[i] = sectionOther
 	}
 	type scopeFrame struct {
 		id    int
 		depth int
 	}
 	var active []scopeFrame
+	var sections []querySection
 	depth := 0
 
 	for i := 0; i < len(tokens); i++ {
@@ -2234,12 +2299,83 @@ func preScanSourceContext(tokens []tok) sourceContext {
 					active = active[:len(active)-1]
 				}
 				scopeID := len(ctx.scopes)
-				ctx.scopes = append(ctx.scopes, sourceScope{qualifiers: map[string]sourceClass{}})
+				ctx.scopes = append(ctx.scopes, sourceScope{
+					qualifiers: map[string]sourceClass{},
+					refAliases: map[string]struct{}{},
+				})
+				sections = append(sections, sectionSelect)
 				active = append(active, scopeFrame{id: scopeID, depth: depth})
 			}
 		}
 		if len(active) > 0 {
-			ctx.tokenScope[i] = active[len(active)-1].id
+			frame := active[len(active)-1]
+			scopeID := frame.id
+			// EXTRACT(YEAR FROM ...) содержит SQL-слово FROM внутри выражения.
+			// Секцию SELECT меняют только ключевые слова на глубине самого SELECT.
+			if t.kind == tIdent && depth == frame.depth {
+				if kw, ok := sqlKW(t.val); ok {
+					switch kw {
+					case "SELECT":
+						sections[scopeID] = sectionSelect
+					case "FROM":
+						sections[scopeID] = sectionFrom
+					case "WHERE":
+						sections[scopeID] = sectionWhere
+					case "GROUP":
+						sections[scopeID] = sectionGroupBy
+					case "ORDER":
+						sections[scopeID] = sectionOrderBy
+					case "HAVING":
+						sections[scopeID] = sectionHaving
+					}
+				}
+			}
+			ctx.tokenScope[i] = scopeID
+			ctx.tokenSection[i] = sections[scopeID]
+			if sections[scopeID] == sectionSelect && t.kind == tIdent && depth == frame.depth {
+				if up := strings.ToUpper(t.val); (up == "КАК" || up == "AS") &&
+					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
+					alias := strings.ToLower(tokens[i+1].val)
+					if isReferenceName(alias) {
+						ctx.scopes[scopeID].refAliases[alias] = struct{}{}
+					}
+				}
+			}
+		}
+
+		// Производная таблица в FROM/JOIN сама является источником текущего
+		// SELECT. Без этого следующий обычный JOIN ошибочно становился mainTable.
+		if t.kind == tIdent && len(active) > 0 {
+			if kw, ok := sqlKW(t.val); ok && (kw == "FROM" || kw == "JOIN") &&
+				i+2 < len(tokens) && tokens[i+1].kind == tLParen &&
+				tokens[i+2].kind == tIdent {
+				if nestedKW, nested := sqlKW(tokens[i+2].val); nested && nestedKW == "SELECT" {
+					scope := &ctx.scopes[active[len(active)-1].id]
+					isMain := scope.mainTable == ""
+					nesting := 0
+					for j := i + 1; j < len(tokens); j++ {
+						switch tokens[j].kind {
+						case tLParen:
+							nesting++
+						case tRParen:
+							nesting--
+							if nesting == 0 {
+								aliasPos := j + 1
+								if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
+									aliasUpper := strings.ToUpper(tokens[aliasPos].val)
+									if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
+										alias := strings.ToLower(tokens[aliasPos+1].val)
+										if isMain {
+											scope.mainTable = alias
+										}
+									}
+								}
+								j = len(tokens)
+							}
+						}
+					}
+				}
+			}
 		}
 
 		if i+2 >= len(tokens) {
@@ -2283,6 +2419,15 @@ func preScanSourceContext(tokens []tok) sourceContext {
 		if scope.main == sourceClassUnknown {
 			scope.main = class
 		}
+		isMain := scope.mainTable == ""
+		if isMain {
+			// Виртуальная таблица эмитится как подзапрос со специальным алиасом,
+			// который здесь не вычисляем. Для обычного источника сохраняем имя,
+			// чтобы bare-Ссылка квалифицировалась в своём SELECT-scope.
+			if i+3 >= len(tokens) || tokens[i+3].kind != tDot {
+				scope.mainTable = sourceToTable(typeUpper, tokens[i+2].val)
+			}
+		}
 
 		entityName := strings.ToLower(tokens[i+2].val)
 		scope.qualifiers[entityName] = class
@@ -2293,7 +2438,11 @@ func preScanSourceContext(tokens []tok) sourceContext {
 		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
 			aliasUpper := strings.ToUpper(tokens[aliasPos].val)
 			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-				scope.qualifiers[strings.ToLower(tokens[aliasPos+1].val)] = class
+				alias := strings.ToLower(tokens[aliasPos+1].val)
+				scope.qualifiers[alias] = class
+				if isMain {
+					scope.mainTable = alias
+				}
 				continue
 			}
 		}
@@ -2485,6 +2634,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		refDims:     preScanRefDims(tokens, opts),
 		sourceCtx:   preScanSourceContext(tokens),
 		aliases:     map[string]struct{}{},
+		unionDepths: map[int]bool{},
+		unionOrders: map[int]bool{},
 		section:     sectionOther,
 	}
 	for {
@@ -2663,6 +2814,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			}
 			tr.advance()
 			if upper == "УПОРЯДОЧИТЬ" {
+				if tr.unionDepths[tr.parenDepth] {
+					tr.unionOrders[tr.parenDepth] = true
+				}
 				tr.section = sectionOrderBy
 				tr.emit("ORDER BY")
 			} else {
@@ -2709,6 +2863,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if t.kind == tLParen {
 				tr.parenDepth++
 			} else if t.kind == tRParen && tr.parenDepth > 0 {
+				delete(tr.unionDepths, tr.parenDepth)
+				delete(tr.unionOrders, tr.parenDepth)
 				tr.parenDepth--
 			}
 			tr.advance()
@@ -2728,11 +2884,31 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			tr.advance()
 			prevDot := tr.prevWasDot
 			tr.prevWasDot = false
+			lower := strings.ToLower(t.val)
+			nextIsDot := tr.peek(0).kind == tDot
+			prevAlias := false
+			if tr.pos >= 2 {
+				if pv := strings.ToUpper(tr.tokens[tr.pos-2].val); pv == "КАК" || pv == "AS" {
+					prevAlias = !prevDot
+				}
+			}
 			// Ссылка / Reference → id (virtual primary-key field, like 1C).
 			// Работает и после точки (Н.Ссылка → н.id), и без алиаса
 			// (ВЫБРАТЬ Ссылка ИЗ Справочник.X → SELECT id FROM x).
-			if up := strings.ToUpper(t.val); up == "ССЫЛКА" || up == "REFERENCE" || up == "REF" {
-				tr.emit("id")
+			if isReferenceName(lower) {
+				switch {
+				case prevAlias:
+					// Имя виртуального поля зарезервировано: исторически
+					// `КАК Ссылка` создаёт SQL-алиас id. Важно не пропускать его
+					// через qualifyReference — `AS таблица.id` невалиден.
+					tr.emit("id")
+				case prevDot:
+					tr.emit("id")
+				case tr.sourceCtx.isReferenceAliasAt(tr.pos-1, lower):
+					tr.emit("id")
+				default:
+					tr.emit(tr.qualifyReference("id"))
+				}
 				continue
 			}
 			// Системные колонки регистра — PascalCase русские алиасы
@@ -2750,6 +2926,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					if len(tr.opts.RowFilters) > 0 {
 						return Result{}, fmt.Errorf("row-level filters for UNION queries are not supported yet")
 					}
+					tr.unionDepths[tr.parenDepth] = true
 				case "WHERE":
 					tr.emit("WHERE")
 					tr.section = sectionWhere
@@ -2765,6 +2942,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 							return Result{}, err
 						}
 					}
+					if kw == "ORDER" && tr.unionDepths[tr.parenDepth] {
+						tr.unionOrders[tr.parenDepth] = true
+					}
 				}
 				tr.emit(kw)
 				// track clause context
@@ -2779,14 +2959,6 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.section = sectionOrderBy
 				}
 			} else {
-				lower := strings.ToLower(t.val)
-				nextIsDot := tr.peek(0).kind == tDot
-				prevAlias := false
-				if tr.pos >= 2 {
-					if pv := strings.ToUpper(tr.tokens[tr.pos-2].val); pv == "КАК" || pv == "AS" {
-						prevAlias = !prevDot
-					}
-				}
 				if prevAlias {
 					// Имя алиаса вывода (КАК <name>) — не колонка: эмитим как есть
 					// и запоминаем, чтобы ссылки на него не квалифицировать/CAST'ить.
