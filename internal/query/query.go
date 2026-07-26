@@ -503,10 +503,11 @@ type sourceContext struct {
 }
 
 type sourceScope struct {
-	main       sourceClass
-	mainTable  string
-	qualifiers map[string]sourceClass
-	refAliases map[string]struct{}
+	main        sourceClass
+	mainTable   string
+	sourceCount int
+	qualifiers  map[string]sourceClass
+	refAliases  map[string]struct{}
 }
 
 func (ctx sourceContext) scopeAt(tokenPos int) (sourceScope, bool) {
@@ -2190,13 +2191,17 @@ func (tr *translator) qualifyOwn(col, lower string) string {
 // основному источнику именно текущего SELECT-scope. Выходные алиасы обрабатываются
 // отдельно: глобальная tr.aliases не должна влиять на вложенные/UNION SELECT.
 func (tr *translator) qualifyReference(col string) string {
-	if len(tr.refDims) == 0 || tr.mainTable == "" || tr.inUnionOrder() {
+	if tr.inUnionOrder() {
 		return col
 	}
-	if scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1); ok && scope.mainTable != "" {
-		return scope.mainTable + "." + col
+	scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1)
+	if !ok || scope.mainTable == "" {
+		return col
 	}
-	return col
+	if len(tr.refDims) == 0 && scope.sourceCount < 2 {
+		return col
+	}
+	return scope.mainTable + "." + col
 }
 
 func (tr *translator) inUnionOrder() bool {
@@ -2351,7 +2356,8 @@ func preScanSourceContext(tokens []tok) sourceContext {
 				tokens[i+2].kind == tIdent {
 				if nestedKW, nested := sqlKW(tokens[i+2].val); nested && nestedKW == "SELECT" {
 					scope := &ctx.scopes[active[len(active)-1].id]
-					isMain := scope.mainTable == ""
+					isMain := scope.sourceCount == 0
+					scope.sourceCount++
 					nesting := 0
 					for j := i + 1; j < len(tokens); j++ {
 						switch tokens[j].kind {
@@ -2411,6 +2417,8 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			continue
 		}
 		scope := &ctx.scopes[active[len(active)-1].id]
+		isMain := scope.sourceCount == 0
+		scope.sourceCount++
 
 		class := sourceClassEntity
 		if isAccumRegType(typeUpper) || isInfoRegType(typeUpper) || isAccountRegType(typeUpper) {
@@ -2419,7 +2427,6 @@ func preScanSourceContext(tokens []tok) sourceContext {
 		if scope.main == sourceClassUnknown {
 			scope.main = class
 		}
-		isMain := scope.mainTable == ""
 		if isMain {
 			// Виртуальная таблица эмитится как подзапрос со специальным алиасом,
 			// который здесь не вычисляем. Для обычного источника сохраняем имя,
@@ -2464,7 +2471,11 @@ func preScanSourceContext(tokens []tok) sourceContext {
 					if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
 						aliasUpper := strings.ToUpper(tokens[aliasPos].val)
 						if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-							scope.qualifiers[strings.ToLower(tokens[aliasPos+1].val)] = class
+							alias := strings.ToLower(tokens[aliasPos+1].val)
+							scope.qualifiers[alias] = class
+							if isMain {
+								scope.mainTable = alias
+							}
 						}
 					}
 					j = len(tokens)
