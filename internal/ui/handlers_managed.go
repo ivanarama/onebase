@@ -41,6 +41,15 @@ func pickManagedForm(entity *metadata.Entity, kind string) *metadata.FormModule 
 // .form.yaml продолжает работать существующая авто-форма без изменений.
 func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind string, data map[string]any) {
 	entity, _ := data["Entity"].(*metadata.Entity)
+	// #481: заголовок вкладки/карточки = представление записи (Наименование…),
+	// а не имя сущности. Для существующей записи кладём TabTitle (его читает
+	// ui.js и шлёт оболочке obSetTitle) и RecordTitle (для заголовка h1).
+	if isNew, _ := data["IsNew"].(bool); !isNew {
+		if title := recordCardTitle(entity, data["Values"]); title != "" {
+			data["TabTitle"] = title
+			data["RecordTitle"] = title
+		}
+	}
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
@@ -116,4 +125,27 @@ func appendManagedFormWarnings(existing any, warnings []string) []string {
 	out, _ := existing.([]string)
 	out = append(out, warnings...)
 	return out
+}
+
+// recordCardTitle возвращает представление записи для заголовка карточки/вкладки:
+// значение поля-представления (Наименование→Description→Имя→Name→Номер→первый
+// строковый — как aiRefLookupField) из Values. "" — если поля нет или пусто
+// (напр. новая запись). Используется для #481.
+func recordCardTitle(entity *metadata.Entity, values any) string {
+	if entity == nil {
+		return ""
+	}
+	field := aiRefLookupField(entity)
+	if field == "" {
+		return ""
+	}
+	switch m := values.(type) {
+	case map[string]string:
+		return strings.TrimSpace(m[field])
+	case map[string]any:
+		if s, ok := m[field].(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }

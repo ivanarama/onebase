@@ -3,6 +3,23 @@
 window.__obEmbedded = window.self !== window.top;
 if (window.__obEmbedded) {
   document.documentElement.className += ' ob-embedded';
+  // #481: заголовок вкладки = представление записи. Сервер рендерит на карточке
+  // существующей записи <meta name="ob-tab-title">; сообщаем его оболочке
+  // (приёмник obSetTitle в tabs.go). ui.js подключён в <head>, поэтому читаем
+  // мету после готовности DOM.
+  (function () {
+    function sendTabTitle() {
+      try {
+        var mt = document.querySelector('meta[name="ob-tab-title"]');
+        var tt = mt && mt.getAttribute('content');
+        if (tt && window.parent && window.parent !== window) {
+          window.parent.postMessage({ source: 'obSetTitle', title: tt }, window.location.origin);
+        }
+      } catch (_) {}
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', sendTabTitle);
+    else sendTabTitle();
+  })();
   // Фаза 2: открытие записи/новой формы/отчёта внутри вкладки — это новая
   // вкладка рядом, а не замена текущей (пагинация/сортировка/фильтры остаются
   // в той же вкладке — у них тот же путь списка, без id-сегмента).
