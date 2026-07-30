@@ -1,6 +1,7 @@
 package interpreter_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -323,5 +324,62 @@ func TestInterpreter_SiblingProcScopedByFile(t *testing.T) {
 	obj := runtime.NewObject("X", metadata.KindDocument)
 	if err := interp.Run(main, obj); err == nil {
 		t.Fatal("ожидалась ошибка: чужой файл не должен резолвиться")
+	}
+}
+
+// #477: вызов локального помощника proc-файла, в аргументе которого — вызов
+// функции из другого модуля. Вычисление аргумента уводит e.ec.curFile в чужой
+// файл; sibling-резолв должен опираться на файл самого вызова (callee.Tok.File),
+// иначе помощник не находится → «unknown function».
+func TestInterpreter_SiblingResolutionWithCrossModuleArg(t *testing.T) {
+	// Функция из другого модуля (резолвится через LookupProc).
+	modProg, err := parser.New(lexer.New(
+		"Функция УдвоитьМод(Х)\n  Возврат Х * 2;\nКонецФункции",
+		"хелперы.module.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse module: %v", err)
+	}
+	dbl := modProg.Procedures[0]
+
+	// proc-файл: Главная зовёт локальную Обёртку, а в её аргументе — УдвоитьМод.
+	mainProg, err := parser.New(lexer.New(
+		"Процедура Главная()\n  ЭтотОбъект.Результат = Обёртка(УдвоитьМод(21));\nКонецПроцедуры\n\n"+
+			"Функция Обёртка(Значение)\n  Возврат Значение + 1;\nКонецФункции",
+		"test.proc.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse main: %v", err)
+	}
+	var main, wrap *ast.ProcedureDecl
+	for _, pr := range mainProg.Procedures {
+		switch {
+		case strings.EqualFold(pr.Name.Literal, "Главная"):
+			main = pr
+		case strings.EqualFold(pr.Name.Literal, "Обёртка"):
+			wrap = pr
+		}
+	}
+	if main == nil || wrap == nil {
+		t.Fatal("процедуры не нашлись")
+	}
+
+	interp := interpreter.New()
+	interp.LookupProc = func(name string) *ast.ProcedureDecl {
+		if strings.EqualFold(name, "УдвоитьМод") {
+			return dbl
+		}
+		return nil
+	}
+	interp.LookupSiblingProc = func(file, name string) *ast.ProcedureDecl {
+		if file == "test.proc.os" && strings.EqualFold(name, "Обёртка") {
+			return wrap
+		}
+		return nil
+	}
+	obj := runtime.NewObject("X", metadata.KindDocument)
+	if err := interp.Run(main, obj); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := obj.Get("Результат"); fmt.Sprintf("%v", got) != "43" {
+		t.Errorf("expected Результат=43, got %v (%T)", got, got)
 	}
 }

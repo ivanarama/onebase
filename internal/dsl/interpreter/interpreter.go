@@ -707,10 +707,13 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				return i.callUserProc(proc, e, args)
 			}
 		}
-		// Помощник из того же файла (.proc.os / .posting.os / .rep.os),
-		// см.
-		if i.LookupSiblingProc != nil && e.ec.curFile != "" {
-			if proc := i.LookupSiblingProc(e.ec.curFile, fnName); proc != nil {
+		// Помощник из того же файла (.proc.os / .posting.os / .rep.os).
+		// Файл берём из токена самого вызова (callee.Tok.File), а не из
+		// e.ec.curFile: curFile — «последняя исполненная позиция» и портится
+		// вычислением аргументов, если среди них есть вызов из другого модуля
+		// (тогда sibling-резолв искал бы в чужом файле → unknown function).
+		if i.LookupSiblingProc != nil && callee.Tok.File != "" {
+			if proc := i.LookupSiblingProc(callee.Tok.File, fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
 			}
 		}
