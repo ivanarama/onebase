@@ -18,7 +18,6 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
-	"gopkg.in/yaml.v3"
 )
 
 // normalizeSQLitePath приводит ввод пути к файлу SQLite к одному виду:
@@ -105,23 +104,10 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 			Version string `yaml:"version"`
 			Logo    string `yaml:"logo"`
 		}
-		if b.ConfigSource == "database" {
-			db, err := OpenDB(context.Background(), b)
-			if err != nil {
-				return
-			}
-			defer db.Close()
-			var content []byte
-			if err := db.QueryRow(context.Background(), "SELECT content FROM _onebase_config WHERE path = $1", "config/app.yaml").Scan(&content); err != nil {
-				return
-			}
-			yaml.Unmarshal(content, &cfg)
-		} else if b.Path != "" {
-			data, err := os.ReadFile(filepath.Join(b.Path, "config", "app.yaml"))
-			if err != nil {
-				return
-			}
-			yaml.Unmarshal(data, &cfg)
+		// Одна сломанная конфигурация не должна ломать весь список баз:
+		// показываем эту строку пустой, причина уходит в журнал.
+		if err := readAppYAML(context.Background(), b, &cfg); err != nil {
+			return
 		}
 		vm.AppName = cfg.Name
 		vm.AppVersion = cfg.Version

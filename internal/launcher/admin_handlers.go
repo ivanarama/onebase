@@ -14,7 +14,6 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/version"
-	"gopkg.in/yaml.v3"
 )
 
 // ── Admin panel handlers for configurator ────────────────────────────────────
@@ -978,20 +977,8 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 		Logo    string `yaml:"logo"`
 	}
 	var cfg appCfg
-	if b.ConfigSource == "database" {
-		db, dbErr := OpenDB(r.Context(), b)
-		if dbErr == nil {
-			defer db.Close()
-			var content []byte
-			if qrErr := db.QueryRow(r.Context(), `SELECT content FROM _onebase_config WHERE path = $1`, "config/app.yaml").Scan(&content); qrErr == nil {
-				yaml.Unmarshal(content, &cfg)
-			}
-		}
-	} else if b.Path != "" {
-		data, err := os.ReadFile(filepath.Join(b.Path, "config", "app.yaml"))
-		if err == nil {
-			yaml.Unmarshal(data, &cfg)
-		}
+	if err := readAppYAML(r.Context(), b, &cfg); err != nil {
+		cfg = appCfg{}
 	}
 
 	// Load logo — use endpoint URL so it works for both file and database sources
@@ -1081,6 +1068,11 @@ func (h *handler) configuratorLogo(w http.ResponseWriter, r *http.Request) {
 	var cfg appCfg
 	var logoData []byte
 
+	if err := readAppYAML(r.Context(), b, &cfg); err != nil || cfg.Logo == "" {
+		http.NotFound(w, r)
+		return
+	}
+
 	if b.ConfigSource == "database" {
 		db, cerr := OpenDB(r.Context(), b)
 		if cerr != nil {
@@ -1088,42 +1080,17 @@ func (h *handler) configuratorLogo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer db.Close()
-		// Get app.yaml
-		var content []byte
-		if err := db.QueryRow(r.Context(), `SELECT content FROM _onebase_config WHERE path = $1`, "config/app.yaml").Scan(&content); err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		yaml.Unmarshal(content, &cfg)
-		if cfg.Logo == "" {
-			http.NotFound(w, r)
-			return
-		}
-		// Get logo file
 		if err := db.QueryRow(r.Context(), `SELECT content FROM _onebase_config WHERE path = $1`, cfg.Logo).Scan(&logoData); err != nil {
 			http.NotFound(w, r)
 			return
 		}
 	} else {
-		if b.Path == "" {
-			http.NotFound(w, r)
-			return
-		}
-		data, err := os.ReadFile(filepath.Join(b.Path, "config", "app.yaml"))
+		data, err := os.ReadFile(filepath.Join(b.Path, cfg.Logo)) //nolint:gosec // G304: путь берётся из config/app.yaml базы, который правит её же администратор
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		yaml.Unmarshal(data, &cfg)
-		if cfg.Logo == "" {
-			http.NotFound(w, r)
-			return
-		}
-		logoData, err = os.ReadFile(filepath.Join(b.Path, cfg.Logo))
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
+		logoData = data
 	}
 
 	ext := strings.ToLower(filepath.Ext(cfg.Logo))

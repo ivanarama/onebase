@@ -5,13 +5,9 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/go-chi/chi/v5"
 
@@ -99,18 +95,10 @@ func (h *handler) cfgLoginData(r *http.Request, b *Base) map[string]any {
 		Logo string `yaml:"logo"`
 	}
 	var cfg appCfg
-	if b.ConfigSource == "database" {
-		if db, dbErr := OpenDB(r.Context(), b); dbErr == nil {
-			defer db.Close()
-			var content []byte
-			if qErr := db.QueryRow(r.Context(), "SELECT content FROM _onebase_config WHERE path = $1", "config/app.yaml").Scan(&content); qErr == nil {
-				yaml.Unmarshal(content, &cfg)
-			}
-		}
-	} else if b.Path != "" {
-		if raw, rErr := os.ReadFile(filepath.Join(b.Path, "config", "app.yaml")); rErr == nil {
-			yaml.Unmarshal(raw, &cfg)
-		}
+	// Логотип — украшение страницы входа: нечитаемый app.yaml не повод не
+	// пустить администратора в конфигуратор.
+	if err := readAppYAML(r.Context(), b, &cfg); err != nil {
+		cfg.Logo = ""
 	}
 	if cfg.Logo != "" {
 		data["LogoURL"] = "/bases/" + b.ID + "/configurator/logo"
