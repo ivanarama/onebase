@@ -13,6 +13,10 @@ import (
 
 func authLog() *slog.Logger { return oblog.Component("auth") }
 
+// maxLoginFormBytes — предел тела формы входа. Логин и пароль — короткие поля;
+// запас на порядки больше любого разумного значения и при этом конечен.
+const maxLoginFormBytes = int64(64 << 10)
+
 var loginTmpl = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>Вход — onebase</title>
@@ -109,7 +113,7 @@ func (h *Handlers) IssueOneTimeCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"code": code})
+	respondJSONTo(w, map[string]any{"code": code})
 }
 
 func (h *Handlers) LoginPage(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +122,7 @@ func (h *Handlers) LoginPage(w http.ResponseWriter, r *http.Request) {
 	if h.Repo != nil {
 		users, _ = h.Repo.ListForSelection(r.Context())
 	}
-	loginTmpl.Execute(w, map[string]any{"Error": "", "Users": users})
+	renderTemplate(w, loginTmpl, map[string]any{"Error": "", "Users": users})
 }
 
 func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -129,10 +133,22 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(code)
-		loginTmpl.Execute(w, map[string]any{"Error": msg, "Users": users})
+		renderTemplate(w, loginTmpl, map[string]any{"Error": msg, "Users": users})
 	}
 
-	r.ParseForm()
+	// Сбой разбора формы нельзя пропускать: дальше login и password окажутся
+	// пустыми, и попытка входа уйдёт в общий путь «неверный логин или пароль».
+	// Пользователь будет искать ошибку в своих учётных данных, а дело в теле
+	// запроса.
+	//
+	// Тело ограничиваем здесь же: голый ParseForm читает его целиком, а форма
+	// входа доступна без аутентификации — то есть это единственная точка, куда
+	// неаутентифицированный клиент может слать сколько угодно данных.
+	r.Body = http.MaxBytesReader(w, r.Body, maxLoginFormBytes)
+	if err := r.ParseForm(); err != nil {
+		renderErr(w, r, http.StatusBadRequest, "некорректные данные формы")
+		return
+	}
 	login := r.FormValue("login")
 	password := r.FormValue("password")
 
@@ -210,7 +226,7 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 
 	h.setSessionCookie(w, r, token)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	respondJSONTo(w, map[string]any{
 		"ok":   true,
 		"user": map[string]any{"id": user.ID, "login": user.Login, "is_admin": user.IsAdmin},
 	})
@@ -250,10 +266,10 @@ func (h *Handlers) Status(w http.ResponseWriter, r *http.Request) {
 	hasUsers, err := h.Repo.HasUsers(r.Context())
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication service unavailable"})
+		respondJSONTo(w, map[string]string{"error": "authentication service unavailable"})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"requires_auth": hasUsers})
+	respondJSONTo(w, map[string]any{"requires_auth": hasUsers})
 }
 
 // Bootstrap sets the session cookie from a one-time code and redirects.

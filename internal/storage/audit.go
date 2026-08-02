@@ -392,11 +392,18 @@ func scanAuditRows(rows auditRowsScanner) ([]*AuditEntry, error) {
 		if recordID != nil {
 			e.RecordID = recordID.String()
 		}
+		// Неразобранное значение оставляло бы в журнале регистрации пустое
+		// «было/стало» — запись, по которой изменение выглядит как отсутствие
+		// изменения. Для журнала аудита это хуже шумной строки.
 		if len(oldVal) > 0 && string(oldVal) != "null" {
-			json.Unmarshal(oldVal, &e.OldValue)
+			if err := json.Unmarshal(oldVal, &e.OldValue); err != nil {
+				storageLog().Warn("значение «было» в журнале регистрации не разобрано", "err", err)
+			}
 		}
 		if len(newVal) > 0 && string(newVal) != "null" {
-			json.Unmarshal(newVal, &e.NewValue)
+			if err := json.Unmarshal(newVal, &e.NewValue); err != nil {
+				storageLog().Warn("значение «стало» в журнале регистрации не разобрано", "err", err)
+			}
 		}
 		entries = append(entries, e)
 	}

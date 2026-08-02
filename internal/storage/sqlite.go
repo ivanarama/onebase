@@ -83,8 +83,7 @@ func ConnectSQLite(ctx context.Context, dbPath string) (*DB, error) {
 		if f, ferr := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY, 0o600); ferr != nil {
 			return nil, i18nerr.Wrapf(ferr, "storage: sqlite: нет прав на запись в папку %q", dir)
 		} else {
-			f.Close()
-			os.Remove(probe)
+			discardPartial(f, probe)
 		}
 
 		// modernc.org/sqlite uses "sqlite" driver name (not "sqlite3").

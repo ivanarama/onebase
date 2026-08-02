@@ -182,17 +182,23 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 			return Blob{}, err
 		}
 		n, err := io.Copy(f, limited)
-		f.Close()
 		if err != nil {
-			os.Remove(fp)
+			discardPartial(f, fp)
 			return Blob{}, err
 		}
 		if n > maxSizeBytes {
-			os.Remove(fp)
+			discardPartial(f, fp)
 			return Blob{}, tooLarge()
 		}
+		// Close на успешном пути — не уборка: он сбрасывает буфер, и его сбой
+		// означает усечённый файл. Раньше ошибка терялась, и insertMeta ниже
+		// регистрировала огрызок как полноценный блоб.
+		if err := f.Close(); err != nil {
+			removeFile(fp)
+			return Blob{}, err
+		}
 		if err := insertMeta(n, FileStorageDisk); err != nil {
-			os.Remove(fp)
+			removeFile(fp)
 			return Blob{}, err
 		}
 		return result(n), nil
@@ -254,7 +260,7 @@ func (db *DB) DeleteBlob(ctx context.Context, id uuid.UUID) error {
 		}
 	} else {
 		// disk / db / легаси: файла на диске может не быть (db-режим) — это не ошибка.
-		os.Remove(filepath.Join(db.filesDir, blobsDirName, id.String()))
+		removeFile(filepath.Join(db.filesDir, blobsDirName, id.String()))
 	}
 	_, err := db.Exec(ctx,
 		fmt.Sprintf(`DELETE FROM _blobs WHERE id=%s`, d.Placeholder(1)), id.String())

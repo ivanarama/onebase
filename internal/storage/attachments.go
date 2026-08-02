@@ -186,22 +186,19 @@ func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string,
 		}
 		cnt, cpErr := io.Copy(f, io.LimitReader(r, maxSizeBytes+1))
 		if cpErr != nil {
-			f.Close()
-			os.Remove(filePath)
+			discardPartial(f, filePath)
 			return Attachment{}, cpErr
 		}
 		if cnt > maxSizeBytes {
-			f.Close()
-			os.Remove(filePath)
+			discardPartial(f, filePath)
 			return Attachment{}, attachmentTooLarge(maxSizeBytes)
 		}
 		if err := f.Sync(); err != nil {
-			f.Close()
-			os.Remove(filePath)
+			discardPartial(f, filePath)
 			return Attachment{}, err
 		}
 		if err := f.Close(); err != nil {
-			os.Remove(filePath)
+			removeFile(filePath)
 			return Attachment{}, err
 		}
 		n = cnt
@@ -255,9 +252,7 @@ func (db *DB) stagePutAttachmentS3(ctx context.Context, key, mime string, r io.R
 		return 0, err
 	}
 	defer func() {
-		name := tmp.Name()
-		tmp.Close()
-		os.Remove(name)
+		discardPartial(tmp, tmp.Name())
 	}()
 	n, err := io.Copy(tmp, io.LimitReader(r, maxSizeBytes+1))
 	if err != nil {
@@ -311,7 +306,7 @@ func (db *DB) OpenAttachment(ctx context.Context, id uuid.UUID) (io.ReadSeekClos
 		}
 		f, err := os.Open(filepath.Join(dir, a.ID.String()))
 		if err != nil {
-			os.RemoveAll(dir)
+			removeFile(dir)
 			return nil, nil, err
 		}
 		return &tempDirFile{File: f, dir: dir}, a, nil
@@ -339,7 +334,7 @@ func (db *DB) MaterializeAttachment(ctx context.Context, id uuid.UUID) (string, 
 		if err != nil {
 			return "", nil, nil, err
 		}
-		return filepath.Join(dir, a.ID.String()), func() { os.RemoveAll(dir) }, a, nil
+		return filepath.Join(dir, a.ID.String()), func() { removeFile(dir) }, a, nil
 	}
 	return filepath.Join(db.filesDir, a.OwnerName, id.String()), nil, a, nil
 }
@@ -354,7 +349,7 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 	if err != nil {
 		return "", err
 	}
-	defer rc.Close()
+	defer closeRead("объект вложения в хранилище", rc)
 	base := filepath.Join(db.filesDir, "_attach_tmp")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", err
@@ -365,16 +360,15 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 	}
 	f, err := os.Create(filepath.Join(dir, a.ID.String()))
 	if err != nil {
-		os.RemoveAll(dir)
+		removeFile(dir)
 		return "", err
 	}
 	if _, err := io.Copy(f, rc); err != nil {
-		f.Close()
-		os.RemoveAll(dir)
+		discardPartial(f, dir)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		os.RemoveAll(dir)
+		removeFile(dir)
 		return "", err
 	}
 	return dir, nil
@@ -398,7 +392,9 @@ type tempDirFile struct {
 
 func (t *tempDirFile) Close() error {
 	err := t.File.Close()
-	os.RemoveAll(t.dir)
+	// Каталог — временная материализация вложения из S3. Его неудалённость не
+	// повод подменять ошибку закрытия файла, но и терять её незачем.
+	removeFile(t.dir)
 	return err
 }
 

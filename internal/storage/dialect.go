@@ -83,14 +83,14 @@ type Dialect interface {
 // PgDialect is the PostgreSQL implementation of Dialect.
 type PgDialect struct{}
 
-func (PgDialect) Name() string                       { return "postgres" }
-func (PgDialect) Placeholder(n int) string           { return fmt.Sprintf("$%d", n) }
-func (PgDialect) Now() string                        { return "now()" }
-func (PgDialect) CurrentTimestampTZ() string         { return "now()" }
-func (PgDialect) LowerLike(col string) string        { return "LOWER(" + col + "::text)" }
-func (PgDialect) CaseInsensitiveLikeOp() string      { return "ILIKE" }
-func (PgDialect) TypeBool() string                   { return "BOOLEAN" }
-func (PgDialect) TypeText() string                   { return "TEXT" }
+func (PgDialect) Name() string                  { return "postgres" }
+func (PgDialect) Placeholder(n int) string      { return fmt.Sprintf("$%d", n) }
+func (PgDialect) Now() string                   { return "now()" }
+func (PgDialect) CurrentTimestampTZ() string    { return "now()" }
+func (PgDialect) LowerLike(col string) string   { return "LOWER(" + col + "::text)" }
+func (PgDialect) CaseInsensitiveLikeOp() string { return "ILIKE" }
+func (PgDialect) TypeBool() string              { return "BOOLEAN" }
+func (PgDialect) TypeText() string              { return "TEXT" }
 func (PgDialect) TypeNumber(p, s int) string {
 	if p > 0 {
 		return fmt.Sprintf("NUMERIC(%d,%d)", p, s)
@@ -140,9 +140,9 @@ func (PgDialect) LatestPerKey(cols, partitionBy, orderBy []string, baseTable, al
 // SQLiteDialect is the SQLite implementation of Dialect.
 type SQLiteDialect struct{}
 
-func (SQLiteDialect) Name() string                  { return "sqlite" }
-func (SQLiteDialect) Placeholder(n int) string      { return "?" }
-func (SQLiteDialect) Now() string                   { return "datetime('now')" }
+func (SQLiteDialect) Name() string             { return "sqlite" }
+func (SQLiteDialect) Placeholder(n int) string { return "?" }
+func (SQLiteDialect) Now() string              { return "datetime('now')" }
 
 // CurrentTimestampTZ wraps datetime('now') in parens because SQLite requires
 // non-constant DEFAULT expressions to be parenthesised.
@@ -155,6 +155,7 @@ func (SQLiteDialect) LowerLike(col string) string {
 func (SQLiteDialect) CaseInsensitiveLikeOp() string { return "LIKE" }
 func (SQLiteDialect) TypeBool() string              { return "INTEGER" } // 0/1
 func (SQLiteDialect) TypeText() string              { return "TEXT" }
+
 // TEXT для денежной точности: shopspring/decimal на стороне Go. См. план.
 func (SQLiteDialect) TypeNumber(p, s int) string { return "TEXT" }
 func (SQLiteDialect) TypeTimestamp() string      { return "TEXT" } // ISO 8601
