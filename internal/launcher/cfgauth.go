@@ -156,7 +156,9 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		renderTemplate(w, cfgLoginTmpl, data)
 	}
 
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	login := r.FormValue("login")
 	password := r.FormValue("password")
 	limiter := h.configuratorLoginLimiter()

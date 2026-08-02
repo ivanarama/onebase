@@ -39,7 +39,9 @@ func (h *handler) configuratorConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	srcDir := strings.TrimSpace(r.FormValue("src_dir"))
 	apply := r.FormValue("apply") == "1"
 

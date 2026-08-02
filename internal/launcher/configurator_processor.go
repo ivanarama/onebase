@@ -18,7 +18,9 @@ func (h *handler) configuratorSaveProcessor(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	procName := r.FormValue("processor_name")
 	title := strings.TrimSpace(r.FormValue("title"))
 	source := r.FormValue("source")

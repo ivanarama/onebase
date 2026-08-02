@@ -20,7 +20,9 @@ func (h *handler) configuratorSavePrintForm(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	filename := strings.TrimSpace(r.FormValue("printform_filename"))
 	source := r.FormValue("source")
 	relPath := "printforms/" + filename
@@ -80,7 +82,9 @@ func (h *handler) configuratorNewPrintForm(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	document := strings.TrimSpace(r.FormValue("document"))
 
@@ -139,7 +143,9 @@ func (h *handler) configuratorSaveLayout(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	layoutName := strings.TrimSpace(r.FormValue("layout_name"))
 	source := r.FormValue("source")
 

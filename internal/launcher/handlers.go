@@ -169,7 +169,9 @@ func (h *handler) newForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	lang := resolveLang(r)
 	dbType := r.FormValue("db_type")
 	if dbType == "" {
@@ -284,7 +286,9 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	b.Name = r.FormValue("name")
 	b.ConfigSource = r.FormValue("config_source")
 	b.Path = r.FormValue("path")
@@ -698,7 +702,9 @@ func (h *handler) configImport(w http.ResponseWriter, r *http.Request) {
 	lang := resolveLang(r)
 	backURL := "/bases/" + b.ID + "/configurator?tab=files"
 
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	srcDir := strings.TrimSpace(r.FormValue("path"))
 	if srcDir == "" {
 		srcDir, err = workspacePath(b.ID)

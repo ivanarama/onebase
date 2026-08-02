@@ -24,7 +24,9 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	entityName := r.FormValue("entity")
 	moduleType := r.FormValue("module_type")
 	source := r.FormValue("source")

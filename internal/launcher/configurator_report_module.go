@@ -20,7 +20,9 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	repName := r.FormValue("report_name")
 	query := r.FormValue("query")
 	title := strings.TrimSpace(r.FormValue("title"))
@@ -194,7 +196,9 @@ func (h *handler) configuratorSaveCommonModule(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	moduleName := r.FormValue("module_name")
 	source := r.FormValue("source")
 	if !validObjectName(moduleName) {

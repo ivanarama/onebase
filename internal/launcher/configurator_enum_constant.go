@@ -18,7 +18,9 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	enumName := r.FormValue("enum_name")
 
 	type enumValueOut struct {
@@ -97,7 +99,9 @@ func (h *handler) configuratorSaveConstant(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lang := resolveLang(r)
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	constName := r.FormValue("const_name")
 	label := strings.TrimSpace(r.FormValue("label"))
 	typ := strings.TrimSpace(r.FormValue("type"))
