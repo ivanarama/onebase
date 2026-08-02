@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -41,7 +40,7 @@ func runExamples(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("неизвестный вид примера %q\nдоступно:\n%s", args[0], strings.Join(exampleKinds(), "\n"))
 	}
-	fmt.Fprint(os.Stdout, text)
+	outf("%s", text)
 	if !strings.HasSuffix(text, "\n") {
 		outln()
 	}

@@ -62,7 +62,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(stageDir)
+	defer removeTemp(stageDir)
 
 	newBin, err := selfupdate.StageBinary(from, stageDir)
 	if err != nil {

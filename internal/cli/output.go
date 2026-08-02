@@ -1,8 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
 )
 
 // Вывод сообщений CLI в stdout.
@@ -39,4 +44,52 @@ func outf(format string, a ...any) {
 func outln(a ...any) {
 	// Ошибка не обрабатывается сознательно — обоснование в комментарии к файлу.
 	_, _ = fmt.Fprintln(os.Stdout, a...)
+}
+
+// errln печатает предупреждение в stderr. Обоснование то же, что у outf: если
+// запись в канал сообщений не удалась, сообщить об этом некуда.
+func errln(a ...any) {
+	// Ошибка не обрабатывается сознательно — обоснование в комментарии к файлу.
+	_, _ = fmt.Fprintln(os.Stderr, a...)
+}
+
+// Уборка в командах: удаление временных путей и закрытие читающей стороны.
+//
+// Здесь, в отличие от вывода, канал сообщений исправен — поэтому сбой уборки не
+// проглатывается, а печатается предупреждением. Команда при этом продолжает
+// работу: временный каталог, который не удалился, не повод считать выполненную
+// миграцию или собранный отчёт неудавшимися.
+
+// removeTemp удаляет временный файл или каталог.
+func removeTemp(path string) {
+	if err := os.RemoveAll(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errln("предупреждение: не удалён временный путь", path+":", err)
+	}
+}
+
+// closeRead закрывает читающую сторону: данные уже прочитаны.
+func closeRead(what string, c io.Closer) {
+	if err := c.Close(); err != nil {
+		errln("предупреждение: не закрыт", what+":", err)
+	}
+}
+
+// mustMarkRequired помечает флаг обязательным. Ошибка тут означает опечатку в
+// имени флага, то есть дефект сборки, а не ситуацию времени выполнения:
+// команда молча теряла бы обязательность флага. Падаем сразу при инициализации.
+func mustMarkRequired(cmd *cobra.Command, name string) {
+	if err := cmd.MarkFlagRequired(name); err != nil {
+		panic("cli: MarkFlagRequired(" + name + "): " + err.Error())
+	}
+}
+
+// tabf/tabln печатают строку в tabwriter. Ошибки записи здесь нет по
+// построению: tabwriter копит строки в собственном буфере и отдаёт ошибку
+// только из Flush — а его вызывающий проверяет.
+func tabf(tw *tabwriter.Writer, format string, a ...any) {
+	_, _ = fmt.Fprintf(tw, format, a...)
+}
+
+func tabln(tw *tabwriter.Writer, a ...any) {
+	_, _ = fmt.Fprintln(tw, a...)
 }

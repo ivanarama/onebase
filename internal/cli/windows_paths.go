@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -40,12 +39,12 @@ func mappedDriveAdvice(paths []namedPath) string {
 	return fmt.Sprintf("%s находится на подключённом сетевом диске. Windows-сервис запускается от LocalSystem и не видит mapped drives. Используйте UNC-путь (\\\\server\\share\\...) или локальный диск.", strings.Join(items, ", "))
 }
 
-func warnMappedNetworkPath(w io.Writer, label, path string, detect networkDriveDetector) {
+func warnMappedNetworkPath(label, path string, detect networkDriveDetector) {
 	mapped, err := findMappedNetworkPaths([]namedPath{{Label: label, Path: path}}, detect)
 	if err != nil || len(mapped) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "Предупреждение:", mappedDriveAdvice(mapped))
+	errln("Предупреждение:", mappedDriveAdvice(mapped))
 }
 
 // quoteWindowsCommandArg формирует один аргумент для команды, которую

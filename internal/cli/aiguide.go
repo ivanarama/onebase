@@ -40,7 +40,7 @@ func runAIGuide(cmd *cobra.Command, _ []string) error {
 	guide := generateAIGuide(environmentNote(proj))
 	out, _ := cmd.Flags().GetString("output")
 	if out == "" {
-		fmt.Fprint(os.Stdout, guide)
+		outf("%s", guide)
 		return nil
 	}
 	if err := os.WriteFile(out, []byte(guide), 0o644); err != nil {

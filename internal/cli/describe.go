@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -313,7 +312,7 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 
 	compact, _ := cmd.Flags().GetBool("compact")
 	if compact {
-		fmt.Fprint(os.Stdout, projectAIContext(proj))
+		outf("%s", projectAIContext(proj))
 		return nil
 	}
 

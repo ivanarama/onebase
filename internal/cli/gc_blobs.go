@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -93,15 +92,14 @@ func runGcBlobs(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	out := os.Stdout
-	fmt.Fprintf(out, "Всего блобов:        %d\n", st.TotalBlobs)
-	fmt.Fprintf(out, "Живых ссылок:        %d\n", st.LiveRefs)
-	fmt.Fprintf(out, "Защищено grace-окном: %d (моложе %s)\n", st.Protected, minAge)
-	fmt.Fprintf(out, "Сирот:               %d\n", len(st.Orphans))
+	outf("Всего блобов:        %d\n", st.TotalBlobs)
+	outf("Живых ссылок:        %d\n", st.LiveRefs)
+	outf("Защищено grace-окном: %d (моложе %s)\n", st.Protected, minAge)
+	outf("Сирот:               %d\n", len(st.Orphans))
 	if doDelete {
-		fmt.Fprintf(out, "Удалено:             %d\n", st.Deleted)
+		outf("Удалено:             %d\n", st.Deleted)
 	} else if len(st.Orphans) > 0 {
-		fmt.Fprintln(out, "Режим предпросмотра — ничего не удалено. Для удаления добавьте --delete.")
+		outln("Режим предпросмотра — ничего не удалено. Для удаления добавьте --delete.")
 	}
 	return nil
 }

@@ -32,13 +32,15 @@ var ibasesListCmd = &cobra.Command{
 			return nil
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tPORT\tDB")
+		// tabwriter копит строки в буфере и отдаёт ошибку записи из Flush,
+		// который проверяется ниже, — поэтому здесь ошибки нет по построению.
+		tabln(tw, "ID\tNAME\tSOURCE\tPORT\tDB")
 		for _, b := range bases {
 			dbLabel := b.DB
 			if b.DBType == "sqlite" {
 				dbLabel = b.DBPath
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", b.ID[:8]+"…", b.Name, b.ConfigSource, b.Port, dbLabel)
+			tabf(tw, "%s\t%s\t%s\t%d\t%s\n", b.ID[:8]+"…", b.Name, b.ConfigSource, b.Port, dbLabel)
 		}
 		return tw.Flush()
 	},
@@ -80,8 +82,8 @@ var ibasesAddCmd = &cobra.Command{
 			b.DBPath = sqlitePath
 			b.DB = ""
 		}
-		warnMappedNetworkPath(os.Stderr, "файл SQLite", b.DBPath, detectMappedNetworkDrive)
-		warnMappedNetworkPath(os.Stderr, "каталог проекта", b.Path, detectMappedNetworkDrive)
+		warnMappedNetworkPath("файл SQLite", b.DBPath, detectMappedNetworkDrive)
+		warnMappedNetworkPath("каталог проекта", b.Path, detectMappedNetworkDrive)
 		if err := store.Add(b); err != nil {
 			return err
 		}
