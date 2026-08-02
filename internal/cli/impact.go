@@ -167,7 +167,7 @@ func scanImpactFile(root, path string, needles []impactNeedle) ([]impactMatch, e
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeRead("файл конфигурации", f)
 	rel, _ := filepath.Rel(root, path)
 	var out []impactMatch
 	sc := bufio.NewScanner(f)

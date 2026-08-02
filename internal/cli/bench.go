@@ -70,7 +70,7 @@ func runBench(cmd *cobra.Command, _ []string) error {
 		tmp := filepath.Join(os.TempDir(), fmt.Sprintf("onebase-bench-%d.db", time.Now().UnixNano()))
 		db, err = storage.ConnectSQLite(ctx, tmp)
 		dbKind = "sqlite(temp)"
-		defer os.Remove(tmp)
+		defer removeTemp(tmp)
 	}
 	if err != nil {
 		return fmt.Errorf("bench: подключение к БД: %w", err)
@@ -150,21 +150,20 @@ func printBenchJSON(env benchEnvInfo, results []bench.Result) error {
 }
 
 func printBenchText(env benchEnvInfo, results []bench.Result) {
-	w := os.Stdout
-	fmt.Fprintf(w, "onebase bench — проведение документов (эталонная база)\n")
-	fmt.Fprintf(w, "  версия:  %s (go %s, %s/%s, CPU=%d)\n", env.OnebaseVersion, env.GoVersion, env.OS, env.Arch, env.NumCPU)
-	fmt.Fprintf(w, "  БД:      %s\n\n", env.DB)
+	outf("onebase bench — проведение документов (эталонная база)\n")
+	outf("  версия:  %s (go %s, %s/%s, CPU=%d)\n", env.OnebaseVersion, env.GoVersion, env.OS, env.Arch, env.NumCPU)
+	outf("  БД:      %s\n\n", env.DB)
 
-	fmt.Fprintf(w, "%-8s %10s %8s %9s %9s %9s %7s\n", "потоки", "док/сек", "ошибки", "p50", "p95", "p99", "APDEX")
-	fmt.Fprintf(w, "%s\n", "----------------------------------------------------------------------")
+	outf("%-8s %10s %8s %9s %9s %9s %7s\n", "потоки", "док/сек", "ошибки", "p50", "p95", "p99", "APDEX")
+	outf("%s\n", "----------------------------------------------------------------------")
 	for _, r := range results {
-		fmt.Fprintf(w, "%-8d %10.1f %8d %9s %9s %9s %7.2f\n",
+		outf("%-8d %10.1f %8d %9s %9s %9s %7.2f\n",
 			r.Threads, r.Throughput, r.Errors,
 			ms(r.P50), ms(r.P95), ms(r.P99), r.Apdex)
 	}
-	fmt.Fprintln(w)
+	outln()
 	for _, r := range results {
-		fmt.Fprintf(w, "  [%d поток(ов)] операций=%d, время=%s, min=%s, среднее=%s, max=%s\n",
+		outf("  [%d поток(ов)] операций=%d, время=%s, min=%s, среднее=%s, max=%s\n",
 			r.Threads, r.Ops, r.Elapsed.Round(time.Millisecond), ms(r.Min), ms(r.Mean), ms(r.Max))
 	}
 }

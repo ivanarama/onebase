@@ -279,7 +279,7 @@ func installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSo
 		return fmt.Errorf("не удалось записать %s (запустите с sudo): %w", unitPath, err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer removeTemp(tmpPath)
 	// The ExecStart line may contain a PostgreSQL DSN with credentials.
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()

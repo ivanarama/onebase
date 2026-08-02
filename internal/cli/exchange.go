@@ -198,7 +198,7 @@ func exchangeInitToken(cmd *cobra.Command) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("чтение token-file: %w", err)
 		}
-		defer f.Close()
+		defer closeRead("файл обмена", f)
 		const maxTokenBytes = 64 << 10
 		data, err := io.ReadAll(io.LimitReader(f, maxTokenBytes+1))
 		if err != nil {
@@ -260,7 +260,7 @@ func readExchangePackage(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeRead("файл обмена", f)
 	data, err := io.ReadAll(io.LimitReader(f, exchange.MaxPackageBytes+1))
 	if err != nil {
 		return nil, err

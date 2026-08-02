@@ -174,7 +174,7 @@ func emitReport(cmd *cobra.Command, res ui.TestRunResult, format string) error {
 	if err != nil {
 		return fmt.Errorf("создать файл отчёта %q: %w", outPath, err)
 	}
-	defer f.Close()
+	defer closeRead("файл отчёта", f)
 	if err := ui.WriteReport(f, res, format); err != nil {
 		return err
 	}

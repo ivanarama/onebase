@@ -98,8 +98,8 @@ func (bc *baseConfig) materializeDBConfig(ctx context.Context) (string, func(), 
 	}
 	if err := configdb.New(db).ExportToDir(ctx, tmp); err != nil {
 		db.Close()
-		os.RemoveAll(tmp)
+		removeTemp(tmp)
 		return "", nil, err
 	}
-	return tmp, func() { db.Close(); os.RemoveAll(tmp) }, nil
+	return tmp, func() { db.Close(); removeTemp(tmp) }, nil
 }

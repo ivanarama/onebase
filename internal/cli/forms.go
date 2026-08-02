@@ -70,17 +70,17 @@ func init() {
 	formsConvertFromCmd.Flags().String("form-name", "", "имя создаваемой формы (по умолчанию из имени каталога)")
 	formsConvertFromCmd.Flags().String("form-kind", "custom", "тип формы: object|list|choice|folder|custom")
 	formsConvertFromCmd.Flags().String("dst", "", "корень проекта OneBase (внутри будет создан forms/<entity>/)")
-	formsConvertFromCmd.MarkFlagRequired("src")
-	formsConvertFromCmd.MarkFlagRequired("entity")
-	formsConvertFromCmd.MarkFlagRequired("dst")
+	mustMarkRequired(formsConvertFromCmd, "src")
+	mustMarkRequired(formsConvertFromCmd, "entity")
+	mustMarkRequired(formsConvertFromCmd, "dst")
 
 	formsConvertToCmd.Flags().String("src", "", "путь к .form.yaml в проекте OneBase")
 	formsConvertToCmd.Flags().String("dst", "", "целевой каталог Forms/<X>/Ext в выгрузке 1С")
-	formsConvertToCmd.MarkFlagRequired("src")
-	formsConvertToCmd.MarkFlagRequired("dst")
+	mustMarkRequired(formsConvertToCmd, "src")
+	mustMarkRequired(formsConvertToCmd, "dst")
 
 	formsValidateCmd.Flags().String("src", "", "путь к .form.yaml")
-	formsValidateCmd.MarkFlagRequired("src")
+	mustMarkRequired(formsValidateCmd, "src")
 
 	formsCmd.AddCommand(formsConvertFromCmd)
 	formsCmd.AddCommand(formsConvertToCmd)

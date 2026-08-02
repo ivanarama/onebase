@@ -72,7 +72,12 @@ func runCheckWithOptions(cmd *cobra.Command, opts configcheck.Options) error {
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(res)
+		// В отличие от человекочитаемого вывода, этот JSON разбирает CI:
+		// недописанный отчёт там превратится в ошибку разбора на чужой
+		// стороне. Лучше упасть здесь, с понятной причиной.
+		if err := enc.Encode(res); err != nil {
+			return err
+		}
 	} else {
 		printIssuesText(res)
 	}

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func TestRequireOneDBTarget(t *testing.T) {

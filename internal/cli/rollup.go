@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -118,7 +116,7 @@ func runRollup(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("предпросмотр свёртки: %w", err)
 	}
 	outln("Предпросмотр свёртки:")
-	printRollupReport(os.Stdout, prev, keepDocs)
+	printRollupReport(prev, keepDocs)
 
 	if dryRun {
 		outln("\n(--dry-run: изменения не внесены)")
@@ -128,8 +126,14 @@ func runRollup(cmd *cobra.Command, _ []string) error {
 	if !assumeYes {
 		outf("\nВНИМАНИЕ: операция необратима. Сделайте резервную копию (onebase backup).\nПродолжить свёртку на %s? [y/N]: ",
 			date.Format("02.01.2006"))
+		// Ошибку чтения обрабатываем тем же путём, что и любой ответ, кроме
+		// «y»: при закрытом stdin (запуск из скрипта без --yes) ans остаётся
+		// пустым, и необратимая свёртка отменяется. Это и есть нужное
+		// поведение — сомнение трактуется как отказ.
 		var ans string
-		fmt.Scanln(&ans)
+		if _, serr := fmt.Scanln(&ans); serr != nil {
+			ans = ""
+		}
 		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
 			outln("Отменено.")
 			return nil
@@ -141,7 +145,7 @@ func runRollup(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("свёртка: %w", err)
 	}
 	outln("\nГотово:")
-	printRollupReport(os.Stdout, rep, keepDocs)
+	printRollupReport(rep, keepDocs)
 	return nil
 }
 
@@ -167,34 +171,36 @@ func selectedRegisterNames(all []*metadata.Register, arg string) []string {
 	return out
 }
 
-func printRollupReport(w io.Writer, rep storage.RollupReport, keepDocs bool) {
-	fmt.Fprintf(w, "  Дата свёртки: %s\n", rep.Cutoff.Format("02.01.2006"))
+// Отчёт всегда идёт в stdout — печатаем через outf/outln, где решение об
+// ошибках записи принято один раз (см. output.go).
+func printRollupReport(rep storage.RollupReport, keepDocs bool) {
+	outf("  Дата свёртки: %s\n", rep.Cutoff.Format("02.01.2006"))
 	for _, r := range rep.Registers {
-		fmt.Fprintf(w, "  %-32s движений: %6d  опорных остатков: %5d\n",
+		outf("  %-32s движений: %6d  опорных остатков: %5d\n",
 			r.Name, r.FoldedMovements, r.OpeningRows)
 	}
 	for _, r := range rep.AccountRegisters {
 		if r.Note != "" {
-			fmt.Fprintf(w, "  %-32s движений: %6d  — %s\n", r.Name, r.FoldedMovements, r.Note)
+			outf("  %-32s движений: %6d  — %s\n", r.Name, r.FoldedMovements, r.Note)
 		} else {
-			fmt.Fprintf(w, "  %-32s движений: %6d  опорных проводок: %5d\n",
+			outf("  %-32s движений: %6d  опорных проводок: %5d\n",
 				r.Name, r.FoldedMovements, r.OpeningRows)
 		}
 	}
 	for _, r := range rep.InfoRegisters {
 		if r.Note != "" {
-			fmt.Fprintf(w, "  %-32s — %s\n", r.Name, r.Note)
+			outf("  %-32s — %s\n", r.Name, r.Note)
 		} else {
-			fmt.Fprintf(w, "  %-32s обрезано строк: %6d  срезов оставлено: %5d\n",
+			outf("  %-32s обрезано строк: %6d  срезов оставлено: %5d\n",
 				r.Name, r.FoldedMovements, r.OpeningRows)
 		}
 	}
 	if keepDocs {
-		fmt.Fprintln(w, "  Документы: снять проведение (не удалять)")
+		outln("  Документы: снять проведение (не удалять)")
 	} else {
-		fmt.Fprintf(w, "  Документы к удалению: %d\n", rep.DeletedDocs)
+		outf("  Документы к удалению: %d\n", rep.DeletedDocs)
 		if rep.DanglingRefs > 0 {
-			fmt.Fprintf(w, "  ⚠ на удаляемые документы ссылается сохраняемых записей: %d — свёртка будет отменена (используйте --keep-documents)\n", rep.DanglingRefs)
+			outf("  ⚠ на удаляемые документы ссылается сохраняемых записей: %d — свёртка будет отменена (используйте --keep-documents)\n", rep.DanglingRefs)
 		}
 	}
 }

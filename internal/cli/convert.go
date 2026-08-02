@@ -24,8 +24,8 @@ func init() {
 	convertCmd.Flags().String("from", "1c-xml", "source format: 1c-xml")
 	convertCmd.Flags().String("dir", "", "path to the 1C:Enterprise XML export directory")
 	convertCmd.Flags().String("out", "", "output directory for the onebase project")
-	convertCmd.MarkFlagRequired("dir")
-	convertCmd.MarkFlagRequired("out")
+	mustMarkRequired(convertCmd, "dir")
+	mustMarkRequired(convertCmd, "out")
 }
 
 func runConvert(cmd *cobra.Command, _ []string) error {
