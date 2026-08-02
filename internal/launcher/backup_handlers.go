@@ -302,7 +302,9 @@ func (h *handler) backupSettings(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	r.ParseForm()
+	if failForm(w, r) {
+		return
+	}
 	type backupCfg struct {
 		Enabled   bool   `yaml:"enabled"`
 		Schedule  string `yaml:"schedule"`
