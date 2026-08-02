@@ -444,7 +444,13 @@ type SessionMeta struct {
 // (п. 1.6) может вытеснить старейшую enterprise-сессию.
 func (r *Repo) CreateSession(ctx context.Context, userID string, meta SessionMeta) (string, error) {
 	d := r.db.Dialect()
-	r.DeleteExpiredSessions(ctx)
+	// Уборка истёкших — попутная housekeeping-операция перед выдачей новой
+	// сессии. Её сбой не должен мешать входу: пользователь войдёт, а таблица
+	// подчистится при следующей попытке. Но молчать нельзя — постоянные сбои
+	// означают неограниченный рост _sessions.
+	if err := r.DeleteExpiredSessions(ctx); err != nil {
+		authLog().Warn("не удалось подчистить истёкшие сессии", "err", err)
+	}
 	if meta.Kind == SessionKindEnterprise {
 		r.enforceSessionLimit(ctx, userID, meta)
 	}
@@ -542,9 +548,14 @@ func (r *Repo) enforceSessionLimit(ctx context.Context, userID string, meta Sess
 	if _, err := r.db.Exec(ctx, delQ, userID, SessionKindEnterprise, excess); err != nil {
 		return
 	}
-	// Аудит вытеснения — актор сам пользователь: это его новый вход.
+	// Аудит вытеснения — актор сам пользователь: это его новый вход. Логин нужен
+	// лишь для читаемости записи: если прочитать не удалось, пишем аудит с
+	// пустым логином, но по user_id событие всё равно найдётся.
 	login := ""
-	r.db.QueryRow(ctx, fmt.Sprintf(`SELECT login FROM _users WHERE id = %s`, d.Placeholder(1)), userID).Scan(&login)
+	if err := r.db.QueryRow(ctx, fmt.Sprintf(`SELECT login FROM _users WHERE id = %s`,
+		d.Placeholder(1)), userID).Scan(&login); err != nil {
+		authLog().Debug("не удалось прочитать логин для аудита вытеснения сессии", "err", err)
+	}
 	r.db.LogAction(ctx, "session_displaced", "", login, userID, userID, login, meta.IP)
 }
 

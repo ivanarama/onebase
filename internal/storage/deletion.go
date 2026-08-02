@@ -80,7 +80,12 @@ type RefInfo struct {
 }
 
 // CheckRefs returns all entities/fields that reference the given object.
-func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, allEntities []*metadata.Entity) []RefInfo {
+//
+// Это предохранитель перед удалением, поэтому он обязан быть fail-closed.
+// Раньше ошибки Scan игнорировались: count оставался нулём, функция отвечала
+// «ссылок нет», и объект удалялся, ломая ссылочную целостность. Теперь сбой
+// любого подсчёта возвращается вызывающему коду, а тот отказывается удалять.
+func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, allEntities []*metadata.Entity) ([]RefInfo, error) {
 	d := db.dialect
 	idA := idArg(d, id)
 	var refs []RefInfo
@@ -91,10 +96,12 @@ func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, al
 			}
 			col := metadata.ColumnName(f)
 			var count int
-			db.QueryRow(ctx,
+			if err := db.QueryRow(ctx,
 				fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s",
 					metadata.TableName(e.Name), col, d.Placeholder(1)),
-				idA).Scan(&count)
+				idA).Scan(&count); err != nil {
+				return nil, fmt.Errorf("проверка ссылок %s.%s: %w", e.Name, f.Name, err)
+			}
 			if count > 0 {
 				refs = append(refs, RefInfo{EntityName: e.Name, FieldName: f.Name, Count: count})
 			}
@@ -107,9 +114,11 @@ func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, al
 				col := metadata.ColumnName(f)
 				table := metadata.TablePartTableName(e.Name, tp.Name)
 				var count int
-				db.QueryRow(ctx,
+				if err := db.QueryRow(ctx,
 					fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", table, col, d.Placeholder(1)),
-					idA).Scan(&count)
+					idA).Scan(&count); err != nil {
+					return nil, fmt.Errorf("проверка ссылок %s.%s.%s: %w", e.Name, tp.Name, f.Name, err)
+				}
 				if count > 0 {
 					refs = append(refs, RefInfo{
 						EntityName: e.Name + "." + tp.Name,
@@ -120,7 +129,7 @@ func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, al
 			}
 		}
 	}
-	return refs
+	return refs, nil
 }
 
 // ListMarked returns all records with deletion_mark=true for the given entity.

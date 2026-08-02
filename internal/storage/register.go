@@ -95,7 +95,11 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 		var recTypes []recTotal
 		for rows.Next() {
 			var rt recTotal
-			rows.Scan(&rt.recType, &rt.total)
+			// Сбойную строку пропускаем: нулевой recTotal дал бы статистику
+			// по несуществующему типу регистратора.
+			if err := rows.Scan(&rt.recType, &rt.total); err != nil {
+				continue
+			}
 			recTypes = append(recTypes, rt)
 		}
 		rows.Close()
@@ -112,9 +116,13 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 			if !exists {
 				count = rt.total
 			} else {
-				db.QueryRow(ctx, fmt.Sprintf(
+				// Не смогли посчитать — не сообщаем о сиротах: лучше
+				// недосказать, чем предложить удалить неизвестно что.
+				if err := db.QueryRow(ctx, fmt.Sprintf(
 					"SELECT COUNT(*) FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
-					table, d.Placeholder(1), tbl), rt.recType).Scan(&count)
+					table, d.Placeholder(1), tbl), rt.recType).Scan(&count); err != nil {
+					continue
+				}
 			}
 			if count > 0 {
 				stats = append(stats, OrphanStat{RegisterName: reg.Name, RecorderType: rt.recType, Count: count})
@@ -142,7 +150,12 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 		var types []string
 		for rows.Next() {
 			var t string
-			rows.Scan(&t)
+			// КРИТИЧНО: при сбое Scan строка t осталась бы пустой, и ниже
+			// выполнился бы DELETE ... WHERE recorder_type = '' — удаление,
+			// вызванное непрочитанной строкой. Пропускаем.
+			if err := rows.Scan(&t); err != nil {
+				continue
+			}
 			types = append(types, t)
 		}
 		rows.Close()
