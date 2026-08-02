@@ -62,7 +62,7 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	if err := applyAllMigrations(ctx, db, proj); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "migration complete")
+	outln("migration complete")
 	return nil
 }
 

@@ -178,7 +178,7 @@ func runExchangeInit(cmd *cobra.Command, _ []string) error {
 	if err := sp.db.SaveExchangeThisNode(sp.ctx, plan.Name, node); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Текущий узел для плана %q: %s\n", plan.Name, node)
+	outf("Текущий узел для плана %q: %s\n", plan.Name, node)
 	token, err := exchangeInitToken(cmd)
 	if err != nil {
 		return err
@@ -187,7 +187,7 @@ func runExchangeInit(cmd *cobra.Command, _ []string) error {
 		if err := sp.db.SaveExchangeToken(sp.ctx, plan.Name, token); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stdout, "Токен онлайн-обмена сохранён.")
+		outln("Токен онлайн-обмена сохранён.")
 	}
 	return nil
 }
@@ -300,7 +300,7 @@ func runExchangeDump(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("запись пакета: %w", err)
 	}
 	pkg, _ := exchange.ParsePackage(data)
-	fmt.Fprintf(os.Stdout, "План %q → узел %q: выгружено объектов %d (сообщение №%d) в %s\n",
+	outf("План %q → узел %q: выгружено объектов %d (сообщение №%d) в %s\n",
 		plan.Name, to, len(pkg.Objects), pkg.MessageNo, out)
 	return nil
 }
@@ -335,7 +335,7 @@ func runExchangeLoad(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Пакет плана %q от узла %q (сообщение №%d): применено %d, пропущено %d, удалено %d, конфликтов %d\n",
+	outf("Пакет плана %q от узла %q (сообщение №%d): применено %d, пропущено %d, удалено %d, конфликтов %d\n",
 		plan.Name, pkg.FromNode, pkg.MessageNo, res.Applied, res.Skipped, res.Deleted, res.Conflicts)
 	return nil
 }
@@ -365,13 +365,13 @@ func runExchangeStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "План обмена: %s\n", plan.Name)
+	outf("План обмена: %s\n", plan.Name)
 	if thisNode == "" {
-		fmt.Fprintln(os.Stdout, "Текущий узел: не задан — выполните `onebase exchange init`")
+		outln("Текущий узел: не задан — выполните `onebase exchange init`")
 	} else {
-		fmt.Fprintf(os.Stdout, "Текущий узел: %s\n", thisNode)
+		outf("Текущий узел: %s\n", thisNode)
 	}
-	fmt.Fprintln(os.Stdout, "\nУзлы (очередь = ждут выгрузки; отпр./подтв. — номера сообщений):")
+	outln("\nУзлы (очередь = ждут выгрузки; отпр./подтв. — номера сообщений):")
 	for _, n := range plan.Nodes {
 		peer, err := sp.db.GetExchangePeer(sp.ctx, plan.Name, n.Code)
 		if err != nil {
@@ -381,7 +381,7 @@ func runExchangeStatus(cmd *cobra.Command, _ []string) error {
 		if thisNode != "" && strings.EqualFold(n.Code, thisNode) {
 			mark = " ← этот узел"
 		}
-		fmt.Fprintf(os.Stdout, "  %-10s %-22s очередь=%d отпр.=%d подтв.=%d принято=%d%s\n",
+		outf("  %-10s %-22s очередь=%d отпр.=%d подтв.=%d принято=%d%s\n",
 			n.Code, n.Name, counts[n.Code], peer.SentNo, peer.AckNo, peer.RecvNo, mark)
 	}
 	return nil
@@ -431,10 +431,10 @@ func runExchangeSync(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "Синхронизация с %q (%s):\n", with, peer.URL)
-	fmt.Fprintf(os.Stdout, "  отправлено → у партнёра применено %d, пропущено %d, конфликтов %d\n",
+	outf("Синхронизация с %q (%s):\n", with, peer.URL)
+	outf("  отправлено → у партнёра применено %d, пропущено %d, конфликтов %d\n",
 		pushRes.Applied+pushRes.Deleted, pushRes.Skipped, pushRes.Conflicts)
-	fmt.Fprintf(os.Stdout, "  получено → у нас применено %d, пропущено %d, конфликтов %d\n",
+	outf("  получено → у нас применено %d, пропущено %d, конфликтов %d\n",
 		loadRes.Applied+loadRes.Deleted, loadRes.Skipped, loadRes.Conflicts)
 	return nil
 }

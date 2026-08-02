@@ -27,8 +27,8 @@ var ibasesListCmd = &cobra.Command{
 			return err
 		}
 		if len(bases) == 0 {
-			fmt.Fprintln(os.Stdout, "No information bases registered.")
-			fmt.Fprintln(os.Stdout, "Use 'onebase start' or 'onebase ibases add' to add one.")
+			outln("No information bases registered.")
+			outln("Use 'onebase start' or 'onebase ibases add' to add one.")
 			return nil
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -85,7 +85,7 @@ var ibasesAddCmd = &cobra.Command{
 		if err := store.Add(b); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stdout, "added: %s (%s)\n", b.Name, b.ID)
+		outf("added: %s (%s)\n", b.Name, b.ID)
 		return nil
 	},
 }
@@ -105,7 +105,7 @@ var ibasesRemoveCmd = &cobra.Command{
 		if err := store.Remove(id); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stdout, "removed:", id)
+		outln("removed:", id)
 		return nil
 	},
 }

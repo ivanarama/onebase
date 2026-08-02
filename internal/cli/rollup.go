@@ -117,22 +117,21 @@ func runRollup(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("предпросмотр свёртки: %w", err)
 	}
-	fmt.Fprintln(os.Stdout, "Предпросмотр свёртки:")
+	outln("Предпросмотр свёртки:")
 	printRollupReport(os.Stdout, prev, keepDocs)
 
 	if dryRun {
-		fmt.Fprintln(os.Stdout, "\n(--dry-run: изменения не внесены)")
+		outln("\n(--dry-run: изменения не внесены)")
 		return nil
 	}
 
 	if !assumeYes {
-		fmt.Fprintf(os.Stdout,
-			"\nВНИМАНИЕ: операция необратима. Сделайте резервную копию (onebase backup).\nПродолжить свёртку на %s? [y/N]: ",
+		outf("\nВНИМАНИЕ: операция необратима. Сделайте резервную копию (onebase backup).\nПродолжить свёртку на %s? [y/N]: ",
 			date.Format("02.01.2006"))
 		var ans string
 		fmt.Scanln(&ans)
 		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			fmt.Fprintln(os.Stdout, "Отменено.")
+			outln("Отменено.")
 			return nil
 		}
 	}
@@ -141,7 +140,7 @@ func runRollup(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("свёртка: %w", err)
 	}
-	fmt.Fprintln(os.Stdout, "\nГотово:")
+	outln("\nГотово:")
 	printRollupReport(os.Stdout, rep, keepDocs)
 	return nil
 }

@@ -1,12 +1,11 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -28,9 +27,9 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	if initListTemplate {
-		fmt.Fprintln(os.Stdout, "Available templates:")
+		outln("Available templates:")
 		for _, t := range project.ListTemplates() {
-			fmt.Fprintf(os.Stdout, "  %-12s %s\n", t.Name, t.Description)
+			outf("  %-12s %s\n", t.Name, t.Description)
 		}
 		return nil
 	}
@@ -53,7 +52,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		writeAIGuide(dir)
-		fmt.Fprintf(os.Stdout, "project initialized from template %q in %s\n", initTemplate, dir)
+		outf("project initialized from template %q in %s\n", initTemplate, dir)
 		return nil
 	}
 
@@ -61,7 +60,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	writeAIGuide(dir)
-	fmt.Fprintf(os.Stdout, "project initialized in %s\n", dir)
+	outf("project initialized in %s\n", dir)
 	return nil
 }
 

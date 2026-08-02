@@ -137,10 +137,10 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return enc.Encode(out)
 	}
 	if showSQL {
-		fmt.Fprintf(os.Stdout, "SQL:\n%s\nARGS: %v\n\n", sqlText, compiled.Args)
+		outf("SQL:\n%s\nARGS: %v\n\n", sqlText, compiled.Args)
 	}
 	printRowsText(cols, rows)
-	fmt.Fprintf(os.Stdout, "\n%d строк, %s\n", len(rows), elapsed)
+	outf("\n%d строк, %s\n", len(rows), elapsed)
 	return nil
 }
 
@@ -217,13 +217,13 @@ func printRowsText(cols []string, rows []map[string]any) {
 	if len(cols) == 0 {
 		return
 	}
-	fmt.Fprintln(os.Stdout, strings.Join(cols, "\t"))
+	outln(strings.Join(cols, "\t"))
 	for _, row := range rows {
 		vals := make([]string, len(cols))
 		for i, col := range cols {
 			vals[i] = formatCLIValue(row[col])
 		}
-		fmt.Fprintln(os.Stdout, strings.Join(vals, "\t"))
+		outln(strings.Join(vals, "\t"))
 	}
 }
 

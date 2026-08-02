@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -85,7 +84,7 @@ func runRecalcTotals(cmd *cobra.Command, _ []string) error {
 		if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
 			return fmt.Errorf("recalc totals %s: %w", reg.Name, err)
 		}
-		fmt.Fprintf(os.Stdout, "итоги пересчитаны: %s (%s)\n", reg.Name, metadata.RegisterTotalsTableName(reg.Name))
+		outf("итоги пересчитаны: %s (%s)\n", reg.Name, metadata.RegisterTotalsTableName(reg.Name))
 		done++
 	}
 	for _, ar := range proj.AccountRegisters {
@@ -99,9 +98,9 @@ func runRecalcTotals(cmd *cobra.Command, _ []string) error {
 		if err := db.RecalcAccountRegisterTotals(ctx, ar); err != nil {
 			return fmt.Errorf("recalc account totals %s: %w", ar.Name, err)
 		}
-		fmt.Fprintf(os.Stdout, "итоги пересчитаны: %s (%s)\n", ar.Name, metadata.AccountRegTotalsTableName(ar.Name))
+		outf("итоги пересчитаны: %s (%s)\n", ar.Name, metadata.AccountRegTotalsTableName(ar.Name))
 		done++
 	}
-	fmt.Fprintf(os.Stdout, "готово: пересчитано %d, пропущено без итогов %d\n", done, skipped)
+	outf("готово: пересчитано %d, пропущено без итогов %d\n", done, skipped)
 	return nil
 }

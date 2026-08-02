@@ -98,17 +98,17 @@ func runFormsValidate(cmd *cobra.Command, _ []string) error {
 	for _, w := range warns {
 		totals[w.Severity]++
 	}
-	fmt.Fprintf(os.Stdout, "Проверка %s\n", src)
-	fmt.Fprintf(os.Stdout, "  Errors: %d, Warnings: %d, Info: %d\n",
+	outf("Проверка %s\n", src)
+	outf("  Errors: %d, Warnings: %d, Info: %d\n",
 		totals[onec_forms.SeverityError], totals[onec_forms.SeverityWarn], totals[onec_forms.SeverityInfo])
 	for _, w := range warns {
-		fmt.Fprintf(os.Stdout, "  %s\n", w)
+		outf("  %s\n", w)
 	}
 	if totals[onec_forms.SeverityError] > 0 {
 		// cobra превратит non-nil error в exit code 1.
 		return fmt.Errorf("обнаружены ошибки в форме (%d)", totals[onec_forms.SeverityError])
 	}
-	fmt.Fprintln(os.Stdout, "✓ Форма прошла валидацию.")
+	outln("✓ Форма прошла валидацию.")
 	return nil
 }
 
@@ -129,15 +129,15 @@ func runFormsConvertTo(cmd *cobra.Command, _ []string) error {
 		resourcesDir = ""
 	}
 
-	fmt.Fprintf(os.Stdout, "Экспорт формы OneBase → 1С\n")
-	fmt.Fprintf(os.Stdout, "  YAML: %s\n", src)
+	outf("Экспорт формы OneBase → 1С\n")
+	outf("  YAML: %s\n", src)
 	if osPath != "" {
-		fmt.Fprintf(os.Stdout, "  Модуль: %s\n", osPath)
+		outf("  Модуль: %s\n", osPath)
 	}
 	if resourcesDir != "" {
-		fmt.Fprintf(os.Stdout, "  Ресурсы: %s\n", resourcesDir)
+		outf("  Ресурсы: %s\n", resourcesDir)
 	}
-	fmt.Fprintf(os.Stdout, "  → %s\n", dst)
+	outf("  → %s\n", dst)
 
 	report, err := onec_forms.ExportToOneC(onec_forms.ExportOptions{
 		YAMLPath:     src,
@@ -155,12 +155,12 @@ func runFormsConvertTo(cmd *cobra.Command, _ []string) error {
 		totals[w.Severity]++
 		byCode[w.Code]++
 	}
-	fmt.Fprintln(os.Stdout, "\nГотово.")
-	fmt.Fprintf(os.Stdout, "  Каталог: %s\n", report.FormDir)
-	fmt.Fprintf(os.Stdout, "\nПредупреждения: info=%d, warn=%d, error=%d\n",
+	outln("\nГотово.")
+	outf("  Каталог: %s\n", report.FormDir)
+	outf("\nПредупреждения: info=%d, warn=%d, error=%d\n",
 		totals[onec_forms.SeverityInfo], totals[onec_forms.SeverityWarn], totals[onec_forms.SeverityError])
 	for code, count := range byCode {
-		fmt.Fprintf(os.Stdout, "  %s: %d\n", code, count)
+		outf("  %s: %d\n", code, count)
 	}
 	shown := 0
 	for _, w := range report.Warnings {
@@ -168,10 +168,10 @@ func runFormsConvertTo(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 		if shown >= 10 {
-			fmt.Fprintf(os.Stdout, "  ... (ещё %d, см. полный отчёт)\n", len(report.Warnings)-10)
+			outf("  ... (ещё %d, см. полный отчёт)\n", len(report.Warnings)-10)
 			break
 		}
-		fmt.Fprintf(os.Stdout, "  %s\n", w)
+		outf("  %s\n", w)
 		shown++
 	}
 	return nil
@@ -223,11 +223,11 @@ func runFormsConvertFrom(cmd *cobra.Command, _ []string) error {
 	dstOS := filepath.Join(formsRoot, formLower+".form.os")
 	dstResources := filepath.Join(formsRoot, formLower, "_resources")
 
-	fmt.Fprintf(os.Stdout, "Импорт формы 1С → OneBase\n")
-	fmt.Fprintf(os.Stdout, "  Form.xml: %s\n", xmlPath)
-	fmt.Fprintf(os.Stdout, "  Module.bsl: %s\n", bslPath)
-	fmt.Fprintf(os.Stdout, "  Items/: %s\n", itemsDir)
-	fmt.Fprintf(os.Stdout, "  → %s\n", dstYAML)
+	outf("Импорт формы 1С → OneBase\n")
+	outf("  Form.xml: %s\n", xmlPath)
+	outf("  Module.bsl: %s\n", bslPath)
+	outf("  Items/: %s\n", itemsDir)
+	outf("  → %s\n", dstYAML)
 
 	report, err := onec_forms.ImportFromOneC(onec_forms.ImportOptions{
 		XMLPath:         xmlPath,
@@ -252,20 +252,20 @@ func runFormsConvertFrom(cmd *cobra.Command, _ []string) error {
 		byCode[w.Code]++
 	}
 
-	fmt.Fprintln(os.Stdout, "\nГотово.")
+	outln("\nГотово.")
 	if report.YAMLPath != "" {
-		fmt.Fprintf(os.Stdout, "  YAML: %s\n", report.YAMLPath)
+		outf("  YAML: %s\n", report.YAMLPath)
 	}
 	if report.ModulePath != "" {
-		fmt.Fprintf(os.Stdout, "  Модуль: %s\n", report.ModulePath)
+		outf("  Модуль: %s\n", report.ModulePath)
 	}
 	if report.ResourcesDir != "" {
-		fmt.Fprintf(os.Stdout, "  Ресурсы: %s\n", report.ResourcesDir)
+		outf("  Ресурсы: %s\n", report.ResourcesDir)
 	}
-	fmt.Fprintf(os.Stdout, "\nПредупреждения: info=%d, warn=%d, error=%d\n",
+	outf("\nПредупреждения: info=%d, warn=%d, error=%d\n",
 		totals[onec_forms.SeverityInfo], totals[onec_forms.SeverityWarn], totals[onec_forms.SeverityError])
 	for code, count := range byCode {
-		fmt.Fprintf(os.Stdout, "  %s: %d\n", code, count)
+		outf("  %s: %d\n", code, count)
 	}
 
 	// Первые 10 warn/error — наружу для контекста.
@@ -275,14 +275,14 @@ func runFormsConvertFrom(cmd *cobra.Command, _ []string) error {
 			continue
 		}
 		if shown >= 10 {
-			fmt.Fprintf(os.Stdout, "  ... (ещё %d, см. полный отчёт)\n", len(report.Warnings)-10)
+			outf("  ... (ещё %d, см. полный отчёт)\n", len(report.Warnings)-10)
 			break
 		}
-		fmt.Fprintf(os.Stdout, "  %s\n", w)
+		outf("  %s\n", w)
 		shown++
 	}
 
-	fmt.Fprintf(os.Stdout, "\nПодсказка: откройте %s, ознакомьтесь с предупреждениями W040 в .form.os\n", report.YAMLPath)
-	fmt.Fprintf(os.Stdout, "и поправьте конструкции BSL, не имеющие аналогов в DSL OneBase.\n")
+	outf("\nПодсказка: откройте %s, ознакомьтесь с предупреждениями W040 в .form.os\n", report.YAMLPath)
+	outf("и поправьте конструкции BSL, не имеющие аналогов в DSL OneBase.\n")
 	return nil
 }

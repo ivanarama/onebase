@@ -82,7 +82,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		configSource = base.ConfigSource
 		dbType = base.DBType
 		sqlitePath = base.DBPath
-		fmt.Fprintf(os.Stdout, "Запуск базы: %s\n", base.Name)
+		outf("Запуск базы: %s\n", base.Name)
 	} else {
 		dir, _ = cmd.Flags().GetString("project")
 		dsn = dsnFromFlags(cmd)
@@ -421,9 +421,9 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		// Предохранитель сети (план 62): хуки уходят только при разрешённой сети.
 		d.SetGuard(func() bool { return dbRef.GetNetworkEnabled(context.Background()) })
 		uiCfg.Webhooks = d
-		fmt.Fprintf(os.Stdout, "веб-хуки: настроено %d\n", len(appCfg.Webhooks))
+		outf("веб-хуки: настроено %d\n", len(appCfg.Webhooks))
 		if !db.GetNetworkEnabled(ctx) {
-			fmt.Fprintln(os.Stdout, "  ⚠ сеть заблокирована предохранителем — хуки не будут отправляться,\n"+
+			outln("  ⚠ сеть заблокирована предохранителем — хуки не будут отправляться,\n" +
 				"    пока не включить «Разрешить сетевые операции» в конфигураторе")
 		}
 	}
@@ -480,7 +480,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 					runLog.Warn("watch publish failed", "err", err)
 					return
 				}
-				fmt.Fprintln(os.Stdout, "[watch] метаданные и расписания перезагружены; app.yaml/roles/locales требуют рестарта")
+				outln("[watch] метаданные и расписания перезагружены; app.yaml/roles/locales требуют рестарта")
 			}
 			watchDone, err := devserver.WatchProjectContext(watchCtx, dir, reload)
 			if err != nil {
@@ -494,7 +494,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 						<-watchDone
 					})
 				}
-				fmt.Fprintf(os.Stdout, "[watch] отслеживаем %s — metadata/DSL/scheduled подхватятся без рестарта\n", dir)
+				outf("[watch] отслеживаем %s — metadata/DSL/scheduled подхватятся без рестарта\n", dir)
 			}
 		case "database":
 			reloadCtx, reloadCancel := context.WithCancel(ctx)
@@ -511,7 +511,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 						runLog.Warn("db watch publish failed", "err", err)
 						return err
 					}
-					fmt.Fprintln(os.Stdout, "[watch] metadata/DSL/scheduled перезагружены из БД; app.yaml/roles/locales требуют рестарта")
+					outln("[watch] metadata/DSL/scheduled перезагружены из БД; app.yaml/roles/locales требуют рестарта")
 					return nil
 				})
 			}()
@@ -522,7 +522,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 					<-reloadDone
 				})
 			}
-			fmt.Fprintln(os.Stdout, "[watch] отслеживаем версии конфигурации в БД — deploy подхватится без рестарта")
+			outln("[watch] отслеживаем версии конфигурации в БД — deploy подхватится без рестарта")
 		}
 	}
 
@@ -534,9 +534,9 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		sched.Start(schedCtx)
 	}()
 
-	fmt.Fprintf(os.Stdout, "onebase running on %s:%d\n", host, port)
+	outf("onebase running on %s:%d\n", host, port)
 	if srv.H2CEnabled() {
-		fmt.Fprintln(os.Stdout, "  HTTP/2 без TLS (h2c) включён для апстрима (ONEBASE_H2C) — см. docs/reverse-proxy.md")
+		outln("  HTTP/2 без TLS (h2c) включён для апстрима (ONEBASE_H2C) — см. docs/reverse-proxy.md")
 	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

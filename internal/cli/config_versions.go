@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -103,11 +102,11 @@ func runConfigVersions(cmd *cobra.Command, _ []string) error {
 		return enc.Encode(versions)
 	}
 	if len(versions) == 0 {
-		fmt.Fprintln(os.Stdout, "Версий нет")
+		outln("Версий нет")
 		return nil
 	}
 	for _, v := range versions {
-		fmt.Fprintf(os.Stdout, "%s  %s  %s  %s\n", v.ID, v.CreatedAt.Format("2006-01-02 15:04:05"), v.AuthorLogin, v.Message)
+		outf("%s  %s  %s  %s\n", v.ID, v.CreatedAt.Format("2006-01-02 15:04:05"), v.AuthorLogin, v.Message)
 	}
 	return nil
 }
@@ -128,11 +127,11 @@ func runConfigDiff(cmd *cobra.Command, args []string) error {
 		return enc.Encode(diff)
 	}
 	if len(diff) == 0 {
-		fmt.Fprintln(os.Stdout, "Различий нет")
+		outln("Различий нет")
 		return nil
 	}
 	for _, d := range diff {
-		fmt.Fprintf(os.Stdout, "%s  %s\n", d.Kind, d.Path)
+		outf("%s  %s\n", d.Kind, d.Path)
 	}
 	return nil
 }
@@ -153,6 +152,6 @@ func runConfigRollback(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(v)
 	}
-	fmt.Fprintf(os.Stdout, "Откат выполнен. Новая версия: %s (%s)\n", v.ID, v.Message)
+	outf("Откат выполнен. Новая версия: %s (%s)\n", v.ID, v.Message)
 	return nil
 }

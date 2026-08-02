@@ -30,7 +30,7 @@ func init() {
 
 func runSchema(cmd *cobra.Command, args []string) error {
 	if list, _ := cmd.Flags().GetBool("list"); list {
-		fmt.Fprintln(os.Stdout, strings.Join(schemaKinds(), "\n"))
+		outln(strings.Join(schemaKinds(), "\n"))
 		return nil
 	}
 	kind, _ := cmd.Flags().GetString("kind")
@@ -151,21 +151,21 @@ func allSchemas() map[string]map[string]any {
 			"required":             []string{"name"},
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"name":           stringSchema("Имя объекта"),
-				"title":          stringSchema("Синоним"),
-				"description":    stringSchema("Описание объекта"),
-				"titles":         stringMapSchema(),
-				"fields":         arrayOf(field),
-				"tableparts":     arrayOf(tablePart),
+				"name":                  stringSchema("Имя объекта"),
+				"title":                 stringSchema("Синоним"),
+				"description":           stringSchema("Описание объекта"),
+				"titles":                stringMapSchema(),
+				"fields":                arrayOf(field),
+				"tableparts":            arrayOf(tablePart),
 				"posting":               map[string]any{"type": "boolean"},
 				"post_caption":          stringSchema("Подпись кнопки проведения (пусто → «Провести»)"),
 				"post_and_close_hidden": map[string]any{"type": "boolean"},
 				"hierarchical":          map[string]any{"type": "boolean"},
-				"hierarchy_kind": stringSchema("folders_and_items|items_only"),
-				"based_on":       arrayOf(stringSchema("Имя исходного объекта")),
-				"list_form":      arrayOf(stringSchema("Имя поля")),
-				"item_form":      arrayOf(stringSchema("Имя поля")),
-				"list_mode":      stringSchema("pages|feed"),
+				"hierarchy_kind":        stringSchema("folders_and_items|items_only"),
+				"based_on":              arrayOf(stringSchema("Имя исходного объекта")),
+				"list_form":             arrayOf(stringSchema("Имя поля")),
+				"item_form":             arrayOf(stringSchema("Имя поля")),
+				"list_mode":             stringSchema("pages|feed"),
 				"numerator": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

@@ -5,17 +5,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/ivantit66/onebase/internal/gengen"
+	"github.com/spf13/cobra"
 )
 
 var (
-	genPrompt   string
-	genOutput   string
-	genDomain   string
-	genList     bool
-	genAddons   []string
-	genMerge    bool
+	genPrompt string
+	genOutput string
+	genDomain string
+	genList   bool
+	genAddons []string
+	genMerge  bool
 )
 
 var generateCmd = &cobra.Command{
@@ -43,10 +43,10 @@ func init() {
 
 func runGenerate(cmd *cobra.Command, args []string) error {
 	if genList {
-		fmt.Fprintln(os.Stdout, "Доступные домены:")
+		outln("Доступные домены:")
 		domains := gengen.AvailableDomains()
 		for name, keywords := range domains {
-			fmt.Fprintf(os.Stdout, "  %-14s %s\n", name, keywords[0]+", "+keywords[1])
+			outf("  %-14s %s\n", name, keywords[0]+", "+keywords[1])
 		}
 		return nil
 	}
@@ -125,15 +125,15 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// 5. Success
-	fmt.Fprintf(os.Stdout, "✓ Проект сгенерирован в %s\n", outDir)
-	fmt.Fprintf(os.Stdout, "  Домен: %s\n", result.Domain)
-	fmt.Fprintf(os.Stdout, "  Шаблон: %s\n", result.Template)
+	outf("✓ Проект сгенерирован в %s\n", outDir)
+	outf("  Домен: %s\n", result.Domain)
+	outf("  Шаблон: %s\n", result.Template)
 	if len(genAddons) > 0 {
-		fmt.Fprintf(os.Stdout, "  Аддоны: %v\n", genAddons)
+		outf("  Аддоны: %v\n", genAddons)
 	}
-	fmt.Fprintf(os.Stdout, "\nЗапуск:\n")
+	outf("\nЗапуск:\n")
 	absPath, _ := filepath.Abs(outDir)
-	fmt.Fprintf(os.Stdout, "  onebase run --project %s --sqlite %s.db\n", absPath, result.Domain)
+	outf("  onebase run --project %s --sqlite %s.db\n", absPath, result.Domain)
 
 	return nil
 }
@@ -173,34 +173,34 @@ func runGenerateMerge(outDir string, result *gengen.AnalyzeResult) error {
 
 // reportMergeDiff compares two manifests and prints what was added.
 func reportMergeDiff(before, after *gengen.ExistingManifest, result *gengen.AnalyzeResult, outDir string) {
-	fmt.Fprintf(os.Stdout, "✓ Сущности добавлены в %s\n", result.Domain)
-	fmt.Fprintf(os.Stdout, "  Домен: %s\n\n", result.Domain)
+	outf("✓ Сущности добавлены в %s\n", result.Domain)
+	outf("  Домен: %s\n\n", result.Domain)
 
 	// New catalogs
 	for name := range after.Catalogs {
 		if _, ok := before.Catalogs[name]; !ok {
-			fmt.Fprintf(os.Stdout, "  + Справочник: %s\n", name)
+			outf("  + Справочник: %s\n", name)
 		}
 	}
 
 	// New documents
 	for name := range after.Documents {
 		if _, ok := before.Documents[name]; !ok {
-			fmt.Fprintf(os.Stdout, "  + Документ: %s\n", name)
+			outf("  + Документ: %s\n", name)
 		}
 	}
 
 	// New enums
 	for name := range after.Enums {
 		if _, ok := before.Enums[name]; !ok {
-			fmt.Fprintf(os.Stdout, "  + Перечисление: %s\n", name)
+			outf("  + Перечисление: %s\n", name)
 		}
 	}
 
 	// New DSL files
 	for path := range after.DSLFiles {
 		if _, ok := before.DSLFiles[path]; !ok {
-			fmt.Fprintf(os.Stdout, "  + DSL: %s\n", path)
+			outf("  + DSL: %s\n", path)
 		}
 	}
 
@@ -216,7 +216,7 @@ func reportMergeDiff(before, after *gengen.ExistingManifest, result *gengen.Anal
 		}
 		for _, f := range afterCat.Fields {
 			if !beforeFields[f.Name] {
-				fmt.Fprintf(os.Stdout, "  + Поле %s → %s\n", catName, f.Name)
+				outf("  + Поле %s → %s\n", catName, f.Name)
 			}
 		}
 	}
@@ -232,14 +232,14 @@ func reportMergeDiff(before, after *gengen.ExistingManifest, result *gengen.Anal
 		}
 		for _, f := range afterDoc.Fields {
 			if !beforeFields[f.Name] {
-				fmt.Fprintf(os.Stdout, "  + Поле %s → %s\n", docName, f.Name)
+				outf("  + Поле %s → %s\n", docName, f.Name)
 			}
 		}
 	}
 
-	fmt.Fprintf(os.Stdout, "\nЗапуск:\n")
+	outf("\nЗапуск:\n")
 	absPath, _ := filepath.Abs(outDir)
-	fmt.Fprintf(os.Stdout, "  onebase run --project %s\n", absPath)
+	outf("  onebase run --project %s\n", absPath)
 }
 
 func dirExists(path string) bool {
