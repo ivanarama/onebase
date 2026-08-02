@@ -68,7 +68,12 @@ func TestExportUniversal_WriteErrorIsReported(t *testing.T) {
 	}
 	t.Logf("размер эталонного архива: %d байт", probe.n)
 
-	for _, limit := range []int{0, probe.n / 4, probe.n / 2, probe.n - 1} {
+	// Лимиты берём с запасом ниже измеренного размера. Побайтовой
+	// воспроизводимости у архива нет: META.txt содержит `date=` с текущим
+	// временем, и прогоны по разные стороны границы секунды сжимаются в разное
+	// число байт. Из-за limit = probe.n-1 тест упал на CI (эталон 4212, а
+	// следующая выгрузка уложилась в 4211 и завершилась успешно).
+	for _, limit := range []int{0, probe.n / 4, probe.n / 2, probe.n * 3 / 4} {
 		w := &errAfterWriter{limit: limit}
 		err := ExportUniversal(ctx, db, "file", t.TempDir(), "", "test", w)
 		if err == nil {
