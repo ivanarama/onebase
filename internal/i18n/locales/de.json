@@ -837,6 +837,7 @@
   "Нельзя восстановить %s-бэкап в %s-базу (%s). Создайте новую базу с типом БД %s или используйте совместимый формат (.obz с галочкой).": "Eine %s-Sicherung kann nicht in eine %s-Datenbank (%s) wiederhergestellt werden. Erstellen Sie eine neue Datenbank mit dem DB-Typ %s oder verwenden Sie das kompatible Format (.obz mit dem Häkchen).",
   "Ошибка восстановления БД": "Fehler bei der Datenbankwiederherstellung",
   "Ошибка импорта конфигурации": "Fehler beim Konfigurationsimport",
+  "Ошибка подготовки схемы конфигурации": "Fehler bei der Vorbereitung des Konfigurationsschemas",
   "Полное восстановление выполнено: база данных + конфигурация": "Vollständige Wiederherstellung abgeschlossen: Datenbank + Konfiguration",
   "Не удалось прочитать список форм": "Formularliste konnte nicht gelesen werden",
   "entity и name обязательны": "entity und name sind erforderlich",
