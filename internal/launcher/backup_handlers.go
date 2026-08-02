@@ -173,38 +173,23 @@ func extractValidatedArchive(dir string, files []*zip.File) error {
 	return nil
 }
 
+// loadBackupDirSetting читает backup.directory из config/app.yaml базы.
+//
+// Пустая строка означает «класть копии в каталог по умолчанию», поэтому
+// нечитаемый app.yaml здесь молча менял место хранения резервных копий:
+// пользователь настроил отдельный диск, а копии уходили в каталог базы.
+// Само поведение оставлено прежним — падать из-за этого нельзя, каталог нужен и
+// для показа настроек, — но причина теперь видна в журнале (внутри readAppYAML).
 func (h *handler) loadBackupDirSetting(b *Base) string {
-	if b.ConfigSource == "database" {
-		db, err := OpenDB(context.Background(), b)
-		if err != nil {
-			return ""
-		}
-		defer db.Close()
-		var content []byte
-		if err := db.QueryRow(context.Background(),
-			"SELECT content FROM _onebase_config WHERE path='config/app.yaml'").Scan(&content); err != nil {
-			return ""
-		}
-		var tmp struct {
-			Backup struct {
-				Directory string `yaml:"directory"`
-			} `yaml:"backup"`
-		}
-		yaml.Unmarshal(content, &tmp)
-		return tmp.Backup.Directory
-	}
-	cfgPath := filepath.Join(b.Path, "config", "app.yaml")
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return ""
-	}
-	var tmp struct {
+	var cfg struct {
 		Backup struct {
 			Directory string `yaml:"directory"`
 		} `yaml:"backup"`
 	}
-	yaml.Unmarshal(raw, &tmp)
-	return tmp.Backup.Directory
+	if err := readAppYAML(context.Background(), b, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Backup.Directory
 }
 
 // dumpForBase chooses the right backup mechanism based on b.DBType.

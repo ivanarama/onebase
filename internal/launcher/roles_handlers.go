@@ -727,11 +727,20 @@ func (h *handler) deleteRoleConfigFiles(ctx context.Context, b *Base, relPaths [
 // roleConfigFiles returns map[configPath]roleName for every roles/*.yaml entry.
 func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]string {
 	out := map[string]string{}
-	readName := func(content []byte) string {
+	// Имя роли из её YAML. Битый файл даёт пустое имя, и роль выпадает из
+	// карты: при переименовании её старый файл не попадёт в stalePaths и
+	// останется в конфигурации рядом с новым — две записи одной роли.
+	// Пропустить такой файл всё равно приходится (имени в нём нет), но молчать
+	// об этом незачем.
+	readName := func(path string, content []byte) string {
 		var hdr struct {
 			Name string `yaml:"name"`
 		}
-		yaml.Unmarshal(content, &hdr)
+		if err := yaml.Unmarshal(content, &hdr); err != nil {
+			respondLog().Warn("роль пропущена: файл не разобран",
+				"path", path, "err", err)
+			return ""
+		}
 		return hdr.Name
 	}
 	if b.ConfigSource == "database" {
@@ -751,7 +760,7 @@ func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]strin
 			if rows.Scan(&path, &content) != nil {
 				continue
 			}
-			out[path] = readName(content)
+			out[path] = readName(path, content)
 		}
 		return out
 	}
@@ -764,8 +773,12 @@ func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]strin
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		content, _ := os.ReadFile(filepath.Join(dir, e.Name()))
-		out["roles/"+e.Name()] = readName(content)
+		content, rerr := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec // G304: имя из os.ReadDir по каталогу roles/ самой базы
+		if rerr != nil {
+			respondLog().Warn("роль пропущена: файл не прочитан", "path", e.Name(), "err", rerr)
+			continue
+		}
+		out["roles/"+e.Name()] = readName("roles/"+e.Name(), content)
 	}
 	return out
 }
