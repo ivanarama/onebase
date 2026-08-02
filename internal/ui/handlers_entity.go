@@ -1644,8 +1644,14 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 							return err
 						}
 					}
+					// Ошибку удаления ТЧ нельзя проглатывать внутри транзакции:
+					// дальше удаляется сам объект, транзакция коммитится, и
+					// строки табличной части остаются сиротами — ссылаются на
+					// несуществующего родителя. Возврат ошибки откатывает всё.
 					for _, tp := range entity.TableParts {
-						s.store.Exec(ctx, "DELETE FROM "+metadata.TablePartTableName(entity.Name, tp.Name)+" WHERE parent_id = "+s.store.Dialect().Placeholder(1), id)
+						if _, err := s.store.Exec(ctx, "DELETE FROM "+metadata.TablePartTableName(entity.Name, tp.Name)+" WHERE parent_id = "+s.store.Dialect().Placeholder(1), id); err != nil {
+							return err
+						}
 					}
 					if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
 						return err
