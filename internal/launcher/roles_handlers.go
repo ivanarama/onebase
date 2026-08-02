@@ -393,10 +393,21 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(r.Context())
+	if err := repo.EnsureSchema(r.Context()); err != nil {
+		writeJSON(w, 500, map[string]any{"error": tr(lang, "Ошибка синхронизации") + ": " + err.Error()})
+		return
+	}
 	// If renamed, drop the old live role row (assignments cascade away).
+	//
+	// Сбой удаления нельзя пропускать дальше: старая строка роли переживёт
+	// переименование вместе со всеми назначениями, и пользователи останутся с
+	// правами роли, которой в конфигурации уже нет. В таблице ролей её при
+	// этом не видно — расхождение обнаружится только при разборе инцидента.
 	if origName != "" && origName != name {
-		repo.DeleteRoleByName(r.Context(), origName)
+		if err := repo.DeleteRoleByName(r.Context(), origName); err != nil {
+			writeJSON(w, 500, map[string]any{"error": tr(lang, "Ошибка синхронизации") + ": " + err.Error()})
+			return
+		}
 	}
 	if err := repo.SyncRoles(r.Context(), []*auth.Role{role}); err != nil {
 		writeJSON(w, 500, map[string]any{"error": tr(lang, "Ошибка синхронизации") + ": " + err.Error()})
@@ -460,9 +471,20 @@ func (h *handler) cfgAdminUserRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(r.Context())
+	// Ошибки чтения здесь нельзя проглатывать: при сбое списки остаются
+	// пустыми, и панель ниже рисует «Ролей пока нет. Создайте роль» — админ
+	// читает это как факт и заводит дубли уже существующих ролей. Пустой
+	// список снятых галочек так же неотличим от «у пользователя нет ролей».
+	if err := repo.EnsureSchema(r.Context()); err != nil {
+		panelError(w, err)
+		return
+	}
 
-	users, _ := repo.List(r.Context())
+	users, err := repo.List(r.Context())
+	if err != nil {
+		panelError(w, err)
+		return
+	}
 	var login, fullName string
 	for _, u := range users {
 		if u.ID == uid {
@@ -471,8 +493,16 @@ func (h *handler) cfgAdminUserRoles(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	allRoles, _ := repo.ListRoles(r.Context())
-	assigned, _ := repo.GetUserRoleIDs(r.Context(), uid)
+	allRoles, err := repo.ListRoles(r.Context())
+	if err != nil {
+		panelError(w, err)
+		return
+	}
+	assigned, err := repo.GetUserRoleIDs(r.Context(), uid)
+	if err != nil {
+		panelError(w, err)
+		return
+	}
 
 	title := escHTML(login)
 	if fullName != "" {
@@ -554,16 +584,53 @@ func (h *handler) cfgAdminUserRolesSave(w http.ResponseWriter, r *http.Request) 
 	for _, id := range req.RoleIDs {
 		selected[id] = true
 	}
-	current, _ := repo.GetUserRoleIDs(r.Context(), req.UserID)
-	allRoles, _ := repo.ListRoles(r.Context())
+	// Диф считается от текущего состояния, поэтому сбой чтения тут опаснее
+	// сбоя записи: при пустом current ни одна роль не попадёт в ветку снятия,
+	// цикл отработает «успешно», и админ получит {"ok":true} на запрос, где он
+	// снимал роль. Пустой allRoles точно так же превращает сохранение в no-op.
+	current, err := repo.GetUserRoleIDs(r.Context(), req.UserID)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	allRoles, err := repo.ListRoles(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	// Транзакции auth.Repo наружу не даёт, поэтому отказ на середине оставляет
+	// часть ролей применённой. Поэтому в ошибке называется роль, на которой
+	// всё встало: по ней видно, где остановился диф. Молчаливое {"ok":true}
+	// было бы хуже любого частичного результата — админ считал бы, что роль
+	// снята, а она осталась. Панель при следующем открытии перечитывает
+	// фактическое состояние из БД.
+	lang := resolveLang(r)
+	applyErr := func(roleName string, err error) {
+		writeJSON(w, 500, map[string]any{
+			"error": tr(lang, "Ошибка сохранения") + " (" + roleName + "): " + err.Error(),
+		})
+	}
 	for _, role := range allRoles {
 		if selected[role.ID] && !current[role.ID] {
-			repo.AssignRole(r.Context(), req.UserID, role.ID)
+			if err := repo.AssignRole(r.Context(), req.UserID, role.ID); err != nil {
+				applyErr(role.Name, err)
+				return
+			}
 		} else if !selected[role.ID] && current[role.ID] {
-			repo.UnassignRole(r.Context(), req.UserID, role.ID)
+			if err := repo.UnassignRole(r.Context(), req.UserID, role.ID); err != nil {
+				applyErr(role.Name, err)
+				return
+			}
 		}
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// panelError рисует ошибку вместо HTML-панели администрирования. Отдельная
+// функция, а не пустая панель: пустой список ролей или пользователей админ
+// читает как факт («ролей нет»), и это подталкивает его к неверному действию.
+func panelError(w http.ResponseWriter, err error) {
+	writeBody(w, []byte(`<div style="padding:16px;color:#c00">`+escHTML(err.Error())+`</div>`))
 }
 
 // ── Config-store helpers (file-based or _onebase_config table) ─────────────────

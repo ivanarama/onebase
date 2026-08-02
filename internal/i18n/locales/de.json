@@ -712,6 +712,7 @@
   "Имя виджета не задано": "Widget-Name nicht angegeben",
   "Укажите имя роли": "Geben Sie den Rollennamen an",
   "Ошибка синхронизации": "Synchronisationsfehler",
+  "Пароль изменён, но сессии пользователя не завершены": "Passwort geändert, aber die Sitzungen des Benutzers wurden nicht beendet",
   "Язык интерфейса": "Oberflächensprache",
   "По умолчанию (русский)": "Standard (Russisch)",
   "Язык по умолчанию для пользователей этой базы": "Standardsprache für Benutzer dieser Datenbank",

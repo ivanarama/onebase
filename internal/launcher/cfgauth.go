@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -128,6 +130,9 @@ func (h *handler) cfgLoginData(r *http.Request, b *Base) map[string]any {
 	return data
 }
 
+// cfgAuthLog — журнал операций входа/выхода конфигуратора.
+func cfgAuthLog() *slog.Logger { return oblog.Component("launcher.cfgauth") }
+
 func (h *handler) cfgLoginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	id := chi.URLParam(r, "id")
@@ -236,7 +241,17 @@ func (h *handler) cfgLogout(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		if b, berr := h.store.Get(id); berr == nil {
 			if db, dberr := getAuthDB(r.Context(), b); dberr == nil {
-				auth.NewRepo(db).DeleteSession(r.Context(), cookie.Value)
+				// Выход обязан сработать на стороне клиента при любом исходе:
+				// куку снимаем ниже безусловно, отказывать пользователю в
+				// выходе из-за недоступной БД нельзя. Но сбой удаления строки
+				// сессии — не мелочь: токен остаётся действительным до
+				// истечения, и скопированная кука продолжит работать. Поэтому
+				// Warn, а не Debug: это расхождение между тем, что видит
+				// пользователь, и тем, что на сервере.
+				if derr := auth.NewRepo(db).DeleteSession(r.Context(), cookie.Value); derr != nil {
+					cfgAuthLog().Warn("сессия конфигуратора не удалена на сервере при выходе — токен действителен до истечения",
+						"base", id, "err", derr)
+				}
 			}
 		}
 	}
@@ -300,7 +315,14 @@ func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 
 		// last_seen_at и для сессий конфигуратора — иначе они выглядят
 		// «мёртвыми» в админке активных сессий (план 78). Троттлится внутри.
-		repo.TouchSession(r.Context(), cookie.Value, time.Now())
+		//
+		// Единственное здесь по-настоящему best-effort действие: доступ уже
+		// разрешён проверкой выше, и отказывать в запросе из-за неудачной
+		// отметки времени было бы хуже самой неудачи. Debug, а не Warn: на
+		// каждом запросе, шум в журнале не окупает пользы.
+		if err := repo.TouchSession(r.Context(), cookie.Value, time.Now()); err != nil {
+			cfgAuthLog().Debug("не удалось обновить last_seen_at сессии конфигуратора", "err", err)
+		}
 
 		ctx := context.WithValue(r.Context(), cfgUserKey{}, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
