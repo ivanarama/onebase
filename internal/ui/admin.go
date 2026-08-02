@@ -230,7 +230,19 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 	s.addPasswordPolicyData(data)
 
 	if r.Method == http.MethodPost {
-		r.ParseForm()
+		// Сбой разбора формы игнорировать нельзя: дальше все FormValue вернут
+		// пустые строки, и обработчик воспримет это как осознанный ввод —
+		// сотрёт полное имя и снимет флаги (is_admin, show_in_list). То есть
+		// битый запрос молча понижал бы права пользователя. Отказываем явно.
+		//
+		// Разбор ограниченный (limitMultipartRequest + parseBoundedForm) — тот
+		// же приём, что на пути событий управляемых форм. Голый r.ParseForm()
+		// читает тело целиком без предела: gosec помечает это как G120.
+		s.limitMultipartRequest(w, r)
+		if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+			http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+			return
+		}
 		switch r.FormValue("action") {
 		case "update":
 			fullName := r.FormValue("full_name")
@@ -300,7 +312,11 @@ func (s *Server) adminUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.resolveLang(r)
-	r.ParseForm()
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 	login := r.FormValue("login")
 	password := r.FormValue("password")
 	fullName := r.FormValue("full_name")
@@ -376,7 +392,11 @@ func (s *Server) adminUserPasswd(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addPasswordPolicyData(data)
 	if r.Method == http.MethodPost {
-		r.ParseForm()
+		s.limitMultipartRequest(w, r)
+		if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+			http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+			return
+		}
 		newPwd := r.FormValue("new_password")
 		confirm := r.FormValue("confirm_password")
 		if newPwd != confirm {
@@ -437,7 +457,11 @@ func (s *Server) selfPasswd(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addPasswordPolicyData(data)
 	if r.Method == http.MethodPost {
-		r.ParseForm()
+		s.limitMultipartRequest(w, r)
+		if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+			http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+			return
+		}
 		oldPwd := r.FormValue("old_password")
 		newPwd := r.FormValue("new_password")
 		confirm := r.FormValue("confirm_password")
@@ -523,7 +547,11 @@ func (s *Server) adminSessionLimit(w http.ResponseWriter, r *http.Request) {
 		s.renderForbidden(w, r)
 		return
 	}
-	r.ParseForm()
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 	n, err := strconv.Atoi(strings.TrimSpace(r.FormValue("limit")))
 	if err != nil || n < 0 {
 		n = 0
@@ -614,7 +642,11 @@ func (s *Server) adminKickSession(w http.ResponseWriter, r *http.Request) {
 		s.renderForbidden(w, r)
 		return
 	}
-	r.ParseForm()
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 	publicID := r.FormValue("public_id")
 	if publicID != "" && s.authRepo != nil {
 		if err := s.authRepo.KickSession(r.Context(), publicID); err == nil {
@@ -793,7 +825,11 @@ func (s *Server) adminUserRolesUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := chi.URLParam(r, "id")
-	r.ParseForm()
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 	selectedRoleIDs := r.Form["role_id"]
 	selectedSet := make(map[string]bool, len(selectedRoleIDs))
 	for _, id := range selectedRoleIDs {

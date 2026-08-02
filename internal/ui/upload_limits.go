@@ -63,3 +63,8 @@ func uploadErrorStatus(err error) int {
 func (s *Server) uploadTooLargeText(lang string, limit int64) string {
 	return fmt.Sprintf(s.tr(lang, "файл превышает максимальный размер %d МБ"), limit>>20)
 }
+
+// defaultFormMemoryBytes — сколько памяти отводится под разбор обычной формы
+// (не загрузки файла). Админские и справочные формы состоят из коротких полей,
+// поэтому мегабайта достаточно; превышение вернёт 413, а не съест память.
+const defaultFormMemoryBytes = int64(1 << 20)

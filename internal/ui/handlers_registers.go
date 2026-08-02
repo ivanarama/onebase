@@ -289,7 +289,11 @@ func (s *Server) infoRegSubmit(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "inforeg", ir.Name, "write") {
 		return
 	}
-	r.ParseForm()
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 
 	var periodPtr *time.Time
 	if ir.Periodic {
@@ -361,7 +365,11 @@ func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "inforeg", ir.Name, "delete") {
 		return
 	}
-	r.ParseForm()
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
 
 	var periodPtr *time.Time
 	if ir.Periodic {
