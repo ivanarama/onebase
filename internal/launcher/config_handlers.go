@@ -56,7 +56,7 @@ func (h *handler) configImportZip(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный архив", file)
 
 	size, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -87,7 +87,7 @@ func (h *handler) configImportZip(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeTemp(tmpDir)
 
 	if err := validateArchiveEntries(tmpDir, reader.File, maxConfigArchiveExpanded); err != nil {
 		data := h.loadCfgData(r.Context(), b, "backup")

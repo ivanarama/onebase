@@ -793,7 +793,7 @@ func (h *handler) initDatabaseBase(ctx context.Context, b *Base, scaffold bool) 
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(tmpDir)
+		defer removeTemp(tmpDir)
 
 		if err := project.Scaffold(tmpDir, name); err != nil {
 			return i18nerr.Wrapf(err, "создание конфигурации")

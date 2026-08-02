@@ -116,7 +116,7 @@ func (r *Runner) Start(base *Base) error {
 	// только с этим токеном (см. ui.MountDebug). Конфигуратор-прокси его прикладывает.
 	debugToken, err := generateDebugToken()
 	if err != nil {
-		logFile.Close()
+		closeRead("журнал базы", logFile)
 		return fmt.Errorf("runner: debug token: %w", err)
 	}
 
@@ -127,7 +127,7 @@ func (r *Runner) Start(base *Base) error {
 	noWindow(cmd)
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
+		closeRead("журнал базы", logFile)
 		return fmt.Errorf("runner: start: %w", err)
 	}
 
@@ -135,8 +135,11 @@ func (r *Runner) Start(base *Base) error {
 	delete(r.exits, base.ID)
 
 	go func() {
-		cmd.Wait()
-		logFile.Close()
+		// Ошибку Wait не разбираем здесь намеренно: ненулевой код возврата —
+		// штатный исход для остановленной базы, а сам код и причину забирает
+		// recordExit из cmd.ProcessState. Возвращать её некуда — горутина.
+		bestEffort("дождаться завершения процесса базы", cmd.Wait())
+		closeRead("журнал базы", logFile)
 		r.recordExit(base.ID, cmd)
 	}()
 
@@ -226,7 +229,10 @@ func killByPort(port int) {
 		out, _ := exec.Command("lsof", "-ti", target).Output()
 		if pid := strings.TrimSpace(string(out)); pid != "" {
 			for _, p := range strings.Fields(pid) {
-				exec.Command("kill", "-9", p).Run()
+				// Результат не решающий: успех проверяется опросом порта в
+				// waitPortFree, а процесс мог завершиться и сам.
+				//nolint:gosec // G204: pid получен от lsof, не от пользователя
+				bestEffort("завершить процесс "+p, exec.Command("kill", "-9", p).Run())
 			}
 		}
 	case "linux":
@@ -236,7 +242,9 @@ func killByPort(port int) {
 			if idx := strings.Index(line, "pid="); idx >= 0 {
 				rest := line[idx+4:]
 				if end := strings.IndexAny(rest, ",\n "); end > 0 {
-					exec.Command("kill", "-9", rest[:end]).Run()
+					//nolint:gosec // G204: pid разобран из вывода ss, не от пользователя
+					bestEffort("завершить процесс "+rest[:end],
+						exec.Command("kill", "-9", rest[:end]).Run())
 				}
 			}
 		}
@@ -248,7 +256,9 @@ func killProc(p *os.Process) {
 	if p == nil {
 		return
 	}
-	p.Kill()
+	// Процесс мог завершиться сам между проверкой и Kill — это не ошибка
+	// вызывающего. Успех остановки подтверждается освобождением порта.
+	bestEffort("завершить процесс базы", p.Kill())
 }
 
 // portFree reports whether the TCP port is free on localhost.
@@ -257,8 +267,9 @@ func portFree(port int) bool {
 	if err != nil {
 		return false
 	}
-	ln.Close()
-	return true
+	// Порт свободен, только если слушатель ещё и закрылся: иначе мы сами его
+	// и заняли, а вызывающий получил бы «свободен» на занятый порт.
+	return ln.Close() == nil
 }
 
 // waitPortFree blocks until the port becomes free or timeout expires.
@@ -300,7 +311,10 @@ func (r *Runner) Healthy(base *Base) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	// Закрываем литерально, а не через closeRead: bodyclose (блокирующий
+	// линтер) распознаёт только прямой resp.Body.Close() и на обёртке
+	// сообщает «response body must be closed».
+	resp.Body.Close() //nolint:errcheck,gosec // G104: тело не читаем, закрытие здесь вторично
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -378,7 +392,9 @@ func (r *Runner) WaitReady(base *Base, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
-			resp.Body.Close()
+			// Литерально — по той же причине, что и в Healthy: bodyclose не
+			// видит закрытия через обёртку.
+			resp.Body.Close() //nolint:errcheck,gosec // G104: опрос готовности, тело не читаем
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -419,7 +435,7 @@ func tailFile(path string, n int) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer closeRead("файл журнала базы", f)
 	st, err := f.Stat()
 	if err != nil || st.Size() == 0 {
 		return ""

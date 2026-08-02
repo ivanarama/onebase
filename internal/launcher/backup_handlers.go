@@ -151,7 +151,7 @@ func extractValidatedArchive(dir string, files []*zip.File) error {
 		}
 		out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
-			rc.Close()
+			closeRead("запись архива", rc)
 			return err
 		}
 		n, copyErr := io.Copy(out, rc)
@@ -273,7 +273,7 @@ func (h *handler) backupDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	file := chi.URLParam(r, "file")
 	if fp, err := safeBackupPath(h.backupDir(b), file); err == nil {
-		os.Remove(fp)
+		removeTemp(fp)
 	}
 	data := h.loadCfgData(r.Context(), b, "backup")
 	data.FieldsSaved = true
@@ -356,7 +356,7 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный файл", file)
 
 	name := filepath.Base(header.Filename)
 	outPath, err := safeBackupPath(dir, name)
@@ -374,7 +374,7 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tmpPath := f.Name()
-	defer os.Remove(tmpPath)
+	defer removeTemp(tmpPath)
 	if _, err := io.Copy(f, file); err != nil {
 		_ = f.Close()
 		data := h.loadCfgData(r.Context(), b, "backup")
@@ -507,7 +507,7 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, tr(lang, "Ошибка создания временной папки")+": "+errText(r, err), 500)
 		return
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeTemp(tmpDir)
 
 	dumpPath, dumpErr := dumpForBase(r.Context(), b, tmpDir)
 	if dumpErr != nil {
@@ -575,7 +575,7 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный файл", file)
 	exchangeRestoreMode := backup.ExchangeRestoreDisasterRecovery
 	if strings.EqualFold(strings.TrimSpace(r.FormValue("exchange_mode")), string(backup.ExchangeRestoreClone)) {
 		exchangeRestoreMode = backup.ExchangeRestoreClone
@@ -609,7 +609,7 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeTemp(tmpDir)
 	if err := validateArchiveEntries(tmpDir, reader.File, maxFullArchiveExpanded); err != nil {
 		data := h.loadCfgData(r.Context(), b, "backup")
 		data.Error = tr(lang, "Неверный формат файла .obz") + ": " + err.Error()

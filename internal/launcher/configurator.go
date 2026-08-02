@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -61,7 +60,7 @@ func (h *handler) configuratorConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// clean previous conversion
-	os.RemoveAll(outDir)
+	removeTemp(outDir)
 
 	rep, err := converter.Convert(converter.Options{SourceDir: srcDir, OutDir: outDir})
 	if err != nil {

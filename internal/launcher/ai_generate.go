@@ -126,7 +126,7 @@ func newGenSession(srcDir string) (*genSession, error) {
 		return nil, err
 	}
 	if err := copyTree(srcDir, overlay); err != nil {
-		os.RemoveAll(overlay)
+		removeTemp(overlay)
 		return nil, err
 	}
 	return &genSession{srcDir: srcDir, overlay: overlay, changed: map[string]bool{}}, nil
@@ -134,7 +134,7 @@ func newGenSession(srcDir string) (*genSession, error) {
 
 func (g *genSession) close() {
 	if g.overlay != "" {
-		os.RemoveAll(g.overlay)
+		removeTemp(g.overlay)
 	}
 }
 
