@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/report"
 	"gopkg.in/yaml.v3"
 )
@@ -128,25 +129,45 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			saveErr = cerr
 		} else {
 			defer db.Close()
-			rows, _ := db.Query(r.Context(),
+			// Тот же разбор, что и при сохранении константы: непроверенный
+			// Query (при сбое rows == nil и Next паникует), пропуск кандидата
+			// на сбойном Scan и «ничего не нашли → saveErr остался nil» — три
+			// пути к отметке «сохранено» без сохранения.
+			rows, qerr := db.Query(r.Context(),
 				`SELECT path, content FROM _onebase_config WHERE path LIKE 'reports/%.yaml'`)
-			var targetPath string
-			var targetContent []byte
-			for rows.Next() {
-				var p string
-				var content []byte
-				rows.Scan(&p, &content)
-				var rep saveReport
-				if yaml.Unmarshal(content, &rep) == nil && rep.Name == repName {
-					targetPath = p
-					targetContent = content
-					break
+			if qerr != nil {
+				saveErr = qerr
+			} else {
+				var targetPath string
+				var targetContent []byte
+				for rows.Next() {
+					var p string
+					var content []byte
+					if serr := rows.Scan(&p, &content); serr != nil {
+						saveErr = serr
+						break
+					}
+					var rep saveReport
+					if yaml.Unmarshal(content, &rep) == nil && rep.Name == repName {
+						targetPath = p
+						targetContent = content
+						break
+					}
 				}
-			}
-			rows.Close()
-			if targetPath != "" {
-				if out, err := updateReportFile(targetContent); err == nil {
-					saveErr = cfgUpsert(r.Context(), db, targetPath, out)
+				rows.Close()
+				switch {
+				case saveErr != nil:
+				case rows.Err() != nil:
+					saveErr = rows.Err()
+				case targetPath == "":
+					saveErr = i18nerr.Errorf("отчёт %s не найден в конфигурации", repName)
+				default:
+					out, uerr := updateReportFile(targetContent)
+					if uerr != nil {
+						saveErr = uerr
+					} else {
+						saveErr = cfgUpsert(r.Context(), db, targetPath, out)
+					}
 				}
 			}
 		}

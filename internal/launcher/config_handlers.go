@@ -129,10 +129,16 @@ func (h *handler) configImportZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Migrate after import
-	h.runner.MigrateBase(r.Context(), b)
-
+	// Migrate after import.
+	//
+	// Конфигурация уже импортирована — откатывать её из-за миграции нельзя, но
+	// и молчать о несогласованной схеме тоже: базу после этого не запустить.
 	data := h.loadCfgData(r.Context(), b, "backup")
+	if _, migrateErr := h.runner.MigrateBase(r.Context(), b); migrateErr != nil {
+		data.Error = tr(resolveLang(r), "Данные восстановлены, но миграция схемы не выполнена") + ": " + migrateErr.Error()
+		renderCfg(w, r, data)
+		return
+	}
 	data.FieldsSaved = true
 	data.FieldsSavedEntity = "panel-backup"
 	data.BackupMessage = "Configuration imported from ZIP"
