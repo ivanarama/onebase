@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -515,10 +514,10 @@ func (h *handler) configuratorMigrate(w http.ResponseWriter, r *http.Request) {
 	out, runErr := h.runner.MigrateBase(r.Context(), b)
 	w.Header().Set("Content-Type", "application/json")
 	if runErr != nil {
-		json.NewEncoder(w).Encode(map[string]any{"output": out, "error": runErr.Error()})
+		respondJSONTo(w, map[string]any{"output": out, "error": runErr.Error()})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]any{"output": out, "error": ""})
+	respondJSONTo(w, map[string]any{"output": out, "error": ""})
 }
 
 // configuratorReorder сохраняет пользовательский порядок объектов одной группы
@@ -845,7 +844,7 @@ func render(w http.ResponseWriter, r *http.Request, name string, data map[string
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	respondJSONTo(w, v)
 }
 
 func (h *handler) browseDir(w http.ResponseWriter, r *http.Request) {

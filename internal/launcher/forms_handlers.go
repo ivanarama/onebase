@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"archive/zip"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -693,12 +692,12 @@ func (h *handler) configuratorFormsPreview(w http.ResponseWriter, r *http.Reques
 	fm, err := loader.NewManagedFormLoader().LoadFormFile(tmp.Name(), entity)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, previewErrorHTML(err.Error()))
+		writeBody(w, []byte(previewErrorHTML(err.Error())))
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, renderManagedFormPreview(fm))
+	writeBody(w, []byte(renderManagedFormPreview(fm)))
 }
 
 // configuratorFormsImport1C — multipart-загрузка ZIP с Form.xml + Module.bsl
@@ -886,5 +885,5 @@ func bytesReaderAt(b []byte) bytesAt { return bytesAt(b) }
 // и используется для админских ответов, поэтому здесь — отдельная утилита.
 func writeFormsJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(v)
+	respondJSONTo(w, v)
 }

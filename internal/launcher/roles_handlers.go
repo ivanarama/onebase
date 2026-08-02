@@ -101,7 +101,7 @@ func (h *handler) cfgAdminRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	repo := auth.NewRepo(db)
@@ -236,7 +236,7 @@ function cfgRoleDel(name){
 </script>`)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(sb.String()))
+	writeBody(w, []byte(sb.String()))
 }
 
 // roleMatrixHTML builds the entity × operation checkbox matrix.
@@ -456,7 +456,7 @@ func (h *handler) cfgAdminUserRoles(w http.ResponseWriter, r *http.Request) {
 	uid := r.URL.Query().Get("uid")
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	repo := auth.NewRepo(db)
@@ -521,7 +521,7 @@ function cfgURolesSave(){
 </script>`)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(sb.String()))
+	writeBody(w, []byte(sb.String()))
 }
 
 // cfgAdminUserRolesSave applies the assignment diff for a user.

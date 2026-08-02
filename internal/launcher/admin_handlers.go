@@ -27,7 +27,7 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	repo := auth.NewRepo(db)
@@ -250,7 +250,7 @@ function cfgUserLang(id,current){
 }
 </script>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 func (h *handler) cfgAdminUserCreate(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +524,7 @@ func (h *handler) cfgAdminSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	repo := auth.NewRepo(db)
@@ -606,7 +606,7 @@ function cfgSaveSessLimit(){
 }
 </script>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 // cfgAdminSessionKick завершает сессии: по public_id — одну (план 78), по
@@ -686,7 +686,7 @@ func (h *handler) cfgAdminAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	s := db.GetAuditSettings(r.Context())
@@ -765,7 +765,7 @@ function cfgAuditSave(){
 }
 </script>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 // cfgAdminAuditSave сохраняет настройки журнала регистрации.
@@ -814,7 +814,7 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	pageSize := db.GetListPageSize(r.Context())
@@ -893,7 +893,7 @@ function cfgSettingsSave(){
 }
 </script>`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked, b.ID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 // cfgAdminSettingsSave сохраняет общие параметры базы (пока — только размер
@@ -1052,7 +1052,7 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 		escHTML(dbLocation),
 		b.Port)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 func (h *handler) configuratorLogo(w http.ResponseWriter, r *http.Request) {
@@ -1130,7 +1130,7 @@ func (h *handler) configuratorLogo(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(logoData)
+	writeBody(w, logoData)
 }
 
 func escHTML(s string) string {
