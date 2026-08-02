@@ -267,8 +267,9 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 				data["Error"] = s.tr(lang, "Пароли не совпадают")
 			} else if err := s.authRepo.UpdatePassword(r.Context(), userID, newPwd); err != nil {
 				data["Error"] = s.errText(r, err)
+			} else if rerr := s.revokeSessionsOnPasswordChange(r, userID, u.Login); rerr != nil {
+				data["Error"] = s.tr(lang, "Пароль изменён, но сессии пользователя не завершены") + ": " + s.errText(r, rerr)
 			} else {
-				s.revokeSessionsOnPasswordChange(r, userID, u.Login)
 				data["Success"] = s.tr(lang, "Пароль изменён")
 			}
 		}
@@ -366,7 +367,12 @@ func (s *Server) adminUserDenyPasswd(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	s.authRepo.SetDenyPasswdChange(r.Context(), userID, !current)
+	// Флаг управляет тем, может ли пользователь сменить себе пароль. Молча не
+	// переключившийся запрет админ увидит только по неизменившейся галочке.
+	if err := s.authRepo.SetDenyPasswdChange(r.Context(), userID, !current); err != nil {
+		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/ui/admin/users", http.StatusFound)
 }
 
@@ -411,7 +417,12 @@ func (s *Server) adminUserPasswd(w http.ResponseWriter, r *http.Request) {
 			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
-		s.revokeSessionsOnPasswordChange(r, userID, userLogin)
+		if rerr := s.revokeSessionsOnPasswordChange(r, userID, userLogin); rerr != nil {
+			data["Error"] = s.tr(lang, "Пароль изменён, но сессии пользователя не завершены") + ": " + s.errText(r, rerr)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			renderAdminTemplate(w, "admin-passwd", data)
+			return
+		}
 		data["Success"] = true
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -421,19 +432,29 @@ func (s *Server) adminUserPasswd(w http.ResponseWriter, r *http.Request) {
 // revokeSessionsOnPasswordChange — политика плана 78: смена пароля админом
 // завершает все сессии пользователя; смена собственного пароля — все сессии,
 // кроме текущей (текущее окно продолжает работать). Событие пишется в аудит.
-func (s *Server) revokeSessionsOnPasswordChange(r *http.Request, targetUserID, targetLogin string) {
+// Ошибка отзыва возвращается вызывающему: пароль к этому моменту уже сменён,
+// откатить нельзя, но и молчать нельзя — сбой отзыва означает, что украденная
+// сессия пережила смену пароля, то есть ровно то, ради чего отзыв и делается.
+// Запись в аудит при этом НЕ пишется: «сессии отозваны» в журнале, когда они не
+// отозваны, хуже отсутствия записи — по ней инцидент закроют как отработанный.
+func (s *Server) revokeSessionsOnPasswordChange(r *http.Request, targetUserID, targetLogin string) error {
 	ctx := r.Context()
 	actor := auth.UserFromContext(ctx)
+	var err error
 	if actor != nil && actor.ID == targetUserID {
-		if cookie, err := r.Cookie("onebase_session"); err == nil && cookie.Value != "" {
-			s.authRepo.KickOtherSessions(ctx, targetUserID, cookie.Value)
+		if cookie, cerr := r.Cookie("onebase_session"); cerr == nil && cookie.Value != "" {
+			err = s.authRepo.KickOtherSessions(ctx, targetUserID, cookie.Value)
 		} else {
-			s.authRepo.KickUserSessions(ctx, targetUserID)
+			err = s.authRepo.KickUserSessions(ctx, targetUserID)
 		}
 	} else {
-		s.authRepo.KickUserSessions(ctx, targetUserID)
+		err = s.authRepo.KickUserSessions(ctx, targetUserID)
+	}
+	if err != nil {
+		return err
 	}
 	s.logSessionAudit(r, "password_change_sessions_revoked", targetLogin, targetUserID)
+	return nil
 }
 
 // selfPasswd lets any authenticated user change their own password.
@@ -484,7 +505,12 @@ func (s *Server) selfPasswd(w http.ResponseWriter, r *http.Request) {
 			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
-		s.revokeSessionsOnPasswordChange(r, u.ID, u.Login)
+		if rerr := s.revokeSessionsOnPasswordChange(r, u.ID, u.Login); rerr != nil {
+			data["Error"] = s.tr(lang, "Пароль изменён, но сессии пользователя не завершены") + ": " + s.errText(r, rerr)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			renderAdminTemplate(w, "admin-passwd", data)
+			return
+		}
 		data["Success"] = true
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -557,7 +583,12 @@ func (s *Server) adminSessionLimit(w http.ResponseWriter, r *http.Request) {
 		n = 0
 	}
 	if s.store != nil {
-		s.store.SaveMaxSessionsPerUser(r.Context(), n)
+		// Редирект ниже прямо утверждает limit_saved=1 — нельзя утверждать это
+		// при неудавшейся записи.
+		if err := s.store.SaveMaxSessionsPerUser(r.Context(), n); err != nil {
+			http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+			return
+		}
 	}
 	http.Redirect(w, r, "/ui/admin/sessions?limit_saved=1", http.StatusFound)
 }
@@ -836,14 +867,34 @@ func (s *Server) adminUserRolesUpdate(w http.ResponseWriter, r *http.Request) {
 		selectedSet[id] = true
 	}
 
-	allRoles, _ := s.authRepo.ListRoles(r.Context())
-	currentIDs, _ := s.authRepo.GetUserRoleIDs(r.Context(), userID)
+	// Диф считается от текущего состояния, поэтому сбой ЧТЕНИЯ опаснее сбоя
+	// записи: при пустом currentIDs ни одна роль не попадёт в ветку снятия,
+	// цикл отработает вхолостую, и админ получит редирект на список — то есть
+	// подтверждение — на запрос, где он снимал роль.
+	allRoles, err := s.authRepo.ListRoles(r.Context())
+	if err != nil {
+		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		return
+	}
+	currentIDs, err := s.authRepo.GetUserRoleIDs(r.Context(), userID)
+	if err != nil {
+		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		return
+	}
 
+	// Транзакции auth.Repo наружу не даёт: отказ на середине оставляет часть
+	// ролей применённой, поэтому в ошибке названа роль, на которой всё встало.
 	for _, role := range allRoles {
-		if selectedSet[role.ID] && !currentIDs[role.ID] {
-			s.authRepo.AssignRole(r.Context(), userID, role.ID)
-		} else if !selectedSet[role.ID] && currentIDs[role.ID] {
-			s.authRepo.UnassignRole(r.Context(), userID, role.ID)
+		var aerr error
+		switch {
+		case selectedSet[role.ID] && !currentIDs[role.ID]:
+			aerr = s.authRepo.AssignRole(r.Context(), userID, role.ID)
+		case !selectedSet[role.ID] && currentIDs[role.ID]:
+			aerr = s.authRepo.UnassignRole(r.Context(), userID, role.ID)
+		}
+		if aerr != nil {
+			http.Error(w, role.Name+": "+s.errText(r, aerr), http.StatusInternalServerError)
+			return
 		}
 	}
 	s.InvalidateWidgetCache()
