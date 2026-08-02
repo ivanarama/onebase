@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strconv"
+
+	oblog "github.com/ivantit66/onebase/internal/logging"
 )
+
+func authLog() *slog.Logger { return oblog.Component("auth") }
 
 var loginTmpl = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <html lang="ru">
@@ -218,7 +223,15 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 				h.Auditor.LogAction(r.Context(), "logout", "", "", "", user.ID, user.Login, r.RemoteAddr)
 			}
 		}
-		h.Repo.DeleteSession(r.Context(), cookie.Value)
+		// Сбой удаления — вопрос безопасности, а не уборки: cookie у клиента мы
+		// сотрём в любом случае, но серверная сессия останется валидной, и
+		// перехваченный токен продолжит работать до истечения TTL. Отказать в
+		// выходе нельзя (пользователь останется залогинен), поэтому громко пишем
+		// в лог — это единственное, что отличает такой случай от штатного выхода.
+		if err := h.Repo.DeleteSession(r.Context(), cookie.Value); err != nil {
+			authLog().Error("не удалось удалить сессию при выходе — токен остаётся валидным до истечения TTL",
+				"err", err)
+		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "onebase_session",

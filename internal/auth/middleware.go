@@ -57,9 +57,14 @@ func (r *Repo) serveWithSession(next http.Handler, w http.ResponseWriter, req *h
 		return
 	}
 
-	// last_seen_at для админки сессий (план 78); троттлится внутри,
-	// ошибка не критична.
-	r.TouchSession(ctx, token, time.Now())
+	// last_seen_at для админки сессий (план 78); троттлится внутри. Ошибка не
+	// влияет на доступ — пользователь уже аутентифицирован, устареет лишь
+	// отметка «последняя активность». Отказывать в запросе из-за неё нельзя,
+	// поэтому пишем в лог на уровне Debug: это горячий путь каждого запроса,
+	// и Warn залил бы журнал при недоступной БД.
+	if err := r.TouchSession(ctx, token, time.Now()); err != nil {
+		authLog().Debug("не удалось обновить last_seen_at сессии", "err", err)
+	}
 
 	next.ServeHTTP(w, req.WithContext(r.contextWithUser(ctx, user)))
 }
