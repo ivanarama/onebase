@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -25,51 +23,16 @@ func (h *handler) configExportZip(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 
-	if b.ConfigSource == "database" {
-		db, cerr := OpenDB(r.Context(), b)
-		if cerr != nil {
-			http.Error(w, cerr.Error(), 500)
-			return
-		}
-		defer db.Close()
-
-		rows, qerr := db.Query(r.Context(), `SELECT path, content FROM _onebase_config ORDER BY path`)
-		if qerr != nil {
-			http.Error(w, qerr.Error(), 500)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var p string
-			var content []byte
-			if err := rows.Scan(&p, &content); err != nil {
-				continue
-			}
-			f, _ := zw.Create(p)
-			f.Write(content)
-		}
-	} else {
-		srcDir := b.Path
-		filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			rel, _ := filepath.Rel(srcDir, path)
-			rel = strings.ReplaceAll(rel, `\`, `/`)
-			if strings.HasPrefix(rel, "backups/") {
-				return nil
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-			f, _ := zw.Create(rel)
-			f.Write(content)
-			return nil
-		})
+	if err := addConfigToZip(r.Context(), zw, b, ""); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
-
-	zw.Close()
+	// Close дописывает центральный каталог: без него архив нечитаем, а без
+	// проверки — нечитаем молча.
+	if err := zw.Close(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	name := b.Name + "_config.zip"
 	w.Header().Set("Content-Type", "application/zip")
