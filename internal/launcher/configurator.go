@@ -79,7 +79,14 @@ func (h *handler) configuratorConvert(w http.ResponseWriter, r *http.Request) {
 			}
 			defer db.Close()
 			repo := configdb.New(db)
-			repo.EnsureSchema(r.Context())
+			// Без схемы импорт всё равно не пройдёт; сообщаем в том же стиле,
+			// что и соседние отказы, вместо того чтобы падать на ImportFromDir
+			// с менее понятной ошибкой.
+			if cerr := repo.EnsureSchema(r.Context()); cerr != nil {
+				data.Error = tr(lang, "Ошибка подготовки схемы конфигурации") + ": " + cerr.Error()
+				renderCfg(w, r, data)
+				return
+			}
 			if cerr := repo.ImportFromDir(r.Context(), outDir); cerr != nil {
 				data.Error = tr(lang, "Ошибка импорта") + ": " + cerr.Error()
 				renderCfg(w, r, data)

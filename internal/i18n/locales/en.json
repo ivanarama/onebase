@@ -944,6 +944,7 @@
   "Нельзя восстановить %s-бэкап в %s-базу (%s). Создайте новую базу с типом БД %s или используйте совместимый формат (.obz с галочкой).": "Cannot restore a %s backup into a %s base (%s). Create a new base with the %s DB type or use the compatible format (.obz with the checkbox).",
   "Ошибка восстановления БД": "Database restore error",
   "Ошибка импорта конфигурации": "Configuration import error",
+  "Ошибка подготовки схемы конфигурации": "Configuration schema preparation error",
   "Полное восстановление выполнено: база данных + конфигурация": "Full restore completed: database + configuration",
   "Не удалось прочитать список форм": "Failed to read the form list",
   "entity и name обязательны": "entity and name are required",
