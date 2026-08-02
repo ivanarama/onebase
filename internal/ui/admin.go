@@ -211,7 +211,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-users", map[string]any{"Users": users})
+	renderAdminTemplate(w, "admin-users", map[string]any{"Users": users})
 }
 
 func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +275,7 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-user-card", data)
+	renderAdminTemplate(w, "admin-user-card", data)
 }
 
 func (s *Server) adminUserNew(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +284,7 @@ func (s *Server) adminUserNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-user-form", s.adminUserFormData(r, "", "", "", false))
+	renderAdminTemplate(w, "admin-user-form", s.adminUserFormData(r, "", "", "", false))
 }
 
 func (s *Server) adminUserFormData(r *http.Request, errMsg, login, fullName string, adminChecked bool) map[string]any {
@@ -328,7 +328,7 @@ func (s *Server) adminUserCreate(w http.ResponseWriter, r *http.Request) {
 	if login == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		data := s.adminUserFormData(r, s.tr(lang, "Логин обязателен"), login, fullName, isAdmin)
-		adminTmpl.ExecuteTemplate(w, "admin-user-form", data)
+		renderAdminTemplate(w, "admin-user-form", data)
 		return
 	}
 
@@ -336,7 +336,7 @@ func (s *Server) adminUserCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		data := s.adminUserFormData(r, s.errText(r, err), login, fullName, isAdmin)
-		adminTmpl.ExecuteTemplate(w, "admin-user-form", data)
+		renderAdminTemplate(w, "admin-user-form", data)
 		return
 	}
 	if denyPasswd || showInList || aiData {
@@ -345,7 +345,7 @@ func (s *Server) adminUserCreate(w http.ResponseWriter, r *http.Request) {
 		if err := s.authRepo.Update(r.Context(), u.ID, fullName, isAdmin, denyPasswd, showInList, aiData); err != nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			data := s.adminUserFormData(r, s.errText(r, err), login, fullName, isAdmin)
-			adminTmpl.ExecuteTemplate(w, "admin-user-form", data)
+			renderAdminTemplate(w, "admin-user-form", data)
 			return
 		}
 	}
@@ -402,20 +402,20 @@ func (s *Server) adminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		if newPwd != confirm {
 			data["Error"] = s.tr(lang, "Пароли не совпадают")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
 		if err := s.authRepo.UpdatePassword(r.Context(), userID, newPwd); err != nil {
 			data["Error"] = s.errText(r, err)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
 		s.revokeSessionsOnPasswordChange(r, userID, userLogin)
 		data["Success"] = true
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+	renderAdminTemplate(w, "admin-passwd", data)
 }
 
 // revokeSessionsOnPasswordChange — политика плана 78: смена пароля админом
@@ -469,26 +469,26 @@ func (s *Server) selfPasswd(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.authRepo.Authenticate(r.Context(), u.Login, oldPwd); err != nil {
 			data["Error"] = s.tr(lang, "Неверный текущий пароль")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
 		if newPwd != confirm {
 			data["Error"] = s.tr(lang, "Пароли не совпадают")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
 		if err := s.authRepo.UpdatePassword(r.Context(), u.ID, newPwd); err != nil {
 			data["Error"] = s.errText(r, err)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+			renderAdminTemplate(w, "admin-passwd", data)
 			return
 		}
 		s.revokeSessionsOnPasswordChange(r, u.ID, u.Login)
 		data["Success"] = true
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-passwd", data)
+	renderAdminTemplate(w, "admin-passwd", data)
 }
 
 func (s *Server) addPasswordPolicyData(data map[string]any) {
@@ -525,7 +525,7 @@ func (s *Server) adminSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hasUsers {
 		users, _ := s.store.ActiveUsersFromAudit(r.Context())
-		adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{"AuditUsers": users})
+		renderAdminTemplate(w, "admin-sessions", map[string]any{"AuditUsers": users})
 		return
 	}
 	sessions, _ := s.authRepo.ActiveSessions(r.Context())
@@ -533,7 +533,7 @@ func (s *Server) adminSessions(w http.ResponseWriter, r *http.Request) {
 	if s.store != nil {
 		limit = s.store.GetMaxSessionsPerUser(r.Context())
 	}
-	adminTmpl.ExecuteTemplate(w, "admin-sessions", map[string]any{
+	renderAdminTemplate(w, "admin-sessions", map[string]any{
 		"Sessions":   sessionVMs(sessions),
 		"Limit":      limit,
 		"LimitSaved": r.URL.Query().Get("limit_saved") == "1",
@@ -737,7 +737,7 @@ func (s *Server) renderAdminAPITokens(w http.ResponseWriter, r *http.Request, ex
 		data[k] = v
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-api-tokens", data)
+	renderAdminTemplate(w, "admin-api-tokens", data)
 }
 
 func parseAPITokenExpiresAt(raw string) (*time.Time, error) {
@@ -770,7 +770,7 @@ func (s *Server) adminCleanup(w http.ResponseWriter, r *http.Request) {
 	stats := s.store.OrphanMovements(r.Context(), registers, entities)
 	deletedStr := r.URL.Query().Get("deleted")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-cleanup", map[string]any{
+	renderAdminTemplate(w, "admin-cleanup", map[string]any{
 		"Stats":   stats,
 		"Deleted": deletedStr,
 	})
@@ -791,7 +791,7 @@ func (s *Server) adminRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-roles", map[string]any{"Roles": roles})
+	renderAdminTemplate(w, "admin-roles", map[string]any{"Roles": roles})
 }
 
 func (s *Server) adminUserRoles(w http.ResponseWriter, r *http.Request) {
@@ -811,7 +811,7 @@ func (s *Server) adminUserRoles(w http.ResponseWriter, r *http.Request) {
 	allRoles, _ := s.authRepo.ListRoles(r.Context())
 	userRoleIDs, _ := s.authRepo.GetUserRoleIDs(r.Context(), userID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-user-roles", map[string]any{
+	renderAdminTemplate(w, "admin-user-roles", map[string]any{
 		"UserID":      userID,
 		"UserLogin":   userLogin,
 		"AllRoles":    allRoles,
@@ -924,7 +924,7 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-audit", map[string]any{
+	renderAdminTemplate(w, "admin-audit", map[string]any{
 		"Filter":    fv,
 		"Entries":   entries,
 		"Page":      page,
@@ -1432,5 +1432,5 @@ func (s *Server) adminWebhooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-webhooks", map[string]any{"Entries": entries})
+	renderAdminTemplate(w, "admin-webhooks", map[string]any{"Entries": entries})
 }

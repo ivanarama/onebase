@@ -12,7 +12,6 @@ package ui
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -140,7 +139,7 @@ func (s *Server) exchangePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(res)
+	respondJSONTo(w, res)
 }
 
 func (s *Server) exchangePull(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,6 @@ package ui
 // Выделено из handlers.go (план 55, этап 1) — перенос as-is.
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -42,7 +41,7 @@ func (s *Server) attachmentsList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(atts)
+	respondJSONTo(w, atts)
 }
 
 // attachmentUpload handles file upload for a record.

@@ -456,7 +456,7 @@ func stripQueryQuotes(q string) string {
 func jsonResp(w http.ResponseWriter, status int, data map[string]any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	respondJSONTo(w, data)
 }
 
 // coerceParams converts string values to appropriate types for query parameters:

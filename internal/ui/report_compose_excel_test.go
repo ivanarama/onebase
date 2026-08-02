@@ -178,7 +178,7 @@ func TestComposedRowsNilMeasure(t *testing.T) {
 	res := &compose.Result{
 		Groups: []*compose.Group{
 			{
-				Key:      "Группа1",
+				Key:       "Группа1",
 				Subtotals: map[string]any{"Кол": nil},
 			},
 		},

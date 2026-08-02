@@ -80,7 +80,7 @@ func TestPageList_FeedMode(t *testing.T) {
 		`data-item="tr"`,
 		"Показать ещё",
 		"page=2", "lm=feed", // ссылка догрузки (& экранируется в &amp;, проверяем по частям)
-		"lm=pages",          // тумблер предлагает вернуться к страницам
+		"lm=pages", // тумблер предлагает вернуться к страницам
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("feed: нет %q", want)

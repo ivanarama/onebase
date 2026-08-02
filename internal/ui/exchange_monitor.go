@@ -59,7 +59,7 @@ func (s *Server) exchangeMonitor(w http.ResponseWriter, r *http.Request) {
 		plans = append(plans, pv)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	exchangeMonitorTmpl.ExecuteTemplate(w, "exchange-monitor", map[string]any{
+	renderTemplate(w, exchangeMonitorTmpl, "exchange-monitor", map[string]any{
 		"Plans": plans,
 		"Msg":   r.URL.Query().Get("msg"),
 		"Err":   r.URL.Query().Get("err"),

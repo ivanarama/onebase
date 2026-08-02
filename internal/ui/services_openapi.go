@@ -5,7 +5,6 @@ package ui
 // достаточно для импорта в Swagger UI / Postman / кодогенераторы клиентов.
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -16,7 +15,7 @@ import (
 func (s *Server) serviceOpenAPI(w http.ResponseWriter, r *http.Request) {
 	doc := buildOpenAPI(s.reg.HTTPServices(), s.cfg.AppName, s.cfg.AppVersion)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(doc)
+	respondJSONTo(w, doc)
 }
 
 func buildOpenAPI(services []*httpservice.Service, title, version string) map[string]any {

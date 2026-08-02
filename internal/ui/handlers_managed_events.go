@@ -63,18 +63,18 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	s.limitMultipartRequest(w, r)
 	if err := parseBoundedForm(r, 32<<20); err != nil {
 		w.WriteHeader(uploadErrorStatus(err))
-		enc.Encode(formEventResponse{Error: "bad form: " + err.Error()})
+		respondJSON(enc, formEventResponse{Error: "bad form: " + err.Error()})
 		return
 	}
 
 	entityName := chi.URLParam(r, "entity")
 	if entityName == "" {
-		enc.Encode(formEventResponse{Error: "entity required"})
+		respondJSON(enc, formEventResponse{Error: "entity required"})
 		return
 	}
 	entity := s.reg.GetEntity(entityName)
 	if entity == nil {
-		enc.Encode(formEventResponse{Error: "entity not found: " + entityName})
+		respondJSON(enc, formEventResponse{Error: "entity not found: " + entityName})
 		return
 	}
 
@@ -84,25 +84,25 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	form := pickManagedForm(entity, formKind)
 	if form == nil {
-		enc.Encode(formEventResponse{Error: "managed form not found for " + entityName})
+		respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
 		return
 	}
 	progAny := form.ProgramAST
 	if progAny == nil {
 		// .form.os не загружен или не распарсен — обработчики недоступны.
-		enc.Encode(formEventResponse{OK: true})
+		respondJSON(enc, formEventResponse{OK: true})
 		return
 	}
 	program, ok := progAny.(*ast.Program)
 	if !ok || program == nil {
-		enc.Encode(formEventResponse{Error: "form AST type mismatch"})
+		respondJSON(enc, formEventResponse{Error: "form AST type mismatch"})
 		return
 	}
 
 	elementName := strings.TrimSpace(r.FormValue("_element"))
 	eventName := strings.TrimSpace(r.FormValue("_event"))
 	if eventName == "" {
-		enc.Encode(formEventResponse{Error: "_event required"})
+		respondJSON(enc, formEventResponse{Error: "_event required"})
 		return
 	}
 
@@ -110,7 +110,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	procName := resolveHandlerProc(form, elementName, eventName)
 	if procName == "" {
 		// Нет привязки — это не ошибка, просто событие декларативное.
-		enc.Encode(formEventResponse{OK: true})
+		respondJSON(enc, formEventResponse{OK: true})
 		return
 	}
 
@@ -133,7 +133,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// parseSubmitForm/handlers_entity — иначе мега-blob обходит лимит через
 	// событийный путь managed-формы (DoS/раздувание БД), XSS при этом нет.
 	if err := checkRichTextLimits(r, entity); err != nil {
-		enc.Encode(formEventResponse{Error: s.errText(r, err)})
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
 	}
 
@@ -693,22 +693,22 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	s.limitMultipartRequest(w, r)
 	if err := parseBoundedForm(r, 32<<20); err != nil {
 		w.WriteHeader(uploadErrorStatus(err))
-		enc.Encode(formEventResponse{Error: "bad form: " + err.Error()})
+		respondJSON(enc, formEventResponse{Error: "bad form: " + err.Error()})
 		return
 	}
 
 	procName := chi.URLParam(r, "name")
 	if procName == "" {
-		enc.Encode(formEventResponse{Error: "processor name required"})
+		respondJSON(enc, formEventResponse{Error: "processor name required"})
 		return
 	}
 	proc := s.reg.GetProcessor(procName)
 	if proc == nil {
-		enc.Encode(formEventResponse{Error: "processor not found: " + procName})
+		respondJSON(enc, formEventResponse{Error: "processor not found: " + procName})
 		return
 	}
 	if !s.can(r, "processor", proc.Name, "run") {
-		enc.Encode(formEventResponse{Error: "доступ запрещён"})
+		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 		return
 	}
 	// Тот же trust-гейт, что и у processorRun: form-event исполняет DSL
@@ -716,20 +716,20 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// внешнюю обработку здесь тоже может запускать только администратор —
 	// иначе неадмин обходил бы проверку через /form-event.
 	if !s.canRunExternalProc(r, proc) {
-		enc.Encode(formEventResponse{Error: "доступ запрещён"})
+		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 		return
 	}
 
 	form := proc.ManagedForm()
 	if form == nil {
-		enc.Encode(formEventResponse{Error: "managed form not found for " + procName})
+		respondJSON(enc, formEventResponse{Error: "managed form not found for " + procName})
 		return
 	}
 
 	elementName := strings.TrimSpace(r.FormValue("_element"))
 	eventName := strings.TrimSpace(r.FormValue("_event"))
 	if eventName == "" {
-		enc.Encode(formEventResponse{Error: "_event required"})
+		respondJSON(enc, formEventResponse{Error: "_event required"})
 		return
 	}
 
@@ -830,7 +830,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 
 		procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
 		if procDecl == nil {
-			enc.Encode(formEventResponse{OK: true})
+			respondJSON(enc, formEventResponse{OK: true})
 			return
 		}
 
@@ -858,7 +858,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	enc.Encode(formEventResponse{OK: true})
+	respondJSON(enc, formEventResponse{OK: true})
 }
 
 func formTablesFromRows(rows map[string][]map[string]any, form *metadata.FormModule) map[string][]map[string]any {

@@ -65,7 +65,7 @@ func (s *Server) intakeMonitor(w http.ResponseWriter, r *http.Request) {
 		views = append(views, v)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	intakeMonitorTmpl.ExecuteTemplate(w, "intake-monitor", map[string]any{
+	renderTemplate(w, intakeMonitorTmpl, "intake-monitor", map[string]any{
 		"Intakes": views,
 		"Msg":     r.URL.Query().Get("msg"),
 		"Err":     r.URL.Query().Get("err"),

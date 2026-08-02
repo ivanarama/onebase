@@ -210,7 +210,7 @@ func (s *Server) writeIntakeResult(w http.ResponseWriter, res intake.Result) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(body)
+	respondJSONTo(w, body)
 }
 
 // dslIntakeHandler запускает DSL-процедуру Обработать(Конверт) как обработчик
