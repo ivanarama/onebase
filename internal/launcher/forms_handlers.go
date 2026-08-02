@@ -729,7 +729,7 @@ func (h *handler) configuratorFormsImport1C(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeTemp(tmpDir)
 
 	xmlPath, bslPath, itemsDir, err := extractImportSource(r, tmpDir)
 	if err != nil {
@@ -747,7 +747,7 @@ func (h *handler) configuratorFormsImport1C(w http.ResponseWriter, r *http.Reque
 	if b.ConfigSource == "database" {
 		// Для БД-режима делаем импорт во временный каталог, затем заливаем содержимое в БД.
 		tmpOut, _ := os.MkdirTemp("", "obimport-out-")
-		defer os.RemoveAll(tmpOut)
+		defer removeTemp(tmpOut)
 		dstYAML = filepath.Join(tmpOut, "form.yaml")
 		dstOS = filepath.Join(tmpOut, "form.os")
 		dstResources = filepath.Join(tmpOut, "_resources")

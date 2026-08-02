@@ -79,7 +79,7 @@ func (h *handler) configuratorImportPDFLayout(w http.ResponseWriter, r *http.Req
 		h.layoutCreateError(w, r, b, lang, tr(lang, "Выберите PDF-файл"))
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный PDF", file)
 
 	var buf bytes.Buffer
 	if _, cerr := io.Copy(&buf, file); cerr != nil {

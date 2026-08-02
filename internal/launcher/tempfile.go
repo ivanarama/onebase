@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"errors"
-	"io"
 	"os"
 )
 
@@ -53,19 +52,6 @@ func writeTempFile(pattern, content string) (path string, cleanup func(), err er
 		return "", noop, cerr
 	}
 	return name, remove, nil
-}
-
-// closeRead закрывает читающую сторону (загруженный файл, открытый исходник).
-// Ошибка тут вторична — данные уже прочитаны, и отказывать в операции из-за
-// неё было бы хуже самой ошибки. Но и глотать молча незачем: Debug.
-//
-// Для пишущей стороны это НЕ подходит: там Close сбрасывает буфер, и его
-// ошибка основная. Такие места возвращают её вызывающему (io.Copy → out.Close
-// в ai_generate и extractImportSource).
-func closeRead(what string, c io.Closer) {
-	if err := c.Close(); err != nil {
-		respondLog().Debug("не удалось закрыть "+what, "err", err)
-	}
 }
 
 // writePDFTemp дописывает содержимое во временный файл, который останется на

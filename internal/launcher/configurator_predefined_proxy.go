@@ -3,7 +3,6 @@ package launcher
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -193,10 +192,11 @@ func (h *handler) oneTimeCodeProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 502, map[string]string{"error": "UI server unreachable: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
+	defer closeRead("ответ сервера базы", resp.Body)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	// Ответ уже начат — статус не поменять; обрыв фиксируем и прекращаем.
+	copyProxied(w, resp.Body)
 }
 
 // ── debug proxy ──────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 502, map[string]string{"error": "UI server unreachable: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
+	defer closeRead("ответ сервера базы", resp.Body)
 
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -253,5 +253,6 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	// Ответ уже начат — статус не поменять; обрыв фиксируем и прекращаем.
+	copyProxied(w, resp.Body)
 }

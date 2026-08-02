@@ -35,5 +35,7 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	noWindow(cmd)
-	cmd.Start()
+	// Браузер мог не найтись — открыть окно всё равно нечем, но пусть это
+	// будет видно: пользователь жалуется «нажал, ничего не произошло».
+	bestEffort("открыть URL во внешнем браузере", cmd.Start())
 }

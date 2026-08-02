@@ -92,8 +92,8 @@ func materializeProject(ctx context.Context, h *handler, b *Base) (dir string, c
 	repo := configdb.New(db)
 	if exporr := repo.ExportToDir(ctx, tmp); exporr != nil {
 		db.Close()
-		os.RemoveAll(tmp)
+		removeTemp(tmp)
 		return "", nil, exporr
 	}
-	return tmp, func() { db.Close(); os.RemoveAll(tmp) }, nil
+	return tmp, func() { db.Close(); removeTemp(tmp) }, nil
 }

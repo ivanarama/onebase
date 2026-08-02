@@ -250,7 +250,7 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 	)
 	file, header, ferr := r.FormFile("app_logo_file")
 	if ferr == nil {
-		defer file.Close()
+		defer closeRead("загруженный логотип", file)
 		data, rerr := io.ReadAll(io.LimitReader(file, maxLogoBytes+1))
 		if rerr != nil {
 			data := h.loadCfgData(r.Context(), b, "tree")

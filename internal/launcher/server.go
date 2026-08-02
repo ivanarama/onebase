@@ -95,7 +95,7 @@ func (s *Server) Done() <-chan struct{} { return s.quit }
 func (s *Server) Close() {
 	CloseAuthPools()
 	if s.httpSrv != nil {
-		s.httpSrv.Close()
+		bestEffort("закрыть HTTP-сервер лаунчера", s.httpSrv.Close())
 	}
 }
 
