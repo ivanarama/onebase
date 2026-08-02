@@ -539,47 +539,19 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 	if b.DBType == "sqlite" {
 		dumpEntryName = "database.db"
 	}
-	f, _ := zw.Create(dumpEntryName)
-	f.Write(dumpData)
+	if err := zipAdd(zw, dumpEntryName, dumpData); err != nil {
+		http.Error(w, tr(lang, "Ошибка выгрузки")+": "+errText(r, err), 500)
+		return
+	}
 
 	// Configuration
-	if b.ConfigSource == "database" {
-		db, cerr := OpenDB(r.Context(), b)
-		if cerr == nil {
-			defer db.Close()
-			rows, qerr := db.Query(r.Context(), `SELECT path, content FROM _onebase_config ORDER BY path`)
-			if qerr == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var p string
-					var content []byte
-					if rows.Scan(&p, &content) != nil {
-						continue
-					}
-					cf, _ := zw.Create("config/" + strings.ReplaceAll(p, `\`, "/"))
-					cf.Write(content)
-				}
-			}
-		}
-	} else {
-		srcDir := b.Path
-		filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			rel, _ := filepath.Rel(srcDir, path)
-			rel = strings.ReplaceAll(rel, `\`, "/")
-			if strings.HasPrefix(rel, "backups/") {
-				return nil
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-			cf, _ := zw.Create("config/" + rel)
-			cf.Write(content)
-			return nil
-		})
+	//
+	// Раньше недоступная БД и сбойный файл здесь просто пропускались: .obz
+	// собирался вообще без конфигурации и отдавался с HTTP 200. Полный бэкап
+	// без конфигурации — не бэкап, поэтому теперь это отказ.
+	if err := addConfigToZip(r.Context(), zw, b, "config/"); err != nil {
+		http.Error(w, tr(lang, "Ошибка выгрузки")+": "+errText(r, err), 500)
+		return
 	}
 
 	exportDBType := b.DBType
@@ -588,10 +560,16 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := fmt.Sprintf("onebase_full_export\nversion=1.0\nformat=binary\ndate=%s\nbase=%s\nsource=%s\ndb_type=%s\n",
 		time.Now().Format("2006-01-02T15:04:05"), b.Name, b.ConfigSource, exportDBType)
-	mf, _ := zw.Create("META.txt")
-	mf.Write([]byte(meta))
-
-	zw.Close()
+	if err := zipAdd(zw, "META.txt", []byte(meta)); err != nil {
+		http.Error(w, tr(lang, "Ошибка выгрузки")+": "+errText(r, err), 500)
+		return
+	}
+	// Close дописывает центральный каталог: без него .obz нечитаем, а без
+	// проверки — нечитаем молча, и выяснится это при восстановлении.
+	if err := zw.Close(); err != nil {
+		http.Error(w, tr(lang, "Ошибка выгрузки")+": "+errText(r, err), 500)
+		return
+	}
 	writeDownload(w, name, buf.Bytes())
 }
 
@@ -838,23 +816,7 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else {
-			configErr = filepath.WalkDir(configDir, func(path string, d os.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
-					return nil
-				}
-				rel, _ := filepath.Rel(configDir, path)
-				dst, jerr := configdb.SafeJoin(b.Path, filepath.ToSlash(rel))
-				if jerr != nil {
-					return jerr
-				}
-				os.MkdirAll(filepath.Dir(dst), 0o755)
-				content, err := os.ReadFile(path)
-				if err != nil {
-					return nil
-				}
-				os.WriteFile(dst, content, 0o644)
-				return nil
-			})
+			configErr = restoreConfigDir(configDir, b.Path)
 		}
 	}
 
