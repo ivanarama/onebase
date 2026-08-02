@@ -91,9 +91,14 @@ func (h *handler) configuratorLayoutPreview(w http.ResponseWriter, r *http.Reque
 					http.Error(w, "PDF temp error: "+werr.Error(), http.StatusInternalServerError)
 					return
 				}
-				tf.Write(pdfBytes)
+				// Файл остаётся на диске: его открывает внешний просмотрщик.
+				// Поэтому Write и Close проверяем — иначе просмотрщик получит
+				// усечённый PDF и покажет «файл повреждён» вместо макета.
+				if wErr := writePDFTemp(tf, pdfBytes); wErr != nil {
+					http.Error(w, "PDF temp error: "+wErr.Error(), http.StatusInternalServerError)
+					return
+				}
 				fp = tf.Name()
-				tf.Close()
 			}
 			if oerr := OpenPath(fp); oerr != nil {
 				http.Error(w, "open error: "+oerr.Error(), http.StatusInternalServerError)

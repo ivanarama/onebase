@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -997,14 +998,13 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
+		defer closeRead("исходный файл", in)
 		out, err := os.Create(target)
 		if err != nil {
 			return err
 		}
 		if _, err := io.Copy(out, in); err != nil {
-			out.Close()
-			return err
+			return errors.Join(err, out.Close())
 		}
 		// Возвращаем ошибку Close — она ловит сбой сброса буфера (напр. диск
 		// заполнен), иначе усечённая копия молча сошла бы за успех.

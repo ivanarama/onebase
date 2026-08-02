@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -634,14 +635,12 @@ func (h *handler) configuratorFormsValidate(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Пишем во временный файл и пытаемся загрузить через managed_form_loader.
-	tmp, err := os.CreateTemp("", "obform-*.form.yaml")
+	tmpPath, cleanup, err := writeTempFile("obform-*.form.yaml", yamlBody)
 	if err != nil {
 		writeFormsJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	defer os.Remove(tmp.Name())
-	tmp.WriteString(yamlBody)
-	tmp.Close()
+	defer cleanup()
 
 	type item struct {
 		Severity string `json:"severity"`
@@ -653,7 +652,7 @@ func (h *handler) configuratorFormsValidate(w http.ResponseWriter, r *http.Reque
 		Items []item `json:"items"`
 	}{OK: true}
 
-	if _, err := loader.NewManagedFormLoader().LoadFormFile(tmp.Name(), entity); err != nil {
+	if _, err := loader.NewManagedFormLoader().LoadFormFile(tmpPath, entity); err != nil {
 		resp.OK = false
 		resp.Items = append(resp.Items, item{Severity: "error", Message: err.Error()})
 	}
@@ -680,16 +679,14 @@ func (h *handler) configuratorFormsPreview(w http.ResponseWriter, r *http.Reques
 		entity = "Объект"
 	}
 
-	tmp, err := os.CreateTemp("", "obpreview-*.form.yaml")
+	tmpPath, cleanup, err := writeTempFile("obpreview-*.form.yaml", yamlBody)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	defer os.Remove(tmp.Name())
-	tmp.WriteString(yamlBody)
-	tmp.Close()
+	defer cleanup()
 
-	fm, err := loader.NewManagedFormLoader().LoadFormFile(tmp.Name(), entity)
+	fm, err := loader.NewManagedFormLoader().LoadFormFile(tmpPath, entity)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writeBody(w, []byte(previewErrorHTML(err.Error())))
@@ -792,7 +789,7 @@ func (h *handler) configuratorFormsImport1C(w http.ResponseWriter, r *http.Reque
 func extractImportSource(r *http.Request, tmpDir string) (string, string, string, error) {
 	// Вариант 1: одиночный ZIP в поле "zip"
 	if zipFile, _, err := r.FormFile("zip"); err == nil {
-		defer zipFile.Close()
+		defer closeRead("загруженный ZIP", zipFile)
 		data, err := io.ReadAll(io.LimitReader(zipFile, (64<<20)+1))
 		if err != nil {
 			return "", "", "", err
@@ -811,14 +808,17 @@ func extractImportSource(r *http.Request, tmpDir string) (string, string, string
 		if err != nil {
 			return nil // не обязательно
 		}
-		defer f.Close()
+		defer closeRead("загруженный файл "+field, f)
 		out, err := os.Create(dst)
 		if err != nil {
 			return err
 		}
-		defer out.Close()
-		_, err = io.Copy(out, f)
-		return err
+		if _, err := io.Copy(out, f); err != nil {
+			return errors.Join(err, out.Close())
+		}
+		// Close возвращаем: он ловит сбой сброса буфера, иначе усечённая копия
+		// сошла бы за успех (тот же приём уже применён в ai_generate).
+		return out.Close()
 	}
 	if err := saveFile("form_xml", filepath.Join(tmpDir, "Form.xml")); err != nil {
 		return "", "", "", err
