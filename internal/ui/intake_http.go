@@ -62,7 +62,7 @@ func (s *Server) dispatchIntake(w http.ResponseWriter, r *http.Request) bool {
 	if r.Body != nil {
 		var rerr error
 		body, rerr = io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxFileSizeBytes))
-		r.Body.Close()
+		closeRead("тело запроса", r.Body)
 		if rerr != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(rerr, &maxErr) {

@@ -32,8 +32,9 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", contentDisposition(rep.Name+".pdf"))
-	w.Write(pdfBytes)
+	name := rep.Name + ".pdf"
+	w.Header().Set("Content-Disposition", contentDisposition(name))
+	writeDownload(w, name, pdfBytes)
 }
 
 // buildReportSheet строит табличный документ из заголовков и строк отчёта:

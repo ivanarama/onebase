@@ -169,7 +169,7 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 			file, _, err := r.FormFile(p.Name)
 			if err == nil {
 				data, err := readUploadedBytes(file, maxSize)
-				file.Close()
+				closeRead("загруженный файл параметра", file)
 				if err != nil {
 					opStatus = "error"
 					http.Error(w, s.errText(r, err), uploadErrorStatus(err))

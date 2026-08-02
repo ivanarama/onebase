@@ -198,7 +198,7 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		var rerr error
 		body, rerr = io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxFileSizeBytes))
-		r.Body.Close()
+		closeRead("тело запроса", r.Body)
 		if rerr != nil {
 			// Тело больше лимита нельзя молча усекать: hmac посчитал бы подпись
 			// по огрызку (ложный 401), а обработчик обработал бы битые данные.

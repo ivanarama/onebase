@@ -622,7 +622,7 @@ func (s *Server) gengenGenerate(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Collect generated files for preview
 	files := make(map[string]string)
-	filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(outDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -631,6 +631,7 @@ func (s *Server) gengenGenerate(w http.ResponseWriter, r *http.Request) {
 		files[rel] = string(data)
 		return nil
 	})
+	bestEffort("обойти каталог сгенерированных файлов", walkErr)
 
 	jsonResp(w, 200, map[string]any{
 		"domain":   result.Domain,

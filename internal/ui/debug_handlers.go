@@ -24,7 +24,7 @@ func readJSON(r *http.Request, v any) error {
 	if r.Body == nil {
 		return fmt.Errorf("empty body")
 	}
-	defer r.Body.Close()
+	defer closeRead("тело запроса", r.Body)
 	return json.NewDecoder(r.Body).Decode(v)
 }
 

@@ -639,6 +639,7 @@ func (s *Server) reportExcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", contentDisposition(rep.Name+".xlsx"))
-	w.Write(data)
+	name := rep.Name + ".xlsx"
+	w.Header().Set("Content-Disposition", contentDisposition(name))
+	writeDownload(w, name, data)
 }

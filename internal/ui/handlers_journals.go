@@ -286,6 +286,7 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", contentDisposition(j.Name+".xlsx"))
-	w.Write(data)
+	name := j.Name + ".xlsx"
+	w.Header().Set("Content-Disposition", contentDisposition(name))
+	writeDownload(w, name, data)
 }
