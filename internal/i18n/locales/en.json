@@ -802,6 +802,7 @@
   "Имя виджета не задано": "Widget name not specified",
   "Укажите имя роли": "Specify role name",
   "Ошибка синхронизации": "Sync error",
+  "База не остановилась — восстановление отменено, чтобы не повредить данные": "The base did not stop — the restore was cancelled to avoid corrupting data",
   "отчёт %s не найден в конфигурации": "report %s not found in the configuration",
   "константа %s не найдена в конфигурации": "constant %s not found in the configuration",
   "Данные восстановлены, но миграция схемы не выполнена": "Data restored, but the schema migration did not run",

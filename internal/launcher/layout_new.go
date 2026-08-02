@@ -252,8 +252,11 @@ func (h *handler) configuratorNewLayout(w http.ResponseWriter, r *http.Request) 
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
 			return
 		}
-		os.MkdirAll(filepath.Dir(fullPath), 0o755)
-		if werr := os.WriteFile(fullPath, src, 0o644); werr != nil {
+		if merr := os.MkdirAll(filepath.Dir(fullPath), 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+merr.Error())
+			return
+		}
+		if werr := os.WriteFile(fullPath, src, 0o644); werr != nil { //nolint:gosec // G306: то же
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
 			return
 		}
@@ -301,7 +304,7 @@ func (h *handler) findOSFormSubdir(r *http.Request, b *Base, osForm string) stri
 	}
 	pfDir := filepath.Join(b.Path, "printforms")
 	found := ""
-	filepath.Walk(pfDir, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(pfDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -313,5 +316,6 @@ func (h *handler) findOSFormSubdir(r *http.Request, b *Base, osForm string) stri
 		}
 		return nil
 	})
+	bestEffort("обойти каталог печатных форм", walkErr)
 	return found
 }

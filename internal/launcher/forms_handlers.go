@@ -829,7 +829,7 @@ func extractImportSource(r *http.Request, tmpDir string) (string, string, string
 
 	// Найдём Form.xml в дереве распакованных файлов (на разных уровнях).
 	var xmlPath, bslPath, itemsDir string
-	filepath.WalkDir(tmpDir, func(p string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(tmpDir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -851,6 +851,7 @@ func extractImportSource(r *http.Request, tmpDir string) (string, string, string
 		}
 		return nil
 	})
+	bestEffort("обойти распакованный архив формы", walkErr)
 	return xmlPath, bslPath, itemsDir, nil
 }
 

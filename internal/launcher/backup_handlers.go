@@ -320,8 +320,13 @@ func (h *handler) backupSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		dir := filepath.Join(b.Path, "config")
-		os.MkdirAll(dir, 0o755)
-		saveErr = os.WriteFile(filepath.Join(dir, "app.yaml"), out, 0o644)
+		// Проверяем отдельно: иначе пользователь увидит «no such file or
+		// directory» от WriteFile и пойдёт искать пропавший app.yaml.
+		if merr := os.MkdirAll(dir, 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+			saveErr = merr
+		} else {
+			saveErr = os.WriteFile(filepath.Join(dir, "app.yaml"), out, 0o644) //nolint:gosec // G306: то же
+		}
 	}
 	data := h.loadCfgData(r.Context(), b, "backup")
 	if saveErr != nil {
@@ -341,9 +346,14 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.backupDir(b)
-	os.MkdirAll(dir, 0o755)
-
 	lang := resolveLang(r)
+	if merr := os.MkdirAll(dir, 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(lang, "Ошибка загрузки") + ": " + merr.Error()
+		renderCfg(w, r, data)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxFullArchiveUpload)
 	file, header, err := r.FormFile("backup_file")
 	if err != nil {
@@ -432,10 +442,20 @@ func (h *handler) backupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Восстанавливать поверх работающей базы нельзя: процесс держит файл БД
+	// открытым, и запись дампа поверх него портит данные. Отправка сигнала
+	// остановки успех не подтверждает — подтверждает только освободившийся
+	// порт. Раньше его ждали, но результат ожидания отбрасывали и шли
+	// восстанавливать в любом случае.
 	wasRunning := h.runner.IsRunning(b.ID)
 	if wasRunning {
 		h.runner.Stop(b.ID)
-		waitPortFree(b.Port, 3*time.Second)
+		if !waitPortFree(b.Port, 3*time.Second) {
+			data := h.loadCfgData(r.Context(), b, "backup")
+			data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
+			renderCfg(w, r, data)
+			return
+		}
 	}
 
 	restoreErr := restoreForBase(r.Context(), b, fp)
@@ -665,9 +685,16 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			// preserve it, then let SQLite create a fresh file for the restore.
 			if b.DBType == "sqlite" && b.DBPath != "" &&
 				strings.Contains(cerr.Error(), "file is not a database") {
+				// Ниже переименовывается файл БД — делать это под работающим
+				// процессом нельзя.
 				if wasRunning {
 					h.runner.Stop(b.ID)
-					waitPortFree(b.Port, 3*time.Second)
+					if !waitPortFree(b.Port, 3*time.Second) {
+						data := h.loadCfgData(r.Context(), b, "backup")
+						data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
+						renderCfg(w, r, data)
+						return
+					}
 					stopped = true
 				}
 				oldPath := b.DBPath + ".old"
@@ -686,7 +713,12 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		defer db.Close()
 		if wasRunning && !stopped {
 			h.runner.Stop(b.ID)
-			waitPortFree(b.Port, 3*time.Second)
+			if !waitPortFree(b.Port, 3*time.Second) {
+				data := h.loadCfgData(r.Context(), b, "backup")
+				data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
+				renderCfg(w, r, data)
+				return
+			}
 		}
 
 		configDest := b.ConfigSource
@@ -778,7 +810,12 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 	wasRunning := h.runner.IsRunning(b.ID)
 	if wasRunning {
 		h.runner.Stop(b.ID)
-		waitPortFree(b.Port, 3*time.Second)
+		if !waitPortFree(b.Port, 3*time.Second) {
+			data := h.loadCfgData(r.Context(), b, "backup")
+			data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
+			renderCfg(w, r, data)
+			return
+		}
 	}
 
 	// Restore database

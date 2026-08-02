@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Весь смысл cleanup.go — в уровне. Эти сбои штатный фон (занятый файл на
@@ -88,5 +89,27 @@ func TestPortFreeReflectsActualState(t *testing.T) {
 	}
 	if !portFree(busy) {
 		t.Errorf("порт %d освобождён, но признан занятым", busy)
+	}
+}
+
+// waitPortFree раньше ничего не возвращал, и вызывающие шли восстанавливать
+// базу независимо от того, встала она или нет. Теперь это единственное
+// подтверждение остановки (Stop лишь шлёт сигнал), поэтому контракт закреплён:
+// занятый порт — false, свободный — true.
+func TestWaitPortFreeReportsBusyPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("сеть недоступна в окружении теста: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	if waitPortFree(port, 150*time.Millisecond) {
+		t.Errorf("порт %d занят, но признан освободившимся", port)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !waitPortFree(port, time.Second) {
+		t.Errorf("порт %d освобождён, но ожидание вернуло false", port)
 	}
 }

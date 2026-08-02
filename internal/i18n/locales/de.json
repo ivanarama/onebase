@@ -712,6 +712,7 @@
   "Имя виджета не задано": "Widget-Name nicht angegeben",
   "Укажите имя роли": "Geben Sie den Rollennamen an",
   "Ошибка синхронизации": "Synchronisationsfehler",
+  "База не остановилась — восстановление отменено, чтобы не повредить данные": "Die Basis wurde nicht gestoppt — die Wiederherstellung wurde abgebrochen, um Datenverlust zu vermeiden",
   "отчёт %s не найден в конфигурации": "Bericht %s wurde in der Konfiguration nicht gefunden",
   "константа %s не найдена в конфигурации": "Konstante %s wurde in der Konfiguration nicht gefunden",
   "Данные восстановлены, но миграция схемы не выполнена": "Daten wiederhergestellt, aber die Schemamigration wurde nicht ausgeführt",

@@ -130,8 +130,11 @@ func (h *handler) configuratorImportPDFLayout(w http.ResponseWriter, r *http.Req
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
 			return
 		}
-		os.MkdirAll(filepath.Dir(fullPath), 0o755)
-		if werr := os.WriteFile(fullPath, src, 0o644); werr != nil {
+		if merr := os.MkdirAll(filepath.Dir(fullPath), 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+merr.Error())
+			return
+		}
+		if werr := os.WriteFile(fullPath, src, 0o644); werr != nil { //nolint:gosec // G306: то же
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
 			return
 		}
