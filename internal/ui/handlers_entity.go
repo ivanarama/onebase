@@ -892,11 +892,11 @@ func (s *Server) renderPopupSaved(w http.ResponseWriter, id, label string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	idJSON, _ := json.Marshal(id)
 	labelJSON, _ := json.Marshal(label)
-	fmt.Fprintf(w, `<!doctype html><html><body><script>
+	writeBody(w, fmt.Appendf(nil, `<!doctype html><html><body><script>
 try {
   window.parent.postMessage({source:"obRefCreate", id:%s, label:%s}, "*");
 } catch (e) {}
-</script>Готово.</body></html>`, idJSON, labelJSON)
+</script>Готово.</body></html>`, idJSON, labelJSON))
 }
 
 // pickObjectFormWithReadHook возвращает форму ОБЪЕКТА (Kind=="object"),

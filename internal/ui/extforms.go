@@ -56,7 +56,7 @@ func (s *Server) adminExtFormUpload(w http.ResponseWriter, r *http.Request) {
 		s.extFormRedirect(w, r, "", s.tr(lang, "файл не выбран"))
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный файл", file)
 	data, err := readUploadedBytes(file, maxSize)
 	if err != nil {
 		if errors.Is(err, errUploadTooLarge) {
@@ -168,7 +168,7 @@ func (s *Server) adminExtFormExport(w http.ResponseWriter, r *http.Request) {
 	fname := rec.Document + "." + rec.Name + ".obform"
 	w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
 	w.Header().Set("Content-Disposition", contentDisposition(fname))
-	w.Write(bundle)
+	writeDownload(w, fname, bundle)
 }
 
 // reloadExtForms перечитывает включённые внешние формы из БД и обновляет

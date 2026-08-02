@@ -57,7 +57,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 		sd.SetBackURL(backPath)
 		html := sd.Doc.HTML(sheet.HTMLOptions{BackURL: sd.Doc.BackURL, PDFURL: r.URL.Path + "/pdf"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(html))
+		writeBody(w, []byte(html))
 		return
 	}
 
@@ -71,7 +71,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 		backPath := fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String())
 		html := doc.HTML(sheet.HTMLOptions{BackURL: backPath, PDFURL: r.URL.Path + "/pdf"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(html))
+		writeBody(w, []byte(html))
 
 	case runtime.PrintFormDSL:
 		sd, ok := s.buildDSLPF(w, r, entity, id, ref.Name)
@@ -82,7 +82,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 		sd.SetBackURL(backPath)
 		html := sd.Doc.HTML(sheet.HTMLOptions{BackURL: sd.Doc.BackURL, PDFURL: r.URL.Path + "/pdf"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(html))
+		writeBody(w, []byte(html))
 
 	default: // Legacy — конвертируется в макет v2 при загрузке (ref.Decl) и
 		// рендерится тем же декларативным движком, что и Declarative (план 64, этап 4).
@@ -98,7 +98,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 		backPath := fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String())
 		html := doc.HTML(sheet.HTMLOptions{BackURL: backPath, PDFURL: r.URL.Path + "/pdf"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(html))
+		writeBody(w, []byte(html))
 	}
 }
 
@@ -294,8 +294,9 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/pdf")
-		w.Header().Set("Content-Disposition", contentDisposition(formName+".pdf"))
-		w.Write(pdfBytes)
+		name := formName + ".pdf"
+		w.Header().Set("Content-Disposition", contentDisposition(name))
+		writeDownload(w, name, pdfBytes)
 		return
 	}
 
@@ -354,7 +355,7 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", contentDisposition(fileName))
-	w.Write(pdfBytes)
+	writeDownload(w, fileName, pdfBytes)
 }
 
 // buildDSLPF выполняет общую часть DSL-печати: находит форму/процедуру,

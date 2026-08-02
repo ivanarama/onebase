@@ -71,7 +71,7 @@ func (s *Server) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.tr(lang, "Нет файла в форме"), 400)
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный файл", file)
 
 	mimeType := header.Header.Get("Content-Type")
 	if mimeType == "" {
@@ -116,7 +116,7 @@ func (s *Server) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.tr(s.resolveLang(r), "Файл не найден"), 404)
 		return
 	}
-	defer f.Close()
+	defer closeRead("загруженный файл", f)
 
 	// Авторизация (защита от IDOR): отдаём вложение только тем, у кого есть право
 	// чтения родителя (или записи — чтобы предпросмотр у загрузчика работал сразу).

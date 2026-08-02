@@ -43,7 +43,7 @@ func (s *Server) imageUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.tr(lang, "Нет файла в форме"), 400)
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженную картинку", file)
 
 	// Тип определяем по СОДЕРЖИМОМУ файла, а не по Content-Type формы (он
 	// подделывается): читаем первые 512 байт для http.DetectContentType и
@@ -93,7 +93,7 @@ func (s *Server) imageServe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.tr(s.resolveLang(r), "Файл не найден"), 404)
 		return
 	}
-	defer rc.Close()
+	defer closeRead("загруженную картинку", rc)
 
 	// Авторизация (защита от IDOR): если у блоба есть владелец-сущность, отдаём
 	// только тем, у кого есть право чтения видимой строки (или записи — чтобы
@@ -132,7 +132,11 @@ func (s *Server) imageServe(w http.ResponseWriter, r *http.Request) {
 	// открытии /image/{id} он будет инертен. На отрисовку через <img> не влияет.
 	w.Header().Set("Content-Disposition", "inline")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-	io.Copy(w, rc)
+	// Ответ уже начат — статус не поменять. Картинка, дописанная наполовину,
+	// видна пользователю сразу, а причина обрыва почти всегда внешняя.
+	if _, err := io.Copy(w, rc); err != nil {
+		uiLog().Debug("картинка не дописана в ответ", "err", err)
+	}
 }
 
 func (s *Server) blobAllowed(r *http.Request, b storage.Blob) bool {

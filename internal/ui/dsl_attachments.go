@@ -151,7 +151,7 @@ func (s *Server) registerAttachmentBuiltins(vars map[string]any, ctxFn func() co
 		if err != nil {
 			return nil, fmt.Errorf("ПрисоединитьФайл: открытие файла: %w", err)
 		}
-		defer f.Close()
+		defer closeRead("вложение", f)
 		mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
 		if mimeType == "" {
 			mimeType = "application/octet-stream"

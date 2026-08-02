@@ -99,7 +99,7 @@ func (s *Server) logo(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 	w.Header().Set("Cache-Control", "public, max-age=3600")
-	w.Write(data)
+	writeBody(w, data)
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {

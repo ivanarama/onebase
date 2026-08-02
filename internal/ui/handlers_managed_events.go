@@ -123,7 +123,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if decl == nil {
-		enc.Encode(formEventResponse{OK: true, Messages: []string{
+		respondJSON(enc, formEventResponse{OK: true, Messages: []string{
 			"⚠ Процедура «" + procName + "» не найдена в .form.os",
 		}})
 		return
@@ -234,7 +234,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// клиент покажет красный баннер и не закроет форму.
 	if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
-		enc.Encode(formEventResponse{
+		respondJSON(enc, formEventResponse{
 			OK:             false,
 			Values:         values,
 			TableParts:     tableParts,
@@ -248,7 +248,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 
 	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
-	enc.Encode(formEventResponse{
+	respondJSON(enc, formEventResponse{
 		OK:             true,
 		Values:         values,
 		TableParts:     tableParts,
@@ -789,7 +789,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 
 				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
 					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
-					enc.Encode(formEventResponse{
+					respondJSON(enc, formEventResponse{
 						OK:             false,
 						Values:         values,
 						TableParts:     tableParts,
@@ -803,7 +803,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				}
 
 				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
-				enc.Encode(formEventResponse{
+				respondJSON(enc, formEventResponse{
 					OK:             true,
 					Values:         values,
 					TableParts:     tableParts,
@@ -844,14 +844,14 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 
 		err := s.interp.Run(procDecl, paramsThis, dslVars)
 		if err != nil {
-			enc.Encode(formEventResponse{
+			respondJSON(enc, formEventResponse{
 				OK:       false,
 				Messages: msgs,
 				Error:    err.Error(),
 			})
 			return
 		}
-		enc.Encode(formEventResponse{
+		respondJSON(enc, formEventResponse{
 			OK:       true,
 			Messages: msgs,
 		})

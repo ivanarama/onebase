@@ -31,6 +31,34 @@ func WriteReport(w io.Writer, res TestRunResult, format string) error {
 	return fmt.Errorf("неизвестный формат отчёта %q (доступны pretty, tap, junit)", format)
 }
 
+// errWriter копит первую ошибку записи, чтобы не превращать формирование отчёта
+// в лестницу проверок после каждой строки.
+//
+// Ошибка здесь не косметическая: WriteReport вызывается из `onebase test`, и
+// отчёт уходит либо в stdout, либо в файл (internal/cli/test.go). Записи не
+// проверялись вовсе, поэтому при заполненном диске команда сообщала об успехе, а
+// на диске оставался обрезанный отчёт. Для TAP и JUnit это опаснее, чем для
+// человекочитаемого вывода: CI разберёт усечённый файл как меньшее число тестов
+// и покажет зелёную сборку.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) printf(format string, a ...any) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintf(e.w, format, a...)
+}
+
+func (e *errWriter) println(a ...any) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintln(e.w, a...)
+}
+
 // caseStatus классифицирует тест: "pass" | "fail" | "error". Пустой тест (без
 // проверок и без ошибки) — это "fail".
 func caseStatus(c TestCaseResult) string {
@@ -47,31 +75,32 @@ func caseStatus(c TestCaseResult) string {
 // ─── pretty ───────────────────────────────────────────────────────────────────
 
 func writePretty(w io.Writer, res TestRunResult) error {
+	ew := &errWriter{w: w}
 	for _, c := range res.Cases {
-		fmt.Fprintf(w, "▶ %s\n", c.Name)
+		ew.printf("▶ %s\n", c.Name)
 		for _, o := range c.Asserts {
 			if o.Passed {
-				fmt.Fprintf(w, "  ok    — %s\n", o.Desc)
+				ew.printf("  ok    — %s\n", o.Desc)
 			} else if o.Detail != "" {
-				fmt.Fprintf(w, "  ПРОВАЛ — %s (%s)\n", o.Desc, o.Detail)
+				ew.printf("  ПРОВАЛ — %s (%s)\n", o.Desc, o.Detail)
 			} else {
-				fmt.Fprintf(w, "  ПРОВАЛ — %s\n", o.Desc)
+				ew.printf("  ПРОВАЛ — %s\n", o.Desc)
 			}
 		}
 		if c.Err != nil {
-			fmt.Fprintf(w, "  ОШИБКА — %s\n", c.Err.Error())
+			ew.printf("  ОШИБКА — %s\n", c.Err.Error())
 		}
 		if len(c.Asserts) == 0 && c.Err == nil {
-			fmt.Fprintln(w, "  (без единой проверки — тест считается неуспешным)")
+			ew.println("  (без единой проверки — тест считается неуспешным)")
 		}
-		fmt.Fprintf(w, "  %s  (%s)\n", caseSummary(c), fmtDuration(c.Duration))
+		ew.printf("  %s  (%s)\n", caseSummary(c), fmtDuration(c.Duration))
 	}
 
 	tests, passedTests, asserts, failedAsserts := res.Totals()
-	fmt.Fprintln(w, "── Итог ──")
-	fmt.Fprintf(w, "Тестов: %d, успешно: %d, провалено: %d\n", tests, passedTests, tests-passedTests)
-	fmt.Fprintf(w, "Проверок: %d, провалено: %d\n", asserts, failedAsserts)
-	return nil
+	ew.println("── Итог ──")
+	ew.printf("Тестов: %d, успешно: %d, провалено: %d\n", tests, passedTests, tests-passedTests)
+	ew.printf("Проверок: %d, провалено: %d\n", asserts, failedAsserts)
+	return ew.err
 }
 
 func caseSummary(c TestCaseResult) string {
@@ -95,21 +124,22 @@ func fmtDuration(d time.Duration) string {
 // ─── TAP (Test Anything Protocol v13) ─────────────────────────────────────────
 
 func writeTAP(w io.Writer, res TestRunResult) error {
-	fmt.Fprintln(w, "TAP version 13")
-	fmt.Fprintf(w, "1..%d\n", len(res.Cases))
+	ew := &errWriter{w: w}
+	ew.println("TAP version 13")
+	ew.printf("1..%d\n", len(res.Cases))
 	for i, c := range res.Cases {
 		status := "ok"
 		if caseStatus(c) != "pass" {
 			status = "not ok"
 		}
-		fmt.Fprintf(w, "%s %d - %s\n", status, i+1, c.Name)
+		ew.printf("%s %d - %s\n", status, i+1, c.Name)
 		// Диагностика проваленного/ошибочного теста — YAML-блок.
 		if caseStatus(c) == "pass" {
 			continue
 		}
-		fmt.Fprintln(w, "  ---")
+		ew.println("  ---")
 		if c.Err != nil {
-			fmt.Fprintf(w, "  error: %s\n", tapScalar(c.Err.Error()))
+			ew.printf("  error: %s\n", tapScalar(c.Err.Error()))
 		}
 		var failed []string
 		for _, o := range c.Asserts {
@@ -122,17 +152,17 @@ func writeTAP(w io.Writer, res TestRunResult) error {
 			}
 		}
 		if len(failed) > 0 {
-			fmt.Fprintln(w, "  failures:")
+			ew.println("  failures:")
 			for _, f := range failed {
-				fmt.Fprintf(w, "    - %s\n", tapScalar(f))
+				ew.printf("    - %s\n", tapScalar(f))
 			}
 		}
 		if len(c.Asserts) == 0 && c.Err == nil {
-			fmt.Fprintln(w, "  error: тест без единой проверки")
+			ew.println("  error: тест без единой проверки")
 		}
-		fmt.Fprintln(w, "  ...")
+		ew.println("  ...")
 	}
-	return nil
+	return ew.err
 }
 
 // tapScalar экранирует значение для YAML-скаляра TAP-диагностики: кавычит и

@@ -56,7 +56,7 @@ func (s *Server) adminExtReportUpload(w http.ResponseWriter, r *http.Request) {
 		s.extReportRedirect(w, r, "", s.tr(lang, "файл не выбран"))
 		return
 	}
-	defer file.Close()
+	defer closeRead("загруженный файл", file)
 	data, err := readUploadedBytes(file, maxSize)
 	if err != nil {
 		if errors.Is(err, errUploadTooLarge) {
@@ -163,7 +163,7 @@ func (s *Server) adminExtReportExport(w http.ResponseWriter, r *http.Request) {
 	fname := rec.Name + ".obform"
 	w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
 	w.Header().Set("Content-Disposition", contentDisposition(fname))
-	w.Write(bundle)
+	writeDownload(w, fname, bundle)
 }
 
 // validateReportQuery компилирует запрос отчёта по схеме конфигурации и (на

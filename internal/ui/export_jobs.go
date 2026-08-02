@@ -276,7 +276,7 @@ func (s *Server) exportJobDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", job.ContentType)
 	w.Header().Set("Content-Disposition", contentDisposition(job.Filename))
-	w.Write(job.Data)
+	writeDownload(w, job.Filename, job.Data)
 }
 
 func (s *Server) exportJobForRequest(w http.ResponseWriter, r *http.Request) (exportJob, bool) {
