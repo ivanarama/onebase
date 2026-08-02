@@ -319,7 +319,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	h.runner.Stop(id)
-	h.store.Remove(id)
+	// Сбой удаления нельзя проглатывать: редирект на список выглядит как
+	// выполненное удаление, а база остаётся в реестре — пользователь решит, что
+	// интерфейс завис, и нажмёт «удалить» ещё раз.
+	if err := h.store.Remove(id); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -362,7 +368,13 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 			return false
 		}
 		b.LastOpened = time.Now()
-		h.store.Update(b)
+		// База уже запущена — отказывать пользователю из-за несохранённой
+		// отметки времени неправильно. Но сбой записи реестра означает, что не
+		// сохранится и всё остальное, поэтому Warn, а не тишина.
+		if err := h.store.Update(b); err != nil {
+			respondLog().Warn("не удалось сохранить отметку последнего открытия базы",
+				"baseID", b.ID, "err", err)
+		}
 	}
 	// Wait until the base server is ready before handing the URL to the client.
 	if err := h.runner.WaitReady(b, 15*time.Second); err != nil {
@@ -590,7 +602,10 @@ func (h *handler) configuratorRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b.LastOpened = time.Now()
-	h.store.Update(b)
+	if err := h.store.Update(b); err != nil {
+		respondLog().Warn("не удалось сохранить отметку последнего открытия базы",
+			"baseID", b.ID, "err", err)
+	}
 	if err := h.runner.WaitReady(b, 15*time.Second); err != nil {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return

@@ -703,13 +703,20 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			backup.ImportOptions{ExchangeMode: exchangeRestoreMode},
 		)
 
+		// Миграция после восстановления доводит схему до состояния, которого
+		// ждёт конфигурация. Её сбой раньше отбрасывался, и пользователь видел
+		// «восстановление выполнено»: данные на месте, схема — нет, а обнаружит
+		// он это при первом же открытии базы.
+		var migrateErr error
 		if importErr == nil {
-			h.runner.MigrateBase(r.Context(), b)
+			_, migrateErr = h.runner.MigrateBase(r.Context(), b)
 		}
 
 		data := h.loadCfgData(r.Context(), b, "backup")
 		if importErr != nil {
 			data.Error = tr(lang, "Ошибка восстановления") + ": " + importErr.Error()
+		} else if migrateErr != nil {
+			data.Error = tr(lang, "Данные восстановлены, но миграция схемы не выполнена") + ": " + migrateErr.Error()
 		} else {
 			data.FieldsSaved = true
 			data.FieldsSavedEntity = "panel-backup"
@@ -805,8 +812,9 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var migrateErr error
 	if configErr == nil {
-		h.runner.MigrateBase(r.Context(), b)
+		_, migrateErr = h.runner.MigrateBase(r.Context(), b)
 	}
 
 	data := h.loadCfgData(r.Context(), b, "backup")
@@ -814,6 +822,8 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		data.Error = tr(lang, "Ошибка восстановления БД") + ": " + restoreErr.Error()
 	} else if configErr != nil {
 		data.Error = tr(lang, "Ошибка импорта конфигурации") + ": " + configErr.Error()
+	} else if migrateErr != nil {
+		data.Error = tr(lang, "Данные восстановлены, но миграция схемы не выполнена") + ": " + migrateErr.Error()
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = "panel-backup"

@@ -490,8 +490,13 @@ func touchMigrateMarker(id string) {
 		return
 	}
 	now := time.Now()
-	if err := os.WriteFile(p, []byte(now.Format(time.RFC3339)), 0o644); err == nil {
-		os.Chtimes(p, now, now)
+	if err := os.WriteFile(p, []byte(now.Format(time.RFC3339)), 0o600); err == nil {
+		// Страховка: mtime читает migratedAt, а WriteFile его и так выставляет
+		// в «сейчас». Поэтому сбой здесь ни на что не влияет — но пусть будет
+		// видно, если файловая система ведёт себя неожиданно.
+		if cerr := os.Chtimes(p, now, now); cerr != nil {
+			respondLog().Debug("не удалось выставить время метки миграции", "path", p, "err", cerr)
+		}
 	}
 }
 

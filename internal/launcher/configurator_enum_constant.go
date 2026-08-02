@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -150,32 +151,55 @@ func (h *handler) configuratorSaveConstant(w http.ResponseWriter, r *http.Reques
 			saveErr = cerr
 		} else {
 			defer db.Close()
-			rows, _ := db.Query(r.Context(),
+			// Поиск файла, в котором объявлена константа.
+			//
+			// Раньше здесь терялись три ошибки подряд, и каждая давала «успешно
+			// сохранено» без сохранения: результат Query не проверялся (при
+			// сбое rows == nil и следующий же Next паниковал), сбойный Scan
+			// пропускал файл-кандидат, а если после этого ничего не нашлось —
+			// saveErr оставался nil и пользователь получал отметку о записи.
+			rows, qerr := db.Query(r.Context(),
 				`SELECT path, content FROM _onebase_config WHERE path LIKE 'constants/%.yaml'`)
-			var targetPath string
-			var targetContent []byte
-			for rows.Next() {
-				var p string
-				var content []byte
-				rows.Scan(&p, &content)
-				var cf rawConstsFile
-				if yaml.Unmarshal(content, &cf) == nil {
-					for _, c := range cf.Constants {
-						if c.Name == constName {
-							targetPath = p
-							targetContent = content
-							break
+			if qerr != nil {
+				saveErr = qerr
+			} else {
+				var targetPath string
+				var targetContent []byte
+				for rows.Next() {
+					var p string
+					var content []byte
+					if serr := rows.Scan(&p, &content); serr != nil {
+						saveErr = serr
+						break
+					}
+					var cf rawConstsFile
+					if yaml.Unmarshal(content, &cf) == nil {
+						for _, c := range cf.Constants {
+							if c.Name == constName {
+								targetPath = p
+								targetContent = content
+								break
+							}
 						}
 					}
+					if targetPath != "" {
+						break
+					}
 				}
-				if targetPath != "" {
-					break
-				}
-			}
-			rows.Close()
-			if targetPath != "" {
-				if out, err := updateConstantsFile(targetContent); err == nil {
-					saveErr = cfgUpsert(r.Context(), db, targetPath, out)
+				rows.Close()
+				switch {
+				case saveErr != nil:
+				case rows.Err() != nil:
+					saveErr = rows.Err()
+				case targetPath == "":
+					saveErr = i18nerr.Errorf("константа %s не найдена в конфигурации", constName)
+				default:
+					out, uerr := updateConstantsFile(targetContent)
+					if uerr != nil {
+						saveErr = uerr
+					} else {
+						saveErr = cfgUpsert(r.Context(), db, targetPath, out)
+					}
 				}
 			}
 		}

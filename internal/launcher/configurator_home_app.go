@@ -2,11 +2,11 @@ package launcher
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -84,9 +84,19 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 	title := r.FormValue("title")
 	icon := ui.NormalizeIconName(r.FormValue("icon"))
 	orderStr := r.FormValue("order")
+	// Порядок из формы. Раньше Sscanf молча оставлял 0 на любом мусоре, и
+	// подсистема уезжала в начало списка так, будто пользователь сам это
+	// задал. Пустое поле — по-прежнему 0, это осмысленное «без порядка».
 	var order int
 	if orderStr != "" {
-		fmt.Sscanf(orderStr, "%d", &order)
+		n, cerr := strconv.Atoi(strings.TrimSpace(orderStr))
+		if cerr != nil {
+			data := h.loadCfgData(r.Context(), b, "tree")
+			data.Error = tr(lang, "Порядок должен быть целым числом") + ": " + orderStr
+			renderCfg(w, r, data)
+			return
+		}
+		order = n
 	}
 
 	// Без имени подсистему не сохраняем — иначе на диске появляется битый

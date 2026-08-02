@@ -16,14 +16,14 @@ import (
 // предпросмотра в конфигураторе. Намеренно плоский: клиент рисует таблицу и
 // (для графиков) лёгкую CSS-визуализацию без внешних библиотек.
 type widgetPreviewResponse struct {
-	OK      bool                  `json:"ok"`
-	Error   string                `json:"error,omitempty"`
-	Type    string                `json:"type"`
-	Title   string                `json:"title"`
-	Mapping string                `json:"mapping"`          // «Ось X: Месяц · Серии: Приход, Расход»
-	Columns []string              `json:"columns"`          // подписи колонок таблицы
-	Rows    [][]string            `json:"rows"`             // отформатированные ячейки
-	Chart   *widgetPreviewChart   `json:"chart,omitempty"`  // только для type=chart
+	OK      bool                `json:"ok"`
+	Error   string              `json:"error,omitempty"`
+	Type    string              `json:"type"`
+	Title   string              `json:"title"`
+	Mapping string              `json:"mapping"`         // «Ось X: Месяц · Серии: Приход, Расход»
+	Columns []string            `json:"columns"`         // подписи колонок таблицы
+	Rows    [][]string          `json:"rows"`            // отформатированные ячейки
+	Chart   *widgetPreviewChart `json:"chart,omitempty"` // только для type=chart
 	// EChartsOption — та же опция ECharts, что строит рабочий стол (widget.EChartsOption).
 	// Конфигуратор рисует её тем же ECharts, поэтому предпросмотр совпадает с тем,
 	// что увидит пользователь (сглаживание линий, круговая и т.д.).
