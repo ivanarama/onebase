@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -116,14 +115,12 @@ func (h *handler) configuratorWidgetPreview(w http.ResponseWriter, r *http.Reque
 // дефолты chart_kind/limit/scope) через временный файл — тот же путь, что и при
 // сохранении, чтобы предпросмотр и сохранение трактовали YAML одинаково.
 func parseWidgetYAML(body string) (*metadata.Widget, error) {
-	tmp, err := os.CreateTemp("", "widget-preview-*.yaml")
+	tmpPath, cleanup, err := writeTempFile("widget-preview-*.yaml", body)
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmp.Name())
-	tmp.WriteString(body)
-	tmp.Close()
-	return metadata.LoadWidgetFile(tmp.Name())
+	defer cleanup()
+	return metadata.LoadWidgetFile(tmpPath)
 }
 
 // buildWidgetPreview приводит widget.Result к плоскому render-ready виду.

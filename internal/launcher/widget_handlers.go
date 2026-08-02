@@ -37,17 +37,24 @@ func (h *handler) configuratorSaveWidget(w http.ResponseWriter, r *http.Request)
 
 	// Validate: parse without writing to disk first so a malformed YAML never
 	// replaces a working widget definition.
-	tmp, err := os.CreateTemp("", "widget-*.yaml")
-	if err == nil {
-		tmp.WriteString(body)
-		tmp.Close()
-		defer os.Remove(tmp.Name())
-		if _, perr := metadata.LoadWidgetFile(tmp.Name()); perr != nil {
-			data := h.loadCfgData(r.Context(), b, "tree")
-			data.Error = tr(lang, "Ошибка YAML") + ": " + perr.Error()
-			renderCfg(w, r, data)
-			return
-		}
+	//
+	// Раньше весь блок стоял под `if err == nil`: сбой создания временного файла
+	// молча отключал проверку, и непроверенный YAML уходил в конфигурацию —
+	// ровно то, что этот блок и должен предотвращать. Теперь сбой подготовки
+	// отличается от сбоя разбора по тексту, но одинаково прекращает сохранение.
+	tmpPath, cleanup, err := writeTempFile("widget-*.yaml", body)
+	if err != nil {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Ошибка проверки") + ": " + err.Error()
+		renderCfg(w, r, data)
+		return
+	}
+	defer cleanup()
+	if _, perr := metadata.LoadWidgetFile(tmpPath); perr != nil {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Ошибка YAML") + ": " + perr.Error()
+		renderCfg(w, r, data)
+		return
 	}
 
 	relPath := "widgets/" + nameToFilename(name) + ".yaml"
