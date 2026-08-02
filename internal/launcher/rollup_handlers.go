@@ -27,7 +27,7 @@ func (h *handler) cfgAdminRollup(w http.ResponseWriter, r *http.Request) {
 	}
 	proj, err := h.loadProjectFor(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Не удалось загрузить конфигурацию: ` + escHTML(err.Error()) + `</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Не удалось загрузить конфигурацию: `+escHTML(err.Error())+`</div>`))
 		return
 	}
 	lang := resolveLang(r)
@@ -222,7 +222,7 @@ document.addEventListener('change',function(e){
 });
 </script></div>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 // rollupReqBody — тело запросов предпросмотра/запуска свёртки.

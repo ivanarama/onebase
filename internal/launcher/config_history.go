@@ -211,22 +211,22 @@ func (h *handler) cfgAdminConfigHistory(w http.ResponseWriter, r *http.Request) 
 	}
 	if b.ConfigSource != "database" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div style="padding:16px"><h3 style="margin:0 0 10px;font-size:15px">История конфигурации</h3><div style="color:#64748b;font-size:12px">Эта база использует файловый режим конфигурации. Историю и diff ведите через Git; встроенная история доступна для режима «конфигурация в БД».</div></div>`))
+		writeBody(w, []byte(`<div style="padding:16px"><h3 style="margin:0 0 10px;font-size:15px">История конфигурации</h3><div style="color:#64748b;font-size:12px">Эта база использует файловый режим конфигурации. Историю и diff ведите через Git; встроенная история доступна для режима «конфигурация в БД».</div></div>`))
 		return
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	repo := configdb.New(db)
 	if err := repo.EnsureSchema(r.Context()); err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">` + html.EscapeString(err.Error()) + `</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">`+html.EscapeString(err.Error())+`</div>`))
 		return
 	}
 	versions, err := repo.ListVersions(r.Context(), configHistoryLimit)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">` + html.EscapeString(err.Error()) + `</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">`+html.EscapeString(err.Error())+`</div>`))
 		return
 	}
 	fromID := r.URL.Query().Get("from")
@@ -239,7 +239,7 @@ func (h *handler) cfgAdminConfigHistory(w http.ResponseWriter, r *http.Request) 
 		diff, diffErr = repo.DiffVersions(r.Context(), fromID, toID)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderConfigHistory(b.ID, versions, fromID, toID, diff, diffErr)))
+	writeBody(w, []byte(renderConfigHistory(b.ID, versions, fromID, toID, diff, diffErr)))
 }
 
 func (h *handler) cfgAdminConfigHistoryRollback(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +334,7 @@ func (h *handler) cfgAdminConfigHistoryExportZip(w http.ResponseWriter, r *http.
 	name := "config_" + shortConfigVersionID(versionID) + ".zip"
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename="+name)
-	w.Write(buf.Bytes())
+	writeDownload(w, name, buf.Bytes())
 }
 
 func (h *handler) cfgAdminConfigHistoryExportOBZ(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +394,7 @@ func (h *handler) cfgAdminConfigHistoryExportOBZ(w http.ResponseWriter, r *http.
 	name := "config_" + shortConfigVersionID(versionID) + ".obz"
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+name)
-	w.Write(buf.Bytes())
+	writeDownload(w, name, buf.Bytes())
 }
 
 func writeConfigHistoryFiles(zw *zip.Writer, files []configdb.ConfigFile, prefix string) error {

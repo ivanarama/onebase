@@ -183,3 +183,45 @@ func TestConfiguratorFileRawRejectsSymlinkOutside(t *testing.T) {
 		t.Fatalf("raw viewer отдал содержимое внешнего файла: %q", rec.Body.String())
 	}
 }
+
+// Просмотр исходника отдаёт содержимое файла как есть — экранировать его нельзя,
+// это редактор. Единственное, что не даёт файлу с <script> исполниться в
+// конфигураторе, — пара заголовков: инертный text/plain и запрет угадывания типа
+// (nosniff). Без nosniff браузер вправе решить, что это HTML, и выполнить скрипт.
+// Тест держит именно этот guard: на него ссылается подавление G705 в respond.go.
+func TestConfiguratorFileRawServesInertContentType(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, "catalogs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := "<script>alert(1)</script>\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "catalogs", "x.yaml"), []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := newTestStore(t)
+	if err := st.Add(&Base{ID: "base", Name: "Base", ConfigSource: "file", Path: cfgDir}); err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{store: st}
+	req := httptest.NewRequest(http.MethodGet, "/bases/base/configurator/file?path=catalogs/x.yaml", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "base")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.configuratorFileRaw(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ожидался 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != payload {
+		t.Fatalf("содержимое исказилось: %q", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, ожидался text/plain: иначе <script> из файла исполнится в конфигураторе", ct)
+	}
+	if nosniff := rec.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, ожидался nosniff: без него браузер вправе счесть файл за HTML", nosniff)
+	}
+}

@@ -74,7 +74,7 @@ func (h *handler) configExportZip(w http.ResponseWriter, r *http.Request) {
 	name := b.Name + "_config.zip"
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename="+name)
-	w.Write(buf.Bytes())
+	writeDownload(w, name, buf.Bytes())
 }
 
 // configImportZip imports a configuration from a ZIP archive into the database.

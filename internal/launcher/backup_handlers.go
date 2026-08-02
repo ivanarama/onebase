@@ -590,7 +590,7 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 	mf.Write([]byte(meta))
 
 	zw.Close()
-	w.Write(buf.Bytes())
+	writeDownload(w, name, buf.Bytes())
 }
 
 // backupFullImport restores both database and configuration from a .obz file.

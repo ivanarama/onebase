@@ -136,7 +136,7 @@ func (h *handler) cfgLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	cfgLoginTmpl.Execute(w, h.cfgLoginData(r, b))
+	renderTemplate(w, cfgLoginTmpl, h.cfgLoginData(r, b))
 }
 
 func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)
 		data := h.cfgLoginData(r, b)
 		data["Error"] = msg
-		cfgLoginTmpl.Execute(w, data)
+		renderTemplate(w, cfgLoginTmpl, data)
 	}
 
 	r.ParseForm()

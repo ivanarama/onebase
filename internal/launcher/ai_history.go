@@ -209,14 +209,14 @@ func (h *handler) cfgAdminAIHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">Нет подключения к БД</div>`))
 		return
 	}
 	entries, err := db.ListAIAudit(r.Context(), 200)
 	if err != nil {
-		w.Write([]byte(`<div style="padding:16px;color:#c00">` + html.EscapeString(err.Error()) + `</div>`))
+		writeBody(w, []byte(`<div style="padding:16px;color:#c00">`+html.EscapeString(err.Error())+`</div>`))
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderAIHistory(entries)))
+	writeBody(w, []byte(renderAIHistory(entries)))
 }

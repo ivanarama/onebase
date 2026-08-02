@@ -100,18 +100,18 @@ func (h *handler) configuratorLayoutPreview(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"ok":true}`))
+			writeBody(w, []byte(`{"ok":true}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Header().Set("Content-Disposition", `inline; filename="preview.pdf"`)
-		w.Write(pdfBytes)
+		writeBody(w, pdfBytes)
 		return
 	}
 
 	html := doc.HTML(sheet.HTMLOptions{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	writeBody(w, []byte(html))
 }
 
 // parseLayoutSafe парсит макет v2 под recover (паника → ошибка).
