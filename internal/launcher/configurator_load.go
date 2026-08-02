@@ -22,7 +22,7 @@ import (
 
 func configDirtyAfter(rootDir string, threshold time.Time) bool {
 	dirty := false
-	filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -47,6 +47,7 @@ func configDirtyAfter(rootDir string, threshold time.Time) bool {
 		}
 		return nil
 	})
+	bestEffort("обойти каталог проекта", walkErr)
 	return dirty
 }
 

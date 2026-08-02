@@ -483,7 +483,10 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 	// это уже делает «Стоп всё».
 	if b, err := h.store.Get(id); err == nil && !portFree(b.Port) {
 		killByPort(b.Port)
-		waitPortFree(b.Port, 3*time.Second)
+		if !waitPortFree(b.Port, 3*time.Second) {
+			respondLog().Warn("база не остановилась: порт остался занят",
+				"baseID", id, "port", b.Port)
+		}
 	}
 	http.Redirect(w, r, "/?sel="+id, http.StatusFound)
 }
@@ -658,7 +661,9 @@ func (h *handler) configExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	OpenPath(workDir)
+	// Папка выгружена в любом случае — путь показан ниже. Не открылась —
+	// пусть будет видно, почему.
+	bestEffort("открыть папку выгрузки", OpenPath(workDir))
 
 	render(w, r, "page-config-result", map[string]any{
 		"Title":   tr(lang, "onebase — Конфигуратор"),

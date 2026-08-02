@@ -60,7 +60,7 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		dir := filepath.Join(b.Path, "enums")
-		os.MkdirAll(dir, 0o755)
+		bestEffort("создать каталог перечислений", os.MkdirAll(dir, 0o755)) //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
 		// find existing file by name field, fallback to name-based filename
 		files, _ := os.ReadDir(dir)
 		targetFile := filepath.Join(dir, nameToFilename(enumName)+".yaml")

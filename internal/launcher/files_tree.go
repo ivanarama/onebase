@@ -292,7 +292,7 @@ func (h *handler) configFilePaths(ctx context.Context, b *Base) []string {
 // пропуская служебные папки.
 func walkConfigFiles(root string) []string {
 	var out []string
-	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -312,6 +312,7 @@ func walkConfigFiles(root string) []string {
 		}
 		return nil
 	})
+	bestEffort("обойти каталог конфигурации", walkErr)
 	return out
 }
 

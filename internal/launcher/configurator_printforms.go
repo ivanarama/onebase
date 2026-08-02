@@ -173,7 +173,7 @@ func (h *handler) configuratorSaveLayout(w http.ResponseWriter, r *http.Request)
 	} else {
 		pfDir := filepath.Join(b.Path, "printforms")
 		layoutPath := ""
-		filepath.Walk(pfDir, func(path string, info os.FileInfo, err error) error {
+		walkErr := filepath.Walk(pfDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
@@ -182,8 +182,9 @@ func (h *handler) configuratorSaveLayout(w http.ResponseWriter, r *http.Request)
 			}
 			return nil
 		})
+		bestEffort("обойти каталог печатных форм", walkErr)
 		if layoutPath == "" {
-			filepath.Walk(pfDir, func(path string, info os.FileInfo, err error) error {
+			walkErr := filepath.Walk(pfDir, func(path string, info os.FileInfo, err error) error {
 				if err != nil || info.IsDir() {
 					return nil
 				}
@@ -192,6 +193,7 @@ func (h *handler) configuratorSaveLayout(w http.ResponseWriter, r *http.Request)
 				}
 				return nil
 			})
+			bestEffort("обойти каталог печатных форм", walkErr)
 		}
 		if layoutPath == "" {
 			layoutPath, saveErr = configdb.SafeJoin(b.Path, relPath)

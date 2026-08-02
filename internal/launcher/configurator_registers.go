@@ -318,7 +318,9 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	p, err := findAccountRegFilePath(dir, reg.Name)
 	if err != nil {
 		// новый файл — subconto/titles сохранять неоткуда, marshal свежего reg
-		os.MkdirAll(filepath.Join(dir, "accountregs"), 0o755)
+		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+			return merr
+		}
 		p = filepath.Join(dir, "accountregs", nameToFilename(reg.Name)+".yaml")
 		out, merr := yaml.Marshal(&reg)
 		if merr != nil {

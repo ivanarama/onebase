@@ -162,17 +162,21 @@ func (r *Runner) recordExit(baseID string, cmd *exec.Cmd) {
 	r.exits[baseID] = true
 }
 
-func (r *Runner) Stop(baseID string) error {
+// Stop снимает отслеживаемый процесс базы. Возврата нет намеренно: результат
+// всегда был nil, и проверка его ничего бы не значила. Сама по себе отправка
+// сигнала успех не гарантирует — подтверждение только одно, освобождение порта,
+// поэтому вызывающие, которым важно, что база действительно встала (перед
+// восстановлением, переименованием файла БД), обязаны спросить waitPortFree.
+func (r *Runner) Stop(baseID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	mp, ok := r.procs[baseID]
 	if !ok {
-		return nil
+		return
 	}
 	killProc(mp.cmd.Process)
 	delete(r.procs, baseID)
-	return nil
 }
 
 // StopAll kills all running base processes (tracked + any still listening on extraPorts)
@@ -211,7 +215,9 @@ func (r *Runner) StopAll(extraPorts []int) {
 	}
 
 	for port := range seen {
-		waitPortFree(port, 3*time.Second)
+		if !waitPortFree(port, 3*time.Second) {
+			respondLog().Warn("порт базы не освободился после остановки", "port", port)
+		}
 	}
 }
 
@@ -220,10 +226,11 @@ func killByPort(port int) {
 	switch runtime.GOOS {
 	case "windows":
 		// runPowerShell runs with -WindowStyle Hidden — no CMD flash.
-		runPowerShell(fmt.Sprintf(
+		_, psErr := runPowerShell(fmt.Sprintf(
 			`$c = Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue
 			 if ($c) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }`,
 			port))
+		bestEffort("завершить процесс на порту через PowerShell", psErr)
 	case "darwin":
 		target := fmt.Sprintf(":%d", port)
 		out, _ := exec.Command("lsof", "-ti", target).Output()
@@ -273,14 +280,17 @@ func portFree(port int) bool {
 }
 
 // waitPortFree blocks until the port becomes free or timeout expires.
-func waitPortFree(port int, timeout time.Duration) {
+// Возвращает false, если порт так и остался занят: для вызывающего это значит,
+// что база не остановилась и трогать её файлы нельзя.
+func waitPortFree(port int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if portFree(port) {
-			return
+			return true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	return false
 }
 
 // StartedAt returns when the process for baseID was started.
@@ -359,6 +369,8 @@ func (r *Runner) Restart(base *Base) error {
 	if !portFree(base.Port) {
 		killByPort(base.Port)
 	}
+	// Порт мог не освободиться — тогда Start ниже вернёт «порт занят», и эта
+	// ошибка дойдёт до пользователя. Отдельно проверять нечего.
 	waitPortFree(base.Port, 3*time.Second)
 	return r.Start(base)
 }
