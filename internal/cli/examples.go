@@ -34,7 +34,7 @@ func init() {
 func runExamples(cmd *cobra.Command, args []string) error {
 	list, _ := cmd.Flags().GetBool("list")
 	if list || len(args) == 0 {
-		fmt.Fprintln(os.Stdout, strings.Join(exampleKinds(), "\n"))
+		outln(strings.Join(exampleKinds(), "\n"))
 		return nil
 	}
 	text, ok := exampleSnippet(args[0])
@@ -43,7 +43,7 @@ func runExamples(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprint(os.Stdout, text)
 	if !strings.HasSuffix(text, "\n") {
-		fmt.Fprintln(os.Stdout)
+		outln()
 	}
 	return nil
 }

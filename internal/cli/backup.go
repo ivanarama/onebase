@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/ivantit66/onebase/internal/backup"
@@ -50,7 +49,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Создание бэкапа в %s ...\n", outDir)
+	outf("Создание бэкапа в %s ...\n", outDir)
 	var path string
 	if backupSQLite != "" {
 		// SQLite бэкапится атомарным VACUUM INTO в обычный .db — восстановление
@@ -62,7 +61,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Бэкап сохранён: %s\n", path)
+	outf("Бэкап сохранён: %s\n", path)
 	return nil
 }
 
@@ -93,7 +92,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	if err := requireOneDBTarget(restoreDB, restoreSQLite); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Восстановление из %s ...\n", restoreFile)
+	outf("Восстановление из %s ...\n", restoreFile)
 	if restoreSQLite != "" {
 		if !restoreForce {
 			return fmt.Errorf("SQLite restore требует остановленного сервиса; повторите с --force после его остановки")
@@ -107,7 +106,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintln(os.Stdout, "Восстановление завершено.")
+	outln("Восстановление завершено.")
 	return nil
 }
 
@@ -142,7 +141,7 @@ func runDemoReset(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	fmt.Fprintf(os.Stdout, "Сброс демо-данных из %s ...\n", demoResetFile)
+	outf("Сброс демо-данных из %s ...\n", demoResetFile)
 	report, err := backup.DemoReset(ctx, db, demoResetFile)
 	if err != nil {
 		return err
@@ -151,6 +150,6 @@ func runDemoReset(cmd *cobra.Command, args []string) error {
 	for _, n := range report.Tables {
 		rows += n
 	}
-	fmt.Fprintf(os.Stdout, "Готово: таблиц %d, строк %d.\n", len(report.Tables), rows)
+	outf("Готово: таблиц %d, строк %d.\n", len(report.Tables), rows)
 	return nil
 }

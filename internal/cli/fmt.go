@@ -2,7 +2,6 @@ package cli
 
 import (
 	stdfmt "fmt"
-	"os"
 
 	"github.com/ivantit66/onebase/internal/configfmt"
 	"github.com/spf13/cobra"
@@ -45,9 +44,9 @@ func runFmt(cmd *cobra.Command, args []string) error {
 		if !ok {
 			changed++
 			if check {
-				stdfmt.Fprintf(os.Stdout, "%s: требует форматирования\n", path)
+				outf("%s: требует форматирования\n", path)
 			} else {
-				stdfmt.Fprintf(os.Stdout, "%s: отформатирован\n", path)
+				outf("%s: отформатирован\n", path)
 			}
 		}
 	}
@@ -55,7 +54,7 @@ func runFmt(cmd *cobra.Command, args []string) error {
 		return stdfmt.Errorf("найдено неотформатированных YAML-файлов: %d", changed)
 	}
 	if changed == 0 {
-		stdfmt.Fprintln(os.Stdout, "OK: YAML уже в каноническом формате")
+		outln("OK: YAML уже в каноническом формате")
 	}
 	return nil
 }

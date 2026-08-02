@@ -237,28 +237,28 @@ func printExplain(cmd *cobra.Command, out explainOutput) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	}
-	fmt.Fprintf(os.Stdout, "%s %s", out.Kind, out.Name)
+	outf("%s %s", out.Kind, out.Name)
 	if out.Title != "" {
-		fmt.Fprintf(os.Stdout, " — %s", out.Title)
+		outf(" — %s", out.Title)
 	}
-	fmt.Fprintln(os.Stdout)
+	outln()
 	if out.Type != "" {
-		fmt.Fprintf(os.Stdout, "type: %s\n", out.Type)
+		outf("type: %s\n", out.Type)
 	}
 	if out.Query != "" {
-		fmt.Fprintf(os.Stdout, "\nЗапрос:\n%s\n", out.Query)
+		outf("\nЗапрос:\n%s\n", out.Query)
 	}
 	if out.SQL != "" {
-		fmt.Fprintf(os.Stdout, "\nSQL:\n%s\nARGS: %v\n", out.SQL, out.Args)
+		outf("\nSQL:\n%s\nARGS: %v\n", out.SQL, out.Args)
 	}
 	if len(out.Sources) > 0 {
-		fmt.Fprintf(os.Stdout, "sources: %v\n", out.Sources)
+		outf("sources: %v\n", out.Sources)
 	}
 	if out.Error != "" {
-		fmt.Fprintf(os.Stdout, "\nОшибка: %s\n", out.Error)
+		outf("\nОшибка: %s\n", out.Error)
 	}
 	if len(out.Rows) > 0 {
-		fmt.Fprintln(os.Stdout, "\nSample:")
+		outln("\nSample:")
 		printRowsText(out.Columns, out.Rows)
 	}
 	return nil

@@ -178,7 +178,7 @@ func runUserList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(users) == 0 {
-		fmt.Fprintln(os.Stdout, "Пользователей нет.")
+		outln("Пользователей нет.")
 		return nil
 	}
 	for _, u := range users {
@@ -196,7 +196,7 @@ func runUserList(cmd *cobra.Command, _ []string) error {
 		if names := roleNames(roles); len(names) > 0 {
 			line += "  роли: " + strings.Join(names, ", ")
 		}
-		fmt.Fprintln(os.Stdout, line)
+		outln(line)
 	}
 	return nil
 }
@@ -233,19 +233,19 @@ func runUserAdd(cmd *cobra.Command, args []string) error {
 	env.db.LogAction(ctx, "user_create", "user", login, u.ID, "", "cli", "")
 
 	if isAdmin {
-		fmt.Fprintf(os.Stdout, "Создан пользователь %s (администратор)\n", login)
+		outf("Создан пользователь %s (администратор)\n", login)
 	} else {
-		fmt.Fprintf(os.Stdout, "Создан пользователь %s\n", login)
+		outf("Создан пользователь %s\n", login)
 	}
 	if generated {
-		fmt.Fprintf(os.Stdout, "Пароль: %s\n", pw)
+		outf("Пароль: %s\n", pw)
 	}
 
 	if showInList {
 		if err := env.repo.SetShowInList(ctx, u.ID, true); err != nil {
 			return fmt.Errorf("пользователь %s создан, но флаг видимости не применён: %w", login, err)
 		}
-		fmt.Fprintf(os.Stdout, "Пользователь %s показывается в списках выбора\n", login)
+		outf("Пользователь %s показывается в списках выбора\n", login)
 	}
 	return nil
 }
@@ -275,9 +275,9 @@ func runUserPasswd(cmd *cobra.Command, args []string) error {
 	_ = env.repo.KickUserSessions(ctx, u.ID)
 	env.db.LogAction(ctx, "user_passwd", "user", login, u.ID, "", "cli", "")
 
-	fmt.Fprintf(os.Stdout, "Пароль обновлён для %s\n", login)
+	outf("Пароль обновлён для %s\n", login)
 	if generated {
-		fmt.Fprintf(os.Stdout, "Пароль: %s\n", pw)
+		outf("Пароль: %s\n", pw)
 	}
 	return nil
 }
@@ -299,7 +299,7 @@ func runUserRm(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	env.db.LogAction(ctx, "user_delete", "user", login, u.ID, "", "cli", "")
-	fmt.Fprintf(os.Stdout, "Пользователь %s удалён\n", login)
+	outf("Пользователь %s удалён\n", login)
 	return nil
 }
 
@@ -339,9 +339,9 @@ func runUserShowInList(cmd *cobra.Command, args []string) error {
 	}
 	env.db.LogAction(ctx, "user_show_in_list", "user", login, u.ID, "", "cli", "")
 	if on {
-		fmt.Fprintf(os.Stdout, "Пользователь %s показывается в списках выбора\n", login)
+		outf("Пользователь %s показывается в списках выбора\n", login)
 	} else {
-		fmt.Fprintf(os.Stdout, "Пользователь %s скрыт из списков выбора\n", login)
+		outf("Пользователь %s скрыт из списков выбора\n", login)
 	}
 	return nil
 }
@@ -380,14 +380,14 @@ func changeUserRole(cmd *cobra.Command, login, roleName string, assign bool) err
 			return err
 		}
 		env.db.LogAction(ctx, "role_assign", "user", login, u.ID, "", "cli", "")
-		fmt.Fprintf(os.Stdout, "Роль «%s» назначена пользователю %s\n", role.Name, login)
+		outf("Роль «%s» назначена пользователю %s\n", role.Name, login)
 		return nil
 	}
 	if err := env.repo.UnassignRole(ctx, u.ID, role.ID); err != nil {
 		return err
 	}
 	env.db.LogAction(ctx, "role_revoke", "user", login, u.ID, "", "cli", "")
-	fmt.Fprintf(os.Stdout, "Роль «%s» снята с пользователя %s\n", role.Name, login)
+	outf("Роль «%s» снята с пользователя %s\n", role.Name, login)
 	return nil
 }
 

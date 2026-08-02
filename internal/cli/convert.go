@@ -2,10 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/ivantit66/onebase/internal/converter"
+	"github.com/spf13/cobra"
 )
 
 var convertCmd = &cobra.Command{
@@ -38,7 +37,7 @@ func runConvert(cmd *cobra.Command, _ []string) error {
 	srcDir, _ := cmd.Flags().GetString("dir")
 	outDir, _ := cmd.Flags().GetString("out")
 
-	fmt.Fprintf(os.Stdout, "Конвертация: %s → %s\n", srcDir, outDir)
+	outf("Конвертация: %s → %s\n", srcDir, outDir)
 
 	report, err := converter.Convert(converter.Options{
 		SourceDir: srcDir,
@@ -48,8 +47,8 @@ func runConvert(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Fprintln(os.Stdout, report.String())
-	fmt.Fprintf(os.Stdout, "Отчёт сохранён: %s/conversion_report.txt\n", outDir)
-	fmt.Fprintf(os.Stdout, "\nЗапуск сервера:\n  onebase dev --project %s --db \"postgres://localhost/mydb?sslmode=disable\"\n", outDir)
+	outln(report.String())
+	outf("Отчёт сохранён: %s/conversion_report.txt\n", outDir)
+	outf("\nЗапуск сервера:\n  onebase dev --project %s --db \"postgres://localhost/mydb?sslmode=disable\"\n", outDir)
 	return nil
 }

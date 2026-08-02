@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/project"
@@ -83,7 +82,7 @@ func runProcrun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	for _, m := range messages {
-		fmt.Fprintln(os.Stdout, m)
+		outln(m)
 	}
 	if runErr != nil {
 		return fmt.Errorf("ошибка выполнения: %w", runErr)

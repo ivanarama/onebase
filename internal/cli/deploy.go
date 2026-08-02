@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -51,19 +50,19 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load app config: %w", err)
 	}
 
-	fmt.Fprintln(os.Stdout, "→ Проверка / создание базы данных...")
+	outln("→ Проверка / создание базы данных...")
 	if err := storage.EnsureDatabase(ctx, dsn); err != nil {
 		return fmt.Errorf("создание БД: %w", err)
 	}
 
-	fmt.Fprintln(os.Stdout, "→ Подключение к PostgreSQL...")
+	outln("→ Подключение к PostgreSQL...")
 	db, err := storage.Connect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("подключение к БД: %w", err)
 	}
 	defer db.Close()
 
-	fmt.Fprintln(os.Stdout, "→ Инициализация схемы платформы...")
+	outln("→ Инициализация схемы платформы...")
 	authRepo := auth.NewRepo(db)
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("auth schema: %w", err)
@@ -95,12 +94,12 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("configdb schema: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "→ Загрузка конфигурации из %s...\n", dir)
+	outf("→ Загрузка конфигурации из %s...\n", dir)
 	if err := cfgRepo.ImportFromDir(ctx, dir); err != nil {
 		return fmt.Errorf("импорт конфигурации: %w", err)
 	}
 
-	fmt.Fprintln(os.Stdout, "→ Загрузка метаданных...")
+	outln("→ Загрузка метаданных...")
 	if err := cfgRepo.MigrateContent(ctx); err != nil {
 		return fmt.Errorf("configdb migrate content: %w", err)
 	}
@@ -110,7 +109,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 	defer proj.Close()
 
-	fmt.Fprintln(os.Stdout, "→ Применение DDL-миграций...")
+	outln("→ Применение DDL-миграций...")
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("migrate entities: %w", err)
 	}
@@ -144,15 +143,15 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 		appName = appCfg.Name
 	}
 
-	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "✓ Деплой завершён успешно!")
-	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintf(os.Stdout, "  Приложение: %s\n", appName)
-	fmt.Fprintf(os.Stdout, "  База данных: %s\n", dsn)
-	fmt.Fprintf(os.Stdout, "  Версия конфигурации: %s (%s)\n", version.ID, version.Message)
-	fmt.Fprintln(os.Stdout, "")
-	fmt.Fprintln(os.Stdout, "Запустите сервер командой:")
-	fmt.Fprintf(os.Stdout, "  onebase run --config-source database --db \"%s\" --port 8080\n", dsn)
+	outln("")
+	outln("✓ Деплой завершён успешно!")
+	outln("")
+	outf("  Приложение: %s\n", appName)
+	outf("  База данных: %s\n", dsn)
+	outf("  Версия конфигурации: %s (%s)\n", version.ID, version.Message)
+	outln("")
+	outln("Запустите сервер командой:")
+	outf("  onebase run --config-source database --db \"%s\" --port 8080\n", dsn)
 	return nil
 }
 

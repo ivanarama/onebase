@@ -51,18 +51,18 @@ func runPrintformsMigrate(cmd *cobra.Command, _ []string) error {
 
 	converted, errs := migrateLegacyPrintForms(dir, keep)
 	if len(converted) == 0 && len(errs) == 0 {
-		fmt.Fprintln(os.Stdout, "Устаревших печатных форм (.yaml) не найдено — конвертировать нечего.")
+		outln("Устаревших печатных форм (.yaml) не найдено — конвертировать нечего.")
 		return nil
 	}
 	if len(converted) > 0 {
-		fmt.Fprintf(os.Stdout, "Конвертировано форм: %d\n", len(converted))
+		outf("Конвертировано форм: %d\n", len(converted))
 		for _, c := range converted {
-			fmt.Fprintf(os.Stdout, "  %s → %s\n", c.From, c.To)
+			outf("  %s → %s\n", c.From, c.To)
 		}
 	}
 	if keep && len(converted) > 0 {
-		fmt.Fprintln(os.Stdout, "\nИсходные .yaml сохранены (--keep). ВНИМАНИЕ: и .yaml, и .layout.yaml")
-		fmt.Fprintln(os.Stdout, "одной формы одновременно приведут к коллизии — удалите .yaml вручную.")
+		outln("\nИсходные .yaml сохранены (--keep). ВНИМАНИЕ: и .yaml, и .layout.yaml")
+		outln("одной формы одновременно приведут к коллизии — удалите .yaml вручную.")
 	}
 	if len(errs) > 0 {
 		fmt.Fprintf(os.Stderr, "\nОшибки конвертации (%d):\n", len(errs))

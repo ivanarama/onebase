@@ -83,13 +83,13 @@ func runImpact(cmd *cobra.Command, _ []string) error {
 		return enc.Encode(rep)
 	}
 	if len(rep.Matches) == 0 {
-		fmt.Fprintln(os.Stdout, "Совпадений не найдено")
+		outln("Совпадений не найдено")
 		return nil
 	}
 	for _, m := range rep.Matches {
-		fmt.Fprintf(os.Stdout, "%s:%d [%s] %s\n", m.File, m.Line, m.Kind, m.Snippet)
+		outf("%s:%d [%s] %s\n", m.File, m.Line, m.Kind, m.Snippet)
 	}
-	fmt.Fprintf(os.Stdout, "\nВсего совпадений: %d\n", len(rep.Matches))
+	outf("\nВсего совпадений: %d\n", len(rep.Matches))
 	return nil
 }
 

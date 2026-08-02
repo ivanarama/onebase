@@ -553,12 +553,12 @@ func printRefactorResult(res refactorResult) {
 	if res.Write {
 		mode = "write"
 	}
-	fmt.Fprintf(os.Stdout, "Refactor %s (%s): %s -> %s\n", res.Type, mode, res.From, res.To)
+	outf("Refactor %s (%s): %s -> %s\n", res.Type, mode, res.From, res.To)
 	if res.Object != "" {
-		fmt.Fprintf(os.Stdout, "Объект: %s\n", res.Object)
+		outf("Объект: %s\n", res.Object)
 	}
 	if len(res.Changes) == 0 {
-		fmt.Fprintln(os.Stdout, "Изменений не найдено")
+		outln("Изменений не найдено")
 		return
 	}
 	for _, ch := range res.Changes {
@@ -566,22 +566,22 @@ func printRefactorResult(res refactorResult) {
 		if ch.RenameTo != "" {
 			target = " -> " + ch.RenameTo
 		}
-		fmt.Fprintf(os.Stdout, "\n%s%s (%d замен)\n", ch.File, target, ch.Replacements)
+		outf("\n%s%s (%d замен)\n", ch.File, target, ch.Replacements)
 		for _, p := range ch.Preview {
-			fmt.Fprintf(os.Stdout, "  L%d: %s\n       %s\n", p.Line, p.Before, p.After)
+			outf("  L%d: %s\n       %s\n", p.Line, p.Before, p.After)
 		}
 	}
 	if len(res.MigrationNotes) > 0 {
-		fmt.Fprintln(os.Stdout, "\nMigration notes:")
+		outln("\nMigration notes:")
 		for _, n := range res.MigrationNotes {
-			fmt.Fprintln(os.Stdout, "- "+n)
+			outln("- " + n)
 		}
 	}
 	if res.Check != nil {
 		if res.Check.OK {
-			fmt.Fprintln(os.Stdout, "\ncheck: OK")
+			outln("\ncheck: OK")
 		} else {
-			fmt.Fprintf(os.Stdout, "\ncheck: FAIL (%d issues), rolledBack=%v\n", res.Check.Total, res.RolledBack)
+			outf("\ncheck: FAIL (%d issues), rolledBack=%v\n", res.Check.Total, res.RolledBack)
 		}
 	}
 }

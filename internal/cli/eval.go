@@ -121,10 +121,10 @@ func runEval(cmd *cobra.Command, args []string) error {
 		return enc.Encode(payload)
 	}
 	for _, m := range messages {
-		fmt.Fprintln(os.Stdout, m)
+		outln(m)
 	}
 	if result != nil {
-		fmt.Fprintln(os.Stdout, formatCLIValue(result))
+		outln(formatCLIValue(result))
 	}
 	return nil
 }

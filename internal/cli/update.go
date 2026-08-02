@@ -57,7 +57,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	if err := selfupdate.VerifySHA256(from, sha); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "SHA256 файла обновления совпала.")
+	outln("SHA256 файла обновления совпала.")
 	stageDir, err := os.MkdirTemp("", "onebase-update-*")
 	if err != nil {
 		return err
@@ -74,7 +74,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// 2. Остановить сервис — освобождаем бинарь.
-	fmt.Fprintf(os.Stdout, "Останавливаю сервис %s ...\n", svcName)
+	outf("Останавливаю сервис %s ...\n", svcName)
 	if err := stopService(svcName, timeout); err != nil {
 		return err
 	}
@@ -86,10 +86,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		_ = startService(svcName, timeout)
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Бинарь заменён (старый сохранён: %s).\n", filepath.Base(backup))
+	outf("Бинарь заменён (старый сохранён: %s).\n", filepath.Base(backup))
 
 	// 4. Запустить сервис и убедиться, что новый бинарь отвечает.
-	fmt.Fprintf(os.Stdout, "Запускаю сервис и жду %s (%s) ...\n", healthzURL, timeout)
+	outf("Запускаю сервис и жду %s (%s) ...\n", healthzURL, timeout)
 	startErr := startService(svcName, timeout)
 	if startErr == nil {
 		startErr = selfupdate.PollHealthzVersion(context.Background(), healthzURL, expectedVersion, timeout, time.Second)
@@ -109,7 +109,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	// 6. Успех — прибираем резервную копию (не критично, если не вышло).
 	_ = os.Remove(backup)
-	fmt.Fprintf(os.Stdout, "Готово: обновление применено, %s отвечает 200.\n", healthzURL)
+	outf("Готово: обновление применено, %s отвечает 200.\n", healthzURL)
 	return nil
 }
 

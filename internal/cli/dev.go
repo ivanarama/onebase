@@ -220,9 +220,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if initial {
-			fmt.Fprintln(os.Stdout, "[dev] loaded")
+			outln("[dev] loaded")
 		} else {
-			fmt.Fprintln(os.Stdout, "[dev] metadata/DSL/scheduled reloaded; app.yaml runtime settings require restart")
+			outln("[dev] metadata/DSL/scheduled reloaded; app.yaml runtime settings require restart")
 		}
 		return nil
 	}
@@ -346,7 +346,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	fmt.Fprintf(os.Stdout, "onebase dev running on :%d\n", port)
+	outf("onebase dev running on :%d\n", port)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)

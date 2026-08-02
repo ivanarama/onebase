@@ -101,23 +101,23 @@ func printIssuesText(res configcheck.Result) {
 			if is.Code != "" {
 				prefix += "[" + is.Code + "] "
 			}
-			fmt.Fprintf(os.Stdout, "%s: %s%s\n", loc, prefix, is.Message)
+			outf("%s: %s%s\n", loc, prefix, is.Message)
 			if is.SuggestedFix != "" {
-				fmt.Fprintf(os.Stdout, "  подсказка: %s\n", is.SuggestedFix)
+				outf("  подсказка: %s\n", is.SuggestedFix)
 			}
 		}
 	}
 
 	if len(res.Warnings) > 0 {
-		fmt.Fprintf(os.Stdout, "Предупреждения:\n")
+		outf("Предупреждения:\n")
 		printIssueList(res.Warnings)
 	}
 
 	if res.OK {
 		if len(res.Warnings) > 0 {
-			fmt.Fprintf(os.Stdout, "OK: ошибок не найдено (%d предупреждений)\n", len(res.Warnings))
+			outf("OK: ошибок не найдено (%d предупреждений)\n", len(res.Warnings))
 		} else {
-			fmt.Fprintln(os.Stdout, "OK: ошибок не найдено")
+			outln("OK: ошибок не найдено")
 		}
 		return
 	}
