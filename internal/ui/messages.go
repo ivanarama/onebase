@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
@@ -81,7 +80,7 @@ func userKeyFromCtx(ctx context.Context) string {
 func (s *Server) messagesList(w http.ResponseWriter, r *http.Request) {
 	msgs := s.messages.List(userKeyFromRequest(r))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(map[string]any{"messages": msgs})
+	respondJSONTo(w, map[string]any{"messages": msgs})
 }
 
 func (s *Server) messagesClear(w http.ResponseWriter, r *http.Request) {

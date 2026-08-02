@@ -28,7 +28,7 @@ func (s *Server) adminExtProcessors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	extProcTmpl.ExecuteTemplate(w, "admin-extprocessors", map[string]any{
+	renderTemplate(w, extProcTmpl, "admin-extprocessors", map[string]any{
 		"Procs": recs,
 		"Msg":   r.URL.Query().Get("msg"),
 		"Err":   r.URL.Query().Get("err"),

@@ -7,7 +7,7 @@ import (
 
 // Issue #46: сырой UTF-8 в filename="..." декодируется браузером как latin-1 —
 // имя файла превращается в кракозябры. RFC 6266: ASCII-фолбэк в filename= и
-// полное имя в filename*=UTF-8''.
+// полное имя в filename*=UTF-8”.
 func TestContentDisposition(t *testing.T) {
 	got := contentDisposition("Контрагенты.xlsx")
 	if !strings.Contains(got, "filename*=UTF-8''") {

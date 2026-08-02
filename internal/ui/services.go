@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -104,7 +103,7 @@ func (s *Server) serviceIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RootURL < out[j].RootURL })
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{"services": out})
+	respondJSONTo(w, map[string]any{"services": out})
 }
 
 // serviceDispatch разбирает /hs/<корень>/<путь>, находит сервис и шаблон,
@@ -408,7 +407,7 @@ func (s *Server) writeServiceResult(w http.ResponseWriter, result any) {
 func writeServiceError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg})
+	respondJSONTo(w, map[string]any{"error": msg})
 }
 
 // sessionToken читает токен сессии ТОЛЬКО из cookie onebase_session. Приём из

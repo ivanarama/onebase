@@ -105,7 +105,7 @@ func TestCrossSheetRowsDuplicateField(t *testing.T) {
 		Groupings: []string{"Товар"},
 		Columns:   []string{"Месяц"},
 		Measures: []report.Measure{
-			{Field: "Сумма", Agg: "sum", Title: "Сумма"},                          // без формата → float64
+			{Field: "Сумма", Agg: "sum", Title: "Сумма"},                           // без формата → float64
 			{Field: "Сумма", Agg: "sum", Title: "Сумма с НДС", Format: "#,##0.00"}, // с форматом → строка
 		},
 	}

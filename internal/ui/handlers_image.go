@@ -7,7 +7,6 @@ package ui
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -78,7 +77,7 @@ func (s *Server) imageUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"ref": b.ID.String()})
+	respondJSONTo(w, map[string]string{"ref": b.ID.String()})
 }
 
 // imageServe отдаёт бинарник по UUID (значение поля image). Бинарник

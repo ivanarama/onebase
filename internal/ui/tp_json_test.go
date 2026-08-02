@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"context"
+
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
-	"context"
 )
 
 // TestParseTablePartRows_TpJSON проверяет ветку tp_json.{TPName} (план 48):

@@ -29,7 +29,7 @@ func (s *Server) adminExtReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	extReportTmpl.ExecuteTemplate(w, "admin-extreports", map[string]any{
+	renderTemplate(w, extReportTmpl, "admin-extreports", map[string]any{
 		"Reports": recs,
 		"Msg":     r.URL.Query().Get("msg"),
 		"Err":     r.URL.Query().Get("err"),

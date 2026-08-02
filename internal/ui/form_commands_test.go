@@ -49,11 +49,11 @@ func TestResolveHandlerProc_CommandFallback(t *testing.T) {
 // attrRefEntityName извлекает сущность из ссылочного типа реквизита формы (фикс B).
 func TestAttrRefEntityName(t *testing.T) {
 	cases := map[string]string{
-		"CatalogRef.Клиент":   "Клиент",
-		"DocumentRef.Заявка":  "Заявка",
-		"string(40)":          "",
+		"CatalogRef.Клиент":    "Клиент",
+		"DocumentRef.Заявка":   "Заявка",
+		"string(40)":           "",
 		"enum:СостояниеЗвонка": "",
-		"":                    "",
+		"":                     "",
 	}
 	for in, want := range cases {
 		if got := attrRefEntityName(in); got != want {

@@ -55,7 +55,7 @@ func (s *Server) adminRLSDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := s.buildRLSDiagnosticRows(roles)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	adminTmpl.ExecuteTemplate(w, "admin-rls", map[string]any{
+	renderAdminTemplate(w, "admin-rls", map[string]any{
 		"Rows":     rows,
 		"DSLPaths": rlsDSLPathRows(),
 	})

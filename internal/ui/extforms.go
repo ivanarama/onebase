@@ -28,7 +28,7 @@ func (s *Server) adminExtForms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	extFormTmpl.ExecuteTemplate(w, "admin-extforms", map[string]any{
+	renderTemplate(w, extFormTmpl, "admin-extforms", map[string]any{
 		"Forms": recs,
 		"Msg":   r.URL.Query().Get("msg"),
 		"Err":   r.URL.Query().Get("err"),
