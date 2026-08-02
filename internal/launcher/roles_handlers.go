@@ -105,8 +105,15 @@ func (h *handler) cfgAdminRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(r.Context())
-	roles, _ := repo.ListRoles(r.Context())
+	if err := repo.EnsureSchema(r.Context()); err != nil {
+		httpErrorDiv(w, "Не удалось подготовить схему ролей", err)
+		return
+	}
+	roles, err := repo.ListRoles(r.Context())
+	if err != nil {
+		httpErrorDiv(w, "Не удалось прочитать список ролей", err)
+		return
+	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
 

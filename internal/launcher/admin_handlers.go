@@ -31,8 +31,17 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(r.Context())
-	users, _ := repo.List(r.Context())
+	// Без схемы список всё равно будет пустым — честнее сказать об этом,
+	// чем показать администратору «пользователей нет».
+	if err := repo.EnsureSchema(r.Context()); err != nil {
+		httpErrorDiv(w, "Не удалось подготовить схему пользователей", err)
+		return
+	}
+	users, err := repo.List(r.Context())
+	if err != nil {
+		httpErrorDiv(w, "Не удалось прочитать список пользователей", err)
+		return
+	}
 
 	// Build language options for the user lang selector
 	langOpts := `<option value="">—</option>`
@@ -519,8 +528,15 @@ func (h *handler) cfgAdminSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
-	repo.EnsureSchema(r.Context())
-	sessions, _ := repo.ActiveSessions(r.Context())
+	if err := repo.EnsureSchema(r.Context()); err != nil {
+		httpErrorDiv(w, "Не удалось подготовить схему сессий", err)
+		return
+	}
+	sessions, err := repo.ActiveSessions(r.Context())
+	if err != nil {
+		httpErrorDiv(w, "Не удалось прочитать активные сессии", err)
+		return
+	}
 
 	kindLabel := func(kind string) string {
 		switch kind {
