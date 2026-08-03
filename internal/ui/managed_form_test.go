@@ -186,18 +186,22 @@ func TestPageManagedForm_ReadOnlyRefDisablesPickerActions(t *testing.T) {
 		DataPath: "Объект.Клиент",
 		ReadOnly: true,
 	}
-	ctx := map[string]any{
-		"Entity":      ent,
-		"Values":      map[string]string{"Клиент": ""},
-		"RefOptions":  map[string]any{},
-		"EnumOptions": map[string]any{},
+	render := func(value string) string {
+		t.Helper()
+		ctx := map[string]any{
+			"Entity":      ent,
+			"Values":      map[string]string{"Клиент": value},
+			"RefOptions":  map[string]any{"Клиент": []map[string]any{{"id": "cl-1", "_label": "ООО Ромашка"}}},
+			"EnumOptions": map[string]any{},
+		}
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
+			t.Fatalf("execute managed-element: %v", err)
+		}
+		return buf.String()
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
-		t.Fatalf("execute managed-element: %v", err)
-	}
-	html := buf.String()
+	html := render("cl-1")
 	// Само поле — disabled: выбрать другое значение нельзя.
 	start := strings.Index(html, `id="ref-Клиент"`)
 	if start < 0 {
@@ -219,6 +223,16 @@ func TestPageManagedForm_ReadOnlyRefDisablesPickerActions(t *testing.T) {
 	}
 	if end := strings.Index(html[cur:], ">"); end > 0 && strings.Contains(html[cur:cur+end], " disabled") {
 		t.Errorf("«Открыть карточку» не должна быть disabled:\n%s", html)
+	}
+
+	// Пустое значение: открывать нечего — кнопки нет, и заглушка выбора не
+	// подписана «— выбрать —», иначе готовое к чтению поле выглядит как забытый ввод.
+	empty := render("")
+	if strings.Contains(empty, `data-ob-ref-current="ref-Клиент"`) {
+		t.Errorf("на пустом readonly-поле кнопка «Открыть карточку» не нужна:\n%s", empty)
+	}
+	if strings.Contains(empty, "— выбрать —") {
+		t.Errorf("readonly-поле не должно предлагать «— выбрать —»:\n%s", empty)
 	}
 }
 
