@@ -67,7 +67,7 @@ resources:
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return &Env{DB: db, Proj: proj}
+	return FromProject(db, proj)
 }
 
 // insertBrokenRef вписывает ссылку на несуществующий объект.

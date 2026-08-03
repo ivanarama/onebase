@@ -81,7 +81,7 @@ func (schemaCheck) Title() string { return "Соответствие схемы 
 func (schemaCheck) CanFix() bool  { return false } // чинит `onebase migrate`
 
 func (c schemaCheck) Run(ctx context.Context, env *Env) Result {
-	plan, err := env.DB.PlanMigration(ctx, env.Proj.Entities, env.Proj.Registers, env.Proj.InfoRegisters)
+	plan, err := env.DB.PlanMigration(ctx, env.Entities, env.Registers, env.InfoRegisters)
 	if err != nil {
 		return failed(c, err)
 	}
@@ -127,7 +127,7 @@ func (orphanMovementsCheck) CanFix() bool { return true }
 //     конфигурации. Удалять такие движения нельзя: данные не должны исчезать
 //     оттого, что метаданные о них не упоминают.
 func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
-	stats := env.DB.OrphanMovements(ctx, env.Proj.Registers, env.Proj.Entities)
+	stats := env.DB.OrphanMovements(ctx, env.Registers, env.Entities)
 	res := Result{Check: c.Name(), Title: c.Title(), Severity: SeverityOK}
 	orphans, unknown := 0, 0
 	for _, s := range stats {
@@ -174,11 +174,11 @@ func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
 // без пересчёта остатки остались бы прежними, и удаление ничего бы не изменило
 // для пользователя (дефект Д1 из аудита — ровно про это).
 func (c orphanMovementsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
-	deleted := env.DB.DeleteOrphanMovements(ctx, env.Proj.Registers, env.Proj.Entities)
+	deleted := env.DB.DeleteOrphanMovements(ctx, env.Registers, env.Entities)
 	if deleted == 0 {
 		return 0, nil
 	}
-	for _, reg := range env.Proj.Registers {
+	for _, reg := range env.Registers {
 		if !reg.TotalsUsable() {
 			continue
 		}
@@ -204,7 +204,7 @@ func (totalsCheck) CanFix() bool  { return true }
 func (c totalsCheck) Run(ctx context.Context, env *Env) Result {
 	res := Result{Check: c.Name(), Title: c.Title(), Severity: SeverityOK}
 	checked := 0
-	for _, reg := range env.Proj.Registers {
+	for _, reg := range env.Registers {
 		if !reg.TotalsUsable() {
 			continue
 		}
@@ -251,7 +251,7 @@ func (c totalsCheck) Fix(ctx context.Context, env *Env, res Result) (int, error)
 		broken[strings.ToLower(strings.SplitN(f.Object, ".", 2)[0])] = true
 	}
 	fixed := 0
-	for _, reg := range env.Proj.Registers {
+	for _, reg := range env.Registers {
 		if !reg.TotalsUsable() || !broken[strings.ToLower(reg.Name)] {
 			continue
 		}
@@ -301,7 +301,7 @@ func (c blobsCheck) Run(ctx context.Context, env *Env) Result {
 	if !env.DB.HasTable(ctx, "_blobs") {
 		return ok(c, "хранилище бинарников не создавалось — проверять нечего")
 	}
-	st, err := env.DB.SweepOrphanBlobs(ctx, env.Proj.Entities, blobGrace, true)
+	st, err := env.DB.SweepOrphanBlobs(ctx, env.Entities, blobGrace, true)
 	if err != nil {
 		return failed(c, err)
 	}
@@ -323,7 +323,7 @@ func (c blobsCheck) Run(ctx context.Context, env *Env) Result {
 }
 
 func (c blobsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
-	st, err := env.DB.SweepOrphanBlobs(ctx, env.Proj.Entities, blobGrace, false)
+	st, err := env.DB.SweepOrphanBlobs(ctx, env.Entities, blobGrace, false)
 	if err != nil {
 		return 0, err
 	}

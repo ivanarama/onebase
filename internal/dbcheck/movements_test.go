@@ -109,7 +109,7 @@ func TestDeleteMovementsOfUnknownRecorderTypeIsExplicit(t *testing.T) {
 	addMovement(t, env, "СовсемУбранныйДокумент", uuid.New(), "500")
 	addMovement(t, env, "ДругойДокумент", uuid.New(), "700")
 
-	deleted := env.DB.DeleteMovementsOfUnknownRecorderType(ctx, env.Proj.Registers, []string{"СовсемУбранныйДокумент"})
+	deleted := env.DB.DeleteMovementsOfUnknownRecorderType(ctx, env.Registers, []string{"СовсемУбранныйДокумент"})
 	if deleted != 1 {
 		t.Fatalf("ожидалось одно удалённое движение, получено %d", deleted)
 	}
@@ -118,10 +118,10 @@ func TestDeleteMovementsOfUnknownRecorderTypeIsExplicit(t *testing.T) {
 	}
 	// Пустой список — ничего не делаем: это защита от «удалить всё» по пустому
 	// аргументу, ровно та ошибка, которой страдал прежний код.
-	if n := env.DB.DeleteMovementsOfUnknownRecorderType(ctx, env.Proj.Registers, nil); n != 0 {
+	if n := env.DB.DeleteMovementsOfUnknownRecorderType(ctx, env.Registers, nil); n != 0 {
 		t.Fatalf("пустой список типов удалил %d движений", n)
 	}
-	if n := env.DB.DeleteMovementsOfUnknownRecorderType(ctx, env.Proj.Registers, []string{"", "   "}); n != 0 {
+	if n := env.DB.DeleteMovementsOfUnknownRecorderType(ctx, env.Registers, []string{"", "   "}); n != 0 {
 		t.Fatalf("пустой тип удалил %d движений", n)
 	}
 }

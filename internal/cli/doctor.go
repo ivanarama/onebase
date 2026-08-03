@@ -127,7 +127,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		outln("")
 	}
 
-	report := dbcheck.Run(ctx, &dbcheck.Env{DB: db, Proj: proj}, checks, fix)
+	report := dbcheck.Run(ctx, dbcheck.FromProject(db, proj), checks, fix)
 
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
