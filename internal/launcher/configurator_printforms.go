@@ -121,7 +121,7 @@ func (h *handler) configuratorNewPrintForm(w http.ResponseWriter, r *http.Reques
 		fullPath, jerr := configdb.SafeJoin(b.Path, relPath)
 		if jerr != nil {
 			saveErr = jerr
-		} else if _, statErr := os.Stat(fullPath); os.IsNotExist(statErr) {
+		} else if _, statErr := os.Stat(fullPath); os.IsNotExist(statErr) { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
 			saveErr = h.writeConfigFileRaw(r.Context(), b, relPath, []byte(source))
 		}
 	}

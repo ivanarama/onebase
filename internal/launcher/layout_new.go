@@ -248,7 +248,7 @@ func (h *handler) configuratorNewLayout(w http.ResponseWriter, r *http.Request) 
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+jerr.Error())
 			return
 		}
-		if _, statErr := os.Stat(fullPath); statErr == nil {
+		if _, statErr := os.Stat(fullPath); statErr == nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
 			return
 		}

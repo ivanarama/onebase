@@ -270,6 +270,18 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entityName := r.FormValue("entity")
+	// Имя сущности приходит из формы и ниже попадает в путь, по которому файл
+	// читается и ПЕРЕЗАПИСЫВАЕТСЯ. nameToFilename только приводит к нижнему
+	// регистру и разделители не вычищает, а filepath.Join схлопывает «..» — то
+	// есть без этой проверки «entity=../../foo» уводило запись за пределы
+	// каталога проекта. Соседние обработчики (модуль, обработка, отчёт) такую
+	// проверку делают; здесь её не было.
+	if !validObjectName(entityName) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	dir := b.Path
 	if b.ConfigSource == "database" {
 		dir, err = workspacePath(b.ID)
@@ -279,11 +291,17 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Find entity YAML file
+	// Find entity YAML file.
+	//
+	// SafeJoin — второй рубеж: он подтверждает, что собранный путь остался
+	// внутри dir, даже если проверка имени выше однажды ослабнет.
 	entityDir := ""
 	for _, sub := range []string{"catalogs", "documents"} {
-		p := filepath.Join(dir, sub, nameToFilename(entityName)+".yaml")
-		if _, e := os.Stat(p); e == nil {
+		p, jerr := configdb.SafeJoin(dir, sub+"/"+nameToFilename(entityName)+".yaml")
+		if jerr != nil {
+			continue
+		}
+		if _, e := os.Stat(p); e == nil { //nolint:gosec // G703: p построен SafeJoin, имя проверено validObjectName выше
 			entityDir = sub
 			break
 		}
@@ -295,7 +313,13 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(dir, entityDir, nameToFilename(entityName)+".yaml")
+	filePath, jerr := configdb.SafeJoin(dir, entityDir+"/"+nameToFilename(entityName)+".yaml")
+	if jerr != nil {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	raw, err := os.ReadFile(filePath)
 	if err != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")

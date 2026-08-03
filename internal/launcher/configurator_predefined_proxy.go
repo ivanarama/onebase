@@ -180,14 +180,16 @@ func (h *handler) oneTimeCodeProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	url := fmt.Sprintf("http://localhost:%d/auth/one-time-code", b.Port)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, nil)
+	// Адрес не пользовательский: схема и хост фиксированы, порт берётся
+	// из реестра баз лаунчера. Внешний URL сюда подставить нельзя.
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, nil) //nolint:gosec // G704: цель — localhost:<порт базы> из реестра
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
 	req.AddCookie(&http.Cookie{Name: "onebase_session", Value: cookie.Value})
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: адрес собран выше из localhost и порта базы из реестра
 	if err != nil {
 		writeJSON(w, 502, map[string]string{"error": "UI server unreachable: " + err.Error()})
 		return
@@ -226,7 +228,9 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 
 	uiURL := fmt.Sprintf("http://localhost:%d/debug/global/%s", b.Port, action)
 
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, uiURL, r.Body)
+	// Адрес не пользовательский: схема и хост фиксированы, порт берётся
+	// из реестра баз лаунчера. Внешний URL сюда подставить нельзя.
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, uiURL, r.Body) //nolint:gosec // G704: цель — localhost:<порт базы> из реестра
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
