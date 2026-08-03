@@ -101,6 +101,7 @@ func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadat
 // audit event without the value (план 88, CC-SEC-004) and returns the full value
 // inline as JSON so the form can reveal it without a reload.
 func (s *Server) discloseField(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	entity := s.getEntity(w, r)
 	if entity == nil {
 		return

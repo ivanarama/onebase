@@ -882,6 +882,7 @@ func (s *Server) errText(r *http.Request, err error) string {
 
 // setLang saves the user's preferred language.
 func (s *Server) setLang(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, s.errText(r, err), 400)
 		return

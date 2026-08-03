@@ -282,6 +282,7 @@ func (s *Server) infoRegForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) infoRegSubmit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	ir := s.getInfoReg(w, r)
 	if ir == nil {
 		return
@@ -358,6 +359,7 @@ func (s *Server) infoRegSubmit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	ir := s.getInfoReg(w, r)
 	if ir == nil {
 		return
@@ -522,6 +524,7 @@ func (s *Server) renderConstantsPage(w http.ResponseWriter, r *http.Request, val
 }
 
 func (s *Server) constantsSave(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, s.errText(r, err), 400)
 		return

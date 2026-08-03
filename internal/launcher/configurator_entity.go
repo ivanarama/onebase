@@ -24,6 +24,7 @@ func (h *handler) configuratorSaveModule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}
@@ -264,8 +265,8 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 
@@ -578,8 +579,8 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	entityName := r.FormValue("entity")
@@ -835,8 +836,8 @@ func (h *handler) configuratorDeleteEntity(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	entityName := r.FormValue("entity")

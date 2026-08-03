@@ -217,6 +217,7 @@ func (h *handler) configuratorSaveCommonModule(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}

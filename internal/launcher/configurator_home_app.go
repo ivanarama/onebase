@@ -75,8 +75,8 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 

@@ -544,6 +544,7 @@ func reportPresetNameOrDefault(ctx context.Context, store *storage.DB, report, u
 // reportSettingsSave сохраняет рантайм-настройки текущего пользователя (POST
 // поля __settings) и возвращает на форму отчёта.
 func (s *Server) reportSettingsSave(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	rep := s.getReport(w, r)
 	if rep == nil {
 		return
@@ -635,6 +636,7 @@ func (s *Server) reportSettingsSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reportPresetDelete(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	rep := s.getReport(w, r)
 	if rep == nil {
 		return

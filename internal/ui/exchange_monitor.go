@@ -67,6 +67,7 @@ func (s *Server) exchangeMonitor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) exchangeMonitorSync(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return

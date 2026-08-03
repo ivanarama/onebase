@@ -19,8 +19,9 @@ func (h *handler) configuratorCheck(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if err := parseFormLimited(w, r); err != nil {
+		writeJSON(w, formErrorStatus(err), map[string]any{"error": err.Error()})
 		return
 	}
 	lang := resolveLang(r)

@@ -57,6 +57,7 @@ type formEventResponse struct {
 
 // handleManagedFormEvent — единая точка обработки событий managed-форм.
 func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -687,6 +688,7 @@ func serializeValue(v any) any {
 // Аналог handleManagedFormEvent, но вместо Entity использует виртуальную entity
 // из параметров обработки. Кнопка «Выполнить» запускает proc.os через interp.
 func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 

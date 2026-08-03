@@ -306,6 +306,7 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if err := r.ParseForm(); err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
