@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -66,10 +67,27 @@ type Result struct {
 // характер проблемы, а не чтобы выгрузить данные в отчёт.
 const maxExamples = 5
 
-// Env — то, над чем работают проверки.
+// Env — то, над чем работают проверки: подключение и метаданные конфигурации.
+//
+// Метаданные лежат раскрытыми слайсами, а не ссылкой на project.Project,
+// потому что источников два: CLI грузит проект с диска, а веб-админка работает
+// с уже загруженным реестром запущенного сервера. Общий знаменатель у них —
+// именно эти три списка.
 type Env struct {
-	DB   *storage.DB
-	Proj *project.Project
+	DB            *storage.DB
+	Entities      []*metadata.Entity
+	Registers     []*metadata.Register
+	InfoRegisters []*metadata.InfoRegister
+}
+
+// FromProject собирает Env по загруженной конфигурации (путь CLI).
+func FromProject(db *storage.DB, proj *project.Project) *Env {
+	return &Env{
+		DB:            db,
+		Entities:      proj.Entities,
+		Registers:     proj.Registers,
+		InfoRegisters: proj.InfoRegisters,
+	}
 }
 
 // Check — одна проверка. Fix вызывается только по явной просьбе и только после
@@ -124,6 +142,17 @@ func Select(names []string) ([]Check, []string) {
 	}
 	sort.Strings(unknown)
 	return out, unknown
+}
+
+// CanFix сообщает, умеет ли проверка с таким именем чинить найденное. Нужен
+// интерфейсам, которые показывают отчёт и решают, предлагать ли починку.
+func CanFix(name string) bool {
+	for _, c := range All() {
+		if c.Name() == name {
+			return c.CanFix()
+		}
+	}
+	return false
 }
 
 // Report — итог всего прогона.

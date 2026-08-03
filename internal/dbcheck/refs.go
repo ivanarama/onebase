@@ -91,7 +91,7 @@ func (c refsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
 // регистров сведений.
 func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 	known := map[string]string{} // имя объекта в нижнем регистре → таблица
-	for _, e := range env.Proj.Entities {
+	for _, e := range env.Entities {
 		known[strings.ToLower(e.Name)] = metadata.TableName(e.Name)
 	}
 
@@ -116,18 +116,18 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 		}
 	}
 
-	for _, e := range env.Proj.Entities {
+	for _, e := range env.Entities {
 		add(e.Name, metadata.TableName(e.Name), e.Fields)
 		for _, tp := range e.TableParts {
 			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields)
 		}
 	}
-	for _, reg := range env.Proj.Registers {
+	for _, reg := range env.Registers {
 		table := metadata.RegisterTableName(reg.Name)
 		add(reg.Name, table, reg.Dimensions)
 		add(reg.Name, table, reg.Attributes)
 	}
-	for _, ir := range env.Proj.InfoRegisters {
+	for _, ir := range env.InfoRegisters {
 		table := metadata.InfoRegTableName(ir.Name)
 		add(ir.Name, table, ir.Dimensions)
 		add(ir.Name, table, ir.Resources)
