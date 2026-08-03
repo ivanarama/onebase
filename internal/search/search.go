@@ -132,7 +132,10 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, 
 			return page, nil
 		}
 	}
-	page.HasMore = len(page.Items) == limit
+	// Пачки кончились раньше страницы: правами отсеяло почти всё, но индекс
+	// прочитан не до конца. Признак «есть ещё» здесь обязателен — иначе
+	// пользователю с узкой политикой выдача врала бы «больше ничего нет».
+	page.HasMore = true
 	return page, nil
 }
 
