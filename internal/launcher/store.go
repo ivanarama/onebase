@@ -43,7 +43,11 @@ func NewStore() (*Store, error) {
 		return nil, fmt.Errorf("launcher: home dir: %w", err)
 	}
 	dir := filepath.Join(home, ".onebase")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0700, а не 0755: каталог принадлежит одному пользователю — сервис,
+	// установленный через `onebase service install --user`, работает со своим
+	// HOME и сюда не заглядывает. Существующему каталогу MkdirAll права не
+	// меняет, поэтому на уже развёрнутых машинах это ничего не ломает.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	return &Store{path: filepath.Join(dir, "ibases.yaml")}, nil
@@ -69,8 +73,17 @@ func (s *Store) save(bases []*Base) error {
 	if err != nil {
 		return err
 	}
+	// 0600: в реестре лежит поле db — строка подключения к PostgreSQL вместе с
+	// паролем. При 0644 её мог прочитать любой локальный пользователь машины.
+	//
+	// Читает реестр только сам лаунчер: серверу параметры подключения приходят
+	// аргументами (`onebase run --db ...`), в файл он не смотрит. Поэтому
+	// ужесточение никого не отключает.
+	//
+	// Уже существующие файлы с 0644 чинятся сами: запись идёт во временный
+	// файл с новыми правами, и Rename заменяет им прежний.
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)
