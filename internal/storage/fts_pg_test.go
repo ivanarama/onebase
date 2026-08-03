@@ -140,6 +140,31 @@ func TestFullTextPG_Morphology(t *testing.T) {
 	}
 }
 
+// Тот же сценарий, что TestFullText_FindsPartsOfPunctuatedValues на SQLite —
+// именно на PostgreSQL он и ломался: разборщик оставляет знак в лексеме числа
+// («РН-000012» → «-000012»), поэтому без нормализации индексируемого текста
+// поиск по «000012» или по телефону без плюса не находил ничего.
+func TestFullTextPG_FindsPartsOfPunctuatedValues(t *testing.T) {
+	ctx := context.Background()
+	db, cat, doc := newPGFTSFixture(t)
+
+	if err := db.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+		"Наименование": "ООО «Ромашка-Плюс»",
+		"Комментарий":  "тел. +79990001122, e-mail sales@romashka.ru",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, doc.Name, uuid.New(), map[string]any{"Номер": "РН-000012"}, doc); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, q := range []string{"000012", "79990001122", "7999", "плюс", "sales", "romashka"} {
+		if hits := searchPG(t, db, q); len(hits) != 1 {
+			t.Fatalf("запрос %q: ожидалось одно совпадение, получено %+v", q, hits)
+		}
+	}
+}
+
 func TestFullTextPG_IncrementalUpdateDeleteAndRollback(t *testing.T) {
 	ctx := context.Background()
 	db, cat, _ := newPGFTSFixture(t)

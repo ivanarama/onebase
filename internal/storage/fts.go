@@ -369,7 +369,7 @@ func BuildFTSDoc(e *metadata.Entity, id uuid.UUID, fields map[string]any) FTSDoc
 	doc := FTSDoc{Kind: string(e.Kind), Name: e.Name, ID: id}
 	var parts []string
 	for _, f := range metadata.FullTextFields(e) {
-		v := fieldTextValue(f, fields)
+		v := ftsNormalize(fieldTextValue(f, fields))
 		if v == "" {
 			continue
 		}
@@ -421,6 +421,34 @@ func truncateRunes(s string, max int) string {
 		return s
 	}
 	return string(r[:max])
+}
+
+// ftsNormalize заменяет любой знак, кроме буквы и цифры, пробелом: в индекс
+// попадает тот же поток слов, на который ftsTokens режет поисковый запрос.
+//
+// Без этого движки расходятся. Разборщик PostgreSQL склеивает знак с числом:
+// «РН-000012» даёт лексемы «рн» и «-000012», «+79990001122» — «+79990001122»,
+// поэтому поиск по «000012» или по телефону без плюса ничего не находил, хотя
+// на SQLite (unicode61 режет по не-буквам) находил. Регистр сохраняем: он всё
+// равно сворачивается обоими движками, а title остаётся читаемым.
+func ftsNormalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	out := make([]rune, 0, len(s))
+	space := true // подавляет ведущие и повторные пробелы
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			out = append(out, r)
+			space = false
+			continue
+		}
+		if !space {
+			out = append(out, ' ')
+			space = true
+		}
+	}
+	return strings.TrimRight(string(out), " ")
 }
 
 // ftsTokens режет пользовательский ввод на слова: остаются только буквы и

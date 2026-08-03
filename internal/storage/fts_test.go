@@ -143,6 +143,48 @@ func TestFullText_MatchesSecondaryFieldsAndPrefix(t *testing.T) {
 	}
 }
 
+// Знаки препинания внутри значения не должны прятать его части от поиска.
+// Разборщик PostgreSQL склеивает знак с числом («РН-000012» → «-000012»,
+// «+79990001122» → «+79990001122»), поэтому индексируемый текст нормализуется
+// до записи — иначе движки отвечали бы по-разному на один и тот же запрос.
+func TestFullText_FindsPartsOfPunctuatedValues(t *testing.T) {
+	ctx := context.Background()
+	db, entities := newFTSTestDB(t)
+	cat, doc := entities[0], entities[1]
+
+	if err := db.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+		"Наименование": "ООО «Ромашка-Плюс»",
+		"Комментарий":  "тел. +79990001122, e-mail sales@romashka.ru",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, doc.Name, uuid.New(), map[string]any{"Номер": "РН-000012"}, doc); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, q := range []string{"000012", "рн", "79990001122", "7999", "плюс", "sales", "romashka"} {
+		if hits := search(t, db, q); len(hits) != 1 {
+			t.Fatalf("запрос %q: ожидалось одно совпадение, получено %+v", q, hits)
+		}
+	}
+}
+
+func TestFTSNormalize(t *testing.T) {
+	cases := map[string]string{
+		"РН-000012":            "РН 000012",
+		"  +7 (999) 000-11-22": "7 999 000 11 22",
+		"ООО «Ромашка-Плюс»":   "ООО Ромашка Плюс",
+		"sales@romashka.ru":    "sales romashka ru",
+		"":                     "",
+		"!!!":                  "",
+	}
+	for in, want := range cases {
+		if got := ftsNormalize(in); got != want {
+			t.Fatalf("ftsNormalize(%q) = %q, ожидалось %q", in, got, want)
+		}
+	}
+}
+
 func TestFullText_IncrementalUpdateAndDelete(t *testing.T) {
 	ctx := context.Background()
 	db, entities := newFTSTestDB(t)
