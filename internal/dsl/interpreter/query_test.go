@@ -31,9 +31,9 @@ func (s *stubDB) Dialect() storage.Dialect { return nil }
 type stubReg struct{}
 
 func (s *stubReg) Registers() []*metadata.Register               { return nil }
-func (s *stubReg) InfoRegisters() []*metadata.InfoRegister        { return nil }
-func (s *stubReg) AccountRegisters() []*metadata.AccountRegister  { return nil }
-func (s *stubReg) Entities() []*metadata.Entity                   { return nil }
+func (s *stubReg) InfoRegisters() []*metadata.InfoRegister       { return nil }
+func (s *stubReg) AccountRegisters() []*metadata.AccountRegister { return nil }
+func (s *stubReg) Entities() []*metadata.Entity                  { return nil }
 
 func evalQuery(t *testing.T, src string, db interpreter.QueryDB, reg interpreter.QueryRegistry) any {
 	t.Helper()

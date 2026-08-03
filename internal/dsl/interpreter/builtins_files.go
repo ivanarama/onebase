@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,13 +32,18 @@ func copyFileFn(args []any, _ string, _ int) (any, error) {
 	if err != nil {
 		RaiseUserError("КопироватьФайл: " + err.Error())
 	}
-	defer in.Close()
+	defer oblog.CloseQuiet("dsl", "исходный файл", in)
 	out, err := os.Create(dst)
 	if err != nil {
 		RaiseUserError("КопироватьФайл: " + err.Error())
 	}
-	defer out.Close()
+	// Close пишущей стороны проверяем: он сбрасывает буфер, и без проверки
+	// КопироватьФайл отчитался бы об успехе при усечённой копии.
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		RaiseUserError("КопироватьФайл: " + err.Error())
+	}
+	if err := out.Close(); err != nil {
 		RaiseUserError("КопироватьФайл: " + err.Error())
 	}
 	return nil, nil

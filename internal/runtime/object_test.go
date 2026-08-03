@@ -120,10 +120,10 @@ func TestObject_MomentTime(t *testing.T) {
 // отсекает все движения → ФИФО «доступно 0».
 func TestObject_MomentTime_StringDate(t *testing.T) {
 	cases := []string{
-		"2026-05-20T12:00:00Z",   // RFC3339
-		"2026-05-20T12:00:00",    // без зоны
-		"2026-05-20 12:00:00",    // SQLite datetime (пробел)
-		"2026-05-20",             // только дата
+		"2026-05-20T12:00:00Z", // RFC3339
+		"2026-05-20T12:00:00",  // без зоны
+		"2026-05-20 12:00:00",  // SQLite datetime (пробел)
+		"2026-05-20",           // только дата
 	}
 	for _, ds := range cases {
 		o := &Object{
@@ -158,7 +158,7 @@ func TestObject_String_SkipsEmpty(t *testing.T) {
 		Type: "X",
 		ID:   uuid.New(),
 		Fields: map[string]any{
-			"наименование": "  ",  // только пробелы
+			"наименование": "  ", // только пробелы
 			"номер":        "Н-1",
 		},
 	}

@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"bufio"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"os"
 	"regexp"
 	"strings"
@@ -34,7 +35,7 @@ func ReadBSL(path string) ([]*BSLProcedure, []Warning, error) {
 		}
 		return nil, nil, err
 	}
-	defer f.Close()
+	defer oblog.CloseQuiet("onec_forms", "файл", f)
 
 	var lines []string
 	sc := bufio.NewScanner(f)

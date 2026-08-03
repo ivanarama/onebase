@@ -9,12 +9,12 @@ import (
 // writer_xml.go мог сериализовать их в Form.xml.
 //
 // Действия:
-//   1. el.Kind: ПолеВвода → InputField, Флажок → CheckBoxField и т.д.
-//      Через elements_map (инверсия). Несимметричные случаи (Decoration,
-//      CommandBarButton) восстанавливаются по props.decoration / props.in_command_bar.
-//   2. Имена событий: ПриОткрытии → OnOpen, ПриИзменении → OnChange.
-//   3. Реквизиты: type "CatalogRef.X" → "cfg:CatalogRef.X", "decimal(15,2)" →
-//      ("xs:decimal", length=15, precision=2) и т.д. — через TypeOneBaseTo1C.
+//  1. el.Kind: ПолеВвода → InputField, Флажок → CheckBoxField и т.д.
+//     Через elements_map (инверсия). Несимметричные случаи (Decoration,
+//     CommandBarButton) восстанавливаются по props.decoration / props.in_command_bar.
+//  2. Имена событий: ПриОткрытии → OnOpen, ПриИзменении → OnChange.
+//  3. Реквизиты: type "CatalogRef.X" → "cfg:CatalogRef.X", "decimal(15,2)" →
+//     ("xs:decimal", length=15, precision=2) и т.д. — через TypeOneBaseTo1C.
 //
 // Сам IR не теряет данные — только нормализует строковые поля. Если у
 // элемента уже стояло 1С-имя (например после ReadFormXML) — оно сохраняется.

@@ -71,9 +71,9 @@ type ExchangeNode struct {
 type ContentCategory int
 
 const (
-	ContentEntity      ContentCategory = iota // справочник или документ (см. Kind)
-	ContentConstant                           // глобальная константа (Константа.X)
-	ContentInfoRegister                       // регистр сведений (РегистрСведений.X)
+	ContentEntity       ContentCategory = iota // справочник или документ (см. Kind)
+	ContentConstant                            // глобальная константа (Константа.X)
+	ContentInfoRegister                        // регистр сведений (РегистрСведений.X)
 )
 
 // ContentEntry — разобранная запись состава обмена. Для ContentEntity поле Kind

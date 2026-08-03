@@ -70,10 +70,10 @@ func NewNotifyFunctions(n Notifier) map[string]any {
 		return nil, nil
 	})
 	return map[string]any{
-		"ОтправитьУведомление":          publish,
-		"PublishNotification":           publish,
+		"ОтправитьУведомление":           publish,
+		"PublishNotification":            publish,
 		"ПоказатьОповещениеПользователя": showNotify,
-		"ShowUserNotification":          showNotify,
+		"ShowUserNotification":           showNotify,
 	}
 }
 

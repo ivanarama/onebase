@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -889,7 +890,11 @@ func resolveTemplate(s string, now time.Time) any {
 	op := strings.TrimSpace(tparts[0])
 	var n int
 	if len(tparts) == 2 {
-		fmt.Sscanf(strings.TrimSpace(tparts[1]), "%d", &n)
+		// Неразбираемое значение оставляет 0 — прежний контракт: шаблон
+		// вроде minus_days:abc трактуется как отсутствие сдвига.
+		if v, err := strconv.Atoi(strings.TrimSpace(tparts[1])); err == nil {
+			n = v
+		}
 	}
 
 	switch op {

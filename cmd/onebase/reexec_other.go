@@ -14,6 +14,8 @@ func reexec() {
 		cmd.Stdin = nil
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		cmd.Start()
+		// Перезапуск best-effort: если не стартовал, продолжаем в текущем
+		// процессе — это и есть запасной путь.
+		_ = cmd.Start()
 	}
 }

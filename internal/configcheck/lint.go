@@ -2,6 +2,7 @@ package configcheck
 
 import (
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ func CheckLintYAML(dir string) []Issue {
 		lintYAMLFile(filepath.Join(dir, "config", "home_page.yaml"), "config/home_page.yaml", "Главная страница", homePageYAMLSchema())...)
 
 	formsRoot := filepath.Join(dir, "forms")
-	filepath.WalkDir(formsRoot, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(formsRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d == nil || d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".form.yaml") {
 			return nil
 		}
@@ -49,6 +50,9 @@ func CheckLintYAML(dir string) []Issue {
 		issues = append(issues, lintFormHotkeys(path, label)...)
 		return nil
 	})
+	if walkErr != nil {
+		oblog.Component("configcheck").Debug("обход каталога прерван", "err", walkErr)
+	}
 
 	return issues
 }

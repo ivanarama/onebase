@@ -27,14 +27,14 @@ const (
 	IN
 	DO
 	ENDDO
-	TO     // To / По  (numeric for loop upper bound)
-	RETURN // Return / Возврат
-	NEW    // Новый / New
-	AND    // И / And
-	OR     // ИЛИ / Or
-	NOT    // НЕ / Not
-	TRUE   // Истина / True
-	FALSE  // Ложь / False
+	TO       // To / По  (numeric for loop upper bound)
+	RETURN   // Return / Возврат
+	NEW      // Новый / New
+	AND      // И / And
+	OR       // ИЛИ / Or
+	NOT      // НЕ / Not
+	TRUE     // Истина / True
+	FALSE    // Ложь / False
 	TRY      // Попытка / Try
 	EXCEPT   // Исключение / Except
 	ENDTRY   // КонецПопытки / EndTry

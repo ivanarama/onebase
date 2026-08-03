@@ -93,7 +93,7 @@ func TestResolve(t *testing.T) {
 		{"", "", "en-US,en;q=0.9", "en"},
 		{"", "", "", "ru"},
 		{"", "ru", "", "ru"},
-		{"de", "en", "", "de"}, // explicit user choice accepted as-is
+		{"de", "en", "", "de"},  // explicit user choice accepted as-is
 		{"", "", "de,en", "de"}, // de is loaded → picks first Accept-Language match
 	}
 	for _, tt := range tests {

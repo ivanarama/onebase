@@ -418,8 +418,10 @@ func (a *Agent) events(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	src.Stream(r.Context(), func(code string) {
-		fmt.Fprintf(w, "data: %s\n\n", code)
+	// Поток SSE живёт до отмены контекста; его завершение с ошибкой —
+	// обычный конец подписки, отвечать уже нечем (заголовки ушли).
+	_ = src.Stream(r.Context(), func(code string) {
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", code)
 		flusher.Flush()
 	})
 }

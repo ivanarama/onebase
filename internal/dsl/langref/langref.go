@@ -41,7 +41,7 @@ type Descriptor struct {
 	Doc       string   `json:"doc"`               // 1–3 предложения
 	Example   string   `json:"example,omitempty"`
 	Snippet   string   `json:"snippet,omitempty"` // шаблон вставки для автодополнения (Monaco snippet: ${1:…} табстопы, $0 — курсор)
-	Group     string   `json:"group,omitempty"` // для дерева функций: "Строки", "Даты"…
+	Group     string   `json:"group,omitempty"`   // для дерева функций: "Строки", "Даты"…
 }
 
 // All возвращает все дескрипторы из всех файлов пакета.

@@ -10,11 +10,11 @@ import (
 )
 
 type Subsystem struct {
-	Name     string
-	Title    string
-	Titles   map[string]string
-	Icon     string
-	Order    int
+	Name   string
+	Title  string
+	Titles map[string]string
+	Icon   string
+	Order  int
 	// Roles — необязательный whitelist ролей (как у страниц и HTTP-сервисов):
 	// непустой список показывает раздел только пользователям с одной из ролей
 	// (админ видит всегда). Пустой — видимость определяется правами на объекты.

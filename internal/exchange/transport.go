@@ -55,7 +55,7 @@ func PushPackage(ctx context.Context, baseURL, plan, token string, data []byte) 
 	if err != nil {
 		return LoadResult{}, fmt.Errorf("push на %s: %w", baseURL, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	body, readErr := readLimited(resp.Body)
 	if readErr != nil {
 		return LoadResult{}, fmt.Errorf("push на %s: %w", baseURL, readErr)
@@ -82,7 +82,7 @@ func PullPackage(ctx context.Context, baseURL, plan, token, toNode string) ([]by
 	if err != nil {
 		return nil, fmt.Errorf("pull с %s: %w", baseURL, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	body, readErr := readLimited(resp.Body)
 	if readErr != nil {
 		return nil, fmt.Errorf("pull с %s: %w", baseURL, readErr)

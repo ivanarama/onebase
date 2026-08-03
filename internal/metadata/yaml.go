@@ -3,6 +3,7 @@ package metadata
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -432,7 +433,11 @@ func parseNumberSpec(typ string) (length, scale int, ok bool) {
 		}
 	}
 	if len(parts) >= 2 {
-		fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &scale)
+		// Неразбираемая дробная часть оставляет 0 — так было и раньше: спека
+		// типа уже прошла валидацию, а 0 означает целое число.
+		if n, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+			scale = n
+		}
 	}
 	return length, scale, true
 }

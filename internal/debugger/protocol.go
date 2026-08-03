@@ -83,13 +83,13 @@ const (
 
 // StatusSnapshot is the JSON response for GET /debug/status
 type StatusSnapshot struct {
-	State       DebugState      `json:"state"`
-	Location    *Location       `json:"location,omitempty"`
-	Variables   []VarEntry      `json:"variables,omitempty"`
-	Stack       []StackFrame    `json:"stack,omitempty"`
-	Breakpoints []Breakpoint    `json:"breakpoints,omitempty"`
-	PauseReason string          `json:"pause_reason,omitempty"` // "breakpoint" or "step"
-	Error       string          `json:"error,omitempty"`
+	State       DebugState   `json:"state"`
+	Location    *Location    `json:"location,omitempty"`
+	Variables   []VarEntry   `json:"variables,omitempty"`
+	Stack       []StackFrame `json:"stack,omitempty"`
+	Breakpoints []Breakpoint `json:"breakpoints,omitempty"`
+	PauseReason string       `json:"pause_reason,omitempty"` // "breakpoint" or "step"
+	Error       string       `json:"error,omitempty"`
 
 	// Diagnostics — filled when debug is enabled
 	DiagLastFile string   `json:"diag_last_file,omitempty"`

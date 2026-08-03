@@ -9,6 +9,7 @@ package configcheck
 
 import (
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -568,9 +569,15 @@ func CheckWidgetYAML(source, name string) []Issue {
 	if err != nil {
 		return []Issue{{Message: err.Error()}}
 	}
-	defer os.Remove(tmp.Name())
-	tmp.WriteString(source)
-	tmp.Close()
+	defer oblog.RemoveQuiet("configcheck", tmp.Name())
+	// Сбой записи оставил бы пустой файл, и загрузчик ниже пожаловался бы на
+	// содержимое, которого пользователь не писал.
+	if _, werr := tmp.WriteString(source); werr != nil {
+		return []Issue{{Message: werr.Error()}}
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		return []Issue{{Message: cerr.Error()}}
+	}
 	if _, err := metadata.LoadWidgetFile(tmp.Name()); err != nil {
 		return []Issue{{Kind: "Виджет", Object: name, Message: err.Error()}}
 	}
@@ -586,9 +593,15 @@ func CheckHomePageYAML(source string) []Issue {
 	if err != nil {
 		return []Issue{{Message: err.Error()}}
 	}
-	defer os.Remove(tmp.Name())
-	tmp.WriteString(source)
-	tmp.Close()
+	defer oblog.RemoveQuiet("configcheck", tmp.Name())
+	// Сбой записи оставил бы пустой файл, и загрузчик ниже пожаловался бы на
+	// содержимое, которого пользователь не писал.
+	if _, werr := tmp.WriteString(source); werr != nil {
+		return []Issue{{Message: werr.Error()}}
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		return []Issue{{Message: cerr.Error()}}
+	}
 	if _, err := metadata.LoadHomePage(tmp.Name()); err != nil {
 		return []Issue{{Kind: "Главная страница", Message: err.Error()}}
 	}
@@ -605,9 +618,15 @@ func CheckEntityYAML(source, name string) []Issue {
 	if err != nil {
 		return []Issue{{Message: err.Error()}}
 	}
-	defer os.Remove(tmp.Name())
-	tmp.WriteString(source)
-	tmp.Close()
+	defer oblog.RemoveQuiet("configcheck", tmp.Name())
+	// Сбой записи оставил бы пустой файл, и загрузчик ниже пожаловался бы на
+	// содержимое, которого пользователь не писал.
+	if _, werr := tmp.WriteString(source); werr != nil {
+		return []Issue{{Message: werr.Error()}}
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		return []Issue{{Message: cerr.Error()}}
+	}
 	if _, err1 := metadata.LoadFile(tmp.Name(), metadata.KindCatalog); err1 == nil {
 		return nil
 	}

@@ -221,9 +221,10 @@ func writeKnownProps(buf *strings.Builder, indent string, props map[string]any) 
 }
 
 // writeTitle сериализует локализованный заголовок:
-//   <Title>
-//     <v8:item><v8:lang>ru</v8:lang><v8:content>X</v8:content></v8:item>
-//   </Title>
+//
+//	<Title>
+//	  <v8:item><v8:lang>ru</v8:lang><v8:content>X</v8:content></v8:item>
+//	</Title>
 func writeTitle(buf *strings.Builder, indent, tagName string, t IRTitle) {
 	if len(t) == 0 {
 		return

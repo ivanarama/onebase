@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -608,8 +609,12 @@ func toFloat(v any) float64 {
 	case int64:
 		return float64(t)
 	case string:
-		var f float64
-		fmt.Sscanf(t, "%f", &f)
+		// Нечисловая строка даёт 0 — прежний контракт: функция приводит
+		// произвольное значение виджета к числу, и нечисловое здесь штатно.
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		if err != nil {
+			return 0
+		}
 		return f
 	case nil:
 		return 0

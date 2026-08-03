@@ -10,6 +10,7 @@ package equipment
 import (
 	"context"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"sort"
 	"sync"
 )
@@ -180,7 +181,7 @@ func Open(driver string, params map[string]string) (Device, error) {
 	}
 	dev := f()
 	if err := dev.Connect(params); err != nil {
-		dev.Disconnect()
+		oblog.Component("equipment").Debug("устройство не отключилось", "err", dev.Disconnect())
 		return nil, fmt.Errorf("подключение %q: %w", driver, err)
 	}
 	return dev, nil

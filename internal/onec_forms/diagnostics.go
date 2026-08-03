@@ -44,17 +44,18 @@ func (w Warning) String() string {
 }
 
 // Коды предупреждений конвертера. Распределение диапазонов:
-//   W001..W009 — общие (структура файлов, чтение/запись).
-//   W010..W019 — элементы формы (типы, неизвестные узлы, неподдержка).
-//   W020..W029 — типы реквизитов (composite, AnyRef, неизвестные xs:*).
-//   W030..W039 — события (без 1:1 аналога, неизвестные).
-//   W040..W049 — BSL-модуль (несовместимые конструкции).
-//   W050      — общий "needs manual review".
+//
+//	W001..W009 — общие (структура файлов, чтение/запись).
+//	W010..W019 — элементы формы (типы, неизвестные узлы, неподдержка).
+//	W020..W029 — типы реквизитов (composite, AnyRef, неизвестные xs:*).
+//	W030..W039 — события (без 1:1 аналога, неизвестные).
+//	W040..W049 — BSL-модуль (несовместимые конструкции).
+//	W050      — общий "needs manual review".
 const (
-	W001_FileNotFound      = "W001"
-	W002_InvalidXML        = "W002"
-	W003_InvalidYAML       = "W003"
-	W004_VersionMismatch   = "W004"
+	W001_FileNotFound    = "W001"
+	W002_InvalidXML      = "W002"
+	W003_InvalidYAML     = "W003"
+	W004_VersionMismatch = "W004"
 
 	W010_UnknownElement    = "W010"
 	W011_UnsupportedProp   = "W011"
@@ -63,18 +64,18 @@ const (
 	W014_CommandNoAction   = "W014" // команда без action — не попадёт ни в командную панель, ни на кнопку
 	W015_FormLocalRefField = "W015" // form-local реквизит перечислимого типа в ПолеВвода не даёт выбор
 
-	W020_CompositeType     = "W020"
-	W021_AnyRef            = "W021"
-	W022_UnknownType       = "W022"
+	W020_CompositeType = "W020"
+	W021_AnyRef        = "W021"
+	W022_UnknownType   = "W022"
 
-	W030_UnmappedEvent     = "W030"
-	W031_EventWithoutProc  = "W031"
+	W030_UnmappedEvent    = "W030"
+	W031_EventWithoutProc = "W031"
 
-	W040_BSLNotInDSL       = "W040" // конструкция BSL без аналога в DSL OneBase
-	W041_DSLNotInBSL       = "W041" // конструкция DSL OneBase без аналога в BSL
-	W042_DirectiveMissing  = "W042"
+	W040_BSLNotInDSL      = "W040" // конструкция BSL без аналога в DSL OneBase
+	W041_DSLNotInBSL      = "W041" // конструкция DSL OneBase без аналога в BSL
+	W042_DirectiveMissing = "W042"
 
-	W050_NeedsReview       = "W050"
+	W050_NeedsReview = "W050"
 )
 
 // Warnings — удобный alias для слайса.

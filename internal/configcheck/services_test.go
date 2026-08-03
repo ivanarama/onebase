@@ -92,8 +92,8 @@ func TestCheckHTTPServices_EnvSourcedSecretIsConfigured(t *testing.T) {
 
 	svc := &httpservice.Service{Name: "Тел", RootURL: "tel", Auth: "hmac",
 		Secret: "${env:TELE_TEST_SECRET}", Templates: []httpservice.URLTemplate{tmpl}}
-	svc.Normalize()   // сохраняет сырой секрет (${env:…}) до раскрытия
-	svc.Secret = ""   // имитируем раскрытие незаданной переменной загрузчиком
+	svc.Normalize() // сохраняет сырой секрет (${env:…}) до раскрытия
+	svc.Secret = "" // имитируем раскрытие незаданной переменной загрузчиком
 
 	proj := &project.Project{
 		HTTPServices:    []*httpservice.Service{svc},

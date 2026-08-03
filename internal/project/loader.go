@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
 	"path/filepath"
@@ -225,7 +226,7 @@ func LoadConfig(dir string) (*AppConfig, error) {
 		}
 		return nil, fmt.Errorf("project: read %s: %w", path, err)
 	}
-	defer f.Close()
+	defer oblog.CloseQuiet("project", "файл", f)
 
 	var cfg AppConfig
 	dec := yaml.NewDecoder(f)
@@ -317,17 +318,17 @@ func LoadFromDB(ctx context.Context, repo *configdb.Repo) (*Project, error) {
 	}
 
 	if err := repo.ExportToDir(ctx, tmpDir); err != nil {
-		os.RemoveAll(tmpDir)
+		oblog.RemoveQuiet("project", tmpDir)
 		return nil, fmt.Errorf("project: export from db: %w", err)
 	}
 
 	proj, err := Load(tmpDir)
 	if err != nil {
-		os.RemoveAll(tmpDir)
+		oblog.RemoveQuiet("project", tmpDir)
 		return nil, err
 	}
 
-	proj.cleanup = func() { os.RemoveAll(tmpDir) }
+	proj.cleanup = func() { oblog.RemoveQuiet("project", tmpDir) }
 	return proj, nil
 }
 

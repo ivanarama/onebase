@@ -25,9 +25,9 @@ func init() {
 type scriptedDisplayDevice struct {
 	conn    io.WriteCloser
 	width   int
-	initCmd []byte         // КомандаИниц (hex), напр. 1B40 = ESC @
-	clear   []byte         // КомандаОчистки (hex), напр. 0C
-	lines   [][2][]byte    // для каждой строки: {hex-префикс, hex-суффикс} вокруг {text}
+	initCmd []byte      // КомандаИниц (hex), напр. 1B40 = ESC @
+	clear   []byte      // КомандаОчистки (hex), напр. 0C
+	lines   [][2][]byte // для каждой строки: {hex-префикс, hex-суффикс} вокруг {text}
 	encode  func(string) []byte
 }
 

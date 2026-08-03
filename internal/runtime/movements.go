@@ -51,7 +51,7 @@ type RegisterMovements struct {
 }
 
 // Get implements interpreter.This (allows member access, though unused directly).
-func (rm *RegisterMovements) Get(name string) any { return nil }
+func (rm *RegisterMovements) Get(name string) any    { return nil }
 func (rm *RegisterMovements) Set(name string, v any) {}
 
 // movementRow оборачивает строку движения. Ведёт себя как MapThis (член →

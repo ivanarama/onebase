@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"sort"
 	"sync"
@@ -326,7 +327,7 @@ func decodeSnapshot(raw []byte) ([]ConfigFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer oblog.CloseQuiet("configdb", "gzip-поток версии", gz)
 	data, err := io.ReadAll(gz)
 	if err != nil {
 		return nil, err

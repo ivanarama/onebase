@@ -51,10 +51,10 @@ func TestEventMap_RoundTrip(t *testing.T) {
 
 func TestType1CToOneBase(t *testing.T) {
 	cases := []struct {
-		name        string
-		xsd         string
+		name         string
+		xsd          string
 		length, prec int
-		want        string
+		want         string
 	}{
 		{"string40", "xs:string", 40, 0, "string(40)"},
 		{"string_unbounded", "xs:string", 0, 0, "string"},

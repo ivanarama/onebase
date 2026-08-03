@@ -45,10 +45,10 @@ type formYAMLOut struct {
 		VerticalScroll         string            `yaml:"vertical_scroll,omitempty"`
 	} `yaml:"form"`
 
-	Attributes []yamlAttribute  `yaml:"attributes,omitempty"`
-	Commands   []yamlCommand    `yaml:"commands,omitempty"`
-	CommandBar *yamlCommandBar  `yaml:"command_bar,omitempty"`
-	Elements   []yamlElement    `yaml:"elements,omitempty"`
+	Attributes []yamlAttribute   `yaml:"attributes,omitempty"`
+	Commands   []yamlCommand     `yaml:"commands,omitempty"`
+	CommandBar *yamlCommandBar   `yaml:"command_bar,omitempty"`
+	Elements   []yamlElement     `yaml:"elements,omitempty"`
 	Events     map[string]string `yaml:"events,omitempty"`
 	Resources  []yamlResource    `yaml:"resources,omitempty"`
 	OneCMeta   map[string]any    `yaml:"oneC_meta,omitempty"`

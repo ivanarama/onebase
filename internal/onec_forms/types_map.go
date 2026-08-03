@@ -2,6 +2,7 @@ package onec_forms
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -70,15 +71,18 @@ func TypeOneBaseTo1C(neutral string) (typeName string, length int, precision int
 		params := t[idx+1 : len(t)-1]
 		switch base {
 		case "string":
-			fmt.Sscanf(params, "%d", &length)
+			// Неразбираемая длина оставляет 0 — прежний и намеренный контракт:
+			// спецификация типа приходит из уже проверенной модели, а 0 здесь
+			// означает «без ограничения».
+			length = atoiOrZero(params)
 			return "xs:string", length, 0, "Variable"
 		case "decimal":
 			parts := strings.Split(params, ",")
 			if len(parts) >= 1 {
-				fmt.Sscanf(parts[0], "%d", &length)
+				length = atoiOrZero(parts[0])
 			}
 			if len(parts) >= 2 {
-				fmt.Sscanf(parts[1], "%d", &precision)
+				precision = atoiOrZero(parts[1])
 			}
 			return "xs:decimal", length, precision, ""
 		}
@@ -100,4 +104,15 @@ func TypeOneBaseTo1C(neutral string) (typeName string, length int, precision int
 		return "cfg:" + t, 0, 0, ""
 	}
 	return t, 0, 0, ""
+}
+
+// atoiOrZero возвращает число или 0, если строка им не является. Ноль здесь —
+// осмысленное значение «без ограничения», а не признак ошибки, поэтому отдельно
+// сообщать не о чем.
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
+	return n
 }

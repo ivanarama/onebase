@@ -405,7 +405,7 @@ func (d *Dispatcher) send(parent context.Context, method string, h *Config, body
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close()                                       //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10)) // дренируем для keep-alive
 	return resp.StatusCode, nil
 }

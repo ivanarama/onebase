@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"strings"
 )
 
@@ -56,7 +57,7 @@ func (d *scannerDevice) Stream(ctx context.Context, fn func(string)) error {
 	defer cancel()
 	go func() {
 		<-ctx2.Done()
-		conn.Close()
+		oblog.CloseQuiet("equipment", "соединение со сканером", conn)
 	}()
 	sc := bufio.NewScanner(conn)
 	for sc.Scan() {

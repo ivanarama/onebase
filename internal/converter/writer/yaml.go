@@ -2,6 +2,7 @@ package writer
 
 import (
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"os"
 	"path/filepath"
 	"strings"
@@ -346,7 +347,7 @@ func writeYAML(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer oblog.CloseQuiet("converter", "файл", f)
 	enc := yaml.NewEncoder(f)
 	enc.SetIndent(2)
 	return enc.Encode(v)

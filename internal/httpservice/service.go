@@ -24,7 +24,7 @@ import (
 // «/orders/{id}/items». Жадный «хвостовой» параметр «{*путь}» захватывает все
 // оставшиеся сегменты (удобно для проксирующих сервисов).
 type URLTemplate struct {
-	Template string            `yaml:"template"`
+	Template string `yaml:"template"`
 	// Methods: HTTP-метод (GET/POST/PUT/DELETE/PATCH/…) → имя процедуры-обработчика
 	// в соответствующем .service.os. Ключи нормализуются в верхний регистр.
 	Methods map[string]string `yaml:"methods"`
@@ -33,10 +33,10 @@ type URLTemplate struct {
 // Service — опубликованный HTTP-сервис. Монтируется по адресу /hs/<RootURL>/…
 // (префикс /hs/ повторяет соглашение 1С для http-сервисов).
 type Service struct {
-	Name      string        `yaml:"name"`
-	Title     string        `yaml:"title"`
-	Titles    map[string]string `yaml:"titles"`
-	RootURL   string        `yaml:"root_url"`
+	Name    string            `yaml:"name"`
+	Title   string            `yaml:"title"`
+	Titles  map[string]string `yaml:"titles"`
+	RootURL string            `yaml:"root_url"`
 	// Auth — способ аутентификации: «none» (аноним, по умолчанию — удобно для
 	// приёма вебхуков), «basic» (HTTP Basic против пользователей базы),
 	// «session» (cookie/токен, как у веб-интерфейса), «token» (постоянный
