@@ -2,11 +2,13 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/access"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/search"
 )
@@ -16,7 +18,13 @@ import (
 // слой internal/search — тот же, что обслуживает REST и DSL, поэтому выдача
 // не может разъехаться между точками входа.
 
-const searchPageSize = 20
+const (
+	searchPageSize = 20
+	// searchDSLMaxLimit ограничивает выдачу ПолнотекстовогоПоиска: каждая
+	// строка выдачи — чтение объекта и проверка политик, поэтому «дай тысячу»
+	// из обработки не должно превращаться в тысячу запросов к базе.
+	searchDSLMaxLimit = 200
+)
 
 // uiSearchDeps связывает общий слой поиска с проверками прав UI-сервера.
 type uiSearchDeps struct{ s *Server }
@@ -56,6 +64,48 @@ func maskedIndexedFields(decisions map[string]access.FieldDecision, e *metadata.
 		}
 	}
 	return out
+}
+
+// dslFullTextSearch — встроенная функция DSL ПолнотекстовыйПоиск(Текст, Лимит).
+// Права те же, что у пользователя сессии: обработка не должна видеть больше,
+// чем тот же пользователь увидел бы в интерфейсе.
+func (s *Server) dslFullTextSearch(ctx context.Context, args []any) (any, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("ПолнотекстовыйПоиск: нужен аргумент — строка поиска")
+	}
+	text := strings.TrimSpace(fmt.Sprintf("%v", args[0]))
+	if text == "" {
+		return interpreter.NewArray(nil), nil
+	}
+	limit := searchPageSize
+	if len(args) > 1 && args[1] != nil {
+		n, err := strconv.Atoi(strings.TrimSpace(fmt.Sprintf("%v", args[1])))
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("ПолнотекстовыйПоиск: второй аргумент — количество результатов, положительное число")
+		}
+		limit = n
+	}
+	if limit > searchDSLMaxLimit {
+		limit = searchDSLMaxLimit
+	}
+
+	page, err := search.Run(ctx, s.store, uiSearchDeps{s}, text, limit, 0)
+	if err != nil {
+		return nil, fmt.Errorf("ПолнотекстовыйПоиск: %w", err)
+	}
+	items := make([]any, 0, len(page.Items))
+	for _, hit := range page.Items {
+		entity := s.reg.GetEntity(hit.Entity)
+		items = append(items, interpreter.NewStructFromMap(map[string]any{
+			"Объект":          hit.Entity,
+			"Вид":             hit.Kind,
+			"Представление":   hit.Title,
+			"Ссылка":          &interpreter.Ref{UUID: hit.ID.String(), Name: hit.Title, Type: hit.Entity, Manager: s.refManagerFor(entity, ctx)},
+			"ПометкаУдаления": hit.DeletionMark,
+			"Проведён":        hit.Posted,
+		}))
+	}
+	return interpreter.NewArray(items), nil
 }
 
 func (s *Server) globalSearch(w http.ResponseWriter, r *http.Request) {

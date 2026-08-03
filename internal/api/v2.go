@@ -36,6 +36,10 @@ type restV2Meta struct {
 	Composed   bool     `json:"composed,omitempty"`
 	Variant    string   `json:"variant,omitempty"`
 	Kind       string   `json:"kind,omitempty"`
+	// NextOffset/HasMore — пагинация глобального поиска (план 82): общее число
+	// совпадений там не считается, продолжать надо с next_offset.
+	NextOffset int  `json:"next_offset,omitempty"`
+	HasMore    bool `json:"has_more,omitempty"`
 }
 
 type restV2ReportComposition struct {
@@ -64,6 +68,9 @@ func (h *handler) mountV2(r chi.Router) {
 		r.Post("/document/{name}/{id}/unpost", h.unpostDocumentV2())
 
 		r.Get("/report/{name}", h.runReportV2())
+
+		// Глобальный поиск (план 82) — те же права, что в списках объектов.
+		r.Get("/search", h.searchV2())
 
 		// Вложения (issue #315) — та же RBAC/RLS-проверка владельца, что и в UI.
 		h.mountV2Attachments(r)
@@ -735,6 +742,10 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 					"page":        map[string]any{"type": "integer"},
 					"limit":       map[string]any{"type": "integer"},
 					"total_pages": map[string]any{"type": "integer"},
+					// Пагинация глобального поиска (план 82): общего числа
+					// совпадений там нет, продолжают с next_offset.
+					"next_offset": map[string]any{"type": "integer"},
+					"has_more":    map[string]any{"type": "boolean"},
 				},
 			},
 			"ReportMeta": map[string]any{
@@ -827,6 +838,21 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 	schemas["DocumentListEnvelope"] = dataEnvelopeSchema(map[string]any{
 		"type":  "array",
 		"items": map[string]any{"$ref": "#/components/schemas/DocumentObject"},
+	}, map[string]any{"$ref": "#/components/schemas/ListMeta"})
+	schemas["SearchHit"] = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kind":          map[string]any{"type": "string", "enum": []string{"catalog", "document"}},
+			"entity":        map[string]any{"type": "string"},
+			"id":            map[string]any{"type": "string", "format": "uuid"},
+			"title":         map[string]any{"type": "string"},
+			"deletion_mark": map[string]any{"type": "boolean"},
+			"posted":        map[string]any{"type": "boolean"},
+		},
+	}
+	schemas["SearchEnvelope"] = dataEnvelopeSchema(map[string]any{
+		"type":  "array",
+		"items": map[string]any{"$ref": "#/components/schemas/SearchHit"},
 	}, map[string]any{"$ref": "#/components/schemas/ListMeta"})
 	schemas["Attachment"] = attachmentOpenAPISchema()
 	schemas["AttachmentEnvelope"] = dataEnvelopeSchema(map[string]any{"$ref": "#/components/schemas/Attachment"}, nil)
@@ -1028,6 +1054,7 @@ func openAPIV2Paths() map[string]any {
 		"/api/v2/document/{name}/{id}/post":        actionPath("postDocument", "Post document", nameParam, idParam, mutationEnvelope, errorResponses),
 		"/api/v2/document/{name}/{id}/unpost":      actionPath("unpostDocument", "Unpost document", nameParam, idParam, mutationEnvelope, errorResponses),
 		"/api/v2/report/{name}":                    reportPath(nameParam, reportEnvelope, errorResponses),
+		"/api/v2/search":                           searchPath(errorResponses),
 		"/api/v2/openapi.json": map[string]any{
 			"get": map[string]any{
 				"operationId": "getOpenAPI",
@@ -1035,6 +1062,27 @@ func openAPIV2Paths() map[string]any {
 				"tags":        []string{"openapi"},
 				"responses":   mergeResponses(map[string]any{"200": openAPIResponse}, errorResponses),
 			},
+		},
+	}
+}
+
+// searchPath — глобальный полнотекстовый поиск (план 82). Выдача ограничена
+// правами пользователя, поэтому общее число совпадений не считается: пагинация
+// идёт по meta.next_offset.
+func searchPath(errors map[string]any) map[string]any {
+	return map[string]any{
+		"get": map[string]any{
+			"operationId": "globalSearch",
+			"summary":     "Full-text search across catalogs and documents",
+			"tags":        []string{"search"},
+			"parameters": []any{
+				map[string]any{"name": "q", "in": "query", "required": true, "schema": map[string]any{"type": "string"}},
+				map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": searchMaxLimit}},
+				map[string]any{"name": "offset", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 0}},
+			},
+			"responses": mergeResponses(map[string]any{
+				"200": responseWithSchema("OK", "#/components/schemas/SearchEnvelope"),
+			}, errors),
 		},
 	}
 }

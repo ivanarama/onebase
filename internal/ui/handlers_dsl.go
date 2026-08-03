@@ -247,6 +247,13 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	vars["ObjectAttributeValues"] = attrValuesFn
 	vars["СохранитьКартинку"] = putImageFn
 	vars["PutImage"] = putImageFn
+	// Глобальный поиск из обработок (план 82). Живой контекст txState.Ctx() —
+	// поиск видит данные открытой DSL-транзакции; права — пользователя сессии.
+	fullTextSearchFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		return s.dslFullTextSearch(txState.Ctx(), args)
+	})
+	vars["ПолнотекстовыйПоиск"] = fullTextSearchFn
+	vars["FullTextSearch"] = fullTextSearchFn
 	// Вложения из DSL (план 105): ПрисоединитьФайл/СписокВложений/
 	// ПутьКВложению/УдалитьВложение. Живой контекст — как у транзакций.
 	s.registerAttachmentBuiltins(vars, txState.Ctx)

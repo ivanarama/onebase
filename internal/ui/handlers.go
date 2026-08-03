@@ -661,69 +661,11 @@ func filterOutFolders(rows []map[string]any) []map[string]any {
 	return out
 }
 
+// firstStringField — представление объекта по строке данных. Логика общая с
+// REST и глобальным поиском, поэтому живёт в metadata; здесь остаётся имя,
+// которым её зовут десятки мест UI.
 func firstStringField(row map[string]any, e *metadata.Entity) string {
-	for _, f := range e.Fields {
-		if f.Type == metadata.FieldTypeString {
-			if v, ok := row[f.Name]; ok && v != nil {
-				return fmt.Sprintf("%v", v)
-			}
-		}
-	}
-	// Нет строкового реквизита — для документа не проваливаемся сразу в сырой
-	// UUID (issue #361). Представление ссылки в языке запросов для документов —
-	// Номер; а документы из одних reference/date/number (типовая проводка,
-	// начисление) вообще не имеют текстового реквизита и раньше показывались в
-	// reference-пикере голыми UUID. Синтезируем читаемую подпись без доп. запросов.
-	if e != nil && e.Kind == metadata.KindDocument {
-		if lbl := documentFallbackLabel(row, e); lbl != "" {
-			return lbl
-		}
-	}
-	return fmt.Sprintf("%v", row["id"])
-}
-
-// documentFallbackLabel строит подпись документа, у которого нет строкового
-// реквизита: сначала Номер (если такое поле есть), иначе — компактный синтез из
-// значений полей-дат и чисел в порядке объявления. Ссылочные поля не включаются:
-// в строке они лежат сырыми UUID и без доп. чтения не читаемы.
-func documentFallbackLabel(row map[string]any, e *metadata.Entity) string {
-	for _, k := range []string{"Номер", "номер"} {
-		if v, ok := row[k]; ok && v != nil {
-			if s := strings.TrimSpace(fmt.Sprintf("%v", v)); s != "" {
-				return s
-			}
-		}
-	}
-	var parts []string
-	for _, f := range e.Fields {
-		if f.Type != metadata.FieldTypeDate && f.Type != metadata.FieldTypeNumber {
-			continue
-		}
-		v, ok := row[f.Name]
-		if !ok || v == nil {
-			continue
-		}
-		if s := formatLabelValue(v); s != "" {
-			parts = append(parts, s)
-		}
-		if len(parts) >= 3 { // достаточно для узнаваемости, не раздуваем подпись
-			break
-		}
-	}
-	return strings.Join(parts, " · ")
-}
-
-// formatLabelValue форматирует значение поля для синтетической подписи: даты — в
-// локальном формате, всё остальное (число может прийти строкой на SQLite) — как
-// есть, без лишних пробелов.
-func formatLabelValue(v any) string {
-	if t, ok := v.(time.Time); ok {
-		if t.IsZero() {
-			return ""
-		}
-		return t.Format("02.01.2006")
-	}
-	return strings.TrimSpace(fmt.Sprintf("%v", v))
+	return metadata.RowLabel(row, e)
 }
 
 var formNumberPattern = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)$`)
