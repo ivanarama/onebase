@@ -71,11 +71,20 @@ backup:
 	if s3.Bucket != "my-backups" || s3.Region != "eu-central-1" || s3.Prefix != "prod/" || s3.KeepLast != 30 {
 		t.Fatalf("S3 parsed incorrectly: %+v", s3)
 	}
-	// Secrets must be resolved from the environment, not left as ${env:...}.
-	if s3.AccessKey != "AKIAEXAMPLE" {
-		t.Errorf("access_key = %q, want resolved AKIAEXAMPLE", s3.AccessKey)
+	// Ссылка на секрет при загрузке НЕ раскрывается (план 83) — креды не должны
+	// жить в конфигурации приложения значением.
+	if s3.AccessKey != "${env:OB_S3_KEY}" || s3.SecretKey != "${env:OB_S3_SECRET}" {
+		t.Errorf("ссылки должны остаться как есть: access_key=%q secret_key=%q", s3.AccessKey, s3.SecretKey)
 	}
-	if s3.SecretKey != "topsecret" {
-		t.Errorf("secret_key = %q, want resolved topsecret", s3.SecretKey)
+	// Значение подставляется в момент создания S3-клиента.
+	resolved, err := s3.ResolveSecrets()
+	if err != nil {
+		t.Fatalf("ResolveSecrets: %v", err)
+	}
+	if resolved.AccessKey != "AKIAEXAMPLE" {
+		t.Errorf("access_key = %q, want resolved AKIAEXAMPLE", resolved.AccessKey)
+	}
+	if resolved.SecretKey != "topsecret" {
+		t.Errorf("secret_key = %q, want resolved topsecret", resolved.SecretKey)
 	}
 }

@@ -20,7 +20,10 @@ func applyFileStorageS3(db *storage.DB, appCfg *project.AppConfig) error {
 	if appCfg == nil || appCfg.FileStorage == nil || appCfg.FileStorage.S3 == nil {
 		return nil
 	}
-	s3 := appCfg.FileStorage.S3
+	s3, err := appCfg.FileStorage.S3.ResolveSecrets()
+	if err != nil {
+		return fmt.Errorf("file_storage.s3: %w", err)
+	}
 	client, err := objstore.New(objstore.Config{
 		Endpoint:  s3.Endpoint,
 		Region:    s3.Region,

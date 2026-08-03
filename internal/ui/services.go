@@ -29,9 +29,33 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/httpservice"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/secrets"
 	"github.com/ivantit66/onebase/internal/storage"
 )
+
+// resolveAuthSecret разыменовывает секрет входящего контура — HTTP-сервиса или
+// шлюза приёма — в момент проверки вызова: в конфигурации лежит ссылка
+// env:/file:/enc:, а не значение (план 83).
+//
+// Любая неудача — 401: контур, чей секрет не удалось получить, обязан не пускать
+// никого. Причина уходит в журнал администратору, а не вызывающему: наружу
+// нельзя раскрывать даже то, задан ли секрет вообще.
+func resolveAuthSecret(ref, kind, name string, w http.ResponseWriter) (string, bool) {
+	v, err := secrets.Default().Resolve(ref)
+	if err != nil {
+		oblog.Component("secrets").Warn("секрет входящего контура не разыменован",
+			"вид", kind, "имя", name, "ошибка", err)
+		writeServiceError(w, http.StatusUnauthorized, "секрет "+kind+" не задан")
+		return "", false
+	}
+	if strings.TrimSpace(v) == "" {
+		writeServiceError(w, http.StatusUnauthorized, "секрет "+kind+" не задан")
+		return "", false
+	}
+	return v, true
+}
 
 // endpointLimiter — скользящее окно запросов в минуту на сервис (rate_limit).
 type endpointLimiter struct {
@@ -279,12 +303,12 @@ func (s *Server) resolveServiceAuth(svc *httpservice.Service, w http.ResponseWri
 	case "token":
 		// Постоянный секрет в заголовке — простой режим для вебхуков
 		// (поглощено из плана 58). Сравнение constant-time.
-		if strings.TrimSpace(svc.Secret) == "" {
-			writeServiceError(w, http.StatusUnauthorized, "секрет сервиса не задан")
+		secret, ok := resolveAuthSecret(svc.Secret, "сервиса", svc.Name, w)
+		if !ok {
 			return nil, false
 		}
 		got := r.Header.Get("X-Webhook-Token")
-		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(svc.Secret)) != 1 {
+		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
 			writeServiceError(w, http.StatusUnauthorized, "неверный токен")
 			return nil, false
 		}
@@ -293,11 +317,11 @@ func (s *Server) resolveServiceAuth(svc *httpservice.Service, w http.ResponseWri
 	case "hmac":
 		// Подпись тела — формат платёжек/Telegram: X-Webhook-Signature =
 		// hex(HMAC-SHA256(тело, secret)); допускается префикс "sha256=".
-		if strings.TrimSpace(svc.Secret) == "" {
-			writeServiceError(w, http.StatusUnauthorized, "секрет сервиса не задан")
+		secret, ok := resolveAuthSecret(svc.Secret, "сервиса", svc.Name, w)
+		if !ok {
 			return nil, false
 		}
-		mac := hmac.New(sha256.New, []byte(svc.Secret))
+		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write(body)
 		want := hex.EncodeToString(mac.Sum(nil))
 		got := strings.TrimPrefix(strings.ToLower(r.Header.Get("X-Webhook-Signature")), "sha256=")

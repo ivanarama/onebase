@@ -90,7 +90,13 @@ type ObjectStore interface {
 // storeFactory builds an ObjectStore from S3 config; overridable in tests.
 type storeFactory func(*project.S3Config) (ObjectStore, error)
 
-func newObjectStore(c *project.S3Config) (ObjectStore, error) {
+func newObjectStore(cfg *project.S3Config) (ObjectStore, error) {
+	// Креды разыменовываются здесь, при создании клиента (план 83): в app.yaml
+	// лежит ссылка env:/file:/enc:, а не сам ключ.
+	c, err := cfg.ResolveSecrets()
+	if err != nil {
+		return nil, fmt.Errorf("auto backup: s3: %w", err)
+	}
 	return objstore.New(objstore.Config{
 		Endpoint:  c.Endpoint,
 		Region:    c.Region,

@@ -154,22 +154,22 @@ func (s *Server) resolveIntakeAuth(in *metadata.Intake, w http.ResponseWriter, r
 	case metadata.IntakeAuthNone, "":
 		return true
 	case metadata.IntakeAuthToken:
-		if in.Secret == "" {
-			writeServiceError(w, http.StatusUnauthorized, "секрет приёмника не задан")
+		secret, ok := resolveAuthSecret(in.Secret, "приёмника", in.Name, w)
+		if !ok {
 			return false
 		}
 		got := r.Header.Get("X-Webhook-Token")
-		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(in.Secret)) != 1 {
+		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
 			writeServiceError(w, http.StatusUnauthorized, "неверный токен")
 			return false
 		}
 		return true
 	case metadata.IntakeAuthHMAC:
-		if in.Secret == "" {
-			writeServiceError(w, http.StatusUnauthorized, "секрет приёмника не задан")
+		secret, ok := resolveAuthSecret(in.Secret, "приёмника", in.Name, w)
+		if !ok {
 			return false
 		}
-		mac := hmac.New(sha256.New, []byte(in.Secret))
+		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write(body)
 		want := hex.EncodeToString(mac.Sum(nil))
 		got := strings.TrimPrefix(strings.ToLower(r.Header.Get("X-Webhook-Signature")), "sha256=")

@@ -7,10 +7,9 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"regexp"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/secrets"
 	"gopkg.in/yaml.v3"
 )
 
@@ -150,63 +149,41 @@ func (c Config) Redacted() Config {
 	out := c
 	out.Endpoints = make([]Endpoint, len(c.Endpoints))
 	for i, e := range c.Endpoints {
-		// ${env:VAR}-ссылка — не секрет (это имя переменной окружения, а не сам
-		// ключ): показываем её админу как есть, маскируем только реальные ключи.
-		if e.APIKey != "" && !isEnvRef(e.APIKey) {
-			e.APIKey = maskKey(e.APIKey)
+		// Ссылка (env:/file:/enc:) — не секрет: это указание, где секрет лежит.
+		// Показываем её админу как есть, маскируем только открытые ключи.
+		if e.APIKey != "" && !secrets.IsRef(e.APIKey) {
+			e.APIKey = secrets.Mask(e.APIKey)
 		}
 		out.Endpoints[i] = e
 	}
 	return out
 }
 
-func maskKey(k string) string {
-	if len(k) <= 4 {
-		return "****"
+// resolveSecrets возвращает копию endpoint'а с разыменованными ссылками в ключе,
+// base_url и заголовках (env:/file:/enc:, план 83).
+//
+// Разыменование делается здесь, в Resolve — перед самым вызовом провайдера, — а
+// не при загрузке или сохранении конфигурации: тогда значение секрета не оседает
+// в _settings, в describe и в дампе бэкапа.
+func (e Endpoint) resolveSecrets() (Endpoint, error) {
+	r := secrets.Default()
+	var err error
+	if e.APIKey, err = r.Resolve(e.APIKey); err != nil {
+		return e, fmt.Errorf("api_key: %w", err)
 	}
-	return "****" + k[len(k)-4:]
-}
-
-// envRefPattern сопоставляет ссылки вида ${env:VAR}: они подставляются из
-// переменных окружения процесса, чтобы секреты (API-ключи, кастомные
-// auth-заголовки) жили в окружении, а не в конфиге базы (_settings/app.yaml/
-// .obz/git). Тот же синтаксис использует project-загрузчик для app.yaml.
-var envRefPattern = regexp.MustCompile(`\$\{env:([^}]+)\}`)
-
-func isEnvRef(s string) bool {
-	s = strings.TrimSpace(s)
-	return s != "" && envRefPattern.FindString(s) == s
-}
-
-// expandSecretEnv разыменовывает все ${env:VAR} в строке. Отсутствующая
-// переменная → пустая подстановка (как в project-загрузчике app.yaml).
-func expandSecretEnv(s string) string {
-	if !strings.Contains(s, "${env:") {
-		return s
+	if e.BaseURL, err = r.Resolve(e.BaseURL); err != nil {
+		return e, fmt.Errorf("base_url: %w", err)
 	}
-	return envRefPattern.ReplaceAllStringFunc(s, func(m string) string {
-		return os.Getenv(strings.TrimSpace(envRefPattern.FindStringSubmatch(m)[1]))
-	})
-}
-
-// resolveSecrets возвращает копию endpoint'а с разыменованными ${env:VAR} в
-// ключе, base_url и заголовках. Разыменование делается в Resolve (перед вызовом
-// провайдера), а не при загрузке/сохранении: секрет не оседает в _settings/
-// describe/экспорте открытым текстом (тот же приём, что у SMTP-пароля в
-// internal/mailer). Раньше ${env:...} подставлялся только на пути app.yaml
-// (project-загрузчик) — базы из веб-конфигуратора (_settings) слали ссылку
-// провайдеру буквально.
-func (e Endpoint) resolveSecrets() Endpoint {
-	e.APIKey = expandSecretEnv(e.APIKey)
-	e.BaseURL = expandSecretEnv(e.BaseURL)
 	if len(e.Headers) > 0 {
 		h := make(map[string]string, len(e.Headers))
 		for k, v := range e.Headers {
-			h[k] = expandSecretEnv(v)
+			if h[k], err = r.Resolve(v); err != nil {
+				return e, fmt.Errorf("заголовок %s: %w", k, err)
+			}
 		}
 		e.Headers = h
 	}
-	return e
+	return e, nil
 }
 
 // UnmaskKeys восстанавливает реальные API-ключи для endpoint'ов, чьи ключи пришли
@@ -270,6 +247,7 @@ func (c Config) Resolve(task string) ([]ResolvedModel, error) {
 		return nil, fmt.Errorf("не найден профиль задачи %q (и нет профиля по умолчанию)", task)
 	}
 	var out []ResolvedModel
+	var secretErr error
 	for _, mname := range p.Models {
 		m, ok := c.model(mname)
 		if !ok {
@@ -279,9 +257,23 @@ func (c Config) Resolve(task string) ([]ResolvedModel, error) {
 		if !ok {
 			continue
 		}
-		out = append(out, ResolvedModel{Model: m, Endpoint: ep.resolveSecrets()})
+		resolved, err := ep.resolveSecrets()
+		if err != nil {
+			// Модель с неразыменованным секретом выбывает из цепочки, но
+			// остальные остаются: смысл профиля как раз в том, чтобы уйти на
+			// следующего провайдера. Причину запоминаем — она пригодится, если
+			// не останется ни одной рабочей модели.
+			if secretErr == nil {
+				secretErr = fmt.Errorf("endpoint %q: %w", ep.Name, err)
+			}
+			continue
+		}
+		out = append(out, ResolvedModel{Model: m, Endpoint: resolved})
 	}
 	if len(out) == 0 {
+		if secretErr != nil {
+			return nil, fmt.Errorf("профиль задачи %q: секрет не разыменован (%w)", p.Task, secretErr)
+		}
 		return nil, fmt.Errorf("профиль задачи %q не содержит ни одной настроенной модели", p.Task)
 	}
 	return out, nil
