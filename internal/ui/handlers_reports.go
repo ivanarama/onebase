@@ -23,6 +23,7 @@ import (
 )
 
 func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	rep := s.getReport(w, r)
 	if rep == nil {
 		return
@@ -69,6 +70,7 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reportRun(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	rep := s.getReport(w, r)
 	if rep == nil {
 		return
@@ -122,7 +124,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	defer func() { finish(opStatus, opRows, opTruncated, opAttrs...) }()
 
 	// Выбранный вариант компоновки (параметр __variant); пусто → основной.
-	variant := r.FormValue("__variant")
+	variant := r.FormValue("__variant") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 	user := currentUserLogin(r)
 	var presets []storage.ReportPreset
 	if reportSupportsRuntimeSettings(rep) {

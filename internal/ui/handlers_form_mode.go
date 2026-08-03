@@ -16,6 +16,7 @@ import (
 // мёртвыми — клик ничего не делал бы (SaveUserFormOpenMode при пустом логине —
 // no-op). Для авторизованного пользователя пишется персональный режим.
 func (s *Server) setFormMode(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	mode := r.FormValue("mode")
 	login := currentUserLogin(r)
 	var err error

@@ -22,8 +22,8 @@ func (h *handler) configuratorSaveWidget(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("widget_name"))
@@ -78,8 +78,8 @@ func (h *handler) configuratorDeleteWidget(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("widget_name"))
@@ -110,8 +110,8 @@ func (h *handler) configuratorSaveHomePage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 
@@ -172,8 +172,8 @@ func (h *handler) configuratorSaveHomePageYAML(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	body := r.FormValue("yaml")

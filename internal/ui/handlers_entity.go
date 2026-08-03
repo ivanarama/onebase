@@ -427,7 +427,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "write") {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
+	if err := r.ParseForm(); err != nil { //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 		http.Error(w, s.errText(r, err), 400)
 		return
 	}
@@ -452,10 +452,10 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		// неприсланными полями.
 		submitted := submittedFormKeys(r)
 		if formKeySubmitted(submitted, "parent_id") {
-			fields["parent_id"] = r.FormValue("parent_id")
+			fields["parent_id"] = r.FormValue("parent_id") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 		}
 		if formKeySubmitted(submitted, "is_folder") {
-			fields["is_folder"] = r.FormValue("is_folder") == "true"
+			fields["is_folder"] = r.FormValue("is_folder") == "true" //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 		}
 	}
 
@@ -495,7 +495,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		}
 	}
 
-	action = r.FormValue("_action")
+	action = r.FormValue("_action") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 	isPostingAct := entity.Posting && (action == "post" || action == "post_and_close")
 	if isPostingAct && !s.requirePerm(w, r, string(entity.Kind), entity.Name, "post") {
 		return
@@ -531,12 +531,13 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		data["FolderOptions"] = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
 	}
 	if isNew {
-		data["IsPopup"] = r.FormValue("_popup") == "1"
+		data["IsPopup"] = r.FormValue("_popup") == "1" //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 	}
 	s.renderEntityForm(w, r, "object", data)
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	entity := s.getEntity(w, r)
 	if entity == nil {
 		return
@@ -1152,6 +1153,7 @@ func (s *Server) renderVersionConflict(w http.ResponseWriter, r *http.Request, e
 }
 
 func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	entity := s.getEntity(w, r)
 	if entity == nil {
 		return

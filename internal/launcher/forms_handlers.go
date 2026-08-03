@@ -450,8 +450,8 @@ func (h *handler) configuratorFormsSave(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	entity := strings.TrimSpace(r.FormValue("entity"))
@@ -536,8 +536,8 @@ func (h *handler) configuratorFormsDelete(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	entity := strings.TrimSpace(r.FormValue("entity"))
@@ -624,8 +624,8 @@ func deleteManagedForm(r *http.Request, b *Base, entity, name string) error {
 // configuratorFormsValidate — POST YAML, возвращает JSON со списком warnings.
 // Использует managed_form_loader для базовой YAML-валидации.
 func (h *handler) configuratorFormsValidate(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	yamlBody := r.FormValue("yaml")
@@ -669,8 +669,8 @@ func (h *handler) configuratorFormsValidate(w http.ResponseWriter, r *http.Reque
 // internal/ui рантайм-движок добавится в будущем (для этого нужно
 // поднимать целую сессию UI-сервера, что излишне для preview).
 func (h *handler) configuratorFormsPreview(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	yamlBody := r.FormValue("yaml")

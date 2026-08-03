@@ -20,6 +20,7 @@ func (h *handler) configuratorSavePrintForm(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}
@@ -82,6 +83,7 @@ func (h *handler) configuratorNewPrintForm(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}
@@ -143,6 +145,7 @@ func (h *handler) configuratorSaveLayout(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}

@@ -137,6 +137,7 @@ func paramDefaultValue(def any, typ string) any {
 }
 
 func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	proc := s.getProcessor(w, r)
 	if proc == nil {
 		return

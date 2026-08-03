@@ -149,6 +149,7 @@ func journalReturnURL(r *http.Request, fallback string) string {
 }
 
 func (s *Server) journalSettingsSave(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	j := s.getJournal(w, r)
 	if j == nil {
 		return
@@ -180,6 +181,7 @@ func (s *Server) journalSettingsSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) journalSettingsReset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	j := s.getJournal(w, r)
 	if j == nil {
 		return

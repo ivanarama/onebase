@@ -113,8 +113,8 @@ func (h *handler) configuratorSaveRegisterFields(w http.ResponseWriter, r *http.
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	regName := r.FormValue("register")
@@ -254,8 +254,8 @@ func (h *handler) configuratorSaveInfoRegFields(w http.ResponseWriter, r *http.R
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	reg := saveInfoReg{
@@ -389,8 +389,8 @@ func (h *handler) configuratorSaveAccountRegister(w http.ResponseWriter, r *http
 		return
 	}
 	lang := resolveLang(r)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), 400)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if failForm(w, r) {
 		return
 	}
 	reg := saveAccountReg{

@@ -73,6 +73,7 @@ func (s *Server) intakeMonitor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) intakeMonitorReplay(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return

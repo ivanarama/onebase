@@ -287,6 +287,7 @@ func (h *handler) backupSettings(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}
@@ -484,6 +485,7 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// compatible=true means universal cross-engine format; absent/other = binary.
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	compatible := r.FormValue("compatible") == "true"
 
 	name := b.Name + "_" + time.Now().Format("2006-01-02_15-04") + ".obz"

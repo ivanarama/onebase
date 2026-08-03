@@ -158,6 +158,7 @@ func (h *handler) newForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}
@@ -275,6 +276,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}
@@ -713,6 +715,7 @@ func (h *handler) configImport(w http.ResponseWriter, r *http.Request) {
 	lang := resolveLang(r)
 	backURL := "/bases/" + b.ID + "/configurator?tab=files"
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if failForm(w, r) {
 		return
 	}

@@ -280,6 +280,7 @@ func (h *handler) configuratorFormsEditOp(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if err := r.ParseForm(); err != nil {
 		writeFormsJSON(w, editOpResponse{OK: false, Errors: []string{err.Error()}})
 		return

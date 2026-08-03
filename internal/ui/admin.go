@@ -215,6 +215,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
@@ -308,6 +309,7 @@ func (s *Server) adminUserFormData(r *http.Request, errMsg, login, fullName stri
 }
 
 func (s *Server) adminUserCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
@@ -377,6 +379,7 @@ func (s *Server) adminUserDenyPasswd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminUserPasswd(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
@@ -459,6 +462,7 @@ func (s *Server) revokeSessionsOnPasswordChange(r *http.Request, targetUserID, t
 
 // selfPasswd lets any authenticated user change their own password.
 func (s *Server) selfPasswd(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	lang := s.resolveLang(r)
 	u := auth.UserFromContext(r.Context())
 	if u == nil {
@@ -569,6 +573,7 @@ func (s *Server) adminSessions(w http.ResponseWriter, r *http.Request) {
 // adminSessionLimit сохраняет политику «максимум сессий на пользователя»
 // (план 78, п. 1.6; ключ auth.max_sessions_per_user в _settings).
 func (s *Server) adminSessionLimit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
@@ -669,6 +674,7 @@ func (s *Server) adminKickUser(w http.ResponseWriter, r *http.Request) {
 
 // adminKickSession завершает одну сессию по public_id (план 78).
 func (s *Server) adminKickSession(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
@@ -711,6 +717,7 @@ func (s *Server) adminAPITokens(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminAPITokenCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return

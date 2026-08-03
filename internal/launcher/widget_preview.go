@@ -54,6 +54,7 @@ func (h *handler) configuratorWidgetPreview(w http.ResponseWriter, r *http.Reque
 		http.NotFound(w, r)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if err := r.ParseForm(); err != nil {
 		writeFormsJSON(w, widgetPreviewResponse{Error: err.Error()})
 		return
