@@ -148,9 +148,25 @@ func trimProjectionItem(item []tok) []tok {
 // список логических полей, которые из-за выражения/агрегата не могут быть
 // защищены маской на выходе.
 func parseProjectionItem(item []tok) (ProjectionColumn, []string) {
+	// Алиас вывода — только «КАК» нулевой глубины: внутри скобок то же слово
+	// принадлежит выражению (ВЫРАЗИТЬ(Поле КАК Строка)), а не имени колонки.
 	alias := ""
+	depth := 0
 	for i := 0; i+1 < len(item); i++ {
-		if item[i].kind != tIdent {
+		switch item[i].kind {
+		case tLParen:
+			depth++
+			continue
+		case tRParen:
+			if depth > 0 {
+				depth--
+			}
+			continue
+		case tIdent:
+		default:
+			continue
+		}
+		if depth != 0 {
 			continue
 		}
 		if kw, isKW := sqlKW(item[i].val); isKW && kw == "AS" {
