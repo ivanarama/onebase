@@ -1077,5 +1077,10 @@
   "слишком много записей в архиве: %d": "too many archive entries: %d",
   "Ошибка config/app.yaml": "config/app.yaml error",
   "Логин обязателен": "Login is required",
-  "Слишком много попыток входа — повторите позже": "Too many login attempts — try again later"
+  "Слишком много попыток входа — повторите позже": "Too many login attempts — try again later",
+  "Поиск по базе": "Search the database",
+  "Что ищем?": "What are we looking for?",
+  "Найти": "Search",
+  "Ничего не найдено.": "Nothing found.",
+  "Помечен на удаление": "Marked for deletion"
 }

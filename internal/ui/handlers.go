@@ -536,6 +536,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["IsAdmin"]; !ok {
 		data["IsAdmin"] = s.isAdmin(r)
 	}
+	// Строка глобального поиска в шапке есть на каждой странице (план 82);
+	// на самой странице результатов она сохраняет введённый запрос.
+	if _, ok := data["SearchQuery"]; !ok {
+		data["SearchQuery"] = ""
+	}
 	if _, ok := data["FormOpenMode"]; !ok {
 		login := currentUserLogin(r)
 		data["FormOpenMode"] = s.store.EffectiveFormOpenMode(r.Context(), login)

@@ -453,6 +453,7 @@ func (s *Server) Mount(r chi.Router) {
 
 	// All functions (admin only)
 	r.Get("/ui/all-functions", s.allFunctions)
+	r.Get("/ui/search", s.globalSearch)
 
 	// Constants
 	r.Get("/ui/constants", s.constantsList)
