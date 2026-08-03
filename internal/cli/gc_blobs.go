@@ -98,6 +98,7 @@ func runGcBlobs(cmd *cobra.Command, _ []string) error {
 	outf("Сирот:               %d\n", len(st.Orphans))
 	if doDelete {
 		outf("Удалено:             %d\n", st.Deleted)
+		printReclaimHint(db, st.Deleted)
 	} else if len(st.Orphans) > 0 {
 		outln("Режим предпросмотра — ничего не удалено. Для удаления добавьте --delete.")
 	}

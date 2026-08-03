@@ -146,7 +146,24 @@ func runRollup(cmd *cobra.Command, _ []string) error {
 	}
 	outln("\nГотово:")
 	printRollupReport(rep, keepDocs)
+	printReclaimHint(db, rep.FoldedMovements())
 	return nil
+}
+
+// printReclaimHint напоминает про место после массового удаления. Само место не
+// возвращается: SQLite не укорачивает файл, а PostgreSQL оставляет старую
+// статистику планировщика (план 114).
+func printReclaimHint(db *storage.DB, deleted int) {
+	if deleted <= 0 {
+		return
+	}
+	outln("")
+	if db.IsSQLite() {
+		outln("Файл базы не уменьшился: SQLite не возвращает место после удаления.")
+	} else {
+		outln("Статистика планировщика не пересчитана после массового удаления.")
+	}
+	outln("Обслуживание: onebase vacuum (см. onebase vacuum --help — на SQLite база будет заблокирована).")
 }
 
 // selectedRegisterNames — имена регистров для свёртки: из --registers (через
