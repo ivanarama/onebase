@@ -14,6 +14,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/version"
@@ -1066,15 +1067,15 @@ func copyDir(src, dst string) error {
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, fsmode.Dir)
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), fsmode.Dir); err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		return os.WriteFile(target, data, fsmode.File) //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 	})
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -204,7 +205,7 @@ func (h *handler) configuratorSaveLayout(w http.ResponseWriter, r *http.Request)
 		if saveErr != nil {
 			// keep saveErr for the common response below
 		} else {
-			saveErr = os.WriteFile(layoutPath, []byte(source), 0o644)
+			saveErr = os.WriteFile(layoutPath, []byte(source), fsmode.File) //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/spf13/cobra"
 )
@@ -69,10 +70,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 // разработчика сразу видел структуру, рабочий цикл и встроенные функции —
 // без ручных подсказок от пользователя (best-effort).
 func writeAIGuide(dir string) {
-	_ = os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(generateAIGuide(environmentNote(dir))), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(generateAIGuide(environmentNote(dir))), fsmode.File)
 	// CLAUDE.md не перезаписываем, если он уже есть (мог быть кастомизирован).
 	claudePath := filepath.Join(dir, "CLAUDE.md")
 	if _, err := os.Stat(claudePath); os.IsNotExist(err) {
-		_ = os.WriteFile(claudePath, []byte(claudePointer), 0o644)
+		_ = os.WriteFile(claudePath, []byte(claudePointer), fsmode.File)
 	}
 }

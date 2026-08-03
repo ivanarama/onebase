@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -57,7 +58,7 @@ func (r *Repo) ImportFromDir(ctx context.Context, dir string) error {
 				return fmt.Errorf("configdb: unsafe import path %q: %w", rel, err)
 			}
 
-			content, err := os.ReadFile(path)
+			content, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			if err != nil {
 				return fmt.Errorf("configdb: read %s: %w", rel, err)
 			}
@@ -256,10 +257,10 @@ func (r *Repo) ExportToDir(ctx context.Context, dir string) error {
 		if err != nil {
 			return fmt.Errorf("configdb: unsafe export path %q: %w", path, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(osPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(osPath), fsmode.Dir); err != nil {
 			return fmt.Errorf("configdb: mkdir: %w", err)
 		}
-		if err := os.WriteFile(osPath, content, 0o644); err != nil {
+		if err := os.WriteFile(osPath, content, fsmode.File); err != nil {
 			return fmt.Errorf("configdb: write %s: %w", osPath, err)
 		}
 	}

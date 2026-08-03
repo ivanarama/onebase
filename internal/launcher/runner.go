@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 )
 
@@ -89,11 +90,11 @@ func (r *Runner) Start(base *Base) error {
 	if err != nil {
 		return err
 	}
-	// 0600: журнал лежит в ~/.onebase (каталог теперь 0700) и содержит вывод
+	// SecretFile: журнал лежит в ~/.onebase (каталог 0700) и содержит вывод
 	// прикладного сервера — там могут оказаться данные пользователей. Пишет и
-	// читает его только лаунчер под тем же пользователем, так что ужесточение
-	// никому не мешает.
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: logPath собран baseLogPath из идентификатора базы, а не из запроса
+	// читает его только лаунчер под тем же пользователем, так что закрытые
+	// права никому не мешают.
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, fsmode.SecretFile) //nolint:gosec // G304: logPath собран baseLogPath из идентификатора базы, а не из запроса
 	if err != nil {
 		return fmt.Errorf("runner: log: %w", err)
 	}
@@ -494,7 +495,7 @@ func baseLogPath(id string) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(home, ".onebase", "logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, id+".log"), nil
@@ -509,7 +510,7 @@ func migrateMarkerPath(id string) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(home, ".onebase", "state")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "migrate_"+id+".stamp"), nil

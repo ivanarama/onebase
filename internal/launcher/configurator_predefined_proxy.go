@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -97,7 +98,7 @@ func savePredefinedToFile(dir, entityName string, predefined interface{}) error 
 			if err != nil {
 				return err
 			}
-			return os.WriteFile(p, out, 0o644)
+			return os.WriteFile(p, out, fsmode.File)
 		}
 	}
 	return fmt.Errorf("entity %q not found", entityName)

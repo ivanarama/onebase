@@ -1,6 +1,7 @@
 package project
 
 import (
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 )
@@ -9,7 +10,7 @@ import (
 func Scaffold(dir, name string) error {
 	dirs := []string{"config", "catalogs", "documents", "registers", "reports", "src"}
 	for _, d := range dirs {
-		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, d), fsmode.Dir); err != nil {
 			return err
 		}
 	}
@@ -24,7 +25,7 @@ func Scaffold(dir, name string) error {
 
 	for path, content := range files {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(content), fsmode.File); err != nil {
 				return err
 			}
 		}

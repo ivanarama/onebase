@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -115,8 +116,8 @@ func SaveFile(path string, p *Page) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), fsmode.Dir); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, fsmode.File)
 }

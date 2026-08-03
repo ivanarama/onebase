@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -96,7 +97,7 @@ func FormatYAMLFile(path string, check bool) (alreadyFormatted bool, err error) 
 	if check {
 		return false, nil
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, fsmode.File); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 		return false, err
 	}
 	return false, nil

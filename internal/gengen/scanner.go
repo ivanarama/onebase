@@ -126,7 +126,7 @@ func ScanProject(dir string) (*ExistingManifest, error) {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".os") {
 				return nil
 			}
-			content, _ := os.ReadFile(path)
+			content, _ := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			rel, _ := filepath.Rel(dslDir, path)
 			manifest.DSLFiles[rel] = string(content)
 			return nil
@@ -188,7 +188,7 @@ func ScanProjectFromFiles(dir string) (*ExistingManifest, error) {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".os") {
 				return nil
 			}
-			content, _ := os.ReadFile(path)
+			content, _ := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			rel, _ := filepath.Rel(dslDir, path)
 			manifest.DSLFiles[rel] = string(content)
 			return nil

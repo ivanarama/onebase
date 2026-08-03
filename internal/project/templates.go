@@ -2,6 +2,7 @@ package project
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 )
@@ -46,7 +47,7 @@ func ApplyTemplate(templateName, dir, appName string) error {
 		dirs[filepath.Dir(path)] = true
 	}
 	for d := range dirs {
-		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, d), fsmode.Dir); err != nil {
 			return err
 		}
 	}
@@ -54,7 +55,7 @@ func ApplyTemplate(templateName, dir, appName string) error {
 	for rel, content := range tmpl.files {
 		dst := filepath.Join(dir, rel)
 		if _, err := os.Stat(dst); os.IsNotExist(err) {
-			if err := os.WriteFile(dst, []byte(content), 0o644); err != nil {
+			if err := os.WriteFile(dst, []byte(content), fsmode.File); err != nil {
 				return err
 			}
 		}
@@ -63,7 +64,7 @@ func ApplyTemplate(templateName, dir, appName string) error {
 	// Write config/app.yaml with actual app name
 	cfgPath := filepath.Join(dir, "config", "app.yaml")
 	cfgContent := fmt.Sprintf("name: %s\nversion: \"1.0\"\n", appName)
-	return os.WriteFile(cfgPath, []byte(cfgContent), 0o644)
+	return os.WriteFile(cfgPath, []byte(cfgContent), fsmode.File)
 }
 
 // ── tasks ────────────────────────────────────────────────────────────────────

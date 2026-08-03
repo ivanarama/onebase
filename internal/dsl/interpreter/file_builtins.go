@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"golang.org/x/text/encoding/charmap"
 )
@@ -133,7 +134,7 @@ func (w *dslTextWriter) CallMethod(name string, args []any) any {
 		return nil
 	case "закрыть", "close":
 		if w.isOpen && w.path != "" {
-			err := os.WriteFile(safePathOrRaise("ЗаписьТекста.Закрыть", w.path), []byte(w.buf.String()), 0644)
+			err := os.WriteFile(safePathOrRaise("ЗаписьТекста.Закрыть", w.path), []byte(w.buf.String()), fsmode.File)
 			if err != nil {
 				panic(userError{Msg: "ЗаписьТекста: ошибка записи файла " + w.path + ": " + err.Error()})
 			}

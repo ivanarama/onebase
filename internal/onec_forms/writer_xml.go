@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"encoding/xml"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"strconv"
 	"strings"
@@ -95,7 +96,7 @@ func WriteFormXML(form *IRForm, dstPath string) error {
 
 	buf.WriteString("</Form>\n")
 
-	return os.WriteFile(dstPath, []byte(buf.String()), 0o644)
+	return os.WriteFile(dstPath, []byte(buf.String()), fsmode.File)
 }
 
 // idGenerator — раздаёт стабильные числовые id для узлов без OriginalID.

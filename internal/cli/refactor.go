@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ivantit66/onebase/internal/configcheck"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/spf13/cobra"
@@ -467,11 +468,11 @@ func applyRefactorOps(root string, ops []refactorOp) (configcheck.Result, bool, 
 			}
 		}
 		full := filepath.Join(root, filepath.FromSlash(target))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 			rollbackRefactor(root, backups, existed)
 			return configcheck.Result{}, true, err
 		}
-		if err := os.WriteFile(full, op.newContent, 0o644); err != nil {
+		if err := os.WriteFile(full, op.newContent, fsmode.File); err != nil {
 			rollbackRefactor(root, backups, existed)
 			return configcheck.Result{}, true, err
 		}
@@ -502,8 +503,8 @@ func rollbackRefactor(root string, backups map[string][]byte, existed map[string
 			_ = os.Remove(full)
 			continue
 		}
-		_ = os.MkdirAll(filepath.Dir(full), 0o755)
-		_ = os.WriteFile(full, backups[rel], 0o644)
+		_ = os.MkdirAll(filepath.Dir(full), fsmode.Dir)
+		_ = os.WriteFile(full, backups[rel], fsmode.File)
 	}
 }
 

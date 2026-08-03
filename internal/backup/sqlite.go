@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -22,7 +23,7 @@ import (
 //
 // Returns the full path of the created file.
 func DumpSQLite(ctx context.Context, dbPath, outDir string) (string, error) {
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, fsmode.Dir); err != nil {
 		return "", err
 	}
 	base := filepath.Base(dbPath)
@@ -189,7 +190,7 @@ func RestoreSQLite(ctx context.Context, dbPath, backupPath string) error {
 	}
 
 	dir := filepath.Dir(dbAbs)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dbAbs)+".restore-*")

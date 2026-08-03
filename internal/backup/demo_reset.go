@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -79,7 +80,7 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (*ImportR
 			rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("недопустимый путь в архиве: %s", zf.Name)
 		}
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outPath), fsmode.Dir); err != nil {
 			return nil, err
 		}
 		if err := extractFile(zf, outPath); err != nil {

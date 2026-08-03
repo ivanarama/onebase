@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"gopkg.in/yaml.v3"
 )
@@ -27,6 +28,12 @@ func (h *handler) configuratorSaveWidget(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("widget_name"))
+	if !validObjectName(name) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	body := r.FormValue("yaml")
 	if name == "" {
 		data := h.loadCfgData(r.Context(), b, "tree")
@@ -257,11 +264,11 @@ func atomicWriteConfigFile(basePath, relPath string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
 	tmp := full + ".tmp"
-	if err := os.WriteFile(tmp, content, 0o644); err != nil {
+	if err := os.WriteFile(tmp, content, fsmode.File); err != nil {
 		return err
 	}
 	return os.Rename(tmp, full)

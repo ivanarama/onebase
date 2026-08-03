@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -136,7 +137,7 @@ func migrateLegacyPrintForms(projectDir string, keep bool) ([]migrateResult, []m
 		}
 		base := strings.TrimSuffix(name, ".yaml")
 		dstPath := filepath.Join(pfDir, base+".layout.yaml")
-		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+		if err := os.WriteFile(dstPath, data, fsmode.File); err != nil {
 			errs = append(errs, migrateError{File: name, Err: fmt.Errorf("запись %s: %w", dstPath, err)})
 			continue
 		}

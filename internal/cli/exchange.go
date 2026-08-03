@@ -10,6 +10,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/exchange"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -219,7 +220,7 @@ func exchangeInitToken(cmd *cobra.Command) (string, error) {
 
 func writeExchangePackage(path string, data []byte) (err error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")

@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/gengen"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
@@ -610,11 +611,11 @@ func (s *Server) gengenGenerate(w http.ResponseWriter, r *http.Request) {
 			jsonResp(w, 400, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), fsmode.Dir); err != nil {
 			jsonResp(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(fullPath, []byte(content), fsmode.File); err != nil {
 			jsonResp(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
@@ -627,7 +628,7 @@ func (s *Server) gengenGenerate(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		rel, _ := filepath.Rel(outDir, path)
-		data, _ := os.ReadFile(path)
+		data, _ := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		files[rel] = string(data)
 		return nil
 	})

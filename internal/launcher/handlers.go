@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/project"
@@ -222,7 +223,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if scaffold {
-			if err := os.MkdirAll(b.Path, 0o755); err != nil {
+			if err := os.MkdirAll(b.Path, fsmode.Dir); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 				render(w, r, "page-form", map[string]any{
 					"Title": tr(lang, "onebase — Добавить базу"),
 					"IsNew": true, "Base": b, "Error": tr(lang, "Не удалось создать папку") + ": " + err.Error(),
@@ -826,7 +827,7 @@ func workspacePath(baseID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return p, os.MkdirAll(p, 0o755)
+	return p, os.MkdirAll(p, fsmode.Dir)
 }
 
 func resolveLang(r *http.Request) string {

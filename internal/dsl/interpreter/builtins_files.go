@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
@@ -70,7 +71,7 @@ func deleteFileFn(args []any, _ string, _ int) (any, error) {
 
 // СоздатьКаталог(Путь) — создание каталога вместе с родительскими.
 func makeDirFn(args []any, _ string, _ int) (any, error) {
-	if err := os.MkdirAll(safePathOrRaise("СоздатьКаталог", strArg(args, 0)), 0o755); err != nil {
+	if err := os.MkdirAll(safePathOrRaise("СоздатьКаталог", strArg(args, 0)), fsmode.Dir); err != nil {
 		RaiseUserError("СоздатьКаталог: " + err.Error())
 	}
 	return nil, nil

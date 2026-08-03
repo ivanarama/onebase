@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -92,7 +93,7 @@ func (h *handler) saveTreeOrderGroupFor(ctx context.Context, b *Base, group stri
 		defer db.Close()
 		return configdb.New(db).SaveFile(ctx, treeOrderFile, raw)
 	}
-	return os.WriteFile(treeOrderPath(b.Path), raw, 0o644)
+	return os.WriteFile(treeOrderPath(b.Path), raw, fsmode.File)
 }
 
 // readConfigFileRaw читает один файл конфигурации в обоих режимах хранения.
@@ -111,7 +112,7 @@ func (h *handler) readConfigFileRaw(ctx context.Context, b *Base, relPath string
 	if err != nil {
 		return nil, false
 	}
-	raw, err := os.ReadFile(full)
+	raw, err := os.ReadFile(full) //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 	if err != nil {
 		return nil, false
 	}
@@ -138,10 +139,10 @@ func (h *handler) writeConfigFileRaw(ctx context.Context, b *Base, relPath strin
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
-	return os.WriteFile(full, content, 0o644)
+	return os.WriteFile(full, content, fsmode.File) //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 }
 
 // orderLineRe находит верхнеуровневую строку «order: N» в YAML подсистемы.

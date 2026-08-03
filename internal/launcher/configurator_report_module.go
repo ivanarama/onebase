@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/report"
 	"gopkg.in/yaml.v3"
@@ -25,6 +26,12 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	repName := r.FormValue("report_name")
+	if !validObjectName(repName) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	query := r.FormValue("query")
 	title := strings.TrimSpace(r.FormValue("title"))
 	chartProc := strings.TrimSpace(r.FormValue("chart_proc"))
@@ -186,7 +193,7 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			}
 			out, err := updateReportFile(raw)
 			if err == nil {
-				saveErr = os.WriteFile(p, out, 0o644)
+				saveErr = os.WriteFile(p, out, fsmode.File) //nolint:gosec // G703: имя объекта проверено validObjectName, а сам путь получен обходом каталога проекта
 			} else {
 				saveErr = err
 			}

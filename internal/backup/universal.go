@@ -22,6 +22,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -640,7 +641,7 @@ func exportConfig(ctx context.Context, db *storage.DB, configSource, configDir s
 		if d.IsDir() {
 			return nil
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return nil
 		}
@@ -717,7 +718,7 @@ func exportAttachments(attachmentsDir string, zw *zip.Writer) (int, error) {
 		if err != nil {
 			return err
 		}
-		f, err := os.Open(path)
+		f, err := os.Open(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}
@@ -834,7 +835,7 @@ func ImportUniversalWithOptions(
 			rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("недопустимый путь в архиве: %s", f.Name)
 		}
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outPath), fsmode.Dir); err != nil {
 			return nil, err
 		}
 		if err := extractFile(f, outPath); err != nil {
@@ -1135,7 +1136,7 @@ func importConfig(ctx context.Context, db *storage.DB, configDest, cfgFileDir, c
 		return repo.ImportFromDir(ctx, configDir)
 	}
 	// File destination: copy YAML files to cfgFileDir.
-	if err := os.MkdirAll(cfgFileDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgFileDir, fsmode.Dir); err != nil {
 		return err
 	}
 	root, err := filepath.EvalSymlinks(cfgFileDir)
@@ -1183,7 +1184,7 @@ func safeConfigDestination(root, rel string) (string, error) {
 		next := filepath.Join(current, part)
 		info, err := os.Lstat(next)
 		if os.IsNotExist(err) {
-			if err := os.Mkdir(next, 0o755); err != nil {
+			if err := os.Mkdir(next, fsmode.Dir); err != nil {
 				return "", err
 			}
 			current = next
@@ -1670,10 +1671,10 @@ func restoreAttachments(srcDir, dstDir string) (int, error) {
 		rel, _ := filepath.Rel(srcDir, path)
 		rel = filepath.FromSlash(rel)
 		dst := filepath.Join(dstDir, rel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), fsmode.Dir); err != nil {
 			return err
 		}
-		src, err := os.Open(path)
+		src, err := os.Open(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}

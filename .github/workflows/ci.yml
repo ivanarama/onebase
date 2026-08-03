@@ -96,51 +96,6 @@ jobs:
         with:
           version: v2.11.4
 
-  # ВРЕМЕННЫЙ gate (план 109, этап C): gosec ещё не включён в .golangci.yml —
-  # его baseline не закрыт. Пока идут этапы 109H–109J, этот job не даёт
-  # baseline расти: он гоняет gosec, но показывает только находки, появившиеся
-  # после merge-base ветки с origin/main. Старые нарушения при этом НЕ
-  # маскируются исключениями в .golangci.yml — их просто не видно в
-  # diff-режиме, и полный прогон по-прежнему их показывает.
-  #
-  # errcheck отсюда убран: он закрыт до нуля и включён в linters.enable
-  # (этапы 109D–G), то есть ловится обычным прогоном на всём коде.
-  #
-  # Удалить вместе с закрытием 109J, когда gosec переедет в linters.enable.
-  #
-  # Только для pull_request: на push в main merge-base совпадает с HEAD, и
-  # проверка вырождается в пустую.
-  lint-changed-code:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Обычный lint job берёт shallow checkout; для merge-base нужна
-          # полная история и remote-tracking ref origin/main.
-          fetch-depth: 0
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: '.go-version'
-          cache: true
-      # actions/checkout не гарантирует remote-tracking ref для базовой ветки —
-      # добираем его явно, иначе --new-from-merge-base не с чем сравнивать.
-      - name: Fetch base branch for merge-base
-        run: git fetch --no-tags --quiet origin main:refs/remotes/origin/main || true
-      - uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.11.4
-          # uniq-by-line=false: по умолчанию golangci-lint оставляет одну находку
-          # на строку, из-за чего правила gosec перекрывают друг друга (G306 и
-          # G301 на одном os.WriteFile). Для gate нужен полный список сразу,
-          # иначе автор чинит найденное по одной за прогон.
-          args: >-
-            --enable-only=gosec
-            --new-from-merge-base=origin/main
-            --uniq-by-line=false
-            --max-issues-per-linter=0
-            --max-same-issues=0
-
   postgres-integration:
     runs-on: ubuntu-latest
     services:

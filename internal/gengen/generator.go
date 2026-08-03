@@ -2,6 +2,7 @@ package gengen
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ func copyDir(srcDir, dstDir string) error {
 		dstPath := filepath.Join(dstDir, rel)
 
 		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0o755)
+			return os.MkdirAll(dstPath, fsmode.Dir)
 		}
 
 		// Skip if destination already exists (merge-safe)
@@ -79,10 +80,10 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), fsmode.Dir); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o644)
+	return os.WriteFile(dst, data, fsmode.File) //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 }
 
 // patchAppYAML updates config/app.yaml with addon references.

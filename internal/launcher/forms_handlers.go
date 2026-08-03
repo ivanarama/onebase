@@ -14,6 +14,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dsl/loader"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/onec_forms"
 	"github.com/ivantit66/onebase/internal/project"
 )
@@ -515,14 +516,14 @@ func saveManagedForm(r *http.Request, b *Base, entity, name string, yamlBody, os
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(yp), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(yp), fsmode.Dir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(yp, yamlBody, 0o644); err != nil {
+	if err := os.WriteFile(yp, yamlBody, fsmode.File); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 		return err
 	}
 	if len(osBody) > 0 {
-		if err := os.WriteFile(op, osBody, 0o644); err != nil {
+		if err := os.WriteFile(op, osBody, fsmode.File); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 			return err
 		}
 	}

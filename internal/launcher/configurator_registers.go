@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,7 +57,7 @@ func saveRegisterFieldsToFile(dir, regName string, dims, res, attrs []saveField,
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, out, 0o644)
+	return os.WriteFile(filePath, out, fsmode.File)
 }
 
 func (h *handler) saveRegisterFieldsToDB(ctx context.Context, b *Base, regName string, dims, res, attrs []saveField, objTitles *map[string]string) error {
@@ -118,6 +119,12 @@ func (h *handler) configuratorSaveRegisterFields(w http.ResponseWriter, r *http.
 		return
 	}
 	regName := r.FormValue("register")
+	if !validObjectName(regName) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 
 	dims := parseRegSection(r, "dim")
 	res := parseRegSection(r, "res")
@@ -200,7 +207,7 @@ func saveInfoRegToFile(dir string, reg saveInfoReg, objTitles *map[string]string
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, out, 0o644)
+	return os.WriteFile(p, out, fsmode.File)
 }
 
 func (h *handler) saveInfoRegToDB(ctx context.Context, b *Base, reg saveInfoReg, objTitles *map[string]string) error {
@@ -264,6 +271,12 @@ func (h *handler) configuratorSaveInfoRegFields(w http.ResponseWriter, r *http.R
 		Dimensions: parseRegSection(r, "dim"),
 		Resources:  parseRegSection(r, "res"),
 	}
+	if !validObjectName(reg.Name) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	var objTitles *map[string]string
 	if formHasMapField(r, "titles") {
 		t := parseMapForm(r, "titles")
@@ -318,7 +331,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	p, err := findAccountRegFilePath(dir, reg.Name)
 	if err != nil {
 		// новый файл — subconto/titles сохранять неоткуда, marshal свежего reg
-		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), fsmode.Dir); merr != nil {
 			return merr
 		}
 		p = filepath.Join(dir, "accountregs", nameToFilename(reg.Name)+".yaml")
@@ -326,7 +339,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 		if merr != nil {
 			return merr
 		}
-		return os.WriteFile(p, out, 0o644)
+		return os.WriteFile(p, out, fsmode.File)
 	}
 	raw, rerr := os.ReadFile(p)
 	if rerr != nil {
@@ -336,7 +349,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	if merr != nil {
 		return merr
 	}
-	return os.WriteFile(p, out, 0o644)
+	return os.WriteFile(p, out, fsmode.File) //nolint:gosec // G703: имя объекта проверено validObjectName, а сам путь получен обходом каталога проекта
 }
 
 func (h *handler) saveAccountRegToDB(ctx context.Context, b *Base, reg saveAccountReg, setTitles bool) error {
@@ -398,6 +411,12 @@ func (h *handler) configuratorSaveAccountRegister(w http.ResponseWriter, r *http
 		Title:     strings.TrimSpace(r.FormValue("title")),
 		Accounts:  strings.TrimSpace(r.FormValue("accounts")),
 		Resources: parseRegSection(r, "res"),
+	}
+	if !validObjectName(reg.Name) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
 	}
 	setTitles := formHasMapField(r, "titles")
 	if setTitles {
