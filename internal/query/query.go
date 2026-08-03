@@ -3635,8 +3635,21 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			} else if kw, ok := sqlKW(t.val); ok {
 				switch kw {
 				case "UNION":
-					if len(tr.opts.RowFilters) > 0 {
-						return Result{}, fmt.Errorf("row-level filters for UNION queries are not supported yet")
+					// Каждая ветвь ОБЪЕДИНИТЬ — самостоятельный SELECT со своим
+					// WHERE (план 79). Отложенный фильтр текущей ветви внедряем
+					// ДО ключевого слова, после чего накопление начинается
+					// заново: внешний WHERE относился бы только к одной ветви,
+					// и раньше такие запросы отклонялись целиком.
+					//
+					// Только на верхнем уровне: источники внутри скобок
+					// фильтруются собственным скоуп-подзапросом
+					// (rowFilteredSourceSQL), в tr.rowFilters они не попадают.
+					if tr.parenDepth == 0 {
+						if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
+							return Result{}, err
+						}
+						tr.rowFilters = nil
+						tr.rowsScoped = false
 					}
 					tr.unionDepths[tr.parenDepth] = true
 				case "WHERE":
