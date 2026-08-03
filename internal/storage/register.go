@@ -67,6 +67,16 @@ type OrphanStat struct {
 	RegisterName string
 	RecorderType string
 	Count        int
+	// UnknownType — документа с таким именем нет в ТЕКУЩЕЙ конфигурации.
+	//
+	// Это принципиально другой случай, чем «документ удалён». Тип регистратора
+	// хранится в движении строкой, поэтому он перестаёт совпадать с
+	// конфигурацией сразу в нескольких безобидных ситуациях: документ
+	// переименовали, команду запустили против другой (или частичной)
+	// конфигурации, объект временно убрали. Движения при этом целы, и удалять
+	// их нельзя: данные не должны исчезать оттого, что метаданные о них не
+	// упоминают.
+	UnknownType bool
 }
 
 // OrphanMovements returns stats about movements whose recorder document no longer exists.
@@ -125,15 +135,28 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 				}
 			}
 			if count > 0 {
-				stats = append(stats, OrphanStat{RegisterName: reg.Name, RecorderType: rt.recType, Count: count})
+				stats = append(stats, OrphanStat{
+					RegisterName: reg.Name, RecorderType: rt.recType,
+					Count: count, UnknownType: !exists,
+				})
 			}
 		}
 	}
 	return stats
 }
 
-// DeleteOrphanMovements removes all movements whose recorder document no longer exists.
-// Returns total number of deleted rows.
+// DeleteOrphanMovements удаляет движения, чей документ-регистратор не найден.
+//
+// Удаляются ТОЛЬКО движения документов, известных конфигурации: тип есть в
+// метаданных, а документа с таким id в таблице нет. Движения с неизвестным
+// типом регистратора не трогаются — см. OrphanStat.UnknownType: неизвестный
+// тип означает расхождение конфигурации с данными (документ переименовали,
+// запустились против другой конфигурации), а не удалённый документ. Раньше они
+// удалялись безусловным DELETE по типу, то есть переименование документа
+// стирало всю его историю движений.
+//
+// Для тех, кто действительно хочет удалить движения выбывшего документа, есть
+// DeleteMovementsOfUnknownRecorderType — отдельный, явный вызов.
 func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) int64 {
 	entityTable := make(map[string]string, len(entities))
 	for _, e := range entities {
@@ -166,15 +189,57 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 				continue // опорные движения свёртки — не сироты (план 74)
 			}
 			tbl, exists := entityTable[strings.ToLower(recType)]
-			var sql string
 			if !exists {
-				sql = fmt.Sprintf("DELETE FROM %s WHERE recorder_type = %s", table, d.Placeholder(1))
-			} else {
-				sql = fmt.Sprintf(
-					"DELETE FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
-					table, d.Placeholder(1), tbl)
+				// Документа нет в конфигурации — движения не наши, чтобы их
+				// удалять (см. комментарий к функции).
+				continue
 			}
+			sql := fmt.Sprintf(
+				"DELETE FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
+				table, d.Placeholder(1), tbl)
 			if ct, err := db.Exec(ctx, sql, recType); err == nil {
+				total += ct.RowsAffected
+			}
+		}
+	}
+	return total
+}
+
+// DeleteMovementsOfUnknownRecorderType удаляет движения, тип регистратора
+// которых отсутствует в конфигурации, — по конкретному типу, названному
+// вызывающим.
+//
+// Отдельная функция и обязательный список типов — намеренно. Это операция «я
+// знаю, что документ ИмяX убран навсегда, снеси его историю»: угадывать такое
+// по расхождению метаданных с данными нельзя, потому что то же расхождение
+// даёт обычное переименование.
+func (db *DB) DeleteMovementsOfUnknownRecorderType(
+	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
+) int64 {
+	// Сравнение точное, без LOWER(): у SQLite встроенный LOWER() работает
+	// только с латиницей, поэтому «Реализация» он не приводит ни к чему, и
+	// регистронезависимое сравнение молча не нашло бы ни одной строки. Тип
+	// приходит из отчёта проверки — то есть ровно в том виде, в каком лежит в
+	// данных, — так что точного совпадения достаточно.
+	wanted := make(map[string]bool, len(recorderTypes))
+	for _, t := range recorderTypes {
+		t = strings.TrimSpace(t)
+		if t == "" || t == RollupRecorderType {
+			continue // пустой тип и опорные движения свёртки не трогаем никогда
+		}
+		wanted[t] = true
+	}
+	if len(wanted) == 0 {
+		return 0
+	}
+	d := db.dialect
+	var total int64
+	for _, reg := range registers {
+		table := metadata.RegisterTableName(reg.Name)
+		for t := range wanted {
+			ct, err := db.Exec(ctx, fmt.Sprintf(
+				"DELETE FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t)
+			if err == nil {
 				total += ct.RowsAffected
 			}
 		}

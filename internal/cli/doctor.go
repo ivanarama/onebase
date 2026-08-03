@@ -55,6 +55,8 @@ func init() {
 	doctorCmd.Flags().String("config-source", "file", "источник конфигурации: file или database")
 	doctorCmd.Flags().StringSlice("check", nil, "какие проверки выполнить (по умолчанию все)")
 	doctorCmd.Flags().StringSlice("fix", nil, "какие проверки должны исправить найденное (all — все умеющие)")
+	doctorCmd.Flags().StringSlice("forget-document", nil,
+		"удалить движения документа, которого больше нет в конфигурации (укажите имя точно как в отчёте)")
 	doctorCmd.Flags().Bool("json", false, "машинный отчёт")
 	rootCmd.AddCommand(doctorCmd)
 }
@@ -105,6 +107,25 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load project: %w", err)
 	}
 	defer proj.Close()
+
+	// Движения документа, которого нет в конфигурации, платформа сама не
+	// удаляет: то же расхождение даёт обычное переименование. Удалить их можно
+	// только назвав документ поимённо — это и есть «я знаю, что он убран
+	// навсегда».
+	if forget, _ := cmd.Flags().GetStringSlice("forget-document"); len(forget) > 0 {
+		n := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
+		outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
+		for _, reg := range proj.Registers {
+			if !reg.TotalsUsable() {
+				continue
+			}
+			if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
+				return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
+			}
+		}
+		outln("Итоги регистров пересчитаны.")
+		outln("")
+	}
 
 	report := dbcheck.Run(ctx, &dbcheck.Env{DB: db, Proj: proj}, checks, fix)
 

@@ -117,27 +117,56 @@ func (orphanMovementsCheck) CanFix() bool { return true }
 // Движение, чей регистратор удалён, продолжает участвовать в остатках: отчёт
 // показывает товар, которого нет ни в одном документе. Раньше это лечилось
 // только через веб-админку, то есть на поднятой базе.
+// Run различает два случая, которые до плана 114 считались одним и тем же:
+//
+//   - документ известен конфигурации, но записи с таким id нет — это сирота,
+//     движение можно удалять;
+//   - документа с таким именем в конфигурации НЕТ — движения целы, а не
+//     осиротели. Тип регистратора хранится строкой, поэтому расходится он и
+//     при обычном переименовании документа, и при запуске против другой
+//     конфигурации. Удалять такие движения нельзя: данные не должны исчезать
+//     оттого, что метаданные о них не упоминают.
 func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
 	stats := env.DB.OrphanMovements(ctx, env.Proj.Registers, env.Proj.Entities)
-	total := 0
 	res := Result{Check: c.Name(), Title: c.Title(), Severity: SeverityOK}
+	orphans, unknown := 0, 0
 	for _, s := range stats {
 		if s.Count == 0 {
 			continue
 		}
-		total += s.Count
+		if s.UnknownType {
+			unknown += s.Count
+			res.Findings = append(res.Findings, Finding{
+				Object: s.RegisterName,
+				Detail: "документа «" + s.RecorderType + "» нет в конфигурации; движения целы и НЕ удаляются",
+				Count:  s.Count,
+			})
+			continue
+		}
+		orphans += s.Count
 		res.Findings = append(res.Findings, Finding{
 			Object: s.RegisterName,
 			Detail: "регистратор (" + s.RecorderType + ") не существует",
 			Count:  s.Count,
 		})
 	}
-	if total == 0 {
+	switch {
+	case orphans == 0 && unknown == 0:
 		return ok(c, "движений без регистратора нет")
+	case orphans == 0:
+		res.Severity = SeverityWarn
+		res.Summary = fmt.Sprintf("движений документов вне конфигурации: %d", unknown)
+		res.FixHint = "проверьте, не переименован ли документ и та ли это конфигурация; " +
+			"удалять такие движения автоматически платформа не станет"
+	default:
+		res.Severity = SeverityError
+		res.Summary = fmt.Sprintf("движений без регистратора: %d", orphans)
+		if unknown > 0 {
+			res.Summary += fmt.Sprintf("; движений документов вне конфигурации: %d", unknown)
+		}
+		res.FixHint = "onebase doctor --fix orphan-movements — удалить сирот и пересчитать итоги " +
+			"(движения документов вне конфигурации не трогаются)"
 	}
-	res.Severity = SeverityError
-	res.Summary = fmt.Sprintf("движений без регистратора: %d", total)
-	res.FixHint = "onebase doctor --fix orphan-movements — удалить их и пересчитать итоги"
 	return res
 }
 
