@@ -66,7 +66,7 @@ func TestGoldenImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	if isUpdateGolden() {
-		if err := os.WriteFile(fixtureYAMLGold, got, 0o644); err != nil {
+		if err := os.WriteFile(fixtureYAMLGold, got, 0o644); err != nil { //nolint:gosec // G703: путь построен под контролем (SafeJoin либо каталог, заданный администратором)
 			t.Fatal(err)
 		}
 		t.Logf("перезаписан эталон: %s", fixtureYAMLGold)
@@ -86,7 +86,7 @@ func TestGoldenImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	if isUpdateGolden() {
-		if err := os.WriteFile(fixtureOSGold, gotOS, 0o644); err != nil {
+		if err := os.WriteFile(fixtureOSGold, gotOS, 0o644); err != nil { //nolint:gosec // G703: путь построен под контролем (SafeJoin либо каталог, заданный администратором)
 			t.Fatal(err)
 		}
 		t.Logf("перезаписан эталон: %s", fixtureOSGold)

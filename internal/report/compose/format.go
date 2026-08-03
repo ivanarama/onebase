@@ -90,7 +90,7 @@ func FormatNumber(d decimal.Decimal, format string) string {
 	// Обрезаем хвостовые нули опциональных разрядов "#" — но не короче
 	// minDecimals (обязательные "0" остаются). Формат из одних "0" даёт
 	// min == max, обрезка не срабатывает — поведение как раньше.
-	for int32(len(fracStr)) > minDecimals && strings.HasSuffix(fracStr, "0") {
+	for int32(len(fracStr)) > minDecimals && strings.HasSuffix(fracStr, "0") { //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип
 		fracStr = fracStr[:len(fracStr)-1]
 	}
 

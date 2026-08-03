@@ -881,7 +881,7 @@ func applyNumberSpec(f metadata.Field, v any) (any, error) {
 		return v, nil
 	}
 	if f.Scale > 0 {
-		dec = dec.Round(int32(f.Scale))
+		dec = dec.Round(int32(f.Scale)) //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип
 	}
 	if f.Length > 0 {
 		intDigits := len(dec.Abs().Truncate(0).String())

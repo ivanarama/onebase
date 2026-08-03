@@ -1116,12 +1116,12 @@ func extractFile(f *zip.File, outPath string) error {
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(out, rc)
+	n, err := io.Copy(out, rc) //nolint:gosec // G110: суммарный распакованный объём проверяется до первой записи (validateArchiveEntries/validateUniversalArchive), а после копирования сверяется с UncompressedSize64
 	if err != nil {
 		_ = out.Close()
 		return err
 	}
-	if uint64(n) != f.UncompressedSize64 {
+	if uint64(n) != f.UncompressedSize64 { //nolint:gosec // G115: n — результат io.Copy, он неотрицателен по контракту
 		_ = out.Close()
 		return fmt.Errorf("неполная запись архива: %s", f.Name)
 	}

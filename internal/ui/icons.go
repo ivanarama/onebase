@@ -58,7 +58,7 @@ func LucideIcon(name string) template.HTML {
 	if !ok {
 		body = lucideIcons[lucideFallback]
 	}
-	return template.HTML(`<svg class="lucide ob-icon" xmlns="http://www.w3.org/2000/svg" ` +
+	return template.HTML(`<svg class="lucide ob-icon" xmlns="http://www.w3.org/2000/svg" ` + //nolint:gosec // G203: разметка константная, из данных сюда ничего не подставляется
 		`width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
 		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ` +
 		`aria-hidden="true" focusable="false">` + body + `</svg>`)
@@ -128,7 +128,7 @@ func LucideIconsJSON() template.JS {
 			lucideJSON = template.JS("{}")
 			return
 		}
-		lucideJSON = template.JS(b)
+		lucideJSON = template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	})
 	return lucideJSON
 }

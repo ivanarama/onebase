@@ -29,7 +29,7 @@ func TestAcceptanceRealCorpus(t *testing.T) {
 	}
 	for _, fn := range files {
 		path := filepath.Join(dir, fn)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G703: путь построен под контролем (SafeJoin либо каталог, заданный администратором)
 		if err != nil {
 			t.Logf("SKIP %s: %v", fn, err)
 			continue

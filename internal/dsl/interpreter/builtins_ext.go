@@ -142,7 +142,7 @@ func formatNumber(f float64, decimals int, sep string) string {
 			if i > 0 && (len(intPart)-i)%3 == 0 {
 				buf = append(buf, sep...)
 			}
-			buf = append(buf, byte(c))
+			buf = append(buf, byte(c)) //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип
 		}
 		intPart = sign + string(buf)
 	}

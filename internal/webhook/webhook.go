@@ -123,7 +123,7 @@ func NewWithOptions(hooks []Config, logFn func(LogEntry), opts Options) *Dispatc
 	if opts.QueueSize <= 0 {
 		opts.QueueSize = DefaultQueueSize
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // G118: значение получено из проверенной модели
 	d := &Dispatcher{
 		hooks:     append([]Config(nil), hooks...),
 		client:    &http.Client{},

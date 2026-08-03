@@ -59,7 +59,7 @@ func renderCrossTable(cr *compose.CrossResult, spec *report.Composition) templat
 			html.EscapeString(fmtMeasure(cr.RowTotal[c.Key()], m)) + `</td>`)
 	}
 	b.WriteString(`</tr></tbody></table>`)
-	return template.HTML(b.String())
+	return template.HTML(b.String()) //nolint:gosec // G203: HTML собран с html.EscapeString на каждом значении
 }
 
 // writeCrossRow рисует строку дерева и рекурсивно её детей с нарастающим отступом.

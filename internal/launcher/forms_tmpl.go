@@ -29,7 +29,7 @@ var formsTmpl = template.Must(template.New("forms").Funcs(template.FuncMap{
 	// не применил автоматический JS-escape поверх готового литерала.
 	"jsString": func(s string) template.JS {
 		b, _ := json.Marshal(s)
-		return template.JS(b)
+		return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	},
 	// jsonObj — встраивание произвольного значения как JS-литерала (объект/массив)
 	// через json.Marshal. nil/ошибка → "null". Помечается template.JS, чтобы
@@ -39,7 +39,7 @@ var formsTmpl = template.Must(template.New("forms").Funcs(template.FuncMap{
 		if err != nil {
 			return template.JS("null")
 		}
-		return template.JS(b)
+		return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	},
 }).Parse(tplFormsBase + tplFormsList + tplFormsEditor))
 

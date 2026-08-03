@@ -21,16 +21,16 @@ func isolatedBrowserCommand(profileDir, url string) (*exec.Cmd, error) {
 	args := chromiumArgs(profileDir, url)
 	if runtime.GOOS == "darwin" {
 		for _, app := range []string{"Google Chrome", "Microsoft Edge", "Chromium"} {
-			if exec.Command("open", "-Ra", app).Run() == nil {
+			if exec.Command("open", "-Ra", app).Run() == nil { //nolint:gosec // G204: имя программы из фиксированного списка браузеров, аргументы — собранный нами URL
 				openArgs := append([]string{"-na", app, "--args"}, args...)
-				return exec.Command("open", openArgs...), nil
+				return exec.Command("open", openArgs...), nil //nolint:gosec // G204: имя программы из фиксированного списка браузеров, аргументы — собранный нами URL
 			}
 		}
 		return nil, i18nerr.Errorf("не найден Chromium-совместимый браузер (Chrome/Edge/Chromium) — откройте обычное окно «Предприятие»")
 	}
 	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"} {
 		if p, err := exec.LookPath(name); err == nil {
-			return exec.Command(p, args...), nil
+			return exec.Command(p, args...), nil //nolint:gosec // G204: имя программы из фиксированного списка браузеров, аргументы — собранный нами URL
 		}
 	}
 	return nil, i18nerr.Errorf("не найден Chromium-совместимый браузер (Chrome/Chromium/Edge) — откройте обычное окно «Предприятие»")

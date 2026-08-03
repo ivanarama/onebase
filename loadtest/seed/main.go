@@ -65,7 +65,7 @@ func main() {
 	// 2. Документы поступления (создаём и сразу проводим).
 	if *documents > 0 && len(ids) > 0 {
 		for i := 0; i < *documents; i++ {
-			cp := ids[rand.Intn(len(ids))]
+			cp := ids[rand.Intn(len(ids))] //nolint:gosec // G404: генератор нагрузки, случайность нужна для разброса данных, а не для защиты
 			if err := createPosting(client, *base, cp, i); err != nil {
 				fail("создание документа %d: %v", i, err)
 			}
@@ -98,8 +98,8 @@ func createCounterparty(c *http.Client, base string, i int) (string, error) {
 }
 
 func createPosting(c *http.Client, base, counterpartyID string, i int) error {
-	qty := float64(1 + rand.Intn(20))
-	price := float64(10 + rand.Intn(990))
+	qty := float64(1 + rand.Intn(20))     //nolint:gosec // G404: генератор нагрузки, случайность нужна для разброса данных, а не для защиты
+	price := float64(10 + rand.Intn(990)) //nolint:gosec // G404: генератор нагрузки, случайность нужна для разброса данных, а не для защиты
 	body := map[string]any{
 		"Дата":      time.Now().Format("2006-01-02"),
 		"Поставщик": counterpartyID,

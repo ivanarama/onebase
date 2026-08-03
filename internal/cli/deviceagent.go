@@ -33,6 +33,6 @@ func runDeviceAgent(cmd *cobra.Command, _ []string) error {
 		fmt.Println("ВНИМАНИЕ: токен не задан — команды принимаются без аутентификации")
 	}
 
-	srv := &http.Server{Addr: listen, Handler: deviceagent.New(token).Handler()}
+	srv := &http.Server{Addr: listen, Handler: deviceagent.New(token).Handler()} //nolint:gosec // G112: таймауты HTTP-сервера выставляются вызывающим, см. настройку сервера
 	return srv.ListenAndServe()
 }

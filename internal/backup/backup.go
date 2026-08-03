@@ -44,7 +44,7 @@ func Dump(ctx context.Context, connStr, outDir string) (string, error) {
 	}()
 
 	// pg_dump → stdout → gzip → file
-	cmd := exec.CommandContext(ctx, pgDump, "--format=plain", "--no-owner", "--no-acl", "--clean", "--if-exists", connStr)
+	cmd := exec.CommandContext(ctx, pgDump, "--format=plain", "--no-owner", "--no-acl", "--clean", "--if-exists", connStr) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	r, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = tmp.Close()
@@ -110,7 +110,7 @@ BEGIN
     EXECUTE 'DROP TYPE IF EXISTS public.' || quote_ident(r.typname) || ' CASCADE';
   END LOOP;
 END $$;`
-	dropCmd := exec.CommandContext(ctx, psql, "--no-password", connStr)
+	dropCmd := exec.CommandContext(ctx, psql, "--no-password", connStr) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	dropCmd.Stdin = strings.NewReader(dropSQL)
 	dropCmd.Stdout = os.Stdout
 	dropCmd.Stderr = os.Stderr
@@ -130,7 +130,7 @@ END $$;`
 	}
 	defer closeRead("gzip-поток дампа", gz)
 
-	cmd := exec.CommandContext(ctx, psql, "--no-password", connStr)
+	cmd := exec.CommandContext(ctx, psql, "--no-password", connStr) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	cmd.Stdin = gz
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -51,7 +51,7 @@ func TestLockManager_ParallelDifferentKeys(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			key := []string{"reg|номенклатура=item" + string(rune('A'+idx))}
+			key := []string{"reg|номенклатура=item" + string(rune('A'+idx))} //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип
 			mgr.Acquire(key)
 			defer mgr.Release(key)
 			cur := atomic.AddInt32(&counter, 1)

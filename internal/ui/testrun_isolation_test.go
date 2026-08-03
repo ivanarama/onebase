@@ -25,7 +25,7 @@ func writeIsolationProject(t *testing.T) string {
 		}
 	}
 	must := func(p, content string) {
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil { //nolint:gosec // G703: путь построен под контролем (SafeJoin либо каталог, заданный администратором)
 			t.Fatal(err)
 		}
 	}

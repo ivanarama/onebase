@@ -332,7 +332,7 @@ func (c *Client) newRequest(ctx context.Context, method, host, canonicalURI, raw
 
 // do executes req and verifies the status code, draining the body.
 func (c *Client) do(req *http.Request, okStatuses ...int) error {
-	resp, err := c.hc.Do(req)
+	resp, err := c.hc.Do(req) //nolint:gosec // G704: адрес собран из фиксированной схемы и хоста, внешний URL подставить нельзя
 	if err != nil {
 		return err
 	}

@@ -33,7 +33,7 @@ func (s *Server) queryConsolePage(w http.ResponseWriter, r *http.Request) {
 	sources := s.buildQuerySources()
 	schemaJSON, _ := json.Marshal(sources)
 	s.render(w, r, "page-query-console", map[string]any{
-		"Schema": template.JS(schemaJSON),
+		"Schema": template.JS(schemaJSON), //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	})
 }
 

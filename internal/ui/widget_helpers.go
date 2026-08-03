@@ -95,7 +95,7 @@ func echartsJSON(chart *widget.ChartData) template.JS {
 	if err != nil {
 		return template.JS("null")
 	}
-	return template.JS(b)
+	return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 }
 
 func widgetChartsJSON(v any) template.JS {
@@ -130,7 +130,7 @@ func jsMarshal(v any) template.JS {
 	if err != nil {
 		return template.JS("{}")
 	}
-	return template.JS(b)
+	return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 }
 
 func toFloatForCell(v any) float64 {

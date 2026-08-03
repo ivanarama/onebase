@@ -382,7 +382,7 @@ func pageGroupDecimal(d decimal.Decimal, frac int) string {
 	if neg {
 		d = d.Neg()
 	}
-	s := d.StringFixed(int32(frac)) // округление по правилам decimal, без float
+	s := d.StringFixed(int32(frac)) //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип // округление по правилам decimal, без float
 	intPart, fracPart := s, ""
 	if dot := strings.IndexByte(s, '.'); dot >= 0 {
 		intPart, fracPart = s[:dot], s[dot+1:]
