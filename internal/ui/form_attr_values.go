@@ -100,6 +100,57 @@ func (s *Server) mergeFormAttrValues(
 	}
 }
 
+// addFormAttrVars публикует реквизиты формы как переменные с голым именем —
+// так их видит модуль управляемой формы в 1С, где под «Объект» лежит только
+// основной реквизит. Значение берётся у formObjectThis, поэтому ссылочный
+// реквизит приходит уже как *Ref (работает .Код/.Наименование), а ValueTable —
+// как прокси таблицы.
+//
+// Присваивание голому имени остаётся локальной переменной обработчика: обратно
+// в форму уезжает только то, что записано через Объект.<Реквизит>.
+func addFormAttrVars(form *metadata.FormModule, entity *metadata.Entity, this *formObjectThis, vars map[string]any) {
+	if form == nil || this == nil || vars == nil {
+		return
+	}
+	// Занятые имена (Объект, ЭтотОбъект, встроенные объекты доступа) переопределять
+	// нельзя: реквизит с именем «Запрос» иначе убил бы билтин для всей процедуры.
+	taken := make(map[string]bool, len(vars))
+	for k := range vars {
+		taken[strings.ToLower(k)] = true
+	}
+	for _, a := range form.Attributes {
+		if a == nil || a.Name == "" || a.MainAttribute {
+			continue
+		}
+		if taken[strings.ToLower(a.Name)] {
+			continue
+		}
+		// Одноимённое поле сущности читается только как Объект.<Поле>: голое имя
+		// было бы неоднозначным, а реквизита формы с таким именем по сути нет.
+		if _, isEntityField := entityFieldByName(entity, a.Name); isEntityField {
+			continue
+		}
+		vars[a.Name] = this.Get(a.Name)
+	}
+}
+
+// setFormSelfRef кладёт в объект псевдо-реквизит «Ссылка» на саму запись —
+// тот же контракт, что даёт entityservice.Save хукам ПриЗаписи/ОбработкаПроведения.
+// Только для существующей записи: у новой ссылки ещё нет, и ПолучитьОбъект() по
+// сгенерированному buildObjectFromForm uuid всё равно ничего не найдёт — пусть
+// обработчик увидит Неопределено и скажет об этом явно.
+func setFormSelfRef(r *http.Request, entity *metadata.Entity, obj *runtime.Object) {
+	if entity == nil || obj == nil || strings.TrimSpace(r.FormValue("_id")) == "" {
+		return
+	}
+	if obj.Fields == nil {
+		obj.Fields = map[string]any{}
+	}
+	selfRef := &interpreter.Ref{UUID: obj.ID.String(), Type: entity.Name}
+	obj.Fields["ссылка"] = selfRef
+	obj.Fields["reference"] = selfRef
+}
+
 // formAttrRef строит *interpreter.Ref по имени сущности и строковому uuid.
 // Образец — enrichHeaderRefs; nil означает «оставить как есть».
 func (s *Server) formAttrRef(ctx context.Context, refEntityName, idStr string) *interpreter.Ref {

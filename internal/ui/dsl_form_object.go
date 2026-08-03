@@ -96,6 +96,12 @@ func (f *formObjectThis) Get(name string) any {
 		if f.entity != nil && (strings.EqualFold(name, "Ссылка") || strings.EqualFold(name, "Reference")) {
 			return f.refResolver.bindRefToContext(ref, f.entity.Name)
 		}
+		// Ссылочный реквизит формы (save:false): его нет в entity.Fields, поэтому
+		// без привязки к резолверу у ссылки не работали ни .Код/.Наименование,
+		// ни ПолучитьОбъект() — читалось Неопределено.
+		if refName := formAttrRefEntity(f.form, name); refName != "" {
+			return f.refResolver.bindRefToContext(ref, refName)
+		}
 	}
 	// Дефолты по типу: пустой numeric → 0, иначе `Объект.Сумма + 100` в DSL
 	// даст concat-строку «<nil>100» (DSL `+` для nil-операнда склеивает
@@ -181,6 +187,21 @@ func (t *formTpProxy) IterateThis() []interpreter.This {
 		out = append(out, newRefAwareMapThis(row, t.tp, t.refResolver))
 	}
 	return out
+}
+
+// formAttrRefEntity возвращает имя сущности, на которую ссылается одноимённый
+// реквизит формы (CatalogRef.X / DocumentRef.X), либо "" — если такого реквизита
+// нет или он не ссылочный.
+func formAttrRefEntity(form *metadata.FormModule, name string) string {
+	if form == nil {
+		return ""
+	}
+	for _, a := range form.Attributes {
+		if a != nil && strings.EqualFold(a.Name, name) {
+			return attrRefEntityName(a.TypeRef)
+		}
+	}
+	return ""
 }
 
 func entityField(entity *metadata.Entity, name string) *metadata.Field {

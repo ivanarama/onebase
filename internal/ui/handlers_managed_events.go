@@ -153,6 +153,13 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		_ = s.restoreUnsubmittedFields(r.Context(), r, entity, form, obj.ID, obj.Fields)
 	}
 
+	// Псевдо-реквизит «Ссылка» самой записи — как в entityservice.Save. Без него
+	// Объект.Ссылка в обработчике формы было Неопределено, и типовой вызов
+	// Модуль.Действие(Объект.Ссылка) падал на «ПолучитьОбъект вызван у
+	// Неопределено». Ставится ДО newFormObjectThis: attachObject предзагружает
+	// реквизиты именно по этой ссылке.
+	setFormSelfRef(r, entity, obj)
+
 	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
 	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
 	s.mergeFormAttrValues(r.Context(), r, form, entity, obj)
@@ -185,6 +192,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	thisObj := s.newFormObjectThis(r.Context(), obj, entity, form)
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
+
+	// Реквизиты формы видны и голым именем — как в модуле управляемой формы 1С,
+	// где под Объект лежит только основной реквизит. Читаются через thisObj,
+	// поэтому ссылочные приходят как *Ref, а ValueTable — как прокси таблицы.
+	addFormAttrVars(form, entity, thisObj, vars)
 
 	// Передаём все процедуры формы, чтобы обработчик мог вызывать
 	// вспомогательные функции из того же .form.os (evalCall ищет
@@ -267,6 +279,13 @@ func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entit
 		return nil, nil, nil, conditionalCSS, msgs
 	}
 	values := normalizeFormAttrKeys(serializeFieldsForEntity(obj.Fields, entity), form, entity)
+	// Псевдо-реквизит «Ссылка» — контекст обработчика, а не значение формы:
+	// в ответ он не едет, чтобы applyValues не искал под него элемент.
+	for _, k := range []string{"ссылка", "reference"} {
+		if _, isEntityField := entityFieldByName(entity, k); !isEntityField {
+			delete(values, k)
+		}
+	}
 	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
