@@ -82,11 +82,10 @@ func setupFormCtxServer(t *testing.T, formOS string, attrs []*metadata.FormAttri
 	interp := interpreter.New()
 	interp.LookupProc = reg.GetModuleProc
 
-	return formCtxFixture{
-		srv: &Server{store: db, reg: reg, interp: interp,
-			lockMgr: runtime.NewLockManager(), messages: NewMessageStore()},
-		entity: ent, docID: docID, naprID: naprID,
-	}
+	srv := &Server{store: db, reg: reg, interp: interp,
+		lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	srv.entitySvc = srv.newEntityService(nil)
+	return formCtxFixture{srv: srv, entity: ent, docID: docID, naprID: naprID}
 }
 
 func (f formCtxFixture) fire(t *testing.T, body url.Values) formEventResponse {
@@ -253,5 +252,69 @@ func TestFormEvent_ОсновнойРеквизитНеПодменяетОбъ�
 	}
 	if len(resp.Messages) != 1 || resp.Messages[0] != "канал=Телефон" {
 		t.Fatalf("messages=%v, ожидалось [канал=Телефон]", resp.Messages)
+	}
+}
+
+// Объект.Записать() в обработчике формы создаёт ещё не сохранённую запись —
+// иначе команда на экране «Создать» упиралась в пустую Ссылка и требовала от
+// оператора сначала нажать «Записать». Клиент получает id записи в savedId,
+// чтобы следующее действие не создало второй документ.
+func TestFormEvent_ОбъектЗаписатьСоздаётНовуюЗапись(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Если НЕ ЗначениеЗаполнено(Объект.Ссылка) Тогда
+		Объект.Записать();
+	КонецЕсли;
+	Об = Объект.Ссылка.ПолучитьОбъект();
+	Сообщить("записано: " + Об.Наименование);
+КонецПроцедуры
+`, nil)
+
+	body := url.Values{}
+	body.Set("Наименование", "ОБР-НОВОЕ") // _id не передан — форма «Создать»
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if len(resp.Messages) != 1 || resp.Messages[0] != "записано: ОБР-НОВОЕ" {
+		t.Fatalf("messages=%v, ожидалось [записано: ОБР-НОВОЕ]", resp.Messages)
+	}
+	if resp.SavedID == "" {
+		t.Fatal("savedId пуст: клиент не узнает id и следующее действие создаст дубль")
+	}
+	// Запись реально появилась в базе — под тем же id, что уехал клиенту.
+	id, err := uuid.Parse(resp.SavedID)
+	if err != nil {
+		t.Fatalf("savedId не uuid: %q", resp.SavedID)
+	}
+	row, err := f.srv.store.GetByID(context.Background(), f.entity.Name, id, f.entity)
+	if err != nil || row == nil {
+		t.Fatalf("записи нет в базе: row=%v err=%v", row, err)
+	}
+	if row["Наименование"] != "ОБР-НОВОЕ" {
+		t.Errorf("Наименование = %v, ожидалось ОБР-НОВОЕ", row["Наименование"])
+	}
+}
+
+// У существующей записи savedId не возвращается: клиенту нечего менять, а
+// непустое значение сбило бы адрес открытой формы.
+func TestFormEvent_SavedIDТолькоДляНовойЗаписи(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Объект.Записать();
+КонецПроцедуры
+`, nil)
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if resp.SavedID != "" {
+		t.Errorf("savedId=%q для существующей записи — должен быть пуст", resp.SavedID)
 	}
 }

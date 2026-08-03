@@ -29,12 +29,19 @@ func (s *Server) newDSLRefAttrResolver(ctx context.Context) *dslRefAttrResolver 
 }
 
 func (s *Server) newFormObjectThis(ctx context.Context, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule) *formObjectThis {
+	return s.newFormObjectThisNew(ctx, obj, entity, form, false)
+}
+
+// newFormObjectThisNew дополнительно помечает объект как ещё не записанный,
+// чтобы Объект.Записать() в обработчике формы создал запись, а не пытался
+// обновить несуществующую.
+func (s *Server) newFormObjectThisNew(ctx context.Context, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule, isNew bool) *formObjectThis {
 	var resolver *dslRefAttrResolver
 	if s != nil && s.store != nil && s.reg != nil {
 		resolver = s.newDSLRefAttrResolver(ctx)
 		resolver.attachObject(entity, obj)
 	}
-	return &formObjectThis{obj: obj, entity: entity, form: form, refResolver: resolver}
+	return &formObjectThis{obj: obj, entity: entity, form: form, refResolver: resolver, srv: s, ctx: ctx, isNew: isNew}
 }
 
 func (r *dslRefAttrResolver) ResolveRefAttr(ref *interpreter.Ref, field string) (any, bool) {

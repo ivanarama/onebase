@@ -1,11 +1,17 @@
 package ui
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // formObjectThis — обёртка над *runtime.Object, используемая как this/Объект
@@ -31,6 +37,14 @@ type formObjectThis struct {
 	entity      *metadata.Entity
 	form        *metadata.FormModule
 	refResolver *dslRefAttrResolver
+	// Запись объекта прямо из обработчика формы (Объект.Записать(), аналог
+	// ЗаписатьНаСервере в 1С). Без неё команда на ещё не записанной форме
+	// упиралась в пустую Ссылка и требовала от пользователя сначала нажать
+	// «Записать» — чего в управляемой форме быть не должно.
+	srv   *Server
+	ctx   context.Context
+	isNew bool
+	saved bool
 }
 
 // GetRefUUID сохраняет ссылочную идентичность runtime.Object у формовой
@@ -60,7 +74,73 @@ func (f *formObjectThis) CallMethod(method string, args []any) any {
 	if f == nil || f.obj == nil {
 		return nil
 	}
+	switch strings.ToLower(method) {
+	case "записать", "write":
+		if err := f.write(); err != nil {
+			interpreter.RaiseUserError("Записать(" + f.entity.Name + "): " + err.Error())
+		}
+		return f.selfRef()
+	case "этоновый", "isnew":
+		return f.isNew && !f.saved
+	}
 	return f.obj.CallMethod(method, args)
+}
+
+// write сохраняет объект формы через entityservice.Save — тем же путём, что и
+// кнопка «Записать»: с хуками ПриЗаписи/ОбработкаПроведения, табличными частями
+// и проверкой построчного доступа. Нужна обработчикам команд: на новой форме
+// они иначе упирались в незаполненную Ссылка.
+func (f *formObjectThis) write() error {
+	if f.srv == nil || f.entity == nil {
+		return fmt.Errorf("запись из обработчика формы недоступна")
+	}
+	ctx := f.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	isNew := f.isNew && !f.saved
+	if isNew {
+		if err := f.srv.autoFillRowAccessFields(ctx, f.entity, "write", f.obj.Fields); err != nil {
+			return err
+		}
+	}
+	accessID := uuid.Nil
+	if !isNew {
+		accessID = f.obj.ID
+	}
+	if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", accessID, f.obj.Fields); err != nil {
+		return err
+	}
+	result, err := f.srv.entitySvc.Save(ctx, entityservice.SaveRequest{
+		Entity:        f.entity,
+		ID:            f.obj.ID,
+		IsNew:         isNew,
+		Fields:        f.obj.Fields,
+		TablePartRows: f.obj.TablePartRows,
+	})
+	if err != nil {
+		return err
+	}
+	if result.DSLError != "" {
+		return fmt.Errorf("%s", result.DSLError)
+	}
+	wasSaved := f.saved
+	f.saved = true
+	// Ссылка появляется только после записи — до неё её нет ни в объекте, ни
+	// у резолвера. Ставим здесь же, чтобы следующая строка обработчика могла
+	// сразу писать Модуль.Действие(Объект.Ссылка).
+	f.obj.Fields["ссылка"] = f.selfRef()
+	f.obj.Fields["reference"] = f.obj.Fields["ссылка"]
+	storage.DeferUntilTxRollback(ctx, func() { f.saved = wasSaved })
+	return nil
+}
+
+func (f *formObjectThis) selfRef() *interpreter.Ref {
+	ref := &interpreter.Ref{UUID: f.obj.ID.String(), Type: f.entity.Name}
+	if f.refResolver != nil {
+		return f.refResolver.bindRefToContext(ref, f.entity.Name)
+	}
+	return ref
 }
 
 func (f *formObjectThis) Get(name string) any {

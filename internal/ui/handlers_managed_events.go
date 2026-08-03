@@ -49,6 +49,10 @@ type formEventResponse struct {
 	// PickerData != nil — обработчик фазы 1 вызвал ПоказатьПодбор: клиент
 	// открывает модальный диалог мультивыбора вместо применения ТЧ (план 46).
 	PickerData *pickerPayload `json:"pickerData,omitempty"`
+	// SavedID заполняется, когда обработчик записал ЕЩЁ НЕ СОХРАНЁННУЮ форму
+	// через Объект.Записать(). Клиент подставляет его в _id следующих событий и
+	// в адрес страницы — иначе второе действие подряд создало бы второй документ.
+	SavedID string `json:"savedId,omitempty"`
 	// ChoiceList — динамический список значений для элемента ПолеСписка,
 	// сформированный обработчиком НачалоВыбора (билтин ДобавитьЗначениеСписка).
 	// Клиент заполняет им <select> того элемента, что инициировал событие.
@@ -189,7 +193,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string
 	vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-	thisObj := s.newFormObjectThis(r.Context(), obj, entity, form)
+	thisObj := s.newFormObjectThisNew(r.Context(), obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
@@ -256,6 +260,9 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			Messages:       outMsgs,
 			Error:          interpreter.FormatUserError(runErr),
 			PickerData:     picker,
+			// Обработчик мог записать форму и упасть уже после этого: id всё
+			// равно нужен клиенту, иначе повтор действия создаст второй документ.
+			SavedID: savedFormID(thisObj),
 		})
 		return
 	}
@@ -270,7 +277,18 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		ConditionalCSS: conditionalCSS,
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
+		SavedID:        savedFormID(thisObj),
 	})
+}
+
+// savedFormID возвращает id записи, если обработчик сохранил ЕЩЁ НЕ записанную
+// форму через Объект.Записать(). Для уже существующей записи пусто — клиенту
+// нечего менять.
+func savedFormID(this *formObjectThis) string {
+	if this == nil || !this.isNew || !this.saved || this.obj == nil {
+		return ""
+	}
+	return this.obj.ID.String()
 }
 
 func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
