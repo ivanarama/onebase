@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -105,6 +106,11 @@ func (db *DB) SecretCarriers(ctx context.Context) ([]SecretCarrier, error) {
 					}
 				}
 			}
+		case e.Key == "auth.providers":
+			// Клиентские секреты провайдеров единого входа (план 84).
+			for id, secret := range providerSecrets(e.Value) {
+				out = append(out, SecretCarrier{"auth.provider." + id + ".client_secret", secret})
+			}
 		case strings.HasPrefix(e.Key, "exchange.token."):
 			if strings.TrimSpace(e.Value) != "" {
 				out = append(out, SecretCarrier{e.Key, e.Value})
@@ -113,6 +119,30 @@ func (db *DB) SecretCarriers(ctx context.Context) ([]SecretCarrier, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// providerSecrets достаёт client_secret каждого провайдера входа. Разбор
+// нетипизированный намеренно: типы провайдеров живут в internal/auth, который
+// сам зависит от storage, и типизировать их здесь означало бы цикл импортов.
+// Битый JSON пропускается — им занимается админка, а не перечисление секретов.
+func providerSecrets(raw string) map[string]string {
+	var providers []map[string]any
+	if err := json.Unmarshal([]byte(raw), &providers); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(providers))
+	for i, p := range providers {
+		secret, _ := p["client_secret"].(string)
+		if strings.TrimSpace(secret) == "" {
+			continue
+		}
+		id, _ := p["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = fmt.Sprintf("#%d", i+1)
+		}
+		out[id] = secret
+	}
+	return out
 }
 
 // secretHeaderName отделяет заголовки с учётными данными от служебных

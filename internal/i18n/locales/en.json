@@ -1077,5 +1077,16 @@
   "слишком много записей в архиве: %d": "too many archive entries: %d",
   "Ошибка config/app.yaml": "config/app.yaml error",
   "Логин обязателен": "Login is required",
-  "Слишком много попыток входа — повторите позже": "Too many login attempts — try again later"
+  "Слишком много попыток входа — повторите позже": "Too many login attempts — try again later",
+  "Войти под другой учётной записью": "Sign in with a different account",
+  "Вход по паролю запрещён политикой базы": "Password login is disabled by the database policy",
+  "Код из приложения-аутентификатора или резервный код": "Code from your authenticator app or a backup code",
+  "Код подтверждения": "Verification code",
+  "Неверный код подтверждения": "Invalid verification code",
+  "Подтвердить": "Confirm",
+  "Подтверждение входа": "Login confirmation",
+  "Политика базы требует двухфакторной аутентификации. Включите её в режиме Предприятия (Профиль → Второй фактор) и повторите вход.": "This database requires two-factor authentication. Enable it in Enterprise mode (Profile → Second factor) and sign in again.",
+  "Служба аутентификации временно недоступна": "Authentication service is temporarily unavailable",
+  "Аутентификация": "Authentication",
+  "Второй фактор": "Second factor"
 }

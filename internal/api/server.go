@@ -84,6 +84,12 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		// 5 неудач с одного IP по одному логину → блок на минуту (план 53).
 		// Общий с basic-auth HTTP-сервисов (см. uiCfg.LoginLimit).
 		LoginLimit: loginLimit,
+		// Имя базы попадает в otpauth-ссылку — в аутентификаторе рядом с кодом
+		// видно, к какой базе он относится (план 84).
+		AppName: uiCfg.AppName,
+		// Внешний адрес для redirect_uri провайдера SSO: за обратным прокси
+		// Host запроса не совпадает с публичным адресом.
+		BaseURL: strings.TrimSpace(os.Getenv("ONEBASE_PUBLIC_URL")),
 	}
 	r.Get("/login", authH.LoginPage)
 	r.Post("/login", authH.LoginSubmit)
@@ -91,6 +97,16 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	r.Get("/auth/status", authH.Status)
 	r.Post("/auth/login", authH.LoginJSON)
 	r.Get("/auth/bootstrap", authH.Bootstrap)
+	// Второй фактор (план 84): шаг между паролем и сессией.
+	r.Get("/login/2fa", authH.TwoFactorPage)
+	r.Post("/login/2fa", authH.TwoFactorSubmit)
+	r.Get("/login/2fa/qr", authH.TwoFactorQR)
+	r.Post("/auth/2fa", authH.TwoFactorJSON)
+	// Единый вход (план 84). Маршруты монтируются всегда: без настроенных
+	// провайдеров они отвечают 404, а условное монтирование потребовало бы
+	// перезапуска базы после добавления провайдера в админке.
+	r.Get("/auth/oidc/{provider}/start", authH.OIDCStart)
+	r.Get("/auth/oidc/{provider}/callback", authH.OIDCCallback)
 	// Одноразовый код для bootstrap (план 53): хендлер сам проверяет session
 	// cookie (401 JSON, без HTML-редиректа auth-мидлвары).
 	r.Post("/auth/one-time-code", authH.IssueOneTimeCode)

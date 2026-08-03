@@ -15,7 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserCard + tplAdminUserForm + tplAdminPasswd + tplAdminSessions + tplAdminAPITokens + tplAdminCleanup + tplAdminRoles + tplAdminUserRoles + tplAdminAudit + tplAdminWebhooks + tplAdminRLS))
+var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserCard + tplAdminUserForm + tplAdminPasswd + tplAdminSessions + tplAdminAPITokens + tplAdminCleanup + tplAdminRoles + tplAdminUserRoles + tplAdminAudit + tplAdminWebhooks + tplAdminRLS + tplAdminAuth + tplAdminAuthProvider + tplProfile2FA))
 
 const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 <main>

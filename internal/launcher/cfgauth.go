@@ -174,6 +174,15 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Политики плана 84 действуют и здесь: конфигуратор — самый
+	// привилегированный вход, и обойти требование второго фактора через него
+	// нельзя. Аварийный выход из sso_only — ONEBASE_ALLOW_PASSWORD_LOGIN.
+	policy := repo.AuthPolicy(r.Context())
+	if !policy.PasswordLoginAllowed() {
+		renderErr(403, tr(lang, "Вход по паролю запрещён политикой базы"))
+		return
+	}
+
 	user, err := repo.Authenticate(r.Context(), login, password)
 	if err != nil {
 		limiter.Fail(loginKey)
@@ -183,6 +192,22 @@ func (h *handler) cfgLoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	if !user.IsAdmin {
 		renderErr(403, tr(lang, "Доступ запрещён. Только для администраторов."))
+		return
+	}
+
+	switch enabled, terr := repo.TOTPEnabled(r.Context(), user.ID); {
+	case terr != nil:
+		cfgAuthLog().Error("не удалось проверить состояние 2FA", "логин", user.Login, "err", terr)
+		renderErr(503, tr(lang, "Служба аутентификации временно недоступна"))
+		return
+	case enabled:
+		// Пароль принят, но сессия конфигуратора выдаётся только после кода.
+		h.beginCfgSecondFactor(w, r, id, user)
+		return
+	case repo.RequiresTwoFactor(r.Context(), policy, user):
+		// Настройка 2FA живёт в Предприятии (QR + резервные коды), поэтому
+		// здесь — только отказ с указанием, что сделать.
+		renderErr(403, tr(lang, "Политика базы требует двухфакторной аутентификации. Включите её в режиме Предприятия (Профиль → Второй фактор) и повторите вход."))
 		return
 	}
 	limiter.Reset(loginKey)

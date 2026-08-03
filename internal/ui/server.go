@@ -377,6 +377,10 @@ func (s *Server) Mount(r chi.Router) {
 	// Self-service: change own password
 	r.Get("/ui/profile/passwd", s.selfPasswd)
 	r.Post("/ui/profile/passwd", s.selfPasswd)
+	// Self-service: второй фактор (план 84)
+	r.Get("/ui/profile/2fa", s.selfTwoFactor)
+	r.Post("/ui/profile/2fa", s.selfTwoFactor)
+	r.Get("/ui/profile/2fa/qr", s.selfTwoFactorQR)
 	// Self-service: завершить все свои сессии, кроме текущей (план 78)
 	r.Post("/ui/profile/logout-others", s.selfLogoutOthers)
 	// Self-service: change language
@@ -392,6 +396,13 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/api-tokens", s.adminAPITokens)
 	r.Post("/ui/admin/api-tokens", s.adminAPITokenCreate)
 	r.Post("/ui/admin/api-tokens/{id}/revoke", s.adminAPITokenRevoke)
+
+	// Admin: аутентификация — политики и провайдеры единого входа (план 84)
+	r.Get("/ui/admin/auth", s.adminAuth)
+	r.Post("/ui/admin/auth/policy", s.adminAuthPolicySave)
+	r.Get("/ui/admin/auth/providers/{id}", s.adminAuthProvider)
+	r.Post("/ui/admin/auth/providers/{id}", s.adminAuthProvider)
+	r.Post("/ui/admin/auth/providers/{id}/delete", s.adminAuthProviderDelete)
 
 	// Admin: roles
 	r.Get("/ui/admin/roles", s.adminRoles)
