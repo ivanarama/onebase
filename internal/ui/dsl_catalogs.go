@@ -115,6 +115,9 @@ type catWriter struct {
 	loaded          bool
 	saved           bool
 	expectedVersion *int64
+	// assigned — реквизиты, присвоенные модулем в этой сессии: их чтение не
+	// маскируется, значение принадлежит текущей операции (план 88E).
+	assigned map[string]bool
 }
 
 func (w *catWriter) ctx() context.Context {
@@ -124,17 +127,27 @@ func (w *catWriter) ctx() context.Context {
 	return context.Background()
 }
 
-// Get: имя табличной части → tpProxy, иначе значение поля шапки.
+// Get: имя табличной части → tpProxy, иначе значение поля шапки. Реквизит
+// прочитанного из БД объекта отдаётся по полевой политике роли (план 88E) —
+// значение, присвоенное самим модулем, возвращается как есть.
 func (w *catWriter) Get(name string) any {
 	for _, tp := range w.entity.TableParts {
 		if strings.EqualFold(tp.Name, name) {
 			return &tpProxy{obj: w.obj, tpName: tp.Name}
 		}
 	}
-	return w.obj.Get(name)
+	v := w.obj.Get(name)
+	if !w.loaded || w.assigned[strings.ToLower(strings.TrimSpace(name))] {
+		return v
+	}
+	return w.s.maskDSLValue(w.ctx(), w.entity, name, v)
 }
 
 func (w *catWriter) Set(name string, v any) {
+	if w.assigned == nil {
+		w.assigned = map[string]bool{}
+	}
+	w.assigned[strings.ToLower(strings.TrimSpace(name))] = true
 	w.obj.Set(name, v)
 }
 
@@ -184,6 +197,13 @@ func (w *catWriter) write() error {
 	}
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 		return err
+	}
+	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
+	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
+	if !isNew {
+		if err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields); err != nil {
+			return err
+		}
 	}
 	result, err := w.s.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:          w.entity,

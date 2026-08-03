@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -35,6 +36,45 @@ func (s *Server) maskRecords(ctx context.Context, entity *metadata.Entity, rows 
 	access.MaskRecords(s.fieldDecisions(ctx, entity), rows)
 }
 
+// maskDSLValue applies the field policy to one attribute value read from a
+// STORED object through a DSL proxy — Ссылка.ПолучитьОбъект(), НайтиПоНомеру(),
+// разыменование Клиент.Телефон. Without it a processing run by a masked user is
+// a trivial bypass: read the object, Сообщить(Об.Телефон).
+//
+// Прикладной код исполняется в правах пользователя, привилегированного режима в
+// платформе нет: под ролью с маской защищённый реквизит приходит в модуль
+// замаскированным — не используйте ПДн в расчётах проведения. Объект,
+// создаваемый самим модулем (Создать()), и `this` формы/проведения не
+// маскируются: там значение принадлежит текущей операции, а не чужой записи.
+func (s *Server) maskDSLValue(ctx context.Context, entity *metadata.Entity, field string, v any) any {
+	dec, ok := s.fieldDecisions(ctx, entity)[canonicalDSLField(entity, field)]
+	if !ok || !dec.Masked() {
+		return v
+	}
+	if dec.Hidden() {
+		return nil
+	}
+	return access.MaskValue(dec.Strategy, dec.Keep, v)
+}
+
+// dslFieldSearchDenied reports whether searching by this attribute would turn a
+// masked field into a guessing oracle: НайтиПоРеквизиту("Телефон", …) recovers
+// the exact value the mask hides. Mirrors the query gate, where a protected
+// field in ГДЕ denies the whole query.
+func (s *Server) dslFieldSearchDenied(ctx context.Context, entity *metadata.Entity, field string) bool {
+	dec, ok := s.fieldDecisions(ctx, entity)[canonicalDSLField(entity, field)]
+	return ok && dec.Masked()
+}
+
+// canonicalDSLField приводит имя реквизита из DSL к имени поля метаданных:
+// решения FieldDecisions ключуются каноническим именем.
+func canonicalDSLField(entity *metadata.Entity, field string) string {
+	if f, ok := entityFieldByName(entity, field); ok {
+		return f.Name
+	}
+	return strings.TrimSpace(field)
+}
+
 // maskedRecordLabel is the only safe way to derive a user-visible label from
 // a freshly loaded record. Reference resolvers often read a row vertically
 // (UUID → label), bypassing the list/form masking chokepoints; mask first so a
@@ -50,6 +90,17 @@ func (s *Server) maskedRecordLabel(ctx context.Context, entity *metadata.Entity,
 // denies the whole query (plan.Denied).
 func (s *Server) queryMaskPlan(ctx context.Context, res query.Result) access.QueryMaskPlan {
 	return access.QueryMaskPlanFor(auth.UserFromContext(ctx), res, s.sourceMeta)
+}
+
+// dslQueryGuard applies the query field gate to `Новый Запрос` inside modules:
+// без него обработка читает защищённые значения запросом в обход маски, которую
+// тот же пользователь видит в отчёте (план 88E).
+func (s *Server) dslQueryGuard(ctx context.Context, res query.Result, rows []map[string]any) error {
+	plan := s.queryMaskPlan(ctx, res)
+	if plan.Denied != "" {
+		return fmt.Errorf("нет доступа к защищённому полю: %s", plan.Denied)
+	}
+	return plan.Apply(rows)
 }
 
 // sourceMeta resolves the metadata of a query source object (entity/register/

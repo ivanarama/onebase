@@ -274,6 +274,11 @@ func (p *docProxy) findByField(field, value string, raw any) any {
 	if r, ok := raw.(*interpreter.Ref); ok {
 		value = r.Name
 	}
+	if p.s.dslFieldSearchDenied(p.ctx(), p.entity, field) {
+		// Поиск по защищённому реквизиту восстанавливает скрытое маской значение
+		// перебором — как отбор ГДЕ в запросе, закрываем целиком (план 88E).
+		interpreter.RaiseUserError("Найти(" + p.entity.Name + "." + field + "): реквизит защищён политикой поля")
+	}
 	if p.s.rowAccessRestricted(p.ctx(), p.entity, "read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {
@@ -308,6 +313,9 @@ func (p *docProxy) findByField(field, value string, raw any) any {
 // Ссылкой (только при ровно одном совпадении) и Количеством.
 func (p *docProxy) matchByField(field string, raw any) any {
 	value := interpreter.MatchValueString(raw)
+	if p.s.dslFieldSearchDenied(p.ctx(), p.entity, field) {
+		interpreter.RaiseUserError("ПроверитьСовпадениеПоРеквизиту(" + p.entity.Name + "." + field + "): реквизит защищён политикой поля")
+	}
 	if p.s.rowAccessRestricted(p.ctx(), p.entity, "read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {
@@ -495,6 +503,9 @@ type docWriter struct {
 	loaded          bool
 	saved           bool
 	expectedVersion *int64
+	// assigned — реквизиты, присвоенные модулем в этой сессии: их чтение не
+	// маскируется, значение принадлежит текущей операции (план 88E).
+	assigned map[string]bool
 }
 
 func (w *docWriter) ctx() context.Context {
@@ -504,17 +515,27 @@ func (w *docWriter) ctx() context.Context {
 	return context.Background()
 }
 
-// Get: имя табличной части → tpProxy, иначе значение поля шапки.
+// Get: имя табличной части → tpProxy, иначе значение поля шапки. Реквизит
+// прочитанного из БД документа отдаётся по полевой политике роли (план 88E) —
+// значение, присвоенное самим модулем, возвращается как есть.
 func (w *docWriter) Get(name string) any {
 	for _, tp := range w.entity.TableParts {
 		if strings.EqualFold(tp.Name, name) {
 			return &tpProxy{obj: w.obj, tpName: tp.Name}
 		}
 	}
-	return w.obj.Get(name)
+	v := w.obj.Get(name)
+	if !w.loaded || w.assigned[strings.ToLower(strings.TrimSpace(name))] {
+		return v
+	}
+	return w.s.maskDSLValue(w.ctx(), w.entity, name, v)
 }
 
 func (w *docWriter) Set(name string, v any) {
+	if w.assigned == nil {
+		w.assigned = map[string]bool{}
+	}
+	w.assigned[strings.ToLower(strings.TrimSpace(name))] = true
 	w.obj.Set(name, v)
 }
 
@@ -716,6 +737,13 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 	}
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 		return err
+	}
+	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
+	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
+	if w.loaded || w.saved {
+		if err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields); err != nil {
+			return err
+		}
 	}
 	w.autoNumber(ctx)
 	// Псевдо-реквизит «Ссылка» самого документа — до запуска OnWrite, как это уже

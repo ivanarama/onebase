@@ -62,7 +62,9 @@ func (r *dslRefAttrResolver) ResolveRefAttr(ref *interpreter.Ref, field string) 
 	if row == nil {
 		return nil, true
 	}
-	return row[fd.Name], true
+	// План 88E: разыменование чужой записи (this.Клиент.Телефон) — такой же путь
+	// чтения, как форма или REST, и обязано подчиняться полевой политике роли.
+	return r.s.maskDSLValue(r.ctx, entity, fd.Name, row[fd.Name]), true
 }
 
 func (r *dslRefAttrResolver) attachObject(entity *metadata.Entity, obj *runtime.Object) {
