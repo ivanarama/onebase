@@ -159,12 +159,18 @@ func Run(ctx context.Context, env *Env, checks []Check, fix map[string]bool) Rep
 				continue
 			}
 			n, err := c.Fix(ctx, env, res)
-			res.Fixed = n
 			if err != nil {
+				res.Fixed = n
 				res.Error = err.Error()
 				res.Severity = SeverityError
 			} else if n > 0 {
-				res.Severity = SeverityOK
+				// Состояние после починки берём перезапуском проверки, а не
+				// объявляем «теперь всё хорошо»: починка бывает частичной —
+				// часть находок чинится, часть требует решения человека, — и
+				// отчёт обязан показывать то, что осталось, а не то, что мы
+				// намеревались сделать.
+				res = c.Run(ctx, env)
+				res.Fixed = n
 				res.Summary = res.Summary + "; исправлено: " + strconv.Itoa(n)
 			}
 		}
