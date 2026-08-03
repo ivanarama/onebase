@@ -40,7 +40,10 @@ func normalizeSQLitePath(path, name string) string {
 	case filepath.Ext(p) == "":
 		isDir = true
 	default:
-		if st, err := os.Stat(p); err == nil && st.IsDir() {
+		// Путь вводит администратор в форме регистрации базы — это его
+		// собственный путь на его же машине, а не чужой ввод. Здесь только
+		// определение «файл или каталог», без чтения содержимого.
+		if st, err := os.Stat(p); err == nil && st.IsDir() { //nolint:gosec // G703: путь администратора, только Stat
 			isDir = true
 		}
 	}
@@ -678,7 +681,9 @@ func (h *handler) configExport(w http.ResponseWriter, r *http.Request) {
 // an untouched ~/.onebase/workspace/<base-id> must not be accepted as a valid
 // zero-file configuration.
 func validateConfigImportDir(srcDir string) error {
-	info, err := os.Stat(srcDir)
+	// srcDir — каталог, выбранный администратором в диалоге импорта на его
+	// машине. Проверяем, что это папка проекта, до replace-all транзакции.
+	info, err := os.Stat(srcDir) //nolint:gosec // G703: путь администратора
 	if err != nil {
 		return fmt.Errorf("папка конфигурации недоступна: %w", err)
 	}
@@ -686,7 +691,7 @@ func validateConfigImportDir(srcDir string) error {
 		return fmt.Errorf("путь не является папкой: %s", srcDir)
 	}
 	appPath := filepath.Join(srcDir, "config", "app.yaml")
-	if info, err := os.Stat(appPath); err != nil || info.IsDir() {
+	if info, err := os.Stat(appPath); err != nil || info.IsDir() { //nolint:gosec // G703: appPath собран из того же каталога администратора
 		return fmt.Errorf("папка не содержит config/app.yaml: %s", srcDir)
 	}
 	cfg, err := project.LoadConfig(srcDir)

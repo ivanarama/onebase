@@ -126,7 +126,7 @@ func (h *handler) configuratorImportPDFLayout(w http.ResponseWriter, r *http.Req
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+jerr.Error())
 			return
 		}
-		if _, statErr := os.Stat(fullPath); statErr == nil {
+		if _, statErr := os.Stat(fullPath); statErr == nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
 			return
 		}

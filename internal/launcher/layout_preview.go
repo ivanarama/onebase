@@ -83,8 +83,9 @@ func (h *handler) configuratorLayoutPreview(w http.ResponseWriter, r *http.Reque
 		// показывает «страница заблокирована Microsoft Edge». Внешнее открытие
 		// работает и в webview, и в обычном браузере (лаунчер локальный).
 		if r.URL.Query().Get("open") == "1" {
-			fp := filepath.Join(os.TempDir(), "onebase-layout-preview.pdf")
-			if werr := os.WriteFile(fp, pdfBytes, 0o600); werr != nil {
+			// Имя фиксированное, из запроса сюда ничего не попадает.
+			fp := filepath.Join(os.TempDir(), "onebase-layout-preview.pdf") //nolint:gosec // G703: путь константный
+			if werr := os.WriteFile(fp, pdfBytes, 0o600); werr != nil {     //nolint:gosec // G703: fp — константное имя в TempDir
 				// Старый файл занят просмотрщиком → уникальное имя.
 				tf, terr := os.CreateTemp("", "onebase-preview-*.pdf")
 				if terr != nil {

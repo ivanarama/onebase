@@ -318,7 +318,7 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 			full, err := configdb.SafeJoin(b.Path, existingLogo)
 			if err != nil {
 				saveErr = err
-			} else if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+			} else if err := os.Remove(full); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: full построен configdb.SafeJoin
 				saveErr = err
 			}
 		}
