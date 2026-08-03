@@ -67,6 +67,7 @@ import (
 	"crypto/md5"
 	"crypto/rc4"
 	"encoding/ascii85"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,12 +98,13 @@ func Open(file string) (*Reader, error) {
 	// TODO: Deal with closing file.
 	f, err := os.Open(file)
 	if err != nil {
-		f.Close()
+		// Локальная правка (см. NOTICE.md): при ошибке Open дескриптора нет,
+		// закрывать нечего — прежний вызов f.Close() на nil был лишним.
 		return nil, err
 	}
 	fi, err := f.Stat()
 	if err != nil {
-		f.Close()
+		closeQuiet(f)
 		return nil, err
 	}
 	return NewReader(f, fi.Size())
@@ -119,14 +121,21 @@ func NewReader(f io.ReaderAt, size int64) (*Reader, error) {
 // the file and returns an error.
 func NewReaderEncrypted(f io.ReaderAt, size int64, pw func() string) (*Reader, error) {
 	buf := make([]byte, 10)
-	f.ReadAt(buf, 0)
+	// Ошибку чтения не разбираем отдельно: короткое чтение оставляет буфер
+	// нулевым, и проверка заголовка ниже всё равно отвергает файл — то есть
+	// поведение уже fail-closed. Явная форма нужна, чтобы это было видно.
+	if _, err := f.ReadAt(buf, 0); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("not a PDF file: %w", err)
+	}
 	if !bytes.HasPrefix(buf, []byte("%PDF-1.")) || buf[7] < '0' || buf[7] > '7' || buf[8] != '\r' && buf[8] != '\n' {
 		return nil, fmt.Errorf("not a PDF file: invalid header")
 	}
 	end := size
 	const endChunk = 100
 	buf = make([]byte, endChunk)
-	f.ReadAt(buf, end-endChunk)
+	if _, err := f.ReadAt(buf, end-endChunk); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("не прочитан хвост PDF: %w", err)
+	}
 	for len(buf) > 0 && buf[len(buf)-1] == '\n' || buf[len(buf)-1] == '\r' {
 		buf = buf[:len(buf)-1]
 	}
@@ -760,7 +769,9 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 					id, _ := b.readToken().(int64)
 					off, _ := b.readToken().(int64)
 					if uint32(id) == ptr.id {
-						b.seekForward(first + off)
+						// Позиционирование внутри уже прочитанного объекта: промах
+						// даст ошибку readObject ниже, где она и разбирается.
+						_ = b.seekForward(first + off)
 						objinstream, err := b.readObject()
 						if err != nil {
 							return Value{}
@@ -1089,7 +1100,9 @@ func decryptStream(key []byte, useAES bool, ptr objptr, rd io.Reader) io.Reader 
 			panic("AES: " + err.Error())
 		}
 		iv := make([]byte, 16)
-		io.ReadFull(rd, iv)
+		// Короткий IV оставит нули: расшифровка тогда не сойдётся и упадёт
+		// разбором выше, как и на любом повреждённом потоке.
+		_, _ = io.ReadFull(rd, iv)
 		cbc := cipher.NewCBCDecrypter(cb, iv)
 		rd = &cbcReader{cbc: cbc, rd: rd, buf: make([]byte, 16)}
 	} else {
@@ -1118,4 +1131,10 @@ func (r *cbcReader) Read(b []byte) (n int, err error) {
 	n = copy(b, r.pend)
 	r.pend = r.pend[n:]
 	return n, nil
+}
+
+// closeQuiet закрывает файл на пути ошибки: наверх идёт причина сбоя, и
+// подменять её ошибкой закрытия незачем. Локальная правка (см. NOTICE.md).
+func closeQuiet(f *os.File) {
+	_ = f.Close()
 }

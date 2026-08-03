@@ -1,7 +1,9 @@
 package writer
 
 import (
+	"errors"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
 	"path/filepath"
@@ -219,12 +221,15 @@ func copyFileRaw(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer oblog.CloseQuiet("converter", "исходный файл", in)
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	// Close пишущей стороны возвращаем: он сбрасывает буфер, и без проверки
+	// усечённая копия шаблона сошла бы за успешную.
+	if _, err := io.Copy(out, in); err != nil {
+		return errors.Join(err, out.Close())
+	}
+	return out.Close()
 }

@@ -61,7 +61,7 @@ contents:
 func TestLoadSubsystemDir_Order(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"склад.yaml":  "name: Склад\norder: 30\n",
+		"склад.yaml":   "name: Склад\norder: 30\n",
 		"продажи.yaml": "name: Продажи\norder: 10\n",
 		"закупки.yaml": "name: Закупки\norder: 20\n",
 	}

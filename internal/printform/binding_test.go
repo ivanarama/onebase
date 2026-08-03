@@ -5,9 +5,9 @@ import "testing"
 func newTestCtx() *RenderContext {
 	return &RenderContext{
 		Document: map[string]any{
-			"Номер":       "УПД-001",
-			"Покупатель":  "ref-buyer",
-			"Дата":        "2026-06-11",
+			"Номер":      "УПД-001",
+			"Покупатель": "ref-buyer",
+			"Дата":       "2026-06-11",
 		},
 		Constants: map[string]any{
 			"НазваниеОрганизации": "ООО Ромашка",

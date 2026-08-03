@@ -11,19 +11,19 @@ package onec_forms
 
 // IRForm — корневой узел IR.
 type IRForm struct {
-	Name                   string   // имя формы ("ФормаОбъекта", "Форма")
-	Kind                   string   // object|list|choice|folder|custom
-	Entity                 string   // имя сущности, к которой привязана форма
-	Title                  IRTitle  // локализованный заголовок
-	OriginalID             string   // id корневого узла из Form.xml (round-trip)
-	Version                string   // <Form version="2.20">
-	AutoSaveDataInSettings bool     // <AutoSaveDataInSettings>
-	VerticalScroll         string   // "auto"|"never"|"always"
+	Name                   string  // имя формы ("ФормаОбъекта", "Форма")
+	Kind                   string  // object|list|choice|folder|custom
+	Entity                 string  // имя сущности, к которой привязана форма
+	Title                  IRTitle // локализованный заголовок
+	OriginalID             string  // id корневого узла из Form.xml (round-trip)
+	Version                string  // <Form version="2.20">
+	AutoSaveDataInSettings bool    // <AutoSaveDataInSettings>
+	VerticalScroll         string  // "auto"|"never"|"always"
 	AutoCommandBar         *IRCommandBar
 	Attributes             []*IRAttribute
 	Commands               []*IRCommand
 	Parameters             []*IRParameter
-	Elements               []*IRElement // дерево ChildItems
+	Elements               []*IRElement      // дерево ChildItems
 	Events                 map[string]string // form-level events (1С имя → процедура)
 	Resources              []IRResource      // бинарные файлы из Items/
 	// UnknownTopLevel — XML-узлы верхнего уровня, не имеющие IR-семантики
@@ -36,14 +36,14 @@ type IRForm struct {
 // Kind хранит каноническое имя из 1С (InputField, Table, UsualGroup, Page, …)
 // либо OneBase-имя (ПолеВвода, Таблица, …) — нормализация в mapping_in/out.
 type IRElement struct {
-	ID         string         // внутренний id (мб совпадать с OriginalID)
-	OriginalID string         // id из Form.xml
-	Name       string         // имя элемента (как в XML attribute name=)
-	Kind       string         // тип элемента (см. elements_map.go)
-	Title      IRTitle        // локализованный заголовок
-	DataPath   string         // "Объект.Контрагент", "Список.Цена"
-	Picture    string         // относительный путь к ресурсу или "stdpic:Post"
-	Values     string         // для PictureField — ValuesPicture
+	ID         string  // внутренний id (мб совпадать с OriginalID)
+	OriginalID string  // id из Form.xml
+	Name       string  // имя элемента (как в XML attribute name=)
+	Kind       string  // тип элемента (см. elements_map.go)
+	Title      IRTitle // локализованный заголовок
+	DataPath   string  // "Объект.Контрагент", "Список.Цена"
+	Picture    string  // относительный путь к ресурсу или "stdpic:Post"
+	Values     string  // для PictureField — ValuesPicture
 	Visible    bool
 	Enabled    bool
 	Required   bool
@@ -67,10 +67,10 @@ type IRAttribute struct {
 	OriginalID    string
 	Name          string
 	Title         IRTitle
-	TypeRef       string  // канонический тип в нейтральной нотации, см. types_map.go
-	Length        int     // для строк/чисел
-	Precision     int     // для decimal
-	AllowedLength string  // "Variable"|"Fixed"
+	TypeRef       string // канонический тип в нейтральной нотации, см. types_map.go
+	Length        int    // для строк/чисел
+	Precision     int    // для decimal
+	AllowedLength string // "Variable"|"Fixed"
 	Save          bool
 	FillingValue  string
 	MainAttribute bool
@@ -125,22 +125,22 @@ type IRCommandBarButton struct {
 
 // IRParameter — параметр формы (Form.xml / Parameters).
 type IRParameter struct {
-	ID         string
-	OriginalID string
-	Name       string
-	TypeRef    string
+	ID           string
+	OriginalID   string
+	Name         string
+	TypeRef      string
 	KeyParameter bool
-	Props      map[string]any
+	Props        map[string]any
 }
 
 // IRResource — бинарный файл из Forms/<Form>/Ext/Form/Items/<ElementName>/.
 // При импорте Data заполнен (для копирования в проект OneBase);
 // при экспорте берётся из проекта по Path.
 type IRResource struct {
-	ElementName string // папка в Items/
-	Path        string // относительный путь от .form.yaml (например "_resources/Логотип/Picture.png")
+	ElementName  string // папка в Items/
+	Path         string // относительный путь от .form.yaml (например "_resources/Логотип/Picture.png")
 	OriginalName string // оригинальное имя файла в Items/ (Picture.png, ValuesPicture.png, ...)
-	Data        []byte // содержимое (опционально — может загружаться лениво)
+	Data         []byte // содержимое (опционально — может загружаться лениво)
 }
 
 // IRUnknownXML — фрагмент XML, не разобранный в IR.
@@ -179,6 +179,6 @@ type ImportReport struct {
 }
 
 type ExportReport struct {
-	FormDir      string // Forms/<FormName>/Ext/
-	Warnings     []Warning
+	FormDir  string // Forms/<FormName>/Ext/
+	Warnings []Warning
 }

@@ -128,7 +128,9 @@ func Convert(opts Options) (*writer.ConversionReport, error) {
 
 	// Записать отчёт в файл
 	reportPath := filepath.Join(opts.OutDir, "conversion_report.txt")
-	os.WriteFile(reportPath, []byte(report.String()), 0o644)
+	if err := os.WriteFile(reportPath, []byte(report.String()), 0o644); err != nil { //nolint:gosec // G306: права не менялись — соглашение репозитория, этап 109H
+		return nil, err
+	}
 
 	return report, nil
 }

@@ -168,7 +168,8 @@ func TestRegistry_ConcurrentObserveIsRaceFreeAndExact(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				reg.WritePrometheus(io.Discard)
+				// Гоняем ради гонок; io.Discard не отказывает.
+				_ = reg.WritePrometheus(io.Discard)
 			}
 		}
 	}()

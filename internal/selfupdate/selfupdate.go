@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"net/http"
 	"os"
@@ -56,7 +57,7 @@ func extractFromZip(zipPath, stageDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("selfupdate: открыть архив: %w", err)
 	}
-	defer zr.Close()
+	defer oblog.CloseQuiet("selfupdate", "архив", zr)
 
 	want := BinaryName()
 	var candidate *zip.File
@@ -85,7 +86,7 @@ func extractFromZip(zipPath, stageDir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		defer rc.Close()
+		defer oblog.CloseQuiet("selfupdate", "поток", rc)
 		if err := writeFile(io.LimitReader(rc, MaxBinaryBytes+1), dst, 0o755); err != nil {
 			return "", err
 		}
@@ -112,7 +113,7 @@ func VerifySHA256(path, wantHex string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer oblog.CloseQuiet("selfupdate", "файл", f)
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return err
@@ -144,7 +145,7 @@ func SwapBinary(targetPath, newPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer in.Close()
+	defer oblog.CloseQuiet("selfupdate", "исходный файл", in)
 	if err := writeFile(in, targetPath, 0o755); err != nil {
 		var restoreErr error
 		if backup, openErr := os.Open(backupPath); openErr == nil {
@@ -172,7 +173,7 @@ func Rollback(targetPath, backupPath string) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: открыть резервный бинарь: %w", err)
 	}
-	defer backup.Close()
+	defer oblog.CloseQuiet("selfupdate", "резервную копию бинарника", backup)
 	if err := writeFile(backup, targetPath, 0o755); err != nil {
 		return fmt.Errorf("selfupdate: восстановить старый бинарь: %w", err)
 	}
@@ -263,7 +264,7 @@ func probeOnce(ctx context.Context, client *http.Client, url, expectedVersion st
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s вернул %d", url, resp.StatusCode)
 	}

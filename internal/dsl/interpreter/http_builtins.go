@@ -66,7 +66,7 @@ func (c *dslHTTPConnection) do(req *dslHTTPRequest, method string) *dslHTTPRespo
 	if err != nil {
 		panic(userError{Msg: "HTTPСоединение: " + err.Error()})
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	bodyBytes := readDSLHTTPResponse(resp.Body, "HTTPСоединение")
 	return &dslHTTPResponse{
 		statusCode: resp.StatusCode,
@@ -167,7 +167,7 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 		if err != nil {
 			panic(userError{Msg: "HTTPПолучить: " + err.Error()})
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 		b := readDSLHTTPResponse(resp.Body, "HTTPПолучить")
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})
@@ -182,7 +182,7 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 		if err != nil {
 			panic(userError{Msg: "HTTPОтправить: " + err.Error()})
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 		b := readDSLHTTPResponse(resp.Body, "HTTPОтправить")
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})

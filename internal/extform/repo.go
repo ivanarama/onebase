@@ -170,6 +170,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 //     макет v2 на загрузке в реестре (reg.SetExternalPrintForms → ConvertLegacy);
 //   - layout — декларативный макет v2 (printform.LayoutForm с top-level areas:);
 //     регистрируется как есть (reg.SetExternalLayoutForms).
+//
 // Записи с непарсящимся содержимым пропускаются с предупреждением, чтобы одна
 // битая форма не валила загрузку остальных.
 func (r *Repo) LoadEnabledPrintForms(ctx context.Context) ([]*printform.PrintForm, []*printform.LayoutForm, error) {

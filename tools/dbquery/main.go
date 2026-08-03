@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
 	"strings"
@@ -42,7 +43,11 @@ func main() {
 	if err != nil {
 		fatal("open db: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "close db:", err)
+		}
+	}()
 
 	if *listTables {
 		printTables(db, *format)
@@ -80,27 +85,36 @@ func printTables(db *sql.DB, format string) {
 	if err != nil {
 		fatal("query tables: %v", err)
 	}
-	defer rows.Close()
+	defer oblog.CloseQuiet("dbquery", "курсор запроса", rows)
 
 	var names []string
 	for rows.Next() {
 		var n string
-		rows.Scan(&n)
+		if err := rows.Scan(&n); err != nil {
+			fatal("scan: %v", err)
+		}
 		names = append(names, n)
 	}
 
 	switch format {
 	case "csv":
 		w := csv.NewWriter(os.Stdout)
-		w.Write([]string{"table"})
+		// csv.Writer копит ошибку и отдаёт её из Flush/Error — проверяем там.
+		_ = w.Write([]string{"table"})
 		for _, n := range names {
-			w.Write([]string{n})
+			// csv.Writer копит ошибку и отдаёт её из Flush/Error — проверяем там.
+			_ = w.Write([]string{n})
 		}
 		w.Flush()
+		if err := w.Error(); err != nil {
+			fatal("csv: %v", err)
+		}
 	case "json":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(names)
+		if err := enc.Encode(names); err != nil {
+			fatal("encode: %v", err)
+		}
 	default:
 		for _, n := range names {
 			fmt.Println(n)
@@ -113,10 +127,12 @@ func printSchema(db *sql.DB) {
 	if err != nil {
 		fatal("query schema: %v", err)
 	}
-	defer rows.Close()
+	defer oblog.CloseQuiet("dbquery", "курсор запроса", rows)
 	for rows.Next() {
 		var s string
-		rows.Scan(&s)
+		if err := rows.Scan(&s); err != nil {
+			fatal("scan: %v", err)
+		}
 		fmt.Println(s)
 		fmt.Println()
 	}
@@ -146,7 +162,7 @@ func printQuery(db *sql.DB, query, format string) {
 	if err != nil {
 		fatal("query: %v", err)
 	}
-	defer rows.Close()
+	defer oblog.CloseQuiet("dbquery", "курсор запроса", rows)
 
 	cols, err := rows.Columns()
 	if err != nil {
@@ -231,15 +247,20 @@ func printTable(cols []string, rows [][]any) {
 
 func printCSV(cols []string, rows [][]any) {
 	w := csv.NewWriter(os.Stdout)
-	w.Write(cols)
+	// csv.Writer копит ошибку и отдаёт её из Flush/Error — проверяем там.
+	_ = w.Write(cols)
 	for _, row := range rows {
 		sr := make([]string, len(cols))
 		for i, v := range row {
 			sr[i] = formatVal(v)
 		}
-		w.Write(sr)
+		// csv.Writer копит ошибку и отдаёт её из Flush/Error — проверяем там.
+		_ = w.Write(sr)
 	}
 	w.Flush()
+	if err := w.Error(); err != nil {
+		fatal("csv: %v", err)
+	}
 }
 
 func printJSON(cols []string, rows [][]any) {
@@ -253,7 +274,9 @@ func printJSON(cols []string, rows [][]any) {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(result)
+	if err := enc.Encode(result); err != nil {
+		fatal("encode: %v", err)
+	}
 }
 
 func formatVal(v any) string {

@@ -7,7 +7,7 @@ package gengen
 // to copy, and optional addons (e.g. "edi" adds counterparty bank details).
 type DomainRule struct {
 	Keywords  []string
-	Templates []string          // priority-ordered; first existing dir wins
+	Templates []string // priority-ordered; first existing dir wins
 	Addons    map[string]Addon
 }
 
@@ -70,14 +70,14 @@ type EnumSpec struct {
 
 // DeltaManifest describes the difference between requested and existing manifests.
 type DeltaManifest struct {
-	NewCatalogs   []EntitySpec             // entities that don't exist yet
+	NewCatalogs   []EntitySpec // entities that don't exist yet
 	NewDocuments  []EntitySpec
 	NewRegisters  []EntitySpec
 	NewEnums      []EnumSpec
-	NewFields     map[string][]FieldSpec   // entity name → new fields to add
+	NewFields     map[string][]FieldSpec     // entity name → new fields to add
 	NewTableParts map[string][]TablePartSpec // entity name → new table parts
-	NewDSLFiles   map[string]string        // relative path → content
-	Conflicts     []Conflict               // name collisions
+	NewDSLFiles   map[string]string          // relative path → content
+	Conflicts     []Conflict                 // name collisions
 }
 
 // Conflict describes a name collision between requested and existing.

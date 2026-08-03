@@ -38,9 +38,9 @@ func TestCheckIntakes(t *testing.T) {
 		Modules:      map[string]*ast.Program{"Good": good, "NoProc": noproc},
 		HTTPServices: []*httpservice.Service{svc},
 		Intakes: []*metadata.Intake{
-			mk("A", "/hs/intake/a", "Good"),   // корректный — без замечаний
-			mk("B", "/site/b", "Good"),        // endpoint не начинается с /hs/
-			mk("C", "/hs/site/c", "Good"),     // коллизия с корнем сервиса «Сайт»
+			mk("A", "/hs/intake/a", "Good"),    // корректный — без замечаний
+			mk("B", "/site/b", "Good"),         // endpoint не начинается с /hs/
+			mk("C", "/hs/site/c", "Good"),      // коллизия с корнем сервиса «Сайт»
 			mk("D", "/hs/intake/d", "Missing"), // нет модуля обработчика
 			mk("E", "/hs/intake/e", "NoProc"),  // в модуле нет процедуры Обработать
 		},

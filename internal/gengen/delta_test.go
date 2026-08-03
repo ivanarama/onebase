@@ -169,7 +169,7 @@ func TestComputeDelta_Conflict(t *testing.T) {
 		},
 	}
 	existing := &ExistingManifest{
-		Catalogs:  make(map[string]CatalogInfo),
+		Catalogs: make(map[string]CatalogInfo),
 		Documents: map[string]DocumentInfo{
 			"РеализацияТоваров": {Name: "РеализацияТоваров"},
 		},
@@ -190,7 +190,7 @@ func TestComputeDelta_Conflict(t *testing.T) {
 
 func TestDeltaManifest_Summary(t *testing.T) {
 	delta := &DeltaManifest{
-		NewCatalogs: []EntitySpec{{Name: "Контрагент"}},
+		NewCatalogs:  []EntitySpec{{Name: "Контрагент"}},
 		NewDocuments: []EntitySpec{{Name: "РеализацияТоваров"}},
 		NewFields: map[string][]FieldSpec{
 			"Контрагент": {{Name: "КПП", Type: "string"}},

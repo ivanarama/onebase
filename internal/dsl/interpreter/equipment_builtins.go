@@ -244,8 +244,8 @@ func NewEquipmentFunctions() map[string]any {
 	})
 	factory := func(args []any) any { return openDevice(args) }
 	return map[string]any{
-		"ПодключитьОборудование":             connect,
-		"ConnectEquipment":                   connect,
+		"ПодключитьОборудование": connect,
+		"ConnectEquipment": connect,
 		"__factory_ПодключаемоеОборудование": factory,
 		"__factory_ConnectedEquipment":       factory,
 	}

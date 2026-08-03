@@ -61,7 +61,9 @@ func newBuffer(r io.Reader, offset int64) *buffer {
 
 func (b *buffer) readByte() byte {
 	if b.pos >= len(b.buf) {
-		b.reload()
+		// Неудачная дозагрузка оставляет буфер пустым, и проверка ниже
+		// возвращает '\n' — конец ввода. Локальная правка (см. NOTICE.md).
+		_, _ = b.reload()
 		if b.pos >= len(b.buf) {
 			return '\n'
 		}

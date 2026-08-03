@@ -8,7 +8,7 @@ import "math"
 // ненулевой доле — это устраняет «прилипающие копейки» на остатках
 // списанных партий (
 //
-//   DistributeAmount(100, []float64{1, 2, 3}, 2) → [16.67, 33.33, 50.00]
+//	DistributeAmount(100, []float64{1, 2, 3}, 2) → [16.67, 33.33, 50.00]
 //
 // При нулевой total или сумме весов == 0 возвращает массив нулей той же длины.
 func DistributeAmount(total float64, weights []float64, scale int) []float64 {

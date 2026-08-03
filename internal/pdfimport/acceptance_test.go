@@ -107,4 +107,3 @@ func sampleCells(tpl *printform.LayoutTemplate, max int) []string {
 	}
 	return out
 }
-

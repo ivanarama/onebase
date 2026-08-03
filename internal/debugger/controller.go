@@ -29,10 +29,10 @@ func NewDebugController() *DebugController {
 // The interpreter goroutine blocks inside Pause(); the HTTP handler unblocks
 // it via Continue() or Step().
 type ActiveSession struct {
-	mu       sync.Mutex
-	ID       string
+	mu         sync.Mutex
+	ID         string
 	ModulePath string
-	State    DebugState
+	State      DebugState
 
 	// Breakpoints indexed by file -> line -> bp
 	breakpoints map[string]map[int]*Breakpoint
@@ -59,7 +59,7 @@ type ActiveSession struct {
 	pauseChan  chan struct{} // signaled when interpreter pauses
 	resumeChan chan struct{} // signaled by HTTP handler to resume
 	doneChan   chan struct{} // closed when session ends
-	stopOnce   sync.Once    // ensures doneChan is closed only once
+	stopOnce   sync.Once     // ensures doneChan is closed only once
 
 	// Expression evaluation during pause
 	evalReq chan evalRequest

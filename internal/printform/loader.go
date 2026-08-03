@@ -207,7 +207,6 @@ func extractDocument(src, folderName string) string {
 	return folderName
 }
 
-
 // loadLayoutForFile tries to find and load a .layout.yaml file matching the given .os file.
 func loadLayoutForFile(osPath string) (*LayoutTemplate, string) {
 	layoutPath := FindLayoutFile(osPath)

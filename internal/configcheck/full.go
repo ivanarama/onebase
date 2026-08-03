@@ -2,6 +2,7 @@ package configcheck
 
 import (
 	"context"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"os"
 	"path/filepath"
 
@@ -151,13 +152,13 @@ func BuildSchemaDB(proj *project.Project) (*storage.DB, func(), error) {
 		return nil, nil, err
 	}
 	path := f.Name()
-	f.Close()
+	oblog.CloseQuiet("configcheck", "заготовку временной БД", f)
 	db, err := storage.ConnectSQLite(ctx, path)
 	if err != nil {
-		os.Remove(path)
+		oblog.RemoveQuiet("configcheck", path)
 		return nil, nil, err
 	}
-	closer := func() { db.Close(); os.Remove(path) }
+	closer := func() { db.Close(); oblog.RemoveQuiet("configcheck", path) }
 	steps := []func() error{
 		func() error { return db.Migrate(ctx, proj.Entities) },
 		func() error { return db.MigrateRegisters(ctx, proj.Registers) },

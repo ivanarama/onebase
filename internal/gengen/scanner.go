@@ -1,6 +1,7 @@
 package gengen
 
 import (
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,7 +122,7 @@ func ScanProject(dir string) (*ExistingManifest, error) {
 	// DSL files
 	dslDir := filepath.Join(dir, "src")
 	if _, err := os.Stat(dslDir); err == nil {
-		filepath.WalkDir(dslDir, func(path string, d os.DirEntry, err error) error {
+		walkErr := filepath.WalkDir(dslDir, func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".os") {
 				return nil
 			}
@@ -130,6 +131,9 @@ func ScanProject(dir string) (*ExistingManifest, error) {
 			manifest.DSLFiles[rel] = string(content)
 			return nil
 		})
+		if walkErr != nil {
+			oblog.Component("gengen").Debug("обход каталога прерван", "err", walkErr)
+		}
 	}
 
 	return manifest, nil
@@ -180,7 +184,7 @@ func ScanProjectFromFiles(dir string) (*ExistingManifest, error) {
 	// Scan DSL files
 	dslDir := filepath.Join(dir, "src")
 	if _, err := os.Stat(dslDir); err == nil {
-		filepath.WalkDir(dslDir, func(path string, d os.DirEntry, err error) error {
+		walkErr := filepath.WalkDir(dslDir, func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".os") {
 				return nil
 			}
@@ -189,6 +193,9 @@ func ScanProjectFromFiles(dir string) (*ExistingManifest, error) {
 			manifest.DSLFiles[rel] = string(content)
 			return nil
 		})
+		if walkErr != nil {
+			oblog.Component("gengen").Debug("обход каталога прерван", "err", walkErr)
+		}
 	}
 
 	return manifest, nil
@@ -199,7 +206,7 @@ func scanEntityDir(dir string, kind metadata.Kind, fn func(*metadata.Entity)) {
 	if _, err := os.Stat(dir); err != nil {
 		return
 	}
-	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
@@ -210,6 +217,9 @@ func scanEntityDir(dir string, kind metadata.Kind, fn func(*metadata.Entity)) {
 		fn(e)
 		return nil
 	})
+	if walkErr != nil {
+		oblog.Component("gengen").Debug("обход каталога прерван", "err", walkErr)
+	}
 }
 
 // scanEnumDir reads enum YAML files.
@@ -222,7 +232,7 @@ func scanEnumDir(dir string, fn func(name string, values []string)) {
 	if _, err := os.Stat(dir); err != nil {
 		return
 	}
-	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".yaml") {
 			return nil
 		}
@@ -235,6 +245,9 @@ func scanEnumDir(dir string, fn func(name string, values []string)) {
 		}
 		return nil
 	})
+	if walkErr != nil {
+		oblog.Component("gengen").Debug("обход каталога прерван", "err", walkErr)
+	}
 }
 
 func extractFields(fields []metadata.Field) []FieldInfo {

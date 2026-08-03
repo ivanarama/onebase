@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"encoding/xml"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
 	"strconv"
@@ -21,7 +22,7 @@ func ReadFormXML(path string) (*IRForm, []Warning, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer f.Close()
+	defer oblog.CloseQuiet("onec_forms", "файл", f)
 
 	root, err := decodeXMLTree(f)
 	if err != nil {
@@ -517,7 +518,9 @@ func writeNode(sb *strings.Builder, n *xmlNode) {
 		sb.WriteByte(' ')
 		writeXMLName(sb, a.Name)
 		sb.WriteString(`="`)
-		xml.EscapeText(sb, []byte(a.Value))
+		// EscapeText пишет в bytes.Buffer — он не может вернуть ошибку
+		// записи, поэтому проверять здесь нечего.
+		_ = xml.EscapeText(sb, []byte(a.Value))
 		sb.WriteByte('"')
 	}
 	if len(n.Children) == 0 && n.Text == "" {
@@ -526,7 +529,9 @@ func writeNode(sb *strings.Builder, n *xmlNode) {
 	}
 	sb.WriteByte('>')
 	if n.Text != "" {
-		xml.EscapeText(sb, []byte(n.Text))
+		// EscapeText пишет в bytes.Buffer — он не может вернуть ошибку
+		// записи, поэтому проверять здесь нечего.
+		_ = xml.EscapeText(sb, []byte(n.Text))
 	}
 	for _, c := range n.Children {
 		writeNode(sb, c)

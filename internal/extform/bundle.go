@@ -12,7 +12,7 @@ import (
 // Manifest — обёртка переносимого бандла *.obform: метаданные формы для
 // дистрибуции между базами (задел под маркетплейс).
 type Manifest struct {
-	Kind        string `yaml:"kind"`               // "printform" или "report"
+	Kind        string `yaml:"kind"` // "printform" или "report"
 	Name        string `yaml:"name"`
 	Document    string `yaml:"document,omitempty"` // только для печатных форм
 	Author      string `yaml:"author,omitempty"`

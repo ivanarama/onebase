@@ -141,7 +141,7 @@ func (c *Client) GetObject(ctx context.Context, key string) (io.ReadCloser, int6
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 		return nil, 0, s3Error(resp.StatusCode, body)
 	}
 	return resp.Body, resp.ContentLength, nil
@@ -165,7 +165,7 @@ func (c *Client) getFrom(ctx context.Context, key string, offset int64) (io.Read
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 		return nil, s3Error(resp.StatusCode, body)
 	}
 	return resp.Body, nil
@@ -237,7 +237,7 @@ func (r *rangeReader) Seek(offset int64, whence int) (int64, error) {
 
 func (r *rangeReader) closeBody() {
 	if r.body != nil {
-		r.body.Close()
+		r.body.Close() //nolint:errcheck,gosec // G104: тело прочитано, закрытие вторично
 		r.body = nil
 	}
 }
@@ -295,7 +295,7 @@ func (c *Client) ListKeys(ctx context.Context, prefix string) ([]string, error) 
 			return nil, err
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 		if err != nil {
 			return nil, err
 		}
@@ -336,7 +336,7 @@ func (c *Client) do(req *http.Request, okStatuses ...int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	for _, ok := range okStatuses {
 		if resp.StatusCode == ok {

@@ -51,10 +51,10 @@ func TestScale_Weight(t *testing.T) {
 
 func TestParseWeight(t *testing.T) {
 	cases := map[string]float64{
-		"0.250":                0.25,
+		"0.250":                 0.25,
 		"ST,GS,+000.250 kg\r\n": 0.25,
-		"1.5":                  1.5,
-		"  12,340 ":            12.34,
+		"1.5":                   1.5,
+		"  12,340 ":             12.34,
 	}
 	for in, want := range cases {
 		got, err := parseWeight(in)

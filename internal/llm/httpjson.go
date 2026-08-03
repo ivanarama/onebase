@@ -34,7 +34,7 @@ func postJSON(ctx context.Context, hc *http.Client, provider, url string, body a
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRespBytes))
 	if err != nil {
 		return nil, fmt.Errorf("%s: чтение ответа: %w", provider, err)

@@ -138,9 +138,10 @@ type ExportOptions struct {
 //
 // Каталог должен соответствовать пути «Forms/<FormName>/Ext» в выгрузке 1С.
 // Внутри создаются:
-//   <DstFormDir>/Form.xml
-//   <DstFormDir>/Form/Module.bsl    (если был OSPath)
-//   <DstFormDir>/Form/Items/<X>/…   (если был ResourcesDir с файлами)
+//
+//	<DstFormDir>/Form.xml
+//	<DstFormDir>/Form/Module.bsl    (если был OSPath)
+//	<DstFormDir>/Form/Items/<X>/…   (если был ResourcesDir с файлами)
 func ExportToOneC(opts ExportOptions) (*ExportReport, error) {
 	if opts.YAMLPath == "" {
 		return nil, fmt.Errorf("ExportToOneC: YAMLPath обязателен")

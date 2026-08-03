@@ -9,16 +9,16 @@ import (
 
 // Chart is the main DSL chart object: Новый Диаграмма
 type Chart struct {
-	title   string
+	title     string
 	chartType string // "гистограмма"/"bar", "линейная"/"line", "круговая"/"pie"
-	width   string
-	height  string
-	legend  bool
-	tooltip bool
-	labels  bool
-	series  []*ChartSeries
-	points  []*ChartPoint
-	values  map[int]map[int]float64 // [seriesIdx][pointIdx] → value
+	width     string
+	height    string
+	legend    bool
+	tooltip   bool
+	labels    bool
+	series    []*ChartSeries
+	points    []*ChartPoint
+	values    map[int]map[int]float64 // [seriesIdx][pointIdx] → value
 }
 
 func NewChart() *Chart {
@@ -180,7 +180,7 @@ type ChartSeriesCollection struct {
 	chart *Chart
 }
 
-func (c *ChartSeriesCollection) Get(name string) any { return nil }
+func (c *ChartSeriesCollection) Get(name string) any    { return nil }
 func (c *ChartSeriesCollection) Set(name string, v any) {}
 
 func (c *ChartSeriesCollection) CallMethod(method string, args []any) any {
@@ -246,7 +246,7 @@ type ChartPointsCollection struct {
 	chart *Chart
 }
 
-func (c *ChartPointsCollection) Get(name string) any { return nil }
+func (c *ChartPointsCollection) Get(name string) any    { return nil }
 func (c *ChartPointsCollection) Set(name string, v any) {}
 
 func (c *ChartPointsCollection) CallMethod(method string, args []any) any {

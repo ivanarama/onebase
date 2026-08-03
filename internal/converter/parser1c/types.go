@@ -63,9 +63,9 @@ type FieldType struct {
 
 // EnumMeta — перечисление
 type EnumMeta struct {
-	Name   string
+	Name    string
 	Synonym string
-	Values []string
+	Values  []string
 }
 
 // ConstantMeta — константа
@@ -126,18 +126,18 @@ type ProcessorMeta struct {
 
 // ConfigDump — всё содержимое выгрузки конфигурации
 type ConfigDump struct {
-	Catalogs        []*CatalogMeta
-	Documents       []*DocumentMeta
-	Registers       []*RegisterMeta
-	Enums           []*EnumMeta
-	Constants       []*ConstantMeta
-	InfoRegisters   []*InfoRegMeta
+	Catalogs         []*CatalogMeta
+	Documents        []*DocumentMeta
+	Registers        []*RegisterMeta
+	Enums            []*EnumMeta
+	Constants        []*ConstantMeta
+	InfoRegisters    []*InfoRegMeta
 	AccountRegisters []*AccountRegMeta
 	ChartsOfAccounts []*ChartOfAccountsMeta
-	ScheduledJobs   []*ScheduledJobMeta
-	Modules         []*ModuleMeta
-	Processors      []*ProcessorMeta
-	SkippedDirs     []SkippedItem
+	ScheduledJobs    []*ScheduledJobMeta
+	Modules          []*ModuleMeta
+	Processors       []*ProcessorMeta
+	SkippedDirs      []SkippedItem
 }
 
 // SkippedItem — объект, который не конвертируется

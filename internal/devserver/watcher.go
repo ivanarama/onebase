@@ -113,7 +113,7 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.Close()
+		defer oblog.CloseQuiet("devserver", "наблюдатель за файлами", w)
 		defer debounce.Stop()
 		for {
 			select {

@@ -138,12 +138,12 @@ func findInherited(p pdf.Page, key string) pdf.Value {
 
 // pathBuilder копит сегменты текущего пути до оператора рисования.
 type pathBuilder struct {
-	curX, curY   float64
-	startX       float64
-	startY       float64
-	segs         []lineSeg // накопленные сегменты текущего подпути
-	lineWidth    float64
-	out          *[]lineSeg
+	curX, curY float64
+	startX     float64
+	startY     float64
+	segs       []lineSeg // накопленные сегменты текущего подпути
+	lineWidth  float64
+	out        *[]lineSeg
 }
 
 // extractLines проходит content stream страницы и собирает горизонтальные и

@@ -1,7 +1,9 @@
 package onec_forms
 
 import (
+	"errors"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,7 +14,8 @@ import (
 //
 // itemsDir указывает на Forms/<FormName>/Ext/Form/Items.
 // dstResourcesDir — каталог в проекте OneBase, обычно
-//   <project>/forms/<entity>/<form_name>/_resources.
+//
+//	<project>/forms/<entity>/<form_name>/_resources.
 //
 // Для каждой подпапки (имя = ElementName) сканируются все файлы. Узнаваемые
 // (.png, .gif, .svg, .jpg) копируются и регистрируются как IRResource.
@@ -136,16 +139,17 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer oblog.CloseQuiet("onec_forms", "исходный файл", in)
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	// Close пишущей стороны возвращаем: он сбрасывает буфер, и без проверки
+	// усечённый ресурс формы сошёл бы за скопированный.
 	if _, err := io.Copy(out, in); err != nil {
-		return err
+		return errors.Join(err, out.Close())
 	}
-	return nil
+	return out.Close()
 }
 
 // AttachResourcesToForm проходит по дереву элементов формы и проставляет

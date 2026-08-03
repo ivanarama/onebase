@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"math/rand"
 	"net/http"
@@ -81,7 +82,7 @@ func doLogin(c *http.Client, base, login, password string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("статус %d", resp.StatusCode)
 	}
@@ -122,7 +123,7 @@ func postForID(c *http.Client, endpoint string, body map[string]any) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("статус %d: %s", resp.StatusCode, msg)
@@ -141,7 +142,7 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer oblog.CloseQuiet("loadtest", "файл", f)
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)

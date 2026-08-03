@@ -179,7 +179,7 @@ func (d *atolDevice) post(url string, body []byte) error {
 	if err != nil {
 		return fmt.Errorf("ккт: отправка задания: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("ккт: сервис вернул %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
@@ -188,7 +188,8 @@ func (d *atolDevice) post(url string, body []byte) error {
 		IsError bool   `json:"isError"`
 		Error   string `json:"error"`
 	}
-	json.Unmarshal(raw, &ack) // отсутствие полей — не ошибка
+	// Отсутствие полей — не ошибка: пустой ack означает «отказа нет».
+	_ = json.Unmarshal(raw, &ack)
 	if ack.IsError {
 		return fmt.Errorf("ккт: задание отклонено: %s", ack.Error)
 	}
@@ -208,7 +209,7 @@ func (d *atolDevice) await(uuid string, r FiscalReceipt) (FiscalResult, error) {
 			return FiscalResult{}, &FiscalStateUnknownError{UUID: uuid, Err: fmt.Errorf("опрос статуса: %w", err)}
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		resp.Body.Close()
+		resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 		if resp.StatusCode >= 300 {
 			return FiscalResult{}, &FiscalStateUnknownError{UUID: uuid, Err: fmt.Errorf("опрос статуса вернул %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))}
 		}
