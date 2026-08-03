@@ -3,13 +3,13 @@ package configfmt
 import (
 	"bytes"
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 

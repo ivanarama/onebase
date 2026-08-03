@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/sheet"
@@ -252,11 +253,11 @@ func (h *handler) configuratorNewLayout(w http.ResponseWriter, r *http.Request) 
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
 			return
 		}
-		if merr := os.MkdirAll(filepath.Dir(fullPath), 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		if merr := os.MkdirAll(filepath.Dir(fullPath), fsmode.Dir); merr != nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+merr.Error())
 			return
 		}
-		if werr := os.WriteFile(fullPath, src, 0o644); werr != nil { //nolint:gosec // G306: то же
+		if werr := os.WriteFile(fullPath, src, fsmode.File); werr != nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
 			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
 			return
 		}

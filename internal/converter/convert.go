@@ -2,13 +2,13 @@ package converter
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/converter/parser1c"
 	"github.com/ivantit66/onebase/internal/converter/writer"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/onec_forms"
 	"gopkg.in/yaml.v3"
 )

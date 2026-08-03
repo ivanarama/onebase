@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/cli"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 )
 
@@ -32,8 +32,8 @@ func writeStartupLog() {
 	dir := filepath.Join(home, ".onebase")
 	// Каталог может уже быть или быть недоступен — тогда ниже упадёт
 	// сама запись, с понятной причиной и путём.
-	_ = os.MkdirAll(dir, 0o755) //nolint:gosec // G301: права — соглашение репозитория, решение по ним принимается разом на этапе 109H
-	// 0600: диагностический след запуска пишется рядом с реестром баз, в
+	_ = os.MkdirAll(dir, fsmode.Dir)
+	// SecretFile: диагностический след запуска пишется рядом с реестром баз, в
 	// каталоге одного пользователя, и содержит аргументы командной строки
 	// (пусть и с замазанным DSN — см. RedactArgs).
 	f, err := os.OpenFile(filepath.Join(dir, "startup.log"),

@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"errors"
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dsl/loader"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/onec_forms"
 	"github.com/ivantit66/onebase/internal/project"
 )

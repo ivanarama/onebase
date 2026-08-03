@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/dsl/langref"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/spf13/cobra"
 )
 

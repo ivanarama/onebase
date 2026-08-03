@@ -3,9 +3,9 @@ package onec_forms
 import (
 	"encoding/base64"
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 

@@ -2,13 +2,13 @@ package launcher
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"gopkg.in/yaml.v3"
 )
@@ -68,7 +68,7 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		dir := filepath.Join(b.Path, "enums")
-		bestEffort("создать каталог перечислений", os.MkdirAll(dir, fsmode.Dir)) //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		bestEffort("создать каталог перечислений", os.MkdirAll(dir, fsmode.Dir))
 		// find existing file by name field, fallback to name-based filename
 		files, _ := os.ReadDir(dir)
 		targetFile := filepath.Join(dir, nameToFilename(enumName)+".yaml")

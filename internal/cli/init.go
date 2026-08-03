@@ -1,10 +1,10 @@
 package cli
 
 import (
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/spf13/cobra"
 )

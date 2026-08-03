@@ -3,13 +3,13 @@ package launcher
 import (
 	"context"
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 
@@ -331,7 +331,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	p, err := findAccountRegFilePath(dir, reg.Name)
 	if err != nil {
 		// новый файл — subconto/titles сохранять неоткуда, marshal свежего reg
-		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), fsmode.Dir); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), fsmode.Dir); merr != nil {
 			return merr
 		}
 		p = filepath.Join(dir, "accountregs", nameToFilename(reg.Name)+".yaml")

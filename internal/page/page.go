@@ -11,12 +11,12 @@
 package page
 
 import (
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 

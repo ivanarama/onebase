@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"gopkg.in/yaml.v3"
@@ -324,7 +324,7 @@ func (h *handler) backupSettings(w http.ResponseWriter, r *http.Request) {
 		dir := filepath.Join(b.Path, "config")
 		// Проверяем отдельно: иначе пользователь увидит «no such file or
 		// directory» от WriteFile и пойдёт искать пропавший app.yaml.
-		if merr := os.MkdirAll(dir, fsmode.Dir); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		if merr := os.MkdirAll(dir, fsmode.Dir); merr != nil {
 			saveErr = merr
 		} else {
 			saveErr = os.WriteFile(filepath.Join(dir, "app.yaml"), out, fsmode.File) //nolint:gosec // G306: то же
@@ -349,7 +349,7 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := h.backupDir(b)
 	lang := resolveLang(r)
-	if merr := os.MkdirAll(dir, fsmode.Dir); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+	if merr := os.MkdirAll(dir, fsmode.Dir); merr != nil {
 		data := h.loadCfgData(r.Context(), b, "backup")
 		data.Error = tr(lang, "Ошибка загрузки") + ": " + merr.Error()
 		renderCfg(w, r, data)

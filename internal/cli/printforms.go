@@ -2,11 +2,11 @@ package cli
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"

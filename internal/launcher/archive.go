@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 )
 
 // Сборка ZIP-архивов конфигурации: экспорт конфигурации и полный .obz.
@@ -122,16 +123,15 @@ func restoreConfigDir(configDir, basePath string) error {
 		if err != nil {
 			return err
 		}
-		// 0755/0644 ниже — соглашение пакета (25 и 27 мест). Права разбираются
-		// разом на этапе 109H, а не точечно здесь: одиночное ужесточение сделало
-		// бы восстановленную конфигурацию непохожей на созданную обычным путём.
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { //nolint:gosec // G301,G122: см. комментарий выше
+		// Права — общие для всей конфигурации (internal/fsmode): восстановленная
+		// конфигурация должна выглядеть точно так же, как созданная обычным путём.
+		if err := os.MkdirAll(filepath.Dir(dst), fsmode.Dir); err != nil { //nolint:gosec // G122: путь — из временного каталога, который мы сами и распаковали
 			return err
 		}
 		content, err := os.ReadFile(path) //nolint:gosec // G304,G122: путь — из временного каталога, который мы сами и распаковали
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(dst, content, 0o644) //nolint:gosec // G306,G703,G122: dst построен configdb.SafeJoin — это и есть guard от traversal; права — этап 109H
+		return os.WriteFile(dst, content, fsmode.File) //nolint:gosec // G703,G122: dst построен configdb.SafeJoin — это и есть guard от traversal
 	})
 }

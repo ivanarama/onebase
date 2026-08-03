@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
 

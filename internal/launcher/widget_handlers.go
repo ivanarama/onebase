@@ -1,7 +1,6 @@
 package launcher
 
 import (
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"gopkg.in/yaml.v3"
 )

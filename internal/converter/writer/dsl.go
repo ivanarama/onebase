@@ -2,13 +2,13 @@ package writer
 
 import (
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/converter/parser1c"
+	"github.com/ivantit66/onebase/internal/fsmode"
 )
 
 // preprocDirectiveLow матчит строку-директиву препроцессора 1С (рус/англ),
