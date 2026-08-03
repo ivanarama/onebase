@@ -44,10 +44,12 @@ func (s *Server) maskedRecordLabel(ctx context.Context, entity *metadata.Entity,
 	return firstStringField(row, entity)
 }
 
-// deniedMaskedColumn is the fail-closed report/AI gate (план 88D): cols are
-// logical fields from query.Result.ProjectionFields, before output aliases.
-func (s *Server) deniedMaskedColumn(ctx context.Context, sources []query.SourceRef, cols []string) string {
-	return access.DeniedMaskedColumn(auth.UserFromContext(ctx), sources, cols, s.sourceMeta)
+// queryMaskPlan is the report/widget/AI field gate (план 88E). A protected field
+// in a plain projection column is masked in the result; one that drives a
+// filter, grouping or aggregate — where an output mask protects nothing — still
+// denies the whole query (plan.Denied).
+func (s *Server) queryMaskPlan(ctx context.Context, res query.Result) access.QueryMaskPlan {
+	return access.QueryMaskPlanFor(auth.UserFromContext(ctx), res, s.sourceMeta)
 }
 
 // sourceMeta resolves the metadata of a query source object (entity/register/

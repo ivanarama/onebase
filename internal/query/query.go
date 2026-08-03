@@ -49,6 +49,11 @@ type Result struct {
 	// обойти masking через `Телефон КАК Контакт` или функцию над полем.
 	// Значение "*" означает wildcard-проекцию.
 	ProjectionFields []string
+	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
+	// маскировать защищённые поля в колонках результата вместо отказа во всём
+	// запросе; при Projection.Simple == false действует прежний отказ по
+	// ProjectionFields.
+	Projection ProjectionPlan
 }
 
 // SourceRef — объект-источник запроса (для проверки прав доступа).
@@ -3325,6 +3330,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		opts.Params = map[string]any{}
 	}
 	projectionFields := projectionFieldNames(tokens)
+	projectionPlan := analyzeProjection(tokens)
 	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
@@ -3728,6 +3734,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		Args:             tr.args,
 		Sources:          tr.sources,
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
+		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
 	}, nil
 }
 

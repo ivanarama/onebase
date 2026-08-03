@@ -67,8 +67,11 @@ func (s *Server) queryConsoleExec(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, 200, map[string]any{"error": "Ошибка запроса: " + err.Error()})
 		return
 	}
-	if denied := s.deniedMaskedColumn(r.Context(), res.Sources, res.ProjectionFields); denied != "" {
-		jsonResp(w, http.StatusForbidden, map[string]any{"error": "Нет доступа к защищённому полю: " + denied})
+	// Консоль запросов открыта только администратору, но при mask_admin: true
+	// (CC-SEC-006) маска действует и на него — план 88E.
+	maskPlan := s.queryMaskPlan(r.Context(), res)
+	if maskPlan.Denied != "" {
+		jsonResp(w, http.StatusForbidden, map[string]any{"error": "Нет доступа к защищённому полю: " + maskPlan.Denied})
 		return
 	}
 
@@ -77,6 +80,10 @@ func (s *Server) queryConsoleExec(w http.ResponseWriter, r *http.Request) {
 	elapsed := time.Since(start).Round(time.Millisecond)
 	if err != nil {
 		jsonResp(w, 200, map[string]any{"error": "Ошибка выполнения: " + err.Error()})
+		return
+	}
+	if err := maskPlan.Apply(rows); err != nil {
+		jsonResp(w, http.StatusForbidden, map[string]any{"error": "Нет доступа к защищённому полю: " + err.Error()})
 		return
 	}
 

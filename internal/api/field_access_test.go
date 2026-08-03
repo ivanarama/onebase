@@ -209,12 +209,13 @@ func TestAPI_FieldDisclose_FailClosedWhenAuditFails(t *testing.T) {
 	}
 }
 
-func TestAPI_Report_FailClosedOnMaskedColumn(t *testing.T) {
+func TestAPI_Report_MasksColumnAndDeniesFilter(t *testing.T) {
 	cat := clientEntityAPI()
 	repPhone := &reportpkg.Report{Name: "КлиентыТел", Query: `ВЫБРАТЬ Телефон ИЗ Справочник.Клиент`}
 	repName := &reportpkg.Report{Name: "КлиентыИмя", Query: `ВЫБРАТЬ Наименование ИЗ Справочник.Клиент`}
+	repFilter := &reportpkg.Report{Name: "КлиентыОтбор", Query: `ВЫБРАТЬ Наименование ИЗ Справочник.Клиент ГДЕ Телефон <> ""`}
 	h, ctx := newAPITestHandlerWithReports(t, []*metadata.Entity{cat},
-		[]*reportpkg.Report{repPhone, repName}, nil)
+		[]*reportpkg.Report{repPhone, repName, repFilter}, nil)
 	if err := h.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{
 		"Наименование": "Иванов", "Телефон": "+79161234455",
 	}, cat); err != nil {
@@ -222,7 +223,7 @@ func TestAPI_Report_FailClosedOnMaskedColumn(t *testing.T) {
 	}
 	operator := apiUser("operator", auth.Permission{
 		Catalogs:    map[string][]string{"Клиент": {"read"}},
-		Reports:     map[string][]string{"КлиентыТел": {"run"}, "КлиентыИмя": {"run"}},
+		Reports:     map[string][]string{"КлиентыТел": {"run"}, "КлиентыИмя": {"run"}, "КлиентыОтбор": {"run"}},
 		FieldAccess: auth.FieldAccess{Catalogs: map[string]auth.FieldPolicies{"Клиент": {"Телефон": {Read: "mask_tail", Keep: 4}}}},
 	})
 
@@ -234,9 +235,21 @@ func TestAPI_Report_FailClosedOnMaskedColumn(t *testing.T) {
 		return rec
 	}
 
-	// Отчёт, выводящий замаскированную колонку, для оператора запрещён.
-	if rec := run(operator, "КлиентыТел"); rec.Code != http.StatusForbidden {
-		t.Fatalf("masked-column report: expected 403, got %d %s", rec.Code, rec.Body.String())
+	// План 88E: отчёт с чувствительной колонкой строится, но значение приходит
+	// замаскированным — реальный номер в ответ не попадает.
+	rec := run(operator, "КлиентыТел")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("masked-column report: expected 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "+79161234455") {
+		t.Fatalf("реальный номер утёк в отчёт: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "4455") {
+		t.Fatalf("ожидался хвост номера под маской mask_tail: %s", rec.Body.String())
+	}
+	// Отбор по защищённому полю — оракул перебора, отчёт запрещён целиком.
+	if rec := run(operator, "КлиентыОтбор"); rec.Code != http.StatusForbidden {
+		t.Fatalf("filter on masked field: expected 403, got %d %s", rec.Code, rec.Body.String())
 	}
 	// Отчёт без чувствительной колонки строится.
 	if rec := run(operator, "КлиентыИмя"); rec.Code != http.StatusOK {
