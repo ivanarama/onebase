@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/secrets"
 )
 
 func exchangeNoRows(err error) bool {
@@ -161,6 +162,13 @@ func exchangeTokenKey(plan string) string {
 
 // GetExchangeToken возвращает общий токен плана для онлайн-обмена ("" если не
 // задан → сетевые эндпоинты плана закрыты). Отсутствие ключа/таблицы — не ошибка.
+//
+// Значение может быть записано ссылкой на секрет (env:/file:/enc:, план 83) —
+// разыменовываем здесь, в единственной точке чтения: у токена ровно два
+// потребителя-действия, сравнить с заголовком входящего запроса и отправить в
+// заголовке исходящего, и обоим нужно значение. Неразворачиваемая ссылка —
+// ошибка, а не пустой токен: пустой означал бы «обмен не настроен» и тихо
+// открыл бы дверь другой ветке проверки.
 func (db *DB) GetExchangeToken(ctx context.Context, plan string) (string, error) {
 	d := db.dialect
 	var v string
@@ -173,7 +181,11 @@ func (db *DB) GetExchangeToken(ctx context.Context, plan string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("exchange: read token: %w", err)
 	}
-	return strings.TrimSpace(v), nil
+	token, err := secrets.Default().Resolve(strings.TrimSpace(v))
+	if err != nil {
+		return "", fmt.Errorf("exchange: токен плана %s: %w", plan, err)
+	}
+	return strings.TrimSpace(token), nil
 }
 
 // SaveExchangeToken задаёт общий токен плана (одинаковый на всех участниках).

@@ -93,13 +93,25 @@ func New(opts ...Option) *Resolver {
 }
 
 var (
-	defaultOnce sync.Once
-	defaultRes  *Resolver
+	defaultMu  sync.Mutex
+	defaultRes *Resolver
+	defaultFP  string
 )
 
 // Default — общий резолвер процесса поверх реального окружения.
+//
+// Резолвер кэшируется по значениям переменных с мастер-ключом: пока они не
+// менялись, возвращается один и тот же экземпляр, и вывод ключа из парольной
+// фразы (PBKDF2, сотни миллисекунд) не повторяется. Смена переменной приводит к
+// пересборке — иначе процесс, которому ключ выдали после старта, не увидел бы
+// его до перезапуска, а тесты не могли бы задавать ключ через t.Setenv.
 func Default() *Resolver {
-	defaultOnce.Do(func() { defaultRes = New() })
+	fp := os.Getenv(EnvMasterKey) + "\x00" + os.Getenv(EnvMasterKeyFile)
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultRes == nil || defaultFP != fp {
+		defaultRes, defaultFP = New(), fp
+	}
 	return defaultRes
 }
 
