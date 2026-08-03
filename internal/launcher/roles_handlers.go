@@ -650,10 +650,10 @@ func (h *handler) saveConfigFile(ctx context.Context, b *Base, relPath string, c
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil { //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 		return err
 	}
-	return os.WriteFile(full, content, fsmode.File)
+	return os.WriteFile(full, content, fsmode.File) //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 }
 
 func (h *handler) saveRoleConfigFile(ctx context.Context, b *Base, relPath string, content []byte, stalePaths []string, author, roleName string) error {

@@ -58,7 +58,7 @@ func (r *Repo) ImportFromDir(ctx context.Context, dir string) error {
 				return fmt.Errorf("configdb: unsafe import path %q: %w", rel, err)
 			}
 
-			content, err := os.ReadFile(path)
+			content, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			if err != nil {
 				return fmt.Errorf("configdb: read %s: %w", rel, err)
 			}

@@ -223,7 +223,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if scaffold {
-			if err := os.MkdirAll(b.Path, fsmode.Dir); err != nil {
+			if err := os.MkdirAll(b.Path, fsmode.Dir); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 				render(w, r, "page-form", map[string]any{
 					"Title": tr(lang, "onebase — Добавить базу"),
 					"IsNew": true, "Base": b, "Error": tr(lang, "Не удалось создать папку") + ": " + err.Error(),

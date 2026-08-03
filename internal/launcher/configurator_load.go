@@ -1069,13 +1069,13 @@ func copyDir(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, fsmode.Dir)
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}
 		if err := os.MkdirAll(filepath.Dir(target), fsmode.Dir); err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, fsmode.File)
+		return os.WriteFile(target, data, fsmode.File) //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 	})
 }

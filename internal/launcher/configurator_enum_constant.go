@@ -25,6 +25,12 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enumName := r.FormValue("enum_name")
+	if !validObjectName(enumName) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 
 	type enumValueOut struct {
 		Name   string            `yaml:"name"`
@@ -80,7 +86,7 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		saveErr = os.WriteFile(targetFile, out, fsmode.File)
+		saveErr = os.WriteFile(targetFile, out, fsmode.File) //nolint:gosec // G703: имя объекта проверено validObjectName, а сам путь получен обходом каталога проекта
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
@@ -106,6 +112,12 @@ func (h *handler) configuratorSaveConstant(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	constName := r.FormValue("const_name")
+	if !validObjectName(constName) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	label := strings.TrimSpace(r.FormValue("label"))
 	typ := strings.TrimSpace(r.FormValue("type"))
 	ref := strings.TrimSpace(r.FormValue("ref"))
@@ -230,7 +242,7 @@ func (h *handler) configuratorSaveConstant(w http.ResponseWriter, r *http.Reques
 			}
 			out, err := updateConstantsFile(raw)
 			if err == nil {
-				saveErr = os.WriteFile(p, out, fsmode.File)
+				saveErr = os.WriteFile(p, out, fsmode.File) //nolint:gosec // G703: имя объекта проверено validObjectName, а сам путь получен обходом каталога проекта
 			} else {
 				saveErr = err
 			}

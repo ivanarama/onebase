@@ -28,6 +28,12 @@ func (h *handler) configuratorSaveWidget(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("widget_name"))
+	if !validObjectName(name) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	body := r.FormValue("yaml")
 	if name == "" {
 		data := h.loadCfgData(r.Context(), b, "tree")

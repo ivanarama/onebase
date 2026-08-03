@@ -119,6 +119,12 @@ func (h *handler) configuratorSaveRegisterFields(w http.ResponseWriter, r *http.
 		return
 	}
 	regName := r.FormValue("register")
+	if !validObjectName(regName) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 
 	dims := parseRegSection(r, "dim")
 	res := parseRegSection(r, "res")
@@ -265,6 +271,12 @@ func (h *handler) configuratorSaveInfoRegFields(w http.ResponseWriter, r *http.R
 		Dimensions: parseRegSection(r, "dim"),
 		Resources:  parseRegSection(r, "res"),
 	}
+	if !validObjectName(reg.Name) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
+	}
 	var objTitles *map[string]string
 	if formHasMapField(r, "titles") {
 		t := parseMapForm(r, "titles")
@@ -337,7 +349,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	if merr != nil {
 		return merr
 	}
-	return os.WriteFile(p, out, fsmode.File)
+	return os.WriteFile(p, out, fsmode.File) //nolint:gosec // G703: имя объекта проверено validObjectName, а сам путь получен обходом каталога проекта
 }
 
 func (h *handler) saveAccountRegToDB(ctx context.Context, b *Base, reg saveAccountReg, setTitles bool) error {
@@ -399,6 +411,12 @@ func (h *handler) configuratorSaveAccountRegister(w http.ResponseWriter, r *http
 		Title:     strings.TrimSpace(r.FormValue("title")),
 		Accounts:  strings.TrimSpace(r.FormValue("accounts")),
 		Resources: parseRegSection(r, "res"),
+	}
+	if !validObjectName(reg.Name) {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Недопустимое имя объекта")
+		renderCfg(w, r, data)
+		return
 	}
 	setTitles := formHasMapField(r, "titles")
 	if setTitles {

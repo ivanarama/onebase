@@ -322,7 +322,7 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 		renderCfg(w, r, data)
 		return
 	}
-	raw, err := os.ReadFile(filePath)
+	raw, err := os.ReadFile(filePath) //nolint:gosec // G703: filePath построен SafeJoin, имя проверено validObjectName
 	if err != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")
 		data.Error = tr(lang, "Ошибка чтения") + ": " + err.Error()
@@ -409,7 +409,7 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
-	if err := os.WriteFile(filePath, out, fsmode.File); err != nil {
+	if err := os.WriteFile(filePath, out, fsmode.File); err != nil { //nolint:gosec // G703: filePath построен SafeJoin, имя проверено validObjectName
 		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
 		renderCfg(w, r, data)
 		return
@@ -938,7 +938,7 @@ func (h *handler) listConfiguratorFiles(ctx context.Context, b *Base) ([]configd
 		var content []byte
 		ext := strings.ToLower(filepath.Ext(rel))
 		if ext == ".yaml" || ext == ".yml" {
-			content, err = os.ReadFile(full)
+			content, err = os.ReadFile(full) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			if err != nil {
 				return err
 			}

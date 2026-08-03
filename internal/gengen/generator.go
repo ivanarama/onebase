@@ -83,7 +83,7 @@ func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), fsmode.Dir); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, fsmode.File)
+	return os.WriteFile(dst, data, fsmode.File) //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 }
 
 // patchAppYAML updates config/app.yaml with addon references.

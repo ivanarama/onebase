@@ -628,7 +628,7 @@ func (s *Server) gengenGenerate(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		rel, _ := filepath.Rel(outDir, path)
-		data, _ := os.ReadFile(path)
+		data, _ := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		files[rel] = string(data)
 		return nil
 	})

@@ -147,7 +147,7 @@ func collectKeys(root string, subdirs []string) ([]string, error) {
 			if strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			if err != nil {
 				return err
 			}

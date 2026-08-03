@@ -112,7 +112,7 @@ func (h *handler) readConfigFileRaw(ctx context.Context, b *Base, relPath string
 	if err != nil {
 		return nil, false
 	}
-	raw, err := os.ReadFile(full)
+	raw, err := os.ReadFile(full) //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 	if err != nil {
 		return nil, false
 	}
@@ -142,7 +142,7 @@ func (h *handler) writeConfigFileRaw(ctx context.Context, b *Base, relPath strin
 	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
-	return os.WriteFile(full, content, fsmode.File)
+	return os.WriteFile(full, content, fsmode.File) //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 }
 
 // orderLineRe находит верхнеуровневую строку «order: N» в YAML подсистемы.

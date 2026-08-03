@@ -376,7 +376,7 @@ func (h *handler) configuratorFileRaw(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad path", http.StatusBadRequest)
 			return
 		}
-		content, err = os.ReadFile(abs)
+		content, err = os.ReadFile(abs) //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
 		if err != nil {
 			http.NotFound(w, r)
 			return

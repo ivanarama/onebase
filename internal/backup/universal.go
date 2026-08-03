@@ -641,7 +641,7 @@ func exportConfig(ctx context.Context, db *storage.DB, configSource, configDir s
 		if d.IsDir() {
 			return nil
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return nil
 		}
@@ -718,7 +718,7 @@ func exportAttachments(attachmentsDir string, zw *zip.Writer) (int, error) {
 		if err != nil {
 			return err
 		}
-		f, err := os.Open(path)
+		f, err := os.Open(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}
@@ -1674,7 +1674,7 @@ func restoreAttachments(srcDir, dstDir string) (int, error) {
 		if err := os.MkdirAll(filepath.Dir(dst), fsmode.Dir); err != nil {
 			return err
 		}
-		src, err := os.Open(path)
+		src, err := os.Open(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}

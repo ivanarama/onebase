@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,7 @@ func writeStartupLog() {
 	// каталоге одного пользователя, и содержит аргументы командной строки
 	// (пусть и с замазанным DSN — см. RedactArgs).
 	f, err := os.OpenFile(filepath.Join(dir, "startup.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, fsmode.SecretFile)
 	if err != nil {
 		return
 	}

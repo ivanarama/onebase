@@ -243,7 +243,7 @@ func (g *genSession) format(pathArg string) string {
 			return "ошибка форматирования " + rel + ": " + err.Error()
 		}
 		if string(out) != string(data) {
-			if err := os.WriteFile(full, out, fsmode.File); err != nil {
+			if err := os.WriteFile(full, out, fsmode.File); err != nil { //nolint:gosec // G703: путь построен configdb.SafeJoin — он и есть guard от traversal, gosec его не распознаёт
 				return "ошибка записи " + rel + ": " + err.Error()
 			}
 			g.changed[rel] = true
@@ -404,7 +404,7 @@ func (g *genSession) impact(object, field, procedure string) string {
 		if !strings.HasSuffix(lowPath, ".yaml") && !strings.HasSuffix(lowPath, ".yml") && !strings.HasSuffix(lowPath, ".os") {
 			return nil
 		}
-		data, err := os.ReadFile(p)
+		data, err := os.ReadFile(p) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return nil
 		}
@@ -995,7 +995,7 @@ func copyTree(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, fsmode.Dir)
 		}
-		in, err := os.Open(path)
+		in, err := os.Open(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"time"
@@ -47,7 +48,7 @@ func NewStore() (*Store, error) {
 	// установленный через `onebase service install --user`, работает со своим
 	// HOME и сюда не заглядывает. Существующему каталогу MkdirAll права не
 	// меняет, поэтому на уже развёрнутых машинах это ничего не ломает.
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, fsmode.SecretDir); err != nil {
 		return nil, err
 	}
 	return &Store{path: filepath.Join(dir, "ibases.yaml")}, nil
@@ -83,7 +84,7 @@ func (s *Store) save(bases []*Base) error {
 	// Уже существующие файлы с 0644 чинятся сами: запись идёт во временный
 	// файл с новыми правами, и Rename заменяет им прежний.
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	if err := os.WriteFile(tmp, data, fsmode.SecretFile); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)
