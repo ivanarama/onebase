@@ -62,6 +62,19 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	outf("Бэкап сохранён: %s\n", path)
+	// Копия снимается с базы целиком, поэтому уносит и секреты, записанные в
+	// _settings значением (план 83). Отфильтровать их из копии нельзя —
+	// восстановление должно давать рабочую базу, — но предупредить обязаны:
+	// файл требует того же обращения, что и сами секреты.
+	if paths := backup.PlaintextSecretPathsFor(cmd.Context(), "", backupDB, backupSQLite); len(paths) > 0 {
+		outln("")
+		outf("Внимание: в копию попали секреты, лежащие в базе открытым текстом (%d):\n", len(paths))
+		for _, p := range paths {
+			outln("  " + p)
+		}
+		outln("Храните файл как сам секрет либо уберите значения из базы:")
+		outln("  onebase secret set <путь> --stdin   (см. onebase secret --help)")
+	}
 	return nil
 }
 

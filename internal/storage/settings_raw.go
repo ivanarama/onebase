@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
+
+	"github.com/ivantit66/onebase/internal/llm"
 )
 
 // Прямой доступ к _settings по ключу — для инструментов, которые работают со
@@ -63,6 +66,65 @@ func (db *DB) GetSetting(ctx context.Context, key string) (value string, ok bool
 		return "", false, fmt.Errorf("settings: read %s: %w", key, e)
 	}
 	return v, true, nil
+}
+
+// SecretCarrier — место в базе, где лежит секрет: логический путь и записанное
+// значение (ссылка либо секрет открытым текстом).
+type SecretCarrier struct {
+	Path  string
+	Value string
+}
+
+// SecretCarriers перечисляет носители секретов в _settings: ключи провайдеров
+// ИИ внутри llm.config, токены планов обмена. Значения возвращаются как есть —
+// решать, что с ними делать, вызывающему: `onebase secret list` описывает их
+// вид, бэкап предупреждает о тех, что лежат открытым текстом.
+//
+// Место общее намеренно: иначе обход llm.config пришлось бы повторять в каждом
+// инструменте, и они разошлись бы при добавлении новой подсистемы.
+func (db *DB) SecretCarriers(ctx context.Context) ([]SecretCarrier, error) {
+	entries, err := db.ListSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []SecretCarrier
+	for _, e := range entries {
+		switch {
+		case e.Key == "llm.config":
+			cfg, err := llm.ParseConfig(e.Value)
+			if err != nil {
+				continue // битый JSON — забота проверки конфигурации, не наша
+			}
+			for _, ep := range cfg.Endpoints {
+				if strings.TrimSpace(ep.APIKey) != "" {
+					out = append(out, SecretCarrier{"llm." + ep.Name + ".api_key", ep.APIKey})
+				}
+				for h, v := range ep.Headers {
+					if strings.TrimSpace(v) != "" && secretHeaderName(h) {
+						out = append(out, SecretCarrier{"llm." + ep.Name + ".headers." + h, v})
+					}
+				}
+			}
+		case strings.HasPrefix(e.Key, "exchange.token."):
+			if strings.TrimSpace(e.Value) != "" {
+				out = append(out, SecretCarrier{e.Key, e.Value})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// secretHeaderName отделяет заголовки с учётными данными от служебных
+// (Content-Type, Accept): точного списка не существует, ориентируемся на имя.
+func secretHeaderName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, marker := range []string{"auth", "token", "key", "secret", "signature", "password"} {
+		if strings.Contains(n, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // tableExistsIn — проверка наличия служебной таблицы без её создания: команды

@@ -301,32 +301,22 @@ func printSecretRows(rows []secretRow) {
 
 // baseSecrets собирает носители секретов из _settings.
 func baseSecrets(ctx context.Context, db *storage.DB) ([]secretRow, error) {
-	entries, err := db.ListSettings(ctx)
+	carriers, err := db.SecretCarriers(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []secretRow
+	for _, c := range carriers {
+		out = append(out, secretRow{c.Path, secrets.Describe(c.Value)})
+	}
+	// Произвольные ключи, положенные через `secret set _settings:…`: носителями
+	// их не считает никто, кроме администратора, — показываем по факту шифрования.
+	entries, err := db.ListSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range entries {
-		switch {
-		case e.Key == "llm.config":
-			cfg, err := llm.ParseConfig(e.Value)
-			if err != nil {
-				continue
-			}
-			for _, ep := range cfg.Endpoints {
-				if ep.APIKey != "" {
-					out = append(out, secretRow{"llm." + ep.Name + ".api_key", secrets.Describe(ep.APIKey)})
-				}
-				for h, v := range ep.Headers {
-					if secrets.Classify(v) != secrets.KindEmpty {
-						out = append(out, secretRow{"llm." + ep.Name + ".headers." + h, secrets.Describe(v)})
-					}
-				}
-			}
-		case strings.HasPrefix(e.Key, "exchange.token."):
-			out = append(out, secretRow{e.Key, secrets.Describe(e.Value)})
-		case secrets.Classify(e.Value) == secrets.KindEnc:
-			// Произвольный ключ, положенный через `secret set _settings:…`.
+		if secrets.Classify(e.Value) == secrets.KindEnc {
 			out = append(out, secretRow{"_settings:" + e.Key, secrets.Describe(e.Value)})
 		}
 	}

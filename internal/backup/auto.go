@@ -63,6 +63,10 @@ func createAutoBackup(ctx context.Context, cfg *project.BackupConfig, target Aut
 	if err != nil {
 		return "", err
 	}
+	// Копия снимается с базы целиком — секреты, лежащие в _settings значением,
+	// уезжают вместе с ней (план 83). Предупреждение в журнал: ночной бэкап
+	// некому показать на экране, а файл может уехать ещё и off-site в S3.
+	WarnPlaintextSecrets(ctx, target.DBType, target.DSN, target.SQLitePath)
 	keepLast := cfg.KeepLast
 	if keepLast <= 0 {
 		keepLast = defaultAutoBackupKeepLast
