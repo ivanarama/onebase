@@ -55,9 +55,11 @@ PostgreSQL; для SQLite потребовалось бы суммировани
    утечка: ключ ИИ из `${env:...}` в `app.yaml` раскрывался при загрузке и
    ложился в `_settings.llm.config` значением — то есть уезжал в обычный дамп
    бэкапа открытым текстом.
-4. **План 81** (реструктуризация схемы) — самый дорогой пробел из «не начатых»:
-   `onebase refactor rename-field` правит файлы конфигурации и честно печатает
-   «колонка не переименовывается автоматически», но планировщика миграций БД нет.
+4. ~~**План 81** (реструктуризация схемы)~~ ✅ **Закрыт** (2026-08-03, ветка
+   `feature/81-schema-restructuring`): устойчивый `id` реквизита, планировщик
+   add/rename/retype/drop, `migrate --dry-run` и `--allow-destructive`,
+   проверка преобразуемости значений до DDL, авто-`id` в конфигураторе.
+   Переименование реквизита больше не отвязывает данные от поля.
 5. **Планы 88E / 79 / 79F** — доводка контуров доступа (см. таблицы ниже).
 6. Стратегические, каждый отдельным проектом: **82** (полнотекстовый поиск),
    **84** (enterprise-auth), **85** (движок бизнес-процессов), **60B**
@@ -71,13 +73,13 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 
 | № | Фича | Эстимейт | Проверка |
 |---|---|---|---|
-| **81** | Безопасная реструктуризация схемы | 7–10 дней | нет `PlanSchemaMigration`, нет `id` у `metadata.Field`, нет `--dry-run`/`--allow-destructive` |
 | **82** | Полнотекстовый поиск | 6–8 дней | нет `tsvector`/`FTS5`/`FullTextIndex` нигде в коде |
 | **84** | Enterprise-auth (TOTP/OIDC/LDAP) | 7–10 дней | грепы `totp|oidc|ldap|2fa` по `internal/`,`cmd/` — пусто |
 | **60B** | Marketplace конфигураций | — | нет `internal/marketplace`, `onebase install`; часть A (версионирование) закрыта |
 | **73** | Lucide через SVG-спрайт | — | сам план отложен «до дефицита иконок» |
 | **46** | PWA в App Store / Google Play | — | нужен `/.well-known/assetlinks.json`; обёртки вне репозитория |
 | — | `dev-workflow-improvements` | ~3–4 дня | нет hot reload Go, `--open`, browser sync |
+| **114** | [`onebase doctor`](114-doctor.md) — тестирование и исправление базы | 4–6 дней | заведён 2026-08-03 как следующий шаг после плана 81: битые ссылки, сверка схемы, обслуживание СУБД; часть операций уже есть, но разбросана |
 
 ## Реализованные этапы
 
@@ -231,7 +233,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 80 | [80-register-totals.md](80-register-totals.md) | Итоги регистров (предрасчёт остатков вместо `SUM` на лету) — ключ к масштабу учёта | 6–9 дней | ✅ Реализовано (накопления + бухгалтерии): итоги в транзакции проводки, быстрый путь `query` (остатки/на-момент/обороты), CLI `recalc-totals`, бенч ~150×. Опц. остаток — `totals.period`/свёртка |
-| 81 | [81-schema-restructuring-safety.md](81-schema-restructuring-safety.md) | Безопасная реструктуризация схемы: устойчивые id полей, rename/retype/drop с данными, dry-run | 7–10 дней | ⬜ Не начато (перепроверено 2026-08-02). Смежное есть и переиспользуется: `onebase refactor rename-field` (правит файлы конфигурации), паттерн table-rebuild в `fixInfoRegPKSQLite`, dry-run-образец в `gc-blobs` |
+| 81 | [81-schema-restructuring-safety.md](81-schema-restructuring-safety.md) | Безопасная реструктуризация схемы: устойчивые id полей, rename/retype/drop с данными, dry-run | 7–10 дней | ✅ Закрыт 2026-08-03 (`feature/81-schema-restructuring`): `id` у поля, карта `_schema_fields`, планировщик add/rename/retype/drop, `migrate --dry-run`/`--allow-destructive`, авто-`id` в конфигураторе. Не делалось: `id` у объектов (переименование таблиц) — отдельный сценарий |
 | 82 | [82-fulltext-search.md](82-fulltext-search.md) | Полнотекстовый / глобальный поиск (PG tsvector, SQLite FTS5) с учётом RBAC+RLS | 6–8 дней | ⬜ Не начато (перепроверено 2026-08-02: `tsvector`/`FTS5`/`FullTextIndex` в коде отсутствуют) |
 | 83 | [83-secrets-management.md](83-secrets-management.md) | Управление секретами at-rest: единый резолвер `env:`/`file:`/`enc:`, шифрование, гигиена экспорта/бэкапа | 4–6 дней | ✅ Закрыт 2026-08-03 (`feature/83-secrets`): `internal/secrets` (AES-GCM, мастер-ключ вне базы), разыменование в момент использования, `onebase secret`, предупреждения `secret.plaintext` в `check` и об открытых секретах в `backup`. Ключ ИИ больше не ложится в `_settings` значением |
 | 84 | [84-enterprise-auth.md](84-enterprise-auth.md) | Enterprise-аутентификация: TOTP-2FA, SSO (OIDC), опц. LDAP — всё opt-in | 7–10 дней | ⬜ Не начато (перепроверено 2026-08-02: грепы `totp|otpauth|oidc|ldap|2fa` по `internal/`,`cmd/` пусты) |

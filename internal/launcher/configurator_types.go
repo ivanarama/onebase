@@ -20,6 +20,11 @@ func cfgUpsert(ctx context.Context, db *storage.DB, path string, content []byte)
 // ── YAML save structs ────────────────────────────────────────────────────────
 
 type saveField struct {
+	// ID — устойчивый идентификатор реквизита (план 81). Конфигуратор
+	// проставляет его сам и сохраняет при перезаписи файла: без него
+	// переименование реквизита отвязало бы данные от поля, а редактор,
+	// не знающий про ключ, стирал бы его при каждом сохранении.
+	ID     string            `yaml:"id,omitempty"`
 	Name   string            `yaml:"name"`
 	Title  string            `yaml:"title,omitempty"`
 	Titles map[string]string `yaml:"titles,omitempty"`

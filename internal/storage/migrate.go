@@ -89,6 +89,9 @@ func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Regist
 		if err := db.renameSnakeCols(ctx, table, allFields); err != nil {
 			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
 		}
+		if err := db.restructureTable(ctx, table, allFields); err != nil {
+			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
+		}
 		for _, f := range allFields {
 			if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 				return fmt.Errorf("migrate register %s.%s: %w", reg.Name, f.Name, err)
@@ -139,6 +142,12 @@ func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoReg
 			if err := db.AddColumnIfMissing(ctx, table, "period", d.TypeTimestamp()); err != nil {
 				return fmt.Errorf("migrate info register %s.period: %w", ir.Name, err)
 			}
+		}
+		// Реструктуризация измерений и ресурсов (план 81). Измерения входят в
+		// первичный ключ: переименование безопасно, а вот удаление измерения
+		// СУБД отклонит — и это правильнее, чем разрушить ключ регистра.
+		if err := db.restructureTable(ctx, table, append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)); err != nil {
+			return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
 		}
 		// Измерения и ресурсы — добавляем если их нет.
 		for _, f := range ir.Dimensions {
@@ -457,6 +466,12 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 		if err := db.renameSnakeCols(ctx, table, e.Fields); err != nil {
 			return fmt.Errorf("migrate %s: %w", e.Name, err)
 		}
+		// Реструктуризация (план 81) идёт ДО добавления колонок: иначе
+		// переименованное поле успело бы завести новую пустую колонку, и
+		// переименовывать было бы уже не во что.
+		if err := db.restructureTable(ctx, table, e.Fields); err != nil {
+			return fmt.Errorf("migrate %s: %w", e.Name, err)
+		}
 		for _, f := range e.Fields {
 			if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 				return fmt.Errorf("migrate %s.%s: %w", e.Name, f.Name, err)
@@ -486,6 +501,9 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
 			}
 			tpTable := metadata.TablePartTableName(e.Name, tp.Name)
+			if err := db.restructureTable(ctx, tpTable, tp.Fields); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
+			}
 			for _, f := range tp.Fields {
 				if err := db.AddColumnIfMissing(ctx, tpTable, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 					return fmt.Errorf("migrate %s.%s.%s: %w", e.Name, tp.Name, f.Name, err)

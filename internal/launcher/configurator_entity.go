@@ -131,12 +131,14 @@ func findEntityFilePath(dir, entityName string) (string, error) {
 }
 
 func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity) {
-	ent.Fields = fields
+	// Устойчивые id (план 81) переносим из прежнего состояния файла и выдаём
+	// новым реквизитам — иначе редактор стирал бы их при каждом сохранении.
+	ent.Fields = ensureFieldIDs(ent.Fields, fields)
 	existingTP := make(map[string]bool, len(ent.TableParts))
 	for i, tp := range ent.TableParts {
 		existingTP[tp.Name] = true
 		if f, ok := tpFields[tp.Name]; ok {
-			ent.TableParts[i].Fields = f
+			ent.TableParts[i].Fields = ensureFieldIDs(tp.Fields, f)
 		}
 	}
 	// Новые табличные части — ключи tpFields, которых ещё нет среди
@@ -152,7 +154,7 @@ func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]
 	}
 	sort.Strings(newTP)
 	for _, name := range newTP {
-		ent.TableParts = append(ent.TableParts, saveTP{Name: name, Fields: tpFields[name]})
+		ent.TableParts = append(ent.TableParts, saveTP{Name: name, Fields: ensureFieldIDs(nil, tpFields[name])})
 	}
 	if posting != nil {
 		ent.Posting = *posting

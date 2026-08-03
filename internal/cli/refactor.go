@@ -160,7 +160,7 @@ func runRefactor(cmd *cobra.Command, req refactorRequest) error {
 		To:             req.to,
 		Write:          req.write,
 		Impact:         impact,
-		MigrationNotes: refactorMigrationNotes(req),
+		MigrationNotes: refactorMigrationNotes(bc.Dir, req),
 		Stats:          map[string]interface{}{"files": len(ops), "replacements": refactorReplacementCount(ops)},
 	}
 	for _, op := range ops {
@@ -532,7 +532,8 @@ func refactorReplacementCount(ops []refactorOp) int {
 	return n
 }
 
-func refactorMigrationNotes(req refactorRequest) []string {
+func refactorMigrationNotes(root string, req refactorRequest) []string {
+	const usageNote = "Проверьте формы, отчёты, виджеты, роли и .os модули, где поле использовалось без квалификатора объекта."
 	switch req.typ {
 	case "rename-object":
 		return []string{
@@ -540,13 +541,51 @@ func refactorMigrationNotes(req refactorRequest) []string {
 			"После применения выполните `onebase check`, миграцию базы и smoke-запуск ключевых сценариев.",
 		}
 	case "rename-field":
+		// Судьба данных зависит от того, есть ли у реквизита устойчивый id
+		// (план 81) — и это ровно то, что человеку надо знать перед миграцией.
+		if fieldHasStableID(root, req.object, req.from) {
+			return []string{
+				"Колонка переименуется вместе с данными при следующем `onebase migrate` — у реквизита задан устойчивый id. План изменений: `onebase migrate --dry-run`.",
+				usageNote,
+			}
+		}
 		return []string{
-			"Проверьте миграцию данных: колонка поля не переименовывается автоматически на уже существующей базе.",
-			"Проверьте формы, отчёты, виджеты, роли и .os модули, где поле использовалось без квалификатора объекта.",
+			"У реквизита НЕТ устойчивого id: колонка не переименуется, данные останутся в осиротевшей старой. Задайте реквизиту `id` до миграции — тогда переименование сохранит данные (план 81).",
+			usageNote,
 		}
 	default:
 		return nil
 	}
+}
+
+// fieldHasStableID сообщает, задан ли у реквизита устойчивый id. Смотрим файл
+// до применения правки — поле там ещё под старым именем.
+func fieldHasStableID(root, object, field string) bool {
+	rel := findEntityFile(root, object)
+	if rel == "" {
+		return false
+	}
+	kind := metadata.KindCatalog
+	if strings.HasPrefix(rel, "documents/") {
+		kind = metadata.KindDocument
+	}
+	e, err := metadata.LoadFile(filepath.Join(root, filepath.FromSlash(rel)), kind)
+	if err != nil || e == nil {
+		return false
+	}
+	for _, f := range e.Fields {
+		if strings.EqualFold(f.Name, field) {
+			return f.ID != ""
+		}
+	}
+	for _, tp := range e.TableParts {
+		for _, f := range tp.Fields {
+			if strings.EqualFold(f.Name, field) {
+				return f.ID != ""
+			}
+		}
+	}
+	return false
 }
 
 func printRefactorResult(res refactorResult) {

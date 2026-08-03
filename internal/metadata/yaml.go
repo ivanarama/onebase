@@ -10,6 +10,10 @@ import (
 )
 
 type rawField struct {
+	// ID — устойчивый идентификатор поля (план 81). Не меняется при
+	// переименовании, поэтому именно он связывает поле метаданных с колонкой
+	// таблицы: без него rename неотличим от «удалили одно, добавили другое».
+	ID     string            `yaml:"id"`
 	Name   string            `yaml:"name"`
 	Title  string            `yaml:"title"`
 	Label  string            `yaml:"label"`
@@ -397,7 +401,7 @@ func parseField(rf rawField) Field {
 	if title == "" {
 		title = rf.Label
 	}
-	f := Field{Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type), AllowInlineCreate: rf.AllowInlineCreate}
+	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type), AllowInlineCreate: rf.AllowInlineCreate}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {
