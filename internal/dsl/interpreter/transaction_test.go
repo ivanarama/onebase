@@ -35,7 +35,7 @@ func openTxTestDB(t *testing.T) (*storage.DB, context.Context) {
 		)`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		db.Exec(context.Background(), `DROP TABLE IF EXISTS _tx_test_items`) //nolint:errcheck
+		db.Exec(context.Background(), `DROP TABLE IF EXISTS _tx_test_items`) //nolint:errcheck,gosec // G104: директива подавляет только перечисленные линтеры
 	})
 	_, err = db.Exec(ctx, `TRUNCATE _tx_test_items`)
 	require.NoError(t, err)

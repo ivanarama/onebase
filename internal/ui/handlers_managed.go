@@ -78,7 +78,7 @@ func (s *Server) prepareManagedFormData(data map[string]any, form *metadata.Form
 		return
 	}
 	if css := formConditionalCSS(form); css != "" {
-		data["FormConditionalCSS"] = template.CSS(css)
+		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 	}
 	rows, _ := data["TablePartRows"].(map[string][]map[string]any)
 	if len(rows) == 0 || len(form.Conditional) == 0 || s.interp == nil {

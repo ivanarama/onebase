@@ -89,7 +89,11 @@ func (r *Runner) Start(base *Base) error {
 	if err != nil {
 		return err
 	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// 0600: журнал лежит в ~/.onebase (каталог теперь 0700) и содержит вывод
+	// прикладного сервера — там могут оказаться данные пользователей. Пишет и
+	// читает его только лаунчер под тем же пользователем, так что ужесточение
+	// никому не мешает.
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: logPath собран baseLogPath из идентификатора базы, а не из запроса
 	if err != nil {
 		return fmt.Errorf("runner: log: %w", err)
 	}
@@ -120,7 +124,7 @@ func (r *Runner) Start(base *Base) error {
 		return fmt.Errorf("runner: debug token: %w", err)
 	}
 
-	cmd := exec.Command(exe, args...)
+	cmd := exec.Command(exe, args...) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Env = append(os.Environ(), "ONEBASE_DEBUG_TOKEN="+debugToken)
@@ -233,7 +237,7 @@ func killByPort(port int) {
 		bestEffort("завершить процесс на порту через PowerShell", psErr)
 	case "darwin":
 		target := fmt.Sprintf(":%d", port)
-		out, _ := exec.Command("lsof", "-ti", target).Output()
+		out, _ := exec.Command("lsof", "-ti", target).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		if pid := strings.TrimSpace(string(out)); pid != "" {
 			for _, p := range strings.Fields(pid) {
 				// Результат не решающий: успех проверяется опросом порта в
@@ -244,7 +248,7 @@ func killByPort(port int) {
 		}
 	case "linux":
 		target := fmt.Sprintf(":%d", port)
-		out, _ := exec.Command("sh", "-c", fmt.Sprintf("ss -tlnp 2>/dev/null | grep '%s '", target)).Output()
+		out, _ := exec.Command("sh", "-c", fmt.Sprintf("ss -tlnp 2>/dev/null | grep '%s '", target)).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		for _, line := range strings.Split(string(out), "\n") {
 			if idx := strings.Index(line, "pid="); idx >= 0 {
 				rest := line[idx+4:]
@@ -350,7 +354,7 @@ func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
 		args = append(args, "--config-source", "database")
 	}
 
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	noWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	if err == nil {

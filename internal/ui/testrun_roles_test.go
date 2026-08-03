@@ -39,10 +39,10 @@ func writeRoleAssertProject(t *testing.T) string {
 
 	add := func(name, code string) {
 		yaml := "name: " + name + "\nkind: test\n"
-		if err := os.WriteFile(filepath.Join(procDir, name+".yaml"), []byte(yaml), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(procDir, name+".yaml"), []byte(yaml), 0o644); err != nil { //nolint:gosec // G703: путь построен под контролем (SafeJoin либо каталог, заданный администратором)
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(srcDir, name+".proc.os"), []byte(code), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(srcDir, name+".proc.os"), []byte(code), 0o644); err != nil { //nolint:gosec // G703: путь построен под контролем (SafeJoin либо каталог, заданный администратором)
 			t.Fatal(err)
 		}
 	}

@@ -309,7 +309,7 @@ func installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSo
 		{"systemctl", "enable", svcName},
 		{"systemctl", "start", svcName},
 	} {
-		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 			return fmt.Errorf("%s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
@@ -375,17 +375,17 @@ func installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, c
 		return nil
 	}
 
-	out, err := exec.Command("sc.exe", "create", svcName,
+	out, err := exec.Command("sc.exe", "create", svcName, //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		"binPath=", binPath,
 		"start=", "auto",
 		"DisplayName=", "OneBase — "+displayName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sc.exe create: %w\n%s", err, out)
 	}
-	if out, err := exec.Command("sc.exe", "description", svcName, "OneBase business platform").CombinedOutput(); err != nil {
+	if out, err := exec.Command("sc.exe", "description", svcName, "OneBase business platform").CombinedOutput(); err != nil { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		return fmt.Errorf("sc.exe description: %w\n%s", err, out)
 	}
-	if out, err := exec.Command("sc.exe", "start", svcName).CombinedOutput(); err != nil {
+	if out, err := exec.Command("sc.exe", "start", svcName).CombinedOutput(); err != nil { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		return fmt.Errorf("sc.exe start: %w\n%s", err, out)
 	}
 
@@ -405,7 +405,7 @@ func runServiceUninstall(cmd *cobra.Command, _ []string) error {
 	}
 	switch runtime.GOOS {
 	case "linux":
-		if out, err := exec.Command("systemctl", "disable", "--now", svcName).CombinedOutput(); err != nil {
+		if out, err := exec.Command("systemctl", "disable", "--now", svcName).CombinedOutput(); err != nil { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 			return fmt.Errorf("systemctl disable --now %s: %w: %s", svcName, err, strings.TrimSpace(string(out)))
 		}
 		unitPath := fmt.Sprintf("/etc/systemd/system/%s.service", svcName)
@@ -417,10 +417,10 @@ func runServiceUninstall(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Printf("Сервис %s удалён.\n", svcName)
 	case "windows":
-		if out, err := exec.Command("sc.exe", "stop", svcName).CombinedOutput(); err != nil && !strings.Contains(string(out), "1062") {
+		if out, err := exec.Command("sc.exe", "stop", svcName).CombinedOutput(); err != nil && !strings.Contains(string(out), "1062") { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 			return fmt.Errorf("sc.exe stop: %w\n%s", err, out)
 		}
-		out, err := exec.Command("sc.exe", "delete", svcName).CombinedOutput()
+		out, err := exec.Command("sc.exe", "delete", svcName).CombinedOutput() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		if err != nil {
 			return fmt.Errorf("sc.exe delete: %w\n%s", err, out)
 		}

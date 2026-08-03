@@ -158,5 +158,5 @@ func (s *Server) exchangePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) //nolint:gosec // G705: ответ уходит с инертным типом (text/plain или application/json), браузер его не исполняет
 }

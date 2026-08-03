@@ -19,11 +19,11 @@ func OpenPath(path string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("explorer", path)
+		cmd = exec.Command("explorer", path) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	case "darwin":
-		cmd = exec.Command("open", path)
+		cmd = exec.Command("open", path) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	default:
-		cmd = exec.Command("xdg-open", path)
+		cmd = exec.Command("xdg-open", path) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	}
 	return cmd.Start()
 }
@@ -58,7 +58,7 @@ if ($r -eq 'OK') { Write-Output $d.SelectedPath }`
 		if initialPath != "" {
 			arg += ` default location POSIX file "` + initialPath + `"`
 		}
-		out, err := exec.Command("osascript", "-e", arg).Output()
+		out, err := exec.Command("osascript", "-e", arg).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		if err != nil {
 			return "", nil
 		}
@@ -70,7 +70,7 @@ if ($r -eq 'OK') { Write-Output $d.SelectedPath }`
 		if initialPath != "" {
 			args = append(args, "--filename="+initialPath)
 		}
-		out, err := exec.Command("zenity", args...).Output()
+		out, err := exec.Command("zenity", args...).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		if err != nil {
 			return "", nil
 		}
@@ -102,7 +102,7 @@ if ($r -eq 'OK') { Write-Output $d.FileName }`
 		out, err := runPowerShell(script)
 		return strings.TrimSpace(out), err
 	default:
-		out, err := exec.Command("zenity", "--file-selection", "--title="+title).Output()
+		out, err := exec.Command("zenity", "--file-selection", "--title="+title).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		if err != nil {
 			return "", nil
 		}
@@ -119,8 +119,8 @@ func psEscape(s string) string {
 func runPowerShell(script string) (string, error) {
 	// -Sta обязателен для WinForms (FolderBrowserDialog/OpenFileDialog требуют STA-апартмент).
 	// Без него на Server 2016/2019/2022 ShowDialog может молча зависнуть или вернуть ошибку.
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Sta", "-WindowStyle", "Hidden", "-Command", script)
-	noWindow(cmd) // CREATE_NO_WINDOW: suppresses the brief flash before -WindowStyle kicks in
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Sta", "-WindowStyle", "Hidden", "-Command", script) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
+	noWindow(cmd)                                                                                                            // CREATE_NO_WINDOW: suppresses the brief flash before -WindowStyle kicks in
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

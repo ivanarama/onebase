@@ -74,8 +74,8 @@ func TestAsk_ReadsConfigEachCall(t *testing.T) {
 	src := &fakeSource{err: errors.New("БД недоступна")}
 	a := New(context.Background(), src, nil)
 
-	a.Ask(interpreter.AIRequest{Task: "анализ", Prompt: "p"}) //nolint:errcheck
-	a.Ask(interpreter.AIRequest{Task: "анализ", Prompt: "p"}) //nolint:errcheck
+	a.Ask(interpreter.AIRequest{Task: "анализ", Prompt: "p"}) //nolint:errcheck,gosec // G104: директива подавляет только перечисленные линтеры
+	a.Ask(interpreter.AIRequest{Task: "анализ", Prompt: "p"}) //nolint:errcheck,gosec // G104: директива подавляет только перечисленные линтеры
 
 	if src.callCnt < 2 {
 		t.Fatalf("ожидалось ≥2 вызовов GetLLMConfig, получено %d", src.callCnt)

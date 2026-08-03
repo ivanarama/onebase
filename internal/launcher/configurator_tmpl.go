@@ -49,7 +49,7 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 		if err != nil {
 			return template.JS("null")
 		}
-		return template.JS(b)
+		return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	},
 	"fieldTypeLabel": func(typ, ref string) string {
 		switch typ {

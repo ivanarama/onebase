@@ -154,7 +154,7 @@ func extractValidatedArchive(dir string, files []*zip.File) error {
 			closeRead("запись архива", rc)
 			return err
 		}
-		n, copyErr := io.Copy(out, rc)
+		n, copyErr := io.Copy(out, rc) //nolint:gosec // G110: суммарный распакованный объём проверяется до первой записи (validateArchiveEntries/validateUniversalArchive), а после копирования сверяется с UncompressedSize64
 		closeErr := out.Close()
 		rcErr := rc.Close()
 		if copyErr != nil {
@@ -166,7 +166,7 @@ func extractValidatedArchive(dir string, files []*zip.File) error {
 		if rcErr != nil {
 			return rcErr
 		}
-		if uint64(n) != f.UncompressedSize64 {
+		if uint64(n) != f.UncompressedSize64 { //nolint:gosec // G115: n — результат io.Copy, он неотрицателен по контракту
 			return i18nerr.Errorf("неполная запись архива: %s", f.Name)
 		}
 	}

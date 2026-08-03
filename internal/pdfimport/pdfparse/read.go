@@ -64,8 +64,8 @@ import (
 	"compress/zlib"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/md5"
-	"crypto/rc4"
+	"crypto/md5" //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
+	"crypto/rc4" //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 	"encoding/ascii85"
 	"errors"
 	"fmt"
@@ -339,9 +339,9 @@ func readXrefStreamData(r *Reader, strm stream, table []xref, size int64) ([]xre
 			case 0:
 				table[x] = xref{ptr: objptr{0, 65535}}
 			case 1:
-				table[x] = xref{ptr: objptr{uint32(x), uint16(v3)}, offset: int64(v2)}
+				table[x] = xref{ptr: objptr{uint32(x), uint16(v3)}, offset: int64(v2)} //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			case 2:
-				table[x] = xref{ptr: objptr{uint32(x), 0}, inStream: true, stream: objptr{uint32(v2), 0}, offset: int64(v3)}
+				table[x] = xref{ptr: objptr{uint32(x), 0}, inStream: true, stream: objptr{uint32(v2), 0}, offset: int64(v3)} //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			default:
 				fmt.Printf("invalid xref stream type %d: %x\n", v1, buf)
 			}
@@ -441,7 +441,7 @@ func readXrefTableData(b *buffer, table []xref) ([]xref, error) {
 				table = table[:x+1]
 			}
 			if alloc == "n" && table[x].offset == 0 {
-				table[x] = xref{ptr: objptr{uint32(x), uint16(gen)}, offset: int64(off)}
+				table[x] = xref{ptr: objptr{uint32(x), uint16(gen)}, offset: int64(off)} //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			}
 		}
 	}
@@ -739,7 +739,7 @@ func (v Value) Len() int {
 func (r *Reader) resolve(parent objptr, x interface{}) Value {
 
 	if ptr, ok := x.(objptr); ok {
-		if ptr.id >= uint32(len(r.xref)) {
+		if ptr.id >= uint32(len(r.xref)) { //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			return Value{}
 		}
 		xref := r.xref[ptr.id]
@@ -768,7 +768,7 @@ func (r *Reader) resolve(parent objptr, x interface{}) Value {
 				for i := 0; i < n; i++ {
 					id, _ := b.readToken().(int64)
 					off, _ := b.readToken().(int64)
-					if uint32(id) == ptr.id {
+					if uint32(id) == ptr.id { //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 						// Позиционирование внутри уже прочитанного объекта: промах
 						// даст ошибку readObject ниже, где она и разбирается.
 						_ = b.seekForward(first + off)
@@ -973,11 +973,11 @@ func (r *Reader) initEncrypt(password string) error {
 		return fmt.Errorf("malformed PDF: missing O= or U= encryption parameters")
 	}
 	p, _ := encrypt["P"].(int64)
-	P := uint32(p)
+	P := uint32(p) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 
 	// TODO: Password should be converted to Latin-1.
 	pw := []byte(password)
-	h := md5.New()
+	h := md5.New() //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 	if len(pw) >= 32 {
 		h.Write(pw[:32])
 	} else {
@@ -985,7 +985,7 @@ func (r *Reader) initEncrypt(password string) error {
 		h.Write(passwordPad[:32-len(pw)])
 	}
 	h.Write([]byte(O))
-	h.Write([]byte{byte(P), byte(P >> 8), byte(P >> 16), byte(P >> 24)})
+	h.Write([]byte{byte(P), byte(P >> 8), byte(P >> 16), byte(P >> 24)}) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 	h.Write([]byte(ID))
 	key := h.Sum(nil)
 
@@ -1000,7 +1000,7 @@ func (r *Reader) initEncrypt(password string) error {
 		key = key[:40/8]
 	}
 
-	c, err := rc4.NewCipher(key)
+	c, err := rc4.NewCipher(key) //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 	if err != nil {
 		return fmt.Errorf("malformed PDF: invalid RC4 key: %v", err)
 	}
@@ -1023,7 +1023,7 @@ func (r *Reader) initEncrypt(password string) error {
 			for j := range key1 {
 				key1[j] ^= byte(i)
 			}
-			c, _ = rc4.NewCipher(key1)
+			c, _ = rc4.NewCipher(key1) //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 			c.XORKeyStream(u, u)
 		}
 	}
@@ -1070,9 +1070,9 @@ func okayV4(encrypt dict) bool {
 }
 
 func cryptKey(key []byte, useAES bool, ptr objptr) []byte {
-	h := md5.New()
+	h := md5.New() //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 	h.Write(key)
-	h.Write([]byte{byte(ptr.id), byte(ptr.id >> 8), byte(ptr.id >> 16), byte(ptr.gen), byte(ptr.gen >> 8)})
+	h.Write([]byte{byte(ptr.id), byte(ptr.id >> 8), byte(ptr.id >> 16), byte(ptr.gen), byte(ptr.gen >> 8)}) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 	if useAES {
 		h.Write([]byte("sAlT"))
 	}
@@ -1084,7 +1084,7 @@ func decryptString(key []byte, useAES bool, ptr objptr, x string) string {
 	if useAES {
 		panic("AES not implemented")
 	} else {
-		c, _ := rc4.NewCipher(key)
+		c, _ := rc4.NewCipher(key) //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 		data := []byte(x)
 		c.XORKeyStream(data, data)
 		x = string(data)
@@ -1106,7 +1106,7 @@ func decryptStream(key []byte, useAES bool, ptr objptr, rd io.Reader) io.Reader 
 		cbc := cipher.NewCBCDecrypter(cb, iv)
 		rd = &cbcReader{cbc: cbc, rd: rd, buf: make([]byte, 16)}
 	} else {
-		c, _ := rc4.NewCipher(key)
+		c, _ := rc4.NewCipher(key) //nolint:gosec // G4xx/G5xx: MD5 и RC4 предписаны стандартным обработчиком безопасности PDF — это разбор чужого формата, а не наш выбор алгоритма
 		rd = &cipher.StreamReader{S: c, R: rd}
 	}
 	return rd

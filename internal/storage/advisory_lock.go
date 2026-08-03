@@ -75,5 +75,5 @@ func advisoryLockKey(key string) int64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte("onebase:data-lock:"))
 	_, _ = h.Write([]byte(key))
-	return int64(h.Sum64())
+	return int64(h.Sum64()) //nolint:gosec // G115: перенос знака намеренный — ключ advisory-блокировки PostgreSQL занимает весь диапазон int64
 }

@@ -38,10 +38,10 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// только cssStyle() из цветов, прошедших csssafe.Color, и фиксированных
 		// font-weight/font-style.
 		"journalRowStyle": func(row map[string]any) template.CSS {
-			return template.CSS(journalRowStyle(row))
+			return template.CSS(journalRowStyle(row)) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 		},
 		"journalCellStyle": func(row map[string]any, field string) template.CSS {
-			return template.CSS(journalCellStyle(row, field))
+			return template.CSS(journalCellStyle(row, field)) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 		},
 		"formRowClass":  formRowClass,
 		"formCellClass": formCellClass,
@@ -420,7 +420,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
 				}
 			}
-			return template.URL(strings.Join(parts, "&"))
+			return template.URL(strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
 		},
 		"listQuerySuffix": func(params storage.ListParams) template.URL {
 			var parts []string
@@ -444,7 +444,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if len(parts) == 0 {
 				return ""
 			}
-			return template.URL("?" + strings.Join(parts, "&"))
+			return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
 		},
 		"filterQuery": func(params storage.ListParams) template.URL {
 			var parts []string
@@ -465,7 +465,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if len(parts) == 0 {
 				return ""
 			}
-			return template.URL("&" + strings.Join(parts, "&"))
+			return template.URL("&" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
 		},
 		"reportParamQuery": func(params any, values map[string]any) string {
 			// Use reflection-free approach: just iterate over values map
@@ -560,7 +560,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if err != nil {
 				return template.JS("null")
 			}
-			return template.JS(b)
+			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
 		"wcell":            widgetCell,
 		"echartsJSON":      echartsJSON,
@@ -570,7 +570,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"pageChartsJSON":   pageChartsJSON,
 		// pageRaw помечает уже санитизированный HTML страницы (план 66) как
 		// безопасный. Источник — только ДобавитьСыройHTML, прошедший sanitizePageHTML.
-		"pageRaw": func(s string) template.HTML { return template.HTML(s) },
+		"pageRaw": func(s string) template.HTML { return template.HTML(s) }, //nolint:gosec // G203: источник — только ДобавитьСыройHTML, прошедший allowlist sanitizePageHTML
 		// pageChart конвертирует чарт-блок страницы в widget.ChartData для echartsJSON.
 		"pageChart": pageChartData,
 	}

@@ -26,7 +26,7 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 	b.WriteString(`</tr></thead><tbody>`)
 	walkComposed(res, spec, &htmlComposeSink{b: &b, spec: spec})
 	b.WriteString(`</tbody></table>`)
-	return template.HTML(b.String())
+	return template.HTML(b.String()) //nolint:gosec // G203: HTML собран с html.EscapeString на каждом значении
 }
 
 // htmlComposeSink рисует строки скомпонованного отчёта в HTML-таблицу.

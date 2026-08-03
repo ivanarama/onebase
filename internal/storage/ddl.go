@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // G505: SHA1 берётся для стабильного имени индекса, а не для защиты; смена алгоритма переименовала бы все индексы
 	"fmt"
 	"strings"
 
@@ -122,7 +122,7 @@ func stableIndexName(table string, cols []string, unique bool) string {
 	if unique {
 		kind = "u"
 	}
-	sum := sha1.Sum([]byte(kind + "|" + table + "|" + strings.Join(cols, "|")))
+	sum := sha1.Sum([]byte(kind + "|" + table + "|" + strings.Join(cols, "|"))) //nolint:gosec // G401/G505: SHA1 берётся для СТАБИЛЬНОГО ИМЕНИ ИНДЕКСА, а не для защиты; смена алгоритма переименовала бы все индексы и потребовала миграции
 	return "idx_ob_" + fmt.Sprintf("%x", sum[:6])
 }
 

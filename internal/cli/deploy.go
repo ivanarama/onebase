@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var deployCmd = &cobra.Command{
+var deployCmd = &cobra.Command{ //nolint:gosec // G101: это не секрет — имя переменной окружения либо строка-плейсхолдер, которую пользователь заменяет своим ключом
 	Use:   "deploy",
 	Short: "Deploy a project to a server database (imports config + runs migrations)",
 	Long: `Deploy loads a local project folder into PostgreSQL so the server

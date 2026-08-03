@@ -173,14 +173,14 @@ func resolveUpdateTarget(cmd *cobra.Command) (svcName, healthzURL, target string
 func stopService(name string, timeout time.Duration) error {
 	switch runtime.GOOS {
 	case "windows":
-		out, err := exec.Command("sc.exe", "stop", name).CombinedOutput()
+		out, err := exec.Command("sc.exe", "stop", name).CombinedOutput() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		// 1062 = «сервис не запущен» — не ошибка для нашей цели.
 		if err != nil && !strings.Contains(string(out), "1062") {
 			return fmt.Errorf("sc stop %s: %w\n%s", name, err, out)
 		}
 		return waitWindowsState(name, "STOPPED", timeout)
 	case "linux":
-		if out, err := exec.Command("systemctl", "stop", name).CombinedOutput(); err != nil {
+		if out, err := exec.Command("systemctl", "stop", name).CombinedOutput(); err != nil { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 			return fmt.Errorf("systemctl stop %s: %w\n%s", name, err, out)
 		}
 		return nil
@@ -193,14 +193,14 @@ func stopService(name string, timeout time.Duration) error {
 func startService(name string, timeout time.Duration) error {
 	switch runtime.GOOS {
 	case "windows":
-		out, err := exec.Command("sc.exe", "start", name).CombinedOutput()
+		out, err := exec.Command("sc.exe", "start", name).CombinedOutput() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		// 1056 = «сервис уже запущен».
 		if err != nil && !strings.Contains(string(out), "1056") {
 			return fmt.Errorf("sc start %s: %w\n%s", name, err, out)
 		}
 		return waitWindowsState(name, "RUNNING", timeout)
 	case "linux":
-		if out, err := exec.Command("systemctl", "start", name).CombinedOutput(); err != nil {
+		if out, err := exec.Command("systemctl", "start", name).CombinedOutput(); err != nil { //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 			return fmt.Errorf("systemctl start %s: %w\n%s", name, err, out)
 		}
 		return nil
@@ -214,7 +214,7 @@ func startService(name string, timeout time.Duration) error {
 func waitWindowsState(name, state string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		out, _ := exec.Command("sc.exe", "query", name).CombinedOutput()
+		out, _ := exec.Command("sc.exe", "query", name).CombinedOutput() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 		if strings.Contains(string(out), state) {
 			return nil
 		}

@@ -254,7 +254,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		}
 		if df.Layout != nil {
 			cpf.HasLayout = true
-			cpf.LayoutPreview = template.HTML(df.Layout.PreviewHTML())
+			cpf.LayoutPreview = template.HTML(df.Layout.PreviewHTML()) //nolint:gosec // G203: PreviewHTML экранирует имена областей и значения через html.EscapeString
 			if df.LayoutPath != "" {
 				if raw, err := os.ReadFile(df.LayoutPath); err == nil {
 					cpf.LayoutYAML = string(raw)
@@ -277,7 +277,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 			LayoutOnly: true,
 		}
 		if lf.Layout != nil {
-			cpf.LayoutPreview = template.HTML(lf.Layout.PreviewHTML())
+			cpf.LayoutPreview = template.HTML(lf.Layout.PreviewHTML()) //nolint:gosec // G203: PreviewHTML экранирует имена областей и значения через html.EscapeString
 		}
 		if lf.Path != "" {
 			if raw, err := os.ReadFile(lf.Path); err == nil {
@@ -603,14 +603,16 @@ func populateBootstrap(data *configuratorData, lang string) {
 		"groupOrder":     orEmpty(data.GroupOrder),
 	}
 	if bb, err := json.Marshal(boot); err == nil {
-		data.Bootstrap = template.JS(bb)
+		data.Bootstrap = template.JS(bb) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	}
 	var dict map[string]string
 	if launcherBundle != nil {
 		dict = launcherBundle.Dict(lang)
 	}
 	if ib, err := json.Marshal(dict); err == nil {
-		data.I18n = template.JS(ib) // nil-словарь → "null"; в шаблоне `|| {}`
+		// nil-словарь → "null"; в шаблоне `|| {}`.
+		// json.Marshal экранирует < > &, поэтому «</script>» из данных не разорвёт тег.
+		data.I18n = template.JS(ib) //nolint:gosec // G203: см. комментарий выше
 	}
 }
 
@@ -809,7 +811,7 @@ func buildQBSchema(d *configuratorData) template.JS {
 		sources = []cfgQBSource{}
 	}
 	b, _ := json.Marshal(sources)
-	return template.JS(b)
+	return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

@@ -81,5 +81,5 @@ func buildLayoutMeta(d *configuratorData) template.JS {
 	if err != nil {
 		return template.JS("{}")
 	}
-	return template.JS(b)
+	return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 }

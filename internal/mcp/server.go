@@ -502,7 +502,7 @@ func (s *Server) baseArgs(withDB bool) []string {
 func (s *Server) runCLI(args ...string) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.exe, append([]string{"--no-gui"}, args...)...)
+	cmd := exec.CommandContext(ctx, s.exe, append([]string{"--no-gui"}, args...)...) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

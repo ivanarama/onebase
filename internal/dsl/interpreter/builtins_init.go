@@ -75,7 +75,7 @@ func init() {
 
 	// ─── B3: Строковые функции ────────────────────────────────────────────
 	chrFn := func(args []any, _ string, _ int) (any, error) {
-		return string(rune(int(floatArg(args, 0)))), nil
+		return string(rune(int(floatArg(args, 0)))), nil //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип
 	}
 	builtins["символ"] = chrFn
 	builtins["chr"] = chrFn

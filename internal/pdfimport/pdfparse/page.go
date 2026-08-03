@@ -360,7 +360,7 @@ func addRangeOffsetBE(dst, code, lo string) string {
 	carry := 0
 	for i := len(b) - 1; i >= 0; i-- {
 		sum := int(b[i]) + (delta & 0xFF) + carry
-		b[i] = byte(sum)
+		b[i] = byte(sum) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 		carry = sum >> 8
 		delta >>= 8
 		if delta == 0 && carry == 0 {

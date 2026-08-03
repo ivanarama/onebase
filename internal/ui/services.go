@@ -387,12 +387,12 @@ func (s *Server) writeServiceResult(w http.ResponseWriter, result any) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		}
 		w.WriteHeader(code)
-		_, _ = w.Write(v.BodyBytes())
+		_, _ = w.Write(v.BodyBytes()) //nolint:gosec // G705: ответ уходит с инертным типом (text/plain или application/json), браузер его не исполняет
 	case nil:
 		w.WriteHeader(http.StatusNoContent)
 	case string:
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(v))
+		_, _ = w.Write([]byte(v)) //nolint:gosec // G705: ответ уходит с инертным типом (text/plain или application/json), браузер его не исполняет
 	default:
 		data, err := interpreter.MarshalDSLValue(v)
 		if err != nil {
@@ -400,7 +400,7 @@ func (s *Server) writeServiceResult(w http.ResponseWriter, result any) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write(data)
+		_, _ = w.Write(data) //nolint:gosec // G705: ответ уходит с инертным типом (text/plain или application/json), браузер его не исполняет
 	}
 }
 

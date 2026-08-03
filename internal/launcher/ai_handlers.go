@@ -20,8 +20,8 @@ func starterLLMConfig() llm.Config {
 	return llm.Config{
 		Enabled: true,
 		Endpoints: []llm.Endpoint{
-			{Name: "google", Kind: llm.KindGemini, APIKey: "ВАШ_КЛЮЧ_GEMINI"},
-			{Name: "z_ai", Kind: llm.KindAnthropic, BaseURL: "https://api.z.ai/api/anthropic", APIKey: "ВАШ_КЛЮЧ_ZAI"},
+			{Name: "google", Kind: llm.KindGemini, APIKey: "ВАШ_КЛЮЧ_GEMINI"},                                          //nolint:gosec // G101: не секрет, а строка-плейсхолдер — пользователь подставляет свой ключ
+			{Name: "z_ai", Kind: llm.KindAnthropic, BaseURL: "https://api.z.ai/api/anthropic", APIKey: "ВАШ_КЛЮЧ_ZAI"}, //nolint:gosec // G101: не секрет, а строка-плейсхолдер — пользователь подставляет свой ключ
 		},
 		Models: []llm.Model{
 			{Name: "gemini-2.5-flash", Endpoint: "google", Vision: true},

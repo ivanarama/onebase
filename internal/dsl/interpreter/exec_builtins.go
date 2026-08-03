@@ -85,7 +85,7 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, name, cmdArgs...)
+		cmd := exec.CommandContext(ctx, name, cmdArgs...) //nolint:gosec // G204: builtin ВыполнитьКоманду закрыт ExecGuard (настройка GetExecEnabled, по умолчанию выключена), в песочнице guard=deny; аргументы идут слайсом, без шелла
 		if workdir != "" {
 			cmd.Dir = workdir
 		}

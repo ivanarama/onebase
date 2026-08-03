@@ -244,7 +244,7 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("X-OneBase-Debug-Token", tok)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: адрес собран из фиксированной схемы и хоста, внешний URL подставить нельзя
 	if err != nil {
 		writeJSON(w, 502, map[string]string{"error": "UI server unreachable: " + err.Error()})
 		return

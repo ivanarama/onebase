@@ -13,7 +13,7 @@ const (
 	DefaultMinPasswordLength = 8
 	maxBcryptPasswordBytes   = 72
 
-	allowEmptyPasswordsEnv = "ONEBASE_ALLOW_EMPTY_PASSWORDS"
+	allowEmptyPasswordsEnv = "ONEBASE_ALLOW_EMPTY_PASSWORDS" //nolint:gosec // G101: это не секрет — имя переменной окружения либо строка-плейсхолдер, которую пользователь заменяет своим ключом
 	minPasswordLengthEnv   = "ONEBASE_MIN_PASSWORD_LENGTH"
 )
 

@@ -82,9 +82,9 @@ func extractZip(data []byte, dir string) error {
 			_ = rc.Close()
 			return err
 		}
-		_, copyErr := io.Copy(out, rc)
-		closeErr := out.Close() // write-close: ошибка важна (файл мог не долететь)
-		_ = rc.Close()          // read-close: best-effort
+		_, copyErr := io.Copy(out, rc) //nolint:gosec // G110: суммарный распакованный объём проверяется до первой записи (validateArchiveEntries/validateUniversalArchive), а после копирования сверяется с UncompressedSize64
+		closeErr := out.Close()        // write-close: ошибка важна (файл мог не долететь)
+		_ = rc.Close()                 // read-close: best-effort
 		if copyErr != nil {
 			return copyErr
 		}
@@ -636,7 +636,7 @@ func TestAttachmentsExportRestore(t *testing.T) {
 	var restoredContent []byte
 	if err := filepath.WalkDir(dstAttDir, func(path string, d fs.DirEntry, _ error) error {
 		if !d.IsDir() {
-			restoredContent, _ = os.ReadFile(path)
+			restoredContent, _ = os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу, который мы сами и распаковали; переход на os.Root — отдельная задача
 		}
 		return nil
 	}); err != nil {

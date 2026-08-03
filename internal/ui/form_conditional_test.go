@@ -324,7 +324,7 @@ func renderConditionalManagedForm(t *testing.T, ent *metadata.Entity, form *meta
 		"TPEnumOrder":        map[string]map[string][]string{},
 		"TPRefMeta":          map[string]map[string]any{},
 		"TablePartRows":      rows,
-		"FormConditionalCSS": template.CSS(formConditionalCSS(form)),
+		"FormConditionalCSS": template.CSS(formConditionalCSS(form)), //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 		"Lang":               "ru",
 	}
 	var buf bytes.Buffer

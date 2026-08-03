@@ -205,7 +205,7 @@ func (b *buffer) readHexString() token {
 			_ = b.errorf("malformed hex string %c %c %s", c, c2, b.buf[b.pos:])
 			break
 		}
-		tmp = append(tmp, byte(x))
+		tmp = append(tmp, byte(x)) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 	}
 	b.tmp = tmp
 	return string(tmp)
@@ -278,7 +278,7 @@ Loop:
 				if x > 255 {
 					b.errorf("invalid octal escape \\%03o", x)
 				}
-				tmp = append(tmp, byte(x))
+				tmp = append(tmp, byte(x)) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			}
 		}
 	}
@@ -300,7 +300,7 @@ func (b *buffer) readName() token {
 				// b.errorf("malformed name")
 				_ = b.errorf("malformed name")
 			}
-			tmp = append(tmp, byte(x))
+			tmp = append(tmp, byte(x)) //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			continue
 		}
 		tmp = append(tmp, c)
@@ -439,16 +439,16 @@ func (b *buffer) readObject() (object, error) {
 		return tok, nil
 	}
 
-	if t1, ok := tok.(int64); ok && int64(uint32(t1)) == t1 {
+	if t1, ok := tok.(int64); ok && int64(uint32(t1)) == t1 { //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 		tok2 := b.readToken()
-		if t2, ok := tok2.(int64); ok && int64(uint16(t2)) == t2 {
+		if t2, ok := tok2.(int64); ok && int64(uint16(t2)) == t2 { //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			tok3 := b.readToken()
 			switch tok3 {
 			case keyword("R"):
-				return objptr{uint32(t1), uint16(t2)}, nil
+				return objptr{uint32(t1), uint16(t2)}, nil //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			case keyword("obj"):
 				old := b.objptr
-				b.objptr = objptr{uint32(t1), uint16(t2)}
+				b.objptr = objptr{uint32(t1), uint16(t2)} //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 				obj, err := b.readObject()
 				if err != nil {
 					return nil, err
@@ -462,7 +462,7 @@ func (b *buffer) readObject() (object, error) {
 					}
 				}
 				b.objptr = old
-				return objdef{objptr{uint32(t1), uint16(t2)}, obj}, err
+				return objdef{objptr{uint32(t1), uint16(t2)}, obj}, err //nolint:gosec // G115: uint32/uint16 заданы форматом PDF, перед приведением стоит проверка диапазона
 			}
 			b.unreadToken(tok3)
 		}
