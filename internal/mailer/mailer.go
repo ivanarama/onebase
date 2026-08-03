@@ -7,10 +7,10 @@ import (
 	"mime"
 	"net/mail"
 	"net/smtp"
-	"os"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/secrets"
 )
 
 // Config holds SMTP settings from config/app.yaml section "email".
@@ -18,7 +18,7 @@ type Config struct {
 	SMTPHost    string `yaml:"smtp_host"`
 	SMTPPort    int    `yaml:"smtp_port"`
 	SMTPUser    string `yaml:"smtp_user"`
-	SMTPPass    string `yaml:"smtp_password"` // or "env:VAR_NAME"
+	SMTPPass    string `yaml:"smtp_password"` // значение или ссылка env:ИМЯ / file:/путь / enc:… (план 83)
 	FromName    string `yaml:"from_name"`
 	FromAddress string `yaml:"from_address"`
 }
@@ -61,7 +61,11 @@ func (m *Mailer) SendWithAttachments(to, subject, textBody, htmlBody string, fil
 
 	var auth smtp.Auth
 	if m.cfg.SMTPUser != "" {
-		auth = smtp.PlainAuth("", m.cfg.SMTPUser, m.password(), m.cfg.SMTPHost)
+		pass, err := m.password()
+		if err != nil {
+			return fmt.Errorf("почта: пароль SMTP: %w", err)
+		}
+		auth = smtp.PlainAuth("", m.cfg.SMTPUser, pass, m.cfg.SMTPHost)
 	}
 
 	if port == 465 {
@@ -123,11 +127,12 @@ func headerHasControl(value string) bool {
 	}) >= 0
 }
 
-func (m *Mailer) password() string {
-	if strings.HasPrefix(m.cfg.SMTPPass, "env:") {
-		return os.Getenv(strings.TrimPrefix(m.cfg.SMTPPass, "env:"))
-	}
-	return m.cfg.SMTPPass
+// password разыменовывает пароль SMTP в момент отправки. Поддержаны ссылки
+// env:/file:/enc: (план 83); историческая форма env:ИМЯ — их частный случай.
+// Ошибка возвращается наверх: отправлять письмо, молча подставив пустой пароль,
+// нельзя — сервер ответит отказом, а причина потеряется.
+func (m *Mailer) password() (string, error) {
+	return secrets.Default().Resolve(m.cfg.SMTPPass)
 }
 
 func sendTLS(addr, host string, auth smtp.Auth, from, to string, msg []byte) error {

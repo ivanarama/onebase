@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"unicode"
@@ -25,6 +24,7 @@ import (
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/secrets"
 	"github.com/ivantit66/onebase/internal/webhook"
 	"gopkg.in/yaml.v3"
 )
@@ -244,69 +244,62 @@ func LoadConfig(dir string) (*AppConfig, error) {
 		}
 		return nil, fmt.Errorf("project: parse %s: %w", path, err)
 	}
-	if cfg.LLM != nil {
-		expandLLMEnv(cfg.LLM)
-	}
-	expandWebhookEnv(cfg.Webhooks)
-	if cfg.Backup != nil {
-		expandBackupEnv(cfg.Backup)
-	}
-	if cfg.FileStorage != nil && cfg.FileStorage.S3 != nil {
-		expandS3Env(cfg.FileStorage.S3)
-	}
+	// Секреты (ключи ИИ, токены вебхуков, креды S3, секреты HTTP-сервисов и
+	// шлюзов приёма) здесь НАМЕРЕННО не разыменовываются: ссылка env:/file:/enc:
+	// остаётся в конфигурации, значение подставляется в момент использования —
+	// llm.Config.Resolve, webhook.send, objstore.New, проверка аутентификации
+	// сервиса/шлюза (план 83).
+	//
+	// Раньше ключи ИИ раскрывались прямо здесь, при загрузке app.yaml, и
+	// applyAppAISettings клал в _settings.llm.config уже РАСКРЫТЫЙ ключ —
+	// откуда он уезжал в обычный дамп бэкапа открытым текстом. То есть секрет,
+	// аккуратно вынесенный администратором в ${env:...}, всё равно оказывался
+	// в базе значением.
 	return &cfg, nil
 }
 
-// expandBackupEnv подставляет ${env:VAR} в секрет-носители off-site бэкапа.
-func expandBackupEnv(b *BackupConfig) {
-	if b.S3 != nil {
-		expandS3Env(b.S3)
+// resolveSecretRef разыменовывает ссылку на секрет в поле, которое потребители
+// читают из конфигурации напрямую (адрес узла обмена).
+//
+// Ошибка разыменования (нечитаемый file:, enc: без мастер-ключа) не роняет
+// загрузку конфигурации: поле остаётся пустым — подсистема, которой оно нужно,
+// выключится, — а причина уходит в журнал. Сервер при этом жив: одна незаданная
+// переменная не должна мешать работать остальной базе.
+func resolveSecretRef(field, s string) string {
+	v, err := secrets.Default().Resolve(s)
+	if err != nil {
+		oblog.Component("secrets").Warn("ссылка на секрет не разыменована",
+			"поле", field, "ошибка", err)
+		return ""
 	}
+	return v
 }
 
-// expandS3Env подставляет ${env:VAR} в секрет-носители S3-конфига (эндпойнт и
-// ключи доступа) — общий для off-site бэкапа и file_storage.s3. Креды живут в
-// окружении, а не в YAML/git/дампе.
-func expandS3Env(s *S3Config) {
-	s.Endpoint = expandEnvRefs(s.Endpoint)
-	s.AccessKey = expandEnvRefs(s.AccessKey)
-	s.SecretKey = expandEnvRefs(s.SecretKey)
-}
-
-// expandWebhookEnv подставляет ${env:VAR} в секрет-носители веб-хуков
-// (URL с токеном бота, заголовки авторизации, тело).
-func expandWebhookEnv(hooks []webhook.Config) {
-	for i := range hooks {
-		hooks[i].URL = expandEnvRefs(hooks[i].URL)
-		hooks[i].Body = expandEnvRefs(hooks[i].Body)
-		for k, v := range hooks[i].Headers {
-			hooks[i].Headers[k] = expandEnvRefs(v)
+// ResolveSecrets возвращает копию S3-конфига с разыменованными ссылками
+// (env:/file:/enc:) в адресе и кредах. Вызывается в момент создания клиента —
+// off-site бэкапом и хранилищем файлов, — а не при загрузке app.yaml: ключи
+// доступа не должны жить в конфигурации значением (план 83).
+//
+// objstore намеренно оставлен листовым пакетом (чистый S3-клиент, ничего не
+// знающий о ссылках на секреты OneBase), поэтому разыменование живёт здесь.
+func (s *S3Config) ResolveSecrets() (S3Config, error) {
+	out := *s
+	r := secrets.Default()
+	for _, f := range []struct {
+		name string
+		p    *string
+	}{
+		{"endpoint", &out.Endpoint},
+		{"access_key", &out.AccessKey},
+		{"secret_key", &out.SecretKey},
+	} {
+		v, err := r.Resolve(*f.p)
+		if err != nil {
+			return out, fmt.Errorf("%s: %w", f.name, err)
 		}
+		*f.p = v
 	}
-}
-
-// envRefPattern matches ${env:VAR} references that are substituted from the
-// process environment — used for secrets like API keys so they live in env,
-// not in app.yaml / git / .obz.
-var envRefPattern = regexp.MustCompile(`\$\{env:([^}]+)\}`)
-
-func expandEnvRefs(s string) string {
-	return envRefPattern.ReplaceAllStringFunc(s, func(m string) string {
-		name := envRefPattern.FindStringSubmatch(m)[1]
-		return os.Getenv(strings.TrimSpace(name))
-	})
-}
-
-// expandLLMEnv substitutes ${env:VAR} in secret-bearing fields of the LLM
-// config (endpoint keys, base URLs, custom headers).
-func expandLLMEnv(c *llm.Config) {
-	for i := range c.Endpoints {
-		c.Endpoints[i].APIKey = expandEnvRefs(c.Endpoints[i].APIKey)
-		c.Endpoints[i].BaseURL = expandEnvRefs(c.Endpoints[i].BaseURL)
-		for k, v := range c.Endpoints[i].Headers {
-			c.Endpoints[i].Headers[k] = expandEnvRefs(v)
-		}
-	}
+	return out, nil
 }
 
 // LoadFromDB loads project metadata from the _onebase_config table, writing
@@ -469,14 +462,13 @@ func (p *Project) loadProcessorLayouts() error {
 }
 
 // loadHTTPServices читает services/*.yaml (план 61). Секреты (auth token/hmac)
-// поддерживают ${env:VAR} — значение живёт в окружении, не в YAML/git/.obz.
+// поддерживают ссылки env:/file:/enc: и разыменовываются при проверке
+// аутентификации вызова (internal/ui/services.go), а не здесь — в конфигурации
+// остаётся ссылка (план 83).
 func (p *Project) loadHTTPServices() error {
 	services, err := httpservice.LoadDir(filepath.Join(p.Dir, "services"))
 	if err != nil {
 		return fmt.Errorf("project: load http services: %w", err)
-	}
-	for _, s := range services {
-		s.Secret = expandEnvRefs(s.Secret)
 	}
 	p.HTTPServices = services
 	return nil
@@ -500,10 +492,11 @@ func (p *Project) loadExchangePlans() error {
 	if err != nil {
 		return fmt.Errorf("project: load exchange plans: %w", err)
 	}
-	// Адреса узлов допускают ${env:VAR} — удобно для per-deploy хостов.
+	// Адреса узлов допускают ${env:VAR} — удобно для per-deploy хостов. Это не
+	// секрет, а адрес: разыменовываем при загрузке, потребителей у него много.
 	for _, pl := range plans {
 		for i := range pl.Nodes {
-			pl.Nodes[i].URL = expandEnvRefs(pl.Nodes[i].URL)
+			pl.Nodes[i].URL = resolveSecretRef("exchange."+pl.Name+".node."+pl.Nodes[i].Code+".url", pl.Nodes[i].URL)
 		}
 	}
 	p.ExchangePlans = plans
@@ -519,12 +512,13 @@ func (p *Project) loadIntakes() error {
 		return fmt.Errorf("project: load intakes: %w", err)
 	}
 	for _, in := range intakes {
-		// Валидируем ДО раскрытия ${env:…}: плейсхолдер считается заданным
+		// Валидируем по ссылке, как она записана: плейсхолдер считается заданным
 		// секретом (onebase check проходит без выставленных переменных окружения).
+		// Само значение подставляется при проверке подлинности отправителя
+		// (internal/ui/intake_http.go), а не здесь (план 83).
 		if err := in.Validate(); err != nil {
 			return fmt.Errorf("project: intake %q: %w", in.Name, err)
 		}
-		in.Secret = expandEnvRefs(in.Secret)
 	}
 	p.Intakes = intakes
 	return nil

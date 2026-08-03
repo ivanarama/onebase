@@ -63,6 +63,10 @@ func createAutoBackup(ctx context.Context, cfg *project.BackupConfig, target Aut
 	if err != nil {
 		return "", err
 	}
+	// Копия снимается с базы целиком — секреты, лежащие в _settings значением,
+	// уезжают вместе с ней (план 83). Предупреждение в журнал: ночной бэкап
+	// некому показать на экране, а файл может уехать ещё и off-site в S3.
+	WarnPlaintextSecrets(ctx, target.DBType, target.DSN, target.SQLitePath)
 	keepLast := cfg.KeepLast
 	if keepLast <= 0 {
 		keepLast = defaultAutoBackupKeepLast
@@ -90,7 +94,13 @@ type ObjectStore interface {
 // storeFactory builds an ObjectStore from S3 config; overridable in tests.
 type storeFactory func(*project.S3Config) (ObjectStore, error)
 
-func newObjectStore(c *project.S3Config) (ObjectStore, error) {
+func newObjectStore(cfg *project.S3Config) (ObjectStore, error) {
+	// Креды разыменовываются здесь, при создании клиента (план 83): в app.yaml
+	// лежит ссылка env:/file:/enc:, а не сам ключ.
+	c, err := cfg.ResolveSecrets()
+	if err != nil {
+		return nil, fmt.Errorf("auto backup: s3: %w", err)
+	}
 	return objstore.New(objstore.Config{
 		Endpoint:  c.Endpoint,
 		Region:    c.Region,

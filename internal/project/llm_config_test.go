@@ -7,7 +7,10 @@ import (
 )
 
 // TestLoadConfig_LLMFromAppYAML проверяет, что секция llm из app.yaml парсится в
-// llm.Config и что ${env:VAR} в ключе подставляется из окружения.
+// llm.Config и что ссылка на секрет ПРИ ЗАГРУЗКЕ НЕ раскрывается (план 83):
+// раскрытый ключ уехал бы отсюда в _settings.llm.config, а оттуда — в дамп
+// бэкапа открытым текстом. Значение подставляет llm.Config.Resolve — перед
+// вызовом провайдера.
 func TestLoadConfig_LLMFromAppYAML(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, "config")
@@ -46,8 +49,16 @@ llm:
 	if len(cfg.LLM.Endpoints) != 1 || cfg.LLM.Endpoints[0].Name != "z_ai" || string(cfg.LLM.Endpoints[0].Kind) != "anthropic" {
 		t.Fatalf("endpoints разобраны неверно: %+v", cfg.LLM.Endpoints)
 	}
-	if got := cfg.LLM.Endpoints[0].APIKey; got != "secret-123" {
-		t.Errorf("${env:...} не подставлен: api_key=%q, ожидалось secret-123", got)
+	if got := cfg.LLM.Endpoints[0].APIKey; got != "${env:ONEBASE_TEST_LLM_KEY}" {
+		t.Errorf("ссылка на секрет должна остаться в конфигурации, получено api_key=%q", got)
+	}
+	// А в момент использования — разыменовывается.
+	resolved, err := cfg.LLM.Resolve("чат")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := resolved[0].Endpoint.APIKey; got != "secret-123" {
+		t.Errorf("Resolve не подставил ключ: api_key=%q, ожидалось secret-123", got)
 	}
 	if len(cfg.LLM.Models) != 1 || cfg.LLM.Models[0].Name != "glm-4.6" || cfg.LLM.Models[0].Endpoint != "z_ai" {
 		t.Errorf("models разобраны неверно: %+v", cfg.LLM.Models)

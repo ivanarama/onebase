@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"text/template"
 	"time"
+
+	"github.com/ivantit66/onebase/internal/secrets"
 )
 
 // Config — один веб-хук из app.yaml.
@@ -324,6 +326,17 @@ func (d *Dispatcher) fire(ctx context.Context, h *Config, e Event) {
 		return
 	}
 
+	// Секреты (токен в URL, заголовок авторизации) разыменовываются здесь —
+	// перед попытками доставки, один раз на доставку (план 83). В журнал при
+	// этом уходит НЕразыменованный URL: entry собран выше по исходному хуку.
+	h, err := resolveHookSecrets(h)
+	if err != nil {
+		entry.Error = "секрет веб-хука не разыменован: " + err.Error()
+		d.failed.Add(1)
+		d.log(entry, start)
+		return
+	}
+
 	body, err := renderBody(h.Body, e)
 	if err != nil {
 		entry.Error = "шаблон тела: " + err.Error()
@@ -386,6 +399,35 @@ func (d *Dispatcher) fire(ctx context.Context, h *Config, e Event) {
 		d.failed.Add(1)
 	}
 	d.log(entry, start)
+}
+
+// resolveHookSecrets возвращает копию хука с разыменованными ссылками
+// (env:/file:/enc:) в URL, заголовках и теле — план 83.
+//
+// Разыменование делается один раз на доставку, а не в каждой попытке: повторы
+// не должны заново читать файл секрета, и все попытки обязаны уходить с одним и
+// тем же значением. Ошибка (нет мастер-ключа, нечитаемый файл) отменяет
+// доставку — уходить к чужому серверу с пустым токеном нельзя.
+func resolveHookSecrets(h *Config) (*Config, error) {
+	r := secrets.Default()
+	out := *h
+	var err error
+	if out.URL, err = r.Resolve(h.URL); err != nil {
+		return nil, fmt.Errorf("url: %w", err)
+	}
+	if out.Body, err = r.Resolve(h.Body); err != nil {
+		return nil, fmt.Errorf("тело: %w", err)
+	}
+	if len(h.Headers) > 0 {
+		hdr := make(map[string]string, len(h.Headers))
+		for k, v := range h.Headers {
+			if hdr[k], err = r.Resolve(v); err != nil {
+				return nil, fmt.Errorf("заголовок %s: %w", k, err)
+			}
+		}
+		out.Headers = hdr
+	}
+	return &out, nil
 }
 
 func (d *Dispatcher) send(parent context.Context, method string, h *Config, body string, timeout time.Duration) (int, error) {

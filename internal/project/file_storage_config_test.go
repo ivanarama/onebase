@@ -41,8 +41,17 @@ file_storage:
 	if s3.Bucket != "files" || s3.Prefix != "base1/" || s3.Endpoint != "minio.local:9000" {
 		t.Fatalf("parsed incorrectly: %+v", s3)
 	}
-	if s3.AccessKey != "AKIA_FS" || s3.SecretKey != "fssecret" {
-		t.Errorf("secrets not resolved from env: %+v", s3)
+	// Ссылки остаются в конфигурации; значение подставляется при создании
+	// клиента — ResolveSecrets (план 83).
+	if s3.AccessKey != "${env:FS_KEY}" || s3.SecretKey != "${env:FS_SECRET}" {
+		t.Errorf("ссылки должны остаться как есть: %+v", s3)
+	}
+	resolved, err := s3.ResolveSecrets()
+	if err != nil {
+		t.Fatalf("ResolveSecrets: %v", err)
+	}
+	if resolved.AccessKey != "AKIA_FS" || resolved.SecretKey != "fssecret" {
+		t.Errorf("secrets not resolved from env: %+v", resolved)
 	}
 	if s3.UseSSL == nil || *s3.UseSSL != false {
 		t.Errorf("use_ssl want false, got %v", s3.UseSSL)

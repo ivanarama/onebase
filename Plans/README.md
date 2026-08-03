@@ -45,15 +45,16 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 1. ~~**Дефекты Д1–Д3**~~ ✅ **Закрыты** (ветка `fix/rollup-totals-and-dsl-webhooks`):
    пересчёт итогов в свёртке, decimal в бухотчётности, веб-хуки на DSL-пути
    документов — каждый с регрессионным тестом, падающим без фикса.
-2. **План 109** — `errcheck` (753 находки в prod: транзакции, бэкапы, запись
-   файлов) и `gosec` (1434 всего, ~945 не-G104). Этапы A (`bodyclose`, PR #503),
-   B (`unused`, PR #508), класс «тесты» (PR #511–#520, 0 находок в `_test.go`) и
-   C (changed-code gate, job `lint-changed-code`) закрыты — baseline больше не
-   растёт. Осталось: 109D–109G (prod по классам риска), 109H–109J (gosec).
-   ≈9–15 дней.
-3. **План 83** (секреты) — ядра нет: `internal/secrets`, `file:`/`enc:` (AES-GCM),
-   `onebase secret set/rotate/list`. Экспорт `.obz` и логи уже редактируют
-   секреты, а **обычный SQL-дамп бэкапа уносит `llm.config` открытым текстом**.
+2. ~~**План 109**~~ ✅ **Закрыт** (2026-08-03, PR #558): `errcheck` и `gosec`
+   включены в блокирующий линтер, baseline разобран до нуля по классам
+   поведения. Этапы A–J пройдены.
+3. ~~**План 83** (секреты)~~ ✅ **Закрыт** (2026-08-03, ветка
+   `feature/83-secrets`): `internal/secrets` (`env:`/`file:`/`enc:`, AES-GCM),
+   разыменование в момент использования, `onebase secret keygen/encrypt/set/
+   list/rotate`, предупреждения в `check` и `backup`. Заодно закрыта настоящая
+   утечка: ключ ИИ из `${env:...}` в `app.yaml` раскрывался при загрузке и
+   ложился в `_settings.llm.config` значением — то есть уезжал в обычный дамп
+   бэкапа открытым текстом.
 4. **План 81** (реструктуризация схемы) — самый дорогой пробел из «не начатых»:
    `onebase refactor rename-field` правит файлы конфигурации и честно печатает
    «колонка не переименовывается автоматически», но планировщика миграций БД нет.
@@ -173,7 +174,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 43 | [43-audit-techdebt.md](43-audit-techdebt.md) | Техдолг по итогам аудита: покрытие непротестированных пакетов, полный graceful shutdown, единый slog, раскол монолитов | 12–18 дней | 🟡 CI/race/coverage, `slog`, `onebase lint`, debugger/processor coverage и graceful shutdown закрыты; остаток — точечное покрытие `ui`/`launcher`/`mcp`/`widget` и раскол монолитов |
-| 109 | [109-ci-linter-hardening.md](109-ci-linter-hardening.md) | Поэтапное включение `bodyclose`, `unused`, `errcheck`, `gosec` в блокирующий CI без широких suppressions | 10.75–17.75 дня | 🟡 A (`bodyclose` #503) + B (`unused` #508) в main; осталось `errcheck`/`gosec` (поведенческие, по классам) |
+| 109 | [109-ci-linter-hardening.md](109-ci-linter-hardening.md) | Поэтапное включение `bodyclose`, `unused`, `errcheck`, `gosec` в блокирующий CI без широких suppressions | 10.75–17.75 дня | ✅ Закрыт 2026-08-03 (этапы A–J, PR #558): все четыре линтера блокирующие, baseline разобран до нуля |
 
 ### Направление З — ИИ для бизнеса
 
@@ -232,7 +233,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 80 | [80-register-totals.md](80-register-totals.md) | Итоги регистров (предрасчёт остатков вместо `SUM` на лету) — ключ к масштабу учёта | 6–9 дней | ✅ Реализовано (накопления + бухгалтерии): итоги в транзакции проводки, быстрый путь `query` (остатки/на-момент/обороты), CLI `recalc-totals`, бенч ~150×. Опц. остаток — `totals.period`/свёртка |
 | 81 | [81-schema-restructuring-safety.md](81-schema-restructuring-safety.md) | Безопасная реструктуризация схемы: устойчивые id полей, rename/retype/drop с данными, dry-run | 7–10 дней | ⬜ Не начато (перепроверено 2026-08-02). Смежное есть и переиспользуется: `onebase refactor rename-field` (правит файлы конфигурации), паттерн table-rebuild в `fixInfoRegPKSQLite`, dry-run-образец в `gc-blobs` |
 | 82 | [82-fulltext-search.md](82-fulltext-search.md) | Полнотекстовый / глобальный поиск (PG tsvector, SQLite FTS5) с учётом RBAC+RLS | 6–8 дней | ⬜ Не начато (перепроверено 2026-08-02: `tsvector`/`FTS5`/`FullTextIndex` в коде отсутствуют) |
-| 83 | [83-secrets-management.md](83-secrets-management.md) | Управление секретами at-rest: единый резолвер `env:`/`file:`/`enc:`, шифрование, гигиена экспорта/бэкапа | 4–6 дней | 🟡 Есть только `${env:VAR}` (ИИ, S3, бэкап, вебхуки, HTTP-сервисы, узлы обмена, intake). Ядра нет: `internal/secrets`, `file:`, `enc:`/AES-GCM, `onebase secret`. Гигиена частично закрыта (`.obz` и логи редактируют секреты), но **SQL-дамп бэкапа уносит `llm.config` открытым текстом** |
+| 83 | [83-secrets-management.md](83-secrets-management.md) | Управление секретами at-rest: единый резолвер `env:`/`file:`/`enc:`, шифрование, гигиена экспорта/бэкапа | 4–6 дней | ✅ Закрыт 2026-08-03 (`feature/83-secrets`): `internal/secrets` (AES-GCM, мастер-ключ вне базы), разыменование в момент использования, `onebase secret`, предупреждения `secret.plaintext` в `check` и об открытых секретах в `backup`. Ключ ИИ больше не ложится в `_settings` значением |
 | 84 | [84-enterprise-auth.md](84-enterprise-auth.md) | Enterprise-аутентификация: TOTP-2FA, SSO (OIDC), опц. LDAP — всё opt-in | 7–10 дней | ⬜ Не начато (перепроверено 2026-08-02: грепы `totp|otpauth|oidc|ldap|2fa` по `internal/`,`cmd/` пусты) |
 | 85 | [85-business-processes-tasks.md](85-business-processes-tasks.md) | Бизнес-процессы и задачи: карта маршрута, «Мои задачи», согласование документов | 2–3 недели | 🟡 Только «заход 0» — прикладной маршрут согласования в `examples/callcenter` на обычном DSL (с Go-тестами `ui/callcenter_validation_test.go`). Платформенного движка нет: ни `internal/bpm`, ни `_bpm_tasks`, ни объектов `БизнесПроцессы`/`Задачи`, ни «Мои задачи» в UI платформы |
 | 86 | [86-data-exchange.md](86-data-exchange.md) | Обмен данными между базами: планы обмена, регистрация изменений, пакеты, конфликты | 3–4 недели | 🟡 Фазы 1 и 2 закрыты (файловый `.obx` + онлайн HTTP-sync, регистрация изменений, конфликты, хаб-транзит, UI-монитор). Осталось: периодические регистры сведений вне состава (`exchange/inforeg.go:28,92`), при `onebase exchange load` документы остаются непроведёнными |
@@ -261,7 +262,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 107 | [107-scheduler-full-vars.md](107-scheduler-full-vars.md) | Полный контекст переменных в регламентных заданиях | ✅ Реализовано |
 | 108 | [108-atomic-hook-side-effects.md](108-atomic-hook-side-effects.md) | Атомарность побочных записей хука проведения | ✅ Реализовано |
 | 108 | [108-config-testing-tooling.md](108-config-testing-tooling.md) | `onebase test` — раннер тестов уровня конфигурации (5 шагов) | ✅ Реализовано |
-| 109 | [109-ci-linter-hardening.md](109-ci-linter-hardening.md) | Ужесточение CI-линтеров (`bodyclose`→`unused`→`errcheck`→`gosec`) | 🟡 A (`bodyclose` #503) + B (`unused` #508) в main; осталось `errcheck`/`gosec` |
+| 109 | [109-ci-linter-hardening.md](109-ci-linter-hardening.md) | Ужесточение CI-линтеров (`bodyclose`→`unused`→`errcheck`→`gosec`) | ✅ Закрыт 2026-08-03 (этапы A–J) |
 | 110 | [110-s3-external-storage.md](110-s3-external-storage.md) | S3-хранилище вложений/блобов + off-site автобэкап | ✅ Реализовано |
 | 111 | [111-scalability-review.md](111-scalability-review.md) | Ревью масштабируемости на 100+ пользователей | ✅ P0/P1/P2 в `main`; P3-1/P3-2 отложены |
 | 112 | [112-user-cli-and-role-asserts.md](112-user-cli-and-role-asserts.md) | `onebase user` + ассерты матрицы прав ролей в `onebase test` | ✅ Реализовано |
