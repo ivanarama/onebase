@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,7 @@ func ConnectSQLite(ctx context.Context, dbPath string) (*DB, error) {
 		dbPath = absPath
 
 		dir := filepath.Dir(dbPath)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 			return nil, i18nerr.Wrapf(err, "storage: sqlite: не удалось создать папку %q", dir)
 		}
 

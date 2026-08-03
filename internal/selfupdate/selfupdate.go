@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"net/http"
@@ -78,7 +79,7 @@ func extractFromZip(zipPath, stageDir string) (string, error) {
 		if f.UncompressedSize64 > MaxBinaryBytes {
 			return "", fmt.Errorf("selfupdate: бинарь в архиве превышает лимит %d байт", MaxBinaryBytes)
 		}
-		if err := os.MkdirAll(stageDir, 0o755); err != nil {
+		if err := os.MkdirAll(stageDir, fsmode.Dir); err != nil {
 			return "", err
 		}
 		dst := filepath.Join(stageDir, want)
@@ -184,7 +185,7 @@ func Rollback(targetPath, backupPath string) error {
 // writeFile записывает r в path с правами perm, атомарно перезаписывая содержимое.
 func writeFile(r io.Reader, path string, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	out, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")

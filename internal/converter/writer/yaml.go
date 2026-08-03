@@ -2,6 +2,7 @@ package writer
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ type yamlRegister struct {
 // WriteCatalogs записывает справочники в out/catalogs/*.yaml.
 func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "catalogs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, cat := range cats {
@@ -71,7 +72,7 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 // WriteDocuments записывает документы в out/documents/*.yaml.
 func WriteDocuments(docs []*parser1c.DocumentMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "documents")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, doc := range docs {
@@ -97,7 +98,7 @@ func WriteDocuments(docs []*parser1c.DocumentMeta, outDir string, notes *Convers
 // WriteRegisters записывает регистры накопления в out/registers/*.yaml.
 func WriteRegisters(regs []*parser1c.RegisterMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "registers")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, reg := range regs {
@@ -164,7 +165,7 @@ type yamlScheduledJob struct {
 // WriteEnums записывает перечисления в out/enums/*.yaml.
 func WriteEnums(enums []*parser1c.EnumMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "enums")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, e := range enums {
@@ -186,7 +187,7 @@ func WriteConstants(consts []*parser1c.ConstantMeta, outDir string, notes *Conve
 		return nil
 	}
 	dir := filepath.Join(outDir, "constants")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	var items []yamlConstant
@@ -205,7 +206,7 @@ func WriteConstants(consts []*parser1c.ConstantMeta, outDir string, notes *Conve
 // WriteInfoRegisters записывает регистры сведений в out/inforegs/*.yaml.
 func WriteInfoRegisters(regs []*parser1c.InfoRegMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "inforegs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, reg := range regs {
@@ -227,7 +228,7 @@ func WriteInfoRegisters(regs []*parser1c.InfoRegMeta, outDir string, notes *Conv
 // WriteAccountRegisters записывает регистры бухгалтерии в out/accountregs/*.yaml.
 func WriteAccountRegisters(regs []*parser1c.AccountRegMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "accountregs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, reg := range regs {
@@ -249,7 +250,7 @@ func WriteAccountRegisters(regs []*parser1c.AccountRegMeta, outDir string, notes
 // WriteChartsOfAccounts записывает планы счетов в out/accounts/*.yaml.
 func WriteChartsOfAccounts(charts []*parser1c.ChartOfAccountsMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "accounts")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, chart := range charts {
@@ -270,7 +271,7 @@ func WriteChartsOfAccounts(charts []*parser1c.ChartOfAccountsMeta, outDir string
 // WriteScheduledJobs записывает регламентные задания в out/scheduled/*.yaml.
 func WriteScheduledJobs(jobs []*parser1c.ScheduledJobMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "scheduled")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, job := range jobs {
@@ -361,11 +362,11 @@ func fileName(name string) string {
 // WriteProcessors записывает обработки в out/processors/*.yaml.
 func WriteProcessors(procs []*parser1c.ProcessorMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "processors")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	srcDir := filepath.Join(outDir, "src")
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+	if err := os.MkdirAll(srcDir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, proc := range procs {
@@ -390,7 +391,7 @@ func WriteProcessors(procs []*parser1c.ProcessorMeta, outDir string, notes *Conv
 			source = fmt.Sprintf("// %s\n// Обработка\n\nПроцедура Главная()\nКонецПроцедуры\n", proc.Name)
 		}
 		srcPath := filepath.Join(srcDir, fileName(proc.Name)+".proc.os")
-		if err := os.WriteFile(srcPath, []byte(source), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte(source), fsmode.File); err != nil {
 			return err
 		}
 		notes.Processors++

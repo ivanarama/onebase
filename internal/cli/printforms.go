@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,7 +137,7 @@ func migrateLegacyPrintForms(projectDir string, keep bool) ([]migrateResult, []m
 		}
 		base := strings.TrimSuffix(name, ".yaml")
 		dstPath := filepath.Join(pfDir, base+".layout.yaml")
-		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+		if err := os.WriteFile(dstPath, data, fsmode.File); err != nil {
 			errs = append(errs, migrateError{File: name, Err: fmt.Errorf("запись %s: %w", dstPath, err)})
 			continue
 		}

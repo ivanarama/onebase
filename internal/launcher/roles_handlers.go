@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -649,10 +650,10 @@ func (h *handler) saveConfigFile(ctx context.Context, b *Base, relPath string, c
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
-	return os.WriteFile(full, content, 0o644)
+	return os.WriteFile(full, content, fsmode.File)
 }
 
 func (h *handler) saveRoleConfigFile(ctx context.Context, b *Base, relPath string, content []byte, stalePaths []string, author, roleName string) error {

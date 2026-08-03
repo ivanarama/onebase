@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func saveRegisterFieldsToFile(dir, regName string, dims, res, attrs []saveField,
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, out, 0o644)
+	return os.WriteFile(filePath, out, fsmode.File)
 }
 
 func (h *handler) saveRegisterFieldsToDB(ctx context.Context, b *Base, regName string, dims, res, attrs []saveField, objTitles *map[string]string) error {
@@ -200,7 +201,7 @@ func saveInfoRegToFile(dir string, reg saveInfoReg, objTitles *map[string]string
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, out, 0o644)
+	return os.WriteFile(p, out, fsmode.File)
 }
 
 func (h *handler) saveInfoRegToDB(ctx context.Context, b *Base, reg saveInfoReg, objTitles *map[string]string) error {
@@ -318,7 +319,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	p, err := findAccountRegFilePath(dir, reg.Name)
 	if err != nil {
 		// новый файл — subconto/titles сохранять неоткуда, marshal свежего reg
-		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		if merr := os.MkdirAll(filepath.Join(dir, "accountregs"), fsmode.Dir); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
 			return merr
 		}
 		p = filepath.Join(dir, "accountregs", nameToFilename(reg.Name)+".yaml")
@@ -326,7 +327,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 		if merr != nil {
 			return merr
 		}
-		return os.WriteFile(p, out, 0o644)
+		return os.WriteFile(p, out, fsmode.File)
 	}
 	raw, rerr := os.ReadFile(p)
 	if rerr != nil {
@@ -336,7 +337,7 @@ func saveAccountRegToFile(dir string, reg saveAccountReg, setTitles bool) error 
 	if merr != nil {
 		return merr
 	}
-	return os.WriteFile(p, out, 0o644)
+	return os.WriteFile(p, out, fsmode.File)
 }
 
 func (h *handler) saveAccountRegToDB(ctx context.Context, b *Base, reg saveAccountReg, setTitles bool) error {

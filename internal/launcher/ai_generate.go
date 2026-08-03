@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"net/http"
 	"os"
@@ -159,10 +160,10 @@ func (g *genSession) createObject(kind, name, yamlText string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(yamlText), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(yamlText), fsmode.File); err != nil {
 		return err
 	}
 	g.changed[rel] = true
@@ -179,10 +180,10 @@ func (g *genSession) createFile(rel, content string) error {
 	if len(content) > 512*1024 {
 		return fmt.Errorf("файл %s слишком большой для AI-generate (лимит 512 KiB)", rel)
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), fsmode.File); err != nil {
 		return err
 	}
 	g.changed[path.Clean(rel)] = true
@@ -242,7 +243,7 @@ func (g *genSession) format(pathArg string) string {
 			return "ошибка форматирования " + rel + ": " + err.Error()
 		}
 		if string(out) != string(data) {
-			if err := os.WriteFile(full, out, 0o644); err != nil {
+			if err := os.WriteFile(full, out, fsmode.File); err != nil {
 				return "ошибка записи " + rel + ": " + err.Error()
 			}
 			g.changed[rel] = true
@@ -992,7 +993,7 @@ func copyTree(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, fsmode.Dir)
 		}
 		in, err := os.Open(path)
 		if err != nil {

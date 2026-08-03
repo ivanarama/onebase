@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,7 @@ func ImportFromOneC(opts ImportOptions) (*ImportReport, error) {
 	}
 
 	// 5. Записываем YAML.
-	if err := os.MkdirAll(filepath.Dir(opts.DstYAMLPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.DstYAMLPath), fsmode.Dir); err != nil {
 		return report, fmt.Errorf("mkdir for yaml: %w", err)
 	}
 	if err := WriteFormYAML(form, opts.DstYAMLPath); err != nil {
@@ -106,7 +107,7 @@ func ImportFromOneC(opts ImportOptions) (*ImportReport, error) {
 		report.Warnings = append(report.Warnings, bslWarns...)
 		if len(procs) > 0 {
 			dsl := EmitDSLSource(procs)
-			if err := os.MkdirAll(filepath.Dir(opts.DstOSPath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(opts.DstOSPath), fsmode.Dir); err != nil {
 				return report, fmt.Errorf("mkdir for os: %w", err)
 			}
 			if err := WriteFormOS(dsl, opts.DstOSPath); err != nil {
@@ -162,7 +163,7 @@ func ExportToOneC(opts ExportOptions) (*ExportReport, error) {
 	report.Warnings = append(report.Warnings, NormalizeForExport(form)...)
 
 	// 3. Подготовить каталог.
-	if err := os.MkdirAll(opts.DstFormDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.DstFormDir, fsmode.Dir); err != nil {
 		return report, err
 	}
 
@@ -178,10 +179,10 @@ func ExportToOneC(opts ExportOptions) (*ExportReport, error) {
 			bslSource, bslWarns := EmitBSLFromDSL(string(dsl))
 			report.Warnings = append(report.Warnings, bslWarns...)
 			bslPath := filepath.Join(opts.DstFormDir, "Form", "Module.bsl")
-			if err := os.MkdirAll(filepath.Dir(bslPath), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(bslPath), fsmode.Dir); err != nil {
 				return report, err
 			}
-			if err := os.WriteFile(bslPath, []byte(bslSource), 0o644); err != nil {
+			if err := os.WriteFile(bslPath, []byte(bslSource), fsmode.File); err != nil {
 				return report, fmt.Errorf("write bsl: %w", err)
 			}
 		}
@@ -207,7 +208,7 @@ func ExportToOneC(opts ExportOptions) (*ExportReport, error) {
 
 // exportResources копирует подкаталоги из <_resources> в <Items>/<X>/...
 func exportResources(srcDir, dstDir string) error {
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+	if err := os.MkdirAll(dstDir, fsmode.Dir); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(srcDir)
@@ -220,7 +221,7 @@ func exportResources(srcDir, dstDir string) error {
 		}
 		elDir := filepath.Join(srcDir, e.Name())
 		dstElDir := filepath.Join(dstDir, e.Name())
-		if err := os.MkdirAll(dstElDir, 0o755); err != nil {
+		if err := os.MkdirAll(dstElDir, fsmode.Dir); err != nil {
 			return err
 		}
 		files, err := os.ReadDir(elDir)

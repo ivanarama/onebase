@@ -3,6 +3,7 @@ package writer
 import (
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
@@ -57,7 +58,7 @@ func WriteTemplates(sourceDir, outDir string, notes *ConversionReport) error {
 	}
 
 	dir := filepath.Join(outDir, "printforms")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, t := range rest {
@@ -80,7 +81,7 @@ func WriteTemplates(sourceDir, outDir string, notes *ConversionReport) error {
 		fmt.Fprintf(&sb, "document: %s\n", owner)
 		fmt.Fprintf(&sb, "title: %q\n", t.Name)
 		sb.WriteString("header: |\n  TODO: оформление макета 1С не конвертируется автоматически.\n")
-		if err := os.WriteFile(filepath.Join(dir, base+".yaml"), []byte(sb.String()), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, base+".yaml"), []byte(sb.String()), fsmode.File); err != nil {
 			return err
 		}
 
@@ -105,7 +106,7 @@ func writeProcessorLayouts(groups map[string][]templateSource, outDir string, no
 		return nil
 	}
 	srcDir := filepath.Join(outDir, "src")
-	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+	if err := os.MkdirAll(srcDir, fsmode.Dir); err != nil {
 		return err
 	}
 	owners := make([]string, 0, len(groups))
@@ -146,7 +147,7 @@ func writeProcessorLayouts(groups map[string][]templateSource, outDir string, no
 		header := "# Заготовка макета обработки из 1С. Области доступны из DSL:\n" +
 			"# Макет.Область(\"<имя макета 1С>\"). TODO: перенесите оформление вручную.\n"
 		name := fileName(owner) + ".proc.layout.yaml"
-		if err := os.WriteFile(filepath.Join(srcDir, name), append([]byte(header), data...), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(srcDir, name), append([]byte(header), data...), fsmode.File); err != nil {
 			return err
 		}
 		notes.ProcessorLayouts = append(notes.ProcessorLayouts, name)

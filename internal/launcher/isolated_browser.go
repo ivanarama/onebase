@@ -12,6 +12,7 @@ package launcher
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 
@@ -103,13 +104,13 @@ func profilesRoot(baseID string) (string, error) {
 // Chromium) — PID запущенного процесса ненадёжен: браузер с уже открытым
 // профилем делегирует существующему процессу и сразу выходит.
 func pickProfileDir(root string) (string, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, fsmode.Dir); err != nil {
 		return "", err
 	}
 	for i := 1; i <= maxIsolatedProfiles; i++ {
 		dir := filepath.Join(root, fmt.Sprintf("profile-%d", i))
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
+			if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 				return "", err
 			}
 			return dir, nil

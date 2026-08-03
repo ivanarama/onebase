@@ -3,6 +3,7 @@ package configdb
 import (
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io/fs"
 	"os"
 	"path"
@@ -256,10 +257,10 @@ func (r *Repo) ExportToDir(ctx context.Context, dir string) error {
 		if err != nil {
 			return fmt.Errorf("configdb: unsafe export path %q: %w", path, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(osPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(osPath), fsmode.Dir); err != nil {
 			return fmt.Errorf("configdb: mkdir: %w", err)
 		}
-		if err := os.WriteFile(osPath, content, 0o644); err != nil {
+		if err := os.WriteFile(osPath, content, fsmode.File); err != nil {
 			return fmt.Errorf("configdb: write %s: %w", osPath, err)
 		}
 	}

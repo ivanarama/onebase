@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -257,11 +258,11 @@ func atomicWriteConfigFile(basePath, relPath string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 		return err
 	}
 	tmp := full + ".tmp"
-	if err := os.WriteFile(tmp, content, 0o644); err != nil {
+	if err := os.WriteFile(tmp, content, fsmode.File); err != nil {
 		return err
 	}
 	return os.Rename(tmp, full)

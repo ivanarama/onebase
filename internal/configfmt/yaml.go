@@ -3,6 +3,7 @@ package configfmt
 import (
 	"bytes"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -96,7 +97,7 @@ func FormatYAMLFile(path string, check bool) (alreadyFormatted bool, err error) 
 	if check {
 		return false, nil
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, fsmode.File); err != nil {
 		return false, err
 	}
 	return false, nil

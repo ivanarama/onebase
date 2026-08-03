@@ -2,6 +2,7 @@ package gengen
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,10 +67,10 @@ func (mg *MergeGenerator) Merge(delta *DeltaManifest) error {
 	// 7. Create new DSL files
 	for relPath, content := range delta.NewDSLFiles {
 		fullPath := filepath.Join(mg.ProjectDir, "src", relPath)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), fsmode.Dir); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(fullPath), err)
 		}
-		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(fullPath, []byte(content), fsmode.File); err != nil {
 			return fmt.Errorf("write %s: %w", fullPath, err)
 		}
 	}
@@ -80,7 +81,7 @@ func (mg *MergeGenerator) Merge(delta *DeltaManifest) error {
 // createEntity creates a new entity YAML file.
 func (mg *MergeGenerator) createEntity(kindDir string, spec EntitySpec) error {
 	dir := filepath.Join(mg.ProjectDir, kindDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 
@@ -98,13 +99,13 @@ func (mg *MergeGenerator) createEntity(kindDir string, spec EntitySpec) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, fsmode.File)
 }
 
 // createEnum creates a new enum YAML file.
 func (mg *MergeGenerator) createEnum(spec EnumSpec) error {
 	dir := filepath.Join(mg.ProjectDir, "enums")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 
@@ -124,7 +125,7 @@ func (mg *MergeGenerator) createEnum(spec EnumSpec) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, fsmode.File)
 }
 
 // addFieldsToEntity finds an existing entity YAML file and appends new fields.
@@ -173,7 +174,7 @@ func (mg *MergeGenerator) addFieldsToEntity(entityName string, fields []FieldSpe
 		return err
 	}
 
-	return os.WriteFile(path, out, 0o644)
+	return os.WriteFile(path, out, fsmode.File)
 }
 
 // addTablePartsToEntity finds an existing entity YAML file and appends new table parts.
@@ -235,7 +236,7 @@ func (mg *MergeGenerator) addTablePartsToEntity(entityName string, tps []TablePa
 		return err
 	}
 
-	return os.WriteFile(path, out, 0o644)
+	return os.WriteFile(path, out, fsmode.File)
 }
 
 // findEntityFile searches for an entity YAML file across known directories.

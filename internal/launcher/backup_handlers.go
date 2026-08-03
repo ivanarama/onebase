@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"log/slog"
 	"net/http"
@@ -137,12 +138,12 @@ func extractValidatedArchive(dir string, files []*zip.File) error {
 			return err // normally caught by validateArchiveEntries; keep fail-closed
 		}
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(outPath, 0o755); err != nil {
+			if err := os.MkdirAll(outPath, fsmode.Dir); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(outPath), fsmode.Dir); err != nil {
 			return err
 		}
 		rc, err := f.Open()
@@ -323,10 +324,10 @@ func (h *handler) backupSettings(w http.ResponseWriter, r *http.Request) {
 		dir := filepath.Join(b.Path, "config")
 		// Проверяем отдельно: иначе пользователь увидит «no such file or
 		// directory» от WriteFile и пойдёт искать пропавший app.yaml.
-		if merr := os.MkdirAll(dir, 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		if merr := os.MkdirAll(dir, fsmode.Dir); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
 			saveErr = merr
 		} else {
-			saveErr = os.WriteFile(filepath.Join(dir, "app.yaml"), out, 0o644) //nolint:gosec // G306: то же
+			saveErr = os.WriteFile(filepath.Join(dir, "app.yaml"), out, fsmode.File) //nolint:gosec // G306: то же
 		}
 	}
 	data := h.loadCfgData(r.Context(), b, "backup")
@@ -348,7 +349,7 @@ func (h *handler) backupUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := h.backupDir(b)
 	lang := resolveLang(r)
-	if merr := os.MkdirAll(dir, 0o755); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+	if merr := os.MkdirAll(dir, fsmode.Dir); merr != nil { //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
 		data := h.loadCfgData(r.Context(), b, "backup")
 		data.Error = tr(lang, "Ошибка загрузки") + ": " + merr.Error()
 		renderCfg(w, r, data)

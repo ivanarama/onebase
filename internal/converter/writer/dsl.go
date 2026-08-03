@@ -2,6 +2,7 @@ package writer
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,7 +38,7 @@ func sanitizeBSL(src string) string {
 // Если рядом есть .bsl-модуль из 1С — добавляет его содержимое как комментарий.
 func WriteDSLStubs(docs []*parser1c.DocumentMeta, srcDir1C, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "src")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 
@@ -45,7 +46,7 @@ func WriteDSLStubs(docs []*parser1c.DocumentMeta, srcDir1C, outDir string, notes
 		stub := buildStub(doc, srcDir1C)
 		name := strings.ToLower(doc.Name) + ".os"
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(stub), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(stub), fsmode.File); err != nil {
 			return err
 		}
 		notes.DSLStubs = append(notes.DSLStubs, name)
@@ -96,7 +97,7 @@ func buildStub(doc *parser1c.DocumentMeta, srcDir1C string) string {
 // WriteModules записывает общие модули в out/src/*.module.os.
 func WriteModules(mods []*parser1c.ModuleMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "src")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return err
 	}
 	for _, mod := range mods {
@@ -106,7 +107,7 @@ func WriteModules(mods []*parser1c.ModuleMeta, outDir string, notes *ConversionR
 		}
 		name := strings.ToLower(mod.Name) + ".module.os"
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(source), fsmode.File); err != nil {
 			return err
 		}
 		notes.Modules++

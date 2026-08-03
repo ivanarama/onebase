@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -610,11 +611,11 @@ func (s *Server) gengenGenerate(w http.ResponseWriter, r *http.Request) {
 			jsonResp(w, 400, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fullPath), fsmode.Dir); err != nil {
 			jsonResp(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(fullPath, []byte(content), fsmode.File); err != nil {
 			jsonResp(w, 500, map[string]any{"error": err.Error()})
 			return
 		}

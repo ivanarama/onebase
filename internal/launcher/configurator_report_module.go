@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -186,7 +187,7 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			}
 			out, err := updateReportFile(raw)
 			if err == nil {
-				saveErr = os.WriteFile(p, out, 0o644)
+				saveErr = os.WriteFile(p, out, fsmode.File)
 			} else {
 				saveErr = err
 			}

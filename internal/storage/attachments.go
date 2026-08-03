@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"os"
 	"path/filepath"
@@ -176,7 +177,7 @@ func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string,
 		compensate = func() { _ = db.blobStore.DeleteObject(context.Background(), key) }
 	} else {
 		dir := filepath.Join(db.filesDir, ownerName)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 			return Attachment{}, err
 		}
 		filePath := filepath.Join(dir, id.String())
@@ -351,7 +352,7 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 	}
 	defer closeRead("объект вложения в хранилище", rc)
 	base := filepath.Join(db.filesDir, "_attach_tmp")
-	if err := os.MkdirAll(base, 0o755); err != nil {
+	if err := os.MkdirAll(base, fsmode.Dir); err != nil {
 		return "", err
 	}
 	dir, err := os.MkdirTemp(base, "att-")

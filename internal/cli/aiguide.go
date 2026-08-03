@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,7 +44,7 @@ func runAIGuide(cmd *cobra.Command, _ []string) error {
 		outf("%s", guide)
 		return nil
 	}
-	if err := os.WriteFile(out, []byte(guide), 0o644); err != nil {
+	if err := os.WriteFile(out, []byte(guide), fsmode.File); err != nil {
 		return err
 	}
 	// --claude: рядом с руководством кладём CLAUDE.md-указатель (Claude Code
@@ -51,7 +52,7 @@ func runAIGuide(cmd *cobra.Command, _ []string) error {
 	if withClaude, _ := cmd.Flags().GetBool("claude"); withClaude {
 		claudePath := filepath.Join(filepath.Dir(out), "CLAUDE.md")
 		if _, err := os.Stat(claudePath); os.IsNotExist(err) {
-			if werr := os.WriteFile(claudePath, []byte(claudePointer), 0o644); werr != nil {
+			if werr := os.WriteFile(claudePath, []byte(claudePointer), fsmode.File); werr != nil {
 				return werr
 			}
 		}

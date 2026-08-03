@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -222,7 +223,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if scaffold {
-			if err := os.MkdirAll(b.Path, 0o755); err != nil {
+			if err := os.MkdirAll(b.Path, fsmode.Dir); err != nil {
 				render(w, r, "page-form", map[string]any{
 					"Title": tr(lang, "onebase — Добавить базу"),
 					"IsNew": true, "Base": b, "Error": tr(lang, "Не удалось создать папку") + ": " + err.Error(),
@@ -826,7 +827,7 @@ func workspacePath(baseID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return p, os.MkdirAll(p, 0o755)
+	return p, os.MkdirAll(p, fsmode.Dir)
 }
 
 func resolveLang(r *http.Request) string {

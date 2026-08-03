@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"net/http"
 	"os"
@@ -515,14 +516,14 @@ func saveManagedForm(r *http.Request, b *Base, entity, name string, yamlBody, os
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(yp), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(yp), fsmode.Dir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(yp, yamlBody, 0o644); err != nil {
+	if err := os.WriteFile(yp, yamlBody, fsmode.File); err != nil {
 		return err
 	}
 	if len(osBody) > 0 {
-		if err := os.WriteFile(op, osBody, 0o644); err != nil {
+		if err := os.WriteFile(op, osBody, fsmode.File); err != nil {
 			return err
 		}
 	}

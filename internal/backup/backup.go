@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"net/url"
 	"os"
@@ -23,7 +24,7 @@ func Dump(ctx context.Context, connStr, outDir string) (string, error) {
 		return "", err
 	}
 
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, fsmode.Dir); err != nil {
 		return "", err
 	}
 

@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -61,7 +62,7 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		dir := filepath.Join(b.Path, "enums")
-		bestEffort("создать каталог перечислений", os.MkdirAll(dir, 0o755)) //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
+		bestEffort("создать каталог перечислений", os.MkdirAll(dir, fsmode.Dir)) //nolint:gosec // G301: права — соглашение пакета, разбор на этапе 109H
 		// find existing file by name field, fallback to name-based filename
 		files, _ := os.ReadDir(dir)
 		targetFile := filepath.Join(dir, nameToFilename(enumName)+".yaml")
@@ -79,7 +80,7 @@ func (h *handler) configuratorSaveEnum(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		saveErr = os.WriteFile(targetFile, out, 0o644)
+		saveErr = os.WriteFile(targetFile, out, fsmode.File)
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
@@ -229,7 +230,7 @@ func (h *handler) configuratorSaveConstant(w http.ResponseWriter, r *http.Reques
 			}
 			out, err := updateConstantsFile(raw)
 			if err == nil {
-				saveErr = os.WriteFile(p, out, 0o644)
+				saveErr = os.WriteFile(p, out, fsmode.File)
 			} else {
 				saveErr = err
 			}

@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -207,7 +208,7 @@ func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filePath, out, 0o644)
+	return os.WriteFile(filePath, out, fsmode.File)
 }
 
 func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, objTitles *map[string]string) error {
@@ -408,7 +409,7 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
-	if err := os.WriteFile(filePath, out, 0o644); err != nil {
+	if err := os.WriteFile(filePath, out, fsmode.File); err != nil {
 		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
 		renderCfg(w, r, data)
 		return

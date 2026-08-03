@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -97,7 +98,7 @@ func savePredefinedToFile(dir, entityName string, predefined interface{}) error 
 			if err != nil {
 				return err
 			}
-			return os.WriteFile(p, out, 0o644)
+			return os.WriteFile(p, out, fsmode.File)
 		}
 	}
 	return fmt.Errorf("entity %q not found", entityName)

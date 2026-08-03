@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io"
 	"os"
 	"path/filepath"
@@ -173,7 +174,7 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 
 	default: // FileStorageDisk — файл на диске, в _blobs только метаданные.
 		dir := filepath.Join(db.filesDir, blobsDirName)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 			return Blob{}, err
 		}
 		fp := filepath.Join(dir, id.String())

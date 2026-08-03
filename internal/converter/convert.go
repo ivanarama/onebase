@@ -2,6 +2,7 @@ package converter
 
 import (
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func Convert(opts Options) (*writer.ConversionReport, error) {
 		return nil, fmt.Errorf("convert: parse: %w", err)
 	}
 
-	if err := os.MkdirAll(opts.OutDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.OutDir, fsmode.Dir); err != nil {
 		return nil, err
 	}
 
@@ -128,7 +129,7 @@ func Convert(opts Options) (*writer.ConversionReport, error) {
 
 	// Записать отчёт в файл
 	reportPath := filepath.Join(opts.OutDir, "conversion_report.txt")
-	if err := os.WriteFile(reportPath, []byte(report.String()), 0o644); err != nil { //nolint:gosec // G306: права не менялись — соглашение репозитория, этап 109H
+	if err := os.WriteFile(reportPath, []byte(report.String()), fsmode.File); err != nil {
 		return nil, err
 	}
 
@@ -265,7 +266,7 @@ func downgradeDanglingEnums(dump *parser1c.ConfigDump, report *writer.Conversion
 
 func writeAppYAML(outDir, name string) error {
 	configDir := filepath.Join(outDir, "config")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, fsmode.Dir); err != nil {
 		return err
 	}
 	cfg := appConfig{Name: name, Version: "1.0"}
@@ -273,5 +274,5 @@ func writeAppYAML(outDir, name string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(configDir, "app.yaml"), data, 0o644)
+	return os.WriteFile(filepath.Join(configDir, "app.yaml"), data, fsmode.File)
 }

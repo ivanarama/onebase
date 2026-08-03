@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -23,7 +24,7 @@ func WriteFormYAML(form *IRForm, dstPath string) error {
 	if err != nil {
 		return fmt.Errorf("yaml.Marshal: %w", err)
 	}
-	if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+	if err := os.WriteFile(dstPath, data, fsmode.File); err != nil {
 		return fmt.Errorf("write %s: %w", dstPath, err)
 	}
 	return nil
@@ -302,5 +303,5 @@ func nonEmptyTitle(t IRTitle) map[string]string {
 // ImportFromOneC: сначала собираем процедуры через ReadBSL → EmitDSLSource,
 // затем записываем как один файл.
 func WriteFormOS(source, dstPath string) error {
-	return os.WriteFile(dstPath, []byte(source), 0o644)
+	return os.WriteFile(dstPath, []byte(source), fsmode.File)
 }

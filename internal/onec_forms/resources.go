@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"errors"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
 	"os"
@@ -40,7 +41,7 @@ func CopyResources(itemsDir, dstResourcesDir string) ([]IRResource, []Warning, e
 		return nil, nil, err
 	}
 
-	if err := os.MkdirAll(dstResourcesDir, 0o755); err != nil {
+	if err := os.MkdirAll(dstResourcesDir, fsmode.Dir); err != nil {
 		return nil, nil, fmt.Errorf("create %s: %w", dstResourcesDir, err)
 	}
 
@@ -85,7 +86,7 @@ func CopyResources(itemsDir, dstResourcesDir string) ([]IRResource, []Warning, e
 			}
 
 			if !dirCreated {
-				if err := os.MkdirAll(dstDir, 0o755); err != nil {
+				if err := os.MkdirAll(dstDir, fsmode.Dir); err != nil {
 					return resources, []Warning(warns), fmt.Errorf("create %s: %w", dstDir, err)
 				}
 				dirCreated = true

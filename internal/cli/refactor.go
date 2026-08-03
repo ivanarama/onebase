@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/fsmode"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -467,11 +468,11 @@ func applyRefactorOps(root string, ops []refactorOp) (configcheck.Result, bool, 
 			}
 		}
 		full := filepath.Join(root, filepath.FromSlash(target))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
 			rollbackRefactor(root, backups, existed)
 			return configcheck.Result{}, true, err
 		}
-		if err := os.WriteFile(full, op.newContent, 0o644); err != nil {
+		if err := os.WriteFile(full, op.newContent, fsmode.File); err != nil {
 			rollbackRefactor(root, backups, existed)
 			return configcheck.Result{}, true, err
 		}
@@ -502,8 +503,8 @@ func rollbackRefactor(root string, backups map[string][]byte, existed map[string
 			_ = os.Remove(full)
 			continue
 		}
-		_ = os.MkdirAll(filepath.Dir(full), 0o755)
-		_ = os.WriteFile(full, backups[rel], 0o644)
+		_ = os.MkdirAll(filepath.Dir(full), fsmode.Dir)
+		_ = os.WriteFile(full, backups[rel], fsmode.File)
 	}
 }
 
