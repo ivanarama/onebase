@@ -265,6 +265,18 @@ func (db *DB) deleteFTSRowsOutside(ctx context.Context, entities []*metadata.Ent
 	return db.exec(ctx, sqlText, names...)
 }
 
+// ReindexEntityFullText пересобирает индекс одного объекта — точечный вариант
+// RebuildFullTextIndex (`onebase reindex --entity`), не трогающий чужие строки.
+func (db *DB) ReindexEntityFullText(ctx context.Context, e *metadata.Entity, batchSize int) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	return db.rebuildEntityFTS(ctx, e, batchSize)
+}
+
 func (db *DB) rebuildEntityFTS(ctx context.Context, e *metadata.Entity, batchSize int) (int, error) {
 	d := db.dialect
 	fields := metadata.FullTextFields(e)
