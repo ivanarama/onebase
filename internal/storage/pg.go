@@ -31,6 +31,10 @@ type DB struct {
 	// (ListParams.RowFilterEvaluated=false), отклоняется fail-closed. Инжектится
 	// из лаунчера/сервера в строгом режиме (ONEBASE_STRICT_RLS).
 	rlsGuard func(entityName string) bool
+	// schemaOpts — режим реструктуризации схемы (план 81): пробный прогон,
+	// разрешение на удаление колонок, приёмник отчёта. Нулевое значение —
+	// прежнее поведение: применять всё безопасное, лишние колонки не трогать.
+	schemaOpts SchemaOptions
 }
 
 // SetStrictRLSGuard включает strict-RLS чокпоинт (план 79F, defense-in-depth).

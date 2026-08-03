@@ -1,6 +1,9 @@
 package metadata
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // ValidateConstants проверяет, что enum-/reference-константы ссылаются на
 // существующие перечисления и сущности — ловит опечатки в `type:` на
@@ -45,6 +48,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: field %s references unknown enum %s", e.Name, f.Name, f.EnumName)
 			}
 		}
+		if err := validateFieldIDs(e); err != nil {
+			return err
+		}
 		if err := validateTileView(e); err != nil {
 			return err
 		}
@@ -68,6 +74,46 @@ func Validate(entities []*Entity, enums []*Enum) error {
 			if !entityNames[src] {
 				return fmt.Errorf("entity %s: based_on references unknown entity %s", e.Name, src)
 			}
+		}
+	}
+	return nil
+}
+
+// fieldIDPattern ограничивает идентификатор поля латиницей, цифрами и «_»:
+// он попадает в служебную таблицу соответствия и в вывод плана миграции, где
+// от него нужна однозначность, а не выразительность (имя поля — отдельно).
+var fieldIDPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validateFieldIDs проверяет устойчивые идентификаторы полей (план 81):
+// формат и уникальность в пределах таблицы. Уникальность именно потабличная —
+// у шапки и у каждой табличной части своя таблица, поэтому совпадение ID между
+// ними безвредно, а внутри одной таблицы означало бы две колонки с одной
+// идентичностью.
+func validateFieldIDs(e *Entity) error {
+	check := func(scope string, fields []Field) error {
+		seen := make(map[string]string, len(fields))
+		for _, f := range fields {
+			if f.ID == "" {
+				continue
+			}
+			if !fieldIDPattern.MatchString(f.ID) {
+				return fmt.Errorf("%s: поле %s: id %q — допустимы латиница, цифры и подчёркивание, первый знак не цифра",
+					scope, f.Name, f.ID)
+			}
+			if prev, dup := seen[f.ID]; dup {
+				return fmt.Errorf("%s: id %q задан у двух полей (%s и %s) — идентификатор должен быть уникален",
+					scope, f.ID, prev, f.Name)
+			}
+			seen[f.ID] = f.Name
+		}
+		return nil
+	}
+	if err := check("entity "+e.Name, e.Fields); err != nil {
+		return err
+	}
+	for _, tp := range e.TableParts {
+		if err := check("entity "+e.Name+", табличная часть "+tp.Name, tp.Fields); err != nil {
+			return err
 		}
 	}
 	return nil

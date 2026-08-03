@@ -1,6 +1,9 @@
 package metadata
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type Kind string
 
@@ -24,6 +27,14 @@ const (
 )
 
 type Field struct {
+	// ID — устойчивый идентификатор поля (план 81), необязательный.
+	//
+	// Имя поля меняется при переименовании, а ID — нет; по нему миграция
+	// понимает, что колонку надо переименовать, а не заводить новую пустую.
+	// Поле без ID мигрирует как раньше, аддитивно: переименование для него
+	// по-прежнему выглядит как «удалить старое + добавить новое», то есть
+	// данные остаются в осиротевшей колонке.
+	ID   string
 	Name string
 	// Title — синоним поля по умолчанию (показывается в UI). Пустой Title →
 	// в интерфейсе используется Name.
@@ -402,6 +413,25 @@ func EnumTypeName(ft FieldType) string {
 
 func TableName(entityName string) string {
 	return strings.ToLower(entityName)
+}
+
+// FieldSignature — диалект-независимая подпись типа поля (план 81).
+//
+// По ней миграция понимает, что тип реквизита изменился и колонку надо
+// преобразовать. Диалект-независимая намеренно: одна и та же конфигурация
+// живёт и на PostgreSQL, и на SQLite, а подпись хранится в базе и должна
+// значить одно и то же в обеих.
+func FieldSignature(f Field) string {
+	switch {
+	case f.RefEntity != "":
+		return "ref:" + f.RefEntity
+	case f.EnumName != "":
+		return "enum:" + f.EnumName
+	case f.Type == FieldTypeNumber && (f.Length > 0 || f.Scale > 0):
+		return fmt.Sprintf("number(%d,%d)", f.Length, f.Scale)
+	default:
+		return string(f.Type)
+	}
 }
 
 func ColumnName(f Field) string {
