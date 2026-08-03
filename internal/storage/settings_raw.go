@@ -127,6 +127,13 @@ func secretHeaderName(name string) bool {
 	return false
 }
 
+// HasTable сообщает, есть ли в базе таблица с таким именем. Нужна проверкам
+// состояния базы (план 114): объект может быть в конфигурации, а таблицы ещё
+// нет — миграцию не выполняли.
+func (db *DB) HasTable(ctx context.Context, table string) bool {
+	return tableExistsIn(ctx, db, table)
+}
+
 // tableExistsIn — проверка наличия служебной таблицы без её создания: команды
 // вида `onebase secret list` обязаны оставаться читающими.
 func tableExistsIn(ctx context.Context, db *DB, table string) bool {

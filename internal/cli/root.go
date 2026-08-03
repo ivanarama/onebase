@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -15,8 +16,16 @@ var rootCmd = &cobra.Command{
 	RunE:    runStart,
 }
 
+// errSilentExit — команда уже всё сообщила пользователю сама и просит лишь
+// ненулевой код возврата. Так `onebase doctor` отличает «нашёл проблемы в базе»
+// от «сама команда сломалась»: первое не должно печататься как ошибка запуска.
+var errSilentExit = errors.New("команда завершилась с ненулевым кодом")
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		if errors.Is(err, errSilentExit) {
+			os.Exit(1)
+		}
 		showError(fmt.Sprintf("Ошибка запуска onebase:\n\n%s", err.Error()))
 		os.Exit(1)
 	}
