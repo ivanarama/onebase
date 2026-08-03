@@ -15,23 +15,23 @@ import (
 
 // ListParams controls filtering, search, sorting and pagination for List queries.
 type ListParams struct {
-	Filters           map[string]FilterValue
-	RowFilter         *Predicate            // additional SQL-side row-level access predicate
+	Filters   map[string]FilterValue
+	RowFilter *Predicate // additional SQL-side row-level access predicate
 	// RowFilterEvaluated — строковый доступ был вычислен для этого списка (план
 	// 79F): хендлер прошёл через applyRowFilter/rowFilterFor (даже если политика
 	// неограничивающая — RowFilter при этом nil). Используется strict-RLS
 	// чокпоинтом в List как признак «фильтр не забыли», иначе fail-closed.
 	RowFilterEvaluated bool
-	JournalRowFilters map[string]*Predicate // per document name row-level predicates for journal UNIONs
-	Sort              string                // field Name (empty = default sort by id)
-	Dir               string                // "asc" or "desc"
-	ParentStr         string                // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
-	Search            string                // full-text search: ILIKE across all string fields
-	ActivityScope     string                // "", "active", "inactive", "all"; applied only for opt-in catalogs
-	Limit             int                   // 0 = no limit
-	Offset            int                   // for pagination
-	ExcludeFolders    bool                  // for hierarchical catalogs: only non-folder elements
-	OnlyFolders       bool                  // for hierarchical catalogs: only folder elements
+	JournalRowFilters  map[string]*Predicate // per document name row-level predicates for journal UNIONs
+	Sort               string                // field Name (empty = default sort by id)
+	Dir                string                // "asc" or "desc"
+	ParentStr          string                // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
+	Search             string                // full-text search: ILIKE across all string fields
+	ActivityScope      string                // "", "active", "inactive", "all"; applied only for opt-in catalogs
+	Limit              int                   // 0 = no limit
+	Offset             int                   // for pagination
+	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
+	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
 }
 
 // FilterValue holds a filter for one field.

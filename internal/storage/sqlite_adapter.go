@@ -10,10 +10,10 @@ type sqlRows struct {
 	r *sql.Rows
 }
 
-func (s *sqlRows) Next() bool          { return s.r.Next() }
+func (s *sqlRows) Next() bool            { return s.r.Next() }
 func (s *sqlRows) Scan(dst ...any) error { return s.r.Scan(dst...) }
-func (s *sqlRows) Err() error          { return s.r.Err() }
-func (s *sqlRows) Close()              { _ = s.r.Close() }
+func (s *sqlRows) Err() error            { return s.r.Err() }
+func (s *sqlRows) Close()                { _ = s.r.Close() }
 func (s *sqlRows) FieldNames() []string {
 	cols, _ := s.r.Columns()
 	return cols
