@@ -47,9 +47,10 @@ func saveRegisterFieldsToFile(dir, regName string, dims, res, attrs []saveField,
 	if err := yaml.Unmarshal(raw, &reg); err != nil {
 		return err
 	}
-	reg.Dimensions = dims
-	reg.Resources = res
-	reg.Attributes = attrs
+	// Устойчивые id (план 81) переносим из прежнего состояния файла.
+	reg.Dimensions = ensureFieldIDs(reg.Dimensions, dims)
+	reg.Resources = ensureFieldIDs(reg.Resources, res)
+	reg.Attributes = ensureFieldIDs(reg.Attributes, attrs)
 	if objTitles != nil {
 		reg.Titles = *objTitles
 	}
@@ -94,9 +95,10 @@ func (h *handler) saveRegisterFieldsToDB(ctx context.Context, b *Base, regName s
 		return fmt.Errorf("register %q not found in DB config", regName)
 	}
 
-	reg.Dimensions = dims
-	reg.Resources = res
-	reg.Attributes = attrs
+	// Устойчивые id (план 81) переносим из прежнего состояния файла.
+	reg.Dimensions = ensureFieldIDs(reg.Dimensions, dims)
+	reg.Resources = ensureFieldIDs(reg.Resources, res)
+	reg.Attributes = ensureFieldIDs(reg.Attributes, attrs)
 	if objTitles != nil {
 		reg.Titles = *objTitles
 	}
@@ -198,6 +200,9 @@ func saveInfoRegToFile(dir string, reg saveInfoReg, objTitles *map[string]string
 			if objTitles == nil {
 				reg.Titles = existing.Titles
 			}
+			// Устойчивые id (план 81) — тоже поле, которого форма не знает.
+			reg.Dimensions = ensureFieldIDs(existing.Dimensions, reg.Dimensions)
+			reg.Resources = ensureFieldIDs(existing.Resources, reg.Resources)
 		}
 	}
 	if objTitles != nil {
@@ -237,6 +242,9 @@ func (h *handler) saveInfoRegToDB(ctx context.Context, b *Base, reg saveInfoReg,
 			if objTitles == nil {
 				reg.Titles = existing.Titles
 			}
+			// Устойчивые id (план 81) — тоже поле, которого форма не знает.
+			reg.Dimensions = ensureFieldIDs(existing.Dimensions, reg.Dimensions)
+			reg.Resources = ensureFieldIDs(existing.Resources, reg.Resources)
 			break
 		}
 	}
