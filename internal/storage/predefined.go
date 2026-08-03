@@ -208,6 +208,18 @@ func (db *DB) SyncPredefined(ctx context.Context, e *metadata.Entity) error {
 		if _, err := db.Exec(ctx, sql, args...); err != nil {
 			return fmt.Errorf("sync predefined %s.%s: %w", e.Name, item.Name, err)
 		}
+		// Полнотекстовый индекс (план 82). Предопределённые вставляются мимо
+		// Upsert, поэтому индексируются здесь — иначе «Основной склад» и прочие
+		// элементы из YAML не находились бы глобальным поиском до первой ручной
+		// правки. Идентификатор берём из базы: при повторной синхронизации
+		// ON CONFLICT попадает в уже существующую строку с прежним id.
+		predefinedID, err := db.GetPredefinedID(ctx, e.Name, item.Name)
+		if err != nil {
+			return fmt.Errorf("sync predefined %s.%s: %w", e.Name, item.Name, err)
+		}
+		if err := db.IndexObject(ctx, e, predefinedID, item.Fields); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +36,12 @@ type DB struct {
 	// разрешение на удаление колонок, приёмник отчёта. Нулевое значение —
 	// прежнее поведение: применять всё безопасное, лишние колонки не трогать.
 	schemaOpts SchemaOptions
+	// ftsState — есть ли в базе схема полнотекстового поиска (план 82).
+	// Кэш на процесс: без него запись объекта в базу, ещё не прошедшую
+	// migrate, падала бы на INSERT в несуществующий _fts. См. ftsAvailable.
+	ftsState int32
+	// ftsCfg — имя конфигурации текстового поиска PostgreSQL (russian/simple).
+	ftsCfg atomic.Value
 }
 
 // SetStrictRLSGuard включает strict-RLS чокпоинт (план 79F, defense-in-depth).

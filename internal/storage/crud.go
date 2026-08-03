@@ -161,6 +161,15 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 		return fmt.Errorf("upsert %s: %w", entityName, classifyConstraintErr(err))
 	}
 
+	// Полнотекстовый индекс (план 82) — в той же транзакции, что и запись:
+	// откат записи откатывает и индекс, поэтому разъехаться они не могут.
+	// Здесь, а не в entityservice, потому что путей записи несколько
+	// (entityservice.Save, ui/dsl_documents, обмен, приёмка) — общий у них
+	// только этот upsert.
+	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+		return err
+	}
+
 	// Audit (best-effort, non-blocking)
 	kind := string(entity.Kind)
 	switch {
@@ -772,6 +781,11 @@ func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error
 	err = db.exec(ctx,
 		fmt.Sprintf("DELETE FROM %s WHERE id = %s", tbl, d.Placeholder(1)), idArg(d, id))
 	if err == nil {
+		// План 82: удалённый объект уходит и из полнотекстового индекса, иначе
+		// глобальный поиск отдавал бы битые ссылки на несуществующие карточки.
+		if ftsErr := db.DeleteFromFullTextIndex(ctx, entityName, id); ftsErr != nil {
+			return ftsErr
+		}
 		if s := db.GetAuditSettings(ctx); s.Enabled && s.Delete {
 			u, _ := auditUserFromCtx(ctx)
 			_ = db.Log(ctx, &AuditEntry{

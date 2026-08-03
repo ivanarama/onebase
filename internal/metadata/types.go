@@ -246,6 +246,54 @@ type Entity struct {
 	// старое автоправило: картинка из image-поля, заголовок из первого поля,
 	// остальные реквизиты ниже.
 	TileView *TileView
+	// FullText — реквизиты шапки, попадающие в полнотекстовый индекс (план 82).
+	// Nil (блока нет в YAML) означает умолчание: все строковые реквизиты, см.
+	// FullTextFields. Явный пустой список — объект исключён из глобального поиска.
+	FullText []string
+	// FullTextSet отличает отсутствующий ключ fulltext от явного «fulltext: []».
+	FullTextSet bool
+}
+
+// FullTextFields возвращает реквизиты шапки, которые индексируются глобальным
+// поиском (план 82). Без блока `fulltext:` в YAML это все строковые реквизиты —
+// у документа сюда попадает и синтезированный Номер. Явный `fulltext: []`
+// выключает объект из индекса, поэтому пустой результат — валидное состояние,
+// а не «список не задан».
+func FullTextFields(e *Entity) []Field {
+	if e == nil {
+		return nil
+	}
+	if e.FullTextSet {
+		out := make([]Field, 0, len(e.FullText))
+		for _, name := range e.FullText {
+			if f := findEntityFieldFold(e, name); f != nil {
+				out = append(out, *f)
+			}
+		}
+		return out
+	}
+	var out []Field
+	for _, f := range e.Fields {
+		if f.Type == FieldTypeString {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// findEntityFieldFold ищет реквизит шапки по имени без учёта регистра: DSL и
+// метаданные регистронезависимы, поэтому `fulltext: [наименование]` должен
+// находить поле «Наименование».
+func findEntityFieldFold(e *Entity, name string) *Field {
+	if e == nil {
+		return nil
+	}
+	for i := range e.Fields {
+		if strings.EqualFold(e.Fields[i].Name, name) {
+			return &e.Fields[i]
+		}
+	}
+	return nil
 }
 
 // TileView описывает, какие реквизиты использовать в плиточной карточке списка.

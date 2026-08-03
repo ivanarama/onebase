@@ -449,6 +449,9 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	if err := db.EnsureNumeratorSchema(ctx); err != nil {
 		return fmt.Errorf("migrate: numerators table: %w", err)
 	}
+	if err := db.EnsureFullTextSchema(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	ordered := orderByDependency(entities)
 	for _, e := range ordered {
 		if _, err := db.Exec(ctx, CreateTableSQL(d, e)); err != nil {
