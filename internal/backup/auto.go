@@ -113,7 +113,7 @@ func uploadToS3(ctx context.Context, cfg *project.S3Config, localPath string, mk
 	if err != nil {
 		return fmt.Errorf("auto backup: s3 open %s: %w", localPath, err)
 	}
-	defer f.Close()
+	defer closeRead("файл резервной копии", f)
 	info, err := f.Stat()
 	if err != nil {
 		return fmt.Errorf("auto backup: s3 stat: %w", err)

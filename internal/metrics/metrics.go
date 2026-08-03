@@ -280,10 +280,37 @@ func snapshotMap[K comparable, V any](m map[K]*V) []kv[K, V] {
 	return out
 }
 
+// promWriter копит первую ошибку записи экспозиции.
+//
+// Обрыв здесь не безобиден: Prometheus разбирает то, что успело прийти, и
+// частичный ответ выглядит для него как «эти серии исчезли». Дальше срабатывают
+// алерты на пропавшие метрики либо, наоборот, молчат те, что считались по
+// недошедшим сериям. Поэтому ошибка доходит до обработчика, а он решает, что с
+// ней делать (заголовки уже отправлены — только журнал).
+type promWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (p *promWriter) printf(format string, a ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintf(p.w, format, a...)
+}
+
+func (p *promWriter) println(a ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintln(p.w, a...)
+}
+
 // WritePrometheus печатает накопленные метрики в формате Prometheus exposition.
 // Под коротким RLock снимает снимок указателей на серии, затем пишет уже без
 // лока (значения читаются атомарно) — скрейп не блокирует горячий путь.
-func (reg *Registry) WritePrometheus(w io.Writer) {
+func (reg *Registry) WritePrometheus(w io.Writer) error {
+	pw := &promWriter{w: w}
 	reg.mu.RLock()
 	funcMetrics := append([]funcMetric(nil), reg.funcMetrics...)
 	reqs := snapshotMap(reg.requests)
@@ -296,8 +323,8 @@ func (reg *Registry) WritePrometheus(w io.Writer) {
 	reg.mu.RUnlock()
 
 	// ── counter: onebase_http_requests_total ──────────────────────────────
-	fmt.Fprintln(w, "# HELP onebase_http_requests_total Общее число обработанных HTTP-запросов.")
-	fmt.Fprintln(w, "# TYPE onebase_http_requests_total counter")
+	pw.println("# HELP onebase_http_requests_total Общее число обработанных HTTP-запросов.")
+	pw.println("# TYPE onebase_http_requests_total counter")
 	sort.Slice(reqs, func(i, j int) bool {
 		a, b := reqs[i].key, reqs[j].key
 		if a.route != b.route {
@@ -309,13 +336,13 @@ func (reg *Registry) WritePrometheus(w io.Writer) {
 		return a.status < b.status
 	})
 	for _, e := range reqs {
-		fmt.Fprintf(w, "onebase_http_requests_total{method=%q,route=%q,status=%q} %d\n",
+		pw.printf("onebase_http_requests_total{method=%q,route=%q,status=%q} %d\n",
 			e.key.method, e.key.route, e.key.status, e.val.Load())
 	}
 
 	// ── histogram: onebase_http_request_duration_seconds ──────────────────
-	fmt.Fprintln(w, "# HELP onebase_http_request_duration_seconds Латентность HTTP-запросов в секундах.")
-	fmt.Fprintln(w, "# TYPE onebase_http_request_duration_seconds histogram")
+	pw.println("# HELP onebase_http_request_duration_seconds Латентность HTTP-запросов в секундах.")
+	pw.println("# TYPE onebase_http_request_duration_seconds histogram")
 	sort.Slice(durs, func(i, j int) bool {
 		a, b := durs[i].key, durs[j].key
 		if a.route != b.route {
@@ -324,19 +351,19 @@ func (reg *Registry) WritePrometheus(w io.Writer) {
 		return a.method < b.method
 	})
 	for _, e := range durs {
-		cum := writeHistogramBuckets(w, reg.buckets, e.val, func(le string, c uint64) {
-			fmt.Fprintf(w, "onebase_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n",
+		cum := writeHistogramBuckets(reg.buckets, e.val, func(le string, c uint64) {
+			pw.printf("onebase_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n",
 				e.key.method, e.key.route, le, c)
 		})
-		fmt.Fprintf(w, "onebase_http_request_duration_seconds_sum{method=%q,route=%q} %s\n",
+		pw.printf("onebase_http_request_duration_seconds_sum{method=%q,route=%q} %s\n",
 			e.key.method, e.key.route, strconv.FormatFloat(e.val.sum(), 'g', -1, 64))
-		fmt.Fprintf(w, "onebase_http_request_duration_seconds_count{method=%q,route=%q} %d\n",
+		pw.printf("onebase_http_request_duration_seconds_count{method=%q,route=%q} %d\n",
 			e.key.method, e.key.route, cum)
 	}
 
 	// ── operation counters/gauges: reports/export/processors/http services ──
-	fmt.Fprintln(w, "# HELP onebase_operation_total Общее число тяжёлых runtime-операций.")
-	fmt.Fprintln(w, "# TYPE onebase_operation_total counter")
+	pw.println("# HELP onebase_operation_total Общее число тяжёлых runtime-операций.")
+	pw.println("# TYPE onebase_operation_total counter")
 	sort.Slice(ops, func(i, j int) bool {
 		a, b := ops[i].key, ops[j].key
 		if a.kind != b.kind {
@@ -345,37 +372,37 @@ func (reg *Registry) WritePrometheus(w io.Writer) {
 		return a.status < b.status
 	})
 	for _, e := range ops {
-		fmt.Fprintf(w, "onebase_operation_total{kind=%q,status=%q} %d\n", e.key.kind, e.key.status, e.val.Load())
+		pw.printf("onebase_operation_total{kind=%q,status=%q} %d\n", e.key.kind, e.key.status, e.val.Load())
 	}
 
-	fmt.Fprintln(w, "# HELP onebase_active_operations Активные тяжёлые runtime-операции.")
-	fmt.Fprintln(w, "# TYPE onebase_active_operations gauge")
+	pw.println("# HELP onebase_active_operations Активные тяжёлые runtime-операции.")
+	pw.println("# TYPE onebase_active_operations gauge")
 	sort.Slice(active, func(i, j int) bool { return active[i].key < active[j].key })
 	for _, e := range active {
-		fmt.Fprintf(w, "onebase_active_operations{kind=%q} %d\n", e.key, e.val.Load())
+		pw.printf("onebase_active_operations{kind=%q} %d\n", e.key, e.val.Load())
 	}
 
-	fmt.Fprintln(w, "# HELP onebase_operation_duration_seconds Длительность тяжёлых runtime-операций в секундах.")
-	fmt.Fprintln(w, "# TYPE onebase_operation_duration_seconds histogram")
+	pw.println("# HELP onebase_operation_duration_seconds Длительность тяжёлых runtime-операций в секундах.")
+	pw.println("# TYPE onebase_operation_duration_seconds histogram")
 	sort.Slice(opDurs, func(i, j int) bool { return opDurs[i].key < opDurs[j].key })
 	for _, e := range opDurs {
-		cum := writeHistogramBuckets(w, reg.buckets, e.val, func(le string, c uint64) {
-			fmt.Fprintf(w, "onebase_operation_duration_seconds_bucket{kind=%q,le=%q} %d\n", e.key, le, c)
+		cum := writeHistogramBuckets(reg.buckets, e.val, func(le string, c uint64) {
+			pw.printf("onebase_operation_duration_seconds_bucket{kind=%q,le=%q} %d\n", e.key, le, c)
 		})
-		fmt.Fprintf(w, "onebase_operation_duration_seconds_sum{kind=%q} %s\n",
+		pw.printf("onebase_operation_duration_seconds_sum{kind=%q} %s\n",
 			e.key, strconv.FormatFloat(e.val.sum(), 'g', -1, 64))
-		fmt.Fprintf(w, "onebase_operation_duration_seconds_count{kind=%q} %d\n", e.key, cum)
+		pw.printf("onebase_operation_duration_seconds_count{kind=%q} %d\n", e.key, cum)
 	}
 
-	fmt.Fprintln(w, "# HELP onebase_slow_operation_total Тяжёлые операции дольше slow_operation_ms.")
-	fmt.Fprintln(w, "# TYPE onebase_slow_operation_total counter")
+	pw.println("# HELP onebase_slow_operation_total Тяжёлые операции дольше slow_operation_ms.")
+	pw.println("# TYPE onebase_slow_operation_total counter")
 	sort.Slice(slow, func(i, j int) bool { return slow[i].key < slow[j].key })
 	for _, e := range slow {
-		fmt.Fprintf(w, "onebase_slow_operation_total{kind=%q} %d\n", e.key, e.val.Load())
+		pw.printf("onebase_slow_operation_total{kind=%q} %d\n", e.key, e.val.Load())
 	}
 
-	fmt.Fprintln(w, "# HELP onebase_limited_operation_total Операции, отклонённые лимитами/backpressure.")
-	fmt.Fprintln(w, "# TYPE onebase_limited_operation_total counter")
+	pw.println("# HELP onebase_limited_operation_total Операции, отклонённые лимитами/backpressure.")
+	pw.println("# TYPE onebase_limited_operation_total counter")
 	sort.Slice(limited, func(i, j int) bool {
 		a, b := limited[i].key, limited[j].key
 		if a.kind != b.kind {
@@ -384,18 +411,19 @@ func (reg *Registry) WritePrometheus(w io.Writer) {
 		return a.reason < b.reason
 	})
 	for _, e := range limited {
-		fmt.Fprintf(w, "onebase_limited_operation_total{kind=%q,reason=%q} %d\n",
+		pw.printf("onebase_limited_operation_total{kind=%q,reason=%q} %d\n",
 			e.key.kind, e.key.reason, e.val.Load())
 	}
 
-	writeFuncMetrics(w, funcMetrics)
+	writeFuncMetrics(pw, funcMetrics)
+	return pw.err
 }
 
 // writeHistogramBuckets печатает кумулятивные корзины гистограммы (включая +Inf)
 // через emit(le, cumulative) и возвращает итоговое число наблюдений (== корзина
 // +Inf). Значение count берётся отсюда же, поэтому «+Inf == count» соблюдается
 // по построению даже при конкурентных наблюдениях.
-func writeHistogramBuckets(w io.Writer, buckets []float64, h *histogram, emit func(le string, cum uint64)) uint64 {
+func writeHistogramBuckets(buckets []float64, h *histogram, emit func(le string, cum uint64)) uint64 {
 	var cum uint64
 	for i, ub := range buckets {
 		cum += h.counts[i].Load()
@@ -406,12 +434,12 @@ func writeHistogramBuckets(w io.Writer, buckets []float64, h *histogram, emit fu
 	return cum
 }
 
-func writeFuncMetrics(w io.Writer, metrics []funcMetric) {
+func writeFuncMetrics(pw *promWriter, metrics []funcMetric) {
 	sort.Slice(metrics, func(i, j int) bool { return metrics[i].name < metrics[j].name })
 	for _, m := range metrics {
-		fmt.Fprintf(w, "# HELP %s %s\n", m.name, m.help)
-		fmt.Fprintf(w, "# TYPE %s %s\n", m.name, m.metricType)
-		fmt.Fprintf(w, "%s %s\n", m.name, strconv.FormatFloat(safeMetricValue(m.value), 'g', -1, 64))
+		pw.printf("# HELP %s %s\n", m.name, m.help)
+		pw.printf("# TYPE %s %s\n", m.name, m.metricType)
+		pw.printf("%s %s\n", m.name, strconv.FormatFloat(safeMetricValue(m.value), 'g', -1, 64))
 	}
 }
 

@@ -822,7 +822,7 @@ func ImportUniversalWithOptions(
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeTemp(tmpDir)
 
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
@@ -1002,7 +1002,7 @@ func importSafeSettings(ctx context.Context, db *storage.DB, filePath string, in
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer closeRead("файл резервной копии", f)
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -1111,7 +1111,7 @@ func extractFile(f *zip.File, outPath string) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer closeRead("поток записи архива", rc)
 	out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -1205,7 +1205,7 @@ func copyFilePublished(ctx context.Context, srcPath, dst string, perm os.FileMod
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer closeRead("исходный файл", src)
 	tmp, err := os.CreateTemp(filepath.Dir(dst), ".onebase-config-*")
 	if err != nil {
 		return err
@@ -1355,7 +1355,7 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer closeRead("файл резервной копии", f)
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
@@ -1679,14 +1679,17 @@ func restoreAttachments(srcDir, dstDir string) (int, error) {
 		}
 		tmp, err := os.CreateTemp(filepath.Dir(dst), ".onebase-restore-*")
 		if err != nil {
-			src.Close()
+			closeRead("исходный файл", src)
 			return err
 		}
 		tmpName := tmp.Name()
-		defer os.Remove(tmpName)
+		defer removeTemp(tmpName)
 		if err := tmp.Chmod(0o600); err != nil {
-			tmp.Close()
-			src.Close()
+			// Файл ещё пуст — закрытие тут действительно вторично, основная
+			// ошибка уже есть. Ниже, на пути записи, closeErr наоборот
+			// проверяется: там Close сбрасывает буфер.
+			closeRead("временный файл", tmp)
+			closeRead("исходный файл", src)
 			return err
 		}
 		_, copyErr := io.Copy(tmp, src)

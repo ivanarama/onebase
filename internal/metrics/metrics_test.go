@@ -32,7 +32,9 @@ func TestRegistry_RecordsAndExposes(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 
 	var sb strings.Builder
-	reg.WritePrometheus(&sb)
+	if err := reg.WritePrometheus(&sb); err != nil {
+		t.Fatalf("WritePrometheus: %v", err)
+	}
 	out := sb.String()
 
 	// Метка route — это шаблон chi, а не конкретный id (низкая кардинальность).
@@ -63,7 +65,9 @@ func TestRegistry_OperationMetrics(t *testing.T) {
 	reg.OperationLimited("http_service.run", "concurrency")
 
 	var sb strings.Builder
-	reg.WritePrometheus(&sb)
+	if err := reg.WritePrometheus(&sb); err != nil {
+		t.Fatalf("WritePrometheus: %v", err)
+	}
 	out := sb.String()
 
 	if !strings.Contains(out, `onebase_operation_total{kind="report.run",status="ok"} 1`) {
@@ -86,7 +90,9 @@ func TestRegistry_FuncMetrics(t *testing.T) {
 	reg.RegisterCounterFunc("onebase_webhook_retry_total", "Webhook retries.", func() float64 { return 7 })
 
 	var sb strings.Builder
-	reg.WritePrometheus(&sb)
+	if err := reg.WritePrometheus(&sb); err != nil {
+		t.Fatalf("WritePrometheus: %v", err)
+	}
 	out := sb.String()
 
 	if !strings.Contains(out, "# TYPE onebase_active_sessions gauge") ||
@@ -172,7 +178,9 @@ func TestRegistry_ConcurrentObserveIsRaceFreeAndExact(t *testing.T) {
 	reader.Wait()
 
 	var sb strings.Builder
-	reg.WritePrometheus(&sb)
+	if err := reg.WritePrometheus(&sb); err != nil {
+		t.Fatalf("WritePrometheus: %v", err)
+	}
 	out := sb.String()
 
 	// Точные счётчики — ни один инкремент не потерян под гонкой.
@@ -205,7 +213,9 @@ func TestRegistry_UnmatchedRouteIsOther(t *testing.T) {
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/no/such/path", nil))
 
 	var sb strings.Builder
-	reg.WritePrometheus(&sb)
+	if err := reg.WritePrometheus(&sb); err != nil {
+		t.Fatalf("WritePrometheus: %v", err)
+	}
 	if !strings.Contains(sb.String(), `route="other",status="404"`) {
 		t.Errorf("ожидали route=other для незаматченного пути, получили:\n%s", sb.String())
 	}

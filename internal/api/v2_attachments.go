@@ -123,7 +123,7 @@ func (h *handler) uploadAttachmentV2(kind metadata.Kind) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "missing file field", "", 0)
 			return
 		}
-		defer file.Close()
+		defer closeReadAPI("загруженный файл", file)
 
 		filename := storage.SanitizeAttachmentName(header.Filename)
 		if !storage.AttachmentExtAllowed(h.allowedAttachmentTypes, filename) {
@@ -191,7 +191,7 @@ func (h *handler) downloadAttachmentV2() http.HandlerFunc {
 			}
 			return
 		}
-		defer f.Close()
+		defer closeReadAPI("вложение", f)
 
 		w.Header().Set("Content-Type", att.MimeType)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
