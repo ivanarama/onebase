@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/webhook"
+
+	oblog "github.com/ivantit66/onebase/internal/logging"
 )
 
 // mountMetrics вешает /metrics, отдающий HTTP-метрики (reg) и gauges пула
@@ -22,7 +25,13 @@ import (
 func mountMetrics(r chi.Router, token string, reg *metrics.Registry, store *storage.DB) {
 	r.With(pprofTokenMiddleware(token)).Get("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		reg.WritePrometheus(w)
+		// Заголовки отправлены — статус уже не поменять. Но обрыв экспозиции
+		// нельзя оставлять незамеченным: Prometheus разберёт то, что успело
+		// прийти, и недошедшие серии будут выглядеть как исчезнувшие.
+		if err := reg.WritePrometheus(w); err != nil {
+			oblog.Component("api").Warn("экспозиция метрик оборвана — Prometheus получил неполный набор", "err", err)
+			return
+		}
 		writePoolStats(w, store)
 	})
 }
@@ -72,8 +81,14 @@ func writePoolStats(w http.ResponseWriter, store *storage.DB) {
 	if st == nil {
 		return
 	}
+	// Заголовки отправлены; обрыв фиксируем один раз в конце, чтобы не
+	// повторять проверку у каждой серии.
+	var writeErr error
 	g := func(name, help string, val int64) {
-		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n%s %d\n", name, help, name, name, val)
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s gauge\n%s %d\n", name, help, name, name, val)
 	}
 	g("onebase_db_pool_acquired_conns", "Занятые соединения пула.", int64(st.AcquiredConns))
 	g("onebase_db_pool_constructing_conns", "Соединения в процессе установки.", int64(st.ConstructingConns))
@@ -82,10 +97,24 @@ func writePoolStats(w http.ResponseWriter, store *storage.DB) {
 	g("onebase_db_pool_max_conns", "Максимум соединений пула.", int64(st.MaxConns))
 
 	c := func(name, help string, val int64) {
-		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", name, help, name, name, val)
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", name, help, name, name, val)
 	}
 	c("onebase_db_pool_acquire_total", "Всего успешных Acquire.", st.AcquireCount)
 	c("onebase_db_pool_empty_acquire_total", "Acquire, ждавшие свободного соединения.", st.EmptyAcquireCount)
 	c("onebase_db_pool_canceled_acquire_total", "Acquire, отменённые контекстом.", st.CanceledAcquireCount)
 	c("onebase_db_pool_new_conns_total", "Всего созданных соединений.", st.NewConnsCount)
+	if writeErr != nil {
+		oblog.Component("api").Warn("метрики пула соединений не дописаны", "err", writeErr)
+	}
+}
+
+// closeReadAPI закрывает читающую сторону в обработчиках REST: данные уже
+// прочитаны, ошибка вторична и не должна подменять причину ответа.
+func closeReadAPI(what string, c io.Closer) {
+	if err := c.Close(); err != nil {
+		oblog.Component("api").Debug("не удалось закрыть "+what, "err", err)
+	}
 }

@@ -6,29 +6,90 @@ import (
 	"time"
 
 	"github.com/xuri/excelize/v2"
+
+	oblog "github.com/ivantit66/onebase/internal/logging"
 )
+
+// sheet копит первую ошибку excelize, чтобы заполнение листа не превратилось в
+// лестницу проверок после каждой ячейки.
+//
+// Ошибка здесь не косметическая: не записанная ячейка в выгрузке неотличима от
+// пустого значения в данных. Пользователь открывает .xlsx, видит пробел в
+// колонке «Сумма» и считает, что суммы нет, — а она просто не записалась.
+// Поэтому первая же ошибка доходит до вызывающего, и файл не отдаётся.
+type sheet struct {
+	f    *excelize.File
+	name string
+	err  error
+}
+
+func (s *sheet) setCell(cell string, v any) {
+	if s.err != nil {
+		return
+	}
+	s.err = s.f.SetCellValue(s.name, cell, v)
+}
+
+func (s *sheet) setStyle(cell string, styleID int) {
+	if s.err != nil {
+		return
+	}
+	s.err = s.f.SetCellStyle(s.name, cell, cell, styleID)
+}
+
+func (s *sheet) setRowHeight(row int, h float64) {
+	if s.err != nil {
+		return
+	}
+	s.err = s.f.SetRowHeight(s.name, row, h)
+}
+
+func (s *sheet) setColWidth(col string, w float64) {
+	if s.err != nil {
+		return
+	}
+	s.err = s.f.SetColWidth(s.name, col, col, w)
+}
+
+func (s *sheet) setPanes(p *excelize.Panes) {
+	if s.err != nil {
+		return
+	}
+	s.err = s.f.SetPanes(s.name, p)
+}
+
+// closeBook освобождает временные файлы excelize. Книга к этому моменту уже
+// сериализована, поэтому ошибка вторична — но не молчит.
+func closeBook(f *excelize.File) {
+	if err := f.Close(); err != nil {
+		oblog.Component("excel").Debug("не удалось закрыть книгу excelize", "err", err)
+	}
+}
 
 // ExportList builds an xlsx workbook from headers + rows and returns the raw bytes.
 // Cells are formatted: dates → "ДД.ММ.ГГГГ", numbers → right-aligned.
 func ExportList(cols []string, rows [][]any) ([]byte, error) {
 	f := excelize.NewFile()
-	defer f.Close()
+	defer closeBook(f)
 
-	sheet := "Лист1"
-	f.SetSheetName("Sheet1", sheet)
+	name := "Лист1"
+	if err := f.SetSheetName("Sheet1", name); err != nil {
+		return nil, err
+	}
+	sh := &sheet{f: f, name: name}
 
 	boldStyle, cellStyle, numStyle := listStyles(f)
 
 	// Header row
 	for ci, col := range cols {
 		cell, _ := excelize.CoordinatesToCellName(ci+1, 1)
-		f.SetCellValue(sheet, cell, col)
-		f.SetCellStyle(sheet, cell, cell, boldStyle)
+		sh.setCell(cell, col)
+		sh.setStyle(cell, boldStyle)
 	}
-	f.SetRowHeight(sheet, 1, 22)
+	sh.setRowHeight(1, 22)
 
 	// Freeze header row
-	f.SetPanes(sheet, &excelize.Panes{
+	sh.setPanes(&excelize.Panes{
 		Freeze:      true,
 		Split:       false,
 		YSplit:      1,
@@ -43,20 +104,20 @@ func ExportList(cols []string, rows [][]any) ([]byte, error) {
 			cell, _ := excelize.CoordinatesToCellName(ci+1, rowIdx)
 			switch v := val.(type) {
 			case time.Time:
-				f.SetCellValue(sheet, cell, v.Format("02.01.2006"))
-				f.SetCellStyle(sheet, cell, cell, cellStyle)
+				sh.setCell(cell, v.Format("02.01.2006"))
+				sh.setStyle(cell, cellStyle)
 			case float64, float32, int, int32, int64, uint, uint32, uint64:
-				f.SetCellValue(sheet, cell, v)
-				f.SetCellStyle(sheet, cell, cell, numStyle)
+				sh.setCell(cell, v)
+				sh.setStyle(cell, numStyle)
 			case nil:
-				f.SetCellValue(sheet, cell, "")
-				f.SetCellStyle(sheet, cell, cell, cellStyle)
+				sh.setCell(cell, "")
+				sh.setStyle(cell, cellStyle)
 			default:
-				f.SetCellValue(sheet, cell, fmt.Sprintf("%v", v))
-				f.SetCellStyle(sheet, cell, cell, cellStyle)
+				sh.setCell(cell, fmt.Sprintf("%v", v))
+				sh.setStyle(cell, cellStyle)
 			}
 		}
-		f.SetRowHeight(sheet, rowIdx, 18)
+		sh.setRowHeight(rowIdx, 18)
 	}
 
 	// Auto column width (approximate: max 40 chars)
@@ -78,7 +139,11 @@ func ExportList(cols []string, rows [][]any) ([]byte, error) {
 		if w > 40 {
 			w = 40
 		}
-		f.SetColWidth(sheet, colLetter, colLetter, w)
+		sh.setColWidth(colLetter, w)
+	}
+
+	if sh.err != nil {
+		return nil, sh.err
 	}
 
 	buf, err := f.WriteToBuffer()
@@ -91,10 +156,14 @@ func ExportList(cols []string, rows [][]any) ([]byte, error) {
 // listStyles registers the shared list-export cell styles on f and returns their
 // IDs: bold frozen header, bordered data cell, and right-aligned number cell.
 // Shared by ExportList and WriteList so both render identically.
+// Ошибки NewStyle игнорируются намеренно: excelize возвращает при них нулевой
+// идентификатор, то есть оформление по умолчанию. Последствие чисто
+// косметическое — рамки и выравнивание, — и ронять из-за него готовую выгрузку
+// было бы хуже, чем отдать её без разметки.
 func listStyles(f *excelize.File) (bold, cell, num int) {
 	bold, _ = f.NewStyle(&excelize.Style{
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"E2E8F0"}, Pattern: 1},
-		Font: &excelize.Font{Bold: true},
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"E2E8F0"}, Pattern: 1},
+		Font:      &excelize.Font{Bold: true},
 		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
 		Border: []excelize.Border{
 			{Type: "left", Color: "CBD5E1", Style: 1},
@@ -137,13 +206,15 @@ func listStyles(f *excelize.File) (bold, cell, num int) {
 // send an error status as long as it has not written to w yet.
 func WriteList(w io.Writer, cols []string, rows [][]any) error {
 	f := excelize.NewFile()
-	defer f.Close()
+	defer closeBook(f)
 
-	sheet := "Лист1"
-	f.SetSheetName("Sheet1", sheet)
+	sheetName := "Лист1"
+	if err := f.SetSheetName("Sheet1", sheetName); err != nil {
+		return err
+	}
 	boldStyle, cellStyle, numStyle := listStyles(f)
 
-	sw, err := f.NewStreamWriter(sheet)
+	sw, err := f.NewStreamWriter(sheetName)
 	if err != nil {
 		return err
 	}

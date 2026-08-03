@@ -127,7 +127,7 @@ func validateSQLiteBackup(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("sqlite restore: открыть подготовленную копию: %w", err)
 	}
-	defer db.Close()
+	defer closeRead("проверочное соединение с копией", db)
 	var result string
 	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&result); err != nil {
 		return fmt.Errorf("sqlite restore: integrity_check: %w", err)
@@ -143,7 +143,7 @@ func copyFileSynced(ctx context.Context, srcPath, dstPath string, perm os.FileMo
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer closeRead("исходный файл", src)
 	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 	if err != nil {
 		return err

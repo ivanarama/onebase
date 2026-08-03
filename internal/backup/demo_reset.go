@@ -41,7 +41,7 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (*ImportR
 	if err != nil {
 		return nil, fmt.Errorf("demo reset: open backup %q: %w", backupPath, err)
 	}
-	defer f.Close()
+	defer closeRead("файл резервной копии", f)
 
 	fi, err := f.Stat()
 	if err != nil {
@@ -65,7 +65,7 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (*ImportR
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer removeTemp(tmpDir)
 
 	for _, zf := range zr.File {
 		if zf.FileInfo().IsDir() {

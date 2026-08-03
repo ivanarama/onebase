@@ -122,13 +122,13 @@ END $$;`
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer closeRead("файл резервной копии", f)
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return fmt.Errorf("не удалось прочитать gzip-архив: %w", err)
 	}
-	defer gz.Close()
+	defer closeRead("gzip-поток дампа", gz)
 
 	cmd := exec.CommandContext(ctx, psql, "--no-password", connStr)
 	cmd.Stdin = gz
