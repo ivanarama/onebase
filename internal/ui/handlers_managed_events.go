@@ -254,7 +254,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			FormTables:     formTables,
 			ConditionalCSS: conditionalCSS,
 			Messages:       outMsgs,
-			Error:          runErr.Error(),
+			Error:          interpreter.FormatUserError(runErr),
 			PickerData:     picker,
 		})
 		return
@@ -817,7 +817,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 						FormTables:     formTables,
 						ConditionalCSS: conditionalCSS,
 						Messages:       outMsgs,
-						Error:          runErr.Error(),
+						Error:          interpreter.FormatUserError(runErr),
 						PickerData:     picker,
 					})
 					return

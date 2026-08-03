@@ -198,19 +198,27 @@ func TestPageManagedForm_ReadOnlyRefDisablesPickerActions(t *testing.T) {
 		t.Fatalf("execute managed-element: %v", err)
 	}
 	html := buf.String()
-	for _, marker := range []string{
-		`id="ref-Клиент"`,
-		`data-ob-ref-picker="ref-Клиент"`,
-		`data-ob-ref-current="ref-Клиент"`,
-	} {
-		start := strings.Index(html, marker)
-		if start < 0 {
-			t.Fatalf("managed ref control is missing %q:\n%s", marker, html)
-		}
-		end := strings.Index(html[start:], ">")
-		if end < 0 || !strings.Contains(html[start:start+end], " disabled") {
-			t.Errorf("read-only ref control %q must be disabled:\n%s", marker, html)
-		}
+	// Само поле — disabled: выбрать другое значение нельзя.
+	start := strings.Index(html, `id="ref-Клиент"`)
+	if start < 0 {
+		t.Fatalf("managed ref control is missing:\n%s", html)
+	}
+	if end := strings.Index(html[start:], ">"); end < 0 || !strings.Contains(html[start:start+end], " disabled") {
+		t.Errorf("read-only ref control must be disabled:\n%s", html)
+	}
+	// Кнопка подбора не рисуется вовсе: серая «…» рядом с готовым значением
+	// заставляет читать его как незаполненный ввод.
+	if strings.Contains(html, `data-ob-ref-picker="ref-Клиент"`) {
+		t.Errorf("read-only ref не должен нести кнопку подбора:\n%s", html)
+	}
+	// А «Открыть карточку» остаётся рабочей: просмотр связанного объекта —
+	// не редактирование, и именно на нередактируемом поле он нужен чаще всего.
+	cur := strings.Index(html, `data-ob-ref-current="ref-Клиент"`)
+	if cur < 0 {
+		t.Fatalf("кнопка «Открыть карточку» потеряна:\n%s", html)
+	}
+	if end := strings.Index(html[cur:], ">"); end > 0 && strings.Contains(html[cur:cur+end], " disabled") {
+		t.Errorf("«Открыть карточку» не должна быть disabled:\n%s", html)
 	}
 }
 
