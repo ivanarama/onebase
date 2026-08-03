@@ -132,8 +132,15 @@ const tplManagedForm = `
           </select>
           <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $el.ReadOnly}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
         </div>
+      {{else if $attr}}
+        {{/* Объявленный скалярный реквизит формы — обычное поле ввода. Жёлтая
+             подсветка ниже адресована ОПЕЧАТКЕ в data_path; штатный реквизит
+             формы работает полноценно (обработчик читает его голым именем и как
+             Объект.<Реквизит>), и предупреждать о нём не о чем. */}}
+        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else}}
-        {{/* Поле не найдено в Entity (возможно реквизит формы, ещё не привязан) */}}
+        {{/* Ни поля сущности, ни реквизита формы с таким именем — почти всегда
+             опечатка в data_path: подсвечиваем, чтобы это не осталось незамеченным. */}}
         <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" style="background:#fef9c3"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
           title="Реквизит формы '{{$el.DataPath}}' не найден среди полей сущности"{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
