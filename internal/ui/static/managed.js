@@ -24,6 +24,43 @@ function obManagedReady(fn) {
   if (!cfg.url) return;
   var URL = String(cfg.url || '');
   var DOC_ID = cfg.docId == null ? '' : String(cfg.docId);
+  // Реквизиты формы (attributes с save:false) переживают полную перезагрузку.
+  // «Записать» уходит POST'ом с редиректом, страница рисуется заново — и всё,
+  // что оператор выбрал в реквизите формы, пропадало (в 1С форма живёт в памяти
+  // клиента, и реквизиты запись переживают). Значения кладём в sessionStorage
+  // ровно на время перезагрузки: пишем перед отправкой, применяем и СРАЗУ
+  // удаляем при следующей загрузке — дольше одной навигации они не живут.
+  var FORM_ATTRS = Array.isArray(cfg.formAttrs) ? cfg.formAttrs : [];
+  var ATTR_STASH_KEY = 'ob-form-attrs:' + String(cfg.entity || '');
+  function stashFormAttrs(){
+    if (!FORM_ATTRS.length) return;
+    var form = document.getElementById('main-form');
+    if (!form) return;
+    var data = {};
+    for (var i = 0; i < FORM_ATTRS.length; i++) {
+      var el = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(FORM_ATTRS[i]) : FORM_ATTRS[i]) + '"]');
+      if (el && el.type !== 'checkbox' && el.value) data[FORM_ATTRS[i]] = el.value;
+    }
+    try {
+      if (Object.keys(data).length) sessionStorage.setItem(ATTR_STASH_KEY, JSON.stringify(data));
+      else sessionStorage.removeItem(ATTR_STASH_KEY);
+    } catch (e) { /* приватный режим — просто не восстановим */ }
+  }
+  function restoreFormAttrs(){
+    if (!FORM_ATTRS.length) return;
+    var raw = null;
+    try { raw = sessionStorage.getItem(ATTR_STASH_KEY); sessionStorage.removeItem(ATTR_STASH_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { return; }
+    var form = document.getElementById('main-form');
+    if (!form || !data) return;
+    Object.keys(data).forEach(function(k){
+      var el = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
+      if (el && !el.value) el.value = data[k];
+    });
+  }
+
   window._tpRefOpts = obManagedReadJSON('ob-managed-tp-ref-opts', window._tpRefOpts || {}) || {};
   window._tpEnumLabels = obManagedReadJSON('ob-managed-tp-enum-labels', window._tpEnumLabels || {}) || {};
   window._tpEnumOrder = obManagedReadJSON('ob-managed-tp-enum-order', window._tpEnumOrder || {}) || {};
@@ -467,6 +504,12 @@ function obManagedReady(fn) {
   // документа звёздочкой в заголовке вкладки браузера (аналог «*» в 1С) и
   // предупреждение при ЛЮБОМ уходе со страницы — крестик, клик по ссылке,
   // закрытие/обновление вкладки.
+  // Сохранить реквизиты формы перед полной отправкой и вернуть после перезагрузки.
+  obManagedReady(restoreFormAttrs);
+  document.addEventListener('submit', function(e){
+    if (e.target && e.target.id === 'main-form') stashFormAttrs();
+  }, true);
+
   window._obFormDirty = false;
   var _obBaseTitle = document.title;
   function _obMarkDirty(){

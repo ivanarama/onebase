@@ -622,6 +622,7 @@ const tplManagedForm = `
   "url" (printf "/ui/%s/%s/form-event" (lower (str .Entity.Kind)) .Entity.Name)
   "docId" .ID
   "autoOpen" (hasFormHandler .Form "ПриОткрытии")
+  "formAttrs" (formAttrNames .Form .Entity)
 )}}</script>
 {{end}}
 <script type="application/json" id="ob-managed-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
