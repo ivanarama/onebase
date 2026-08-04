@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dbcheck"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -791,26 +792,62 @@ func parseAPITokenExpiresAt(raw string) (*time.Time, error) {
 	return &end, nil
 }
 
+// doctorCheckView — результат проверки плюс признак «умеет чиниться»: шаблону
+// нужно решить, показывать ли галочку исправления.
+type doctorCheckView struct {
+	dbcheck.Result
+	CanFix bool
+}
+
+// adminCleanup — страница диагностики базы: тот же набор проверок, что у
+// `onebase doctor` (план 114), в веб-интерфейсе.
+//
+// Раньше здесь была одна кнопка «удалить все осиротевшие движения» — то есть
+// веб был строго слабее CLI и при этом единственным местом, где очистка вообще
+// доступна. Теперь оба показывают один и тот же отчёт: расходиться им нечем,
+// проверки живут в общем пакете.
 func (s *Server) adminCleanup(w http.ResponseWriter, r *http.Request) {
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
 	}
-	registers := s.reg.Registers()
-	entities := s.reg.Entities()
-
-	if r.Method == http.MethodPost {
-		deleted := s.store.DeleteOrphanMovements(r.Context(), registers, entities)
-		http.Redirect(w, r, fmt.Sprintf("/ui/admin/cleanup?deleted=%d", deleted), http.StatusFound)
-		return
+	env := &dbcheck.Env{
+		DB:            s.store,
+		Entities:      s.reg.Entities(),
+		Registers:     s.reg.Registers(),
+		InfoRegisters: s.reg.InfoRegisters(),
 	}
 
-	stats := s.store.OrphanMovements(r.Context(), registers, entities)
-	deletedStr := r.URL.Query().Get("deleted")
+	fix := map[string]bool{}
+	fixing := false
+	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
+		if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+			http.Error(w, s.errText(r, err), http.StatusBadRequest)
+			return
+		}
+		for _, name := range r.Form["fix"] {
+			if name = strings.TrimSpace(name); name != "" {
+				fix[name] = true
+				fixing = true
+			}
+		}
+	}
+
+	report := dbcheck.Run(r.Context(), env, dbcheck.All(), fix)
+	views := make([]doctorCheckView, 0, len(report.Results))
+	fixedTotal := 0
+	for _, res := range report.Results {
+		views = append(views, doctorCheckView{Result: res, CanFix: dbcheck.CanFix(res.Check)})
+		fixedTotal += res.Fixed
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	renderAdminTemplate(w, "admin-cleanup", map[string]any{
-		"Stats":   stats,
-		"Deleted": deletedStr,
+		"Checks":     views,
+		"Fixing":     fixing,
+		"FixedTotal": fixedTotal,
+		"Clean":      report.Worst() == dbcheck.SeverityOK,
 	})
 }
 
@@ -1352,42 +1389,64 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
 </main></body></html>
 {{end}}`
 
+// tplAdminCleanup — диагностика базы (план 114): тот же отчёт, что печатает
+// `onebase doctor`. Исправления запускаются только по явно отмеченным галочкам:
+// каждое из них меняет данные, поэтому «починить всё одной кнопкой» здесь нет.
 const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
 <main>
-<h2>Очистка регистров</h2>
+<h2>Диагностика базы</h2>
 <p style="color:#64748b;font-size:14px;margin-bottom:20px">
-  Осиротевшие движения — строки в регистрах, документ которых уже удалён.
+  Те же проверки, что у команды <code>onebase doctor</code>. Сама по себе страница
+  ничего не меняет — исправления выполняются только для отмеченных проверок.
 </p>
-{{if .Deleted}}
+{{if .Fixing}}
 <div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
-  Удалено строк: {{.Deleted}}
+  Исправлено: {{.FixedTotal}}. Ниже — состояние базы после исправления.
 </div>
 {{end}}
-{{if .Stats}}
-<div class="card" style="max-width:700px;margin-bottom:20px">
+<form method="POST" action="/ui/admin/cleanup"
+      data-ob-confirm="Выполнить исправления для отмеченных проверок? Сначала убедитесь, что есть резервная копия.">
+<div class="card" style="max-width:900px;margin-bottom:20px">
 <table>
 <thead><tr>
-  <th>Регистр</th><th>Вид регистратора</th><th style="text-align:right">Строк</th>
+  <th style="width:34px"></th><th>Проверка</th><th>Результат</th>
 </tr></thead>
 <tbody>
-{{range .Stats}}<tr>
-  <td>{{.RegisterName}}</td>
-  <td>{{.RecorderType}}</td>
-  <td style="text-align:right;color:#ef4444;font-weight:600">{{.Count}}</td>
+{{range .Checks}}<tr>
+  <td style="text-align:center">
+    {{if and .CanFix .Findings}}<input type="checkbox" name="fix" value="{{.Check}}" title="исправить">{{end}}
+  </td>
+  <td style="white-space:nowrap;vertical-align:top">
+    {{if eq (printf "%s" .Severity) "error"}}<span style="color:#ef4444;font-weight:600">●</span>
+    {{else if eq (printf "%s" .Severity) "warn"}}<span style="color:#f59e0b;font-weight:600">●</span>
+    {{else}}<span style="color:#16a34a">●</span>{{end}}
+    {{.Title}}
+  </td>
+  <td style="vertical-align:top">
+    {{.Summary}}
+    {{if .Error}}<div style="color:#ef4444;font-size:13px;margin-top:4px">{{.Error}}</div>{{end}}
+    {{range .Findings}}
+      <div style="font-size:13px;color:#475569;margin-top:4px">
+        {{.Object}}: {{.Detail}}{{if .Count}} ({{.Count}}){{end}}
+        {{if .Examples}}<div style="color:#94a3b8">например: {{range $i, $e := .Examples}}{{if $i}}, {{end}}{{$e}}{{end}}</div>{{end}}
+      </div>
+    {{end}}
+    {{if and .FixHint (not .Fixed)}}<div style="font-size:13px;color:#64748b;margin-top:4px">→ {{.FixHint}}</div>{{end}}
+  </td>
 </tr>{{end}}
 </tbody>
 </table>
 </div>
-<form method="POST" action="/ui/admin/cleanup"
-      data-ob-confirm="Удалить все осиротевшие движения?">
-  <button class="btn btn-danger" type="submit">Удалить осиротевшие движения</button>
-  <a class="btn" href="/ui" style="background:#e2e8f0;color:#475569;margin-left:8px">Отмена</a>
-</form>
+{{if .Clean}}
+<p class="empty" style="max-width:900px">Проблем не найдено — база в порядке.</p>
 {{else}}
-<div class="card" style="max-width:600px">
-  <p class="empty">Осиротевших движений не найдено — регистры чисты.</p>
-</div>
+<button class="btn btn-danger" type="submit">Исправить отмеченное</button>
+<a class="btn" href="/ui" style="background:#e2e8f0;color:#475569;margin-left:8px">Отмена</a>
+<p style="color:#64748b;font-size:13px;margin-top:10px;max-width:900px">
+  Исправления меняют данные. Перед запуском снимите резервную копию.
+</p>
 {{end}}
+</form>
 </main></body></html>
 {{end}}`
 

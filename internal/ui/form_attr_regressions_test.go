@@ -189,3 +189,52 @@ func TestManagedFormRendersEntityOptionsOnNameCollision(t *testing.T) {
 		t.Error("в разметку просочился справочник одноимённого реквизита формы")
 	}
 }
+
+// Объявленный скалярный реквизит формы — рабочее поле, а не подозрительное:
+// жёлтая подсветка «не найден среди полей сущности» адресована опечатке в
+// data_path, и на штатном реквизите она сбивала с толку.
+func TestManagedFormRendersDeclaredScalarAttrWithoutWarning(t *testing.T) {
+	form := &metadata.FormModule{
+		Name: "ФормаОбъекта", Kind: "object", EntityName: "Обращение",
+		LayoutKind: metadata.FormLayoutManaged,
+		Attributes: []*metadata.FormAttribute{{Name: "Телефон", TypeRef: "Строка"}},
+		Elements: []*metadata.FormElement{
+			{Kind: metadata.FormElementField, Name: "ПолеТелефон", DataPath: "Телефон"},
+			{Kind: metadata.FormElementField, Name: "ПолеОпечатка", DataPath: "Тлефон"},
+		},
+	}
+	entity := &metadata.Entity{
+		Name: "Обращение", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	data := map[string]any{
+		"Entity": entity, "Form": form, "IsNew": true,
+		"Values":        map[string]string{},
+		"RefOptions":    map[string][]map[string]any{},
+		"EnumOptions":   map[string]any{},
+		"ChoiceOptions": loadChoiceOptions(form, "ru"),
+		"TPRefOptions":  map[string]any{},
+		"TPEnumLabels":  map[string]map[string]map[string]string{},
+		"TPEnumOrder":   map[string]map[string][]string{},
+		"TPRefMeta":     map[string]any{},
+		"TablePartRows": map[string][]map[string]any{},
+		"User":          nil, "Lang": "ru",
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	html := buf.String()
+	if strings.Contains(html, `name="Телефон" value="" placeholder="Телефон" style="background:#fef9c3"`) {
+		t.Error("объявленный реквизит формы подсвечен как ненайденное поле")
+	}
+	if !strings.Contains(html, `name="Телефон"`) {
+		t.Error("поле объявленного реквизита формы не отрисовано")
+	}
+	// Опечатка в data_path по-прежнему видна.
+	if !strings.Contains(html, `name="Тлефон" value="" placeholder="Тлефон" style="background:#fef9c3"`) {
+		t.Error("необъявленный data_path потерял предупреждающую подсветку")
+	}
+}

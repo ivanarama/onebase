@@ -419,6 +419,18 @@ function obManagedReady(fn) {
       applyValues(data.values);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
+      // Обработчик записал новую форму (Объект.Записать()): дальше она работает
+      // с этой записью. Без подмены _id второе действие подряд ушло бы как
+      // «новый документ» и создало дубль, а адрес страницы остался бы /new.
+      if (data.savedId && !DOC_ID) {
+        DOC_ID = String(data.savedId);
+        var idInput = document.querySelector('#main-form [name="_id"]');
+        if (idInput) idInput.value = DOC_ID;
+        if (window.history && history.replaceState) {
+          history.replaceState(null, '', location.pathname.replace(/\/new$/, '/' + DOC_ID));
+        }
+        window._obFormDirty = false;
+      }
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
     } catch (e) {

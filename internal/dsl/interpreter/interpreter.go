@@ -766,11 +766,32 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			}
 		}
 		if recv == nil {
+			// Имя приёмника в тексте ошибки экономит поиск: «вызван у Неопределено»
+			// без него не отвечает на главный вопрос — ЧТО именно пустое. Чаще
+			// всего это ссылка ещё не записанного объекта.
+			if src := exprSourceName(callee.Object); src != "" {
+				RaiseUserError("Метод " + callee.Field.Literal + " вызван у Неопределено: «" + src + "» не заполнено")
+			}
 			RaiseUserError("Метод " + callee.Field.Literal + " вызван у Неопределено")
 		}
 		return nil
 	}
 	return nil
+}
+
+// exprSourceName восстанавливает исходный текст простого выражения-приёмника
+// («Ссылка», «Объект.Ссылка») для сообщений об ошибках. Для всего сложнее
+// цепочки идентификаторов возвращает "" — тогда сообщение остаётся прежним.
+func exprSourceName(expr ast.Expr) string {
+	switch v := expr.(type) {
+	case *ast.Ident:
+		return v.Tok.Literal
+	case *ast.MemberExpr:
+		if base := exprSourceName(v.Object); base != "" {
+			return base + "." + v.Field.Literal
+		}
+	}
+	return ""
 }
 
 // evalEvalBuiltin реализует Вычислить(Выражение): args[0] — строка-выражение.
