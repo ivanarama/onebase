@@ -463,29 +463,30 @@ func (rd refDimInfo) displayCol() string {
 }
 
 type translator struct {
-	tokens      []tok
-	pos         int
-	args        []any
-	params      map[string]int // param name → 1-based index in args (0 = NULL sentinel)
-	paramValues map[string]any
-	opts        CompileOpts
-	parts       []string
-	prevWasDot  bool                          // true after emitting "." — used to resolve .Ссылка → .id
-	colMap      map[string]string             // lowercase field name → actual column name (for reference dims)
-	colTypes    map[string]metadata.FieldType // lowercase field name → type (для квалификации и CAST number)
-	refDims     []refDimInfo                  // reference dimensions with auto-JOIN info
-	mainTable   string                        // main FROM table/alias (set when source is emitted)
-	mainEmitted bool                          // главная таблица FROM уже эмитирована (refDims авто-JOIN — только для неё)
-	section     querySection                  // current clause context
-	aliases     map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
-	sources     []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
-	rowFilters  []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
-	rowsScoped  bool                          // true после внедрения rowFilters в outer WHERE
-	rowApplied  []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
-	parenDepth  int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
-	sourceCtx   sourceContext                 // scoped-типы источников для системных колонок регистра
-	unionDepths map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
-	unionOrders map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
+	tokens       []tok
+	pos          int
+	args         []any
+	params       map[string]int // param name → 1-based index in args (0 = NULL sentinel)
+	paramValues  map[string]any
+	opts         CompileOpts
+	parts        []string
+	prevWasDot   bool                          // true after emitting "." — used to resolve .Ссылка → .id
+	colMap       map[string]string             // lowercase field name → actual column name (for reference dims)
+	colTypes     map[string]metadata.FieldType // lowercase field name → type (для квалификации и CAST number)
+	refDims      []refDimInfo                  // reference dimensions with auto-JOIN info
+	mainTable    string                        // main FROM table/alias (set when source is emitted)
+	mainEmitted  bool                          // главная таблица FROM уже эмитирована (refDims авто-JOIN — только для неё)
+	section      querySection                  // current clause context
+	aliases      map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
+	sources      []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
+	rowFilters   []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
+	rowsScoped   bool                          // true после внедрения rowFilters в outer WHERE
+	rowGroupOpen bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
+	rowApplied   []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
+	parenDepth   int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
+	sourceCtx    sourceContext                 // scoped-типы источников для системных колонок регистра
+	unionDepths  map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
+	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 }
 
 type sourceClass uint8
@@ -766,8 +767,25 @@ func (tr *translator) emitPendingRowFiltersAfterWhere() error {
 		return nil
 	}
 	tr.emit(strings.Join(conds, " AND "))
-	tr.emit("AND")
+	// Собственное условие ГДЕ оборачиваем в скобки: без них верхнеуровневое
+	// ИЛИ пользователя связывается сильнее внедрённого фильтра
+	// («фильтр AND a ИЛИ b» → «(фильтр AND a) OR b»), и строки правой части
+	// возвращаются мимо политики. Скобку закрывает closeRowFilterGroup в
+	// точке, где секция ГДЕ заканчивается.
+	tr.emit("AND (")
+	tr.rowGroupOpen = true
 	return nil
+}
+
+// closeRowFilterGroup закрывает скобку вокруг собственного условия ГДЕ.
+// Вызывается там, где секция ГДЕ завершается: перед СГРУППИРОВАТЬ/ИМЕЯ/
+// УПОРЯДОЧИТЬ, перед ОБЪЕДИНИТЬ и в конце запроса.
+func (tr *translator) closeRowFilterGroup() {
+	if !tr.rowGroupOpen {
+		return
+	}
+	tr.emit(")")
+	tr.rowGroupOpen = false
 }
 
 func (tr *translator) peek(offset int) tok {
@@ -3515,6 +3533,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		// Multi-word: СГРУППИРОВАТЬ ПО / УПОРЯДОЧИТЬ ПО
 		if t.kind == tIdent && (upper == "СГРУППИРОВАТЬ" || upper == "УПОРЯДОЧИТЬ") {
 			if tr.parenDepth == 0 {
+				tr.closeRowFilterGroup()
 				if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 					return Result{}, err
 				}
@@ -3645,6 +3664,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// фильтруются собственным скоуп-подзапросом
 					// (rowFilteredSourceSQL), в tr.rowFilters они не попадают.
 					if tr.parenDepth == 0 {
+						tr.closeRowFilterGroup()
 						if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 							return Result{}, err
 						}
@@ -3663,6 +3683,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					continue
 				case "GROUP", "HAVING", "ORDER":
 					if tr.parenDepth == 0 {
+						tr.closeRowFilterGroup()
 						if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 							return Result{}, err
 						}
@@ -3730,6 +3751,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 
 		tr.advance()
 	}
+	tr.closeRowFilterGroup()
 	if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 		return Result{}, err
 	}
