@@ -205,7 +205,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 62 | [62-network-safety-switch.md](62-network-safety-switch.md) | Предохранитель сети: галочка `net.enabled` лочит хуки/HTTP/сервисы/email; сброс при restore | 0.5 дня | ✅ Реализовано |
 | 67 | [67-exec-command.md](67-exec-command.md) | Выполнение команд ОС из DSL (`ВыполнитьКоманду`) за флагом `AllowExec` (выкл. по умолчанию, без shell, таймаут, аудит) | 1–1.5 дня | ✅ Реализовано |
 | 76 | [76-multi-user-scale-readiness.md](76-multi-user-scale-readiness.md) | Готовность к 100+ активным пользователям: REST RBAC, лимиты, индексы, reference picker, атомарная запись, observability и путь к горизонтальному масштабированию | 2–4 недели по этапам | 🟡 Этапы A–F закрыты; остался этап G (горизонталь): realtime-hub через Redis/NATS, leader election планировщика, broadcast перезагрузки конфигурации |
-| 79 | [79-row-level-access.md](79-row-level-access.md) | Строковые политики доступа поверх RBAC: декларативные row filters в ролях, SQL-side фильтрация UI/REST/picker и безопасный контур отчетов/AI | 1–2 недели по этапам | 🟡 Core влит (`assertRowFiltersApplied`); осталось: запросы с `ОБЪЕДИНИТЬ` при активной политике fail-closed отказывают (`query.go:3639`), нет UI-редактора политик, нет нативного PG RLS вторым слоем |
+| 79 | [79-row-level-access.md](79-row-level-access.md) | Строковые политики доступа поверх RBAC: декларативные row filters в ролях, SQL-side фильтрация UI/REST/picker и безопасный контур отчетов/AI | 1–2 недели по этапам | 🟡 Core влит (`assertRowFiltersApplied`); `ОБЪЕДИНИТЬ` поддержан 2026-08-04 (фильтр внедряется в каждую ветвь). Осталось: нет UI-редактора политик, нет нативного PG RLS вторым слоем |
 
 ### Направление Г — Интеграции и экосистема (продолжение)
 
