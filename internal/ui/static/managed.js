@@ -84,7 +84,13 @@ function obManagedReady(fn) {
       if (inp.type === 'checkbox') {
         inp.checked = v === true || v === 'true' || v === 1;
       } else {
-        inp.value = (v === null || v === undefined) ? '' : v;
+        var val = (v === null || v === undefined) ? '' : String(v);
+        // Сервер сериализует дату как «2026-08-04T00:00» (формат datetime-local).
+        // Для <input type="date"> это невалидное значение: браузер молча очищает
+        // поле — дата на форме пропадала после первого же события, а следующая
+        // запись затирала её в базе.
+        if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
+        inp.value = val;
       }
     });
   }

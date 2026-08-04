@@ -368,3 +368,36 @@ func TestFormEvent_ПрисвоенноеОбработчикомНеЗатир�
 		t.Fatalf("Канал=%v, присвоение обработчика затёрто значением из базы", got)
 	}
 }
+
+// Нередактируемое поле приходит в POST, если отрисовано как <input readonly>
+// (в отличие от disabled-списка), но пользователь его не вводит. Его всё равно
+// надо перечитывать: номер, присвоенный нумератором при записи, иначе появлялся
+// на форме только после закрытия и повторного открытия.
+func TestFormEvent_ReadonlyПолеОбновляетсяДажеПридяИзФормы(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Об = Объект.Ссылка.ПолучитьОбъект();
+	Об.Канал = "Присвоено при записи";
+	Об.Записать();
+КонецПроцедуры
+`, nil)
+	// «Канал» на форме — нередактируемое поле.
+	form := f.entity.Forms[0]
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеКанал",
+		DataPath: "Объект.Канал", ReadOnly: true,
+	})
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+	body.Set("Канал", "Телефон") // readonly-инпут отправляет старое значение
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if got := resp.Values["Канал"]; got != "Присвоено при записи" {
+		t.Fatalf("Канал=%v, ожидалось «Присвоено при записи» (readonly не обновилось)", got)
+	}
+}

@@ -254,7 +254,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	runErr := s.interp.Run(decl, thisObj, vars)
-	s.refreshFieldsWrittenByHandler(r.Context(), r, entity, obj, fieldsBefore)
+	s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
 	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{

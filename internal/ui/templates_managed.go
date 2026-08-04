@@ -596,7 +596,9 @@ const tplManagedForm = `
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки */}}
   <a href="/ui/" class="btn btn-cancel">Отмена</a>
   {{else}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{/* «Записать» здесь НЕ дублируем: она уже есть в командной панели формы, и
+       две одинаковые кнопки на одном экране заставляют гадать, чем они
+       отличаются. Внизу остаётся только выход из формы. */}}
   <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">Отмена</a>
   {{end}}
 </div>

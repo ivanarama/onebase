@@ -40,10 +40,27 @@ func snapshotFieldValues(fields map[string]any) map[string]string {
 	return out
 }
 
+// readOnlyFormFields собирает имена полей сущности, отрисованных формой как
+// нередактируемые (по последнему сегменту data_path, как checkboxOmittedFields).
+func readOnlyFormFields(form *metadata.FormModule) map[string]bool {
+	out := map[string]bool{}
+	if form == nil {
+		return out
+	}
+	form.Walk(func(el *metadata.FormElement) bool {
+		if el != nil && el.ReadOnly && el.DataPath != "" {
+			out[strings.ToLower(dpFieldName(el.DataPath))] = true
+		}
+		return true
+	})
+	return out
+}
+
 func (s *Server) refreshFieldsWrittenByHandler(
 	ctx context.Context,
 	r *http.Request,
 	entity *metadata.Entity,
+	form *metadata.FormModule,
 	obj *runtime.Object,
 	before map[string]string,
 ) {
@@ -68,8 +85,14 @@ func (s *Server) refreshFieldsWrittenByHandler(
 		}
 		return keys
 	}
+	readOnly := readOnlyFormFields(form)
 	stale := func(f metadata.Field) bool {
-		if formKeySubmitted(submitted, f.Name) {
+		// Нередактируемое поле перечитываем всегда. Оно приходит в POST, если
+		// отрисовано как <input readonly> (в отличие от disabled-списка), но
+		// пользователь его не вводит: это результат, и в форме он обязан быть
+		// свежим. Иначе номер, присвоенный нумератором при записи, появлялся
+		// на форме только после переоткрытия.
+		if !readOnly[strings.ToLower(f.Name)] && formKeySubmitted(submitted, f.Name) {
 			return false
 		}
 		keys := fieldKeys(f.Name)
