@@ -42,9 +42,10 @@ func searchTestHandler(t *testing.T) (*handler, *metadata.Entity, *metadata.Enti
 type searchResponse struct {
 	Data []restSearchHit `json:"data"`
 	Meta struct {
-		Limit      int  `json:"limit"`
-		NextOffset int  `json:"next_offset"`
-		HasMore    bool `json:"has_more"`
+		Limit      int    `json:"limit"`
+		NextOffset int    `json:"next_offset"`
+		NextCursor string `json:"next_cursor"`
+		HasMore    bool   `json:"has_more"`
 	} `json:"meta"`
 }
 
@@ -144,14 +145,14 @@ func TestAPI_V2Search_RejectsBadParams(t *testing.T) {
 	seedSearchData(t, h, cat, doc)
 	user := apiUser("reader", auth.Permission{Catalogs: map[string][]string{cat.Name: {"read"}}})
 
-	for _, query := range []string{"", "q=", "q=ромашка&limit=0", "q=ромашка&limit=abc", "q=ромашка&offset=-1"} {
+	for _, query := range []string{"", "q=", "q=ромашка&limit=0", "q=ромашка&limit=abc"} {
 		if w, _ := doSearch(t, h, query, user); w.Code != http.StatusBadRequest {
 			t.Fatalf("запрос %q: код %d, ожидался 400", query, w.Code)
 		}
 	}
 }
 
-func TestAPI_V2Search_PaginatesByNextOffset(t *testing.T) {
+func TestAPI_V2Search_PaginatesByNextCursor(t *testing.T) {
 	h, cat, doc := searchTestHandler(t)
 	seedSearchData(t, h, cat, doc)
 
@@ -163,12 +164,86 @@ func TestAPI_V2Search_PaginatesByNextOffset(t *testing.T) {
 	if len(first.Data) != 1 || !first.Meta.HasMore {
 		t.Fatalf("первая страница: %+v, meta %+v", first.Data, first.Meta)
 	}
+	if first.Meta.NextCursor == "" {
+		t.Fatal("курсор следующей страницы пуст")
+	}
+	if first.Meta.NextOffset != 0 {
+		t.Fatalf("сырое смещение уехало наружу: %d", first.Meta.NextOffset)
+	}
 	_, second := doSearch(t, h,
-		"q="+url.QueryEscape("ромашк")+"&limit=1&offset="+strconv.Itoa(first.Meta.NextOffset), user)
+		"q="+url.QueryEscape("ромашк")+"&limit=1&cursor="+url.QueryEscape(first.Meta.NextCursor), user)
 	if len(second.Data) != 1 {
 		t.Fatalf("вторая страница: %+v", second.Data)
 	}
 	if second.Data[0].ID == first.Data[0].ID {
 		t.Fatalf("вторая страница повторила первую: %+v", second.Data)
+	}
+}
+
+// Ответ поиска не должен выдавать, что совпадение БЫЛО, но скрыто правами.
+// Смещение считается по просмотренным строкам индекса — то есть до отсева
+// маскированием и строковыми политиками, — поэтому наружу оно не отдаётся
+// вовсе: побайтовым подбором по нему восстанавливался скрытый телефон,
+// причём в журнал раскрытия при этом ничего не писалось.
+func TestAPI_V2Search_ОтветНеВыдаётСкрытыхСовпадений(t *testing.T) {
+	h, cat, doc := searchTestHandler(t)
+	if err := h.store.Upsert(context.Background(), cat.Name, uuid.New(), map[string]any{
+		"Наименование": "ООО Ромашка", "Менеджер": "petrov",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+	// Читатель со строковой политикой: строка чужого менеджера ему не видна.
+	user := apiUser("ivanov", auth.Permission{
+		Catalogs:  map[string][]string{cat.Name: {"read"}},
+		Documents: map[string][]string{doc.Name: {"read"}},
+		RowAccess: auth.RowAccess{Catalogs: map[string]auth.RowPolicies{
+			cat.Name: {"read": auth.RowPolicy{
+				Field: "Менеджер", Op: "eq", Value: auth.RowValue{User: "login"},
+			}},
+		}},
+	})
+
+	// Запрос по значению, которое есть в индексе, но скрыто политикой,
+	// и запрос по заведомо несуществующему значению.
+	_, hidden := doSearch(t, h, "q="+url.QueryEscape("ромашка"), user)
+	_, absent := doSearch(t, h, "q="+url.QueryEscape("незнакомоеслово"), user)
+
+	if len(hidden.Data) != 0 || len(absent.Data) != 0 {
+		t.Fatalf("выдача не пуста: скрытое %+v, отсутствующее %+v", hidden.Data, absent.Data)
+	}
+	if hidden.Meta.NextOffset != 0 || absent.Meta.NextOffset != 0 {
+		t.Fatalf("сырое смещение уехало наружу: скрытое %d, отсутствующее %d",
+			hidden.Meta.NextOffset, absent.Meta.NextOffset)
+	}
+	if hidden.Meta != absent.Meta {
+		t.Fatalf("ответы различимы: скрытое %+v, отсутствующее %+v", hidden.Meta, absent.Meta)
+	}
+}
+
+// Курсор непрозрачен: одно и то же положение чтения каждый раз выглядит иначе,
+// поэтому сравнивать курсоры разных запросов между собой бесполезно.
+func TestAPI_V2Search_КурсорНепрозраченИНеПовторяется(t *testing.T) {
+	h, cat, doc := searchTestHandler(t)
+	seedSearchData(t, h, cat, doc)
+	user := apiUser("reader", auth.Permission{
+		Catalogs:  map[string][]string{cat.Name: {"read"}},
+		Documents: map[string][]string{doc.Name: {"read"}},
+	})
+
+	_, first := doSearch(t, h, "q="+url.QueryEscape("ромашк")+"&limit=1", user)
+	_, again := doSearch(t, h, "q="+url.QueryEscape("ромашк")+"&limit=1", user)
+	if first.Meta.NextCursor == "" || again.Meta.NextCursor == "" {
+		t.Fatal("курсор пуст, продолжение недоступно")
+	}
+	if first.Meta.NextCursor == again.Meta.NextCursor {
+		t.Fatal("курсор повторяется — по нему можно сравнивать положение чтения")
+	}
+	if _, err := strconv.Atoi(first.Meta.NextCursor); err == nil {
+		t.Fatalf("курсор — обычное число: %q", first.Meta.NextCursor)
+	}
+	// Подделанный курсор не ломает поиск: листание начинается сначала.
+	_, forged := doSearch(t, h, "q="+url.QueryEscape("ромашк")+"&limit=1&cursor=AAAAAAAA", user)
+	if len(forged.Data) != 1 {
+		t.Fatalf("подделанный курсор сломал выдачу: %+v", forged.Data)
 	}
 }

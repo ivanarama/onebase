@@ -455,3 +455,109 @@ func TestFTSTokens(t *testing.T) {
 		}
 	}
 }
+
+// Правка существующего объекта идёт мимо upsert: UpsertVersioned с ненулевой
+// ожидаемой версией делает собственный UPDATE. Через этот путь идут ВСЕ правки
+// из UI (форма всегда шлёт _version), REST с If-Match и DSL. Без индексации
+// там поиск отдавал старое значение — в том числе стёртое пользователем.
+func TestFullText_ПравкаСВерсиейОбновляетИндекс(t *testing.T) {
+	db, entities := newFTSTestDB(t)
+	ctx := context.Background()
+	cat := entities[0]
+
+	id := uuid.New()
+	if err := db.Upsert(ctx, cat.Name, id, map[string]any{"Наименование": "ООО Ромашка"}, cat); err != nil {
+		t.Fatal(err)
+	}
+	if len(search(t, db, "ромашка", cat.Name)) != 1 {
+		t.Fatal("объект не проиндексирован при создании")
+	}
+
+	version := int64(1)
+	if err := db.UpsertVersioned(ctx, cat.Name, id,
+		map[string]any{"Наименование": "ООО Василёк"}, cat, &version); err != nil {
+		t.Fatal(err)
+	}
+	if hits := search(t, db, "василек", cat.Name); len(hits) != 1 {
+		t.Fatalf("новое имя не находится: %+v", hits)
+	}
+	if hits := search(t, db, "ромашка", cat.Name); len(hits) != 0 {
+		t.Fatalf("старое значение осталось в индексе: %+v", hits)
+	}
+}
+
+// Удаление объекта убирает его из индекса независимо от регистра имени, в
+// котором пришёл вызов: REST v1 берёт имя из URL, и строгое сравнение с
+// каноническим owner_name оставляло строку в индексе навсегда.
+func TestFullText_УдалениеНеЗависитОтРегистраИмени(t *testing.T) {
+	db, entities := newFTSTestDB(t)
+	ctx := context.Background()
+	cat := entities[0]
+
+	id := uuid.New()
+	if err := db.Upsert(ctx, cat.Name, id, map[string]any{"Наименование": "ООО Ромашка"}, cat); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(ctx, "КОНТРАГЕНТ", id); err != nil {
+		t.Fatal(err)
+	}
+	if hits := search(t, db, "ромашка", cat.Name); len(hits) != 0 {
+		t.Fatalf("строка индекса пережила удаление: %+v", hits)
+	}
+}
+
+// «ё» и «е» ищутся одинаково: вводят обычно без точек, а свернуть их не умеет
+// ни один из движков.
+func TestFullText_ЁСворачиваетсяКЕ(t *testing.T) {
+	db, entities := newFTSTestDB(t)
+	ctx := context.Background()
+	cat := entities[0]
+
+	if err := db.Upsert(ctx, cat.Name, uuid.New(),
+		map[string]any{"Наименование": "Королёв Артём"}, cat); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"королев", "Королёв", "артем", "Артём"} {
+		if hits := search(t, db, q, cat.Name); len(hits) != 1 {
+			t.Fatalf("запрос %q ничего не нашёл: %+v", q, hits)
+		}
+	}
+}
+
+// Обновление платформы на существующей базе: данные есть, индекса ещё нет.
+// Migrate обязан наполнить его сам — иначе строка поиска в шапке работает,
+// а находит ноль объектов, пока администратор не догадается про reindex.
+func TestFullText_МиграцияНаполняетИндексНаСуществующейБазе(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "upgrade.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	entities := ftsTestEntities()
+	cat := entities[0]
+
+	// База «до обновления»: таблицы есть, полнотекстового индекса нет.
+	if err := db.Migrate(ctx, entities); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, cat.Name, uuid.New(),
+		map[string]any{"Наименование": "ООО Ромашка"}, cat); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, "DROP TABLE "+ftsTable); err != nil {
+		t.Fatal(err)
+	}
+	db.ftsState = ftsStateUnknown
+	if hits := search(t, db, "ромашка", cat.Name); len(hits) != 0 {
+		t.Fatalf("индекс не сброшен, проба некорректна: %+v", hits)
+	}
+
+	// Обновление платформы — повторный Migrate.
+	if err := db.Migrate(ctx, entities); err != nil {
+		t.Fatal(err)
+	}
+	if hits := search(t, db, "ромашка", cat.Name); len(hits) != 1 {
+		t.Fatalf("после миграции поиск не находит ранее записанное: %+v", hits)
+	}
+}

@@ -78,11 +78,10 @@ func (h *handler) searchV2() http.HandlerFunc {
 			}
 			limit = min(n, searchMaxLimit)
 		}
-		offset, err := strconv.Atoi(orZero(r.URL.Query().Get("offset")))
-		if err != nil || offset < 0 {
-			writeError(w, http.StatusBadRequest, "offset должен быть неотрицательным числом", "", 0)
-			return
-		}
+		// Числовое смещение снаружи не принимается: продолжение задаётся только
+		// непрозрачным курсором из предыдущего ответа. Иначе перебор позиций дал
+		// бы ту же утечку, что и выдача next_offset (см. internal/search/cursor.go).
+		offset := search.DecodeCursor(r.URL.Query().Get("cursor"))
 
 		page, err := search.Run(r.Context(), h.store, restSearchDeps{h: h}, q, limit, offset)
 		if err != nil {
@@ -101,25 +100,17 @@ func (h *handler) searchV2() http.HandlerFunc {
 			})
 		}
 		w.Header().Set("X-Limit", strconv.Itoa(limit))
-		w.Header().Set("X-Offset", strconv.Itoa(offset))
 		writeJSONV2(w, http.StatusOK, restV2Envelope{
 			Data: hits,
 			Meta: &restV2Meta{
 				Limit: limit,
 				// Общее число совпадений не считается: чтобы его узнать, надо
 				// прогнать через права весь индекс. Пагинация идёт по
-				// next_offset — смещению, на котором остановилось чтение.
+				// next_cursor — непрозрачной позиции чтения.
 				Total:      len(hits),
-				NextOffset: page.NextOffset,
+				NextCursor: page.Cursor,
 				HasMore:    page.HasMore,
 			},
 		})
 	}
-}
-
-func orZero(s string) string {
-	if s == "" {
-		return "0"
-	}
-	return s
 }

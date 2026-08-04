@@ -36,9 +36,11 @@ type restV2Meta struct {
 	Composed   bool     `json:"composed,omitempty"`
 	Variant    string   `json:"variant,omitempty"`
 	Kind       string   `json:"kind,omitempty"`
-	// NextOffset/HasMore — пагинация глобального поиска (план 82): общее число
-	// совпадений там не считается, продолжать надо с next_offset.
-	NextOffset int  `json:"next_offset,omitempty"`
+	// NextCursor/HasMore — пагинация глобального поиска (план 82): общее число
+	// совпадений там не считается, продолжать надо с next_cursor. Курсор
+	// непрозрачен намеренно — сырое смещение считается по просмотренным
+	// строкам индекса и выдавало бы наличие скрытых совпадений.
+	NextCursor string `json:"next_cursor,omitempty"`
 	HasMore    bool `json:"has_more,omitempty"`
 }
 
@@ -743,8 +745,8 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 					"limit":       map[string]any{"type": "integer"},
 					"total_pages": map[string]any{"type": "integer"},
 					// Пагинация глобального поиска (план 82): общего числа
-					// совпадений там нет, продолжают с next_offset.
-					"next_offset": map[string]any{"type": "integer"},
+					// совпадений там нет, продолжают с next_cursor.
+					"next_cursor": map[string]any{"type": "string"},
 					"has_more":    map[string]any{"type": "boolean"},
 				},
 			},
@@ -1068,7 +1070,7 @@ func openAPIV2Paths() map[string]any {
 
 // searchPath — глобальный полнотекстовый поиск (план 82). Выдача ограничена
 // правами пользователя, поэтому общее число совпадений не считается: пагинация
-// идёт по meta.next_offset.
+// идёт по meta.next_cursor.
 func searchPath(errors map[string]any) map[string]any {
 	return map[string]any{
 		"get": map[string]any{

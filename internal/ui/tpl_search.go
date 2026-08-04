@@ -30,7 +30,7 @@ const tplSearch = `
   </div>
   {{if .HasMore}}
   <div style="margin-top:14px">
-    <a class="btn" href="/ui/search?q={{.Q}}&amp;offset={{.NextOffset}}">{{t $.Lang "Показать ещё"}}</a>
+    <a class="btn" href="/ui/search?q={{.Q}}&amp;cursor={{.NextCursor}}">{{t $.Lang "Показать ещё"}}</a>
   </div>
   {{end}}
   {{else}}

@@ -40,8 +40,15 @@ type Page struct {
 	// NextOffset — смещение в индексе для следующей страницы. Считается по
 	// просмотренным строкам индекса, а не по показанным: часть строк отсеяли
 	// права, и продолжать надо с того места, где чтение остановилось.
+	//
+	// НАРУЖУ ЭТО ЧИСЛО НЕ ОТДАЁТСЯ: разница «просмотрено» и «показано» — оракул
+	// по скрытым значениям (см. cursor.go). Точки входа обязаны публиковать
+	// только Cursor.
 	NextOffset int
-	HasMore    bool
+	// Cursor — непрозрачная позиция чтения для следующей страницы. Пусто, если
+	// продолжения нет.
+	Cursor  string
+	HasMore bool
 }
 
 // Deps — то, чего поиск не умеет сам: права и метаданные. Реализуется
@@ -108,7 +115,7 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, 
 			return Page{}, err
 		}
 		if len(hits) == 0 {
-			return page, nil
+			return withCursor(page), nil
 		}
 		for _, hit := range hits {
 			page.NextOffset++
@@ -125,18 +132,27 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, 
 				// Индекс мог не кончиться — следующая страница начнётся с
 				// NextOffset, поэтому уже просмотренное не повторится.
 				page.HasMore = true
-				return page, nil
+				return withCursor(page), nil
 			}
 		}
 		if len(hits) < batch {
-			return page, nil
+			return withCursor(page), nil
 		}
 	}
 	// Пачки кончились раньше страницы: правами отсеяло почти всё, но индекс
 	// прочитан не до конца. Признак «есть ещё» здесь обязателен — иначе
 	// пользователю с узкой политикой выдача врала бы «больше ничего нет».
 	page.HasMore = true
-	return page, nil
+	return withCursor(page), nil
+}
+
+// withCursor проставляет непрозрачную позицию чтения. Вызывается на каждом
+// выходе из Run, чтобы наружу не уехало сырое смещение.
+func withCursor(page Page) Page {
+	if page.HasMore {
+		page.Cursor = EncodeCursor(page.NextOffset)
+	}
+	return page
 }
 
 // resolveHit перечитывает строку и проверяет права. Именно перечитывание, а

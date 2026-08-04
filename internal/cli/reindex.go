@@ -81,7 +81,7 @@ func runReindex(cmd *cobra.Command, _ []string) error {
 		}
 		// Пересобираем только его: с одним элементом в списке общая чистка
 		// «строк исчезнувших объектов» снесла бы индекс всех остальных.
-		if err := db.EnsureFullTextSchema(ctx); err != nil {
+		if _, err := db.EnsureFullTextSchema(ctx); err != nil {
 			return err
 		}
 		n, err := db.ReindexEntityFullText(ctx, picked, batch)

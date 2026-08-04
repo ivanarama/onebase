@@ -110,9 +110,12 @@ func (s *Server) dslFullTextSearch(ctx context.Context, args []any) (any, error)
 
 func (s *Server) globalSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	// Продолжение листания — только непрозрачным курсором: сырое смещение
+	// считается по просмотренным строкам индекса и выдавало бы наличие
+	// совпадений, скрытых маской или строковой политикой.
+	offset := search.DecodeCursor(r.URL.Query().Get("cursor"))
 
-	data := map[string]any{"Q": q, "Offset": offset, "SearchQuery": q}
+	data := map[string]any{"Q": q, "SearchQuery": q}
 	if q == "" {
 		s.render(w, r, "page-search", data)
 		return
@@ -125,7 +128,7 @@ func (s *Server) globalSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Results"] = page.Items
 	data["HasMore"] = page.HasMore
-	data["NextOffset"] = page.NextOffset
+	data["NextCursor"] = page.Cursor
 	data["Searched"] = true
 	s.render(w, r, "page-search", data)
 }

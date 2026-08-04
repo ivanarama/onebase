@@ -125,8 +125,17 @@ func (db *DB) tableExists(ctx context.Context, table string) (bool, error) {
 
 // EnsureFullTextSchema создаёт таблицу полнотекстового индекса и надстройку
 // над ней. Вызывается из Migrate; идемпотентна.
-func (db *DB) EnsureFullTextSchema(ctx context.Context) error {
+//
+// Возвращает признак «схемы не было»: при обновлении платформы на существующей
+// базе после этого нужен разовый backfill, иначе строка поиска в шапке есть, а
+// находит ноль объектов — и узнать об этом можно только догадавшись выполнить
+// `onebase reindex`.
+func (db *DB) EnsureFullTextSchema(ctx context.Context) (bool, error) {
 	d := db.dialect
+	existed, err := db.tableExists(ctx, ftsTable)
+	if err != nil {
+		return false, fmt.Errorf("полнотекстовый индекс: проверка %s: %w", ftsTable, err)
+	}
 	ddl := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			owner_kind TEXT NOT NULL,
@@ -137,13 +146,13 @@ func (db *DB) EnsureFullTextSchema(ctx context.Context) error {
 			PRIMARY KEY (owner_name, owner_id)
 		)`, ftsTable, d.TypeUUID())
 	if _, err := db.Exec(ctx, ddl); err != nil {
-		return fmt.Errorf("полнотекстовый индекс: создание %s: %w", ftsTable, err)
+		return false, fmt.Errorf("полнотекстовый индекс: создание %s: %w", ftsTable, err)
 	}
 	if err := db.fullTextIndex().EnsureSchema(ctx, db); err != nil {
-		return err
+		return false, err
 	}
 	atomic.StoreInt32(&db.ftsState, ftsStateReady)
-	return nil
+	return !existed, nil
 }
 
 // IndexObject записывает объект в полнотекстовый индекс. Вызывается изнутри
@@ -181,9 +190,13 @@ func (db *DB) DeleteFromFullTextIndex(ctx context.Context, entityName string, id
 		return nil
 	}
 	d := db.dialect
-	sqlText := fmt.Sprintf("DELETE FROM %s WHERE owner_name = %s AND owner_id = %s",
-		ftsTable, d.Placeholder(1), d.Placeholder(2))
-	if err := db.exec(ctx, sqlText, entityName, idArg(d, id)); err != nil {
+	// Удаляем по owner_id: идентификатор записи уникален сам по себе, а имя
+	// объекта приходит от вызывающего в произвольном регистре (REST v1 берёт
+	// его из URL), и строгое сравнение с каноническим owner_name оставляло
+	// строку в индексе навсегда. Регистронезависимое сравнение в SQL тут не
+	// помощник: lower() в SQLite умеет только ASCII, а имена русские.
+	sqlText := fmt.Sprintf("DELETE FROM %s WHERE owner_id = %s", ftsTable, d.Placeholder(1))
+	if err := db.exec(ctx, sqlText, idArg(d, id)); err != nil {
 		return fmt.Errorf("полнотекстовый индекс %s: удаление: %w", entityName, err)
 	}
 	return nil
@@ -223,7 +236,7 @@ type FTSRebuildStat struct {
 // пишется своей транзакцией, поэтому длинная пересборка не держит одну
 // транзакцию на всё время и не блокирует прикладную работу.
 func (db *DB) RebuildFullTextIndex(ctx context.Context, entities []*metadata.Entity, batchSize int, progress func(FTSRebuildStat)) ([]FTSRebuildStat, error) {
-	if err := db.EnsureFullTextSchema(ctx); err != nil {
+	if _, err := db.EnsureFullTextSchema(ctx); err != nil {
 		return nil, err
 	}
 	if batchSize <= 0 {
@@ -277,7 +290,23 @@ func (db *DB) ReindexEntityFullText(ctx context.Context, e *metadata.Entity, bat
 	return db.rebuildEntityFTS(ctx, e, batchSize)
 }
 
-func (db *DB) rebuildEntityFTS(ctx context.Context, e *metadata.Entity, batchSize int) (int, error) {
+// rebuildEntityFTS пересобирает индекс одного объекта. Очистка и наполнение
+// идут ОДНОЙ транзакцией: раздельными запросами любая ошибка в середине
+// (пропала колонка, обрыв связи, Ctrl+C) оставляла объект вообще без индекса,
+// и текст ошибки об этом не предупреждал.
+func (db *DB) rebuildEntityFTS(ctx context.Context, e *metadata.Entity, batchSize int) (n int, err error) {
+	txErr := db.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		var innerErr error
+		n, innerErr = db.rebuildEntityFTSTx(txCtx, e, batchSize)
+		return innerErr
+	})
+	if txErr != nil {
+		return 0, txErr
+	}
+	return n, nil
+}
+
+func (db *DB) rebuildEntityFTSTx(ctx context.Context, e *metadata.Entity, batchSize int) (int, error) {
 	d := db.dialect
 	fields := metadata.FullTextFields(e)
 	// Сначала снимаем прежние строки объекта: без этого записи, выпавшие из
@@ -439,7 +468,7 @@ func ftsNormalize(s string) string {
 	space := true // подавляет ведущие и повторные пробелы
 	for _, r := range s {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			out = append(out, r)
+			out = append(out, foldYo(r))
 			space = false
 			continue
 		}
@@ -449,6 +478,19 @@ func ftsNormalize(s string) string {
 		}
 	}
 	return strings.TrimRight(string(out), " ")
+}
+
+// foldYo сводит «ё» к «е». Ни один из движков этого не делает, а вводят обычно
+// без точек: «артем» не находил «Артём», «королев» — «Королёв». Свёртка нужна
+// одинаковая при индексации и при разборе запроса, иначе движки разъедутся.
+func foldYo(r rune) rune {
+	switch r {
+	case 'ё':
+		return 'е'
+	case 'Ё':
+		return 'Е'
+	}
+	return r
 }
 
 // ftsTokens режет пользовательский ввод на слова: остаются только буквы и
@@ -467,7 +509,7 @@ func ftsTokens(text string) []string {
 	)
 	for _, r := range text {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			buf.WriteRune(r)
+			buf.WriteRune(foldYo(r))
 			continue
 		}
 		flush()
