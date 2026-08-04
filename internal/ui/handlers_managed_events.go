@@ -53,6 +53,11 @@ type formEventResponse struct {
 	// через Объект.Записать(). Клиент подставляет его в _id следующих событий и
 	// в адрес страницы — иначе второе действие подряд создало бы второй документ.
 	SavedID string `json:"savedId,omitempty"`
+	// Version — текущая версия записи после обработчика. Клиент кладёт её в
+	// скрытое поле _version: обработчик, записавший объект, версию поднял, а
+	// форма держала прочитанную при отрисовке — и следующая кнопка «Записать»
+	// упиралась в «объект изменён другим пользователем».
+	Version int64 `json:"version,omitempty"`
 	// ChoiceList — динамический список значений для элемента ПолеСписка,
 	// сформированный обработчиком НачалоВыбора (билтин ДобавитьЗначениеСписка).
 	// Клиент заполняет им <select> того элемента, что инициировал событие.
@@ -247,9 +252,24 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	addTPEventContextVars(r, obj, vars)
 
+	// Снимок полей до обработчика — по нему после Run отличаем «поле изменил сам
+	// обработчик» от «поле осталось прежним», см. refreshFieldsWrittenByHandler.
+	fieldsBefore := snapshotFieldValues(obj.Fields)
+
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
-	if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
+	runErr := s.interp.Run(decl, thisObj, vars)
+	// Перечитывать из базы имеет смысл только для записи, которая там есть:
+	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
+	// номер от нумератора обязан приехать на экран «Создать» сразу). Гейт по
+	// сырому _id, а не по obj.ID: buildObjectFromForm для новой записи генерирует
+	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
+	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
+	// описана выше у restoreUnsubmittedFields.
+	if strings.TrimSpace(r.FormValue("_id")) != "" || savedFormID(thisObj) != "" {
+		s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+	}
+	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{
 			OK:             false,
@@ -263,6 +283,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			// Обработчик мог записать форму и упасть уже после этого: id всё
 			// равно нужен клиенту, иначе повтор действия создаст второй документ.
 			SavedID: savedFormID(thisObj),
+			Version: s.currentEntityVersion(r.Context(), entity, obj),
 		})
 		return
 	}
@@ -278,6 +299,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
 		SavedID:        savedFormID(thisObj),
+		Version:        s.currentEntityVersion(r.Context(), entity, obj),
 	})
 }
 

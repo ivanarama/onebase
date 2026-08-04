@@ -49,7 +49,14 @@ func setupFormCtxServer(t *testing.T, formOS string, attrs []*metadata.FormAttri
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Канал", Type: metadata.FieldTypeString},
+			{Name: "Активно", Type: metadata.FieldTypeBool},
 		},
+		// ТЧ с колонкой, одноимённой полю шапки, — на ней проверяется, что
+		// readonly-колонка ТЧ не делает поле шапки «всегда перечитываемым».
+		TableParts: []metadata.TablePart{{
+			Name:   "Строки",
+			Fields: []metadata.Field{{Name: "Канал", Type: metadata.FieldTypeString}},
+		}},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{napr, ent}); err != nil {
 		t.Fatal(err)
@@ -61,7 +68,7 @@ func setupFormCtxServer(t *testing.T, formOS string, attrs []*metadata.FormAttri
 	}
 	docID := uuid.New()
 	if err := db.Upsert(ctx, ent.Name, docID,
-		map[string]any{"Наименование": "ОБР-000002", "Канал": "Телефон"}, ent); err != nil {
+		map[string]any{"Наименование": "ОБР-000002", "Канал": "Телефон", "Активно": true}, ent); err != nil {
 		t.Fatal(err)
 	}
 
@@ -316,5 +323,179 @@ func TestFormEvent_SavedIDТолькоДляНовойЗаписи(t *testing.T)
 	}
 	if resp.SavedID != "" {
 		t.Errorf("savedId=%q для существующей записи — должен быть пуст", resp.SavedID)
+	}
+}
+
+// Поле, которое обработчик изменил ЧЕРЕЗ БАЗУ (типовой путь: команда зовёт общий
+// модуль, модуль читает объект, меняет и записывает), должно вернуться в форму
+// актуальным. Раньше нередактируемое поле-результат не приходило из POST и
+// восстанавливалось из базы ДО обработчика — форма показывала результат
+// ПРЕДЫДУЩЕГО действия, отставая на шаг.
+func TestFormEvent_ПолеИзменённоеЧерезБазуВозвращаетсяАктуальным(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Об = Объект.Ссылка.ПолучитьОбъект();
+	Об.Канал = "Изменён модулем";
+	Об.Записать();
+КонецПроцедуры
+`, nil)
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+	// «Канал» не отправлен — как нередактируемое (disabled) поле на форме.
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if got := resp.Values["Канал"]; got != "Изменён модулем" {
+		t.Fatalf("Канал=%v, ожидалось «Изменён модулем» (поле отстаёт на шаг)", got)
+	}
+}
+
+// Значение, присвоенное САМИМ обработчиком, перечитыванием из базы не затирается:
+// оно может быть ещё не записано и обязано доехать до формы как есть.
+func TestFormEvent_ПрисвоенноеОбработчикомНеЗатирается(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Объект.Канал = "Черновик, не записан";
+КонецПроцедуры
+`, nil)
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if got := resp.Values["Канал"]; got != "Черновик, не записан" {
+		t.Fatalf("Канал=%v, присвоение обработчика затёрто значением из базы", got)
+	}
+}
+
+// Нередактируемое поле приходит в POST, если отрисовано как <input readonly>
+// (в отличие от disabled-списка), но пользователь его не вводит. Его всё равно
+// надо перечитывать: номер, присвоенный нумератором при записи, иначе появлялся
+// на форме только после закрытия и повторного открытия.
+func TestFormEvent_ReadonlyПолеОбновляетсяДажеПридяИзФормы(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Об = Объект.Ссылка.ПолучитьОбъект();
+	Об.Канал = "Присвоено при записи";
+	Об.Записать();
+КонецПроцедуры
+`, nil)
+	// «Канал» на форме — нередактируемое поле.
+	form := f.entity.Forms[0]
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеКанал",
+		DataPath: "Объект.Канал", ReadOnly: true,
+	})
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+	body.Set("Канал", "Телефон") // readonly-инпут отправляет старое значение
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if got := resp.Values["Канал"]; got != "Присвоено при записи" {
+		t.Fatalf("Канал=%v, ожидалось «Присвоено при записи» (readonly не обновилось)", got)
+	}
+}
+
+// Снятый пользователем флажок обязан остаться снятым. Для РЕДАКТИРУЕМОГО
+// элемента «Флажок» отсутствие ключа в POST означает «снято», а не «не
+// передавалось» (контракт частичной записи), поэтому перечитывать такое поле
+// из базы нельзя: иначе любое событие формы — нажатие команды, ПриИзменении
+// соседа — возвращало бы галку взведённой, applyValues ставил бы её обратно
+// в DOM, а следующая запись писала бы в базу старое «истина».
+func TestFormEvent_СнятыйФлажокОстаётсяСнятым(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Сообщить("ок");
+КонецПроцедуры
+`, nil)
+	form := f.entity.Forms[0]
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementCheckbox, Name: "ПолеАктивно",
+		DataPath: "Объект.Активно",
+	})
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+	// «Активно» не отправлено — пользователь снял галку. В базе там истина.
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if got := resp.Values["Активно"]; got == true || got == "true" {
+		t.Fatalf("Активно=%#v — снятая галка вернулась взведённой", got)
+	}
+}
+
+// ReadOnly-колонка табличной части не должна делать одноимённое поле шапки
+// «всегда перечитываемым»: имена сегментов data_path совпадают, но к полю шапки
+// путь ТЧ отношения не имеет. Иначе введённое пользователем значение шапки
+// молча откатывается к тому, что лежит в базе.
+func TestFormEvent_ReadonlyКолонкаТЧНеЗатираетПолеШапки(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Сообщить("ок");
+КонецПроцедуры
+`, nil)
+	form := f.entity.Forms[0]
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "КолонкаКанал",
+		DataPath: "Объект.Строки.Канал", ReadOnly: true,
+	})
+
+	body := url.Values{}
+	body.Set("_id", f.docID.String())
+	body.Set("Наименование", "ОБР-000002")
+	body.Set("Канал", "Почта") // в базе «Телефон», пользователь ввёл «Почта»
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if got := resp.Values["Канал"]; got != "Почта" {
+		t.Fatalf("Канал=%v, введённое пользователем значение шапки затёрто базой", got)
+	}
+}
+
+// Перечитывание не должно отключаться для формы «Создать», на которой обработчик
+// сам записал объект: номер от нумератора и прочее, присвоенное при записи,
+// обязаны приехать на экран сразу, без переоткрытия формы. Гейт «есть ли запись
+// в базе» смотрит и на сырой _id, и на факт записи внутри обработчика.
+func TestFormEvent_НаСозданииПолеПослеЗаписиПриходитСразу(t *testing.T) {
+	f := setupFormCtxServer(t, `
+Процедура Тест()
+	Объект.Записать();
+	Об = Объект.Ссылка.ПолучитьОбъект();
+	Об.Канал = "Присвоено при записи";
+	Об.Записать();
+КонецПроцедуры
+`, nil)
+
+	body := url.Values{}
+	body.Set("Наименование", "ОБР-НОВОЕ") // _id не передан — форма «Создать»
+
+	resp := f.fire(t, body)
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if resp.SavedID == "" {
+		t.Fatal("savedId пуст: обработчик записал новую запись, id обязан уехать клиенту")
+	}
+	if got := resp.Values["Канал"]; got != "Присвоено при записи" {
+		t.Fatalf("Канал=%v, ожидалось «Присвоено при записи» (поле после записи не приехало)", got)
 	}
 }

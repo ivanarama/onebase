@@ -15,10 +15,11 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-// deniedMaskedColumn is the fail-closed report gate (план 88D): returns a masked
-// output column the REST user may not receive via a report query, or "".
-func (h *handler) deniedMaskedColumn(ctx context.Context, sources []query.SourceRef, cols []string) string {
-	return access.DeniedMaskedColumn(auth.UserFromContext(ctx), sources, cols, h.sourceMeta)
+// queryMaskPlan is the REST report field gate (план 88E): a protected field in a
+// plain projection column comes back masked, one that drives a filter, grouping
+// or aggregate denies the query (plan.Denied).
+func (h *handler) queryMaskPlan(ctx context.Context, res query.Result) access.QueryMaskPlan {
+	return access.QueryMaskPlanFor(auth.UserFromContext(ctx), res, h.sourceMeta)
 }
 
 func (h *handler) sourceMeta(kind, name string) *metadata.Entity {

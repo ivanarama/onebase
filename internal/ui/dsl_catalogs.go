@@ -115,6 +115,9 @@ type catWriter struct {
 	loaded          bool
 	saved           bool
 	expectedVersion *int64
+	// assigned — реквизиты, присвоенные модулем в этой сессии: их чтение не
+	// маскируется, значение принадлежит текущей операции (план 88E).
+	assigned map[string]bool
 }
 
 func (w *catWriter) ctx() context.Context {
@@ -124,22 +127,40 @@ func (w *catWriter) ctx() context.Context {
 	return context.Background()
 }
 
-// Get: имя табличной части → tpProxy, иначе значение поля шапки.
+// Get: имя табличной части → tpProxy, иначе значение поля шапки. Реквизит
+// прочитанного из БД объекта отдаётся по полевой политике роли (план 88E) —
+// значение, присвоенное самим модулем, возвращается как есть.
 func (w *catWriter) Get(name string) any {
 	for _, tp := range w.entity.TableParts {
 		if strings.EqualFold(tp.Name, name) {
 			return &tpProxy{obj: w.obj, tpName: tp.Name}
 		}
 	}
-	return w.obj.Get(name)
+	v := w.obj.Get(name)
+	if !w.loaded || w.assigned[strings.ToLower(strings.TrimSpace(name))] {
+		return v
+	}
+	return w.s.maskDSLValue(w.ctx(), w.entity, name, v)
 }
 
 func (w *catWriter) Set(name string, v any) {
+	if w.assigned == nil {
+		w.assigned = map[string]bool{}
+	}
+	w.assigned[strings.ToLower(strings.TrimSpace(name))] = true
 	w.obj.Set(name, v)
 }
 
 // Fields — имена заполненных полей объекта: позволяет использовать объект как
 // источник в ЗаполнитьЗначенияСвойств (совместимо с CatalogRecordWriter).
+// forgetAssigned снимает признак «присвоено модулем» с перечисленных реквизитов:
+// после этого Get() отдаёт их по полевой политике роли, а не как есть.
+func (w *catWriter) forgetAssigned(names []string) {
+	for _, n := range names {
+		delete(w.assigned, strings.ToLower(strings.TrimSpace(n)))
+	}
+}
+
 func (w *catWriter) Fields() []string {
 	names := make([]string, 0, len(w.obj.Fields))
 	for k := range w.obj.Fields {
@@ -184,6 +205,19 @@ func (w *catWriter) write() error {
 	}
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 		return err
+	}
+	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
+	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
+	if !isNew {
+		restored, err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields)
+		if err != nil {
+			return err
+		}
+		// Восстановленное значение ложится в тот же набор, который читает
+		// Get(): без снятия признака «присвоено модулем» защита записи сама
+		// стала бы каналом раскрытия — после Записать() модуль прочитал бы
+		// реальное значение, которого не видел до неё.
+		w.forgetAssigned(restored)
 	}
 	result, err := w.s.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:          w.entity,
@@ -233,6 +267,10 @@ func (w *catWriter) read() error {
 		return err
 	}
 	w.obj = obj
+	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
+	// больше нет, а сохранённый признак снимал бы маску с реальных значений
+	// («Об.Телефон = ""; Об.Прочитать(); Сообщить(Об.Телефон)» отдавал реальный).
+	w.assigned = nil
 	version, err := w.s.store.EntityVersion(w.ctx(), w.entity.Name, w.obj.ID)
 	if err != nil {
 		return err

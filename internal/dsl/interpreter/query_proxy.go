@@ -33,9 +33,15 @@ type queryProxy struct {
 	reg      QueryRegistry
 	ctx      context.Context
 	compiler QueryCompiler
+	guard    QueryGuard
 }
 
 type QueryCompiler func(ctx context.Context, text string, params map[string]any) (query.Result, error)
+
+// QueryGuard проверяет и правит строки результата до того, как они попадут в
+// DSL: полевое маскирование ПДн (план 88E). Ошибка означает, что запрос читать
+// нельзя, — строки в модуль не отдаются.
+type QueryGuard func(ctx context.Context, res query.Result, rows []map[string]any) error
 
 // NewQueryProxy создаёт фабрику для инъекции через extraVars.
 // Использование: extraVars["__factory_Запрос"] = interpreter.NewQueryFactory(ctx, db, reg)
@@ -47,6 +53,13 @@ func NewQueryFactory(ctx context.Context, db QueryDB, reg QueryRegistry) func(ar
 // to the host runtime. UI uses this to inject row-level access filters; callers
 // that pass nil keep the legacy direct query.Compile behavior.
 func NewQueryFactoryWithCompiler(ctx context.Context, db QueryDB, reg QueryRegistry, compiler QueryCompiler) func(args []any) any {
+	return NewQueryFactoryGuarded(ctx, db, reg, compiler, nil)
+}
+
+// NewQueryFactoryGuarded additionally attaches a host guard over the result
+// rows — UI uses it for field-level masking (план 88E), so a processing cannot
+// read protected values that the same user would only see masked in a report.
+func NewQueryFactoryGuarded(ctx context.Context, db QueryDB, reg QueryRegistry, compiler QueryCompiler, guard QueryGuard) func(args []any) any {
 	return func(args []any) any {
 		return &queryProxy{
 			params:   make(map[string]any),
@@ -54,6 +67,7 @@ func NewQueryFactoryWithCompiler(ctx context.Context, db QueryDB, reg QueryRegis
 			reg:      reg,
 			ctx:      ctx,
 			compiler: compiler,
+			guard:    guard,
 		}
 	}
 }
@@ -144,6 +158,11 @@ func (q *queryProxy) execute() *Array {
 	rows, err := q.db.QueryAll(q.ctx, res.SQL, res.Args...)
 	if err != nil {
 		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL})
+	}
+	if q.guard != nil {
+		if err := q.guard(q.ctx, res, rows); err != nil {
+			panic(userError{Msg: "Запрос: " + err.Error()})
+		}
 	}
 	arr := &Array{}
 	for _, row := range rows {

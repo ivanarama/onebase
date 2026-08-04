@@ -187,12 +187,19 @@ func (s *Server) aiRunQuery(ctx context.Context, call llm.ToolCall) llm.ToolResu
 			return llm.ToolResult{ID: call.ID, Content: "нет доступа к объекту: " + denied, IsError: true}
 		}
 	}
-	if denied := s.deniedMaskedColumn(ctx, res.Sources, res.ProjectionFields); denied != "" {
-		return llm.ToolResult{ID: call.ID, Content: "нет доступа к защищённому полю: " + denied, IsError: true}
+	// План 88E: колонка с защищённым полем уходит в LLM замаскированной, а отбор
+	// или агрегат по такому полю по-прежнему отклоняется — маска на выходе от
+	// перебора условием не защищает.
+	maskPlan := s.queryMaskPlan(ctx, res)
+	if maskPlan.Denied != "" {
+		return llm.ToolResult{ID: call.ID, Content: "нет доступа к защищённому полю: " + maskPlan.Denied, IsError: true}
 	}
 	rows, err := s.store.QueryAll(ctx, res.SQL, res.Args...)
 	if err != nil {
 		return llm.ToolResult{ID: call.ID, Content: "ошибка выполнения: " + err.Error(), IsError: true}
+	}
+	if err := maskPlan.Apply(rows); err != nil {
+		return llm.ToolResult{ID: call.ID, Content: "нет доступа к защищённому полю: " + err.Error(), IsError: true}
 	}
 	truncated := false
 	if len(rows) > aiQueryRowLimit {
