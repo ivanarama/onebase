@@ -45,8 +45,8 @@ func (r *Repo) UpsertSSOUser(ctx context.Context, p *OIDCProvider, claims map[st
 			return nil, lookupErr
 		}
 		if existing != nil {
-			if strings.Contains(login, "@") && claimBoolFalse(claims, "email_verified") {
-				return nil, fmt.Errorf("auth: почта %q не подтверждена провайдером", login)
+			if !ssoLinkAllowed(p, claims, login) {
+				return nil, fmt.Errorf("auth: провайдер не подтвердил владение %q — связывание с существующей учётной записью отклонено", login)
 			}
 			if err := r.linkAuthIdentity(ctx, existing.ID, p.ID, subject); err != nil {
 				return nil, err
@@ -94,16 +94,43 @@ func ssoLogin(p *OIDCProvider, claims map[string]any) string {
 
 // claimBoolFalse сообщает, что claim присутствует и равен false. Отсутствие
 // claim'а не считается отрицанием: многие провайдеры его просто не выдают.
-func claimBoolFalse(claims map[string]any, name string) bool {
+// ssoLinkAllowed решает, можно ли привязать SSO-личность к УЖЕ СУЩЕСТВУЮЩЕЙ
+// локальной учётке. Это самая опасная операция провижининга: она отдаёт чужому
+// каталогу доступ к учётке, которая заведена здесь, — в том числе к
+// администраторской.
+//
+// Требуется явное email_verified == true. Отсутствие claim за подтверждение НЕ
+// считается: раньше защита стояла только на случае «claim есть и равен false»,
+// поэтому провайдер, который его вовсе не присылает (так делает Microsoft
+// Entra ID), связывал кого угодно с admin@example.com. Логин не из почты
+// (preferred_username и подобные) провайдер подтвердить не может в принципе —
+// такие связываются только вручную администратором.
+//
+// На автосоздание учётки это не влияет: новая запись чужих прав не наследует.
+func ssoLinkAllowed(p *OIDCProvider, claims map[string]any, login string) bool {
+	if p == nil || !strings.Contains(login, "@") {
+		return false
+	}
+	// Подтверждается именно тот адрес, который стал логином: email_verified
+	// относится к claim email, а логин мог прийти из другого claim.
+	if !strings.EqualFold(strings.TrimSpace(claimString(claims, "email")), strings.TrimSpace(login)) {
+		return false
+	}
+	return claimBoolTrue(claims, "email_verified")
+}
+
+// claimBoolTrue — claim присутствует И равен истине. Отсутствие claim истиной
+// не считается: см. ssoLinkAllowed.
+func claimBoolTrue(claims map[string]any, name string) bool {
 	v, ok := claims[name]
 	if !ok {
 		return false
 	}
 	switch t := v.(type) {
 	case bool:
-		return !t
+		return t
 	case string:
-		return strings.EqualFold(strings.TrimSpace(t), "false")
+		return strings.EqualFold(strings.TrimSpace(t), "true")
 	}
 	return false
 }

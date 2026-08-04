@@ -344,14 +344,19 @@ func TestOIDCWithoutAutoCreateRefusesUnknownUser(t *testing.T) {
 }
 
 func TestOIDCRequiresLocalSecondFactorUnlessTrusted(t *testing.T) {
+	// Логин — подтверждённый адрес почты: связывание с существующей локальной
+	// учёткой иначе (и правильно) отклоняется, см. ssoLinkAllowed.
 	issuer := newMockIssuer(t, map[string]any{
-		"sub": "ext-1", "email": "admin", "email_verified": true,
+		"sub": "ext-1", "email": "admin@example.com", "email_verified": true,
 	})
 	// Провайдер не считается источником MFA, а у учётки включён TOTP —
 	// после SSO обязан спрашиваться локальный код.
 	repo, h := newSSORepo(t, issuer.srv.URL, func(p *auth.OIDCProvider) { p.TrustMFA = false })
 	ctx := t.Context()
-	admin, err := repo.GetByLogin(ctx, "admin")
+	if _, err := repo.Create(ctx, "admin@example.com", "S3cret-pass", "Админ Почтовый", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	admin, err := repo.GetByLogin(ctx, "admin@example.com")
 	if err != nil || admin == nil {
 		t.Fatalf("GetByLogin: %v", err)
 	}

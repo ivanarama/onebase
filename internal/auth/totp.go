@@ -92,7 +92,10 @@ func TOTPCode(secret string, step int64) (string, error) {
 // шага), не принимается — иначе подсмотренный код работал бы все 30 секунд у
 // того, кто успел его перехватить.
 func VerifyTOTP(secret, code string, now time.Time, minStep int64) (int64, bool) {
-	code = strings.TrimSpace(code)
+	// Часть аутентификаторов показывает код с разделителем — «081 804»,
+	// «081-804», — и пользователь переписывает его как видит. Отбрасываем всё,
+	// кроме цифр: иначе верный код отвергался как неверный.
+	code = keepDigits(code)
 	if len(code) != totpDigits {
 		return 0, false
 	}
@@ -111,6 +114,18 @@ func VerifyTOTP(secret, code string, now time.Time, minStep int64) (int64, bool)
 		}
 	}
 	return 0, false
+}
+
+// keepDigits оставляет в строке только цифры.
+func keepDigits(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // OTPAuthURI собирает otpauth://-ссылку для QR-кода. issuer попадает и в путь,

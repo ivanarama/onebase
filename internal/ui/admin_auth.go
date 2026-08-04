@@ -328,7 +328,22 @@ func (s *Server) saveProvider(r *http.Request, p *auth.OIDCProvider, isNew bool)
 	if !replaced {
 		providers = append(providers, p)
 	}
-	return s.authRepo.SaveAuthProviders(r.Context(), providers)
+	if err := s.authRepo.SaveAuthProviders(r.Context(), providers); err != nil {
+		return err
+	}
+	// Снятая галка «Включён» у последнего провайдера при sso_only запирала базу
+	// наглухо: ни SSO, ни пароля, а ONEBASE_ALLOW_PASSWORD_LOGIN требует доступа
+	// к процессу, которого у администратора арендованной установки нет. Удаление
+	// провайдера этот случай обрабатывало, сохранение карточки — нет.
+	policy := s.authRepo.AuthPolicy(r.Context())
+	if policy.SSOOnly && !anyEnabled(providers) {
+		policy.SSOOnly = false
+		if err := s.authRepo.SaveAuthPolicy(r.Context(), policy); err != nil {
+			return err
+		}
+		s.logSessionAudit(r, "auth_policy_sso_only_released", p.ID, "")
+	}
+	return nil
 }
 
 // adminAuthProviderDelete удаляет провайдера.

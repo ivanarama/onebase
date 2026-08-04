@@ -471,6 +471,34 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Секреты второго фактора лежат колонкой _users.totp_secret, а не в
+	// _settings (план 84). Без этого прохода штатная ротация мастер-ключа
+	// молча ломала 2FA у всех: профиль по-прежнему показывал «включён», а код
+	// из приложения переставал приниматься.
+	totp, err := db.ListTOTPSecrets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range totp {
+		if secrets.Classify(row.Value) != secrets.KindEnc {
+			continue
+		}
+		reenc, err := reencrypt(row.Value, oldKey, newKey)
+		if err != nil {
+			return fmt.Errorf("секрет TOTP учётной записи %s: %w", row.Login, err)
+		}
+		if reenc == "" {
+			continue // уже под новым ключом
+		}
+		changed++
+		outf("  auth.user.%s.totp_secret → ключ %s\n", row.Login, newKey.ID())
+		if !dry {
+			if err := db.SaveTOTPSecretRaw(ctx, row.UserID, reenc); err != nil {
+				return err
+			}
+		}
+	}
+
 	if changed == 0 {
 		outln("Перешифровывать нечего: enc:-значений под старым ключом в базе нет.")
 		return nil

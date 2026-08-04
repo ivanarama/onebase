@@ -71,6 +71,18 @@ const tplProfile2FA = `{{define "profile-2fa"}}` + adminHead + `
     <button class="btn btn-primary" type="submit">Выпустить коды</button>
   </form>
 </div>
+<div class="card" style="max-width:620px;margin-bottom:16px">
+  <h3 style="margin-bottom:10px">Привязать другое устройство</h3>
+  <p style="font-size:13px;color:#475569;margin-bottom:12px">Прежний аутентификатор и все резервные коды перестанут работать. Подтвердите паролем или текущим кодом.</p>
+  <form method="POST">
+    <input type="hidden" name="action" value="start">
+    <div class="form-group">
+      <label>Пароль или код подтверждения</label>
+      <input type="password" name="confirm" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" type="submit">Привязать другое устройство</button>
+  </form>
+</div>
 <div class="card" style="max-width:620px">
   <h3 style="margin-bottom:10px">Отключить второй фактор</h3>
   {{if .Required}}
@@ -144,6 +156,28 @@ func (s *Server) renderTwoFactorProfile(w http.ResponseWriter, r *http.Request, 
 // пишется до подтверждения кодом: брошенная на полпути настройка не должна
 // оставлять учётку с секретом, которого нет ни в одном телефоне.
 func (s *Server) startTwoFactorSetup(w http.ResponseWriter, r *http.Request, u *auth.User) {
+	// Перепривязка фактора — операция чувствительнее отключения: она переносит
+	// второй фактор на другое устройство И отзывает резервные коды владельца.
+	// Раньше она была единственной незащищённой: угнанная (или просто открытая)
+	// сессия выдавала себе новый секрет, подтверждала его и заодно обходила
+	// guard на disable. Теперь тот же confirmIdentity, что у disable и у
+	// перевыпуска кодов.
+	enabled, err := s.authRepo.TOTPEnabled(r.Context(), u.ID)
+	if err != nil {
+		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		return
+	}
+	if enabled {
+		//nolint:gosec // G120: предел тела ставит selfTwoFactor (MaxBytesReader + parseBoundedForm)
+		if !s.confirmIdentity(r, u, r.FormValue("confirm")) {
+			s.renderTwoFactorProfile(w, r, u, map[string]any{
+				"Rebind": true,
+				"Error":  "Второй фактор уже включён. Чтобы привязать другое устройство, подтвердите пароль или текущий код",
+			})
+			return
+		}
+		s.logSessionAudit(r, "2fa_rebind_started", u.Login, u.ID)
+	}
 	token, secret, err := auth.StartEnrollment(u.ID, u.Login)
 	if err != nil {
 		http.Error(w, s.errText(r, err), http.StatusInternalServerError)

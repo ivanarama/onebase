@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -1086,5 +1087,57 @@ func TestImportConfigRejectsSymlinkedDestinationParent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "item.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("import escaped through destination symlink: %v", err)
+	}
+}
+
+// Восстановление .obz не должно запирать учётку с включённым вторым фактором.
+// Секрет TOTP зашифрован мастер-ключом ИСХОДНОЙ установки: при другом ключе
+// разыменовать его нельзя ничем, а резервные коды раньше и вовсе не
+// выгружались — пароль принимался, шаг второго фактора был обязателен, пройти
+// его было нечем, и аварийного обхода для 2FA нет.
+func TestImportUniversal_НечитаемыйВторойФакторГасится(t *testing.T) {
+	ctx := context.Background()
+
+	// Резервные коды теперь попадают в архив.
+	found := false
+	for _, tbl := range systemTables {
+		if tbl == "_auth_backup_codes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("_auth_backup_codes не выгружается: восстановление обнулит все резервные коды")
+	}
+
+	dst := newSQLite(t, "totp-dst")
+	repo := auth.NewRepo(dst)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	u, err := repo.Create(ctx, "admin", "S3cret-pass", "Админ", true)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Секрет «из чужой установки»: enc: под ключом, которого у нас нет.
+	if err := dst.SaveTOTPSecretRaw(ctx, u.ID, "enc:v1:AAAAAAAAAAAAAAAAAAAAAAAA"); err != nil {
+		t.Fatalf("SaveTOTPSecretRaw: %v", err)
+	}
+	if _, err := dst.Exec(ctx, `UPDATE _users SET totp_enabled = ? WHERE id = ?`, true, u.ID); err != nil {
+		t.Fatalf("totp_enabled: %v", err)
+	}
+
+	reset, err := disableUnreadableTOTP(ctx, dst)
+	if err != nil {
+		t.Fatalf("disableUnreadableTOTP: %v", err)
+	}
+	if len(reset) != 1 || reset[0] != "admin" {
+		t.Fatalf("нечитаемый фактор не погашен: %+v", reset)
+	}
+	info, err := repo.TwoFactorInfoFor(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("TwoFactorInfoFor: %v", err)
+	}
+	if info.Enabled {
+		t.Fatal("второй фактор остался включённым — учётка заперта")
 	}
 }
