@@ -29,12 +29,19 @@ func (s *Server) newDSLRefAttrResolver(ctx context.Context) *dslRefAttrResolver 
 }
 
 func (s *Server) newFormObjectThis(ctx context.Context, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule) *formObjectThis {
+	return s.newFormObjectThisNew(ctx, obj, entity, form, false)
+}
+
+// newFormObjectThisNew дополнительно помечает объект как ещё не записанный,
+// чтобы Объект.Записать() в обработчике формы создал запись, а не пытался
+// обновить несуществующую.
+func (s *Server) newFormObjectThisNew(ctx context.Context, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule, isNew bool) *formObjectThis {
 	var resolver *dslRefAttrResolver
 	if s != nil && s.store != nil && s.reg != nil {
 		resolver = s.newDSLRefAttrResolver(ctx)
 		resolver.attachObject(entity, obj)
 	}
-	return &formObjectThis{obj: obj, entity: entity, form: form, refResolver: resolver}
+	return &formObjectThis{obj: obj, entity: entity, form: form, refResolver: resolver, srv: s, ctx: ctx, isNew: isNew}
 }
 
 func (r *dslRefAttrResolver) ResolveRefAttr(ref *interpreter.Ref, field string) (any, bool) {
@@ -62,7 +69,9 @@ func (r *dslRefAttrResolver) ResolveRefAttr(ref *interpreter.Ref, field string) 
 	if row == nil {
 		return nil, true
 	}
-	return row[fd.Name], true
+	// План 88E: разыменование чужой записи (this.Клиент.Телефон) — такой же путь
+	// чтения, как форма или REST, и обязано подчиняться полевой политике роли.
+	return r.s.maskDSLValue(r.ctx, entity, fd.Name, row[fd.Name]), true
 }
 
 func (r *dslRefAttrResolver) attachObject(entity *metadata.Entity, obj *runtime.Object) {

@@ -180,13 +180,16 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		s.renderForbidden(w, r)
 		return
 	}
-	// Проверяем логические поля проекции ДО выполнения SQL. Имена результирующих
-	// колонок уже могут быть заменены КАК/AS и не годятся как security provenance.
-	if denied := s.deniedMaskedColumn(opCtx, compiled.Sources, compiled.ProjectionFields); denied != "" {
+	// Разбираем проекцию ДО выполнения SQL: простые колонки маскируются после
+	// чтения, а поле под маской в отборе/группировке/агрегате отклоняет отчёт —
+	// имена результирующих колонок могут быть заменены КАК/AS и сами по себе не
+	// годятся как security provenance.
+	maskPlan := s.queryMaskPlan(opCtx, compiled)
+	if maskPlan.Denied != "" {
 		opStatus = "error"
 		s.render(w, r, "page-report", map[string]any{
 			"Report":             rep,
-			"QueryError":         s.tr(s.resolveLang(r), "Отчёт содержит защищённое поле и не может быть построен под текущей ролью") + ": " + denied,
+			"QueryError":         s.tr(s.resolveLang(r), "Отчёт содержит защищённое поле и не может быть построен под текущей ролью") + ": " + maskPlan.Denied,
 			"ParamValues":        paramValues,
 			"ReportParams":       reportParams,
 			"ActiveVariant":      variant,
@@ -211,6 +214,24 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		s.render(w, r, "page-report", map[string]any{
 			"Report":             rep,
 			"QueryError":         err.Error(),
+			"ParamValues":        paramValues,
+			"ReportParams":       reportParams,
+			"ActiveVariant":      variant,
+			"UserSettings":       settings,
+			"ReportSettingsJSON": settingsJSON,
+			"ReportPresets":      presets,
+			"ActivePresetID":     rs.ActivePresetID,
+			"ActivePreset":       activePreset,
+		})
+		return
+	}
+	// Маска ПДн — до компоновки, отборов и разрешения ссылок: группировки, итоги
+	// и выгрузка строятся уже по замаскированным значениям (план 88E).
+	if err := maskPlan.Apply(rows); err != nil {
+		opStatus = "error"
+		s.render(w, r, "page-report", map[string]any{
+			"Report":             rep,
+			"QueryError":         s.tr(s.resolveLang(r), "Отчёт содержит защищённое поле и не может быть построен под текущей ролью") + ": " + err.Error(),
 			"ParamValues":        paramValues,
 			"ReportParams":       reportParams,
 			"ActiveVariant":      variant,
@@ -562,8 +583,9 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if denied := s.deniedQuerySource(ctx, compiled.Sources); denied != "" {
 		return nil, nil, newReportExportError(http.StatusForbidden, "source access", fmt.Errorf("нет доступа к объекту: %s", denied))
 	}
-	if denied := s.deniedMaskedColumn(ctx, compiled.Sources, compiled.ProjectionFields); denied != "" {
-		return nil, nil, newReportExportError(http.StatusForbidden, "masked field", fmt.Errorf("отчёт содержит защищённое поле: %s", denied))
+	maskPlan := s.queryMaskPlan(ctx, compiled)
+	if maskPlan.Denied != "" {
+		return nil, nil, newReportExportError(http.StatusForbidden, "masked field", fmt.Errorf("отчёт содержит защищённое поле: %s", maskPlan.Denied))
 	}
 	if stats != nil {
 		stats.attrs = []slog.Attr{slog.String("sql_hash", sqlHash(compiled.SQL))}
@@ -578,6 +600,11 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	}
 	if truncated {
 		return nil, nil, newReportExportError(http.StatusRequestEntityTooLarge, "export limit", fmt.Errorf("результат выгрузки превышает export_max_rows"))
+	}
+	// Маска ПДн до компоновки и выгрузки (план 88E): в файл уходит то же
+	// значение, что видно в отчёте на экране.
+	if err := maskPlan.Apply(data); err != nil {
+		return nil, nil, newReportExportError(http.StatusForbidden, "masked field", err)
 	}
 	detailLinkCol := ""
 	if comp != nil {

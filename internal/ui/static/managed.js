@@ -24,6 +24,43 @@ function obManagedReady(fn) {
   if (!cfg.url) return;
   var URL = String(cfg.url || '');
   var DOC_ID = cfg.docId == null ? '' : String(cfg.docId);
+  // Реквизиты формы (attributes с save:false) переживают полную перезагрузку.
+  // «Записать» уходит POST'ом с редиректом, страница рисуется заново — и всё,
+  // что оператор выбрал в реквизите формы, пропадало (в 1С форма живёт в памяти
+  // клиента, и реквизиты запись переживают). Значения кладём в sessionStorage
+  // ровно на время перезагрузки: пишем перед отправкой, применяем и СРАЗУ
+  // удаляем при следующей загрузке — дольше одной навигации они не живут.
+  var FORM_ATTRS = Array.isArray(cfg.formAttrs) ? cfg.formAttrs : [];
+  var ATTR_STASH_KEY = 'ob-form-attrs:' + String(cfg.entity || '');
+  function stashFormAttrs(){
+    if (!FORM_ATTRS.length) return;
+    var form = document.getElementById('main-form');
+    if (!form) return;
+    var data = {};
+    for (var i = 0; i < FORM_ATTRS.length; i++) {
+      var el = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(FORM_ATTRS[i]) : FORM_ATTRS[i]) + '"]');
+      if (el && el.type !== 'checkbox' && el.value) data[FORM_ATTRS[i]] = el.value;
+    }
+    try {
+      if (Object.keys(data).length) sessionStorage.setItem(ATTR_STASH_KEY, JSON.stringify(data));
+      else sessionStorage.removeItem(ATTR_STASH_KEY);
+    } catch (e) { /* приватный режим — просто не восстановим */ }
+  }
+  function restoreFormAttrs(){
+    if (!FORM_ATTRS.length) return;
+    var raw = null;
+    try { raw = sessionStorage.getItem(ATTR_STASH_KEY); sessionStorage.removeItem(ATTR_STASH_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { return; }
+    var form = document.getElementById('main-form');
+    if (!form || !data) return;
+    Object.keys(data).forEach(function(k){
+      var el = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
+      if (el && !el.value) el.value = data[k];
+    });
+  }
+
   window._tpRefOpts = obManagedReadJSON('ob-managed-tp-ref-opts', window._tpRefOpts || {}) || {};
   window._tpEnumLabels = obManagedReadJSON('ob-managed-tp-enum-labels', window._tpEnumLabels || {}) || {};
   window._tpEnumOrder = obManagedReadJSON('ob-managed-tp-enum-order', window._tpEnumOrder || {}) || {};
@@ -84,7 +121,13 @@ function obManagedReady(fn) {
       if (inp.type === 'checkbox') {
         inp.checked = v === true || v === 'true' || v === 1;
       } else {
-        inp.value = (v === null || v === undefined) ? '' : v;
+        var val = (v === null || v === undefined) ? '' : String(v);
+        // Сервер сериализует дату как «2026-08-04T00:00» (формат datetime-local).
+        // Для <input type="date"> это невалидное значение: браузер молча очищает
+        // поле — дата на форме пропадала после первого же события, а следующая
+        // запись затирала её в базе.
+        if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
+        inp.value = val;
       }
     });
   }
@@ -419,6 +462,31 @@ function obManagedReady(fn) {
       applyValues(data.values);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
+      // Обработчик записал новую форму (Объект.Записать()): дальше она работает
+      // с этой записью. Без подмены _id второе действие подряд ушло бы как
+      // «новый документ» и создало дубль, а адрес страницы остался бы /new.
+      if (data.savedId && !DOC_ID) {
+        DOC_ID = String(data.savedId);
+        var idInput = document.querySelector('#main-form [name="_id"]');
+        if (idInput) idInput.value = DOC_ID;
+        if (window.history && history.replaceState) {
+          history.replaceState(null, '', location.pathname.replace(/\/new$/, '/' + DOC_ID));
+        }
+        window._obFormDirty = false;
+      }
+      // Обработчик, записавший объект, поднял его версию. Форма держит версию,
+      // прочитанную при отрисовке, — без обновления следующая «Записать»
+      // упирается в «объект изменён другим пользователем».
+      if (data.version) {
+        var verInput = form.querySelector('[name="_version"]');
+        if (!verInput) {
+          verInput = document.createElement('input');
+          verInput.type = 'hidden';
+          verInput.name = '_version';
+          form.appendChild(verInput);
+        }
+        verInput.value = String(data.version);
+      }
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
     } catch (e) {
@@ -436,6 +504,12 @@ function obManagedReady(fn) {
   // документа звёздочкой в заголовке вкладки браузера (аналог «*» в 1С) и
   // предупреждение при ЛЮБОМ уходе со страницы — крестик, клик по ссылке,
   // закрытие/обновление вкладки.
+  // Сохранить реквизиты формы перед полной отправкой и вернуть после перезагрузки.
+  obManagedReady(restoreFormAttrs);
+  document.addEventListener('submit', function(e){
+    if (e.target && e.target.id === 'main-form') stashFormAttrs();
+  }, true);
+
   window._obFormDirty = false;
   var _obBaseTitle = document.title;
   function _obMarkDirty(){

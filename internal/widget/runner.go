@@ -489,12 +489,18 @@ func (r *Runner) runQuery(ctx context.Context, w *metadata.Widget) ([]map[string
 	if denied := r.deniedQuerySource(compiled.Sources); denied != "" {
 		return nil, nil, &accessDeniedError{object: denied}
 	}
-	if denied := access.DeniedMaskedColumn(r.User, compiled.Sources, compiled.ProjectionFields, r.sourceMeta); denied != "" {
-		return nil, nil, &accessDeniedError{object: "поле «" + denied + "»"}
+	// План 88E: защищённое поле в простой колонке виджета маскируется, в отборе
+	// или агрегате — по-прежнему закрывает виджет целиком.
+	maskPlan := access.QueryMaskPlanFor(r.User, compiled, r.sourceMeta)
+	if maskPlan.Denied != "" {
+		return nil, nil, &accessDeniedError{object: "поле «" + maskPlan.Denied + "»"}
 	}
 	rows, cols, err := r.Store.RunQuery(ctx, compiled.SQL, compiled.Args)
 	if err != nil {
 		return rows, cols, err
+	}
+	if err := maskPlan.Apply(rows); err != nil {
+		return nil, nil, &accessDeniedError{object: err.Error()}
 	}
 	return rows, cols, nil
 }

@@ -186,6 +186,27 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// attrRefEntity — имя сущности из ссылочного типа реквизита формы
 		// ("CatalogRef.X" → "X"), пусто если тип не ссылочный.
 		"attrRefEntity": func(typeRef string) string { return attrRefEntityName(typeRef) },
+		// formAttrNames — имена скалярных реквизитов формы (save:false), которых
+		// нет среди полей сущности. Клиент по ним восстанавливает введённое после
+		// полной перезагрузки страницы: «Записать» уходит POST'ом с редиректом, и
+		// иначе выбор в реквизите формы просто пропадал (в 1С форма живёт в
+		// памяти клиента и реквизиты переживают запись).
+		"formAttrNames": func(form *metadata.FormModule, entity *metadata.Entity) []string {
+			if form == nil {
+				return nil
+			}
+			var names []string
+			for _, a := range form.Attributes {
+				if a == nil || a.Name == "" || a.MainAttribute || a.TypeRef == "ValueTable" {
+					continue
+				}
+				if _, isEntityField := entityFieldByName(entity, a.Name); isEntityField {
+					continue
+				}
+				names = append(names, a.Name)
+			}
+			return names
+		},
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
 			if v, ok := m["ru"]; ok && v != "" {

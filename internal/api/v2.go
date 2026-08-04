@@ -413,13 +413,20 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden source: "+denied, "", 0)
 			return
 		}
-		if denied := h.deniedMaskedColumn(r.Context(), compiled.Sources, compiled.ProjectionFields); denied != "" {
-			writeError(w, http.StatusForbidden, "masked field: "+denied, "", 0)
+		maskPlan := h.queryMaskPlan(r.Context(), compiled)
+		if maskPlan.Denied != "" {
+			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
 		}
 		rows, cols, truncated, err := h.store.RunQueryLimit(r.Context(), compiled.SQL, compiled.Args, limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		// Маска ПДн до компоновки (план 88E): в JSON и в группировки уходит уже
+		// замаскированное значение.
+		if err := maskPlan.Apply(rows); err != nil {
+			writeError(w, http.StatusForbidden, "masked field: "+err.Error(), "", 0)
 			return
 		}
 		if wantsReportComposition(r.URL.Query()) {

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -42,35 +41,73 @@ func uiMaskUser(ops []string, fields auth.FieldPolicies) *auth.User {
 	}
 }
 
-func TestUI_QueryProjectionMaskGateRejectsAliasAndExpression(t *testing.T) {
+// План 88E: защищённое поле в простой колонке выборки маскируется в результате
+// (в т.ч. под алиасом КАК и в проекции «*»), а поле, участвующее в отборе,
+// группировке или агрегате, по-прежнему закрывает запрос целиком — маска на
+// выходе от перебора условием не защищает.
+func TestUI_QueryProjectionMaskGate(t *testing.T) {
 	cat := uiClientEntity()
-	s, _ := newSubmitTestServer(t, []*metadata.Entity{cat})
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{cat})
+	if err := s.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{
+		"Наименование": "Иванов", "Телефон": "+79161234455", "Адрес": "Москва, Тверская 1",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
 	user := uiMaskUser([]string{"read"}, auth.FieldPolicies{
-		"Телефон": {Read: "mask_all"},
+		"Телефон": {Read: "mask_tail", Keep: 4},
 		"Адрес":   {Read: "mask_all"},
 	})
-	ctx := auth.ContextWithUser(context.Background(), user)
+	uctx := auth.ContextWithUser(ctx, user)
 
-	for _, text := range []string{
-		`ВЫБРАТЬ Телефон КАК Контакт ИЗ Справочник.Клиент`,
+	for _, denied := range []string{
 		`ВЫБРАТЬ Строка(Телефон) КАК Контакт ИЗ Справочник.Клиент`,
 		`ВЫБРАТЬ Телефон + " " + Адрес КАК Контакт ИЗ Справочник.Клиент`,
-		`ВЫБРАТЬ * ИЗ Справочник.Клиент`,
+		`ВЫБРАТЬ Наименование ИЗ Справочник.Клиент ГДЕ Телефон <> ""`,
+		`ВЫБРАТЬ Наименование ИЗ Справочник.Клиент УПОРЯДОЧИТЬ ПО Телефон`,
 	} {
-		compiled, err := s.compileQueryWithRowAccess(ctx, text, nil)
+		compiled, err := s.compileQueryWithRowAccess(uctx, denied, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if denied := s.deniedMaskedColumn(ctx, compiled.Sources, compiled.ProjectionFields); denied == "" {
-			t.Fatalf("masked projection was allowed: %s (%v)", text, compiled.ProjectionFields)
+		if plan := s.queryMaskPlan(uctx, compiled); plan.Denied == "" {
+			t.Fatalf("защищённое поле пропущено вне простой колонки: %s", denied)
 		}
 	}
-	compiled, err := s.compileQueryWithRowAccess(ctx, `ВЫБРАТЬ Наименование ИЗ Справочник.Клиент ГДЕ Телефон <> ""`, nil)
+
+	for _, tc := range []struct{ text, column, want string }{
+		{`ВЫБРАТЬ Телефон КАК Контакт ИЗ Справочник.Клиент`, "контакт", "••••••••4455"},
+		{`ВЫБРАТЬ Телефон ИЗ Справочник.Клиент`, "телефон", "••••••••4455"},
+		{`ВЫБРАТЬ Адрес ИЗ Справочник.Клиент`, "адрес", "••••••"},
+		{`ВЫБРАТЬ * ИЗ Справочник.Клиент`, "телефон", "••••••••4455"},
+	} {
+		compiled, err := s.compileQueryWithRowAccess(uctx, tc.text, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := s.queryMaskPlan(uctx, compiled)
+		if plan.Denied != "" {
+			t.Fatalf("простая колонка отклонена вместо маскирования: %s (%s)", tc.text, plan.Denied)
+		}
+		rows, _, err := s.store.RunQuery(uctx, compiled.SQL, compiled.Args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := plan.Apply(rows); err != nil {
+			t.Fatalf("%s: %v", tc.text, err)
+		}
+		if got := fmt.Sprint(rows[0][tc.column]); got != tc.want {
+			t.Fatalf("%s: колонка %q = %q, ожидалось %q", tc.text, tc.column, got, tc.want)
+		}
+	}
+
+	// Роль без field_access и админ читают запрос без маски.
+	full := uiMaskUser([]string{"read"}, nil)
+	compiled, err := s.compileQueryWithRowAccess(uctx, `ВЫБРАТЬ Телефон ИЗ Справочник.Клиент`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if denied := s.deniedMaskedColumn(ctx, compiled.Sources, compiled.ProjectionFields); denied != "" {
-		t.Fatalf("safe output projection denied as %q", denied)
+	if plan := s.queryMaskPlan(auth.ContextWithUser(ctx, full), compiled); !plan.Empty() {
+		t.Fatalf("роль без field_access не должна маскировать: %+v", plan)
 	}
 }
 
@@ -299,5 +336,66 @@ func TestUI_DiscloseField_FailClosedWhenAuditFails(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "+79161234455") {
 		t.Fatal("ПДн не должны раскрываться при отказе записи в аудит")
+	}
+}
+
+// План 88E, добор по ревью: формулировки, которыми поколоночный разбор
+// обходили. Каждая из них до починки выполнялась с реальными значениями, хотя
+// в 88D такой запрос отклонялся.
+func TestUI_QueryProjectionMaskОбходыРазбора(t *testing.T) {
+	cat := uiClientEntity()
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{cat})
+	if err := s.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{
+		"Наименование": "Иванов", "Телефон": "+79161234455", "Адрес": "Москва, Тверская 1",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+	user := uiMaskUser([]string{"read"}, auth.FieldPolicies{
+		"Телефон": {Read: "mask_tail", Keep: 4},
+	})
+	uctx := auth.ContextWithUser(ctx, user)
+
+	// Отбор, группировка и сортировка по защищённой колонке — отказ, как бы на
+	// колонку ни сослались: по имени поля, по выходному алиасу или по номеру.
+	// Подзапрос от отказа тоже не спасает: он лишь делает разбор непростым, а
+	// запасной путь смотрел только список выборки и никогда — ГДЕ.
+	for _, denied := range []string{
+		`ВЫБРАТЬ Наименование, Телефон КАК Т ИЗ Справочник.Клиент ГДЕ Т = "+79161234455"`,
+		`ВЫБРАТЬ Наименование, Телефон КАК Т ИЗ Справочник.Клиент УПОРЯДОЧИТЬ ПО Т`,
+		`ВЫБРАТЬ Телефон, Наименование ИЗ Справочник.Клиент УПОРЯДОЧИТЬ ПО 1`,
+		`ВЫБРАТЬ Наименование ИЗ Справочник.Клиент ` +
+			`ГДЕ Телефон = "+79161234455" И Наименование В (ВЫБРАТЬ Наименование ИЗ Справочник.Клиент)`,
+	} {
+		compiled, err := s.compileQueryWithRowAccess(uctx, denied, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan := s.queryMaskPlan(uctx, compiled); plan.Denied == "" {
+			t.Fatalf("защищённое поле пропущено вне простой колонки: %s", denied)
+		}
+	}
+
+	// Квалифицированная звёздочка — такая же проекция «*», как голая: колонки
+	// маскируются, а не отдаются как есть.
+	compiled, err := s.compileQueryWithRowAccess(uctx, `ВЫБРАТЬ К.* ИЗ Справочник.Клиент КАК К`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := s.queryMaskPlan(uctx, compiled)
+	if plan.Denied != "" {
+		t.Fatalf("К.* отклонено вместо маскирования: %s", plan.Denied)
+	}
+	rows, _, err := s.store.RunQuery(uctx, compiled.SQL, compiled.Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Apply(rows); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(rows[0]["телефон"]); got != "••••••••4455" {
+		t.Fatalf("К.* отдало реальное значение: %q", got)
+	}
+	if got := fmt.Sprint(rows[0]["наименование"]); got != "Иванов" {
+		t.Fatalf("К.* испортило незащищённую колонку: %q", got)
 	}
 }

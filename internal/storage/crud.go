@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -842,6 +843,21 @@ type uuidProvider interface{ GetRefUUID() string }
 
 // fieldValueDialect extracts a field value and normalizes UUIDs:
 // PG accepts uuid.UUID directly; SQLite stores them as TEXT strings.
+// refValueAsPointer возвращает указатель на копию значения, если интерфейс
+// uuidProvider реализован НА УКАЗАТЕЛЕ (как у interpreter.Ref), а в поле лежит
+// сама структура. Так ссылка, скопированная по значению, всё равно доезжает до
+// SQL как uuid, а не как непонятная драйверу структура.
+func refValueAsPointer(v any) (uuidProvider, bool) {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || rv.Kind() != reflect.Struct {
+		return nil, false
+	}
+	ptr := reflect.New(rv.Type())
+	ptr.Elem().Set(rv)
+	p, ok := ptr.Interface().(uuidProvider)
+	return p, ok
+}
+
 func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
 	v := fields[f.Name]
 	if v == nil {
@@ -850,6 +866,13 @@ func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
 	if f.RefEntity != "" {
 		if v == nil {
 			return nil
+		}
+		// Ссылка могла прийти ЗНАЧЕНИЕМ, а не указателем: GetRefUUID объявлен на
+		// указателе, поэтому такая копия не проходила проверку ниже и уезжала в
+		// драйвер как есть — «unsupported type interpreter.Ref, a struct», причём
+		// в момент записи документа и без подсказки, какое поле виновато.
+		if p, ok := refValueAsPointer(v); ok {
+			v = p
 		}
 		if rv, ok := v.(uuidProvider); ok {
 			s := rv.GetRefUUID()
@@ -869,6 +892,20 @@ func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
 				return idArg(d, id)
 			}
 			return nil
+		}
+	}
+	// Ссылка в НЕссылочной колонке (поле объявлено строкой, а DSL положил ссылку —
+	// например копированием реквизита между документами). Пишем представление, как
+	// это давно делает регистр (normalizeRegArg): раньше сюда доезжала структура и
+	// драйвер падал с «unsupported type», хотя терять было нечего.
+	if f.RefEntity == "" && v != nil {
+		if p, ok := refValueAsPointer(v); ok {
+			v = p
+		}
+		if _, isRef := v.(uuidProvider); isRef {
+			if s, ok := v.(interface{ String() string }); ok {
+				v = s.String()
+			}
 		}
 	}
 	// SQLite stores time.Time as its .String() representation ("2006-01-02 15:04:05 -0700 MST")

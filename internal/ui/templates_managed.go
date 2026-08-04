@@ -62,17 +62,28 @@ const tplManagedForm = `
       {{if isRef (str $f.Type)}}
         <div style="display:flex;gap:6px;align-items:center">
           <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $f.InlineCreateEnabled false}} data-ref-allow-create="1"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-            <option value="">— выбрать —</option>
+            <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
-          <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $el.ReadOnly}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
-          <button type="button" data-ob-ref-current="ref-{{$fn}}"{{if $el.ReadOnly}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          {{/* Нередактируемому полю кнопка подбора не нужна — выбирать нечего, а
+               серая «…» рядом заставляет читать значение как незаполненный ввод.
+               «Открыть карточку» остаётся и остаётся РАБОЧЕЙ: посмотреть связанный
+               объект — не редактирование, и на readonly-поле это как раз то, что
+               нужно (открыть звонок, клиента, документ-основание). */}}
+          {{if not $el.ReadOnly}}
+          <button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
+          {{end}}
+          {{/* Открывать нечего, пока значение не выбрано — на пустом поле кнопка
+               только занимала место и сбивала выравнивание соседей. */}}
+          {{if index $ctx.Values $fn}}
+          <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          {{end}}
         </div>
       {{else if isEnum (str $f.Type)}}
         <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-          <option value="">— выбрать —</option>
+          <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
           {{range index $ctx.EnumOptions $fn}}
           <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
           {{end}}
@@ -85,7 +96,7 @@ const tplManagedForm = `
           <option value="true" {{if eq (index $ctx.Values $fn) "true"}}selected{{end}}>Да</option>
         </select>
       {{else if eq (str $f.Type) "number"}}
-        <input type="text" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" title="Введите число; десятичный разделитель — запятая или точка"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="text" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $ctx.Values $fn}}" title="Введите число; десятичный разделитель — запятая или точка"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else if isRichText (str $f.Type)}}
         {{/* textarea — скрытое form-backing поле; Quill (этап 2) монтируется на
              .richtext-editor и синхронизирует HTML обратно перед submit. Без JS
@@ -102,7 +113,7 @@ const tplManagedForm = `
       {{else if $el.Multiline}}
         <textarea name="{{$fn}}" rows="5" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
       {{else}}
-        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
     {{else if eq (str $el.Type) "file"}}
       {{/* Поле не найдено в Entity, но элемент объявлен как file */}}
@@ -125,15 +136,22 @@ const tplManagedForm = `
              остаётся прежний текстовый ввод со значением. */}}
         <div style="display:flex;gap:6px;align-items:center">
           <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-            <option value="">— выбрать —</option>
+            <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $el.ReadOnly}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
         </div>
+      {{else if $attr}}
+        {{/* Объявленный скалярный реквизит формы — обычное поле ввода. Жёлтая
+             подсветка ниже адресована ОПЕЧАТКЕ в data_path; штатный реквизит
+             формы работает полноценно (обработчик читает его голым именем и как
+             Объект.<Реквизит>), и предупреждать о нём не о чем. */}}
+        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else}}
-        {{/* Поле не найдено в Entity (возможно реквизит формы, ещё не привязан) */}}
+        {{/* Ни поля сущности, ни реквизита формы с таким именем — почти всегда
+             опечатка в data_path: подсвечиваем, чтобы это не осталось незамеченным. */}}
         <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" style="background:#fef9c3"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
           title="Реквизит формы '{{$el.DataPath}}' не найден среди полей сущности"{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
@@ -150,7 +168,7 @@ const tplManagedForm = `
   <div class="form-group">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if hasHandler $el "НачалоВыбора"}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-      <option value="">— выбрать —</option>
+      <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
       {{range index $ctx.ChoiceOptions $el.Name}}
       <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
       {{end}}
@@ -159,9 +177,13 @@ const tplManagedForm = `
   </div>
 {{else if eq (str $el.Kind) "Флажок"}}
   {{$fn := dpField $el.DataPath}}
-  <div class="form-group" style="display:flex;align-items:center;gap:8px">
+  {{$hChg := hasHandler $el "ПриИзменении"}}
+  <div class="form-group managed-checkbox" style="display:flex;align-items:center;gap:8px">
+    {{/* ПриИзменении у флажка работает так же, как у остальных полей: без
+         data-ob-fire-change обработчик «поставил галку → выполнилось действие»
+         молча не вызывался. */}}
     <input type="checkbox" id="cb-{{$fn}}" name="{{$fn}}" value="true"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
-      {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $el.ReadOnly}} disabled{{end}}>
+      {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}</label>
   </div>
 {{else if eq (str $el.Kind) "Надпись"}}
@@ -169,7 +191,7 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
-  <button type="button" class="btn btn-secondary" style="margin:6px 4px 6px 0"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.HotKey}} data-ob-hotkey="{{$el.HotKey}}" aria-keyshortcuts="{{$el.HotKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if hasHandler $el "Нажатие"}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.HotKey}} data-ob-hotkey="{{$el.HotKey}}" aria-keyshortcuts="{{$el.HotKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if hasHandler $el "Нажатие"}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
@@ -241,7 +263,7 @@ const tplManagedForm = `
           {{if isRef (str $f.Type)}}
             <div style="display:flex;gap:4px;align-items:center">
               <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}>
-                <option value="">— выбрать —</option>
+                <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
                 {{range index $tpRef $f.Name}}
                 <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}>{{index . "_label"}}</option>
                 {{end}}
@@ -349,7 +371,7 @@ const tplManagedForm = `
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if eq $el.View "select"}}
       <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-        <option value="">— выбрать —</option>
+        <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
         {{if $enum}}
           {{range index $ctx.EnumOptions $fn}}<option value="{{.Value}}" {{if eq .Value $cur}}selected{{end}}>{{.Label}}</option>{{end}}
         {{else}}
@@ -383,8 +405,26 @@ const tplManagedForm = `
 {{if .TabTitle}}<meta name="ob-tab-title" content="{{.TabTitle}}">{{end}}
 <style>
 .managed-group-horizontal>.managed-group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
-.managed-group-horizontal>.managed-group-body>.form-group{flex:1 1 220px;min-width:180px;margin-bottom:0}
+/* Поле в горизонтальной группе не растягивается на всю строку: иначе одинокое
+   поле уезжало во всю ширину, а кнопка рядом с ним — к правому краю экрана. */
+.managed-group-horizontal>.managed-group-body>.form-group{flex:0 1 260px;min-width:180px;margin-bottom:0}
 .managed-group-horizontal>.managed-group-body>.form-decoration,.managed-group-horizontal>.managed-group-body>button{flex:0 0 auto}
+/* Кнопка формы: отступы задаются классом, а не inline-стилем — иначе правило
+   выравнивания в горизонтальной группе ниже проигрывало бы по приоритету. */
+.managed-btn{margin:6px 4px 6px 0}
+/* Кнопка встаёт вровень с полем, а не с его меткой: метка занимает
+   line-height 18px + margin-bottom 5px (см. label в общем стиле), а разницу
+   высот кнопки (30px) и поля (39px) добираем до общей средней линии. */
+.managed-group-horizontal>.managed-group-body>.form-group>label{line-height:18px}
+.managed-group-horizontal>.managed-group-body>.managed-btn{align-self:flex-start;margin:27px 0 0 0}
+/* Флажок без метки сверху выравниваем по той же линии, что и поля рядом. */
+.managed-group-horizontal>.managed-group-body>.form-group.managed-checkbox{align-self:flex-start;margin-top:27px}
+/* Нередактируемое поле — это ЗНАЧЕНИЕ, а не ввод: убираем стрелку списка и
+   гасим рамку, чтобы результат команды не читался как незаполненное поле.
+   Флажок и переключатель исключены: appearance:none стирает сам квадратик,
+   и нередактируемая галка превращалась в подпись без индикатора. */
+.form-group input[readonly],.form-group input:disabled:not([type=checkbox]):not([type=radio]),.form-group select:disabled,.form-group textarea[readonly]{
+  background:#f8fafc;border-color:#eef2f7;color:#334155;cursor:default;opacity:1;-webkit-appearance:none;appearance:none}
 </style>
 {{if hasGridTP .Form}}
 <link rel="stylesheet" href="/vendor/slickgrid/slick.grid.css">
@@ -556,7 +596,9 @@ const tplManagedForm = `
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки */}}
   <a href="/ui/" class="btn btn-cancel">Отмена</a>
   {{else}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{/* «Записать» здесь НЕ дублируем: она уже есть в командной панели формы, и
+       две одинаковые кнопки на одном экране заставляют гадать, чем они
+       отличаются. Внизу остаётся только выход из формы. */}}
   <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">Отмена</a>
   {{end}}
 </div>
@@ -580,6 +622,7 @@ const tplManagedForm = `
   "url" (printf "/ui/%s/%s/form-event" (lower (str .Entity.Kind)) .Entity.Name)
   "docId" .ID
   "autoOpen" (hasFormHandler .Form "ПриОткрытии")
+  "formAttrs" (formAttrNames .Form .Entity)
 )}}</script>
 {{end}}
 <script type="application/json" id="ob-managed-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>

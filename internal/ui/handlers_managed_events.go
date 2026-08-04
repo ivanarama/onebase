@@ -49,6 +49,15 @@ type formEventResponse struct {
 	// PickerData != nil — обработчик фазы 1 вызвал ПоказатьПодбор: клиент
 	// открывает модальный диалог мультивыбора вместо применения ТЧ (план 46).
 	PickerData *pickerPayload `json:"pickerData,omitempty"`
+	// SavedID заполняется, когда обработчик записал ЕЩЁ НЕ СОХРАНЁННУЮ форму
+	// через Объект.Записать(). Клиент подставляет его в _id следующих событий и
+	// в адрес страницы — иначе второе действие подряд создало бы второй документ.
+	SavedID string `json:"savedId,omitempty"`
+	// Version — текущая версия записи после обработчика. Клиент кладёт её в
+	// скрытое поле _version: обработчик, записавший объект, версию поднял, а
+	// форма держала прочитанную при отрисовке — и следующая кнопка «Записать»
+	// упиралась в «объект изменён другим пользователем».
+	Version int64 `json:"version,omitempty"`
 	// ChoiceList — динамический список значений для элемента ПолеСписка,
 	// сформированный обработчиком НачалоВыбора (билтин ДобавитьЗначениеСписка).
 	// Клиент заполняет им <select> того элемента, что инициировал событие.
@@ -153,6 +162,13 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		_ = s.restoreUnsubmittedFields(r.Context(), r, entity, form, obj.ID, obj.Fields)
 	}
 
+	// Псевдо-реквизит «Ссылка» самой записи — как в entityservice.Save. Без него
+	// Объект.Ссылка в обработчике формы было Неопределено, и типовой вызов
+	// Модуль.Действие(Объект.Ссылка) падал на «ПолучитьОбъект вызван у
+	// Неопределено». Ставится ДО newFormObjectThis: attachObject предзагружает
+	// реквизиты именно по этой ссылке.
+	setFormSelfRef(r, entity, obj)
+
 	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
 	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
 	s.mergeFormAttrValues(r.Context(), r, form, entity, obj)
@@ -182,9 +198,14 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string
 	vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-	thisObj := s.newFormObjectThis(r.Context(), obj, entity, form)
+	thisObj := s.newFormObjectThisNew(r.Context(), obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
+
+	// Реквизиты формы видны и голым именем — как в модуле управляемой формы 1С,
+	// где под Объект лежит только основной реквизит. Читаются через thisObj,
+	// поэтому ссылочные приходят как *Ref, а ValueTable — как прокси таблицы.
+	addFormAttrVars(form, entity, thisObj, vars)
 
 	// Передаём все процедуры формы, чтобы обработчик мог вызывать
 	// вспомогательные функции из того же .form.os (evalCall ищет
@@ -231,9 +252,24 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	addTPEventContextVars(r, obj, vars)
 
+	// Снимок полей до обработчика — по нему после Run отличаем «поле изменил сам
+	// обработчик» от «поле осталось прежним», см. refreshFieldsWrittenByHandler.
+	fieldsBefore := snapshotFieldValues(obj.Fields)
+
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
-	if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
+	runErr := s.interp.Run(decl, thisObj, vars)
+	// Перечитывать из базы имеет смысл только для записи, которая там есть:
+	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
+	// номер от нумератора обязан приехать на экран «Создать» сразу). Гейт по
+	// сырому _id, а не по obj.ID: buildObjectFromForm для новой записи генерирует
+	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
+	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
+	// описана выше у restoreUnsubmittedFields.
+	if strings.TrimSpace(r.FormValue("_id")) != "" || savedFormID(thisObj) != "" {
+		s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+	}
+	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{
 			OK:             false,
@@ -242,8 +278,12 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			FormTables:     formTables,
 			ConditionalCSS: conditionalCSS,
 			Messages:       outMsgs,
-			Error:          runErr.Error(),
+			Error:          interpreter.FormatUserError(runErr),
 			PickerData:     picker,
+			// Обработчик мог записать форму и упасть уже после этого: id всё
+			// равно нужен клиенту, иначе повтор действия создаст второй документ.
+			SavedID: savedFormID(thisObj),
+			Version: s.currentEntityVersion(r.Context(), entity, obj),
 		})
 		return
 	}
@@ -258,7 +298,19 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		ConditionalCSS: conditionalCSS,
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
+		SavedID:        savedFormID(thisObj),
+		Version:        s.currentEntityVersion(r.Context(), entity, obj),
 	})
+}
+
+// savedFormID возвращает id записи, если обработчик сохранил ЕЩЁ НЕ записанную
+// форму через Объект.Записать(). Для уже существующей записи пусто — клиенту
+// нечего менять.
+func savedFormID(this *formObjectThis) string {
+	if this == nil || !this.isNew || !this.saved || this.obj == nil {
+		return ""
+	}
+	return this.obj.ID.String()
 }
 
 func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
@@ -267,6 +319,13 @@ func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entit
 		return nil, nil, nil, conditionalCSS, msgs
 	}
 	values := normalizeFormAttrKeys(serializeFieldsForEntity(obj.Fields, entity), form, entity)
+	// Псевдо-реквизит «Ссылка» — контекст обработчика, а не значение формы:
+	// в ответ он не едет, чтобы applyValues не искал под него элемент.
+	for _, k := range []string{"ссылка", "reference"} {
+		if _, isEntityField := entityFieldByName(entity, k); !isEntityField {
+			delete(values, k)
+		}
+	}
 	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
@@ -798,7 +857,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 						FormTables:     formTables,
 						ConditionalCSS: conditionalCSS,
 						Messages:       outMsgs,
-						Error:          runErr.Error(),
+						Error:          interpreter.FormatUserError(runErr),
 						PickerData:     picker,
 					})
 					return

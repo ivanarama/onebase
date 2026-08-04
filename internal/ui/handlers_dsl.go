@@ -81,6 +81,7 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	catalogs := interpreter.NewCatalogsRoot(txState, s.store, s.reg).
 		WithManagerCaller(mgrCaller).
 		WithRowAccessChecker(rowAccess).
+		WithFieldSearchChecker(s.dslFieldSearchChecker()).
 		WithExchangeRegistrar(s.exchangeRegistrar()).
 		WithObjectFactory(s.catObjectFactory(txState))
 	// Документы.X.Создать()/.Записать()/.Провести() из обработки.
@@ -257,7 +258,7 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	// Вложения из DSL (план 105): ПрисоединитьФайл/СписокВложений/
 	// ПутьКВложению/УдалитьВложение. Живой контекст — как у транзакций.
 	s.registerAttachmentBuiltins(vars, txState.Ctx)
-	queryFactory := interpreter.NewQueryFactoryWithCompiler(txState.Ctx(), s.store, s.reg, s.compileDSLQueryWithRowAccess)
+	queryFactory := interpreter.NewQueryFactoryGuarded(txState.Ctx(), s.store, s.reg, s.compileDSLQueryWithRowAccess, s.dslQueryGuard)
 	vars["__factory_Запрос"] = queryFactory
 	vars["__factory_Query"] = queryFactory
 
