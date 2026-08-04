@@ -86,8 +86,14 @@ type saveEntity struct {
 	ListForm           []string          `yaml:"list_form,omitempty"`
 	ItemForm           []string          `yaml:"item_form,omitempty"`
 	Activity           *saveActivity     `yaml:"activity,omitempty"`
-	Fields             []saveField       `yaml:"fields"`
-	TableParts         []saveTP          `yaml:"tableparts,omitempty"`
+	// FullText — указатель, потому что «ключа нет» и «fulltext: []» значат
+	// разное: первое — индексировать все строковые реквизиты, второе — убрать
+	// объект из глобального поиска (план 82). Без этого поля правка объекта из
+	// конфигуратора молча вытирала блок, то есть возвращала в поиск то, что
+	// администратор оттуда убрал.
+	FullText   *[]string   `yaml:"fulltext,omitempty"`
+	Fields     []saveField `yaml:"fields"`
+	TableParts []saveTP    `yaml:"tableparts,omitempty"`
 }
 
 type saveRegister struct {

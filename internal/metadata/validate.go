@@ -3,6 +3,7 @@ package metadata
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // ValidateConstants проверяет, что enum-/reference-константы ссылаются на
@@ -58,6 +59,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 			return err
 		}
 		if err := validateIndexes(e); err != nil {
+			return err
+		}
+		if err := validateFullText(e); err != nil {
 			return err
 		}
 		for _, tp := range e.TableParts {
@@ -189,6 +193,33 @@ func validateTileView(e *Entity) error {
 		if findEntityField(e, name) == nil {
 			return fmt.Errorf("entity %s: tile_view.fields references unknown field %s", e.Name, name)
 		}
+	}
+	return nil
+}
+
+// validateFullText проверяет блок `fulltext:` (план 82): перечисленные поля
+// должны существовать в шапке и нести текст. Ссылочные и перечислимые поля
+// хранят UUID/код — индексировать их бессмысленно, а молча пропустить значит
+// оставить пользователя с пустой выдачей и без объяснения.
+func validateFullText(e *Entity) error {
+	if !e.FullTextSet {
+		return nil
+	}
+	seen := make(map[string]bool, len(e.FullText))
+	for _, name := range e.FullText {
+		f := findEntityFieldFold(e, name)
+		if f == nil {
+			return fmt.Errorf("entity %s: fulltext ссылается на неизвестный реквизит %s", e.Name, name)
+		}
+		if f.RefEntity != "" || f.EnumName != "" || (f.Type != FieldTypeString && !IsRichText(f.Type)) {
+			return fmt.Errorf("entity %s: реквизит %s нельзя индексировать полнотекстовым поиском — нужен тип string или richtext",
+				e.Name, f.Name)
+		}
+		key := strings.ToLower(f.Name)
+		if seen[key] {
+			return fmt.Errorf("entity %s: реквизит %s указан в fulltext дважды", e.Name, f.Name)
+		}
+		seen[key] = true
 	}
 	return nil
 }

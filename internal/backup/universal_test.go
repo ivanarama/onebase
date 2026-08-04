@@ -18,8 +18,10 @@ import (
 
 	"golang.org/x/text/encoding/charmap"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -1086,5 +1088,57 @@ func TestImportConfigRejectsSymlinkedDestinationParent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "item.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("import escaped through destination symlink: %v", err)
+	}
+}
+
+// Полнотекстовый индекс восстановленной базы (план 82). Импорт заливает строки
+// прямым INSERT мимо upsert, поэтому хук индексации не срабатывает: без
+// пересборки поиск в восстановленной базе не находил бы ничего, а поверх
+// существующей — держал бы в выдаче объекты, которых в архиве нет.
+func TestImportUniversal_ПересобираетПолнотекстовыйИндекс(t *testing.T) {
+	ctx := context.Background()
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, "catalogs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "catalogs", "контрагент.yaml"),
+		[]byte("name: Контрагент\nfields:\n  - name: Наименование\n    type: string\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj, err := project.Load(cfgDir)
+	if err != nil {
+		t.Fatalf("project.Load: %v", err)
+	}
+	defer proj.Close()
+
+	src := newSQLite(t, "fts-src")
+	if err := src.Migrate(ctx, proj.Entities); err != nil {
+		t.Fatal(err)
+	}
+	cat := proj.Entities[0]
+	if err := src.Upsert(ctx, cat.Name, uuid.New(),
+		map[string]any{"Наименование": "ООО Ромашка"}, cat); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := ExportUniversal(ctx, src, "file", cfgDir, "", "test", &buf); err != nil {
+		t.Fatalf("ExportUniversal: %v", err)
+	}
+
+	dst := newSQLite(t, "fts-dst")
+	if _, err := ImportUniversal(ctx, dst, "file", cfgDir, "",
+		bytes.NewReader(buf.Bytes()), int64(buf.Len())); err != nil {
+		t.Fatalf("ImportUniversal: %v", err)
+	}
+
+	hits, err := dst.SearchFullText(ctx, storage.FTSQuery{
+		Text: "ромашка", Names: []string{cat.Name}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("поиск: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("восстановленная база не ищет по своим данным: %+v", hits)
 	}
 }

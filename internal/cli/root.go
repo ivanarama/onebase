@@ -37,5 +37,5 @@ func init() {
 	rootCmd.SilenceErrors = true
 	rootCmd.PersistentFlags().BoolVar(&noGUI, "no-gui", false,
 		"не показывать модальные окна с ошибками — для скриптов и CI (также ONEBASE_NO_GUI=1)")
-	rootCmd.AddCommand(initCmd, devCmd, runCmd, migrateCmd, buildCmd, startCmd, ibasesCmd, convertCmd, backupCmd, restoreCmd, demoResetCmd, deployCmd, serviceCmd, benchCmd, generateCmd, recalcTotalsCmd, updateCmd)
+	rootCmd.AddCommand(initCmd, devCmd, runCmd, migrateCmd, buildCmd, startCmd, ibasesCmd, convertCmd, backupCmd, restoreCmd, demoResetCmd, deployCmd, serviceCmd, benchCmd, generateCmd, recalcTotalsCmd, reindexCmd, updateCmd)
 }

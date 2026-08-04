@@ -493,6 +493,8 @@ func KnownBuiltinNames() map[string]struct{} {
 		"сохранитькартинку", "putimage",
 		"добавитьправилооформления", "addformattingrule",
 		"очиститьоформление", "clearformatting",
+		// глобальный поиск из DSL (план 82, internal/ui/search.go)
+		"полнотекстовыйпоиск", "fulltextsearch",
 		// вложения из DSL (план 105, internal/ui/dsl_attachments.go)
 		"присоединитьфайл", "attachfile",
 		"списоквложений", "listattachments",

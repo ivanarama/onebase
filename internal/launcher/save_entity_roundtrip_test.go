@@ -239,3 +239,51 @@ func TestApplyFieldEdits_PostCaption(t *testing.T) {
 		t.Errorf("пустая подпись не очистила PostCaption: %q", ent.PostCaption)
 	}
 }
+
+// Блок fulltext переживает правку объекта из конфигуратора. Это не косметика:
+// «fulltext: []» — единственный способ убрать объект из глобального поиска,
+// и молчаливая потеря ключа возвращала бы в выдачу то, что администратор
+// оттуда убрал. Пустой список и явный перечень проверяются отдельно: они
+// значат разное, а «ключа нет» значит третье.
+func TestSaveEntity_Roundtrip_СохраняетFulltext(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{
+			name:  "перечень реквизитов",
+			input: "name: Контрагент\nfulltext:\n  - Наименование\n  - ИНН\nfields:\n  - name: ИНН\n    type: string\n",
+			want:  "fulltext:\n    - Наименование\n    - ИНН",
+		},
+		{
+			name:  "объект вне поиска",
+			input: "name: Контрагент\nfulltext: []\nfields:\n  - name: ИНН\n    type: string\n",
+			want:  "fulltext: []",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var ent saveEntity
+			if err := yaml.Unmarshal([]byte(tc.input), &ent); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			out, err := yaml.Marshal(&ent)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if !strings.Contains(string(out), tc.want) {
+				t.Fatalf("после roundtrip потерян %q\nполучилось:\n%s", tc.want, out)
+			}
+		})
+	}
+
+	// Объекта без блока fulltext правка касаться не должна: появившийся ключ
+	// зафиксировал бы текущий состав индекса и сломал бы значение по умолчанию.
+	var ent saveEntity
+	if err := yaml.Unmarshal([]byte("name: Контрагент\nfields:\n  - name: ИНН\n    type: string\n"), &ent); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out, err := yaml.Marshal(&ent)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(out), "fulltext") {
+		t.Fatalf("появился ключ fulltext, которого не было:\n%s", out)
+	}
+}
