@@ -148,3 +148,16 @@ func (s *Server) refreshFieldsWrittenByHandler(
 		}
 	}
 }
+
+// currentEntityVersion возвращает версию записи после обработчика. Ноль — если
+// записи ещё нет или версию не прочитать: тогда клиент оставляет прежнюю.
+func (s *Server) currentEntityVersion(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) int64 {
+	if s == nil || s.store == nil || entity == nil || obj == nil || obj.ID == uuid.Nil {
+		return 0
+	}
+	version, exists, err := s.store.EntityVersionExists(ctx, entity.Name, obj.ID)
+	if err != nil || !exists {
+		return 0
+	}
+	return version
+}

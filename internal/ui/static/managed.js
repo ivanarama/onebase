@@ -437,6 +437,19 @@ function obManagedReady(fn) {
         }
         window._obFormDirty = false;
       }
+      // Обработчик, записавший объект, поднял его версию. Форма держит версию,
+      // прочитанную при отрисовке, — без обновления следующая «Записать»
+      // упирается в «объект изменён другим пользователем».
+      if (data.version) {
+        var verInput = form.querySelector('[name="_version"]');
+        if (!verInput) {
+          verInput = document.createElement('input');
+          verInput.type = 'hidden';
+          verInput.name = '_version';
+          form.appendChild(verInput);
+        }
+        verInput.value = String(data.version);
+      }
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
     } catch (e) {

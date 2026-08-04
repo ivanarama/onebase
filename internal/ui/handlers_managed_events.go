@@ -53,6 +53,11 @@ type formEventResponse struct {
 	// через Объект.Записать(). Клиент подставляет его в _id следующих событий и
 	// в адрес страницы — иначе второе действие подряд создало бы второй документ.
 	SavedID string `json:"savedId,omitempty"`
+	// Version — текущая версия записи после обработчика. Клиент кладёт её в
+	// скрытое поле _version: обработчик, записавший объект, версию поднял, а
+	// форма держала прочитанную при отрисовке — и следующая кнопка «Записать»
+	// упиралась в «объект изменён другим пользователем».
+	Version int64 `json:"version,omitempty"`
 	// ChoiceList — динамический список значений для элемента ПолеСписка,
 	// сформированный обработчиком НачалоВыбора (билтин ДобавитьЗначениеСписка).
 	// Клиент заполняет им <select> того элемента, что инициировал событие.
@@ -269,6 +274,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			// Обработчик мог записать форму и упасть уже после этого: id всё
 			// равно нужен клиенту, иначе повтор действия создаст второй документ.
 			SavedID: savedFormID(thisObj),
+			Version: s.currentEntityVersion(r.Context(), entity, obj),
 		})
 		return
 	}
@@ -284,6 +290,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
 		SavedID:        savedFormID(thisObj),
+		Version:        s.currentEntityVersion(r.Context(), entity, obj),
 	})
 }
 
