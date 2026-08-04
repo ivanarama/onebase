@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
 )
 
@@ -215,12 +216,20 @@ func (c totalsCheck) Run(ctx context.Context, env *Env) Result {
 		}
 		for _, r := range reg.Resources {
 			checked++
-			col := metadata.ColumnName(r)
-			fromMoves, err := sumColumn(ctx, env, src, col)
+			// Числовое значение ресурса: на SQLite сырая колонка регистра —
+			// TEXT, поэтому CAST обязателен по обе стороны сверки.
+			num := "CAST(" + quoteIdent(metadata.ColumnName(r)) + " AS NUMERIC)"
+			// Движения суммируются ЗНАКОВО — тем же выражением, которым итоги и
+			// заполняются (storage.SignedResourceSum). Беззнаковый SUM давал бы
+			// расхождение на каждом регистре, где есть расход: итоги 100−30=70
+			// против «движений» 100+30=130 — то есть проверка объявляла бы
+			// ошибкой исправную базу.
+			fromMoves, err := sumExpr(ctx, env, src, storage.SignedResourceSum(num))
 			if err != nil {
 				return failed(c, err)
 			}
-			fromTotals, err := sumColumn(ctx, env, totals, col)
+			// В итогах знак уже учтён при записи — здесь просто сумма по месяцам.
+			fromTotals, err := sumExpr(ctx, env, totals, "SUM("+num+")")
 			if err != nil {
 				return failed(c, err)
 			}
@@ -263,21 +272,25 @@ func (c totalsCheck) Fix(ctx context.Context, env *Env, res Result) (int, error)
 	return fixed, nil
 }
 
-// sumColumn возвращает сумму колонки как decimal. Значение читается строкой:
-// на SQLite числа хранятся в TEXT, и float здесь дал бы копеечные расхождения
-// на ровном месте (тот самый дефект Д2 из аудита).
-func sumColumn(ctx context.Context, env *Env, table, column string) (decimal.Decimal, error) {
+// sumExpr вычисляет агрегат agg по таблице и возвращает его как decimal.
+// Значение читается строкой: на SQLite числа хранятся в TEXT, и float здесь дал
+// бы копеечные расхождения на ровном месте (тот самый дефект Д2 из аудита).
+//
+// Выражение агрегата задаёт вызывающий: движения и итоги сверяются РАЗНЫМИ
+// выражениями (знаковая сумма против обычной), и прятать эту разницу внутрь
+// помощника значило бы снова сделать её незаметной.
+func sumExpr(ctx context.Context, env *Env, table, agg string) (decimal.Decimal, error) {
 	var raw *string
-	q := "SELECT CAST(COALESCE(SUM(CAST(" + quoteIdent(column) + " AS NUMERIC)), 0) AS TEXT) FROM " + quoteIdent(table)
+	q := "SELECT CAST(COALESCE(" + agg + ", 0) AS TEXT) FROM " + quoteIdent(table)
 	if err := env.DB.QueryRow(ctx, q).Scan(&raw); err != nil {
-		return decimal.Zero, fmt.Errorf("%s.%s: сумма: %w", table, column, err)
+		return decimal.Zero, fmt.Errorf("%s: сумма %s: %w", table, agg, err)
 	}
 	if raw == nil {
 		return decimal.Zero, nil
 	}
 	d, err := decimal.NewFromString(strings.TrimSpace(*raw))
 	if err != nil {
-		return decimal.Zero, fmt.Errorf("%s.%s: сумма %q не разбирается как число: %w", table, column, *raw, err)
+		return decimal.Zero, fmt.Errorf("%s: сумма %q не разбирается как число: %w", table, *raw, err)
 	}
 	return d, nil
 }
