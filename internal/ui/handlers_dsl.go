@@ -56,6 +56,16 @@ func langFromCtx(ctx context.Context) string {
 }
 
 func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollector) map[string]any {
+	vars, _ := s.buildDSLVarsTx(ctx, mc)
+	return vars
+}
+
+// buildDSLVarsTx дополнительно отдаёт «живой» источник контекста (TxState).
+// Он нужен вызывающему, чтобы менеджеры ссылок, построенные ДО открытия
+// DSL-транзакции, всё равно выполняли ПолучитьОбъект()/Записать() ВНУТРИ неё:
+// со статическим контекстом такой вызов уходит за вторым соединением, а пул
+// SQLite — одно соединение, и запрос виснет до таймаута.
+func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState) {
 	// TxState is created before the common variable set so path resolvers and
 	// all write-capable DSL objects observe the same live transaction context.
 	txState := interpreter.NewTxState(ctx)
@@ -290,12 +300,19 @@ func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollecto
 	vars["НСтр"] = nstrFn
 	vars["NStr"] = nstrFn
 
-	return vars
+	return vars, txState
 }
 
 func (s *Server) buildDSLVarsWithMessages(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
+	vars, _ := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
+	return vars
+}
+
+// buildDSLVarsWithMessagesTx — то же, что buildDSLVarsWithMessages, но отдаёт и
+// «живой» источник контекста (см. buildDSLVarsTx).
+func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
 	ctx = withDSLMessageCollector(ctx, msgs)
-	vars := s.buildDSLVars(ctx, mc)
+	vars, txState := s.buildDSLVarsTx(ctx, mc)
 	userKey := userKeyFromCtx(ctx)
 	msgFunc := interpreter.BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		if len(args) > 0 {
@@ -309,7 +326,7 @@ func (s *Server) buildDSLVarsWithMessages(ctx context.Context, mc *runtime.Movem
 	})
 	vars["Сообщить"] = msgFunc
 	vars["Message"] = msgFunc
-	return vars
+	return vars, txState
 }
 
 func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) (string, []string) {

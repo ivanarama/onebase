@@ -12,9 +12,33 @@ import (
 )
 
 type dslRefAttrResolver struct {
-	s     *Server
-	ctx   context.Context
-	cache map[string]map[string]map[string]any // entity -> uuid -> field name -> value
+	s   *Server
+	ctx context.Context
+	// ctxSrc — «живой» контекст DSL-исполнения (TxState). Менеджеры ссылок
+	// строятся ДО того, как модуль откроет НачатьТранзакцию, и со статическим
+	// контекстом их ПолучитьОбъект()/Записать() уходили за ВТОРЫМ соединением.
+	// Пул SQLite — одно соединение, занятое транзакцией, поэтому такой вызов
+	// висел до таймаута. nil — остаётся прежний статический контекст.
+	ctxSrc docsCtxSource
+	cache  map[string]map[string]map[string]any // entity -> uuid -> field name -> value
+}
+
+// Ctx реализует interpreter.CtxSource: менеджеры ссылок спрашивают контекст
+// на КАЖДОМ вызове, поэтому ПолучитьОбъект() попадает в транзакцию, открытую
+// уже после создания менеджера.
+func (r *dslRefAttrResolver) Ctx() context.Context { return r.liveCtx() }
+
+// liveCtx возвращает контекст с открытой DSL-транзакцией, если она есть.
+func (r *dslRefAttrResolver) liveCtx() context.Context {
+	if r == nil {
+		return context.Background()
+	}
+	if r.ctxSrc != nil {
+		if ctx := r.ctxSrc.Ctx(); ctx != nil {
+			return ctx
+		}
+	}
+	return r.ctx
 }
 
 func (s *Server) newDSLRefAttrResolver(ctx context.Context) *dslRefAttrResolver {
@@ -29,19 +53,22 @@ func (s *Server) newDSLRefAttrResolver(ctx context.Context) *dslRefAttrResolver 
 }
 
 func (s *Server) newFormObjectThis(ctx context.Context, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule) *formObjectThis {
-	return s.newFormObjectThisNew(ctx, obj, entity, form, false)
+	return s.newFormObjectThisLive(ctx, nil, obj, entity, form, false)
 }
 
-// newFormObjectThisNew дополнительно помечает объект как ещё не записанный,
-// чтобы Объект.Записать() в обработчике формы создал запись, а не пытался
-// обновить несуществующую.
-func (s *Server) newFormObjectThisNew(ctx context.Context, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule, isNew bool) *formObjectThis {
+// newFormObjectThisLive помечает объект как ещё не записанный (чтобы
+// Объект.Записать() создал запись, а не пытался обновить несуществующую) и
+// принимает «живой» источник контекста: без него ссылки объекта не видят
+// открытую модулем DSL-транзакцию (см. dslRefAttrResolver.ctxSrc).
+func (s *Server) newFormObjectThisLive(ctx context.Context, ctxSrc docsCtxSource, obj *runtime.Object, entity *metadata.Entity, form *metadata.FormModule, isNew bool) *formObjectThis {
 	var resolver *dslRefAttrResolver
 	if s != nil && s.store != nil && s.reg != nil {
 		resolver = s.newDSLRefAttrResolver(ctx)
+		resolver.ctxSrc = ctxSrc
 		resolver.attachObject(entity, obj)
 	}
-	return &formObjectThis{obj: obj, entity: entity, form: form, refResolver: resolver, srv: s, ctx: ctx, isNew: isNew}
+	return &formObjectThis{obj: obj, entity: entity, form: form, refResolver: resolver,
+		srv: s, ctx: ctx, ctxSrc: ctxSrc, isNew: isNew}
 }
 
 func (r *dslRefAttrResolver) ResolveRefAttr(ref *interpreter.Ref, field string) (any, bool) {
@@ -132,7 +159,7 @@ func (r *dslRefAttrResolver) attachRef(ref *interpreter.Ref, entityName string) 
 		ref.Type = entityName
 	}
 	if ref.Manager == nil && r.s != nil {
-		ref.Manager = r.s.refManagerFor(r.s.reg.GetEntity(ref.Type), r.ctx)
+		ref.Manager = r.s.refManagerForSrc(r.s.reg.GetEntity(ref.Type), r, r.liveCtx())
 	}
 	ref.AttrResolver = r
 	return ref
@@ -153,7 +180,7 @@ func (r *dslRefAttrResolver) bindRefToContext(ref *interpreter.Ref, entityName s
 		bound.Type = entityName
 	}
 	if r.s != nil {
-		bound.Manager = r.s.refManagerFor(r.s.reg.GetEntity(bound.Type), r.ctx)
+		bound.Manager = r.s.refManagerForSrc(r.s.reg.GetEntity(bound.Type), r, r.liveCtx())
 	}
 	bound.AttrResolver = r
 	return &bound
@@ -197,7 +224,7 @@ func (r *dslRefAttrResolver) preloadIDs(entity *metadata.Entity, ids []uuid.UUID
 	// реестра при cap>len писал в разделяемый backing array метаданных из
 	// конкурентных запросов (гонка под -race).
 	fields := uniqueObjectFields(entity.Fields)
-	rows, err := r.s.store.GetFieldsByIDs(r.ctx, entity, missing, fields)
+	rows, err := r.s.store.GetFieldsByIDs(r.liveCtx(), entity, missing, fields)
 	if err != nil {
 		return fmt.Errorf("%s: %w", entity.Name, err)
 	}
@@ -209,13 +236,13 @@ func (r *dslRefAttrResolver) cacheRows(entity *metadata.Entity, rows map[string]
 	if r.cache[entity.Name] == nil {
 		r.cache[entity.Name] = map[string]map[string]any{}
 	}
-	refNames := r.s.bulkReferenceNames(r.ctx, rows, entity.Fields)
+	refNames := r.s.bulkReferenceNames(r.liveCtx(), rows, entity.Fields)
 	for idStr, row := range rows {
 		vals := make(map[string]any, len(entity.Fields))
 		for _, fd := range entity.Fields {
 			raw := row[fd.Name]
 			if fd.RefEntity != "" {
-				vals[fd.Name] = r.s.refFromValueCached(r.ctx, fd.RefEntity, raw, refNames[fd.RefEntity])
+				vals[fd.Name] = r.s.refFromValueCached(r.liveCtx(), fd.RefEntity, raw, refNames[fd.RefEntity])
 			} else {
 				vals[fd.Name] = normalizeAttrValue(fd.Type, raw)
 			}

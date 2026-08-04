@@ -85,10 +85,22 @@ func dslMessageCollectorFromContext(ctx context.Context) *[]string {
 // собранные из значений колонок БД, несли менеджера — иначе у Удалить()
 // и ПолучитьОбъект() на них не было бы привязки к типу.
 func (s *Server) refManagerFor(entity *metadata.Entity, ctx context.Context) interpreter.RefManager {
+	return s.refManagerForSrc(entity, interpreter.NewStaticCtx(ctx), ctx)
+}
+
+// refManagerForSrc — та же сборка менеджера, но с ЖИВЫМ источником контекста.
+// Менеджер ссылки создаётся в момент первого чтения реквизита, то есть ДО того,
+// как модуль откроет НачатьТранзакцию. Со снимком контекста его ПолучитьОбъект()
+// уходил за ВТОРЫМ соединением, а пул SQLite — одно соединение, занятое той самой
+// транзакцией: запрос вставал намертво до таймаута. С живым источником вызов
+// выполняется внутри открытой транзакции.
+func (s *Server) refManagerForSrc(entity *metadata.Entity, ctxSrc interpreter.CtxSource, ctx context.Context) interpreter.RefManager {
 	if entity == nil {
 		return nil
 	}
-	ctxSrc := interpreter.NewStaticCtx(ctx)
+	if ctxSrc == nil {
+		ctxSrc = interpreter.NewStaticCtx(ctx)
+	}
 	switch entity.Kind {
 	case metadata.KindCatalog:
 		return interpreter.NewCatalogProxy(entity, s.store, ctxSrc).
