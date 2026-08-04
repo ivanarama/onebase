@@ -218,3 +218,140 @@ func TestDSL_QueryGuardMasksAndDenies(t *testing.T) {
 		t.Fatal("отбор по защищённому полю из модуля должен отклоняться")
 	}
 }
+
+// Поиск по защищённому реквизиту СПРАВОЧНИКА обязан отклоняться так же, как у
+// документов: попадание подтверждает скрытое маской значение, то есть даёт
+// оракул перебора, а представление найденной ссылки печатается Сообщить().
+// Проверяется реальный путь исполнения — объект «Справочники» из buildDSLVars,
+// а не сам хелпер: гейт был написан, но к прокси справочников не подключён.
+func TestDSL_ПоискПоЗащищённомуРеквизитуСправочникаОтклоняется(t *testing.T) {
+	client, order := dslMaskEntities()
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, order})
+	if err := s.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{
+		"Наименование": "Иванов", "Телефон": "+79161234455",
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+
+	catalogProxy := func(policies auth.FieldPolicies) *interpreter.CatalogProxy {
+		t.Helper()
+		uctx := auth.ContextWithUser(ctx, uiMaskUser([]string{"read"}, policies))
+		vars := s.buildDSLVars(uctx, nil)
+		root, ok := vars["Справочники"].(*interpreter.CatalogsRoot)
+		if !ok {
+			t.Fatalf("Справочники → %T", vars["Справочники"])
+		}
+		p, ok := root.Get("Клиент").(*interpreter.CatalogProxy)
+		if !ok {
+			t.Fatalf("Справочники.Клиент → %T", root.Get("Клиент"))
+		}
+		return p
+	}
+	call := func(p *interpreter.CatalogProxy, method string, args ...any) (res any, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = errFromPanic(r)
+			}
+		}()
+		return p.CallMethod(method, args), nil
+	}
+
+	byPhone := catalogProxy(auth.FieldPolicies{"Телефон": {Read: "mask_all"}})
+	for _, tc := range []struct {
+		method string
+		args   []any
+	}{
+		{"найтипореквизиту", []any{"Телефон", "+79161234455"}},
+		{"проверитьсовпадениепореквизиту", []any{"Телефон", "+79161234455"}},
+	} {
+		res, err := call(byPhone, tc.method, tc.args...)
+		if err == nil || !strings.Contains(err.Error(), "защищён") {
+			t.Fatalf("%s по защищённому реквизиту: err=%v, результат=%v", tc.method, err, res)
+		}
+	}
+	// Незащищённый реквизит ищется как прежде.
+	if res, err := call(byPhone, "найтипонаименованию", "Иванов"); err != nil || res == nil {
+		t.Fatalf("поиск по обычному реквизиту сломан: err=%v res=%v", err, res)
+	}
+
+	// Маска на Наименование закрывает и НайтиПоНаименованию: метод — тот же
+	// поиск по реквизиту, только имя поля зашито в вызове.
+	byName := catalogProxy(auth.FieldPolicies{"Наименование": {Read: "mask_all"}})
+	if res, err := call(byName, "найтипонаименованию", "Иванов"); err == nil ||
+		!strings.Contains(err.Error(), "защищён") {
+		t.Fatalf("НайтиПоНаименованию при маске на Наименование: err=%v, результат=%v", err, res)
+	}
+}
+
+// Прочитать() и Записать() не должны снимать маску с реквизита. Оба пути ведут
+// в одно и то же место: признак «присвоено модулем» ставится при Set и раньше
+// не снимался никогда, а обе операции кладут в тот же набор реальные значения
+// из БД — модуль читал то, чего не видел.
+func TestDSL_ОперацииНеСнимаютМаскуСРеквизита(t *testing.T) {
+	client, order := dslMaskEntities()
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, order})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, "Клиент", id, map[string]any{
+		"Наименование": "Иванов", "Телефон": "+79161234455",
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+	uctx := auth.ContextWithUser(ctx,
+		uiMaskUser([]string{"read", "write"}, auth.FieldPolicies{"Телефон": {Read: "mask_all"}}))
+
+	load := func() *catWriter {
+		t.Helper()
+		obj, err := s.catObjectFactory(ctxSource{uctx}).LoadCatalogObject(client, id.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		w, ok := obj.(*catWriter)
+		if !ok {
+			t.Fatalf("ПолучитьОбъект → %T", obj)
+		}
+		return w
+	}
+	call := func(w *catWriter, method string) error {
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = errFromPanic(r)
+				}
+			}()
+			w.CallMethod(method, nil)
+		}()
+		return err
+	}
+
+	// Об.Телефон = ""; Об.Прочитать(); Сообщить(Об.Телефон)
+	w := load()
+	if got := w.Get("Телефон"); got != "••••••" {
+		t.Fatalf("сразу после ПолучитьОбъект: %v", got)
+	}
+	w.Set("Телефон", "0000")
+	if err := call(w, "прочитать"); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.Get("Телефон"); got != "••••••" {
+		t.Fatalf("после Прочитать() маска снята: %v", got)
+	}
+
+	// Об.Телефон = "0000"; Об.Записать(); Сообщить(Об.Телефон)
+	w = load()
+	w.Set("Телефон", "0000")
+	if err := call(w, "записать"); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.Get("Телефон"); got != "••••••" {
+		t.Fatalf("после Записать() маска снята: %v", got)
+	}
+	// В самой базе значение при этом не перезаписано.
+	row, err := s.store.GetByID(ctx, "Клиент", id, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Телефон"] != "+79161234455" {
+		t.Fatalf("защищённый реквизит перезаписан: %v", row["Телефон"])
+	}
+}

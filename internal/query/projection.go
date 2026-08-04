@@ -1,6 +1,9 @@
 package query
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // ProjectionColumn — один элемент списка выборки в порядке результирующих
 // колонок. Используется полевым маскированием отчётов/виджетов/AI (план 88E):
@@ -34,7 +37,20 @@ type ProjectionPlan struct {
 	// Маска на выходе такое поле не защищает: значение участвует в отборе (даёт
 	// оракул перебора) или сворачивается в агрегат, поэтому запрос по
 	// защищённому полю в этих позициях отклоняется целиком.
+	//
+	// Имена собираются КАК НАПИСАНЫ, поэтому среди них бывают и выходные алиасы
+	// колонок («... Телефон КАК Т ... ГДЕ Т = …»): сверять их с именами полей
+	// одного к одному нельзя, разрешать алиасы обязан потребитель плана.
+	//
+	// При Simple == false сюда попадают ВСЕ идентификаторы запроса: разобрать
+	// такой запрос поколоночно нельзя, а отбор по защищённому полю обязан
+	// отклоняться и внутри подзапроса.
 	UnmaskableFields []string
+	// UnmaskableOrdinals — номера колонок, использованные в СГРУППИРОВАТЬ и
+	// УПОРЯДОЧИТЬ вместо имени («УПОРЯДОЧИТЬ ПО 1»). Ссылка по номеру сортирует
+	// по значению колонки ровно так же, как ссылка по имени, и точно так же
+	// раскрывает порядок скрытых значений.
+	UnmaskableOrdinals []int
 }
 
 // analyzeProjection разбирает список выборки запроса. Работает по исходному
@@ -43,8 +59,13 @@ func analyzeProjection(tokens []tok) ProjectionPlan {
 	start, ok := singleSelectStart(tokens)
 	if !ok {
 		// Подзапрос или ОБЪЕДИНИТЬ: соответствие «элемент выборки → колонка
-		// результата» неоднозначно, маскировать нечего сопоставить.
-		return ProjectionPlan{}
+		// результата» неоднозначно, маскировать нечего сопоставить. Но отказ по
+		// отбору обязан работать и здесь: иначе фиктивный подзапрос
+		// («... И Наименование В (ВЫБРАТЬ ...)») снимал бы отказ по ГДЕ,
+		// потому что запасной путь смотрит только список выборки.
+		// Собираем все идентификаторы: перебор намеренно избыточен — лишнее имя
+		// лишь ужесточает проверку, пропущенное открывает утечку.
+		return ProjectionPlan{UnmaskableFields: allIdentifiers(tokens)}
 	}
 	end := topLevelFrom(tokens, start)
 	plan := ProjectionPlan{Simple: true}
@@ -54,9 +75,19 @@ func analyzeProjection(tokens []tok) ProjectionPlan {
 		plan.Columns = append(plan.Columns, col)
 		unmask.addAll(used)
 	}
-	unmask.addAll(collectUnmaskableTail(tokens, end))
+	tail, ordinals := collectUnmaskableTail(tokens, end)
+	unmask.addAll(tail)
 	plan.UnmaskableFields = unmask.list()
+	plan.UnmaskableOrdinals = ordinals
 	return plan
+}
+
+// allIdentifiers — все идентификаторы потока, кроме ключевых слов и имён
+// вызываемых функций.
+func allIdentifiers(tokens []tok) []string {
+	set := newFieldSet()
+	set.addAll(identifiersIn(tokens))
+	return set.list()
 }
 
 // singleSelectStart возвращает позицию единственного SELECT запроса. Второй
@@ -177,7 +208,14 @@ func parseProjectionItem(item []tok) (ProjectionColumn, []string) {
 			break
 		}
 	}
-	if len(item) == 1 && item[0].kind == tStar {
+	// Проекция «звёздочка» — и голая «*», и квалифицированная «К.*». Отличается
+	// от умножения тем, что звёздочка ЗАМЫКАЕТ элемент выборки: «Цена * 2» на
+	// ней не заканчивается. Признак намеренно широкий: принять за «*» лишнее —
+	// значит промаскировать колонки по именам, то есть ужесточить; не принять
+	// «К.*» — значит отдать строки как есть, что и было утечкой (элемент
+	// [ident, dot, star] не проходил simpleFieldRef, уходил в ветку выражения
+	// с пустыми Fields и до проверок не доживал).
+	if n := len(item); n > 0 && item[n-1].kind == tStar {
 		return ProjectionColumn{Star: true}, nil
 	}
 	if field, ok := simpleFieldRef(item); ok {
@@ -240,11 +278,14 @@ func identifiersIn(item []tok) []string {
 // ГДЕ/ИМЕЯ/СГРУППИРОВАТЬ/УПОРЯДОЧИТЬ, в условиях соединения (ПО) и внутри
 // скобок секции ИЗ (аргументы виртуальных таблиц). Имена таблиц и алиасы самой
 // секции ИЗ не собираются: они не поля.
-func collectUnmaskableTail(tokens []tok, from int) []string {
+// Вторым значением возвращает номера колонок, использованные вместо имени в
+// СГРУППИРОВАТЬ/УПОРЯДОЧИТЬ.
+func collectUnmaskableTail(tokens []tok, from int) ([]string, []int) {
 	section := sectionFrom
 	inJoinCond := false
 	depth := 0
 	var out []string
+	var ordinals []int
 	for i := from; i < len(tokens); i++ {
 		t := tokens[i]
 		switch t.kind {
@@ -254,6 +295,15 @@ func collectUnmaskableTail(tokens []tok, from int) []string {
 		case tRParen:
 			if depth > 0 {
 				depth--
+			}
+			continue
+		case tNum:
+			// «УПОРЯДОЧИТЬ ПО 1» сортирует по значению первой колонки так же,
+			// как ссылка по имени. В остальных секциях число — литерал сравнения.
+			if depth == 0 && (section == sectionOrderBy || section == sectionGroupBy) {
+				if n, err := strconv.Atoi(t.val); err == nil && n > 0 {
+					ordinals = append(ordinals, n)
+				}
 			}
 			continue
 		case tIdent:
@@ -295,7 +345,7 @@ func collectUnmaskableTail(tokens []tok, from int) []string {
 			}
 		}
 	}
-	return out
+	return out, ordinals
 }
 
 // expandProjectionRefDims доводит план до фактических значений колонок: элемент

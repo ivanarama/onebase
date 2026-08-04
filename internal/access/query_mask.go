@@ -44,13 +44,48 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 	if !res.Projection.Simple {
 		// Подзапрос/ОБЪЕДИНИТЬ: сопоставить элемент выборки с колонкой
 		// результата нельзя — остаётся прежний fail-closed отказ (план 88D).
+		// Но одного разбора списка выборки мало: DeniedMaskedColumn не смотрит
+		// ГДЕ, поэтому фиктивный подзапрос снимал отказ по отбору. Сначала —
+		// защищённое поле в любом месте такого запроса.
+		for _, field := range res.Projection.UnmaskableFields {
+			if _, ok := masked[fieldKey(field)]; ok {
+				return QueryMaskPlan{Denied: field}
+			}
+		}
 		return QueryMaskPlan{Denied: DeniedMaskedColumn(u, res.Sources, res.ProjectionFields, lookup)}
 	}
 	// Поле под маской в отборе/группировке/сортировке/агрегате: маска на выходе
 	// его не защищает — значение либо перебирается условием, либо уже свёрнуто.
-	for _, field := range res.Projection.UnmaskableFields {
-		if _, ok := masked[fieldKey(field)]; ok {
-			return QueryMaskPlan{Denied: field}
+	// Хвост запроса ссылается на колонку и по выходному алиасу, и по номеру —
+	// оба варианта дают тот же оракул, что и ссылка по имени поля.
+	aliasFields := map[string][]string{}
+	for _, col := range res.Projection.Columns {
+		if col.Output != "" && len(col.Fields) > 0 {
+			aliasFields[fieldKey(col.Output)] = col.Fields
+		}
+	}
+	for _, name := range res.Projection.UnmaskableFields {
+		if _, ok := masked[fieldKey(name)]; ok {
+			return QueryMaskPlan{Denied: name}
+		}
+		if fields, ok := aliasFields[fieldKey(name)]; ok {
+			if denied, hit := firstMaskedField(masked, fields); hit {
+				return QueryMaskPlan{Denied: denied}
+			}
+		}
+	}
+	for _, n := range res.Projection.UnmaskableOrdinals {
+		if n < 1 || n > len(res.Projection.Columns) {
+			continue
+		}
+		col := res.Projection.Columns[n-1]
+		if col.Star {
+			// «ВЫБРАТЬ * … УПОРЯДОЧИТЬ ПО 1»: какая колонка таблицы окажется
+			// первой, разбор не знает — путь fail-closed.
+			return QueryMaskPlan{Denied: anyMaskedName(masked)}
+		}
+		if denied, hit := firstMaskedField(masked, col.Fields); hit {
+			return QueryMaskPlan{Denied: denied}
 		}
 	}
 	plan := QueryMaskPlan{}
@@ -151,6 +186,29 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 		return nil, nil
 	}
 	return byField, byColumn
+}
+
+// firstMaskedField возвращает первое из полей, на которое стоит маска.
+func firstMaskedField(masked map[string]FieldDecision, fields []string) (string, bool) {
+	for _, field := range fields {
+		if _, ok := masked[fieldKey(field)]; ok {
+			return field, true
+		}
+	}
+	return "", false
+}
+
+// anyMaskedName — имя защищённого поля для сообщения об отказе, когда конкретную
+// колонку назвать нельзя. Выбирается детерминированно, чтобы текст отказа не
+// плясал от обхода карты.
+func anyMaskedName(masked map[string]FieldDecision) string {
+	best := ""
+	for key := range masked {
+		if best == "" || key < best {
+			best = key
+		}
+	}
+	return best
 }
 
 // mostRestrictive выбирает самое строгое решение среди полей, которые питают

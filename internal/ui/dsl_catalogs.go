@@ -153,6 +153,14 @@ func (w *catWriter) Set(name string, v any) {
 
 // Fields — имена заполненных полей объекта: позволяет использовать объект как
 // источник в ЗаполнитьЗначенияСвойств (совместимо с CatalogRecordWriter).
+// forgetAssigned снимает признак «присвоено модулем» с перечисленных реквизитов:
+// после этого Get() отдаёт их по полевой политике роли, а не как есть.
+func (w *catWriter) forgetAssigned(names []string) {
+	for _, n := range names {
+		delete(w.assigned, strings.ToLower(strings.TrimSpace(n)))
+	}
+}
+
 func (w *catWriter) Fields() []string {
 	names := make([]string, 0, len(w.obj.Fields))
 	for k := range w.obj.Fields {
@@ -201,9 +209,15 @@ func (w *catWriter) write() error {
 	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
 	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
 	if !isNew {
-		if err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields); err != nil {
+		restored, err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields)
+		if err != nil {
 			return err
 		}
+		// Восстановленное значение ложится в тот же набор, который читает
+		// Get(): без снятия признака «присвоено модулем» защита записи сама
+		// стала бы каналом раскрытия — после Записать() модуль прочитал бы
+		// реальное значение, которого не видел до неё.
+		w.forgetAssigned(restored)
 	}
 	result, err := w.s.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:          w.entity,
@@ -253,6 +267,10 @@ func (w *catWriter) read() error {
 		return err
 	}
 	w.obj = obj
+	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
+	// больше нет, а сохранённый признак снимал бы маску с реальных значений
+	// («Об.Телефон = ""; Об.Прочитать(); Сообщить(Об.Телефон)» отдавал реальный).
+	w.assigned = nil
 	version, err := w.s.store.EntityVersion(w.ctx(), w.entity.Name, w.obj.ID)
 	if err != nil {
 		return err

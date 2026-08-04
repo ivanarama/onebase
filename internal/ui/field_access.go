@@ -126,15 +126,21 @@ func (s *Server) sourceMeta(kind, name string) *metadata.Entity {
 // cannot overwrite the real value — neither with the mask itself nor with a
 // crafted request. Consistent with «нельзя изменить то, что не видно». Applied on
 // update only; on create the user legitimately enters their own values.
-func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any) error {
+//
+// Возвращает имена ключей, которые были восстановлены или удалены. Вызывающий
+// обязан учесть, что в переданной карте после этого лежит РЕАЛЬНОЕ значение: для
+// DSL-объекта это тот же набор, который читает модуль, и без снятия признака
+// «присвоено» защита записи сама стала бы каналом раскрытия.
+func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any) ([]string, error) {
 	dec := s.fieldDecisions(ctx, entity)
 	if len(dec) == 0 || fields == nil {
-		return nil
+		return nil, nil
 	}
 	row, err := s.store.GetByID(ctx, entity.Name, id, entity)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var restored []string
 	for field := range dec {
 		key, ok := maskCIKey(fields, field)
 		if !ok {
@@ -145,8 +151,9 @@ func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadat
 		} else {
 			delete(fields, key)
 		}
+		restored = append(restored, key)
 	}
-	return nil
+	return restored, nil
 }
 
 // discloseField serves POST /ui/{kind}/{entity}/{id}/disclose with form fields

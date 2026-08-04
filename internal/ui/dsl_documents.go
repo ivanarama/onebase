@@ -93,6 +93,7 @@ func (s *Server) refManagerFor(entity *metadata.Entity, ctx context.Context) int
 	case metadata.KindCatalog:
 		return interpreter.NewCatalogProxy(entity, s.store, ctxSrc).
 			WithRowAccessChecker(s.dslRowAccessChecker()).
+			WithFieldSearchChecker(s.dslFieldSearchChecker()).
 			WithExchangeRegistrar(s.exchangeRegistrar()).
 			WithObjectFactory(s.catObjectFactory(ctxSrc))
 	case metadata.KindDocument:
@@ -590,6 +591,14 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 // read перечитывает шапку и табличные части документа из БД
 // (Документ.Прочитать()). Использует тот же путь загрузки, что и
 // Ссылка.ПолучитьОбъект().
+// forgetAssigned снимает признак «присвоено модулем» с перечисленных реквизитов:
+// после этого Get() отдаёт их по полевой политике роли, а не как есть.
+func (w *docWriter) forgetAssigned(names []string) {
+	for _, n := range names {
+		delete(w.assigned, strings.ToLower(strings.TrimSpace(n)))
+	}
+}
+
 func (w *docWriter) read() error {
 	if err := w.s.checkDSLRowAccess(w.ctx(), w.entity, "read", w.obj.ID, nil); err != nil {
 		return err
@@ -614,6 +623,9 @@ func (w *docWriter) read() error {
 	}
 	w.obj.Fields = fields
 	w.obj.TablePartRows = tpRows
+	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
+	// больше нет, а сохранённый признак снимал бы маску с реальных значений.
+	w.assigned = nil
 	w.s.enrichHeaderRefs(w.ctx(), w.entity, w.obj)
 	for _, tp := range w.entity.TableParts {
 		w.s.enrichTPRowsWithRefs(w.ctx(), tp, tpRows[tp.Name])
@@ -741,9 +753,15 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
 	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
 	if w.loaded || w.saved {
-		if err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields); err != nil {
+		restored, err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields)
+		if err != nil {
 			return err
 		}
+		// Восстановленное значение ложится в тот же набор, который читает
+		// Get(): без снятия признака «присвоено модулем» защита записи сама
+		// стала бы каналом раскрытия — после Записать() модуль прочитал бы
+		// реальное значение, которого не видел до неё.
+		w.forgetAssigned(restored)
 	}
 	w.autoNumber(ctx)
 	// Псевдо-реквизит «Ссылка» самого документа — до запуска OnWrite, как это уже
@@ -947,3 +965,14 @@ func (t *tpProxy) CallMethod(method string, args []any) any {
 	}
 	return nil
 }
+
+// dslFieldSearchChecker отдаёт полевую политику прокси справочников: поиск по
+// защищённому реквизиту обязан отклоняться и там, а не только у документов,
+// где гейт стоял с самого начала (план 88E).
+type dslFieldSearch struct{ s *Server }
+
+func (c dslFieldSearch) IsFieldSearchDenied(ctx context.Context, entity *metadata.Entity, field string) bool {
+	return c.s.dslFieldSearchDenied(ctx, entity, field)
+}
+
+func (s *Server) dslFieldSearchChecker() interpreter.FieldSearchChecker { return dslFieldSearch{s: s} }
