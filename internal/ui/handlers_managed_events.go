@@ -247,9 +247,15 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	addTPEventContextVars(r, obj, vars)
 
+	// Снимок полей до обработчика — по нему после Run отличаем «поле изменил сам
+	// обработчик» от «поле осталось прежним», см. refreshFieldsWrittenByHandler.
+	fieldsBefore := snapshotFieldValues(obj.Fields)
+
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
-	if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
+	runErr := s.interp.Run(decl, thisObj, vars)
+	s.refreshFieldsWrittenByHandler(r.Context(), r, entity, obj, fieldsBefore)
+	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{
 			OK:             false,
