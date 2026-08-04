@@ -170,6 +170,22 @@ C:\onebase\bin\onebase.exe service uninstall --name onebase-docflow
 `ONEBASE_ALLOW_EMPTY_PASSWORDS=true`; не используйте этот режим для сервера,
 доступного из сети. После изменения переменных перезапустите службу.
 
+Если включаются двухфакторная аутентификация или единый вход (Администрирование
+→ Аутентификация), пригодятся ещё две переменные:
+
+```powershell
+# Публичный адрес базы — из него собирается redirect_uri для OIDC-провайдера.
+[Environment]::SetEnvironmentVariable("ONEBASE_PUBLIC_URL", "https://erp.example.com", "Machine")
+
+# Аварийный вход по паролю при включённой политике «только единый вход».
+# Держите незаданной; выставляйте временно, если провайдер недоступен.
+[Environment]::SetEnvironmentVariable("ONEBASE_ALLOW_PASSWORD_LOGIN", "1", "Machine")
+```
+
+Секреты второго фактора (TOTP) и `client_secret` провайдеров шифруются
+мастер-ключом `ONEBASE_MASTER_KEY` (см. `onebase secret`). Без него они лягут в
+базу открытым текстом и уедут в резервную копию — для production ключ задавайте.
+
 ---
 
 ## 5. Smoke-тест

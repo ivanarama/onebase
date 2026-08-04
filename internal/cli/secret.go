@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -434,6 +435,23 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 			}
 			continue
 		}
+		if e.Key == "auth.providers" {
+			n, value, err := rotateAuthProviders(e.Value, oldKey, newKey)
+			if err != nil {
+				return fmt.Errorf("auth.providers: %w", err)
+			}
+			if n == 0 {
+				continue
+			}
+			changed += n
+			outf("  auth.providers: %d значен. → ключ %s\n", n, newKey.ID())
+			if !dry {
+				if err := db.SaveSetting(ctx, e.Key, value); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if secrets.Classify(e.Value) != secrets.KindEnc {
 			continue
 		}
@@ -453,6 +471,34 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Секреты второго фактора лежат колонкой _users.totp_secret, а не в
+	// _settings (план 84). Без этого прохода штатная ротация мастер-ключа
+	// молча ломала 2FA у всех: профиль по-прежнему показывал «включён», а код
+	// из приложения переставал приниматься.
+	totp, err := db.ListTOTPSecrets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range totp {
+		if secrets.Classify(row.Value) != secrets.KindEnc {
+			continue
+		}
+		reenc, err := reencrypt(row.Value, oldKey, newKey)
+		if err != nil {
+			return fmt.Errorf("секрет TOTP учётной записи %s: %w", row.Login, err)
+		}
+		if reenc == "" {
+			continue // уже под новым ключом
+		}
+		changed++
+		outf("  auth.user.%s.totp_secret → ключ %s\n", row.Login, newKey.ID())
+		if !dry {
+			if err := db.SaveTOTPSecretRaw(ctx, row.UserID, reenc); err != nil {
+				return err
+			}
+		}
+	}
+
 	if changed == 0 {
 		outln("Перешифровывать нечего: enc:-значений под старым ключом в базе нет.")
 		return nil
@@ -465,6 +511,38 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 	outln("Замените мастер-ключ процесса базы на новый и перезапустите её —")
 	outln("старый ключ больше не откроет эти значения.")
 	return nil
+}
+
+// rotateAuthProviders перешифровывает client_secret провайдеров единого входа
+// (план 84). Разбор нетипизированный: остальные поля провайдера ротации не
+// касаются, и переписывать их через типы значило бы терять поля, добавленные
+// более новой версией.
+func rotateAuthProviders(raw string, oldKey, newKey *secrets.Key) (int, string, error) {
+	var providers []map[string]any
+	if err := json.Unmarshal([]byte(raw), &providers); err != nil {
+		return 0, "", err
+	}
+	changed := 0
+	for i, p := range providers {
+		secret, _ := p["client_secret"].(string)
+		reenc, err := reencrypt(secret, oldKey, newKey)
+		if err != nil {
+			id, _ := p["id"].(string)
+			return 0, "", fmt.Errorf("провайдер %s: %w", id, err)
+		}
+		if reenc != "" {
+			providers[i]["client_secret"] = reenc
+			changed++
+		}
+	}
+	if changed == 0 {
+		return 0, raw, nil
+	}
+	out, err := json.Marshal(providers)
+	if err != nil {
+		return 0, "", err
+	}
+	return changed, string(out), nil
 }
 
 // rotateLLMConfig перешифровывает enc:-значения внутри JSON настроек ИИ.
