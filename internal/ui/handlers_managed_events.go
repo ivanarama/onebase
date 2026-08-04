@@ -259,7 +259,16 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	runErr := s.interp.Run(decl, thisObj, vars)
-	s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+	// Перечитывать из базы имеет смысл только для записи, которая там есть:
+	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
+	// номер от нумератора обязан приехать на экран «Создать» сразу). Гейт по
+	// сырому _id, а не по obj.ID: buildObjectFromForm для новой записи генерирует
+	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
+	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
+	// описана выше у restoreUnsubmittedFields.
+	if strings.TrimSpace(r.FormValue("_id")) != "" || savedFormID(thisObj) != "" {
+		s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+	}
 	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{
