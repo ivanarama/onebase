@@ -334,6 +334,17 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 	if d, ok := args[0].(decimal.Decimal); ok {
 		return d, nil
 	}
+	// Булево → 1/0. Без этой ветки Число(Истина) шло в разбор строки «true»,
+	// не парсилось и молча давало 0 — то есть Число(Истина) = Число(Ложь), и
+	// типовая проверка флага «Если Число(Флаг) <> 1» не срабатывала никогда.
+	// Значение поля типа bool приходит в DSL то булевым (форма, restore из БД),
+	// то числом 0/1 (ПолучитьОбъект на SQLite) — Число() выравнивает оба случая.
+	if b, ok := args[0].(bool); ok {
+		if b {
+			return decimal.NewFromInt(1), nil
+		}
+		return decimal.Zero, nil
+	}
 	s := fmt.Sprintf("%v", args[0])
 	d, err := decimal.NewFromString(strings.ReplaceAll(s, ",", "."))
 	if err != nil {
