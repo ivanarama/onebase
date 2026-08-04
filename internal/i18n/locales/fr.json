@@ -626,5 +626,6 @@
   "Длина, Точность": "Longueur, Précision",
   "Рабочее место кассира (РМК)": "Poste de caisse (PDV)",
   "Настройки агента оборудования": "Paramètres de l'agent d'équipement",
-  "Свёртка базы": "Consolidation de la base"
+  "Свёртка базы": "Consolidation de la base",
+  "Диагностика базы": "Diagnostic de la base"
 }

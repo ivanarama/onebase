@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ivantit66/onebase/internal/dbcheck"
 )
 
 func TestAdminTemplatesUseDelegatedHandlers(t *testing.T) {
@@ -62,12 +64,26 @@ func TestAdminTemplatesUseDelegatedHandlers(t *testing.T) {
 			want: []string{`data-ob-select-on-click`, `data-ob-confirm="Отозвать API-токен Интеграция?"`},
 		},
 		{
+			// Диагностика базы (план 114): исправления запускаются только для
+			// отмеченных проверок, поэтому подтверждение говорит про них, а не
+			// про одну конкретную операцию.
 			name: "admin-cleanup",
 			tpl:  adminTmpl,
-			data: map[string]any{"Stats": []map[string]any{{
-				"RegisterName": "Остатки", "RecorderType": "Док", "Count": 1,
-			}}},
-			want: []string{`data-ob-confirm="Удалить все осиротевшие движения?"`},
+			data: map[string]any{
+				"Checks": []doctorCheckView{{
+					Result: dbcheck.Result{
+						Check: "orphan-movements", Title: "Движения без документа-регистратора",
+						Severity: dbcheck.SeverityError, Summary: "движений без регистратора: 1",
+						Findings: []dbcheck.Finding{{Object: "Остатки", Detail: "регистратор (Док) не существует", Count: 1}},
+						FixHint:  "onebase doctor --fix orphan-movements",
+					},
+					CanFix: true,
+				}},
+			},
+			want: []string{
+				`data-ob-confirm="Выполнить исправления для отмеченных проверок?`,
+				`name="fix" value="orphan-movements"`,
+			},
 		},
 		{
 			name: "admin-extforms",
