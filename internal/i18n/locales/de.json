@@ -860,5 +860,6 @@
   "Настройки агента оборудования": "Geräteagent-Einstellungen",
   "onebase — Информационные базы": "onebase — Informationsdatenbanken",
   "Файл базы": "Datenbankdatei",
-  "Свёртка базы": "Datenbank-Rollup"
+  "Свёртка базы": "Datenbank-Rollup",
+  "Диагностика базы": "Datenbankdiagnose"
 }

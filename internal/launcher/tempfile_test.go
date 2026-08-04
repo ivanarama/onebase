@@ -28,9 +28,22 @@ func TestWriteTempFileRoundTripAndCleanup(t *testing.T) {
 	}
 }
 
+// Каталог временных файлов уводится в никуда.
+//
+// os.TempDir читает разные переменные на разных ОС: TMPDIR на Unix, TMP/TEMP
+// (через GetTempPath) на Windows. Одного TMPDIR мало — на Windows он молча
+// игнорируется, и проверка вырождается в «временный файл создался как обычно».
+func setMissingTempDir(t *testing.T) {
+	t.Helper()
+	missing := filepath.Join(t.TempDir(), "нет-такого-каталога")
+	t.Setenv("TMPDIR", missing)
+	t.Setenv("TMP", missing)
+	t.Setenv("TEMP", missing)
+}
+
 // Сбой подготовки временного файла — не повод пропустить проверку.
 func TestWriteTempFileFailsWhenTempDirMissing(t *testing.T) {
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "нет-такого-каталога"))
+	setMissingTempDir(t)
 
 	if _, _, err := writeTempFile("probe-*.yaml", "x"); err == nil {
 		t.Fatal("ожидалась ошибка при недоступном каталоге временных файлов")
@@ -46,7 +59,8 @@ func TestWriteTempFileFailsWhenTempDirMissing(t *testing.T) {
 // уходил в конфигурацию. То есть guard исчезал ровно в тот момент, когда с
 // машиной что-то не так.
 //
-// TMPDIR в никуда воспроизводит это детерминированно и без прав доступа.
+// Каталог временных файлов в никуда воспроизводит это детерминированно и без
+// возни с правами доступа.
 func TestSaveWidgetDoesNotSaveWhenValidationCannotRun(t *testing.T) {
 	cfgDir := t.TempDir()
 	store := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
@@ -55,7 +69,7 @@ func TestSaveWidgetDoesNotSaveWhenValidationCannotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "нет-такого-каталога"))
+	setMissingTempDir(t)
 
 	form := url.Values{"widget_name": {"Продажи"}, "yaml": {"это: не виджет\n"}}
 	req := httptest.NewRequest(http.MethodPost, "/bases/wdg/configurator/widget/save",

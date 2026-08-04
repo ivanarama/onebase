@@ -68,6 +68,19 @@ type RollupReport struct {
 	DanglingRefs     int               // ссылок на удаляемые документы из сохраняемых записей (delete-режим)
 }
 
+// FoldedMovements — сколько строк движений свёрнуто во всех регистрах вместе.
+// По нему видно, стоит ли предлагать обслуживание хранилища: место после
+// удаления само не возвращается (план 114).
+func (r RollupReport) FoldedMovements() int {
+	total := 0
+	for _, group := range [][]RollupRegReport{r.Registers, r.AccountRegisters, r.InfoRegisters} {
+		for _, reg := range group {
+			total += reg.FoldedMovements
+		}
+	}
+	return total
+}
+
 // EnsureRollupTable создаёт служебный журнал свёрток _rollup. Времена хранятся
 // строками (RFC3339 / дата) — это дёшево и не зависит от диалекта (логика свёртки
 // берёт дату из RollupOptions, а не из этой таблицы; таблица — только аудит).

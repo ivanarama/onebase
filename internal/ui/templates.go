@@ -846,7 +846,7 @@ const tplNav = `
         <summary>{{t $.Lang "Обслуживание базы"}}</summary>
         <div class="sys-group-body">
           <a href="/ui/delete-marked">{{t $.Lang "Удалить помеченные"}}</a>
-          <a href="/ui/admin/cleanup">{{t $.Lang "Очистка регистров"}}</a>
+          <a href="/ui/admin/cleanup">{{t $.Lang "Диагностика базы"}}</a>
         </div>
       </details>
       <details class="sys-group">
