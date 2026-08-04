@@ -598,7 +598,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 }
 
 func templateSource() string {
-	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplPageCustom + tplAppShell
+	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplPageCustom + tplAppShell
 }
 
 const tplHead = `
@@ -774,6 +774,20 @@ body{padding-bottom:32px}
 .tile-label{color:#94a3b8;flex-shrink:0}
 .tile-val{color:#334155;word-break:break-word}
 .tile-foot{margin-top:auto;padding-top:10px}
+/* Глобальный поиск (план 82): строка в шапке и страница результатов */
+.topbar-search{display:flex;align-items:center;margin:0 6px}
+.topbar-search input{width:210px;max-width:34vw;padding:5px 10px;border:1px solid #475569;border-radius:5px;font-size:13px;background:#334155;color:#f1f5f9}
+.topbar-search input::placeholder{color:#94a3b8}
+.topbar-search input:focus{outline:none;border-color:#7dd3fc;background:#1e293b}
+.search-results{display:flex;flex-direction:column;gap:8px}
+.search-hit{display:block;padding:11px 14px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;text-decoration:none;transition:box-shadow .15s,border-color .15s}
+.search-hit:hover{box-shadow:0 4px 14px rgba(0,0,0,.08);border-color:#cbd5e1}
+.search-hit-title{font-size:15px;font-weight:600;color:#1e293b;word-break:break-word}
+.search-hit-deleted{text-decoration:line-through;opacity:.6}
+.search-hit-meta{margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:#94a3b8}
+.search-hit-entity{color:#64748b}
+.search-hit-flag{color:#dc2626}
+.search-hit-posted{color:#16a34a;font-weight:600}
 /* Поле-картинка на форме */
 .img-field{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc}
@@ -789,6 +803,9 @@ const tplNav = `
 <header class="topbar">
   <button class="nav-toggle" type="button" aria-label="{{t $.Lang "Меню"}}" aria-controls="ob-nav" aria-expanded="false" data-ob-nav-toggle>&#9776;</button>
   <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{t $.Lang "Главная"}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
+  <form class="topbar-search" method="get" action="/ui/search" role="search">
+    <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">
+  </form>
   <form method="post" action="/ui/form-mode" style="display:inline;margin:0">
     {{if eq (printf "%v" .FormOpenMode) "tabs"}}
       <input type="hidden" name="mode" value="pages">

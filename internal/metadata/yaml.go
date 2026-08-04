@@ -77,6 +77,9 @@ type rawEntity struct {
 	ListRefreshOn      []string          `yaml:"list_refresh_on"`
 	NotifyChanges      bool              `yaml:"notify_changes"`
 	TileView           *rawTileView      `yaml:"tile_view"`
+	// FullText — указатель, чтобы отличить отсутствие ключа (умолчание: все
+	// строковые реквизиты) от явного `fulltext: []` (объект вне поиска).
+	FullText *[]string `yaml:"fulltext"`
 }
 
 type rawTileView struct {
@@ -143,6 +146,10 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 			e.TileView.Fields = trimStringList(*raw.TileView.Fields)
 			e.TileView.FieldsSet = true
 		}
+	}
+	if raw.FullText != nil {
+		e.FullText = trimStringList(*raw.FullText)
+		e.FullTextSet = true
 	}
 	if raw.Numerator != nil {
 		n := &Numerator{

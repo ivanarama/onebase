@@ -104,6 +104,14 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 	if tag.RowsAffected != 1 {
 		return ErrVersionConflict
 	}
+	// Полнотекстовый индекс (план 82) — в той же транзакции, что и запись.
+	// Через этот путь идут ВСЕ правки существующих объектов (форма UI и REST
+	// с If-Match всегда шлют версию, DSL выставляет её при чтении объекта), а
+	// собственный UPDATE мимо upsert хук индексации не задевал: в выдаче
+	// оставалось прежнее значение — в том числе стёртый пользователем телефон.
+	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+		return err
+	}
 	if oldRow != nil {
 		if changes := AuditDiff(oldRow, fields, entity); len(changes) > 0 {
 			db.logUpdate(ctx, string(entity.Kind), entityName, id, changes)

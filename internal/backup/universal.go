@@ -972,6 +972,12 @@ func ImportUniversalWithOptions(
 	}
 	fkDisabled = false
 
+	// Полнотекстовый индекс восстановленной базы (план 82) — после коммита
+	// данных, см. rebuildSearchIndex.
+	if err := rebuildSearchIndex(ctx, db, configDest, cfgFileDir); err != nil {
+		return report, fmt.Errorf("import: пересборка полнотекстового индекса: %w", err)
+	}
+
 	// Attachment files are copied only after the database transaction commits;
 	// every individual destination is published atomically.
 	attachSrc := filepath.Join(tmpDir, "attachments")
@@ -1270,6 +1276,52 @@ func copyFilePublished(ctx context.Context, srcPath, dst string, perm os.FileMod
 // migrateSchema creates all required tables in the target database by loading
 // the project configuration and running all Migrate* calls.
 // configDest: "database" → load from _onebase_config; "file" → load from cfgFileDir.
+// loadProjectForImport поднимает конфигурацию восстановленной базы — из файлов
+// или из _onebase_config, как указано в configDest. Вызывающий обязан закрыть
+// проект.
+func loadProjectForImport(ctx context.Context, db *storage.DB, configDest, cfgFileDir string) (*project.Project, error) {
+	if configDest == "file" && cfgFileDir != "" {
+		proj, err := project.Load(cfgFileDir)
+		if err != nil {
+			return nil, fmt.Errorf("load project from files: %w", err)
+		}
+		return proj, nil
+	}
+	repo := configdb.New(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		return nil, err
+	}
+	proj, err := project.LoadFromDB(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("load project for migration: %w", err)
+	}
+	return proj, nil
+}
+
+// rebuildSearchIndex пересобирает полнотекстовый индекс (план 82) после
+// восстановления. Импорт заливает строки прямым INSERT мимо upsert, поэтому
+// хук индексации не срабатывает: без пересборки поиск в восстановленной базе
+// не находил бы ничего, а поверх существующей — держал бы в выдаче исчезнувшие
+// объекты (очищаются только таблицы из архива). Возить индекс в архиве нельзя:
+// над ним стоят надстройки диалекта (FTS5-триггеры в SQLite, генерируемая
+// колонка в PostgreSQL), и сырые строки оставили бы их рассогласованными.
+func rebuildSearchIndex(ctx context.Context, db *storage.DB, configDest, cfgFileDir string) error {
+	proj, err := loadProjectForImport(ctx, db, configDest, cfgFileDir)
+	if err != nil {
+		return err
+	}
+	defer proj.Close()
+	if len(proj.Entities) == 0 {
+		// Конфигурации нет — индексировать нечего, а пересборка с пустым
+		// списком объектов вычистила бы индекс целиком.
+		return nil
+	}
+	if _, err := db.RebuildFullTextIndex(ctx, proj.Entities, 0, nil); err != nil {
+		return err
+	}
+	return nil
+}
+
 func migrateSchema(ctx context.Context, db *storage.DB, configDest, cfgFileDir string) error {
 	var proj *project.Project
 	var err error

@@ -449,6 +449,10 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	if err := db.EnsureNumeratorSchema(ctx); err != nil {
 		return fmt.Errorf("migrate: numerators table: %w", err)
 	}
+	ftsCreated, err := db.EnsureFullTextSchema(ctx)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	ordered := orderByDependency(entities)
 	for _, e := range ordered {
 		if _, err := db.Exec(ctx, CreateTableSQL(d, e)); err != nil {
@@ -516,6 +520,17 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	}
 	if err := db.SyncAllPredefined(ctx, entities); err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+	// Первичное наполнение полнотекстового индекса (план 82). Схема заводится в
+	// начале Migrate, но наполнять её можно только сейчас — таблицы объектов
+	// созданы. Инкрементально индекс пишется при каждой записи, поэтому backfill
+	// нужен ровно один раз: при обновлении платформы на базе, где данные уже
+	// есть. Без него строка поиска работает, но не находит ничего, и понять
+	// это можно только догадавшись выполнить `onebase reindex`.
+	if ftsCreated {
+		if _, err := db.RebuildFullTextIndex(ctx, entities, 0, nil); err != nil {
+			return fmt.Errorf("migrate: первичное наполнение полнотекстового индекса: %w", err)
+		}
 	}
 	return nil
 }
