@@ -93,6 +93,7 @@ func (s *Server) refManagerFor(entity *metadata.Entity, ctx context.Context) int
 	case metadata.KindCatalog:
 		return interpreter.NewCatalogProxy(entity, s.store, ctxSrc).
 			WithRowAccessChecker(s.dslRowAccessChecker()).
+			WithFieldSearchChecker(s.dslFieldSearchChecker()).
 			WithExchangeRegistrar(s.exchangeRegistrar()).
 			WithObjectFactory(s.catObjectFactory(ctxSrc))
 	case metadata.KindDocument:
@@ -274,6 +275,11 @@ func (p *docProxy) findByField(field, value string, raw any) any {
 	if r, ok := raw.(*interpreter.Ref); ok {
 		value = r.Name
 	}
+	if p.s.dslFieldSearchDenied(p.ctx(), p.entity, field) {
+		// Поиск по защищённому реквизиту восстанавливает скрытое маской значение
+		// перебором — как отбор ГДЕ в запросе, закрываем целиком (план 88E).
+		interpreter.RaiseUserError("Найти(" + p.entity.Name + "." + field + "): реквизит защищён политикой поля")
+	}
 	if p.s.rowAccessRestricted(p.ctx(), p.entity, "read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {
@@ -308,6 +314,9 @@ func (p *docProxy) findByField(field, value string, raw any) any {
 // Ссылкой (только при ровно одном совпадении) и Количеством.
 func (p *docProxy) matchByField(field string, raw any) any {
 	value := interpreter.MatchValueString(raw)
+	if p.s.dslFieldSearchDenied(p.ctx(), p.entity, field) {
+		interpreter.RaiseUserError("ПроверитьСовпадениеПоРеквизиту(" + p.entity.Name + "." + field + "): реквизит защищён политикой поля")
+	}
 	if p.s.rowAccessRestricted(p.ctx(), p.entity, "read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {
@@ -495,6 +504,9 @@ type docWriter struct {
 	loaded          bool
 	saved           bool
 	expectedVersion *int64
+	// assigned — реквизиты, присвоенные модулем в этой сессии: их чтение не
+	// маскируется, значение принадлежит текущей операции (план 88E).
+	assigned map[string]bool
 }
 
 func (w *docWriter) ctx() context.Context {
@@ -504,17 +516,27 @@ func (w *docWriter) ctx() context.Context {
 	return context.Background()
 }
 
-// Get: имя табличной части → tpProxy, иначе значение поля шапки.
+// Get: имя табличной части → tpProxy, иначе значение поля шапки. Реквизит
+// прочитанного из БД документа отдаётся по полевой политике роли (план 88E) —
+// значение, присвоенное самим модулем, возвращается как есть.
 func (w *docWriter) Get(name string) any {
 	for _, tp := range w.entity.TableParts {
 		if strings.EqualFold(tp.Name, name) {
 			return &tpProxy{obj: w.obj, tpName: tp.Name}
 		}
 	}
-	return w.obj.Get(name)
+	v := w.obj.Get(name)
+	if !w.loaded || w.assigned[strings.ToLower(strings.TrimSpace(name))] {
+		return v
+	}
+	return w.s.maskDSLValue(w.ctx(), w.entity, name, v)
 }
 
 func (w *docWriter) Set(name string, v any) {
+	if w.assigned == nil {
+		w.assigned = map[string]bool{}
+	}
+	w.assigned[strings.ToLower(strings.TrimSpace(name))] = true
 	w.obj.Set(name, v)
 }
 
@@ -569,6 +591,14 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 // read перечитывает шапку и табличные части документа из БД
 // (Документ.Прочитать()). Использует тот же путь загрузки, что и
 // Ссылка.ПолучитьОбъект().
+// forgetAssigned снимает признак «присвоено модулем» с перечисленных реквизитов:
+// после этого Get() отдаёт их по полевой политике роли, а не как есть.
+func (w *docWriter) forgetAssigned(names []string) {
+	for _, n := range names {
+		delete(w.assigned, strings.ToLower(strings.TrimSpace(n)))
+	}
+}
+
 func (w *docWriter) read() error {
 	if err := w.s.checkDSLRowAccess(w.ctx(), w.entity, "read", w.obj.ID, nil); err != nil {
 		return err
@@ -593,6 +623,9 @@ func (w *docWriter) read() error {
 	}
 	w.obj.Fields = fields
 	w.obj.TablePartRows = tpRows
+	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
+	// больше нет, а сохранённый признак снимал бы маску с реальных значений.
+	w.assigned = nil
 	w.s.enrichHeaderRefs(w.ctx(), w.entity, w.obj)
 	for _, tp := range w.entity.TableParts {
 		w.s.enrichTPRowsWithRefs(w.ctx(), tp, tpRows[tp.Name])
@@ -716,6 +749,19 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 	}
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 		return err
+	}
+	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
+	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
+	if w.loaded || w.saved {
+		restored, err := w.s.protectMaskedFieldsOnWrite(ctx, w.entity, w.obj.ID, w.obj.Fields)
+		if err != nil {
+			return err
+		}
+		// Восстановленное значение ложится в тот же набор, который читает
+		// Get(): без снятия признака «присвоено модулем» защита записи сама
+		// стала бы каналом раскрытия — после Записать() модуль прочитал бы
+		// реальное значение, которого не видел до неё.
+		w.forgetAssigned(restored)
 	}
 	w.autoNumber(ctx)
 	// Псевдо-реквизит «Ссылка» самого документа — до запуска OnWrite, как это уже
@@ -919,3 +965,14 @@ func (t *tpProxy) CallMethod(method string, args []any) any {
 	}
 	return nil
 }
+
+// dslFieldSearchChecker отдаёт полевую политику прокси справочников: поиск по
+// защищённому реквизиту обязан отклоняться и там, а не только у документов,
+// где гейт стоял с самого начала (план 88E).
+type dslFieldSearch struct{ s *Server }
+
+func (c dslFieldSearch) IsFieldSearchDenied(ctx context.Context, entity *metadata.Entity, field string) bool {
+	return c.s.dslFieldSearchDenied(ctx, entity, field)
+}
+
+func (s *Server) dslFieldSearchChecker() interpreter.FieldSearchChecker { return dslFieldSearch{s: s} }

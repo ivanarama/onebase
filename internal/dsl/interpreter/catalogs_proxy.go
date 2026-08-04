@@ -102,6 +102,15 @@ type RowAccessChecker interface {
 	AutoFillRowAccess(ctx context.Context, entity *metadata.Entity, op string, fields map[string]any) error
 }
 
+// FieldSearchChecker сообщает, что поиск по реквизиту превратил бы полевую маску
+// в оракул перебора: значения пользователь не видит, но подтверждает его по
+// факту попадания — ровно как отбор ГДЕ в запросе, который план 88E закрывает
+// целиком. Проверяющий подключается вышестоящим слоем (ui); nil сохраняет
+// прежнее доверенное поведение для тестов и headless-вызовов.
+type FieldSearchChecker interface {
+	IsFieldSearchDenied(ctx context.Context, entity *metadata.Entity, field string) bool
+}
+
 // CtxSource предоставляет «живой» контекст. Для обычного запуска это
 // статический контекст; при активной DSL-транзакции — *TxState, чей
 // Ctx() несёт открытую транзакцию — запись справочника
@@ -147,13 +156,14 @@ type CatalogObjectFactory interface {
 }
 
 type CatalogsRoot struct {
-	db         CatalogsDB
-	lookup     EntityLookup
-	ctxSrc     CtxSource
-	caller     ManagerCaller // optional — fallback к модулю менеджера в CallMethod
-	access     RowAccessChecker
-	registrar  ExchangeRegistrar
-	objFactory CatalogObjectFactory
+	db          CatalogsDB
+	lookup      EntityLookup
+	ctxSrc      CtxSource
+	caller      ManagerCaller // optional — fallback к модулю менеджера в CallMethod
+	access      RowAccessChecker
+	fieldSearch FieldSearchChecker
+	registrar   ExchangeRegistrar
+	objFactory  CatalogObjectFactory
 }
 
 // NewCatalogsRoot creates the root object for injection as DSL extraVar.
@@ -176,6 +186,14 @@ func (r *CatalogsRoot) WithRowAccessChecker(c RowAccessChecker) *CatalogsRoot {
 	return r
 }
 
+// WithFieldSearchChecker подключает полевую политику к поиску по реквизиту
+// (НайтиПоРеквизиту/НайтиПоНаименованию/НайтиПоКоду/ПроверитьСовпадение…).
+// Возвращает себя для цепочки.
+func (r *CatalogsRoot) WithFieldSearchChecker(c FieldSearchChecker) *CatalogsRoot {
+	r.fieldSearch = c
+	return r
+}
+
 // WithExchangeRegistrar подключает регистрацию изменений в планах обмена для
 // прямых записей справочников из DSL. Возвращает себя для цепочки.
 func (r *CatalogsRoot) WithExchangeRegistrar(reg ExchangeRegistrar) *CatalogsRoot {
@@ -195,7 +213,8 @@ func (r *CatalogsRoot) Get(entityName string) any {
 	if entity == nil || entity.Kind != metadata.KindCatalog {
 		return nil
 	}
-	return &CatalogProxy{entity: entity, db: r.db, ctxSrc: r.ctxSrc, caller: r.caller, access: r.access, registrar: r.registrar, objFactory: r.objFactory}
+	return &CatalogProxy{entity: entity, db: r.db, ctxSrc: r.ctxSrc, caller: r.caller,
+		access: r.access, fieldSearch: r.fieldSearch, registrar: r.registrar, objFactory: r.objFactory}
 }
 
 func (r *CatalogsRoot) Set(_ string, _ any) {}
@@ -206,13 +225,14 @@ func (r *CatalogsRoot) Set(_ string, _ any) {}
 //	Справочники.ТипЦен.НайтиПоНаименованию("X")     → *Ref or nil
 //	Справочники.Контрагент.Создать()                → *CatalogRecordWriter
 type CatalogProxy struct {
-	entity     *metadata.Entity
-	db         CatalogsDB
-	ctxSrc     CtxSource
-	caller     ManagerCaller // optional — для вызовов методов модуля менеджера
-	access     RowAccessChecker
-	registrar  ExchangeRegistrar
-	objFactory CatalogObjectFactory
+	entity      *metadata.Entity
+	db          CatalogsDB
+	ctxSrc      CtxSource
+	caller      ManagerCaller // optional — для вызовов методов модуля менеджера
+	access      RowAccessChecker
+	fieldSearch FieldSearchChecker
+	registrar   ExchangeRegistrar
+	objFactory  CatalogObjectFactory
 }
 
 // NewCatalogProxy создаёт менеджера справочника для привязки к ссылкам,
@@ -227,6 +247,13 @@ func NewCatalogProxy(entity *metadata.Entity, db CatalogsDB, ctxSrc CtxSource) *
 // catalog proxy, usually one used as a Ref manager for values loaded from DB.
 func (p *CatalogProxy) WithRowAccessChecker(c RowAccessChecker) *CatalogProxy {
 	p.access = c
+	return p
+}
+
+// WithFieldSearchChecker подключает полевую политику к поиску по реквизиту у
+// standalone-прокси. Для цепочки.
+func (p *CatalogProxy) WithFieldSearchChecker(c FieldSearchChecker) *CatalogProxy {
+	p.fieldSearch = c
 	return p
 }
 
@@ -408,10 +435,24 @@ func (p *CatalogProxy) LoadObject(uuidStr string) (any, error) {
 	}, nil
 }
 
+// denyProtectedFieldSearch закрывает поиск по реквизиту под маской: попадание
+// подтверждает скрытое значение, то есть восстанавливает его перебором — как
+// отбор ГДЕ в запросе, отклоняем целиком (план 88E). Тот же гейт стоит у
+// документов, см. ui/dsl_documents.go.
+func (p *CatalogProxy) denyProtectedFieldSearch(call, field string) {
+	if p.fieldSearch == nil || strings.TrimSpace(field) == "" {
+		return
+	}
+	if p.fieldSearch.IsFieldSearchDenied(p.ctx(), p.entity, field) {
+		RaiseUserError(call + "(" + p.entity.Name + "." + field + "): реквизит защищён политикой поля")
+	}
+}
+
 func (p *CatalogProxy) findByField(field string, args []any) any {
 	if len(args) == 0 {
 		return nil
 	}
+	p.denyProtectedFieldSearch("Найти", field)
 	value, ok := args[0].(string)
 	if !ok {
 		if r, ok := args[0].(*Ref); ok {
@@ -450,6 +491,7 @@ func (p *CatalogProxy) findByField(field string, args []any) any {
 // matchByField — safe-match по реквизиту: возвращает Структуру со Статусом,
 // Ссылкой (только при ровно одном совпадении) и Количеством.
 func (p *CatalogProxy) matchByField(field string, raw any) any {
+	p.denyProtectedFieldSearch("ПроверитьСовпадениеПоРеквизиту", field)
 	value := MatchValueString(raw)
 	if p.rowAccessRestricted("read") {
 		ids, displays, err := p.visibleMatches(field, value)

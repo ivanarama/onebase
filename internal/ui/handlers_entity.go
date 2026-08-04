@@ -1183,7 +1183,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// План 88: не дать пользователю, видящему поле лишь замаскированным,
 	// перезаписать реальное значение маской/подделкой — восстанавливаем
 	// исходные значения масковых полей из БД до проверок и Save.
-	if err := s.protectMaskedFieldsOnWrite(r.Context(), entity, id, obj.Fields); err != nil {
+	if _, err := s.protectMaskedFieldsOnWrite(r.Context(), entity, id, obj.Fields); err != nil {
 		http.Error(w, s.errText(r, err), 500)
 		return
 	}
