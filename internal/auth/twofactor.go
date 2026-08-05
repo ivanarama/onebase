@@ -25,7 +25,16 @@ var (
 	ErrInvalidSecondFactor = errors.New("auth: неверный код подтверждения")
 	// ErrTwoFactorNotEnabled — второй фактор у учётки не настроен.
 	ErrTwoFactorNotEnabled = errors.New("auth: второй фактор не настроен")
+	// ErrInvalidBindTicket — код привязки не подошёл: неверный, просроченный или
+	// уже использованный. Формулировка одна на все случаи (как у кода 2FA).
+	ErrInvalidBindTicket = errors.New("auth: неверный или просроченный код привязки")
 )
+
+// BindTicketTTL — сколько живёт выданный администратором одноразовый код
+// привязки второго фактора (issue #577). Сутки: администратор передаёт код
+// пользователю вне системы (звонок, мессенджер), и тому нужно время им
+// воспользоваться, но вечно висеть коду незачем.
+const BindTicketTTL = 24 * time.Hour
 
 // TwoFactorInfo — состояние второго фактора учётки для экранов профиля и
 // администрирования.
@@ -69,6 +78,19 @@ func (r *Repo) ensureTwoFactorSchema(ctx context.Context) error {
 	)`, d.TypeUUID(), d.TypeTimestamp())
 	if _, err := r.db.Exec(ctx, codesDDL); err != nil {
 		return fmt.Errorf("auth: create _auth_backup_codes: %w", err)
+	}
+	// Одноразовые коды привязки второго фактора (issue #577). По одному активному
+	// на учётку: переиздание заменяет прежний. Срок — Unix-секунды в BIGINT, а не
+	// timestamp: сравнение «не истёк» одинаково работает на обоих диалектах, без
+	// разбора часовых поясов. В базе только хэш кода — как у резервных кодов.
+	ticketsDDL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS _auth_bind_tickets (
+		user_id %s NOT NULL REFERENCES _users(id) ON DELETE CASCADE,
+		code_hash TEXT NOT NULL,
+		expires_at BIGINT NOT NULL,
+		PRIMARY KEY (user_id)
+	)`, d.TypeUUID())
+	if _, err := r.db.Exec(ctx, ticketsDDL); err != nil {
+		return fmt.Errorf("auth: create _auth_bind_tickets: %w", err)
 	}
 	return nil
 }
@@ -259,6 +281,54 @@ func (r *Repo) consumeBackupCode(ctx context.Context, userID, code string) error
 	}
 	if tag.RowsAffected == 0 {
 		return ErrInvalidSecondFactor
+	}
+	return nil
+}
+
+// IssueBindTicket выдаёт одноразовый код привязки второго фактора для учётки
+// (issue #577): администратор передаёт его пользователю, тот вводит на входе,
+// когда политика требует 2FA, а самопривязка по паролю выключена. Возвращает
+// код открытым текстом — единственный раз, когда он виден; в базе лежит только
+// хэш. Прежний код учётки при этом гасится: активный код один.
+func (r *Repo) IssueBindTicket(ctx context.Context, userID string) (string, error) {
+	code, err := generateBackupCode()
+	if err != nil {
+		return "", err
+	}
+	expires := time.Now().Add(BindTicketTTL).Unix()
+	err = r.db.WithTxScope(ctx, func(txCtx context.Context) error {
+		d := r.db.Dialect()
+		del := fmt.Sprintf(`DELETE FROM _auth_bind_tickets WHERE user_id = %s`, d.Placeholder(1))
+		if _, err := r.db.Exec(txCtx, del, userID); err != nil {
+			return err
+		}
+		ins := fmt.Sprintf(`INSERT INTO _auth_bind_tickets (user_id, code_hash, expires_at) VALUES (%s, %s, %s)`,
+			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+		_, err := r.db.Exec(txCtx, ins, userID, hashBackupCode(code), expires)
+		return err
+	})
+	if err != nil {
+		return "", fmt.Errorf("auth: код привязки: %w", err)
+	}
+	return code, nil
+}
+
+// ConsumeBindTicket проверяет и гасит код привязки учётки. Одноразовость и срок
+// обеспечивает сам DELETE: строка удаляется ровно один раз и только пока не
+// истекла, параллельная попытка с тем же кодом получит 0 изменённых строк.
+func (r *Repo) ConsumeBindTicket(ctx context.Context, userID, code string, now time.Time) error {
+	if strings.TrimSpace(code) == "" {
+		return ErrInvalidBindTicket
+	}
+	d := r.db.Dialect()
+	q := fmt.Sprintf(`DELETE FROM _auth_bind_tickets WHERE user_id = %s AND code_hash = %s AND expires_at > %s`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+	tag, err := r.db.Exec(ctx, q, userID, hashBackupCode(code), now.Unix())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected == 0 {
+		return ErrInvalidBindTicket
 	}
 	return nil
 }

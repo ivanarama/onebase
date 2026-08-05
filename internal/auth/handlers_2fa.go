@@ -75,6 +75,24 @@ var twoFactorEnrollTmpl = template.Must(template.New("2fa-enroll").Parse(`<!DOCT
 </div>
 </body></html>`))
 
+var twoFactorBindTmpl = template.Must(template.New("2fa-bind").Parse(`<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Код привязки — onebase</title>
+<style>` + twoFactorCSS + `</style></head>
+<body>
+<div class="box">
+  <h2>🔐 Требуется второй фактор</h2>
+  <p class="sub">Политика безопасности этой базы требует двухфакторной аутентификации для учётной записи <b>{{.Login}}</b>. Чтобы привязать его, получите у администратора одноразовый <b>код привязки</b> и введите его ниже — после этого откроется настройка приложения-аутентификатора.</p>
+  {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+  <form method="POST" action="{{.Action}}">
+    <label>Код привязки</label>
+    <input name="code" autofocus autocomplete="off" inputmode="text" placeholder="abcd-efgh-ijkl-mnop">
+    <button class="btn" type="submit">Продолжить</button>
+  </form>
+  <a class="back" href="{{.CancelURL}}">← Войти под другой учётной записью</a>
+</div>
+</body></html>`))
+
 var backupCodesTmpl = template.Must(template.New("2fa-codes").Parse(`<!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>Резервные коды — onebase</title>
@@ -131,15 +149,22 @@ func (h *Handlers) clearChallengeCookie(w http.ResponseWriter, r *http.Request) 
 
 // beginSecondFactor выдаёт challenge и показывает нужный шаг: ввод кода либо
 // первичную настройку. Вызывается из формы входа после проверки пароля.
-func (h *Handlers) beginSecondFactor(w http.ResponseWriter, r *http.Request, user *User, enroll bool, returnURL string) {
+//
+// enrollAuthorized разрешает показать QR и секрет сразу (самопривязка). При
+// enroll и enrollAuthorized=false секрет не генерируется вовсе — пользователю
+// сперва предлагается ввести одноразовый код привязки от администратора
+// (issue #577), иначе один предъявленный пароль закреплял бы за собой второй
+// фактор чужой учётки.
+func (h *Handlers) beginSecondFactor(w http.ResponseWriter, r *http.Request, user *User, enroll, enrollAuthorized bool, returnURL string) {
 	ch := Challenge{UserID: user.ID, Login: user.Login, Enroll: enroll, ReturnURL: returnURL}
-	if enroll {
+	if enroll && enrollAuthorized {
 		secret, err := GenerateTOTPSecret()
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		ch.Secret = secret
+		ch.EnrollAuthorized = true
 	}
 	token, err := h.challenges().Issue(ch)
 	if err != nil {
@@ -164,6 +189,12 @@ func (h *Handlers) renderTwoFactor(w http.ResponseWriter, ch Challenge, errMsg s
 	}
 	if !ch.Enroll {
 		renderTemplate(w, twoFactorTmpl, data)
+		return
+	}
+	if !ch.EnrollAuthorized {
+		// Привязка ещё не разрешена: сперва одноразовый код от администратора,
+		// QR и секрет не показываем (issue #577).
+		renderTemplate(w, twoFactorBindTmpl, data)
 		return
 	}
 	data["QRURL"] = "/login/2fa/qr"
@@ -281,6 +312,12 @@ func (h *Handlers) TwoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(r.FormValue("code"))
 
 	if ch.Enroll {
+		if !ch.EnrollAuthorized {
+			// Шаг «введите код привязки»: код из формы — это одноразовый код от
+			// администратора, а не код TOTP (issue #577).
+			h.completeBindTicket(w, r, ch, token, code)
+			return
+		}
 		h.completeEnrollment(w, r, ch, token, code)
 		return
 	}
@@ -291,10 +328,47 @@ func (h *Handlers) TwoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 	h.finishSecondFactor(w, r, ch, token, "login_2fa")
 }
 
+// completeBindTicket проверяет одноразовый код привязки от администратора и,
+// если он подошёл, переводит вход к настройке 2FA: генерирует секрет и
+// показывает QR. Секрет появляется только здесь — привязать второй фактор по
+// одному паролю нельзя (issue #577).
+func (h *Handlers) completeBindTicket(w http.ResponseWriter, r *http.Request, ch Challenge, token, code string) {
+	if err := h.Repo.ConsumeBindTicket(r.Context(), ch.UserID, code, time.Now()); err != nil {
+		h.failSecondFactor(w, r, ch, token, err)
+		return
+	}
+	secret, err := GenerateTOTPSecret()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Правим challenge на месте — тот же токен и кука. Счётчик попыток сбрасываем:
+	// неудачные вводы кода привязки не должны съедать попытки ввода кода из
+	// приложения на следующем шаге.
+	if !h.challenges().Update(token, func(c *Challenge) {
+		c.EnrollAuthorized = true
+		c.Secret = secret
+		c.attempts = 0
+	}) {
+		h.clearChallengeCookie(w, r)
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	ch.EnrollAuthorized = true
+	ch.Secret = secret
+	h.renderTwoFactor(w, ch, "")
+}
+
 // completeEnrollment включает второй фактор кодом из приложения и показывает
 // резервные коды. Сессия создаётся здесь же: пользователь уже подтвердил и
 // пароль, и владение секретом.
 func (h *Handlers) completeEnrollment(w http.ResponseWriter, r *http.Request, ch Challenge, token, code string) {
+	if !ch.EnrollAuthorized {
+		// Защита в глубину: сюда нельзя попасть, минуя код привязки, но если
+		// попали — второй фактор не включаем (issue #577).
+		h.failSecondFactor(w, r, ch, token, ErrInvalidSecondFactor)
+		return
+	}
 	step, ok := VerifyTOTP(ch.Secret, code, time.Now(), 0)
 	if !ok {
 		h.failSecondFactor(w, r, ch, token, ErrInvalidSecondFactor)
@@ -374,6 +448,9 @@ func (h *Handlers) failSecondFactor(w http.ResponseWriter, r *http.Request, ch C
 		return
 	}
 	msg := "Неверный код подтверждения"
+	if ch.Enroll && !ch.EnrollAuthorized {
+		msg = "Неверный или просроченный код привязки"
+	}
 	if cause != nil && !strings.Contains(cause.Error(), "неверный код") {
 		authLog().Warn("сбой проверки второго фактора", "логин", ch.Login, "err", cause)
 	}

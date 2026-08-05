@@ -40,6 +40,12 @@ type Challenge struct {
 	// после подтверждения кодом: иначе брошенная на полпути настройка оставила
 	// бы учётку с секретом, которого нет ни в одном телефоне.
 	Secret string
+	// EnrollAuthorized: привязка второго фактора на входе разрешена — можно
+	// показывать QR и секрет. При Enroll и false пользователю сперва предлагается
+	// ввести одноразовый код привязки от администратора (issue #577): секрет не
+	// генерируется, пока код не предъявлен. Разрешает привязку либо политика
+	// SelfEnroll2FA, либо вход через SSO (личность подтверждена провайдером).
+	EnrollAuthorized bool
 	// ReturnURL — куда вернуть после успешного входа.
 	ReturnURL string
 	// Configurator: вход в конфигуратор лаунчера, а не в Предприятие.
@@ -117,6 +123,20 @@ func (c *Challenges) Fail(token string) bool {
 		delete(c.items, token)
 		return false
 	}
+	return true
+}
+
+// Update меняет challenge на месте, сохраняя тот же токен (и куку). Нужно, чтобы
+// перевести привязку из шага «введите код от администратора» в шаг «отсканируйте
+// QR», не переиздавая challenge. false — challenge истёк между чтением и правкой.
+func (c *Challenges) Update(token string, fn func(*Challenge)) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch, ok := c.items[token]
+	if !ok {
+		return false
+	}
+	fn(ch)
 	return true
 }
 
