@@ -101,25 +101,62 @@ func TestRun_RefillsPageAfterFilteredRows(t *testing.T) {
 	}
 }
 
-// Когда добор упёрся в лимит пачек, а индекс не дочитан, выдача обязана
-// признаться, что результаты ещё есть.
-func TestRun_ReportsMoreWhenBatchesExhausted(t *testing.T) {
+// Пустая выдача по значению, скрытому правами, обязана быть НЕОТЛИЧИМА от выдачи
+// по заведомо отсутствующему значению — при любом числе скрытых совпадений.
+// Иначе has_more работает оракулом: подтверждает существование строки, которую
+// видеть нельзя (issue #578). Раньше добор, упёршийся в лимит пачек на сплошь
+// скрытой выдаче, ставил has_more=true — этот тест на старом коде падал.
+func TestRun_HiddenMatchesIndistinguishableFromAbsent(t *testing.T) {
 	ctx := context.Background()
-	db, e := newSearchFixture(t, 300)
+	db, e := newSearchFixture(t, 300) // 300 строк «ООО Ромашка», все скрыты политикой
 
-	deps := fakeDeps{
+	hiddenAll := fakeDeps{
 		entities: []*metadata.Entity{e},
 		allowRow: func(map[string]any) bool { return false }, // ничего не видно
 	}
-	page, err := Run(ctx, db, deps, "ромашка", 10, 0)
+	hidden, err := Run(ctx, db, hiddenAll, "ромашка", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 0 {
-		t.Fatalf("все строки отсеяны политикой, выдача должна быть пустой: %+v", page)
+	absent, err := Run(ctx, db, hiddenAll, "нетакогослова", 10, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !page.HasMore {
-		t.Fatal("индекс дочитан не до конца — выдача не должна утверждать, что результатов больше нет")
+	if len(hidden.Items) != 0 || len(absent.Items) != 0 {
+		t.Fatalf("обе выдачи должны быть пустыми: hidden=%+v absent=%+v", hidden, absent)
+	}
+	if hidden.HasMore || hidden.HasMore != absent.HasMore {
+		t.Fatalf("has_more по скрытому значению отличается от отсутствующего (оракул): hidden=%v absent=%v", hidden.HasMore, absent.HasMore)
+	}
+	if (hidden.Cursor == "") != (absent.Cursor == "") {
+		t.Fatalf("курсор выдаёт наличие скрытых совпадений: hidden=%q absent=%q", hidden.Cursor, absent.Cursor)
+	}
+	// Бюджет просмотра не даёт вычитывать весь индекс на каждый запрос.
+	if hidden.NextOffset > 10*scanBudgetFactor {
+		t.Fatalf("бюджет просмотра превышен (вычитан весь индекс?): NextOffset=%d", hidden.NextOffset)
+	}
+}
+
+// Полная видимая страница сообщает «есть ещё» и продолжает листаться; неполная
+// (видимых меньше страницы) — нет.
+func TestRun_HasMoreReflectsVisiblePageFill(t *testing.T) {
+	ctx := context.Background()
+	db, e := newSearchFixture(t, 5) // 5 видимых строк
+	deps := fakeDeps{entities: []*metadata.Entity{e}}
+
+	full, err := Run(ctx, db, deps, "ромашка", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Items) != 2 || !full.HasMore {
+		t.Fatalf("полная страница должна сообщать has_more: %+v", full)
+	}
+	tail, err := Run(ctx, db, deps, "ромашка", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tail.Items) != 5 || tail.HasMore {
+		t.Fatalf("неполная страница не должна сообщать has_more: %+v", tail)
 	}
 }
 
