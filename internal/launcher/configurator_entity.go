@@ -130,6 +130,33 @@ func findEntityFilePath(dir, entityName string) (string, error) {
 	return "", fmt.Errorf("entity %q not found", entityName)
 }
 
+// findEntityConfigFile возвращает путь и содержимое YAML справочника/документа
+// с именем entityName. Работает в обоих режимах хранения (файлы проекта и
+// конфигурация в БД) и опознаёт объект по ключу name: внутри YAML — имя файла
+// с именем объекта совпадать не обязано. Третье значение false — не нашли.
+func (h *handler) findEntityConfigFile(ctx context.Context, b *Base, entityName string) (string, []byte, bool) {
+	files, err := h.listConfiguratorFiles(ctx, b)
+	if err != nil {
+		return "", nil, false
+	}
+	for _, f := range files {
+		p := filepath.ToSlash(f.Path)
+		if !strings.HasPrefix(p, "catalogs/") && !strings.HasPrefix(p, "documents/") {
+			continue
+		}
+		if ext := strings.ToLower(filepath.Ext(p)); ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		var hdr struct {
+			Name string `yaml:"name"`
+		}
+		if yaml.Unmarshal(f.Content, &hdr) == nil && strings.EqualFold(hdr.Name, entityName) {
+			return p, f.Content, true
+		}
+	}
+	return "", nil, false
+}
+
 func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity) {
 	// Устойчивые id (план 81) переносим из прежнего состояния файла и выдаём
 	// новым реквизитам — иначе редактор стирал бы их при каждом сохранении.
@@ -274,60 +301,28 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entityName := r.FormValue("entity")
-	// Имя сущности приходит из формы и ниже попадает в путь, по которому файл
-	// читается и ПЕРЕЗАПИСЫВАЕТСЯ. nameToFilename только приводит к нижнему
-	// регистру и разделители не вычищает, а filepath.Join схлопывает «..» — то
-	// есть без этой проверки «entity=../../foo» уводило запись за пределы
-	// каталога проекта. Соседние обработчики (модуль, обработка, отчёт) такую
-	// проверку делают; здесь её не было.
+	// Имя сущности приходит из формы. Путь к файлу из него больше не собирается
+	// (см. findEntityConfigFile ниже), но проверку оставляем первым рубежом:
+	// «entity=../../foo» — заведомо не объект конфигурации, и отвечать на него
+	// надо понятной ошибкой, а не поиском по всему проекту.
 	if !validObjectName(entityName) {
 		data := h.loadCfgData(r.Context(), b, "tree")
 		data.Error = tr(lang, "Недопустимое имя объекта")
 		renderCfg(w, r, data)
 		return
 	}
-	dir := b.Path
-	if b.ConfigSource == "database" {
-		dir, err = workspacePath(b.ID)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-	}
-
-	// Find entity YAML file.
-	//
-	// SafeJoin — второй рубеж: он подтверждает, что собранный путь остался
-	// внутри dir, даже если проверка имени выше однажды ослабнет.
-	entityDir := ""
-	for _, sub := range []string{"catalogs", "documents"} {
-		p, jerr := configdb.SafeJoin(dir, sub+"/"+nameToFilename(entityName)+".yaml")
-		if jerr != nil {
-			continue
-		}
-		if _, e := os.Stat(p); e == nil { //nolint:gosec // G703: p построен SafeJoin, имя проверено validObjectName выше
-			entityDir = sub
-			break
-		}
-	}
-	if entityDir == "" {
+	// YAML сущности ищем по содержимому (ключ name:), а не по имени файла.
+	// Прежний код собирал путь из имени объекта и смотрел ТОЛЬКО на диск: при
+	// конфигурации в БД файлов там нет вовсе (dir — пустой каталог workspace,
+	// наполняемый лишь ручной выгрузкой), и «Сохранить формы» отвечало «Файл
+	// сущности не найден» (issue #572). Имя файла к тому же не обязано совпадать
+	// с именем объекта — после импорта из 1С или переименования не совпадало и в
+	// файловом режиме. Поиск по содержимому решает оба случая и заодно снимает
+	// имя из запроса с пути: путь берётся из перечня файлов конфигурации.
+	relPath, raw, found := h.findEntityConfigFile(r.Context(), b, entityName)
+	if !found {
 		data := h.loadCfgData(r.Context(), b, "tree")
 		data.Error = tr(lang, "Файл сущности не найден") + ": " + entityName
-		renderCfg(w, r, data)
-		return
-	}
-
-	filePath, jerr := configdb.SafeJoin(dir, entityDir+"/"+nameToFilename(entityName)+".yaml")
-	if jerr != nil {
-		data := h.loadCfgData(r.Context(), b, "tree")
-		data.Error = tr(lang, "Недопустимое имя объекта")
-		renderCfg(w, r, data)
-		return
-	}
-	raw, err := os.ReadFile(filePath) //nolint:gosec // G703: filePath построен SafeJoin, имя проверено validObjectName
-	if err != nil {
-		data := h.loadCfgData(r.Context(), b, "tree")
-		data.Error = tr(lang, "Ошибка чтения") + ": " + err.Error()
 		renderCfg(w, r, data)
 		return
 	}
@@ -411,7 +406,9 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
-	if err := os.WriteFile(filePath, out, fsmode.File); err != nil { //nolint:gosec // G703: filePath построен SafeJoin, имя проверено validObjectName
+	// writeConfigFileRaw сам выбирает хранилище: файл проекта или запись
+	// _onebase_config — состав форм сохраняется в обоих режимах одинаково.
+	if err := h.writeConfigFileRaw(r.Context(), b, relPath, out); err != nil {
 		data.Error = tr(lang, "Ошибка сохранения") + ": " + err.Error()
 		renderCfg(w, r, data)
 		return

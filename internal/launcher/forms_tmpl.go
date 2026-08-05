@@ -155,9 +155,21 @@ const tplFormsList = `
 
 <div class="panel">
   <h2>Создать форму</h2>
+  <p style="color:#64748b;font-size:12px;margin-top:0">
+    Вид формы определяет, где она подставится: <b>object</b> — карточка элемента/документа,
+    <b>list</b> — список сущности (элементы формы задают состав и порядок колонок),
+    <b>choice</b> — форма выбора. Имя формы на вид не влияет — его задаёт этот список.
+  </p>
   <form action="/bases/{{.Base.ID}}/configurator/forms/edit" method="GET" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <label>Сущность: <input type="text" name="entity" placeholder="Контрагент" required style="padding:6px 10px;border:1px solid #d0d7e3;border-radius:5px;font-size:13px"></label>
     <label>Имя формы: <input type="text" name="name" placeholder="ФормаОбъекта" required style="padding:6px 10px;border:1px solid #d0d7e3;border-radius:5px;font-size:13px"></label>
+    <label>Вид формы: <select name="kind" style="padding:6px 10px;border:1px solid #d0d7e3;border-radius:5px;font-size:13px">
+      <option value="object">карточка объекта (object)</option>
+      <option value="list">список (list)</option>
+      <option value="choice">выбор (choice)</option>
+      <option value="folder">группа (folder)</option>
+      <option value="custom">произвольная (custom)</option>
+    </select></label>
     <button type="submit" class="btn btn-primary">Создать</button>
   </form>
 </div>

@@ -554,7 +554,7 @@ func TestNewFormYAMLTemplate_ScaffoldByKind(t *testing.T) {
 		if len(attrs) != 0 {
 			t.Fatalf("ожидалось 0 реквизитов, получили %d", len(attrs))
 		}
-		y := newFormYAMLTemplate("ПустаяОбработка", "ФормаОбъекта", attrs)
+		y := newFormYAMLTemplate("ПустаяОбработка", "ФормаОбъекта", "object", attrs)
 		if strings.Contains(y, "Наименование") {
 			t.Errorf("шаблон обработки не должен содержать «Наименование»:\n%s", y)
 		}
@@ -567,7 +567,7 @@ func TestNewFormYAMLTemplate_ScaffoldByKind(t *testing.T) {
 
 	t.Run("обработка с параметрами — поля из параметров", func(t *testing.T) {
 		attrs := objectScaffoldAttrs(proj, "ЗагрузкаЦен")
-		y := newFormYAMLTemplate("ЗагрузкаЦен", "ФормаОбъекта", attrs)
+		y := newFormYAMLTemplate("ЗагрузкаЦен", "ФормаОбъекта", "object", attrs)
 		if strings.Contains(y, "Наименование") {
 			t.Errorf("шаблон обработки не должен содержать «Наименование»:\n%s", y)
 		}
@@ -582,7 +582,7 @@ func TestNewFormYAMLTemplate_ScaffoldByKind(t *testing.T) {
 
 	t.Run("справочник — поля из метаданных, включая Наименование", func(t *testing.T) {
 		attrs := objectScaffoldAttrs(proj, "Контрагент")
-		y := newFormYAMLTemplate("Контрагент", "ФормаОбъекта", attrs)
+		y := newFormYAMLTemplate("Контрагент", "ФормаОбъекта", "object", attrs)
 		if !strings.Contains(y, "data_path: Объект.Наименование") {
 			t.Errorf("шаблон справочника должен содержать поле «Наименование»:\n%s", y)
 		}
@@ -596,7 +596,7 @@ func TestNewFormYAMLTemplate_ScaffoldByKind(t *testing.T) {
 		if attrs := objectScaffoldAttrs(proj, "НетТакого"); attrs != nil {
 			t.Errorf("ожидался nil для неизвестного объекта, получили %v", attrs)
 		}
-		y := newFormYAMLTemplate("НетТакого", "ФормаОбъекта", nil)
+		y := newFormYAMLTemplate("НетТакого", "ФормаОбъекта", "object", nil)
 		if strings.Contains(y, "Наименование") {
 			t.Errorf("фолбэк-шаблон не должен содержать «Наименование»:\n%s", y)
 		}

@@ -286,11 +286,16 @@ func (h *handler) configuratorFormsEdit(w http.ResponseWriter, r *http.Request) 
 
 	if form == nil {
 		// «Новая форма» — заранее заполненный шаблон YAML из реальных реквизитов.
+		// Вид формы приходит из списка на странице создания: раньше он был жёстко
+		// «object», и форму списка через UI создать было нельзя — сущность
+		// продолжала показывать в списке все поля, как бы форма ни называлась
+		// (issue #572).
+		kind := normFormKind(r.URL.Query().Get("kind"))
 		form = &cfgManagedForm{
 			Entity: entity,
 			Name:   name,
-			Kind:   "object",
-			YAML:   newFormYAMLTemplate(entity, name, attrs),
+			Kind:   kind,
+			YAML:   newFormYAMLTemplate(entity, name, kind, attrs),
 		}
 	}
 
@@ -388,32 +393,86 @@ func objectScaffoldTableParts(proj *project.Project, entity string) []formTableP
 	return nil
 }
 
+// normFormKind сводит вид формы из запроса к известным значениям. Пустое или
+// незнакомое — "object" (прежнее поведение и самый частый случай).
+func normFormKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "list":
+		return "list"
+	case "choice":
+		return "choice"
+	case "folder":
+		return "folder"
+	case "custom":
+		return "custom"
+	default:
+		return "object"
+	}
+}
+
+// formKindTitle — заголовок формы по умолчанию для её вида.
+func formKindTitle(kind string) string {
+	switch kind {
+	case "list":
+		return "Список"
+	case "choice":
+		return "Выбор"
+	case "folder":
+		return "Группа"
+	case "custom":
+		return "Форма"
+	default:
+		return "Карточка"
+	}
+}
+
 // newFormYAMLTemplate — начальный YAML при создании новой формы. Группа
 // «Реквизиты» заполняется реальными реквизитами объекта (attrs); если их нет
 // (например, обработка без параметров) — группа остаётся пустой, без хардкодного
 // поля «Наименование» (issue #133).
-func newFormYAMLTemplate(entity, name string, attrs []formScaffoldAttr) string {
+//
+// Форма списка (kind: list) описывает не карточку, а КОЛОНКИ списка: элементы
+// кладутся плоско, без группы — группировать колонки списка не во что.
+func newFormYAMLTemplate(entity, name, kind string, attrs []formScaffoldAttr) string {
 	if name == "" {
 		name = "ФормаОбъекта"
 	}
 	if entity == "" {
 		entity = "Сущность"
 	}
+	kind = normFormKind(kind)
 	var b strings.Builder
 	fmt.Fprintf(&b, `schema: onebase.form/v1
 form:
   name: %s
-  kind: object
+  kind: %s
   entity: %s
   title:
-    ru: "Карточка"
+    ru: %s
 
 elements:
-  - kind: ГруппаФормы
+`, name, kind, entity, yamlDQString(formKindTitle(kind)))
+
+	if kind == "list" {
+		if len(attrs) == 0 {
+			return strings.TrimSuffix(b.String(), "elements:\n") + "elements: []\n"
+		}
+		for _, a := range attrs {
+			fmt.Fprintf(&b, `  - kind: ПолеВвода
+    name: Поле%s
+    title:
+      ru: %s
+    data_path: Объект.%s
+`, a.Name, yamlDQString(scaffoldAttrTitle(a)), a.Name)
+		}
+		return b.String()
+	}
+
+	b.WriteString(`  - kind: ГруппаФормы
     name: Реквизиты
     title:
       ru: "Реквизиты"
-`, name, entity)
+`)
 	if len(attrs) == 0 {
 		// Реквизитов нет — пустая группа; пользователь добавит элементы сам.
 		b.WriteString("    children: []\n")
@@ -421,18 +480,22 @@ elements:
 	}
 	b.WriteString("    children:\n")
 	for _, a := range attrs {
-		title := a.Title
-		if title == "" {
-			title = a.Name
-		}
 		fmt.Fprintf(&b, `      - kind: ПолеВвода
         name: Поле%s
         title:
           ru: %s
         data_path: Объект.%s
-`, a.Name, yamlDQString(title), a.Name)
+`, a.Name, yamlDQString(scaffoldAttrTitle(a)), a.Name)
 	}
 	return b.String()
+}
+
+// scaffoldAttrTitle — подпись реквизита для заготовки: синоним, иначе имя.
+func scaffoldAttrTitle(a formScaffoldAttr) string {
+	if a.Title != "" {
+		return a.Title
+	}
+	return a.Name
 }
 
 // yamlDQString оборачивает строку в безопасный YAML double-quoted скаляр
