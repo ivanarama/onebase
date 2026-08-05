@@ -126,6 +126,11 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 	if err := r.EnsureAPITokenSchema(ctx); err != nil {
 		return err
 	}
+	// Второй фактор и привязка к внешнему провайдеру (план 84). Колонки
+	// добавляются всегда, но пустые: пока 2FA/SSO не включены, вход не меняется.
+	if err := r.ensureTwoFactorSchema(ctx); err != nil {
+		return err
+	}
 	// Idempotent user migrations. Ignore only an actual duplicate-column error:
 	// swallowing SQLITE_BUSY, permission, or connection errors leaves a partially
 	// migrated schema that fails later on unrelated requests.

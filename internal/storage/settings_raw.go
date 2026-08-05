@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -105,14 +106,52 @@ func (db *DB) SecretCarriers(ctx context.Context) ([]SecretCarrier, error) {
 					}
 				}
 			}
+		case e.Key == "auth.providers":
+			// Клиентские секреты провайдеров единого входа (план 84).
+			for id, secret := range providerSecrets(e.Value) {
+				out = append(out, SecretCarrier{"auth.provider." + id + ".client_secret", secret})
+			}
 		case strings.HasPrefix(e.Key, "exchange.token."):
 			if strings.TrimSpace(e.Value) != "" {
 				out = append(out, SecretCarrier{e.Key, e.Value})
 			}
 		}
 	}
+	// Секреты TOTP лежат не в _settings, а колонкой _users.totp_secret (план 84).
+	// Без них `onebase secret list` показывал ноль носителей, а `secret rotate`
+	// печатал «перешифровывать нечего» — и после штатной ротации мастер-ключа
+	// код из приложения переставал приниматься у всех сразу, без диагностики.
+	totp, err := db.TOTPSecretCarriers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, totp...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// providerSecrets достаёт client_secret каждого провайдера входа. Разбор
+// нетипизированный намеренно: типы провайдеров живут в internal/auth, который
+// сам зависит от storage, и типизировать их здесь означало бы цикл импортов.
+// Битый JSON пропускается — им занимается админка, а не перечисление секретов.
+func providerSecrets(raw string) map[string]string {
+	var providers []map[string]any
+	if err := json.Unmarshal([]byte(raw), &providers); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(providers))
+	for i, p := range providers {
+		secret, _ := p["client_secret"].(string)
+		if strings.TrimSpace(secret) == "" {
+			continue
+		}
+		id, _ := p["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			id = fmt.Sprintf("#%d", i+1)
+		}
+		out[id] = secret
+	}
+	return out
 }
 
 // secretHeaderName отделяет заголовки с учётными данными от служебных
@@ -163,4 +202,68 @@ func (db *DB) SaveSetting(ctx context.Context, key, value string) error {
 		return fmt.Errorf("settings: save %s: %w", key, err)
 	}
 	return nil
+}
+
+// TOTPSecretRow — секрет второго фактора одной учётной записи, как он записан.
+type TOTPSecretRow struct {
+	UserID string
+	Login  string
+	Value  string
+}
+
+// ListTOTPSecrets возвращает непустые секреты TOTP. Отсутствие таблицы или
+// колонки — не ошибка: база могла не проходить миграцию плана 84.
+func (db *DB) ListTOTPSecrets(ctx context.Context) ([]TOTPSecretRow, error) {
+	if !db.HasTable(ctx, "_users") {
+		return nil, nil
+	}
+	rows, err := db.Query(ctx, `SELECT id, login, totp_secret FROM _users WHERE totp_secret <> ''`)
+	if err != nil {
+		// Колонки нет — плана 84 в этой базе ещё не было.
+		return nil, nil
+	}
+	defer rows.Close()
+	var out []TOTPSecretRow
+	for rows.Next() {
+		var r TOTPSecretRow
+		if err := rows.Scan(&r.UserID, &r.Login, &r.Value); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// TOTPSecretCarriers — секреты TOTP в виде носителей секретов.
+func (db *DB) TOTPSecretCarriers(ctx context.Context) ([]SecretCarrier, error) {
+	rows, err := db.ListTOTPSecrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SecretCarrier, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SecretCarrier{"auth.user." + r.Login + ".totp_secret", r.Value})
+	}
+	return out, nil
+}
+
+// SaveTOTPSecretRaw записывает секрет TOTP как есть — для перешифровки при
+// ротации мастер-ключа. Прикладной путь включения второго фактора идёт через
+// internal/auth.
+func (db *DB) SaveTOTPSecretRaw(ctx context.Context, userID, value string) error {
+	d := db.dialect
+	q := fmt.Sprintf(`UPDATE _users SET totp_secret = %s WHERE id = %s`, d.Placeholder(1), d.Placeholder(2))
+	_, err := db.Exec(ctx, q, value, userID)
+	return err
+}
+
+// DisableTOTPRaw гасит второй фактор учётной записи и стирает нечитаемый
+// секрет. Используется восстановлением из бэкапа: см. internal/backup.
+func (db *DB) DisableTOTPRaw(ctx context.Context, userID string) error {
+	d := db.dialect
+	q := fmt.Sprintf(
+		`UPDATE _users SET totp_secret = '', totp_enabled = %s, totp_last_step = 0 WHERE id = %s`,
+		d.Placeholder(1), d.Placeholder(2))
+	_, err := db.Exec(ctx, q, false, userID)
+	return err
 }

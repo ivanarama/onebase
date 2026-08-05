@@ -831,7 +831,8 @@ const tplNav = `
               <button type="submit" class="sys-btn">{{t $.Lang "Применить"}}</button>
             </form>
           </div>
-          {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}{{end}}
+          {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
+          <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
         </div>
       </details>
       {{if not .IsAdmin}}
@@ -849,6 +850,7 @@ const tplNav = `
           <a href="/ui/admin/users">{{t $.Lang "Пользователи"}}</a>
           <a href="/ui/admin/roles">{{t $.Lang "Роли и права"}}</a>
           <a href="/ui/admin/sessions">{{t $.Lang "Активные пользователи"}}</a>
+          <a href="/ui/admin/auth">{{t $.Lang "Аутентификация"}}</a>
           <a href="/ui/admin/api-tokens">{{t $.Lang "API-токены"}}</a>
           <a href="/ui/admin/audit">{{t $.Lang "Журнал изменений"}}</a>
           <a href="/ui/admin/rls">{{t $.Lang "Диагностика RLS"}}</a>
