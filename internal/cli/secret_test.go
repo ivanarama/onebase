@@ -263,7 +263,7 @@ func TestBaseSecretsInventory(t *testing.T) {
 	}
 	found := map[string]string{}
 	for _, r := range rows {
-		found[r.Path] = r.Kind
+		found[r.Path] = secrets.Describe(r.Value)
 	}
 	if got := found["llm.z_ai.api_key"]; got != "ОТКРЫТЫЙ ТЕКСТ" {
 		t.Errorf("открытый ключ должен быть виден как проблема: %q", got)
@@ -274,10 +274,11 @@ func TestBaseSecretsInventory(t *testing.T) {
 	if got := found["exchange.token.обмен"]; !strings.Contains(got, key.ID()) {
 		t.Errorf("зашифрованный токен должен называть отпечаток ключа: %q", got)
 	}
-	// Значения секретов в инвентаризацию не попадают никогда.
+	// Значения секретов в отчёт не попадают никогда: строка несёт сырое
+	// значение (ротации нужен отпечаток ключа), но наружу идёт только описание.
 	for _, r := range rows {
-		if strings.Contains(r.Kind, "sk-открытым-текстом") || strings.Contains(r.Kind, "значение") {
-			t.Fatalf("значение секрета утекло в отчёт: %+v", r)
+		if d := secrets.Describe(r.Value); strings.Contains(d, "sk-открытым-текстом") || strings.Contains(d, "значение") {
+			t.Fatalf("значение секрета утекло в отчёт: %q", d)
 		}
 	}
 }
@@ -316,7 +317,7 @@ backup:
 	}
 	found := map[string]string{}
 	for _, r := range rows {
-		found[r.Path] = r.Kind
+		found[r.Path] = secrets.Describe(r.Value)
 	}
 	want := map[string]string{
 		"email.smtp_password":  "переменная окружения",

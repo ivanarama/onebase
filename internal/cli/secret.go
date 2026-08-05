@@ -277,11 +277,14 @@ func runSecretList(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// secretRow — одна строка инвентаризации. Значение не показывается никогда,
-// только его вид.
+// secretRow — одна строка инвентаризации: где лежит секрет и что там записано.
+//
+// Значение хранится сырым, а наружу идёт только его вид (secrets.Describe):
+// печатать сам секрет нельзя никогда, но ротации нужно отличить «зашифровано
+// старым ключом» от «зашифровано новым», а по описанию этого не сделать.
 type secretRow struct {
-	Path string
-	Kind string
+	Path  string
+	Value string
 }
 
 func printSecretRows(rows []secretRow) {
@@ -296,7 +299,7 @@ func printSecretRows(rows []secretRow) {
 		}
 	}
 	for _, r := range rows {
-		outf("  %-*s  %s\n", width, r.Path, r.Kind)
+		outf("  %-*s  %s\n", width, r.Path, secrets.Describe(r.Value))
 	}
 }
 
@@ -308,7 +311,7 @@ func baseSecrets(ctx context.Context, db *storage.DB) ([]secretRow, error) {
 	}
 	var out []secretRow
 	for _, c := range carriers {
-		out = append(out, secretRow{c.Path, secrets.Describe(c.Value)})
+		out = append(out, secretRow{c.Path, c.Value})
 	}
 	// Произвольные ключи, положенные через `secret set _settings:…`: носителями
 	// их не считает никто, кроме администратора, — показываем по факту шифрования.
@@ -318,7 +321,7 @@ func baseSecrets(ctx context.Context, db *storage.DB) ([]secretRow, error) {
 	}
 	for _, e := range entries {
 		if secrets.Classify(e.Value) == secrets.KindEnc {
-			out = append(out, secretRow{"_settings:" + e.Key, secrets.Describe(e.Value)})
+			out = append(out, secretRow{"_settings:" + e.Key, e.Value})
 		}
 	}
 	return out, nil
@@ -334,12 +337,12 @@ func configSecrets(dir string) ([]secretRow, error) {
 		return nil, err
 	}
 	if appCfg.Email != nil && appCfg.Email.SMTPPass != "" {
-		out = append(out, secretRow{"email.smtp_password", secrets.Describe(appCfg.Email.SMTPPass)})
+		out = append(out, secretRow{"email.smtp_password", appCfg.Email.SMTPPass})
 	}
 	if appCfg.LLM != nil {
 		for _, ep := range appCfg.LLM.Endpoints {
 			if ep.APIKey != "" {
-				out = append(out, secretRow{"llm." + ep.Name + ".api_key", secrets.Describe(ep.APIKey)})
+				out = append(out, secretRow{"llm." + ep.Name + ".api_key", ep.APIKey})
 			}
 		}
 	}
@@ -352,7 +355,7 @@ func configSecrets(dir string) ([]secretRow, error) {
 	for _, h := range appCfg.Webhooks {
 		for name, v := range h.Headers {
 			if secrets.Classify(v) != secrets.KindEmpty {
-				out = append(out, secretRow{"webhook." + h.Name + ".headers." + name, secrets.Describe(v)})
+				out = append(out, secretRow{"webhook." + h.Name + ".headers." + name, v})
 			}
 		}
 	}
@@ -360,7 +363,7 @@ func configSecrets(dir string) ([]secretRow, error) {
 	if err == nil {
 		for _, s := range services {
 			if s.Secret != "" {
-				out = append(out, secretRow{"service." + s.Name + ".secret", secrets.Describe(s.Secret)})
+				out = append(out, secretRow{"service." + s.Name + ".secret", s.Secret})
 			}
 		}
 	}
@@ -368,7 +371,7 @@ func configSecrets(dir string) ([]secretRow, error) {
 	if err == nil {
 		for _, in := range intakes {
 			if in.Secret != "" {
-				out = append(out, secretRow{"intake." + in.Name + ".secret", secrets.Describe(in.Secret)})
+				out = append(out, secretRow{"intake." + in.Name + ".secret", in.Secret})
 			}
 		}
 	}
@@ -378,10 +381,10 @@ func configSecrets(dir string) ([]secretRow, error) {
 func s3Rows(prefix string, s3 *project.S3Config) []secretRow {
 	var out []secretRow
 	if s3.AccessKey != "" {
-		out = append(out, secretRow{prefix + ".access_key", secrets.Describe(s3.AccessKey)})
+		out = append(out, secretRow{prefix + ".access_key", s3.AccessKey})
 	}
 	if s3.SecretKey != "" {
-		out = append(out, secretRow{prefix + ".secret_key", secrets.Describe(s3.SecretKey)})
+		out = append(out, secretRow{prefix + ".secret_key", s3.SecretKey})
 	}
 	return out
 }
@@ -499,6 +502,14 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Файлы конфигурации команда не трогает — и не должна: YAML лежит в git и в
+	// поставке клиенту, переписывать его за администратора нельзя. Но и молчать
+	// нельзя: ниже мы советуем сменить мастер-ключ процесса, а `secret encrypt`
+	// прямо предлагает класть enc: в YAML. Смена ключа без этого предупреждения
+	// оставляет такие значения нечитаемыми — и узнаётся это уже по отвалившейся
+	// почте или выбывшей из профиля модели ИИ, а не здесь.
+	warnConfigSecretsUnderOldKey(bc.Dir, bc.ConfigInDB, newKey)
+
 	if changed == 0 {
 		outln("Перешифровывать нечего: enc:-значений под старым ключом в базе нет.")
 		return nil
@@ -511,6 +522,69 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 	outln("Замените мастер-ключ процесса базы на новый и перезапустите её —")
 	outln("старый ключ больше не откроет эти значения.")
 	return nil
+}
+
+// configSecretsNotUnderKey возвращает enc:-значения файлов конфигурации,
+// которые заданным ключом не откроются.
+//
+// Отбор по отпечатку, а не по «зашифровано старым»: значение под третьим, давно
+// забытым ключом после смены мастер-ключа не откроется ровно так же. А уже
+// перешифрованное вручную молчит — иначе повторный прогон ротации пугал бы
+// администратора тем, что он только что починил.
+func configSecretsNotUnderKey(dir string, key *secrets.Key) ([]secretRow, error) {
+	rows, err := configSecrets(dir)
+	if err != nil {
+		return nil, err
+	}
+	var stale []secretRow
+	for _, r := range rows {
+		if secrets.Classify(r.Value) != secrets.KindEnc {
+			continue
+		}
+		if id, ok := secrets.RefKeyID(r.Value); ok && id == key.ID() {
+			continue
+		}
+		stale = append(stale, r)
+	}
+	return stale, nil
+}
+
+// warnConfigSecretsUnderOldKey печатает это предупреждение.
+//
+// inDB меняет не отбор, а адрес починки: у базы с конфигурацией в БД (план 60)
+// файлов нет, а dir — временная выгрузка, которая исчезнет вместе с командой.
+// Назвать такой путь значило бы отправить администратора искать файл, которого
+// нет, поэтому там речь про конфигуратор.
+//
+// Ошибка чтения конфигурации наверх не возвращается: база к этому моменту уже
+// перешифрована, и ронять команду из-за нечитаемого app.yaml значило бы
+// закончить успешную операцию ненулевым кодом. Но и проглатывать нельзя —
+// администратор должен знать, что конфигурацию проверить не удалось.
+func warnConfigSecretsUnderOldKey(dir string, inDB bool, newKey *secrets.Key) {
+	where := "в конфигурации (" + dir + ")"
+	if inDB {
+		where = "в конфигурации базы"
+	}
+	stale, err := configSecretsNotUnderKey(dir, newKey)
+	if err != nil {
+		outf("\nВнимание: конфигурацию %s проверить не удалось: %v\n", where, err)
+		outln("Проверьте enc:-значения конфигурации вручную — эта команда их не перешифровывает.")
+		return
+	}
+	if len(stale) == 0 {
+		return
+	}
+	outf("\nВнимание: %s есть enc:-значения, зашифрованные не новым ключом.\n", where)
+	outln("Эта команда перешифровывает только данные базы — конфигурация остаётся как есть:")
+	printSecretRows(stale)
+	outln("Перешифруйте их до смены мастер-ключа процесса:")
+	outln("  ONEBASE_MASTER_KEY=<новый> onebase secret encrypt --stdin")
+	if inDB {
+		outln("и замените значения в конфигураторе (конфигурация хранится в базе, файлов нет) —")
+		outln("иначе подсистемы, которым они нужны, выключатся.")
+		return
+	}
+	outln("и замените значения в YAML — иначе подсистемы, которым они нужны, выключатся.")
 }
 
 // rotateAuthProviders перешифровывает client_secret провайдеров единого входа
