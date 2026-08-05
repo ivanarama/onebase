@@ -379,7 +379,7 @@ func reportYAMLSchema() *yamlLintSchema {
 		"totals":      obj("grand", "subtotals"),
 		"sort":        seq(sortKey),
 		"conditional": seq(conditional),
-		"appearance":  obj("lines", "zebra"),
+		"appearance":  obj("lines", "zebra", "collapse_to"),
 		"chart":       obj("type", "category", "series"),
 	})
 	return with(obj("name", "title", "query", "chart_proc", "output_format"), map[string]*yamlLintSchema{

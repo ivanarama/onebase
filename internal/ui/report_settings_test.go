@@ -237,6 +237,44 @@ func TestEffectiveCompositionAppearance(t *testing.T) {
 	}
 }
 
+// Начальное сворачивание групп (issue #575) — тоже презентация: пользователь
+// задаёт свой уровень в панели «Настройки», отрицательное значение из
+// недоверенного JSON сводится к нулю, а отсутствие ключа не выдумывает уровень.
+func TestEffectiveCompositionCollapseTo(t *testing.T) {
+	zero := 0
+	deep := 2
+	negative := -5
+	trusted := &reportpkg.Composition{
+		Groupings:  []string{"Товар"},
+		Measures:   []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+		Appearance: reportpkg.Appearance{CollapseTo: &zero},
+	}
+	rep := &reportpkg.Report{Composition: trusted}
+
+	user := func(a reportpkg.Appearance) *reportpkg.Composition {
+		return &reportpkg.Composition{
+			Groupings:  []string{"Товар"},
+			Measures:   []reportpkg.Measure{{Field: "Сумма", Agg: "sum"}},
+			Appearance: a,
+		}
+	}
+
+	eff := effectiveComposition(rep, &reportpkg.UserReportSettings{Composition: user(reportpkg.Appearance{CollapseTo: &deep})})
+	if eff.Appearance.CollapseTo == nil || *eff.Appearance.CollapseTo != 2 {
+		t.Fatalf("уровень пользователя не применён: %v", eff.Appearance.CollapseTo)
+	}
+
+	effNeg := effectiveComposition(rep, &reportpkg.UserReportSettings{Composition: user(reportpkg.Appearance{CollapseTo: &negative})})
+	if effNeg.Appearance.CollapseTo == nil || *effNeg.Appearance.CollapseTo != 0 {
+		t.Fatalf("отрицательный уровень должен стать нулём: %v", effNeg.Appearance.CollapseTo)
+	}
+
+	effNone := effectiveComposition(rep, &reportpkg.UserReportSettings{Composition: user(reportpkg.Appearance{})})
+	if effNone.Appearance.CollapseTo != nil {
+		t.Fatalf("пустое поле панели снимает сворачивание, получили %d", *effNone.Appearance.CollapseTo)
+	}
+}
+
 func TestEffectiveCompositionIgnoresEmptyMeasureOverride(t *testing.T) {
 	trusted := &reportpkg.Composition{
 		Groupings: []string{"Организация", "Номенклатура"},
@@ -574,7 +612,7 @@ func TestReportSettingsPanelAppearance(t *testing.T) {
 		t.Fatalf("execute page-report: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{`id="rs-lines"`, `id="rs-zebra"`, `value="vertical"`, `value="both"`} {
+	for _, want := range []string{`id="rs-lines"`, `id="rs-zebra"`, `id="rs-collapse-to"`, `value="vertical"`, `value="both"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("в панели нет контрола оформления %q", want)
 		}

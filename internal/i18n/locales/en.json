@@ -912,6 +912,8 @@
   "Цвет текста": "Text color",
   "Центр": "Center",
   "Чередование строк (зебра)": "Row striping (zebra)",
+  "Свернуто до уровня": "Collapsed to level",
+  "Пусто — отчёт открывается развёрнутым; 0 — видны только группы верхнего уровня": "Empty — the report opens fully expanded; 0 — only top-level groups are visible",
   "Число": "Number",
   "Число (2 знака)": "Number (2 decimals)",
   "Число (3 знака)": "Number (3 decimals)",
