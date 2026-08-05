@@ -33,20 +33,45 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 		return err
 	}
 	opts := db.schemaOpts
-	for _, c := range changes {
-		applied := false
-		if !c.Destructive() || opts.AllowDestructive {
-			if err := db.applySchemaChange(ctx, c); err != nil {
-				return err
+
+	// Весь план одной таблицы и запись карты полей — в одной транзакции (issue
+	// #588). Иначе сбой посреди плана оставлял базу в состоянии, о котором карта
+	// `_schema_fields` не знает: часть переименований применена, а карта (её
+	// пишет saveSchemaMap последней строкой) о них не в курсе — следующий прогон
+	// строит план по устаревшей карте и разбирает частично применённое
+	// состояние. DDL транзакционен на обоих диалектах; retypeSQLite вложится
+	// сюда савпоинтом (WithTxScope это умеет).
+	type reportItem struct {
+		change  SchemaChange
+		applied bool
+	}
+	var reports []reportItem
+	err = db.WithTxScope(ctx, func(ctx context.Context) error {
+		for _, c := range changes {
+			applied := false
+			if !c.Destructive() || opts.AllowDestructive {
+				if err := db.applySchemaChange(ctx, c); err != nil {
+					return err
+				}
+				applied = true
 			}
-			applied = true
+			// Иначе колонка остаётся осиротевшей — осознанный отказ, не сбой.
+			reports = append(reports, reportItem{c, applied})
 		}
-		// Иначе колонка остаётся осиротевшей — это осознанный отказ, а не сбой.
-		if opts.Report != nil {
-			opts.Report(c, applied)
+		return db.saveSchemaMap(ctx, table, fields)
+	})
+	if err != nil {
+		return err
+	}
+	// Report только после фиксации транзакции: при откате (сбой посреди плана)
+	// ничего не применилось, и сообщать «применено» об откаченных изменениях —
+	// значит ввести администратора в заблуждение о состоянии базы.
+	if opts.Report != nil {
+		for _, rep := range reports {
+			opts.Report(rep.change, rep.applied)
 		}
 	}
-	return db.saveSchemaMap(ctx, table, fields)
+	return nil
 }
 
 func anyFieldHasID(fields []metadata.Field) bool {
