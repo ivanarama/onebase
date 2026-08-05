@@ -160,6 +160,22 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("load app config: %w", err)
 	}
 
+	// Реструктуризация схемы (план 81) при старте сервера идёт без права терять
+	// данные и не молча. Прежде опции здесь были нулевыми: изменение, которое
+	// округляет числа или удаляет колонку, применялось бы на ближайшем
+	// рестарте — без флага, без --dry-run и без строчки в выводе. Теперь такие
+	// изменения откладываются (данные и прежний тип колонки остаются на месте),
+	// а администратор видит, что схема расходится с конфигурацией и чем это
+	// лечится. Сужение точности числа с этой правкой тоже считается потерей
+	// данных, см. SchemaChange.Destructive.
+	var deferredSchema []string
+	db.SetSchemaOptions(storage.SchemaOptions{
+		Report: func(c storage.SchemaChange, applied bool) {
+			if !applied {
+				deferredSchema = append(deferredSchema, c.String())
+			}
+		},
+	})
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -180,6 +196,17 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	}
 	if err := db.EnsureIntakeSchema(ctx); err != nil {
 		return fmt.Errorf("intake schema: %w", err)
+	}
+	// Отложенное печатаем после всех миграций: изменения приходят из разных
+	// вызовов (сущности, регистры, ТЧ), и одним списком администратору понятнее.
+	if len(deferredSchema) > 0 {
+		errln("Схема базы расходится с конфигурацией — эти изменения потеряли бы данные и НЕ применены:")
+		for _, s := range deferredSchema {
+			errln("  " + s)
+		}
+		errln("Колонки остались как есть, сервер работает на прежней схеме.")
+		errln("Посмотреть план: onebase migrate --project <кат> --dry-run")
+		errln("Применить осознанно (сначала резервная копия): onebase migrate --allow-destructive")
 	}
 
 	// Sync roles from YAML. Malformed or unreadable role files must not leave
