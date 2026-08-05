@@ -267,6 +267,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		DBType:       dbType,
 		DBPath:       r.FormValue("db_path"),
 		Port:         parsePort(r.FormValue("port")),
+		Host:         normalizeHost(r.FormValue("host")),
 	}
 
 	if b.Name == "" {
@@ -381,6 +382,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	b.DBPath = r.FormValue("db_path")
 	b.Port = parsePort(r.FormValue("port"))
+	b.Host = normalizeHost(r.FormValue("host"))
 
 	if b.Name == "" {
 		render(w, r, "page-form", map[string]any{
