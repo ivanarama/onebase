@@ -48,8 +48,9 @@ type SchemaChange struct {
 	Table   string
 	FieldID string
 	Kind    ChangeKind
-	// From/To — колонки для rename, подписи типа для retype, имя колонки для
-	// add/drop (в To и From соответственно).
+	// From/To — для rename прежнее и новое имя колонки; для retype в From
+	// прежняя подпись типа, а в To имя колонки (менять её retype не может);
+	// для add имя колонки в To, для drop — в From.
 	From string
 	To   string
 	// Field — желаемое состояние поля (пусто для drop: поля уже нет).
@@ -60,7 +61,40 @@ type SchemaChange struct {
 }
 
 // Destructive сообщает, что изменение необратимо теряет данные.
-func (c SchemaChange) Destructive() bool { return c.Kind == ChangeDrop }
+//
+// Это не только drop. Сужающий ретайп числа тоже теряет данные молча:
+// number(15,2) → number(15,0) на PostgreSQL уходит в ALTER … USING
+// …::NUMERIC(15,0), а NUMERIC с меньшим scale округляет — копеек больше нет.
+// Проверка преобразуемости этого не ловит: «10.55» разбирается как число, ей
+// целевая точность неизвестна. Поэтому такое изменение требует того же явного
+// разрешения, что и удаление колонки.
+func (c SchemaChange) Destructive() bool {
+	return c.Kind == ChangeDrop || (c.Kind == ChangeRetype && retypeNarrows(c.From, c.Field))
+}
+
+// retypeNarrows сообщает, что новый тип вмещает меньше прежнего, то есть часть
+// значений будет округлена или обрезана.
+//
+// Расширение (scale 0 → 2, разрядность 5 → 15) и снятие ограничений
+// (number(15,2) → number без параметров) сужением не считаются: данные при них
+// сохраняются полностью. Смена самого типа (строка → число) здесь ни при чём —
+// её сторожит checkConvertible, которая честно смотрит на значения.
+func retypeNarrows(from string, to metadata.Field) bool {
+	if !strings.HasPrefix(from, "number(") || to.Type != metadata.FieldTypeNumber {
+		return false
+	}
+	oldLen, oldScale := parseSignatureNumber(from)
+	newLen, newScale := to.Length, to.Scale
+	if newLen == 0 && newScale == 0 {
+		return false // ограничения сняты — NUMERIC без параметров вмещает всё
+	}
+	if newScale < oldScale {
+		return true // дробная часть округляется
+	}
+	// Целая часть — это разрядность минус масштаб: number(5,2) держит три знака
+	// до запятой, и переход к number(4,2) обрежет значения от 100.
+	return newLen-newScale < oldLen-oldScale
+}
 
 // String — строка плана для вывода `onebase migrate --dry-run`.
 func (c SchemaChange) String() string {
@@ -351,26 +385,55 @@ func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metad
 				return nil, fmt.Errorf(
 					"%s: поле %s (id %s) переименовано в %s, но колонка %s уже существует — разберите вручную",
 					table, st.Column, f.ID, want, want)
+			case !oldExists && newExists:
+				// Переименование уже применено, а карта после сбоя не
+				// сохранилась (saveSchemaMap идёт последним). Делать нечего:
+				// колонка на месте под нужным именем, карту обновит
+				// saveSchemaMap в конце этого же прогона.
 			}
 			// Переименование могло совпасть со сменой типа: тип проверим ниже
 			// уже по новому имени.
 		}
 
 		if st.Type != sig {
+			note := retypeNote(st.Type, sig)
+			if retypeNarrows(st.Type, f) {
+				note = narrowNote(st.Type, f)
+			}
 			changes = append(changes, SchemaChange{
 				Table: table, FieldID: f.ID, Kind: ChangeRetype,
 				From: st.Type, To: want, Field: f,
-				Note: retypeNote(st.Type, sig),
+				Note: note,
 			})
 		}
 	}
 
+	// Имена колонок, которые нужны живым полям: колонку, занятую живым полем,
+	// удалять нельзя, даже если по карте она принадлежит убранному.
+	wanted := map[string]string{}
+	for _, f := range fields {
+		if f.ID != "" {
+			wanted[metadata.ColumnName(f)] = f.Name
+		}
+	}
 	for id, st := range stored {
 		if alive[id] {
 			continue
 		}
 		if _, exists := actual[st.Column]; !exists {
 			continue
+		}
+		// Коллизия имён: поле убрали, а другое поле с тем же именем колонки
+		// добавили. Add для него не создаётся (колонка-то есть), зато drop по
+		// карте удалил бы колонку, а следующий AddColumnIfMissing завёл бы её
+		// пустой — данные нового поля пропали бы, и по выводу это выглядело бы
+		// штатным удалением. Разбираться должен человек, как и при
+		// переименовании в занятое имя.
+		if fieldName, taken := wanted[st.Column]; taken {
+			return nil, fmt.Errorf(
+				"%s: колонка %s числится за убранным полем (id %s), но её же занимает поле %s — "+
+					"уберите одно из них или задайте разные имена; разберите вручную",
+				table, st.Column, id, fieldName)
 		}
 		changes = append(changes, SchemaChange{
 			Table: table, FieldID: id, Kind: ChangeDrop, From: st.Column,
@@ -404,4 +467,11 @@ func retypeNote(from, to string) string {
 		return "колонка не меняется (обе ссылки — UUID), но записанные ссылки указывают на прежний справочник — проверьте данные"
 	}
 	return ""
+}
+
+// narrowNote — примечание сужающего ретайпа. Ставится в план вместо retypeNote,
+// потому что здесь речь не «проверьте данные», а «данные изменятся».
+func narrowNote(from string, to metadata.Field) string {
+	return "новый тип " + metadata.FieldSignature(to) + " вмещает меньше прежнего " + from +
+		": значения будут округлены или обрезаны безвозвратно"
 }
