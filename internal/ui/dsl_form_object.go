@@ -41,10 +41,27 @@ type formObjectThis struct {
 	// ЗаписатьНаСервере в 1С). Без неё команда на ещё не записанной форме
 	// упиралась в пустую Ссылка и требовала от пользователя сначала нажать
 	// «Записать» — чего в управляемой форме быть не должно.
-	srv   *Server
-	ctx   context.Context
-	isNew bool
-	saved bool
+	srv *Server
+	ctx context.Context
+	// ctxSrc — «живой» контекст DSL-исполнения: собственная запись объекта тоже
+	// должна попадать в открытую модулем транзакцию, а не ждать второго
+	// соединения (пул SQLite — одно).
+	ctxSrc docsCtxSource
+	isNew  bool
+	saved  bool
+}
+
+// liveCtx — контекст с открытой DSL-транзакцией, если она есть.
+func (f *formObjectThis) liveCtx() context.Context {
+	if f.ctxSrc != nil {
+		if ctx := f.ctxSrc.Ctx(); ctx != nil {
+			return ctx
+		}
+	}
+	if f.ctx != nil {
+		return f.ctx
+	}
+	return context.Background()
 }
 
 // GetRefUUID сохраняет ссылочную идентичность runtime.Object у формовой
@@ -94,10 +111,7 @@ func (f *formObjectThis) write() error {
 	if f.srv == nil || f.entity == nil {
 		return fmt.Errorf("запись из обработчика формы недоступна")
 	}
-	ctx := f.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := f.liveCtx()
 	isNew := f.isNew && !f.saved
 	if isNew {
 		if err := f.srv.autoFillRowAccessFields(ctx, f.entity, "write", f.obj.Fields); err != nil {

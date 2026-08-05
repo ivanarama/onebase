@@ -197,8 +197,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// `Объект.Товары.Добавить()` реально модифицировал obj).
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string
-	vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-	thisObj := s.newFormObjectThisNew(r.Context(), obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
+	// txState — «живой» контекст: обработчик может позвать модуль, который
+	// откроет транзакцию, и ссылки объекта обязаны выполнять ПолучитьОбъект()
+	// внутри неё, а не ждать второго соединения (пул SQLite — одно).
+	vars, txState := s.buildDSLVarsWithMessagesTx(r.Context(), mc, &msgs)
+	thisObj := s.newFormObjectThisLive(r.Context(), txState, obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
