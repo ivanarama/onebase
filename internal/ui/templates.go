@@ -1536,14 +1536,14 @@ const tplForm = `
       <option value="true"  {{if eq (index $.Values $fn) "true"}}selected{{end}}>{{t $.Lang "Да"}}</option>
     </select>
   {{else if eq (str .Type) "number"}}
-    <input type="text" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}" title="{{t $.Lang "Введите число; десятичный разделитель — запятая или точка"}}">
+    <input type="text" autocomplete="off" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}" title="{{t $.Lang "Введите число; десятичный разделитель — запятая или точка"}}">
   {{else if isRichText (str .Type)}}
     {{/* textarea — скрытое form-backing поле (хранит санитизированный HTML).
          Без JS остаётся видимым и рабочим (прогрессивное улучшение). С JS
          Quill (этап 2) инициализируется над .richtext-editor и синхронизирует
          содержимое обратно в textarea перед submit — серверный санитайзер
          обрабатывает результат. */}}
-    <textarea name="{{$fn}}" class="richtext-field" rows="8" style="width:100%">{{index $.Values $fn}}</textarea>
+    <textarea name="{{$fn}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%">{{index $.Values $fn}}</textarea>
     <div class="richtext-editor"></div>
   {{else if isImage (str .Type)}}
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
@@ -1558,7 +1558,7 @@ const tplForm = `
       </div>
     </div>
   {{else}}
-    <input type="text" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}">
+    <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}">
   {{end}}
 </div>
 {{end}}
