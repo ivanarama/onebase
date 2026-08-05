@@ -61,6 +61,44 @@ func generateDebugToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// normalizeHost сводит выбранный интерфейс прослушивания к безопасному набору:
+// "0.0.0.0" (все интерфейсы — база доступна из сети) либо "127.0.0.1" (только
+// этот компьютер, умолчание). Пустое/незнакомое → loopback: наружу база
+// выставляется только явным выбором (secure-by-default, план 53).
+func normalizeHost(s string) string {
+	if strings.TrimSpace(s) == "0.0.0.0" {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
+}
+
+// runArgs собирает аргументы дочернего `onebase run` для базы. Вынесено из Start
+// ради юнит-тестов. Главное здесь — проброс --host: без него дочерний процесс
+// всегда брал дефолт 127.0.0.1, и открыть базу в локальную сеть через лаунчер
+// было нельзя (issue #590). Loopback тоже передаём явно, чтобы поведение не
+// зависело от дефолта подкоманды run.
+func runArgs(base *Base) []string {
+	var args []string
+	if base.DBType == "sqlite" || (base.DBType == "" && base.DB == "") {
+		// backward-compat: пустой db и пустой db_type → SQLite (как было до
+		// добавления поля db_type). db_path генерируется автоматически если пустой.
+		dbPath := base.DBPath
+		if dbPath == "" {
+			dbPath = filepath.Join(os.TempDir(), "onebase_"+base.ID+".db")
+		}
+		args = []string{"run", "--sqlite", dbPath, "--port", fmt.Sprintf("%d", base.Port)}
+	} else {
+		args = []string{"run", "--db", base.DB, "--port", fmt.Sprintf("%d", base.Port)}
+	}
+	if base.ConfigSource == "file" {
+		args = append(args, "--project", base.Path)
+	} else {
+		args = append(args, "--config-source", "database")
+	}
+	args = append(args, "--host", normalizeHost(base.Host))
+	return args
+}
+
 func (r *Runner) Start(base *Base) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -99,23 +137,7 @@ func (r *Runner) Start(base *Base) error {
 		return fmt.Errorf("runner: log: %w", err)
 	}
 
-	var args []string
-	if base.DBType == "sqlite" || (base.DBType == "" && base.DB == "") {
-		// backward-compat: пустой db и пустой db_type → SQLite (как было до
-		// добавления поля db_type). db_path генерируется автоматически если пустой.
-		dbPath := base.DBPath
-		if dbPath == "" {
-			dbPath = filepath.Join(os.TempDir(), "onebase_"+base.ID+".db")
-		}
-		args = []string{"run", "--sqlite", dbPath, "--port", fmt.Sprintf("%d", base.Port)}
-	} else {
-		args = []string{"run", "--db", base.DB, "--port", fmt.Sprintf("%d", base.Port)}
-	}
-	if base.ConfigSource == "file" {
-		args = append(args, "--project", base.Path)
-	} else {
-		args = append(args, "--config-source", "database")
-	}
+	args := runArgs(base)
 
 	// Per-base секрет для debug API: процесс базы примет запросы к /debug/global/*
 	// только с этим токеном (см. ui.MountDebug). Конфигуратор-прокси его прикладывает.
