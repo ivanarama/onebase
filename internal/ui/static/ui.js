@@ -354,6 +354,14 @@ function obPresetReportSettings() {
     if (le) le.value = lines;
     var ze = document.getElementById('rs-zebra');
     if (ze) ze.checked = !!(ap.zebra || ap.Zebra);
+    // Начальное сворачивание групп: пустое поле = ключа нет = всё развёрнуто.
+    // Ноль — значимое значение, поэтому проверяем именно на null/undefined.
+    var ce = document.getElementById('rs-collapse-to');
+    if (ce) {
+      var ct = ap.collapse_to;
+      if (ct === null || ct === undefined) ct = ap.CollapseTo;
+      ce.value = (ct === null || ct === undefined) ? '' : ct;
+    }
   } catch (e) {}
 }
 
@@ -413,7 +421,10 @@ window.rsCollect = function () {
   var sort = prevComp.Sort || prevComp.sort || [];
   var totals = prevComp.Totals || prevComp.totals;
   var detail = (typeof prevComp.Detail !== 'undefined') ? prevComp.Detail : prevComp.detail;
-  var nextComp = { Groupings: groupings, Measures: measures, Appearance: { lines: lines, zebra: zebra } };
+  var appearance = { lines: lines, zebra: zebra };
+  var collapseTo = parseInt(((document.getElementById('rs-collapse-to') || {}).value || '').trim(), 10);
+  if (!isNaN(collapseTo) && collapseTo >= 0) appearance.collapse_to = collapseTo;
+  var nextComp = { Groupings: groupings, Measures: measures, Appearance: appearance };
   if (columns && columns.length) nextComp.Columns = columns;
   if (sort && sort.length) nextComp.Sort = sort;
   if (totals) nextComp.Totals = totals;
@@ -478,59 +489,86 @@ function obInitReportDelegates() {
   }, true);
 }
 
-function obInitReportCompositionControls() {
-  function rcEscape(key) {
-    return (window.CSS && CSS.escape) ? CSS.escape(key) : key.replace(/["\\\]]/g, '\\$&');
-  }
-  function rcSetOpen(tr, open) {
-    var key = tr.getAttribute('data-group');
-    var ek = rcEscape(key);
+// rcBuildView — состояние сворачивания одной скомпонованной таблицы отчёта.
+// Каждая группа помнит, раскрыта ли она; видимость строки пересчитывается по
+// цепочке предков. Прежний код прятал/показывал поддерево целиком по префиксу
+// пути, из-за чего клик по свёрнутой группе вываливал сразу все уровни до
+// деталей — с начальным сворачиванием (issue #575) это делало его бесполезным.
+function rcBuildView(table) {
+  var tbody = table.tBodies[0] || table;
+  var groups = [];
+  var byPath = {};
+  tbody.querySelectorAll('tr.grp').forEach(function (tr) {
     var cell = tr.querySelector('td');
-    var sel = '[data-parent="' + ek + '"],[data-parent^="' + ek + '/"],[data-group^="' + ek + '/"]';
-    document.querySelectorAll(sel).forEach(function (el) { el.style.display = open ? '' : 'none'; });
-    if (cell) cell.textContent = (open ? '▼' : '▶') + cell.textContent.slice(1);
+    var g = {
+      tr: tr,
+      cell: cell,
+      path: tr.getAttribute('data-group') || '',
+      // Начальное состояние рисует сервер (appearance.collapse_to): «▶» —
+      // группа свёрнута. Без ключа все группы приходят развёрнутыми.
+      open: !cell || cell.textContent.trim().charAt(0) !== '▶'
+    };
+    groups.push(g);
+    byPath[g.path] = g;
+  });
+
+  // Путь родителя — путь без последнего сегмента. Разделитель внутри значения
+  // группировки сервер экранирует (%2F), поэтому резать по «/» безопасно.
+  function parentOf(path) {
+    var i = path.lastIndexOf('/');
+    return i <= 0 ? '' : path.slice(0, i);
   }
-  document.querySelectorAll('tr.grp').forEach(function (tr) {
-    tr.style.cursor = 'pointer';
-    tr.addEventListener('click', function () {
-      var cell = tr.querySelector('td');
-      var open = cell.textContent.trim().charAt(0) === '▼';
-      rcSetOpen(tr, !open);
+  function ancestorsOpen(path) {
+    for (var p = parentOf(path); p !== ''; p = parentOf(p)) {
+      var g = byPath[p];
+      if (g && !g.open) return false;
+    }
+    return true;
+  }
+  function apply() {
+    groups.forEach(function (g) {
+      g.tr.style.display = ancestorsOpen(g.path) ? '' : 'none';
+      if (!g.cell) return;
+      var mark = g.open ? '▼' : '▶';
+      var text = g.cell.textContent;
+      if (text.charAt(0) !== mark) g.cell.textContent = mark + text.slice(1);
+    });
+    tbody.querySelectorAll('tr.det,tr.subtotal').forEach(function (tr) {
+      var g = byPath[tr.getAttribute('data-parent') || ''];
+      var show = !g || (g.open && ancestorsOpen(g.path));
+      tr.style.display = show ? '' : 'none';
+    });
+  }
+
+  groups.forEach(function (g) {
+    g.tr.style.cursor = 'pointer';
+    g.tr.addEventListener('click', function () {
+      g.open = !g.open;
+      apply();
     });
   });
+
+  return {
+    setAll: function (open) {
+      groups.forEach(function (g) { g.open = open; });
+      apply();
+    }
+  };
+}
+
+function obInitReportCompositionControls() {
+  var views = [];
+  document.querySelectorAll('table.report-composed').forEach(function (table) {
+    views.push(rcBuildView(table));
+  });
+  if (!views.length) return;
+  function setAll(open) {
+    return function () { views.forEach(function (v) { v.setAll(open); }); };
+  }
   var expandBtn = document.getElementById('rc-expand');
+  if (expandBtn) expandBtn.addEventListener('click', setAll(true));
   var collapseBtn = document.getElementById('rc-collapse');
-  if (expandBtn) {
-    expandBtn.addEventListener('click', function () {
-      var tbody = document.querySelector('table.report-composed tbody');
-      if (!tbody) return;
-      tbody.querySelectorAll('tr').forEach(function (tr) { tr.style.display = ''; });
-      tbody.querySelectorAll('tr.grp').forEach(function (tr) {
-        var cell = tr.querySelector('td');
-        if (cell && cell.textContent.trim().charAt(0) === '▶') {
-          cell.textContent = '▼' + cell.textContent.slice(1);
-        }
-      });
-    });
-  }
-  if (collapseBtn) {
-    collapseBtn.addEventListener('click', function () {
-      var tbody = document.querySelector('table.report-composed tbody');
-      if (!tbody) return;
-      tbody.querySelectorAll('tr.det,tr.subtotal').forEach(function (tr) { tr.style.display = 'none'; });
-      tbody.querySelectorAll('tr.grp').forEach(function (tr) {
-        var level = parseInt(tr.getAttribute('data-level') || '0', 10);
-        if (level > 0) {
-          tr.style.display = 'none';
-        } else {
-          var cell = tr.querySelector('td');
-          if (cell && cell.textContent.trim().charAt(0) === '▼') {
-            cell.textContent = '▶' + cell.textContent.slice(1);
-          }
-        }
-      });
-    });
-  }
+  if (collapseBtn) collapseBtn.addEventListener('click', setAll(false));
 }
 
 function obInitReportBlocks() {

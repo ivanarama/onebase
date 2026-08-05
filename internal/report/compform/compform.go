@@ -105,8 +105,9 @@ func Parse(f url.Values) (*report.Composition, bool) {
 	// белому списку — значение приходит и из недоверенной рантайм-формы (__settings),
 	// а дальше уходит в CSS-класс; неизвестное → "" (исторический вид).
 	c.Appearance = report.Appearance{
-		Lines: normLines(f.Get("comp.appearance.lines")),
-		Zebra: f.Get("comp.appearance.zebra") != "",
+		Lines:      normLines(f.Get("comp.appearance.lines")),
+		Zebra:      f.Get("comp.appearance.zebra") != "",
+		CollapseTo: parseCollapseTo(f.Get("comp.appearance.collapse_to")),
 	}
 
 	// Диаграмма (пустой type → нет диаграммы)
@@ -131,6 +132,26 @@ func Parse(f url.Values) (*report.Composition, bool) {
 		return nil, true
 	}
 	return c, true
+}
+
+// parseCollapseTo читает начальное состояние групп (issue #575): развёрнуты
+// уровни 0..N. Пустое поле или нечисловой ввод — nil, то есть «не задано»:
+// отчёт открывается развёрнутым, как было. Отрицательное значение равнозначно
+// нулю. Верхняя граница не нужна — уровень глубже группировок означает то же
+// «всё развёрнуто».
+func parseCollapseTo(v string) *int {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return nil
+	}
+	if n < 0 {
+		n = 0
+	}
+	return &n
 }
 
 // normLines нормализует значение линий сетки по белому списку. "horizontal"
