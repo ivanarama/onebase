@@ -68,9 +68,13 @@ type Deps interface {
 	MaskedLabel(ctx context.Context, e *metadata.Entity, row map[string]any) string
 }
 
-// maxBatches ограничивает добор строк при отсеве правами: если пользователю
-// не видно почти ничего, поиск не должен вычитывать весь индекс.
-const maxBatches = 5
+// scanBudgetFactor задаёт бюджет просмотра индекса на один запрос — во сколько
+// раз больше страницы поиск готов прочитать, добирая её сквозь строки, скрытые
+// правами. Бюджет считается в ПРОСМОТРЕННЫХ строках индекса (≈ прежние пять
+// пачек по 2×limit): если пользователю почти ничего не видно, поиск не
+// вычитывает весь индекс. Он же — граница, за которой has_more больше ничего не
+// сообщает о скрытых правами строках (issue #578, см. ниже).
+const scanBudgetFactor = 10
 
 // Run выполняет глобальный поиск с учётом прав пользователя из ctx.
 func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, offset int) (Page, error) {
@@ -102,23 +106,31 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, 
 
 	page := Page{NextOffset: offset}
 	// Строки, отсеянные правами, не должны укорачивать страницу — добираем
-	// следующую пачку, пока не наберём limit или не кончится индекс.
+	// следующие строки индекса, пока не наберём limit либо не исчерпаем бюджет
+	// просмотра (scanBudgetFactor) или сам индекс.
 	batch := limit * 2
-	for i := 0; i < maxBatches && len(page.Items) < limit; i++ {
+	maxScan := limit * scanBudgetFactor
+	scanned := 0
+	for scanned < maxScan && len(page.Items) < limit {
+		n := batch
+		if rem := maxScan - scanned; n > rem {
+			n = rem
+		}
 		hits, err := store.SearchFullText(ctx, storage.FTSQuery{
 			Text:   text,
 			Names:  names,
-			Limit:  batch,
+			Limit:  n,
 			Offset: page.NextOffset,
 		})
 		if err != nil {
 			return Page{}, err
 		}
 		if len(hits) == 0 {
-			return withCursor(page), nil
+			break // индекс дочитан
 		}
 		for _, hit := range hits {
 			page.NextOffset++
+			scanned++
 			e := byName[hit.Name]
 			if e == nil {
 				continue
@@ -129,20 +141,22 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, 
 			}
 			page.Items = append(page.Items, res)
 			if len(page.Items) == limit {
-				// Индекс мог не кончиться — следующая страница начнётся с
-				// NextOffset, поэтому уже просмотренное не повторится.
-				page.HasMore = true
-				return withCursor(page), nil
+				break // страница набрана; NextOffset — где остановились
 			}
 		}
-		if len(hits) < batch {
-			return withCursor(page), nil
+		if len(hits) < n {
+			break // индекс дочитан внутри пачки
 		}
 	}
-	// Пачки кончились раньше страницы: правами отсеяло почти всё, но индекс
-	// прочитан не до конца. Признак «есть ещё» здесь обязателен — иначе
-	// пользователю с узкой политикой выдача врала бы «больше ничего нет».
-	page.HasMore = true
+	// has_more — набралась ли ПОЛНАЯ видимая страница в пределах бюджета.
+	// Сознательно НЕ зависит от того, сколько строк отсеяли права: иначе пустая
+	// выдача с «есть ещё» отличала бы скрытое правами совпадение от заведомо
+	// отсутствующего — оракул по маске (план 88) или строковой политике
+	// (план 79), причём при любом числе совпадений (issue #578). Цена размена:
+	// пользователь с очень узкой политикой может не увидеть «есть ещё», когда
+	// его видимые совпадения лежат дальше бюджета просмотра; добор ограничен
+	// бюджетом, а точную позицию всё равно прячет курсор.
+	page.HasMore = len(page.Items) == limit
 	return withCursor(page), nil
 }
 
