@@ -264,10 +264,12 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/login?err=sso", http.StatusFound)
 			return
 		case enabled:
-			h.beginSecondFactor(w, r, user, false, st.returnURL)
+			h.beginSecondFactor(w, r, user, false, false, st.returnURL)
 			return
 		case h.Repo.RequiresTwoFactor(r.Context(), policy, user):
-			h.beginSecondFactor(w, r, user, true, st.returnURL)
+			// Через SSO личность подтвердил провайдер, а не один пароль, поэтому
+			// первичную привязку разрешаем сразу, без кода привязки (issue #577).
+			h.beginSecondFactor(w, r, user, true, true, st.returnURL)
 			return
 		}
 	}

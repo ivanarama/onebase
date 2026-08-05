@@ -238,10 +238,12 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		renderErr(w, r, http.StatusServiceUnavailable, "Служба аутентификации временно недоступна")
 		return
 	case enabled:
-		h.beginSecondFactor(w, r, user, false, returnURL)
+		h.beginSecondFactor(w, r, user, false, false, returnURL)
 		return
 	case h.Repo.RequiresTwoFactor(r.Context(), policy, user):
-		h.beginSecondFactor(w, r, user, true, returnURL)
+		// Привязка на входе по одному паролю разрешена только явной политикой
+		// (issue #577) — иначе сперва потребуется код привязки от администратора.
+		h.beginSecondFactor(w, r, user, true, policy.SelfEnroll2FA, returnURL)
 		return
 	}
 
