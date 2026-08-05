@@ -117,6 +117,13 @@ func psEscape(s string) string {
 }
 
 func runPowerShell(script string) (string, error) {
+	// PowerShell 5.1 (штатный на Windows) при перенаправлении stdout кодирует его
+	// в OEM-кодовую страницу консоли — для русской Windows это cp866, а не UTF-8.
+	// Go читает эти байты как UTF-8, поэтому кириллица в выбранном пути
+	// возвращалась как «?»/кракозябры, и путь с русскими каталогами не
+	// подхватывался (issue #589). Просим PowerShell писать UTF-8 — одной строкой
+	// в начале скрипта, чтобы покрыть оба диалога (BrowseDir/BrowseFile).
+	script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" + script
 	// -Sta обязателен для WinForms (FolderBrowserDialog/OpenFileDialog требуют STA-апартмент).
 	// Без него на Server 2016/2019/2022 ShowDialog может молча зависнуть или вернуть ошибку.
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Sta", "-WindowStyle", "Hidden", "-Command", script) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
@@ -134,5 +141,8 @@ func runPowerShell(script string) (string, error) {
 		}
 		return "", nil // user cancelled = exit code != 0
 	}
-	return stdout.String(), nil
+	// На случай, если PowerShell предварит вывод меткой порядка байтов (BOM):
+	// strings.TrimSpace её не убирает (U+FEFF не считается пробелом), и путь
+	// начался бы с невидимого символа, ломая поиск файла на диске.
+	return strings.TrimPrefix(stdout.String(), "\ufeff"), nil
 }
