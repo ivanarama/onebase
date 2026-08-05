@@ -82,7 +82,31 @@ type handler struct {
 	// isoBrowser запускает изолированные окна Предприятия (план 78);
 	// в тестах подменяется фейком.
 	isoBrowser isolatedBrowser
+
+	// statusCache кэширует ДОРОГИЕ на рендер списка проверки — статус живости
+	// (усыновление через /health, до 1.5с) и данные app.yaml (открытие БД у
+	// database-баз) — на короткий TTL. Без него каждое переключение базы
+	// (`/?sel=`) синхронно и последовательно било по всем базам, и список
+	// заметно тормозил (issue #596, регрессия c434500a). Мутирующие обработчики
+	// (start/stop/…) сбрасывают запись базы, чтобы статус обновился сразу.
+	statusMu    sync.Mutex
+	statusCache map[string]baseStatus
 }
+
+// baseStatus — закэшированный результат дорогих проверок одной базы.
+type baseStatus struct {
+	running    bool
+	appName    string
+	appVersion string
+	hasLogo    bool
+	fetched    time.Time
+}
+
+// baseStatusTTL — как долго переиспользуется закэшированный статус базы. Секунды:
+// быстрое переключение `/?sel=` укладывается в окно и не перепробует, а лаг
+// индикатора «запущена/остановлена» при этом незаметен (плюс мутирующие действия
+// сбрасывают кэш сразу).
+const baseStatusTTL = 3 * time.Second
 
 // baseVM — view-модель информационной базы для списка лаунчера: встраивает
 // *Base и дополняет рантайм-полями (запущена ли база, URL, данные из app.yaml).
@@ -95,6 +119,85 @@ type baseVM struct {
 	LogoBase64 string
 }
 
+// baseStatuses возвращает статусы всех баз, обновляя протухшие записи кэша
+// ПАРАЛЛЕЛЬНО и с общим TTL. Раньше рендер списка синхронно и последовательно
+// пробовал каждую базу (/health до 1.5с + открытие БД у database-баз), и цена
+// линейно росла с числом баз, повторяясь на каждом `/?sel=` (issue #596).
+func (h *handler) baseStatuses(bases []*Base) map[string]baseStatus {
+	now := time.Now()
+	h.statusMu.Lock()
+	if h.statusCache == nil {
+		h.statusCache = map[string]baseStatus{}
+	}
+	var stale []*Base
+	for _, b := range bases {
+		if st, ok := h.statusCache[b.ID]; !ok || now.Sub(st.fetched) > baseStatusTTL {
+			stale = append(stale, b)
+		}
+	}
+	h.statusMu.Unlock()
+
+	if len(stale) > 0 {
+		fresh := make([]baseStatus, len(stale))
+		var wg sync.WaitGroup
+		for i, b := range stale {
+			wg.Add(1)
+			go func(i int, b *Base) {
+				defer wg.Done()
+				fresh[i] = h.probeBase(b)
+			}(i, b)
+		}
+		wg.Wait()
+		h.statusMu.Lock()
+		for i, b := range stale {
+			h.statusCache[b.ID] = fresh[i]
+		}
+		h.statusMu.Unlock()
+	}
+
+	out := make(map[string]baseStatus, len(bases))
+	h.statusMu.Lock()
+	for _, b := range bases {
+		out[b.ID] = h.statusCache[b.ID]
+	}
+	h.statusMu.Unlock()
+	return out
+}
+
+// probeBase выполняет дорогие проверки одной базы — статус живости и данные
+// app.yaml. Вызывается из горутины baseStatuses, поэтому без общих блокировок.
+func (h *handler) probeBase(b *Base) baseStatus {
+	st := baseStatus{running: h.baseRunning(b), fetched: time.Now()}
+	var cfg struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version"`
+		Logo    string `yaml:"logo"`
+	}
+	// Одна сломанная конфигурация не должна ломать весь список: строка остаётся
+	// пустой, причина уходит в журнал внутри readAppYAML.
+	if err := readAppYAML(context.Background(), b, &cfg); err == nil {
+		st.appName = cfg.Name
+		st.appVersion = cfg.Version
+		st.hasLogo = cfg.Logo != ""
+	}
+	return st
+}
+
+// invalidateStatus сбрасывает закэшированный статус базы — после старта/останова
+// индикатор в списке должен обновиться сразу, не дожидаясь истечения TTL.
+func (h *handler) invalidateStatus(baseID string) {
+	h.statusMu.Lock()
+	delete(h.statusCache, baseID)
+	h.statusMu.Unlock()
+}
+
+// clearStatus сбрасывает весь кэш статусов (например, после «Стоп всё»).
+func (h *handler) clearStatus() {
+	h.statusMu.Lock()
+	h.statusCache = map[string]baseStatus{}
+	h.statusMu.Unlock()
+}
+
 func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 	bases, err := h.store.List()
 	if err != nil {
@@ -102,30 +205,18 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loadAppInfo := func(b *Base, vm *baseVM) {
-		var cfg struct {
-			Name    string `yaml:"name"`
-			Version string `yaml:"version"`
-			Logo    string `yaml:"logo"`
-		}
-		// Одна сломанная конфигурация не должна ломать весь список баз:
-		// показываем эту строку пустой, причина уходит в журнал.
-		if err := readAppYAML(context.Background(), b, &cfg); err != nil {
-			return
-		}
-		vm.AppName = cfg.Name
-		vm.AppVersion = cfg.Version
-		if cfg.Logo != "" {
-			vm.LogoBase64 = "/bases/" + b.ID + "/configurator/logo"
-		}
-	}
+	statuses := h.baseStatuses(bases)
 
 	selID := r.URL.Query().Get("sel")
 	var selected *baseVM
 	vms := make([]*baseVM, 0, len(bases))
 	for _, b := range bases {
-		vm := &baseVM{Base: b, Running: h.baseRunning(b), BaseURL: h.runner.BaseURL(b)}
-		loadAppInfo(b, vm)
+		st := statuses[b.ID]
+		vm := &baseVM{Base: b, Running: st.running, BaseURL: h.runner.BaseURL(b),
+			AppName: st.appName, AppVersion: st.appVersion}
+		if st.hasLogo {
+			vm.LogoBase64 = "/bases/" + b.ID + "/configurator/logo"
+		}
 		vms = append(vms, vm)
 		if b.ID == selID {
 			selected = vm
@@ -332,6 +423,7 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	h.invalidateStatus(id) // база удалена — убираем осиротевшую запись кэша
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -373,6 +465,7 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 			writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 			return false
 		}
+		h.invalidateStatus(b.ID) // статус в списке должен обновиться сразу
 		b.LastOpened = time.Now()
 		// База уже запущена — отказывать пользователю из-за несохранённой
 		// отметки времени неправильно. Но сбой записи реестра означает, что не
@@ -494,6 +587,7 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 				"baseID", id, "port", b.Port)
 		}
 	}
+	h.invalidateStatus(id) // индикатор «остановлена» — сразу, не через TTL
 	http.Redirect(w, r, "/?sel="+id, http.StatusFound)
 }
 
@@ -508,6 +602,7 @@ func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.runner.StopAll(ports)
+	h.clearStatus() // все базы остановлены — сбрасываем весь кэш статусов
 
 	redirect := "/"
 	if sel != "" {
