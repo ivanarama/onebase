@@ -37,8 +37,18 @@ func monthKeyExpr(d Dialect, col string) string {
 	return "to_char(" + col + " AT TIME ZONE 'UTC', 'YYYY-MM')"
 }
 
-// signedResourceSum возвращает выражение знаковой суммы ресурса (как в genBalances).
-func signedResourceSum(col string) string {
+// SignedResourceSum возвращает выражение знаковой суммы ресурса (как в
+// genBalances): приход со знаком плюс, всё остальное — минус.
+//
+// Экспортирована, потому что этим же выражением обязан пользоваться всякий, кто
+// сверяет движения с итогами: итоги заполняются знаковой суммой, и беззнаковый
+// SUM по сырой колонке не сойдётся с ними ни на одном регистре, где есть расход.
+// Проверка состояния базы (internal/dbcheck) на этом и погорела — держим одно
+// выражение на всех, чтобы разойтись было негде.
+//
+// Аргумент подставляется как есть, так что вызывающий волен передать не голую
+// колонку, а выражение — например CAST(x AS NUMERIC).
+func SignedResourceSum(col string) string {
 	return "SUM(CASE WHEN вид_движения = 'Приход' THEN " + col + " ELSE -" + col + " END)"
 }
 
@@ -96,7 +106,7 @@ func insertTotalsSelectSQL(d Dialect, reg *metadata.Register, where string) stri
 	for _, f := range reg.Resources {
 		col := metadata.ColumnName(f)
 		insertCols = append(insertCols, col)
-		selectCols = append(selectCols, signedResourceSum(col))
+		selectCols = append(selectCols, SignedResourceSum(col))
 	}
 
 	var sb strings.Builder
