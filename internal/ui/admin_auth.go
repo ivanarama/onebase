@@ -33,7 +33,13 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
       <select name="require_2fa_roles" multiple size="{{.RoleSelectSize}}" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:7px">
         {{range .Roles}}<option value="{{.Name}}" {{if index $.RoleSelected .Name}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Учётная запись такой роли без второго фактора не войдёт: при следующем входе система потребует настроить его.</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Учётная запись такой роли без второго фактора не войдёт: при следующем входе система потребует настроить его — по коду привязки от администратора (карточка пользователя → «Выдать код привязки»), если самопривязка ниже выключена.</div>
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
+        <input type="checkbox" name="allow_self_enroll_2fa" value="1" {{if .Policy.SelfEnroll2FA}}checked{{end}}> Разрешить самостоятельную привязку второго фактора на входе (без кода привязки)
+      </label>
+      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ По умолчанию выключено. Если включить, привязать второй фактор к учётной записи сможет любой, кто предъявил её пароль (для утёкшего пароля — закрепление доступа). Включайте только там, где второй фактор раздаётся массово; иначе выдавайте код привязки в карточке пользователя.</div>
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
@@ -206,6 +212,7 @@ func (s *Server) adminAuthPolicySave(w http.ResponseWriter, r *http.Request) {
 		SSOOnly:          r.FormValue("sso_only") == "1",
 		Require2FAAdmins: r.FormValue("require_2fa_admins") == "1",
 		Require2FARoles:  r.Form["require_2fa_roles"],
+		SelfEnroll2FA:    r.FormValue("allow_self_enroll_2fa") == "1",
 	}
 	// Запрет паролей без единственного работающего способа войти — верный
 	// способ запереть базу. Провайдеров должно быть хотя бы одно включённое.
