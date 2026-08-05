@@ -127,6 +127,7 @@
   "Вставить": "Insert",
   "Второй фактор": "Second factor",
   "Второй фактор сброшен — пользователь настроит его заново при следующем входе": "Two-factor authentication has been reset — the user will set it up again on next sign-in",
+  "Код привязки выдан — передайте его пользователю": "Binding code issued — pass it on to the user",
   "Вход по паролю запрещён политикой базы": "Password login is disabled by the database policy",
   "Вход уводит на первый раздел, ведущая ссылка «Главная» скрыта. Нужны подсистемы.": "Login opens the first section; the leading \"Home\" link is hidden. Subsystems are required.",
   "Входная приёмка": "Inbound intake",
