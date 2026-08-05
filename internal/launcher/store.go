@@ -27,6 +27,10 @@ type Base struct {
 	DBType string `yaml:"db_type,omitempty"`
 	// DBPath is the SQLite database file path (only when DBType="sqlite").
 	DBPath string `yaml:"db_path,omitempty"`
+	// Host — интерфейс прослушивания дочернего процесса базы (issue #590).
+	// Пусто/"127.0.0.1" — только этот компьютер (умолчание, secure-by-default);
+	// "0.0.0.0" — все интерфейсы, база доступна из локальной сети.
+	Host string `yaml:"host,omitempty"`
 }
 
 type storeFile struct {
