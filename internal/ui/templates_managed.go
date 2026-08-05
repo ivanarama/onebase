@@ -103,6 +103,23 @@ const tplManagedForm = `
              textarea остаётся рабочим (прогрессивное улучшение). */}}
         <textarea name="{{$fn}}" class="richtext-field" rows="8" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>{{index $ctx.Values $fn}}</textarea>
         {{if not $el.ReadOnly}}<div class="richtext-editor"></div>{{end}}
+      {{else if isImage (str $f.Type)}}
+        {{/* Поле-картинка (image): скрытый input хранит ссылку (UUID), превью +
+             загрузка/очистка — зеркало автоген-формы (templates.go, ветка isImage).
+             Эндпоинт общий: POST /ui/<kind>/<name>/_image, показ — /ui/_image/<uuid>.
+             JS (data-ob-image-upload / data-ob-image-clear) уже поддерживает эту
+             разметку. Без JS остаётся скрытый input — значение не теряется. */}}
+        {{$iv := index $ctx.Values $fn}}
+        <div class="img-field">
+          <input type="hidden" name="{{$fn}}" value="{{$iv}}">
+          <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
+          {{if not $el.ReadOnly}}
+          <div class="img-actions">
+            <label class="btn btn-sm btn-secondary">{{t $ctx.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $ctx.Entity.Kind)}}/{{lower $ctx.Entity.Name}}/_image"></label>
+            <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $ctx.Lang "Очистить"}}</button>
+          </div>
+          {{end}}
+        </div>
       {{else if eq (str $el.Type) "file"}}
         <div style="display:flex;gap:6px;align-items:center">
           <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>
