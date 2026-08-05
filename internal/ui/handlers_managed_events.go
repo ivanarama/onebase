@@ -259,6 +259,17 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// обработчик» от «поле осталось прежним», см. refreshFieldsWrittenByHandler.
 	fieldsBefore := snapshotFieldValues(obj.Fields)
 
+	// Снимок строк ТЧ (POST) и их состояние в базе ДО обработчика — по ним после
+	// Run отличаем «модуль переписал ТЧ в базе» от «пользователь правил грид»
+	// (issue #579, см. refreshTablePartsWrittenByHandler). Только для существующей
+	// записи с табличными частями — иначе лишний запрос в БД на каждое событие.
+	existingRecord := strings.TrimSpace(r.FormValue("_id")) != ""
+	var tpBefore, tpDBBefore map[string][]map[string]any
+	if existingRecord && len(entity.TableParts) > 0 && obj.ID != uuid.Nil {
+		tpBefore = tablePartRowsSnapshot(obj.TablePartRows)
+		tpDBBefore = s.tablePartRowsFromDB(r.Context(), entity, obj.ID)
+	}
+
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	runErr := s.interp.Run(decl, thisObj, vars)
@@ -271,6 +282,9 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// описана выше у restoreUnsubmittedFields.
 	if strings.TrimSpace(r.FormValue("_id")) != "" || savedFormID(thisObj) != "" {
 		s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+	}
+	if existingRecord && tpDBBefore != nil {
+		s.refreshTablePartsWrittenByHandler(r.Context(), entity, obj, tpBefore, tpDBBefore)
 	}
 	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
