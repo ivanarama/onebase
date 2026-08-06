@@ -108,6 +108,34 @@ func TestRollbackPrev_WithoutPrevFails(t *testing.T) {
 	}
 }
 
+// Второе обновление подряд: рядом с бинарём мог остаться .old от прошлой
+// попытки, а Windows не переименует поверх существующего файла.
+func TestApply_TwiceInARow(t *testing.T) {
+	isolatedHome(t)
+	targetDir, staged := installation(t)
+	if err := Apply(staged, targetDir); err != nil {
+		t.Fatalf("первое применение: %v", err)
+	}
+	// Имитируем остаток прошлой попытки, который не успели убрать.
+	if err := os.WriteFile(filepath.Join(targetDir, "onebase-a.old"), []byte("остаток"), 0o755); err != nil { //nolint:gosec // G306: это исполняемый файл
+		t.Fatal(err)
+	}
+
+	_, next := installation(t)
+	// Второе обновление кладём в тот же каталог установки.
+	for _, n := range next.Files {
+		if err := os.WriteFile(filepath.Join(next.Dir, n), []byte("НОВЕЙШИЙ-"+n), 0o755); err != nil { //nolint:gosec // G306: это исполняемый файл
+			t.Fatal(err)
+		}
+	}
+	if err := Apply(next, targetDir); err != nil {
+		t.Fatalf("второе применение: %v", err)
+	}
+	if got := read(t, filepath.Join(targetDir, "onebase-a")); got != "НОВЕЙШИЙ-onebase-a" {
+		t.Fatalf("бинарь не заменён вторым обновлением: %q", got)
+	}
+}
+
 func TestApply_UnverifiedRefused(t *testing.T) {
 	isolatedHome(t)
 	targetDir, staged := installation(t)

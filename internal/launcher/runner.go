@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -314,6 +315,20 @@ func (r *Runner) IsRunning(baseID string) bool {
 	defer r.mu.Unlock()
 	_, ok := r.procs[baseID]
 	return ok
+}
+
+// RunningIDs возвращает базы, процессы которых ведёт этот лаунчер. Снимок
+// нужен обновлению платформы: базы придётся остановить ради подмены бинаря, а
+// после перезапуска — поднять ровно те же.
+func (r *Runner) RunningIDs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := make([]string, 0, len(r.procs))
+	for id := range r.procs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // Healthy сообщает, отвечает ли на порту базы её /health — то есть база уже
