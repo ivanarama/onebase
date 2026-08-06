@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
+	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -82,6 +83,10 @@ type handler struct {
 	// isoBrowser запускает изолированные окна Предприятия (план 78);
 	// в тестах подменяется фейком.
 	isoBrowser isolatedBrowser
+
+	// incidents — последние ошибки самого лаунчера (план 115). Может быть nil:
+	// часть тестов собирает handler литералом.
+	incidents *incident.Store
 
 	// statusCache кэширует ДОРОГИЕ на рендер списка проверки — статус живости
 	// (усыновление через /health, до 1.5с) и данные app.yaml (открытие БД у

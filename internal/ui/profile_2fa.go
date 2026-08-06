@@ -164,7 +164,7 @@ func (s *Server) startTwoFactorSetup(w http.ResponseWriter, r *http.Request, u *
 	// перевыпуска кодов.
 	enabled, err := s.authRepo.TOTPEnabled(r.Context(), u.ID)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	if enabled {
@@ -180,7 +180,7 @@ func (s *Server) startTwoFactorSetup(w http.ResponseWriter, r *http.Request, u *
 	}
 	token, secret, err := auth.StartEnrollment(u.ID, u.Login)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{

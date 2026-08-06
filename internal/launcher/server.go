@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/i18n"
+	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/webassets"
 	"github.com/ivantit66/onebase/internal/websec"
 )
@@ -72,6 +72,7 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 	h := &handler{
 		store: store, runner: runner, isoBrowser: systemBrowser{},
 		cfgLoginLimit: auth.NewLoginLimiter(5, time.Minute),
+		incidents:     incident.NewStore(incident.DefaultLimit),
 	}
 	if b, err := i18n.Load(i18n.EmbeddedLocales, ""); err == nil {
 		launcherBundle = b
@@ -101,7 +102,9 @@ func (s *Server) Close() {
 
 func (s *Server) ListenAndServe() error {
 	r := chi.NewRouter()
-	r.Use(middleware.Recoverer)
+	// Как chi middleware.Recoverer, но с кодом инцидента в ответе (план 115).
+	// Логина у лаунчера нет — он обслуживает одного локального пользователя.
+	r.Use(incident.Recoverer(s.h.incidents, nil))
 	// Конфигуратор — чувствительная поверхность (консоль кода, миграции):
 	// те же базовые защитные заголовки и Origin-проверка CSRF, что у базы
 	// (план 53, этап 3). Модальные iframe конфигуратора — same-origin,

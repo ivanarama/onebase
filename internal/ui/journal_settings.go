@@ -174,7 +174,7 @@ func (s *Server) journalSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SaveJournalUserSettings(r.Context(), j.Name, currentUserLogin(r), canon); err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, journalReturnURL(r, journalFormURL(j.Name)), http.StatusSeeOther)
@@ -191,7 +191,7 @@ func (s *Server) journalSettingsReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteJournalUserSettings(r.Context(), j.Name, currentUserLogin(r)); err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, journalReturnURL(r, journalFormURL(j.Name)), http.StatusSeeOther)

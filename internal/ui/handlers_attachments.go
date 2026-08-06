@@ -33,7 +33,7 @@ func (s *Server) attachmentsList(w http.ResponseWriter, r *http.Request) {
 
 	atts, err := s.store.ListAttachments(r.Context(), string(entity.Kind), entity.Name, id)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	if atts == nil {
@@ -152,7 +152,7 @@ func (s *Server) attachmentDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.store.DeleteAttachment(r.Context(), aid); err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)

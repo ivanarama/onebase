@@ -590,7 +590,7 @@ func (s *Server) reportSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// сохраняют единственную настройку в _settings.
 	if action == "" {
 		if err := s.store.SaveReportUserSettings(r.Context(), rep.Name, currentUserLogin(r), canon); err != nil {
-			http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+			s.serverError(w, r, err)
 			return
 		}
 		http.Redirect(w, r, reportRunURLAfterSettingsSave(rep.Name, rep.Params, r, ""), http.StatusSeeOther)
@@ -654,7 +654,7 @@ func (s *Server) reportPresetDelete(w http.ResponseWriter, r *http.Request) {
 	presetID := r.FormValue("__preset")
 	if presetID != "" && presetID != standardReportPresetID {
 		if err := s.store.DeleteReportPreset(r.Context(), rep.Name, currentUserLogin(r), presetID); err != nil {
-			http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+			s.serverError(w, r, err)
 			return
 		}
 	}
@@ -672,7 +672,7 @@ func (s *Server) reportSettingsReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteReportUserSettings(r.Context(), rep.Name, currentUserLogin(r)); err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, reportFormURLWithPreset(rep.Name, standardReportPresetID), http.StatusSeeOther)

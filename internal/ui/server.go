@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/extform"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
+	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/mailer"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
@@ -81,6 +82,7 @@ type Server struct {
 	allowedAttachmentTypes []string // расширения из attachments.allowed_types; пусто = без ограничений
 	globalDebug            *debugger.GlobalDebugController
 	messages               *MessageStore
+	incidents              *incident.Store // последние ошибки и паники с кодом E-… (план 115)
 	widgetCache            *widget.Cache
 	lockMgr                *runtime.LockManager   // #2 managed locks
 	entitySvc              *entityservice.Service // упсёрт + ТЧ + движения + проведение, разделяется с api
@@ -113,7 +115,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		loginLimit = auth.NewLoginLimiter(5, time.Minute)
 	}
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
-	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), widgetCache: widget.NewCache(60 * time.Second), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
+	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), incidents: incident.NewStore(incident.DefaultLimit), widgetCache: widget.NewCache(60 * time.Second), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
 	s.entitySvc = s.newEntityService(cfg.Webhooks)
 	// Отладчик подключается к исполнению через DebugSource: каждый запуск DSL
 	// захватывает текущую сессию глобального контроллера в свой execCtx.

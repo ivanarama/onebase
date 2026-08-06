@@ -53,7 +53,7 @@ func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
 
 	rows, total, colRefMap, err := s.store.JournalQuery(r.Context(), j, docs, params, pageSize, offset)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 
@@ -258,7 +258,7 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 
 	rows, _, colRefMap, err := s.store.JournalQuery(r.Context(), j, docs, params, 10000, 0)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.resolveJournalRefs(r.Context(), j, colRefMap, rows)

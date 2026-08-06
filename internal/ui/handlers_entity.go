@@ -80,7 +80,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.store.List(r.Context(), entity.Name, entity, params)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	// Маскирование ПДн (план 88) — до resolveRefs: если чувствительное поле
@@ -580,7 +580,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		Action:        action,
 	})
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	if result.DSLError != "" {
@@ -707,7 +707,7 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	items, total, err := s.referenceOptionsPage(r.Context(), ent, r.URL.Query().Get("q"), limit, offset)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -795,7 +795,7 @@ func (s *Server) treeChildrenJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.List(r.Context(), ent.Name, ent, params)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	s.maskRecords(r.Context(), ent, rows) // план 88: маска ПДн в ячейках дерева
@@ -1176,7 +1176,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// возможность перекрыть восстановленное значение.
 	if form := pickManagedForm(entity, "object"); form != nil {
 		if err := s.restoreUnsubmittedFields(r.Context(), r, entity, form, id, obj.Fields); err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 	}
@@ -1184,7 +1184,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// перезаписать реальное значение маской/подделкой — восстанавливаем
 	// исходные значения масковых полей из БД до проверок и Save.
 	if _, err := s.protectMaskedFieldsOnWrite(r.Context(), entity, id, obj.Fields); err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	if !s.rowAllowedUpdate(w, r, entity, "write", id, obj.Fields) {
@@ -1228,7 +1228,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.renderVersionConflict(w, r, entity, id)
 			return
 		}
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	if result.DSLError != "" {
@@ -1350,7 +1350,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape(hookErrMsg), http.StatusSeeOther)
 			return
 		}
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, docURL, http.StatusSeeOther)
@@ -1438,7 +1438,7 @@ func (s *Server) unpostDocument(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.entitySvc.Unpost(r.Context(), entity, id)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	if result.DSLError != "" {
@@ -1478,7 +1478,7 @@ func (s *Server) setRecordActivity(w http.ResponseWriter, r *http.Request) {
 	}
 	active := r.URL.Query().Get("active") == "1" || strings.EqualFold(r.URL.Query().Get("active"), "true")
 	if err := s.store.SetActivity(r.Context(), entity, id, active); err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, safeBackURL(r, listURL(entity)), http.StatusSeeOther)
@@ -1529,7 +1529,7 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 			return s.markForDeletion(ctx, entity, id, false)
 		}); err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
@@ -1542,7 +1542,7 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 			return s.markForDeletion(ctx, entity, id, true)
 		}); err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
@@ -1589,7 +1589,7 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		s.publishDocChange(ctx, entity, id, "удалён", delBefore)
 		return nil
 	}); err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	// Веб-хук <kind>.delete (план 29) — только физическое удаление
@@ -1721,7 +1721,7 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 
 	marked, err := s.store.ListMarked(r.Context(), entity.Name, entity)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 

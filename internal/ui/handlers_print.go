@@ -65,7 +65,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 	case runtime.PrintFormDeclarative:
 		doc, _, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 		backPath := fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String())
@@ -92,7 +92,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		doc, _, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 		backPath := fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String())
@@ -309,7 +309,7 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 	case runtime.PrintFormDeclarative:
 		doc, ctx, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 		fileName = pdfFileName(ref.Name, docNumber(ctx.Document))
@@ -342,7 +342,7 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		}
 		doc, ctx, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
-			http.Error(w, s.errText(r, err), 500)
+			s.serverError(w, r, err)
 			return
 		}
 		fileName = pdfFileName(ref.Name, docNumber(ctx.Document))

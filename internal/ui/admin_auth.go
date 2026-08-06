@@ -373,13 +373,13 @@ func (s *Server) adminAuthProviderDelete(w http.ResponseWriter, r *http.Request)
 	if policy.SSOOnly && !anyEnabled(kept) {
 		policy.SSOOnly = false
 		if err := s.authRepo.SaveAuthPolicy(r.Context(), policy); err != nil {
-			http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+			s.serverError(w, r, err)
 			return
 		}
 		s.logSessionAudit(r, "auth_policy_sso_only_released", id, "")
 	}
 	if err := s.authRepo.SaveAuthProviders(r.Context(), kept); err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	s.logSessionAudit(r, "auth_provider_deleted", id, "")
