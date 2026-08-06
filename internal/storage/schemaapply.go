@@ -47,6 +47,13 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 	}
 	var reports []reportItem
 	err = db.WithTxScope(ctx, func(ctx context.Context) error {
+		reports = reports[:0]
+		// deferred: field_id → фактическая (прежняя) подпись поля, чьё
+		// разрушительное изменение отложено. В карту нужно записать состояние,
+		// которое реально в базе, а не желаемое: иначе следующий план сравнит
+		// метаданные с картой, расхождения не увидит и никогда не переприменит
+		// отложенное изменение, а --allow-destructive его уже не догонит (#612).
+		deferred := map[string]string{}
 		for _, c := range changes {
 			applied := false
 			if !c.Destructive() || opts.AllowDestructive {
@@ -54,11 +61,17 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 					return err
 				}
 				applied = true
+			} else if c.Kind == ChangeRetype && c.FieldID != "" {
+				// Сужающий ретайп отложен: колонка физически осталась прежнего
+				// типа (c.From). Отложенный drop сюда не попадает — поля уже нет
+				// в fields, и его подпись хранит прежняя запись карты, которую
+				// saveSchemaMap не трогает, пока колонка жива.
+				deferred[c.FieldID] = c.From
 			}
 			// Иначе колонка остаётся осиротевшей — осознанный отказ, не сбой.
 			reports = append(reports, reportItem{c, applied})
 		}
-		return db.saveSchemaMap(ctx, table, fields)
+		return db.saveSchemaMap(ctx, table, fields, deferred)
 	})
 	if err != nil {
 		return err
