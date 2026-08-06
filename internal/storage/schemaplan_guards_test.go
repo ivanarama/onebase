@@ -185,6 +185,54 @@ func TestRetypeSQLiteRollsBackWhole(t *testing.T) {
 	}
 }
 
+// Ретайп string→boolean на SQLite обязан сохранять истинные значения. Прежде
+// перенос шёл слепым CAST(<col> AS INTEGER): SQLite отдаёт целое только для
+// числового литерала, а 'true'/'yes'/'on'/'t' превращал в 0 — миграция молча
+// обнуляла все истины (#607). Проверяем словесные формы на реальном драйвере.
+func TestRetypeSQLiteStringToBoolPreservesTrue(t *testing.T) {
+	ctx := context.Background()
+	db := schemaTestDB(t)
+
+	e := catalogWithField(metadata.Field{ID: "f_flag", Name: "Активен", Type: metadata.FieldTypeString})
+	if err := db.Migrate(ctx, []*metadata.Entity{e}); err != nil {
+		t.Fatal(err)
+	}
+	tbl := metadata.TableName(e.Name)
+
+	truthy := []string{"true", "TRUE", "t", "yes", "on", "1"}
+	falsy := []string{"false", "f", "no", "off", "0"}
+	for _, v := range append(append([]string{}, truthy...), falsy...) {
+		if _, err := db.Exec(ctx,
+			"INSERT INTO "+quoteIdent(tbl)+" (id, "+quoteIdent("активен")+") VALUES (?, ?)",
+			uuid.NewString(), v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := db.applyRetype(ctx, SchemaChange{
+		Table: tbl, FieldID: "f_flag", Kind: ChangeRetype, From: "string", To: "активен",
+		Field: metadata.Field{ID: "f_flag", Name: "Активен", Type: metadata.FieldTypeBool},
+	}); err != nil {
+		t.Fatalf("ретайп string→bool сорвался: %v", err)
+	}
+
+	var ones, zeros int
+	if err := db.QueryRow(ctx,
+		"SELECT COUNT(*) FROM "+quoteIdent(tbl)+" WHERE "+quoteIdent("активен")+" = 1").Scan(&ones); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx,
+		"SELECT COUNT(*) FROM "+quoteIdent(tbl)+" WHERE "+quoteIdent("активен")+" = 0").Scan(&zeros); err != nil {
+		t.Fatal(err)
+	}
+	if ones != len(truthy) {
+		t.Errorf("истинных значений после ретайпа %d, ожидалось %d — словесные формы обнулены", ones, len(truthy))
+	}
+	if zeros != len(falsy) {
+		t.Errorf("ложных значений после ретайпа %d, ожидалось %d", zeros, len(falsy))
+	}
+}
+
 // Пропавшая колонка должна называться прямо. На SQLite неизвестный идентификатор
 // в двойных кавычках вырождается в строковый литерал, поэтому прежняя проверка
 // возвращала «1 значение не преобразуется», а примером было имя колонки — и

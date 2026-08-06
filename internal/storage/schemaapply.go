@@ -164,7 +164,7 @@ func (db *DB) retypeSQLite(ctx context.Context, c SchemaChange, newSQL string) e
 		if _, err := db.Exec(ctx, "ALTER TABLE "+q+" ADD COLUMN "+quoteIdent(tmp)+" "+newSQL); err != nil {
 			return fmt.Errorf("%s.%s: временная колонка: %w", c.Table, c.To, err)
 		}
-		if _, err := db.Exec(ctx, "UPDATE "+q+" SET "+quoteIdent(tmp)+" = CAST("+quoteIdent(c.To)+" AS "+newSQL+")"); err != nil {
+		if _, err := db.Exec(ctx, "UPDATE "+q+" SET "+quoteIdent(tmp)+" = "+sqliteRetypeExpr(c.Field, quoteIdent(c.To), newSQL)); err != nil {
 			return fmt.Errorf("%s.%s: перенос значений: %w", c.Table, c.To, err)
 		}
 		if err := db.dropColumn(ctx, c.Table, c.To); err != nil {
@@ -175,6 +175,23 @@ func (db *DB) retypeSQLite(ctx context.Context, c SchemaChange, newSQL string) e
 		}
 		return nil
 	})
+}
+
+// sqliteRetypeExpr — выражение переноса значений при смене типа колонки на SQLite.
+//
+// Обычный CAST(<col> AS INTEGER) годится не для всякого типа: SQLite приводит к
+// целому только числовой литерал, а словесные формы булева ('true', 'yes', 'on'…)
+// даёт нулём — то есть молча обнулил бы все истинные значения (#607). Для булева
+// типа (TypeBool → INTEGER) переносим значения CASE-выражением, понимающим те же
+// формы, что и valueChecker; к этому месту checkConvertible уже отсеяла всё, что
+// не булев литерал, поэтому «иначе» здесь — только ложь.
+func sqliteRetypeExpr(f metadata.Field, col, newSQL string) string {
+	if f.RefEntity == "" && f.Type == metadata.FieldTypeBool {
+		return "CASE WHEN " + col + " IS NULL THEN NULL" +
+			" WHEN lower(CAST(" + col + " AS TEXT)) IN ('true','t','yes','on','1') THEN 1" +
+			" ELSE 0 END"
+	}
+	return "CAST(" + col + " AS " + newSQL + ")"
 }
 
 // dropColumn удаляет колонку. В SQLite DROP COLUMN отказывается работать, если
