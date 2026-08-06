@@ -65,6 +65,21 @@ jobs:
           done
           exit "$failed"
 
+      # Форматирование не проверялось ничем: gofmt в гейтах не было, а в
+      # .golangci.yml формат-линтеры не включены. За неделю 30.07–06.08 в main
+      # утекли три файла не по формату (из #570, #595, #600) — дрейф копится
+      # ровно потому, что его никто не ловит. third_party исключён: он
+      # вендорный, приводить его к нашему формату незачем.
+      - name: gofmt
+        run: |
+          unformatted="$(git ls-files '*.go' | grep -v '^third_party/' | xargs gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Файлы не отформатированы gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: чисто"
+
       - name: go vet
         run: go vet ./...
 
