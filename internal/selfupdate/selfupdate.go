@@ -174,11 +174,21 @@ func Rollback(targetPath, backupPath string) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: открыть резервный бинарь: %w", err)
 	}
-	defer oblog.CloseQuiet("selfupdate", "резервную копию бинарника", backup)
-	if err := writeFile(backup, targetPath, 0o755); err != nil {
-		return fmt.Errorf("selfupdate: восстановить старый бинарь: %w", err)
+	writeErr := writeFile(backup, targetPath, 0o755)
+	// Закрываем ДО удаления, а не через defer: Windows не даёт удалить открытый
+	// файл, и молчаливый `_ = os.Remove` оставлял бы резервную копию на месте.
+	// Тогда повторный откат находил бы её снова и отчитывался успехом, хотя
+	// откатываться уже некуда.
+	oblog.CloseQuiet("selfupdate", "резервную копию бинарника", backup)
+	if writeErr != nil {
+		return fmt.Errorf("selfupdate: восстановить старый бинарь: %w", writeErr)
 	}
-	_ = os.Remove(backupPath)
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		// Не ошибка операции: бинарь на месте, а лишняя копия — вопрос уборки.
+		// Возвращать её наверх нельзя, иначе удавшийся откат выглядел бы
+		// провалившимся.
+		oblog.Component("selfupdate").Warn("резервная копия не удалена", "file", backupPath, "err", err)
+	}
 	return nil
 }
 
