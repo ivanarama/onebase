@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/bugreport"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 )
@@ -466,43 +466,11 @@ const logTailLines = 15
 
 // tailFile возвращает последние n строк файла (читает не более 8 КБ с конца).
 // Пустая строка — файла нет или прочитать не удалось.
+//
+// Реализация общая с отчётом об ошибке (план 115): тот же журнал, то же чтение
+// с конца — расходиться этим двум местам незачем.
 func tailFile(path string, n int) string {
-	if path == "" {
-		return ""
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer closeRead("файл журнала базы", f)
-	st, err := f.Stat()
-	if err != nil || st.Size() == 0 {
-		return ""
-	}
-	const maxTail = 8 << 10
-	off := st.Size() - maxTail
-	if off < 0 {
-		off = 0
-	}
-	buf := make([]byte, st.Size()-off)
-	if _, err := f.ReadAt(buf, off); err != nil && err != io.EOF {
-		return ""
-	}
-	text := strings.TrimRight(string(buf), "\r\n\t ")
-	if off > 0 {
-		// Первая строка обрезана серединой — отбрасываем её.
-		if i := strings.IndexByte(text, '\n'); i >= 0 {
-			text = text[i+1:]
-		}
-	}
-	lines := strings.Split(text, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	for i, ln := range lines {
-		lines[i] = strings.TrimRight(ln, "\r")
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	return bugreport.TailFile(path, n, 8<<10)
 }
 
 // logsDirOverride подменяет каталог логов баз в тестах.
@@ -522,6 +490,11 @@ func baseLogPath(id string) (string, error) {
 	}
 	return filepath.Join(dir, id+".log"), nil
 }
+
+// BaseLogPath возвращает путь к журналу базы. Экспортируется ради отчёта об
+// ошибке (план 115): `onebase support` собирает пакет без запущенного лаунчера
+// и должен искать журналы там же, где их пишет лаунчер, а не по своей догадке.
+func BaseLogPath(id string) (string, error) { return baseLogPath(id) }
 
 // migrateMarkerPath возвращает путь к файлу-метке времени последней успешной
 // миграции базы. Метка лежит в служебной папке лаунчера (а не в каталоге

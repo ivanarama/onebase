@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/version"
 )
@@ -1117,30 +1118,9 @@ func escHTML(s string) string {
 	return r.Replace(s)
 }
 
-// maskDSN hides password in a connection string.
-// postgres://user:secret@host:5432/db → postgres://user:***@host:5432/db
-func maskDSN(dsn string) string {
-	// URL format: postgres://user:pass@host/db
-	if i := strings.Index(dsn, "://"); i >= 0 {
-		rest := dsn[i+3:]
-		if at := strings.Index(rest, "@"); at >= 0 {
-			userPart := rest[:at]
-			if colon := strings.LastIndex(userPart, ":"); colon >= 0 {
-				return dsn[:i+3+colon+1] + "***" + dsn[i+3+at:]
-			}
-		}
-	}
-	// DSN format: host=... password=secret ...
-	if i := strings.Index(dsn, "password="); i >= 0 {
-		end := i + len("password=")
-		rest := dsn[end:]
-		if sp := strings.IndexByte(rest, ' '); sp >= 0 {
-			return dsn[:end] + "***" + rest[sp:]
-		}
-		return dsn[:end] + "***"
-	}
-	return dsn
-}
+// maskDSN — тонкая обёртка над общим редактором (internal/logging): тот же
+// алгоритм используют экран «О программе» базы и отчёт об ошибке.
+func maskDSN(dsn string) string { return oblog.RedactDSN(dsn) }
 
 // baseDatabaseLocation returns the same database location the launcher uses,
 // including the actual file path for SQLite and a password-masked PostgreSQL

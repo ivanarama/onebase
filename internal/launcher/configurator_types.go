@@ -467,6 +467,7 @@ type configuratorData struct {
 	AppAuthor        string
 	AppCopyright     string
 	AppLicense       string
+	AppSupport       string // куда сообщать об ошибках этой конфигурации (план 115)
 	AvailableLangs   []i18n.Lang
 	DSNMasked        string
 	Tab              string             // "tree" | "convert" | "files"

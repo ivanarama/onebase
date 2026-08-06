@@ -226,6 +226,7 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 	newAuthor := strings.TrimSpace(r.FormValue("app_author"))
 	newCopyright := strings.TrimSpace(r.FormValue("app_copyright"))
 	newLicense := strings.TrimSpace(r.FormValue("app_license"))
+	newSupport := strings.TrimSpace(r.FormValue("app_support"))
 	existingLogo := strings.TrimSpace(r.FormValue("app_logo_existing"))
 	removeLogo := r.FormValue("app_logo_remove") == "1"
 
@@ -282,10 +283,12 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 		Author    string `yaml:"author,omitempty"`
 		Copyright string `yaml:"copyright,omitempty"`
 		License   string `yaml:"license,omitempty"`
+		Support   string `yaml:"support,omitempty"`
 	}
 	out, _ := yaml.Marshal(saveAppConfig{
 		Name: newName, Version: newVersion, Lang: newLang, Logo: logoPath,
 		Author: newAuthor, Copyright: newCopyright, License: newLicense,
+		Support: newSupport,
 	})
 
 	var saveErr error
