@@ -1,4 +1,4 @@
-package storage
+package storage_test
 
 import (
 	"context"
@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // truthy приводит значение булева реквизита к bool независимо от диалекта:
@@ -28,8 +30,7 @@ func truthy(t *testing.T, v any) bool {
 	}
 }
 
-func boolRetypeCatalog(t *testing.T, typ metadata.FieldType) *metadata.Entity {
-	t.Helper()
+func boolRetypeCatalog(typ metadata.FieldType) *metadata.Entity {
 	return &metadata.Entity{
 		Name: "РетайпБул",
 		Kind: metadata.KindCatalog,
@@ -52,10 +53,10 @@ func boolRetypeCatalog(t *testing.T, typ metadata.FieldType) *metadata.Entity {
 // в «ложь». На PostgreSQL тот же сценарий отрабатывал верно (ALTER … USING),
 // из-за чего раздельные тесты расхождения не показывали.
 func TestRetypeStringToBoolKeepsTruthyValues(t *testing.T) {
-	forEachDialect(t, func(t *testing.T, db *DB) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
 
-		before := boolRetypeCatalog(t, metadata.FieldTypeString)
+		before := boolRetypeCatalog(metadata.FieldTypeString)
 		if err := db.Migrate(ctx, []*metadata.Entity{before}); err != nil {
 			t.Fatalf("миграция (строка): %v", err)
 		}
@@ -83,7 +84,7 @@ func TestRetypeStringToBoolKeepsTruthyValues(t *testing.T) {
 			}
 		}
 
-		after := boolRetypeCatalog(t, metadata.FieldTypeBool)
+		after := boolRetypeCatalog(metadata.FieldTypeBool)
 		if err := db.Migrate(ctx, []*metadata.Entity{after}); err != nil {
 			t.Fatalf("миграция (булево): %v", err)
 		}

@@ -157,6 +157,12 @@ jobs:
           go test -race -count=1 -timeout 15m -tags integration ./internal/storage
           go test -race -count=1 -timeout 15m -tags integration ./internal/configdb
           go test -race -count=1 -timeout 15m -tags integration ./internal/entityservice
+          # internal/query до плана 115 не видел PostgreSQL вообще, хотя
+          # компилятор запросов — самое диалектозависимое место платформы:
+          # виртуальные таблицы разворачиваются в подзапросы, числа на SQLite
+          # лежат в TEXT и требуют CAST. Матричные тесты (dbtest.ForEachDialect)
+          # исполняют скомпилированный SQL на обоих диалектах.
+          go test -race -count=1 -timeout 15m -tags integration ./internal/query
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck
