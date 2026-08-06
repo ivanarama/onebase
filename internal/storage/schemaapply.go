@@ -63,6 +63,20 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 	if err != nil {
 		return err
 	}
+	// Смена типа колонки меняет тип результата уже подготовленных запросов, а
+	// pgx кэширует планы на каждом соединении пула. Без сброса первое же
+	// чтение этой таблицы после ретайпа падает с «cached plan must not change
+	// result type» (SQLSTATE 0A000) — и падает не в тесте, а у живого сервера,
+	// который отмигрировал схему и продолжает работать на том же пуле.
+	// Reset закрывает простаивающие соединения и помечает занятые на закрытие,
+	// так что следующий запрос готовит план заново. Делается ПОСЛЕ коммита:
+	// откаченный план типов не менял.
+	for _, rep := range reports {
+		if rep.applied && rep.change.Kind == ChangeRetype {
+			db.resetConnPool()
+			break
+		}
+	}
 	// Report только после фиксации транзакции: при откате (сбой посреди плана)
 	// ничего не применилось, и сообщать «применено» об откаченных изменениях —
 	// значит ввести администратора в заблуждение о состоянии базы.
@@ -72,6 +86,14 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 		}
 	}
 	return nil
+}
+
+// resetConnPool сбрасывает подготовленные планы пула. На SQLite не нужен:
+// там пул из одного соединения и кэша планов уровня pgx нет.
+func (db *DB) resetConnPool() {
+	if db.pool != nil {
+		db.pool.Reset()
+	}
 }
 
 func anyFieldHasID(fields []metadata.Field) bool {
@@ -164,7 +186,8 @@ func (db *DB) retypeSQLite(ctx context.Context, c SchemaChange, newSQL string) e
 		if _, err := db.Exec(ctx, "ALTER TABLE "+q+" ADD COLUMN "+quoteIdent(tmp)+" "+newSQL); err != nil {
 			return fmt.Errorf("%s.%s: временная колонка: %w", c.Table, c.To, err)
 		}
-		if _, err := db.Exec(ctx, "UPDATE "+q+" SET "+quoteIdent(tmp)+" = CAST("+quoteIdent(c.To)+" AS "+newSQL+")"); err != nil {
+		if _, err := db.Exec(ctx, "UPDATE "+q+" SET "+quoteIdent(tmp)+" = "+
+			sqliteRetypeExpr(quoteIdent(c.To), c.Field, newSQL)); err != nil {
 			return fmt.Errorf("%s.%s: перенос значений: %w", c.Table, c.To, err)
 		}
 		if err := db.dropColumn(ctx, c.Table, c.To); err != nil {
@@ -175,6 +198,30 @@ func (db *DB) retypeSQLite(ctx context.Context, c SchemaChange, newSQL string) e
 		}
 		return nil
 	})
+}
+
+// sqliteRetypeExpr — выражение переноса значений при смене типа на SQLite.
+//
+// Обычно достаточно CAST, но для булева типа он ломает данные: SQLite приводит
+// к целому только числовые литералы, поэтому CAST('true' AS INTEGER) = 0 —
+// «истина» молча превращается в «ложь» (issue #607). При этом valueChecker
+// считает 'true'/'t'/'yes'/'on' годными значениями, так что checkConvertible
+// пропускает такую миграцию как безопасную.
+//
+// Набор распознаваемых слов ОБЯЗАН совпадать с valueChecker для
+// metadata.FieldTypeBool: проверка и перенос должны договариваться об одном и
+// том же, иначе «проверили одно, записали другое» повторится.
+//
+// На PostgreSQL этой правки не нужно: там ALTER … USING с pgUsingExpr, и
+// CAST('true' AS BOOLEAN) отрабатывает верно.
+func sqliteRetypeExpr(col string, f metadata.Field, newSQL string) string {
+	if f.Type != metadata.FieldTypeBool {
+		return "CAST(" + col + " AS " + newSQL + ")"
+	}
+	return "CASE" +
+		" WHEN " + col + " IS NULL OR TRIM(" + col + ") = '' THEN NULL" +
+		" WHEN LOWER(TRIM(" + col + ")) IN ('true','t','yes','on','1') THEN 1" +
+		" ELSE 0 END"
 }
 
 // dropColumn удаляет колонку. В SQLite DROP COLUMN отказывается работать, если
