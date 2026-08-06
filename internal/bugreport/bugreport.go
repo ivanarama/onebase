@@ -68,6 +68,9 @@ type Contacts struct {
 	IssuesURL string
 }
 
+// Any сообщает, есть ли хоть один адрес — иначе блок «Куда отправить» не нужен.
+func (c Contacts) Any() bool { return c.App != "" || c.Platform != "" || c.IssuesURL != "" }
+
 // PlatformContacts возвращает контакты платформы (без контакта конфигурации).
 func PlatformContacts(app string) Contacts {
 	return Contacts{App: strings.TrimSpace(app), Platform: version.SupportContact, IssuesURL: version.IssuesURL}

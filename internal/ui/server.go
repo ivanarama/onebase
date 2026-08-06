@@ -36,6 +36,7 @@ type Config struct {
 	AppAuthor        string // автор конфигурации (app.yaml: author)
 	AppCopyright     string // правообладатель конфигурации (app.yaml: copyright)
 	AppLicense       string // лицензия конфигурации (app.yaml: license)
+	AppSupport       string // куда сообщать об ошибках этой конфигурации (app.yaml: support, план 115)
 	PlatAuthor       string // правообладатель платформы (version.Author)
 	PlatLicense      string // лицензия платформы (version.License)
 	DSN              string // legacy PostgreSQL location; use DatabaseLocation in UI
@@ -511,6 +512,12 @@ func (s *Server) Mount(r chi.Router) {
 	// About
 	r.Get("/ui/about", s.about)
 	r.Get("/ui/logo", s.logo)
+
+	// «Сообщить об ошибке» (план 115): форма → предпросмотр → файл.
+	// Доступна любому вошедшему: жалуется как раз тот, у кого нет прав.
+	r.Get("/ui/report-problem", s.reportProblemForm)
+	r.Post("/ui/report-problem", s.reportProblemPreview)
+	r.Post("/ui/report-problem/download", s.reportProblemDownload)
 
 	// Messages panel
 	r.Get("/ui/messages", s.messagesList)

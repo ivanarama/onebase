@@ -302,6 +302,7 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		uiCfg.AppAuthor = appCfg.Author
 		uiCfg.AppCopyright = appCfg.Copyright
 		uiCfg.AppLicense = appCfg.License
+		uiCfg.AppSupport = appCfg.Support
 		uiCfg.Lang = appCfg.Lang
 		if appCfg.Logo != "" {
 			uiCfg.Logo = filepath.Join(proj.Dir, appCfg.Logo)
