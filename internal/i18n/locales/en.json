@@ -1113,5 +1113,6 @@
   "Обновляю и перезапускаю...": "Updating and restarting...",
   "Платформа перезапускается — это окно закроется.": "The platform is restarting — this window will close.",
   "Вернуть предыдущую версию платформы?": "Roll back to the previous platform version?",
-  "Откатываю и перезапускаю...": "Rolling back and restarting..."
+  "Откатываю и перезапускаю...": "Rolling back and restarting...",
+  "обновление выполняется из лаунчера": "update it from the launcher"
 }

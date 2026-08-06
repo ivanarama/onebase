@@ -87,27 +87,25 @@ func (s State) StagedReady() bool {
 	return s.Staged != nil && s.Staged.Verified && s.Staged.Tag != ""
 }
 
-// HomeDir возвращает ~/.onebase — тот же каталог, в котором лаунчер держит
-// реестр баз (launcher.NewStore). Права 0700: каталог одного пользователя.
-func HomeDir() (string, error) {
+// updatesDirPath возвращает путь ~/.onebase/updates, ничего не создавая.
+// Отдельно от UpdatesDir, потому что читателей больше, чем писателей: экран
+// «О программе» в Предприятии только смотрит состояние, а процесс базы может
+// работать службой под чужим профилем — создавать там каталоги незачем.
+func updatesDirPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("selfupdate: домашний каталог: %w", err)
 	}
-	dir := filepath.Join(home, ".onebase")
-	if err := os.MkdirAll(dir, fsmode.SecretDir); err != nil {
-		return "", err
-	}
-	return dir, nil
+	return filepath.Join(home, ".onebase", "updates"), nil
 }
 
 // UpdatesDir возвращает ~/.onebase/updates, создавая его при необходимости.
+// Права 0700: каталог одного пользователя, как и реестр баз рядом.
 func UpdatesDir() (string, error) {
-	home, err := HomeDir()
+	dir, err := updatesDirPath()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, "updates")
 	if err := os.MkdirAll(dir, fsmode.SecretDir); err != nil {
 		return "", err
 	}
@@ -138,7 +136,7 @@ func PrevDir() (string, error) {
 // возвращается пустое состояние и ошибка, которую вызывающий волен только
 // записать в журнал (лаунчер обязан подняться в любом случае).
 func LoadState() (State, error) {
-	updates, err := UpdatesDir()
+	updates, err := updatesDirPath()
 	if err != nil {
 		return State{}, err
 	}

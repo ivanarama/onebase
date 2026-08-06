@@ -16,7 +16,7 @@
 
 ### Шаг 1. Скачать и запустить
 
-1. Скачайте архив со страницы [Releases](https://github.com/ivantit66/onebase/releases/latest):  
+1. Скачайте архив со страницы [Releases](https://github.com/ivanarama/onebase/releases/latest):  
    `onebase-windows-amd64.zip`
 2. Распакуйте в любую папку, например `C:\onebase\`
 3. Двойной клик на **`onebase-gui.exe`**
@@ -91,7 +91,7 @@ PostgreSQL 14+ → https://www.postgresql.org/download/
 ### Установка
 
 ```bash
-git clone https://github.com/ivantit66/onebase
+git clone https://github.com/ivanarama/onebase
 cd onebase
 go build -o onebase.exe ./cmd/onebase
 ```

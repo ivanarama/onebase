@@ -1012,6 +1012,17 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 		}
 		platVer += `</span>`
 	}
+	// Конфигуратор обслуживает тот же процесс, что и лаунчер, поэтому отсюда
+	// можно сразу увести на страницу обновления (план 92). Само обновление
+	// делается там: оно остановит все базы и перезапустит платформу.
+	if upd := h.updatesState(); upd.ShowBadge() {
+		platVer += fmt.Sprintf(
+			`<div style="margin-top:6px;font-size:12px;color:#166534">%s: <b>%s</b> · <a href="/updates" target="_top" style="color:#1a5fa8">%s</a></div>`,
+			escHTML(tr(resolveLang(r), "Доступна новая версия платформы")),
+			escHTML(upd.LatestTag),
+			escHTML(tr(resolveLang(r), "Обновление платформы")),
+		)
+	}
 
 	dbLocation := baseDatabaseLocation(b)
 	configMode := "Файлы"
