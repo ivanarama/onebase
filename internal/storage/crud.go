@@ -513,6 +513,14 @@ func normalizeValue(v any) any {
 		return decimal.NewFromBigInt(t.Int, t.Exp)
 	case int64:
 		return t
+	case time.Time:
+		// Момент хранится в UTC (см. toDriverValue), а прикладной слой работает в
+		// ЛОКАЛЬНОМ времени: ТекущаяДатаВремя() отдаёт локальное, интерфейс
+		// показывает локальное (formatFieldValueForInput). Без приведения дата,
+		// прочитанная из БД, несла UTC-стенные часы, и Час()/НачалоДня() над
+		// значением из запроса давали час со сдвигом на часовой пояс (записали
+		// 17:25 — прочитали 14:25). Момент времени при этом не меняется.
+		return t.In(time.Local)
 	}
 	return v
 }
@@ -573,10 +581,12 @@ func normalizeFieldValue(f metadata.Field, v any) any {
 func normalizeDate(v any) any {
 	switch t := v.(type) {
 	case time.Time:
-		return t
+		return t.In(time.Local)
 	case string:
 		if parsed, ok := ParseRegPeriod(t); ok {
-			return parsed
+			// В локальное — тем же правилом, что и в normalizeValue: прикладной
+			// слой везде работает с локальным настенным временем.
+			return parsed.In(time.Local)
 		}
 	}
 	return normalizeValue(v)

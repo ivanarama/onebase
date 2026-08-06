@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // BuiltinFunc is a callable value that can be injected via extraVars (e.g. Сообщить).
@@ -437,10 +439,29 @@ func builtinMin(args []any, file string, line int) (any, error) {
 	return b, nil
 }
 
+// toTime приводит аргумент функций работы с датой к time.Time. Кроме собственно
+// time.Time принимает и СТРОКОВОЕ представление даты: результат запроса не
+// типизируется по метаданным (storage.RunQuery отдаёт значения через
+// normalizeValue, которому типы полей неизвестны), и на SQLite колонка даты
+// приходит из запроса строкой RFC3339. Без разбора строки Час(Стр.Дата) молча
+// возвращал Неопределено, Число() превращал это в 0, и время суток из запроса
+// было недоступно — прикладные конфигурации вынуждены были дублировать час
+// отдельным числовым полем при записи.
+//
+// Разобранное значение приводим к ЛОКАЛЬНОМУ времени: на запись момент
+// переводится в UTC (storage), а интерфейс показывает его обратно в локальном
+// (см. formatFieldValueForInput). Час записанного «17:25» должен и читаться как
+// 17, а не как 14 по UTC.
 func toTime(args []any, i int) (time.Time, bool) {
-	if i < len(args) {
-		if t, ok := args[i].(time.Time); ok {
-			return t, true
+	if i >= len(args) {
+		return time.Time{}, false
+	}
+	switch v := args[i].(type) {
+	case time.Time:
+		return v, true
+	case string:
+		if t, ok := storage.ParseRegPeriod(v); ok {
+			return t.In(time.Local), true
 		}
 	}
 	return time.Time{}, false
