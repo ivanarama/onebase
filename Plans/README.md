@@ -286,7 +286,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 112 | [112-user-cli-and-role-asserts.md](112-user-cli-and-role-asserts.md) | `onebase user` + ассерты матрицы прав ролей в `onebase test` | ✅ Реализовано |
 | 113 | [113-row-field-access-asserts.md](113-row-field-access-asserts.md) | Ассерты полевого и строкового доступа в `onebase test` | ✅ Реализовано |
 | 114 | [114-doctor.md](114-doctor.md) | `onebase doctor` — проверка и починка состояния базы | ✅ Реализовано |
-| 115 | [115-process-hardening.md](115-process-hardening.md) | Гейты, чокпоинты инвариантов, матрица диалектов (по итогам ревью недели) | 🚧 В работе |
+| 115 | [115-process-hardening.md](115-process-hardening.md) | Гейты, чокпоинты инвариантов, матрица диалектов (по итогам ревью недели) | ✅ Реализовано |
 
 ### Направление Н — планы вне таблиц (сведено аудитом 2026-08-02)
 
