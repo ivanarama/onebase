@@ -450,6 +450,13 @@ func safeAppearance(a reportpkg.Appearance) reportpkg.Appearance {
 	default:
 		a.Lines = ""
 	}
+	// CollapseTo — уровень начальной развёртки групп (issue #575). Значение
+	// уходит числом в data-атрибут таблицы; отрицательное трактуем как 0
+	// («свернуть всё»), чтобы в _settings не оседала бессмыслица.
+	if a.CollapseTo != nil && *a.CollapseTo < 0 {
+		zero := 0
+		a.CollapseTo = &zero
+	}
 	return a
 }
 

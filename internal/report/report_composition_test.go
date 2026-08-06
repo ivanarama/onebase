@@ -111,6 +111,50 @@ composition:
 	}
 }
 
+// collapse_to читается из appearance и отличает «0» от «ключа нет» (issue #575):
+// именно поэтому поле указательное. Вариант отчёта задаёт своё значение.
+func TestParseAppearanceCollapseTo(t *testing.T) {
+	src := []byte(`
+name: Тест
+query: "ВЫБРАТЬ 1"
+composition:
+  groupings: [Участник, Категория]
+  measures:
+    - { field: Сумма, agg: sum }
+  appearance: { collapse_to: 0 }
+variants:
+  - name: Подробный
+    composition:
+      groupings: [Участник]
+      measures:
+        - { field: Сумма, agg: sum }
+      appearance: { collapse_to: 2 }
+`)
+	r, err := ParseBytes(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := r.Composition.Appearance.CollapseTo
+	if got == nil || *got != 0 {
+		t.Fatalf("collapse_to: 0 должен читаться как заданный ноль, получили %v", got)
+	}
+	if len(r.Variants) != 1 || r.Variants[0].Composition == nil {
+		t.Fatalf("вариант не разобран: %+v", r.Variants)
+	}
+	if v := r.Variants[0].Composition.Appearance.CollapseTo; v == nil || *v != 2 {
+		t.Fatalf("collapse_to варианта: %v", v)
+	}
+
+	// Без ключа — nil: отчёт открывается развёрнутым, как было.
+	plain, err := ParseBytes([]byte("name: Т\nquery: \"ВЫБРАТЬ 1\"\ncomposition:\n  groupings: [М]\n  measures:\n    - { field: С, agg: sum }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Composition.Appearance.CollapseTo != nil {
+		t.Fatalf("без ключа ожидали nil, получили %v", *plain.Composition.Appearance.CollapseTo)
+	}
+}
+
 func TestParseNoComposition(t *testing.T) {
 	r, err := ParseBytes([]byte("name: X\nquery: \"ВЫБРАТЬ 1\"\n"))
 	if err != nil {

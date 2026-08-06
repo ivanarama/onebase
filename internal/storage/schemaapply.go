@@ -33,20 +33,45 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 		return err
 	}
 	opts := db.schemaOpts
-	for _, c := range changes {
-		applied := false
-		if !c.Destructive() || opts.AllowDestructive {
-			if err := db.applySchemaChange(ctx, c); err != nil {
-				return err
+
+	// Весь план одной таблицы и запись карты полей — в одной транзакции (issue
+	// #588). Иначе сбой посреди плана оставлял базу в состоянии, о котором карта
+	// `_schema_fields` не знает: часть переименований применена, а карта (её
+	// пишет saveSchemaMap последней строкой) о них не в курсе — следующий прогон
+	// строит план по устаревшей карте и разбирает частично применённое
+	// состояние. DDL транзакционен на обоих диалектах; retypeSQLite вложится
+	// сюда савпоинтом (WithTxScope это умеет).
+	type reportItem struct {
+		change  SchemaChange
+		applied bool
+	}
+	var reports []reportItem
+	err = db.WithTxScope(ctx, func(ctx context.Context) error {
+		for _, c := range changes {
+			applied := false
+			if !c.Destructive() || opts.AllowDestructive {
+				if err := db.applySchemaChange(ctx, c); err != nil {
+					return err
+				}
+				applied = true
 			}
-			applied = true
+			// Иначе колонка остаётся осиротевшей — осознанный отказ, не сбой.
+			reports = append(reports, reportItem{c, applied})
 		}
-		// Иначе колонка остаётся осиротевшей — это осознанный отказ, а не сбой.
-		if opts.Report != nil {
-			opts.Report(c, applied)
+		return db.saveSchemaMap(ctx, table, fields)
+	})
+	if err != nil {
+		return err
+	}
+	// Report только после фиксации транзакции: при откате (сбой посреди плана)
+	// ничего не применилось, и сообщать «применено» об откаченных изменениях —
+	// значит ввести администратора в заблуждение о состоянии базы.
+	if opts.Report != nil {
+		for _, rep := range reports {
+			opts.Report(rep.change, rep.applied)
 		}
 	}
-	return db.saveSchemaMap(ctx, table, fields)
+	return nil
 }
 
 func anyFieldHasID(fields []metadata.Field) bool {
@@ -129,19 +154,27 @@ func (db *DB) applyRetype(ctx context.Context, c SchemaChange) error {
 func (db *DB) retypeSQLite(ctx context.Context, c SchemaChange, newSQL string) error {
 	tmp := c.To + "__ob_retype"
 	q := quoteIdent(c.Table)
-	if _, err := db.Exec(ctx, "ALTER TABLE "+q+" ADD COLUMN "+quoteIdent(tmp)+" "+newSQL); err != nil {
-		return fmt.Errorf("%s.%s: временная колонка: %w", c.Table, c.To, err)
-	}
-	if _, err := db.Exec(ctx, "UPDATE "+q+" SET "+quoteIdent(tmp)+" = CAST("+quoteIdent(c.To)+" AS "+newSQL+")"); err != nil {
-		return fmt.Errorf("%s.%s: перенос значений: %w", c.Table, c.To, err)
-	}
-	if err := db.dropColumn(ctx, c.Table, c.To); err != nil {
-		return err
-	}
-	if _, err := db.Exec(ctx, "ALTER TABLE "+q+" RENAME COLUMN "+quoteIdent(tmp)+" TO "+quoteIdent(c.To)); err != nil {
-		return fmt.Errorf("%s.%s: переименование временной колонки: %w", c.Table, c.To, err)
-	}
-	return nil
+	// Все четыре шага — в одной транзакции: SQLite умеет транзакционный DDL,
+	// и без неё обрыв между DROP и RENAME оставлял базу в состоянии, из
+	// которого она не выходит сама. Данные лежали бы в <колонка>__ob_retype,
+	// самой колонки не было бы, а повторный прогон падал бы на ADD COLUMN
+	// («duplicate column name») — и так до ручной правки, причём миграция
+	// срывается, то есть сервер уже не поднять.
+	return db.WithTxScope(ctx, func(ctx context.Context) error {
+		if _, err := db.Exec(ctx, "ALTER TABLE "+q+" ADD COLUMN "+quoteIdent(tmp)+" "+newSQL); err != nil {
+			return fmt.Errorf("%s.%s: временная колонка: %w", c.Table, c.To, err)
+		}
+		if _, err := db.Exec(ctx, "UPDATE "+q+" SET "+quoteIdent(tmp)+" = CAST("+quoteIdent(c.To)+" AS "+newSQL+")"); err != nil {
+			return fmt.Errorf("%s.%s: перенос значений: %w", c.Table, c.To, err)
+		}
+		if err := db.dropColumn(ctx, c.Table, c.To); err != nil {
+			return err
+		}
+		if _, err := db.Exec(ctx, "ALTER TABLE "+q+" RENAME COLUMN "+quoteIdent(tmp)+" TO "+quoteIdent(c.To)); err != nil {
+			return fmt.Errorf("%s.%s: переименование временной колонки: %w", c.Table, c.To, err)
+		}
+		return nil
+	})
 }
 
 // dropColumn удаляет колонку. В SQLite DROP COLUMN отказывается работать, если
@@ -229,6 +262,17 @@ func (db *DB) checkConvertible(ctx context.Context, table, column string, f meta
 	parse := valueChecker(f)
 	if parse == nil {
 		return 0, nil, nil // в текст преобразуется что угодно
+	}
+	// Колонку надо проверить на существование отдельно: SQLite для неизвестного
+	// идентификатора в двойных кавычках подставляет СТРОКОВЫЙ ЛИТЕРАЛ (наследие
+	// совместимости), поэтому запрос ниже не упал бы, а вернул одно «значение»,
+	// равное имени колонки, — и мы обвинили бы данные в том, что колонки нет.
+	cols, err := db.tableColumns(ctx, table)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, ok := cols[strings.ToLower(column)]; !ok {
+		return 0, nil, fmt.Errorf("%s.%s: колонки нет в таблице — схема расходится с картой полей", table, column)
 	}
 	rows, err := db.Query(ctx, "SELECT DISTINCT CAST("+quoteIdent(column)+" AS TEXT) FROM "+quoteIdent(table)+
 		" WHERE "+quoteIdent(column)+" IS NOT NULL")

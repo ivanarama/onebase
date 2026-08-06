@@ -402,6 +402,16 @@ const tplForm = `
         <div class="hint">{{t $.Lang "У каждой базы должен быть уникальный порт. Первая база: 8080, вторая: 8081 и т.д."}}</div>
       </div>
     </div>
+    <div class="form-row">
+      <div class="fg">
+        <label>{{t $.Lang "Доступ по сети"}}</label>
+        <select name="host">
+          <option value="127.0.0.1" {{if ne .Base.Host "0.0.0.0"}}selected{{end}}>{{t $.Lang "Только этот компьютер (127.0.0.1)"}}</option>
+          <option value="0.0.0.0" {{if eq .Base.Host "0.0.0.0"}}selected{{end}}>{{t $.Lang "Все интерфейсы (0.0.0.0) — доступ из локальной сети"}}</option>
+        </select>
+        <div class="hint">{{t $.Lang "«Все интерфейсы» открывает базу другим машинам сети. Пока в базе нет пользователей, доступ будет без пароля — сначала заведите пользователя."}}</div>
+      </div>
+    </div>
     {{if .IsNew}}
     <div class="cbrow" id="scaffold-row">
       <input type="checkbox" name="scaffold" id="scaffold" value="1">

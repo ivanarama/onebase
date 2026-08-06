@@ -100,9 +100,16 @@ type CellStyle struct {
 // = исторический вид (горизонтальные линии, без зебры) — существующие отчёты не
 // меняются. Lines: "" или "horizontal" — только нижние границы (как было);
 // "vertical" — только вертикальные; "both" — полная сетка; "none" — без линий.
+//
+// CollapseTo — начальное состояние групп при открытии отчёта (issue #575):
+// уровни 0..N развёрнуты, глубже — свёрнуто. 0 — видны только группы верхнего
+// уровня со своими итогами. nil (ключа нет) — всё развёрнуто, как было. Поле
+// указательное именно поэтому: `collapse_to: 0` — осмысленное значение, и от
+// «не задано» его надо отличать.
 type Appearance struct {
-	Lines string `yaml:"lines" json:"lines,omitempty"`
-	Zebra bool   `yaml:"zebra" json:"zebra,omitempty"`
+	Lines      string `yaml:"lines" json:"lines,omitempty"`
+	Zebra      bool   `yaml:"zebra" json:"zebra,omitempty"`
+	CollapseTo *int   `yaml:"collapse_to,omitempty" json:"collapse_to,omitempty"`
 }
 
 // ChartSpec задаёт параметры диаграммы, встроенной в отчёт.

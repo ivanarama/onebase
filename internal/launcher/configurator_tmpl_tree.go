@@ -698,6 +698,8 @@ const cfgTabTree = `{{define "tab-tree"}}
                 <option value="none" {{if eq $al "none"}}selected{{end}}>{{t $.Lang "без линий"}}</option>
               </select></div>
             <label><input type="checkbox" name="comp.appearance.zebra" {{with .Composition}}{{if .Appearance.Zebra}}checked{{end}}{{end}}> {{t $.Lang "Чередование строк (зебра)"}}</label>
+            <div class="fg"><label title="{{t $.Lang "Пусто — отчёт открывается развёрнутым; 0 — видны только группы верхнего уровня"}}">{{t $.Lang "Свернуто до уровня"}}</label>
+              <input type="number" name="comp.appearance.collapse_to" min="0" step="1" placeholder="—" value="{{with .Composition}}{{with .Appearance.CollapseTo}}{{.}}{{end}}{{end}}" style="width:70px;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></div>
           </div>
           <div class="section-hd" style="margin-top:14px">{{t $.Lang "Условное оформление"}}
             <button type="button" class="cfg-add-btn" style="font-size:14px;margin-left:8px" onclick="compAddCond('cc-{{$rn}}')">+</button></div>

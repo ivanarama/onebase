@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	oblog "github.com/ivantit66/onebase/internal/logging"
@@ -31,11 +32,16 @@ input:focus,select:focus{border-color:#1a5fa8;box-shadow:0 0 0 2px rgba(26,95,16
 .btn{width:100%;background:#1a5fa8;color:#fff;border:none;padding:10px;font-size:14px;border-radius:3px;cursor:pointer;font-weight:500}
 .btn:hover{background:#1550a0}
 .err{color:#c00;font-size:13px;margin-bottom:14px;padding:8px;background:#fff0f0;border-radius:3px;border:1px solid #fcc}
+.sep{display:flex;align-items:center;gap:8px;color:#94a3b8;font-size:12px;margin:4px 0 14px}
+.sep:before,.sep:after{content:"";flex:1;height:1px;background:#e2e8f0}
+.btn-sso{display:block;text-align:center;text-decoration:none;background:#fff;color:#1a5fa8;border:1px solid #1a5fa8;margin-bottom:8px;line-height:20px}
+.btn-sso:hover{background:#f0f6ff}
 </style></head>
 <body>
 <div class="box">
   <h2>⚡ onebase — Вход</h2>
   {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+  {{if .PasswordLogin}}
   <form method="POST">
     <label>Имя пользователя</label>
     <input name="login" autofocus autocomplete="off" {{if .Users}}list="ob-users"{{end}}>
@@ -44,6 +50,14 @@ input:focus,select:focus{border-color:#1a5fa8;box-shadow:0 0 0 2px rgba(26,95,16
     <input name="password" type="password" autocomplete="current-password">
     <button class="btn" type="submit">Войти</button>
   </form>
+  {{end}}
+  {{if .Providers}}
+  {{if .PasswordLogin}}<div class="sep"><span>или</span></div>{{end}}
+  {{range .Providers}}<a class="btn btn-sso" href="/auth/oidc/{{.ID}}/start{{$.ReturnQuery}}">Войти через {{.Name}}</a>{{end}}
+  {{end}}
+  {{if and (not .PasswordLogin) (not .Providers)}}
+  <div class="err">Вход по паролю запрещён политикой, а провайдеры единого входа не настроены. Обратитесь к администратору базы.</div>
+  {{end}}
 </div>
 </body></html>`))
 
@@ -58,6 +72,17 @@ type Handlers struct {
 	Codes         *OneTimeCodes // одноразовые bootstrap-коды (план 53); optional
 	LoginLimit    *LoginLimiter // rate-limit попыток входа (план 53); optional
 	SecureCookies bool          // force Secure behind a trusted HTTPS terminator
+	// Challenges — незавершённые входы, ожидающие второго фактора (план 84).
+	// nil → общее хранилище процесса (DefaultChallenges).
+	Challenges *Challenges
+	// OIDC — клиент внешних провайдеров входа (план 84). nil → общий клиент
+	// процесса (DefaultOIDCClient).
+	OIDC *OIDCClient
+	// AppName — имя базы в приложении-аутентификаторе и в otpauth-ссылке.
+	AppName string
+	// BaseURL — внешний адрес базы для redirect_uri провайдера
+	// (https://erp.example.com). Пусто → адрес собирается из запроса.
+	BaseURL string
 }
 
 // sessionMetaFromRequest собирает мету сессии пользовательского режима.
@@ -116,24 +141,50 @@ func (h *Handlers) IssueOneTimeCode(w http.ResponseWriter, r *http.Request) {
 	respondJSONTo(w, map[string]any{"code": code})
 }
 
-func (h *Handlers) LoginPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+// loginPageData собирает данные формы входа: список пользователей для подсказки,
+// кнопки внешних провайдеров и признак того, разрешён ли вход по паролю
+// (политика sso_only, план 84).
+func (h *Handlers) loginPageData(r *http.Request, errMsg string) map[string]any {
 	var users []*User
+	var providers []*OIDCProvider
+	passwordLogin := true
 	if h.Repo != nil {
 		users, _ = h.Repo.ListForSelection(r.Context())
+		providers = h.Repo.EnabledAuthProviders(r.Context())
+		passwordLogin = h.Repo.AuthPolicy(r.Context()).PasswordLoginAllowed()
 	}
-	renderTemplate(w, loginTmpl, map[string]any{"Error": "", "Users": users})
+	returnQuery := ""
+	if ret := r.URL.Query().Get("return"); ret != "" && isLocalURL(ret) {
+		returnQuery = "?return=" + url.QueryEscape(ret)
+	}
+	return map[string]any{
+		"Error":         errMsg,
+		"Users":         users,
+		"Providers":     providers,
+		"PasswordLogin": passwordLogin,
+		"ReturnQuery":   returnQuery,
+	}
+}
+
+func (h *Handlers) LoginPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	errMsg := ""
+	switch r.URL.Query().Get("err") {
+	case "2fa":
+		errMsg = "Слишком много неверных кодов подтверждения — начните вход заново"
+	case "sso":
+		errMsg = "Единый вход не удался — подробности в журнале сервера"
+	case "sso_user":
+		errMsg = "Учётная запись не найдена в этой базе — обратитесь к администратору"
+	}
+	renderTemplate(w, loginTmpl, h.loginPageData(r, errMsg))
 }
 
 func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	renderErr := func(w http.ResponseWriter, r *http.Request, code int, msg string) {
-		var users []*User
-		if h.Repo != nil {
-			users, _ = h.Repo.ListForSelection(r.Context())
-		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(code)
-		renderTemplate(w, loginTmpl, map[string]any{"Error": msg, "Users": users})
+		renderTemplate(w, loginTmpl, h.loginPageData(r, msg))
 	}
 
 	// Сбой разбора формы нельзя пропускать: дальше login и password окажутся
@@ -156,6 +207,14 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Политика читается ДО проверки пароля: при sso_only локальный пароль не
+	// принимается вовсе, и незачем даже сверять его с хэшем.
+	policy := h.Repo.AuthPolicy(r.Context())
+	if !policy.PasswordLoginAllowed() {
+		renderErr(w, r, http.StatusForbidden, "Вход по паролю запрещён политикой базы — используйте единый вход")
+		return
+	}
+
 	user, err := h.Repo.Authenticate(r.Context(), login, password)
 	if err != nil {
 		if h.LoginLimit != nil {
@@ -164,6 +223,30 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 		renderErr(w, r, http.StatusUnauthorized, "Неверное имя пользователя или пароль")
 		return
 	}
+
+	returnURL := r.URL.Query().Get("return")
+	if returnURL == "" || !isLocalURL(returnURL) {
+		returnURL = "/ui"
+	}
+
+	// Второй фактор (план 84). Сессия не создаётся, пока код не предъявлен;
+	// счётчик неудачных попыток входа тоже не сбрасывается — пароль ещё не
+	// довёл до сессии.
+	switch enabled, terr := h.Repo.TOTPEnabled(r.Context(), user.ID); {
+	case terr != nil:
+		authLog().Error("не удалось проверить состояние 2FA", "логин", user.Login, "err", terr)
+		renderErr(w, r, http.StatusServiceUnavailable, "Служба аутентификации временно недоступна")
+		return
+	case enabled:
+		h.beginSecondFactor(w, r, user, false, false, returnURL)
+		return
+	case h.Repo.RequiresTwoFactor(r.Context(), policy, user):
+		// Привязка на входе по одному паролю разрешена только явной политикой
+		// (issue #577) — иначе сперва потребуется код привязки от администратора.
+		h.beginSecondFactor(w, r, user, true, policy.SelfEnroll2FA, returnURL)
+		return
+	}
+
 	if h.LoginLimit != nil {
 		h.LoginLimit.Reset(LoginKey(r, login))
 	}
@@ -180,11 +263,6 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.setSessionCookie(w, r, token)
-
-	returnURL := r.URL.Query().Get("return")
-	if returnURL == "" || !isLocalURL(returnURL) {
-		returnURL = "/ui"
-	}
 	http.Redirect(w, r, returnURL, http.StatusFound)
 }
 
@@ -202,6 +280,12 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	policy := h.Repo.AuthPolicy(r.Context())
+	if !policy.PasswordLoginAllowed() {
+		http.Error(w, `{"error":"password login disabled"}`, http.StatusForbidden)
+		return
+	}
+
 	user, err := h.Repo.Authenticate(r.Context(), req.Login, req.Password)
 	if err != nil {
 		if h.LoginLimit != nil {
@@ -210,6 +294,40 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
+
+	// Второй фактор: сессии ещё нет, клиент получает challenge и досылает код
+	// на /auth/2fa. Первичную настройку JSON-клиенту предложить нечем — она
+	// требует QR и резервных кодов, поэтому такой ответ ведёт в веб-интерфейс.
+	switch enabled, terr := h.Repo.TOTPEnabled(r.Context(), user.ID); {
+	case terr != nil:
+		http.Error(w, `{"error":"internal"}`, http.StatusServiceUnavailable)
+		return
+	case enabled, h.Repo.RequiresTwoFactor(r.Context(), policy, user):
+		ch := Challenge{UserID: user.ID, Login: user.Login, Enroll: !enabled}
+		if ch.Enroll {
+			secret, serr := GenerateTOTPSecret()
+			if serr != nil {
+				http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+				return
+			}
+			ch.Secret = secret
+		}
+		token, cerr := h.challenges().Issue(ch)
+		if cerr != nil {
+			http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+			return
+		}
+		h.setChallengeCookie(w, r, token)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		reason := "2fa_required"
+		if ch.Enroll {
+			reason = "2fa_setup_required"
+		}
+		respondJSONTo(w, map[string]any{"error": reason, "challenge": token})
+		return
+	}
+
 	if h.LoginLimit != nil {
 		h.LoginLimit.Reset(LoginKey(r, req.Login))
 	}

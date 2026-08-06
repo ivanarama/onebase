@@ -100,7 +100,7 @@ func TestPageForm_RichTextLoadsQuill(t *testing.T) {
 	html := buf.String()
 
 	for _, want := range []string{
-		`<textarea name="Результат" class="richtext-field"`, // textarea сохранён
+		`<textarea name="Результат" autocomplete="off" class="richtext-field"`, // textarea сохранён (#595: autocomplete off)
 		`<div class="richtext-editor"></div>`,               // контейнер Quill
 		`/vendor/quill/quill.snow.css`,                      // CSS офлайн
 		`/vendor/quill/quill.js`,                            // bundle офлайн

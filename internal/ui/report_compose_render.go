@@ -18,21 +18,68 @@ import (
 // walkComposed (общий с Excel-выгрузкой); htmlComposeSink рисует каждую строку.
 func renderComposedTable(res *compose.Result, spec *report.Composition) template.HTML {
 	var b strings.Builder
-	b.WriteString(`<table class="` + appearanceClass(spec) + `">`)
+	depth, collapsed := collapseLevel(spec)
+	b.WriteString(`<table class="` + appearanceClass(spec) + `"`)
+	if collapsed {
+		fmt.Fprintf(&b, ` data-collapse-to="%d"`, depth)
+	}
+	b.WriteString(`>`)
 	b.WriteString(`<thead><tr><th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
 	for _, m := range spec.Measures {
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` + html.EscapeString(measureTitle(m)) + `</th>`)
 	}
 	b.WriteString(`</tr></thead><tbody>`)
-	walkComposed(res, spec, &htmlComposeSink{b: &b, spec: spec})
+	sink := &htmlComposeSink{b: &b, spec: spec, collapseTo: depth}
+	if !collapsed {
+		sink.collapseTo = -1
+	}
+	walkComposed(res, spec, sink)
 	b.WriteString(`</tbody></table>`)
 	return template.HTML(b.String()) //nolint:gosec // G203: HTML собран с html.EscapeString на каждом значении
 }
 
+// collapseLevel читает начальное состояние групп из компоновки (issue #575):
+// уровни 0..N развёрнуты, глубже — свёрнуто. Второе значение false — ключа нет,
+// отчёт открывается полностью развёрнутым, как было всегда. Отрицательное
+// значение равнозначно нулю: «свернуть всё, что можно».
+func collapseLevel(spec *report.Composition) (int, bool) {
+	if spec == nil || spec.Appearance.CollapseTo == nil {
+		return 0, false
+	}
+	if n := *spec.Appearance.CollapseTo; n > 0 {
+		return n, true
+	}
+	return 0, true
+}
+
 // htmlComposeSink рисует строки скомпонованного отчёта в HTML-таблицу.
+//
+// collapseTo — уровень начального сворачивания (-1 = не сворачивать). Строку
+// глубже этого уровня рисуем скрытой, а группу на нём и глубже — с маркером
+// «▶»: раскрытие идёт по одному уровню за клик, иначе первый же клик по
+// свёрнутой группе снова вываливал всё поддерево.
 type htmlComposeSink struct {
-	b    *strings.Builder
-	spec *report.Composition
+	b          *strings.Builder
+	spec       *report.Composition
+	collapseTo int
+}
+
+// hiddenStyle возвращает display:none для строк, скрытых начальным
+// сворачиванием. Уровень строки уже учитывает вложенность: детали и подытог
+// группы уровня L приходят с level = L+1.
+func (h *htmlComposeSink) hiddenStyle(level int) string {
+	if h.collapseTo >= 0 && level > h.collapseTo {
+		return "display:none"
+	}
+	return ""
+}
+
+// groupMarker — треугольник состояния группы: свёрнута (▶) или развёрнута (▼).
+func (h *htmlComposeSink) groupMarker(level int) string {
+	if h.collapseTo >= 0 && level >= h.collapseTo {
+		return "▶"
+	}
+	return "▼"
 }
 
 // measureCells выводит ячейки показателей строки: выравнивание + условное
@@ -47,15 +94,15 @@ func (h *htmlComposeSink) measureCells(vals map[string]any, styles map[string]re
 
 func (h *htmlComposeSink) group(g *compose.Group, level int, path string) {
 	pad := fmt.Sprintf("padding-left:%dpx", 8+level*18)
-	rowStyle := cssOf(g.Styles[""])
-	fmt.Fprintf(h.b, `<tr class="grp" data-group="%s" data-level="%d" style="%s"><td style="%s">▼ %s</td>`,
-		html.EscapeString(path), level, html.EscapeString(rowStyle), pad, html.EscapeString(fmtVal(g.Key)))
+	rowStyle := joinStyles(cssOf(g.Styles[""]), h.hiddenStyle(level))
+	fmt.Fprintf(h.b, `<tr class="grp" data-group="%s" data-level="%d" style="%s"><td style="%s">%s %s</td>`,
+		html.EscapeString(path), level, html.EscapeString(rowStyle), pad, h.groupMarker(level), html.EscapeString(fmtVal(g.Key)))
 	h.measureCells(g.Subtotals, g.Styles)
 	h.b.WriteString(`</tr>`)
 }
 
 func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
-	rowStyle := cssOf(d.Styles[""])
+	rowStyle := joinStyles(cssOf(d.Styles[""]), h.hiddenStyle(level))
 	fmt.Fprintf(h.b, `<tr class="det" data-parent="%s" style="%s">`, html.EscapeString(path), html.EscapeString(rowStyle))
 	// Первая ячейка: ссылка-расшифровка на исходный документ (если настроено).
 	// Ссылка строится только когда заданы DetailLink, DetailEntity и значение поля
@@ -76,7 +123,7 @@ func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
 }
 
 func (h *htmlComposeSink) subtotal(g *compose.Group, level int, path string) {
-	rowStyle := cssOf(g.Styles[""])
+	rowStyle := joinStyles(cssOf(g.Styles[""]), h.hiddenStyle(level))
 	fmt.Fprintf(h.b, `<tr class="subtotal" data-parent="%s" style="%s"><td style="padding-left:%dpx">··· Итого: %s ···</td>`,
 		html.EscapeString(path), html.EscapeString(rowStyle), 8+level*18, html.EscapeString(fmtVal(g.Key)))
 	h.measureCells(g.Subtotals, g.Styles)

@@ -18,6 +18,10 @@ type baseConfig struct {
 	DBType     string // "sqlite" или "" (postgres)
 	SQLitePath string
 	DSN        string
+	// ConfigInDB — конфигурация живёт в самой базе, а Dir лишь временная
+	// выгрузка. Командам, которые советуют пользователю поправить файл, знать
+	// это обязательно: файла нет, а путь из Dir исчезнет вместе с Cleanup.
+	ConfigInDB bool
 	cleanup    func()
 }
 
@@ -69,7 +73,7 @@ func resolveBase(cmd *cobra.Command) (*baseConfig, error) {
 			if err != nil {
 				return nil, fmt.Errorf("экспорт конфигурации из БД: %w", err)
 			}
-			bc.Dir, bc.cleanup = dir, cleanup
+			bc.Dir, bc.cleanup, bc.ConfigInDB = dir, cleanup, true
 		} else {
 			bc.Dir = base.Path
 		}

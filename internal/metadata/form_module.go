@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -74,6 +75,37 @@ const (
 	FormElementPicture          FormElementType = "ПолеКартинки"    // PictureField
 	FormElementCommandBarButton FormElementType = "КнопкаКП"        // CommandBar Button
 )
+
+// knownFormElementTypes — множество поддерживаемых движком видов элементов формы.
+// Держится рядом с константами FormElementType: добавляя новый вид, впиши его
+// сюда, иначе configcheck пометит его как неизвестный (см. CheckFormElementKind).
+var knownFormElementTypes = map[FormElementType]bool{
+	FormElementField: true, FormElementLabel: true, FormElementButton: true,
+	FormElementTable: true, FormElementGroupBox: true, FormElementPage: true,
+	FormElementPages: true, FormElementCheckbox: true, FormElementSwitch: true,
+	FormElementInputList: true, FormElementDatePicker: true, FormElementFormField: true,
+	FormElementTablePart: true, FormElementColumn: true, FormElementCommandBar: true,
+	FormElementPicture: true, FormElementCommandBarButton: true,
+}
+
+// IsKnownFormElementType сообщает, поддерживается ли вид элемента формы движком.
+// Пустой kind считается известным (контейнер/дефолт проверяется отдельно).
+// Нужна, чтобы ловить выдуманные виды (напр. «ПолеИзображения», «ПолеФайла») ещё
+// на onebase check, а не показывать «рендеринг не реализован» уже в форме.
+func IsKnownFormElementType(k FormElementType) bool {
+	return k == "" || knownFormElementTypes[k]
+}
+
+// KnownFormElementTypes возвращает отсортированный список поддерживаемых видов —
+// для подсказок в ошибках check и в промпте каркас-генератора.
+func KnownFormElementTypes() []FormElementType {
+	out := make([]FormElementType, 0, len(knownFormElementTypes))
+	for k := range knownFormElementTypes {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
 
 // Layout kinds of a form module. Пустая строка трактуется как "autogen"
 // ради backward-compat — все ранее загруженные .form.os формы остаются

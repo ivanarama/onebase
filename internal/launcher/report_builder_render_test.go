@@ -80,3 +80,32 @@ func TestReportBuilderAppearance(t *testing.T) {
 	}
 	_ = renderConfiguratorReport(t, nil) // nil composition не должен паниковать
 }
+
+// Начальное сворачивание групп (issue #575): поле есть в конструкторе и
+// преднаполняется из composition. Ноль — заданное значение, а не «пусто».
+func TestReportBuilderCollapseTo(t *testing.T) {
+	zero := 0
+	html := renderConfiguratorReport(t, &report.Composition{
+		Groupings:  []string{"М"},
+		Measures:   []report.Measure{{Field: "Сумма", Agg: "sum"}},
+		Appearance: report.Appearance{CollapseTo: &zero},
+	})
+	for _, want := range []string{
+		"Свернуто до уровня",
+		`name="comp.appearance.collapse_to"`,
+		`value="0"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("нет %q", want)
+		}
+	}
+
+	// Без ключа поле пустое — отчёт открывается развёрнутым, как было.
+	plain := renderConfiguratorReport(t, &report.Composition{
+		Groupings: []string{"М"},
+		Measures:  []report.Measure{{Field: "Сумма", Agg: "sum"}},
+	})
+	if !strings.Contains(plain, `name="comp.appearance.collapse_to" min="0" step="1" placeholder="—" value=""`) {
+		t.Fatalf("без ключа поле должно быть пустым:\n%s", plain)
+	}
+}

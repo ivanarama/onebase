@@ -831,7 +831,8 @@ const tplNav = `
               <button type="submit" class="sys-btn">{{t $.Lang "Применить"}}</button>
             </form>
           </div>
-          {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}{{end}}
+          {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
+          <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
         </div>
       </details>
       {{if not .IsAdmin}}
@@ -849,6 +850,7 @@ const tplNav = `
           <a href="/ui/admin/users">{{t $.Lang "Пользователи"}}</a>
           <a href="/ui/admin/roles">{{t $.Lang "Роли и права"}}</a>
           <a href="/ui/admin/sessions">{{t $.Lang "Активные пользователи"}}</a>
+          <a href="/ui/admin/auth">{{t $.Lang "Аутентификация"}}</a>
           <a href="/ui/admin/api-tokens">{{t $.Lang "API-токены"}}</a>
           <a href="/ui/admin/audit">{{t $.Lang "Журнал изменений"}}</a>
           <a href="/ui/admin/rls">{{t $.Lang "Диагностика RLS"}}</a>
@@ -1534,14 +1536,14 @@ const tplForm = `
       <option value="true"  {{if eq (index $.Values $fn) "true"}}selected{{end}}>{{t $.Lang "Да"}}</option>
     </select>
   {{else if eq (str .Type) "number"}}
-    <input type="text" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}" title="{{t $.Lang "Введите число; десятичный разделитель — запятая или точка"}}">
+    <input type="text" autocomplete="off" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}" title="{{t $.Lang "Введите число; десятичный разделитель — запятая или точка"}}">
   {{else if isRichText (str .Type)}}
     {{/* textarea — скрытое form-backing поле (хранит санитизированный HTML).
          Без JS остаётся видимым и рабочим (прогрессивное улучшение). С JS
          Quill (этап 2) инициализируется над .richtext-editor и синхронизирует
          содержимое обратно в textarea перед submit — серверный санитайзер
          обрабатывает результат. */}}
-    <textarea name="{{$fn}}" class="richtext-field" rows="8" style="width:100%">{{index $.Values $fn}}</textarea>
+    <textarea name="{{$fn}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%">{{index $.Values $fn}}</textarea>
     <div class="richtext-editor"></div>
   {{else if isImage (str .Type)}}
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
@@ -1556,7 +1558,7 @@ const tplForm = `
       </div>
     </div>
   {{else}}
-    <input type="text" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}">
+    <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}">
   {{end}}
 </div>
 {{end}}
@@ -1867,6 +1869,9 @@ const tplReport = `
       </select>
     </label>
     <label><input type="checkbox" id="rs-zebra"> {{t $.Lang "Чередование строк (зебра)"}}</label>
+    <label>{{t $.Lang "Свернуто до уровня"}}
+      <input type="number" id="rs-collapse-to" min="0" step="1" placeholder="—" title="{{t $.Lang "Пусто — отчёт открывается развёрнутым; 0 — видны только группы верхнего уровня"}}" style="margin-left:6px;width:64px">
+    </label>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn btn-primary" type="submit">{{t $.Lang "Применить"}}</button>

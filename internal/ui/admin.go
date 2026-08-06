@@ -16,7 +16,7 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserCard + tplAdminUserForm + tplAdminPasswd + tplAdminSessions + tplAdminAPITokens + tplAdminCleanup + tplAdminRoles + tplAdminUserRoles + tplAdminAudit + tplAdminWebhooks + tplAdminRLS))
+var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdminUserCard + tplAdminUserForm + tplAdminPasswd + tplAdminSessions + tplAdminAPITokens + tplAdminCleanup + tplAdminRoles + tplAdminUserRoles + tplAdminAudit + tplAdminWebhooks + tplAdminRLS + tplAdminAuth + tplAdminAuthProvider + tplProfile2FA))
 
 const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 <main>
@@ -100,6 +100,33 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
   </div>
   <button class="btn btn-primary" type="submit">Сохранить</button>
 </form>
+</div>
+
+<div class="card" style="max-width:560px;margin-bottom:16px">
+<h3 style="margin-bottom:16px">Второй фактор</h3>
+{{if .TwoFactor}}
+  {{if .TwoFactor.Enabled}}
+  <p style="font-size:14px;color:#15803d;font-weight:600;margin-bottom:8px">✓ Включён</p>
+  <p style="font-size:13px;color:#475569;margin-bottom:12px">Осталось резервных кодов: <b>{{.TwoFactor.BackupCodesLeft}}</b>. Сброс нужен, когда пользователь потерял аутентификатор и резервные коды: после сброса он настроит второй фактор заново при следующем входе.</p>
+  <form method="POST" data-ob-confirm="Сбросить второй фактор пользователя {{.User.Login}}?">
+    <input type="hidden" name="action" value="reset_2fa">
+    <button class="btn btn-danger" type="submit">Сбросить второй фактор</button>
+  </form>
+  {{else}}
+  <p style="font-size:14px;color:#64748b;margin-bottom:12px">Выключен.</p>
+  <p style="font-size:13px;color:#475569;margin-bottom:12px">Если политика базы требует второй фактор, пользователь привязывает его при входе. Пока самопривязка по паролю выключена (значение по умолчанию), для привязки нужен одноразовый <b>код привязки</b>: выдайте его и передайте пользователю — он введёт код после пароля. Без кода привязать фактор по одному паролю нельзя. Код действует {{.BindTicketTTLHours}} ч; новый заменяет прежний.</p>
+  {{if .BindTicket}}
+  <div class="secret" style="font-family:Consolas,monospace;font-size:15px;letter-spacing:1px;background:#f0fdf4;border:1px solid #86efac;border-radius:5px;padding:10px;text-align:center;margin-bottom:8px;word-break:break-all">{{.BindTicket}}</div>
+  <p style="font-size:12px;color:#b45309;margin-bottom:12px">Покажите код пользователю сейчас — второй раз он не отобразится.</p>
+  {{end}}
+  <form method="POST">
+    <input type="hidden" name="action" value="issue_bind_ticket">
+    <button class="btn btn-primary" type="submit">Выдать код привязки</button>
+  </form>
+  {{end}}
+{{else}}
+  <p style="font-size:13px;color:#94a3b8">Состояние недоступно.</p>
+{{end}}
 </div>
 
 <div class="card" style="max-width:560px">
@@ -230,6 +257,10 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{"User": u}
 	s.addPasswordPolicyData(data)
+	data["BindTicketTTLHours"] = int(auth.BindTicketTTL / time.Hour)
+	if info, infoErr := s.authRepo.TwoFactorInfoFor(r.Context(), userID); infoErr == nil {
+		data["TwoFactor"] = info
+	}
 
 	if r.Method == http.MethodPost {
 		// Сбой разбора формы игнорировать нельзя: дальше все FormValue вернут
@@ -261,6 +292,34 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 				u.ShowInList = showInList
 				u.AIDataAccess = aiData
 				data["Success"] = s.tr(lang, "Данные сохранены")
+			}
+		case "reset_2fa":
+			// Административный сброс второго фактора. Без него потеря
+			// аутентификатора при израсходованных резервных кодах означала
+			// потерю доступа, а при require_2fa_admins и единственном
+			// администраторе — неадминистрируемую базу: в конфигуратор такой
+			// администратор тоже не попадёт, его отправят включать 2FA в
+			// Предприятие, куда он войти уже не может.
+			if err := s.authRepo.DisableTOTP(r.Context(), userID); err != nil {
+				data["Error"] = s.errText(r, err)
+			} else {
+				s.logSessionAudit(r, "2fa_reset_by_admin", u.Login, userID)
+				if info, infoErr := s.authRepo.TwoFactorInfoFor(r.Context(), userID); infoErr == nil {
+					data["TwoFactor"] = info
+				}
+				data["Success"] = s.tr(lang, "Второй фактор сброшен — пользователь настроит его заново при следующем входе")
+			}
+		case "issue_bind_ticket":
+			// Одноразовый код привязки второго фактора (issue #577): им
+			// пользователь подтверждает на входе право привязать 2FA, когда
+			// самопривязка по паролю выключена политикой. Показывается один раз.
+			code, terr := s.authRepo.IssueBindTicket(r.Context(), userID)
+			if terr != nil {
+				data["Error"] = s.errText(r, terr)
+			} else {
+				s.logSessionAudit(r, "2fa_bind_ticket_issued", u.Login, userID)
+				data["BindTicket"] = code
+				data["Success"] = s.tr(lang, "Код привязки выдан — передайте его пользователю")
 			}
 		case "passwd":
 			newPwd := r.FormValue("new_password")

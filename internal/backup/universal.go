@@ -24,6 +24,7 @@ import (
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/secrets"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -35,12 +36,40 @@ var ErrLegacyFormat = errors.New("archive is not in universal format (use legacy
 type ImportReport struct {
 	Tables map[string]int // table name → rows inserted
 	Files  int            // attachment files restored
+	// TOTPReset — учётные записи, которым при восстановлении погашен второй
+	// фактор: их секрет зашифрован мастер-ключом другой установки.
+	TOTPReset []string
+}
+
+// disableUnreadableTOTP гасит второй фактор у учёток, чей секрет не
+// разыменовывается текущим мастер-ключом. Возвращает их логины.
+func disableUnreadableTOTP(ctx context.Context, db *storage.DB) ([]string, error) {
+	rows, err := db.ListTOTPSecrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var reset []string
+	for _, row := range rows {
+		if _, err := secrets.Default().Resolve(row.Value); err == nil {
+			continue
+		}
+		if err := db.DisableTOTPRaw(ctx, row.UserID); err != nil {
+			return nil, err
+		}
+		reset = append(reset, row.Login)
+	}
+	return reset, nil
 }
 
 // systemTables is the ordered list of system tables included in the universal
 // backup. The order matters for import (users before sessions, etc.).
 var systemTables = []string{
 	"_users",
+	// Резервные коды второго фактора (план 84). Без них восстановленная база
+	// запирала учётку с 2FA намертво: пароль принимается, шаг второго фактора
+	// обязателен, а пройти его нечем — секрет под чужим мастер-ключом,
+	// резервных кодов ноль.
+	"_auth_backup_codes",
 	"_roles",
 	"_user_roles",
 	"_constants",

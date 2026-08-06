@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 )
@@ -26,9 +28,10 @@ import (
 // (Объект.Поле = …) трогать нельзя: оно может быть ещё не записано и обязано
 // доехать до формы как есть.
 //
-// Область действия — РЕКВИЗИТЫ ШАПКИ. Табличные части не перечитываются:
-// obj.TablePartRows формируется только из POST, поэтому команда, меняющая строки
-// ТЧ через общий модуль, по-прежнему вернёт в форму предыдущее состояние.
+// Область действия ЭТОЙ функции — РЕКВИЗИТЫ ШАПКИ. Строки табличных частей
+// перечитывает refreshTablePartsWrittenByHandler ниже (issue #579): там сложнее,
+// потому что надо отличить строки, переписанные модулем в базе, от строк,
+// отредактированных пользователем в гриде и ещё не записанных.
 //
 // Читаем базу второй раз (первый — restoreUnsubmittedFields до обработчика), и
 // переиспользовать ту строку нельзя принципиально: смысл в том, чтобы увидеть
@@ -172,6 +175,170 @@ func (s *Server) refreshFieldsWrittenByHandler(
 			obj.Fields[k] = fresh
 		}
 	}
+}
+
+// Возврат в форму строк табличной части, которые обработчик записал через общий
+// модуль (issue #579).
+//
+// refreshFieldsWrittenByHandler выше перечитывает только реквизиты ШАПКИ. Строки
+// ТЧ формируются из POST и не перечитывались, поэтому команда, меняющая строки
+// через общий модуль (модуль читает документ, правит ТЧ, записывает), возвращала
+// в форму ПРЕЖНИЕ строки — то же «отставание на шаг», что PR #573 закрыл для
+// шапки.
+//
+// Трудность в том, чтобы отличить «модуль переписал ТЧ в базе» (перечитать) от
+// «пользователь отредактировал строки в гриде и ещё не записал» (не затирать).
+// Устойчивого ключа у строк POST нет, поэтому сравниваем состояния целиком, по
+// значениям колонок ТЧ:
+//
+//  1. обработчик сам изменил строки в памяти (Объект.ТЧ.Добавить/…) — оставляем
+//     как есть: это его намерение, оно может быть ещё не записано;
+//  2. строки POST отличаются от строк в базе ДО обработчика — пользователь
+//     правил грид, его правки не трогаем;
+//  3. иначе (POST == база до обработчика, в памяти обработчик ТЧ не трогал) —
+//     перечитываем из базы: если модуль переписал строки, приедут свежие; если
+//     не трогал — база совпадёт с POST, и перечитывание ничего не меняет.
+func (s *Server) refreshTablePartsWrittenByHandler(
+	ctx context.Context,
+	entity *metadata.Entity,
+	obj *runtime.Object,
+	tpPost map[string][]map[string]any,
+	tpDBBefore map[string][]map[string]any,
+) {
+	if s == nil || s.store == nil || entity == nil || obj == nil || obj.ID == uuid.Nil {
+		return
+	}
+	for _, tp := range entity.TableParts {
+		cur := obj.TablePartRows[tp.Name]
+		post := tpPost[tp.Name]
+		// (1) строки изменил сам обработчик — не трогаем.
+		if !tpRowsEqual(cur, post, tp) {
+			continue
+		}
+		// (2) пользователь правил грид (POST ≠ база до обработчика) — не затираем.
+		if !tpRowsEqual(post, tpDBBefore[tp.Name], tp) {
+			continue
+		}
+		// (3) перечитываем строки из базы — их мог переписать модуль.
+		fresh, err := s.store.GetTablePartRows(ctx, entity.Name, tp.Name, obj.ID, tp)
+		if err != nil {
+			continue
+		}
+		s.enrichTPRowsWithRefs(ctx, tp, fresh)
+		if obj.TablePartRows == nil {
+			obj.TablePartRows = map[string][]map[string]any{}
+		}
+		obj.TablePartRows[tp.Name] = fresh
+	}
+}
+
+// tablePartRowsSnapshot делает глубокую копию строк ТЧ для сравнения «до/после»:
+// обработчик может править строки на месте (formTpProxy), поэтому поверхностной
+// копии мало.
+func tablePartRowsSnapshot(src map[string][]map[string]any) map[string][]map[string]any {
+	if src == nil {
+		return nil
+	}
+	out := make(map[string][]map[string]any, len(src))
+	for name, rows := range src {
+		cp := make([]map[string]any, len(rows))
+		for i, row := range rows {
+			m := make(map[string]any, len(row))
+			for k, v := range row {
+				m[k] = v
+			}
+			cp[i] = m
+		}
+		out[name] = cp
+	}
+	return out
+}
+
+// tablePartRowsFromDB читает строки всех ТЧ записи из базы (сырые, без
+// обогащения ссылками — сравнение идёт по значениям). Ошибку чтения ТЧ глотаем:
+// команда не должна падать из-за неё, просто эту ТЧ не перечитаем.
+func (s *Server) tablePartRowsFromDB(ctx context.Context, entity *metadata.Entity, id uuid.UUID) map[string][]map[string]any {
+	out := make(map[string][]map[string]any, len(entity.TableParts))
+	for _, tp := range entity.TableParts {
+		rows, err := s.store.GetTablePartRows(ctx, entity.Name, tp.Name, id, tp)
+		if err != nil {
+			continue
+		}
+		out[tp.Name] = rows
+	}
+	return out
+}
+
+// tpRowsEqual сравнивает строки ТЧ по значениям объявленных колонок. Порядок
+// строк значим (обе стороны упорядочены по номеру строки).
+func tpRowsEqual(a, b []map[string]any, tp metadata.TablePart) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		for _, f := range tp.Fields {
+			if tpCellNorm(f, tpCellValue(a[i], f.Name)) != tpCellNorm(f, tpCellValue(b[i], f.Name)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func tpCellValue(row map[string]any, name string) any {
+	if _, v, ok := lookupMapCI(row, name); ok {
+		return v
+	}
+	return nil
+}
+
+// tpCellNorm приводит значение колонки к канонической строке, устойчивой к
+// разнице представлений POST и базы: строки формы (Число → float64, из базы —
+// TEXT/numeric), ссылки (*Ref из обогащения ↔ сырой UUID из базы) иначе давали
+// бы ложное «пользователь правил грид», и строки ТЧ не перечитывались бы.
+func tpCellNorm(f metadata.Field, v any) string {
+	if ref, ok := v.(*interpreter.Ref); ok {
+		if ref == nil {
+			return ""
+		}
+		return ref.UUID
+	}
+	if f.RefEntity != "" {
+		if idStr, _, ok := uuidFromValue(v); ok {
+			return idStr
+		}
+	}
+	switch f.Type {
+	case metadata.FieldTypeNumber:
+		switch t := v.(type) {
+		case float64:
+			return strconv.FormatFloat(t, 'f', -1, 64)
+		case int64:
+			return strconv.FormatInt(t, 10)
+		case string:
+			if x, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
+				return strconv.FormatFloat(x, 'f', -1, 64)
+			}
+		}
+	case metadata.FieldTypeBool:
+		switch t := v.(type) {
+		case bool:
+			if t {
+				return "true"
+			}
+			return "false"
+		case string:
+			s := strings.ToLower(strings.TrimSpace(t))
+			if s == "true" || s == "1" || s == "t" {
+				return "true"
+			}
+			return "false"
+		}
+	}
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // currentEntityVersion возвращает версию записи после обработчика. Ноль — если

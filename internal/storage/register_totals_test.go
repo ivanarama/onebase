@@ -46,7 +46,7 @@ func onTheFlyBalances(ctx context.Context, t *testing.T, db *DB, reg *metadata.R
 	var sel []string
 	sel = append(sel, dims...)
 	for _, r := range reg.Resources {
-		sel = append(sel, signedResourceSum(metadata.ColumnName(r)))
+		sel = append(sel, SignedResourceSum(metadata.ColumnName(r)))
 	}
 	q := "SELECT " + strings.Join(sel, ", ") + " FROM " + metadata.RegisterTableName(reg.Name)
 	if len(dims) > 0 {

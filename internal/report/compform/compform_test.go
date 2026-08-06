@@ -273,6 +273,48 @@ func TestParseAppearanceGarbageLines(t *testing.T) {
 	}
 }
 
+// comp.appearance.collapse_to: пустое поле — «не задано» (nil, отчёт открывается
+// развёрнутым), ноль — значимое значение, мусор игнорируется, отрицательное
+// сводится к нулю (issue #575).
+func TestParseAppearanceCollapseTo(t *testing.T) {
+	base := func() url.Values {
+		f := url.Values{}
+		f.Set("comp.present", "1")
+		f.Set("comp.grouping.0", "М")
+		f.Set("comp.measure.0.field", "Сумма")
+		return f
+	}
+	cases := []struct {
+		in   string
+		want *int
+	}{
+		{"", nil},
+		{"0", ptr(0)},
+		{"2", ptr(2)},
+		{" 3 ", ptr(3)},
+		{"-1", ptr(0)},
+		{"мусор", nil},
+	}
+	for _, c := range cases {
+		f := base()
+		f.Set("comp.appearance.collapse_to", c.in)
+		got, _ := compform.Parse(f)
+		if got == nil {
+			t.Fatalf("collapse_to=%q: композиция не разобрана", c.in)
+		}
+		switch {
+		case c.want == nil && got.Appearance.CollapseTo != nil:
+			t.Errorf("collapse_to=%q: ожидали nil, получили %d", c.in, *got.Appearance.CollapseTo)
+		case c.want != nil && got.Appearance.CollapseTo == nil:
+			t.Errorf("collapse_to=%q: ожидали %d, получили nil", c.in, *c.want)
+		case c.want != nil && *got.Appearance.CollapseTo != *c.want:
+			t.Errorf("collapse_to=%q: ожидали %d, получили %d", c.in, *c.want, *got.Appearance.CollapseTo)
+		}
+	}
+}
+
+func ptr(v int) *int { return &v }
+
 func TestParseAppearanceOnlyCleared(t *testing.T) {
 	// Только оформление, без группировок/показателей/правил → композиция считается
 	// пустой (nil, true): оформление само по себе её непустой не делает.

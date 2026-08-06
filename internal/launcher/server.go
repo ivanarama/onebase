@@ -155,6 +155,9 @@ func (s *Server) ListenAndServe() error {
 	// Configurator login/logout (no auth)
 	r.Get("/bases/{id}/configurator/login", s.h.cfgLoginPage)
 	r.Post("/bases/{id}/configurator/login", s.h.cfgLoginSubmit)
+	// Второй фактор входа в конфигуратор (план 84).
+	r.Get("/bases/{id}/configurator/2fa", s.h.cfg2FAPage)
+	r.Post("/bases/{id}/configurator/2fa", s.h.cfg2FASubmit)
 	r.Get("/bases/{id}/configurator/logout", s.h.cfgLogout)
 	r.Get("/bases/{id}/configurator/logo", s.h.configuratorLogo)
 

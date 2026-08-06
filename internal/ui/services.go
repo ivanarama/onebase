@@ -345,10 +345,33 @@ func (s *Server) resolveServiceAuth(svc *httpservice.Service, w http.ResponseWri
 			writeServiceError(w, http.StatusTooManyRequests, "слишком много попыток входа, повторите позже")
 			return nil, false
 		}
+		// Политика входа действует и здесь. Иначе `auth: basic` был бы дырой
+		// мимо неё: при sso_only локальный пароль обязан отклоняться, а учётке
+		// с обязательным вторым фактором одного пароля недостаточно — код
+		// сервиса исполнялся бы под личностью и ролями администратора
+		// (ТекущийПользователь, аудит, RLS) по одному утёкшему паролю.
+		// Исключение планом 84 выдавалось API-токенам (план 26), не паролю.
+		policy := s.authRepo.AuthPolicy(r.Context())
+		if !policy.PasswordLoginAllowed() {
+			writeServiceError(w, http.StatusUnauthorized,
+				"вход по паролю отключён политикой; используйте API-токен")
+			return nil, false
+		}
 		u, err := s.authRepo.Authenticate(r.Context(), login, pass)
 		if err != nil {
 			s.loginLimit.Fail(limKey)
 			return s.denyBasic(w)
+		}
+		// Второй фактор в потоке Basic предъявить негде, поэтому учётка, которой
+		// он положен, паролем здесь не входит вовсе. Ошибку чтения признака
+		// трактуем как «фактор есть»: путь fail-closed.
+		if u != nil {
+			enabled, totpErr := s.authRepo.TOTPEnabled(r.Context(), u.ID)
+			if totpErr != nil || enabled || s.authRepo.RequiresTwoFactor(r.Context(), policy, u) {
+				writeServiceError(w, http.StatusUnauthorized,
+					"учётной записи требуется второй фактор; используйте API-токен")
+				return nil, false
+			}
 		}
 		s.loginLimit.Reset(limKey)
 		return s.serviceUserCtx(r.Context(), u), true
