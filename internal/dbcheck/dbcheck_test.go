@@ -45,6 +45,13 @@ dimensions:
 resources:
   - { name: Сумма, type: number(15,2) }
 `)
+	write("inforegs/ценыконтрагентов.yaml", `name: ЦеныКонтрагентов
+title: Цены контрагентов
+dimensions:
+  - { name: Контрагент, type: reference:Контрагенты }
+resources:
+  - { name: Цена, type: number(15,2) }
+`)
 
 	proj, err := project.Load(dir)
 	if err != nil {
@@ -62,6 +69,9 @@ resources:
 		t.Fatal(err)
 	}
 	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
