@@ -62,7 +62,7 @@ func forEachDialect(t *testing.T, body func(t *testing.T, db *DB)) {
 		// «уже нужного типа» и не делает ничего, а таблица в своей схеме
 		// остаётся прежней. Заводим локальную копию, чтобы матричные тесты
 		// были действительно изолированы.
-		// TODO(#633): убрать, когда системные таблицы перестанут утекать в public.
+		// TODO(#638): убрать, когда системные таблицы перестанут утекать в public.
 		if _, err := db.Exec(ctx,
 			`CREATE TABLE IF NOT EXISTS `+schema+`._schema_fields
 			   (LIKE public._schema_fields INCLUDING ALL)`); err != nil {
