@@ -20,6 +20,7 @@ import (
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -86,10 +87,33 @@ func (s *Server) reportRun(w http.ResponseWriter, r *http.Request) {
 	s.runReport(w, r, rep, reportParamValuesFromRequest(r, rep))
 }
 
+// reportParamDefault возвращает значение параметра по умолчанию с раскрытыми
+// подстановками ({{today}} и прочие) — той же грамматикой, что у виджетов и
+// регламентных заданий. Пусто, если умолчание не задано.
+func reportParamDefault(p reportpkg.Param) string {
+	if strings.TrimSpace(p.Default) == "" {
+		return ""
+	}
+	resolved := scheduler.ResolveParamTemplates(map[string]any{p.Name: p.Default})
+	switch v := resolved[p.Name].(type) {
+	case string:
+		return v
+	case time.Time:
+		return v.Format("2006-01-02")
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
 func reportParamValuesFromRequest(r *http.Request, rep *reportpkg.Report) map[string]any {
 	paramValues := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
 		val := r.FormValue(p.Name)
+		if val == "" {
+			// Значение по умолчанию подставляется и в ФОРМУ: пользователь видит,
+			// с чем построен отчёт, и может это изменить.
+			val = reportParamDefault(p)
+		}
 		if val == "" {
 			paramValues[p.Name] = nil
 		} else {
@@ -563,6 +587,9 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	paramValues := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
 		val := r.URL.Query().Get(p.Name)
+		if val == "" {
+			val = reportParamDefault(p)
+		}
 		if p.Type == "bool" {
 			paramValues[p.Name] = parseParamValue(val, "bool")
 			continue
