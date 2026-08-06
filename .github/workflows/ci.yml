@@ -82,6 +82,22 @@ jobs:
           CGO_ENABLED: 0
         run: go build ./...
 
+      # Windows-специфичный код (//go:build windows) до плана 115 не
+      # компилировался в CI вообще: сборка идёт на linux, а windows-цель
+      # собиралась только в release.yml — то есть поломка вскрывалась на
+      # релизе. Кросс-компиляция без CGo проверяет ровно это и стоит секунды.
+      #
+      # Код под -tags webview сюда не входит: webview_go требует CGo, и при
+      # CGO_ENABLED=0 все его файлы исключаются («build constraints exclude
+      # all Go files»), то есть кросс-проверка не проверяла бы ничего.
+      # Для него нужен windows-раннер с CGo — пока покрыт только release.yml.
+      - name: Build (windows, check compile)
+        env:
+          CGO_ENABLED: 0
+          GOOS: windows
+          GOARCH: amd64
+        run: go build ./...
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -125,11 +141,17 @@ jobs:
           set -euo pipefail
           # Run packages sequentially: tagged suites share the service database
           # and some deliberately verify bootstrap/no-user state.
-          go test -count=1 -timeout 5m -tags integration .
-          go test -count=1 -timeout 5m -tags integration ./internal/auth
-          go test -count=1 -timeout 5m -tags integration ./internal/storage
-          go test -count=1 -timeout 5m -tags integration ./internal/configdb
-          go test -count=1 -timeout 5m -tags integration ./internal/entityservice
+          #
+          # -race здесь обязателен (план 115, этап B): конкурентные дефекты на
+          # реальной СУБД юнит-джоб не видит — он гоняет SQLite. До этого
+          # internal/entityservice/fifo_race_pg_test.go, существующий ради
+          # гонок, исполнялся без детектора. Таймаут поднят с 5m: -race
+          # замедляет прогон в несколько раз.
+          go test -race -count=1 -timeout 15m -tags integration .
+          go test -race -count=1 -timeout 15m -tags integration ./internal/auth
+          go test -race -count=1 -timeout 15m -tags integration ./internal/storage
+          go test -race -count=1 -timeout 15m -tags integration ./internal/configdb
+          go test -race -count=1 -timeout 15m -tags integration ./internal/entityservice
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck
