@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -237,4 +239,72 @@ func decodeFormEventResponse(t *testing.T, b []byte) formEventResponse {
 		t.Fatalf("json: %v; body=%s", err, string(b))
 	}
 	return resp
+}
+
+// #621: обработчик события управляемой формы оставил открытой DSL-транзакцию и
+// вышел с ошибкой. Перечитывание после Run обязано идти живым контекстом
+// (внутри той же транзакции), а не r.Context(): на SQLite пул — одно соединение,
+// и запрос по r.Context() ждал бы второе, занятое транзакцией, — событие вешало
+// бы всю базу ровно на пути возврата ошибки. Событие обязано ВЕРНУТЬ ошибку.
+func TestHandleManagedFormEvent_OpenTxDoesNotHang(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура Бум()
+	НачатьТранзакцию();
+	ВызватьИсключение("боль");
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаБум",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "Бум",
+			},
+		},
+	})
+
+	// Существующая запись: гейт _id включает перечитывание после Run.
+	ctx := context.Background()
+	id := uuid.New()
+	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": "A"}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаБум")
+	body.Set("_event", string(metadata.FormEventOnClick))
+	body.Set("_kind", "object")
+	body.Set("_id", id.String())
+	body.Set("Наименование", "A")
+
+	// Гоняем в горутине: до фикса перечитывание виснет на единственном соединении
+	// SQLite, и без таймаута тест не падал бы, а зависал бы вместе с прогоном.
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/ui/catalog/"+ent.Name+"/form-event",
+			strings.NewReader(body.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("kind", "catalog")
+		rctx.URLParams.Add("entity", ent.Name)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		rec := httptest.NewRecorder()
+		srv.handleManagedFormEvent(rec, req)
+		done <- rec
+	}()
+
+	select {
+	case rec := <-done:
+		if rec.Code != 200 {
+			t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+		}
+		resp := decodeFormEventResponse(t, rec.Body.Bytes())
+		if resp.OK {
+			t.Fatalf("ожидалась ошибка обработчика, получили ok=true")
+		}
+		if resp.Error == "" {
+			t.Fatalf("ожидался непустой error")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("событие зависло: перечитывание после Run ушло мимо открытой транзакции (#621)")
+	}
 }

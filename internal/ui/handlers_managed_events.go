@@ -280,11 +280,26 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
 	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
 	// описана выше у restoreUnsubmittedFields.
+	// ПРАВИЛО: всё, что после Run ходит в базу, обязано брать ЖИВОЙ контекст, а не
+	// r.Context(). Обработчик мог оставить открытой DSL-транзакцию (НачатьТранзакцию
+	// и выход по ошибке без ОтменитьТранзакцию), а на SQLite пул — одно соединение:
+	// запрос по r.Context() ждал бы второе соединение, которое занято этой
+	// транзакцией, и событие вешало бы всю базу — причём ровно на пути возврата
+	// ошибки пользователю (#621, тот же класс беды, что чинил #580). txState.Ctx()
+	// отдаёт контекст открытой транзакции, а без неё — базовый r.Context().
+	liveCtx := txState.Ctx()
+	// Перечитывать из базы имеет смысл только для записи, которая там есть:
+	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
+	// номер от нумератора обязан приехать на экран «Создать» сразу). Гейт по
+	// сырому _id, а не по obj.ID: buildObjectFromForm для новой записи генерирует
+	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
+	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
+	// описана выше у restoreUnsubmittedFields.
 	if strings.TrimSpace(r.FormValue("_id")) != "" || savedFormID(thisObj) != "" {
-		s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+		s.refreshFieldsWrittenByHandler(liveCtx, r, entity, form, obj, fieldsBefore)
 	}
 	if existingRecord && tpDBBefore != nil {
-		s.refreshTablePartsWrittenByHandler(r.Context(), entity, obj, tpBefore, tpDBBefore)
+		s.refreshTablePartsWrittenByHandler(liveCtx, entity, obj, tpBefore, tpDBBefore)
 	}
 	if runErr != nil {
 		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
@@ -300,7 +315,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			// Обработчик мог записать форму и упасть уже после этого: id всё
 			// равно нужен клиенту, иначе повтор действия создаст второй документ.
 			SavedID: savedFormID(thisObj),
-			Version: s.currentEntityVersion(r.Context(), entity, obj),
+			Version: s.currentEntityVersion(liveCtx, entity, obj),
 		})
 		return
 	}
@@ -316,7 +331,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
 		SavedID:        savedFormID(thisObj),
-		Version:        s.currentEntityVersion(r.Context(), entity, obj),
+		Version:        s.currentEntityVersion(liveCtx, entity, obj),
 	})
 }
 
