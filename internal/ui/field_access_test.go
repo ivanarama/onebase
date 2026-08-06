@@ -145,6 +145,70 @@ func TestUI_SubmitEdit_MaskedFieldWriteGuard(t *testing.T) {
 	}
 }
 
+// #609: реквизит, закрытый полевой политикой роли (план 88), обязан уезжать
+// клиенту маской и через события управляемой формы. restoreUnsubmittedFields
+// дочитывает незапрошенное поле из БД РЕАЛЬНЫМ значением (это верно для записи
+// и предикатов доступа), но в ответ /form-event оно шло сырым, в обход маски
+// отрисовки — applyValues подставлял бы реальное значение в DOM.
+func TestUI_ManagedFormEvent_MasksProtectedField(t *testing.T) {
+	cat := uiClientEntity()
+	// Управляемая форма с обработчиком-пустышкой: событие доходит до сериализации
+	// ответа, а restoreUnsubmittedFields по пути дочитывает Телефон из БД.
+	form := &metadata.FormModule{
+		Name: "ФормаОбъекта", Kind: "object", EntityName: cat.Name,
+		LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{
+			Kind: metadata.FormElementButton, Name: "Кнопка",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Ничего"},
+		}},
+		ProgramAST: mustParse(t, "Процедура Ничего()\nКонецПроцедуры\n"),
+	}
+	cat.Forms = []*metadata.FormModule{form}
+
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{cat})
+	id := uuid.New()
+	const realPhone = "+79161234455"
+	if err := s.store.Upsert(ctx, "Клиент", id, map[string]any{
+		"Наименование": "Иванов", "Телефон": realPhone,
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+	user := uiMaskUser([]string{"read"}, auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}})
+
+	// Телефон в теле события НЕ шлём — именно его дочитывает restoreUnsubmittedFields.
+	body := url.Values{
+		"_element": {"Кнопка"}, "_event": {string(metadata.FormEventOnClick)},
+		"_kind": {"object"}, "_id": {id.String()}, "Наименование": {"Иванов"},
+	}
+	r := reqWithChi("POST", "/ui/catalog/Клиент/form-event", body,
+		map[string]string{"kind": "catalog", "entity": "Клиент"})
+	r = r.WithContext(auth.ContextWithUser(r.Context(), user))
+	w := httptest.NewRecorder()
+	s.handleManagedFormEvent(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var resp formEventResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json: %v; body=%s", err, w.Body.String())
+	}
+	got := fmt.Sprintf("%v", resp.Values["Телефон"])
+	if strings.Contains(got, realPhone) {
+		t.Fatalf("реальный телефон утёк клиенту через событие формы: %q", got)
+	}
+	if !strings.HasSuffix(got, "4455") {
+		t.Fatalf("ожидалась маска mask_tail(4) c хвостом 4455, получили %q", got)
+	}
+	// В БД лежит исходное значение: маска в базу не попала.
+	row, err := s.store.GetByID(ctx, "Клиент", id, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Телефон"] != realPhone {
+		t.Fatalf("в БД должно остаться реальное значение, лежит %v", row["Телефон"])
+	}
+}
+
 // Раскрытие под правом disclose: возвращает полное значение и пишет аудит без
 // значения.
 func TestUI_DiscloseField(t *testing.T) {

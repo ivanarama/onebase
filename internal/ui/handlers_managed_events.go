@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -287,7 +288,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		s.refreshTablePartsWrittenByHandler(r.Context(), entity, obj, tpBefore, tpDBBefore)
 	}
 	if runErr != nil {
-		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
+		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{
 			OK:             false,
 			Values:         values,
@@ -305,7 +306,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
+	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs)
 	respondJSON(enc, formEventResponse{
 		OK:             true,
 		Values:         values,
@@ -330,7 +331,7 @@ func savedFormID(this *formObjectThis) string {
 	return this.obj.ID.String()
 }
 
-func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
+func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
 	conditionalCSS := formConditionalRulesCSS(rules)
 	if obj == nil {
 		return nil, nil, nil, conditionalCSS, msgs
@@ -349,6 +350,15 @@ func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entit
 			msgs = append(msgs, warnings...)
 		}
 	}
+	// Маскирование реквизитов, закрытых полевой политикой роли (план 88), перед
+	// отправкой клиенту. restoreUnsubmittedFields и refreshFieldsWrittenByHandler
+	// намеренно держат в obj.Fields РЕАЛЬНЫЕ значения — их видят и запись из
+	// обработчика (Объект.Записать), и предикаты доступа, и в БД маска попасть не
+	// должна. Но в ответ /form-event защищённое поле обязано уехать маской, иначе
+	// applyValues подставит реальное значение в DOM в обход маски отрисовки (#609).
+	// Ключи values для полей сущности — канонические имена, MaskRecord матчит их
+	// регистронезависимо; условные правила выше уже посчитаны по реальным значениям.
+	s.maskRecord(ctx, entity, values)
 	return values, tableParts, formTablesFromRows(tableParts, form), conditionalCSS, msgs
 }
 
@@ -866,7 +876,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				}
 
 				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
+					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs)
 					respondJSON(enc, formEventResponse{
 						OK:             false,
 						Values:         values,
@@ -880,7 +890,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 					return
 				}
 
-				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
+				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs)
 				respondJSON(enc, formEventResponse{
 					OK:             true,
 					Values:         values,
