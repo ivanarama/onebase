@@ -16,9 +16,14 @@ package ui
 // Иначе работает старая авто-форма (tplForm) — backward-compat.
 const tplManagedForm = `
 {{define "managed-element"}}
-{{$el := .El}}{{$ctx := .Ctx}}{{$ro := effectiveFormElementReadOnly $ctx.Form $el}}
-{{if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+{{$el := .El}}{{$ctx := .Ctx}}
+{{/* $ro — нередактируемость элемента: собственный readonly (и item_form) ИЛИ
+     истинное условие readonly_when по полям записи. Скрытые по hidden_when не
+     отрисовываются вовсе — первой веткой цепочки. */}}
+{{$ro := or (effectiveFormElementReadOnly $ctx.Form $el) (elReadOnly $ctx $el)}}
+{{if elHidden $ctx $el}}
+{{else if eq (str $el.Kind) "ГруппаФормы"}}
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
@@ -48,7 +53,7 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "Страница"}}
   {{/* Отдельная страница вне набора СтраницыФормы (её можно добавить на холсте) —
        рендерим как именованный блок с детьми, а не «рендеринг не реализован». */}}
-  <fieldset class="form-group-box" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+  <fieldset class="form-group-box" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
   </fieldset>
@@ -58,7 +63,7 @@ const tplManagedForm = `
   {{/* textarea — рабочее поле формы: без JS редактирование остаётся возможным
        (прогрессивное улучшение, как у richtext/Quill). Редактор монтируется на
        соседний .code-editor и синхронизирует текст обратно в textarea. */}}
-  <div class="form-group">
+  <div class="form-group" data-ob-el="{{$el.Name}}">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     <textarea name="{{$fn}}" autocomplete="off" class="code-field" rows="12" spellcheck="false"
       style="width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px"
@@ -69,7 +74,7 @@ const tplManagedForm = `
   {{$fn := dpField $el.DataPath}}
   {{$f := fieldByName $ctx.Entity $fn}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
-  <div class="form-group">
+  <div class="form-group" data-ob-el="{{$el.Name}}">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if $f}}
       {{if isRef (str $f.Type)}}
@@ -200,7 +205,7 @@ const tplManagedForm = `
        может подгрузить связанные данные и вернуть их в values. */}}
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
-  <div class="form-group">
+  <div class="form-group" data-ob-el="{{$el.Name}}">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and (not $ro) (hasHandler $el "НачалоВыбора")}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
@@ -213,7 +218,7 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "Флажок"}}
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
-  <div class="form-group managed-checkbox" style="display:flex;align-items:center;gap:8px">
+  <div class="form-group managed-checkbox" data-ob-el="{{$el.Name}}" style="display:flex;align-items:center;gap:8px">
     {{/* ПриИзменении у флажка работает так же, как у остальных полей: без
          data-ob-fire-change обработчик «поставил галку → выполнилось действие»
          молча не вызывался. */}}
@@ -229,7 +234,7 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "Кнопка"}}
   {{$clickAction := or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el))}}
   {{$hotKey := ""}}{{if and (not $ro) $clickAction}}{{$hotKey = normalizedFormHotkey $el.HotKey}}{{end}}
-  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn btn-secondary managed-btn" data-ob-el="{{$el.Name}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
@@ -431,7 +436,7 @@ const tplManagedForm = `
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$dv := index $ctx.Values $fn}}
-  <div class="form-group">
+  <div class="form-group" data-ob-el="{{$el.Name}}">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     <input type="date" name="{{$fn}}" value="{{if ge (len $dv) 10}}{{slice $dv 0 10}}{{else}}{{$dv}}{{end}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
   </div>
@@ -445,7 +450,7 @@ const tplManagedForm = `
   {{$cur := index $ctx.Values $fn}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$enum := and $f (isEnum (str $f.Type))}}
-  <div class="form-group">
+  <div class="form-group" data-ob-el="{{$el.Name}}">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if eq $el.View "select"}}
       <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>

@@ -200,6 +200,13 @@ type FormElement struct {
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
 	ReadOnly        bool              `yaml:"readonly,omitempty"`       // только чтение
+	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
+	// языка, что `when` условного оформления): элемент становится нередактируемым
+	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет
+	// живёт в бизнес-логике: без них форма показывает поле активным, а отказ
+	// прилетает исключением уже при записи.
+	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
+	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	UseGrid         bool              `yaml:"use_grid,omitempty"`       // (устар.) SlickGrid теперь включён по умолчанию
 	NoGrid          bool              `yaml:"no_grid,omitempty"`        // отключить SlickGrid у ТЧ (вернуть простую таблицу)
 	AutoSum         bool              `yaml:"auto_sum,omitempty"`       // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)

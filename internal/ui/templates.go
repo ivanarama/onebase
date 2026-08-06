@@ -483,6 +483,27 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			handler, ok := el.Handlers[metadata.FormEventType(eventName)]
 			return ok && strings.TrimSpace(handler) != ""
 		},
+		// elReadOnly / elHidden — итоговое состояние элемента управляемой формы
+		// с учётом условий readonly_when/hidden_when по полям записи. Условия
+		// вычисляются на сервере при отрисовке (и заново после каждого события
+		// формы), а шаблон только читает результат по имени элемента.
+		"elReadOnly": func(ctx map[string]any, el *metadata.FormElement) bool {
+			if el == nil {
+				return false
+			}
+			if el.ReadOnly {
+				return true
+			}
+			set, _ := ctx["ElReadOnly"].(map[string]bool)
+			return set[el.Name]
+		},
+		"elHidden": func(ctx map[string]any, el *metadata.FormElement) bool {
+			if el == nil {
+				return false
+			}
+			set, _ := ctx["ElHidden"].(map[string]bool)
+			return set[el.Name]
+		},
 		// hasFormHandler — есть ли у формы (а не элемента) обработчик события.
 		// Используется в managed-шаблоне для авто-вызова ПриОткрытииФормы при
 		// загрузке страницы.
@@ -1455,6 +1476,11 @@ const tplIndex = `
 .w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:8px}
 .w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
 .w-kpi-sub{font-size:12px;color:#94a3b8;margin-top:6px}
+/* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
+   как ссылка — подчёркивание только при наведении, чтобы карточка не выглядела
+   пестрее соседних. */
+a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
+a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
 .w-list th{padding:6px 8px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;text-align:left;background:transparent}
@@ -1519,7 +1545,13 @@ const tplIndex = `
 {{end}}
 
 {{define "widget-kpi-body"}}
-  {{if .KPI}}<div class="w-kpi-value">{{.KPI.Display}}</div>{{else}}<div class="w-empty">нет данных</div>{{end}}
+  {{/* Со ссылкой (link:) значение становится переходом к списку/отчёту:
+       счётчик «в карантине: 3» должен открывать эту очередь, а не заставлять
+       искать её руками. Без link — прежняя некликабельная карточка. */}}
+  {{if .KPI}}
+    {{if .Link}}<a class="w-kpi-value w-kpi-link" href="{{.Link}}">{{.KPI.Display}}</a>
+    {{else}}<div class="w-kpi-value">{{.KPI.Display}}</div>{{end}}
+  {{else}}<div class="w-empty">нет данных</div>{{end}}
 {{end}}
 
 {{define "widget-list-body"}}
