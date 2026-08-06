@@ -125,3 +125,27 @@ func TestDeleteMovementsOfUnknownRecorderTypeIsExplicit(t *testing.T) {
 		t.Fatalf("пустой тип удалил %d движений", n)
 	}
 }
+
+// Сухой прогон --forget-document (#610): CountMovementsOfRecorderType считает
+// объём необратимого удаления, ничего не трогая.
+func TestCountMovementsOfRecorderTypeDoesNotDelete(t *testing.T) {
+	ctx := context.Background()
+	env := testEnv(t)
+
+	addMovement(t, env, "СовсемУбранныйДокумент", uuid.New(), "500")
+	addMovement(t, env, "СовсемУбранныйДокумент", uuid.New(), "600")
+	addMovement(t, env, "ДругойДокумент", uuid.New(), "700")
+
+	n := env.DB.CountMovementsOfRecorderType(ctx, env.Registers, []string{"СовсемУбранныйДокумент"})
+	if n != 2 {
+		t.Fatalf("сухой прогон насчитал %d, ожидалось 2", n)
+	}
+	// Ничего не удалено: все три движения на месте.
+	if got := movementCount(t, env); got != 3 {
+		t.Fatalf("сухой прогон изменил данные: осталось %d из 3", got)
+	}
+	// Пустой/служебный список — ноль.
+	if n := env.DB.CountMovementsOfRecorderType(ctx, env.Registers, nil); n != 0 {
+		t.Fatalf("пустой список насчитал %d", n)
+	}
+}
