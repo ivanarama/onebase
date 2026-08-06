@@ -208,7 +208,7 @@ jobs:
       - name: Benchmark (PR)
         run: |
           go test -run NONE -bench . -benchmem -count 6 \
-            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ \
+            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ ./internal/query/ \
             | tee bench-pr.txt
 
       - name: Benchmark (base)
@@ -217,7 +217,7 @@ jobs:
           # На базе бенч-функций может не быть — тогда файл пустой, benchstat
           # просто покажет только числа PR. Не валим джоб из-за этого.
           go test -run NONE -bench . -benchmem -count 6 \
-            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ \
+            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ ./internal/query/ \
             | tee bench-base.txt || true
           git checkout -
 
@@ -225,7 +225,24 @@ jobs:
         run: benchstat bench-base.txt bench-pr.txt | tee benchstat.txt
 
       - name: Upload benchstat report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchstat
           path: benchstat.txt
+
+      # Порог просадки (план 115, этап D). До этого джоб только печатал отчёт:
+      # порога не было, базовый прогон завершался `|| true` — то есть джоб
+      # создавал впечатление защиты от регрессий, которой не было. Просадка
+      # вроде #623 (полный скан при удалении из полнотекстового индекса)
+      # проходила беспрепятственно.
+      #
+      # Гейт смотрит только СТАТИСТИЧЕСКИ ЗНАЧИМЫЕ изменения: незначимые
+      # benchstat помечает «~», и они игнорируются, иначе шум разделяемого
+      # раннера ронял бы каждый второй PR. Порог 25% выбран мягким намеренно —
+      # ловим обвалы, а не колебания. Сам разбор покрыт тестами
+      # (tools/benchgate/main_test.go), чтобы гейт не оказался декорацией.
+      - name: Fail on performance regression
+        run: |
+          benchstat -format csv bench-base.txt bench-pr.txt 2>/dev/null \
+            | go run ./tools/benchgate -threshold 25
