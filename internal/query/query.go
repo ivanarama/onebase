@@ -2826,7 +2826,51 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 		tr.emit("CAST(" + col + " AS NUMERIC)")
 		return
 	}
+	if tr.needsEmptyTextCoalesce(lower) {
+		tr.emit("COALESCE(" + col + ", '')")
+		return
+	}
 	tr.emit(col)
+}
+
+// needsEmptyTextCoalesce — нужно ли трактовать незаполненное значение колонки как
+// ПУСТУЮ СТРОКУ в сравнении на равенство/неравенство.
+//
+// Незаполненный реквизит в прикладной модели — пустое значение, а не «неизвестно»:
+// `Состояние <> "Завершено"` для записи без состояния истинно. В SQL же
+// NULL <> 'Завершено' даёт NULL, и такие записи молча выпадали из отбора — ровно
+// те, ради которых пишут отчёты «что висит». COALESCE(поле,'') возвращает
+// сравнению ожидаемый смысл; заодно `Поле = ""` начинает находить незаполненные.
+//
+// Границы намеренные:
+//   - только строка и перечисление. У числа пустое значение — 0, и текущее
+//     поведение (NULL не попадает в `<> 0`) уже совпадает с прикладным смыслом;
+//     COALESCE там только помешал бы индексу. Дата и булево — по той же причине.
+//   - только рядом с «=», «<>», «!=»: колонка в списке выборки, в ГРУППИРОВАТЬ и
+//     в УПОРЯДОЧИТЬ остаётся собой, и NULL в выводе не подменяется пустой строкой.
+//   - алиас вывода (КАК ...) не колонка, его не трогаем.
+func (tr *translator) needsEmptyTextCoalesce(lower string) bool {
+	if _, isAlias := tr.aliases[lower]; isAlias {
+		return false
+	}
+	t, known := tr.colTypes[lower]
+	if !known || (t != metadata.FieldTypeString && !metadata.IsEnum(t)) {
+		return false
+	}
+	idx := tr.pos - 1
+	return tr.equalityOpAt(idx+1) || tr.equalityOpAt(idx-1)
+}
+
+func (tr *translator) equalityOpAt(idx int) bool {
+	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tOp {
+		return false
+	}
+	switch tr.tokens[idx].val {
+	case "=", "<>", "!=":
+		return true
+	default:
+		return false
+	}
 }
 
 // emitQualifiedColumn эмитит колонку после точки (алиас.поле). Для number на
