@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,6 +14,13 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/shopspring/decimal"
 )
+
+// ErrColumnInUniqueIndex — колонку нельзя удалить обычным DROP COLUMN, потому что
+// она входит в UNIQUE/PRIMARY KEY, объявленный при создании таблицы (SQLite
+// хранит его в sqlite_autoindex). Для регистра сведений это измерение из ключа:
+// его удаляет пересоздание таблицы (fixInfoRegPKSQLite), а не ALTER, поэтому
+// MigrateInfoRegisters ловит этот случай и доводит удаление там.
+var ErrColumnInUniqueIndex = errors.New("колонка входит в UNIQUE/PRIMARY KEY, объявленный при создании таблицы")
 
 // maxConvertExamples — сколько непреобразуемых значений показать в ошибке.
 // Список нужен, чтобы админ понял, что именно чинить; полный дамп колонки в
@@ -223,7 +231,7 @@ func (db *DB) dropIndexesOnColumn(ctx context.Context, table, column string) err
 		// Автоиндексы (UNIQUE в объявлении таблицы) удалить нельзя — про них
 		// честно сообщаем, а не падаем с невнятной ошибкой SQLite.
 		if strings.HasPrefix(idx, "sqlite_autoindex") {
-			return fmt.Errorf("%s: колонка %s входит в UNIQUE-ограничение таблицы — удалите ограничение вручную", table, column)
+			return fmt.Errorf("%s: колонка %s входит в UNIQUE-ограничение таблицы — удалите ограничение вручную: %w", table, column, ErrColumnInUniqueIndex)
 		}
 		if _, err := db.Exec(ctx, "DROP INDEX IF EXISTS "+quoteIdent(idx)); err != nil {
 			return fmt.Errorf("%s: снятие индекса %s: %w", table, idx, err)
