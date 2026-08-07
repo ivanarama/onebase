@@ -299,6 +299,8 @@ chart_proc: СформироватьДиаграмму
 
 Полный список статей и видео — [docs/publications.md](docs/publications.md).
 
+[<img src="https://infostart.ru/bitrix/templates/sandbox_empty/assets/tpl/abo/img/logo.svg" alt="Инфостарт" width="120">](https://infostart.ru/)
+
 ---
 
 ## Авторы
