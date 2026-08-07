@@ -316,13 +316,19 @@ func runUserPasswd(cmd *cobra.Command, args []string) error {
 	if err := env.repo.UpdatePassword(ctx, u.ID, pw); err != nil {
 		return err
 	}
-	// Сброс сессий: старый пароль больше не должен давать доступ.
-	_ = env.repo.KickUserSessions(ctx, u.ID)
+	// Отзыв живых сессий: смену пароля часто делают именно чтобы кого-то
+	// отключить, и «отозвать не удалось» нельзя проглатывать в «Пароль обновлён»
+	// — иначе администратор получит ложное подтверждение (#622). Пароль уже
+	// изменён, поэтому сообщаем оба факта и завершаемся ненулевым кодом.
+	kickErr := env.repo.KickUserSessions(ctx, u.ID)
 	env.db.LogAction(ctx, "user_passwd", "user", login, u.ID, "", "cli", "")
 
 	outf("Пароль обновлён для %s\n", login)
 	if generated {
 		outf("Пароль: %s\n", pw)
+	}
+	if kickErr != nil {
+		return fmt.Errorf("пароль изменён, но действующие сессии %s отозвать не удалось — прежний вход мог сохраниться: %w", login, kickErr)
 	}
 	return nil
 }
