@@ -45,6 +45,19 @@ dimensions:
 resources:
   - { name: Сумма, type: number(15,2) }
 `)
+	write("accounts/основной.yaml", `name: Основной
+title: Основной план счетов
+accounts:
+  - { code: "50", name: Касса, kind: active }
+  - { code: "51", name: Расчётный счёт, kind: active }
+`)
+	write("accountregs/бухучёт.yaml", `name: БухУчёт
+title: Бухгалтерский учёт
+accounts: Основной
+totals: { enabled: true }
+resources:
+  - { name: Сумма, type: number(15,2) }
+`)
 
 	proj, err := project.Load(dir)
 	if err != nil {
@@ -62,6 +75,9 @@ resources:
 		t.Fatal(err)
 	}
 	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MigrateAccountRegisters(ctx, proj.AccountRegisters); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
@@ -247,6 +263,63 @@ func TestTotalsCheckFindsAndRecalculates(t *testing.T) {
 	rep = Run(ctx, env, []Check{totalsCheck{}}, nil)
 	if res := findResult(t, rep, "totals"); res.Severity != SeverityOK {
 		t.Fatalf("после пересчёта итоги должны сходиться: %+v", res)
+	}
+}
+
+// insertAccountEntry вписывает проводку бухрегистра МИМО пересчёта итогов —
+// ровно то, что делает восстановление части данных или прямой SQL.
+func insertAccountEntry(t *testing.T, env *Env, sum string) {
+	t.Helper()
+	if _, err := env.DB.Exec(context.Background(),
+		`INSERT INTO акк_бухучёт (id, period, регистратор, регистратор_тип, счётдт, счёткт, сумма)
+		 VALUES (?, '2026-01-15T00:00:00Z', ?, 'Реализация', '50', '51', ?)`,
+		uuid.New().String(), uuid.New().String(), sum); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// #613: доктор обязан ловить разъехавшиеся итоги регистра БУХГАЛТЕРИИ — раньше
+// он их не проверял вовсе, и испорченные итоги_акк_* оставались невидимы.
+func TestAccountTotalsCheckFindsAndRecalculates(t *testing.T) {
+	ctx := context.Background()
+	env := testEnv(t)
+
+	insertAccountEntry(t, env, "500")
+
+	rep := Run(ctx, env, []Check{accountTotalsCheck{}}, nil)
+	res := findResult(t, rep, "account-totals")
+	if res.Severity != SeverityError || len(res.Findings) != 1 {
+		t.Fatalf("расхождение итогов бухрегистра не найдено: %+v", res)
+	}
+	if res.Findings[0].Object != "БухУчёт.Сумма" {
+		t.Errorf("находка не называет ресурс: %q", res.Findings[0].Object)
+	}
+
+	rep = Run(ctx, env, []Check{accountTotalsCheck{}}, map[string]bool{"account-totals": true})
+	if res := findResult(t, rep, "account-totals"); res.Fixed != 1 {
+		t.Fatalf("итоги бухрегистра не пересчитаны: %+v", res)
+	}
+	rep = Run(ctx, env, []Check{accountTotalsCheck{}}, nil)
+	if res := findResult(t, rep, "account-totals"); res.Severity != SeverityOK {
+		t.Fatalf("после пересчёта итоги бухрегистра должны сходиться: %+v", res)
+	}
+}
+
+// --fix totals (регистры накопления) не должен рапортовать об успехе, оставляя
+// бухгалтерскую часть нетронутой: это разные проверки, и account-totals обязана
+// по-прежнему видеть расхождение.
+func TestFixTotalsDoesNotTouchAccountTotals(t *testing.T) {
+	ctx := context.Background()
+	env := testEnv(t)
+
+	insertAccountEntry(t, env, "500")
+
+	// Чиним только totals — бухгалтерских итогов он касаться не должен.
+	Run(ctx, env, []Check{totalsCheck{}}, map[string]bool{"totals": true})
+
+	rep := Run(ctx, env, []Check{accountTotalsCheck{}}, nil)
+	if res := findResult(t, rep, "account-totals"); res.Severity != SeverityError {
+		t.Fatalf("--fix totals молча «починил» бухрегистр: %+v", res)
 	}
 }
 
