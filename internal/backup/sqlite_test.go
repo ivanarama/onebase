@@ -132,3 +132,57 @@ func TestRestoreSQLiteRejectsCorruptBackupAndPreservesTarget(t *testing.T) {
 		t.Fatalf("live target changed: value=%q err=%v", got, err)
 	}
 }
+
+// Восстановление поверх открытой базы уничтожает её WAL и подменяет inode под
+// живым процессом. Останавливать базу обязан вызывающий, но проверка занятости
+// здесь — последний рубеж на случай, если очередной обработчик спросил живость
+// не той функцией (issue #627).
+func TestRestoreSQLiteRefusesWhileDatabaseInUse(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "live.db")
+
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	if _, err := db.Exec(ctx, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO t(name) VALUES('alpha')"); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Копию снимаем на живой базе — это разрешено (VACUUM INTO не блокирует).
+	outPath, err := DumpSQLite(ctx, dbPath, filepath.Join(dir, "backups"))
+	if err != nil {
+		t.Fatalf("DumpSQLite: %v", err)
+	}
+
+	err = RestoreSQLite(ctx, dbPath, outPath)
+	if err == nil {
+		db.Close()
+		t.Fatal("восстановление выполнено поверх открытой базы")
+	}
+	if !strings.Contains(err.Error(), "открыта другим процессом") {
+		db.Close()
+		t.Fatalf("ожидался отказ по занятости базы, получено: %v", err)
+	}
+	if _, statErr := os.Stat(dbPath + ".old"); statErr == nil {
+		db.Close()
+		t.Error("создана копия .old — восстановление дошло до подмены файла")
+	}
+	// База осталась рабочей: соединение живо и файл на месте.
+	var n int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM t").Scan(&n); err != nil {
+		db.Close()
+		t.Fatalf("база после отказа нечитаема: %v", err)
+	}
+	db.Close()
+
+	// После остановки базы то же восстановление обязано пройти — проверка не
+	// должна запирать нормальный сценарий.
+	if err := RestoreSQLite(ctx, dbPath, outPath); err != nil {
+		t.Fatalf("RestoreSQLite на остановленной базе: %v", err)
+	}
+}

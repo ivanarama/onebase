@@ -64,6 +64,7 @@
   "База данных будет создана автоматически, если не существует.": "Database will be created automatically if it does not exist.",
   "База данных восстановлена из": "Database restored from",
   "База не остановилась — восстановление отменено, чтобы не повредить данные": "The base did not stop — the restore was cancelled to avoid corrupting data",
+  "База работает, но запущена не этим лаунчером — остановите её и повторите": "The base is running but was not started by this launcher — stop it and retry",
   "База остановлена — запустите её заново для применения изменений.": "The base was stopped — start it again to apply the changes.",
   "База остановлена — запустите её заново.": "The base was stopped — start it again.",
   "Без галки — быстрый бинарный дамп, только для той же СУБД": "Without the checkbox — fast binary dump, same DBMS only",
@@ -752,6 +753,8 @@
   "Свернуть дерево": "Collapse tree",
   "Свернуть/Развернуть": "Collapse/Expand",
   "Свернуть/развернуть YAML": "Collapse/expand YAML",
+  "Светлая или тёмная тема редактора кода": "Light or dark code editor theme",
+  "Светлая тема": "Light theme",
   "Свойства": "Properties",
   "Свойства ячейки": "Cell properties",
   "Свёртка базы": "Database rollup",
@@ -838,6 +841,7 @@
   "Таймаут": "Timeout",
   "Текст": "Text",
   "Текст запроса": "Query text",
+  "Тёмная тема": "Dark theme",
   "Тип": "Type",
   "Тип базы данных": "Database type",
   "Тип графика": "Chart type",
@@ -1169,5 +1173,7 @@
   "Платформа перезапускается — это окно закроется.": "The platform is restarting — this window will close.",
   "Вернуть предыдущую версию платформы?": "Roll back to the previous platform version?",
   "Откатываю и перезапускаю...": "Rolling back and restarting...",
-  "обновление выполняется из лаунчера": "update it from the launcher"
+  "обновление выполняется из лаунчера": "update it from the launcher",
+  "превышен размер данных формы: форматированный текст с картинками не должен превышать %d МБ в одном поле": "form data too large: rich text with images must not exceed %d MB per field",
+  "превышен размер данных формы (не более %d МБ)": "form data too large (limit %d MB)"
 }

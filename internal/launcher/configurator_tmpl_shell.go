@@ -37,6 +37,11 @@ window.MonacoEnvironment = { getWorkerUrl: function () {
 // Режим переводов запоминается между сессиями (одна кнопка 🌐 в топбаре вместо
 // спойлера у каждого реквизита). Класс ставим до отрисовки — поля не «прыгают».
 try{if(localStorage.getItem('cfgTitlesOn')==='1')document.documentElement.classList.add('cfg-titles-on');}catch(e){}
+// Тема редактора кода — тем же приёмом и по той же причине: класс до отрисовки,
+// иначе блоки кода мигнут тёмным, прежде чем применится светлая тема. Дефолт
+// страницы (тёмная) действует, пока пользователь не выбрал тему явно.
+window.cfgCodeThemeDefault='dark';
+try{var _ct=localStorage.getItem('cfgCodeTheme');if(_ct?_ct==='light':window.cfgCodeThemeDefault==='light')document.documentElement.classList.add('cfg-code-light');}catch(e){}
 </script>
 <!-- ECharts: тот же движок, что рисует графики в пользовательском режиме —
      предпросмотр виджета выглядит как у пользователя. Грузим ДО AMD-загрузчика
@@ -44,6 +49,7 @@ try{if(localStorage.getItem('cfgTitlesOn')==='1')document.documentElement.classL
      AMD-модуль вместо window.echarts (тогда график «недоступен»). -->
 <script src="/vendor/echarts/echarts.min.js" onerror="window._echartsLoadErr=1"></script>
 <script src="/vendor/monaco/vs/loader.js" onerror="window._monacoLoadErr='loader.js failed'"></script>
+<script src="/static/code-theme.js"></script>
 <script>{{.InlineJSYaml}}</script>
 <title>{{t $.Lang "Конфигуратор"}} — {{if .AppName}}{{.AppName}}{{else}}{{.Base.Name}}{{end}}</title>
 <link rel="stylesheet" href="/static/configurator.css">
@@ -74,6 +80,9 @@ try{if(localStorage.getItem('cfgTitlesOn')==='1')document.documentElement.classL
   <button id="cfg-save-topbar" onclick="cfgSaveActive()" title="{{t $.Lang "Сохранить (Ctrl+S)"}}" class="cfg-save-topbar">&#128190; {{t $.Lang "Сохранить"}}</button>
   <button onclick="launchEnterprise()" title="{{t $.Lang "Запустить предприятие"}}" class="run-enterprise-btn"><svg viewBox="0 0 24 24" fill="#333"><polygon points="6,3 20,12 6,21"/></svg></button>
   {{if and (eq .Tab "tree") $.AvailableLangs}}<button id="cfg-titles-toggle" class="dbg-topbar-btn" onclick="cfgTitlesToggle()" title="{{t $.Lang "Показать/скрыть поля переводов у всех объектов"}}">&#127760; {{t $.Lang "Переводы"}}</button>{{end}}
+  {{/* Тумблер темы кода — только на «Дереве»: редакторы модулей есть только там.
+       Подпись показывает тему, в которую переключит клик (видимость — CSS). */}}
+  {{if eq .Tab "tree"}}<button id="cfg-code-theme-toggle" class="dbg-topbar-btn" onclick="cfgCodeThemeToggle()" title="{{t $.Lang "Светлая или тёмная тема редактора кода"}}"><span class="cth-to-light">&#9728;&#65039; {{t $.Lang "Светлая тема"}}</span><span class="cth-to-dark">&#127769; {{t $.Lang "Тёмная тема"}}</span></button>{{end}}
   <button id="dbg-toggle" class="dbg-topbar-btn" onclick="dbgToggle()">&#128027; {{t $.Lang "Отладка: ВЫКЛ"}}</button>
   <button onclick="toggleSyntaxRef()" title="{{t $.Lang "Синтакс-помощник"}} (F1)" class="dbg-topbar-btn">&#10067; {{t $.Lang "Справка"}}</button>
   <span id="monaco-status" style="font-size:9px;color:#94a3b8">Monaco:...</span>
