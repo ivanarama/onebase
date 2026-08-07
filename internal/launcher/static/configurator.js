@@ -404,21 +404,8 @@ window.onerror = function(msg, url, ln, col, err) {
   return false;
 };
 
-// ── Тема редактора кода ─────────────────────────────────────────
-// Тёмная (onebase-dark) по умолчанию — как было до тумблера; светлая
-// (onebase-light) включается кнопкой в топбаре и запоминается в localStorage.
-// Класс на <html> ставится ещё в <head> (см. cfg-head), поэтому pre.os-code
-// не успевает мигнуть тёмным до загрузки Monaco.
-function cfgCodeThemeName() {
-  return document.documentElement.classList.contains('cfg-code-light') ? 'onebase-light' : 'onebase-dark';
-}
-function cfgCodeThemeToggle() {
-  var light = document.documentElement.classList.toggle('cfg-code-light');
-  try { localStorage.setItem('cfgCodeTheme', light ? 'light' : 'dark'); } catch (e) {}
-  // Тема Monaco глобальна на страницу: одного вызова хватает на все
-  // открытые редакторы, перебирать monacoEditors не нужно.
-  if (window._monacoReady && typeof monaco !== 'undefined') monaco.editor.setTheme(cfgCodeThemeName());
-}
+// Тема редактора кода (cfgCodeThemeName/cfgCodeThemeToggle) — в общем
+// /static/code-theme.js: те же темы использует конструктор управляемых форм.
 
 function startEdit(name) {
   var pre = document.getElementById('pre-'+name);
@@ -2581,57 +2568,8 @@ require(['vs/editor/editor.main'], function() {
       }], activeSignature: 0, activeParameter: Math.min(active, d.params.length-1) }, dispose: function(){} };
     }
   });
-  // Dark theme matching existing #1e1e2e style
-  monaco.editor.defineTheme('onebase-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [
-      { token: 'keyword', foreground: 'c792ea', fontStyle: 'bold' },
-      { token: 'type', foreground: '82aaff' },
-      { token: 'variable.predefined', foreground: 'ff5370', fontStyle: 'bold' },
-      { token: 'string', foreground: 'c3e88d' },
-      { token: 'number', foreground: 'f78c6c' },
-      { token: 'comment', foreground: '546e7a', fontStyle: 'italic' }
-    ],
-    colors: {
-      'editor.background': '#1e1e2e',
-      'editor.foreground': '#cdd6f4',
-      'editor.lineHighlightBackground': '#2a2a3e',
-      'editorLineNumber.foreground': '#6c7086',
-      'editorLineNumber.activeForeground': '#cdd6f4',
-      'editor.selectionBackground': '#45475a',
-      'editorCursor.foreground': '#f5e0dc'
-    }
-  });
-  // Светлая тема — те же роли токенов, но подобранные под белый фон:
-  // палитру тёмной темы переносить нельзя (лиловый c792ea и серо-синий
-  // комментарий 546e7a на белом уже нечитаемы). Цвета парные к
-  // переменным --cfg-hl-* в configurator.css, которыми покрашен pre.os-code.
-  monaco.editor.defineTheme('onebase-light', {
-    base: 'vs',
-    inherit: true,
-    rules: [
-      { token: 'keyword', foreground: '7c3aed', fontStyle: 'bold' },
-      { token: 'type', foreground: '1d4ed8' },
-      { token: 'variable.predefined', foreground: 'b91c1c', fontStyle: 'bold' },
-      { token: 'string', foreground: '15803d' },
-      { token: 'number', foreground: 'b45309' },
-      { token: 'comment', foreground: '64748b', fontStyle: 'italic' }
-    ],
-    colors: {
-      'editor.background': '#ffffff',
-      'editor.foreground': '#1f2937',
-      'editor.lineHighlightBackground': '#f3f6fb',
-      'editorLineNumber.foreground': '#9aa4b2',
-      'editorLineNumber.activeForeground': '#1f2937',
-      'editor.selectionBackground': '#cfe2ff',
-      'editorCursor.foreground': '#1a4a80'
-    }
-  });
-  // defineTheme не применяет тему — редакторы создаются уже после, с
-  // cfgCodeThemeName(), но глобальную тему выставляем сразу: иначе до первого
-  // startEdit активной остаётся встроенная vs.
-  monaco.editor.setTheme(cfgCodeThemeName());
+  // Темы кода — общие с конструктором форм (/static/code-theme.js).
+  cfgCodeThemeDefine(monaco);
   window._monacoReady = true;
 
   // Динамическая подсветка: дополнить список встроенных именами из langref
