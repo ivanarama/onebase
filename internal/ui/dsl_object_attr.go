@@ -62,11 +62,18 @@ func (s *Server) objectAttributeValue(ctx context.Context, args []any) (any, err
 	if err != nil || row == nil {
 		return nil, nil // запись не найдена
 	}
+	// План 88E: читается ЧУЖАЯ сохранённая запись — тот же путь, что и
+	// разыменование this.Клиент.Телефон (dsl_ref_attr.go), и он обязан
+	// подчиняться полевой политике роли. Без маски обработка обходит её одной
+	// строкой: Сообщить(ЗначениеРеквизитаОбъекта(Ссылка, "Телефон")).
 	val := row[field.Name]
+	var out any
 	if field.RefEntity != "" {
-		return s.refFromValue(ctx, field.RefEntity, val), nil
+		out = s.refFromValue(ctx, field.RefEntity, val)
+	} else {
+		out = normalizeAttrValue(field.Type, val)
 	}
-	return normalizeAttrValue(field.Type, val), nil
+	return s.maskDSLValue(ctx, entity, field.Name, out), nil
 }
 
 type bulkObjectRef struct {
@@ -124,11 +131,18 @@ func (s *Server) objectAttributeValues(ctx context.Context, args []any) (any, er
 		vals := make(map[string]any, len(fields))
 		for _, f := range fields {
 			raw := row[f.Name]
+			var v any
 			if f.RefEntity != "" {
-				vals[f.Name] = s.refFromValueCached(ctx, f.RefEntity, raw, refNames[f.RefEntity])
+				v = s.refFromValueCached(ctx, f.RefEntity, raw, refNames[f.RefEntity])
 			} else {
-				vals[f.Name] = normalizeAttrValue(f.Type, raw)
+				v = normalizeAttrValue(f.Type, raw)
 			}
+			// Маска здесь, а не побочно: единственным гейтом был
+			// maskedRecordLabel строкой выше, который маскирует row на месте и
+			// вызывается ТОЛЬКО когда у ссылки ещё нет наименования. Ссылка с
+			// уже заполненным именем (обычный случай из формы или запроса)
+			// уносила реальные значения.
+			vals[f.Name] = s.maskDSLValue(ctx, entity, f.Name, v)
 		}
 		out.CallMethod("вставить", []any{ref.key, interpreter.NewStructFromMap(vals)})
 	}

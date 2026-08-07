@@ -178,6 +178,10 @@ func (s *Server) resolveRegisterRows(ctx context.Context, rows []map[string]any,
 			if recID, err := uuid.Parse(recIDStr); err == nil {
 				if entity := s.reg.GetEntityBySlug(recType); entity != nil {
 					if docRow, err2 := s.store.GetByID(ctx, entity.Name, recID, entity); err2 == nil {
+						// Представление регистратора едет в список движений, то
+						// есть номер и дата документа обязаны подчиняться той же
+						// полевой политике, что и список самого документа.
+						s.maskRecord(ctx, entity, docRow)
 						num := fmt.Sprintf("%v", docRow["Номер"])
 						date := regFmtDate(docRow["Дата"])
 						row["recorder_label"] = fmt.Sprintf("%s №%s от %s", entity.Name, num, date)
