@@ -698,7 +698,17 @@ func (tr *translator) rowFilterCondition(kind, name string, meta *metadata.Entit
 	}
 	tr.args = append(tr.args, args...)
 	tr.markRowApplied(kind, name)
-	return sql, nil
+	if sql == "" {
+		return "", nil
+	}
+	// Скобки обязательны здесь, а не у потребителей: предикат политики с any:
+	// разворачивается в «a OR b», а вызывающие складывают условия через AND
+	// (ВТ регистров) и подставляют в ON авто-JOIN. Без обрамления «period<=? AND
+	// склад=A OR склад=B» разбирается как «(… AND …) OR …» — граница периода
+	// теряется для второй ветки, а политика — силу (#625; #574 закрыл лишь
+	// верхний ГДЕ). pendingRowFilterConditions уже оборачивает — делаем то же тут,
+	// чтобы правило не зависело от памяти очередного потребителя.
+	return "(" + sql + ")", nil
 }
 
 func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias string) (string, bool, error) {

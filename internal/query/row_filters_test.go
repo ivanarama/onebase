@@ -116,7 +116,7 @@ func TestCompile_RowFiltersVirtualRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if !strings.Contains(res.SQL, "FROM рег_товарноедвижение WHERE owner = ? GROUP BY") {
+	if !strings.Contains(res.SQL, "FROM рег_товарноедвижение WHERE (owner = ?) GROUP BY") {
 		t.Fatalf("row filter must be inside register virtual table, got:\n%s", res.SQL)
 	}
 }
