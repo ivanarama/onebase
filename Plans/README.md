@@ -286,6 +286,8 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 111 | [111-scalability-review.md](111-scalability-review.md) | Ревью масштабируемости на 100+ пользователей | ✅ P0/P1/P2 в `main`; P3-1/P3-2 отложены |
 | 112 | [112-user-cli-and-role-asserts.md](112-user-cli-and-role-asserts.md) | `onebase user` + ассерты матрицы прав ролей в `onebase test` | ✅ Реализовано |
 | 113 | [113-row-field-access-asserts.md](113-row-field-access-asserts.md) | Ассерты полевого и строкового доступа в `onebase test` | ✅ Реализовано |
+| 114 | [114-doctor.md](114-doctor.md) | `onebase doctor` — проверка и починка состояния базы | ✅ Реализовано |
+| 115 | [115-process-hardening.md](115-process-hardening.md) | Гейты, чокпоинты инвариантов, матрица диалектов (по итогам ревью недели) | ✅ Реализовано |
 
 ### Направление Н — планы вне таблиц (сведено аудитом 2026-08-02)
 

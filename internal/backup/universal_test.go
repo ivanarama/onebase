@@ -1111,8 +1111,13 @@ func TestImportUniversal_НечитаемыйВторойФакторГасит�
 		t.Fatal("_auth_backup_codes не выгружается: восстановление обнулит все резервные коды")
 	}
 
-	dst := newSQLite(t, "totp-dst")
-	repo := auth.NewRepo(dst)
+	// Тест идёт через ПОЛНЫЙ цикл export→import, а не дёргает disableUnreadableTOTP
+	// напрямую: гашение должно быть подключено в ImportUniversalWithOptions, иначе
+	// покрытие есть, а поведения нет (#611).
+	cfgDir := t.TempDir() // конфигурация не нужна: проверяем только системные таблицы
+
+	src := newSQLite(t, "totp-src")
+	repo := auth.NewRepo(src)
 	if err := repo.EnsureSchema(ctx); err != nil {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
@@ -1121,26 +1126,37 @@ func TestImportUniversal_НечитаемыйВторойФакторГасит�
 		t.Fatalf("Create: %v", err)
 	}
 	// Секрет «из чужой установки»: enc: под ключом, которого у нас нет.
-	if err := dst.SaveTOTPSecretRaw(ctx, u.ID, "enc:v1:AAAAAAAAAAAAAAAAAAAAAAAA"); err != nil {
+	if err := src.SaveTOTPSecretRaw(ctx, u.ID, "enc:v1:AAAAAAAAAAAAAAAAAAAAAAAA"); err != nil {
 		t.Fatalf("SaveTOTPSecretRaw: %v", err)
 	}
-	if _, err := dst.Exec(ctx, `UPDATE _users SET totp_enabled = ? WHERE id = ?`, true, u.ID); err != nil {
+	if _, err := src.Exec(ctx, `UPDATE _users SET totp_enabled = ? WHERE id = ?`, true, u.ID); err != nil {
 		t.Fatalf("totp_enabled: %v", err)
 	}
 
-	reset, err := disableUnreadableTOTP(ctx, dst)
+	var buf bytes.Buffer
+	if err := ExportUniversal(ctx, src, "file", cfgDir, "", "test", &buf); err != nil {
+		t.Fatalf("ExportUniversal: %v", err)
+	}
+
+	dst := newSQLite(t, "totp-dst")
+	report, err := ImportUniversal(ctx, dst, "file", cfgDir, "",
+		bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	if err != nil {
-		t.Fatalf("disableUnreadableTOTP: %v", err)
+		t.Fatalf("ImportUniversal: %v", err)
 	}
-	if len(reset) != 1 || reset[0] != "admin" {
-		t.Fatalf("нечитаемый фактор не погашен: %+v", reset)
+
+	// Отчёт называет учётки, которым надо перепривязать 2FA.
+	if len(report.TOTPReset) != 1 || report.TOTPReset[0] != "admin" {
+		t.Fatalf("report.TOTPReset не заполнен импортом: %+v", report.TOTPReset)
 	}
-	info, err := repo.TwoFactorInfoFor(ctx, u.ID)
+	// А сам фактор в восстановленной базе погашен — вход не заперт.
+	dstRepo := auth.NewRepo(dst)
+	info, err := dstRepo.TwoFactorInfoFor(ctx, u.ID)
 	if err != nil {
 		t.Fatalf("TwoFactorInfoFor: %v", err)
 	}
 	if info.Enabled {
-		t.Fatal("второй фактор остался включённым — учётка заперта")
+		t.Fatal("второй фактор остался включённым после восстановления — учётка заперта")
 	}
 }
 

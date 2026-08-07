@@ -101,9 +101,9 @@ func TestPageForm_RichTextLoadsQuill(t *testing.T) {
 
 	for _, want := range []string{
 		`<textarea name="Результат" autocomplete="off" class="richtext-field"`, // textarea сохранён (#595: autocomplete off)
-		`<div class="richtext-editor"></div>`,               // контейнер Quill
-		`/vendor/quill/quill.snow.css`,                      // CSS офлайн
-		`/vendor/quill/quill.js`,                            // bundle офлайн
+		`<div class="richtext-editor"></div>`,                                  // контейнер Quill
+		`/vendor/quill/quill.snow.css`,                                         // CSS офлайн
+		`/vendor/quill/quill.js`,                                               // bundle офлайн
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("page-form не содержит %q", want)
