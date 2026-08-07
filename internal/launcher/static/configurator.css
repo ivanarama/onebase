@@ -105,15 +105,32 @@ summary.cfg-group-hd[draggable=true]{cursor:grab}
 .obj-pane.active{display:block}
 
 .module-editor-wrap{position:relative;margin-top:8px}
+/* ── Тема блоков кода ─────────────────────────────────
+   Тёмная по умолчанию (как было), светлая — по классу html.cfg-code-light
+   от тумблера в топбаре. Переменные держат в одном месте и pre.os-code, и
+   textarea-фолбэк, и самописную подсветку .hl-* ниже; Monaco переключается
+   своей темой onebase-light (см. cfgCodeThemeName в configurator.js).
+   Прозрачная рамка в тёмной теме — чтобы переключение не двигало вёрстку. */
+:root{
+  --cfg-code-bg:#1e1e2e;--cfg-code-fg:#cdd6f4;--cfg-code-border:transparent;
+  --cfg-hl-kw:#c792ea;--cfg-hl-fn:#82aaff;--cfg-hl-sp:#ff5370;
+  --cfg-hl-str:#c3e88d;--cfg-hl-num:#f78c6c;--cfg-hl-cmt:#546e7a;
+}
+html.cfg-code-light{
+  --cfg-code-bg:#fff;--cfg-code-fg:#1f2937;--cfg-code-border:#d8dde8;
+  --cfg-hl-kw:#7c3aed;--cfg-hl-fn:#1d4ed8;--cfg-hl-sp:#b91c1c;
+  --cfg-hl-str:#15803d;--cfg-hl-num:#b45309;--cfg-hl-cmt:#64748b;
+}
 pre.os-code{
-  background:#1e1e2e;color:#cdd6f4;
+  background:var(--cfg-code-bg);color:var(--cfg-code-fg);
+  border:1px solid var(--cfg-code-border);
   font-family:'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
   font-size:12px;line-height:1.6;padding:14px 16px;border-radius:6px;
   overflow:auto;white-space:pre;min-height:100px;tab-size:2;margin:0;cursor:pointer
 }
 .os-edit{
   width:100%;min-height:200px;
-  background:#1e1e2e;color:#cdd6f4;
+  background:var(--cfg-code-bg);color:var(--cfg-code-fg);
   font-family:'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
   font-size:12px;line-height:1.6;padding:14px 16px;border-radius:6px;
   border:2px solid #3070d8;resize:vertical;outline:none;tab-size:2;
@@ -140,12 +157,12 @@ pre.os-code{
 .module-empty{color:#888;font-size:12px;padding:10px 0;font-style:italic}
 
 /* ── Syntax colours ─────────────────────────────────── */
-.hl-kw{color:#c792ea;font-weight:600}
-.hl-fn{color:#82aaff}
-.hl-sp{color:#ff5370;font-weight:600}
-.hl-str{color:#c3e88d}
-.hl-num{color:#f78c6c}
-.hl-cmt{color:#546e7a;font-style:italic}
+.hl-kw{color:var(--cfg-hl-kw);font-weight:600}
+.hl-fn{color:var(--cfg-hl-fn)}
+.hl-sp{color:var(--cfg-hl-sp);font-weight:600}
+.hl-str{color:var(--cfg-hl-str)}
+.hl-num{color:var(--cfg-hl-num)}
+.hl-cmt{color:var(--cfg-hl-cmt);font-style:italic}
 
 /* ── New object form ─────────────────────────────────── */
 .cfg-group-hd{display:flex;align-items:center;padding-right:6px}
@@ -222,7 +239,10 @@ pre.convert-out{background:#f5f7fa;border:1px solid #e2e6ed;padding:12px;border-
 .qb-row{display:flex;gap:4px;margin-bottom:5px;align-items:center;flex-wrap:wrap}
 
 /* ── Monaco editor ─────────────────────────────────── */
-.monaco-target{width:100%;min-height:400px;height:calc(100vh - 340px);border-radius:6px;overflow:hidden}
+/* Рамка — та же переменная, что у pre.os-code: в тёмной теме прозрачная, в
+   светлой отделяет белый редактор от белой панели (box-sizing:border-box
+   выше — высота от рамки не меняется). */
+.monaco-target{width:100%;min-height:400px;height:calc(100vh - 340px);border:1px solid var(--cfg-code-border);border-radius:6px;overflow:hidden}
 .code-wrap{position:relative}
 
 /* ── Debug panel ─────────────────────────────────── */
@@ -250,6 +270,13 @@ tr:has(> td > .titles-block){display:none}
 html.cfg-titles-on tr:has(> td > .titles-block){display:table-row}
 /* активное состояние кнопки-тумблера в топбаре */
 html.cfg-titles-on #cfg-titles-toggle{background:#16a34a;border-color:#22c55e}
+
+/* Тумблер темы кода: обе подписи отрисованы в разметке (перевод делает шаблон,
+   в JS переведённых строк нет), видимую выбирает класс на <html>. Показываем
+   ту тему, в которую переключит клик. */
+#cfg-code-theme-toggle .cth-to-dark{display:none}
+html.cfg-code-light #cfg-code-theme-toggle .cth-to-dark{display:inline}
+html.cfg-code-light #cfg-code-theme-toggle .cth-to-light{display:none}
 
 .cfg-menu-wrap{position:relative}
 .cfg-menu-btn{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px}
