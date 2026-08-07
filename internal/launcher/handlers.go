@@ -82,6 +82,9 @@ type handler struct {
 	// isoBrowser запускает изолированные окна Предприятия (план 78);
 	// в тестах подменяется фейком.
 	isoBrowser isolatedBrowser
+	// quitFn просит лаунчер закрыться — нужен обновлению платформы, которое
+	// заменяет бинарь и перезапускает процесс из нового файла (план 92).
+	quitFn func()
 
 	// statusCache кэширует ДОРОГИЕ на рендер списка проверки — статус живости
 	// (усыновление через /health, до 1.5с) и данные app.yaml (открытие БД у
@@ -231,6 +234,9 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		"Bases":    vms,
 		"Selected": selected,
 		"NativeOK": NativeIsolatedSupported(),
+		// Состояние обновлений читается из файла, без обращения к сети:
+		// проверку делает фоновая горутина (план 92).
+		"Update": h.updatesState(),
 		"BaseURL": func() string {
 			if selected != nil {
 				return h.runner.BaseURL(selected.Base)

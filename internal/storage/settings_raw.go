@@ -213,14 +213,25 @@ type TOTPSecretRow struct {
 
 // ListTOTPSecrets возвращает непустые секреты TOTP. Отсутствие таблицы или
 // колонки — не ошибка: база могла не проходить миграцию плана 84.
+//
+// «Нет колонки» отделяем от прочих сбоев явной проверкой ColumnExists, а не
+// глотанием любой ошибки Query: транзиентный сбой соединения иначе выглядел бы
+// как «перешифровывать/гасить нечего», и secret rotate и disableUnreadableTOTP
+// тихо не сделали бы ничего, отрапортовав об успехе (#611).
 func (db *DB) ListTOTPSecrets(ctx context.Context) ([]TOTPSecretRow, error) {
 	if !db.HasTable(ctx, "_users") {
 		return nil, nil
 	}
+	hasCol, err := db.dialect.ColumnExists(ctx, db, "_users", "totp_secret")
+	if err != nil {
+		return nil, fmt.Errorf("settings: проверка колонки totp_secret: %w", err)
+	}
+	if !hasCol {
+		return nil, nil // плана 84 в этой базе ещё не было
+	}
 	rows, err := db.Query(ctx, `SELECT id, login, totp_secret FROM _users WHERE totp_secret <> ''`)
 	if err != nil {
-		// Колонки нет — плана 84 в этой базе ещё не было.
-		return nil, nil
+		return nil, fmt.Errorf("settings: чтение секретов TOTP: %w", err)
 	}
 	defer rows.Close()
 	var out []TOTPSecretRow
