@@ -85,6 +85,27 @@ func TestRestructureNarrowingSkippedWithoutPermission(t *testing.T) {
 	if got == nil || *got != "10.55" {
 		t.Errorf("значение изменилось: %v", got)
 	}
+
+	// #612: карта полей не должна помнить отложенное изменение как применённое.
+	// Иначе следующий план сравнил бы метаданные с картой (обе — number(15,0)),
+	// расхождения не увидел бы, и сужение больше никогда не предложилось, а
+	// --allow-destructive его уже не догнал бы.
+	changes, err := db.PlanTableChanges(ctx, metadata.TableName(after.Name), after.Fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reRetype *SchemaChange
+	for i := range changes {
+		if changes[i].Kind == ChangeRetype && changes[i].FieldID == "f_sum" {
+			reRetype = &changes[i]
+		}
+	}
+	if reRetype == nil {
+		t.Fatalf("повторный план не предлагает отложенное сужение — карта записана как применённая: %+v", changes)
+	}
+	if !reRetype.Destructive() {
+		t.Errorf("переприложенное изменение должно оставаться разрушительным: %+v", reRetype)
+	}
 }
 
 // С явным разрешением сужение применяется — отказ не должен превратиться в

@@ -133,32 +133,40 @@ func VerifySHA256(path, wantHex string) error {
 // путь к сохранённой копии.
 func SwapBinary(targetPath, newPath string) (string, error) {
 	backupPath := targetPath + ".old"
-	old, err := os.Open(targetPath)
-	if err != nil {
-		return "", fmt.Errorf("selfupdate: открыть старый бинарь: %w", err)
+	// Освобождаем имя ПЕРЕИМЕНОВАНИЕМ, а не копированием: Windows не даёт
+	// перезаписать запущенный .exe, но даёт его переименовать. Именно так
+	// лаунчер обновляет сам себя — он и есть тот процесс, чей файл меняется.
+	// Работающий процесс продолжает жить со своим (уже переименованным) файлом.
+	//
+	// Раньше здесь старый бинарь копировался в .old, а новый писался поверх
+	// занятого имени — на самообновлении это падало с «Access is denied».
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		// Остаток прошлой попытки: Windows не переименует поверх существующего.
+		return "", fmt.Errorf("selfupdate: убрать прежнюю резервную копию %s: %w", backupPath, err)
 	}
-	if err := writeFile(old, backupPath, 0o755); err != nil {
-		_ = old.Close()
-		return "", fmt.Errorf("selfupdate: сохранить старый бинарь: %w", err)
+	if err := os.Rename(targetPath, backupPath); err != nil {
+		return "", fmt.Errorf("selfupdate: освободить имя бинаря: %w", err)
 	}
-	_ = old.Close()
+
+	restore := func(cause error) error {
+		if rErr := os.Rename(backupPath, targetPath); rErr != nil {
+			return fmt.Errorf("selfupdate: %w; вернуть старый бинарь не удалось: %v", cause, rErr)
+		}
+		return cause
+	}
+
 	in, err := os.Open(newPath)
 	if err != nil {
-		return "", err
+		return "", restore(fmt.Errorf("selfupdate: открыть новый бинарь: %w", err))
 	}
 	defer oblog.CloseQuiet("selfupdate", "исходный файл", in)
+
 	if err := writeFile(in, targetPath, 0o755); err != nil {
-		var restoreErr error
-		if backup, openErr := os.Open(backupPath); openErr == nil {
-			restoreErr = writeFile(backup, targetPath, 0o755)
-			_ = backup.Close()
-		} else {
-			restoreErr = openErr
+		// Недописанный файл убираем, иначе Rename ниже упрётся в него.
+		if rmErr := os.Remove(targetPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			return "", fmt.Errorf("selfupdate: записать новый бинарь: %w; убрать недописанный файл: %v", err, rmErr)
 		}
-		if restoreErr != nil {
-			return "", fmt.Errorf("selfupdate: записать новый бинарь: %w; восстановить старый: %v", err, restoreErr)
-		}
-		return "", fmt.Errorf("selfupdate: записать новый бинарь: %w", err)
+		return "", restore(fmt.Errorf("selfupdate: записать новый бинарь: %w", err))
 	}
 	return backupPath, nil
 }
@@ -174,11 +182,21 @@ func Rollback(targetPath, backupPath string) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: открыть резервный бинарь: %w", err)
 	}
-	defer oblog.CloseQuiet("selfupdate", "резервную копию бинарника", backup)
-	if err := writeFile(backup, targetPath, 0o755); err != nil {
-		return fmt.Errorf("selfupdate: восстановить старый бинарь: %w", err)
+	writeErr := writeFile(backup, targetPath, 0o755)
+	// Закрываем ДО удаления, а не через defer: Windows не даёт удалить открытый
+	// файл, и молчаливый `_ = os.Remove` оставлял бы резервную копию на месте.
+	// Тогда повторный откат находил бы её снова и отчитывался успехом, хотя
+	// откатываться уже некуда.
+	oblog.CloseQuiet("selfupdate", "резервную копию бинарника", backup)
+	if writeErr != nil {
+		return fmt.Errorf("selfupdate: восстановить старый бинарь: %w", writeErr)
 	}
-	_ = os.Remove(backupPath)
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		// Не ошибка операции: бинарь на месте, а лишняя копия — вопрос уборки.
+		// Возвращать её наверх нельзя, иначе удавшийся откат выглядел бы
+		// провалившимся.
+		oblog.Component("selfupdate").Warn("резервная копия не удалена", "file", backupPath, "err", err)
+	}
 	return nil
 }
 

@@ -74,19 +74,21 @@ const maxExamples = 5
 // с уже загруженным реестром запущенного сервера. Общий знаменатель у них —
 // именно эти три списка.
 type Env struct {
-	DB            *storage.DB
-	Entities      []*metadata.Entity
-	Registers     []*metadata.Register
-	InfoRegisters []*metadata.InfoRegister
+	DB               *storage.DB
+	Entities         []*metadata.Entity
+	Registers        []*metadata.Register
+	InfoRegisters    []*metadata.InfoRegister
+	AccountRegisters []*metadata.AccountRegister
 }
 
 // FromProject собирает Env по загруженной конфигурации (путь CLI).
 func FromProject(db *storage.DB, proj *project.Project) *Env {
 	return &Env{
-		DB:            db,
-		Entities:      proj.Entities,
-		Registers:     proj.Registers,
-		InfoRegisters: proj.InfoRegisters,
+		DB:               db,
+		Entities:         proj.Entities,
+		Registers:        proj.Registers,
+		InfoRegisters:    proj.InfoRegisters,
+		AccountRegisters: proj.AccountRegisters,
 	}
 }
 
@@ -111,6 +113,7 @@ func All() []Check {
 		refsCheck{},
 		orphanMovementsCheck{},
 		totalsCheck{},
+		accountTotalsCheck{},
 		blobsCheck{},
 	}
 }

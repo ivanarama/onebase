@@ -10,7 +10,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return key
 	},
-}).Parse(tplLauncherHead + tplIndex + tplForm + tplConfigResult))
+}).Parse(tplLauncherHead + tplIndex + tplForm + tplConfigResult + tplUpdates))
 
 const tplLauncherHead = `
 {{define "lhead"}}<!DOCTYPE html>
@@ -29,6 +29,14 @@ body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#E
 .tbtn.danger:hover{background:linear-gradient(to bottom,#FFE8E8,#FFBFBF);border-color:#FF9090}
 .tbtn svg{width:16px;height:16px}
 .tbtn-sep{width:1px;background:#ACA899;height:24px;margin:0 4px}
+/* отметка о доступной версии платформы: заметная, но не кричащая — на канале
+   build сборки выходят по нескольку раз в день */
+.upd-badge{background:linear-gradient(to bottom,#EAF7EC,#C9E9CF);border-color:#7FBF8C;color:#166534;font-weight:600}
+.upd-badge:hover{background:linear-gradient(to bottom,#DCF3E1,#B4DFBC);border-color:#5AA96A}
+.upd-card{background:#fff;border:1px solid #ACA899;border-radius:2px;padding:14px;max-width:760px}
+.upd-note{background:#FFF9E6;border:1px solid #E8D9A0;border-radius:2px;padding:8px 10px;font-size:12px;color:#6b5a1e;margin-bottom:8px}
+.upd-avail{background:#EAF7EC;border:1px solid #A8D8B4;border-radius:2px;padding:8px 10px;font-size:12px;color:#166534}
+.upd-notes{margin-top:8px;padding:8px 10px;background:#F7F7F4;border:1px solid #E0DDD2;border-radius:2px;font-size:11px;line-height:1.45;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:'Segoe UI',Tahoma,Arial,sans-serif}
 
 /* main layout */
 .content{display:flex;height:calc(100vh - 37px)}
@@ -118,6 +126,13 @@ const tplIndex = `
   <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return doPost(this)" title="{{t $.Lang "Остановить все базы"}}">
     <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> {{t $.Lang "Стоп всё"}}
   </a>
+  {{/* with, а не if: у части рендер-тестов данных об обновлении нет вовсе */}}
+  {{with .Update}}{{if .Enabled}}
+  <a class="tbtn{{if .ShowBadge}} upd-badge{{end}}" href="/updates"
+     title="{{if .ShowBadge}}{{t $.Lang "Доступна новая версия платформы"}}{{else}}{{t $.Lang "Обновление платформы"}}{{end}}">
+    <svg viewBox="0 0 24 24"><path d="M12 4l8 8h-5v8h-6v-8H4z"/></svg>{{if .ShowBadge}} {{.LatestTag}}{{end}}
+  </a>
+  {{end}}{{end}}
   <a class="tbtn danger" href="/quit" onclick="return quitLauncher()" title="{{t $.Lang "Завершить лаунчер"}}">
     <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
   </a>
@@ -504,6 +519,139 @@ function normalizeDBPath(inputId) {
   inp.value = trimmed + sep + name + '.db';
 }
 </script>
+</body></html>
+{{end}}
+`
+
+// tplUpdates — страница обновления платформы (план 92). Отдельная страница, а
+// не модалка: здесь и переключатель канала, и список изменений, и предупреждение
+// про остановку баз — в модальном окне это читалось бы хуже.
+const tplUpdates = `
+{{define "page-updates"}}
+{{template "lhead" .}}
+<div class="toolbar">
+  <a class="tbtn" href="/">← {{t $.Lang "Назад"}}</a>
+  <div style="flex:1"></div>
+</div>
+<div class="content">
+<div class="list-panel">
+  <div class="upd-card">
+    <h2 style="font-size:15px;margin-bottom:10px">{{t $.Lang "Обновление платформы"}}</h2>
+
+    {{if not .U.Enabled}}
+    <div class="upd-note">{{t $.Lang "Обновление платформы отключено политикой администратора"}}
+      <div style="color:#888;margin-top:4px">{{.U.BinDir}}/onebase.policy.yaml</div>
+    </div>
+    {{else}}
+
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px">
+      <tr><td style="color:#888;padding:3px 0;width:150px">{{t $.Lang "Установленная версия"}}</td><td style="font-weight:600">{{.U.Current}}</td></tr>
+      <tr><td style="color:#888;padding:3px 0">{{t $.Lang "Канал"}}</td><td>
+        {{if .U.ChannelLocked}}
+          {{.U.Channel}} <span style="color:#888">({{t $.Lang "задан администратором"}})</span>
+        {{else}}
+          <label style="margin-right:10px"><input type="radio" name="ch" value="build" {{if eq .U.Channel "build"}}checked{{end}} onclick="setChannel('build')"> build — {{t $.Lang "сборки из main, несколько раз в день"}}</label>
+          <label><input type="radio" name="ch" value="stable" {{if eq .U.Channel "stable"}}checked{{end}} onclick="setChannel('stable')"> stable — {{t $.Lang "только выпуски"}}</label>
+        {{end}}
+      </td></tr>
+      <tr><td style="color:#888;padding:3px 0">{{t $.Lang "Источник"}}</td><td>{{.U.Repo}}</td></tr>
+      {{if not .U.CheckedAt.IsZero}}
+      <tr><td style="color:#888;padding:3px 0">{{t $.Lang "Проверено"}}</td><td>{{.U.CheckedAt.Local.Format "02.01.2006 15:04"}}</td></tr>
+      {{end}}
+    </table>
+
+    {{if .U.CheckError}}
+    <div class="upd-note">{{t $.Lang "Проверить обновления не удалось"}}: {{.U.CheckError}}</div>
+    {{end}}
+
+    {{if .U.LatestTag}}
+      {{if .U.Available}}
+        <div class="upd-avail">
+          {{if .U.SameScheme}}
+            {{t $.Lang "Доступна новая версия"}}: <b>{{.U.LatestTag}}</b>
+          {{else}}
+            {{t $.Lang "Канал предлагает версию"}} <b>{{.U.LatestTag}}</b> — {{t $.Lang "это переключение канала, а не более новая сборка"}}
+          {{end}}
+          {{if not .U.LatestAt.IsZero}}<span style="color:#888"> · {{.U.LatestAt.Local.Format "02.01.2006 15:04"}}</span>{{end}}
+          {{if .U.LatestURL}} · <a href="{{.U.LatestURL}}" target="_blank" style="color:#1a5fa8">{{t $.Lang "страница выпуска"}} ↗</a>{{end}}
+        </div>
+        {{if .U.LatestNotes}}<pre class="upd-notes">{{.U.LatestNotes}}</pre>{{end}}
+      {{else}}
+        <div class="upd-note">{{t $.Lang "Установлена актуальная версия"}} — {{.U.LatestTag}}</div>
+      {{end}}
+    {{end}}
+
+    {{if not .U.CanWrite}}
+    <div class="upd-note">{{t $.Lang "Нет прав на запись в каталог платформы — обновление доступно только администратору"}}
+      <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
+    </div>
+    {{end}}
+
+    <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap">
+      {{if .U.NetAllowed}}
+      <a class="tbtn" href="#" onclick="return updAction('/updates/check', '{{t $.Lang "Проверяю..."}}')">{{t $.Lang "Проверить"}}</a>
+      {{if and .U.Available (ne .U.StagedTag .U.LatestTag)}}
+      <a class="tbtn" href="#" onclick="return updAction('/updates/download', '{{t $.Lang "Скачиваю, это займёт несколько минут..."}}')">{{t $.Lang "Скачать"}}</a>
+      {{end}}
+      {{end}}
+      {{if .U.CanApply}}
+      <a class="tbtn upd-badge" href="#" onclick="return updApply()">{{t $.Lang "Перезапустить и обновить"}} → {{.U.StagedTag}}</a>
+      {{end}}
+      {{if and .U.PrevTag .U.CanWrite}}
+      <a class="tbtn danger" href="#" onclick="return updRollback('{{.U.PrevTag}}')">{{t $.Lang "Вернуть версию"}} {{.U.PrevTag}}</a>
+      {{end}}
+    </div>
+
+    {{if .U.StagedTag}}
+    <div class="upd-note" style="margin-top:12px">{{t $.Lang "Обновление скачано и проверено"}}: {{.U.StagedTag}}.
+      {{if gt .U.RunningCount 0}}
+      <b>{{t $.Lang "Применение остановит запущенные базы"}} ({{.U.RunningCount}}) {{t $.Lang "и перезапустит платформу"}}.</b>
+      {{else}}
+      {{t $.Lang "Применение перезапустит платформу"}}.
+      {{end}}
+      <div style="color:#888;margin-top:4px">{{t $.Lang "Затрагивает всех пользователей этой машины. Откат возможен сразу после обновления, но базы, открытые новой версией, обратно не мигрируются."}}</div>
+    </div>
+    {{end}}
+
+    <div id="upd-status" style="margin-top:12px;font-size:12px;color:#555"></div>
+    {{end}}
+  </div>
+</div>
+</div>
+
+{{if .U.Enabled}}
+<script>
+function updStatus(text) { document.getElementById('upd-status').textContent = text || ''; }
+function updPost(url, busy, done) {
+  updStatus(busy);
+  fetch(url, {method:'POST'}).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, body:j}; }); })
+    .then(function(res){
+      if (!res.ok) { updStatus(res.body.error || 'ошибка'); return; }
+      done(res.body);
+    })
+    .catch(function(e){ updStatus(String(e)); });
+  return false;
+}
+function updAction(url, busy) {
+  return updPost(url, busy, function(){ window.location.reload(); });
+}
+function setChannel(ch) {
+  return updPost('/updates/channel?value=' + encodeURIComponent(ch), '', function(){ window.location.reload(); });
+}
+function updApply() {
+  return updPost('/updates/apply', '{{t $.Lang "Обновляю и перезапускаю..."}}', function(){
+    // Окно закроется само: процесс поднимет новую версию и откроет своё окно.
+    updStatus('{{t $.Lang "Платформа перезапускается — это окно закроется."}}');
+  });
+}
+function updRollback(tag) {
+  if (!confirm('{{t $.Lang "Вернуть предыдущую версию платформы?"}} ' + tag)) return false;
+  return updPost('/updates/rollback', '{{t $.Lang "Откатываю и перезапускаю..."}}', function(){
+    updStatus('{{t $.Lang "Платформа перезапускается — это окно закроется."}}');
+  });
+}
+</script>
+{{end}}
 </body></html>
 {{end}}
 `
