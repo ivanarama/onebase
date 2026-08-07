@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -559,5 +560,46 @@ func TestFullText_МиграцияНаполняетИндексНаСущест
 	}
 	if hits := search(t, db, "ромашка", cat.Name); len(hits) != 1 {
 		t.Fatalf("после миграции поиск не находит ранее записанное: %+v", hits)
+	}
+}
+
+// #623: удаление из _fts ищет по одному owner_id, а первичный ключ ведёт по
+// owner_name — для одиночного owner_id он неприменим, и обе СУБД брали полный
+// скан общего индекса с горячего пути записи. Проверяем, что индекс по owner_id
+// создан и удаление идёт по нему, а не сканом.
+func TestFullText_DeleteUsesOwnerIDIndex(t *testing.T) {
+	db, _ := newFTSTestDB(t)
+	ctx := context.Background()
+
+	// Индекс по owner_id должен существовать после миграции.
+	var idxCount int
+	if err := db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='_fts' AND name='_fts_owner_id'`).Scan(&idxCount); err != nil {
+		t.Fatal(err)
+	}
+	if idxCount != 1 {
+		t.Fatalf("индекс _fts_owner_id не создан (%d)", idxCount)
+	}
+
+	// План удаления по owner_id обязан использовать индекс, а не полный скан.
+	rows, err := db.Query(ctx, `EXPLAIN QUERY PLAN DELETE FROM _fts WHERE owner_id = ?`, uuid.New().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan += detail + "\n"
+	}
+	if !strings.Contains(plan, "_fts_owner_id") {
+		t.Fatalf("удаление из _fts не использует индекс по owner_id:\n%s", plan)
+	}
+	if strings.Contains(plan, "SCAN _fts") && !strings.Contains(plan, "USING") {
+		t.Fatalf("удаление из _fts идёт полным сканом:\n%s", plan)
 	}
 }
