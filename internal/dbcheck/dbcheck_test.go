@@ -45,6 +45,13 @@ dimensions:
 resources:
   - { name: Сумма, type: number(15,2) }
 `)
+	write("inforegs/ценыконтрагентов.yaml", `name: ЦеныКонтрагентов
+title: Цены контрагентов
+dimensions:
+  - { name: Контрагент, type: reference:Контрагенты }
+resources:
+  - { name: Цена, type: number(15,2) }
+`)
 	write("accounts/основной.yaml", `name: Основной
 title: Основной план счетов
 accounts:
@@ -75,6 +82,9 @@ resources:
 		t.Fatal(err)
 	}
 	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateAccountRegisters(ctx, proj.AccountRegisters); err != nil {
