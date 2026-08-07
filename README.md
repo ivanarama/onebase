@@ -292,9 +292,12 @@ chart_proc: СформироватьДиаграмму
 
 ## Публикации
 
-[**Этот репозиторий использован в статье на Инфостарт**](https://infostart.ru/1c/articles/2694204/)
+Свежее:
 
-<img src="https://infostart.ru/bitrix/templates/sandbox_empty/assets/tpl/abo/img/logo.svg" alt="Инфостарт" width="120">
+- [От ТЗ до работающей базы за 37 минут: ИИ-агент сам пишет, проверяет и чинит конфигурацию](https://infostart.ru/1c/articles/2756473/) — статья, Инфостарт
+- [Один промпт — готовая конфигурация](https://youtu.be/JxQTz-dYoJI) — видео, YouTube
+
+Полный список статей и видео — [docs/publications.md](docs/publications.md).
 
 ---
 
