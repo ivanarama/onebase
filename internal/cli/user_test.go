@@ -307,3 +307,61 @@ func containsRune(s string, r rune) bool {
 	}
 	return false
 }
+
+// #620: офлайн-снятие второго фактора — восстановление доступа без входа и без
+// другого администратора (утрата устройства-аутентификатора; запертая база).
+func TestUserCLI_2FAReset(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "users.db")
+
+	cmd := userTestCmd(t, dir, dbPath)
+	mustSet(t, cmd.Flags(), "admin", "true")
+	mustSet(t, cmd.Flags(), "generate", "true")
+	if err := runUserAdd(cmd, []string{"admin"}); err != nil {
+		t.Fatalf("создание админа: %v", err)
+	}
+
+	// Привяжем второй фактор напрямую и убедимся, что он включён.
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := auth.NewRepo(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	u, err := findUserByLogin(ctx, repo, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnableTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", 0); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := repo.TOTPEnabled(ctx, u.ID); !on {
+		t.Fatal("подготовка: второй фактор не включён")
+	}
+	db.Close()
+
+	// Сброс через CLI.
+	cmd = userTestCmd(t, dir, dbPath)
+	if err := runUser2FAReset(cmd, []string{"admin"}); err != nil {
+		t.Fatalf("user 2fa reset: %v", err)
+	}
+
+	db, err = storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo = auth.NewRepo(db)
+	if on, err := repo.TOTPEnabled(ctx, u.ID); err != nil || on {
+		t.Fatalf("второй фактор не снят: on=%v err=%v", on, err)
+	}
+
+	// Несуществующий логин — понятная ошибка, а не паника.
+	cmd = userTestCmd(t, dir, dbPath)
+	if err := runUser2FAReset(cmd, []string{"нетакого"}); err == nil {
+		t.Fatal("сброс для несуществующего логина должен вернуть ошибку")
+	}
+}
