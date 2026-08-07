@@ -301,7 +301,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			// Обработчик мог записать форму и упасть уже после этого: id всё
 			// равно нужен клиенту, иначе повтор действия создаст второй документ.
 			SavedID: savedFormID(thisObj),
-			Version: s.currentEntityVersion(r.Context(), entity, obj),
+			Version: s.versionWrittenByHandler(r.Context(), entity, obj, thisObj),
 		})
 		return
 	}
@@ -317,7 +317,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
 		SavedID:        savedFormID(thisObj),
-		Version:        s.currentEntityVersion(r.Context(), entity, obj),
+		Version:        s.versionWrittenByHandler(r.Context(), entity, obj, thisObj),
 	})
 }
 
