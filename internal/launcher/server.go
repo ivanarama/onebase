@@ -130,6 +130,10 @@ func (s *Server) ListenAndServe() error {
 	r.Get("/", s.h.index)
 	r.Get("/browse-dir", s.h.browseDir)
 	r.Get("/browse-file", s.h.browseFile)
+	// «Сообщить об ошибке» (план 115): форма → предпросмотр → пакет на диск.
+	r.Get("/report-problem", s.h.reportProblem)
+	r.Post("/report-problem", s.h.reportProblemPreview)
+	r.Post("/report-problem/save", s.h.reportProblemSave)
 	r.Get("/bases/new", s.h.newForm)
 	r.Post("/bases", s.h.create)
 	r.Get("/bases/{id}/edit", s.h.editForm)

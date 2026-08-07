@@ -1042,6 +1042,9 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 	<tr><td style="padding:6px 0;color:#888">База данных</td><td style="padding:6px 0;word-break:break-all">%s</td></tr>
 	<tr><td style="padding:6px 0;color:#888">Порт</td><td style="padding:6px 0">:%d</td></tr>
 	</table>
+	<div style="margin-top:16px;text-align:right">
+	  <a href="/report-problem?base=%s" target="_top" style="color:#1a5fa8">%s</a>
+	</div>
 	</div>`,
 		logoHTML,
 		userRow,
@@ -1050,7 +1053,9 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 		escHTML(configMode),
 		escHTML(configLocation),
 		escHTML(dbLocation),
-		b.Port)
+		b.Port,
+		escHTML(b.ID),
+		escHTML(tr(resolveLang(r), "Сообщить об ошибке")))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writeBody(w, []byte(html))
 }

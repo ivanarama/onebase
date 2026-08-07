@@ -10,7 +10,7 @@ var tmpl = template.Must(template.New("root").Funcs(template.FuncMap{
 		}
 		return key
 	},
-}).Parse(tplLauncherHead + tplIndex + tplForm + tplConfigResult))
+}).Parse(tplLauncherHead + tplIndex + tplForm + tplConfigResult + tplReportProblem))
 
 const tplLauncherHead = `
 {{define "lhead"}}<!DOCTYPE html>
@@ -115,6 +115,9 @@ const tplIndex = `
     <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg> {{t $.Lang "Добавить"}}
   </a>
   <div style="flex:1"></div>
+  <a class="tbtn" href="/report-problem{{if .Selected}}?base={{.Selected.ID}}{{end}}" title="{{t $.Lang "Собрать отчёт об ошибке одним файлом"}}">
+    <svg viewBox="0 0 24 24"><path d="M20 8h-2.81a5.99 5.99 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a6.02 6.02 0 0 0-2.83 0L8.41 3 7 4.41l1.62 1.63A5.99 5.99 0 0 0 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81a6 6 0 0 0 10.38 0H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg> {{t $.Lang "Сообщить об ошибке"}}
+  </a>
   <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return doPost(this)" title="{{t $.Lang "Остановить все базы"}}">
     <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> {{t $.Lang "Стоп всё"}}
   </a>
