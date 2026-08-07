@@ -62,6 +62,7 @@ docs/*
 !docs/mcp.md
 !docs/rest-api-v2.md
 !docs/roadmap.json
+!docs/publications.md
 !docs/users-load-limits.md
 !docs/release-template.md
 !docs/DEPLOYMENT.md

@@ -14,6 +14,7 @@ package incident
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -36,13 +37,13 @@ const DefaultLimit = 50
 
 // Record — один зарегистрированный инцидент.
 type Record struct {
-	ID    string    // "E-3F7A2C"
+	ID    string // "E-3F7A2C"
 	Time  time.Time
-	Kind  string    // KindError | KindPanic
-	Where string    // "POST /ui/doc/заказ/new" — метод и путь, без строки запроса
-	Text  string    // текст ошибки
-	Stack string    // только для паник
-	User  string    // логин: нужен, чтобы показать пользователю ЕГО инциденты; в отчёт не идёт
+	Kind  string // KindError | KindPanic
+	Where string // "POST /ui/doc/заказ/new" — метод и путь, без строки запроса
+	Text  string // текст ошибки
+	Stack string // только для паник
+	User  string // логин: нужен, чтобы показать пользователю ЕГО инциденты; в отчёт не идёт
 }
 
 // Store — кольцевой буфер инцидентов. Устройство повторяет ui.MessageStore:
@@ -130,9 +131,11 @@ func newID() string {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// Источник случайности недоступен — код всё равно нужен, иначе
-		// пользователю не на что сослаться. Берём наносекунды.
-		n := time.Now().UnixNano()
-		b[0], b[1], b[2] = byte(n>>16), byte(n>>8), byte(n)
+		// пользователю не на что сослаться. Берём младшие 24 бита наносекунд
+		// и печатаем их сразу шестнадцатеричной записью: сужение int64 до byte
+		// дало бы то же самое, но выглядело бы как недосмотр (gosec G115), а
+		// маска здесь ровно то, чего мы хотим.
+		return "E-" + strings.ToUpper(fmt.Sprintf("%06x", time.Now().UnixNano()&0xFFFFFF))
 	}
 	return "E-" + strings.ToUpper(hex.EncodeToString(b[:]))
 }

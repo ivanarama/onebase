@@ -1,8 +1,10 @@
 package query_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -74,4 +76,44 @@ func TestCompile_RowFiltersOrWithGroupAndOrder(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	assertNames(t, runNames(t, db, res), "Товар-свой")
+}
+
+// Виртуальная таблица регистра — второй сайт того же дефекта — покрыта
+// поведенчески и на обоих диалектах в row_filters_vt_matrix_test.go
+// (TestRowFilterAnyKeepsMomentBoundInVirtualTable): там сверяется само сальдо,
+// а не текст SQL. Дублировать её здесь сверкой с точной пунктуацией незачем —
+// ровно такую сверку выше по файлу пришлось снимать, она ломалась на верном
+// поведении.
+
+// #625: авто-JOIN разыменования ссылочного поля кладёт предикат
+// политики в ON. Без скобок «ON id=fk AND a OR b» связывает JOIN только с a, а
+// строки b примешивают чужую ссылку (и размножают строку).
+func TestCompile_RowFiltersAnyWrappedInAutoJoinON(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "Категория", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Owner", Type: metadata.FieldTypeString},
+		},
+	}
+	tov := &metadata.Entity{
+		Name: "Товар", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Категория", Type: metadata.FieldTypeString, RefEntity: "Категория"}},
+	}
+	res, err := query.Compile(`ВЫБРАТЬ Т.Категория.Наименование ИЗ Справочник.Товар КАК Т`, query.CompileOpts{
+		Entities: []*metadata.Entity{cat, tov},
+		Dialect:  storage.SQLiteDialect{},
+		RowFilters: map[query.SourceRef]*storage.Predicate{
+			{Kind: "catalog", Name: "Категория"}: {Any: []storage.Predicate{
+				{Field: "Owner", Op: "eq", Value: "A"},
+				{Field: "Owner", Op: "eq", Value: "B"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if !strings.Contains(res.SQL, "AND ((ref_категория.owner = ?) OR (ref_категория.owner = ?))") {
+		t.Fatalf("предикат any: в ON авто-JOIN не обёрнут в скобки:\n%s", res.SQL)
+	}
 }
