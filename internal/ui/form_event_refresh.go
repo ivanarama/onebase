@@ -341,6 +341,23 @@ func tpCellNorm(f metadata.Field, v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
+// versionWrittenByHandler возвращает актуальную версию записи ТОЛЬКО когда
+// объект записал сам обработчик текущего события (Объект.Записать() поднял
+// версию, а форма держит прочитанную при отрисовке). Во всех прочих случаях —
+// ноль: клиент оставляет _version, с которым форма была отрисована, и
+// оптимистическая блокировка продолжает ловить чужую параллельную запись.
+//
+// Без этого гейта версия ехала клиенту после КАЖДОГО события формы (#608): между
+// открытием и «Записать» пользователь жмёт любую кнопку — ответ отдаёт свежую
+// версию из БД, клиент кладёт её в _version, и последующая проверка версии всегда
+// совпадает, молча затирая правки того, кто сохранил запись параллельно.
+func (s *Server) versionWrittenByHandler(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, this *formObjectThis) int64 {
+	if this == nil || !this.saved {
+		return 0
+	}
+	return s.currentEntityVersion(ctx, entity, obj)
+}
+
 // currentEntityVersion возвращает версию записи после обработчика. Ноль — если
 // записи ещё нет или версию не прочитать: тогда клиент оставляет прежнюю.
 func (s *Server) currentEntityVersion(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) int64 {

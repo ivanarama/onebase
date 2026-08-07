@@ -123,3 +123,47 @@ func TestRotateReportsUnreadableConfig(t *testing.T) {
 		t.Fatal("нечитаемая конфигурация обязана давать ошибку, а не пустой список")
 	}
 }
+
+// #617: enc:-секрет в заголовке llm-endpoint'а обязан быть виден инвентаризации
+// и предупреждению об устаревшем ключе — так же, как заголовки вебхуков. Прежде
+// configSecrets перечисляла у LLM только api_key, и enc: в llm.<ep>.headers.*
+// не попадал ни в `secret list`, ни в warnConfigSecretsUnderOldKey.
+func TestConfigSecretsIncludesLLMHeaders(t *testing.T) {
+	oldKey, newKey := testKey(t), testKey(t)
+	dir := t.TempDir()
+	encHdr, err := oldKey.Encrypt("прокси-токен")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: Demo\n" +
+		"llm:\n  endpoints:\n    - name: z_ai\n      kind: anthropic\n" +
+		"      api_key: \"env:OB_LLM_KEY\"\n" +
+		"      headers:\n        Authorization: \"Bearer ${" + encHdr + "}\"\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "app.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := configSecrets(dir)
+	if err != nil {
+		t.Fatalf("configSecrets: %v", err)
+	}
+	var found bool
+	for _, r := range rows {
+		if r.Path == "llm.z_ai.headers.Authorization" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("заголовок llm-endpoint'а не попал в инвентаризацию: %+v", rows)
+	}
+
+	// И предупреждение об устаревшем ключе его видит (встроенный ${enc:…}).
+	stale := stalePaths(t, dir, newKey)
+	if _, ok := stale["llm.z_ai.headers.Authorization"]; !ok {
+		t.Fatalf("enc: в заголовке LLM не назван устаревшим: %+v", stale)
+	}
+}

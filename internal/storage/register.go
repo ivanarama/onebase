@@ -80,7 +80,13 @@ type OrphanStat struct {
 }
 
 // OrphanMovements returns stats about movements whose recorder document no longer exists.
-func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) []OrphanStat {
+//
+// Ошибку запроса по регистру возвращаем наверх, а не проглатываем: иначе
+// нечитаемый регистр (блокировка, обрыв соединения) выпадал бы из статистики, и
+// doctor отчитался бы «осиротевших движений нет» не потому что их нет, а потому
+// что не смотрели. Отсутствие таблицы — законный случай (регистр ещё не
+// мигрирован), его отличаем явной проверкой HasTable и пропускаем (#622).
+func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) ([]OrphanStat, error) {
 	d := db.dialect
 	entityTable := make(map[string]string, len(entities))
 	for _, e := range entities {
@@ -89,6 +95,9 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 	var stats []OrphanStat
 	for _, reg := range registers {
 		table := metadata.RegisterTableName(reg.Name)
+		if !db.HasTable(ctx, table) {
+			continue // регистр ещё не мигрирован — проверять нечего
+		}
 		// Сначала полностью считываем типы регистраторов и закрываем курсор.
 		// Вложенный QueryRow ниже нельзя выполнять при открытом rows: на
 		// единственном SQLite-соединении (SetMaxOpenConns(1)) он зависнет,
@@ -96,7 +105,7 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 		rows, err := db.Query(ctx, fmt.Sprintf(
 			"SELECT recorder_type, COUNT(*) FROM %s GROUP BY recorder_type", table))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%s: чтение движений: %w", reg.Name, err)
 		}
 		type recTotal struct {
 			recType string
@@ -142,7 +151,7 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 			}
 		}
 	}
-	return stats
+	return stats, nil
 }
 
 // DeleteOrphanMovements удаляет движения, чей документ-регистратор не найден.
