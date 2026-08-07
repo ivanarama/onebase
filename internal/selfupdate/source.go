@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	oblog "github.com/ivantit66/onebase/internal/logging"
 )
 
 // Channel — канал обновлений. Каналы уже разделены самим CI (release.yml):
@@ -186,7 +184,7 @@ func getJSON(ctx context.Context, url string, dst any) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: запрос к %s: %w", url, err)
 	}
-	defer oblog.CloseQuiet("selfupdate", "ответ GitHub API", resp.Body)
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 
 	switch {
 	case resp.StatusCode == http.StatusForbidden, resp.StatusCode == http.StatusTooManyRequests:

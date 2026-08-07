@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/fsmode"
-	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/version"
 )
 
@@ -76,7 +75,7 @@ func downloadFile(ctx context.Context, url, dst string) error {
 	if err != nil {
 		return fmt.Errorf("selfupdate: скачать %s: %w", url, err)
 	}
-	defer oblog.CloseQuiet("selfupdate", "загрузку обновления", resp.Body)
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("selfupdate: %s вернул %d", url, resp.StatusCode)
 	}
@@ -108,7 +107,7 @@ func fetchBytes(ctx context.Context, url string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer oblog.CloseQuiet("selfupdate", "ответ сервера", resp.Body)
+	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s вернул %d", url, resp.StatusCode)
 	}
