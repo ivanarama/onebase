@@ -260,7 +260,7 @@ func (db *DB) DisableFKForImport(ctx context.Context) (cleanup func() error, err
 		`SELECT c.conname, t.relname, pg_get_constraintdef(c.oid)
 		 FROM pg_constraint c
 		 JOIN pg_class t ON c.conrelid = t.oid
-		 WHERE c.contype='f' AND c.connamespace='public'::regnamespace`)
+		 WHERE c.contype='f' AND c.connamespace=current_schema()::regnamespace`)
 	if err != nil {
 		return func() error { return nil }, err
 	}

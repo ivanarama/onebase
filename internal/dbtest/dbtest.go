@@ -60,16 +60,6 @@ func ForEachDialect(t *testing.T, body func(t *testing.T, db *storage.DB)) {
 			db.Close()
 			t.Fatalf("CreateSchema: %v", err)
 		}
-		// Обход дырявой изоляции: ConnectWithSchema ставит
-		// search_path = "<schema>,public", поэтому системные таблицы
-		// резолвятся в ОБЩУЮ public и переживают эфемерную схему — прогоны
-		// видят состояние друг друга.
-		// TODO(#638): убрать, когда системные таблицы перестанут утекать.
-		if _, err := db.Exec(ctx,
-			`CREATE TABLE IF NOT EXISTS `+schema+`._schema_fields
-			   (LIKE public._schema_fields INCLUDING ALL)`); err != nil {
-			t.Logf("локальная _schema_fields не заведена (%v) — вероятно, в public её ещё нет", err)
-		}
 		t.Cleanup(func() {
 			if err := db.DropSchemaCascade(context.Background(), schema); err != nil {
 				t.Errorf("DropSchemaCascade(%s): %v", schema, err)
