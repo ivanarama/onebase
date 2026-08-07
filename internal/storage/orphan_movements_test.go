@@ -49,8 +49,12 @@ func TestOrphanMovements_NoDeadlockDetectAndDelete(t *testing.T) {
 	ents := []*metadata.Entity{doc}
 
 	// Должна вернуться без зависания и найти 1 осиротевшее движение.
+	stats, err := db.OrphanMovements(ctx, regs, ents)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var total int
-	for _, s := range db.OrphanMovements(ctx, regs, ents) {
+	for _, s := range stats {
 		total += s.Count
 	}
 	if total != 1 {
@@ -61,7 +65,47 @@ func TestOrphanMovements_NoDeadlockDetectAndDelete(t *testing.T) {
 	if deleted := db.DeleteOrphanMovements(ctx, regs, ents); deleted != 1 {
 		t.Errorf("DeleteOrphanMovements: удалено %d, ожидалось 1", deleted)
 	}
-	if rest := db.OrphanMovements(ctx, regs, ents); len(rest) != 0 {
+	rest, err := db.OrphanMovements(ctx, regs, ents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 0 {
 		t.Errorf("после очистки осиротевших быть не должно, получили %v", rest)
+	}
+}
+
+// #622: нечитаемый регистр обязан завершать проверку ОШИБКОЙ, а не выпадать из
+// статистики (иначе doctor отчитается «сирот нет» не потому что их нет, а потому
+// что не смотрели). Отсутствие таблицы при этом остаётся законным пропуском.
+func TestOrphanMovements_QueryErrorSurfaces(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	reg := &metadata.Register{
+		Name:       "Битый",
+		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+
+	// Регистр НЕ мигрирован: таблицы нет — это законный пропуск, не ошибка.
+	stats, err := db.OrphanMovements(ctx, []*metadata.Register{reg}, nil)
+	if err != nil {
+		t.Fatalf("отсутствие таблицы регистра — не ошибка: %v", err)
+	}
+	if len(stats) != 0 {
+		t.Fatalf("для несуществующего регистра статистика должна быть пустой: %v", stats)
+	}
+
+	// Таблица есть, но без колонки recorder_type — запрос по регистру не выполнится.
+	// Раньше такой регистр молча выпадал из статистики; теперь — ошибка наверх.
+	if _, err := db.Exec(ctx, `CREATE TABLE `+metadata.RegisterTableName(reg.Name)+` (id TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.OrphanMovements(ctx, []*metadata.Register{reg}, nil); err == nil {
+		t.Fatal("нечитаемый регистр обязан вернуть ошибку, а не пустую статистику")
 	}
 }

@@ -80,7 +80,13 @@ type OrphanStat struct {
 }
 
 // OrphanMovements returns stats about movements whose recorder document no longer exists.
-func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) []OrphanStat {
+//
+// Ошибку запроса по регистру возвращаем наверх, а не проглатываем: иначе
+// нечитаемый регистр (блокировка, обрыв соединения) выпадал бы из статистики, и
+// doctor отчитался бы «осиротевших движений нет» не потому что их нет, а потому
+// что не смотрели. Отсутствие таблицы — законный случай (регистр ещё не
+// мигрирован), его отличаем явной проверкой HasTable и пропускаем (#622).
+func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) ([]OrphanStat, error) {
 	d := db.dialect
 	entityTable := make(map[string]string, len(entities))
 	for _, e := range entities {
@@ -89,6 +95,9 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 	var stats []OrphanStat
 	for _, reg := range registers {
 		table := metadata.RegisterTableName(reg.Name)
+		if !db.HasTable(ctx, table) {
+			continue // регистр ещё не мигрирован — проверять нечего
+		}
 		// Сначала полностью считываем типы регистраторов и закрываем курсор.
 		// Вложенный QueryRow ниже нельзя выполнять при открытом rows: на
 		// единственном SQLite-соединении (SetMaxOpenConns(1)) он зависнет,
@@ -96,7 +105,7 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 		rows, err := db.Query(ctx, fmt.Sprintf(
 			"SELECT recorder_type, COUNT(*) FROM %s GROUP BY recorder_type", table))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%s: чтение движений: %w", reg.Name, err)
 		}
 		type recTotal struct {
 			recType string
@@ -142,7 +151,7 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 			}
 		}
 	}
-	return stats
+	return stats, nil
 }
 
 // DeleteOrphanMovements удаляет движения, чей документ-регистратор не найден.
@@ -216,19 +225,7 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 func (db *DB) DeleteMovementsOfUnknownRecorderType(
 	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
 ) int64 {
-	// Сравнение точное, без LOWER(): у SQLite встроенный LOWER() работает
-	// только с латиницей, поэтому «Реализация» он не приводит ни к чему, и
-	// регистронезависимое сравнение молча не нашло бы ни одной строки. Тип
-	// приходит из отчёта проверки — то есть ровно в том виде, в каком лежит в
-	// данных, — так что точного совпадения достаточно.
-	wanted := make(map[string]bool, len(recorderTypes))
-	for _, t := range recorderTypes {
-		t = strings.TrimSpace(t)
-		if t == "" || t == RollupRecorderType {
-			continue // пустой тип и опорные движения свёртки не трогаем никогда
-		}
-		wanted[t] = true
-	}
+	wanted := wantedRecorderTypes(recorderTypes)
 	if len(wanted) == 0 {
 		return 0
 	}
@@ -245,6 +242,51 @@ func (db *DB) DeleteMovementsOfUnknownRecorderType(
 		}
 	}
 	return total
+}
+
+// CountMovementsOfRecorderType считает движения по названным типам регистратора
+// во всех регистрах, ничего не меняя, — сухой прогон для --forget-document:
+// удаление необратимо, поэтому объём стоит увидеть заранее.
+func (db *DB) CountMovementsOfRecorderType(
+	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
+) int64 {
+	wanted := wantedRecorderTypes(recorderTypes)
+	if len(wanted) == 0 {
+		return 0
+	}
+	d := db.dialect
+	var total int64
+	for _, reg := range registers {
+		table := metadata.RegisterTableName(reg.Name)
+		for t := range wanted {
+			var n int64
+			err := db.QueryRow(ctx, fmt.Sprintf(
+				"SELECT COUNT(*) FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t).Scan(&n)
+			if err == nil {
+				total += n
+			}
+		}
+	}
+	return total
+}
+
+// wantedRecorderTypes нормализует список типов регистратора для forget-операций.
+//
+// Сравнение точное, без LOWER(): у SQLite встроенный LOWER() работает только с
+// латиницей, поэтому «Реализация» он не приводит ни к чему, и регистронезависимое
+// сравнение молча не нашло бы ни одной строки. Тип приходит из отчёта проверки —
+// ровно в том виде, в каком лежит в данных, — так что точного совпадения
+// достаточно. Пустой тип и опорные движения свёртки не трогаем никогда.
+func wantedRecorderTypes(recorderTypes []string) map[string]bool {
+	wanted := make(map[string]bool, len(recorderTypes))
+	for _, t := range recorderTypes {
+		t = strings.TrimSpace(t)
+		if t == "" || t == RollupRecorderType {
+			continue
+		}
+		wanted[t] = true
+	}
+	return wanted
 }
 
 // WriteMovements replaces all movements for a document in the given register.

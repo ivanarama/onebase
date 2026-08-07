@@ -344,6 +344,15 @@ func configSecrets(dir string) ([]secretRow, error) {
 			if ep.APIKey != "" {
 				out = append(out, secretRow{"llm." + ep.Name + ".api_key", ep.APIKey})
 			}
+			// Произвольные заголовки endpoint'а уходят в запрос так же, как у
+			// вебхуков, и типовой случай — заголовок авторизации к собственному
+			// прокси LLM. Без их обхода enc: в llm.<ep>.headers.* не виден ни
+			// `secret list`, ни предупреждению об устаревшем ключе (#617).
+			for name, v := range ep.Headers {
+				if secrets.Classify(v) != secrets.KindEmpty {
+					out = append(out, secretRow{"llm." + ep.Name + ".headers." + name, v})
+				}
+			}
 		}
 	}
 	if appCfg.Backup != nil && appCfg.Backup.S3 != nil {
@@ -420,86 +429,103 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	changed := 0
-	for _, e := range entries {
-		if e.Key == "llm.config" {
-			n, value, err := rotateLLMConfig(e.Value, oldKey, newKey)
-			if err != nil {
-				return fmt.Errorf("llm.config: %w", err)
-			}
-			if n == 0 {
+	// Все записи ротации — в одной транзакции (кроме пробного прогона): первая
+	// ошибка расшифровки иначе оставляла бы базу наполовину перешифрованной, под
+	// смешанными старым и новым ключами (#617).
+	rotate := func(ctx context.Context) error {
+		for _, e := range entries {
+			if e.Key == "llm.config" {
+				n, value, err := rotateLLMConfig(e.Value, oldKey, newKey)
+				if err != nil {
+					return fmt.Errorf("llm.config: %w", err)
+				}
+				if n == 0 {
+					continue
+				}
+				changed += n
+				outf("  llm.config: %d значен. → ключ %s\n", n, newKey.ID())
+				if !dry {
+					if err := db.SaveSetting(ctx, e.Key, value); err != nil {
+						return err
+					}
+				}
 				continue
 			}
-			changed += n
-			outf("  llm.config: %d значен. → ключ %s\n", n, newKey.ID())
+			if e.Key == "auth.providers" {
+				n, value, err := rotateAuthProviders(e.Value, oldKey, newKey)
+				if err != nil {
+					return fmt.Errorf("auth.providers: %w", err)
+				}
+				if n == 0 {
+					continue
+				}
+				changed += n
+				outf("  auth.providers: %d значен. → ключ %s\n", n, newKey.ID())
+				if !dry {
+					if err := db.SaveSetting(ctx, e.Key, value); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			// Обрабатываем и enc:-значение целиком, и встроенные ${enc:…} (секрет как
+			// часть строки — заголовок авторизации, URL с токеном): reencrypt вернёт
+			// "" для всего, что перешифровывать не нужно. Прежний гейт по
+			// Classify==KindEnc встроенные ссылки молча пропускал (#617).
+			if secrets.Classify(e.Value) != secrets.KindEnc && !secrets.ContainsRef(e.Value) {
+				continue
+			}
+			reenc, err := reencrypt(e.Value, oldKey, newKey)
+			if err != nil {
+				return fmt.Errorf("%s: %w", e.Key, err)
+			}
+			if reenc == "" {
+				continue // уже под новым ключом
+			}
+			changed++
+			outf("  %s → ключ %s\n", e.Key, newKey.ID())
 			if !dry {
-				if err := db.SaveSetting(ctx, e.Key, value); err != nil {
+				if err := db.SaveSetting(ctx, e.Key, reenc); err != nil {
 					return err
 				}
 			}
-			continue
 		}
-		if e.Key == "auth.providers" {
-			n, value, err := rotateAuthProviders(e.Value, oldKey, newKey)
-			if err != nil {
-				return fmt.Errorf("auth.providers: %w", err)
-			}
-			if n == 0 {
-				continue
-			}
-			changed += n
-			outf("  auth.providers: %d значен. → ключ %s\n", n, newKey.ID())
-			if !dry {
-				if err := db.SaveSetting(ctx, e.Key, value); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-		if secrets.Classify(e.Value) != secrets.KindEnc {
-			continue
-		}
-		reenc, err := reencrypt(e.Value, oldKey, newKey)
-		if err != nil {
-			return fmt.Errorf("%s: %w", e.Key, err)
-		}
-		if reenc == "" {
-			continue // уже под новым ключом
-		}
-		changed++
-		outf("  %s → ключ %s\n", e.Key, newKey.ID())
-		if !dry {
-			if err := db.SaveSetting(ctx, e.Key, reenc); err != nil {
-				return err
-			}
-		}
-	}
 
-	// Секреты второго фактора лежат колонкой _users.totp_secret, а не в
-	// _settings (план 84). Без этого прохода штатная ротация мастер-ключа
-	// молча ломала 2FA у всех: профиль по-прежнему показывал «включён», а код
-	// из приложения переставал приниматься.
-	totp, err := db.ListTOTPSecrets(ctx)
-	if err != nil {
-		return err
-	}
-	for _, row := range totp {
-		if secrets.Classify(row.Value) != secrets.KindEnc {
-			continue
-		}
-		reenc, err := reencrypt(row.Value, oldKey, newKey)
+		// Секреты второго фактора лежат колонкой _users.totp_secret, а не в
+		// _settings (план 84). Без этого прохода штатная ротация мастер-ключа
+		// молча ломала 2FA у всех: профиль по-прежнему показывал «включён», а код
+		// из приложения переставал приниматься.
+		totp, err := db.ListTOTPSecrets(ctx)
 		if err != nil {
-			return fmt.Errorf("секрет TOTP учётной записи %s: %w", row.Login, err)
+			return err
 		}
-		if reenc == "" {
-			continue // уже под новым ключом
-		}
-		changed++
-		outf("  auth.user.%s.totp_secret → ключ %s\n", row.Login, newKey.ID())
-		if !dry {
-			if err := db.SaveTOTPSecretRaw(ctx, row.UserID, reenc); err != nil {
-				return err
+		for _, row := range totp {
+			if secrets.Classify(row.Value) != secrets.KindEnc {
+				continue
+			}
+			reenc, err := reencrypt(row.Value, oldKey, newKey)
+			if err != nil {
+				return fmt.Errorf("секрет TOTP учётной записи %s: %w", row.Login, err)
+			}
+			if reenc == "" {
+				continue // уже под новым ключом
+			}
+			changed++
+			outf("  auth.user.%s.totp_secret → ключ %s\n", row.Login, newKey.ID())
+			if !dry {
+				if err := db.SaveTOTPSecretRaw(ctx, row.UserID, reenc); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
+	}
+	if dry {
+		if err := rotate(ctx); err != nil {
+			return err
+		}
+	} else if err := db.WithTx(ctx, rotate); err != nil {
+		return err
 	}
 
 	// Файлы конфигурации команда не трогает — и не должна: YAML лежит в git и в
@@ -538,13 +564,12 @@ func configSecretsNotUnderKey(dir string, key *secrets.Key) ([]secretRow, error)
 	}
 	var stale []secretRow
 	for _, r := range rows {
-		if secrets.Classify(r.Value) != secrets.KindEnc {
-			continue
+		// И enc:-значение целиком, и встроенный ${enc:…} (заголовок авторизации,
+		// URL с токеном) перестают открываться после смены мастер-ключа — оба
+		// повода предупредить (#617).
+		if secrets.EncUnderOtherKey(r.Value, key.ID()) {
+			stale = append(stale, r)
 		}
-		if id, ok := secrets.RefKeyID(r.Value); ok && id == key.ID() {
-			continue
-		}
-		stale = append(stale, r)
 	}
 	return stale, nil
 }
@@ -661,17 +686,14 @@ func rotateLLMConfig(raw string, oldKey, newKey *secrets.Key) (int, string, erro
 // перешифровывать нечего: значение не enc: или уже под новым ключом — так
 // повторный запуск ротации безопасен.
 func reencrypt(value string, oldKey, newKey *secrets.Key) (string, error) {
-	if secrets.Classify(value) != secrets.KindEnc {
-		return "", nil
-	}
-	if id, ok := secrets.RefKeyID(value); ok && id == newKey.ID() {
-		return "", nil
-	}
-	plain, err := oldKey.Decrypt(value)
+	out, changed, err := secrets.ReencryptEnc(value, oldKey, newKey)
 	if err != nil {
 		return "", err
 	}
-	return newKey.Encrypt(plain)
+	if !changed {
+		return "", nil // перешифровывать нечего или уже под новым ключом
+	}
+	return out, nil
 }
 
 // masterKeyFromEnv читает текущий мастер-ключ, требуя его наличия.

@@ -197,6 +197,42 @@ func TestTabShellSingleSSEAndEventForwarding(t *testing.T) {
 	}
 }
 
+// TestModalsCloseOnlyExplicitly фиксирует поведение из отзыва пользователя:
+// модальное окно не должно закрываться кликом мимо него. Браузер шлёт click
+// общему предку mousedown и mouseup, поэтому «размашистое» выделение текста в
+// поле ввода, где кнопку мыши отпустили уже за границей окна, приходило как
+// клик по фону: окно закрывалось и уносило введённые данные (воспроизведено в
+// браузере — подбор терял проставленные количества). Закрывать модальное окно
+// должны только явные действия: «Отмена», «×», Esc.
+func TestModalsCloseOnlyExplicitly(t *testing.T) {
+	for name, src := range map[string]string{
+		"ui.js":         string(uiJS),
+		"managed.js":    string(managedJS),
+		"консоль строк": tplQueryConsole, // модальный пикер dev-инструментов
+	} {
+		for _, bad := range []string{
+			"e.target === modal",
+			"e.target === overlay",
+			"event.target===this",
+		} {
+			if strings.Contains(src, bad) {
+				t.Errorf("%s: вернулось закрытие модального окна по клику мимо него (%q) — "+
+					"выделение текста мышью с выходом за границу окна теряет введённые данные", name, bad)
+			}
+		}
+	}
+	// Быстрый выход остаётся: Esc закрывает подбор и выбор ссылки. В managed-форме
+	// это делает managed.js (в фазе перехвата), в автогенерируемой — ui.js.
+	for _, want := range []string{"window.__obModalEsc", "_item-picker-modal", "_ref-picker-modal"} {
+		if !strings.Contains(string(uiJS), want) {
+			t.Errorf("ui.js: нет закрытия модальных окон по Esc (%q)", want)
+		}
+	}
+	if !strings.Contains(string(managedJS), "_item-picker-modal") {
+		t.Error("managed.js: пропало закрытие модальных окон по Esc")
+	}
+}
+
 func TestStaticQueryBuilderJS(t *testing.T) {
 	r := chi.NewRouter()
 	mountStatic(r)

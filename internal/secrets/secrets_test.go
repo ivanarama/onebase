@@ -357,3 +357,71 @@ func TestRefKeyID(t *testing.T) {
 		t.Fatal("RefKeyID на не-enc значении обязан вернуть false")
 	}
 }
+
+// #617: ротация обязана перешифровывать не только значение-целиком, но и
+// ВСТРОЕННЫЕ ${enc:…} (секрет как часть строки — заголовок авторизации, URL с
+// токеном). Прежде reencrypt отсекал всё, что не enc: целиком, и такие значения
+// молча оставались под старым ключом.
+func TestReencryptEnc_EmbeddedAndWhole(t *testing.T) {
+	oldKey, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newKey, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Значение-целиком (bare enc:).
+	whole, err := oldKey.Encrypt("токен")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, changed, err := ReencryptEnc(whole, oldKey, newKey)
+	if err != nil || !changed {
+		t.Fatalf("целое enc: не перешифровано: changed=%v err=%v", changed, err)
+	}
+	if got, err := newKey.Decrypt(out); err != nil || got != "токен" {
+		t.Fatalf("новый ключ не открывает: %q err=%v", got, err)
+	}
+
+	// Встроенное ${enc:…} в заголовке авторизации.
+	enc, err := oldKey.Encrypt("s3cr3t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := "Bearer ${" + enc + "}"
+	out, changed, err = ReencryptEnc(header, oldKey, newKey)
+	if err != nil || !changed {
+		t.Fatalf("встроенный ${enc:…} не перешифрован: changed=%v err=%v", changed, err)
+	}
+	if !strings.HasPrefix(out, "Bearer ${enc:") || !strings.HasSuffix(out, "}") {
+		t.Fatalf("обёртка ${…} не сохранена: %q", out)
+	}
+	if plain, err := New(WithKey(newKey)).Resolve(out); err != nil || plain != "Bearer s3cr3t" {
+		t.Fatalf("новый ключ не разворачивает встроенную ссылку: %q err=%v", plain, err)
+	}
+
+	// Идемпотентность: уже под новым ключом — менять нечего.
+	if _, changed, err := ReencryptEnc(out, oldKey, newKey); err != nil || changed {
+		t.Fatalf("повторная ротация тронула значение под новым ключом: changed=%v err=%v", changed, err)
+	}
+
+	// Встроенные env:/file: — не наши: остаются нетронутыми, enc рядом — нет.
+	mixed := "https://host/${env:TOK}?k=${" + enc + "}"
+	out, changed, err = ReencryptEnc(mixed, oldKey, newKey)
+	if err != nil || !changed {
+		t.Fatalf("смешанное значение не перешифровано: changed=%v err=%v", changed, err)
+	}
+	if !strings.Contains(out, "${env:TOK}") {
+		t.Fatalf("встроенная env:-ссылка утрачена: %q", out)
+	}
+	if strings.Contains(out, enc) {
+		t.Fatalf("старое enc:-значение осталось: %q", out)
+	}
+
+	// Открытый текст без ссылок — трогать нечего.
+	if _, changed, err := ReencryptEnc("просто строка", oldKey, newKey); err != nil || changed {
+		t.Fatalf("открытый текст помечен изменённым: changed=%v err=%v", changed, err)
+	}
+}
