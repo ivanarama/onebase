@@ -155,3 +155,69 @@ func TestRefreshTableParts_HandlerEditedInMemoryKept(t *testing.T) {
 		t.Fatalf("строки, добавленные обработчиком в памяти, не сохранены: %v", got)
 	}
 }
+
+// #624: ТЧ с булевым реквизитом на SQLite (bool хранится как INTEGER, драйвер
+// отдаёт int64). Пользователь грид не правил, обработчик через модуль изменил
+// флаг в базе — форма обязана показать изменённую строку. До фикса tpCellNorm не
+// понимал int64 для булева типа, сравнение всегда видело расхождение и решало,
+// что грид правил пользователь, — перечитывание отменялось.
+func TestRefreshTableParts_BoolRereadOnSQLite(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "tp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	tp := metadata.TablePart{
+		Name: "Товары",
+		Fields: []metadata.Field{
+			{Name: "Товар", Type: metadata.FieldTypeString},
+			{Name: "Оплачено", Type: metadata.FieldTypeBool},
+		},
+	}
+	e := &metadata.Entity{
+		Name:       "Заказ",
+		Kind:       metadata.KindDocument,
+		Fields:     []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+		TableParts: []metadata.TablePart{tp},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{e}); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.New()
+	if err := db.Upsert(ctx, e.Name, id, map[string]any{"Номер": "1"}, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertTablePartRows(ctx, e.Name, tp.Name, id,
+		[]map[string]any{{"Товар": "A", "Оплачено": true}}, tp); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: db}
+
+	// POST совпадает с базой до обработчика: пользователь ничего не правил
+	// (флаг из формы приходит булевым).
+	obj := &runtime.Object{
+		ID: id, Type: "Заказ", Kind: metadata.KindDocument,
+		Fields:        map[string]any{"номер": "1"},
+		TablePartRows: map[string][]map[string]any{"Товары": {{"Товар": "A", "Оплачено": true}}},
+	}
+	tpBefore := tablePartRowsSnapshot(obj.TablePartRows)
+	tpDBBefore := s.tablePartRowsFromDB(ctx, e, id)
+
+	// Обработчик через модуль снял флаг в базе.
+	if err := db.UpsertTablePartRows(ctx, e.Name, tp.Name, id,
+		[]map[string]any{{"Товар": "A", "Оплачено": false}}, tp); err != nil {
+		t.Fatal(err)
+	}
+
+	s.refreshTablePartsWrittenByHandler(ctx, e, obj, tpBefore, tpDBBefore)
+
+	rows := obj.TablePartRows["Товары"]
+	if len(rows) != 1 {
+		t.Fatalf("строк %d, ожидалась 1", len(rows))
+	}
+	if got := tpCellNorm(tp.Fields[1], tpCellValue(rows[0], "Оплачено")); got != "false" {
+		t.Fatalf("перечитывание ТЧ не вернуло изменённый флаг (int64/bool рассинхрон на SQLite): %q", got)
+	}
+}

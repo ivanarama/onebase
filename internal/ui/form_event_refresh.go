@@ -323,22 +323,33 @@ func tpCellNorm(f metadata.Field, v any) string {
 	case metadata.FieldTypeBool:
 		switch t := v.(type) {
 		case bool:
-			if t {
-				return "true"
-			}
-			return "false"
+			return boolCanon(t)
+		case int64:
+			// SQLite хранит булево как INTEGER (TypeBool → INTEGER), и драйвер
+			// отдаёт int64. Без этой ветки значение уходило в общий Sprintf → "1"/"0"
+			// и никогда не совпадало с "true"/"false" со стороны формы, поэтому
+			// перечитывание ТЧ с булевым реквизитом не срабатывало на SQLite (#624).
+			return boolCanon(t != 0)
+		case int:
+			return boolCanon(t != 0)
 		case string:
 			s := strings.ToLower(strings.TrimSpace(t))
-			if s == "true" || s == "1" || s == "t" {
-				return "true"
-			}
-			return "false"
+			return boolCanon(s == "true" || s == "1" || s == "t")
 		}
 	}
 	if v == nil {
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// boolCanon — канон булева значения для сравнения «значение из БД против значения
+// из формы»: одна и та же форма для bool, int64/int (SQLite) и строки.
+func boolCanon(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // currentEntityVersion возвращает версию записи после обработчика. Ноль — если
