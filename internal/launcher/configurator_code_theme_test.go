@@ -43,19 +43,34 @@ func TestCodeTheme_MonacoAndFallbackFollowToggle(t *testing.T) {
 		t.Fatalf("static/configurator.js: %v", err)
 	}
 	src := string(js)
+	if !strings.Contains(src, "cfgCodeThemeDefine(monaco)") {
+		t.Error("конфигуратор не объявляет темы кода из общего code-theme.js")
+	}
+	if !strings.Contains(src, "theme: cfgCodeThemeName()") {
+		t.Error("редактор конфигуратора создаётся мимо текущей темы")
+	}
+	if strings.Contains(src, "theme: 'onebase-dark'") {
+		t.Error("редактор создаётся с жёстко зашитой тёмной темой — тумблер не подхватится")
+	}
+
+	// Сами темы и тумблер живут в общем файле: их использует и конструктор форм.
+	shared, err := staticFiles.ReadFile("static/code-theme.js")
+	if err != nil {
+		t.Fatalf("static/code-theme.js: %v", err)
+	}
+	sharedSrc := string(shared)
 	for _, want := range []string{
 		"function cfgCodeThemeName()",                // текущая тема по классу на <html>
 		"function cfgCodeThemeToggle()",              // переключение + localStorage
+		"function cfgCodeThemeDefine(monaco)",        // объявление тем страницей
+		"monaco.editor.defineTheme('onebase-dark'",   // тёмная тема Monaco
 		"monaco.editor.defineTheme('onebase-light'",  // светлая тема Monaco
 		"monaco.editor.setTheme(cfgCodeThemeName())", // применение к уже открытым редакторам
 		"localStorage.setItem('cfgCodeTheme'",        // выбор переживает перезагрузку
 	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("в configurator.js нет %q", want)
+		if !strings.Contains(sharedSrc, want) {
+			t.Errorf("в code-theme.js нет %q", want)
 		}
-	}
-	if strings.Contains(src, "theme: 'onebase-dark'") {
-		t.Error("редактор создаётся с жёстко зашитой тёмной темой — тумблер не подхватится")
 	}
 
 	css, err := staticFiles.ReadFile("static/configurator.css")

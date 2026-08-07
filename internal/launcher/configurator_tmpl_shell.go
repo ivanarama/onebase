@@ -38,8 +38,10 @@ window.MonacoEnvironment = { getWorkerUrl: function () {
 // спойлера у каждого реквизита). Класс ставим до отрисовки — поля не «прыгают».
 try{if(localStorage.getItem('cfgTitlesOn')==='1')document.documentElement.classList.add('cfg-titles-on');}catch(e){}
 // Тема редактора кода — тем же приёмом и по той же причине: класс до отрисовки,
-// иначе блоки кода мигнут тёмным, прежде чем применится светлая тема.
-try{if(localStorage.getItem('cfgCodeTheme')==='light')document.documentElement.classList.add('cfg-code-light');}catch(e){}
+// иначе блоки кода мигнут тёмным, прежде чем применится светлая тема. Дефолт
+// страницы (тёмная) действует, пока пользователь не выбрал тему явно.
+window.cfgCodeThemeDefault='dark';
+try{var _ct=localStorage.getItem('cfgCodeTheme');if(_ct?_ct==='light':window.cfgCodeThemeDefault==='light')document.documentElement.classList.add('cfg-code-light');}catch(e){}
 </script>
 <!-- ECharts: тот же движок, что рисует графики в пользовательском режиме —
      предпросмотр виджета выглядит как у пользователя. Грузим ДО AMD-загрузчика
@@ -47,6 +49,7 @@ try{if(localStorage.getItem('cfgCodeTheme')==='light')document.documentElement.c
      AMD-модуль вместо window.echarts (тогда график «недоступен»). -->
 <script src="/vendor/echarts/echarts.min.js" onerror="window._echartsLoadErr=1"></script>
 <script src="/vendor/monaco/vs/loader.js" onerror="window._monacoLoadErr='loader.js failed'"></script>
+<script src="/static/code-theme.js"></script>
 <script>{{.InlineJSYaml}}</script>
 <title>{{t $.Lang "Конфигуратор"}} — {{if .AppName}}{{.AppName}}{{else}}{{.Base.Name}}{{end}}</title>
 <link rel="stylesheet" href="/static/configurator.css">
