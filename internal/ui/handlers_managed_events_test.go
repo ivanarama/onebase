@@ -56,6 +56,53 @@ func TestHandleManagedFormEvent_ButtonFiresSoobshchit(t *testing.T) {
 	}
 }
 
+// #608: событие управляемой формы, обработчик которого сам объект НЕ записал,
+// не должно обновлять _version клиента. Иначе версия, поднятая параллельной
+// чужой записью между отрисовкой и событием, молча приезжает клиенту, и
+// последующая «Записать» проходит проверку версии, затирая чужие правки.
+func TestHandleManagedFormEvent_VersionNotForwardedWithoutWrite(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ТестНажатие()
+	Сообщить("hi");
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаТест",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "ТестНажатие",
+			},
+		},
+	})
+
+	ctx := context.Background()
+	id := uuid.New()
+	// Пользователь A отрисовал форму, держит прочитанную версию.
+	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": "A"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	// Пользователь B параллельно сохранил ту же запись → версия в БД уехала вперёд.
+	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": "B"}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаТест")
+	body.Set("_event", string(metadata.FormEventOnClick))
+	body.Set("_kind", "object")
+	body.Set("_id", id.String())
+	body.Set("Наименование", "A")
+
+	rec := executeFormEvent(t, srv, ent, body)
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if resp.Version != 0 {
+		t.Errorf("version=%d, ожидался 0 — обработчик объект не писал, версию клиенту слать нельзя (иначе оптимистическая блокировка ослепла)", resp.Version)
+	}
+}
+
 // Если у элемента нет привязанной процедуры — handler отдаёт ok=true
 // без messages и без error. Это «декларативное» событие, не ошибка.
 func TestHandleManagedFormEvent_NoHandlerIsOK(t *testing.T) {
