@@ -209,6 +209,44 @@ func restoreForBase(ctx context.Context, b *Base, fp string) error {
 	return backup.Restore(ctx, b.DB, fp)
 }
 
+// ensureBaseStoppedForRestore останавливает базу перед перезаписью её данных.
+//
+// Живость проверяется через baseRunning, а не через runner.IsRunning: лаунчер
+// «усыновляет» базу, запущенную прежним экземпляром (см. baseRunning в
+// handlers.go), и для такой базы в runner.procs процесса нет. По IsRunning она
+// выглядела остановленной, поэтому защита «не восстанавливать работающую базу»
+// не срабатывала вовсе: восстановление шло поверх открытого файла БД, унося
+// незачекпойнченный WAL и подменяя inode под живым процессом (issue #627).
+//
+// Усыновлённую базу лаунчер остановить не может — её процесса у него нет, а
+// глушить чужой процесс по номеру порта здесь нельзя. Правильный исход —
+// внятный отказ, а не молчаливая перезапись.
+//
+// Возвращает (wasRunning, ok). При ok == false ответ пользователю уже отправлен
+// и обработчику остаётся только выйти.
+func (h *handler) ensureBaseStoppedForRestore(w http.ResponseWriter, r *http.Request, b *Base, lang string) (bool, bool) {
+	if !h.baseRunning(b) {
+		return false, true
+	}
+	if !h.runner.IsRunning(b.ID) {
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(lang, "База работает, но запущена не этим лаунчером — остановите её и повторите")
+		renderCfg(w, r, data)
+		return true, false
+	}
+	h.runner.Stop(b.ID)
+	h.invalidateStatus(b.ID) // индикатор в списке должен погаснуть сразу
+	// Отправка сигнала остановки успех не подтверждает — подтверждает только
+	// освободившийся порт.
+	if !waitPortFree(b.Port, 3*time.Second) {
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
+		renderCfg(w, r, data)
+		return true, false
+	}
+	return true, true
+}
+
 // checkBackupFileMismatch returns an error when the backup file engine does not
 // match the target base engine (e.g. restoring a .sql.gz PG dump into SQLite).
 func checkBackupFileMismatch(b *Base, filename string) error {
@@ -445,19 +483,10 @@ func (h *handler) backupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Восстанавливать поверх работающей базы нельзя: процесс держит файл БД
-	// открытым, и запись дампа поверх него портит данные. Отправка сигнала
-	// остановки успех не подтверждает — подтверждает только освободившийся
-	// порт. Раньше его ждали, но результат ожидания отбрасывали и шли
-	// восстанавливать в любом случае.
-	wasRunning := h.runner.IsRunning(b.ID)
-	if wasRunning {
-		h.runner.Stop(b.ID)
-		if !waitPortFree(b.Port, 3*time.Second) {
-			data := h.loadCfgData(r.Context(), b, "backup")
-			data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
-			renderCfg(w, r, data)
-			return
-		}
+	// открытым, и запись дампа поверх него портит данные.
+	wasRunning, ok := h.ensureBaseStoppedForRestore(w, r, b, lang)
+	if !ok {
+		return
 	}
 
 	restoreErr := restoreForBase(r.Context(), b, fp)
@@ -680,26 +709,19 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 
 	// Universal format: cross-engine restore.
 	if archiveFormat == "universal" {
-		wasRunning := h.runner.IsRunning(b.ID)
-		stopped := false
+		// Перезалив таблиц идёт в БД под работающим приложением, а ниже по ветке
+		// «file is not a database» ещё и переименовывается файл БД — и то и
+		// другое требует остановленной базы.
+		wasRunning, ok := h.ensureBaseStoppedForRestore(w, r, b, lang)
+		if !ok {
+			return
+		}
 		db, cerr := OpenDB(r.Context(), b)
 		if cerr != nil {
 			// For SQLite: if the file exists but is not a valid database (new/empty/corrupt),
 			// preserve it, then let SQLite create a fresh file for the restore.
 			if b.DBType == "sqlite" && b.DBPath != "" &&
 				strings.Contains(cerr.Error(), "file is not a database") {
-				// Ниже переименовывается файл БД — делать это под работающим
-				// процессом нельзя.
-				if wasRunning {
-					h.runner.Stop(b.ID)
-					if !waitPortFree(b.Port, 3*time.Second) {
-						data := h.loadCfgData(r.Context(), b, "backup")
-						data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
-						renderCfg(w, r, data)
-						return
-					}
-					stopped = true
-				}
 				oldPath := b.DBPath + ".old"
 				_ = os.Remove(oldPath)
 				if os.Rename(b.DBPath, oldPath) == nil {
@@ -714,15 +736,6 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer db.Close()
-		if wasRunning && !stopped {
-			h.runner.Stop(b.ID)
-			if !waitPortFree(b.Port, 3*time.Second) {
-				data := h.loadCfgData(r.Context(), b, "backup")
-				data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
-				renderCfg(w, r, data)
-				return
-			}
-		}
 
 		configDest := b.ConfigSource
 		if configDest == "" {
@@ -817,15 +830,9 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wasRunning := h.runner.IsRunning(b.ID)
-	if wasRunning {
-		h.runner.Stop(b.ID)
-		if !waitPortFree(b.Port, 3*time.Second) {
-			data := h.loadCfgData(r.Context(), b, "backup")
-			data.Error = tr(lang, "База не остановилась — восстановление отменено, чтобы не повредить данные")
-			renderCfg(w, r, data)
-			return
-		}
+	wasRunning, ok := h.ensureBaseStoppedForRestore(w, r, b, lang)
+	if !ok {
+		return
 	}
 
 	// Restore database
