@@ -96,3 +96,24 @@ func TestCodeTheme_MonacoAndFallbackFollowToggle(t *testing.T) {
 		t.Error("в configurator.css вернулся жёстко зашитый цвет подсветки — тема на него не влияет")
 	}
 }
+
+// TestCodeTheme_ConfigHistoryFollowsTheme — просмотр версии в истории
+// конфигурации показывает исходник файла, а не вывод консоли, поэтому обязан
+// идти за темой: жёсткий тёмный блок посреди светлого редактора выглядел
+// чужеродно. Модалка рендерится на странице конфигуратора, где переменные
+// объявлены; значения после запятой оставлены для рендера вне неё.
+func TestCodeTheme_ConfigHistoryFollowsTheme(t *testing.T) {
+	out := configHistoryPre("До", []byte("Процедура Тест()\nКонецПроцедуры\n"))
+	for _, want := range []string{"var(--cfg-code-bg,#0f172a)", "var(--cfg-code-fg,#e2e8f0)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("просмотр версии не берёт цвет из темы: нет %q", want)
+		}
+	}
+	if strings.Contains(out, "background:#0f172a") {
+		t.Error("просмотр версии снова красится жёстким тёмным фоном")
+	}
+	// Экранирование содержимого не должно пострадать от правки стилей.
+	if esc := configHistoryPre("До", []byte("<script>")); !strings.Contains(esc, "&lt;script&gt;") {
+		t.Error("содержимое файла версии перестало экранироваться")
+	}
+}
