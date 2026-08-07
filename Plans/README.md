@@ -285,6 +285,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 111 | [111-scalability-review.md](111-scalability-review.md) | Ревью масштабируемости на 100+ пользователей | ✅ P0/P1/P2 в `main`; P3-1/P3-2 отложены |
 | 112 | [112-user-cli-and-role-asserts.md](112-user-cli-and-role-asserts.md) | `onebase user` + ассерты матрицы прав ролей в `onebase test` | ✅ Реализовано |
 | 113 | [113-row-field-access-asserts.md](113-row-field-access-asserts.md) | Ассерты полевого и строкового доступа в `onebase test` | ✅ Реализовано |
+| 115 | [115-bug-report.md](115-bug-report.md) | «Сообщить об ошибке»: код инцидента + отчёт одним файлом (лаунчер / Предприятие / `onebase support`) | ✅ Реализовано 2026-08-07 (115A–115E). Контакт платформы `version.SupportContact` пока пуст; источник репозитория переключить на политику после мержа плана 92 |
 
 ### Направление Н — планы вне таблиц (сведено аудитом 2026-08-02)
 
