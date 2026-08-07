@@ -292,25 +292,29 @@ func (h *handler) backupSettings(w http.ResponseWriter, r *http.Request) {
 	if failForm(w, r) {
 		return
 	}
-	type backupCfg struct {
-		Enabled   bool   `yaml:"enabled"`
-		Schedule  string `yaml:"schedule"`
-		KeepLast  int    `yaml:"keep_last"`
-		Directory string `yaml:"directory"`
-	}
-	type appCfgWithBackup struct {
-		Name    string    `yaml:"name"`
-		Version string    `yaml:"version,omitempty"`
-		Backup  backupCfg `yaml:"backup,omitempty"`
-	}
 	keepLast, _ := strconv.Atoi(r.FormValue("backup_keep"))
-	cfg := backupCfg{
-		Enabled:   r.FormValue("backup_enabled") == "on",
-		Schedule:  strings.TrimSpace(r.FormValue("backup_schedule")),
-		KeepLast:  keepLast,
-		Directory: strings.TrimSpace(r.FormValue("backup_dir")),
+	// Правим только блок backup. Раньше форма собирала весь app.yaml из name и
+	// backup: остальное стиралось — включая сам backup.s3 с ключами доступа, — а
+	// name подменялось именем базы из реестра лаунчера (issue #656).
+	rawApp, _ := h.readConfigFileRaw(r.Context(), b, appConfigPath)
+	out, appErr := updateAppYAML(rawApp, func(doc *yaml.Node) error {
+		bk, err := yamlSubMap(doc, "backup")
+		if err != nil {
+			return err
+		}
+		return setAppYAMLFields(bk, []appYAMLField{
+			{"enabled", r.FormValue("backup_enabled") == "on"},
+			{"schedule", strOrNil(strings.TrimSpace(r.FormValue("backup_schedule")))},
+			{"keep_last", keepLast},
+			{"directory", strOrNil(strings.TrimSpace(r.FormValue("backup_dir")))},
+		})
+	})
+	if appErr != nil {
+		data := h.loadCfgData(r.Context(), b, "backup")
+		data.Error = tr(resolveLang(r), "Ошибка сохранения") + ": " + appErr.Error()
+		renderCfg(w, r, data)
+		return
 	}
-	out, _ := yaml.Marshal(appCfgWithBackup{Name: b.Name, Backup: cfg})
 	var saveErr error
 	if b.ConfigSource == "database" {
 		db, cerr := OpenDB(r.Context(), b)
