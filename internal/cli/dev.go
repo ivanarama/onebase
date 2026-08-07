@@ -257,6 +257,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		uiCfg.AppAuthor = appCfg.Author
 		uiCfg.AppCopyright = appCfg.Copyright
 		uiCfg.AppLicense = appCfg.License
+		uiCfg.AppSupport = appCfg.Support
 		uiCfg.Lang = appCfg.Lang
 		if appCfg.Attachments != nil {
 			if appCfg.Attachments.MaxFileSizeMB > 0 {

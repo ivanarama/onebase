@@ -36,7 +36,7 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.GetMovements(r.Context(), name, reg, flt)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.resolveRegisterRows(r.Context(), rows, reg)
@@ -68,7 +68,7 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.GetBalances(r.Context(), name, reg, flt)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.resolveRegisterRows(r.Context(), rows, reg)
@@ -247,7 +247,7 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.InfoRegList(r.Context(), ir, flt)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.resolveInfoRegRows(r.Context(), rows, ir)
@@ -398,7 +398,7 @@ func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		return exchange.RegisterInfoRegOnSave(ctx, s.store, plans, ir, dims, true)
 	}); err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/ui/inforeg/"+strings.ToLower(ir.Name), http.StatusFound)
@@ -565,7 +565,7 @@ func (s *Server) constantsSave(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/ui/constants?saved=1", http.StatusSeeOther)

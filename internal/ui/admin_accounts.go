@@ -21,7 +21,7 @@ func (s *Server) accountsList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.GetAccounts(r.Context(), chart.Name)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.render(w, r, "page-accounts", map[string]any{
@@ -42,7 +42,7 @@ func (s *Server) accountRegMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.GetAccountMovements(r.Context(), ar.Name, ar)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.resolveAccountRows(r.Context(), rows, ar)
@@ -80,7 +80,7 @@ func (s *Server) accountRegBalances(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.store.AccountBalances(r.Context(), ar.Name, planName, asOf, ar.Resources, ar.Subconto)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 

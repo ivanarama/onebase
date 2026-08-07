@@ -598,7 +598,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 }
 
 func templateSource() string {
-	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplPageCustom + tplAppShell
+	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell
 }
 
 const tplHead = `
@@ -819,6 +819,7 @@ const tplNav = `
     <button class="sys-btn" type="button" data-ob-toggle-target="sysd">&#9881; {{t $.Lang "Система"}} &#9660;</button>
     <div class="sys-drop" id="sysd">
       <a href="/ui/about">{{t $.Lang "О программе"}}</a>
+      <a href="/ui/report-problem">{{t $.Lang "Сообщить об ошибке"}}</a>
       <details class="sys-group">
         <summary>{{t $.Lang "Профиль и интерфейс"}}</summary>
         <div class="sys-group-body">
@@ -2404,6 +2405,9 @@ const tplAbout = `
       </td>
     </tr>
   </table>
+  <div style="margin-top:18px;text-align:right">
+    <a class="btn" href="/ui/report-problem">{{t $.Lang "Сообщить об ошибке"}}</a>
+  </div>
 </div>
 </main></div></body></html>
 {{end}}

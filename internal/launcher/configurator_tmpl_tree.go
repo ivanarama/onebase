@@ -250,6 +250,10 @@ const cfgTabTree = `{{define "tab-tree"}}
         <input type="text" name="app_license" value="{{.AppLicense}}" placeholder="{{t $.Lang "MIT / проприетарная / ..."}}">
       </div>
       <div class="fg" style="margin-top:10px">
+        <label>{{t $.Lang "Поддержка (куда сообщать об ошибках)"}}</label>
+        <input type="text" name="app_support" value="{{.AppSupport}}" placeholder="{{t $.Lang "почта, телефон или чат вашей первой линии"}}">
+      </div>
+      <div class="fg" style="margin-top:10px">
         <label>{{t $.Lang "Язык интерфейса"}}</label>
         <select name="app_lang" style="padding:6px 8px;border:1px solid #d0d7e3;border-radius:4px;font-size:13px">
           <option value="">{{t $.Lang "По умолчанию (русский)"}}</option>

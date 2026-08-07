@@ -64,6 +64,7 @@ try{if(localStorage.getItem('cfgTitlesOn')==='1')document.documentElement.classL
       <a href="#" onclick="cfgAdmin('ai');return false">{{t $.Lang "ИИ-помощник"}}</a>
       <a href="#" onclick="cfgAdmin('ai-history');return false">{{t $.Lang "История ИИ"}}</a>
       <a href="#" onclick="toggleSyntaxRef();cfgMenuToggle();return false">{{t $.Lang "Справка по встроенному языку"}} (F1)</a>
+      <a href="/report-problem?base={{.Base.ID}}" target="_top">{{t $.Lang "Сообщить об ошибке"}}</a>
       <a href="/bases/{{.Base.ID}}/configurator/logout" style="color:#c00;border-top:1px solid #e5e7eb;margin-top:2px">🚪 {{t $.Lang "Выйти"}}</a>
     </div>
   </div>

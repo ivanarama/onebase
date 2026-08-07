@@ -1,0 +1,53 @@
+name: Ошибка
+description: Сообщить о неправильной работе платформы
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Аккаунт GitHub нужен не всем.** Если вам неудобно заводить его,
+        нажмите в программе «Сообщить об ошибке» (меню «Система» в Предприятии,
+        кнопка в панели лаунчера или `onebase support` в консоли) — платформа
+        соберёт готовый файл, его можно отправить любым удобным каналом.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло
+      description: Что делали, что ожидали, что получилось.
+      placeholder: |
+        Что делал: провёл реализацию товаров.
+        Что ожидал: документ проведён.
+        Что получилось: красная плашка «no such column: цена».
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Отчёт из программы
+      description: >
+        Содержимое report.md из пакета «Сообщить об ошибке» — там уже есть
+        версия, окружение и код инцидента. Проверьте текст: в сообщениях об
+        ошибках могли оказаться данные, которые вы не хотите публиковать.
+      render: markdown
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия платформы
+      description: Экран «О программе» или `onebase --version`.
+      placeholder: build-689
+    validations:
+      required: true
+
+  - type: dropdown
+    id: db
+    attributes:
+      label: СУБД
+      options:
+        - SQLite
+        - PostgreSQL
+        - Не знаю
+    validations:
+      required: true

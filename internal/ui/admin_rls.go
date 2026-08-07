@@ -50,7 +50,7 @@ func (s *Server) adminRLSDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	roles, err := s.authRepo.ListRoles(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	rows := s.buildRLSDiagnosticRows(roles)

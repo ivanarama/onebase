@@ -235,7 +235,7 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.authRepo.List(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -432,7 +432,7 @@ func (s *Server) adminUserDenyPasswd(w http.ResponseWriter, r *http.Request) {
 	// Флаг управляет тем, может ли пользователь сменить себе пароль. Молча не
 	// переключившийся запрет админ увидит только по неизменившейся галочке.
 	if err := s.authRepo.SetDenyPasswdChange(r.Context(), userID, !current); err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/ui/admin/users", http.StatusFound)
@@ -651,7 +651,7 @@ func (s *Server) adminSessionLimit(w http.ResponseWriter, r *http.Request) {
 		// Редирект ниже прямо утверждает limit_saved=1 — нельзя утверждать это
 		// при неудавшейся записи.
 		if err := s.store.SaveMaxSessionsPerUser(r.Context(), n); err != nil {
-			http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+			s.serverError(w, r, err)
 			return
 		}
 	}
@@ -822,12 +822,12 @@ func (s *Server) renderAdminAPITokens(w http.ResponseWriter, r *http.Request, ex
 	}
 	users, err := s.authRepo.List(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	tokens, err := s.authRepo.ListAPITokens(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	data := map[string]any{"Users": users, "Tokens": tokens}
@@ -921,7 +921,7 @@ func (s *Server) adminRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	roles, err := s.authRepo.ListRoles(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -976,12 +976,12 @@ func (s *Server) adminUserRolesUpdate(w http.ResponseWriter, r *http.Request) {
 	// подтверждение — на запрос, где он снимал роль.
 	allRoles, err := s.authRepo.ListRoles(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	currentIDs, err := s.authRepo.GetUserRoleIDs(r.Context(), userID)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 
@@ -1101,7 +1101,7 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.store.AuditByRecord(r.Context(), entity.Name, id)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	s.enrichAuditEntries(r.Context(), entity, entries)
@@ -1604,7 +1604,7 @@ func (s *Server) adminWebhooks(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.store.ListWebhookLog(r.Context(), 200)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

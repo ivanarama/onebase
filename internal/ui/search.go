@@ -123,7 +123,7 @@ func (s *Server) globalSearch(w http.ResponseWriter, r *http.Request) {
 
 	page, err := search.Run(r.Context(), s.store, uiSearchDeps{s}, q, searchPageSize, offset)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusInternalServerError)
+		s.serverError(w, r, err)
 		return
 	}
 	data["Results"] = page.Items

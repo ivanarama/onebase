@@ -28,7 +28,7 @@ func (s *Server) listExcel(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.List(r.Context(), entity.Name, entity, params)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	// План 88: маска ПДн применяется до выгрузки в Excel.

@@ -24,7 +24,7 @@ func (s *Server) adminExtProcessors(w http.ResponseWriter, r *http.Request) {
 	}
 	recs, err := s.extprocessors.List(r.Context())
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -177,7 +177,7 @@ func (s *Server) adminExtProcessorExport(w http.ResponseWriter, r *http.Request)
 	}
 	bundle, err := extform.BuildProcessorBundle(rec, s.cfg.PlatVersion)
 	if err != nil {
-		http.Error(w, s.errText(r, err), 500)
+		s.serverError(w, r, err)
 		return
 	}
 	fname := rec.Name + ".obform"

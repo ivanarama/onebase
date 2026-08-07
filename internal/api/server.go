@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -64,7 +64,15 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	}
 	r := chi.NewRouter()
 	r.Use(requestLogger()) // как middleware.Logger, но режет токены/коды из URI (план 53)
-	r.Use(middleware.Recoverer)
+	// Вместо chi middleware.Recoverer: тот же перехват, но паника получает код
+	// инцидента, который виден пользователю и подставляется в «Сообщить об
+	// ошибке» вместе со стеком (план 116).
+	r.Use(incident.Recoverer(uiSrv.Incidents(), func(r *http.Request) string {
+		if u := auth.UserFromContext(r.Context()); u != nil {
+			return u.Login
+		}
+		return ""
+	}))
 	r.Use(websec.SecurityHeaders) // nosniff, Referrer-Policy, CSP frame-ancestors (план 53)
 	r.Use(csrfExceptServices)     // CSRF для всего, кроме /hs/* (у сервисов своя CORS-модель, см. serviceDispatch)
 

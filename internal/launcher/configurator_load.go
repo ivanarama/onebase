@@ -121,6 +121,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		data.AppAuthor = appCfg.Author
 		data.AppCopyright = appCfg.Copyright
 		data.AppLicense = appCfg.License
+		data.AppSupport = appCfg.Support
 	}
 	if launcherBundle != nil {
 		data.AvailableLangs = launcherBundle.Available()

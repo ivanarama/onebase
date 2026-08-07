@@ -187,9 +187,15 @@ type AppConfig struct {
 	// Авторство и лицензия конфигурации (план 69). Необязательны. Едут вместе
 	// с конфигурацией (app.yaml попадает в файл / в _onebase_config / в .obz) —
 	// чтобы форк или поставка клиенту имели определённого правообладателя.
-	Author      string             `yaml:"author,omitempty"`
-	Copyright   string             `yaml:"copyright,omitempty"`
-	License     string             `yaml:"license,omitempty"`
+	Author    string `yaml:"author,omitempty"`
+	Copyright string `yaml:"copyright,omitempty"`
+	License   string `yaml:"license,omitempty"`
+	// Support — куда пользователю этой конфигурации сообщать об ошибках
+	// (план 116). Свободный текст: почта, телефон, чат первой линии. Едет с
+	// конфигурацией по той же причине, что и Author: поставка клиенту несёт
+	// СВОЮ поддержку, а не трекер разработчика платформы, до которого
+	// пользователь не дойдёт и куда ему не надо.
+	Support     string             `yaml:"support,omitempty"`
 	Lang        string             `yaml:"lang,omitempty"`
 	Logo        string             `yaml:"logo,omitempty"`
 	Email       *EmailConfig       `yaml:"email,omitempty"`

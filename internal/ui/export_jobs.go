@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/excel"
+	"github.com/ivantit66/onebase/internal/incident"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/sheet"
 )
@@ -219,7 +221,13 @@ func (s *Server) runReportExportJob(r *http.Request, jobID string, rep *reportpk
 	// паника роняла весь процесс базы вместе со всеми сессиями.
 	defer func() {
 		if p := recover(); p != nil {
-			s.exportJobStore().markError(jobID, fmt.Sprintf("внутренняя ошибка выгрузки: %v", p))
+			// Инцидент регистрируем и здесь: пользователь видит только карточку
+			// задачи, и без кода связать её со стеком в журнале нечем (план 116).
+			// rep внутри recover не трогаем: сама паника бывает именно на нём.
+			id := s.recordBackgroundPanic("экспорт отчёта, задача "+jobID,
+				fmt.Sprintf("%v", p), string(debug.Stack()), currentUserLogin(r))
+			s.exportJobStore().markError(jobID,
+				incident.WithCode(fmt.Sprintf("внутренняя ошибка выгрузки: %v", p), id))
 		}
 	}()
 

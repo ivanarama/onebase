@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/selfupdate"
@@ -74,26 +75,10 @@ func prepareAboutConfig(cfg Config) Config {
 	return cfg
 }
 
-func maskDSN(dsn string) string {
-	if i := strings.Index(dsn, "://"); i >= 0 {
-		rest := dsn[i+3:]
-		if at := strings.Index(rest, "@"); at >= 0 {
-			userPart := rest[:at]
-			if colon := strings.LastIndex(userPart, ":"); colon >= 0 {
-				return dsn[:i+3+colon+1] + "***" + dsn[i+3+at:]
-			}
-		}
-	}
-	if i := strings.Index(dsn, "password="); i >= 0 {
-		end := i + len("password=")
-		rest := dsn[end:]
-		if sp := strings.IndexByte(rest, ' '); sp >= 0 {
-			return dsn[:end] + "***" + rest[sp:]
-		}
-		return dsn[:end] + "***"
-	}
-	return dsn
-}
+// maskDSN — тонкая обёртка над общим редактором (internal/logging): один и тот
+// же алгоритм нужен экрану «О программе», списку баз лаунчера и отчёту об
+// ошибке, и расходиться копиям нельзя.
+func maskDSN(dsn string) string { return oblog.RedactDSN(dsn) }
 
 func (s *Server) logo(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Logo == "" {
