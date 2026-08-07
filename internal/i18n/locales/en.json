@@ -631,6 +631,7 @@
   "Политика базы требует двухфакторной аутентификации. Включите её в режиме Предприятия (Профиль → Второй фактор) и повторите вход.": "This database requires two-factor authentication. Enable it in Enterprise mode (Profile → Second factor) and sign in again.",
   "Полная выгрузка (база + конфигурация)": "Full export (database + configuration)",
   "Полное восстановление выполнено: %d таблиц, %d файлов вложений": "Full restore completed: %d tables, %d attachment files",
+  "Сброшен второй фактор (перепривяжите): %s": "Two-factor authentication was reset (re-enroll): %s",
   "Полное восстановление выполнено: база данных + конфигурация": "Full restore completed: database + configuration",
   "Полный код": "Full code",
   "Пользователи": "Users",
