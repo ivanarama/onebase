@@ -22,11 +22,11 @@ func CheckFormElementKind(proj *project.Project) []Issue {
 				return
 			}
 			issues = append(issues, Issue{
-				File:    label,
-				Object:  object,
-				Kind:    "Управляемая форма",
-				Code:    "form.unknown-kind",
-				Message: fmt.Sprintf("элемент %q задаёт неизвестный вид kind: %s", formElementName(el), el.Kind),
+				File:         label,
+				Object:       object,
+				Kind:         "Управляемая форма",
+				Code:         "form.unknown-kind",
+				Message:      fmt.Sprintf("элемент %q задаёт неизвестный вид kind: %s", formElementName(el), el.Kind),
 				SuggestedFix: "Используйте поддерживаемый вид: " + known + ". Для картинки в поле типа image — kind: ПолеВвода (не ПолеФайла/ПолеИзображения).",
 			})
 		})

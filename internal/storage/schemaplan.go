@@ -250,9 +250,15 @@ func (db *DB) tableColumns(ctx context.Context, table string) (map[string]string
 		// (не из запроса пользователя) и уже нормализовано ColumnName/TableName.
 		rows, err = db.Query(ctx, `SELECT name, type FROM pragma_table_info(?)`, table)
 	} else {
+		// current_schema(), а не жёстко 'public': при schema-изоляции (план 108)
+		// таблицы лежат в эфемерной схеме, и фильтр по 'public' возвращал пустоту.
+		// Планировщик считал таблицу несуществующей и вместо retype/rename выдавал
+		// add на каждое поле — то есть вся реструктуризация плана 81 молча
+		// превращалась в no-op везде, кроме схемы public. При обычном подключении
+		// current_schema() и есть 'public', поэтому поведение не меняется.
 		rows, err = db.Query(ctx,
 			`SELECT column_name, data_type FROM information_schema.columns
-			  WHERE table_schema = 'public' AND table_name = $1`, table)
+			  WHERE table_schema = current_schema() AND table_name = $1`, table)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("schema: колонки %s: %w", table, err)
