@@ -124,6 +124,78 @@ func (r *Repo) SaveAuthPolicy(ctx context.Context, p Policy) error {
 	return r.db.SaveSetting(ctx, authPolicyKey, string(raw))
 }
 
+// TwoFactorLockoutRisk сообщает, запрёт ли включение этой политики базу: требуем
+// второй фактор от когорты, у которой ни у кого он не привязан, а самопривязка
+// (SelfEnroll2FA) выключена — тогда первичная привязка на входе требует кода от
+// администратора, а выдать его некому. Возвращает человекочитаемое имя первой
+// такой когорты («администраторов», «роли X»), либо "" если политика безопасна.
+//
+// Зеркалит защиту SSOOnly в adminAuthPolicySave: включить требование без
+// единственного работающего способа войти — верный способ запереть базу (#620).
+func (r *Repo) TwoFactorLockoutRisk(ctx context.Context, p Policy) (string, error) {
+	// Самопривязка ломает тупик: любой введёт пароль и привяжет фактор сам.
+	if p.SelfEnroll2FA {
+		return "", nil
+	}
+	// Администраторы — невосстановимый случай: если заперты они, выдать код
+	// привязки некому вообще. (Роли админ ещё мог бы разлочить, будь он в базе.)
+	if p.Require2FAAdmins {
+		total, err := r.countUsers(ctx, "WHERE is_admin")
+		if err != nil {
+			return "", err
+		}
+		bound, err := r.countUsers(ctx, "WHERE is_admin AND totp_enabled")
+		if err != nil {
+			return "", err
+		}
+		if total > 0 && bound == 0 {
+			return "администраторов", nil
+		}
+	}
+	for _, role := range p.Require2FARoles {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			continue
+		}
+		total, err := r.countRoleMembers(ctx, role, false)
+		if err != nil {
+			return "", err
+		}
+		bound, err := r.countRoleMembers(ctx, role, true)
+		if err != nil {
+			return "", err
+		}
+		if total > 0 && bound == 0 {
+			return "роли «" + role + "»", nil
+		}
+	}
+	return "", nil
+}
+
+// countUsers считает учётки по условию (bool-колонки в WHERE годятся для обоих
+// диалектов: PG boolean, SQLite integer 0/1).
+func (r *Repo) countUsers(ctx context.Context, where string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM _users `+where).Scan(&n)
+	return n, err
+}
+
+// countRoleMembers считает членов роли по имени; withTOTP — только с привязанным
+// вторым фактором.
+func (r *Repo) countRoleMembers(ctx context.Context, roleName string, withTOTP bool) (int, error) {
+	d := r.db.Dialect()
+	q := `SELECT COUNT(*) FROM _users u
+		JOIN _user_roles ur ON ur.user_id = u.id
+		JOIN _roles rl ON rl.id = ur.role_id
+		WHERE rl.name = ` + d.Placeholder(1)
+	if withTOTP {
+		q += ` AND u.totp_enabled`
+	}
+	var n int
+	err := r.db.QueryRow(ctx, q, roleName).Scan(&n)
+	return n, err
+}
+
 // RequiresTwoFactor — версия Policy.RequiresTwoFactor, которая сама догружает
 // роли пользователя. Сбой загрузки ролей трактуется как «второй фактор нужен»:
 // иначе временная недоступность таблицы ролей снимала бы политику ровно тогда,

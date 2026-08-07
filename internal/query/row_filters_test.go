@@ -116,7 +116,12 @@ func TestCompile_RowFiltersVirtualRegister(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if !strings.Contains(res.SQL, "FROM рег_товарноедвижение WHERE owner = ? GROUP BY") {
+	// Проверяем РАЗМЕЩЕНИЕ фильтра (внутри подзапроса виртуальной таблицы, до
+	// GROUP BY), а не пунктуацию: с issue #625 предикат политики обрамляется
+	// скобками в rowFilterCondition, и сравнение с точным текстом ломалось на
+	// «WHERE (owner = ?)» при полностью верном поведении.
+	noParens := strings.NewReplacer("(", "", ")", "").Replace(res.SQL)
+	if !strings.Contains(noParens, "FROM рег_товарноедвижение WHERE owner = ? GROUP BY") {
 		t.Fatalf("row filter must be inside register virtual table, got:\n%s", res.SQL)
 	}
 }
