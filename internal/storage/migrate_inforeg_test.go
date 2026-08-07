@@ -162,6 +162,108 @@ func TestMigrateInfoRegisters_RebuildsPK(t *testing.T) {
 	}
 }
 
+// #616: удаление измерения регистра сведений без --allow-destructive НЕ должно
+// терять данные. Измерение входит в PK, поэтому его удаление даёт mismatch и шло
+// в rebuild fixInfoRegPKSQLite, который пересоздавал таблицу по новым метаданным
+// и терял осиротевшую колонку — в обход отказа плана 81.
+func TestMigrateInfoRegisters_DropDimensionKeepsDataWithoutPermission(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	v1 := &metadata.InfoRegister{
+		Name: "ЦеныНоменклатуры",
+		Dimensions: []metadata.Field{
+			{ID: "d_nom", Name: "Номенклатура", Type: "string"},
+			{ID: "d_sklad", Name: "Склад", Type: "string"},
+		},
+		Resources: []metadata.Field{{ID: "r_price", Name: "Цена", Type: "number"}},
+	}
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{v1}); err != nil {
+		t.Fatalf("v1 migrate: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO инфо_ценыноменклатуры (номенклатура, склад, цена) VALUES ('Гвозди','Основной','10')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Убираем измерение «Склад» — без --allow-destructive (schemaOpts по умолчанию).
+	v2 := &metadata.InfoRegister{
+		Name:       "ЦеныНоменклатуры",
+		Dimensions: []metadata.Field{{ID: "d_nom", Name: "Номенклатура", Type: "string"}},
+		Resources:  []metadata.Field{{ID: "r_price", Name: "Цена", Type: "number"}},
+	}
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{v2}); err != nil {
+		t.Fatalf("v2 migrate: %v", err)
+	}
+
+	// Колонка «склад» и данные на месте: разрушительное изменение отложено.
+	if has, _ := db.dialect.ColumnExists(ctx, db, "инфо_ценыноменклатуры", "склад"); !has {
+		t.Fatal("колонка «склад» удалена без --allow-destructive — данные потеряны")
+	}
+	var sklad, price string
+	if err := db.QueryRow(ctx,
+		`SELECT склад, CAST(цена AS TEXT) FROM инфо_ценыноменклатуры WHERE номенклатура='Гвозди'`).Scan(&sklad, &price); err != nil {
+		t.Fatalf("строка исчезла: %v", err)
+	}
+	if sklad != "Основной" || price != "10" {
+		t.Errorf("данные искажены: склад=%q цена=%q", sklad, price)
+	}
+}
+
+// А с --allow-destructive удаление измерения применяется осознанно: колонка и её
+// данные исчезают, PK перестраивается на оставшееся измерение.
+func TestMigrateInfoRegisters_DropDimensionLosesDataWithPermission(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	v1 := &metadata.InfoRegister{
+		Name: "ЦеныНоменклатуры",
+		Dimensions: []metadata.Field{
+			{ID: "d_nom", Name: "Номенклатура", Type: "string"},
+			{ID: "d_sklad", Name: "Склад", Type: "string"},
+		},
+		Resources: []metadata.Field{{ID: "r_price", Name: "Цена", Type: "number"}},
+	}
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{v1}); err != nil {
+		t.Fatalf("v1 migrate: %v", err)
+	}
+	if _, err := db.Exec(ctx,
+		`INSERT INTO инфо_ценыноменклатуры (номенклатура, склад, цена) VALUES ('Гвозди','Основной','10')`); err != nil {
+		t.Fatal(err)
+	}
+
+	db.SetSchemaOptions(SchemaOptions{AllowDestructive: true})
+	v2 := &metadata.InfoRegister{
+		Name:       "ЦеныНоменклатуры",
+		Dimensions: []metadata.Field{{ID: "d_nom", Name: "Номенклатура", Type: "string"}},
+		Resources:  []metadata.Field{{ID: "r_price", Name: "Цена", Type: "number"}},
+	}
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{v2}); err != nil {
+		t.Fatalf("v2 migrate: %v", err)
+	}
+
+	if has, _ := db.dialect.ColumnExists(ctx, db, "инфо_ценыноменклатуры", "склад"); has {
+		t.Fatal("с --allow-destructive колонка «склад» должна исчезнуть")
+	}
+	// Остальные данные сохранены, PK перестроен на оставшееся измерение.
+	var price string
+	if err := db.QueryRow(ctx,
+		`SELECT CAST(цена AS TEXT) FROM инфо_ценыноменклатуры WHERE номенклатура='Гвозди'`).Scan(&price); err != nil {
+		t.Fatalf("строка исчезла целиком: %v", err)
+	}
+	if price != "10" {
+		t.Errorf("цена искажена: %q", price)
+	}
+}
+
 // Добавление новых ресурсов уже работало — регресс-тест на это.
 func TestMigrateInfoRegisters_AddsResource(t *testing.T) {
 	ctx := context.Background()
