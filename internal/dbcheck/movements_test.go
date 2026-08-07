@@ -136,7 +136,10 @@ func TestCountMovementsOfRecorderTypeDoesNotDelete(t *testing.T) {
 	addMovement(t, env, "СовсемУбранныйДокумент", uuid.New(), "600")
 	addMovement(t, env, "ДругойДокумент", uuid.New(), "700")
 
-	n := env.DB.CountMovementsOfRecorderType(ctx, env.Registers, []string{"СовсемУбранныйДокумент"})
+	n, err := env.DB.CountMovementsOfRecorderType(ctx, env.Registers, []string{"СовсемУбранныйДокумент"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if n != 2 {
 		t.Fatalf("сухой прогон насчитал %d, ожидалось 2", n)
 	}
@@ -145,7 +148,7 @@ func TestCountMovementsOfRecorderTypeDoesNotDelete(t *testing.T) {
 		t.Fatalf("сухой прогон изменил данные: осталось %d из 3", got)
 	}
 	// Пустой/служебный список — ноль.
-	if n := env.DB.CountMovementsOfRecorderType(ctx, env.Registers, nil); n != 0 {
-		t.Fatalf("пустой список насчитал %d", n)
+	if n, err := env.DB.CountMovementsOfRecorderType(ctx, env.Registers, nil); err != nil || n != 0 {
+		t.Fatalf("пустой список насчитал %d, err=%v", n, err)
 	}
 }

@@ -109,3 +109,44 @@ func TestOrphanMovements_QueryErrorSurfaces(t *testing.T) {
 		t.Fatal("нечитаемый регистр обязан вернуть ошибку, а не пустую статистику")
 	}
 }
+
+// #622: то же для сухого прогона --forget-document. Здесь проглоченная ошибка
+// опаснее всего: прогон существует, чтобы показать объём НЕОБРАТИМОГО удаления,
+// и недосчитанный «0» читается как «удалять нечего» — то есть уговаривает снять
+// --dry-run и снести историю вслепую.
+func TestCountMovementsOfRecorderType_QueryErrorSurfaces(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	reg := &metadata.Register{
+		Name:       "Битый",
+		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	regs := []*metadata.Register{reg}
+
+	// Регистр НЕ мигрирован: таблицы нет — законный пропуск, не ошибка.
+	n, err := db.CountMovementsOfRecorderType(ctx, regs, []string{"СовсемУбранныйДокумент"})
+	if err != nil {
+		t.Fatalf("отсутствие таблицы регистра — не ошибка: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("для несуществующего регистра ожидался ноль, получили %d", n)
+	}
+
+	// Таблица есть, но без колонки recorder_type — счётный запрос не выполнится.
+	if _, err := db.Exec(ctx, `CREATE TABLE `+metadata.RegisterTableName(reg.Name)+` (id TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	n, err = db.CountMovementsOfRecorderType(ctx, regs, []string{"СовсемУбранныйДокумент"})
+	if err == nil {
+		t.Fatal("нечитаемый регистр обязан вернуть ошибку, а не молчаливый ноль")
+	}
+	if n != 0 {
+		t.Errorf("вместе с ошибкой уехала частичная сумма %d — её примут за настоящий объём", n)
+	}
+}

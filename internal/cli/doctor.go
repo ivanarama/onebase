@@ -128,7 +128,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				strings.Join(inConfig, ", "))
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-			n := db.CountMovementsOfRecorderType(ctx, proj.Registers, forget)
+			n, err := db.CountMovementsOfRecorderType(ctx, proj.Registers, forget)
+			if err != nil {
+				// Молчаливый «0» здесь опаснее отказа: администратор прочитал бы
+				// его как «удалять нечего» и снял бы --dry-run (#622).
+				return fmt.Errorf("сухой прогон --forget-document: %w", err)
+			}
 			outf("Сухой прогон: к удалению движений документов %s: %d (ничего не изменено)\n",
 				strings.Join(forget, ", "), n)
 			outln("")

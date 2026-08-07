@@ -247,27 +247,39 @@ func (db *DB) DeleteMovementsOfUnknownRecorderType(
 // CountMovementsOfRecorderType считает движения по названным типам регистратора
 // во всех регистрах, ничего не меняя, — сухой прогон для --forget-document:
 // удаление необратимо, поэтому объём стоит увидеть заранее.
+//
+// Ошибку запроса возвращаем наверх, а не проглатываем. Сухой прогон существует
+// ровно затем, чтобы показать объём предстоящей потери, и недосчитанное из-за
+// нечитаемого регистра «0» читается как «удалять нечего» — то есть подталкивает
+// к тому самому необратимому шагу, от которого прогон и страхует (#622).
+// Отсутствие таблицы — законный случай (регистр ещё не мигрирован), его
+// отличаем явной проверкой HasTable и пропускаем, как в OrphanMovements.
 func (db *DB) CountMovementsOfRecorderType(
 	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
-) int64 {
+) (int64, error) {
 	wanted := wantedRecorderTypes(recorderTypes)
 	if len(wanted) == 0 {
-		return 0
+		return 0, nil
 	}
 	d := db.dialect
 	var total int64
 	for _, reg := range registers {
 		table := metadata.RegisterTableName(reg.Name)
+		if !db.HasTable(ctx, table) {
+			continue // регистр ещё не мигрирован — считать нечего
+		}
 		for t := range wanted {
 			var n int64
-			err := db.QueryRow(ctx, fmt.Sprintf(
-				"SELECT COUNT(*) FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t).Scan(&n)
-			if err == nil {
-				total += n
+			if err := db.QueryRow(ctx, fmt.Sprintf(
+				"SELECT COUNT(*) FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t).Scan(&n); err != nil {
+				// Частичную сумму не отдаём: она выглядит как настоящий объём,
+				// а им не является.
+				return 0, fmt.Errorf("%s: подсчёт движений %s: %w", reg.Name, t, err)
 			}
+			total += n
 		}
 	}
-	return total
+	return total, nil
 }
 
 // wantedRecorderTypes нормализует список типов регистратора для forget-операций.
