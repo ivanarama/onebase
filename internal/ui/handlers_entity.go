@@ -428,7 +428,9 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		return
 	}
 	if err := r.ParseForm(); err != nil { //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
-		http.Error(w, s.errText(r, err), 400)
+		// Сырое «request body too large» пользователю ничего не объясняет —
+		// называем предел, в который он упёрся по смыслу (#629).
+		http.Error(w, s.errText(r, formBodyError(err, entity)), uploadErrorStatus(err))
 		return
 	}
 	// Лимит richtext проверяем по СЫРОМУ значению формы (до санитайза в
@@ -537,11 +539,14 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	entity := s.getEntity(w, r)
 	if entity == nil {
 		return
 	}
+	// Предел тела зависит от метаданных: форме с richtext-реквизитом нужен запас
+	// на порядок больше (#629). Сущность известна из маршрута — getEntity читает
+	// только URL-параметр и тела не касается, так что порядок безопасен.
+	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	obj, fields, tpRows, action, ok := s.parseSubmitForm(w, r, entity, nil)
 	if !ok {
 		return
@@ -1153,11 +1158,12 @@ func (s *Server) renderVersionConflict(w http.ResponseWriter, r *http.Request, e
 }
 
 func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	entity := s.getEntity(w, r)
 	if entity == nil {
 		return
 	}
+	// Предел тела — по метаданным сущности, см. комментарий в submit (#629).
+	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "invalid id", 400)
