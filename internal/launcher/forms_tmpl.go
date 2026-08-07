@@ -317,7 +317,24 @@ const tplFormsEditor = `
   .prop-splitter{cursor:row-resize;border-left:0;border-right:0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0}
   .prop-panel{border-left:0;border-top:1px solid #eef0f5}
 }
+/* Тумблер темы кода: обе подписи в разметке, видимую выбирает класс на <html>
+   (тот же приём, что в конфигураторе). Показываем тему, в которую переключит клик. */
+#cfg-code-theme-toggle .cth-to-dark{display:none}
+html.cfg-code-light #cfg-code-theme-toggle .cth-to-dark{display:inline}
+html.cfg-code-light #cfg-code-theme-toggle .cth-to-light{display:none}
 </style>
+<script>
+// Тема редактора кода общая с конфигуратором (один origin — один localStorage),
+// но пока выбор не сделан явно, эта страница остаётся светлой, какой и была.
+// Класс ставим до отрисовки, иначе редакторы мигнут чужой темой.
+window.cfgCodeThemeDefault='light';
+try{var _ct=localStorage.getItem('cfgCodeTheme');if(_ct?_ct==='light':window.cfgCodeThemeDefault==='light')document.documentElement.classList.add('cfg-code-light');}catch(e){}
+</script>
+<!-- Загрузчик Monaco: без него require не определён и редакторы молча
+     деградировали в textarea (подсветки и сворачивания YAML не было никогда).
+     Тот же вендоренный пакет, что в конфигураторе, — офлайн, тот же origin. -->
+<script src="/vendor/monaco/vs/loader.js" onerror="window._monacoLoadErr='loader.js failed'"></script>
+<script src="/static/code-theme.js"></script>
 <body>
 {{template "forms-header" .}}
 <main>
@@ -347,6 +364,7 @@ const tplFormsEditor = `
     <button type="button" class="layout-btn active" data-layout="modern" onclick="switchEditorLayout('modern')">Новый</button>
     <button type="button" class="layout-btn" data-layout="classic" onclick="switchEditorLayout('classic')">Классический</button>
   </div>
+  <button type="button" class="btn" id="cfg-code-theme-toggle" onclick="cfgCodeThemeToggle()" title="Светлая или тёмная тема редактора кода"><span class="cth-to-light">&#9728;&#65039; Светлая тема</span><span class="cth-to-dark">&#127769; Тёмная тема</span></button>
   <span class="editor-meta">{{.EditingForm.Entity}}.{{.EditingForm.Name}}{{if .EditingForm.Kind}} · {{.EditingForm.Kind}}{{end}}</span>
 </div>
 
@@ -473,13 +491,14 @@ if (typeof require === 'undefined') {
 } else {
   require.config({ paths: { vs: '/vendor/monaco/vs' }});
   require(['vs/editor/editor.main'], function () {
+    cfgCodeThemeDefine(monaco); // темы общие с конфигуратором
     window.yamlEditor = monaco.editor.create(document.getElementById('yaml-editor'), {
       value: _initialYAML,
-      language: 'yaml', theme: 'vs-light', automaticLayout: true, minimap: { enabled: false }, fontSize: 12
+      language: 'yaml', theme: cfgCodeThemeName(), automaticLayout: true, minimap: { enabled: false }, fontSize: 12
     });
     window.osEditor = monaco.editor.create(document.getElementById('os-editor'), {
       value: _initialOS,
-      language: 'plaintext', theme: 'vs-light', automaticLayout: true, minimap: { enabled: false }, fontSize: 12
+      language: 'plaintext', theme: cfgCodeThemeName(), automaticLayout: true, minimap: { enabled: false }, fontSize: 12
     });
     refreshPreview();
     hookYamlChange();
