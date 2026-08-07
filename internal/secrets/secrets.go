@@ -249,6 +249,93 @@ func ContainsRef(s string) bool {
 	return refPattern.MatchString(s)
 }
 
+// ReencryptEnc перешифровывает все enc:-секреты в значении со старого ключа на
+// новый, сохраняя остальной текст и встроенные env:/file:-ссылки нетронутыми.
+//
+// Обрабатывает и значение-целиком (bare `enc:...` или `${enc:...}`), и ВСТРОЕННЫЕ
+// `${enc:...}` — секрет как часть строки (`Bearer ${enc:…}`, URL вебхука с
+// токеном): ротация обязана добраться и до них, иначе они молча останутся под
+// старым ключом (#617). Форма каждого вхождения сохраняется (bare ↔ ${}).
+//
+// changed=false, если enc-секретов нет или все уже под новым ключом, — тогда
+// вызывающему нечего записывать, и повторный прогон ротации безопаден.
+func ReencryptEnc(value string, oldKey, newKey *Key) (out string, changed bool, err error) {
+	// Значение-целиком без обёртки ${}: bare `enc:...` (env:/file: — не наше).
+	if scheme, _, ok := splitBare(strings.TrimSpace(value)); ok {
+		if scheme != SchemeEnc {
+			return value, false, nil
+		}
+		return reencToken(strings.TrimSpace(value), oldKey, newKey)
+	}
+	if !refPattern.MatchString(value) {
+		return value, false, nil
+	}
+	var firstErr error
+	out = refPattern.ReplaceAllStringFunc(value, func(m string) string {
+		sub := refPattern.FindStringSubmatch(m)
+		if sub == nil || sub[1] != SchemeEnc {
+			return m // env:/file: оставляем как есть
+		}
+		tok, ch, terr := reencToken(m, oldKey, newKey)
+		if terr != nil {
+			if firstErr == nil {
+				firstErr = terr
+			}
+			return m
+		}
+		if ch {
+			changed = true
+		}
+		return tok
+	})
+	if firstErr != nil {
+		return "", false, firstErr
+	}
+	return out, changed, nil
+}
+
+// EncUnderOtherKey сообщает, что в значении есть enc:-секрет — целиком или
+// встроенный `${enc:…}`, — зашифрованный НЕ ключом keyID. Нужно предупреждению
+// об устаревшем мастер-ключе: встроенный enc тоже перестаёт открываться после
+// смены ключа, а по одному Classify его не видно. Значение уже целиком под keyID
+// (или enc в нём нет) даёт false — повторный прогон ротации не пугает зря.
+func EncUnderOtherKey(value, keyID string) bool {
+	underOther := func(tok string) bool {
+		id, ok := RefKeyID(tok)
+		return ok && id != keyID
+	}
+	if scheme, _, ok := splitBare(strings.TrimSpace(value)); ok {
+		return scheme == SchemeEnc && underOther(strings.TrimSpace(value))
+	}
+	for _, m := range refPattern.FindAllStringSubmatch(value, -1) {
+		if m[1] == SchemeEnc && underOther(m[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+// reencToken перешифровывает один enc-токен (bare `enc:...` или `${enc:...}`),
+// сохраняя его обёртку. changed=false, если он уже под новым ключом.
+func reencToken(token string, oldKey, newKey *Key) (string, bool, error) {
+	wrapped := strings.HasPrefix(strings.TrimSpace(token), "${")
+	if id, ok := RefKeyID(token); ok && id == newKey.ID() {
+		return token, false, nil // уже под новым ключом
+	}
+	plain, err := oldKey.Decrypt(token)
+	if err != nil {
+		return "", false, err
+	}
+	enc, err := newKey.Encrypt(plain) // возвращает bare `enc:...`
+	if err != nil {
+		return "", false, err
+	}
+	if wrapped {
+		enc = "${" + enc + "}"
+	}
+	return enc, true, nil
+}
+
 // Mask возвращает значение в виде, пригодном для показа: последние четыре знака
 // и звёздочки. Ссылки не маскируются — это не секрет, а указание, где он лежит.
 func Mask(s string) string {
