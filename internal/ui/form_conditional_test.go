@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"html/template"
 	"net/url"
 	"strings"
@@ -97,7 +98,7 @@ func TestManagedFormEventStateAddsConditionalClasses(t *testing.T) {
 		},
 	}
 	s := &Server{interp: interpreter.New()}
-	_, tableParts, _, css, msgs := s.serializeManagedFormEventState(form, ent, obj, form.Conditional, nil)
+	_, tableParts, _, css, msgs := s.serializeManagedFormEventState(context.Background(), form, ent, obj, form.Conditional, nil)
 	if len(msgs) != 0 {
 		t.Fatalf("unexpected messages: %v", msgs)
 	}

@@ -41,7 +41,7 @@ type restV2Meta struct {
 	// непрозрачен намеренно — сырое смещение считается по просмотренным
 	// строкам индекса и выдавало бы наличие скрытых совпадений.
 	NextCursor string `json:"next_cursor,omitempty"`
-	HasMore    bool `json:"has_more,omitempty"`
+	HasMore    bool   `json:"has_more,omitempty"`
 }
 
 type restV2ReportComposition struct {
