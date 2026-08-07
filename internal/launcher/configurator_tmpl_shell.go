@@ -138,8 +138,10 @@ const cfgFoot = `{{define "cfg-foot"}}
 </div>{{/* dbg-wrapper */}}
 </div>{{/* cfg-body */}}
 
-<!-- Debug value inspector modal -->
-<div class="cfg-modal-overlay" id="dbg-val-modal" onclick="if(event.target===this)dbgValModalClose()">
+<!-- Debug value inspector modal. Закрытие — только крестиком: клик по фону
+     закрывал окно, когда значение выделяли мышью и отпускали кнопку за его
+     границей (см. комментарий в internal/ui/static/ui.js). -->
+<div class="cfg-modal-overlay" id="dbg-val-modal">
   <div class="cfg-modal-box" style="max-width:780px">
     <div class="cfg-modal-hd">
       <h3 id="dbg-val-modal-title">{{t $.Lang "Значение"}}</h3>
@@ -154,8 +156,9 @@ const cfgFoot = `{{define "cfg-foot"}}
   </div>
 </div>
 
-<!-- Admin modal -->
-<div class="cfg-modal-overlay" id="cfg-modal" onclick="if(event.target===this)cfgModalClose()">
+<!-- Admin modal. Закрытие — только крестиком: внутри iframe редактируют данные,
+     а клик по фону прилетал от обычного выделения текста мышью. -->
+<div class="cfg-modal-overlay" id="cfg-modal">
   <div class="cfg-modal-box">
     <div class="cfg-modal-hd">
       <h3 id="cfg-modal-title">—</h3>
@@ -340,7 +343,9 @@ const cfgMain = `{{define "cfg-main"}}
 {{if eq .Tab "files"}}{{template "tab-files" .}}{{end}}
 {{if eq .Tab "backup"}}{{template "tab-backup" .}}{{end}}
 {{template "cfg-foot" .}}
-<div id="admin-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.style.display='none'"></div>
+<!-- Закрытие — только крестиком в шапке (её рисует cfgAdmin сразу, ещё до ответа
+     сервера): клик по фону закрывал панель прямо во время заполнения форм. -->
+<div id="admin-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;align-items:center;justify-content:center;padding:20px"></div>
 {{template "syntax-ref" .}}
 {{end}}`
 

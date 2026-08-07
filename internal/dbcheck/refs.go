@@ -33,6 +33,14 @@ type refColumn struct {
 	Table  string
 	Column string
 	Target string // таблица объекта-цели
+	// Register != nil — колонка принадлежит регистру накопления: очистка меняет
+	// то, во что движение агрегируется, поэтому после неё нужно пересчитать итоги
+	// (план 80), иначе Остатки()/Обороты() врут молча (#619).
+	Register *metadata.Register
+	// NoNull — колонку занулить нельзя: измерение регистра сведений объявлено
+	// NOT NULL и входит в PRIMARY KEY. Автоочистка её пропускает и показывает
+	// оператору как требующую ручного разбора (#619).
+	NoNull bool
 }
 
 func (c refsCheck) Run(ctx context.Context, env *Env) Result {
@@ -76,12 +84,43 @@ func (c refsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
 		return 0, err
 	}
 	fixed := 0
+	affected := map[string]*metadata.Register{} // регистры накопления к пересчёту
+	var problems []string                       // копим, а не прерываемся на первой
 	for _, rc := range cols {
+		if rc.NoNull {
+			// Занулить измерение регистра сведений нельзя — показываем оператору,
+			// если по нему есть битые ссылки: строку надо разбирать вручную.
+			n, _, err := brokenRefs(ctx, env.DB, rc)
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("%s: %v", rc.Object, err))
+			} else if n > 0 {
+				problems = append(problems, fmt.Sprintf(
+					"%s: %d битых ссылок в измерении регистра сведений (NOT NULL) — занулить нельзя, разберите строки вручную", rc.Object, n))
+			}
+			continue
+		}
 		n, err := clearBrokenRefs(ctx, env.DB, rc)
 		if err != nil {
-			return fixed, err
+			problems = append(problems, fmt.Sprintf("%s: %v", rc.Object, err))
+			continue
 		}
 		fixed += n
+		if n > 0 && rc.Register != nil {
+			affected[strings.ToLower(rc.Register.Name)] = rc.Register
+		}
+	}
+	// Пересчёт итогов затронутых регистров накопления: очистка измерения изменила
+	// то, во что движение агрегируется, а Остатки()/Обороты() читают итоги.
+	for _, reg := range affected {
+		if !reg.TotalsUsable() {
+			continue
+		}
+		if err := env.DB.RecalcRegisterTotals(ctx, reg); err != nil {
+			problems = append(problems, fmt.Sprintf("пересчёт итогов %s: %v", reg.Name, err))
+		}
+	}
+	if len(problems) > 0 {
+		return fixed, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return fixed, nil
 }
@@ -96,7 +135,7 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 	}
 
 	var out []refColumn
-	add := func(object, table string, fields []metadata.Field) {
+	add := func(object, table string, fields []metadata.Field, reg *metadata.Register, noNull bool) {
 		for _, f := range fields {
 			if f.RefEntity == "" {
 				continue
@@ -108,29 +147,34 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 				continue
 			}
 			out = append(out, refColumn{
-				Object: object + "." + f.Name,
-				Table:  table,
-				Column: metadata.ColumnName(f),
-				Target: target,
+				Object:   object + "." + f.Name,
+				Table:    table,
+				Column:   metadata.ColumnName(f),
+				Target:   target,
+				Register: reg,
+				NoNull:   noNull,
 			})
 		}
 	}
 
 	for _, e := range env.Entities {
-		add(e.Name, metadata.TableName(e.Name), e.Fields)
+		add(e.Name, metadata.TableName(e.Name), e.Fields, nil, false)
 		for _, tp := range e.TableParts {
-			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields)
+			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields, nil, false)
 		}
 	}
 	for _, reg := range env.Registers {
 		table := metadata.RegisterTableName(reg.Name)
-		add(reg.Name, table, reg.Dimensions)
-		add(reg.Name, table, reg.Attributes)
+		// Измерения и реквизиты регистра накопления зануляемы, но очистка меняет
+		// агрегацию — после неё пересчитываем итоги (reg передаём в refColumn).
+		add(reg.Name, table, reg.Dimensions, reg, false)
+		add(reg.Name, table, reg.Attributes, reg, false)
 	}
 	for _, ir := range env.InfoRegisters {
 		table := metadata.InfoRegTableName(ir.Name)
-		add(ir.Name, table, ir.Dimensions)
-		add(ir.Name, table, ir.Resources)
+		// Измерения регистра сведений — NOT NULL и в PRIMARY KEY: занулить нельзя.
+		add(ir.Name, table, ir.Dimensions, nil, true)
+		add(ir.Name, table, ir.Resources, nil, false)
 	}
 
 	// Таблицы может не быть — например, объект только что добавили в

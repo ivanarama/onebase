@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -273,6 +274,14 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	runErr := s.interp.Run(decl, thisObj, vars)
+	// ПРАВИЛО: всё, что после Run ходит в базу, обязано брать ЖИВОЙ контекст, а не
+	// r.Context(). Обработчик мог оставить открытой DSL-транзакцию (НачатьТранзакцию
+	// и выход по ошибке без ОтменитьТранзакцию), а на SQLite пул — одно соединение:
+	// запрос по r.Context() ждал бы второе соединение, которое занято этой
+	// транзакцией, и событие вешало бы всю базу — причём ровно на пути возврата
+	// ошибки пользователю (#621, тот же класс беды, что чинил #580). txState.Ctx()
+	// отдаёт контекст открытой транзакции, а без неё — базовый r.Context().
+	liveCtx := txState.Ctx()
 	// Перечитывать из базы имеет смысл только для записи, которая там есть:
 	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
 	// номер от нумератора обязан приехать на экран «Создать» сразу). Гейт по
@@ -281,13 +290,13 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
 	// описана выше у restoreUnsubmittedFields.
 	if strings.TrimSpace(r.FormValue("_id")) != "" || savedFormID(thisObj) != "" {
-		s.refreshFieldsWrittenByHandler(r.Context(), r, entity, form, obj, fieldsBefore)
+		s.refreshFieldsWrittenByHandler(liveCtx, r, entity, form, obj, fieldsBefore)
 	}
 	if existingRecord && tpDBBefore != nil {
-		s.refreshTablePartsWrittenByHandler(r.Context(), entity, obj, tpBefore, tpDBBefore)
+		s.refreshTablePartsWrittenByHandler(liveCtx, entity, obj, tpBefore, tpDBBefore)
 	}
 	if runErr != nil {
-		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
+		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs)
 		respondJSON(enc, formEventResponse{
 			OK:             false,
 			Values:         values,
@@ -300,12 +309,12 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			// Обработчик мог записать форму и упасть уже после этого: id всё
 			// равно нужен клиенту, иначе повтор действия создаст второй документ.
 			SavedID: savedFormID(thisObj),
-			Version: s.currentEntityVersion(r.Context(), entity, obj),
+			Version: s.versionWrittenByHandler(liveCtx, entity, obj, thisObj),
 		})
 		return
 	}
 
-	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, entity, obj, condRuntime.rules, msgs)
+	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs)
 	respondJSON(enc, formEventResponse{
 		OK:             true,
 		Values:         values,
@@ -316,7 +325,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		PickerData:     picker,
 		ChoiceList:     choiceItems,
 		SavedID:        savedFormID(thisObj),
-		Version:        s.currentEntityVersion(r.Context(), entity, obj),
+		Version:        s.versionWrittenByHandler(liveCtx, entity, obj, thisObj),
 	})
 }
 
@@ -330,12 +339,24 @@ func savedFormID(this *formObjectThis) string {
 	return this.obj.ID.String()
 }
 
-func (s *Server) serializeManagedFormEventState(form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
+func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
 	conditionalCSS := formConditionalRulesCSS(rules)
 	if obj == nil {
 		return nil, nil, nil, conditionalCSS, msgs
 	}
-	values := normalizeFormAttrKeys(serializeFieldsForEntity(obj.Fields, entity), form, entity)
+	fields := serializeFieldsForEntity(obj.Fields, entity)
+	// Маска накладывается ЗДЕСЬ, на пути к клиенту, а не при чтении из БД
+	// (issue #609). Разделение принципиальное: те же значения нужны настоящими
+	// для записи и для DSL-обработчика — restoreUnsubmittedFields и
+	// refreshFieldsWrittenByHandler дочитывают неприсланные реквизиты именно
+	// затем, чтобы запись их не затёрла. Замаскировать при чтении значило бы
+	// записать строку-маску в базу поверх реального значения, а это хуже
+	// утечки: утечка обратима, испорченные данные — нет.
+	//
+	// serializeFieldsForEntity строит НОВУЮ карту, поэтому obj.Fields остаётся
+	// нетронутым и обработчик продолжает видеть настоящие значения.
+	s.maskRecord(ctx, entity, fields)
+	values := normalizeFormAttrKeys(fields, form, entity)
 	// Псевдо-реквизит «Ссылка» — контекст обработчика, а не значение формы:
 	// в ответ он не едет, чтобы applyValues не искал под него элемент.
 	for _, k := range []string{"ссылка", "reference"} {
@@ -866,7 +887,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				}
 
 				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
+					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs)
 					respondJSON(enc, formEventResponse{
 						OK:             false,
 						Values:         values,
@@ -880,7 +901,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 					return
 				}
 
-				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(form, virtEntity, obj, condRuntime.rules, msgs)
+				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs)
 				respondJSON(enc, formEventResponse{
 					OK:             true,
 					Values:         values,

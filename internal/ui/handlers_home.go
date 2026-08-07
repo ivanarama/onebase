@@ -13,7 +13,9 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/selfupdate"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/version"
 	"github.com/ivantit66/onebase/internal/widget"
 )
 
@@ -30,13 +32,33 @@ func (s *Server) about(w http.ResponseWriter, r *http.Request) {
 	cfg := prepareAboutConfig(s.cfg)
 	user := auth.UserFromContext(r.Context())
 	s.render(w, r, "page-about", map[string]any{
-		"Cfg":       cfg,
-		"Catalogs":  catalogs,
-		"Documents": docs,
-		"Registers": len(s.reg.Registers()),
-		"Reports":   len(s.reg.Reports()),
-		"User":      user,
+		"Cfg":             cfg,
+		"Catalogs":        catalogs,
+		"Documents":       docs,
+		"Registers":       len(s.reg.Registers()),
+		"Reports":         len(s.reg.Reports()),
+		"User":            user,
+		"UpdateAvailable": availableUpdateTag(),
 	})
+}
+
+// availableUpdateTag возвращает версию платформы, о которой узнал лаунчер, если
+// она новее работающей.
+//
+// Сеть здесь НЕ трогается принципиально: сервер базы может быть системной
+// службой под чужим профилем, обязан работать офлайн (issue #299) и подчиняться
+// политике исходящих соединений. Проверку делает лаунчер и кладёт результат в
+// ~/.onebase/updates/state.json — отсюда мы его только читаем. Нет файла (служба,
+// headless, другой пользователь) — нет и строки.
+func availableUpdateTag() string {
+	st, err := selfupdate.LoadState()
+	if err != nil || st.Latest == nil {
+		return ""
+	}
+	if !st.UpdateAvailable(version.String()) {
+		return ""
+	}
+	return st.Latest.Tag
 }
 
 func prepareAboutConfig(cfg Config) Config {

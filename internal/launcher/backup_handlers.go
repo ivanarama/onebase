@@ -757,6 +757,13 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			data.FieldsSavedEntity = "panel-backup"
 			msg := fmt.Sprintf(tr(lang, "Полное восстановление выполнено: %d таблиц, %d файлов вложений"),
 				len(report.Tables), report.Files)
+			if len(report.TOTPReset) > 0 {
+				// Секрет 2FA этих учёток зашифрован чужим мастер-ключом и текущим не
+				// читается — второй фактор погашен, чтобы вход не заперло. Называем
+				// их, чтобы владельцам перепривязать приложение-аутентификатор (#611).
+				msg += ". " + fmt.Sprintf(tr(lang, "Сброшен второй фактор (перепривяжите): %s"),
+					strings.Join(report.TOTPReset, ", "))
+			}
 			if wasRunning {
 				msg += ". " + tr(lang, "База остановлена — запустите её заново.")
 			}
