@@ -80,3 +80,38 @@ func TestAbout_RegularUserDoesNotSeeServerPaths(t *testing.T) {
 		}
 	}
 }
+
+// «О программе» в Предприятии сообщает о новой версии платформы, но не
+// предлагает её ставить: рабочий процесс базы может быть системной службой и
+// своим бинарём не распоряжается — обновляют из лаунчера (план 92).
+func TestAbout_ShowsAvailablePlatformUpdate(t *testing.T) {
+	var buf bytes.Buffer
+	data := map[string]any{
+		"Cfg":  prepareAboutConfig(Config{PlatVersion: "build-660"}),
+		"Lang": "ru", "Catalogs": 0, "Documents": 0, "Registers": 0, "Reports": 0,
+		"UpdateAvailable": "build-689",
+	}
+	if err := tmpl.ExecuteTemplate(&buf, "page-about", data); err != nil {
+		t.Fatalf("render page-about: %v", err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, "build-689") {
+		t.Error("нет сведений о доступной версии платформы")
+	}
+	if !strings.Contains(html, "из лаунчера") {
+		t.Error("не сказано, где обновляться")
+	}
+	if strings.Contains(html, "/updates") {
+		t.Error("в Предприятии не должно быть кнопки обновления — процесс базы себя не обновляет")
+	}
+
+	// Обновлений нет — строки тоже нет.
+	buf.Reset()
+	data["UpdateAvailable"] = ""
+	if err := tmpl.ExecuteTemplate(&buf, "page-about", data); err != nil {
+		t.Fatalf("render page-about: %v", err)
+	}
+	if strings.Contains(buf.String(), "Доступна новая версия") {
+		t.Error("без обновления строка о новой версии не нужна")
+	}
+}
