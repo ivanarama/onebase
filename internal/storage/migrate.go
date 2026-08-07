@@ -42,13 +42,13 @@ func (db *DB) renameSnakeCols(ctx context.Context, table string, fields []metada
 		// разрушительных действий при этом не выполняется.
 		var oldExists bool
 		if err := db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2)`,
+			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND column_name=$2)`,
 			table, oldCol).Scan(&oldExists); err != nil || !oldExists {
 			continue
 		}
 		var newExists bool
 		if err := db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2)`,
+			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND column_name=$2)`,
 			table, newCol).Scan(&newExists); err != nil {
 			continue
 		}
@@ -409,7 +409,7 @@ func (db *DB) pgPrimaryKey(ctx context.Context, table string) ([]string, string,
 		JOIN pg_namespace n ON n.oid = t.relnamespace
 		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE
 		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-		WHERE c.contype = 'p' AND n.nspname = 'public' AND t.relname = $1
+		WHERE c.contype = 'p' AND n.nspname = current_schema() AND t.relname = $1
 		ORDER BY k.ord`, table)
 	if err != nil {
 		return nil, "", err

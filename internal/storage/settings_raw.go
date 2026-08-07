@@ -182,8 +182,13 @@ func tableExistsIn(ctx context.Context, db *DB, table string) bool {
 		err = db.QueryRow(ctx,
 			`SELECT COUNT(*)>0 FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists)
 	} else {
+		// current_schema(), а не литерал 'public': служебные таблицы создаются
+		// неквалифицированно и потому ложатся в схему подключения (план 108).
+		// Фильтр по 'public' заставлял loadSchemaMap отдавать в эфемерной схеме
+		// пустую карту полей — реструктуризация плана 81 молча превращалась в
+		// no-op (#638). При обычном подключении current_schema() и есть 'public'.
 		err = db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, table).Scan(&exists)
+			`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=$1)`, table).Scan(&exists)
 	}
 	return err == nil && exists
 }
