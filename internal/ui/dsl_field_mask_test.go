@@ -355,3 +355,87 @@ func TestDSL_ОперацииНеСнимаютМаскуСРеквизита(t 
 		t.Fatalf("защищённый реквизит перезаписан: %v", row["Телефон"])
 	}
 }
+
+// ЗначениеРеквизитаОбъекта читает ЧУЖУЮ сохранённую запись — тот же путь, что
+// разыменование this.Клиент.Телефон, и обязан подчиняться полевой политике.
+// Без маски обработка обходила её одной строкой (issue #649, находка #615).
+func TestDSL_ЗначениеРеквизитаОбъектаМаскируется(t *testing.T) {
+	client, order := dslMaskEntities()
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, order})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, "Клиент", id, map[string]any{
+		"Наименование": "Иванов", "Телефон": "+79161234455",
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+	uctx := auth.ContextWithUser(ctx, uiMaskUser([]string{"read"},
+		auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}}))
+	vars := s.buildDSLVars(uctx, nil)
+
+	fn, ok := vars["ЗначениеРеквизитаОбъекта"].(interpreter.BuiltinFunc)
+	if !ok {
+		t.Fatalf("ЗначениеРеквизитаОбъекта → %T", vars["ЗначениеРеквизитаОбъекта"])
+	}
+	got, err := fn([]any{&interpreter.Ref{UUID: id.String(), Type: "Клиент"}, "Телефон"}, "", 0)
+	if err != nil {
+		t.Fatalf("ЗначениеРеквизитаОбъекта: %v", err)
+	}
+	if s, _ := got.(string); strings.Contains(s, "9161234") {
+		t.Errorf("реальный телефон утёк через ЗначениеРеквизитаОбъекта: %q", got)
+	}
+}
+
+// ЗначенияРеквизитовОбъектов маскировала ПОБОЧНО — только через
+// maskedRecordLabel, который правит строку на месте и вызывается лишь когда у
+// ссылки ещё нет наименования. Ссылка с уже заполненным именем (обычный случай
+// из формы или запроса) уносила реальные значения. Подслучай с именем
+// обязателен: без него тест был бы зелёным на дырявом коде.
+func TestDSL_ЗначенияРеквизитовОбъектовМаскируются(t *testing.T) {
+	client, order := dslMaskEntities()
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, order})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, "Клиент", id, map[string]any{
+		"Наименование": "Иванов", "Телефон": "+79161234455",
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+	uctx := auth.ContextWithUser(ctx, uiMaskUser([]string{"read"},
+		auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}}))
+	vars := s.buildDSLVars(uctx, nil)
+	fn, ok := vars["ЗначенияРеквизитовОбъектов"].(interpreter.BuiltinFunc)
+	if !ok {
+		t.Fatalf("ЗначенияРеквизитовОбъектов → %T", vars["ЗначенияРеквизитовОбъектов"])
+	}
+
+	for _, tc := range []struct {
+		name string
+		ref  *interpreter.Ref
+	}{
+		{"ссылка без наименования", &interpreter.Ref{UUID: id.String(), Type: "Клиент"}},
+		{"ссылка с наименованием", &interpreter.Ref{UUID: id.String(), Type: "Клиент", Name: "Иванов"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			list := &interpreter.Array{}
+			list.CallMethod("добавить", []any{tc.ref})
+			res, err := fn([]any{list, "Клиент", []any{"Телефон"}}, "", 0)
+			if err != nil {
+				t.Fatalf("ЗначенияРеквизитовОбъектов: %v", err)
+			}
+			m, ok := res.(*interpreter.Map)
+			if !ok {
+				t.Fatalf("результат → %T", res)
+			}
+			st, ok := m.CallMethod("получить", []any{tc.ref}).(*interpreter.Struct)
+			if !ok {
+				t.Fatalf("значение по ссылке → %T, ожидалась Структура", m.CallMethod("получить", []any{tc.ref}))
+			}
+			got := fmt.Sprint(st.Get("Телефон"))
+			if got == "" || got == "<nil>" {
+				t.Fatalf("реквизит Телефон не вернулся — тест проверял бы пустоту")
+			}
+			if strings.Contains(got, "9161234") {
+				t.Errorf("реальный телефон утёк через ЗначенияРеквизитовОбъектов: %s", got)
+			}
+		})
+	}
+}
