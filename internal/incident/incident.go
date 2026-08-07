@@ -14,6 +14,7 @@ package incident
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -130,9 +131,11 @@ func newID() string {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// Источник случайности недоступен — код всё равно нужен, иначе
-		// пользователю не на что сослаться. Берём наносекунды.
-		n := time.Now().UnixNano()
-		b[0], b[1], b[2] = byte(n>>16), byte(n>>8), byte(n)
+		// пользователю не на что сослаться. Берём младшие 24 бита наносекунд
+		// и печатаем их сразу шестнадцатеричной записью: сужение int64 до byte
+		// дало бы то же самое, но выглядело бы как недосмотр (gosec G115), а
+		// маска здесь ровно то, чего мы хотим.
+		return "E-" + strings.ToUpper(fmt.Sprintf("%06x", time.Now().UnixNano()&0xFFFFFF))
 	}
 	return "E-" + strings.ToUpper(hex.EncodeToString(b[:]))
 }

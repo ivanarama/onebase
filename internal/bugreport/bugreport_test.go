@@ -102,7 +102,7 @@ func TestContactsBlock_OrderAndAccountWarning(t *testing.T) {
 	if app < 0 || plat < 0 || iss < 0 {
 		t.Fatalf("не все контакты попали в отчёт:\n%s", md)
 	}
-	if !(app < plat && plat < iss) {
+	if app >= plat || plat >= iss {
 		t.Errorf("порядок контактов должен быть конфигурация → платформа → трекер:\n%s", md)
 	}
 	if !strings.Contains(md, "нужен аккаунт GitHub") {
