@@ -51,6 +51,20 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 			data["RecordTitle"] = title
 		}
 	}
+	// Иерархия: при создании через управляемую форму признак группы и родитель
+	// приходят query-параметрами кнопок «📁 Группа» / «＋ в группе». Автоформа
+	// рисует их полями, managed-форма — нет, поэтому переносим их в data, чтобы
+	// шаблон отрисовал скрытые поля (#618). Только для новой записи: у
+	// существующей is_folder/parent_id восстанавливает restoreUnsubmittedFields.
+	isNew, _ := data["IsNew"].(bool)
+	if isFolder, parentID := hierarchyCreateHints(r, entity, isNew); isFolder || parentID != "" {
+		if isFolder {
+			data["NewIsFolder"] = true
+		}
+		if parentID != "" {
+			data["NewParentID"] = parentID
+		}
+	}
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
@@ -71,6 +85,20 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		return
 	}
 	s.render(w, r, "page-form", data)
+}
+
+// hierarchyCreateHints читает признак группы и родителя из query-параметров
+// кнопок создания («📁 Группа» → ?is_folder=true, «＋ в группе» → ?parent_id=…)
+// для управляемой формы НОВОЙ иерархической записи. Автоформа рисует их полями,
+// managed-форма — скрытыми: при создании восстановить их неоткуда, и без переноса
+// Upsert пишет is_folder=false, а элемент улетает в корень (#618).
+func hierarchyCreateHints(r *http.Request, entity *metadata.Entity, isNew bool) (isFolder bool, parentID string) {
+	if entity == nil || !entity.Hierarchical || !isNew {
+		return false, ""
+	}
+	isFolder = r.URL.Query().Get("is_folder") == "true"
+	parentID = strings.TrimSpace(r.URL.Query().Get("parent_id"))
+	return isFolder, parentID
 }
 
 func (s *Server) prepareManagedFormData(data map[string]any, form *metadata.FormModule) {

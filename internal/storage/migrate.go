@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -147,7 +148,13 @@ func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoReg
 		// первичный ключ: переименование безопасно, а вот удаление измерения
 		// СУБД отклонит — и это правильнее, чем разрушить ключ регистра.
 		if err := db.restructureTable(ctx, table, append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)); err != nil {
-			return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
+			// Удаление измерения из ключа обычным DROP COLUMN на SQLite невозможно
+			// (колонка входит в PRIMARY KEY). Это не сбой: удаление измерения меняет
+			// ключ, и его доводит пересоздание таблицы в fixInfoRegPK ниже — с той же
+			// защитой плана 81 (без --allow-destructive колонка и данные сохранены).
+			if !errors.Is(err, ErrColumnInUniqueIndex) {
+				return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
+			}
 		}
 		// Измерения и ресурсы — добавляем если их нет.
 		for _, f := range ir.Dimensions {
@@ -249,56 +256,86 @@ func (db *DB) fixInfoRegPKSQLite(ctx context.Context, ir *metadata.InfoRegister)
 	// PK mismatch — rebuild.
 	d := db.dialect
 	tmp := table + "_new"
-	if _, err := db.Exec(ctx, "DROP TABLE IF EXISTS "+sqliteIdent(tmp)); err != nil {
-		return err
-	}
-	createSQL := CreateInfoRegisterSQL(d, ir)
-	// Подменяем имя таблицы на _new
-	createSQL = strings.Replace(createSQL, "CREATE TABLE IF NOT EXISTS "+table, "CREATE TABLE "+tmp, 1)
-	if _, err := db.Exec(ctx, createSQL); err != nil {
-		return err
-	}
 
-	// Копируем данные — только общие колонки. Берём пересечение
-	// колонок старой и новой таблицы.
-	oldCols, err := tableColumnNames(ctx, db, table)
-	if err != nil {
-		return err
-	}
-	newCols, err := tableColumnNames(ctx, db, tmp)
-	if err != nil {
-		return err
-	}
-	var common []string
-	newSet := make(map[string]bool, len(newCols))
-	for _, c := range newCols {
-		newSet[c] = true
-	}
-	for _, c := range oldCols {
-		if newSet[c] {
-			common = append(common, c)
+	// CREATE + INSERT SELECT + DROP + RENAME — в одной транзакции: без неё обрыв
+	// между DROP <table> и RENAME <tmp> оставлял базу вовсе без таблицы регистра,
+	// и повторный прогон её не восстанавливал (#616). Тот же урок, что у
+	// retypeSQLite. Пропуск пересоздания (нет разрешения на потерю колонки) тоже
+	// проходит через откат транзакции — sentinel errSkipInfoRegRebuild.
+	err = db.WithTxScope(ctx, func(ctx context.Context) error {
+		if _, err := db.Exec(ctx, "DROP TABLE IF EXISTS "+sqliteIdent(tmp)); err != nil {
+			return err
 		}
-	}
-	if len(common) > 0 {
-		copySQL := fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s",
-			sqliteIdent(tmp),
-			strings.Join(common, ", "),
-			strings.Join(common, ", "),
-			sqliteIdent(table))
-		if _, err := db.Exec(ctx, copySQL); err != nil {
-			// Откатимся — дропнем tmp, оставим старую.
-			_, _ = db.Exec(ctx, "DROP TABLE "+sqliteIdent(tmp))
-			return i18nerr.Wrapf(err, "copy data (возможно дубликаты по новому PK)")
+		createSQL := CreateInfoRegisterSQL(d, ir)
+		// Подменяем имя таблицы на _new
+		createSQL = strings.Replace(createSQL, "CREATE TABLE IF NOT EXISTS "+table, "CREATE TABLE "+tmp, 1)
+		if _, err := db.Exec(ctx, createSQL); err != nil {
+			return err
 		}
+
+		oldCols, err := tableColumnNames(ctx, db, table)
+		if err != nil {
+			return err
+		}
+		newCols, err := tableColumnNames(ctx, db, tmp)
+		if err != nil {
+			return err
+		}
+		newSet := make(map[string]bool, len(newCols))
+		for _, c := range newCols {
+			newSet[c] = true
+		}
+		// Пересоздание копирует лишь пересечение колонок. Колонки, которых нет в
+		// новой таблице (удалённое измерение), пропали бы вместе с данными. Для
+		// регистра сведений измерения входят в PK, поэтому удаление измерения
+		// ВСЕГДА даёт mismatch и попадало сюда, а restructureTable выше уже отложил
+		// этот ChangeDrop как разрушительный — колонка осталась осиротевшей. Без
+		// --allow-destructive пересоздание тихо доводило удаление до конца, теряя
+		// данные. Поэтому: если rebuild уронил бы колонки, а разрешения нет, —
+		// откатываемся и оставляем таблицу как есть (смена ключа тоже требует
+		// --allow-destructive).
+		var common, dropped []string
+		for _, c := range oldCols {
+			if newSet[c] {
+				common = append(common, c)
+			} else {
+				dropped = append(dropped, c)
+			}
+		}
+		if len(dropped) > 0 && !db.schemaOpts.AllowDestructive {
+			return errSkipInfoRegRebuild
+		}
+
+		if len(common) > 0 {
+			copySQL := fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s",
+				sqliteIdent(tmp),
+				strings.Join(common, ", "),
+				strings.Join(common, ", "),
+				sqliteIdent(table))
+			if _, err := db.Exec(ctx, copySQL); err != nil {
+				return i18nerr.Wrapf(err, "copy data (возможно дубликаты по новому PK)")
+			}
+		}
+		if _, err := db.Exec(ctx, "DROP TABLE "+sqliteIdent(table)); err != nil {
+			return err
+		}
+		if _, err := db.Exec(ctx, "ALTER TABLE "+sqliteIdent(tmp)+" RENAME TO "+sqliteIdent(table)); err != nil {
+			return err
+		}
+		return nil
+	})
+	if errors.Is(err, errSkipInfoRegRebuild) {
+		storageLog().Warn("смена ключа регистра сведений отложена: требует --allow-destructive; колонка и данные сохранены",
+			"регистр", ir.Name)
+		return nil
 	}
-	if _, err := db.Exec(ctx, "DROP TABLE "+sqliteIdent(table)); err != nil {
-		return err
-	}
-	if _, err := db.Exec(ctx, "ALTER TABLE "+sqliteIdent(tmp)+" RENAME TO "+sqliteIdent(table)); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
+
+// errSkipInfoRegRebuild — внутренний сигнал: пересоздание таблицы регистра
+// сведений уронило бы колонку с данными, а --allow-destructive не задан.
+// Пробрасывается наружу транзакции, чтобы её откатить, и там гасится.
+var errSkipInfoRegRebuild = errors.New("info register rebuild skipped: destructive")
 
 // tableColumnNames возвращает имена колонок таблицы в порядке их объявления.
 func tableColumnNames(ctx context.Context, db *DB, table string) ([]string, error) {

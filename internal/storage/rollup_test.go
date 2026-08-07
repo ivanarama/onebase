@@ -142,7 +142,11 @@ func TestRollup_FoldsAccumulationRegister(t *testing.T) {
 	}
 
 	// Опорные движения не считаются сиротами.
-	for _, o := range db.OrphanMovements(ctx, []*metadata.Register{reg}, nil) {
+	orphanStats, err := db.OrphanMovements(ctx, []*metadata.Register{reg}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphanStats {
 		if o.RecorderType == RollupRecorderType {
 			t.Errorf("опорные движения помечены сиротами: %+v", o)
 		}

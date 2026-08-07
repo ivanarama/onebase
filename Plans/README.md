@@ -272,6 +272,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 89 | [89-versioned-validation-profiles.md](89-versioned-validation-profiles.md) | Версионируемые профили правил валидации | 🟡 Сделан «заход 0» (прикладной паттерн, который план и рекомендует первым). «Заход 1» (платформенный `internal/validation`, `_validation_profiles`, UI-редактор, REST `/validate`) не начат — по плану берётся по факту потребности |
 | 90 | [90-inbound-intake-idempotency-dlq.md](90-inbound-intake-idempotency-dlq.md) | Идемпотентность входящих, карантин/DLQ, replay | 🟡 90A–90C закрыты. Осталось 90D: `dlq.max_retries`/`dlq.on` парсятся и валидируются, но **нигде не применяются** (авто-повторов нет, replay только вручную); нет TTL-очистки `_intake_log`; `internal/intake` не переиспользован в `internal/exchange` |
 | 91 | [91-agent-protocol-generation.md](91-agent-protocol-generation.md) | Протокол проверки результата в ai-guide (AGENTS.md) | ✅ Реализовано |
+| 92 | [92-platform-selfupdate.md](92-platform-selfupdate.md) | Автообновление платформы: каналы build/stable, кнопка в лаунчере, сетевой `onebase update` | ✅ Реализовано (92A–92C). Отличия от плана: страница `/updates` вместо модалки; попутно исправлено самообновление на Windows (`SwapBinary` копировала бинарь вместо переименования). Не сделано осознанно: подпись артефактов, дельта-обновления |
 | 99 | [99-debugger.md](99-debugger.md) | Отладчик DSL (точки останова, шаги, стек) — `internal/debugger/*` | 🟡 Ядро закрыто. Осталось: условные точки останова (`Condition` сохраняется, но в `CheckBreakpoint` не вычисляется), автосохранение точек между сессиями, F9/F5, правка значений переменных |
 | 100 | [100-ai-assistant-actions.md](100-ai-assistant-actions.md) | Действия ИИ-ассистента в UI — `ui/ai_actions.go` | ✅ Реализовано |
 | 104 | [104-catalog-object-tableparts.md](104-catalog-object-tableparts.md) | Табличные части и хук `ПриЗаписи` у объектов справочников | ✅ Реализовано |
@@ -285,7 +286,9 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 111 | [111-scalability-review.md](111-scalability-review.md) | Ревью масштабируемости на 100+ пользователей | ✅ P0/P1/P2 в `main`; P3-1/P3-2 отложены |
 | 112 | [112-user-cli-and-role-asserts.md](112-user-cli-and-role-asserts.md) | `onebase user` + ассерты матрицы прав ролей в `onebase test` | ✅ Реализовано |
 | 113 | [113-row-field-access-asserts.md](113-row-field-access-asserts.md) | Ассерты полевого и строкового доступа в `onebase test` | ✅ Реализовано |
-| 115 | [115-bug-report.md](115-bug-report.md) | «Сообщить об ошибке»: код инцидента + отчёт одним файлом (лаунчер / Предприятие / `onebase support`) | ✅ Реализовано 2026-08-07 (115A–115E). Контакт платформы `version.SupportContact` пока пуст; источник репозитория переключить на политику после мержа плана 92 |
+| 114 | [114-doctor.md](114-doctor.md) | `onebase doctor` — проверка и починка состояния базы | ✅ Реализовано |
+| 115 | [115-process-hardening.md](115-process-hardening.md) | Гейты, чокпоинты инвариантов, матрица диалектов (по итогам ревью недели) | ✅ Реализовано |
+| 116 | [116-bug-report.md](116-bug-report.md) | «Сообщить об ошибке»: код инцидента + отчёт одним файлом (лаунчер / Предприятие / `onebase support`) | ✅ Реализовано 2026-08-07 (116A–116E). Контакт платформы `version.SupportContact` пока пуст; источник репозитория переключить на политику после мержа плана 92 |
 
 ### Направление Н — планы вне таблиц (сведено аудитом 2026-08-02)
 

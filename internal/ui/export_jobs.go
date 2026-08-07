@@ -222,7 +222,7 @@ func (s *Server) runReportExportJob(r *http.Request, jobID string, rep *reportpk
 	defer func() {
 		if p := recover(); p != nil {
 			// Инцидент регистрируем и здесь: пользователь видит только карточку
-			// задачи, и без кода связать её со стеком в журнале нечем (план 115).
+			// задачи, и без кода связать её со стеком в журнале нечем (план 116).
 			// rep внутри recover не трогаем: сама паника бывает именно на нём.
 			id := s.recordBackgroundPanic("экспорт отчёта, задача "+jobID,
 				fmt.Sprintf("%v", p), string(debug.Stack()), currentUserLogin(r))

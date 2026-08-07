@@ -1,9 +1,9 @@
 # onebase installer for Windows
-# Usage: irm https://raw.githubusercontent.com/ivantit66/onebase/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/ivanarama/onebase/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
-$repo = "ivantit66/onebase"
+$repo = "ivanarama/onebase"
 $installDir = "$env:USERPROFILE\.onebase\bin"
 $exe = "$installDir\onebase.exe"
 

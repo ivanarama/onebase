@@ -2335,7 +2335,11 @@ const tplAbout = `
     {{end}}
     <tr>
       <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;width:180px;font-size:14px">{{t $.Lang "Версия платформы"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-weight:600;font-size:14px">onebase {{if .Cfg.PlatVersion}}{{.Cfg.PlatVersion}}{{else}}dev{{end}}{{if .Cfg.PlatDate}}<span style="color:#94a3b8;font-weight:400"> · {{.Cfg.PlatDate}}{{if .Cfg.PlatCommit}} · {{.Cfg.PlatCommit}}{{end}}</span>{{end}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-weight:600;font-size:14px">onebase {{if .Cfg.PlatVersion}}{{.Cfg.PlatVersion}}{{else}}dev{{end}}{{if .Cfg.PlatDate}}<span style="color:#94a3b8;font-weight:400"> · {{.Cfg.PlatDate}}{{if .Cfg.PlatCommit}} · {{.Cfg.PlatCommit}}{{end}}</span>{{end}}
+        {{/* Только уведомление: процесс базы своим бинарём не распоряжается —
+             он может быть службой. Обновляют платформу из лаунчера. */}}
+        {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:#94a3b8">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
+      </td>
     </tr>
     {{if .Cfg.PlatAuthor}}
     <tr>

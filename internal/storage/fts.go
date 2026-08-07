@@ -148,6 +148,17 @@ func (db *DB) EnsureFullTextSchema(ctx context.Context) (bool, error) {
 	if _, err := db.Exec(ctx, ddl); err != nil {
 		return false, fmt.Errorf("полнотекстовый индекс: создание %s: %w", ftsTable, err)
 	}
+	// Индекс по owner_id: удаление из индекса ищет по одному owner_id
+	// (DeleteFromFullTextIndex, в т.ч. изнутри upsert для объектов без
+	// индексируемого содержимого — горячий путь записи). Первичный ключ
+	// (owner_name, owner_id) для этого неприменим — ведущей owner_name в
+	// предикате нет, и обе СУБД брали бы полный скан общего индекса, растущий
+	// вместе со всей базой (#623). IF NOT EXISTS — индекс нужен и существующим
+	// базам, поэтому здесь же, где CREATE TABLE.
+	if _, err := db.Exec(ctx, fmt.Sprintf(
+		"CREATE INDEX IF NOT EXISTS %s_owner_id ON %s (owner_id)", ftsTable, ftsTable)); err != nil {
+		return false, fmt.Errorf("полнотекстовый индекс: индекс по owner_id: %w", err)
+	}
 	if err := db.fullTextIndex().EnsureSchema(ctx, db); err != nil {
 		return false, err
 	}

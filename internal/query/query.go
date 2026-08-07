@@ -698,7 +698,21 @@ func (tr *translator) rowFilterCondition(kind, name string, meta *metadata.Entit
 	}
 	tr.args = append(tr.args, args...)
 	tr.markRowApplied(kind, name)
-	return sql, nil
+	if sql == "" {
+		return "", nil
+	}
+	// Скобки ставим ЗДЕСЬ, а не у потребителей (issue #625). Предикат политики
+	// с несколькими вариантами (`any:`) содержит верхнеуровневое OR, а все
+	// потребители склеивают условия через AND — без обрамления получалось
+	// «period <= ? AND (склад='A') OR (склад='B')», то есть
+	// «(period<=? AND склад='A') OR склад='B'»: для второй ветви граница
+	// периода и прочие условия отваливались, и строки возвращались мимо
+	// политики. Потребителей несколько (виртуальные таблицы регистров и
+	// регистров сведений, авто-JOIN ссылочного поля), и правило, которое
+	// каждый обязан помнить, рано или поздно забудут — поэтому оно живёт в
+	// точке, где предикат рождается. Ровно так же поступает
+	// pendingRowFilterConditions для верхнего ГДЕ.
+	return "(" + sql + ")", nil
 }
 
 func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias string) (string, bool, error) {

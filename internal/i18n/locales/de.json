@@ -839,6 +839,7 @@
   "Ошибка чтения файла": "Fehler beim Lesen der Datei",
   "Неверный формат файла .obz": "Ungültiges .obz-Dateiformat",
   "Полное восстановление выполнено: %d таблиц, %d файлов вложений": "Vollständige Wiederherstellung abgeschlossen: %d Tabellen, %d Anhangsdateien",
+  "Сброшен второй фактор (перепривяжите): %s": "Zwei-Faktor-Authentifizierung zurückgesetzt (neu einrichten): %s",
   "База остановлена — запустите её заново.": "Die Datenbank wurde gestoppt — starten Sie sie erneut.",
   "Нельзя восстановить %s-бэкап в %s-базу (%s). Создайте новую базу с типом БД %s или используйте совместимый формат (.obz с галочкой).": "Eine %s-Sicherung kann nicht in eine %s-Datenbank (%s) wiederhergestellt werden. Erstellen Sie eine neue Datenbank mit dem DB-Typ %s oder verwenden Sie das kompatible Format (.obz mit dem Häkchen).",
   "Ошибка восстановления БД": "Fehler bei der Datenbankwiederherstellung",

@@ -2103,7 +2103,6 @@ function openItemPicker(payload, elementName) {
     updateBasket();
   });
   btnCancel.addEventListener('click', function () { modal.remove(); });
-  modal.addEventListener('click', function (e) { if (e.target === modal) modal.remove(); });
   btnOk.addEventListener('click', function () {
     var result = checkedRows().map(function (cb) {
       var tr = cb.closest('tr');
@@ -2266,9 +2265,6 @@ function openRefPicker(selOrId) {
     });
   }
   document.getElementById('_rp-cancel').addEventListener('click', function () { modal.remove(); });
-  modal.addEventListener('click', function (e) {
-    if (e.target === modal) modal.remove();
-  });
 }
 
 function openRefCurrent(selOrId) {
@@ -2333,10 +2329,36 @@ function openRefCreate(targetSelect, refEntity) {
     modal.remove();
   }
   window.addEventListener('message', handler);
-  modal.addEventListener('click', function (e) {
-    if (e.target === modal) cleanup();
-  });
 }
+
+// Модальные окна закрываются только явным действием: кнопкой («Отмена», «×»)
+// или Esc — но НЕ кликом мимо окна.
+//
+// Клик по фону закрывал окно и терял введённые данные: браузер шлёт click
+// общему предку mousedown и mouseup, поэтому «размашистое» выделение текста
+// в поле ввода, где кнопку мыши отпустили уже за границей окна, приходило как
+// клик по фону. Проверено в браузере: подбор с введёнными количествами
+// закрывался и данные пропадали. Модальные диалоги 1С ведут себя так же —
+// мимо окна не закрываются.
+//
+// Esc для managed-форм обрабатывает managed.js (в фазе перехвата, с отменой
+// правки ячейки грида и подтверждением «данные не записаны»); здесь — тот же
+// быстрый выход для автогенерируемых форм, которые грузят только ui.js.
+// Окно создания элемента (_ref-create-modal) сюда не входит намеренно: это
+// форма ввода внутри iframe, у неё свои «Отмена»/«×» и свой Esc с вопросом
+// о несохранённых данных.
+(function () {
+  if (window.__obModalEsc) return;
+  window.__obModalEsc = true;
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' && e.keyCode !== 27) return;
+    var modal = document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
+    if (!modal) return;
+    modal.remove();
+    e.preventDefault();
+    e.stopPropagation();
+  });
+})();
 
 // onebaseDevice — тонкий мост браузер→локальный device-agent кассира.
 // Сервер onebase к агенту не ходит (агент за NAT на машине кассира); ходит

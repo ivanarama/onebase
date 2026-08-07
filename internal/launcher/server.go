@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -57,10 +58,18 @@ func (w *noStoreResponseWriter) Write(p []byte) (int, error) {
 
 // Server is the launcher HTTP server (list of registered bases).
 type Server struct {
-	h       *handler
-	ln      net.Listener
-	quit    chan struct{}
-	httpSrv *http.Server
+	h        *handler
+	ln       net.Listener
+	quit     chan struct{}
+	quitOnce sync.Once
+	httpSrv  *http.Server
+}
+
+// requestQuit просит лаунчер завершиться: закрывает канал Done, на котором
+// висит окно. Через sync.Once, потому что сигналов теперь два — кнопка выхода
+// и применение обновления, — а повторный close(chan) паникует.
+func (s *Server) requestQuit() {
+	s.quitOnce.Do(func() { close(s.quit) })
 }
 
 // NewServer creates a launcher server bound to a random available port.
@@ -77,7 +86,9 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 	if b, err := i18n.Load(i18n.EmbeddedLocales, ""); err == nil {
 		launcherBundle = b
 	}
-	return &Server{h: h, ln: ln, quit: make(chan struct{})}, nil
+	srv := &Server{h: h, ln: ln, quit: make(chan struct{})}
+	h.quitFn = srv.requestQuit
+	return srv, nil
 }
 
 // URL returns the base URL of the launcher server.
@@ -102,7 +113,7 @@ func (s *Server) Close() {
 
 func (s *Server) ListenAndServe() error {
 	r := chi.NewRouter()
-	// Как chi middleware.Recoverer, но с кодом инцидента в ответе (план 115).
+	// Как chi middleware.Recoverer, но с кодом инцидента в ответе (план 116).
 	// Логина у лаунчера нет — он обслуживает одного локального пользователя.
 	r.Use(incident.Recoverer(s.h.incidents, nil))
 	// Конфигуратор — чувствительная поверхность (консоль кода, миграции):
@@ -130,7 +141,7 @@ func (s *Server) ListenAndServe() error {
 	r.Get("/", s.h.index)
 	r.Get("/browse-dir", s.h.browseDir)
 	r.Get("/browse-file", s.h.browseFile)
-	// «Сообщить об ошибке» (план 115): форма → предпросмотр → пакет на диск.
+	// «Сообщить об ошибке» (план 116): форма → предпросмотр → пакет на диск.
 	r.Get("/report-problem", s.h.reportProblem)
 	r.Post("/report-problem", s.h.reportProblemPreview)
 	r.Post("/report-problem/save", s.h.reportProblemSave)
@@ -272,10 +283,25 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/one-time-code", s.h.oneTimeCodeProxy)
 
 	r.Post("/killall", s.h.killAll)
-	r.Post("/quit", func(w http.ResponseWriter, r *http.Request) {
+	r.Post("/quit", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		close(s.quit)
+		s.requestQuit()
 	})
+
+	// Обновление платформы (план 92). Маршруты локальные — лаунчер слушает
+	// только 127.0.0.1, — но сами хендлеры ещё раз сверяются с политикой и
+	// правами на каталог бинаря: на общей установке кнопки быть не должно.
+	r.Get("/updates", s.h.updatesPage)
+	r.Post("/updates/check", s.h.updatesCheck)
+	r.Post("/updates/download", s.h.updatesDownload)
+	r.Post("/updates/apply", s.h.updatesApply)
+	r.Post("/updates/rollback", s.h.updatesRollback)
+	r.Post("/updates/channel", s.h.updatesChannel)
+
+	// Тихая фоновая проверка обновлений платформы (план 92): результат
+	// складывается в ~/.onebase/updates/state.json, откуда его читают шапка
+	// лаунчера и «О программе».
+	s.h.startUpdateWatcher()
 
 	// Slowloris-защита (см. api/server.go): только ReadHeaderTimeout + IdleTimeout.
 	// WriteTimeout не ставим — launcher проксирует SSE-события отладчика.

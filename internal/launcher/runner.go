@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -338,6 +339,20 @@ func (r *Runner) IsRunning(baseID string) bool {
 	return ok
 }
 
+// RunningIDs возвращает базы, процессы которых ведёт этот лаунчер. Снимок
+// нужен обновлению платформы: базы придётся остановить ради подмены бинаря, а
+// после перезапуска — поднять ровно те же.
+func (r *Runner) RunningIDs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := make([]string, 0, len(r.procs))
+	for id := range r.procs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // Healthy сообщает, отвечает ли на порту базы её /health — то есть база уже
 // работает, даже если запущена не этим экземпляром лаунчера (прежний
 // экземпляр, пересборка exe, ручной запуск). Используется для «усыновления»
@@ -467,7 +482,7 @@ const logTailLines = 15
 // tailFile возвращает последние n строк файла (читает не более 8 КБ с конца).
 // Пустая строка — файла нет или прочитать не удалось.
 //
-// Реализация общая с отчётом об ошибке (план 115): тот же журнал, то же чтение
+// Реализация общая с отчётом об ошибке (план 116): тот же журнал, то же чтение
 // с конца — расходиться этим двум местам незачем.
 func tailFile(path string, n int) string {
 	return bugreport.TailFile(path, n, 8<<10)
@@ -492,7 +507,7 @@ func baseLogPath(id string) (string, error) {
 }
 
 // BaseLogPath возвращает путь к журналу базы. Экспортируется ради отчёта об
-// ошибке (план 115): `onebase support` собирает пакет без запущенного лаунчера
+// ошибке (план 116): `onebase support` собирает пакет без запущенного лаунчера
 // и должен искать журналы там же, где их пишет лаунчер, а не по своей догадке.
 func BaseLogPath(id string) (string, error) { return baseLogPath(id) }
 
