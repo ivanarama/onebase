@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/incident"
+	"github.com/ivantit66/onebase/internal/selfupdate"
 )
 
 func TestMarkdown_HasEnvironmentAndIncident(t *testing.T) {
@@ -124,6 +125,28 @@ func TestPlatformContacts_TrimsAppContact(t *testing.T) {
 	}
 	if c.IssuesURL == "" {
 		t.Error("трекер платформы должен быть задан по умолчанию")
+	}
+}
+
+func TestIssuesURL_FollowsUpdatePolicy(t *testing.T) {
+	// В закрытом контуре администратор указывает зеркало в onebase.policy.yaml —
+	// отправлять пользователя в апстрим оттуда неверно (план 92).
+	dir := t.TempDir()
+	policy := "updates:\n  repo: myorg/onebase-dist\n"
+	if err := os.WriteFile(filepath.Join(dir, selfupdate.PolicyFileName), []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := selfupdate.LoadPolicy(dir).RepoOr(""); got != "myorg/onebase-dist" {
+		t.Fatalf("политика прочитана как %q", got)
+	}
+
+	// Без политики — апстрим по умолчанию.
+	if got := selfupdate.LoadPolicy(t.TempDir()).RepoOr(""); got != selfupdate.DefaultRepo {
+		t.Errorf("без политики ожидался %q, получено %q", selfupdate.DefaultRepo, got)
+	}
+	url := issuesURL()
+	if !strings.HasPrefix(url, "https://github.com/") || !strings.HasSuffix(url, "/issues/new") {
+		t.Errorf("адрес трекера = %q", url)
 	}
 }
 

@@ -1,5 +1,5 @@
 // Package bugreport собирает отчёт об ошибке, который пользователь отправляет
-// разработчику сам — файлом или текстом (план 115).
+// разработчику сам — файлом или текстом (план 116).
 //
 // Платформа ничего не отправляет по сети: ни приёмника, ни телеметрии, ни
 // секретов в бинаре. Это единственный вариант, который работает в закрытом
@@ -19,6 +19,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/incident"
 	oblog "github.com/ivantit66/onebase/internal/logging"
+	"github.com/ivantit66/onebase/internal/selfupdate"
 	"github.com/ivantit66/onebase/internal/version"
 )
 
@@ -29,17 +30,26 @@ type Env struct {
 	Date     string // дата коммита, дд.мм.гг
 	Modified bool   // сборка из грязного дерева
 	OS       string // "windows/amd64"
+	Channel  string // канал обновлений: build | stable (пусто — состояние неизвестно)
 }
 
-// CurrentEnv читает окружение процесса. Ничего не спрашивает у сети и у базы.
+// CurrentEnv читает окружение процесса.
+//
+// В сеть не ходит: канал берётся из состояния, которое записал лаунчер
+// (~/.onebase/updates/state.json, план 92). Файла нет — просто нет строки:
+// служба, headless-запуск или чужой профиль это нормальный случай.
 func CurrentEnv() Env {
-	return Env{
+	env := Env{
 		Platform: "onebase " + version.String(),
 		Commit:   version.Commit(),
 		Date:     version.CommitDate(),
 		Modified: version.Modified(),
 		OS:       runtime.GOOS + "/" + runtime.GOARCH,
 	}
+	if st, err := selfupdate.LoadState(); err == nil {
+		env.Channel = string(st.Channel)
+	}
+	return env
 }
 
 func (e Env) String() string {
@@ -49,6 +59,9 @@ func (e Env) String() string {
 	}
 	if e.Commit != "" {
 		s += " · " + e.Commit
+	}
+	if e.Channel != "" {
+		s += " · канал " + e.Channel
 	}
 	if e.Modified {
 		s += " · сборка из изменённого дерева"
@@ -71,9 +84,30 @@ type Contacts struct {
 // Any сообщает, есть ли хоть один адрес — иначе блок «Куда отправить» не нужен.
 func (c Contacts) Any() bool { return c.App != "" || c.Platform != "" || c.IssuesURL != "" }
 
-// PlatformContacts возвращает контакты платформы (без контакта конфигурации).
+// PlatformContacts возвращает контакты платформы плюс переданный контакт
+// конфигурации.
+//
+// Адрес трекера собирается из источника сборок (план 92): в закрытом контуре
+// администратор переопределяет репозиторий зеркалом в `onebase.policy.yaml`, и
+// отправлять пользователя в апстрим было бы неверно. Каталог бинаря недоступен
+// (редкий случай прав) — остаётся апстрим по умолчанию.
 func PlatformContacts(app string) Contacts {
-	return Contacts{App: strings.TrimSpace(app), Platform: version.SupportContact, IssuesURL: version.IssuesURL}
+	return Contacts{
+		App:       strings.TrimSpace(app),
+		Platform:  version.SupportContact,
+		IssuesURL: issuesURL(),
+	}
+}
+
+func issuesURL() string {
+	repo := selfupdate.DefaultRepo
+	if dir, err := selfupdate.BinaryDir(); err == nil {
+		repo = selfupdate.LoadPolicy(dir).RepoOr("")
+	}
+	if repo == "" {
+		return version.IssuesURL
+	}
+	return "https://github.com/" + repo + "/issues/new"
 }
 
 // Input — всё, из чего собирается отчёт.

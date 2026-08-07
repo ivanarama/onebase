@@ -95,6 +95,26 @@ var userRoleRevokeCmd = &cobra.Command{
 	RunE:  runUserRoleRevoke,
 }
 
+var user2FACmd = &cobra.Command{
+	Use:   "2fa",
+	Short: "Второй фактор учётной записи",
+}
+
+var user2FAResetCmd = &cobra.Command{
+	Use:   "reset <login>",
+	Short: "Снять второй фактор с учётной записи (офлайн-восстановление доступа)",
+	Long: `Отключает второй фактор у учётной записи по прямому доступу к базе — без
+входа и без другого администратора.
+
+Офлайн-выход из двух тупиков (#620): утрачено устройство с аутентификатором;
+либо политика требует второй фактор, а привязать его на входе нельзя, потому что
+некому выдать одноразовый код. После сброса пользователь входит по паролю; если
+политика по-прежнему требует второй фактор, включите самопривязку в админке или
+разберитесь с политикой.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runUser2FAReset,
+}
+
 func init() {
 	// Базовые флаги выбора базы — персистентные на группе, чтобы их видели все
 	// подкоманды (resolveBase читает их из cmd.Flags(), куда cobra подмешивает
@@ -115,8 +135,33 @@ func init() {
 	userShowInListCmd.Flags().Bool("off", false, "скрыть из списков выбора")
 
 	userRoleCmd.AddCommand(userRoleAssignCmd, userRoleRevokeCmd)
-	userCmd.AddCommand(userListCmd, userAddCmd, userPasswdCmd, userRmCmd, userShowInListCmd, userRoleCmd)
+	user2FACmd.AddCommand(user2FAResetCmd)
+	userCmd.AddCommand(userListCmd, userAddCmd, userPasswdCmd, userRmCmd, userShowInListCmd, userRoleCmd, user2FACmd)
 	rootCmd.AddCommand(userCmd)
+}
+
+func runUser2FAReset(cmd *cobra.Command, args []string) error {
+	login := strings.TrimSpace(args[0])
+	env, err := openUserEnv(cmd)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+
+	ctx := context.Background()
+	u, err := findUserByLogin(ctx, env.repo, login)
+	if err != nil {
+		return err
+	}
+	if err := env.repo.DisableTOTP(ctx, u.ID); err != nil {
+		return err
+	}
+	// Сессии на всякий случай гасим: у восстановления доступа не должно оставаться
+	// хвостов, а второй фактор мог сбрасывать не сам владелец.
+	_ = env.repo.KickUserSessions(ctx, u.ID)
+	env.db.LogAction(ctx, "user_2fa_reset", "user", login, u.ID, "", "cli", "")
+	outf("Второй фактор снят у %s\n", login)
+	return nil
 }
 
 func addPasswordFlags(cmd *cobra.Command) {
@@ -271,13 +316,19 @@ func runUserPasswd(cmd *cobra.Command, args []string) error {
 	if err := env.repo.UpdatePassword(ctx, u.ID, pw); err != nil {
 		return err
 	}
-	// Сброс сессий: старый пароль больше не должен давать доступ.
-	_ = env.repo.KickUserSessions(ctx, u.ID)
+	// Отзыв живых сессий: смену пароля часто делают именно чтобы кого-то
+	// отключить, и «отозвать не удалось» нельзя проглатывать в «Пароль обновлён»
+	// — иначе администратор получит ложное подтверждение (#622). Пароль уже
+	// изменён, поэтому сообщаем оба факта и завершаемся ненулевым кодом.
+	kickErr := env.repo.KickUserSessions(ctx, u.ID)
 	env.db.LogAction(ctx, "user_passwd", "user", login, u.ID, "", "cli", "")
 
 	outf("Пароль обновлён для %s\n", login)
 	if generated {
 		outf("Пароль: %s\n", pw)
+	}
+	if kickErr != nil {
+		return fmt.Errorf("пароль изменён, но действующие сессии %s отозвать не удалось — прежний вход мог сохраниться: %w", login, kickErr)
 	}
 	return nil
 }

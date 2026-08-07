@@ -952,9 +952,8 @@ function qcOpenPicker(btn, entityType) {
     document.getElementById('qc-picker-q').addEventListener('input', function() {
       qcPickerSearch(this.getAttribute('data-ob-qc-picker-entity') || '', this.value);
     });
-    modal.addEventListener('click', function(e) {
-      if (e.target === modal) modal.style.display = 'none';
-    });
+    // Закрытие — только крестиком: клик по фону закрывал окно при выделении
+    // текста мышью с выходом за его границу (см. комментарий в ui.js).
   } else {
     modal.style.display = 'flex';
     document.getElementById('qc-picker-q').value = '';

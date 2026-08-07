@@ -18,12 +18,27 @@ var startCmd = &cobra.Command{
 
 func runStart(_ *cobra.Command, _ []string) error {
 	startLog := oblog.Component("cli.start")
+
+	// Старт — самый безопасный момент применить скачанное обновление: баз ещё
+	// нет, останавливать нечего. Работает только при включённом auto_apply
+	// (план 92); после подмены перезапускаемся уже из нового бинаря.
+	if launcher.ApplyStagedOnStart() {
+		if err := launcher.RestartSelf(); err != nil {
+			startLog.Error("обновление применено, но перезапуск не удался", "err", err)
+		} else {
+			return nil
+		}
+	}
+
 	store, err := launcher.NewStore()
 	if err != nil {
 		return fmt.Errorf("start: store: %w", err)
 	}
 
 	runner := launcher.NewRunner()
+
+	// Базы, работавшие до перезапуска ради обновления, поднимаем обратно.
+	launcher.ResumeAfterUpdate(store, runner)
 
 	srv, err := launcher.NewServer(store, runner)
 	if err != nil {
