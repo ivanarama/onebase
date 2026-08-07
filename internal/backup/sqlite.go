@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -139,6 +140,69 @@ func validateSQLiteBackup(ctx context.Context, path string) error {
 	return nil
 }
 
+// sqliteInUse сообщает, держит ли файл базы открытым кто-то ещё.
+//
+// Восстановление подменяет файл целиком и удаляет -wal/-shm. Под работающей
+// базой это уничтожает незачекпойнченные транзакции и оставляет процесс с
+// удалённым inode (issue #627). Останавливать базу обязан вызывающий, но
+// проверка здесь не даёт порче случиться из-за того, что очередной обработчик
+// спросил живость не той функцией.
+//
+// Приём: в WAL-режиме соединение держит shared-блокировку «мёртвой руки» в
+// -shm всё время, пока база открыта, поэтому первая же транзакция в
+// exclusive-режиме упирается в SQLITE_BUSY, пока базу держит кто-то ещё.
+// Ограничение: базу в journal-режиме простаивающее соединение не блокирует —
+// такую занятость проверка не увидит.
+//
+// «Занята» возвращается только по явному SQLITE_BUSY/SQLITE_LOCKED: любая
+// другая ошибка означает «проверить не удалось», и восстановление продолжается
+// как раньше — иначе проверка запрещала бы восстановление ровно тех баз,
+// которые сломаны и восстановления и ждут.
+func sqliteInUse(ctx context.Context, dbPath string) bool {
+	if _, err := os.Stat(dbPath); err != nil {
+		return false // файла нет — некому его и держать
+	}
+	db, err := sql.Open("sqlite", filepath.ToSlash(dbPath))
+	if err != nil {
+		return false
+	}
+	defer closeRead("проверочное соединение с базой", db)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return false
+	}
+	defer closeRead("проверочное соединение с базой", conn)
+	// busy_timeout=0: ждать освобождения незачем, ответ нужен сразу.
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout=0"); err != nil {
+		return false
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA locking_mode=EXCLUSIVE"); err != nil {
+		return false
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return isSQLiteBusy(err)
+	}
+	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		backupLog().Debug("не удалось откатить проверочную транзакцию", "err", err)
+	}
+	return false
+}
+
+// isSQLiteBusy распознаёт отказ по занятости: у драйвера modernc код лежит в
+// ошибке (5 — SQLITE_BUSY, 6 — SQLITE_LOCKED, старший байт — уточнение),
+// строковая проверка оставлена запасной на случай обёрнутой ошибки.
+func isSQLiteBusy(err error) bool {
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		switch coded.Code() & 0xff {
+		case 5, 6:
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_busy")
+}
+
 func copyFileSynced(ctx context.Context, srcPath, dstPath string, perm os.FileMode) (err error) {
 	src, err := os.Open(srcPath)
 	if err != nil {
@@ -187,6 +251,9 @@ func RestoreSQLite(ctx context.Context, dbPath, backupPath string) error {
 	}
 	if dstInfo, statErr := os.Stat(dbPath); statErr == nil && os.SameFile(srcInfo, dstInfo) {
 		return fmt.Errorf("sqlite restore: backup and target are the same file")
+	}
+	if sqliteInUse(ctx, dbAbs) {
+		return fmt.Errorf("sqlite restore: база %s открыта другим процессом — остановите её и повторите", dbAbs)
 	}
 
 	dir := filepath.Dir(dbAbs)
