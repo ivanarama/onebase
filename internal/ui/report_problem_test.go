@@ -168,6 +168,49 @@ func TestReportProblemDownload_RejectsEmpty(t *testing.T) {
 	}
 }
 
+// Связка «зарегистрированный инцидент → строка выпадающего списка»: между
+// хранилищем и шаблоном есть слой представления, и ошибка в нём оставила бы
+// пользователя без единственного способа сослаться на сбой.
+func TestRecentIncidentViews_MapsStoreToForm(t *testing.T) {
+	s := &Server{cfg: Config{}, incidents: incident.NewStore(10), authRepo: &auth.Repo{}}
+	rec := s.incidents.Record(incident.Record{
+		Kind:  incident.KindError,
+		Where: "POST /ui/doc/заказ/new",
+		Text:  "no such column: цена",
+		User:  "ivanov",
+	})
+	s.incidents.Record(incident.Record{Text: "чужая ошибка", User: "petrov"})
+
+	req := httptest.NewRequest("GET", "/ui/report-problem", nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), &auth.User{ID: "u1", Login: "ivanov"}))
+
+	views := s.recentIncidentViews(req)
+	if len(views) != 1 {
+		t.Fatalf("пользователю показано %d инцидентов, ожидался один свой", len(views))
+	}
+	if views[0].ID != rec.ID {
+		t.Errorf("код инцидента = %q, ожидался %q", views[0].ID, rec.ID)
+	}
+	if views[0].Short != "no such column: цена" {
+		t.Errorf("текст в списке = %q", views[0].Short)
+	}
+	if views[0].When == "" {
+		t.Error("в списке нет времени инцидента")
+	}
+
+	// Администратор видит все.
+	admin := httptest.NewRequest("GET", "/ui/report-problem", nil)
+	admin = admin.WithContext(auth.ContextWithUser(admin.Context(), &auth.User{ID: "a", Login: "root", IsAdmin: true}))
+	if n := len(s.recentIncidentViews(admin)); n != 2 {
+		t.Errorf("администратору показано %d инцидентов, ожидались оба", n)
+	}
+
+	// Хранилища нет (Server собран литералом в тестах) — не падаем.
+	if v := (&Server{}).recentIncidentViews(req); v != nil {
+		t.Error("без хранилища список должен быть пустым")
+	}
+}
+
 func TestMaySeeIncident_ForeignIncidentHidden(t *testing.T) {
 	// Код инцидента короткий, и подобрать чужой можно перебором: текст чужой
 	// ошибки в отчёт попадать не должен.
