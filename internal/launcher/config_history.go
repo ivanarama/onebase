@@ -177,9 +177,15 @@ func renderConfigHistoryDiff(fromID, toID string, diff []configdb.DiffEntry, dif
 	return b.String()
 }
 
+// configHistoryPre — содержимое файла версии в модалке истории. Это просмотр
+// исходника, а не консоль, поэтому цвета берутся из тех же переменных, что и
+// редактор модулей (модалка живёт на странице конфигуратора, configurator.css
+// там подключён): при светлой теме тёмный блок посреди светлого редактора
+// выглядел чужеродно. Значения после запятой — на случай рендера вне страницы
+// конфигуратора, где переменные не объявлены.
 func configHistoryPre(title string, content []byte) string {
 	text := configHistoryClip(string(content), 8000)
-	return fmt.Sprintf(`<div><div style="font-size:11px;color:#64748b;margin:6px 0 3px">%s</div><pre style="white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;background:#0f172a;color:#e2e8f0;border-radius:4px;padding:8px;margin:0;font-size:11px;line-height:1.45">%s</pre></div>`,
+	return fmt.Sprintf(`<div><div style="font-size:11px;color:#64748b;margin:6px 0 3px">%s</div><pre style="white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;background:var(--cfg-code-bg,#0f172a);color:var(--cfg-code-fg,#e2e8f0);border:1px solid var(--cfg-code-border,transparent);border-radius:4px;padding:8px;margin:0;font-size:11px;line-height:1.45">%s</pre></div>`,
 		html.EscapeString(title), html.EscapeString(text))
 }
 
