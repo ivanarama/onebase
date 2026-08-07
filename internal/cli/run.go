@@ -128,6 +128,20 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("auth schema: %w", err)
 	}
+	// Сценарий обновления (#620): база, где второй фактор требовался, а привязка
+	// шла на входе (до #577), после обновления получает SelfEnroll2FA=false — и
+	// все, кто не успел привязать фактор, теряют вход, снять политику нечем.
+	// Автоматически политику не меняем (это выбор администратора), но громко
+	// предупреждаем и называем офлайн-выход.
+	if policy := authRepo.AuthPolicy(ctx); policy.Enabled() {
+		if cohort, err := authRepo.TwoFactorLockoutRisk(ctx, policy); err != nil {
+			runLog.Warn("проверка риска блокировки вторым фактором не выполнена", "err", err)
+		} else if cohort != "" {
+			runLog.Warn("политика требует второй фактор от когорты, у которой он не привязан ни у кого, при выключенной самопривязке — войти не сможет никто",
+				"когорта", cohort,
+				"выход", "включите самопривязку в админке либо снимите второй фактор офлайн: onebase user 2fa reset <login>")
+		}
+	}
 
 	var proj *project.Project
 	var cfgRepo *configdb.Repo
