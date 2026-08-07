@@ -27,6 +27,20 @@ func NewEphemeralSchemaName() string {
 // чтение из тестов) идёт в указанную схему, а общие типы/расширения из public
 // по-прежнему резолвятся. Схему нужно создать (CreateSchema) до запросов и
 // удалить (DropSchemaCascade) после.
+//
+// Контракт (#638): служебные таблицы платформы — _schema_fields, _settings,
+// _numerators, _sequences, _fts, _audit и прочие — живут В ЭТОЙ схеме, а не в
+// public. Так уже устроена запись: все Ensure*Schema делают неквалифицированный
+// CREATE TABLE IF NOT EXISTS, и PostgreSQL кладёт таблицу в первую существующую
+// схему search_path, то есть в эфемерную; прогон обязан умирать вместе со
+// схемой. Из public берутся только общие типы, расширения и глобальный каст
+// uuid→text.
+//
+// Отсюда правило для всего пакета: любая интроспекция каталога (pg_tables,
+// information_schema.*, pg_constraint) фильтруется по current_schema(), а не по
+// литералу 'public'. Иначе читаем и пишем в разные места — ровно это и ломало
+// реструктуризацию: карта полей бралась из public, а таблица лежала в схеме
+// подключения.
 func ConnectWithSchema(ctx context.Context, dsn, schema string) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

@@ -106,10 +106,14 @@ func (PgDialect) JSONField(col, path string) string {
 	return fmt.Sprintf("%s->'%s'", col, path)
 }
 
+// ColumnExists проверяет колонку В СХЕМЕ ПОДКЛЮЧЕНИЯ. Фильтра по схеме тут не
+// было вовсе, поэтому колонка «существовала», если одноимённая таблица нашлась
+// в любой схеме базы (#638).
 func (PgDialect) ColumnExists(ctx context.Context, db *DB, table, col string) (bool, error) {
 	var exists bool
 	err := db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
+		`SELECT EXISTS(SELECT 1 FROM information_schema.columns
+		   WHERE table_schema=current_schema() AND table_name=$1 AND column_name=$2)`,
 		table, col,
 	).Scan(&exists)
 	return exists, err
