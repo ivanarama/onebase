@@ -128,7 +128,10 @@ func (orphanMovementsCheck) CanFix() bool { return true }
 //     конфигурации. Удалять такие движения нельзя: данные не должны исчезать
 //     оттого, что метаданные о них не упоминают.
 func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
-	stats := env.DB.OrphanMovements(ctx, env.Registers, env.Entities)
+	stats, err := env.DB.OrphanMovements(ctx, env.Registers, env.Entities)
+	if err != nil {
+		return failed(c, err)
+	}
 	res := Result{Check: c.Name(), Title: c.Title(), Severity: SeverityOK}
 	orphans, unknown := 0, 0
 	for _, s := range stats {

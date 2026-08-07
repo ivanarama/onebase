@@ -189,7 +189,9 @@ function cfgImportPdfLayout(action, entity) {
   document.body.appendChild(overlay);
   function close() { document.body.removeChild(overlay); }
   document.getElementById('_pdfCancel').onclick = close;
-  overlay.onclick = function(e){ if (e.target === overlay) close(); };
+  // Клик по фону окно не закрывает (см. комментарий в internal/ui/static/ui.js):
+  // выделение текста мышью с выходом за границу окна приходит как клик по фону
+  // и терял бы заполненные поля.
   var okBtn = document.getElementById('_pdfOk');
   okBtn.onclick = function() {
     var name = (document.getElementById('_pdfName').value || '').trim();
@@ -2811,8 +2813,9 @@ document.getElementById('qb-insert').onclick=function(){
   _mqbTA=null;
   document.getElementById('qb-overlay').classList.remove('active');
 };
-// close on overlay click
-document.getElementById('qb-overlay').addEventListener('click',function(e){if(e.target===this)this.classList.remove('active');});
+// Закрытие — только кнопкой «×» (qb-close): клик по фону закрывал конструктор
+// вместе с набранным запросом при выделении текста мышью с выходом за границу
+// окна (см. комментарий в internal/ui/static/ui.js).
 })();
 
 function openQBModal(ta,presetSel){
@@ -3252,14 +3255,21 @@ function cfgAdmin(name) {
   // Use global overlay instead of panel-admin
   var overlay = document.getElementById('admin-overlay');
   if(!overlay)return;
+  // Шапку с крестиком рисуем сразу, вместе с «Загрузка...»: панель закрывается
+  // только явным действием (клик по фону убран — он прилетал от выделения
+  // текста мышью и закрывал панель с заполненной формой), поэтому без крестика
+  // не ответивший запрос запирал бы конфигуратор.
+  function frame(inner){
+    return '<div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:90%;max-width:800px;max-height:85vh;overflow-y:auto;position:relative">'
+      +'<div style="position:sticky;top:0;background:#fff;padding:8px 16px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:600;font-size:13px">Администрирование</span><button onclick="document.getElementById(\'admin-overlay\').style.display=\'none\'" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666">×</button></div>'
+      +'<div style="padding:16px">'+inner+'</div></div>';
+  }
   overlay.style.display='flex';
-  overlay.innerHTML = '<div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:90%;max-width:800px;max-height:85vh;overflow-y:auto;position:relative"><div style="padding:20px;text-align:center;color:#888">'+T("Загрузка...")+'</div></div>';
+  overlay.innerHTML = frame('<div style="padding:20px;text-align:center;color:#888">'+T("Загрузка...")+'</div>');
   fetch('/bases/' + _dbgBase + '/configurator/admin/' + name)
     .then(function(r){ return r.text(); })
     .then(function(html){
-      overlay.innerHTML = '<div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:90%;max-width:800px;max-height:85vh;overflow-y:auto;position:relative">'
-        +'<div style="position:sticky;top:0;background:#fff;padding:8px 16px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:600;font-size:13px">Администрирование</span><button onclick="document.getElementById(\'admin-overlay\').style.display=\'none\'" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666">×</button></div>'
-        +'<div style="padding:16px">'+html+'</div></div>';
+      overlay.innerHTML = frame(html);
       // Scripts inside innerHTML don't execute — re-run them manually
       overlay.querySelectorAll('script').forEach(function(s){
         var ns = document.createElement('script');

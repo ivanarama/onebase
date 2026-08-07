@@ -817,9 +817,44 @@ func (s *Service) clearMovements(ctx context.Context, entityName string, id uuid
 	return nil
 }
 
+// totalsLockKeys собирает ключи advisory-локов итогов по всем регистрам, в
+// которые пойдут движения. Ключи те же, что берут Write*Movements по
+// отдельности — здесь они нужны, чтобы захватить их одним отсортированным
+// вызовом и не зависеть от порядка обхода карты движений.
+func (s *Service) totalsLockKeys(mc *runtime.MovementsCollector) []string {
+	var keys []string
+	for regName := range mc.All() {
+		if reg := s.Reg.GetRegister(regName); reg != nil {
+			if reg.TotalsUsable() {
+				keys = append(keys, "register-totals|"+strings.ToLower(reg.Name))
+			}
+			continue
+		}
+		if ar := s.Reg.GetAccountRegister(regName); ar != nil && ar.TotalsUsable() {
+			keys = append(keys, "account-totals|"+strings.ToLower(ar.Name))
+		}
+	}
+	return keys
+}
+
 // writeMovements распределяет накопленные в mc движения по нужным типам
 // регистров (накопления, счетов, сведений). Вынесено из ui.Server.saveMovements.
 func (s *Service) writeMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
+	// Локи итогов берём ОДНИМ вызовом до записи (issue #626). Каждый
+	// Write*Movements берёт свой лок сам, а обход mc.All() — обычная Go-map со
+	// случайным порядком: одно проведение захватывало «товары», потом
+	// «хозрасчётный», параллельное — наоборот, и PostgreSQL снимал одно из них
+	// с «deadlock detected». AdvisoryXactLock сортирует ключи (normalizeAdvisoryKeys),
+	// но только ВНУТРИ одного вызова — поэтому здесь и нужен общий список.
+	// Повторный захват того же ключа в той же транзакции безвреден, так что
+	// Write*Movements менять не требуется.
+	//
+	// Тот же инвариант уже записан в runtime/locks.go: «Acquire берёт мьютексы
+	// по всем ключам в детерминированном порядке, чтобы избежать
+	// кросс-deadlock'а между двумя проведениями».
+	if err := s.Store.AdvisoryXactLock(ctx, s.totalsLockKeys(mc)); err != nil {
+		return err
+	}
 	for regName, rows := range mc.All() {
 		if reg := s.Reg.GetRegister(regName); reg != nil {
 			if err := s.Store.WriteMovements(ctx, regName, docType, docID, rows, reg, mc.Period); err != nil {

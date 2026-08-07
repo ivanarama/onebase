@@ -222,6 +222,20 @@ func (s *Server) adminAuthPolicySave(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Симметрично: требовать второй фактор от когорты, у которой он ни у кого не
+	// привязан, при выключенной самопривязке — верный способ запереть базу
+	// навсегда (первичная привязка на входе потребует кода от администратора, а
+	// выдать его будет некому). #620.
+	if cohort, err := s.authRepo.TwoFactorLockoutRisk(r.Context(), policy); err != nil {
+		s.renderAdminAuth(w, r, map[string]any{"Error": s.errText(r, err)})
+		return
+	} else if cohort != "" {
+		s.renderAdminAuth(w, r, map[string]any{
+			"Error": "Нельзя требовать второй фактор от " + cohort +
+				", пока он не привязан ни у одной из этих учётных записей: сначала привяжите второй фактор или включите самопривязку — иначе войти не сможет никто",
+		})
+		return
+	}
 	if err := s.authRepo.SaveAuthPolicy(r.Context(), policy); err != nil {
 		s.renderAdminAuth(w, r, map[string]any{"Error": s.errText(r, err)})
 		return

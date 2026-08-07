@@ -9,6 +9,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dbcheck"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/spf13/cobra"
@@ -58,6 +59,7 @@ func init() {
 	doctorCmd.Flags().StringSlice("fix", nil, "какие проверки должны исправить найденное (all — все умеющие)")
 	doctorCmd.Flags().StringSlice("forget-document", nil,
 		"удалить движения документа, которого больше нет в конфигурации (укажите имя точно как в отчёте)")
+	doctorCmd.Flags().Bool("dry-run", false, "показать объём удаления --forget-document, ничего не меняя")
 	doctorCmd.Flags().Bool("json", false, "машинный отчёт")
 	rootCmd.AddCommand(doctorCmd)
 }
@@ -114,18 +116,36 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// только назвав документ поимённо — это и есть «я знаю, что он убран
 	// навсегда».
 	if forget, _ := cmd.Flags().GetStringSlice("forget-document"); len(forget) > 0 {
-		n := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
-		outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
-		for _, reg := range proj.Registers {
-			if !reg.TotalsUsable() {
-				continue
-			}
-			if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
-				return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
-			}
+		// Проверка «неизвестности» типа: удаление необратимо, а сразу за ним идёт
+		// пересчёт итогов — потеря не оставляет следа ни в отчёте, ни в проверках.
+		// Опечатка в имени живого документа стёрла бы его историю по всем
+		// регистрам, поэтому сверяем каждый тип со списком документов конфигурации
+		// (proj под рукой) и отказываем, если документ ещё существует (#610).
+		if inConfig := forgetTypesInConfig(proj, forget); len(inConfig) > 0 {
+			return fmt.Errorf(
+				"тип %s есть в конфигурации — это не осиротевшие движения; "+
+					"--forget-document принимает только типы из отчёта проверки orphan-movements",
+				strings.Join(inConfig, ", "))
 		}
-		outln("Итоги регистров пересчитаны.")
-		outln("")
+		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			n := db.CountMovementsOfRecorderType(ctx, proj.Registers, forget)
+			outf("Сухой прогон: к удалению движений документов %s: %d (ничего не изменено)\n",
+				strings.Join(forget, ", "), n)
+			outln("")
+		} else {
+			n := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
+			outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
+			for _, reg := range proj.Registers {
+				if !reg.TotalsUsable() {
+					continue
+				}
+				if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
+					return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
+				}
+			}
+			outln("Итоги регистров пересчитаны.")
+			outln("")
+		}
 	}
 
 	report := dbcheck.Run(ctx, dbcheck.FromProject(db, proj), checks, fix)
@@ -145,6 +165,30 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return errSilentExit
 	}
 	return nil
+}
+
+// forgetTypesInConfig возвращает те переданные --forget-document типы, которые
+// всё ещё есть в конфигурации как документы. Движения осиротевшими становятся
+// только когда сам документ убран из конфигурации; удаление истории живого
+// документа — почти наверняка опечатка. Сравнение регистронезависимое
+// (strings.EqualFold корректно работает с кириллицей, в отличие от SQLite LOWER):
+// имя, отличающееся лишь регистром, точного удаления бы не задело, но отказ с
+// внятной ошибкой лучше молчаливого «удалено 0».
+func forgetTypesInConfig(proj *project.Project, forget []string) []string {
+	var bad []string
+	for _, t := range forget {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		for _, e := range proj.Entities {
+			if e.Kind == metadata.KindDocument && strings.EqualFold(e.Name, t) {
+				bad = append(bad, t)
+				break
+			}
+		}
+	}
+	return bad
 }
 
 // parseFixList разбирает --fix. «all» означает все проверки, которые вообще

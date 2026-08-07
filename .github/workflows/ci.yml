@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Ручной запуск (план 115). Без него прогон нельзя перезапустить иначе как
+  # новым пушем: во время аварии GitHub Actions 2026-08-06 вебхуки были
+  # задушены до ~15%, PR-события прогонов не создавали, а обязательные
+  # статус-чеки при этом блокируют мерж — восстановиться было нечем.
+  workflow_dispatch:
 
 jobs:
   build:
@@ -60,6 +65,21 @@ jobs:
           done
           exit "$failed"
 
+      # Форматирование не проверялось ничем: gofmt в гейтах не было, а в
+      # .golangci.yml формат-линтеры не включены. За неделю 30.07–06.08 в main
+      # утекли три файла не по формату (из #570, #595, #600) — дрейф копится
+      # ровно потому, что его никто не ловит. third_party исключён: он
+      # вендорный, приводить его к нашему формату незачем.
+      - name: gofmt
+        run: |
+          unformatted="$(git ls-files '*.go' | grep -v '^third_party/' | xargs gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Файлы не отформатированы gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: чисто"
+
       - name: go vet
         run: go vet ./...
 
@@ -80,6 +100,22 @@ jobs:
       - name: Build (check compile)
         env:
           CGO_ENABLED: 0
+        run: go build ./...
+
+      # Windows-специфичный код (//go:build windows) до плана 115 не
+      # компилировался в CI вообще: сборка идёт на linux, а windows-цель
+      # собиралась только в release.yml — то есть поломка вскрывалась на
+      # релизе. Кросс-компиляция без CGo проверяет ровно это и стоит секунды.
+      #
+      # Код под -tags webview сюда не входит: webview_go требует CGo, и при
+      # CGO_ENABLED=0 все его файлы исключаются («build constraints exclude
+      # all Go files»), то есть кросс-проверка не проверяла бы ничего.
+      # Для него нужен windows-раннер с CGo — пока покрыт только release.yml.
+      - name: Build (windows, check compile)
+        env:
+          CGO_ENABLED: 0
+          GOOS: windows
+          GOARCH: amd64
         run: go build ./...
 
   lint:
@@ -125,11 +161,23 @@ jobs:
           set -euo pipefail
           # Run packages sequentially: tagged suites share the service database
           # and some deliberately verify bootstrap/no-user state.
-          go test -count=1 -timeout 5m -tags integration .
-          go test -count=1 -timeout 5m -tags integration ./internal/auth
-          go test -count=1 -timeout 5m -tags integration ./internal/storage
-          go test -count=1 -timeout 5m -tags integration ./internal/configdb
-          go test -count=1 -timeout 5m -tags integration ./internal/entityservice
+          #
+          # -race здесь обязателен (план 115, этап B): конкурентные дефекты на
+          # реальной СУБД юнит-джоб не видит — он гоняет SQLite. До этого
+          # internal/entityservice/fifo_race_pg_test.go, существующий ради
+          # гонок, исполнялся без детектора. Таймаут поднят с 5m: -race
+          # замедляет прогон в несколько раз.
+          go test -race -count=1 -timeout 15m -tags integration .
+          go test -race -count=1 -timeout 15m -tags integration ./internal/auth
+          go test -race -count=1 -timeout 15m -tags integration ./internal/storage
+          go test -race -count=1 -timeout 15m -tags integration ./internal/configdb
+          go test -race -count=1 -timeout 15m -tags integration ./internal/entityservice
+          # internal/query до плана 115 не видел PostgreSQL вообще, хотя
+          # компилятор запросов — самое диалектозависимое место платформы:
+          # виртуальные таблицы разворачиваются в подзапросы, числа на SQLite
+          # лежат в TEXT и требуют CAST. Матричные тесты (dbtest.ForEachDialect)
+          # исполняют скомпилированный SQL на обоих диалектах.
+          go test -race -count=1 -timeout 15m -tags integration ./internal/query
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck
@@ -175,7 +223,7 @@ jobs:
       - name: Benchmark (PR)
         run: |
           go test -run NONE -bench . -benchmem -count 6 \
-            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ \
+            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ ./internal/query/ \
             | tee bench-pr.txt
 
       - name: Benchmark (base)
@@ -184,7 +232,7 @@ jobs:
           # На базе бенч-функций может не быть — тогда файл пустой, benchstat
           # просто покажет только числа PR. Не валим джоб из-за этого.
           go test -run NONE -bench . -benchmem -count 6 \
-            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ \
+            ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ ./internal/query/ \
             | tee bench-base.txt || true
           git checkout -
 
@@ -192,7 +240,24 @@ jobs:
         run: benchstat bench-base.txt bench-pr.txt | tee benchstat.txt
 
       - name: Upload benchstat report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchstat
           path: benchstat.txt
+
+      # Порог просадки (план 115, этап D). До этого джоб только печатал отчёт:
+      # порога не было, базовый прогон завершался `|| true` — то есть джоб
+      # создавал впечатление защиты от регрессий, которой не было. Просадка
+      # вроде #623 (полный скан при удалении из полнотекстового индекса)
+      # проходила беспрепятственно.
+      #
+      # Гейт смотрит только СТАТИСТИЧЕСКИ ЗНАЧИМЫЕ изменения: незначимые
+      # benchstat помечает «~», и они игнорируются, иначе шум разделяемого
+      # раннера ронял бы каждый второй PR. Порог 25% выбран мягким намеренно —
+      # ловим обвалы, а не колебания. Сам разбор покрыт тестами
+      # (tools/benchgate/main_test.go), чтобы гейт не оказался декорацией.
+      - name: Fail on performance regression
+        run: |
+          benchstat -format csv bench-base.txt bench-pr.txt 2>/dev/null \
+            | go run ./tools/benchgate -threshold 25
