@@ -120,7 +120,7 @@ func (r *Runner) Start(base *Base) error {
 		return i18nerr.Errorf("порт %d уже занят другим процессом — остановите его вручную или смените порт базы", base.Port)
 	}
 
-	exe, err := os.Executable()
+	exe, err := exePath()
 	if err != nil {
 		return fmt.Errorf("runner: executable: %w", err)
 	}
@@ -189,6 +189,12 @@ func (r *Runner) recordExit(baseID string, cmd *exec.Cmd) {
 	}
 	r.exits[baseID] = true
 }
+
+// exePath — путь к бинарю платформы, который лаунчер запускает дочерним
+// процессом (сервер базы, migrate). Вынесено в переменную ради тестов: под
+// `go test` os.Executable() указывает на тест-бинарь, и запуск его «как
+// платформы» прогоняет весь пакет заново — рекурсивно и без конца.
+var exePath = os.Executable
 
 // Stop снимает отслеживаемый процесс базы. Возврата нет намеренно: результат
 // всегда был nil, и проверка его ничего бы не значила. Сама по себе отправка
@@ -375,7 +381,7 @@ func (r *Runner) BaseURL(base *Base) string {
 }
 
 func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
-	exe, err := os.Executable()
+	exe, err := exePath()
 	if err != nil {
 		return "", err
 	}

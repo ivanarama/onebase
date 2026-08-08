@@ -67,17 +67,13 @@ type formEventResponse struct {
 
 // handleManagedFormEvent — единая точка обработки событий managed-форм.
 func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
-	s.limitMultipartRequest(w, r)
-	if err := parseBoundedForm(r, 32<<20); err != nil {
-		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: "bad form: " + err.Error()})
-		return
-	}
-
+	// Сущность резолвим ДО разбора тела: от неё зависит предел (#629). Пределы не
+	// композируются — прежняя пара «1 МиБ, затем limitMultipartRequest на 52 МиБ»
+	// связывала всегда по внутреннему мегабайту, из-за чего кнопка на форме с
+	// большим richtext ломалась ещё до записи, а внешний предел был мёртв.
 	entityName := chi.URLParam(r, "entity")
 	if entityName == "" {
 		respondJSON(enc, formEventResponse{Error: "entity required"})
@@ -86,6 +82,13 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	entity := s.reg.GetEntity(entityName)
 	if entity == nil {
 		respondJSON(enc, formEventResponse{Error: "entity not found: " + entityName})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		w.WriteHeader(uploadErrorStatus(err))
+		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
 		return
 	}
 

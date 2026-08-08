@@ -404,6 +404,9 @@ window.onerror = function(msg, url, ln, col, err) {
   return false;
 };
 
+// Тема редактора кода (cfgCodeThemeName/cfgCodeThemeToggle) — в общем
+// /static/code-theme.js: те же темы использует конструктор управляемых форм.
+
 function startEdit(name) {
   var pre = document.getElementById('pre-'+name);
   var ta  = document.getElementById('ta-'+name);
@@ -425,7 +428,7 @@ function startEdit(name) {
     var editor = monaco.editor.create(div, {
       value: ta.value,
       language: langId,
-      theme: 'onebase-dark',
+      theme: cfgCodeThemeName(),
       minimap: { enabled: false },
       fontSize: 12,
       lineNumbers: 'on',
@@ -2565,28 +2568,8 @@ require(['vs/editor/editor.main'], function() {
       }], activeSignature: 0, activeParameter: Math.min(active, d.params.length-1) }, dispose: function(){} };
     }
   });
-  // Dark theme matching existing #1e1e2e style
-  monaco.editor.defineTheme('onebase-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [
-      { token: 'keyword', foreground: 'c792ea', fontStyle: 'bold' },
-      { token: 'type', foreground: '82aaff' },
-      { token: 'variable.predefined', foreground: 'ff5370', fontStyle: 'bold' },
-      { token: 'string', foreground: 'c3e88d' },
-      { token: 'number', foreground: 'f78c6c' },
-      { token: 'comment', foreground: '546e7a', fontStyle: 'italic' }
-    ],
-    colors: {
-      'editor.background': '#1e1e2e',
-      'editor.foreground': '#cdd6f4',
-      'editor.lineHighlightBackground': '#2a2a3e',
-      'editorLineNumber.foreground': '#6c7086',
-      'editorLineNumber.activeForeground': '#cdd6f4',
-      'editor.selectionBackground': '#45475a',
-      'editorCursor.foreground': '#f5e0dc'
-    }
-  });
+  // Темы кода — общие с конструктором форм (/static/code-theme.js).
+  cfgCodeThemeDefine(monaco);
   window._monacoReady = true;
 
   // Динамическая подсветка: дополнить список встроенных именами из langref

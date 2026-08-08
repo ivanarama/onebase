@@ -275,21 +275,28 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 		hasLogoUpload = true
 	}
 
-	type saveAppConfig struct {
-		Name      string `yaml:"name"`
-		Version   string `yaml:"version,omitempty"`
-		Lang      string `yaml:"lang,omitempty"`
-		Logo      string `yaml:"logo,omitempty"`
-		Author    string `yaml:"author,omitempty"`
-		Copyright string `yaml:"copyright,omitempty"`
-		License   string `yaml:"license,omitempty"`
-		Support   string `yaml:"support,omitempty"`
-	}
-	out, _ := yaml.Marshal(saveAppConfig{
-		Name: newName, Version: newVersion, Lang: newLang, Logo: logoPath,
-		Author: newAuthor, Copyright: newCopyright, License: newLicense,
-		Support: newSupport,
+	// Правим только ключи этой формы. Сборка файла заново из структуры на восемь
+	// полей стирала всё остальное — email, webhooks, llm, backup вместе с ключами
+	// доступа S3, limits, db (issue #656).
+	rawApp, _ := h.readConfigFileRaw(r.Context(), b, appConfigPath)
+	out, appErr := updateAppYAML(rawApp, func(doc *yaml.Node) error {
+		return setAppYAMLFields(doc, []appYAMLField{
+			{"name", newName}, // пустое имя отсечено выше
+			{"version", strOrNil(newVersion)},
+			{"lang", strOrNil(newLang)},
+			{"logo", strOrNil(logoPath)},
+			{"author", strOrNil(newAuthor)},
+			{"copyright", strOrNil(newCopyright)},
+			{"license", strOrNil(newLicense)},
+			{"support", strOrNil(newSupport)},
+		})
 	})
+	if appErr != nil {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = tr(lang, "Ошибка сохранения") + ": " + appErr.Error()
+		renderCfg(w, r, data)
+		return
+	}
 
 	var saveErr error
 	if b.ConfigSource == "database" {
