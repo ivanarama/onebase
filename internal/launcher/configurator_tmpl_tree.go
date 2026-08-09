@@ -706,8 +706,8 @@ const cfgTabTree = `{{define "tab-tree"}}
               <input type="number" name="comp.appearance.collapse_to" min="0" step="1" placeholder="—" value="{{with .Composition}}{{with .Appearance.CollapseTo}}{{.}}{{end}}{{end}}" style="width:70px;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></div>
           </div>
           <div class="section-hd" style="margin-top:14px">{{t $.Lang "Условное оформление"}}
-            <button type="button" class="cfg-add-btn" style="font-size:14px;margin-left:8px" onclick="compAddCond('cc-{{$rn}}')">+</button></div>
-          <table class="fields-tbl" id="cc-{{$rn}}">
+            <button type="button" class="cfg-add-btn" style="font-size:14px;margin-left:8px" onclick="compAddCond('ccond-{{$rn}}')">+</button></div>
+          <table class="fields-tbl" id="ccond-{{$rn}}">
             <tr><th>{{t $.Lang "Когда"}} (DSL)</th><th>{{t $.Lang "Поле"}}</th><th>{{t $.Lang "Цвет"}}</th><th>{{t $.Lang "Фон"}}</th><th>{{t $.Lang "Ж"}}</th><th>{{t $.Lang "К"}}</th><th></th></tr>
             {{with .Composition}}{{range $i, $r := .Conditional}}
             <tr>
@@ -717,7 +717,7 @@ const cfgTabTree = `{{define "tab-tree"}}
               <td><input type="color" name="comp.cond.{{$i}}.background" value="{{if $r.Style.Background}}{{$r.Style.Background}}{{else}}#ffffff{{end}}"></td>
               <td><input type="checkbox" name="comp.cond.{{$i}}.bold" {{if $r.Style.Bold}}checked{{end}}></td>
               <td><input type="checkbox" name="comp.cond.{{$i}}.italic" {{if $r.Style.Italic}}checked{{end}}></td>
-              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest('tr').remove();compReindexCond('cc-{{$rn}}')">&#x2715;</button></td>
+              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest('tr').remove();compReindexCond('ccond-{{$rn}}')">&#x2715;</button></td>
             </tr>
             {{end}}{{end}}
           </table>

@@ -345,3 +345,44 @@ func TestParseDetailLinkEmpty(t *testing.T) {
 		t.Fatalf("пустые поля должны остаться пустыми: link=%q entity=%q", c.DetailLink, c.DetailEntity)
 	}
 }
+
+// Индексы строк формы приходят разрежёнными: клиент нумерует строки по их числу
+// в таблице, а удаление строки из середины оставляет дыру. Прежний разбор
+// обрывался на первой дыре и молча терял всё, что ниже (issue #678).
+func TestParse_ПропускиВИндексахНеОбрываютРазбор(t *testing.T) {
+	f := url.Values{
+		"comp.present": {"1"},
+		// правило 1 удалено пользователем
+		"comp.cond.0.when": {"Сумма > 100"},
+		"comp.cond.2.when": {"Сумма < 0"},
+		"comp.cond.3.when": {"Сумма = 0"},
+		// то же в остальных секциях
+		"comp.grouping.0":      {"Клиент"},
+		"comp.grouping.2":      {"Менеджер"},
+		"comp.column.0":        {"Месяц"},
+		"comp.column.2":        {"Квартал"},
+		"comp.measure.0.field": {"Сумма"},
+		"comp.measure.2.field": {"Количество"},
+		"comp.sort.0.field":    {"Сумма"},
+		"comp.sort.2.field":    {"Клиент"},
+	}
+	c, ok := compform.Parse(f)
+	if !ok || c == nil {
+		t.Fatalf("Parse: ok=%v c=%v", ok, c)
+	}
+	if len(c.Conditional) != 3 {
+		t.Errorf("правил условного оформления %d, ожидалось 3: %+v", len(c.Conditional), c.Conditional)
+	}
+	if len(c.Groupings) != 2 {
+		t.Errorf("группировок %d, ожидалось 2: %v", len(c.Groupings), c.Groupings)
+	}
+	if len(c.Columns) != 2 {
+		t.Errorf("колонок %d, ожидалось 2: %v", len(c.Columns), c.Columns)
+	}
+	if len(c.Measures) != 2 {
+		t.Errorf("показателей %d, ожидалось 2", len(c.Measures))
+	}
+	if len(c.Sort) != 2 {
+		t.Errorf("ключей сортировки %d, ожидалось 2", len(c.Sort))
+	}
+}

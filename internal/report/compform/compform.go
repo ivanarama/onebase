@@ -7,6 +7,7 @@ package compform
 
 import (
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -23,29 +24,29 @@ func Parse(f url.Values) (*report.Composition, bool) {
 	c := &report.Composition{}
 
 	// Группировки
-	for i := 0; ; i++ {
+	for _, i := range rowIndexes(f, "comp.grouping.", "") {
 		v := strings.TrimSpace(f.Get("comp.grouping." + strconv.Itoa(i)))
 		if v == "" {
-			break
+			continue
 		}
 		c.Groupings = append(c.Groupings, v)
 	}
 
 	// Колонки кросс-таблицы (непусто → режим кросс-таблицы)
-	for i := 0; ; i++ {
+	for _, i := range rowIndexes(f, "comp.column.", "") {
 		v := strings.TrimSpace(f.Get("comp.column." + strconv.Itoa(i)))
 		if v == "" {
-			break
+			continue
 		}
 		c.Columns = append(c.Columns, v)
 	}
 
 	// Показатели
-	for i := 0; ; i++ {
+	for _, i := range rowIndexes(f, "comp.measure.", ".field") {
 		p := "comp.measure." + strconv.Itoa(i)
 		fld := strings.TrimSpace(f.Get(p + ".field"))
 		if fld == "" {
-			break
+			continue
 		}
 		c.Measures = append(c.Measures, report.Measure{
 			Field:  fld,
@@ -65,21 +66,21 @@ func Parse(f url.Values) (*report.Composition, bool) {
 	c.DetailEntity = strings.TrimSpace(f.Get("comp.detail_entity"))
 
 	// Сортировка
-	for i := 0; ; i++ {
+	for _, i := range rowIndexes(f, "comp.sort.", ".field") {
 		p := "comp.sort." + strconv.Itoa(i)
 		fld := strings.TrimSpace(f.Get(p + ".field"))
 		if fld == "" {
-			break
+			continue
 		}
 		c.Sort = append(c.Sort, report.SortKey{Field: fld, Dir: f.Get(p + ".dir")})
 	}
 
 	// Условное оформление
-	for i := 0; ; i++ {
+	for _, i := range rowIndexes(f, "comp.cond.", ".when") {
 		p := "comp.cond." + strconv.Itoa(i)
 		when := strings.TrimSpace(f.Get(p + ".when"))
 		if when == "" {
-			break
+			continue
 		}
 		color := strings.TrimSpace(f.Get(p + ".color"))
 		if color == "#000000" {
@@ -169,4 +170,37 @@ func normLines(v string) string {
 	default: // "", "horizontal", мусор
 		return ""
 	}
+}
+
+// rowIndexes возвращает индексы строк, фактически присланных формой под ключами
+// «<prefix><i>» либо «<prefix><i>.<suffix>», по возрастанию.
+//
+// Перебирать индексы подряд с остановкой на первом пустом нельзя: клиент
+// нумерует строки по их числу в таблице, а удаление строки из середины
+// оставляет дыру — на ней разбор обрывался и терял всё, что ниже (issue #678).
+func rowIndexes(f url.Values, prefix, suffix string) []int {
+	seen := map[int]bool{}
+	for key := range f {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		num := key[len(prefix):]
+		if suffix != "" {
+			if !strings.HasSuffix(num, suffix) {
+				continue
+			}
+			num = num[:len(num)-len(suffix)]
+		}
+		i, err := strconv.Atoi(num)
+		if err != nil || i < 0 {
+			continue
+		}
+		seen[i] = true
+	}
+	out := make([]int, 0, len(seen))
+	for i := range seen {
+		out = append(out, i)
+	}
+	sort.Ints(out)
+	return out
 }
