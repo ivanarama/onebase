@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -131,36 +130,35 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 	if err := r.ensureTwoFactorSchema(ctx); err != nil {
 		return err
 	}
-	// Idempotent user migrations. Ignore only an actual duplicate-column error:
-	// swallowing SQLITE_BUSY, permission, or connection errors leaves a partially
-	// migrated schema that fails later on unrelated requests.
-	for _, ddl := range []string{
-		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN deny_passwd_change %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
-		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN show_in_list %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
-		`ALTER TABLE _users ADD COLUMN lang TEXT NOT NULL DEFAULT ''`,
-		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN ai_data_access %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
+	// Догоняющие миграции для баз, созданных до появления этих колонок.
+	// На свежей базе колонки уже созданы через CREATE TABLE выше, поэтому проба
+	// обязана быть идемпотентной — этим занимается storage.AddColumnIfMissing
+	// (PostgreSQL: ADD COLUMN IF NOT EXISTS, SQLite: проверка каталога), а не
+	// разбор текста ошибки драйвера.
+	for _, c := range []struct{ col, typ string }{
+		{"deny_passwd_change", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
+		{"show_in_list", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
+		{"lang", "TEXT NOT NULL DEFAULT ''"},
+		{"ai_data_access", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
 	} {
-		if _, err := r.db.Exec(ctx, ddl); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("auth: migrate _users: %w", err)
+		if err := r.db.AddColumnIfMissing(ctx, "_users", c.col, c.typ); err != nil {
+			return fmt.Errorf("auth: migrate _users.%s: %w", c.col, err)
 		}
 	}
 	// Мультисессии (план 78): служебные метаданные сессии. Колонки nullable без
 	// DEFAULT — SQLite не разрешает ни UNIQUE, ни CURRENT_TIMESTAMP в ADD COLUMN;
-	// уникальность public_id обеспечивает отдельный индекс. EnsureSchema зовётся
-	// конкурентно из процесса базы и лаунчера, поэтому глотаем только «колонка уже
-	// есть» — молча проглоченный SQLITE_BUSY оставил бы колонку несозданной и
-	// сломал INSERT сессий.
-	for _, ddl := range []string{
-		`ALTER TABLE _sessions ADD COLUMN token_hash TEXT`,
-		`ALTER TABLE _sessions ADD COLUMN public_id TEXT`,
-		`ALTER TABLE _sessions ADD COLUMN kind TEXT`,
-		fmt.Sprintf(`ALTER TABLE _sessions ADD COLUMN created_at %s`, d.TypeTimestamp()),
-		fmt.Sprintf(`ALTER TABLE _sessions ADD COLUMN last_seen_at %s`, d.TypeTimestamp()),
-		`ALTER TABLE _sessions ADD COLUMN ip TEXT`,
-		`ALTER TABLE _sessions ADD COLUMN user_agent TEXT`,
+	// уникальность public_id обеспечивает отдельный индекс.
+	for _, c := range []struct{ col, typ string }{
+		{"token_hash", "TEXT"},
+		{"public_id", "TEXT"},
+		{"kind", "TEXT"},
+		{"created_at", d.TypeTimestamp()},
+		{"last_seen_at", d.TypeTimestamp()},
+		{"ip", "TEXT"},
+		{"user_agent", "TEXT"},
 	} {
-		if _, err := r.db.Exec(ctx, ddl); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("auth: migrate _sessions: %w", err)
+		if err := r.db.AddColumnIfMissing(ctx, "_sessions", c.col, c.typ); err != nil {
+			return fmt.Errorf("auth: migrate _sessions.%s: %w", c.col, err)
 		}
 	}
 	if err := r.migrateSessionTokens(ctx); err != nil {
@@ -177,13 +175,6 @@ func (r *Repo) EnsureSchema(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// isDuplicateColumnErr распознаёт «колонка уже существует» у SQLite
-// («duplicate column name») и PostgreSQL («column ... already exists»).
-func isDuplicateColumnErr(err error) bool {
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "duplicate column") || strings.Contains(s, "already exists")
 }
 
 // boolFalseFor returns "FALSE" for PG and "0" for SQLite, used in DEFAULT clauses.
