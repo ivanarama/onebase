@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -25,17 +26,12 @@ func (h *handler) configuratorSavePredefined(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	entityName := r.FormValue("entity")
-	// collect predefined items
-	type rawPD struct {
-		Name   string                 `yaml:"name"`
-		Fields map[string]interface{} `yaml:"fields,omitempty"`
-	}
-	var predefined []rawPD
 	fieldNames := r.Form["pre_field_names"]
-	for i := 0; i < 500; i++ {
+	var predefined []rawPredefinedRow
+	for _, i := range formRowIndices(r, "pre") {
 		name := strings.TrimSpace(r.FormValue(fmt.Sprintf("pre.%d.name", i)))
 		if name == "" {
-			break
+			continue // строку очистили — считаем удалённой
 		}
 		fields := make(map[string]interface{})
 		for _, fn := range fieldNames {
@@ -43,7 +39,7 @@ func (h *handler) configuratorSavePredefined(w http.ResponseWriter, r *http.Requ
 				fields[fn] = v
 			}
 		}
-		pd := rawPD{Name: name}
+		pd := rawPredefinedRow{Name: name}
 		if len(fields) > 0 {
 			pd.Fields = fields
 		}
@@ -66,7 +62,7 @@ func (h *handler) configuratorSavePredefined(w http.ResponseWriter, r *http.Requ
 	renderCfg(w, r, data)
 }
 
-func savePredefinedToFile(dir, entityName string, predefined interface{}) error {
+func savePredefinedToFile(dir, entityName string, predefined []rawPredefinedRow) error {
 	// find entity file in catalogs/ or documents/
 	for _, subdir := range []string{"catalogs", "documents"} {
 		entries, _ := os.ReadDir(filepath.Join(dir, subdir))
@@ -85,26 +81,20 @@ func savePredefinedToFile(dir, entityName string, predefined interface{}) error 
 			if yaml.Unmarshal(raw, &top) != nil || top.Name != entityName {
 				continue
 			}
-			var node map[string]interface{}
-			if err := yaml.Unmarshal(raw, &node); err != nil {
-				return err
-			}
-			if predefined == nil {
-				delete(node, "predefined")
-			} else {
-				node["predefined"] = predefined
-			}
-			out, err := yaml.Marshal(node)
+			out, err := applyPredefined(raw, subdir+"/"+e.Name(), predefined)
 			if err != nil {
 				return err
 			}
-			return os.WriteFile(p, out, fsmode.File)
+			// p собран из каталога базы и имени файла, полученного от os.ReadDir
+			// того же каталога: ReadDir отдаёт базовые имена, выйти за пределы
+			// dir/subdir нечем. gosec этого не распознаёт.
+			return os.WriteFile(p, out, fsmode.File) //nolint:gosec // G703: путь построен из ReadDir-имени, traversal невозможен
 		}
 	}
 	return fmt.Errorf("entity %q not found", entityName)
 }
 
-func (h *handler) savePredefinedToDB(ctx context.Context, b *Base, entityName string, predefined interface{}) error {
+func (h *handler) savePredefinedToDB(ctx context.Context, b *Base, entityName string, predefined []rawPredefinedRow) error {
 	db, err := OpenDB(ctx, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -136,20 +126,53 @@ func (h *handler) savePredefinedToDB(ctx context.Context, b *Base, entityName st
 	if targetPath == "" {
 		return fmt.Errorf("entity %q not found in DB config", entityName)
 	}
-	var node map[string]interface{}
-	if err := yaml.Unmarshal(rawContent, &node); err != nil {
-		return err
-	}
-	if predefined == nil {
-		delete(node, "predefined")
-	} else {
-		node["predefined"] = predefined
-	}
-	out, err := yaml.Marshal(node)
+	out, err := applyPredefined(rawContent, targetPath, predefined)
 	if err != nil {
 		return err
 	}
 	return cfgUpsert(ctx, db, targetPath, out)
+}
+
+// rawPredefinedRow — одна строка формы «Предопределённые элементы».
+type rawPredefinedRow struct {
+	Name   string                 `yaml:"name"`
+	Fields map[string]interface{} `yaml:"fields,omitempty"`
+}
+
+// applyPredefined точечно заменяет блок predefined в YAML сущности, сохраняя
+// порядок остальных ключей и комментарии. Пустой список удаляет ключ.
+//
+// Раньше файл круглился через map[string]interface{}: порядок ключей и
+// комментарии терялись при каждом сохранении — тот же класс, что #656 у
+// app.yaml. Идиома взята у applyAccountRegFields.
+func applyPredefined(raw []byte, what string, predefined []rawPredefinedRow) ([]byte, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("applyPredefined: ожидалось YAML-отображение в корне %s", what)
+	}
+	// Пустой список — ключ убрать. Типизированный nil-слайс, обёрнутый в any,
+	// не равен nil, поэтому передаём нетипизированный (ср. anyOrNil).
+	var val any
+	if len(predefined) > 0 {
+		val = predefined
+	}
+	if err := setYAMLMapField(root.Content[0], "predefined", val); err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2) // файл пользовательский и лежит под git — не менять отступ
+	if err := enc.Encode(&root); err != nil {
+		_ = enc.Close()
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // ── one-time code proxy ──────────────────────────────────────────────────────
