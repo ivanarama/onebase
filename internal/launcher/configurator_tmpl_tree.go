@@ -595,7 +595,7 @@ const cfgTabTree = `{{define "tab-tree"}}
                 </select>
               </td>
               <td><input type="text" name="param.{{$i}}.label" value="{{$p.Label}}" placeholder="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
-              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest('tr').remove();repReindex('params-{{$rn}}')">✕</button></td>
+              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="repRemoveParam(this,'params-{{$rn}}')">✕</button></td>
             </tr>
             {{if $.AvailableLangs}}<tr><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "param.%d.labels" $i) "Values" $p.Labels)}}</td></tr>{{end}}
             {{end}}
@@ -814,7 +814,7 @@ const cfgTabTree = `{{define "tab-tree"}}
                 </select>
               </td>
               <td><input type="text" name="param.{{$i}}.label" value="{{$p.Label}}" placeholder="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
-              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest('tr').remove();repReindex('pparams-{{$pn}}')">✕</button></td>
+              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="repRemoveParam(this,'pparams-{{$pn}}')">✕</button></td>
             </tr>
             {{if $.AvailableLangs}}<tr><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "param.%d.labels" $i) "Values" $p.Labels)}}</td></tr>{{end}}
             {{end}}
