@@ -57,17 +57,17 @@ const backupCodeAlphabet = "abcdefghjkmnpqrstuvwxyz23456789"
 // кодов. Вызывается из EnsureSchema; идемпотентна.
 func (r *Repo) ensureTwoFactorSchema(ctx context.Context) error {
 	d := r.db.Dialect()
-	for _, ddl := range []string{
-		`ALTER TABLE _users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''`,
-		fmt.Sprintf(`ALTER TABLE _users ADD COLUMN totp_enabled %s NOT NULL DEFAULT %s`, d.TypeBool(), boolFalseFor(d)),
-		`ALTER TABLE _users ADD COLUMN totp_last_step BIGINT NOT NULL DEFAULT 0`,
+	for _, c := range []struct{ col, typ string }{
+		{"totp_secret", "TEXT NOT NULL DEFAULT ''"},
+		{"totp_enabled", d.TypeBool() + " NOT NULL DEFAULT " + boolFalseFor(d)},
+		{"totp_last_step", "BIGINT NOT NULL DEFAULT 0"},
 		// Привязка к внешнему провайдеру (SSO): по паре (провайдер, subject)
 		// учётка находится даже после смены адреса почты в каталоге.
-		`ALTER TABLE _users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE _users ADD COLUMN auth_subject TEXT NOT NULL DEFAULT ''`,
+		{"auth_provider", "TEXT NOT NULL DEFAULT ''"},
+		{"auth_subject", "TEXT NOT NULL DEFAULT ''"},
 	} {
-		if _, err := r.db.Exec(ctx, ddl); err != nil && !isDuplicateColumnErr(err) {
-			return fmt.Errorf("auth: migrate _users (2fa): %w", err)
+		if err := r.db.AddColumnIfMissing(ctx, "_users", c.col, c.typ); err != nil {
+			return fmt.Errorf("auth: migrate _users.%s (2fa): %w", c.col, err)
 		}
 	}
 	codesDDL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS _auth_backup_codes (
