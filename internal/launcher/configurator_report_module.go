@@ -53,11 +53,16 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Parse params from form: param.0.name, param.0.type, param.0.label, ...
+	// Индексы собираем скан-циклом formRowIndices, а не перебором подряд:
+	// клиент считает номер новой строки по числу строк с текстовым полем, а
+	// шаблон подкладывает под каждый параметр вторую строку с блоком переводов,
+	// поэтому индексы разрежены (issue #677). Удаление параметра тоже оставляет
+	// дыру. Плотный цикл обрывался на первой из них.
 	var newParams []saveParam
-	for i := 0; i < 50; i++ {
+	for _, i := range formRowIndices(r, "param") {
 		pname := strings.TrimSpace(r.FormValue(fmt.Sprintf("param.%d.name", i)))
 		if pname == "" {
-			break
+			continue // строку очистили — считаем удалённой
 		}
 		ptype := r.FormValue(fmt.Sprintf("param.%d.type", i))
 		plabel := strings.TrimSpace(r.FormValue(fmt.Sprintf("param.%d.label", i)))
