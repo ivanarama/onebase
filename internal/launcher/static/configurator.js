@@ -2603,19 +2603,42 @@ document.querySelectorAll('form').forEach(function(form) {
 });
 
 // ── Report params ──────────────────────────────────────────────
+// repParamNameInput — строка параметра узнаётся по полю param.<n>.name.
+// Считать «все строки с текстовым полем» нельзя: под каждым параметром шаблон
+// рисует ВТОРУЮ строку с блоком переводов, и она тоже состоит из текстовых
+// полей (issue #677).
+function repParamNameInput(tr) {
+  return tr.querySelector('input[name^="param."][name$=".name"]');
+}
+
 function repReindex(tableId) {
   var tbl = document.getElementById(tableId);
   if (!tbl) return;
-  var rows = tbl.querySelectorAll('tbody tr, tr:not(:first-child)');
-  // skip header row (first tr), iterate data rows
-  var dataRows = Array.from(tbl.querySelectorAll('tr')).filter(function(r){ return r.querySelector('input[type=text]'); });
-  dataRows.forEach(function(tr, i) {
+  var i = -1;
+  Array.from(tbl.querySelectorAll('tr')).forEach(function(tr) {
+    // Строка переводов принадлежит параметру над ней и получает его же индекс,
+    // иначе param.0.labels.en уезжает на второй параметр.
+    if (repParamNameInput(tr)) i++;
+    if (i < 0) return; // шапка до первого параметра
     tr.querySelectorAll('input,select').forEach(function(el) {
       el.name = el.name.replace(/param\.\d+\./, 'param.' + i + '.');
     });
     var btn = tr.querySelector('button[type=button]');
-    if (btn) btn.setAttribute('onclick', 'this.closest(\'tr\').remove();repReindex(\'' + tableId + '\')');
+    if (btn) btn.setAttribute('onclick', 'repRemoveParam(this,\'' + tableId + '\')');
   });
+}
+
+// repRemoveParam удаляет строку параметра вместе с его строкой переводов:
+// оставшись сиротой, она досталась бы предыдущему параметру.
+function repRemoveParam(btn, tableId) {
+  var tr = btn.closest('tr');
+  if (!tr) return;
+  var next = tr.nextElementSibling;
+  if (next && !repParamNameInput(next) && next.querySelector('input[name*=".labels."]')) {
+    next.remove();
+  }
+  tr.remove();
+  repReindex(tableId);
 }
 // ── Enum values add/remove/reindex ────────────────────────────────────────────
 function enumReindex(containerId) {
@@ -2655,8 +2678,9 @@ function enumAddVal(containerId) {
 function repAddParam(tableId) {
   var tbl = document.getElementById(tableId);
   if (!tbl) return;
-  var dataRows = Array.from(tbl.querySelectorAll('tr')).filter(function(r){ return r.querySelector('input[type=text]'); });
-  var i = dataRows.length;
+  // Считаем именно параметры, а не строки с текстовым полем: строка переводов
+  // удвоила бы счёт и новый параметр получил бы индекс 2N (issue #677).
+  var i = tbl.querySelectorAll('input[name^="param."][name$=".name"]').length;
   var tr = document.createElement('tr');
   tr.innerHTML = '<td><input type="text" name="param.' + i + '.name" value="" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="ИмяПараметра"></td>'
     + '<td><select name="param.' + i + '.type" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">'
@@ -2664,7 +2688,7 @@ function repAddParam(tableId) {
     + window.__cfg.entityNames.map(function(n){return '<option value="reference:'+n+'">ссылка: '+n+'</option>';}).join('')
     + '</select></td>'
     + '<td><input type="text" name="param.' + i + '.label" value="" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="Заголовок"></td>'
-    + '<td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest(\'tr\').remove();repReindex(\'' + tableId + '\')">✕</button></td>';
+    + '<td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="repRemoveParam(this,\'' + tableId + '\')">✕</button></td>';
   tbl.appendChild(tr);
   tr.querySelector('input[type=text]').focus();
 }
