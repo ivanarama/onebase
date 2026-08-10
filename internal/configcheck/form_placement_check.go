@@ -30,13 +30,21 @@ func CheckFormPlacement(dir string, proj *project.Project) []Issue {
 		return nil
 	}
 
-	// Каталоги, которые загрузчик реально просматривает: по одному на сущность.
-	known := make(map[string]string) // нижний регистр → оригинальное имя сущности
+	// Каталоги, которые загрузчик реально просматривает: по одному на сущность
+	// И на обработку — у обработок тоже бывают управляемые формы
+	// (ui.handleProcessorFormEvent, шаблон с forms/<имя обработки>/).
+	known := make(map[string]string) // нижний регистр → оригинальное имя
 	for _, ent := range proj.Entities {
 		if ent == nil || ent.Name == "" {
 			continue
 		}
 		known[strings.ToLower(ent.Name)] = ent.Name
+	}
+	for _, pr := range proj.Processors {
+		if pr == nil || pr.Name == "" {
+			continue
+		}
+		known[strings.ToLower(pr.Name)] = pr.Name
 	}
 
 	var warns []Issue

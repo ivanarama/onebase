@@ -63,6 +63,10 @@ type formEventResponse struct {
 	// сформированный обработчиком НачалоВыбора (билтин ДобавитьЗначениеСписка).
 	// Клиент заполняет им <select> того элемента, что инициировал событие.
 	ChoiceList []choiceListItem `json:"choiceList,omitempty"`
+	// RefOptions — <option> для ссылочных значений из Values: <select> рисуется
+	// первой страницей справочника, и присвоенная обработчиком ссылка за её
+	// пределами иначе молча обнуляла бы поле (#615, см. eventRefOptions).
+	RefOptions map[string][]map[string]any `json:"refOptions,omitempty"`
 }
 
 // handleManagedFormEvent — единая точка обработки событий managed-форм.
@@ -299,37 +303,23 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		s.refreshTablePartsWrittenByHandler(liveCtx, entity, obj, tpBefore, tpDBBefore)
 	}
 	if runErr != nil {
-		values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs)
-		respondJSON(enc, formEventResponse{
-			OK:             false,
-			Values:         values,
-			TableParts:     tableParts,
-			FormTables:     formTables,
-			ConditionalCSS: conditionalCSS,
-			Messages:       outMsgs,
-			Error:          interpreter.FormatUserError(runErr),
-			PickerData:     picker,
-			// Обработчик мог записать форму и упасть уже после этого: id всё
-			// равно нужен клиенту, иначе повтор действия создаст второй документ.
-			SavedID: savedFormID(thisObj),
-			Version: s.versionWrittenByHandler(liveCtx, entity, obj, thisObj),
-		})
+		resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(false)
+		resp.Error = interpreter.FormatUserError(runErr)
+		resp.PickerData = picker
+		// Обработчик мог записать форму и упасть уже после этого: id всё равно
+		// нужен клиенту, иначе повтор действия создаст второй документ.
+		resp.SavedID = savedFormID(thisObj)
+		resp.Version = s.versionWrittenByHandler(liveCtx, entity, obj, thisObj)
+		respondJSON(enc, resp)
 		return
 	}
 
-	values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs)
-	respondJSON(enc, formEventResponse{
-		OK:             true,
-		Values:         values,
-		TableParts:     tableParts,
-		Messages:       outMsgs,
-		FormTables:     formTables,
-		ConditionalCSS: conditionalCSS,
-		PickerData:     picker,
-		ChoiceList:     choiceItems,
-		SavedID:        savedFormID(thisObj),
-		Version:        s.versionWrittenByHandler(liveCtx, entity, obj, thisObj),
-	})
+	resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(true)
+	resp.PickerData = picker
+	resp.ChoiceList = choiceItems
+	resp.SavedID = savedFormID(thisObj)
+	resp.Version = s.versionWrittenByHandler(liveCtx, entity, obj, thisObj)
+	respondJSON(enc, resp)
 }
 
 // savedFormID возвращает id записи, если обработчик сохранил ЕЩЁ НЕ записанную
@@ -342,10 +332,38 @@ func savedFormID(this *formObjectThis) string {
 	return this.obj.ID.String()
 }
 
-func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) (map[string]any, map[string][]map[string]any, map[string][]map[string]any, string, []string) {
+// formEventState — сериализованное состояние формы для ответа события.
+//
+// Возвращается одной структурой, а не набором значений, ради RefOptions: их
+// собирает сама сериализация, и ни один из четырёх ответов не может их забыть.
+// Прежняя россыпь возвратов и была бы ровно тем механизмом отказа, который
+// разбирает #615, — инвариант, применённый в N−1 месте из N.
+type formEventState struct {
+	Values         map[string]any
+	TableParts     map[string][]map[string]any
+	FormTables     map[string][]map[string]any
+	RefOptions     map[string][]map[string]any
+	ConditionalCSS string
+	Messages       []string
+}
+
+// response — единственное место, где состояние переносится в ответ.
+func (st formEventState) response(ok bool) formEventResponse {
+	return formEventResponse{
+		OK:             ok,
+		Values:         st.Values,
+		TableParts:     st.TableParts,
+		FormTables:     st.FormTables,
+		RefOptions:     st.RefOptions,
+		ConditionalCSS: st.ConditionalCSS,
+		Messages:       st.Messages,
+	}
+}
+
+func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) formEventState {
 	conditionalCSS := formConditionalRulesCSS(rules)
 	if obj == nil {
-		return nil, nil, nil, conditionalCSS, msgs
+		return formEventState{ConditionalCSS: conditionalCSS, Messages: msgs}
 	}
 	fields := serializeFieldsForEntity(obj.Fields, entity)
 	// Маска накладывается ЗДЕСЬ, на пути к клиенту, а не при чтении из БД
@@ -373,7 +391,14 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 			msgs = append(msgs, warnings...)
 		}
 	}
-	return values, tableParts, formTablesFromRows(tableParts, form), conditionalCSS, msgs
+	return formEventState{
+		Values:         values,
+		TableParts:     tableParts,
+		FormTables:     formTablesFromRows(tableParts, form),
+		RefOptions:     s.eventRefOptions(ctx, form, entity, values),
+		ConditionalCSS: conditionalCSS,
+		Messages:       msgs,
+	}
 }
 
 // selectedTPRows читает _tp (имя ТЧ) и _tp_selected (CSV индексов отмеченных
@@ -893,30 +918,16 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 				}
 
 				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-					values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs)
-					respondJSON(enc, formEventResponse{
-						OK:             false,
-						Values:         values,
-						TableParts:     tableParts,
-						FormTables:     formTables,
-						ConditionalCSS: conditionalCSS,
-						Messages:       outMsgs,
-						Error:          interpreter.FormatUserError(runErr),
-						PickerData:     picker,
-					})
+					resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
+					resp.Error = interpreter.FormatUserError(runErr)
+					resp.PickerData = picker
+					respondJSON(enc, resp)
 					return
 				}
 
-				values, tableParts, formTables, conditionalCSS, outMsgs := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs)
-				respondJSON(enc, formEventResponse{
-					OK:             true,
-					Values:         values,
-					TableParts:     tableParts,
-					FormTables:     formTables,
-					ConditionalCSS: conditionalCSS,
-					Messages:       outMsgs,
-					PickerData:     picker,
-				})
+				resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+				resp.PickerData = picker
+				respondJSON(enc, resp)
 				return
 			}
 		}

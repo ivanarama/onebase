@@ -37,21 +37,67 @@ type oidcState struct {
 	expires   time.Time
 }
 
+// Начатые входы копятся в памяти процесса на всё время жизни state, а начать
+// вход может кто угодно: GET /auth/oidc/<id>/start не требует аутентификации.
+// Без ограничений это неаутентифицированное исчерпание памяти — карта росла
+// неограниченно, а чистка обходила её ЦЕЛИКОМ на каждой вставке под общим
+// мьютексом, то есть деградировала квадратично (#615).
+const (
+	// maxOIDCStates — потолок числа начатых входов. При достижении вытесняется
+	// самый старый: заблокировать вход всем на 15 минут хуже, чем потерять один
+	// начатый вход, который к тому же всегда можно начать заново.
+	maxOIDCStates = 10000
+	// maxOIDCReturnURL — предел длины адреса возврата. Он приходит из query и
+	// раньше ограничивался только размером заголовков (1 МиБ), то есть один
+	// запрос удерживал мегабайт на 15 минут. Разумный адрес в тысячи раз короче.
+	maxOIDCReturnURL = 2048
+	// oidcSweepInterval — как часто вычищать протухшие. Чаще незачем: TTL
+	// измеряется минутами, а обход карты стоит тем дороже, чем она больше.
+	oidcSweepInterval = 30 * time.Second
+)
+
 var (
-	oidcStatesMu sync.Mutex
-	oidcStates   = map[string]*oidcState{}
+	oidcStatesMu    sync.Mutex
+	oidcStates      = map[string]*oidcState{}
+	oidcLastSweep   time.Time
+	oidcStatesDrops int // вытеснено под давлением — видно в журнале
 )
 
 func putOIDCState(state string, s *oidcState) {
 	oidcStatesMu.Lock()
 	defer oidcStatesMu.Unlock()
 	now := time.Now()
-	for k, v := range oidcStates {
-		if now.After(v.expires) {
-			delete(oidcStates, k)
+	if now.Sub(oidcLastSweep) >= oidcSweepInterval || len(oidcStates) >= maxOIDCStates {
+		for k, v := range oidcStates {
+			if now.After(v.expires) {
+				delete(oidcStates, k)
+			}
 		}
+		oidcLastSweep = now
+	}
+	// Чистка могла ничего не освободить: все записи свежие. Тогда вытесняем
+	// самые старые, иначе потолок не соблюдается.
+	for len(oidcStates) >= maxOIDCStates {
+		oldestKey, oldest := "", time.Time{}
+		for k, v := range oidcStates {
+			if oldest.IsZero() || v.expires.Before(oldest) {
+				oldestKey, oldest = k, v.expires
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(oidcStates, oldestKey)
+		oidcStatesDrops++
 	}
 	oidcStates[state] = s
+}
+
+// oidcStateCount — размер карты начатых входов (для тестов и диагностики).
+func oidcStateCount() int {
+	oidcStatesMu.Lock()
+	defer oidcStatesMu.Unlock()
+	return len(oidcStates)
 }
 
 // takeOIDCState забирает состояние: одноразово, как и код авторизации.
@@ -142,7 +188,9 @@ func (h *Handlers) OIDCStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	returnURL := r.URL.Query().Get("return")
-	if returnURL == "" || !isLocalURL(returnURL) {
+	// Длину режем ДО проверки локальности: неразумно длинный адрес возврата —
+	// не вход пользователя, а способ удержать память процесса (#615).
+	if returnURL == "" || len(returnURL) > maxOIDCReturnURL || !isLocalURL(returnURL) {
 		returnURL = "/ui"
 	}
 	putOIDCState(state, &oidcState{
