@@ -34,13 +34,16 @@ func TestRefDeleteOnString_RaisesWithHint(t *testing.T) {
 	assert.ErrorContains(t, err, "НайтиПоИдентификатору")
 }
 
-// Граница правки: прочие методы у строки ведут себя как прежде (Неопределено,
-// без ошибки) — диагностика добавлена только «ссылочным» методам, чтобы не
-// менять поведение работающих конфигураций.
-func TestOtherMethodOnString_Unchanged(t *testing.T) {
+// После #718 любой неизвестный метод у строки является ошибкой. Специальная
+// подсказка этого PR применяется только к ссылочным методам; остальные должны
+// сохранить общую диагностику типа, а не советовать НайтиПоИдентификатору.
+func TestOtherMethodOnString_UsesGeneralUnknownMethodError(t *testing.T) {
 	src := `Процедура Тест()
 		с = "текст";
 		р = с.НеизвестныйМетод();
 	КонецПроцедуры`
-	assert.NoError(t, runProcErr(t, src))
+	err := runProcErr(t, src)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "не существует у значения типа Строка")
+	assert.NotContains(t, err.Error(), "НайтиПоИдентификатору")
 }
