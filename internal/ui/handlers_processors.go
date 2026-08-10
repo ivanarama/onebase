@@ -175,7 +175,12 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
-	paramValues, err := processorParamValuesFromRequest(r, proc.Params, maxSize)
+	paramValues, err := processorParamValuesFromRequest(
+		r,
+		proc.Params,
+		maxSize,
+		processorRequestControlsForForm(proc.Params, proc.ManagedForm()),
+	)
 	if err != nil {
 		opStatus = "error"
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
@@ -302,17 +307,110 @@ func decodeUploadText(data []byte) string {
 	return string(decoded)
 }
 
-const processorParamPresencePrefix = "_ob_present_"
+const (
+	processorParamPresencePrefix = "_ob_present_"
+	processorFileContentPrefix   = "_fc_"
+)
 
-func processorParamPresenceName(name string) string {
-	return processorParamPresencePrefix + name
+func processorParamPresenceName(params []processorpkg.Param, name string) string {
+	return processorAuxiliaryParamName(params, processorParamPresencePrefix, name)
+}
+
+func processorFileContentName(params []processorpkg.Param, name string) string {
+	return processorAuxiliaryParamName(params, processorFileContentPrefix, name)
+}
+
+// processorAuxiliaryParamName сохраняет привычное имя helper-поля, пока оно
+// не совпадает с легальным параметром обработки. При совпадении выбирается
+// ближайшее свободное имя: namespace параметров не резервируется, а сервер и
+// шаблон получают один и тот же детерминированный результат.
+func processorAuxiliaryParamName(params []processorpkg.Param, prefix, name string) string {
+	declared := make(map[string]bool, len(params))
+	for _, p := range params {
+		declared[strings.ToLower(p.Name)] = true
+	}
+	aux := prefix + name
+	for declared[strings.ToLower(aux)] {
+		aux += "_"
+	}
+	return aux
+}
+
+// processorRequestControls описывает служебные поля, которые действительно
+// отрисованы текущей формой обработки. Префиксы _ob_present_ и _fc_ сами по
+// себе ничего не доказывают: такие имена разрешены у обычных параметров.
+type processorRequestControls struct {
+	boolPresence map[string][]string
+	fileContent  map[string][]string
+}
+
+// processorRequestControlsForForm строит allow-list служебных полей по форме,
+// которую сервер только что отдал пользователю. nil означает legacy-форму:
+// она рисует checkbox-marker для каждого bool-параметра и настоящий multipart
+// input для file-параметра (без _fc_ textarea).
+func processorRequestControlsForForm(params []processorpkg.Param, form *metadata.FormModule) processorRequestControls {
+	controls := processorRequestControls{
+		boolPresence: make(map[string][]string),
+		fileContent:  make(map[string][]string),
+	}
+	if form == nil {
+		for _, p := range params {
+			if p.Type == "bool" {
+				key := strings.ToLower(p.Name)
+				controls.boolPresence[key] = append(controls.boolPresence[key], processorParamPresenceName(params, p.Name))
+			}
+		}
+		return controls
+	}
+
+	paramsByName := make(map[string]processorpkg.Param, len(params))
+	for _, p := range params {
+		paramsByName[strings.ToLower(p.Name)] = p
+	}
+	form.Walk(func(el *metadata.FormElement) bool {
+		if el == nil || el.ReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 {
+			return true
+		}
+		fieldName := dpFieldName(el.DataPath)
+		p, ok := paramsByName[strings.ToLower(fieldName)]
+		if !ok {
+			return true
+		}
+		paramKey := strings.ToLower(p.Name)
+		switch {
+		case p.Type == "bool" && el.Kind == metadata.FormElementCheckbox:
+			controls.boolPresence[paramKey] = appendUniqueProcessorControl(
+				controls.boolPresence[paramKey], processorParamPresenceName(params, fieldName),
+			)
+		case p.Type == "file" && el.Kind == metadata.FormElementField && strings.EqualFold(el.Type, "file"):
+			controls.fileContent[paramKey] = appendUniqueProcessorControl(
+				controls.fileContent[paramKey], processorFileContentName(params, fieldName),
+			)
+		}
+		return true
+	})
+	return controls
+}
+
+func appendUniqueProcessorControl(names []string, name string) []string {
+	for _, existing := range names {
+		if existing == name {
+			return names
+		}
+	}
+	return append(names, name)
 }
 
 // processorParamValuesFromRequest извлекает только реально переданные поля.
 // Отсутствующий metadata-параметр не попадает в map и потому не затирает
 // DSL-default при BindNamedArgs; явно переданное пустое значение остаётся
 // полноценным значением (parseParamValue может представить его как nil).
-func processorParamValuesFromRequest(r *http.Request, params []processorpkg.Param, maxFileSize int64) (map[string]any, error) {
+func processorParamValuesFromRequest(
+	r *http.Request,
+	params []processorpkg.Param,
+	maxFileSize int64,
+	controls processorRequestControls,
+) (map[string]any, error) {
 	values := make(map[string]any)
 	for _, p := range params {
 		if p.Type == "file" {
@@ -340,9 +438,9 @@ func processorParamValuesFromRequest(r *http.Request, params []processorpkg.Para
 			// переносит его содержимое в поле <name>, но принимаем оба варианта:
 			// это сохраняет прямой urlencoded-контракт и не путает содержимое с
 			// текстовым полем пути, если клиент прислал оба.
-			text, present := processorFormText(r, "_fc_"+p.Name)
+			text, present := processorControlText(r, controls.fileContent[strings.ToLower(p.Name)])
 			if !present {
-				text, present = processorFormText(r, p.Name)
+				text, present = processorPostFormText(r, p.Name)
 			}
 			if !present {
 				continue
@@ -354,14 +452,14 @@ func processorParamValuesFromRequest(r *http.Request, params []processorpkg.Para
 			continue
 		}
 
-		text, present := processorFormText(r, p.Name)
+		text, present := processorPostFormText(r, p.Name)
 		if !present {
 			// HTML не отправляет unchecked checkbox. Presence-marker рисуется
 			// только рядом с реально существующим bool-контролом, поэтому marker
 			// означает явное false, а полное отсутствие custom-параметра оставляет
 			// DSL-default нетронутым.
 			if p.Type == "bool" {
-				if _, rendered := r.Form[processorParamPresenceName(p.Name)]; rendered {
+				if _, rendered := processorControlText(r, controls.boolPresence[strings.ToLower(p.Name)]); rendered {
 					values[p.Name] = false
 				}
 			}
@@ -372,8 +470,11 @@ func processorParamValuesFromRequest(r *http.Request, params []processorpkg.Para
 	return values, nil
 }
 
-func processorFormText(r *http.Request, name string) (string, bool) {
-	raw, present := r.Form[name]
+// processorPostFormText читает только тело запроса. r.Form объединяет body с
+// query string, поэтому через него ?_fc_X=... или ?_ob_present_X=... мог бы
+// подделать состояние формы.
+func processorPostFormText(r *http.Request, name string) (string, bool) {
+	raw, present := r.PostForm[name]
 	if !present {
 		return "", false
 	}
@@ -381,6 +482,15 @@ func processorFormText(r *http.Request, name string) (string, bool) {
 		return "", true
 	}
 	return raw[0], true
+}
+
+func processorControlText(r *http.Request, allowed []string) (string, bool) {
+	for _, name := range allowed {
+		if text, present := processorPostFormText(r, name); present {
+			return text, true
+		}
+	}
+	return "", false
 }
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,

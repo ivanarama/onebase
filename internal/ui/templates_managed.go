@@ -136,9 +136,11 @@ const tplManagedForm = `
       {{else if eq (str $el.Type) "file"}}
         <div style="display:flex;gap:6px;align-items:center">
           <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>
-          <textarea name="_fc_{{$fn}}" id="file-content-{{$fn}}" style="display:none"></textarea>
+          {{if not $el.ReadOnly}}
+          <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$fn}}" data-ob-file-content-for="{{$fn}}" style="display:none"></textarea>
           <input type="file" id="file-pick-{{$fn}}" style="display:none" data-ob-file-pick-path="file-path-{{$fn}}" data-ob-file-pick-content="file-content-{{$fn}}">
           <button type="button" data-ob-file-trigger="file-pick-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
+          {{end}}
         </div>
       {{else if $el.Multiline}}
         <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
@@ -148,10 +150,12 @@ const tplManagedForm = `
     {{else if eq (str $el.Type) "file"}}
       {{/* Поле не найдено в Entity, но элемент объявлен как file */}}
       <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}>
-        <textarea name="_fc_{{$fn}}" id="file-content-{{$fn}}" style="display:none"></textarea>
+        <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>
+        {{if not $el.ReadOnly}}
+        <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$fn}}" data-ob-file-content-for="{{$fn}}" style="display:none"></textarea>
         <input type="file" id="file-pick-{{$fn}}" style="display:none" data-ob-file-pick-path="file-path-{{$fn}}" data-ob-file-pick-content="file-content-{{$fn}}">
         <button type="button" data-ob-file-trigger="file-pick-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
+        {{end}}
       </div>
     {{else}}
       {{$attr := attrByName $ctx.Form $fn}}
@@ -212,7 +216,7 @@ const tplManagedForm = `
     {{/* ПриИзменении у флажка работает так же, как у остальных полей: без
          data-ob-fire-change обработчик «поставил галку → выполнилось действие»
          молча не вызывался. */}}
-    {{if not $el.ReadOnly}}<input type="hidden" name="_ob_present_{{$fn}}" value="1">{{end}}
+    {{if not $el.ReadOnly}}<input type="hidden" name="{{if $ctx.IsProcessor}}{{processorParamPresenceName $ctx.Processor $fn}}{{else}}_ob_present_{{$fn}}{{end}}" value="1">{{end}}
     <input type="checkbox" id="cb-{{$fn}}" name="{{$fn}}" value="true"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
       {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}</label>

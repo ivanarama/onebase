@@ -866,7 +866,12 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
 		return
 	}
-	paramValues, err := processorParamValuesFromRequest(r, proc.Params, maxSize)
+	paramValues, err := processorParamValuesFromRequest(
+		r,
+		proc.Params,
+		maxSize,
+		processorRequestControlsForForm(proc.Params, form),
+	)
 	if err != nil {
 		opStatus = "error"
 		w.WriteHeader(uploadErrorStatus(err))

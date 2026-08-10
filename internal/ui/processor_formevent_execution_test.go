@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"mime/multipart"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
@@ -50,8 +52,23 @@ func newProcessorFormEventExecutionServer(t *testing.T, proc *processor.Processo
 }
 
 func postProcessorFormEventExecution(t *testing.T, srv *Server, procName, contentType string, body io.Reader) *httptest.ResponseRecorder {
+	return postProcessorFormEventExecutionWithQuery(t, srv, procName, nil, contentType, body)
+}
+
+func postProcessorFormEventExecutionWithQuery(
+	t *testing.T,
+	srv *Server,
+	procName string,
+	query url.Values,
+	contentType string,
+	body io.Reader,
+) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest("POST", "/ui/processor/"+procName+"/form-event", body)
+	target := "/ui/processor/" + procName + "/form-event"
+	if len(query) != 0 {
+		target += "?" + query.Encode()
+	}
+	req := httptest.NewRequest("POST", target, body)
 	req.Header.Set("Content-Type", contentType)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("name", procName)
@@ -78,7 +95,13 @@ func processorClickBody(elementName string) url.Values {
 }
 
 func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) {
-	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"})
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеДанные",
+			DataPath: "Объект.Данные", Type: "file",
+		},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
 	proc := &processor.Processor{
 		Name:   "ФайловаяОбр",
 		Params: []processor.Param{{Name: "Данные", Type: "file"}},
@@ -111,6 +134,55 @@ func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) 
 				t.Fatalf("file parameter not passed: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
 			}
 		})
+	}
+}
+
+func TestHandleProcessorFormEvent_ReadsMultipartFile(t *testing.T) {
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеДанные",
+			DataPath: "Объект.Данные", Type: "file",
+		},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
+	proc := &processor.Processor{
+		Name:   "MultipartФайловаяОбр",
+		Params: []processor.Param{{Name: "Данные", Type: "file"}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Данные)
+	Сообщить(Данные);
+КонецПроцедуры
+	`)
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("_element", "Запустить"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("_event", string(metadata.FormEventOnClick)); err != nil {
+		t.Fatal(err)
+	}
+	file, err := writer.CreateFormFile("Данные", "данные.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("multipart-содержимое")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postProcessorFormEventExecution(t, srv, proc.Name, writer.FormDataContentType(), &body)
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK || len(resp.Messages) != 1 || resp.Messages[0] != "multipart-содержимое" {
+		t.Fatalf("multipart file parameter not passed: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
 	}
 }
 
@@ -158,6 +230,219 @@ func TestHandleProcessorFormEvent_UncheckedBoolDiffersFromAbsentParam(t *testing
 				t.Fatalf("bool presence mismatch: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
 			}
 		})
+	}
+}
+
+func TestHandleProcessorFormEvent_HelperPrefixesRemainLegalCustomParams(t *testing.T) {
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеЛегальныйМаркер",
+			DataPath: "Объект._ob_present_Flag",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеЛегальныйФайл",
+			DataPath: "Объект._fc_Data",
+		},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
+	proc := &processor.Processor{
+		Name: "ЛегальныеПрефиксыОбр",
+		Params: []processor.Param{
+			{Name: "Flag", Type: "bool"},
+			{Name: "Data", Type: "file"},
+			{Name: "_ob_present_Flag", Type: "string"},
+			{Name: "_fc_Data", Type: "string"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Flag = Истина, Data = "file-default", _ob_present_Flag = "", _fc_Data = "")
+	Если Flag Тогда
+		Сообщить("true");
+	Иначе
+		Сообщить("false");
+	КонецЕсли;
+	Сообщить(Data);
+	Сообщить(_ob_present_Flag);
+	Сообщить(_fc_Data);
+КонецПроцедуры
+`)
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+	body := processorClickBody("Запустить")
+	body.Set("_ob_present_Flag", "legal-marker-value")
+	body.Set("_fc_Data", "legal-file-value")
+
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := []string{"true", "file-default", "legal-marker-value", "legal-file-value"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("helper-shaped custom params corrupted values: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
+func TestHandleProcessorFormEvent_HelperNamesAvoidDeclaredParamCollisions(t *testing.T) {
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementCheckbox, Name: "ПолеFlag",
+			DataPath: "Объект.Flag",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеData",
+			DataPath: "Объект.Data", Type: "file",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеЛегальныйМаркер",
+			DataPath: "Объект._ob_present_Flag",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеЛегальныйФайл",
+			DataPath: "Объект._fc_Data",
+		},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
+	proc := &processor.Processor{
+		Name: "КоллизииПрефиксовОбр",
+		Params: []processor.Param{
+			{Name: "Flag", Type: "bool"},
+			{Name: "Data", Type: "file"},
+			{Name: "_ob_present_Flag", Type: "string"},
+			{Name: "_fc_Data", Type: "string"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Flag = Истина, Data = "file-default", _ob_present_Flag = "", _fc_Data = "")
+	Если Flag Тогда
+		Сообщить("true");
+	Иначе
+		Сообщить("false");
+	КонецЕсли;
+	Сообщить(Data);
+	Сообщить(_ob_present_Flag);
+	Сообщить(_fc_Data);
+КонецПроцедуры
+`)
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+	body := processorClickBody("Запустить")
+	boolHelper := processorParamPresenceName(proc.Params, "Flag")
+	fileHelper := processorFileContentName(proc.Params, "Data")
+	if boolHelper == "_ob_present_Flag" || fileHelper == "_fc_Data" {
+		t.Fatalf("helper names still collide: bool=%q file=%q", boolHelper, fileHelper)
+	}
+	body.Set(boolHelper, "1")
+	body.Set(fileHelper, "actual-file-content")
+	body.Set("_ob_present_Flag", "legal-marker-value")
+	body.Set("_fc_Data", "legal-file-value")
+
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := []string{"false", "actual-file-content", "legal-marker-value", "legal-file-value"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("collision-safe helpers corrupted values: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
+func TestHandleProcessorFormEvent_QueryCannotInjectHelpers(t *testing.T) {
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementCheckbox, Name: "ПолеFlag",
+			DataPath: "Объект.Flag",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеData",
+			DataPath: "Объект.Data", Type: "file",
+		},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
+	proc := &processor.Processor{
+		Name: "QueryHelpersОбр",
+		Params: []processor.Param{
+			{Name: "Flag", Type: "bool"},
+			{Name: "Data", Type: "file"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Flag = Истина, Data = "file-default")
+	Если Flag Тогда
+		Сообщить("true");
+	Иначе
+		Сообщить("false");
+	КонецЕсли;
+	Сообщить(Data);
+КонецПроцедуры
+`)
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+	body := processorClickBody("Запустить")
+	query := url.Values{
+		"_ob_present_Flag": {"1"},
+		"_fc_Data":         {"query-file-content"},
+	}
+
+	rec := postProcessorFormEventExecutionWithQuery(t, srv, proc.Name, query,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := []string{"true", "file-default"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("query injected helper fields: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
+func TestHandleProcessorFormEvent_RejectsHelpersForReadOnlyControls(t *testing.T) {
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementCheckbox, Name: "ПолеFlag",
+			DataPath: "Объект.Flag", ReadOnly: true,
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеData",
+			DataPath: "Объект.Data", Type: "file", ReadOnly: true,
+		},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
+	proc := &processor.Processor{
+		Name: "ReadOnlyHelpersОбр",
+		Params: []processor.Param{
+			{Name: "Flag", Type: "bool"},
+			{Name: "Data", Type: "file"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Flag = Истина, Data = "file-default")
+	Если Flag Тогда
+		Сообщить("true");
+	Иначе
+		Сообщить("false");
+	КонецЕсли;
+	Сообщить(Data);
+КонецПроцедуры
+`)
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+	body := processorClickBody("Запустить")
+	body.Set("_ob_present_Flag", "1")
+	body.Set("_fc_Data", "forged-file-content")
+
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := []string{"true", "file-default"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("read-only helpers changed values: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
 	}
 }
 

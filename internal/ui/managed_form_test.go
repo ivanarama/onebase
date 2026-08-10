@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/processor"
 )
 
 // pickManagedForm должен возвращать nil, если у сущности только legacy формы
@@ -234,6 +235,105 @@ func TestPageManagedForm_ReadOnlyRefDisablesPickerActions(t *testing.T) {
 	}
 	if strings.Contains(empty, "— выбрать —") {
 		t.Errorf("readonly-поле не должно предлагать «— выбрать —»:\n%s", empty)
+	}
+}
+
+func TestPageManagedForm_ReadOnlyFileHasNoEditableHelper(t *testing.T) {
+	el := &metadata.FormElement{
+		Kind:     metadata.FormElementField,
+		Name:     "ПолеФайл",
+		DataPath: "Объект.Файл",
+		Type:     "file",
+		ReadOnly: true,
+	}
+	ctx := map[string]any{
+		"Entity": &metadata.Entity{
+			Name: "Файлы",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{
+				Name: "Файл",
+				Type: metadata.FieldTypeString,
+			}},
+		},
+		"Values":      map[string]string{"Файл": "данные.txt"},
+		"RefOptions":  map[string]any{},
+		"EnumOptions": map[string]any{},
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
+		t.Fatalf("execute managed-element: %v", err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `name="Файл"`) || !strings.Contains(html, " readonly") {
+		t.Fatalf("read-only file path is missing or editable:\n%s", html)
+	}
+	for _, forbidden := range []string{`name="_fc_Файл"`, `data-ob-file-trigger=`, `type="file"`} {
+		if strings.Contains(html, forbidden) {
+			t.Errorf("read-only file renders editable helper %q:\n%s", forbidden, html)
+		}
+	}
+}
+
+func TestPageManagedForm_ProcessorHelperNamesAvoidParamCollisions(t *testing.T) {
+	proc := &processor.Processor{
+		Name: "Коллизии",
+		Params: []processor.Param{
+			{Name: "Flag", Type: "bool"},
+			{Name: "Data", Type: "file"},
+			{Name: "_ob_present_Flag", Type: "string"},
+			{Name: "_fc_Data", Type: "string"},
+		},
+	}
+	ctx := map[string]any{
+		"Entity":      processorVirtualEntity(proc),
+		"Values":      map[string]string{},
+		"RefOptions":  map[string]any{},
+		"EnumOptions": map[string]any{},
+		"IsProcessor": true,
+		"Processor":   proc,
+	}
+	render := func(el *metadata.FormElement) string {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
+			t.Fatalf("execute managed-element: %v", err)
+		}
+		return buf.String()
+	}
+
+	checkboxHTML := render(&metadata.FormElement{
+		Kind: metadata.FormElementCheckbox, Name: "ПолеFlag", DataPath: "Объект.Flag",
+	})
+	boolHelper := processorParamPresenceName(proc.Params, "Flag")
+	if !strings.Contains(checkboxHTML, `name="`+boolHelper+`"`) || strings.Contains(checkboxHTML, `name="_ob_present_Flag"`) {
+		t.Fatalf("processor checkbox helper is not collision-safe:\n%s", checkboxHTML)
+	}
+
+	fileHTML := render(&metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеData", DataPath: "Объект.Data", Type: "file",
+	})
+	fileHelper := processorFileContentName(proc.Params, "Data")
+	if !strings.Contains(fileHTML, `name="`+fileHelper+`"`) || strings.Contains(fileHTML, `name="_fc_Data"`) {
+		t.Fatalf("processor file helper is not collision-safe:\n%s", fileHTML)
+	}
+	if !strings.Contains(fileHTML, `data-ob-file-content-for="Data"`) {
+		t.Fatalf("processor file helper lacks control identity:\n%s", fileHTML)
+	}
+}
+
+func TestManagedRuntime_FileHelpersUseRenderedControlIdentity(t *testing.T) {
+	js := string(managedJS)
+	for _, want := range []string{
+		`[data-ob-file-content-for]`,
+		`data-ob-file-content-for="`,
+		`fileHelpers.forEach`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("managed runtime is missing %q", want)
+		}
+	}
+	if strings.Contains(js, "k.startsWith('_fc_')") {
+		t.Error("managed runtime still reserves every _fc_ parameter name")
 	}
 }
 

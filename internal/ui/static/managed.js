@@ -146,7 +146,7 @@ function obManagedReady(fn) {
     Object.keys(values).forEach(function(k){
       const v = values[k];
       // Пропускаем файловые поля: не подставляем содержимое в поле пути
-      const fc = form.querySelector('[name="_fc_' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
+      const fc = form.querySelector('[data-ob-file-content-for="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
       if (fc) return;
       const inp = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
       if (!inp) return;
@@ -430,17 +430,26 @@ function obManagedReady(fn) {
     if (window.obGridSync && window.obGridSync() === false) return;
     const form = document.getElementById('main-form');
     if (!form) return;
-    const fd = new FormData(form);
-    fd.set('_element', elementName || '');
-    fd.set('_event', eventName || '');
-    fd.set('_kind', 'object');
-    if (DOC_ID) fd.set('_id', DOC_ID);
     const body = new URLSearchParams();
-    fd.forEach((v, k) => {
-      if (k.startsWith('_fc_')) return; // skip file-content helper fields
+    const fileHelpers = Array.prototype.slice.call(form.querySelectorAll('[data-ob-file-content-for]'));
+    const fileHelperDisabled = fileHelpers.map(function(el){ return el.disabled; });
+    let eventFD;
+    try {
+      fileHelpers.forEach(function(el){ el.disabled = true; });
+      eventFD = new FormData(form);
+    } finally {
+      fileHelpers.forEach(function(el, i){ el.disabled = fileHelperDisabled[i]; });
+    }
+    eventFD.set('_element', elementName || '');
+    eventFD.set('_event', eventName || '');
+    eventFD.set('_kind', 'object');
+    if (DOC_ID) eventFD.set('_id', DOC_ID);
+    eventFD.forEach((v, k) => {
       if (typeof v !== 'string') { body.append(k, ''); return; }
-      // If a _fc_ counterpart exists with content, prefer it over the path
-      const fcEl = form.querySelector('[name="_fc_' + k + '"]');
+      // If the rendered file helper has content, prefer it over the path.
+      // The data attribute identifies the actual control without reserving
+      // all legal parameter names beginning with _fc_.
+      const fcEl = form.querySelector('[data-ob-file-content-for="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
       if (fcEl && fcEl.value) { body.append(k, fcEl.value); }
       else { body.append(k, v); }
     });
