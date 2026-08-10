@@ -24,7 +24,7 @@ geomean,141.42135623730945,,141.42135623730945,,+0.00%,
 `
 
 func TestParseFindsSignificantRegression(t *testing.T) {
-	regs, err := parse(strings.NewReader(sampleCSV), "sec/op", 25)
+	regs, _, err := parse(strings.NewReader(sampleCSV), "sec/op", 25)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestParseFindsSignificantRegression(t *testing.T) {
 // Незначимое изменение («~») гейт обязан игнорировать, иначе шум раннера
 // будет ронять каждый второй PR.
 func TestParseIgnoresInsignificant(t *testing.T) {
-	regs, err := parse(strings.NewReader(sampleCSV), "sec/op", 0.0001)
+	regs, _, err := parse(strings.NewReader(sampleCSV), "sec/op", 0.0001)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestParseIgnoresInsignificant(t *testing.T) {
 // geomean — агрегат, а не бенчмарк: он просел на 22.57%, но при пороге 20%
 // ронять сборку из-за него нельзя.
 func TestParseIgnoresGeomean(t *testing.T) {
-	regs, err := parse(strings.NewReader(sampleCSV), "sec/op", 20)
+	regs, _, err := parse(strings.NewReader(sampleCSV), "sec/op", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestParseIgnoresGeomean(t *testing.T) {
 
 // Порог выше просадки — гейт молчит.
 func TestParseBelowThreshold(t *testing.T) {
-	regs, err := parse(strings.NewReader(sampleCSV), "sec/op", 60)
+	regs, _, err := parse(strings.NewReader(sampleCSV), "sec/op", 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestParseBelowThreshold(t *testing.T) {
 // Секции метрик не должны смешиваться: при metric=B/op берётся просадка
 // памяти, а не времени.
 func TestParseSelectsMetricSection(t *testing.T) {
-	regs, err := parse(strings.NewReader(sampleCSV), "B/op", 25)
+	regs, _, err := parse(strings.NewReader(sampleCSV), "B/op", 25)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,5 +109,51 @@ func TestParsePercent(t *testing.T) {
 		if ok != c.ok || (ok && got != c.want) {
 			t.Errorf("parsePercent(%q) = %v,%v; ожидалось %v,%v", c.in, got, ok, c.want, c.ok)
 		}
+	}
+}
+
+// Реальный случай из issue #683: PR из двух правок markdown получил «+79.86%»
+// при разбросе ±152%. Значимость при таком разбросе достигается легко, но
+// величине верить нельзя — строка обязана попасть в noisy, а не в просадки.
+const noisyCSV = `goos: linux
+goarch: amd64
+pkg: example/x
+,base.txt,,pr.txt,,,
+,sec/op,CI,sec/op,CI,vs base,P
+Upsert_SQLite-4,4.791e-04,37%,8.616e-04,152%,+79.86%,p=0.002 n=6
+RealRegression-4,1.0e-06,3%,5.0e-06,4%,+400.00%,p=0.001 n=6
+geomean,2.1e-05,,6.5e-05,,+209.00%,
+`
+
+func TestParseIgnoresNoisyMeasurement(t *testing.T) {
+	regs, noisy, err := parse(strings.NewReader(noisyCSV), "sec/op", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(noisy) != 1 || noisy[0].name != "Upsert_SQLite-4" {
+		t.Fatalf("шумная строка не отброшена: noisy=%+v", noisy)
+	}
+	if noisy[0].noise < 151 || noisy[0].noise > 153 {
+		t.Errorf("разброс %v, ожидалось ~152", noisy[0].noise)
+	}
+	for _, r := range regs {
+		if r.name == "Upsert_SQLite-4" {
+			t.Errorf("шумная строка засчитана просадкой: %+v", r)
+		}
+	}
+}
+
+// Настоящая просадка при скромном разбросе обязана валить гейт — иначе правка
+// превратила бы его в декорацию.
+func TestParseKeepsRegressionWithLowNoise(t *testing.T) {
+	regs, _, err := parse(strings.NewReader(noisyCSV), "sec/op", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regs) != 1 || regs[0].name != "RealRegression-4" {
+		t.Fatalf("настоящая просадка потеряна: regs=%+v", regs)
+	}
+	if regs[0].noise > 5 {
+		t.Errorf("разброс %v, ожидался небольшой", regs[0].noise)
 	}
 }

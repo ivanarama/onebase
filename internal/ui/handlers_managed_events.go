@@ -788,14 +788,17 @@ func serializeValue(v any) any {
 // Аналог handleManagedFormEvent, но вместо Entity использует виртуальную entity
 // из параметров обработки. Кнопка «Выполнить» запускает proc.os через interp.
 func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
-	s.limitMultipartRequest(w, r)
+	// Один предел, а не два вложенных: пределы не композируются, и прежний
+	// MaxBytesReader на defaultFormMemoryBytes связывал раньше, обрезая
+	// файл-параметр обработки мегабайтом (issue #674). Присваивание r.Body —
+	// здесь, а не в хелпере: иначе gosec (G120) не видит предел.
+	r.Body = http.MaxBytesReader(w, r.Body, s.effectiveUploadLimit()+uiMultipartOverhead)
 	if err := parseBoundedForm(r, 32<<20); err != nil {
 		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: "bad form: " + err.Error()})
+		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
 		return
 	}
 
