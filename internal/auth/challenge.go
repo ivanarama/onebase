@@ -46,6 +46,10 @@ type Challenge struct {
 	// генерируется, пока код не предъявлен. Разрешает привязку либо политика
 	// SelfEnroll2FA, либо вход через SSO (личность подтверждена провайдером).
 	EnrollAuthorized bool
+	// bindCode — код привязки, предъявленный на первом шаге. Наружу не уходит
+	// (поле неэкспортируемое, в шаблоны challenge не передаётся): он нужен,
+	// чтобы погасить билет ПОСЛЕ того, как привязка состоялась.
+	bindCode string
 	// ReturnURL — куда вернуть после успешного входа.
 	ReturnURL string
 	// Configurator: вход в конфигуратор лаунчера, а не в Предприятие.
@@ -137,6 +141,21 @@ func (c *Challenges) Update(token string, fn func(*Challenge)) bool {
 		return false
 	}
 	fn(ch)
+	return true
+}
+
+// Renew сдвигает срок жизни challenge”'а на полный TTL. Нужен на переходе к
+// шагу сканирования QR: этот шаг длиннее предыдущего (поставить приложение,
+// отсканировать код, дождаться следующего окна), а отсчёт шёл от ввода пароля
+// (#615). false — challenge истёк между чтением и правкой.
+func (c *Challenges) Renew(token string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch, ok := c.items[token]
+	if !ok {
+		return false
+	}
+	ch.expires = time.Now().Add(c.ttl)
 	return true
 }
 
