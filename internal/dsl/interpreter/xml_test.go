@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,71 @@ func TestReadXML_AllowsLiteralDocumentWhitespaceAndBOM(t *testing.T) {
 	if got := root.Get(xmlFieldText); got != " " {
 		t.Fatalf("ссылка внутри корня дала Текст = %q, ожидался пробел", got)
 	}
+}
+
+func TestXML_AttributeAndTextBudgets(t *testing.T) {
+	t.Run("read attribute limit", func(t *testing.T) {
+		var doc strings.Builder
+		doc.Grow((maxXMLAttributesPerElement + 1) * 12)
+		doc.WriteString("<r")
+		for i := 0; i <= maxXMLAttributesPerElement; i++ {
+			doc.WriteString(" a")
+			doc.WriteString(strconv.Itoa(i))
+			doc.WriteString(`="v"`)
+		}
+		doc.WriteString("/>")
+		requireXMLUserError(t, "число атрибутов", func() {
+			_, _ = builtinReadXML([]any{doc.String()}, "", 0)
+		})
+	})
+
+	t.Run("write attribute limit", func(t *testing.T) {
+		keys := make([]any, maxXMLAttributesPerElement+1)
+		vals := make([]any, maxXMLAttributesPerElement+1)
+		for i := range keys {
+			keys[i] = "a" + strconv.Itoa(i)
+			vals[i] = "v"
+		}
+		tree := &Struct{vals: map[string]any{}}
+		tree.Set(xmlFieldName, "Корень")
+		tree.Set(xmlFieldAttrs, &Map{keys: keys, vals: vals})
+		requireXMLUserError(t, "число атрибутов", func() {
+			_, _ = builtinWriteXML([]any{tree}, "", 0)
+		})
+	})
+
+	t.Run("read total attribute limit", func(t *testing.T) {
+		var doc strings.Builder
+		doc.Grow(maxXMLAttributesTotal * 12)
+		doc.WriteString("<r>")
+		for element := 0; element <= maxXMLAttributesTotal/maxXMLAttributesPerElement; element++ {
+			doc.WriteString("<n")
+			for i := 0; i < maxXMLAttributesPerElement; i++ {
+				doc.WriteString(" a")
+				doc.WriteString(strconv.Itoa(i))
+				doc.WriteString(`="v"`)
+			}
+			doc.WriteString("/>")
+		}
+		doc.WriteString("</r>")
+		requireXMLUserError(t, "общее число атрибутов", func() {
+			_, _ = builtinReadXML([]any{doc.String()}, "", 0)
+		})
+	})
+
+	t.Run("read document bytes", func(t *testing.T) {
+		doc := "<r>" + strings.Repeat("x", maxXMLDocumentBytes) + "</r>"
+		requireXMLUserError(t, "размер XML", func() {
+			_, _ = builtinReadXML([]any{doc}, "", 0)
+		})
+	})
+
+	t.Run("write text bytes", func(t *testing.T) {
+		text := strings.Repeat("x", maxXMLTextBytes+1)
+		requireXMLUserError(t, "объём текстовых данных", func() {
+			_, _ = builtinWriteXML([]any{text, "Корень"}, "", 0)
+		})
+	})
 }
 
 func TestReadXML_RejectsUnrepresentableContent(t *testing.T) {
@@ -475,8 +541,38 @@ func TestXML_NonFiniteFloatFailsClosed(t *testing.T) {
 	}
 }
 
-// XMLСтрока и XMLЗначение должны быть обратны друг другу — иначе обмен данными
-// молча теряет значения на круге «выгрузил → загрузил».
+func TestXML_DateTimeRFC3339Bounds(t *testing.T) {
+	invalid := []struct {
+		value time.Time
+		want  string
+	}{
+		{time.Date(-1, 1, 1, 0, 0, 0, 0, time.UTC), "0000..9999"},
+		{time.Date(10_000, 1, 1, 0, 0, 0, 0, time.UTC), "0000..9999"},
+		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("+24", 24*60*60)), "меньше 24 часов"},
+		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("-24", -24*60*60)), "меньше 24 часов"},
+		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("odd", 60*60+1)), "кратно минуте"},
+	}
+	for _, tc := range invalid {
+		requireXMLUserError(t, tc.want, func() {
+			_, _ = builtinXMLString([]any{tc.value}, "", 0)
+		})
+		requireXMLUserError(t, tc.want, func() {
+			_, _ = builtinWriteXML([]any{tc.value, "Дата"}, "", 0)
+		})
+	}
+
+	valid := time.Date(0, 1, 1, 0, 0, 0, 0, time.FixedZone("edge", 23*60*60+59*60))
+	got, err := builtinXMLString([]any{valid}, "", 0)
+	if err != nil {
+		t.Fatalf("XMLСтрока: %v", err)
+	}
+	if got != "0000-01-01T00:00:00+23:59" {
+		t.Fatalf("граничная дата = %q", got)
+	}
+}
+
+// В поддерживаемом RFC/XSD-диапазоне XMLСтрока и XMLЗначение должны давать
+// одинаковое лексическое значение на круге «выгрузил → загрузил».
 func TestXMLStringValue_AreInverse(t *testing.T) {
 	for _, c := range []struct {
 		typeName string

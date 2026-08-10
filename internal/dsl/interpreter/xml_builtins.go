@@ -40,8 +40,12 @@ const (
 
 	// Ограничения защищают рекурсивное преобразование в коллекции DSL и обратно
 	// от переполнения стека и документов, создающих чрезмерное число объектов.
-	maxXMLDepth = 256
-	maxXMLNodes = 100_000
+	maxXMLDepth                = 256
+	maxXMLNodes                = 100_000
+	maxXMLAttributesPerElement = 10_000
+	maxXMLAttributesTotal      = 100_000
+	maxXMLDocumentBytes        = 16 << 20
+	maxXMLTextBytes            = 16 << 20
 
 	// Decimal ограничивается до любых операций, способных развернуть exponent
 	// в строку. 10 000 цифр существенно больше прикладных numeric-значений, но
@@ -78,6 +82,9 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	if strings.HasPrefix(decoderInput, "\uFEFF") {
 		decoderInput = strings.TrimPrefix(decoderInput, "\uFEFF")
 	}
+	if len(decoderInput) > maxXMLDocumentBytes {
+		return nil, fmt.Errorf("размер XML превышает предел %d байт", maxXMLDocumentBytes)
+	}
 	dec := xml.NewDecoder(strings.NewReader(decoderInput))
 	dec.Strict = true
 
@@ -89,6 +96,8 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	var root *xmlNode
 	var stack []*frame
 	nodeCount := 0
+	attributeCount := 0
+	textBytes := 0
 	var previousOffset int64
 	for {
 		tok, err := dec.Token()
@@ -119,6 +128,16 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 			if err != nil {
 				return nil, err
 			}
+			if len(t.Attr) > maxXMLAttributesPerElement {
+				return nil, fmt.Errorf("число атрибутов элемента «%s» превышает предел %d", name, maxXMLAttributesPerElement)
+			}
+			if attributeCount > maxXMLAttributesTotal-len(t.Attr) {
+				return nil, fmt.Errorf("общее число атрибутов XML превышает предел %d", maxXMLAttributesTotal)
+			}
+			attributeCount += len(t.Attr)
+			if err := addXMLTextBytes(&textBytes, len(name)); err != nil {
+				return nil, err
+			}
 			node := &xmlNode{Name: name}
 			seenAttrs := make(map[string]struct{}, len(t.Attr))
 			for _, a := range t.Attr {
@@ -131,6 +150,9 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 				}
 				if _, exists := seenAttrs[attrName]; exists {
 					return nil, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", attrName, name)
+				}
+				if err := addXMLTextBytes(&textBytes, len(attrName), len(a.Value)); err != nil {
+					return nil, err
 				}
 				seenAttrs[attrName] = struct{}{}
 				node.Attrs = append(node.Attrs, [2]string{attrName, a.Value})
@@ -180,6 +202,9 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 				}
 				continue
 			}
+			if err := addXMLTextBytes(&textBytes, len(t)); err != nil {
+				return nil, err
+			}
 			stack[len(stack)-1].text.Write([]byte(t))
 		case xml.Comment:
 			return nil, fmt.Errorf("комментарии XML не поддерживаются")
@@ -212,9 +237,13 @@ func xmlNodeToDSL(n *xmlNode) any {
 	s := &Struct{vals: map[string]any{}}
 	s.Set(xmlFieldName, n.Name)
 
-	attrs := &Map{}
-	for _, kv := range n.Attrs {
-		attrs.CallMethod("вставить", []any{kv[0], kv[1]})
+	attrs := &Map{
+		keys: make([]any, len(n.Attrs)),
+		vals: make([]any, len(n.Attrs)),
+	}
+	for i, kv := range n.Attrs {
+		attrs.keys[i] = kv[0]
+		attrs.vals[i] = kv[1]
 	}
 	s.Set(xmlFieldAttrs, attrs)
 	s.Set(xmlFieldText, n.Text)
@@ -255,8 +284,10 @@ func builtinWriteXML(args []any, file string, line int) (any, error) {
 }
 
 type xmlWriter struct {
-	encoder *xml.Encoder
-	nodes   int
+	encoder    *xml.Encoder
+	nodes      int
+	attributes int
+	textBytes  int
 }
 
 // writeValue пишет значение как элемент name. Структура с полем «Имя» всегда
@@ -288,12 +319,15 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 		if x == nil {
 			break
 		}
-		for _, k := range x.Keys() {
+		if len(x.keys) != len(x.vals) {
+			return fmt.Errorf("Соответствие повреждено: число ключей и значений различается")
+		}
+		for i, k := range x.keys {
 			key, ok := k.(string)
 			if !ok {
 				return fmt.Errorf("имя элемента из ключа Соответствия должно быть строкой, получено %T", k)
 			}
-			if err := w.writeValue(key, x.Get(k), depth+1); err != nil {
+			if err := w.writeValue(key, x.vals[i], depth+1); err != nil {
 				return err
 			}
 		}
@@ -314,6 +348,9 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 		if err := validateXMLCharacters(text); err != nil {
 			return fmt.Errorf("текст элемента «%s»: %w", name, err)
 		}
+		if err := addXMLTextBytes(&w.textBytes, len(text)); err != nil {
+			return err
+		}
 		if text != "" {
 			if err := w.encoder.EncodeToken(xml.CharData([]byte(text))); err != nil {
 				return fmt.Errorf("текст элемента «%s»: %w", name, err)
@@ -332,6 +369,9 @@ func (w *xmlWriter) writeNode(n *xmlNode, depth int) error {
 		return err
 	}
 	if n.Text != "" {
+		if err := addXMLTextBytes(&w.textBytes, len(n.Text)); err != nil {
+			return err
+		}
 		if err := w.encoder.EncodeToken(xml.CharData([]byte(n.Text))); err != nil {
 			return fmt.Errorf("текст элемента «%s»: %w", n.Name, err)
 		}
@@ -358,6 +398,16 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 	if err := validateXMLName(name); err != nil {
 		return xml.StartElement{}, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
 	}
+	if len(attrs) > maxXMLAttributesPerElement {
+		return xml.StartElement{}, fmt.Errorf("число атрибутов элемента «%s» превышает предел %d", name, maxXMLAttributesPerElement)
+	}
+	if w.attributes > maxXMLAttributesTotal-len(attrs) {
+		return xml.StartElement{}, fmt.Errorf("общее число атрибутов XML превышает предел %d", maxXMLAttributesTotal)
+	}
+	w.attributes += len(attrs)
+	if err := addXMLTextBytes(&w.textBytes, len(name)); err != nil {
+		return xml.StartElement{}, err
+	}
 
 	start := xml.StartElement{Name: xml.Name{Local: name}}
 	seen := make(map[string]struct{}, len(attrs))
@@ -371,6 +421,9 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 		seen[attr[0]] = struct{}{}
 		if err := validateXMLCharacters(attr[1]); err != nil {
 			return xml.StartElement{}, fmt.Errorf("значение атрибута «%s»: %w", attr[0], err)
+		}
+		if err := addXMLTextBytes(&w.textBytes, len(attr[0]), len(attr[1])); err != nil {
+			return xml.StartElement{}, err
 		}
 		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: attr[0]}, Value: attr[1]})
 	}
@@ -432,6 +485,9 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 		}
 		if len(attrs.keys) != len(attrs.vals) {
 			return nil, true, fmt.Errorf("поле «%s» узла XML повреждено", xmlFieldAttrs)
+		}
+		if len(attrs.keys) > maxXMLAttributesPerElement {
+			return nil, true, fmt.Errorf("число атрибутов элемента «%s» превышает предел %d", name, maxXMLAttributesPerElement)
 		}
 		seen := make(map[string]struct{}, len(attrs.keys))
 		for i, keyVal := range attrs.keys {
@@ -534,6 +590,16 @@ func validateXMLCharacters(text string) error {
 	return nil
 }
 
+func addXMLTextBytes(total *int, sizes ...int) error {
+	for _, size := range sizes {
+		if size < 0 || *total > maxXMLTextBytes-size {
+			return fmt.Errorf("объём текстовых данных XML превышает предел %d байт", maxXMLTextBytes)
+		}
+		*total += size
+	}
+	return nil
+}
+
 func isXMLWhitespaceOnly(text string) bool {
 	for _, r := range text {
 		switch r {
@@ -570,7 +636,7 @@ func xmlStringOf(v any) (string, error) {
 		}
 		return "false", nil
 	case time.Time:
-		return x.Format(time.RFC3339Nano), nil
+		return safeXMLDateTimeString(x)
 	case decimal.Decimal:
 		return safeXMLDecimalString(x)
 	case *decimal.Decimal:
@@ -590,6 +656,29 @@ func xmlStringOf(v any) (string, error) {
 	default:
 		return fmt.Sprintf("%v", v), nil
 	}
+}
+
+func validateXMLDateTime(value time.Time) error {
+	year := value.Year()
+	if year < 0 || year > 9999 {
+		return fmt.Errorf("год даты должен быть в диапазоне 0000..9999")
+	}
+	_, offset := value.Zone()
+	const daySeconds = 24 * 60 * 60
+	if offset <= -daySeconds || offset >= daySeconds {
+		return fmt.Errorf("смещение часового пояса должно быть меньше 24 часов по модулю")
+	}
+	if offset%60 != 0 {
+		return fmt.Errorf("смещение часового пояса должно быть кратно минуте")
+	}
+	return nil
+}
+
+func safeXMLDateTimeString(value time.Time) (string, error) {
+	if err := validateXMLDateTime(value); err != nil {
+		return "", err
+	}
+	return value.Format(time.RFC3339Nano), nil
 }
 
 func safeXMLDecimalString(value decimal.Decimal) (string, error) {
@@ -693,6 +782,9 @@ func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
 	case bool:
 		return "boolean", nil
 	case time.Time:
+		if err := validateXMLDateTime(value); err != nil {
+			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
+		}
 		return "dateTime", nil
 	case float64:
 		if math.IsNaN(value) || math.IsInf(value, 0) {

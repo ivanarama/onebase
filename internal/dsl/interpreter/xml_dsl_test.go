@@ -2,7 +2,10 @@ package interpreter_test
 
 import (
 	"math"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -39,6 +42,11 @@ func evalXMLError(t *testing.T, src string) error {
 }
 
 func evalXMLWithVarsError(t *testing.T, src string, vars map[string]any) error {
+	_, err := evalXMLWithVars(t, src, vars)
+	return err
+}
+
+func evalXMLWithVars(t *testing.T, src string, vars map[string]any) (any, error) {
 	t.Helper()
 	l := lexer.New(src, "test.os")
 	p := parser.New(l)
@@ -49,7 +57,38 @@ func evalXMLWithVarsError(t *testing.T, src string, vars map[string]any) error {
 	interp := interpreter.New()
 	obj := runtime.NewObject("Test", metadata.KindDocument)
 	var result any
-	return interp.RunWithResult(prog.Procedures[0], obj, &result, vars)
+	err = interp.RunWithResult(prog.Procedures[0], obj, &result, vars)
+	return result, err
+}
+
+func evalXMLWithVarsTimeout(t *testing.T, src string, vars map[string]any, timeout time.Duration) (any, error) {
+	t.Helper()
+	l := lexer.New(src, "test.os")
+	p := parser.New(l)
+	prog, err := p.ParseProgram()
+	require.NoError(t, err)
+	require.NotEmpty(t, prog.Procedures)
+
+	type outcome struct {
+		result any
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		interp := interpreter.New()
+		obj := runtime.NewObject("Test", metadata.KindDocument)
+		var result any
+		err := interp.RunWithResult(prog.Procedures[0], obj, &result, vars)
+		done <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		return got.result, got.err
+	case <-time.After(timeout):
+		t.Fatalf("публичный XML-путь не завершился за %s", timeout)
+		return nil, nil
+	}
 }
 
 func TestDSL_ReadXML_NameAttrsText(t *testing.T) {
@@ -183,4 +222,58 @@ func TestDSL_XML_RejectsNonFiniteFloat(t *testing.T) {
 			assert.Contains(t, err.Error(), "конечным")
 		}
 	}
+}
+
+func TestDSL_XML_LargeAttributeMapIsLinear(t *testing.T) {
+	const attributeCount = 10_000
+	var doc strings.Builder
+	doc.Grow(attributeCount * 18)
+	doc.WriteString("<Корень")
+	for i := 0; i < attributeCount; i++ {
+		n := strconv.Itoa(i)
+		doc.WriteString(" a")
+		doc.WriteString(n)
+		doc.WriteString(`="v`)
+		doc.WriteString(n)
+		doc.WriteByte('"')
+	}
+	doc.WriteString("/>")
+
+	src := `Процедура Тест()
+		Дерево = ПрочитатьXML(Текст);
+		Возврат ЗаписатьXML(Дерево.Атрибуты, "Корень");
+	КонецПроцедуры`
+	result, err := evalXMLWithVarsTimeout(t, src, map[string]any{"Текст": doc.String()}, 5*time.Second)
+	require.NoError(t, err)
+	out, ok := result.(string)
+	require.True(t, ok, "ожидалась строка, получено %T", result)
+	assert.True(t, strings.HasPrefix(out, "<Корень><a0>v0</a0>"), out[:min(len(out), 100)])
+	assert.True(t, strings.HasSuffix(out, "<a9999>v9999</a9999></Корень>"))
+}
+
+func TestDSL_XML_DateTimeBounds(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат XMLСтрока(Дата(10000, 1, 1));
+	КонецПроцедуры`
+	err := evalXMLError(t, src)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "0000..9999")
+
+	oddOffset := time.Date(2026, 8, 10, 12, 30, 0, 0, time.FixedZone("odd", 3*60*60+1))
+	src = `Процедура Тест()
+		Возврат XMLСтрока(Значение);
+	КонецПроцедуры`
+	err = evalXMLWithVarsError(t, src, map[string]any{"Значение": oddOffset})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "кратно минуте")
+
+	valid := time.Date(2026, 8, 10, 12, 30, 0, 123456789, time.FixedZone("MSK", 3*60*60))
+	src = `Процедура Тест()
+		Тип = XMLТипЗнч(Значение);
+		Текст = XMLСтрока(Значение);
+		Возврат XMLСтрока(XMLЗначение(Тип, Текст));
+	КонецПроцедуры`
+	result, err := evalXMLWithVars(t, src, map[string]any{"Значение": valid})
+	require.NoError(t, err)
+	assert.Equal(t, "2026-08-10T12:30:00.123456789+03:00", result)
 }
