@@ -688,7 +688,11 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
 		if low := strings.ToLower(fnName); low == "вычислить" || low == "eval" {
-			return i.evalEvalBuiltin(args, e)
+			// Файл берём из токена вызова, а не из e.ec.curFile: последний —
+			// «последняя исполненная позиция» и портится вычислением
+			// аргументов, если среди них есть вызов из другого модуля (та же
+			// причина, что и у sibling-резолва ниже).
+			return i.evalEvalBuiltin(args, e, callee.Tok.File)
 		}
 		if val, ok := e.get(fnName); ok {
 			if bf, ok2 := val.(BuiltinFunc); ok2 {
@@ -804,7 +808,15 @@ func exprSourceName(expr ast.Expr) string {
 // evalEvalBuiltin реализует Вычислить(Выражение): args[0] — строка-выражение.
 // Разбирается через parser.ParseExpr и вычисляется в переданном окружении,
 // поэтому выражение видит локальные переменные процедуры.
-func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
+//
+// callerFile — файл, в котором написан сам вызов Вычислить. Он становится
+// файлом разбираемого выражения, и без этого выражение теряло доступ к
+// процедурам собственного файла: sibling-резолв ищет по имени файла токена, а
+// синтетический «<Вычислить>» не совпадал ни с чем — диспетчеризация
+// `Вычислить("Обработчик_" + Имя + "()")` падала `unknown function`, если
+// обработчики лежали рядом в `<обработка>.proc.os`, и внезапно начинала
+// работать после переноса их в общий модуль (issue #692).
+func (i *Interpreter) evalEvalBuiltin(args []any, e *env, callerFile string) any {
 	if len(args) == 0 {
 		return nil
 	}
@@ -812,7 +824,10 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 	if !ok {
 		panic(userError{Msg: "Вычислить: ожидается строка-выражение"})
 	}
-	p := parser.New(lexer.New(src, "<Вычислить>"))
+	if callerFile == "" {
+		callerFile = "<Вычислить>"
+	}
+	p := parser.New(lexer.New(src, callerFile))
 	expr, err := p.ParseExpr()
 	if err != nil {
 		panic(userError{Msg: "Вычислить: " + err.Error()})
