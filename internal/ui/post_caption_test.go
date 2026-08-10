@@ -48,7 +48,10 @@ func TestFormEdit_PostCaption_CustomLabel(t *testing.T) {
 	if !strings.Contains(body, `value="post" form="main-form">Создать начисление<`) {
 		t.Errorf("кастомная подпись «Создать начисление» не отрендерилась; тело:\n%s", body)
 	}
-	if !strings.Contains(body, `value="post_and_close" form="main-form">Создать начисление и закрыть<`) {
+	// Подпись проверяем отдельно от атрибутов: их состав у кнопки меняется
+	// (например, добавилась подсказка сочетания клавиш), а к тексту подписи это
+	// отношения не имеет — привязка к соседству делала тест ломким.
+	if !strings.Contains(body, `value="post_and_close"`) || !strings.Contains(body, `>Создать начисление и закрыть<`) {
 		t.Errorf("вторая кнопка должна быть «Создать начисление и закрыть»; тело:\n%s", body)
 	}
 	if strings.Contains(body, `>Провести<`) {
@@ -82,7 +85,7 @@ func TestFormEdit_PostCaption_DefaultUnchanged(t *testing.T) {
 	if !strings.Contains(body, `value="post" form="main-form">Провести<`) {
 		t.Errorf("стандартная кнопка «Провести» отсутствует; тело:\n%s", body)
 	}
-	if !strings.Contains(body, `value="post_and_close" form="main-form">Провести и закрыть<`) {
+	if !strings.Contains(body, `value="post_and_close"`) || !strings.Contains(body, `>Провести и закрыть<`) {
 		t.Errorf("стандартная кнопка «Провести и закрыть» отсутствует; тело:\n%s", body)
 	}
 }

@@ -666,21 +666,115 @@ function listOpen(url, title) {
   window.location.href = url;
 }
 
-function listRowClick(e, tr) {
-  if (e.target.closest('a,button')) return;
+function listSelectRow(tr) {
   if (_listSel) {
     _listSel.querySelectorAll('td').forEach(function (td) { td.style.background = ''; });
     _listSel.classList.remove('tile-selected');
   }
   _listSel = tr;
+  if (!tr) return;
   tr.querySelectorAll('td').forEach(function (td) { td.style.background = '#dbeafe'; });
   tr.classList.add('tile-selected');
 }
 
+function listRowClick(e, tr) {
+  if (e.target.closest('a,button')) return;
+  listSelectRow(tr);
+}
+
 function listRowDblClick(e, tr) {
   if (e.target.closest('a,button')) return;
+  listActivateRow(tr);
+}
+
+function listActivateRow(tr) {
+  if (!tr) return;
   if (tr.dataset.isFolder === '1') window.location.href = tr.dataset.folderUrl;
   else listOpen(tr.dataset.openUrl);
+}
+
+// Встроенные горячие клавиши — привычные по 1С. Живут в ui.js, потому что нужны
+// и на списках, и на формах — как автогенерируемых, так и управляемых
+// (managed.js грузится только на вторых).
+//
+//   Форма:  Ctrl+Enter — «Провести и закрыть» (нет такой кнопки — «Записать»),
+//           Ctrl+S — «Записать».
+//   Список: Ins — создать, ↑/↓ — курсор по строкам, Enter/F2 — открыть,
+//           Ctrl+F — строка поиска. Delete (пометить на удаление) — отдельно.
+//
+// Буквенные сочетания разбираем по e.code, а не по e.key: при русской раскладке
+// Ctrl+S приходит как «ы», и проверка по e.key просто не сработала бы.
+function obFormActionButton(values) {
+  for (var i = 0; i < values.length; i++) {
+    var btn = document.querySelector('button[name="_action"][value="' + values[i] + '"]');
+    if (btn && !btn.disabled) return btn;
+  }
+  return null;
+}
+
+function obIsTypingTarget(el) {
+  if (!el || !el.tagName) return false;
+  if (el.isContentEditable) return true;
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+}
+
+function obListRows() {
+  return Array.prototype.slice.call(document.querySelectorAll('[data-ob-list-row]'));
+}
+
+function obListMoveCursor(delta) {
+  var rows = obListRows();
+  if (!rows.length) return false;
+  var idx = _listSel ? rows.indexOf(_listSel) : -1;
+  var next = idx < 0 ? (delta > 0 ? 0 : rows.length - 1) : idx + delta;
+  if (next < 0 || next >= rows.length) return true; // упёрлись в край — клавишу всё равно съедаем
+  listSelectRow(rows[next]);
+  if (rows[next].scrollIntoView) rows[next].scrollIntoView({ block: 'nearest' });
+  return true;
+}
+
+function obInitKeyboardShortcuts() {
+  if (window.__obKeyShortcuts) return;
+  window.__obKeyShortcuts = true;
+  document.addEventListener('keydown', function (e) {
+    if (e.altKey || e.metaKey) return;
+    // Модальный подбор забирает клавиатуру себе.
+    if (document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal')) return;
+
+    if (e.ctrlKey) {
+      if (e.key === 'Enter') {
+        var go = obFormActionButton(['post_and_close', '']);
+        if (go) { e.preventDefault(); go.click(); }
+        return;
+      }
+      if (e.code === 'KeyS') {
+        var write = obFormActionButton(['']);
+        if (write) { e.preventDefault(); write.click(); }
+        return;
+      }
+      if (e.code === 'KeyF') {
+        var q = document.querySelector('input[name="q"]');
+        if (q) { e.preventDefault(); q.focus(); q.select(); }
+      }
+      return;
+    }
+
+    if (e.key === 'Insert') {
+      var create = document.querySelector('[data-ob-list-create]');
+      if (create) { e.preventDefault(); create.click(); }
+      return;
+    }
+    if (e.shiftKey || obIsTypingTarget(e.target) || !obListRows().length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (obListMoveCursor(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
+      return;
+    }
+    if ((e.key === 'Enter' || e.key === 'F2') && _listSel) {
+      e.preventDefault();
+      if (e.key === 'F2') listOpen(_listSel.dataset.openUrl);
+      else listActivateRow(_listSel);
+    }
+  });
 }
 
 function initTreeToggle(btn) {
@@ -1030,6 +1124,7 @@ function obInitFeed() {
 
 obReady(function () {
   obInitListDelegates();
+  obInitKeyboardShortcuts();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Delete' && _listSel && obListConfig().canDelete) {

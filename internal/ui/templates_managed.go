@@ -257,9 +257,9 @@ const tplManagedForm = `
   <input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">
   <div style="display:flex;gap:6px;margin-top:4px">
     <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"
-      data-ob-grid-add="{{$tpName}}">+ Добавить строку</button>
+      data-ob-grid-add="{{$tpName}}" title="Insert">+ Добавить строку</button>
     <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"
-      data-ob-grid-del="{{$tpName}}">− Удалить строку</button>
+      data-ob-grid-del="{{$tpName}}" title="Delete">− Удалить строку</button>
   </div>
 {{else}}
 <table class="tp-table" data-tp="{{$tpName}}">
@@ -496,11 +496,11 @@ const tplManagedForm = `
       {{end}}
     {{end}}
   {{end}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if .CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
+      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}

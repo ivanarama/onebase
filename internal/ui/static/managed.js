@@ -1442,6 +1442,132 @@ obManagedReady(obManagedInitDelegates);
     obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки");
   };
 
+  // reindexOrd — переписывает _ord подряд (0..n-1) по текущему порядку массива.
+  // Порядок строк документа значим и хранится именно в _ord (см. obGridSync),
+  // поэтому после вставки/перемещения его надо нормализовать.
+  function reindexOrd(items) {
+    for (var i = 0; i < items.length; i++) items[i]._ord = i;
+    return items;
+  }
+
+  function byOrd(g) {
+    return g.dataView.getItems().slice().sort(function(a, b) { return (a._ord || 0) - (b._ord || 0); });
+  }
+
+  // commitGridEdit — закрыть открытый редактор перед структурной операцией.
+  // false — правку не приняли (например, в ячейке-ссылке набрано ненайденное);
+  // добавлять/двигать строки в этот момент нельзя.
+  function commitGridEdit(g) {
+    var lock = g.grid && g.grid.getEditorLock && g.grid.getEditorLock();
+    if (lock && lock.isActive()) return lock.commitCurrentEdit();
+    return true;
+  }
+
+  // obGridCopyRow — копия текущей строки сразу под ней (F9, как в 1С).
+  window.obGridCopyRow = function(tpName) {
+    var g = (window._obGrids || {})[tpName];
+    if (!g || !commitGridEdit(g)) return;
+    var ac = g.grid.getActiveCell();
+    if (!ac) return;
+    var src = g.dataView.getItem(ac.row);
+    if (!src) return;
+    var nextId = 0;
+    g.dataView.getItems().forEach(function(it) { if (it.id >= nextId) nextId = it.id + 1; });
+    var copy = {id: nextId, _ord: (src._ord || 0) + 0.5};
+    var cols = g.columnsMeta || [];
+    for (var i = 0; i < cols.length; i++) copy[cols[i].id] = src[cols[i].id];
+    copy._obRowClass = src._obRowClass || "";
+    copy._obCellClasses = src._obCellClasses || {};
+    g.dataView.addItem(copy);
+    g.dataView.setItems(reindexOrd(byOrd(g)));
+    window._obFormDirty = true;
+    g.grid.invalidate();
+    var rowIdx = g.dataView.getRowById(nextId);
+    if (rowIdx !== undefined) {
+      g.grid.scrollRowIntoView(rowIdx);
+      g.grid.setActiveCell(rowIdx, 0);
+      g.grid.editActiveCell();
+    }
+    updateTotals(g);
+    obFireRowEvent(tpName, "data-sg-rowadd", "ПриДобавленииСтроки");
+  };
+
+  // obGridMoveRow — переместить текущую строку на delta позиций (Ctrl+↑/↓).
+  // Работаем в порядке _ord, а не отображения: под клиентской сортировкой
+  // «переместить вверх» иначе давало бы непредсказуемый результат. После
+  // перемещения список показывается в порядке документа.
+  window.obGridMoveRow = function(tpName, delta) {
+    var g = (window._obGrids || {})[tpName];
+    if (!g || !commitGridEdit(g)) return;
+    var ac = g.grid.getActiveCell();
+    if (!ac) return;
+    var cur = g.dataView.getItem(ac.row);
+    if (!cur) return;
+    var items = byOrd(g);
+    var pos = -1;
+    for (var i = 0; i < items.length; i++) { if (items[i].id === cur.id) { pos = i; break; } }
+    var to = pos + delta;
+    if (pos < 0 || to < 0 || to >= items.length) return;
+    items.splice(to, 0, items.splice(pos, 1)[0]);
+    g.dataView.setItems(reindexOrd(items));
+    window._obFormDirty = true;
+    g.grid.invalidate();
+    var rowIdx = g.dataView.getRowById(cur.id);
+    if (rowIdx !== undefined) {
+      g.grid.scrollRowIntoView(rowIdx);
+      g.grid.setActiveCell(rowIdx, ac.cell);
+    }
+    updateTotals(g);
+  };
+
+  // activeGridName — грид, к которому относится нажатие. Сначала тот, внутри
+  // которого фокус (курсор в ячейке или открытый редактор), иначе — тот, где
+  // есть активная ячейка: после коммита фокус уезжает на служебный focus-sink.
+  function activeGridName() {
+    var el = document.activeElement;
+    var host = el && el.closest ? el.closest(".ob-grid[data-sg-tp]") : null;
+    if (host) return host.getAttribute("data-sg-tp");
+    var grids = window._obGrids || {};
+    for (var tp in grids) {
+      if (grids[tp].grid && grids[tp].grid.getActiveCell()) return tp;
+    }
+    return "";
+  }
+
+  // Клавиши работы со строками — как в 1С. Delete живёт на самом гриде
+  // (grid.onKeyDown), потому что зависит от editor-lock; остальные ловим на
+  // документе: Ins должен работать и когда фокус ушёл с грида.
+  //
+  // ВАЖНО: слушатель в ФАЗЕ ПЕРЕХВАТА. Свой обработчик SlickGrid вешает на
+  // канву грида, то есть ГЛУБЖЕ документа, и в фазе всплытия успевает разобрать
+  // клавишу первым: Ctrl+↓ у него — «перейти к последней строке», и перемещение
+  // строки не срабатывало вовсе. Отсюда же stopPropagation — чтобы после нашей
+  // обработки грид не выполнил ещё и свою.
+  if (!window._obGridKeysHook) {
+    window._obGridKeysHook = true;
+    document.addEventListener("keydown", function(e) {
+      if (e.altKey || e.metaKey) return;
+      var tp = activeGridName();
+      if (!tp) return;
+      function take() { e.preventDefault(); e.stopPropagation(); }
+      if (e.key === "Insert" && !e.ctrlKey && !e.shiftKey) {
+        take();
+        if (window.obGridAddRow) window.obGridAddRow(tp);
+        return;
+      }
+      // Явный hotkey кнопки формы важнее встроенного значения клавиши.
+      if (e.key === "F9" && !e.ctrlKey && !e.shiftKey && !document.querySelector('[data-ob-hotkey="F9"]')) {
+        take();
+        if (window.obGridCopyRow) window.obGridCopyRow(tp);
+        return;
+      }
+      if (e.ctrlKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        take();
+        if (window.obGridMoveRow) window.obGridMoveRow(tp, e.key === "ArrowDown" ? 1 : -1);
+      }
+    }, true);
+  }
+
   // SlickGrid-aware applyTableParts. Оборачивает window.applyTableParts (DOM-
   // версию из obFire-IIFE): для ТЧ с гридом обновляет модель грида, для
   // остальных вызывает origApplyTP. Активную ячейку сохраняем, чтобы серверный
