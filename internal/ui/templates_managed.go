@@ -268,12 +268,14 @@ const tplManagedForm = `
        data-sg-rows='{{jsJSON $tpRows}}'
        {{if $tpCmds}}data-sg-cmd="1"{{end}}></div>
   <input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">
+  {{if not $el.ReadOnly}}
   <div style="display:flex;gap:6px;margin-top:4px">
     <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"
       data-ob-grid-add="{{$tpName}}" title="Insert">+ Добавить строку</button>
     <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"
       data-ob-grid-del="{{$tpName}}" title="Delete">− Удалить строку</button>
   </div>
+  {{end}}
 {{else}}
 <table class="tp-table" data-tp="{{$tpName}}">
     <thead>

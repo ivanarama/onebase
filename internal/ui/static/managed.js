@@ -1434,9 +1434,8 @@ obManagedReady(obManagedInitDelegates);
 
   window.obGridAddRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g) return;
-    var _lk = g.grid.getEditorLock && g.grid.getEditorLock();
-    if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
+    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    window._obActiveGridName = tpName;
     var nextId = 0, nextOrd = 0;
     g.dataView.getItems().forEach(function(it) {
       if (it.id >= nextId) nextId = it.id + 1;
@@ -1462,9 +1461,8 @@ obManagedReady(obManagedInitDelegates);
   // Delete selected row from grid
   window.obGridDelRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g) return;
-    var _lk = g.grid.getEditorLock && g.grid.getEditorLock();
-    if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
+    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    window._obActiveGridName = tpName;
     // Без плагина выделения getSelectedRows бросает исключение — удаляем
     // активную (текущую) строку, как в обычной таблице.
     var sel = [];
@@ -1504,7 +1502,8 @@ obManagedReady(obManagedInitDelegates);
   // obGridCopyRow — копия текущей строки сразу под ней (F9, как в 1С).
   window.obGridCopyRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g || !commitGridEdit(g)) return;
+    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    window._obActiveGridName = tpName;
     var ac = g.grid.getActiveCell();
     if (!ac) return;
     var src = g.dataView.getItem(ac.row);
@@ -1515,7 +1514,7 @@ obManagedReady(obManagedInitDelegates);
     var cols = g.columnsMeta || [];
     for (var i = 0; i < cols.length; i++) copy[cols[i].id] = src[cols[i].id];
     copy._obRowClass = src._obRowClass || "";
-    copy._obCellClasses = src._obCellClasses || {};
+    copy._obCellClasses = Object.assign({}, src._obCellClasses || {});
     g.dataView.addItem(copy);
     g.dataView.setItems(reindexOrd(byOrd(g)));
     window._obFormDirty = true;
@@ -1536,7 +1535,8 @@ obManagedReady(obManagedInitDelegates);
   // перемещения список показывается в порядке документа.
   window.obGridMoveRow = function(tpName, delta) {
     var g = (window._obGrids || {})[tpName];
-    if (!g || !commitGridEdit(g)) return;
+    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    window._obActiveGridName = tpName;
     var ac = g.grid.getActiveCell();
     if (!ac) return;
     var cur = g.dataView.getItem(ac.row);
@@ -1558,18 +1558,48 @@ obManagedReady(obManagedInitDelegates);
     updateTotals(g);
   };
 
-  // activeGridName — грид, к которому относится нажатие. Сначала тот, внутри
-  // которого фокус (курсор в ячейке или открытый редактор), иначе — тот, где
-  // есть активная ячейка: после коммита фокус уезжает на служебный focus-sink.
-  function activeGridName() {
-    var el = document.activeElement;
+  function gridNameFromTarget(el) {
     var host = el && el.closest ? el.closest(".ob-grid[data-sg-tp]") : null;
-    if (host) return host.getAttribute("data-sg-tp");
+    return host ? (host.getAttribute("data-sg-tp") || "") : "";
+  }
+
+  function rememberActiveGrid(tpName) {
+    if (tpName && (window._obGrids || {})[tpName]) window._obActiveGridName = tpName;
+  }
+
+  // activeGridName — грид, к которому относится нажатие. Фокус внутри грида
+  // имеет приоритет; после ухода на служебный focus-sink используем ПОСЛЕДНИЙ
+  // грид, с которым реально взаимодействовал пользователь. Перебирать первый
+  // грид с activeCell нельзя: на форме их может быть несколько, и activeCell
+  // сохраняется у каждого.
+  function activeGridName(target) {
     var grids = window._obGrids || {};
-    for (var tp in grids) {
-      if (grids[tp].grid && grids[tp].grid.getActiveCell()) return tp;
+    var direct = gridNameFromTarget(target || document.activeElement);
+    if (direct && grids[direct]) {
+      rememberActiveGrid(direct);
+      return direct;
     }
+    var remembered = window._obActiveGridName || "";
+    var g = remembered && grids[remembered];
+    if (g && g.div && document.contains(g.div)) return remembered;
+    if (remembered) window._obActiveGridName = "";
     return "";
+  }
+
+  function gridTypingTarget(el) {
+    if (!el || !el.tagName) return false;
+    if (el.isContentEditable) return true;
+    return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  }
+
+  function hasActionableFormHotkey(key) {
+    var buttons = document.querySelectorAll('[data-ob-hotkey]');
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      if (String(btn.getAttribute('data-ob-hotkey') || '').toUpperCase() !== key) continue;
+      if (!btn.disabled && btn.getAttribute('aria-disabled') !== 'true') return true;
+    }
+    return false;
   }
 
   // Клавиши работы со строками — как в 1С. Delete живёт на самом гриде
@@ -1584,9 +1614,17 @@ obManagedReady(obManagedInitDelegates);
   if (!window._obGridKeysHook) {
     window._obGridKeysHook = true;
     document.addEventListener("keydown", function(e) {
-      if (e.altKey || e.metaKey) return;
-      var tp = activeGridName();
+      if (e.defaultPrevented || e.altKey || e.metaKey) return;
+      if (document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal')) return;
+      var direct = gridNameFromTarget(e.target);
+      // Редактор ячейки находится внутри .ob-grid: там структурная клавиша
+      // сначала коммитит значение. Обычное поле формы вне грида нельзя
+      // перехватывать из-за когда-то активной табличной части.
+      if (!direct && gridTypingTarget(e.target)) return;
+      var tp = activeGridName(e.target);
       if (!tp) return;
+      var active = (window._obGrids || {})[tp];
+      if (!active || active.readOnly) return;
       function take() { e.preventDefault(); e.stopPropagation(); }
       if (e.key === "Insert" && !e.ctrlKey && !e.shiftKey) {
         take();
@@ -1594,7 +1632,7 @@ obManagedReady(obManagedInitDelegates);
         return;
       }
       // Явный hotkey кнопки формы важнее встроенного значения клавиши.
-      if (e.key === "F9" && !e.ctrlKey && !e.shiftKey && !document.querySelector('[data-ob-hotkey="F9"]')) {
+      if (e.key === "F9" && !e.ctrlKey && !e.shiftKey && !hasActionableFormHotkey("F9")) {
         take();
         if (window.obGridCopyRow) window.obGridCopyRow(tp);
         return;
@@ -1702,8 +1740,12 @@ obManagedReady(obManagedInitDelegates);
     // (добавить/удалить строку, подбор, сериализация) продолжат работать.
     window._obGrids[tpName] = {
       grid: grid, dataView: dataView, columns: columns,
-      columnsMeta: colsRaw, refOpts: refOpts, div: div
+      columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly
     };
+    // activeCell остаётся у нескольких SlickGrid одновременно. Запоминаем
+    // именно пользовательский контакт с конкретным DOM-хостом.
+    div.addEventListener("mousedown", function() { rememberActiveGrid(tpName); }, true);
+    div.addEventListener("focusin", function() { rememberActiveGrid(tpName); });
 
    try {
     dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(window._obGrids[tpName]); });
@@ -1776,7 +1818,7 @@ obManagedReady(obManagedInitDelegates);
 
     // Delete key removes selected rows
     grid.onKeyDown.subscribe(function(e) {
-      if (e.key === 'Delete' && !grid.getEditorLock().isActive()) {
+      if (!readOnly && e.key === 'Delete' && !grid.getEditorLock().isActive()) {
         var sel = [];
         try { sel = grid.getSelectedRows() || []; } catch (er) { sel = []; }
         if (!sel.length) { var ac = grid.getActiveCell(); if (ac) sel = [ac.row]; }

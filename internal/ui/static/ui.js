@@ -814,12 +814,16 @@ function obInitKeyboardShortcuts() {
       return;
     }
 
+    // Ввод текста важнее списковых клавиш, включая Insert: выбранная ранее
+    // строка списка не должна превращать Insert в действие над данными,
+    // пока пользователь редактирует поиск или другое поле.
+    if (e.shiftKey || obIsTypingTarget(e.target)) return;
     if (e.key === 'Insert') {
       var create = document.querySelector('[data-ob-list-create]');
       if (create) { e.preventDefault(); create.click(); }
       return;
     }
-    if (e.shiftKey || obIsTypingTarget(e.target) || !obListRows().length) return;
+    if (!obListRows().length) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (obListMoveCursor(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
       return;
@@ -1199,8 +1203,11 @@ obReady(function () {
     // listSel(), а не _listSel: после живого обновления списка на экране может
     // не быть подсветки, и пометка на удаление по клавише улетала бы в строку,
     // о выборе которой пользователь уже не помнит.
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || obIsTypingTarget(e.target)) return;
+    if (document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal')) return;
     var sel = listSel();
     if (e.key === 'Delete' && sel && obListConfig().canDelete) {
+      e.preventDefault();
       listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
     }
   });
