@@ -403,12 +403,15 @@ func (db *DB) readFTSBatch(ctx context.Context, q string, e *metadata.Entity, fi
 }
 
 // BuildFTSDoc собирает индексируемый текст объекта из значений реквизитов.
-// Title — первый непустой индексируемый реквизит (обычно Наименование или
-// Номер): он весит больше в ранжировании и показывается в выдаче.
+// Title показывается в выдаче поиска и весит больше в ранжировании, поэтому он
+// выбирается тем же правилом, что и представление объекта в списках и пикерах —
+// по ИМЕНИ реквизита (metadata.LabelFields), а не по позиции. Иначе у
+// импортированной из 1С конфигурации в выдаче стоял бы код: конвертер кладёт
+// «Код» первым (план 117, решение №3).
 func BuildFTSDoc(e *metadata.Entity, id uuid.UUID, fields map[string]any) FTSDoc {
 	doc := FTSDoc{Kind: string(e.Kind), Name: e.Name, ID: id}
 	var parts []string
-	for _, f := range metadata.FullTextFields(e) {
+	for _, f := range ftsFieldsTitleFirst(e) {
 		v := ftsNormalize(fieldTextValue(f, fields))
 		if v == "" {
 			continue
@@ -427,6 +430,28 @@ func BuildFTSDoc(e *metadata.Entity, id uuid.UUID, fields map[string]any) FTSDoc
 // fieldTextValue достаёт текст реквизита из map значений формы/записи.
 // Ключи там встречаются и в исходном регистре имени, и в нижнем (DSL
 // регистронезависим), поэтому пробуем оба — как fieldValueDialect.
+// ftsFieldsTitleFirst — индексируемые реквизиты, но кандидат на Title вынесен
+// вперёд. Состав индексируемого текста при этом не меняется: переставляется
+// только порядок, а Title — это первое непустое значение.
+func ftsFieldsTitleFirst(e *metadata.Entity) []metadata.Field {
+	all := metadata.FullTextFields(e)
+	label := metadata.LabelFields(e)
+	if len(label) == 0 || len(all) == 0 {
+		return all
+	}
+	want := label[0].Name
+	out := make([]metadata.Field, 0, len(all))
+	var rest []metadata.Field
+	for _, f := range all {
+		if strings.EqualFold(f.Name, want) {
+			out = append(out, f)
+			continue
+		}
+		rest = append(rest, f)
+	}
+	return append(out, rest...)
+}
+
 func fieldTextValue(f metadata.Field, fields map[string]any) string {
 	v, ok := fields[f.Name]
 	if !ok || v == nil {
