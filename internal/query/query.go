@@ -2342,9 +2342,10 @@ func (tr *translator) assertSingleHopNavigation(rd *refDimInfo) error {
 	if tr.pos >= 1 && tr.tokens[tr.pos-1].kind == tIdent {
 		field = tr.tokens[tr.pos-1].val
 	}
+	// Ключ — одним литералом: i18ncheck собирает ключи из исходника и склейку
+	// через + видит только первым куском.
 	return i18nerr.Errorf(
-		"навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет. "+
-			"Выбери ссылку целиком (%s) и дочитай поля отдельным запросом либо соедини %s явно через СОЕДИНЕНИЕ",
+		"навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет; выбери ссылку целиком (%s) либо соедини %s явно через СОЕДИНЕНИЕ",
 		field, tr.peek(1).val, field, tr.peek(1).val, tail, field, rd.refEntity)
 }
 
