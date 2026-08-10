@@ -133,7 +133,9 @@ func (c Common) Build() map[string]any {
 	// запуск пишется в журнал (defense-in-depth, поверх настроек аудита).
 	execGuard := c.ExecGuard
 	if execGuard == nil {
-		execGuard = func() error { return errors.New("выполнение команд ОС отключено") }
+		execGuard = func() error {
+			return errors.New("выполнение команд ОС отключено — включите: onebase settings set exec.enabled вкл")
+		}
 	}
 	var execAudit interpreter.ExecAudit
 	if c.Store != nil {
