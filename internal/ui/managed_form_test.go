@@ -327,6 +327,8 @@ func TestManagedRuntime_FileHelpersUseRenderedControlIdentity(t *testing.T) {
 		`[data-ob-file-content-for]`,
 		`data-ob-file-content-for="`,
 		`fileHelpers.forEach`,
+		`obFileContentReady = '1'`,
+		`fcEl.dataset.obFileContentReady === '1'`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("managed runtime is missing %q", want)
@@ -334,6 +336,58 @@ func TestManagedRuntime_FileHelpersUseRenderedControlIdentity(t *testing.T) {
 	}
 	if strings.Contains(js, "k.startsWith('_fc_')") {
 		t.Error("managed runtime still reserves every _fc_ parameter name")
+	}
+}
+
+func TestProcessorServiceFieldNamesAvoidDeclaredParamCollisions(t *testing.T) {
+	params := []processor.Param{
+		{Name: "_event", Type: "string"},
+		{Name: "_ob_service_event", Type: "string"},
+		{Name: "_ob_service_event_", Type: "string"},
+	}
+	if got := processorServiceFieldName(params, "_element"); got != "_element" {
+		t.Fatalf("non-colliding service field changed: %q", got)
+	}
+	if got := processorServiceFieldName(params, "_event"); got != "_ob_service_event__" {
+		t.Fatalf("service field still collides: %q", got)
+	}
+
+	js := string(managedJS)
+	for _, want := range []string{
+		`serviceField('_element')`,
+		`serviceField('_event')`,
+		`serviceField('_kind')`,
+		`serviceField('_id')`,
+		`serviceField('_tp_selected')`,
+		`serviceField(k)`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("managed runtime is missing collision-safe service field %q", want)
+		}
+	}
+	if !strings.Contains(tplManagedForm, `"serviceFields" (processorServiceFieldNames .Processor)`) {
+		t.Error("processor managed config does not expose collision-safe service fields")
+	}
+}
+
+func TestProcessorHelperNamesAvoidOtherGeneratedHelpers(t *testing.T) {
+	params := []processor.Param{
+		{Name: "Flag", Type: "bool"},
+		{Name: "Flag_", Type: "bool"},
+		{Name: "_ob_present_Flag", Type: "string"},
+		{Name: "Data", Type: "file"},
+		{Name: "Data_", Type: "file"},
+		{Name: "_fc_Data", Type: "string"},
+	}
+	boolA := processorParamPresenceName(params, "Flag")
+	boolB := processorParamPresenceName(params, "Flag_")
+	if boolA == boolB || boolA != "_ob_present_Flag_" || boolB != "_ob_present_Flag__" {
+		t.Fatalf("checkbox helpers collide: Flag=%q Flag_=%q", boolA, boolB)
+	}
+	fileA := processorFileContentName(params, "Data")
+	fileB := processorFileContentName(params, "Data_")
+	if fileA == fileB || fileA != "_fc_Data_" || fileB != "_fc_Data__" {
+		t.Fatalf("file helpers collide: Data=%q Data_=%q", fileA, fileB)
 	}
 }
 

@@ -24,6 +24,11 @@ function obManagedReady(fn) {
   if (!cfg.url) return;
   var URL = String(cfg.url || '');
   var DOC_ID = cfg.docId == null ? '' : String(cfg.docId);
+  var SERVICE_FIELDS = cfg.serviceFields && typeof cfg.serviceFields === 'object' ? cfg.serviceFields : {};
+  function serviceField(name){
+    var mapped = SERVICE_FIELDS[name];
+    return typeof mapped === 'string' && mapped ? mapped : name;
+  }
   // Реквизиты формы (attributes с save:false) переживают полную перезагрузку.
   // «Записать» уходит POST'ом с редиректом, страница рисуется заново — и всё,
   // что оператор выбрал в реквизите формы, пропадало (в 1С форма живёт в памяти
@@ -401,7 +406,10 @@ function obManagedReady(fn) {
     if (!pathEl) return;
     if (file.path) {
       pathEl.value = file.path;
-      if (contentEl) contentEl.value = '';
+      if (contentEl) {
+        contentEl.value = '';
+        delete contentEl.dataset.obFileContentReady;
+      }
       return;
     }
     pathEl.value = file.name;
@@ -416,6 +424,7 @@ function obManagedReady(fn) {
         text = new TextDecoder('windows-1251').decode(bytes);
       }
       contentEl.value = text;
+      contentEl.dataset.obFileContentReady = '1';
     };
     reader.readAsArrayBuffer(file);
   };
@@ -440,17 +449,17 @@ function obManagedReady(fn) {
     } finally {
       fileHelpers.forEach(function(el, i){ el.disabled = fileHelperDisabled[i]; });
     }
-    eventFD.set('_element', elementName || '');
-    eventFD.set('_event', eventName || '');
-    eventFD.set('_kind', 'object');
-    if (DOC_ID) eventFD.set('_id', DOC_ID);
+    eventFD.set(serviceField('_element'), elementName || '');
+    eventFD.set(serviceField('_event'), eventName || '');
+    eventFD.set(serviceField('_kind'), 'object');
+    if (DOC_ID) eventFD.set(serviceField('_id'), DOC_ID);
     eventFD.forEach((v, k) => {
       if (typeof v !== 'string') { body.append(k, ''); return; }
       // If the rendered file helper has content, prefer it over the path.
       // The data attribute identifies the actual control without reserving
       // all legal parameter names beginning with _fc_.
       const fcEl = form.querySelector('[data-ob-file-content-for="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
-      if (fcEl && fcEl.value) { body.append(k, fcEl.value); }
+      if (fcEl && (fcEl.value || fcEl.dataset.obFileContentReady === '1')) { body.append(k, fcEl.value); }
       else { body.append(k, v); }
     });
     // Команда над ТЧ: подмешать индексы выделенных строк (_tp_selected) по
@@ -464,7 +473,7 @@ function obManagedReady(fn) {
         // пересчёта/очистки выделение не нужно — гасим ошибку и шлём пусто.
         var sel = [];
         try { sel = obg.grid.getSelectedRows() || []; } catch (e) { sel = []; }
-        body.append('_tp_selected', sel.join(','));
+        body.append(serviceField('_tp_selected'), sel.join(','));
       } else {
         // Legacy: read from DOM checkboxes
         const tbody = document.getElementById('tp-body-' + extraParams._tp);
@@ -474,12 +483,12 @@ function obManagedReady(fn) {
             const cb = tr.querySelector('._tp-sel');
             if (cb && cb.checked) sel.push(i);
           });
-          body.append('_tp_selected', sel.join(','));
+          body.append(serviceField('_tp_selected'), sel.join(','));
         }
       }
     }
     if (extraParams) {
-      Object.keys(extraParams).forEach(k => body.append(k, extraParams[k]));
+      Object.keys(extraParams).forEach(k => body.append(serviceField(k), extraParams[k]));
     }
     try {
       const res = await fetch(URL, {

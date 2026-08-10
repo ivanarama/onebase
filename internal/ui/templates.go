@@ -38,6 +38,12 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorFileContentName(proc.Params, name)
 		},
+		"processorServiceFieldNames": func(proc *processorpkg.Processor) map[string]string {
+			if proc == nil {
+				return nil
+			}
+			return processorServiceFieldNames(proc.Params)
+		},
 		"str": func(v any) string {
 			if v == nil {
 				return ""

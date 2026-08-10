@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -92,6 +93,35 @@ func processorClickBody(elementName string) url.Values {
 	body.Set("_element", elementName)
 	body.Set("_event", string(metadata.FormEventOnClick))
 	return body
+}
+
+func TestProcessorFormBodyLimit_AllowsURLEncodingExpansion(t *testing.T) {
+	const maxFileSize = int64(7 << 20)
+	params := []processor.Param{{Name: "First", Type: "file"}, {Name: "Second", Type: "file"}}
+	urlEncoded := httptest.NewRequest("POST", "/", nil)
+	urlEncoded.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	if got, want := processorFormBodyLimit(urlEncoded, maxFileSize, params), 6*maxFileSize+uiMultipartOverhead; got != want {
+		t.Fatalf("urlencoded body limit=%d, want %d", got, want)
+	}
+
+	multipartRequest := httptest.NewRequest("POST", "/", nil)
+	multipartRequest.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	if got, want := processorFormBodyLimit(multipartRequest, maxFileSize, params), 2*maxFileSize+uiMultipartOverhead; got != want {
+		t.Fatalf("multipart body limit=%d, want %d", got, want)
+	}
+}
+
+func TestProcessorSandboxTimeout_UsesRemainingOperationDeadline(t *testing.T) {
+	deadline := time.Now().Add(time.Hour)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	got := processorSandboxTimeout(ctx, 2*time.Hour)
+	if got < 59*time.Minute || got > time.Hour {
+		t.Fatalf("sandbox timeout=%v, want remaining operation deadline", got)
+	}
+	if got := processorSandboxTimeout(context.Background(), 0); got != 0 {
+		t.Fatalf("disabled timeout=%v, want 0", got)
+	}
 }
 
 func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) {
@@ -350,6 +380,62 @@ func TestHandleProcessorFormEvent_HelperNamesAvoidDeclaredParamCollisions(t *tes
 	}
 }
 
+func TestHandleProcessorFormEvent_ServiceNamesAvoidDeclaredParamCollisions(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура RunCheck()
+	Сообщить(Объект._event + ":" + Параметры._element + ":" + Объект._kind + ":" + Параметры._pick_result);
+КонецПроцедуры
+`)
+	form := processorExecutionForm(
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ParamEvent", DataPath: "Объект._event"},
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ParamElement", DataPath: "Объект._element"},
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ParamKind", DataPath: "Объект._kind"},
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ParamPick", DataPath: "Объект._pick_result"},
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Проверить",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "RunCheck",
+			},
+		},
+	)
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{
+		Name: "ServiceNameCollisions",
+		Params: []processor.Param{
+			{Name: "_event", Type: "string"},
+			{Name: "_element", Type: "string"},
+			{Name: "_kind", Type: "string"},
+			{Name: "_pick_result", Type: "string"},
+			{Name: "_ob_service_event", Type: "string"},
+			{Name: "_ob_service_event_", Type: "string"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	body := url.Values{
+		"_event":       {"param-event"},
+		"_element":     {"param-element"},
+		"_kind":        {"param-kind"},
+		"_pick_result": {"param-pick"},
+	}
+	serviceNames := processorServiceFieldNames(proc.Params)
+	body.Set(serviceNames["_element"], "Проверить")
+	body.Set(serviceNames["_event"], string(metadata.FormEventOnClick))
+	body.Set(serviceNames["_kind"], "object")
+	body.Set(serviceNames["_pick_result"], "[]")
+
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := "param-event:param-element:param-kind:param-pick"
+	if !resp.OK || resp.Error != "" || len(resp.Messages) != 1 || resp.Messages[0] != want {
+		t.Fatalf("service fields corrupted legal params: ok=%v error=%q messages=%v, want=%q", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
 func TestHandleProcessorFormEvent_QueryCannotInjectHelpers(t *testing.T) {
 	form := processorExecutionForm(
 		&metadata.FormElement{
@@ -446,6 +532,118 @@ func TestHandleProcessorFormEvent_RejectsHelpersForReadOnlyControls(t *testing.T
 	}
 }
 
+func TestHandleProcessorFormEvent_BoundHandlerRejectsQueryParamInjection(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура RunCheck()
+	Сообщить("видимое:" + Объект.Visible);
+	Если Параметры.Hidden = Неопределено Тогда
+		Сообщить("скрытое:нет");
+	Иначе
+		Сообщить("скрытое:" + Параметры.Hidden);
+	КонецЕсли;
+КонецПроцедуры
+`)
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеVisible",
+			DataPath: "Объект.Visible",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Проверить",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "RunCheck",
+			},
+		},
+	)
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{
+		Name: "BoundQueryInjection",
+		Params: []processor.Param{
+			{Name: "Visible", Type: "string"},
+			{Name: "Hidden", Type: "string"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	body := processorClickBody("Проверить")
+	body.Set("Visible", "body-value")
+	query := url.Values{
+		"Visible": {"query-value"},
+		"Hidden":  {"query-hidden"},
+	}
+
+	rec := postProcessorFormEventExecutionWithQuery(t, srv, proc.Name, query,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := []string{"видимое:body-value", "скрытое:нет"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("query changed bound handler object: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
+func TestHandleProcessorFormEvent_BoundHandlerRejectsReadOnlyAndUnrenderedParams(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура RunCheck()
+	Сообщить("видимое:" + Объект.Visible);
+	Если Объект.ReadOnlyParam = Неопределено Тогда
+		Сообщить("толькочтение:нет");
+	Иначе
+		Сообщить("толькочтение:" + Объект.ReadOnlyParam);
+	КонецЕсли;
+	Если Параметры.Hidden = Неопределено Тогда
+		Сообщить("скрытое:нет");
+	Иначе
+		Сообщить("скрытое:" + Параметры.Hidden);
+	КонецЕсли;
+КонецПроцедуры
+`)
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеVisible",
+			DataPath: "Объект.Visible",
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеReadOnly",
+			DataPath: "Объект.ReadOnlyParam", ReadOnly: true,
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Проверить",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "RunCheck",
+			},
+		},
+	)
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{
+		Name: "BoundDirectSpoof",
+		Params: []processor.Param{
+			{Name: "Visible", Type: "string"},
+			{Name: "ReadOnlyParam", Type: "string"},
+			{Name: "Hidden", Type: "string"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	body := processorClickBody("Проверить")
+	body.Set("Visible", "body-value")
+	body.Set("ReadOnlyParam", "forged-readonly")
+	body.Set("Hidden", "forged-hidden")
+
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	want := []string{"видимое:body-value", "толькочтение:нет", "скрытое:нет"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("forged params changed bound handler object: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
 func TestHandleProcessorFormEvent_MissingBoundHandlerDoesNotFallback(t *testing.T) {
 	form := processorExecutionForm(&metadata.FormElement{
 		Kind: metadata.FormElementButton,
@@ -537,6 +735,64 @@ func TestHandleProcessorFormEvent_RespectsRequestTimeout(t *testing.T) {
 	}
 	if elapsed > 3*time.Second {
 		t.Fatalf("request timeout took too long: %v", elapsed)
+	}
+}
+
+func TestHandleProcessorFormEvent_BoundHandlerRollsBackOpenTransaction(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура RunCheck()
+	НачатьТранзакцию();
+	ВызватьИсключение("boom");
+КонецПроцедуры
+`)
+	form := processorExecutionForm(
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "Selected", DataPath: "Объект.Selected"},
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Проверить",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "RunCheck",
+			},
+		},
+	)
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{
+		Name:   "BoundOpenTransaction",
+		Params: []processor.Param{{Name: "Selected", Type: "reference:ReferenceItems"}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	srv, db := newProcessorFormEventExecutionServer(t, proc, nil)
+	refEntity := &metadata.Entity{
+		Name: "ReferenceItems", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Name", Type: metadata.FieldTypeString}},
+	}
+	ctx := context.Background()
+	if err := db.Migrate(ctx, []*metadata.Entity{refEntity}); err != nil {
+		t.Fatal(err)
+	}
+	srv.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{refEntity}})
+	refID := uuid.New()
+	if err := db.Upsert(ctx, refEntity.Name, refID, map[string]any{"Name": "item"}, refEntity); err != nil {
+		t.Fatal(err)
+	}
+	srv.cfg.Limits.RequestTimeoutSec = 2
+	body := processorClickBody("Проверить")
+	body.Set("Selected", refID.String())
+
+	started := time.Now()
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+		t.Fatalf("bound handler response waited for transaction timeout: %v", elapsed)
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.OK || !strings.Contains(resp.Error, "boom") {
+		t.Fatalf("unexpected response: ok=%v error=%q", resp.OK, resp.Error)
+	}
+
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := db.GetByID(readCtx, refEntity.Name, refID, refEntity); err != nil {
+		t.Fatalf("open transaction still owns the database connection: %v", err)
 	}
 }
 

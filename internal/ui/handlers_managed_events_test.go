@@ -168,6 +168,12 @@ form:
   kind: object
   entity: ПараметрыОбр
 elements:
+  - kind: ПолеВвода
+    name: ПолеМодель
+    data_path: Объект.ModelName
+  - kind: ПолеВвода
+    name: ПолеБэкенд
+    data_path: Объект.Backend
   - kind: Кнопка
     name: Выполнить
 `), 0o644); err != nil {

@@ -655,6 +655,7 @@ const tplManagedForm = `
   "url" (printf "/ui/processor/%s/form-event" (lower .Processor.Name))
   "docId" ""
   "autoOpen" (hasFormHandler .Form "ПриОткрытии")
+  "serviceFields" (processorServiceFieldNames .Processor)
 )}}</script>
 {{else}}
 <script type="application/json" id="ob-managed-config">{{jsJSON (dict

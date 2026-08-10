@@ -850,7 +850,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// файл-параметр обработки мегабайтом (issue #674). Авторизация и trust-гейт
 	// выше выполняются до разбора потенциально большого multipart-тела.
 	maxSize := s.effectiveUploadLimit()
-	r.Body = http.MaxBytesReader(w, r.Body, maxSize+uiMultipartOverhead)
+	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, proc.Params))
 	opCtx, finish, ok := s.beginOperation(r, opProcessorRun, proc.Name)
 	if !ok {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -866,11 +866,12 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
 		return
 	}
+	requestControls := processorRequestControlsForForm(proc, form)
 	paramValues, err := processorParamValuesFromRequest(
 		r,
 		proc.Params,
 		maxSize,
-		processorRequestControlsForForm(proc.Params, form),
+		requestControls,
 	)
 	if err != nil {
 		opStatus = "error"
@@ -879,8 +880,10 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	elementName := strings.TrimSpace(r.FormValue("_element"))
-	eventName := strings.TrimSpace(r.FormValue("_event"))
+	elementValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_element"))
+	eventValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_event"))
+	elementName := strings.TrimSpace(elementValue)
+	eventName := strings.TrimSpace(eventValue)
 	if eventName == "" {
 		opStatus = "error"
 		respondJSON(enc, formEventResponse{Error: "_event required"})
@@ -916,20 +919,15 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		}
 
 		virtEntity := processorVirtualEntity(proc)
-		obj := buildObjectFromForm(r, virtEntity)
-		if obj.Fields == nil {
-			obj.Fields = make(map[string]any)
-		}
-		// formToFields не читает multipart-файлы. Подмешиваем значения из
-		// единого парсера параметров, чтобы .form.os видел тот же Параметры,
-		// что и обычный запуск обработки.
-		for name, value := range paramValues {
-			obj.Fields[name] = value
-		}
+		obj := processorFormObjectFromRequest(r, virtEntity, paramValues, requestControls)
 		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
 		var msgs []string
-		vars := s.buildDSLVarsWithMessages(opCtx, mc, &msgs)
-		thisObj := s.newFormObjectThis(opCtx, obj, virtEntity, nil)
+		// An unclosed explicit DSL transaction must be rolled back when the
+		// request ends even when operation timeouts are disabled.
+		dslCtx, cancelDSL := context.WithCancel(opCtx)
+		defer cancelDSL()
+		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
+		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, nil, false)
 		vars["Объект"] = thisObj
 		vars["ЭтотОбъект"] = thisObj
 		vars["Параметры"] = thisObj
@@ -949,13 +947,14 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		for k, v := range condRuntime.builtins() {
 			vars[k] = v
 		}
-		if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
+		pickResult, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_pick_result"))
+		if pr := parsePickResult(pickResult); pr != nil {
 			vars["ПодборРезультат"] = pr
 			vars["PickResult"] = pr
 		}
 
 		var runErr error
-		if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
+		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
 			runErr = s.interp.RunSandboxed(decl, thisObj,
 				interpreter.SandboxProfile{MaxWallClock: timeout}, nil, vars)
 		} else {
@@ -963,14 +962,14 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		}
 		if runErr != nil {
 			opStatus = operationStatus(opCtx, runErr)
-			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
+			resp := s.serializeManagedFormEventState(txState.Ctx(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
 			resp.Error = interpreter.FormatUserError(runErr)
 			resp.PickerData = picker
 			respondJSON(enc, resp)
 			return
 		}
 
-		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp := s.serializeManagedFormEventState(txState.Ctx(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
 		resp.PickerData = picker
 		respondJSON(enc, resp)
 		return
@@ -1000,7 +999,9 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 
 		paramsThis := &interpreter.MapThis{M: paramValues}
 		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-		dslVars := s.buildDSLVarsWithMessages(opCtx, mc, &msgs)
+		dslCtx, cancelDSL := context.WithCancel(opCtx)
+		defer cancelDSL()
+		dslVars := s.buildDSLVarsWithMessages(dslCtx, mc, &msgs)
 		dslVars["Параметры"] = paramsThis
 		interpreter.InjectMaket(dslVars, proc.Layout)
 
@@ -1008,7 +1009,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		// аргументы Выполнить так же, как обычный POST запуска обработки.
 		procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
 		var err error
-		if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
+		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
 			_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
 				interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
 		} else {
