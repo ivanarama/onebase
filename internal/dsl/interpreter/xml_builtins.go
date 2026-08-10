@@ -536,7 +536,7 @@ func xmlStringOf(v any) string {
 		}
 		return "false"
 	case time.Time:
-		return x.Format("2006-01-02T15:04:05")
+		return x.Format(time.RFC3339Nano)
 	case decimal.Decimal:
 		return x.String()
 	case int64:
@@ -579,7 +579,7 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 	switch typeName {
 	case "строка", "string":
 		return strArg(args, 1), nil
-	case "число", "number":
+	case "число", "number", "decimal":
 		d, err := decimal.NewFromString(text)
 		if err != nil {
 			panic(userError{Msg: "XMLЗначение: не число: " + text})
@@ -593,8 +593,8 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 			return false, nil
 		}
 		panic(userError{Msg: "XMLЗначение: не булево: " + text})
-	case "дата", "date":
-		for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02", "20060102150405", "20060102"} {
+	case "дата", "date", "datetime":
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02", "20060102150405", "20060102"} {
 			if t, err := time.Parse(layout, text); err == nil {
 				return t, nil
 			}

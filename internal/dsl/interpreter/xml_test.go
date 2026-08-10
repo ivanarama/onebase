@@ -71,15 +71,11 @@ func requireXMLUserError(t *testing.T, contains string, fn func()) {
 		if r == nil {
 			t.Fatal("ожидалась пользовательская ошибка")
 		}
-		var message string
-		switch e := r.(type) {
-		case userError:
-			message = e.Msg
-		case error:
-			message = e.Error()
-		default:
-			message = fmt.Sprint(e)
+		e, ok := r.(userError)
+		if !ok {
+			t.Fatalf("ожидалась userError, получена %T: %v", r, r)
 		}
+		message := e.Msg
 		if contains != "" && !strings.Contains(message, contains) {
 			t.Fatalf("ошибка %q не содержит %q", message, contains)
 		}
@@ -322,7 +318,7 @@ func TestXMLString_Primitives(t *testing.T) {
 		{int64(42), "42"},
 		{decimal.RequireFromString("42.50"), "42.5"},
 		{"уже строка", "уже строка"},
-		{time.Date(2026, 8, 10, 12, 30, 0, 0, time.UTC), "2026-08-10T12:30:00"},
+		{time.Date(2026, 8, 10, 12, 30, 0, 0, time.UTC), "2026-08-10T12:30:00Z"},
 		{nil, ""},
 	}
 	for _, c := range cases {
@@ -362,6 +358,24 @@ func TestXMLValue_ParsesByType(t *testing.T) {
 	if !ok || tm.Year() != 2026 || tm.Day() != 10 {
 		t.Errorf("Дата = %v (%T)", got, got)
 	}
+
+	wantTime := time.Date(2026, 8, 10, 12, 30, 0, 123456789, time.FixedZone("MSK", 3*60*60))
+	got, err = builtinXMLValue([]any{"dateTime", "2026-08-10T12:30:00.123456789+03:00"}, "", 0)
+	if err != nil {
+		t.Fatalf("XMLЗначение(dateTime): %v", err)
+	}
+	parsedTime, ok := got.(time.Time)
+	if !ok || !parsedTime.Equal(wantTime) || parsedTime.Nanosecond() != wantTime.Nanosecond() {
+		t.Errorf("dateTime = %v (%T), ожидалось %v", got, got, wantTime)
+	}
+
+	got, err = builtinXMLValue([]any{"decimal", "42.5"}, "", 0)
+	if err != nil {
+		t.Fatalf("XMLЗначение(decimal): %v", err)
+	}
+	if d, ok := got.(decimal.Decimal); !ok || !d.Equal(decimal.RequireFromString("42.5")) {
+		t.Errorf("decimal = %v (%T), ожидалось 42.5", got, got)
+	}
 }
 
 // XMLСтрока и XMLЗначение должны быть обратны друг другу — иначе обмен данными
@@ -373,7 +387,7 @@ func TestXMLStringValue_AreInverse(t *testing.T) {
 	}{
 		{"Число", decimal.RequireFromString("-17.25")},
 		{"Булево", false},
-		{"Дата", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)},
+		{"Дата", time.Date(2026, 1, 2, 3, 4, 5, 987654321, time.FixedZone("MSK", 3*60*60))},
 		{"Строка", "текст с пробелами"},
 	} {
 		s, err := builtinXMLString([]any{c.in}, "", 0)
@@ -390,6 +404,36 @@ func TestXMLStringValue_AreInverse(t *testing.T) {
 		}
 		if again != s {
 			t.Errorf("%s: круг дал %v вместо %v", c.typeName, again, s)
+		}
+	}
+}
+
+func TestXMLTypeOf_CanBePassedToXMLValue(t *testing.T) {
+	values := []any{
+		decimal.RequireFromString("17.25"),
+		true,
+		"строка",
+		time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.FixedZone("MSK", 3*60*60)),
+	}
+	for _, value := range values {
+		typeName, err := builtinXMLTypeOf([]any{value}, "", 0)
+		if err != nil {
+			t.Fatalf("XMLТипЗнч(%v): %v", value, err)
+		}
+		text, err := builtinXMLString([]any{value}, "", 0)
+		if err != nil {
+			t.Fatalf("XMLСтрока(%v): %v", value, err)
+		}
+		back, err := builtinXMLValue([]any{typeName, text}, "", 0)
+		if err != nil {
+			t.Fatalf("XMLЗначение(%v, %v): %v", typeName, text, err)
+		}
+		again, err := builtinXMLString([]any{back}, "", 0)
+		if err != nil {
+			t.Fatalf("XMLСтрока(%v): %v", back, err)
+		}
+		if again != text {
+			t.Errorf("%T: круг дал %v вместо %v", value, again, text)
 		}
 	}
 }
