@@ -178,6 +178,8 @@ func (a *Array) CallMethod(name string, args []any) any {
 				a.items[idx] = val
 			}
 		}
+	default:
+		unknownMethod("Массив", name, arrayMethods)
 	}
 	return nil
 }
@@ -286,6 +288,8 @@ func (s *Struct) CallMethod(name string, args []any) any {
 			return nil
 		}
 		return v
+	default:
+		unknownMethod("Структура", name, structMethods)
 	}
 	return nil
 }
@@ -359,6 +363,8 @@ func (m *Map) CallMethod(name string, args []any) any {
 	case "очистить", "clear":
 		m.keys = nil
 		m.vals = nil
+	default:
+		unknownMethod("Соответствие", name, mapMethods)
 	}
 	return nil
 }

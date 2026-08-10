@@ -62,7 +62,11 @@ func TestOrphanMovements_NoDeadlockDetectAndDelete(t *testing.T) {
 	}
 
 	// Удаление вычищает их, повторное обнаружение пусто.
-	if deleted := db.DeleteOrphanMovements(ctx, regs, ents); deleted != 1 {
+	deleted, err := db.DeleteOrphanMovements(ctx, regs, ents)
+	if err != nil {
+		t.Fatalf("DeleteOrphanMovements: %v", err)
+	}
+	if deleted != 1 {
 		t.Errorf("DeleteOrphanMovements: удалено %d, ожидалось 1", deleted)
 	}
 	rest, err := db.OrphanMovements(ctx, regs, ents)

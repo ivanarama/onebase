@@ -81,9 +81,9 @@ func (h *handler) searchV2() http.HandlerFunc {
 		// Числовое смещение снаружи не принимается: продолжение задаётся только
 		// непрозрачным курсором из предыдущего ответа. Иначе перебор позиций дал
 		// бы ту же утечку, что и выдача next_offset (см. internal/search/cursor.go).
-		offset := search.DecodeCursor(r.URL.Query().Get("cursor"))
-
-		page, err := search.Run(r.Context(), h.store, restSearchDeps{h: h}, q, limit, offset)
+		// Курсор разбирает сам search.Run — своими q и limit, чтобы продолжить
+		// можно было только тот запрос, которым он выдан (#615).
+		page, err := search.Run(r.Context(), h.store, restSearchDeps{h: h}, q, limit, r.URL.Query().Get("cursor"))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 			return
