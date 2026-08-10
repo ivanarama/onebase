@@ -685,7 +685,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		fnName := callee.Tok.Literal
 		lowName := strings.ToLower(fnName)
 		var fallback FallbackBuiltinFunc
-		// В sandbox с wall-clock три имени паузы — часть security boundary,
+		// В sandbox с wall-clock имена паузы — часть security boundary,
 		// поэтому разрешаются до env/procedure shadowing. Иначе код мог сделать
 		// `Приостановить = 0`, после чего обычный dispatch игнорировал non-callable
 		// значение и проваливался в глобальный builtin с прямым ожиданием.

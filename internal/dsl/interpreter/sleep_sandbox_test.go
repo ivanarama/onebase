@@ -37,9 +37,9 @@ func TestSleepSandbox_TwoPausesShareWallClock(t *testing.T) {
 
 // Имена паузы в sandbox являются частью security boundary: присваивание
 // одноимённой локальной переменной не должно сбрасывать deadline-aware dispatch
-// к глобальному builtin. Проверяем все три публичных синонима через RunSandboxed.
+// к глобальному builtin. Проверяем все публичные синонимы через RunSandboxed.
 func TestSleepSandbox_LocalVariableCannotBypassDeadline(t *testing.T) {
-	for _, name := range []string{"Приостановить", "Пауза", "Sleep"} {
+	for _, name := range []string{"Приостановить", "Пауза", "Подождать", "Sleep", "Wait"} {
 		t.Run(name, func(t *testing.T) {
 			src := fmt.Sprintf(`Функция Тест()
   %s = 0;
@@ -55,6 +55,43 @@ func TestSleepSandbox_LocalVariableCannotBypassDeadline(t *testing.T) {
 			assert.NotEqual(t, "обход", result)
 			assert.Less(t, time.Since(start), 300*time.Millisecond,
 				"локальная переменная отключила отмену ожидания %s", name)
+		})
+	}
+}
+
+// Все документированные имена должны работать и через обычный публичный
+// dispatch. Нулевая выдержка проверяет регистрацию без реального ожидания.
+func TestSleepDSL_AllAliasesAreRegistered(t *testing.T) {
+	for _, name := range []string{"Приостановить", "Пауза", "Подождать", "Sleep", "Wait"} {
+		t.Run(name, func(t *testing.T) {
+			src := fmt.Sprintf(`Функция Тест()
+  %s(0);
+  Возврат "готово";
+КонецФункции`, name)
+			var result any
+			require.NoError(t, interpreter.New().RunWithResult(parseProc(t, src), nil, &result))
+			assert.Equal(t, "готово", result)
+		})
+	}
+}
+
+// Те же алиасы обязаны использовать frozen-clock builtin в onebase test, а не
+// случайно проваливаться в настоящий time.Sleep.
+func TestSleepDSL_AllAliasesUseFrozenClock(t *testing.T) {
+	for _, name := range []string{"Приостановить", "Пауза", "Подождать", "Sleep", "Wait"} {
+		t.Run(name, func(t *testing.T) {
+			profile := interpreter.NewTestProfile()
+			profile.Reset()
+			src := fmt.Sprintf(`Функция Тест()
+  Часы.Установить(Дата(2000, 8, 10, 12, 0, 0));
+  %s(30);
+  Возврат Строка(ТекущаяДатаВремя()) + "|" + Строка(Мок.Паузы[0].Секунды);
+КонецФункции`, name)
+			var result any
+			start := time.Now()
+			require.NoError(t, interpreter.New().RunWithResult(parseProc(t, src), nil, &result, profile.Vars()))
+			assert.Less(t, time.Since(start), time.Second)
+			assert.Equal(t, "10.08.2000 12:00:30|30", result)
 		})
 	}
 }

@@ -231,11 +231,13 @@ func init() {
 	typeFn := func(args []any, _ string, _ int) (any, error) {
 		return normalizeTypeName(strArg(args, 0)), nil
 	}
-	// Приостановить/Пауза/Sleep — блокирующая выдержка (issue #708).
+	// Приостановить/Пауза/Подождать/Sleep/Wait — блокирующая выдержка (issue #708).
 	sleepFn := newSleepBuiltin()
 	builtins["приостановить"] = sleepFn
 	builtins["пауза"] = sleepFn
+	builtins["подождать"] = sleepFn
 	builtins["sleep"] = sleepFn
+	builtins["wait"] = sleepFn
 	builtins["типзнч"] = typeOfFn
 	builtins["typeof"] = typeOfFn
 	builtins["тип"] = typeFn

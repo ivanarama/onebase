@@ -93,11 +93,11 @@ func waitForSleep(d time.Duration, ec *execCtx) {
 	}
 }
 
-// isSleepBuiltinName ограничивает security-исключение ровно тремя публичными
+// isSleepBuiltinName ограничивает security-исключение публичными
 // именами паузы. Порядок shadowing всех остальных функций не меняется.
 func isSleepBuiltinName(lowName string) bool {
 	switch lowName {
-	case "приостановить", "пауза", "sleep":
+	case "приостановить", "пауза", "подождать", "sleep", "wait":
 		return true
 	default:
 		return false

@@ -49,7 +49,7 @@ type execCtx struct {
 	curLine           int
 	debug             DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
 	deadline          time.Time // wall-clock запуска; zero = без лимита
-	forceSandboxSleep bool      // три имени паузы зарезервированы sandbox-диспетчером
+	forceSandboxSleep bool      // имена паузы зарезервированы sandbox-диспетчером
 	maxLoopIters      int       // потолок итераций цикла; 0 = maxWhileIter
 	moduleEnvs        map[string]*env
 }

@@ -1102,7 +1102,7 @@ var functionDescriptors = []Descriptor{
 		Group:     "Формы",
 	},
 	{
-		Name: "приостановить", Display: "Приостановить", Aliases: []string{"Пауза", "Sleep"},
+		Name: "приостановить", Display: "Приостановить", Aliases: []string{"Пауза", "Подождать", "Sleep", "Wait"},
 		Kind:      KindFunc,
 		Signature: "Приостановить(Секунды)",
 		Params:    []Param{{Name: "Секунды", Type: "число", Doc: "длительность выдержки, допускаются доли секунды"}},

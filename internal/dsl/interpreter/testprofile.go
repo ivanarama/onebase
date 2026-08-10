@@ -213,7 +213,8 @@ func (p *TestProfile) Vars() map[string]any {
 		// подменяемое время
 		"ТекущаяДатаВремя": nowFn, "Now": nowFn,
 		"ТекущаяДата": todayFn, "Today": todayFn,
-		"Приостановить": sleepFn, "Пауза": sleepFn, "Sleep": sleepFn,
+		"Приостановить": sleepFn, "Пауза": sleepFn, "Подождать": sleepFn,
+		"Sleep": sleepFn, "Wait": sleepFn,
 
 		// почта
 		"ОтправитьПисьмо": sendEmail, "SendEmail": sendEmail,
