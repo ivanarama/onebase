@@ -114,22 +114,11 @@ func (s *Server) aiEntityNames(kind metadata.Kind) string {
 // aiRefLookupField — по какому реквизиту резолвить ссылку, переданную именем:
 // Наименование/Description, затем Номер, затем первый строковый реквизит.
 func aiRefLookupField(entity *metadata.Entity) string {
-	for _, cand := range []string{"Наименование", "Description", "Имя", "Name"} {
-		for _, f := range entity.Fields {
-			if strings.EqualFold(f.Name, cand) {
-				return f.Name
-			}
-		}
-	}
-	for _, f := range entity.Fields {
-		if strings.EqualFold(f.Name, "Номер") {
-			return f.Name
-		}
-	}
-	for _, f := range entity.Fields {
-		if f.Type == metadata.FieldTypeString {
-			return f.Name
-		}
+	// Раньше здесь жила своя копия порядка предпочтения — единственная именная
+	// среди трёх позиционных. Теперь правило одно на платформу (план 117,
+	// решение №3): metadata.LabelFields.
+	if f := metadata.LabelFields(entity); len(f) > 0 {
+		return f[0].Name
 	}
 	return ""
 }
