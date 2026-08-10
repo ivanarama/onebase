@@ -83,6 +83,37 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # JavaScript не проверялся в CI ничем. Для компилятора Go это вложенные
+      # статические ресурсы, поэтому синтаксическая ошибка в configurator.js
+      # (4352 строки) прошла бы все гейты зелёными — а в браузере SyntaxError
+      # отменяет весь файл вместе со всеми обработчиками, то есть конфигуратор
+      # просто не открывается (issue #684). Синтаксис — не всё, но именно он
+      # отделяет «кнопка работает иначе» от «страница не работает вовсе».
+      #
+      # node предустановлен на ubuntu-latest, ставить нечего. Вендоренные бандлы
+      # (webassets, rapidoc, third_party) исключены — они не наши.
+      - name: JS syntax check
+        run: |
+          set -eu
+          command -v node >/dev/null || { echo "::error::node не найден на раннере"; exit 1; }
+          js="$(git ls-files '*.js' | grep -vE '^third_party/|^internal/webassets/|^internal/ui/rapidoc/')"
+          [ -n "$js" ] || { echo "::error::не найдено ни одного .js — сломан отбор файлов"; exit 1; }
+          n=0
+          for f in $js; do
+            case "$f" in
+              # Сценарии k6 — ES-модули (import из 'k6/http'); у node режим
+              # модуля включается расширением, поэтому проверяем через копию.
+              loadtest/*) cp "$f" "${RUNNER_TEMP:-/tmp}/jscheck.mjs"
+                          node --check "${RUNNER_TEMP:-/tmp}/jscheck.mjs" \
+                            || { echo "::error file=$f::синтаксическая ошибка"; exit 1; } ;;
+              *)          node --check "$f" \
+                            || { echo "::error file=$f::синтаксическая ошибка"; exit 1; } ;;
+            esac
+            n=$((n+1))
+          done
+          echo "JS syntax: чисто ($n файлов)"
+
+
       # -race на Linux работает без CGo-плясок (на Windows нужен gcc) и ловит
       # гонки разделяемого интерпретатора и других синглтонов (план 52/56).
       # Coverage собирается тем же прогоном, чтобы не гонять тесты дважды.

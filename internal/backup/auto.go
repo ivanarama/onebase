@@ -326,19 +326,38 @@ func dumpAutoTarget(ctx context.Context, target AutoTarget, dir string) (string,
 	return Dump(ctx, target.DSN, dir)
 }
 
-// RotateBackups keeps the newest keepLast backup files and removes older ones.
+// RotateBackups оставляет keepLast свежих копий КАЖДОЙ базы в каталоге и удаляет
+// остальные.
+//
+// Раньше выборка сужалась одной лишь маской backup_* — имя базы в отбор не
+// входило, поэтому при общем каталоге ротация одной базы сносила копии соседних.
+// Общий каталог не экзотика: docs/DEPLOYMENT.md показывает фиксированный
+// абсолютный путь, а AutoBackupDir разводит базы по подкаталогам, только если
+// backup.directory не задан вовсе. Тот же дефект был в off-site ротации и
+// закрыт в #628; здесь он оставался, хотя issue #628 приводила локальную
+// ротацию как эталон (issue #673).
+//
+// Порядок внутри семейства — по времени изменения файла: для локальных копий это
+// надёжнее метки в имени. Файлы backup_*, чьё имя не разбирается на
+// backup_<БД>_<дата>, не трогаются вовсе — чьи они, неизвестно.
 func RotateBackups(dir string, keepLast int) error {
 	if keepLast <= 0 {
 		return nil
 	}
-	files, err := BackupFiles(dir)
+	files, err := BackupFiles(dir) // уже отсортированы «новые первыми»
 	if err != nil {
 		return err
 	}
-	if len(files) <= keepLast {
-		return nil
-	}
-	for _, f := range files[keepLast:] {
+	kept := make(map[string]int, 4)
+	for _, f := range files {
+		family, _, ok := splitBackupName(filepath.Base(f.Path))
+		if !ok {
+			continue
+		}
+		kept[family]++
+		if kept[family] <= keepLast {
+			continue
+		}
 		if err := os.Remove(f.Path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
