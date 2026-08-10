@@ -405,7 +405,7 @@ var functionDescriptors = []Descriptor{
 		Group:     "Даты",
 	},
 	{
-		Name: "добавитьчас", Display: "ДобавитьЧас", Aliases: []string{"AddHours"}, Kind: KindFunc,
+		Name: "добавитьчас", Display: "ДобавитьЧас", Aliases: []string{"ДобавитьЧасов", "AddHours", "AddHour"}, Kind: KindFunc,
 		Signature: "ДобавитьЧас(Дата, Количество)",
 		Params: []Param{
 			{Name: "Дата", Type: "дата"},
@@ -417,7 +417,7 @@ var functionDescriptors = []Descriptor{
 		Group:   "Даты",
 	},
 	{
-		Name: "добавитьминут", Display: "ДобавитьМинут", Aliases: []string{"AddMinutes"}, Kind: KindFunc,
+		Name: "добавитьминут", Display: "ДобавитьМинут", Aliases: []string{"ДобавитьМинуту", "AddMinutes", "AddMinute"}, Kind: KindFunc,
 		Signature: "ДобавитьМинут(Дата, Количество)",
 		Params: []Param{
 			{Name: "Дата", Type: "дата"},
@@ -428,7 +428,7 @@ var functionDescriptors = []Descriptor{
 		Group:   "Даты",
 	},
 	{
-		Name: "добавитьсекунд", Display: "ДобавитьСекунд", Aliases: []string{"AddSeconds"}, Kind: KindFunc,
+		Name: "добавитьсекунд", Display: "ДобавитьСекунд", Aliases: []string{"ДобавитьСекунду", "AddSeconds", "AddSecond"}, Kind: KindFunc,
 		Signature: "ДобавитьСекунд(Дата, Количество)",
 		Params: []Param{
 			{Name: "Дата", Type: "дата"},
@@ -605,8 +605,8 @@ var functionDescriptors = []Descriptor{
 		Params:    []Param{{Name: "Значение", Type: "произвольный"}},
 		Returns:   "число",
 		Doc: "Преобразует значение в число. Запятая трактуется как десятичный разделитель; при ошибке возвращает 0. " +
-			"ДАТУ в число не преобразует — возвращает 0, поэтому строить на этом арифметику дат нельзя: " +
-			"складывайте дату с числом (секунды) или используйте ДобавитьСекунд/ДобавитьМинут/ДобавитьЧас.",
+			"Дата даёт ГГГГММДДЧЧММСС — обратно разбирается конструктором: Дата(Число(Д)) = Д. Это НЕ секунды от " +
+			"эпохи: для интервала бери Д2 - Д1 или РазностьДат, а для сдвига — ДобавитьСекунд/ДобавитьМинут/ДобавитьЧас.",
 		Group: "Число",
 	},
 	{
