@@ -125,6 +125,9 @@ func (i *Interpreter) EvalExpr(expr ast.Expr, this This) any {
 // через callUserProc (включая обработку дефолтов).
 func (i *Interpreter) Call(proc *ast.ProcedureDecl, this This, args []any, extraVars ...map[string]any) (result any, err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -693,6 +696,10 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	case *ast.Ident:
 		fnName := callee.Tok.Literal
 		var fallback FallbackBuiltinFunc
+		// Обычный AST всегда несёт identity собственного исходника в токене.
+		// Только выражения, разобранные динамически для Вычислить/отладчика,
+		// наследуют lexical identity текущего кадра.
+		sourceFile := callSourceFile(callee.Tok.File, e)
 		// Вычислить(Выражение) — разбор строки как выражения и вычисление в
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
@@ -716,7 +723,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		// vars["__form_procs__"] как map[lowercase]*ProcedureDecl.
 		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
 			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
-				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 {
+				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 && sourceFile != "" && proc.Name.File == sourceFile {
 					return i.callUserProc(proc, e, args)
 				}
 			}
@@ -734,14 +741,6 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		//
 		// Обращение к чужому экспорту остаётся квалифицированным: Модуль.Функция.
 		//
-		// Identity берём из кадра процедуры, а не из диагностического токена:
-		// у выражения Вычислить токен намеренно имеет файл «<Вычислить>», но
-		// область поиска соседних процедур остаётся областью вызывающего модуля.
-		// Для EvalExpr без кадра сохраняем совместимость через токен вызова.
-		sourceFile := e.sourceFile
-		if sourceFile == "" {
-			sourceFile = callee.Tok.File
-		}
 		if i.LookupSiblingProc != nil && sourceFile != "" {
 			if proc := i.LookupSiblingProc(sourceFile, fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
@@ -809,6 +808,20 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		return nil
 	}
 	return nil
+}
+
+// callSourceFile отделяет диагностическое имя динамического выражения от
+// identity модуля, в области которого оно исполняется. Для обычного AST файл
+// токена всегда авторитетен — это важно, например, для default-выражения
+// процедуры B, вычисляемого в variable scope вызывающей процедуры A.
+func callSourceFile(tokenFile string, e *env) string {
+	switch tokenFile {
+	case "<Вычислить>", "<console>":
+		if e != nil {
+			return e.sourceFile
+		}
+	}
+	return tokenFile
 }
 
 // exprSourceName восстанавливает исходный текст простого выражения-приёмника
@@ -946,8 +959,10 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 	child.sourceFile = proc.Name.File
 	for idx, param := range proc.Params {
 		if idx < len(args) {
-			child.setLocal(param.Literal, args[idx])
-			continue
+			if _, missing := args[idx].(missingNamedArg); !missing {
+				child.setLocal(param.Literal, args[idx])
+				continue
+			}
 		}
 		// Параметр без переданного значения — пробуем дефолт. В legacy
 		// дефолт вычисляется в callEnv; в strict lexical — в module-env/root,
@@ -955,7 +970,12 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		// child ещё не имеет других параметров — сознательно не даём дефолтам
 		// ссылаться на «соседей» (1С-семантика).
 		if idx < len(proc.Defaults) && proc.Defaults[idx] != nil {
-			child.setLocal(param.Literal, i.evalExpr(proc.Defaults[idx], defaultEnv))
+			// Значения переменных берём из прежнего defaultEnv, но lexical
+			// identity принадлежит AST вызываемой процедуры. Shallow-copy не
+			// копирует карты/цепочку scope и потому сохраняет legacy visibility.
+			exprEnv := *defaultEnv
+			exprEnv.sourceFile = proc.Name.File
+			child.setLocal(param.Literal, i.evalExpr(proc.Defaults[idx], &exprEnv))
 		} else {
 			child.setLocal(param.Literal, nil)
 		}

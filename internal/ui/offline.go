@@ -94,7 +94,6 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 		if p.Type == "file" {
 			path, ok := fileParams[p.Name]
 			if !ok {
-				paramValues[p.Name] = ""
 				continue
 			}
 			data, readErr := os.ReadFile(path)
@@ -104,7 +103,11 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 			paramValues[p.Name] = decodeUploadText(data)
 			continue
 		}
-		paramValues[p.Name] = parseParamValue(strParams[p.Name], p.Type)
+		raw, ok := strParams[p.Name]
+		if !ok {
+			continue
+		}
+		paramValues[p.Name] = parseParamValue(raw, p.Type)
 	}
 
 	paramsThis := &interpreter.MapThis{M: paramValues}

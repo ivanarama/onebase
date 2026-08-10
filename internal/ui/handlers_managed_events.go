@@ -816,17 +816,6 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
-	// Один предел, а не два вложенных: пределы не композируются, и прежний
-	// MaxBytesReader на defaultFormMemoryBytes связывал раньше, обрезая
-	// файл-параметр обработки мегабайтом (issue #674). Присваивание r.Body —
-	// здесь, а не в хелпере: иначе gosec (G120) не видит предел.
-	r.Body = http.MaxBytesReader(w, r.Body, s.effectiveUploadLimit()+uiMultipartOverhead)
-	if err := parseBoundedForm(r, 32<<20); err != nil {
-		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
-		return
-	}
-
 	procName := chi.URLParam(r, "name")
 	if procName == "" {
 		respondJSON(enc, formEventResponse{Error: "processor name required"})
@@ -856,117 +845,176 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Один предел, а не два вложенных: пределы не композируются, и прежний
+	// MaxBytesReader на defaultFormMemoryBytes связывал раньше, обрезая
+	// файл-параметр обработки мегабайтом (issue #674). Авторизация и trust-гейт
+	// выше выполняются до разбора потенциально большого multipart-тела.
+	maxSize := s.effectiveUploadLimit()
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize+uiMultipartOverhead)
+	opCtx, finish, ok := s.beginOperation(r, opProcessorRun, proc.Name)
+	if !ok {
+		w.WriteHeader(http.StatusTooManyRequests)
+		respondJSON(enc, formEventResponse{Error: "слишком много одновременно выполняемых обработок, повторите позже"})
+		return
+	}
+	opStatus := "ok"
+	defer func() { finish(opStatus, 0, false) }()
+
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		opStatus = "error"
+		w.WriteHeader(uploadErrorStatus(err))
+		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
+		return
+	}
+	paramValues, err := processorParamValuesFromRequest(r, proc.Params, maxSize)
+	if err != nil {
+		opStatus = "error"
+		w.WriteHeader(uploadErrorStatus(err))
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+		return
+	}
+
 	elementName := strings.TrimSpace(r.FormValue("_element"))
 	eventName := strings.TrimSpace(r.FormValue("_event"))
 	if eventName == "" {
+		opStatus = "error"
 		respondJSON(enc, formEventResponse{Error: "_event required"})
 		return
 	}
 
-	// Try form-level handler (from .form.os AST)
+	// Явно привязанный обработчик имеет безусловный приоритет. Если его нет в
+	// .form.os, это ошибка конфигурации, а не разрешение незаметно выполнить
+	// глобальную процедуру Выполнить.
+	boundProcName := resolveHandlerProc(form, elementName, eventName)
 	progAny := form.ProgramAST
 	var program *ast.Program
-	if progAny != nil {
-		if p, ok := progAny.(*ast.Program); ok && p != nil {
-			program = p
-		}
+	if p, ok := progAny.(*ast.Program); ok && p != nil {
+		program = p
 	}
-
-	if program != nil {
-		procName := resolveHandlerProc(form, elementName, eventName)
-		if procName != "" {
-			var decl *ast.ProcedureDecl
+	if boundProcName != "" {
+		var decl *ast.ProcedureDecl
+		if program != nil {
 			for _, p := range program.Procedures {
-				if strings.EqualFold(p.Name.Literal, procName) {
+				if strings.EqualFold(p.Name.Literal, boundProcName) {
 					decl = p
 					break
 				}
 			}
-			if decl != nil {
-				virtEntity := processorVirtualEntity(proc)
-				obj := buildObjectFromForm(r, virtEntity)
-				mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-				var msgs []string
-				vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-				thisObj := s.newFormObjectThis(r.Context(), obj, virtEntity, nil)
-				vars["Объект"] = thisObj
-				vars["ЭтотОбъект"] = thisObj
-				vars["Параметры"] = thisObj
-				interpreter.InjectMaket(vars, proc.Layout)
-
-				// Передаём все процедуры формы для вызовов из .form.os.
-				formProcs := make(map[string]*ast.ProcedureDecl, len(program.Procedures))
-				for _, p := range program.Procedures {
-					formProcs[strings.ToLower(p.Name.Literal)] = p
-				}
-				vars["__form_procs__"] = formProcs
-
-				// Подбор (план 46), как в handleManagedFormEvent: фаза 1 копит
-				// payload через ПоказатьПодбор → pickerData в ответе; фаза 2
-				// отдаёт _pick_result в ПодборРезультат для обработчика Выбор.
-				var picker *pickerPayload
-				pickerFn := newPickerBuiltin(&picker)
-				vars["ПоказатьПодбор"] = pickerFn
-				vars["ShowPicker"] = pickerFn
-				condRuntime := newFormConditionalRuntime(form)
-				for k, v := range condRuntime.builtins() {
-					vars[k] = v
-				}
-				if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
-					vars["ПодборРезультат"] = pr
-					vars["PickResult"] = pr
-				}
-
-				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-					resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
-					resp.Error = interpreter.FormatUserError(runErr)
-					resp.PickerData = picker
-					respondJSON(enc, resp)
-					return
-				}
-
-				resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
-				resp.PickerData = picker
-				respondJSON(enc, resp)
-				return
-			}
 		}
-	}
-
-	// No form handler — for "Нажатие" on execute button, run processor logic
-	if eventName == string(metadata.FormEventOnClick) {
+		if decl == nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: "процедура «" + boundProcName + "» не найдена в .form.os"})
+			return
+		}
 		if proc.External {
-			// Исполнение внешней обработки (DSL) всегда логируем — как в processorRun.
 			s.auditExtProcRun(r, proc.Name)
 		}
-		paramValues := map[string]any{}
-		for _, p := range proc.Params {
-			paramValues[p.Name] = parseParamValue(r.FormValue(p.Name), p.Type)
+
+		virtEntity := processorVirtualEntity(proc)
+		obj := buildObjectFromForm(r, virtEntity)
+		if obj.Fields == nil {
+			obj.Fields = make(map[string]any)
+		}
+		// formToFields не читает multipart-файлы. Подмешиваем значения из
+		// единого парсера параметров, чтобы .form.os видел тот же Параметры,
+		// что и обычный запуск обработки.
+		for name, value := range paramValues {
+			obj.Fields[name] = value
+		}
+		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
+		var msgs []string
+		vars := s.buildDSLVarsWithMessages(opCtx, mc, &msgs)
+		thisObj := s.newFormObjectThis(opCtx, obj, virtEntity, nil)
+		vars["Объект"] = thisObj
+		vars["ЭтотОбъект"] = thisObj
+		vars["Параметры"] = thisObj
+		interpreter.InjectMaket(vars, proc.Layout)
+
+		formProcs := make(map[string]*ast.ProcedureDecl, len(program.Procedures))
+		for _, p := range program.Procedures {
+			formProcs[strings.ToLower(p.Name.Literal)] = p
+		}
+		vars["__form_procs__"] = formProcs
+
+		var picker *pickerPayload
+		pickerFn := newPickerBuiltin(&picker)
+		vars["ПоказатьПодбор"] = pickerFn
+		vars["ShowPicker"] = pickerFn
+		condRuntime := newFormConditionalRuntime(form)
+		for k, v := range condRuntime.builtins() {
+			vars[k] = v
+		}
+		if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
+			vars["ПодборРезультат"] = pr
+			vars["PickResult"] = pr
+		}
+
+		var runErr error
+		if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
+			runErr = s.interp.RunSandboxed(decl, thisObj,
+				interpreter.SandboxProfile{MaxWallClock: timeout}, nil, vars)
+		} else {
+			runErr = s.interp.Run(decl, thisObj, vars)
+		}
+		if runErr != nil {
+			opStatus = operationStatus(opCtx, runErr)
+			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
+			resp.Error = interpreter.FormatUserError(runErr)
+			resp.PickerData = picker
+			respondJSON(enc, resp)
+			return
+		}
+
+		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp.PickerData = picker
+		respondJSON(enc, resp)
+		return
+	}
+
+	// Без привязанного обработчика общий Выполнить разрешён только настоящей
+	// кнопке из метаданных формы. Одного присланного клиентом _event=Нажатие
+	// недостаточно.
+	if eventName == string(metadata.FormEventOnClick) {
+		element := form.GetElementByName(elementName)
+		if element == nil || element.Kind != metadata.FormElementButton {
+			respondJSON(enc, formEventResponse{OK: true})
+			return
 		}
 
 		procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
 		if procDecl == nil {
-			respondJSON(enc, formEventResponse{OK: true})
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: "процедура Выполнить() не найдена в обработке «" + proc.Name + "»"})
 			return
+		}
+		if proc.External {
+			s.auditExtProcRun(r, proc.Name)
 		}
 
 		var msgs []string
 
 		paramsThis := &interpreter.MapThis{M: paramValues}
 		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-		dslVars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
+		dslVars := s.buildDSLVarsWithMessages(opCtx, mc, &msgs)
 		dslVars["Параметры"] = paramsThis
 		interpreter.InjectMaket(dslVars, proc.Layout)
 
 		// Кнопка managed-формы должна передавать параметры в объявленные
 		// аргументы Выполнить так же, как обычный POST запуска обработки.
 		procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
-		_, err := s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
+		var err error
+		if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
+			_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
+				interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
+		} else {
+			_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
+		}
 		if err != nil {
+			opStatus = operationStatus(opCtx, err)
 			respondJSON(enc, formEventResponse{
 				OK:       false,
 				Messages: msgs,
-				Error:    err.Error(),
+				Error:    interpreter.FormatUserError(err),
 			})
 			return
 		}

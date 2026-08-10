@@ -79,6 +79,41 @@ func TestBindNamedArgs_ЗначенияПоУмолчаниюНеЗатираю�
 	}
 }
 
+// Разреженная сигнатура: отсутствие первого metadata-параметра не должно
+// мешать передать второй по имени и не должно затирать DSL-default первого.
+func TestBindNamedArgs_РазреженныйВторойПараметрНеЗатираетDefaultПервого(t *testing.T) {
+	decl := declOf(t, `Функция Выполнить(Первый = "по умолчанию", Второй = "")
+		Возврат Первый + "/" + Второй;
+	КонецФункции`)
+
+	args := interpreter.BindNamedArgs(decl, map[string]any{"Второй": "задан"})
+	if len(args) != 2 {
+		t.Fatalf("аргументов %d, ждали sparse-список до второго formal", len(args))
+	}
+	res, err := interpreter.New().Call(decl, runtime.NewObject("T", metadata.KindCatalog), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "по умолчанию/задан" {
+		t.Fatalf("получено %#v", res)
+	}
+}
+
+// Явный nil — значение, а не отсутствие: он обязан затереть DSL-default.
+func TestBindNamedArgs_ЯвныйNilОтличаетсяОтОтсутствующего(t *testing.T) {
+	decl := declOf(t, `Функция Выполнить(Первый = "по умолчанию")
+		Возврат Первый;
+	КонецФункции`)
+	args := interpreter.BindNamedArgs(decl, map[string]any{"Первый": nil})
+	res, err := interpreter.New().Call(decl, runtime.NewObject("T", metadata.KindCatalog), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != nil {
+		t.Fatalf("явный nil заменён default: %#v", res)
+	}
+}
+
 // Если первый же параметр не совпал, не передаётся ничего: поведение остаётся
 // прежним, и процедура с посторонней сигнатурой не получает чужих значений
 // по позиции.

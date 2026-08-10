@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -174,25 +175,11 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
-	paramValues := map[string]any{}
-	for _, p := range proc.Params {
-		if p.Type == "file" {
-			file, _, err := r.FormFile(p.Name)
-			if err == nil {
-				data, err := readUploadedBytes(file, maxSize)
-				closeRead("загруженный файл параметра", file)
-				if err != nil {
-					opStatus = "error"
-					http.Error(w, s.errText(r, err), uploadErrorStatus(err))
-					return
-				}
-				paramValues[p.Name] = decodeUploadText(data)
-				continue
-			}
-			paramValues[p.Name] = ""
-			continue
-		}
-		paramValues[p.Name] = parseParamValue(r.FormValue(p.Name), p.Type)
+	paramValues, err := processorParamValuesFromRequest(r, proc.Params, maxSize)
+	if err != nil {
+		opStatus = "error"
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
 	}
 
 	procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
@@ -223,18 +210,18 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	// Параметры обработки связываем и с одноимёнными аргументами Выполнить —
 	// см. interpreter.BindNamedArgs (#706).
 	procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
-	var err error
+	var callErr error
 	if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
-		_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
+		_, callErr = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
 			interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
 	} else {
-		_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
+		_, callErr = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 	}
 
 	var runErr string
-	if err != nil {
-		opStatus = operationStatus(opCtx, err)
-		runErr = err.Error()
+	if callErr != nil {
+		opStatus = operationStatus(opCtx, callErr)
+		runErr = callErr.Error()
 	}
 
 	if proc.ManagedForm() != nil {
@@ -313,6 +300,43 @@ func decodeUploadText(data []byte) string {
 		return string(data)
 	}
 	return string(decoded)
+}
+
+// processorParamValuesFromRequest извлекает только реально переданные поля.
+// Отсутствующий metadata-параметр не попадает в map и потому не затирает
+// DSL-default при BindNamedArgs; явно переданное пустое значение остаётся
+// полноценным значением (parseParamValue может представить его как nil).
+func processorParamValuesFromRequest(r *http.Request, params []processorpkg.Param, maxFileSize int64) (map[string]any, error) {
+	values := make(map[string]any)
+	for _, p := range params {
+		if p.Type == "file" {
+			file, _, err := r.FormFile(p.Name)
+			if errors.Is(err, http.ErrMissingFile) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+			}
+			data, readErr := readUploadedBytes(file, maxFileSize)
+			closeRead("загруженный файл параметра", file)
+			if readErr != nil {
+				return nil, readErr
+			}
+			values[p.Name] = decodeUploadText(data)
+			continue
+		}
+
+		raw, present := r.Form[p.Name]
+		if !present {
+			continue
+		}
+		text := ""
+		if len(raw) > 0 {
+			text = raw[0]
+		}
+		values[p.Name] = parseParamValue(text, p.Type)
+	}
+	return values, nil
 }
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,

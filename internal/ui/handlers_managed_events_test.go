@@ -86,6 +86,7 @@ elements:
 Процедура ТестНажатие()
 	Сообщить(Кто());
 	Сообщить(Вычислить("Кто()"));
+	Сообщить(ИзГлобального());
 КонецПроцедуры
 
 Функция Кто()
@@ -120,6 +121,10 @@ elements:
 Функция Кто() Экспорт
 	Возврат "ГЛОБАЛЬНАЯ";
 КонецФункции
+
+Функция ИзГлобального() Экспорт
+	Возврат Кто();
+КонецФункции
 `)
 	registry.LoadModules(map[string]*ast.Program{"Коллизия": global})
 	if registry.GetModuleProc("Кто") == nil {
@@ -145,7 +150,7 @@ elements:
 	if !resp.OK {
 		t.Fatalf("ok=false, error=%q", resp.Error)
 	}
-	if len(resp.Messages) != 2 || resp.Messages[0] != "ФОРМА" || resp.Messages[1] != "ФОРМА" {
+	if len(resp.Messages) != 3 || resp.Messages[0] != "ФОРМА" || resp.Messages[1] != "ФОРМА" || resp.Messages[2] != "ГЛОБАЛЬНАЯ" {
 		t.Fatalf("локальная процедура формы не выиграла коллизию: messages=%v", resp.Messages)
 	}
 }
@@ -175,14 +180,15 @@ elements:
 	proc := &processor.Processor{
 		Name: "ПараметрыОбр",
 		Params: []processor.Param{
+			{Name: "Missing", Type: "string"},
 			{Name: "ModelName", Type: "string"},
 			{Name: "Backend", Type: "string"},
 		},
 		Forms: []*metadata.FormModule{form},
 	}
 	program := mustParse(t, `
-Процедура Выполнить(Backend, ModelName)
-	Сообщить(ModelName + ":" + Backend);
+Процедура Выполнить(Missing = "dsl-default", Backend, ModelName)
+	Сообщить(Missing + ":" + ModelName + ":" + Backend);
 КонецПроцедуры
 `)
 	registry := runtime.NewRegistry()
@@ -226,7 +232,7 @@ elements:
 	if !resp.OK {
 		t.Fatalf("ok=false, error=%q", resp.Error)
 	}
-	if len(resp.Messages) != 1 || resp.Messages[0] != "gemma:ollama" {
+	if len(resp.Messages) != 1 || resp.Messages[0] != "dsl-default:gemma:ollama" {
 		t.Fatalf("именованный аргумент Выполнить потерян: messages=%v", resp.Messages)
 	}
 }
