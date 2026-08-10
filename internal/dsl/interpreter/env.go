@@ -47,9 +47,10 @@ func (m *MapThis) Set(name string, v any) {
 type execCtx struct {
 	curFile      string // last executed statement location (for error reporting)
 	curLine      int
-	debug        DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
-	deadline     time.Time // wall-clock запуска; zero = без лимита
-	maxLoopIters int       // потолок итераций цикла; 0 = maxWhileIter
+	debug        DebugHook       // hook этого запуска; nil = без отладки, нулевые накладные
+	deadline     time.Time       // wall-clock запуска; zero = без лимита
+	deadlineDone <-chan struct{} // закрывается при исчерпании общего wall-clock запуска
+	maxLoopIters int             // потолок итераций цикла; 0 = maxWhileIter
 	moduleEnvs   map[string]*env
 }
 
@@ -64,6 +65,13 @@ func (ec *execCtx) loopLimit() int {
 // checkDeadline жёстко останавливает запуск (dslStop, мимо Попытки), если
 // исчерпан wall-clock. Дёшево, когда дедлайн не задан.
 func (ec *execCtx) checkDeadline() {
+	if ec.deadlineDone != nil {
+		select {
+		case <-ec.deadlineDone:
+			panic(dslStop{err: errSandboxTimeout})
+		default:
+		}
+	}
 	if !ec.deadline.IsZero() && time.Now().After(ec.deadline) {
 		panic(dslStop{err: errSandboxTimeout})
 	}

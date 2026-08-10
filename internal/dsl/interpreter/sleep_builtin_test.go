@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -32,6 +33,12 @@ func TestПриостановить_ПределИОтрицательные(t *
 	}{
 		{"больше предела", float64(maxSleepSeconds + 1)},
 		{"отрицательная", -1.0},
+		{"NaN", math.NaN()},
+		{"плюс бесконечность", math.Inf(1)},
+		{"минус бесконечность", math.Inf(-1)},
+		{"переполнение duration", math.MaxFloat64},
+		{"числовая строка", "0.001"},
+		{"булево", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			start := time.Now()
@@ -70,7 +77,7 @@ func raisesUserError(fn func()) (raised bool) {
 func TestПриостановить_ПодЗамороженнымиЧасамиДвигаетВремя(t *testing.T) {
 	base := time.Date(2026, 8, 10, 12, 0, 0, 0, time.Local)
 	clock := &TestClock{frozen: &base}
-	fn := newFrozenClockSleepBuiltin(clock)
+	fn := newFrozenClockSleepBuiltin(clock, nil)
 
 	start := time.Now()
 	if _, err := fn([]any{30.0}, "t.os", 1); err != nil {
@@ -87,7 +94,7 @@ func TestПриостановить_ПодЗамороженнымиЧасами
 // Незамороженные часы означают обычный прогон — там выдержка настоящая, иначе
 // тест-профиль незаметно отключил бы backoff в бою.
 func TestПриостановить_БезЗаморозкиЖдётПоНастоящему(t *testing.T) {
-	fn := newFrozenClockSleepBuiltin(&TestClock{})
+	fn := newFrozenClockSleepBuiltin(&TestClock{}, nil)
 	start := time.Now()
 	if _, err := fn([]any{0.15}, "t.os", 1); err != nil {
 		t.Fatal(err)

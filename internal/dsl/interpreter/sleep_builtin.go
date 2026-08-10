@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -18,8 +19,9 @@ import (
 //
 // Верхний предел обязателен: выдержка блокирует поток целиком, и опечатка в
 // «секундах» (взяли миллисекунды) подвесила бы воркер регламентного задания на
-// часы. Предел на ОДИН вызов, а не на суммарное ожидание: цикл повторов с
-// нарастающей задержкой — законный сценарий, ради которого всё и делается.
+// часы. В обычном запуске предел относится к одному вызову. В песочнице
+// дополнительно действует единый wall-clock всего запуска: пауза использует
+// только его остаток.
 const maxSleepSeconds = 300
 
 // sleepDuration разбирает аргумент и проверяет границы. Общая для боевого
@@ -31,10 +33,18 @@ func sleepDuration(args []any) time.Duration {
 	if len(args) == 0 {
 		RaiseUserError("Приостановить: нужно указать длительность в секундах")
 	}
-	secs := floatArg(args, 0)
+	if !isNumeric(args[0]) {
+		RaiseUserError("Приостановить: ожидается число, получено " + getTypeName(args[0]))
+	}
+	secs, ok := toFloat(args[0])
+	if !ok {
+		RaiseUserError("Приостановить: длительность не удалось преобразовать в число")
+	}
 	switch {
-	case secs != secs: // NaN
-		RaiseUserError("Приостановить: длительность не число")
+	case math.IsNaN(secs):
+		RaiseUserError("Приостановить: длительность NaN недопустима")
+	case math.IsInf(secs, 0):
+		RaiseUserError("Приостановить: длительность должна быть конечным числом")
 	case secs < 0:
 		RaiseUserError(fmt.Sprintf("Приостановить: длительность %g отрицательная", secs))
 	case secs > maxSleepSeconds:
@@ -46,10 +56,49 @@ func sleepDuration(args []any) time.Duration {
 
 func newSleepBuiltin() BuiltinFunc {
 	return func(args []any, _ string, _ int) (any, error) {
-		if d := sleepDuration(args); d > 0 {
-			time.Sleep(d)
-		}
+		waitForSleep(sleepDuration(args), nil)
 		return nil, nil
+	}
+}
+
+// waitForSleep ждёт через timer, чтобы sandbox мог отменить ожидание общим
+// дедлайном. Прямой time.Sleep здесь снова сделал бы блокирующий builtin дырой
+// в MaxWallClock.
+func waitForSleep(d time.Duration, ec *execCtx) {
+	if ec != nil {
+		ec.checkDeadline()
+	}
+	if d <= 0 {
+		return
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	if ec == nil || ec.deadlineDone == nil {
+		<-timer.C
+		return
+	}
+	select {
+	case <-timer.C:
+		// Если таймер паузы и дедлайн готовы одновременно, дедлайн имеет
+		// приоритет: запуск не должен успешно закончиться за границей бюджета.
+		ec.checkDeadline()
+	case <-ec.deadlineDone:
+		panic(dslStop{err: errSandboxTimeout})
+	}
+}
+
+// newSandboxSleepFunctions возвращает паузу, связанную с execCtx конкретного
+// запуска. Все вызовы видят один deadlineDone, поэтому каждый следующий вызов
+// расходует остаток общего MaxWallClock, а не получает новый полный лимит.
+func newSandboxSleepFunctions(ec *execCtx) map[string]any {
+	fn := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		waitForSleep(sleepDuration(args), ec)
+		return nil, nil
+	})
+	return map[string]any{
+		"Приостановить": fn,
+		"Пауза":         fn,
+		"Sleep":         fn,
 	}
 }
 
@@ -58,13 +107,14 @@ func newSleepBuiltin() BuiltinFunc {
 // мгновенно — тест утверждает, что между попытками прошло сколько надо, не
 // тратя на это реальных секунд. Незамороженные часы означают обычный прогон,
 // и там выдержка настоящая.
-func newFrozenClockSleepBuiltin(clock *TestClock) BuiltinFunc {
+func newFrozenClockSleepBuiltin(clock *TestClock, pauses *Array) BuiltinFunc {
 	return func(args []any, _ string, _ int) (any, error) {
 		d := sleepDuration(args)
+		if pauses != nil {
+			recordCall(pauses, map[string]any{"Секунды": d.Seconds()})
+		}
 		if clock == nil || clock.frozen == nil {
-			if d > 0 {
-				time.Sleep(d)
-			}
+			waitForSleep(d, nil)
 			return nil, nil
 		}
 		moved := clock.frozen.Add(d)
