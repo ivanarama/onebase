@@ -952,12 +952,15 @@ func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:
 		return t
-	case float64:
-		return t != 0
-	case decimal.Decimal:
-		return !t.IsZero()
 	case string:
 		return t != ""
+	}
+	// Числовой ноль ложен в любом Go-типе. Раньше здесь стояли только float64 и
+	// decimal, а целые проваливались в «всё остальное — истина»: булево поле из
+	// запроса на SQLite приходит как int64, поэтому `Если Стр.Флаг Тогда` для
+	// Ложь молча выбирал ветку «истина» (issue #704).
+	if zero, ok := numericZero(v); ok {
+		return !zero
 	}
 	return true
 }
@@ -1046,6 +1049,12 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 		infoFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 			return errInfo, nil
 		})
+		rethrowFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+			if len(args) == 0 {
+				panic(*caught)
+			}
+			return raiseUserException(args, file, line)
+		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в
 		// текущем scope (не в child) — чтобы переменные, впервые присвоенные в
@@ -1055,9 +1064,13 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			"ErrorDescription":   descFn,
 			"ИнформацияОбОшибке": infoFn,
 			"ErrorInfo":          infoFn,
+			"ВызватьИсключение":  rethrowFn,
+			"Raise":              rethrowFn,
 		})
-		i.execBlock(t.Except, e)
-		restore()
+		func() {
+			defer restore()
+			i.execBlock(t.Except, e)
+		}()
 	}
 }
 
