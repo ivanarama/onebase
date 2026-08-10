@@ -103,23 +103,31 @@ func TestЧисло_ДатаRoundTrip(t *testing.T) {
 func TestЧисло_ДатаRoundTripВосстанавливаетНулиГода(t *testing.T) {
 	// Не используем 01.01.0001 00:00:00: в UTC это Go zero time, который DSL
 	// намеренно считает своей пустой датой и преобразует в 0.
-	source := time.Date(1, time.May, 11, 10, 30, 45, 0, time.Local)
-	number, err := builtinToNumber([]any{source}, "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, ok := number.(decimal.Decimal)
-	if !ok || d.String() != "10511103045" {
-		t.Fatalf("Число(Дата(1,5,11,10,30,45)) = %T(%v), ожидалось 10511103045", number, number)
-	}
-	back, err := dateConstructor([]any{d}, "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := back.(time.Time)
-	if !ok || got.Year() != 1 || got.Month() != time.May || got.Day() != 11 ||
-		got.Hour() != 10 || got.Minute() != 30 || got.Second() != 45 {
-		t.Fatalf("Дата(Число(Дата(1,5,11,10,30,45))) = %T(%v)", back, back)
+	for _, tc := range []struct {
+		year int
+		want string
+	}{
+		{year: 1, want: "10511103045"},
+		{year: 10, want: "100511103045"},
+		{year: 100, want: "1000511103045"},
+	} {
+		t.Run(fmt.Sprintf("year_%04d", tc.year), func(t *testing.T) {
+			number := evalBreakFunc(t, fmt.Sprintf(`Функция Тест()
+  Возврат Число(Дата(%d, 5, 11, 10, 30, 45));
+КонецФункции`, tc.year))
+			d, ok := number.(decimal.Decimal)
+			if !ok || d.String() != tc.want {
+				t.Fatalf("Число(Дата(%d,...)) = %T(%v), ожидалось %s", tc.year, number, number, tc.want)
+			}
+			back := evalBreakFunc(t, fmt.Sprintf(`Функция Тест()
+  Возврат Дата(Число(Дата(%d, 5, 11, 10, 30, 45)));
+КонецФункции`, tc.year))
+			got, ok := back.(time.Time)
+			if !ok || got.Year() != tc.year || got.Month() != time.May || got.Day() != 11 ||
+				got.Hour() != 10 || got.Minute() != 30 || got.Second() != 45 {
+				t.Fatalf("Дата(Число(Дата(%d,...))) = %T(%v)", tc.year, back, back)
+			}
+		})
 	}
 }
 
@@ -128,14 +136,9 @@ func TestЧисло_ДатаRoundTripВосстанавливаетНулиГо�
 func TestЧисло_ДатаRoundTripИмеетТочностьДоСекунды(t *testing.T) {
 	source := time.Date(2026, time.May, 11, 10, 30, 45, 987654321,
 		time.FixedZone("external", 7*60*60))
-	number, err := builtinToNumber([]any{source}, "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	back, err := dateConstructor([]any{number}, "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	back := evalBreakFunc(t, `Функция Тест()
+  Возврат Дата(Число(Вход));
+КонецФункции`, map[string]any{"Вход": source})
 	got := back.(time.Time)
 	if got.Year() != source.Year() || got.Month() != source.Month() || got.Day() != source.Day() ||
 		got.Hour() != source.Hour() || got.Minute() != source.Minute() || got.Second() != source.Second() {
@@ -160,10 +163,9 @@ func TestДата_ЧисловойВводОтклоняетДробьИНебе
 		"infinity": math.Inf(1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			result, err := dateConstructor([]any{input}, "", 0)
-			if err != nil {
-				t.Fatal(err)
-			}
+			result := evalBreakFunc(t, `Функция Тест()
+  Возврат Дата(Вход);
+КонецФункции`, map[string]any{"Вход": input})
 			got, ok := result.(time.Time)
 			if !ok || !got.IsZero() {
 				t.Fatalf("Дата(%v) = %T(%v), ожидалась пустая дата", input, result, result)
@@ -190,6 +192,9 @@ func TestДобавить_ФормыЕдинственногоЧисла(t *test
 		"ДобавитьСекунду(Дата(2026, 5, 11, 10, 0, 0), 90)": "10:1:30",
 		"ДобавитьМинуту(Дата(2026, 5, 11, 10, 0, 0), 90)":  "11:30:0",
 		"ДобавитьЧасов(Дата(2026, 5, 11, 10, 0, 0), 1.5)":  "11:30:0",
+		"AddSecond(Дата(2026, 5, 11, 10, 0, 0), 90)":       "10:1:30",
+		"AddMinute(Дата(2026, 5, 11, 10, 0, 0), 90)":       "11:30:0",
+		"AddHour(Дата(2026, 5, 11, 10, 0, 0), 1.5)":        "11:30:0",
 	}
 	for expr, want := range cases {
 		r := evalBreakFunc(t, "Функция Тест()\n  Возврат "+expr+";\nКонецФункции")
