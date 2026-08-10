@@ -702,18 +702,30 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				fallback = bf
 			}
 		}
-		if i.LookupProc != nil {
-			if proc := i.LookupProc(fnName); proc != nil {
-				return i.callUserProc(proc, e, args)
-			}
-		}
-		// Помощник из того же файла (.proc.os / .posting.os / .rep.os).
+		// СВОЁ РАНЬШЕ ЧУЖОГО. Помощник из того же файла (.proc.os /
+		// .posting.os / .rep.os) ищется ПЕРЕД экспортом чужого модуля.
+		//
+		// Порядок был обратным, и любая экспортная функция полностью затеняла
+		// одноимённую локальную: собственная функция модуля становилась
+		// недостижимой, а неквалифицированный вызов молча уходил в чужой
+		// экспорт. При несовпадении числа параметров недостающие вставали как
+		// nil — то есть добавление нового модуля со вспомогательным именем
+		// ломало посторонний, давно зелёный код, и ошибка указывала на строку в
+		// НОВОМ файле (#717).
+		//
+		// Обращение к чужому экспорту остаётся квалифицированным: Модуль.Функция.
+		//
 		// Файл берём из токена самого вызова (callee.Tok.File), а не из
 		// e.ec.curFile: curFile — «последняя исполненная позиция» и портится
 		// вычислением аргументов, если среди них есть вызов из другого модуля
 		// (тогда sibling-резолв искал бы в чужом файле → unknown function).
 		if i.LookupSiblingProc != nil && callee.Tok.File != "" {
 			if proc := i.LookupSiblingProc(callee.Tok.File, fnName); proc != nil {
+				return i.callUserProc(proc, e, args)
+			}
+		}
+		if i.LookupProc != nil {
+			if proc := i.LookupProc(fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
 			}
 		}
