@@ -132,15 +132,24 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 			}
 			tbl, exists := entityTable[strings.ToLower(rt.recType)]
 			var count int
-			if !exists {
+			switch {
+			case !exists:
 				count = rt.total
-			} else {
-				// Не смогли посчитать — не сообщаем о сиротах: лучше
-				// недосказать, чем предложить удалить неизвестно что.
+			case !db.HasTable(ctx, tbl):
+				// Тип есть в конфигурации, а таблицы документа в базе нет —
+				// значит документов этого типа нет вообще, и все его движения
+				// осиротевшие. Раньше запрос падал на «no such table», ошибка
+				// глоталась, и проверка рапортовала «движений без регистратора
+				// нет» при живой сироте (#615).
+				count = rt.total
+			default:
 				if err := db.QueryRow(ctx, fmt.Sprintf(
 					"SELECT COUNT(*) FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
 					table, d.Placeholder(1), tbl), rt.recType).Scan(&count); err != nil {
-					continue
+					// Недосчитанное молча — это «всё чисто» на сломанной базе.
+					// Диагностика обязана отличать «сирот нет» от «не смогли
+					// проверить» (#615, тот же урок, что #622).
+					return nil, fmt.Errorf("%s: подсчёт сирот %s: %w", reg.Name, rt.recType, err)
 				}
 			}
 			if count > 0 {
@@ -166,7 +175,7 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 //
 // Для тех, кто действительно хочет удалить движения выбывшего документа, есть
 // DeleteMovementsOfUnknownRecorderType — отдельный, явный вызов.
-func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) int64 {
+func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) (int64, error) {
 	entityTable := make(map[string]string, len(entities))
 	for _, e := range entities {
 		entityTable[strings.ToLower(e.Name)] = metadata.TableName(e.Name)
@@ -174,23 +183,31 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 	var total int64
 	for _, reg := range registers {
 		table := metadata.RegisterTableName(reg.Name)
+		if !db.HasTable(ctx, table) {
+			continue // регистр ещё не мигрирован — удалять нечего
+		}
 		rows, err := db.Query(ctx, fmt.Sprintf(
 			"SELECT DISTINCT recorder_type FROM %s", table))
 		if err != nil {
-			continue
+			return total, fmt.Errorf("%s: чтение типов регистратора: %w", reg.Name, err)
 		}
 		var types []string
 		for rows.Next() {
 			var t string
 			// КРИТИЧНО: при сбое Scan строка t осталась бы пустой, и ниже
 			// выполнился бы DELETE ... WHERE recorder_type = '' — удаление,
-			// вызванное непрочитанной строкой. Пропускаем.
+			// вызванное непрочитанной строкой. Поэтому не пропускаем молча, а
+			// прекращаем: недочитанный тип означает недоудалённые движения.
 			if err := rows.Scan(&t); err != nil {
-				continue
+				rows.Close()
+				return total, fmt.Errorf("%s: чтение типа регистратора: %w", reg.Name, err)
 			}
 			types = append(types, t)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return total, fmt.Errorf("%s: чтение типов регистратора: %w", reg.Name, err)
+		}
 
 		d := db.dialect
 		for _, recType := range types {
@@ -206,12 +223,16 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 			sql := fmt.Sprintf(
 				"DELETE FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
 				table, d.Placeholder(1), tbl)
-			if ct, err := db.Exec(ctx, sql, recType); err == nil {
-				total += ct.RowsAffected
+			ct, err := db.Exec(ctx, sql, recType)
+			if err != nil {
+				// Отказ DELETE, поданный как «удалено 0», неотличим от честного
+				// «удалять было нечего» — и это на необратимой операции (#615).
+				return total, fmt.Errorf("%s: удаление сирот %s: %w", reg.Name, recType, err)
 			}
+			total += ct.RowsAffected
 		}
 	}
-	return total
+	return total, nil
 }
 
 // DeleteMovementsOfUnknownRecorderType удаляет движения, тип регистратора
@@ -224,24 +245,32 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 // даёт обычное переименование.
 func (db *DB) DeleteMovementsOfUnknownRecorderType(
 	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
-) int64 {
+) (int64, error) {
 	wanted := wantedRecorderTypes(recorderTypes)
 	if len(wanted) == 0 {
-		return 0
+		return 0, nil
 	}
 	d := db.dialect
 	var total int64
 	for _, reg := range registers {
 		table := metadata.RegisterTableName(reg.Name)
+		if !db.HasTable(ctx, table) {
+			continue // регистр ещё не мигрирован — удалять нечего
+		}
 		for t := range wanted {
 			ct, err := db.Exec(ctx, fmt.Sprintf(
 				"DELETE FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t)
-			if err == nil {
-				total += ct.RowsAffected
+			if err != nil {
+				// Сухой прогон (CountMovementsOfRecorderType) ошибку уже
+				// возвращает, а боевой — глотал: «Удалено движений: 0» и код 0
+				// при живых движениях. Необратимая операция обязана падать, а
+				// не рапортовать об успехе (#615, остаток #622).
+				return total, fmt.Errorf("%s: удаление движений %s: %w", reg.Name, t, err)
 			}
+			total += ct.RowsAffected
 		}
 	}
-	return total
+	return total, nil
 }
 
 // CountMovementsOfRecorderType считает движения по названным типам регистратора

@@ -88,16 +88,23 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 }
 
 // hierarchyCreateHints читает признак группы и родителя из query-параметров
-// кнопок создания («📁 Группа» → ?is_folder=true, «＋ в группе» → ?parent_id=…)
+// кнопок создания («📁 Группа» → ?is_folder=true, «＋ в группе» → ?parent=…)
 // для управляемой формы НОВОЙ иерархической записи. Автоформа рисует их полями,
 // managed-форма — скрытыми: при создании восстановить их неоткуда, и без переноса
 // Upsert пишет is_folder=false, а элемент улетает в корень (#618).
+//
+// Родитель приходит в параметре `parent` — так его называют и кнопки списка
+// (templates.go, «+ Элемент»/«📁 Группа»), и автоформа (handlers_entity.go).
+// Здесь читался `parent_id`, которого не шлёт НИКТО, поэтому половина фикса
+// #618 не работала: признак группы ставился, а родитель терялся и запись
+// улетала в корень. Тест при этом был зелёный — он звал эту функцию напрямую с
+// рукописным query и закреплял неверное имя (#615).
 func hierarchyCreateHints(r *http.Request, entity *metadata.Entity, isNew bool) (isFolder bool, parentID string) {
 	if entity == nil || !entity.Hierarchical || !isNew {
 		return false, ""
 	}
 	isFolder = r.URL.Query().Get("is_folder") == "true"
-	parentID = strings.TrimSpace(r.URL.Query().Get("parent_id"))
+	parentID = strings.TrimSpace(r.URL.Query().Get("parent"))
 	return isFolder, parentID
 }
 
