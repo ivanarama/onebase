@@ -81,10 +81,8 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 	if el.Kind == "HTMLDocumentField" {
 		el.Kind = string(metadata.FormElementCodeField)
 		el.Language = "html"
-	}
-
-	// Маппинг типа элемента: InputField → ПолеВвода и т.д.
-	if mapped, ok := Element1CToOneBase(el.Kind); ok {
+	} else if mapped, ok := Element1CToOneBase(el.Kind); ok {
+		// Маппинг типа элемента: InputField → ПолеВвода и т.д.
 		el.Kind = string(mapped)
 	} else {
 		// Неизвестный — оставляем имя XML и эмитим W010.

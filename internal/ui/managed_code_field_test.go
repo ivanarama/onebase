@@ -61,6 +61,33 @@ func TestManagedCodeField_RendersTextareaAndHolder(t *testing.T) {
 	}
 }
 
+func TestManagedCodeField_FiresChangeHandler(t *testing.T) {
+	out := renderCodeElement(t, &metadata.FormElement{
+		Kind:     metadata.FormElementCodeField,
+		Name:     "КодПравила",
+		DataPath: "Объект.КодПравила",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "КодПравилаПриИзменении"},
+	})
+	if !strings.Contains(out, `data-ob-fire-change="КодПравила"`) {
+		t.Errorf("у поля с ПриИзменении нет делегированного обработчика:\n%s", out)
+	}
+}
+
+func TestManagedCodeField_RuntimeKeepsMonacoAndTextareaInSync(t *testing.T) {
+	src := string(managedJS)
+	for _, want := range []string{
+		"inp._obSetCodeValue(val)",
+		"ta._obSetCodeValue = function",
+		"ed.onDidBlurEditorWidget",
+		"new Event('input', { bubbles: true })",
+		"new Event('change', { bubbles: true })",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("runtime ПоляКода не содержит %q", want)
+		}
+	}
+}
+
 // Без language подсветка не выключается, а становится plaintext: пустой язык
 // Monaco не принимает.
 func TestManagedCodeField_DefaultsToPlaintext(t *testing.T) {

@@ -54,6 +54,7 @@ const tplManagedForm = `
   </fieldset>
 {{else if eq (str $el.Kind) "ПолеКода"}}
   {{$fn := dpField $el.DataPath}}
+  {{$hChg := hasHandler $el "ПриИзменении"}}
   {{/* textarea — рабочее поле формы: без JS редактирование остаётся возможным
        (прогрессивное улучшение, как у richtext/Quill). Редактор монтируется на
        соседний .code-editor и синхронизирует текст обратно в textarea. */}}
@@ -61,7 +62,7 @@ const tplManagedForm = `
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     <textarea name="{{$fn}}" autocomplete="off" class="code-field" rows="12" spellcheck="false"
       style="width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px"
-      {{if $el.AccessKey}}accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>{{index $ctx.Values $fn}}</textarea>
+      {{if $el.AccessKey}}accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
     {{if not $el.ReadOnly}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid #e2e8f0;border-radius:8px"></div>{{end}}
   </div>
 {{else if eq (str $el.Kind) "ПолеВвода"}}

@@ -177,4 +177,9 @@ func TestNormalize_HTMLDocumentFieldСтановитсяПолемКода(t *te
 	if el.Language != "html" {
 		t.Errorf("язык = %q, ожидался html", el.Language)
 	}
+	for _, w := range warns {
+		if w.Code == W010_UnknownElement {
+			t.Errorf("HTMLDocumentField ошибочно признан неизвестным элементом: %+v", w)
+		}
+	}
 }

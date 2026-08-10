@@ -127,7 +127,11 @@ function obManagedReady(fn) {
         // поле — дата на форме пропадала после первого же события, а следующая
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
-        inp.value = val;
+        if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
+          inp._obSetCodeValue(val);
+        } else {
+          inp.value = val;
+        }
       }
     });
   }
@@ -1545,7 +1549,30 @@ obManagedReady(function () {
           renderWhitespace: 'selection'
         });
         ta.style.display = 'none';
-        ed.onDidChangeModelContent(function () { ta.value = ed.getValue(); });
+
+        // Ответ обработчика формы может обновить значение поля. textarea уже
+        // получила бы новый текст, но Monaco продолжал показывать старый и при
+        // следующем вводе затирал ответ сервера. Держим оба представления
+        // синхронными и не выдаём программное обновление за правку пользователя.
+        var syncing = false;
+        ta._obSetCodeValue = function (value) {
+          value = String(value == null ? '' : value);
+          ta.value = value;
+          if (ed.getValue() === value) return;
+          syncing = true;
+          try {
+            ed.setValue(value);
+          } finally {
+            syncing = false;
+          }
+        };
+        ed.onDidChangeModelContent(function () {
+          ta.value = ed.getValue();
+          if (!syncing) ta.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        ed.onDidBlurEditorWidget(function () {
+          if (!syncing) ta.dispatchEvent(new Event('change', { bubbles: true }));
+        });
       })(holders[i]);
     }
   });
