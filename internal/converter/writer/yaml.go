@@ -23,15 +23,22 @@ type yamlTablePart struct {
 }
 
 type yamlCatalog struct {
-	Name       string          `yaml:"name"`
-	Title      string          `yaml:"title,omitempty"`
-	Fields     []yamlField     `yaml:"fields"`
-	TableParts []yamlTablePart `yaml:"tableparts,omitempty"`
+	Name         string          `yaml:"name"`
+	Title        string          `yaml:"title,omitempty"`
+	Hierarchical bool            `yaml:"hierarchical,omitempty"`
+	Fields       []yamlField     `yaml:"fields"`
+	TableParts   []yamlTablePart `yaml:"tableparts,omitempty"`
 }
 
+type yamlNumerator struct {
+	Length int    `yaml:"length,omitempty"`
+	Period string `yaml:"period,omitempty"`
+}
 type yamlDocument struct {
 	Name       string          `yaml:"name"`
 	Title      string          `yaml:"title,omitempty"`
+	Posting    bool            `yaml:"posting,omitempty"`
+	Numerator  *yamlNumerator  `yaml:"numerator,omitempty"`
 	Fields     []yamlField     `yaml:"fields"`
 	TableParts []yamlTablePart `yaml:"tableparts,omitempty"`
 }
@@ -51,9 +58,22 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 	}
 	for _, cat := range cats {
 		obj := yamlCatalog{
-			Name:   cat.Name,
-			Title:  synonymTitle(cat.Name, cat.Synonym),
-			Fields: withStandardCatalogFields(convertFields(cat.Attributes, notes)),
+			Name:         cat.Name,
+			Title:        synonymTitle(cat.Name, cat.Synonym),
+			Hierarchical: cat.Hierarchical,
+			Fields:       withStandardCatalogFields(convertFields(cat.Attributes, notes)),
+		}
+		// Автонумерацию кода справочника платформа пока не выполняет: блок
+		// numerator: у справочника разбирается и ничего не делает (план 117, Д2).
+		// Писать его сюда значило бы отдать конфигурацию, которая выглядит
+		// рабочей и молчит, — поэтому честнее сказать вслух.
+		if cat.Code.Auto {
+			notes.TypeWarnings = append(notes.TypeWarnings,
+				"справочник "+cat.Name+": автонумерация кода не перенесена — платформа пока нумерует только документы (план 117)")
+		}
+		if cat.Code.CheckUnique {
+			notes.TypeWarnings = append(notes.TypeWarnings,
+				"справочник "+cat.Name+": контроль уникальности кода не перенесён — задайте indexes: [{fields: [Код], unique: true}] вручную")
 		}
 		for _, ts := range cat.TabularSections {
 			obj.TableParts = append(obj.TableParts, yamlTablePart{
@@ -70,6 +90,52 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 }
 
 // WriteDocuments записывает документы в out/documents/*.yaml.
+// withStandardDocumentFields добавляет «Номер» и «Дату» — стандартные реквизиты
+// документа в 1С, которых у импортированного объекта не было вовсе. Из-за этого
+// документ приезжал без номера и даты, и жалоба «в документах нет НОМЕРА»
+// (issue #658) относилась к конвертеру, а не к движку: автонумерацию платформа
+// умеет (план 117, Д6).
+//
+// Порядок как в 1С: сначала стандартные, потом пользовательские.
+func withStandardDocumentFields(fields []yamlField) []yamlField {
+	has := func(name string) bool {
+		for _, f := range fields {
+			if strings.EqualFold(f.Name, name) {
+				return true
+			}
+		}
+		return false
+	}
+	var std []yamlField
+	if !has("Номер") {
+		std = append(std, yamlField{Name: "Номер", Type: "string"})
+	}
+	if !has("Дата") {
+		std = append(std, yamlField{Name: "Дата", Type: "date"})
+	}
+	return append(std, fields...)
+}
+
+// numeratorFrom переносит автонумерацию документа. Период 1С «Year»/«Month»/
+// «Day» соответствует period платформы; «Nonperiodical» — сквозная нумерация.
+func numeratorFrom(n parser1c.Numbering) *yamlNumerator {
+	if !n.Auto {
+		return nil
+	}
+	out := &yamlNumerator{Length: n.Length}
+	switch strings.ToLower(n.Periodicity) {
+	case "year":
+		out.Period = "year"
+	case "month":
+		out.Period = "month"
+	case "day":
+		out.Period = "day"
+	case "nonperiodical", "":
+		out.Period = "none"
+	}
+	return out
+}
+
 func WriteDocuments(docs []*parser1c.DocumentMeta, outDir string, notes *ConversionReport) error {
 	dir := filepath.Join(outDir, "documents")
 	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
@@ -77,9 +143,15 @@ func WriteDocuments(docs []*parser1c.DocumentMeta, outDir string, notes *Convers
 	}
 	for _, doc := range docs {
 		obj := yamlDocument{
-			Name:   doc.Name,
-			Title:  synonymTitle(doc.Name, doc.Synonym),
-			Fields: convertFields(doc.Attributes, notes),
+			Name:      doc.Name,
+			Title:     synonymTitle(doc.Name, doc.Synonym),
+			Posting:   doc.Posting,
+			Numerator: numeratorFrom(doc.Number),
+			Fields:    withStandardDocumentFields(convertFields(doc.Attributes, notes)),
+		}
+		if doc.Number.Auto && strings.EqualFold(doc.Number.Type, "Number") {
+			notes.TypeWarnings = append(notes.TypeWarnings,
+				"документ "+doc.Name+": числовой номер перенесён строковым — платформа нумерует строками")
 		}
 		for _, ts := range doc.TabularSections {
 			obj.TableParts = append(obj.TableParts, yamlTablePart{
