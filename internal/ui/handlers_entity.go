@@ -1185,6 +1185,13 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
+		var restoreErr error
+		obj.TablePartRows, restoreErr = s.restoreReadOnlyTableParts(r.Context(), entity, form, id, obj.TablePartRows)
+		if restoreErr != nil {
+			s.serverError(w, r, restoreErr)
+			return
+		}
+		tpRows = obj.TablePartRows
 	}
 	// План 88: не дать пользователю, видящему поле лишь замаскированным,
 	// перезаписать реальное значение маской/подделкой — восстанавливаем

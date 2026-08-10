@@ -1694,6 +1694,9 @@ obManagedReady(obManagedInitDelegates);
       rememberActiveGrid(direct);
       return direct;
     }
+    // A concrete no-grid table target is authoritative too: never fall back
+    // to a SlickGrid that happened to be active before focus moved here.
+    if (source && source.closest && source.closest('table[data-ob-dom-table]')) return "";
     var remembered = window._obActiveGridName || "";
     var g = remembered && grids[remembered];
     if (g && g.div && document.contains(g.div) && managedElementVisible(g.div)) return remembered;

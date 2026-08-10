@@ -238,6 +238,21 @@ function obInitFormDirty() {
       return '';
     }
   });
+  // Auto-generated entity forms do not load managed.js, so their documented
+  // Escape shortcut has to live here. Let an open picker consume Escape first.
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented || (e.key !== 'Escape' && e.keyCode !== 27) || obHasBlockingModal()) return;
+    var cancel = document.querySelector('[data-ob-popup-cancel], [data-ob-close-tab], a.btn-cancel');
+    if (!cancel) return;
+    if (window._obFormDirty && !confirm('Данные были изменены и не записаны. Закрыть форму?')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    cancel.click();
+  }, true);
 }
 obReady(obInitFormDirty);
 
@@ -712,10 +727,28 @@ function listSetSel(tr, options) {
       try { _listSel.focus({ preventScroll: true }); } catch (_) { _listSel.focus(); }
     }
   } else {
-    var first = obListRows()[0];
+    var first = options && options.root
+      ? obListRowsIn(options.root)[0]
+      : obListRows()[0];
     if (first) first.setAttribute('tabindex', '0');
   }
   listSyncActionsBtn();
+}
+
+function obListRowsIn(root) {
+  if (!root || !root.querySelectorAll) return [];
+  return Array.prototype.slice.call(root.querySelectorAll('[data-ob-list-row]')).filter(obElementVisible);
+}
+
+// A live refresh replaces every row node. Even without a selected row, each
+// refreshed list must keep one Tab entry point (the first visible row).
+function obEnsureListRovingTabindex(root) {
+  var rows = obListRowsIn(root);
+  var selected = listSel();
+  var current = selected && root.contains && root.contains(selected) ? selected : null;
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].setAttribute('tabindex', rows[i] === (current || rows[0]) ? '0' : '-1');
+  }
 }
 
 // Пока строка не выбрана, кнопка «Действия» приглушена, но остаётся на месте и
@@ -736,7 +769,7 @@ function listSyncActionsBtn() {
 // Возврат выделения после перерисовки списка: та же запись опознаётся по
 // data-open-url (в нём id, у всех трёх видов строк — таблица, плитка, дерево).
 // Записи не стало в выдаче — выделение снимается, а не остаётся на призраке.
-function listRestoreSel(key, root) {
+function listRestoreSel(key, root, options) {
   var next = null;
   if (key) {
     var rows = (root || document).querySelectorAll('[data-ob-list-row]');
@@ -744,7 +777,19 @@ function listRestoreSel(key, root) {
       if (rows[i].getAttribute('data-open-url') === key) { next = rows[i]; break; }
     }
   }
-  listSetSel(next);
+  listSetSel(next, { focus: !!(options && options.focus), root: root || document });
+  obEnsureListRovingTabindex(root || document);
+}
+
+function obReplaceLiveListContents(cur, fresh) {
+  if (!cur || !fresh) return;
+  var selected = listSel();
+  var selMine = !!(selected && cur.contains(selected));
+  var restoreFocus = !!(selMine && document.activeElement && cur.contains(document.activeElement));
+  var selKey = selMine ? listSelKey() : '';
+  cur.innerHTML = fresh.innerHTML;
+  if (selMine) listRestoreSel(selKey, cur, { focus: restoreFocus });
+  else obEnsureListRovingTabindex(cur);
 }
 
 function listSelKey() {
@@ -895,6 +940,10 @@ function obDOMTableFromTarget(el) {
   return el && el.closest ? el.closest('table[data-ob-dom-table]') : null;
 }
 
+function obSlickGridFromTarget(el) {
+  return el && el.closest ? el.closest('.ob-grid[data-sg-tp]') : null;
+}
+
 function obDOMTableReadOnly(table) {
   // Fail closed: a DOM table is writable only when the server rendered an
   // explicit marker. This also covers a missing CanWrite value safely.
@@ -905,9 +954,11 @@ function obDOMSetCurrentRow(table, row, focus) {
   if (!table) return;
   var body = table.tBodies && table.tBodies[0];
   if (!body) return;
+  if (row && row.parentElement !== body) row = null;
+  var tabRow = row || (body.rows.length ? body.rows[0] : null);
   Array.prototype.forEach.call(body.rows, function (item) {
     item.setAttribute('aria-selected', item === row ? 'true' : 'false');
-    item.setAttribute('tabindex', item === row ? '0' : '-1');
+    item.setAttribute('tabindex', item === tabRow ? '0' : '-1');
   });
   table._obCurrentRow = row || null;
   window._obActiveDOMTable = table;
@@ -931,7 +982,8 @@ function obDOMPrepareRow(table, row) {
 window.obDOMPrepareRow = obDOMPrepareRow;
 
 function obDOMActiveTable(target) {
-  var direct = obDOMTableFromTarget(target || document.activeElement);
+  var source = target || document.activeElement;
+  var direct = obDOMTableFromTarget(source);
   if (direct) {
     if (!document.contains(direct) || !obElementVisible(direct)) {
       if (window._obActiveDOMTable === direct) window._obActiveDOMTable = null;
@@ -940,6 +992,9 @@ function obDOMActiveTable(target) {
     window._obActiveDOMTable = direct;
     return direct;
   }
+  // A concrete SlickGrid target is authoritative. Never apply a shortcut to
+  // an unrelated DOM table merely because it was active earlier.
+  if (obSlickGridFromTarget(source)) return null;
   var remembered = window._obActiveDOMTable;
   if (remembered && document.contains(remembered) && obElementVisible(remembered)) return remembered;
   window._obActiveDOMTable = null;
@@ -948,12 +1003,14 @@ function obDOMActiveTable(target) {
 
 function obDOMCurrentRow(table) {
   if (!table || !table.tBodies || !table.tBodies[0]) return null;
+  var body = table.tBodies[0];
   var active = document.activeElement;
   var direct = active && active.closest ? active.closest('tr') : null;
-  if (direct && table.contains(direct)) return direct;
-  if (table._obCurrentRow && table.contains(table._obCurrentRow)) return table._obCurrentRow;
+  if (direct && direct.parentElement === body) return direct;
+  if (table._obCurrentRow && table._obCurrentRow.parentElement === body) return table._obCurrentRow;
   var selected = table.querySelector('tbody ._tp-sel:checked');
-  return selected && selected.closest ? selected.closest('tr') : null;
+  var selectedRow = selected && selected.closest ? selected.closest('tr') : null;
+  return selectedRow && selectedRow.parentElement === body ? selectedRow : null;
 }
 
 function obDOMCommit(table) {
@@ -1014,7 +1071,8 @@ function obDOMFinishMutation(table, row, focusControl) {
   obDOMReindex(table);
   obDOMRefreshTotals(table);
   window._obFormDirty = true;
-  if (!row) {
+  var body = table && table.tBodies && table.tBodies[0];
+  if (!row || !body || row.parentElement !== body) {
     obDOMSetCurrentRow(table, null, false);
     return;
   }
@@ -1087,7 +1145,9 @@ function obDOMDeleteRows(table) {
   var body = table.tBodies && table.tBodies[0];
   if (!body) return;
   var rows = Array.prototype.slice.call(body.rows);
-  var checked = Array.prototype.slice.call(body.querySelectorAll('._tp-sel:checked')).map(function (item) { return item.closest('tr'); });
+  var checked = Array.prototype.slice.call(body.querySelectorAll('._tp-sel:checked')).map(function (item) { return item.closest('tr'); }).filter(function (row) {
+    return row && row.parentElement === body;
+  });
   var current = obDOMCurrentRow(table);
   var remove = checked.length ? checked : (current ? [current] : []);
   if (!remove.length) return;
@@ -1111,7 +1171,7 @@ function obHandleDOMTableShortcut(e) {
   var direct = obDOMTableFromTarget(e.target);
   // Remembered table shortcuts are convenient after its focus sink, but never
   // steal keys from an unrelated interactive control.
-  if (!direct && obIsInteractiveTarget(e.target)) return false;
+  if (!direct && (obSlickGridFromTarget(e.target) || obIsInteractiveTarget(e.target))) return false;
   if (direct && e.target && e.target.closest && e.target.closest('a[href],button,summary,[contenteditable]:not([contenteditable="false"])')) return false;
   var table = obDOMActiveTable(e.target);
   if (!table || obDOMTableReadOnly(table)) return false;
@@ -1139,8 +1199,8 @@ function obInitDOMTables() {
     var table = obDOMTableFromTarget(e.target);
     if (!table) return;
     var row = e.target.closest && e.target.closest('tr');
-    if (row && table.contains(row)) obDOMSetCurrentRow(table, row, false);
-    else window._obActiveDOMTable = table;
+    if (row && row.parentElement === (table.tBodies && table.tBodies[0])) obDOMSetCurrentRow(table, row, false);
+    else obDOMSetCurrentRow(table, null, false);
   }
   document.addEventListener('mousedown', remember, true);
   document.addEventListener('focusin', remember);
@@ -3291,10 +3351,7 @@ window.onebaseDevice = {
         // после — иначе автообновление молча съедало бы выбор пользователя.
         // Трогаем выделение, только если оно жило в ЭТОМ списке: на странице
         // может быть несколько живых списков, чужой выбор не наше дело.
-        var selMine = cur.contains(listSel());
-        var selKey = selMine ? listSelKey() : '';
-        cur.innerHTML = fresh.innerHTML; // содержимое; атрибуты контейнера сохраняются
-        if (selMine) listRestoreSel(selKey, cur);
+        obReplaceLiveListContents(cur, fresh); // содержимое; атрибуты контейнера сохраняются
         try { cur.scrollTop = sc; } catch (_) {}
       })
       .catch(function () {}); // офлайн/редирект логина — тихо, F5 пользователя выручит

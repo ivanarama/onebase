@@ -190,6 +190,16 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			obj.TablePartRows[k] = v
 		}
 	}
+	// Restore after every client-controlled table parser, including form-local
+	// ValueTable attributes, so a name collision cannot bypass ReadOnly.
+	if strings.TrimSpace(r.FormValue("_id")) != "" {
+		var restoreErr error
+		obj.TablePartRows, restoreErr = s.restoreReadOnlyTableParts(r.Context(), entity, form, obj.ID, obj.TablePartRows)
+		if restoreErr != nil {
+			respondJSON(enc, formEventResponse{Error: s.errText(r, restoreErr)})
+			return
+		}
+	}
 	// Подмешать ссылки → *runtime.Ref, как при сохранении (нужно для
 	// Объект.Покупатель.Наименование и проч.).
 	s.enrichHeaderRefs(r.Context(), entity, obj)

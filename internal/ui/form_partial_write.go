@@ -104,6 +104,77 @@ func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) m
 	return out
 }
 
+// managedReadOnlyTableParts returns entity table parts that are exposed by a
+// managed form exclusively through ReadOnly elements. If the same table part
+// is also placed as writable, the submitted writable representation wins.
+func managedReadOnlyTableParts(form *metadata.FormModule, entity *metadata.Entity) []metadata.TablePart {
+	if form == nil || entity == nil {
+		return nil
+	}
+	type access struct {
+		seen     bool
+		writable bool
+	}
+	byName := make(map[string]access)
+	var walk func(el *metadata.FormElement)
+	walk = func(el *metadata.FormElement) {
+		if el == nil {
+			return
+		}
+		if el.Kind == metadata.FormElementTablePart {
+			name := strings.ToLower(strings.TrimSpace(dpFieldName(el.DataPath)))
+			if name != "" {
+				state := byName[name]
+				state.seen = true
+				state.writable = state.writable || !el.ReadOnly
+				byName[name] = state
+			}
+		}
+		for _, child := range el.Children {
+			walk(child)
+		}
+	}
+	for _, el := range form.Elements {
+		walk(el)
+	}
+
+	result := make([]metadata.TablePart, 0, len(byName))
+	for _, tp := range entity.TableParts {
+		state := byName[strings.ToLower(tp.Name)]
+		if state.seen && !state.writable {
+			result = append(result, tp)
+		}
+	}
+	return result
+}
+
+// restoreReadOnlyTableParts replaces client-provided rows with canonical rows
+// from storage. Disabled no-grid controls are omitted by FormData, while a
+// forged tp_json value must not turn a ReadOnly element into a write channel.
+func (s *Server) restoreReadOnlyTableParts(
+	ctx context.Context,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	id uuid.UUID,
+	rows map[string][]map[string]any,
+) (map[string][]map[string]any, error) {
+	readOnly := managedReadOnlyTableParts(form, entity)
+	if len(readOnly) == 0 {
+		return rows, nil
+	}
+	if rows == nil {
+		rows = make(map[string][]map[string]any)
+	}
+	for _, tp := range readOnly {
+		stored, err := s.store.GetTablePartRows(ctx, entity.Name, tp.Name, id, tp)
+		if err != nil {
+			return nil, err
+		}
+		rows[tp.Name] = stored
+	}
+	return rows, nil
+}
+
 // normalizeRestoredValue приводит прочитанное из БД значение к типу, который
 // ждут DSL и запись. Критично для bool: SQLite отдаёт его как int64, а truthy в
 // интерпретаторе про int64 не знает и по default возвращает истину — тогда

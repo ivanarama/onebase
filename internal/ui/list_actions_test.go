@@ -178,10 +178,11 @@ func TestListRuntime_SelectionIsValidatedAgainstDOM(t *testing.T) {
 	}
 
 	// Живое обновление списка не должно молча съедать выбор пользователя.
-	if !strings.Contains(js, "listRestoreSel(selKey, cur)") {
+	if !strings.Contains(js, "listRestoreSel(selKey, cur, { focus: restoreFocus })") ||
+		!strings.Contains(js, "obReplaceLiveListContents(cur, fresh)") {
 		t.Error("после живого обновления списка выделение не восстанавливается")
 	}
-	if !strings.Contains(js, "var selMine = cur.contains(listSel());") {
+	if !strings.Contains(js, "var selMine = !!(selected && cur.contains(selected));") {
 		t.Error("живое обновление трогает выделение, не проверив, что оно принадлежит этому списку")
 	}
 }

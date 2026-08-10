@@ -28,9 +28,11 @@ const fs = require('fs');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const start = source.indexOf('var _listSel = null;');
 const end = source.indexOf('\nfunction obInitFeed', start);
+const dirtyStart = source.indexOf('function obInitFormDirty()');
+const dirtyEnd = source.indexOf('\nobReady(obInitFormDirty);', dirtyStart);
 const addTpStart = source.indexOf('function addTpRow');
 const addTpEnd = source.indexOf('\nfunction recalcTpRow', addTpStart);
-if (start < 0 || end < 0 || addTpStart < 0 || addTpEnd < 0) throw new Error('shortcut runtime slice not found');
+if (start < 0 || end < 0 || dirtyStart < 0 || dirtyEnd < 0 || addTpStart < 0 || addTpEnd < 0) throw new Error('shortcut runtime slice not found');
 
 function makeElement(tag, options = {}) {
   const attrs = Object.assign({}, options.attrs || {});
@@ -60,6 +62,7 @@ function makeElement(tag, options = {}) {
     contains(other) { return other === this; },
     closest(selector) {
       if (selector.includes('table[data-ob-dom-table]')) return options.table || null;
+      if (selector === '.ob-grid[data-sg-tp]') return options.slickGrid || null;
       if (selector === '[data-ob-list-row]' && options.listRow) return this;
       if (options.interactive && /a\[href\]|button|input|textarea|select|summary|contenteditable|role=/.test(selector)) return this;
       if (options.contentEditable && selector.includes('contenteditable')) return this;
@@ -81,6 +84,10 @@ let saveClicks = 0;
 let postCloseClicks = 0;
 let domAddButton = null;
 let dynamicTbody = null;
+let domTableForQuery = null;
+let dirtyFormEnabled = false;
+let closeClicks = 0;
+let confirmResult = true;
 let activated = 0;
 let confirmCalls = 0;
 const submittedForms = [];
@@ -89,6 +96,8 @@ const globalSearch = makeElement('input');
 const listSearch = makeElement('input');
 const save = {disabled: false, click() { saveClicks++; }};
 const postClose = {disabled: false, click() { postCloseClicks++; }};
+const dirtyForm = {addEventListener() {}};
+const closeForm = {click() { closeClicks++; }};
 
 function dispatch(type, event) {
   (listeners[type] || []).slice().forEach(fn => fn(event));
@@ -99,11 +108,13 @@ global.window = {
   getComputedStyle(el) { return el && el.style ? el.style : {}; },
   _obActiveDOMTable: null,
   location: {href: ''},
-  obOpenInShell() { activated++; return true; }
+  obOpenInShell() { activated++; return true; },
+  addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
 };
 global.document = {
   body,
   activeElement: body,
+  title: 'Form',
   addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); },
   contains(el) { return !!el && !el.detached; },
   getElementById(id) {
@@ -117,11 +128,14 @@ global.document = {
     if (selector.includes('post_and_close')) return postClose;
     if (selector === 'button[name="_action"][value=""]') return save;
     if (selector === 'input[name="q"]') return globalSearch;
+    if (selector === '#main-form[data-ob-dirty-watch="1"]' && dirtyFormEnabled) return dirtyForm;
+    if (selector === '[data-ob-popup-cancel], [data-ob-close-tab], a.btn-cancel') return closeForm;
     return null;
   },
   querySelectorAll(selector) {
     if (selector === '[data-ob-list-row]') return rows;
     if (selector === '[data-ob-add-tp-row],[data-ob-add-tp]' && domAddButton) return [domAddButton];
+    if (selector === 'table[data-ob-dom-table]' && domTableForQuery) return [domTableForQuery];
     return [];
   },
   createElement(tag) {
@@ -132,7 +146,7 @@ global.document = {
   }
 };
 
-global.confirm = function() { confirmCalls++; return true; };
+global.confirm = function() { confirmCalls++; return confirmResult; };
 function obReadJSONScript(id, fallback) { return id === 'ob-list-config' && configPresent ? listConfig : fallback; }
 function recalcTpTotals() {}
 
@@ -227,13 +241,14 @@ assert(confirmCalls === 1 && submittedForms.length === 1 && submittedForms[0].ac
 // active editor, copy values, and rewrite server-side row indexes after moves.
 const tbody = {
   rows: [],
-  appendChild(row) { this.rows.push(row); row.body = this; },
+  appendChild(row) { this.rows.push(row); row.body = this; row.parentElement = this; },
   insertBefore(row, before) {
     const old = this.rows.indexOf(row);
     if (old >= 0) this.rows.splice(old, 1);
     const at = before ? this.rows.indexOf(before) : -1;
     if (at < 0) this.rows.push(row); else this.rows.splice(at, 0, row);
     row.body = this;
+    row.parentElement = this;
   },
   querySelectorAll() { return []; }
 };
@@ -261,7 +276,7 @@ const table = {
 function makeDOMRow(value, index) {
   const attrs = {};
   const row = {
-    nodeType: 1, tagName: 'TR', table, body: tbody, style: {display: '', visibility: ''}, parentElement: table,
+    nodeType: 1, tagName: 'TR', table, body: tbody, style: {display: '', visibility: ''}, parentElement: tbody,
     get sectionRowIndex() { return tbody.rows.indexOf(this); },
     get nextSibling() { const at = tbody.rows.indexOf(this); return at >= 0 ? (tbody.rows[at + 1] || null) : null; },
     getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
@@ -273,7 +288,7 @@ function makeDOMRow(value, index) {
       if (selector === 'tr') return this;
       return null;
     },
-    remove() { const at = tbody.rows.indexOf(this); if (at >= 0) tbody.rows.splice(at, 1); },
+    remove() { const at = tbody.rows.indexOf(this); if (at >= 0) tbody.rows.splice(at, 1); this.parentElement = null; },
     querySelectorAll(selector) {
       if (selector === '[name]' || selector.includes('input[name]')) return [this.control];
       if (selector.includes('input,select,textarea,button')) return [this.control, this.removeButton];
@@ -315,6 +330,8 @@ const rowA = makeDOMRow('A', 0);
 const rowB = makeDOMRow('B', 1);
 tbody.appendChild(rowA);
 tbody.appendChild(rowB);
+domTableForQuery = table;
+obInitDOMTables();
 domAddButton = {
   disabled: false,
   getAttribute(name) {
@@ -338,6 +355,56 @@ assert(tbody.rows[2].control.getAttribute('name') === 'tp.Lines.2.Name', 'copy d
 assert(rowEvents.length === 1 && rowEvents[0].eventName === 'ПриДобавленииСтроки', 'F9 did not emit exactly one row-add event');
 assert(rowEvents[0].values.join(',') === 'B,A,A', 'row-add event fired before copied values and order were committed');
 
+// A concrete SlickGrid target must never fall back to the remembered no-grid
+// table. Exercise all structural keys against the real DOM mutation code.
+const slickHost = {nodeType: 1, style: {display: '', visibility: ''}, parentElement: body};
+const slickTarget = makeElement('div', {slickGrid: slickHost});
+rows = [];
+listSetSel(null);
+listConfig.canDelete = false;
+const beforeForeignGrid = tbody.rows.map(row => row.control.value).join(',');
+const beforeForeignEvents = rowEvents.length;
+fire({key: 'Insert', target: slickTarget});
+fire({key: 'F9', target: slickTarget});
+fire({key: 'Delete', target: slickTarget});
+assert(tbody.rows.map(row => row.control.value).join(',') === beforeForeignGrid && rowEvents.length === beforeForeignEvents,
+  'SlickGrid target mutated the remembered DOM table via Insert/F9/Delete');
+
+// Header/footer rows are not data rows. Clicking either clears the current
+// tbody row, so F9/Delete cannot copy or remove a stale body row.
+function makeSectionRow(section) {
+  return {
+    nodeType: 1, tagName: 'TR', table, parentElement: section,
+    closest(selector) {
+      if (selector.includes('table[data-ob-dom-table]')) return table;
+      if (selector === 'tr') return this;
+      return null;
+    }
+  };
+}
+const headerRow = makeSectionRow({tagName: 'THEAD'});
+const footerRow = makeSectionRow({tagName: 'TFOOT'});
+for (const nonDataRow of [headerRow, footerRow]) {
+  document.activeElement = nonDataRow;
+  dispatch('mousedown', {target: nonDataRow});
+  const before = tbody.rows.map(row => row.control.value).join(',');
+  fire({key: 'F9', target: nonDataRow});
+  fire({key: 'Delete', target: nonDataRow});
+  assert(tbody.rows.map(row => row.control.value).join(',') === before,
+    'thead/tfoot row became the current mutable DOM row');
+}
+
+// The same operations continue to work for a real tbody row.
+document.activeElement = rowA;
+dispatch('mousedown', {target: rowA});
+const beforeBodyCopy = tbody.rows.length;
+fire({key: 'F9', target: rowA});
+assert(tbody.rows.length === beforeBodyCopy + 1, 'tbody F9 stopped copying rows');
+const copiedBodyRow = table._obCurrentRow;
+document.activeElement = copiedBodyRow;
+fire({key: 'Delete', target: copiedBodyRow});
+assert(tbody.rows.length === beforeBodyCopy, 'tbody Delete stopped removing rows');
+
 const beforeInvalidInsert = tbody.rows.length;
 document.activeElement = rowB.control;
 rowB.control.valid = false;
@@ -356,6 +423,86 @@ fire({key: 'Insert', target: body});
 fire({key: 'Insert', target: rowB.control});
 assert(tbody.rows.length === beforeInvalidInsert, 'hidden remembered/direct DOM table accepted Insert');
 assert(window._obActiveDOMTable === null, 'hidden DOM table remained remembered');
+
+// Live replacement always recreates a roving Tab stop. It restores focus only
+// when focus actually lived inside the replaced selected list.
+let liveRows = [];
+let replacementRows = [];
+const live = {
+  contains(node) { return liveRows.includes(node); },
+  querySelectorAll(selector) { return selector === '[data-ob-list-row]' ? liveRows : []; }
+};
+Object.defineProperty(live, 'innerHTML', {
+  get() { return 'live-html'; },
+  set() {
+    liveRows.forEach(row => { row.detached = true; });
+    liveRows = replacementRows;
+    rows = liveRows;
+  }
+});
+const fresh = {innerHTML: 'fresh-html'};
+
+listSetSel(null);
+document.activeElement = body;
+liveRows = [makeElement('tr', {listRow: true, dataset: {openUrl: '/old'}})];
+rows = liveRows;
+replacementRows = [
+  makeElement('tr', {listRow: true, dataset: {openUrl: '/new-first'}}),
+  makeElement('tr', {listRow: true, dataset: {openUrl: '/new-second'}})
+];
+obReplaceLiveListContents(live, fresh);
+assert(replacementRows[0].getAttribute('tabindex') === '0' && replacementRows[1].getAttribute('tabindex') === '-1',
+  'refresh without selection lost the first roving tabindex');
+assert(document.activeElement === body, 'refresh without selection stole DOM focus');
+
+const oldSelected = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/same'}, dataset: {openUrl: '/same'}});
+const newSelected = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/same'}, dataset: {openUrl: '/same'}});
+liveRows = [oldSelected];
+rows = liveRows;
+replacementRows = [newSelected];
+listSetSel(oldSelected);
+oldSelected.focus();
+obReplaceLiveListContents(live, fresh);
+assert(listSel() === newSelected && newSelected.getAttribute('aria-selected') === 'true', 'refresh did not restore selected row');
+assert(document.activeElement === newSelected && newSelected.focusCount === 1, 'refresh did not restore focus from the selected list');
+
+const oldOutside = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/outside'}, dataset: {openUrl: '/outside'}});
+const newOutside = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/outside'}, dataset: {openUrl: '/outside'}});
+liveRows = [oldOutside];
+rows = liveRows;
+replacementRows = [newOutside];
+listSetSel(oldOutside);
+document.activeElement = body;
+obReplaceLiveListContents(live, fresh);
+assert(listSel() === newOutside && newOutside.focusCount === 0 && document.activeElement === body,
+  'refresh stole outside focus while restoring selection');
+
+// Autogen entity forms implement the documented Escape close contract with
+// the same dirty confirmation and leave picker modals alone.
+eval(source.slice(dirtyStart, dirtyEnd));
+dirtyFormEnabled = true;
+obInitFormDirty();
+const closeBefore = closeClicks;
+const confirmsBefore = confirmCalls;
+window._obFormDirty = false;
+fire({key: 'Escape', defaultPrevented: true});
+assert(closeClicks === closeBefore, 'defaultPrevented Escape closed the autogen form');
+fire({key: 'Escape'});
+assert(closeClicks === closeBefore + 1 && confirmCalls === confirmsBefore, 'clean autogen Escape did not close directly');
+window._obFormDirty = true;
+confirmResult = false;
+const denied = fire({key: 'Escape'});
+assert(closeClicks === closeBefore + 1 && confirmCalls === confirmsBefore + 1 && denied.prevented,
+  'dirty autogen Escape ignored a rejected confirmation');
+confirmResult = true;
+fire({key: 'Escape'});
+assert(closeClicks === closeBefore + 2 && confirmCalls === confirmsBefore + 2,
+  'dirty autogen Escape did not close after confirmation');
+modalID = '_ref-picker-modal';
+window._obFormDirty = false;
+fire({key: 'Escape'});
+assert(closeClicks === closeBefore + 2, 'autogen Escape closed the form behind a picker modal');
+modalID = '';
 
 // Dynamic auto-form rows use the same availability contract: a writable
 // table advertises Delete, a readonly table does not expose a dead shortcut.
@@ -461,6 +608,12 @@ const unknownHost = {
   getAttribute(name) { return name === 'data-sg-tp' ? 'Unknown' : null; }
 };
 const unknownTarget = {closest(selector) { return selector === '.ob-grid[data-sg-tp]' ? unknownHost : null; }};
+const domTable = {nodeType: 1, style: {display: '', visibility: ''}, parentElement: null};
+const domTarget = {closest(selector) {
+  if (selector === '.ob-grid[data-sg-tp]') return null;
+  if (selector.includes('table[data-ob-dom-table]')) return domTable;
+  return null;
+}};
 const body = {nodeType: 1, tagName: 'BODY', style: {display: '', visibility: ''}, parentElement: null, closest() { return null; }};
 const link = {tagName: 'A', closest(selector) {
   if (selector === '.ob-grid[data-sg-tp]') return null;
@@ -566,6 +719,17 @@ host.style.display = '';
 window._obActiveGridName = 'Lines';
 fire({key: 'Insert', target: unknownTarget});
 assert(items.length === beforeLink, 'unknown direct grid fell back to remembered SlickGrid');
+
+// The inverse mixed-form direction: a concrete no-grid DOM target must never
+// use a remembered SlickGrid for Insert/Delete/F9.
+resetRows(['A', 'B']);
+window._obActiveGridName = 'Lines';
+const beforeDOMTarget = items.map(item => item.Name).join(',');
+fire({key: 'Insert', target: domTarget});
+fire({key: 'F9', target: domTarget});
+fire({key: 'Delete', target: domTarget});
+assert(items.map(item => item.Name).join(',') === beforeDOMTarget && rowEvents.length === 0,
+  'DOM table target mutated remembered SlickGrid via Insert/F9/Delete');
 
 // Toolbar Delete executes the production mutation. With no vendored
 // RowSelectionModel it must not even call the throwing selection API, must
