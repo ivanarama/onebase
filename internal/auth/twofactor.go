@@ -333,6 +333,34 @@ func (r *Repo) ConsumeBindTicket(ctx context.Context, userID, code string, now t
 	return nil
 }
 
+// VerifyBindTicket проверяет код привязки, НЕ гася его.
+//
+// Билет гасится только когда второй фактор действительно привязан
+// (completeEnrollment). Раньше он удалялся в начале второго шага, и любой сбой
+// на сканировании QR — истёкший challenge, пять опечаток в коде TOTP, закрытая
+// вкладка — оставлял пользователя разом без второго фактора и без кода
+// привязки: за новым надо было идти к администратору (#615).
+//
+// Перебор от этого не выигрывает: неподошедший код и раньше ничего не гасил
+// (DELETE отбирал строку по хэшу), а число попыток ограничивает счётчик
+// challenge'а и лимитер входа.
+func (r *Repo) VerifyBindTicket(ctx context.Context, userID, code string, now time.Time) error {
+	if strings.TrimSpace(code) == "" {
+		return ErrInvalidBindTicket
+	}
+	d := r.db.Dialect()
+	q := fmt.Sprintf(`SELECT COUNT(*) FROM _auth_bind_tickets WHERE user_id = %s AND code_hash = %s AND expires_at > %s`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+	var n int
+	if err := r.db.QueryRow(ctx, q, userID, hashBackupCode(code), now.Unix()).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrInvalidBindTicket
+	}
+	return nil
+}
+
 // normalizeBackupCode убирает разделители и регистр: код переписывают руками.
 func normalizeBackupCode(code string) string {
 	s := strings.ToLower(strings.TrimSpace(code))

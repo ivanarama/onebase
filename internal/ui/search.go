@@ -89,7 +89,7 @@ func (s *Server) dslFullTextSearch(ctx context.Context, args []any) (any, error)
 		limit = searchDSLMaxLimit
 	}
 
-	page, err := search.Run(ctx, s.store, uiSearchDeps{s}, text, limit, 0)
+	page, err := search.Run(ctx, s.store, uiSearchDeps{s}, text, limit, "")
 	if err != nil {
 		return nil, fmt.Errorf("ПолнотекстовыйПоиск: %w", err)
 	}
@@ -112,8 +112,10 @@ func (s *Server) globalSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	// Продолжение листания — только непрозрачным курсором: сырое смещение
 	// считается по просмотренным строкам индекса и выдавало бы наличие
-	// совпадений, скрытых маской или строковой политикой.
-	offset := search.DecodeCursor(r.URL.Query().Get("cursor"))
+	// совпадений, скрытых маской или строковой политикой. Разбирает курсор
+	// сам search.Run — своими text и limit, чтобы продолжить можно было
+	// только тот запрос, которым курсор выдан (#615).
+	cursor := r.URL.Query().Get("cursor")
 
 	data := map[string]any{"Q": q, "SearchQuery": q}
 	if q == "" {
@@ -121,7 +123,7 @@ func (s *Server) globalSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, err := search.Run(r.Context(), s.store, uiSearchDeps{s}, q, searchPageSize, offset)
+	page, err := search.Run(r.Context(), s.store, uiSearchDeps{s}, q, searchPageSize, cursor)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
