@@ -29,8 +29,8 @@ type Blob struct {
 	Size int64
 	// Владелец — сущность, для которой загружен бинарник (kind+имя). Нужен
 	// авторизации отдачи (imageServe проверяет право чтения на владельца).
-	// Пустые значения = легаси-блоб или загрузка без контекста сущности (DSL
-	// СохранитьКартинку) — отдача таким требует лишь аутентификации.
+	// Пустые значения = легаси-блоб или legacy-вызов DSL СохранитьКартинку без
+	// ссылки-владельца — отдача таким требует лишь аутентификации.
 	OwnerKind   string
 	OwnerEntity string
 }
@@ -40,8 +40,8 @@ type Blob struct {
 type BlobOwner struct {
 	Kind   string // "catalog"|"document"|... (как в auth.User.Has)
 	Entity string // имя сущности
-	// DSLManaged помечает блоб, созданный из DSL (СохранитьКартинку) — у него нет
-	// владельца, а UUID мог быть сохранён прикладным кодом в строковое поле,
+	// DSLManaged помечает блоб, созданный legacy-вызовом DSL СохранитьКартинку без
+	// владельца. UUID мог быть сохранён прикладным кодом в строковое поле,
 	// константу или реквизит инфорегистра, которые сборщик мусора НЕ сканирует
 	// (он смотрит только image-поля сущностей). Такие блобы исключаются из sweep,
 	// чтобы Gc не удалил используемую картинку (ревью #11).
@@ -165,11 +165,16 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 		if err := db.blobStore.PutObject(ctx, key, bytes.NewReader(data), int64(len(data)), mime); err != nil {
 			return Blob{}, fmt.Errorf("blobs: s3 put: %w", err)
 		}
+		compensate := func() { _ = db.blobStore.DeleteObject(context.Background(), key) }
 		if err := insertMeta(int64(len(data)), FileStorageS3); err != nil {
 			// Компенсируем: объект уже залит, а строки нет — убираем объект.
-			_ = db.blobStore.DeleteObject(ctx, key)
+			compensate()
 			return Blob{}, err
 		}
+		// Метаданные участвуют в транзакции, а S3-объект — нет. При откате
+		// транзакции/сейвпоинта удаляем внешнее содержимое, иначе останется файл без
+		// строки _blobs и последующий GC уже не сможет его обнаружить.
+		DeferUntilTxRollback(ctx, compensate)
 		return result(int64(len(data))), nil
 
 	default: // FileStorageDisk — файл на диске, в _blobs только метаданные.
@@ -202,6 +207,10 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 			removeFile(fp)
 			return Blob{}, err
 		}
+		// Как и S3, файл находится вне транзакции БД. Привязываем его время жизни
+		// к исходу транзакции, чтобы ошибка последующей записи объекта не оставляла
+		// физический orphan без строки _blobs.
+		DeferUntilTxRollback(ctx, func() { removeFile(fp) })
 		return result(n), nil
 	}
 }

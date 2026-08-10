@@ -166,8 +166,8 @@ func TestSweepOrphanBlobs_DSLManaged(t *testing.T) {
 	if st.ProtectedDSL != 1 || st.ProtectedRecent != 0 {
 		t.Fatalf("ProtectedDSL=%d ProtectedRecent=%d, ожидалось 1/0", st.ProtectedDSL, st.ProtectedRecent)
 	}
-	if st.Protected != st.ProtectedDSL+st.ProtectedRecent {
-		t.Fatalf("Protected=%d не равно сумме причин (%d+%d)", st.Protected, st.ProtectedDSL, st.ProtectedRecent)
+	if st.Protected != st.ProtectedDSL+st.ProtectedRecent+st.ProtectedLegacy {
+		t.Fatalf("Protected=%d не равно сумме причин (%d+%d+%d)", st.Protected, st.ProtectedDSL, st.ProtectedRecent, st.ProtectedLegacy)
 	}
 }
 
@@ -204,6 +204,10 @@ func TestSweepOrphanBlobs_LegacyZeroCreatedAt(t *testing.T) {
 	}
 	if st.Protected != 1 {
 		t.Fatalf("protected=%d, ожидалось 1", st.Protected)
+	}
+	if st.ProtectedLegacy != 1 || st.ProtectedRecent != 0 || st.ProtectedDSL != 0 {
+		t.Fatalf("причина защиты: legacy=%d recent=%d dsl=%d, ожидалось 1/0/0",
+			st.ProtectedLegacy, st.ProtectedRecent, st.ProtectedDSL)
 	}
 	if err := openClosed(t, db, mustUUID(t, legacy)); err != nil {
 		t.Fatalf("легаси-блоб (created_at=0) не должен удаляться: %v", err)
