@@ -164,3 +164,17 @@ func TestNormalizeForImport_RealFile(t *testing.T) {
 		t.Errorf("first element after normalize = %q, ожидается СтраницыФормы", form.Elements[0].Kind)
 	}
 }
+
+// HTMLDocumentField: показать готовый HTML платформа не умеет, но содержимое —
+// разметка, и её правят как код. Теряться такое поле не должно.
+func TestNormalize_HTMLDocumentFieldСтановитсяПолемКода(t *testing.T) {
+	el := &IRElement{Kind: "HTMLDocumentField", Name: "Просмотр"}
+	var warns Warnings
+	normalizeElement(el, &warns)
+	if el.Kind != "ПолеКода" {
+		t.Errorf("вид = %q, ожидалось ПолеКода", el.Kind)
+	}
+	if el.Language != "html" {
+		t.Errorf("язык = %q, ожидался html", el.Language)
+	}
+}
