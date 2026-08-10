@@ -702,9 +702,45 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 }
 
 type xmlTreeBudget struct {
-	nodes      int
-	attributes int
-	textBytes  int
+	nodes                   int
+	attributes              int
+	textBytes               int
+	validatedNames          map[string]error
+	validatedAttributeNames map[string]error
+	validatedCharacters     map[string]error
+}
+
+// validateCached не сканирует повторно одну и ту же неизменяемую строку в
+// разделяемых поддеревьях. Byte-budget по-прежнему учитывается до вызова этого
+// метода для каждого вхождения, поэтому кеш не ослабляет ограничения ресурсов.
+func validateCached(cache *map[string]error, value string, validate func(string) error) error {
+	// Для коротких строк проверка дешевле записи в map. Порог также ограничивает
+	// число записей кеша совокупным text-budget примерно четырьмя тысячами.
+	const minCacheBytes = 4 << 10
+	if len(value) < minCacheBytes {
+		return validate(value)
+	}
+	if *cache == nil {
+		*cache = make(map[string]error)
+	}
+	if err, ok := (*cache)[value]; ok {
+		return err
+	}
+	err := validate(value)
+	(*cache)[value] = err
+	return err
+}
+
+func (b *xmlTreeBudget) validateName(value string) error {
+	return validateCached(&b.validatedNames, value, validateXMLName)
+}
+
+func (b *xmlTreeBudget) validateAttributeName(value string) error {
+	return validateCached(&b.validatedAttributeNames, value, validateXMLAttributeName)
+}
+
+func (b *xmlTreeBudget) validateCharacters(value string) error {
+	return validateCached(&b.validatedCharacters, value, validateXMLCharacters)
 }
 
 // asXMLTreeNode распознаёт Структуру, полученную из ПрочитатьXML. Наличие
@@ -734,7 +770,7 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 	if err := addXMLTextBytes(&budget.textBytes, len(name)); err != nil {
 		return nil, true, err
 	}
-	if err := validateXMLName(name); err != nil {
+	if err := budget.validateName(name); err != nil {
 		return nil, true, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
 	}
 
@@ -786,14 +822,14 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 			if err := addXMLTextBytes(&budget.textBytes, len(value)); err != nil {
 				return nil, true, err
 			}
-			if err := validateXMLAttributeName(key); err != nil {
+			if err := budget.validateAttributeName(key); err != nil {
 				return nil, true, err
 			}
 			if _, duplicate := seen[key]; duplicate {
 				return nil, true, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", key, name)
 			}
 			seen[key] = struct{}{}
-			if err := validateXMLCharacters(value); err != nil {
+			if err := budget.validateCharacters(value); err != nil {
 				return nil, true, fmt.Errorf("значение атрибута «%s»: %w", key, err)
 			}
 			node.Attrs = append(node.Attrs, [2]string{key, value})
@@ -807,7 +843,7 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 		if err := addXMLTextBytes(&budget.textBytes, len(text)); err != nil {
 			return nil, true, err
 		}
-		if err := validateXMLCharacters(text); err != nil {
+		if err := budget.validateCharacters(text); err != nil {
 			return nil, true, fmt.Errorf("текст элемента «%s»: %w", name, err)
 		}
 		node.Text = text
