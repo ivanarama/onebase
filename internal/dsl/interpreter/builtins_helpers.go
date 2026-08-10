@@ -2,7 +2,7 @@ package interpreter
 
 import (
 	"fmt"
-	"strconv"
+	"math"
 	"strings"
 	"time"
 )
@@ -126,6 +126,40 @@ func parseDateString(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// numericDateString converts the two compact numeric forms understood by
+// Дата: YYYYMMDD and YYYYMMDDhhmmss. A decimal value drops leading zeroes, so
+// the full form produced by Число(Дата) needs them restored for years 0001–0999.
+// Bounds are checked before Decimal.StringFixed: shopspring/decimal accepts
+// extreme exponents, and expanding one here would otherwise exhaust memory.
+func numericDateString(v any) (string, bool) {
+	if f, ok := v.(float64); ok && (math.IsNaN(f) || math.IsInf(f, 0)) {
+		return "", false
+	}
+	d, ok := toDecimal(v)
+	if !ok || d.Sign() <= 0 {
+		return "", false
+	}
+	exp := d.Exponent()
+	if exp < -14 || exp >= 14 {
+		return "", false
+	}
+	coefficient := d.Coefficient()
+	if coefficient.BitLen() > 128 || !d.IsInteger() {
+		return "", false
+	}
+	s := d.StringFixed(0)
+	switch len(s) {
+	case 8, 14:
+		// Already a complete date or date-time representation.
+	case 11, 12, 13:
+		// Число(Дата) loses only the leading zeroes of a valid four-digit year.
+		s = strings.Repeat("0", 14-len(s)) + s
+	default:
+		return "", false
+	}
+	return s, true
+}
+
 // dateConstructor реализует функцию Дата():
 //
 //	Дата(Год, Месяц, День[, Час, Минута, Секунда])
@@ -144,8 +178,8 @@ func dateConstructor(args []any, _ string, _ int) (any, error) {
 			}
 			return time.Time{}, nil
 		default:
-			if f, ok := toFloat(v); ok && f != 0 {
-				if t, ok := parseDateString(strconv.FormatInt(int64(f), 10)); ok {
+			if s, ok := numericDateString(v); ok {
+				if t, ok := parseDateString(s); ok {
 					return t, nil
 				}
 			}

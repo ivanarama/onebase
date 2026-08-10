@@ -2,8 +2,11 @@ package interpreter
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Сдвиг даты по часам, минутам и секундам (issue #707).
@@ -71,7 +74,8 @@ func TestДобавить_СекундыЭквивалентныСложению
 	}
 }
 
-// Число(Дата) даёт ГГГГММДДЧЧММСС и разбирается обратно конструктором.
+// Число(Дата) даёт ГГГГММДДЧЧММСС и разбирается обратно конструктором по
+// календарным компонентам с точностью до секунды.
 // Раньше дата уходила в разбор строки «2026-05-11 00:00:00 +0300 MSK», не
 // парсилась и молча давала 0 — это читалось как «дата пустая», и арифметику
 // времени начинали строить на нуле (issue #707).
@@ -94,6 +98,80 @@ func TestЧисло_ДатаRoundTrip(t *testing.T) {
 	}
 }
 
+// Decimal удаляет начальные нули из ГГГГММДДЧЧММСС. Конструктор возвращает их
+// перед разбором, иначе даты первых 999 лет не проходили заявленный round-trip.
+func TestЧисло_ДатаRoundTripВосстанавливаетНулиГода(t *testing.T) {
+	// Не используем 01.01.0001 00:00:00: в UTC это Go zero time, который DSL
+	// намеренно считает своей пустой датой и преобразует в 0.
+	source := time.Date(1, time.May, 11, 10, 30, 45, 0, time.Local)
+	number, err := builtinToNumber([]any{source}, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := number.(decimal.Decimal)
+	if !ok || d.String() != "10511103045" {
+		t.Fatalf("Число(Дата(1,5,11,10,30,45)) = %T(%v), ожидалось 10511103045", number, number)
+	}
+	back, err := dateConstructor([]any{d}, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := back.(time.Time)
+	if !ok || got.Year() != 1 || got.Month() != time.May || got.Day() != 11 ||
+		got.Hour() != 10 || got.Minute() != 30 || got.Second() != 45 {
+		t.Fatalf("Дата(Число(Дата(1,5,11,10,30,45))) = %T(%v)", back, back)
+	}
+}
+
+// Компактное число не кодирует зону и дробную секунду: сохраняются именно
+// видимые календарные компоненты до секунд, а восстановленная зона локальная.
+func TestЧисло_ДатаRoundTripИмеетТочностьДоСекунды(t *testing.T) {
+	source := time.Date(2026, time.May, 11, 10, 30, 45, 987654321,
+		time.FixedZone("external", 7*60*60))
+	number, err := builtinToNumber([]any{source}, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := dateConstructor([]any{number}, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := back.(time.Time)
+	if got.Year() != source.Year() || got.Month() != source.Month() || got.Day() != source.Day() ||
+		got.Hour() != source.Hour() || got.Minute() != source.Minute() || got.Second() != source.Second() {
+		t.Fatalf("календарные компоненты изменились: %v -> %v", source, got)
+	}
+	if got.Nanosecond() != 0 || got.Location() != time.Local {
+		t.Fatalf("Дата(число) должна вернуть локальную точность до секунды: %v", got)
+	}
+}
+
+// Нечёткие и патологически большие числа не являются компактной датой. В
+// частности, extreme exponent должен отклоняться до разворачивания в строку.
+func TestДата_ЧисловойВводОтклоняетДробьИНебезопасныйExponent(t *testing.T) {
+	huge, err := decimal.NewFromString("1e2147483647")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, input := range map[string]any{
+		"fraction": decimal.RequireFromString("20260511.5"),
+		"huge":     huge,
+		"nan":      math.NaN(),
+		"infinity": math.Inf(1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := dateConstructor([]any{input}, "", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, ok := result.(time.Time)
+			if !ok || !got.IsZero() {
+				t.Fatalf("Дата(%v) = %T(%v), ожидалась пустая дата", input, result, result)
+			}
+		})
+	}
+}
+
 // Пустая дата остаётся нулём — Число() не должно выдавать 00010101000000.
 func TestЧисло_ПустаяДатаОстаётсяНулём(t *testing.T) {
 	r := evalBreakFunc(t, `Функция Тест()
@@ -104,9 +182,9 @@ func TestЧисло_ПустаяДатаОстаётсяНулём(t *testing.T)
 	}
 }
 
-// Формы единственного числа работают наравне с множественными: соседние
-// календарные функции единственного числа, и промах по форме давал бы
-// `unknown function` на ровном месте.
+// Для секунд и минут приняты формы единственного числа, а для часа — также
+// привычная форма ДобавитьЧасов. Промах по форме раньше давал `unknown
+// function` на ровном месте.
 func TestДобавить_ФормыЕдинственногоЧисла(t *testing.T) {
 	cases := map[string]string{
 		"ДобавитьСекунду(Дата(2026, 5, 11, 10, 0, 0), 90)": "10:1:30",
