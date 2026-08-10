@@ -35,6 +35,16 @@ func TestCompile_ПервыеВместеСРазличными(t *testing.T) {
 	}
 }
 
+func TestCompile_ПервыеПередРазличными(t *testing.T) {
+	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 5 РАЗЛИЧНЫЕ Наименование ИЗ Справочник.Товар`, CompileOpts{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if !strings.Contains(strings.ToUpper(res.SQL), "SELECT DISTINCT") || !strings.HasSuffix(res.SQL, " LIMIT 5") {
+		t.Errorf("модификаторы разобраны неверно:\n%s", res.SQL)
+	}
+}
+
 func TestCompile_TopРаботаетКакПервые(t *testing.T) {
 	res, err := Compile(`SELECT TOP 3 Наименование FROM Справочник.Товар`, CompileOpts{})
 	if err != nil {
@@ -54,6 +64,38 @@ func TestCompile_ПервыеБезЧислаНеТрогаем(t *testing.T) {
 	}
 	if strings.Contains(res.SQL, "LIMIT") {
 		t.Errorf("LIMIT появился на пустом месте:\n%s", res.SQL)
+	}
+}
+
+func TestCompile_ПервыеПроверяетКоличество(t *testing.T) {
+	for _, src := range []string{
+		`ВЫБРАТЬ ПЕРВЫЕ 0 Наименование ИЗ Справочник.Товар`,
+		`ВЫБРАТЬ ПЕРВЫЕ 1.5 Наименование ИЗ Справочник.Товар`,
+		`ВЫБРАТЬ ПЕРВЫЕ -1 Наименование ИЗ Справочник.Товар`,
+		`SELECT TOP 999999999999999999999999 Name FROM Catalog.Товар`,
+	} {
+		t.Run(src, func(t *testing.T) {
+			_, err := Compile(src, CompileOpts{})
+			if err == nil || !strings.Contains(err.Error(), "положительное целое число") {
+				t.Fatalf("ожидалась понятная ошибка количества, получено %v", err)
+			}
+		})
+	}
+}
+
+func TestCompile_ПервыеВОбъединенииОтклоняетсяБезПодменыСемантики(t *testing.T) {
+	queries := []string{
+		`ВЫБРАТЬ ПЕРВЫЕ 1 Наименование ИЗ Справочник.Товар ОБЪЕДИНИТЬ ВСЕ ВЫБРАТЬ Наименование ИЗ Справочник.Товар`,
+		`ВЫБРАТЬ Наименование ИЗ Справочник.Товар ОБЪЕДИНИТЬ ВСЕ ВЫБРАТЬ ПЕРВЫЕ 1 Наименование ИЗ Справочник.Товар`,
+		`ВЫБРАТЬ Наименование ИЗ (ВЫБРАТЬ ПЕРВЫЕ 1 Наименование ИЗ Справочник.Товар) КАК Т`,
+	}
+	for _, src := range queries {
+		t.Run(src, func(t *testing.T) {
+			_, err := Compile(src, CompileOpts{})
+			if err == nil || (!strings.Contains(err.Error(), "ОБЪЕДИНИТЬ") && !strings.Contains(err.Error(), "вложенных")) {
+				t.Fatalf("ожидался явный отказ для неподдержанной области ПЕРВЫЕ, получено %v", err)
+			}
+		})
 	}
 }
 

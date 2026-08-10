@@ -90,14 +90,19 @@ func sourcePermKind(typeUpper string) string {
 
 // Compile translates a 1C-style query to PostgreSQL SQL.
 func Compile(src string, opts CompileOpts) (Result, error) {
-	tokens, limit := extractFirstN(tokenize(src))
+	tokens, limit, hasLimit, err := extractFirstN(tokenize(src))
+	if err != nil {
+		return Result{}, err
+	}
 	res, err := translate(tokens, opts)
-	if err != nil || limit <= 0 {
+	if err != nil || !hasLimit {
 		return res, err
 	}
-	// LIMIT дописывается к готовому SQL, а не встраивается в трансляцию: он
-	// применяется к результату целиком, в том числе к запросу с ОБЪЕДИНИТЬ.
-	res.SQL += " LIMIT " + strconv.Itoa(limit)
+	// Для простого внешнего SELECT LIMIT можно безопасно дописать к готовому SQL:
+	// он окажется после WHERE/GROUP/HAVING/ORDER BY. Составные запросы выше
+	// отклоняются: ПЕРВЫЕ относится к отдельной ветви ОБЪЕДИНИТЬ, а глобальный
+	// LIMIT молча изменил бы результат.
+	res.SQL += " LIMIT " + strconv.FormatInt(limit, 10)
 	return res, nil
 }
 
@@ -107,16 +112,82 @@ func Compile(src string, opts CompileOpts) (Result, error) {
 // «SELECT ПЕРВЫЕ 10 …» и падал с синтаксической ошибкой SQL.
 //
 // РАЗЛИЧНЫЕ и ПЕРВЫЕ сочетаются в любом порядке — как и в 1С.
-func extractFirstN(tokens []tok) ([]tok, int) {
-	if len(tokens) == 0 {
-		return tokens, 0
+func extractFirstN(tokens []tok) ([]tok, int64, bool, error) {
+	limitIndex := -1
+	var limit int64
+	depth := 0
+	topLevelUnion := false
+
+	for selectIndex := 0; selectIndex < len(tokens); selectIndex++ {
+		t := tokens[selectIndex]
+		switch t.kind {
+		case tLParen:
+			depth++
+			continue
+		case tRParen:
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if t.kind != tIdent {
+			continue
+		}
+		kw, isKeyword := sqlKW(t.val)
+		if isKeyword && kw == "UNION" && depth == 0 {
+			topLevelUnion = true
+			continue
+		}
+		if !isKeyword || kw != "SELECT" {
+			continue
+		}
+
+		wordIndex := firstModifierIndex(tokens, selectIndex)
+		if wordIndex < 0 {
+			continue
+		}
+		if wordIndex+1 >= len(tokens) || tokens[wordIndex+1].kind != tNum {
+			if firstLooksLikeBareField(tokens, wordIndex) {
+				continue
+			}
+			return nil, 0, false, i18nerr.Errorf(
+				"%s требует положительное целое число записей", tokens[wordIndex].val,
+			)
+		}
+
+		n, parseErr := strconv.ParseInt(tokens[wordIndex+1].val, 10, 64)
+		if parseErr != nil || n <= 0 {
+			return nil, 0, false, i18nerr.Errorf(
+				"%s требует положительное целое число записей, получено %q",
+				tokens[wordIndex].val, tokens[wordIndex+1].val,
+			)
+		}
+		if selectIndex != 0 || depth != 0 || limitIndex >= 0 {
+			return nil, 0, false, i18nerr.Errorf(
+				"%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается",
+				tokens[wordIndex].val,
+			)
+		}
+		limitIndex = wordIndex
+		limit = n
 	}
-	i := 0
-	if kw, ok := sqlKW(tokens[i].val); !ok || kw != "SELECT" || tokens[i].kind != tIdent {
-		return tokens, 0
+
+	if limitIndex < 0 {
+		return tokens, 0, false, nil
 	}
-	i++
-	// пропускаем РАЗЛИЧНЫЕ/ВСЕ перед ПЕРВЫЕ
+	if topLevelUnion {
+		return nil, 0, false, i18nerr.Errorf(
+			"ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви",
+		)
+	}
+	out := make([]tok, 0, len(tokens)-2)
+	out = append(out, tokens[:limitIndex]...)
+	out = append(out, tokens[limitIndex+2:]...)
+	return out, limit, true, nil
+}
+
+func firstModifierIndex(tokens []tok, selectIndex int) int {
+	i := selectIndex + 1
 	for i < len(tokens) && tokens[i].kind == tIdent {
 		if kw, ok := sqlKW(tokens[i].val); ok && (kw == "DISTINCT" || kw == "ALL") {
 			i++
@@ -125,23 +196,35 @@ func extractFirstN(tokens []tok) ([]tok, int) {
 		break
 	}
 	if i >= len(tokens) || tokens[i].kind != tIdent {
-		return tokens, 0
+		return -1
 	}
 	word := strings.ToUpper(tokens[i].val)
 	if word != "ПЕРВЫЕ" && word != "TOP" {
-		return tokens, 0
+		return -1
 	}
-	if i+1 >= len(tokens) || tokens[i+1].kind != tNum {
-		return tokens, 0
+	return i
+}
+
+// Первые/Top остаётся допустимым именем поля или функции. Ошибкой считаем
+// только форму, похожую на модификатор с потерянным/неверным количеством.
+func firstLooksLikeBareField(tokens []tok, wordIndex int) bool {
+	if wordIndex+1 >= len(tokens) {
+		return true
 	}
-	n, err := strconv.Atoi(tokens[i+1].val)
-	if err != nil || n <= 0 {
-		return tokens, 0
+	next := tokens[wordIndex+1]
+	switch next.kind {
+	case tEOF, tComma, tDot, tLParen, tRParen:
+		return true
+	case tIdent:
+		kw, ok := sqlKW(next.val)
+		return ok && (kw == "FROM" || kw == "AS")
+	case tOp:
+		// «ПЕРВЫЕ -1»/«TOP +1» — почти наверняка неверный лимит. Для поля
+		// с таким именем арифметика остаётся доступна через квалификатор Т.Первые.
+		return next.val != "+" && next.val != "-"
+	default:
+		return false
 	}
-	out := make([]tok, 0, len(tokens)-2)
-	out = append(out, tokens[:i]...)
-	out = append(out, tokens[i+2:]...)
-	return out, n
 }
 
 // --- tokenizer ---
