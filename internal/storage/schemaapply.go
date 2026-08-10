@@ -255,10 +255,32 @@ func (db *DB) dropColumn(ctx context.Context, table, column string) error {
 			return err
 		}
 	}
-	if _, err := db.Exec(ctx, "ALTER TABLE "+quoteIdent(table)+" DROP COLUMN "+quoteIdent(column)); err != nil {
-		return fmt.Errorf("%s: удаление колонки %s: %w", table, column, err)
+	_, err := db.Exec(ctx, "ALTER TABLE "+quoteIdent(table)+" DROP COLUMN "+quoteIdent(column))
+	if err == nil {
+		return nil
 	}
-	return nil
+	// SQLite не удаляет колонку, упомянутую в ограничении таблицы, а ссылочные
+	// реквизиты платформа объявляет именно так (FOREIGN KEY в CreateTableSQL).
+	// Тогда идём рекомендованным движком путём — пересоздаём таблицу без этой
+	// колонки (#615). Ошибки другой природы наверх как есть.
+	if db.IsSQLite() && isSQLiteConstraintDropErr(err) {
+		if rebuildErr := db.dropColumnRebuildSQLite(ctx, table, column); rebuildErr != nil {
+			return fmt.Errorf("%s: удаление колонки %s пересозданием таблицы: %w", table, column, rebuildErr)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s: удаление колонки %s: %w", table, column, err)
+}
+
+// isSQLiteConstraintDropErr — отказ удалить колонку из-за ограничения таблицы.
+// Текст, а не код: SQLite отдаёт для этого случая общий SQLITE_ERROR (1), и
+// отличить его от прочих логических ошибок кодом нельзя. Сообщения движка не
+// локализуются, поэтому разбор по тексту здесь безопасен — в отличие от
+// PostgreSQL, где такой разбор ломался на локали (#672).
+func isSQLiteConstraintDropErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "foreign key definition") ||
+		strings.Contains(msg, "error in table") && strings.Contains(msg, "after drop column")
 }
 
 func (db *DB) dropIndexesOnColumn(ctx context.Context, table, column string) error {
