@@ -7,6 +7,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"golang.org/x/net/html"
 )
 
 // Набор фиксирует встроенные горячие клавиши, привычные по 1С: Ins/F9/Ctrl+↑↓
@@ -130,7 +131,7 @@ func TestListDataShortcutsDoNotHijackTyping(t *testing.T) {
 	}
 	body := js[start:]
 	insert := strings.Index(body, "if (e.key === 'Insert')")
-	typing := strings.Index(body, "obIsTypingTarget(e.target)")
+	typing := strings.Index(body, "obIsInteractiveTarget(e.target)")
 	if insert < 0 || typing < 0 || typing > insert {
 		t.Fatal("typing guard должен выполняться до Insert списка")
 	}
@@ -143,7 +144,7 @@ func TestListDataShortcutsDoNotHijackTyping(t *testing.T) {
 	if prefixStart < 0 {
 		prefixStart = 0
 	}
-	if !strings.Contains(js[prefixStart:deleteHandler], "obIsTypingTarget(e.target)") {
+	if !strings.Contains(js[prefixStart:deleteHandler], "obIsInteractiveTarget(e.target)") {
 		t.Fatal("Delete списка не защищён от нажатия в поле ввода")
 	}
 }
@@ -196,7 +197,7 @@ func TestGridRowKeysRememberLastInteractedGrid(t *testing.T) {
 		t.Fatal("managed.js: не найдена activeGridName")
 	}
 	body := js[start:]
-	if end := strings.Index(body, "function gridTypingTarget"); end > 0 {
+	if end := strings.Index(body, "function gridInteractiveTarget"); end > 0 {
 		body = body[:end]
 	}
 	if !strings.Contains(body, "window._obActiveGridName") {
@@ -219,7 +220,7 @@ func TestReadOnlyGridHidesAndRejectsStructuralActions(t *testing.T) {
 			Fields: []metadata.Field{{Name: "Товар", Type: metadata.FieldTypeString}},
 		}},
 	}
-	render := func(readOnly bool) string {
+	render := func(readOnly, canWrite bool) string {
 		t.Helper()
 		el := &metadata.FormElement{
 			Kind:     metadata.FormElementTablePart,
@@ -229,6 +230,7 @@ func TestReadOnlyGridHidesAndRejectsStructuralActions(t *testing.T) {
 		}
 		ctx := map[string]any{
 			"Entity":        ent,
+			"CanWrite":      canWrite,
 			"TablePartRows": map[string][]map[string]any{"Строки": {}},
 			"TPRefOptions":  map[string]any{},
 			"TPEnumLabels":  map[string]map[string]map[string]string{},
@@ -240,16 +242,191 @@ func TestReadOnlyGridHidesAndRejectsStructuralActions(t *testing.T) {
 		return buf.String()
 	}
 
-	readOnly := render(true)
+	readOnly := render(true, true)
 	if !strings.Contains(readOnly, `data-sg-ro="1"`) {
 		t.Fatal("readonly-флаг не дошёл до SlickGrid")
 	}
 	if strings.Contains(readOnly, "data-ob-grid-add") || strings.Contains(readOnly, "data-ob-grid-del") {
 		t.Fatal("readonly-таблица показывает структурные кнопки")
 	}
-	editable := render(false)
+	permissionReadOnly := render(false, false)
+	if !strings.Contains(permissionReadOnly, `data-sg-ro="1"`) || strings.Contains(permissionReadOnly, "data-ob-grid-add") {
+		t.Fatal("CanWrite=false должен fail-closed блокировать SlickGrid")
+	}
+	editable := render(false, true)
 	if !strings.Contains(editable, "data-ob-grid-add") || !strings.Contains(editable, "data-ob-grid-del") {
 		t.Fatal("редактируемая таблица потеряла структурные кнопки")
+	}
+}
+
+func keyboardHTMLAttr(node *html.Node, name string) (string, bool) {
+	for _, attr := range node.Attr {
+		if attr.Key == name {
+			return attr.Val, true
+		}
+	}
+	return "", false
+}
+
+func keyboardFindHTML(node *html.Node, match func(*html.Node) bool) *html.Node {
+	if match(node) {
+		return node
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if found := keyboardFindHTML(child, match); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// NoGrid is a separate DOM implementation, so readonly must be asserted on
+// the rendered controls rather than inferred from SlickGrid's data-sg-ro.
+func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Заказ",
+		Kind: metadata.KindDocument,
+		TableParts: []metadata.TablePart{{
+			Name:   "Строки",
+			Fields: []metadata.Field{{Name: "Товар", Type: metadata.FieldTypeString}},
+		}},
+	}
+
+	for _, tc := range []struct {
+		name, marker       string
+		readOnly, canWrite bool
+	}{
+		{name: "element readonly", readOnly: true, canWrite: true, marker: "1"},
+		{name: "permission readonly", readOnly: false, canWrite: false, marker: "1"},
+		{name: "editable", readOnly: false, canWrite: true, marker: "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			el := &metadata.FormElement{
+				Kind: metadata.FormElementTablePart, Name: "СтрокиФормы",
+				DataPath: "Объект.Строки", ReadOnly: tc.readOnly, NoGrid: true,
+				Handlers: map[metadata.FormEventType]string{
+					metadata.FormEventOnRowAdded:   "СтрокиПриДобавлении",
+					metadata.FormEventOnRowDeleted: "СтрокиПриУдалении",
+				},
+			}
+			ctx := map[string]any{
+				"Entity": ent, "CanWrite": tc.canWrite,
+				"TablePartRows": map[string][]map[string]any{"Строки": {{"Товар": "A"}}},
+				"TPRefOptions":  map[string]any{},
+				"TPEnumLabels":  map[string]map[string]map[string]string{},
+			}
+			var rendered bytes.Buffer
+			if err := tmpl.ExecuteTemplate(&rendered, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
+				t.Fatalf("ExecuteTemplate managed-element: %v", err)
+			}
+			doc, err := html.Parse(strings.NewReader(rendered.String()))
+			if err != nil {
+				t.Fatalf("parse rendered HTML: %v", err)
+			}
+			table := keyboardFindHTML(doc, func(node *html.Node) bool {
+				value, ok := keyboardHTMLAttr(node, "data-ob-dom-table")
+				return node.Type == html.ElementNode && node.Data == "table" && ok && value == "Строки"
+			})
+			if table == nil {
+				t.Fatal("NoGrid table has no DOM-shortcut marker")
+			}
+			if marker, _ := keyboardHTMLAttr(table, "data-ob-readonly"); marker != tc.marker {
+				t.Fatalf("data-ob-readonly=%q, want %q", marker, tc.marker)
+			}
+			if keys, _ := keyboardHTMLAttr(table, "aria-keyshortcuts"); keys != "Insert F9 Delete Control+ArrowUp Control+ArrowDown" {
+				t.Fatalf("unexpected table shortcut hint %q", keys)
+			}
+			if element, _ := keyboardHTMLAttr(table, "data-ob-element"); element != "СтрокиФормы" {
+				t.Fatalf("row event element=%q", element)
+			}
+			for _, marker := range []string{"data-ob-rowadd", "data-ob-rowdel"} {
+				if value, _ := keyboardHTMLAttr(table, marker); value != "1" {
+					t.Errorf("%s=%q, want 1", marker, value)
+				}
+			}
+
+			field := keyboardFindHTML(table, func(node *html.Node) bool {
+				name, _ := keyboardHTMLAttr(node, "name")
+				return node.Type == html.ElementNode && node.Data == "input" && name == "tp.Строки.0.Товар"
+			})
+			remove := keyboardFindHTML(table, func(node *html.Node) bool {
+				_, ok := keyboardHTMLAttr(node, "data-ob-remove-row")
+				return node.Type == html.ElementNode && node.Data == "button" && ok
+			})
+			add := keyboardFindHTML(doc, func(node *html.Node) bool {
+				name, ok := keyboardHTMLAttr(node, "data-ob-add-tp")
+				return node.Type == html.ElementNode && node.Data == "button" && ok && name == "Строки"
+			})
+			if field == nil || remove == nil || add == nil {
+				t.Fatal("rendered NoGrid table lost a field or structural button")
+			}
+			wantDisabled := tc.marker == "1"
+			for label, node := range map[string]*html.Node{"field": field, "remove": remove, "add": add} {
+				_, disabled := keyboardHTMLAttr(node, "disabled")
+				if disabled != wantDisabled {
+					t.Errorf("%s disabled=%v, want %v", label, disabled, wantDisabled)
+				}
+			}
+		})
+	}
+}
+
+func TestGeneratedFormDOMTableShortcutRender(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Заказ",
+		Kind: metadata.KindDocument,
+		TableParts: []metadata.TablePart{{
+			Name:   "Строки",
+			Fields: []metadata.Field{{Name: "Товар", Type: metadata.FieldTypeString}},
+		}},
+	}
+	for _, canWrite := range []bool{true, false} {
+		data := map[string]any{
+			"Entity": ent, "IsNew": true, "CanWrite": canWrite,
+			"Values": map[string]string{}, "RefOptions": map[string]any{},
+			"EnumOptions": map[string]any{}, "TPRefOptions": map[string]any{},
+			"TPRefMeta":     map[string]any{},
+			"TablePartRows": map[string][]map[string]any{"Строки": {{"Товар": "A"}}},
+			"Lang":          "ru",
+		}
+		var rendered bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&rendered, "page-form", data); err != nil {
+			t.Fatalf("ExecuteTemplate page-form (CanWrite=%v): %v", canWrite, err)
+		}
+		doc, err := html.Parse(strings.NewReader(rendered.String()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		table := keyboardFindHTML(doc, func(node *html.Node) bool {
+			value, ok := keyboardHTMLAttr(node, "data-ob-dom-table")
+			return node.Type == html.ElementNode && node.Data == "table" && ok && value == "Строки"
+		})
+		if table == nil {
+			t.Fatal("generated form table has no DOM shortcut marker")
+		}
+		wantMarker := "0"
+		if !canWrite {
+			wantMarker = "1"
+		}
+		if marker, _ := keyboardHTMLAttr(table, "data-ob-readonly"); marker != wantMarker {
+			t.Fatalf("CanWrite=%v: data-ob-readonly=%q, want %q", canWrite, marker, wantMarker)
+		}
+		field := keyboardFindHTML(table, func(node *html.Node) bool {
+			name, _ := keyboardHTMLAttr(node, "name")
+			return node.Type == html.ElementNode && node.Data == "input" && name == "tp.Строки.0.Товар"
+		})
+		add := keyboardFindHTML(doc, func(node *html.Node) bool {
+			name, ok := keyboardHTMLAttr(node, "data-tp-name")
+			return node.Type == html.ElementNode && node.Data == "button" && ok && name == "Строки"
+		})
+		if field == nil || add == nil {
+			t.Fatal("generated table lost a field or add button")
+		}
+		_, fieldDisabled := keyboardHTMLAttr(field, "disabled")
+		_, addDisabled := keyboardHTMLAttr(add, "disabled")
+		if fieldDisabled != !canWrite || addDisabled != !canWrite {
+			t.Fatalf("CanWrite=%v: field disabled=%v, add disabled=%v", canWrite, fieldDisabled, addDisabled)
+		}
 	}
 }
 

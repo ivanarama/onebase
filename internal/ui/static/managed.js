@@ -247,6 +247,20 @@ function obManagedReady(fn) {
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
+      const domTable = tbody.closest && tbody.closest('table[data-ob-dom-table]');
+      const focused = domTable && document.activeElement && domTable.contains(document.activeElement);
+      const focusedRow = focused && document.activeElement.closest ? document.activeElement.closest('tr') : null;
+      const restoreRow = focusedRow || (domTable && domTable._obCurrentRow && domTable.contains(domTable._obCurrentRow) ? domTable._obCurrentRow : null);
+      const restoreIndex = restoreRow ? restoreRow.sectionRowIndex : -1;
+      const focusedName = focused && document.activeElement.getAttribute ? (document.activeElement.getAttribute('name') || '') : '';
+      const namePrefix = 'tp.' + tpName + '.';
+      var restoreField = '';
+      if (focusedName.indexOf(namePrefix) === 0) {
+        const rest = focusedName.slice(namePrefix.length);
+        const dot = rest.indexOf('.');
+        if (dot >= 0) restoreField = rest.slice(dot + 1);
+      }
+      if (domTable) domTable._obCurrentRow = null;
       tbody.innerHTML = '';
       rows.forEach(function(row, idx){
         const tr = document.createElement('tr');
@@ -323,11 +337,36 @@ function obManagedReady(fn) {
         btn.type = 'button';
         btn.className = 'del-btn';
         btn.textContent = '×';
-        btn.onclick = function(){ tr.remove(); };
+        btn.setAttribute('data-ob-remove-row', '');
+        btn.title = 'Delete';
+        btn.setAttribute('aria-keyshortcuts', 'Delete');
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
+        if (domTable && window.obDOMPrepareRow) window.obDOMPrepareRow(domTable, tr);
       });
+      if (domTable && tbody.rows.length) {
+        const rowIndex = restoreIndex >= 0 ? Math.min(restoreIndex, tbody.rows.length - 1) : 0;
+        const row = tbody.rows[rowIndex];
+        if (focused && window.obDOMSetCurrentRow) {
+          window.obDOMSetCurrentRow(domTable, row, false);
+          var focusTarget = null;
+          if (restoreField) {
+            const controls = row.querySelectorAll('[name]');
+            for (var controlIndex = 0; controlIndex < controls.length; controlIndex++) {
+              const name = controls[controlIndex].getAttribute('name') || '';
+              const rest = name.indexOf(namePrefix) === 0 ? name.slice(namePrefix.length) : '';
+              const dot = rest.indexOf('.');
+              if (dot >= 0 && rest.slice(dot + 1) === restoreField) { focusTarget = controls[controlIndex]; break; }
+            }
+          }
+          if (focusTarget && !focusTarget.disabled && focusTarget.focus) focusTarget.focus();
+          else if (row.focus) row.focus();
+        } else {
+          row.setAttribute('tabindex', '0');
+        }
+      }
+      if (domTable && window.obDOMReindex) window.obDOMReindex(domTable);
     });
   }
 
@@ -653,6 +692,8 @@ function obManagedAddTpRow(btn) {
   var fields = meta.map(function (f) { return f.name; });
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
   addTpRow(tpName, fields, nums, tbody.rows.length);
+  var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
+  if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
 
 function obManagedAddVtRow(btn) {
@@ -726,7 +767,17 @@ function obManagedInitDelegates() {
     if (btn.hasAttribute('data-ob-remove-row')) {
       e.preventDefault();
       var tr = btn.closest && btn.closest('tr');
-      if (tr) tr.remove();
+      if (tr) {
+        var table = tr.closest && tr.closest('table[data-ob-dom-table]');
+        var body = tr.parentElement;
+        var index = tr.sectionRowIndex;
+        tr.remove();
+        if (table && body && window.obDOMFinishMutation) {
+          var next = body.rows.length ? body.rows[Math.min(Math.max(index, 0), body.rows.length - 1)] : null;
+          window.obDOMFinishMutation(table, next, false);
+          if (window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'delete');
+        }
+      }
     }
   });
 
@@ -737,13 +788,16 @@ function obManagedInitDelegates() {
   }
 
   function obManagedEventHotkey(e) {
-    if (!e || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return '';
+    if (!e || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return '';
     return obManagedNormalizeHotkey(e.key || e.code || '');
   }
 
   document.addEventListener('keydown', function (e) {
     var hotkey = obManagedEventHotkey(e);
     if (!hotkey) return;
+    if ((typeof obHasBlockingModal === 'function' && obHasBlockingModal()) ||
+        document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal') ||
+        document.getElementById('_ref-create-modal')) return;
     var form = document.getElementById('main-form');
     var target = e.target;
     if (form && target && target !== document.body && !form.contains(target)) return;
@@ -1586,17 +1640,23 @@ obManagedReady(obManagedInitDelegates);
     return "";
   }
 
-  function gridTypingTarget(el) {
-    if (!el || !el.tagName) return false;
-    if (el.isContentEditable) return true;
-    return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  function gridInteractiveTarget(el) {
+    if (!el || !el.closest) return false;
+    return !!el.closest('a[href],button,input,textarea,select,option,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="menuitem"]');
+  }
+
+  function managedHasBlockingModal() {
+    if (typeof obHasBlockingModal === 'function') return obHasBlockingModal();
+    return !!(document.getElementById('_ref-picker-modal') ||
+      document.getElementById('_item-picker-modal') ||
+      document.getElementById('_ref-create-modal'));
   }
 
   function hasActionableFormHotkey(key) {
     var buttons = document.querySelectorAll('[data-ob-hotkey]');
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
-      if (String(btn.getAttribute('data-ob-hotkey') || '').toUpperCase() !== key) continue;
+      if (String(btn.getAttribute('data-ob-hotkey') || '').trim().toUpperCase() !== key) continue;
       if (!btn.disabled && btn.getAttribute('aria-disabled') !== 'true') return true;
     }
     return false;
@@ -1614,25 +1674,26 @@ obManagedReady(obManagedInitDelegates);
   if (!window._obGridKeysHook) {
     window._obGridKeysHook = true;
     document.addEventListener("keydown", function(e) {
-      if (e.defaultPrevented || e.altKey || e.metaKey) return;
-      if (document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal')) return;
+      if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
+      if (managedHasBlockingModal()) return;
       var direct = gridNameFromTarget(e.target);
       // Редактор ячейки находится внутри .ob-grid: там структурная клавиша
       // сначала коммитит значение. Обычное поле формы вне грида нельзя
       // перехватывать из-за когда-то активной табличной части.
-      if (!direct && gridTypingTarget(e.target)) return;
+      if (!direct && gridInteractiveTarget(e.target)) return;
+      if (direct && e.target && e.target.closest && e.target.closest('a[href],button,summary,[contenteditable]:not([contenteditable="false"])')) return;
       var tp = activeGridName(e.target);
       if (!tp) return;
       var active = (window._obGrids || {})[tp];
       if (!active || active.readOnly) return;
       function take() { e.preventDefault(); e.stopPropagation(); }
-      if (e.key === "Insert" && !e.ctrlKey && !e.shiftKey) {
+      if (e.key === "Insert" && !e.ctrlKey) {
         take();
         if (window.obGridAddRow) window.obGridAddRow(tp);
         return;
       }
       // Явный hotkey кнопки формы важнее встроенного значения клавиши.
-      if (e.key === "F9" && !e.ctrlKey && !e.shiftKey && !hasActionableFormHotkey("F9")) {
+      if (e.key === "F9" && !e.ctrlKey && !hasActionableFormHotkey("F9")) {
         take();
         if (window.obGridCopyRow) window.obGridCopyRow(tp);
         return;
@@ -1818,7 +1879,9 @@ obManagedReady(obManagedInitDelegates);
 
     // Delete key removes selected rows
     grid.onKeyDown.subscribe(function(e) {
-      if (!readOnly && e.key === 'Delete' && !grid.getEditorLock().isActive()) {
+      var modalOpen = managedHasBlockingModal();
+      if (!readOnly && !modalOpen && !e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey &&
+          e.key === 'Delete' && !grid.getEditorLock().isActive()) {
         var sel = [];
         try { sel = grid.getSelectedRows() || []; } catch (er) { sel = []; }
         if (!sel.length) { var ac = grid.getActiveCell(); if (ac) sel = [ac.row]; }
@@ -1829,6 +1892,7 @@ obManagedReady(obManagedInitDelegates);
           window._obFormDirty = true;
           grid.invalidate();
           obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки");
+          e.preventDefault();
           e.stopImmediatePropagation();
         }
       }

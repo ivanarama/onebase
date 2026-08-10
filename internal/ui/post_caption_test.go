@@ -6,7 +6,47 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
 )
+
+func formActionButtonLabel(t *testing.T, body, action string) (string, bool) {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse rendered form: %v", err)
+	}
+	var text func(*html.Node, *strings.Builder)
+	text = func(node *html.Node, out *strings.Builder) {
+		if node.Type == html.TextNode {
+			out.WriteString(node.Data)
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			text(child, out)
+		}
+	}
+	var walk func(*html.Node) (string, bool)
+	walk = func(node *html.Node) (string, bool) {
+		if node.Type == html.ElementNode && node.Data == "button" {
+			attrs := map[string]string{}
+			for _, attr := range node.Attr {
+				attrs[attr.Key] = attr.Val
+			}
+			if attrs["name"] == "_action" && attrs["value"] == action {
+				var label strings.Builder
+				text(node, &label)
+				return strings.Join(strings.Fields(label.String()), " "), true
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			if label, ok := walk(child); ok {
+				return label, true
+			}
+		}
+		return "", false
+	}
+	return walk(doc)
+}
 
 // renderCard рендерит карточку документа ПоступлениеТоваров через реальный
 // HTTP-handler formEdit (автогенерируемая форма — у документа нет FormModule).
@@ -41,21 +81,11 @@ func TestFormEdit_PostCaption_CustomLabel(t *testing.T) {
 
 	body := renderCard(t, s, writeOne(t, dp, "ПОС-CAP"))
 
-	// Санити: кнопка проведения вообще рендерится (CanPost=true в харнессе).
-	if !strings.Contains(body, `value="post"`) {
-		t.Fatalf("нет кнопки проведения (value=\"post\"); тело:\n%s", body)
+	if label, ok := formActionButtonLabel(t, body, "post"); !ok || label != "Создать начисление" {
+		t.Fatalf("подпись action=post: %q, exists=%v; тело:\n%s", label, ok, body)
 	}
-	if !strings.Contains(body, `value="post" form="main-form">Создать начисление<`) {
-		t.Errorf("кастомная подпись «Создать начисление» не отрендерилась; тело:\n%s", body)
-	}
-	// Подпись проверяем отдельно от атрибутов: их состав у кнопки меняется
-	// (например, добавилась подсказка сочетания клавиш), а к тексту подписи это
-	// отношения не имеет — привязка к соседству делала тест ломким.
-	if !strings.Contains(body, `value="post_and_close"`) || !strings.Contains(body, `>Создать начисление и закрыть<`) {
-		t.Errorf("вторая кнопка должна быть «Создать начисление и закрыть»; тело:\n%s", body)
-	}
-	if strings.Contains(body, `>Провести<`) {
-		t.Errorf("осталась стандартная подпись «Провести» вместо кастомной; тело:\n%s", body)
+	if label, ok := formActionButtonLabel(t, body, "post_and_close"); !ok || label != "Создать начисление и закрыть" {
+		t.Fatalf("подпись action=post_and_close: %q, exists=%v; тело:\n%s", label, ok, body)
 	}
 }
 
@@ -67,10 +97,10 @@ func TestFormEdit_PostAndCloseHidden(t *testing.T) {
 
 	body := renderCard(t, s, writeOne(t, dp, "ПОС-HID"))
 
-	if !strings.Contains(body, `value="post"`) {
+	if _, ok := formActionButtonLabel(t, body, "post"); !ok {
 		t.Fatalf("основная кнопка проведения должна остаться; тело:\n%s", body)
 	}
-	if strings.Contains(body, `value="post_and_close"`) {
+	if _, ok := formActionButtonLabel(t, body, "post_and_close"); ok {
 		t.Errorf("кнопка «Провести и закрыть» должна быть скрыта при post_and_close_hidden; тело:\n%s", body)
 	}
 }
@@ -82,10 +112,10 @@ func TestFormEdit_PostCaption_DefaultUnchanged(t *testing.T) {
 
 	body := renderCard(t, s, writeOne(t, dp, "ПОС-DEF"))
 
-	if !strings.Contains(body, `value="post" form="main-form">Провести<`) {
-		t.Errorf("стандартная кнопка «Провести» отсутствует; тело:\n%s", body)
+	if label, ok := formActionButtonLabel(t, body, "post"); !ok || label != "Провести" {
+		t.Errorf("подпись action=post: %q, exists=%v; тело:\n%s", label, ok, body)
 	}
-	if !strings.Contains(body, `value="post_and_close"`) || !strings.Contains(body, `>Провести и закрыть<`) {
-		t.Errorf("стандартная кнопка «Провести и закрыть» отсутствует; тело:\n%s", body)
+	if label, ok := formActionButtonLabel(t, body, "post_and_close"); !ok || label != "Провести и закрыть" {
+		t.Errorf("подпись action=post_and_close: %q, exists=%v; тело:\n%s", label, ok, body)
 	}
 }

@@ -318,6 +318,7 @@ func renderConditionalManagedForm(t *testing.T, ent *metadata.Entity, form *meta
 		"Entity":             ent,
 		"Form":               form,
 		"IsNew":              true,
+		"CanWrite":           true,
 		"Values":             map[string]string{},
 		"RefOptions":         map[string]any{},
 		"EnumOptions":        map[string]any{},

@@ -143,16 +143,17 @@ func TestPageList_ActionsButtonStartsInactive(t *testing.T) {
 
 // TestListRuntime_SelectionIsValidatedAgainstDOM — выделение строки живёт в
 // переменной ui.js, а живой список (план 87) заменяет строки контейнера целиком.
-// Отцепленный от документа узел выглядит как «ничего не выбрано» (подсветки
-// нет), но переменная остаётся непустой — команды и клавиша Delete сработали бы
-// по записи, которую пользователь не выбирал и не видит. Поэтому источник
-// правды один: listSel() со сверкой document.contains.
+// Отцепленный от документа или скрытый свёрнутым деревом узел выглядит как
+// «ничего не выбрано» (подсветки нет), но переменная остаётся непустой — команды
+// и Delete сработали бы по записи, которую пользователь не выбирал и не видит.
+// Поэтому источник правды один: listSel() со сверкой DOM и видимости.
 func TestListRuntime_SelectionIsValidatedAgainstDOM(t *testing.T) {
 	js := string(uiJS)
 
 	for _, want := range []string{
 		"function listSel()",
-		"if (_listSel && !document.contains(_listSel)) _listSel = null;",
+		"if (_listSel && (!document.contains(_listSel) || !obElementVisible(_listSel)))",
+		"function obElementVisible(",
 		"function listSetSel(",
 		"function listSyncActionsBtn(",
 		"function listRestoreSel(",

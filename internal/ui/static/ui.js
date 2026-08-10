@@ -651,7 +651,13 @@ obReady(function () {
 var _listSel = null;
 
 function listSel() {
-  if (_listSel && !document.contains(_listSel)) _listSel = null;
+  if (_listSel && (!document.contains(_listSel) || !obElementVisible(_listSel))) {
+    var stale = _listSel;
+    _listSel = null;
+    listSelPaint(stale, false);
+    stale.setAttribute('aria-selected', 'false');
+    stale.setAttribute('tabindex', '-1');
+  }
   return _listSel;
 }
 
@@ -685,11 +691,30 @@ function listSelPaint(el, on) {
 // Единственное место, где меняется выделение: снимает подсветку с прежней
 // строки, ставит на новую (null — снять выделение) и приводит кнопку
 // «Действия» в соответствие новому состоянию.
-function listSetSel(tr) {
+function listSetSel(tr, options) {
   var prev = listSel();
-  if (prev && prev !== tr) listSelPaint(prev, false);
+  if (prev && prev !== tr) {
+    listSelPaint(prev, false);
+    prev.setAttribute('aria-selected', 'false');
+    prev.setAttribute('tabindex', '-1');
+  }
+  document.querySelectorAll('[data-ob-list-row]').forEach(function (row) {
+    if (row === tr) return;
+    row.setAttribute('aria-selected', 'false');
+    row.setAttribute('tabindex', '-1');
+  });
   _listSel = tr || null;
-  if (_listSel) listSelPaint(_listSel, true);
+  if (_listSel) {
+    listSelPaint(_listSel, true);
+    _listSel.setAttribute('aria-selected', 'true');
+    _listSel.setAttribute('tabindex', '0');
+    if (options && options.focus && _listSel.focus) {
+      try { _listSel.focus({ preventScroll: true }); } catch (_) { _listSel.focus(); }
+    }
+  } else {
+    var first = obListRows()[0];
+    if (first) first.setAttribute('tabindex', '0');
+  }
   listSyncActionsBtn();
 }
 
@@ -728,12 +753,12 @@ function listSelKey() {
 }
 
 function listRowClick(e, tr) {
-  if (e.target.closest('a,button')) return;
-  listSetSel(tr);
+  if (obIsInteractiveTarget(e.target)) return;
+  listSetSel(tr, { focus: true });
 }
 
 function listRowDblClick(e, tr) {
-  if (e.target.closest('a,button')) return;
+  if (obIsInteractiveTarget(e.target)) return;
   listActivateRow(tr);
 }
 
@@ -763,13 +788,38 @@ function obFormActionButton(values) {
 }
 
 function obIsTypingTarget(el) {
-  if (!el || !el.tagName) return false;
-  if (el.isContentEditable) return true;
+  if (!el) return false;
+  if (el.isContentEditable || (el.closest && el.closest('[contenteditable]:not([contenteditable="false"])'))) return true;
+  if (!el.tagName) return false;
   return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
 }
 
+function obIsInteractiveTarget(el) {
+  if (!el || !el.closest) return false;
+  return !!el.closest('a[href],button,input,textarea,select,option,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="menuitem"]');
+}
+
+function obHasBlockingModal() {
+  return !!(document.getElementById('_ref-picker-modal') ||
+    document.getElementById('_item-picker-modal') ||
+    document.getElementById('_ref-create-modal'));
+}
+window.obHasBlockingModal = obHasBlockingModal;
+
+function obElementVisible(el) {
+  if (!el) return false;
+  for (var cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+    if (cur.hidden || cur.getAttribute('aria-hidden') === 'true' || cur.style.display === 'none' || cur.style.visibility === 'hidden') return false;
+    if (window.getComputedStyle) {
+      var style = window.getComputedStyle(cur);
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    }
+  }
+  return true;
+}
+
 function obListRows() {
-  return Array.prototype.slice.call(document.querySelectorAll('[data-ob-list-row]'));
+  return Array.prototype.slice.call(document.querySelectorAll('[data-ob-list-row]')).filter(obElementVisible);
 }
 
 function obListMoveCursor(delta) {
@@ -783,18 +833,281 @@ function obListMoveCursor(delta) {
   var idx = cur ? rows.indexOf(cur) : -1;
   var next = idx < 0 ? (delta > 0 ? 0 : rows.length - 1) : idx + delta;
   if (next < 0 || next >= rows.length) return true; // упёрлись в край — клавишу всё равно съедаем
-  listSetSel(rows[next]);
+  listSetSel(rows[next], { focus: true });
   if (rows[next].scrollIntoView) rows[next].scrollIntoView({ block: 'nearest' });
   return true;
+}
+
+function obHasActionableHotkey(key) {
+  var wanted = String(key || '').trim().toUpperCase();
+  var buttons = document.querySelectorAll('[data-ob-hotkey]');
+  for (var i = 0; i < buttons.length; i++) {
+    var value = String(buttons[i].getAttribute('data-ob-hotkey') || '').trim().toUpperCase();
+    if (value === wanted && !buttons[i].disabled && buttons[i].getAttribute('aria-disabled') !== 'true') return true;
+  }
+  return false;
+}
+
+function obDOMTableFromTarget(el) {
+  return el && el.closest ? el.closest('table[data-ob-dom-table]') : null;
+}
+
+function obDOMTableReadOnly(table) {
+  // Fail closed: a DOM table is writable only when the server rendered an
+  // explicit marker. This also covers a missing CanWrite value safely.
+  return !table || table.getAttribute('data-ob-readonly') !== '0';
+}
+
+function obDOMSetCurrentRow(table, row, focus) {
+  if (!table) return;
+  var body = table.tBodies && table.tBodies[0];
+  if (!body) return;
+  Array.prototype.forEach.call(body.rows, function (item) {
+    item.setAttribute('aria-selected', item === row ? 'true' : 'false');
+    item.setAttribute('tabindex', item === row ? '0' : '-1');
+  });
+  table._obCurrentRow = row || null;
+  window._obActiveDOMTable = table;
+  if (row && focus && row.focus) {
+    try { row.focus({ preventScroll: true }); } catch (_) { row.focus(); }
+  }
+}
+window.obDOMSetCurrentRow = obDOMSetCurrentRow;
+
+function obDOMPrepareRow(table, row) {
+  if (!table || !row) return;
+  if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '-1');
+  if (!row.hasAttribute('aria-selected')) row.setAttribute('aria-selected', 'false');
+  if (obDOMTableReadOnly(table)) {
+    row.querySelectorAll('input,select,textarea,button').forEach(function (control) {
+      if (control.hasAttribute && (control.hasAttribute('data-ob-ref-current') || control.hasAttribute('data-ob-ref-current-self'))) return;
+      control.disabled = true;
+    });
+  }
+}
+window.obDOMPrepareRow = obDOMPrepareRow;
+
+function obDOMActiveTable(target) {
+  var direct = obDOMTableFromTarget(target || document.activeElement);
+  if (direct) {
+    window._obActiveDOMTable = direct;
+    return direct;
+  }
+  var remembered = window._obActiveDOMTable;
+  if (remembered && document.contains(remembered)) return remembered;
+  window._obActiveDOMTable = null;
+  return null;
+}
+
+function obDOMCurrentRow(table) {
+  if (!table || !table.tBodies || !table.tBodies[0]) return null;
+  var active = document.activeElement;
+  var direct = active && active.closest ? active.closest('tr') : null;
+  if (direct && table.contains(direct)) return direct;
+  if (table._obCurrentRow && table.contains(table._obCurrentRow)) return table._obCurrentRow;
+  var selected = table.querySelector('tbody ._tp-sel:checked');
+  return selected && selected.closest ? selected.closest('tr') : null;
+}
+
+function obDOMCommit(table) {
+  var active = document.activeElement;
+  if (!active || !table.contains(active) || !/^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName || '')) return true;
+  if (active.disabled) return true;
+  if (active.checkValidity && !active.checkValidity()) {
+    if (active.reportValidity) active.reportValidity();
+    return false;
+  }
+  if (active.blur) active.blur();
+  return true;
+}
+
+function obDOMReindex(table) {
+  if (!table || !table.tBodies || !table.tBodies[0]) return;
+  var tpName = table.getAttribute('data-ob-dom-table') || '';
+  var prefix = 'tp.' + tpName + '.';
+  Array.prototype.forEach.call(table.tBodies[0].rows, function (row, index) {
+    row.querySelectorAll('[name]').forEach(function (control) {
+      var name = control.getAttribute('name') || '';
+      if (name.indexOf(prefix) !== 0) return;
+      var suffix = name.slice(prefix.length);
+      var dot = suffix.indexOf('.');
+      if (dot >= 0) control.setAttribute('name', prefix + index + suffix.slice(dot));
+    });
+  });
+}
+window.obDOMReindex = obDOMReindex;
+
+function obDOMRefreshTotals(table) {
+  if (typeof recalcTpTotals !== 'function') return;
+  var number = table.querySelector('tbody [data-tp-num]');
+  if (number) recalcTpTotals(number);
+}
+
+function obDOMNotifyMutation(table, kind) {
+  if (!table || window._obDOMDeferRowEvent) return;
+  var attr = kind === 'add' ? 'data-ob-rowadd' : 'data-ob-rowdel';
+  if (table.getAttribute(attr) !== '1' || typeof window.obFire !== 'function') return;
+  var element = table.getAttribute('data-ob-element') || table.getAttribute('data-ob-dom-table') || '';
+  var tpName = table.getAttribute('data-ob-dom-table') || '';
+  window.obFire(element, kind === 'add' ? 'ПриДобавленииСтроки' : 'ПриУдаленииСтроки', { _tp: tpName });
+}
+window.obDOMNotifyMutation = obDOMNotifyMutation;
+
+function obDOMAddButton(table) {
+  var tpName = table.getAttribute('data-ob-dom-table') || '';
+  var buttons = document.querySelectorAll('[data-ob-add-tp-row],[data-ob-add-tp]');
+  for (var i = 0; i < buttons.length; i++) {
+    var owner = buttons[i].getAttribute('data-tp-name') || buttons[i].getAttribute('data-ob-add-tp') || '';
+    if (owner === tpName) return buttons[i];
+  }
+  return null;
+}
+
+function obDOMFinishMutation(table, row, focusControl) {
+  obDOMReindex(table);
+  obDOMRefreshTotals(table);
+  window._obFormDirty = true;
+  if (!row) {
+    obDOMSetCurrentRow(table, null, false);
+    return;
+  }
+  obDOMPrepareRow(table, row);
+  obDOMSetCurrentRow(table, row, !focusControl);
+  if (focusControl) {
+    var control = row.querySelector('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)');
+    if (control && control.focus) control.focus();
+    else obDOMSetCurrentRow(table, row, true);
+  }
+}
+window.obDOMFinishMutation = obDOMFinishMutation;
+
+function obDOMAddRow(table) {
+  if (!obDOMCommit(table)) return;
+  var button = obDOMAddButton(table);
+  var body = table.tBodies && table.tBodies[0];
+  if (!button || button.disabled || !body) return;
+  var count = body.rows.length;
+  button.click();
+  if (body.rows.length <= count) return;
+  obDOMFinishMutation(table, body.rows[body.rows.length - 1], true);
+}
+
+function obDOMCopyControlValue(source, target) {
+  if (source.type === 'checkbox' || source.type === 'radio') target.checked = source.checked;
+  else target.value = source.value;
+}
+
+function obDOMCopyRow(table) {
+  if (!obDOMCommit(table)) return;
+  var source = obDOMCurrentRow(table);
+  var body = table.tBodies && table.tBodies[0];
+  var button = obDOMAddButton(table);
+  if (!source || !body || !button || button.disabled) return;
+  var count = body.rows.length;
+  var wasDeferred = window._obDOMDeferRowEvent;
+  window._obDOMDeferRowEvent = true;
+  try { button.click(); } finally { window._obDOMDeferRowEvent = wasDeferred; }
+  if (body.rows.length <= count) return;
+  var copy = body.rows[body.rows.length - 1];
+  var from = source.querySelectorAll('input[name],select[name],textarea[name]');
+  var to = copy.querySelectorAll('input[name],select[name],textarea[name]');
+  for (var i = 0; i < from.length && i < to.length; i++) obDOMCopyControlValue(from[i], to[i]);
+  copy.className = source.className;
+  if (source.cells && copy.cells) {
+    for (var cell = 0; cell < source.cells.length && cell < copy.cells.length; cell++) copy.cells[cell].className = source.cells[cell].className;
+  }
+  if (source.nextSibling) body.insertBefore(copy, source.nextSibling);
+  obDOMFinishMutation(table, copy, true);
+  obDOMNotifyMutation(table, 'add');
+}
+
+function obDOMMoveRow(table, delta) {
+  if (!obDOMCommit(table)) return;
+  var row = obDOMCurrentRow(table);
+  var body = table.tBodies && table.tBodies[0];
+  if (!row || !body) return;
+  var rows = Array.prototype.slice.call(body.rows);
+  var index = rows.indexOf(row);
+  var next = index + delta;
+  if (index < 0 || next < 0 || next >= rows.length) return;
+  if (delta < 0) body.insertBefore(row, rows[next]);
+  else body.insertBefore(row, rows[next].nextSibling);
+  obDOMFinishMutation(table, row, false);
+}
+
+function obDOMDeleteRows(table) {
+  if (!obDOMCommit(table)) return;
+  var body = table.tBodies && table.tBodies[0];
+  if (!body) return;
+  var rows = Array.prototype.slice.call(body.rows);
+  var checked = Array.prototype.slice.call(body.querySelectorAll('._tp-sel:checked')).map(function (item) { return item.closest('tr'); });
+  var current = obDOMCurrentRow(table);
+  var remove = checked.length ? checked : (current ? [current] : []);
+  if (!remove.length) return;
+  var currentIndex = current ? rows.indexOf(current) : rows.indexOf(remove[0]);
+  var wasDeferred = window._obDOMDeferRowEvent;
+  window._obDOMDeferRowEvent = true;
+  try {
+    remove.forEach(function (row) {
+      var button = row.querySelector('[data-ob-remove-row],.del-btn');
+      if (button && button.click) button.click();
+      else row.remove();
+    });
+  } finally { window._obDOMDeferRowEvent = wasDeferred; }
+  var nextRows = Array.prototype.slice.call(body.rows);
+  var next = nextRows.length ? nextRows[Math.min(Math.max(currentIndex, 0), nextRows.length - 1)] : null;
+  obDOMFinishMutation(table, next, false);
+  obDOMNotifyMutation(table, 'delete');
+}
+
+function obHandleDOMTableShortcut(e) {
+  var direct = obDOMTableFromTarget(e.target);
+  // Remembered table shortcuts are convenient after its focus sink, but never
+  // steal keys from an unrelated interactive control.
+  if (!direct && obIsInteractiveTarget(e.target)) return false;
+  if (direct && e.target && e.target.closest && e.target.closest('a[href],button,summary,[contenteditable]:not([contenteditable="false"])')) return false;
+  var table = obDOMActiveTable(e.target);
+  if (!table || obDOMTableReadOnly(table)) return false;
+  var action = null;
+  if (!e.ctrlKey && e.key === 'Insert') action = function () { obDOMAddRow(table); };
+  else if (!e.ctrlKey && e.key === 'F9' && !obHasActionableHotkey('F9')) action = function () { obDOMCopyRow(table); };
+  else if (e.ctrlKey && e.key === 'ArrowUp') action = function () { obDOMMoveRow(table, -1); };
+  else if (e.ctrlKey && e.key === 'ArrowDown') action = function () { obDOMMoveRow(table, 1); };
+  else if (!e.ctrlKey && e.key === 'Delete' && (!obIsTypingTarget(e.target) || (e.target.matches && e.target.matches('._tp-sel')))) action = function () { obDOMDeleteRows(table); };
+  if (!action) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  action();
+  return true;
+}
+
+function obInitDOMTables() {
+  document.querySelectorAll('table[data-ob-dom-table]').forEach(function (table) {
+    var body = table.tBodies && table.tBodies[0];
+    if (!body) return;
+    Array.prototype.forEach.call(body.rows, function (row) { obDOMPrepareRow(table, row); });
+    if (body.rows.length) body.rows[0].setAttribute('tabindex', '0');
+  });
+  function remember(e) {
+    var table = obDOMTableFromTarget(e.target);
+    if (!table) return;
+    var row = e.target.closest && e.target.closest('tr');
+    if (row && table.contains(row)) obDOMSetCurrentRow(table, row, false);
+    else window._obActiveDOMTable = table;
+  }
+  document.addEventListener('mousedown', remember, true);
+  document.addEventListener('focusin', remember);
 }
 
 function obInitKeyboardShortcuts() {
   if (window.__obKeyShortcuts) return;
   window.__obKeyShortcuts = true;
   document.addEventListener('keydown', function (e) {
-    if (e.altKey || e.metaKey) return;
+    if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
     // Модальный подбор забирает клавиатуру себе.
-    if (document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal')) return;
+    if (obHasBlockingModal()) return;
+
+    if (obHandleDOMTableShortcut(e)) return;
 
     if (e.ctrlKey) {
       if (e.key === 'Enter') {
@@ -808,7 +1121,7 @@ function obInitKeyboardShortcuts() {
         return;
       }
       if (e.code === 'KeyF') {
-        var q = document.querySelector('input[name="q"]');
+        var q = document.getElementById('ob-list-config') && document.querySelector('input[name="q"]');
         if (q) { e.preventDefault(); q.focus(); q.select(); }
       }
       return;
@@ -817,7 +1130,7 @@ function obInitKeyboardShortcuts() {
     // Ввод текста важнее списковых клавиш, включая Insert: выбранная ранее
     // строка списка не должна превращать Insert в действие над данными,
     // пока пользователь редактирует поиск или другое поле.
-    if (e.shiftKey || obIsTypingTarget(e.target)) return;
+    if (obIsInteractiveTarget(e.target)) return;
     if (e.key === 'Insert') {
       var create = document.querySelector('[data-ob-list-create]');
       if (create) { e.preventDefault(); create.click(); }
@@ -849,9 +1162,11 @@ function toggleTreeNode(btn) {
   var fid = btn.dataset.folderId;
   var expanded = btn.getAttribute('data-expanded') === '1';
   if (expanded) {
+    var selected = listSel();
     treeSetVisible(fid, false);
     btn.setAttribute('data-expanded', '0');
     btn.textContent = '▶';
+    if (selected && !obElementVisible(selected)) listSetSel(tr, { focus: true });
     return;
   }
   if (btn.getAttribute('data-loaded') === '1') {
@@ -889,7 +1204,8 @@ function treeSetVisible(parentId, visible) {
     row.style.display = visible ? '' : 'none';
     var childId = row.dataset.treeId;
     if (childId) {
-      treeSetVisible(childId, visible && row.dataset.isFolder !== '1' || row.querySelector('.tree-toggle[data-expanded="1"]') !== null);
+      var expanded = row.querySelector('.tree-toggle[data-expanded="1"]') !== null;
+      treeSetVisible(childId, visible && (row.dataset.isFolder !== '1' || expanded));
     }
   });
 }
@@ -931,6 +1247,9 @@ function makeTreeRow(row) {
   tr.dataset.activityShowUrl = row.activity_show_url || '';
   tr.dataset.openUrl = row.open_url || '';
   tr.setAttribute('data-ob-list-row', '');
+  tr.setAttribute('tabindex', '-1');
+  tr.setAttribute('aria-selected', 'false');
+  tr.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown Enter F2 Delete');
   var cells = row.cells || [];
   var treeCell = row.tree_cell || 0;
   for (var i = 0; i < cells.length; i++) {
@@ -1196,15 +1515,18 @@ function obInitFeed() {
 
 obReady(function () {
   obInitListDelegates();
+  obInitDOMTables();
   obInitKeyboardShortcuts();
+  var firstListRow = obListRows()[0];
+  if (firstListRow) firstListRow.setAttribute('tabindex', '0');
   listSyncActionsBtn();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
   document.addEventListener('keydown', function (e) {
     // listSel(), а не _listSel: после живого обновления списка на экране может
     // не быть подсветки, и пометка на удаление по клавише улетала бы в строку,
     // о выборе которой пользователь уже не помнит.
-    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || obIsTypingTarget(e.target)) return;
-    if (document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal')) return;
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || obIsInteractiveTarget(e.target)) return;
+    if (obHasBlockingModal()) return;
     var sel = listSel();
     if (e.key === 'Delete' && sel && obListConfig().canDelete) {
       e.preventDefault();
@@ -1871,7 +2193,17 @@ function obInitFormDelegates() {
     if (removeRow) {
       e.preventDefault();
       var row = removeRow.closest(removeRow.getAttribute('data-ob-remove-row') || 'tr');
-      if (row) row.remove();
+      if (row) {
+        var domTable = row.closest('table[data-ob-dom-table]');
+        var body = row.parentElement;
+        var index = row.sectionRowIndex;
+        row.remove();
+        if (domTable && body) {
+          var next = body.rows && body.rows.length ? body.rows[Math.min(Math.max(index, 0), body.rows.length - 1)] : null;
+          obDOMFinishMutation(domTable, next, false);
+          obDOMNotifyMutation(domTable, 'delete');
+        }
+      }
       return;
     }
     var addTp = e.target.closest('[data-ob-add-tp-row]');
@@ -1880,6 +2212,8 @@ function obInitFormDelegates() {
       var tpName = addTp.getAttribute('data-tp-name') || '';
       var tbody = document.getElementById('tp-body-' + tpName);
       addTpRow(tpName, obSplitDataList(addTp.getAttribute('data-tp-fields')), obSplitDataList(addTp.getAttribute('data-tp-num-fields')), tbody ? tbody.rows.length : 0);
+      var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
+      if (table) obDOMNotifyMutation(table, 'add');
       return;
     }
     var fileClick = e.target.closest('[data-ob-file-click]');
@@ -2004,6 +2338,8 @@ function addTpRow(tpName, fields, numFields, idx) {
   tdDel.appendChild(btn);
   tr.appendChild(tdDel);
   tbody.appendChild(tr);
+  var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
+  if (table) obDOMFinishMutation(table, tr, true);
 }
 
 function recalcTpRow(inp) {
