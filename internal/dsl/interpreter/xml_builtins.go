@@ -2,10 +2,14 @@ package interpreter
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
 )
@@ -20,16 +24,23 @@ import (
 //	Текст     — текстовое содержимое элемента (строка, без дочерних)
 //	Элементы  — Массив вложенных элементов (таких же Структур)
 //
-// Такое представление обратимо: ЗаписатьXML(ПрочитатьXML(Текст)) даёт исходный
-// документ с точностью до форматирования. Имена тегов живут в ЗНАЧЕНИИ поля Имя,
-// а не в имени поля Структуры, — поэтому их регистр сохраняется: DSL
-// регистронезависим и Struct.Set приводит имена полей к нижнему регистру.
+// Такое представление сохраняет структуру документа, но намеренно не моделирует
+// пространства имён, смешанное содержимое, комментарии и инструкции обработки.
+// Эти конструкции отклоняются, чтобы чтение никогда не теряло данные молча.
+// Имена тегов живут в ЗНАЧЕНИИ поля Имя, а не в имени поля Структуры, — поэтому
+// их регистр сохраняется: DSL регистронезависим и Struct.Set приводит имена полей
+// к нижнему регистру.
 
 const (
 	xmlFieldName     = "Имя"
 	xmlFieldAttrs    = "Атрибуты"
 	xmlFieldText     = "Текст"
 	xmlFieldChildren = "Элементы"
+
+	// Ограничения защищают рекурсивное преобразование в коллекции DSL и обратно
+	// от переполнения стека и документов, создающих чрезмерное число объектов.
+	maxXMLDepth = 256
+	maxXMLNodes = 100_000
 )
 
 // xmlNode — промежуточное представление между encoding/xml и коллекциями DSL.
@@ -54,54 +65,123 @@ func builtinReadXML(args []any, file string, line int) (any, error) {
 
 func parseXMLDocument(text string) (*xmlNode, error) {
 	dec := xml.NewDecoder(strings.NewReader(text))
-	dec.Strict = false
+	dec.Strict = true
+
+	type frame struct {
+		node *xmlNode
+		text strings.Builder
+	}
+
 	var root *xmlNode
-	var stack []*xmlNode
+	var stack []*frame
+	nodeCount := 0
 	for {
 		tok, err := dec.Token()
 		if err != nil {
-			if err.Error() == "EOF" {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, err
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			node := &xmlNode{Name: t.Name.Local}
+			depth := len(stack) + 1
+			if depth > maxXMLDepth {
+				return nil, fmt.Errorf("глубина XML превышает предел %d", maxXMLDepth)
+			}
+			nodeCount++
+			if nodeCount > maxXMLNodes {
+				return nil, fmt.Errorf("число элементов XML превышает предел %d", maxXMLNodes)
+			}
+
+			name, err := decodedXMLName(t.Name, "элемента")
+			if err != nil {
+				return nil, err
+			}
+			node := &xmlNode{Name: name}
+			seenAttrs := make(map[string]struct{}, len(t.Attr))
 			for _, a := range t.Attr {
-				name := a.Name.Local
-				if a.Name.Space != "" {
-					name = a.Name.Space + ":" + a.Name.Local
+				attrName, err := decodedXMLName(a.Name, "атрибута")
+				if err != nil {
+					return nil, err
 				}
-				node.Attrs = append(node.Attrs, [2]string{name, a.Value})
+				if attrName == "xmlns" {
+					return nil, fmt.Errorf("пространства имён XML не поддерживаются (атрибут xmlns)")
+				}
+				if _, exists := seenAttrs[attrName]; exists {
+					return nil, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", attrName, name)
+				}
+				seenAttrs[attrName] = struct{}{}
+				node.Attrs = append(node.Attrs, [2]string{attrName, a.Value})
 			}
 			if len(stack) > 0 {
-				parent := stack[len(stack)-1]
+				parent := stack[len(stack)-1].node
 				parent.Children = append(parent.Children, node)
-			} else if root == nil {
+			} else {
+				if root != nil {
+					return nil, fmt.Errorf("XML содержит более одного корневого элемента")
+				}
 				root = node
 			}
-			stack = append(stack, node)
+			stack = append(stack, &frame{node: node})
 		case xml.EndElement:
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-			}
-		case xml.CharData:
 			if len(stack) == 0 {
-				continue
+				return nil, fmt.Errorf("закрывающий тег «%s» не имеет открывающего", t.Name.Local)
 			}
-			chunk := strings.TrimSpace(string(t))
-			if chunk == "" {
-				continue
+			name, err := decodedXMLName(t.Name, "элемента")
+			if err != nil {
+				return nil, err
 			}
 			cur := stack[len(stack)-1]
-			cur.Text += chunk
+			if cur.node.Name != name {
+				return nil, fmt.Errorf("закрывающий тег «%s» не соответствует «%s»", name, cur.node.Name)
+			}
+			text := cur.text.String()
+			if len(cur.node.Children) > 0 {
+				if !isXMLWhitespaceOnly(text) {
+					return nil, fmt.Errorf("смешанное содержимое элемента «%s» не поддерживается", cur.node.Name)
+				}
+				// Пробельное форматирование между дочерними элементами не является
+				// данными дерева и намеренно не сохраняется.
+				cur.node.Text = ""
+			} else {
+				// У текстового элемента сохраняем пробелы без TrimSpace.
+				cur.node.Text = text
+			}
+			stack = stack[:len(stack)-1]
+		case xml.CharData:
+			if len(stack) == 0 {
+				if !isXMLWhitespaceOnly(string(t)) {
+					return nil, fmt.Errorf("текст вне корневого элемента XML")
+				}
+				continue
+			}
+			stack[len(stack)-1].text.Write([]byte(t))
+		case xml.Comment:
+			return nil, fmt.Errorf("комментарии XML не поддерживаются")
+		case xml.Directive:
+			return nil, fmt.Errorf("директивы XML не поддерживаются")
+		case xml.ProcInst:
+			return nil, fmt.Errorf("инструкции обработки XML не поддерживаются")
 		}
+	}
+	if len(stack) != 0 {
+		return nil, fmt.Errorf("XML неожиданно завершён внутри элемента «%s»", stack[len(stack)-1].node.Name)
 	}
 	if root == nil {
 		return nil, fmt.Errorf("документ не содержит корневого элемента")
 	}
 	return root, nil
+}
+
+func decodedXMLName(name xml.Name, kind string) (string, error) {
+	if name.Space != "" {
+		return "", fmt.Errorf("пространства имён XML не поддерживаются (%s «%s»)", kind, name.Local)
+	}
+	if err := validateXMLName(name.Local); err != nil {
+		return "", fmt.Errorf("недопустимое имя %s «%s»: %w", kind, name.Local, err)
+	}
+	return name.Local, nil
 }
 
 func xmlNodeToDSL(n *xmlNode) any {
@@ -129,114 +209,310 @@ func builtinWriteXML(args []any, file string, line int) (any, error) {
 	}
 	rootName := "Элемент"
 	if len(args) > 1 && args[1] != nil {
-		if name := strings.TrimSpace(strArg(args, 1)); name != "" {
-			rootName = name
+		name, ok := args[1].(string)
+		if !ok {
+			panic(userError{Msg: "ЗаписатьXML: имя корня должно быть строкой"})
 		}
+		rootName = name
 	}
+	if err := validateXMLName(rootName); err != nil {
+		panic(userError{Msg: "ЗаписатьXML: недопустимое имя корня «" + rootName + "»: " + err.Error()})
+	}
+
 	var sb strings.Builder
-	if err := writeXMLValue(&sb, rootName, args[0]); err != nil {
+	w := &xmlWriter{encoder: xml.NewEncoder(&sb)}
+	if err := w.writeValue(rootName, args[0], 1); err != nil {
+		panic(userError{Msg: "ЗаписатьXML: " + err.Error()})
+	}
+	if err := w.encoder.Flush(); err != nil {
 		panic(userError{Msg: "ЗаписатьXML: " + err.Error()})
 	}
 	return sb.String(), nil
 }
 
-// writeXMLValue пишет значение как элемент name. Структура с полем «Имя»
-// трактуется как узел дерева (обратный ход к ПрочитатьXML), остальное —
-// как произвольные данные: поля становятся вложенными элементами.
-func writeXMLValue(sb *strings.Builder, name string, v any) error {
-	if node, ok := asXMLTreeNode(v); ok {
-		return writeXMLNode(sb, node)
+type xmlWriter struct {
+	encoder *xml.Encoder
+	nodes   int
+}
+
+// writeValue пишет значение как элемент name. Структура с полем «Имя» всегда
+// считается узлом дерева. Если форма такого узла неверна, возвращается ошибка:
+// молчаливый fallback к произвольной Структуре потерял бы часть данных.
+func (w *xmlWriter) writeValue(name string, v any, depth int) error {
+	budget := &xmlTreeBudget{}
+	if node, isTree, err := asXMLTreeNode(v, depth, budget); err != nil {
+		return err
+	} else if isTree {
+		return w.writeNode(node, depth)
+	}
+
+	start, err := w.startElement(name, nil, depth)
+	if err != nil {
+		return err
 	}
 	switch x := v.(type) {
 	case *Struct:
-		sb.WriteString("<" + name + ">")
+		if x == nil {
+			break
+		}
 		for _, k := range x.Fields() {
-			if err := writeXMLValue(sb, k, x.Get(k)); err != nil {
+			if err := w.writeValue(k, x.Get(k), depth+1); err != nil {
 				return err
 			}
 		}
-		sb.WriteString("</" + name + ">")
 	case *Map:
-		sb.WriteString("<" + name + ">")
+		if x == nil {
+			break
+		}
 		for _, k := range x.Keys() {
 			key := fmt.Sprintf("%v", k)
-			if err := writeXMLValue(sb, key, x.Get(k)); err != nil {
+			if err := w.writeValue(key, x.Get(k), depth+1); err != nil {
 				return err
 			}
 		}
-		sb.WriteString("</" + name + ">")
 	case *Array:
-		sb.WriteString("<" + name + ">")
+		if x == nil {
+			break
+		}
 		for _, item := range x.Iterate() {
-			if err := writeXMLValue(sb, "Элемент", item); err != nil {
+			if err := w.writeValue("Элемент", item, depth+1); err != nil {
 				return err
 			}
 		}
-		sb.WriteString("</" + name + ">")
 	default:
-		sb.WriteString("<" + name + ">")
-		sb.WriteString(escapeXMLText(xmlStringOf(v)))
-		sb.WriteString("</" + name + ">")
+		text := xmlStringOf(v)
+		if err := validateXMLCharacters(text); err != nil {
+			return fmt.Errorf("текст элемента «%s»: %w", name, err)
+		}
+		if text != "" {
+			if err := w.encoder.EncodeToken(xml.CharData([]byte(text))); err != nil {
+				return fmt.Errorf("текст элемента «%s»: %w", name, err)
+			}
+		}
+	}
+	if err := w.encoder.EncodeToken(start.End()); err != nil {
+		return fmt.Errorf("закрытие элемента «%s»: %w", name, err)
 	}
 	return nil
 }
 
-func writeXMLNode(sb *strings.Builder, n *xmlNode) error {
-	sb.WriteString("<" + n.Name)
-	for _, kv := range n.Attrs {
-		sb.WriteString(" " + kv[0] + `="` + escapeXMLAttr(kv[1]) + `"`)
+func (w *xmlWriter) writeNode(n *xmlNode, depth int) error {
+	start, err := w.startElement(n.Name, n.Attrs, depth)
+	if err != nil {
+		return err
 	}
-	if n.Text == "" && len(n.Children) == 0 {
-		sb.WriteString("/>")
-		return nil
+	if n.Text != "" {
+		if err := w.encoder.EncodeToken(xml.CharData([]byte(n.Text))); err != nil {
+			return fmt.Errorf("текст элемента «%s»: %w", n.Name, err)
+		}
 	}
-	sb.WriteString(">")
-	sb.WriteString(escapeXMLText(n.Text))
 	for _, c := range n.Children {
-		if err := writeXMLNode(sb, c); err != nil {
+		if err := w.writeNode(c, depth+1); err != nil {
 			return err
 		}
 	}
-	sb.WriteString("</" + n.Name + ">")
+	if err := w.encoder.EncodeToken(start.End()); err != nil {
+		return fmt.Errorf("закрытие элемента «%s»: %w", n.Name, err)
+	}
 	return nil
 }
 
-// asXMLTreeNode распознаёт Структуру, полученную из ПрочитатьXML.
-func asXMLTreeNode(v any) (*xmlNode, bool) {
+func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml.StartElement, error) {
+	if depth > maxXMLDepth {
+		return xml.StartElement{}, fmt.Errorf("глубина XML превышает предел %d", maxXMLDepth)
+	}
+	w.nodes++
+	if w.nodes > maxXMLNodes {
+		return xml.StartElement{}, fmt.Errorf("число элементов XML превышает предел %d", maxXMLNodes)
+	}
+	if err := validateXMLName(name); err != nil {
+		return xml.StartElement{}, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
+	}
+
+	start := xml.StartElement{Name: xml.Name{Local: name}}
+	seen := make(map[string]struct{}, len(attrs))
+	for _, attr := range attrs {
+		if err := validateXMLAttributeName(attr[0]); err != nil {
+			return xml.StartElement{}, err
+		}
+		if _, exists := seen[attr[0]]; exists {
+			return xml.StartElement{}, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", attr[0], name)
+		}
+		seen[attr[0]] = struct{}{}
+		if err := validateXMLCharacters(attr[1]); err != nil {
+			return xml.StartElement{}, fmt.Errorf("значение атрибута «%s»: %w", attr[0], err)
+		}
+		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: attr[0]}, Value: attr[1]})
+	}
+	if err := w.encoder.EncodeToken(start); err != nil {
+		return xml.StartElement{}, fmt.Errorf("открытие элемента «%s»: %w", name, err)
+	}
+	return start, nil
+}
+
+type xmlTreeBudget struct {
+	nodes int
+}
+
+// asXMLTreeNode распознаёт Структуру, полученную из ПрочитатьXML. Наличие
+// поля Имя однозначно выбирает формат дерева; ошибки остальных полей не должны
+// превращать значение в произвольную структуру.
+func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, error) {
 	s, ok := v.(*Struct)
+	if !ok || s == nil {
+		return nil, false, nil
+	}
+	nameVal, hasName := xmlStructField(s, xmlFieldName)
+	if !hasName {
+		return nil, false, nil
+	}
+	if depth > maxXMLDepth {
+		return nil, true, fmt.Errorf("глубина XML превышает предел %d", maxXMLDepth)
+	}
+	budget.nodes++
+	if budget.nodes > maxXMLNodes {
+		return nil, true, fmt.Errorf("число элементов XML превышает предел %d", maxXMLNodes)
+	}
+
+	name, ok := nameVal.(string)
 	if !ok {
-		return nil, false
+		return nil, true, fmt.Errorf("поле «%s» узла XML должно быть строкой", xmlFieldName)
 	}
-	nameVal := s.Get(xmlFieldName)
-	if nameVal == nil {
-		return nil, false
+	if err := validateXMLName(name); err != nil {
+		return nil, true, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
 	}
-	name := strings.TrimSpace(fmt.Sprintf("%v", nameVal))
-	if name == "" {
-		return nil, false
+
+	allowedFields := map[string]struct{}{
+		strings.ToLower(xmlFieldName):     {},
+		strings.ToLower(xmlFieldAttrs):    {},
+		strings.ToLower(xmlFieldText):     {},
+		strings.ToLower(xmlFieldChildren): {},
 	}
-	node := &xmlNode{Name: name}
-	if attrs, ok := s.Get(xmlFieldAttrs).(*Map); ok {
-		for _, k := range attrs.Keys() {
-			node.Attrs = append(node.Attrs, [2]string{
-				fmt.Sprintf("%v", k),
-				xmlStringOf(attrs.Get(k)),
-			})
+	for _, field := range s.Fields() {
+		if _, allowed := allowedFields[strings.ToLower(field)]; !allowed {
+			return nil, true, fmt.Errorf("неизвестное поле «%s» узла XML «%s»", field, name)
 		}
 	}
-	if txt := s.Get(xmlFieldText); txt != nil {
-		node.Text = xmlStringOf(txt)
-	}
-	if children, ok := s.Get(xmlFieldChildren).(*Array); ok {
-		for _, c := range children.Iterate() {
-			child, ok := asXMLTreeNode(c)
+
+	node := &xmlNode{Name: name}
+	if attrsVal, exists := xmlStructField(s, xmlFieldAttrs); exists && attrsVal != nil {
+		attrs, ok := attrsVal.(*Map)
+		if !ok || attrs == nil {
+			return nil, true, fmt.Errorf("поле «%s» узла XML должно быть Соответствием", xmlFieldAttrs)
+		}
+		if len(attrs.keys) != len(attrs.vals) {
+			return nil, true, fmt.Errorf("поле «%s» узла XML повреждено", xmlFieldAttrs)
+		}
+		seen := make(map[string]struct{}, len(attrs.keys))
+		for i, keyVal := range attrs.keys {
+			key, ok := keyVal.(string)
 			if !ok {
-				return nil, false
+				return nil, true, fmt.Errorf("имя атрибута узла XML должно быть строкой, получено %T", keyVal)
+			}
+			if err := validateXMLAttributeName(key); err != nil {
+				return nil, true, err
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return nil, true, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", key, name)
+			}
+			seen[key] = struct{}{}
+			value, ok := attrs.vals[i].(string)
+			if !ok {
+				return nil, true, fmt.Errorf("значение атрибута «%s» должно быть строкой", key)
+			}
+			if err := validateXMLCharacters(value); err != nil {
+				return nil, true, fmt.Errorf("значение атрибута «%s»: %w", key, err)
+			}
+			node.Attrs = append(node.Attrs, [2]string{key, value})
+		}
+	}
+	if textVal, exists := xmlStructField(s, xmlFieldText); exists && textVal != nil {
+		text, ok := textVal.(string)
+		if !ok {
+			return nil, true, fmt.Errorf("поле «%s» узла XML должно быть строкой", xmlFieldText)
+		}
+		if err := validateXMLCharacters(text); err != nil {
+			return nil, true, fmt.Errorf("текст элемента «%s»: %w", name, err)
+		}
+		node.Text = text
+	}
+	if childrenVal, exists := xmlStructField(s, xmlFieldChildren); exists && childrenVal != nil {
+		children, ok := childrenVal.(*Array)
+		if !ok || children == nil {
+			return nil, true, fmt.Errorf("поле «%s» узла XML должно быть Массивом", xmlFieldChildren)
+		}
+		for i, childVal := range children.Iterate() {
+			child, isTree, err := asXMLTreeNode(childVal, depth+1, budget)
+			if err != nil {
+				return nil, true, fmt.Errorf("%s[%d]: %w", xmlFieldChildren, i, err)
+			}
+			if !isTree {
+				return nil, true, fmt.Errorf("%s[%d] не является узлом XML с полем «%s»", xmlFieldChildren, i, xmlFieldName)
 			}
 			node.Children = append(node.Children, child)
 		}
 	}
-	return node, true
+	if len(node.Children) > 0 && node.Text != "" {
+		return nil, true, fmt.Errorf("смешанное содержимое элемента «%s» не поддерживается", name)
+	}
+	return node, true, nil
+}
+
+func xmlStructField(s *Struct, name string) (any, bool) {
+	v, ok := s.vals[strings.ToLower(name)]
+	return v, ok
+}
+
+func validateXMLAttributeName(name string) error {
+	if name == "xmlns" {
+		return fmt.Errorf("пространства имён XML не поддерживаются (атрибут xmlns)")
+	}
+	if err := validateXMLName(name); err != nil {
+		return fmt.Errorf("недопустимое имя атрибута «%s»: %w", name, err)
+	}
+	return nil
+}
+
+func validateXMLName(name string) error {
+	if name == "" {
+		return fmt.Errorf("имя пусто")
+	}
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("имя содержит некорректную UTF-8 последовательность")
+	}
+	for i, r := range []rune(name) {
+		if r == ':' {
+			return fmt.Errorf("пространства имён и символ ':' не поддерживаются")
+		}
+		if i == 0 {
+			if r != '_' && !unicode.IsLetter(r) {
+				return fmt.Errorf("первый символ должен быть буквой или '_'")
+			}
+			continue
+		}
+		if r != '_' && r != '-' && r != '.' && !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
+			return fmt.Errorf("символ %q недопустим", r)
+		}
+	}
+	return nil
+}
+
+func validateXMLCharacters(text string) error {
+	if pos := firstDisallowedXMLCharacter(text); pos != 0 {
+		return fmt.Errorf("недопустимый символ XML в позиции %d", pos)
+	}
+	return nil
+}
+
+func isXMLWhitespaceOnly(text string) bool {
+	for _, r := range text {
+		switch r {
+		case ' ', '\t', '\n', '\r':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func builtinXMLString(args []any, file string, line int) (any, error) {
@@ -333,13 +609,26 @@ func builtinFindDisallowedXMLChars(args []any, file string, line int) (any, erro
 	if len(args) == 0 {
 		return int64(0), nil
 	}
-	text := strArg(args, 0)
-	for i, r := range []rune(text) {
-		if !isAllowedXMLRune(r) {
-			return int64(i + 1), nil // 1-based, как принято в строковых функциях
+	return int64(firstDisallowedXMLCharacter(strArg(args, 0))), nil
+}
+
+// firstDisallowedXMLCharacter возвращает 1-based позицию в символах. Отдельная
+// проверка RuneError с размером 1 отличает повреждённую UTF-8 от допустимого
+// литерального символа U+FFFD.
+func firstDisallowedXMLCharacter(text string) int {
+	position := 0
+	for len(text) > 0 {
+		position++
+		r, size := utf8.DecodeRuneInString(text)
+		if r == utf8.RuneError && size == 1 {
+			return position
 		}
+		if !isAllowedXMLRune(r) {
+			return position
+		}
+		text = text[size:]
 	}
-	return int64(0), nil
+	return 0
 }
 
 // isAllowedXMLRune — диапазоны символов, допустимых в XML 1.0 (раздел 2.2).
@@ -356,14 +645,4 @@ func isAllowedXMLRune(r rune) bool {
 	default:
 		return false
 	}
-}
-
-func escapeXMLText(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
-	return r.Replace(s)
-}
-
-func escapeXMLAttr(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
-	return r.Replace(s)
 }

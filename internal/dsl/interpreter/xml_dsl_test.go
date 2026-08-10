@@ -32,6 +32,20 @@ func evalXML(t *testing.T, src string) any {
 	return result
 }
 
+func evalXMLError(t *testing.T, src string) error {
+	t.Helper()
+	l := lexer.New(src, "test.os")
+	p := parser.New(l)
+	prog, err := p.ParseProgram()
+	require.NoError(t, err)
+	require.NotEmpty(t, prog.Procedures)
+
+	interp := interpreter.New()
+	obj := runtime.NewObject("Test", metadata.KindDocument)
+	var result any
+	return interp.RunWithResult(prog.Procedures[0], obj, &result)
+}
+
 func TestDSL_ReadXML_NameAttrsText(t *testing.T) {
 	src := `Процедура Тест()
 		Дерево = ПрочитатьXML("<Заказ Номер=""7""><Строка>Стол</Строка></Заказ>");
@@ -90,4 +104,27 @@ func TestDSL_XMLTypeOf(t *testing.T) {
 			И XMLТипЗнч(ТекущаяДата()) = "dateTime";
 	КонецПроцедуры`
 	assert.Equal(t, true, evalXML(t, src))
+}
+
+// Негативные проверки идут через публичный DSL-путь, чтобы гарантировать, что
+// строгие ошибки builtin действительно доходят до автора модуля, а не только
+// работают при прямом вызове внутренней функции.
+func TestDSL_XML_RejectsUnsupportedMixedContent(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат ПрочитатьXML("<a>данные<b/></a>");
+	КонецПроцедуры`
+	err := evalXMLError(t, src)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "смешанное содержимое")
+}
+
+func TestDSL_XML_RejectsInjectedElementName(t *testing.T) {
+	src := `Процедура Тест()
+		Узел = Новый Структура;
+		Узел.Вставить("Имя", "a></a><evil");
+		Возврат ЗаписатьXML(Узел);
+	КонецПроцедуры`
+	err := evalXMLError(t, src)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "недопустимое имя")
 }
