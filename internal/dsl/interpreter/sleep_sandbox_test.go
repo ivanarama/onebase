@@ -9,6 +9,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -184,6 +185,34 @@ func TestSleepDSL_RejectsMaxFloatWithoutDurationOverflow(t *testing.T) {
 	msg, ok := result.(string)
 	require.True(t, ok, "результат = %T (%v)", result, result)
 	assert.Contains(t, msg, "больше предела")
+}
+
+// shopspring/decimal разворачивает 10^Exponent при InexactFloat64. Проверка
+// границы обязана сработать раньше, иначе один Decimal из внешних данных может
+// исчерпать память процесса ещё до лимита 300 секунд.
+func TestSleepDSL_RejectsExtremeDecimalExponentBeforeExpansion(t *testing.T) {
+	for name, input := range map[string]decimal.Decimal{
+		"huge": decimal.New(1, math.MaxInt32),
+		"tiny": decimal.New(1, math.MinInt32),
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := `Функция Тест()
+  Попытка
+    Приостановить(Вход);
+  Исключение
+    Возврат ОписаниеОшибки();
+  КонецПопытки;
+  Возврат "принято";
+КонецФункции`
+			var result any
+			start := time.Now()
+			err := interpreter.New().RunWithResult(parseProc(t, src), nil, &result,
+				map[string]any{"Вход": input})
+			require.NoError(t, err)
+			assert.Contains(t, result.(string), "безопасного диапазона")
+			assert.Less(t, time.Since(start), time.Second)
+		})
+	}
 }
 
 // Числовая строка не является числом параметра: неявный ParseFloat скрывал

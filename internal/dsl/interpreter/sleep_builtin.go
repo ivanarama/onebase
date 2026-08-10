@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Приостановить(Секунды) — блокирующая выдержка времени (issue #708).
@@ -36,7 +38,7 @@ func sleepDuration(args []any) time.Duration {
 	if !isNumeric(args[0]) {
 		RaiseUserError("Приостановить: ожидается число, получено " + getTypeName(args[0]))
 	}
-	secs, ok := toFloat(args[0])
+	secs, ok := sleepSeconds(args[0])
 	if !ok {
 		RaiseUserError("Приостановить: длительность не удалось преобразовать в число")
 	}
@@ -52,6 +54,32 @@ func sleepDuration(args []any) time.Duration {
 			"длинную выдержку делают регламентным заданием, а не паузой в коде", secs, maxSleepSeconds))
 	}
 	return time.Duration(secs * float64(time.Second))
+}
+
+// sleepSeconds не пропускает патологический Decimal в InexactFloat64:
+// shopspring/decimal строит big.Int 10^Exponent, поэтому `1e2147483647`
+// исчерпал бы память ещё до обычной проверки maxSleepSeconds. Для duration
+// достаточно наносекунд; небольшой запас scale допускает нормальные Decimal с
+// хвостовыми нулями, но удерживает преобразование в постоянном бюджете.
+func sleepSeconds(v any) (float64, bool) {
+	d, isDecimal := v.(decimal.Decimal)
+	if !isDecimal {
+		return toFloat(v)
+	}
+	if d.IsZero() {
+		return 0, true
+	}
+	if d.Sign() < 0 {
+		RaiseUserError("Приостановить: длительность отрицательная")
+	}
+	if exp := d.Exponent(); exp < -18 || exp > 3 {
+		RaiseUserError("Приостановить: числовое представление длительности вне безопасного диапазона")
+	}
+	coefficient := d.Coefficient()
+	if coefficient.BitLen() > 256 {
+		RaiseUserError("Приостановить: числовое представление длительности слишком велико")
+	}
+	return d.InexactFloat64(), true
 }
 
 func newSleepBuiltin() BuiltinFunc {
