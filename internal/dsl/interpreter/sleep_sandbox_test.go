@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,9 +36,9 @@ func TestSleepSandbox_TwoPausesShareWallClock(t *testing.T) {
 		"ожидание не было отменено дедлайном песочницы")
 }
 
-// Имена паузы в sandbox являются частью security boundary: присваивание
-// одноимённой локальной переменной не должно сбрасывать deadline-aware dispatch
-// к глобальному builtin. Проверяем все публичные синонимы через RunSandboxed.
+// Одноимённая non-callable переменная не должна сбрасывать deadline-aware
+// dispatch при провале к глобальному builtin. Проверяем все публичные синонимы
+// через RunSandboxed.
 func TestSleepSandbox_LocalVariableCannotBypassDeadline(t *testing.T) {
 	for _, name := range []string{"Приостановить", "Пауза", "Подождать", "Sleep", "Wait"} {
 		t.Run(name, func(t *testing.T) {
@@ -57,6 +58,53 @@ func TestSleepSandbox_LocalVariableCannotBypassDeadline(t *testing.T) {
 				"локальная переменная отключила отмену ожидания %s", name)
 		})
 	}
+}
+
+// Доверенная callable-инъекция и пользовательская процедура разрешаются раньше
+// глобального builtin и не должны внезапно становиться зарезервированным Sleep.
+// Ограничение относится к штатному блокирующему ожиданию, а не к самому имени.
+func TestSleepSandbox_CallableShadowingIsPreserved(t *testing.T) {
+	called := false
+	custom := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+		called = true
+		return nil, nil
+	})
+	src := `Функция Тест()
+  Sleep(10);
+  Возврат "готово";
+КонецФункции`
+	var result any
+	start := time.Now()
+	err := interpreter.New().RunSandboxed(parseProc(t, src), nil,
+		interpreter.SandboxProfile{MaxWallClock: 100 * time.Millisecond}, &result,
+		map[string]any{"Sleep": custom})
+	require.NoError(t, err)
+	assert.True(t, called)
+	assert.Equal(t, "готово", result)
+	assert.Less(t, time.Since(start), time.Second)
+}
+
+func TestSleepSandbox_UserProcedureShadowingIsPreserved(t *testing.T) {
+	main := parseProc(t, `Функция Тест()
+  Возврат Sleep(10);
+КонецФункции`)
+	helper := parseProc(t, `Функция Sleep(Секунды)
+  Возврат "пользовательская процедура";
+КонецФункции`)
+	interp := interpreter.New()
+	interp.LookupSiblingProc = func(_ string, name string) *ast.ProcedureDecl {
+		if strings.EqualFold(name, "Sleep") {
+			return helper
+		}
+		return nil
+	}
+	var result any
+	start := time.Now()
+	err := interp.RunSandboxed(main, nil,
+		interpreter.SandboxProfile{MaxWallClock: 100 * time.Millisecond}, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "пользовательская процедура", result)
+	assert.Less(t, time.Since(start), time.Second)
 }
 
 // Все документированные имена должны работать и через обычный публичный

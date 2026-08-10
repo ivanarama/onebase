@@ -685,15 +685,6 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		fnName := callee.Tok.Literal
 		lowName := strings.ToLower(fnName)
 		var fallback FallbackBuiltinFunc
-		// В sandbox с wall-clock имена паузы — часть security boundary,
-		// поэтому разрешаются до env/procedure shadowing. Иначе код мог сделать
-		// `Приостановить = 0`, после чего обычный dispatch игнорировал non-callable
-		// значение и проваливался в глобальный builtin с прямым ожиданием.
-		// В обычном запуске и для любых других имён порядок разрешения прежний.
-		if e.ec != nil && e.ec.forceSandboxSleep && isSleepBuiltinName(lowName) {
-			waitForSleep(sleepDuration(args), e.ec)
-			return nil
-		}
 		// Вычислить(Выражение) — разбор строки как выражения и вычисление в
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
@@ -765,6 +756,15 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				}
 			}
 			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, fnName)})
+		}
+		// Только штатный builtin паузы получает deadline-aware dispatch. Это
+		// закрывает провал к прямому ожиданию после одноимённой non-callable
+		// переменной, но не ломает обычный порядок разрешения: пользовательская
+		// процедура либо доверенная инъекция Sleep/Wait по-прежнему может
+		// затенить builtin и сама контролируется общим дедлайном между операторами.
+		if e.ec != nil && !e.ec.deadline.IsZero() && isSleepBuiltinName(lowName) {
+			waitForSleep(sleepDuration(args), e.ec)
+			return nil
 		}
 		result, err := fn(args, callee.Tok.File, callee.Tok.Line)
 		if err != nil {

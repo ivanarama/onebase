@@ -112,14 +112,12 @@ func applySandboxLimits(e *env, p SandboxProfile) {
 	e.ec.maxLoopIters = p.MaxLoopIters
 	if p.MaxWallClock > 0 {
 		e.ec.deadline = time.Now().Add(p.MaxWallClock)
-		e.ec.forceSandboxSleep = true
 	}
 }
 
-// applySandboxVars навязывает запреты после переменных вызывающего. Пауза не
-// хранится в env: её security-dispatch идёт по execCtx до shadowing, иначе DSL
-// мог бы присвоить одноимённой переменной число и провалиться в глобальный
-// builtin без дедлайна.
+// applySandboxVars навязывает запреты после переменных вызывающего. Штатная
+// пауза не хранится в env: при провале к глобальному builtin evalCall применяет
+// к ней общий deadline запуска.
 func applySandboxVars(e *env, p SandboxProfile) {
 	for k, v := range p.Vars() {
 		e.setLocal(k, v)
