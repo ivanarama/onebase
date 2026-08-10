@@ -2,7 +2,9 @@ package interpreter
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -24,6 +26,22 @@ type TxState struct {
 	db       TxDB              // savepoint executor; set on first begin
 }
 
+// txExecutionContext takes transaction/storage values from valueCtx while
+// retaining cancellation and deadlines from executionCtx. The transaction is
+// opened with a detached context so database/sql cannot auto-rollback it behind
+// the hook wrapper when execution is canceled; individual DB calls still stop
+// with the execution context. context.WithoutCancel keeps Value(), which makes
+// the same transaction available to bounded cleanup.
+type txExecutionContext struct {
+	valueCtx     context.Context
+	executionCtx context.Context
+}
+
+func (c txExecutionContext) Deadline() (time.Time, bool) { return c.executionCtx.Deadline() }
+func (c txExecutionContext) Done() <-chan struct{}       { return c.executionCtx.Done() }
+func (c txExecutionContext) Err() error                  { return c.executionCtx.Err() }
+func (c txExecutionContext) Value(key any) any           { return c.valueCtx.Value(key) }
+
 // NewTxState creates a TxState with the given base context.
 func NewTxState(ctx context.Context) *TxState {
 	return &TxState{ctxStack: []context.Context{ctx}}
@@ -32,6 +50,61 @@ func NewTxState(ctx context.Context) *TxState {
 // Ctx returns the current context (contains the active transaction if any).
 func (s *TxState) Ctx() context.Context {
 	return s.ctxStack[len(s.ctxStack)-1]
+}
+
+// HasOpen reports whether the DSL execution still owns an open transaction or
+// savepoint. Execution boundaries use it to prevent a procedure that forgot to
+// commit/rollback from leaking a connection past the request.
+func (s *TxState) HasOpen() bool {
+	return s != nil && len(s.txs) > 0
+}
+
+// RollbackOpen unwinds every transaction/savepoint still owned by the DSL,
+// from the innermost level to the outermost one. The supplied context should be
+// detached from the execution cancellation (and bounded by the caller), while
+// retaining the transaction values from Ctx().
+//
+// Database rollback/release is always attempted before the corresponding hook
+// scope is discarded. The state is cleared even when cleanup fails, and all
+// cleanup errors are returned instead of panicking.
+func (s *TxState) RollbackOpen(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	var cleanupErr error
+	for len(s.txs) > 0 {
+		tx := s.txs[len(s.txs)-1]
+		s.txs = s.txs[:len(s.txs)-1]
+		if len(s.ctxStack) > 1 {
+			s.ctxStack = s.ctxStack[:len(s.ctxStack)-1]
+		}
+
+		if len(s.saves) > 0 {
+			sp := s.saves[len(s.saves)-1]
+			s.saves = s.saves[:len(s.saves)-1]
+			if s.db == nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("rollback savepoint %s: transaction database is unavailable", sp))
+			} else {
+				if _, err := s.db.Exec(ctx, "ROLLBACK TO SAVEPOINT "+sp); err != nil {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("rollback savepoint %s: %w", sp, err))
+				}
+				if _, err := s.db.Exec(ctx, "RELEASE SAVEPOINT "+sp); err != nil {
+					cleanupErr = errors.Join(cleanupErr, fmt.Errorf("release savepoint %s: %w", sp, err))
+				}
+			}
+			storage.RollbackTxHookScope(ctx)
+			continue
+		}
+
+		if tx == nil {
+			cleanupErr = errors.Join(cleanupErr, errors.New("rollback transaction: transaction handle is unavailable"))
+			continue
+		}
+		if err := tx.Rollback(ctx); err != nil {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("rollback transaction: %w", err))
+		}
+	}
+	return cleanupErr
 }
 
 func (s *TxState) begin(db TxDB) {
@@ -52,10 +125,15 @@ func (s *TxState) begin(db TxDB) {
 			s.ctxStack = append(s.ctxStack, s.Ctx())
 			return
 		}
-		tx, txCtx, err := db.BeginTx(s.Ctx())
+		executionCtx := s.Ctx()
+		if err := executionCtx.Err(); err != nil {
+			panic(userError{Msg: "НачатьТранзакцию: " + err.Error()})
+		}
+		tx, txValueCtx, err := db.BeginTx(context.WithoutCancel(executionCtx))
 		if err != nil {
 			panic(userError{Msg: "НачатьТранзакцию: " + err.Error()})
 		}
+		txCtx := txExecutionContext{valueCtx: txValueCtx, executionCtx: executionCtx}
 		s.txs = append(s.txs, tx)
 		s.ctxStack = append(s.ctxStack, txCtx)
 	} else {

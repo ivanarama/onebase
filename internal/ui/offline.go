@@ -112,7 +112,8 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 
 	paramsThis := &interpreter.MapThis{M: paramValues}
 	mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-	dslVars := s.buildDSLVarsWithMessages(ctx, mc, &messages)
+	dslVars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &messages)
+	defer rollbackDSLExecution(txState)
 	dslVars["Параметры"] = paramsThis
 	interpreter.InjectMaket(dslVars, proc.Layout)
 	for k, v := range extraVars {
@@ -123,5 +124,6 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 	// объявленный параметр процедуры иначе затеняет инжектированный и приходит
 	// пустым — молча, со значением по умолчанию (#706).
 	_, runErr = s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
+	runErr = finishDSLExecution(txState, runErr)
 	return messages, runErr, nil
 }

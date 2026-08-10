@@ -98,16 +98,37 @@ func processorClickBody(elementName string) url.Values {
 func TestProcessorFormBodyLimit_AllowsURLEncodingExpansion(t *testing.T) {
 	const maxFileSize = int64(7 << 20)
 	params := []processor.Param{{Name: "First", Type: "file"}, {Name: "Second", Type: "file"}}
+	proc := &processor.Processor{Params: params}
+	controls := processorRequestControlsForForm(proc, nil)
 	urlEncoded := httptest.NewRequest("POST", "/", nil)
 	urlEncoded.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-	if got, want := processorFormBodyLimit(urlEncoded, maxFileSize, params), 6*maxFileSize+uiMultipartOverhead; got != want {
+	if got, want := processorFormBodyLimit(urlEncoded, maxFileSize, controls), 6*maxFileSize+uiMultipartOverhead; got != want {
 		t.Fatalf("urlencoded body limit=%d, want %d", got, want)
 	}
 
 	multipartRequest := httptest.NewRequest("POST", "/", nil)
 	multipartRequest.Header.Set("Content-Type", "multipart/form-data; boundary=test")
-	if got, want := processorFormBodyLimit(multipartRequest, maxFileSize, params), 2*maxFileSize+uiMultipartOverhead; got != want {
+	if got, want := processorFormBodyLimit(multipartRequest, maxFileSize, controls), 2*maxFileSize+uiMultipartOverhead; got != want {
 		t.Fatalf("multipart body limit=%d, want %d", got, want)
+	}
+
+	noFiles := processorRequestControlsForForm(&processor.Processor{Params: []processor.Param{{Name: "Text", Type: "string"}}}, nil)
+	if got := processorFormBodyLimit(urlEncoded, maxFileSize, noFiles); got != defaultFormMemoryBytes {
+		t.Fatalf("zero-file body limit=%d, want small form limit %d", got, defaultFormMemoryBytes)
+	}
+
+	managedProc := &processor.Processor{Params: []processor.Param{
+		{Name: "Rendered", Type: "file"},
+		{Name: "Readonly", Type: "file"},
+		{Name: "Unplaced", Type: "file"},
+	}}
+	managedForm := processorExecutionForm(
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "RenderedFile", DataPath: "Объект.Rendered", Type: "file"},
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ReadonlyFile", DataPath: "Объект.Readonly", Type: "file", ReadOnly: true},
+	)
+	managedControls := processorRequestControlsForForm(managedProc, managedForm)
+	if got, want := processorFormBodyLimit(urlEncoded, maxFileSize, managedControls), 3*maxFileSize+uiMultipartOverhead; got != want {
+		t.Fatalf("managed body limit=%d, want only one editable rendered file (%d)", got, want)
 	}
 }
 
@@ -130,7 +151,7 @@ func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) 
 			Kind: metadata.FormElementField, Name: "ПолеДанные",
 			DataPath: "Объект.Данные", Type: "file",
 		},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name:   "ФайловаяОбр",
@@ -152,7 +173,7 @@ func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) 
 		{name: "file-content backing field", field: "_fc_Данные"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := processorClickBody("Запустить")
+			body := processorClickBody("Выполнить")
 			body.Set(tc.field, "содержимое файла")
 			rec := postProcessorFormEventExecution(t, srv, proc.Name,
 				"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
@@ -173,7 +194,7 @@ func TestHandleProcessorFormEvent_ReadsMultipartFile(t *testing.T) {
 			Kind: metadata.FormElementField, Name: "ПолеДанные",
 			DataPath: "Объект.Данные", Type: "file",
 		},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name:   "MultipartФайловаяОбр",
@@ -189,7 +210,7 @@ func TestHandleProcessorFormEvent_ReadsMultipartFile(t *testing.T) {
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("_element", "Запустить"); err != nil {
+	if err := writer.WriteField("_element", "Выполнить"); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.WriteField("_event", string(metadata.FormEventOnClick)); err != nil {
@@ -219,7 +240,7 @@ func TestHandleProcessorFormEvent_ReadsMultipartFile(t *testing.T) {
 func TestHandleProcessorFormEvent_UncheckedBoolDiffersFromAbsentParam(t *testing.T) {
 	form := processorExecutionForm(
 		&metadata.FormElement{Kind: metadata.FormElementCheckbox, Name: "ПолеФлаг", DataPath: "Объект.Флаг"},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name:   "БулеваОбр",
@@ -246,7 +267,7 @@ func TestHandleProcessorFormEvent_UncheckedBoolDiffersFromAbsentParam(t *testing
 		{name: "custom form parameter absent", marker: false, message: "true"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := processorClickBody("Запустить")
+			body := processorClickBody("Выполнить")
 			if tc.marker {
 				body.Set("_ob_present_Флаг", "1")
 			}
@@ -273,7 +294,7 @@ func TestHandleProcessorFormEvent_HelperPrefixesRemainLegalCustomParams(t *testi
 			Kind: metadata.FormElementField, Name: "ПолеЛегальныйФайл",
 			DataPath: "Объект._fc_Data",
 		},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name: "ЛегальныеПрефиксыОбр",
@@ -298,7 +319,7 @@ func TestHandleProcessorFormEvent_HelperPrefixesRemainLegalCustomParams(t *testi
 КонецПроцедуры
 `)
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 	body.Set("_ob_present_Flag", "legal-marker-value")
 	body.Set("_fc_Data", "legal-file-value")
 
@@ -332,7 +353,7 @@ func TestHandleProcessorFormEvent_HelperNamesAvoidDeclaredParamCollisions(t *tes
 			Kind: metadata.FormElementField, Name: "ПолеЛегальныйФайл",
 			DataPath: "Объект._fc_Data",
 		},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name: "КоллизииПрефиксовОбр",
@@ -357,7 +378,7 @@ func TestHandleProcessorFormEvent_HelperNamesAvoidDeclaredParamCollisions(t *tes
 КонецПроцедуры
 `)
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 	boolHelper := processorParamPresenceName(proc.Params, "Flag")
 	fileHelper := processorFileContentName(proc.Params, "Data")
 	if boolHelper == "_ob_present_Flag" || fileHelper == "_fc_Data" {
@@ -446,7 +467,7 @@ func TestHandleProcessorFormEvent_QueryCannotInjectHelpers(t *testing.T) {
 			Kind: metadata.FormElementField, Name: "ПолеData",
 			DataPath: "Объект.Data", Type: "file",
 		},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name: "QueryHelpersОбр",
@@ -467,7 +488,7 @@ func TestHandleProcessorFormEvent_QueryCannotInjectHelpers(t *testing.T) {
 КонецПроцедуры
 `)
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 	query := url.Values{
 		"_ob_present_Flag": {"1"},
 		"_fc_Data":         {"query-file-content"},
@@ -495,7 +516,7 @@ func TestHandleProcessorFormEvent_RejectsHelpersForReadOnlyControls(t *testing.T
 			Kind: metadata.FormElementField, Name: "ПолеData",
 			DataPath: "Объект.Data", Type: "file", ReadOnly: true,
 		},
-		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"},
 	)
 	proc := &processor.Processor{
 		Name: "ReadOnlyHelpersОбр",
@@ -516,7 +537,7 @@ func TestHandleProcessorFormEvent_RejectsHelpersForReadOnlyControls(t *testing.T
 КонецПроцедуры
 `)
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 	body.Set("_ob_present_Flag", "1")
 	body.Set("_fc_Data", "forged-file-content")
 
@@ -647,7 +668,7 @@ func TestHandleProcessorFormEvent_BoundHandlerRejectsReadOnlyAndUnrenderedParams
 func TestHandleProcessorFormEvent_MissingBoundHandlerDoesNotFallback(t *testing.T) {
 	form := processorExecutionForm(&metadata.FormElement{
 		Kind: metadata.FormElementButton,
-		Name: "Запустить",
+		Name: "Выполнить",
 		Handlers: map[metadata.FormEventType]string{
 			metadata.FormEventOnClick: "НетТакойПроцедуры",
 		},
@@ -659,7 +680,7 @@ func TestHandleProcessorFormEvent_MissingBoundHandlerDoesNotFallback(t *testing.
 КонецПроцедуры
 `)
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 
 	rec := postProcessorFormEventExecution(t, srv, proc.Name,
 		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
@@ -683,13 +704,13 @@ func TestHandleProcessorFormEvent_FallbackRequiresRealButton(t *testing.T) {
 	rec := postProcessorFormEventExecution(t, srv, proc.Name,
 		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
 	resp := decodeFormEventResponse(t, rec.Body.Bytes())
-	if !resp.OK || resp.Error != "" || len(resp.Messages) != 0 {
-		t.Fatalf("forged non-button click executed fallback: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
+	if resp.OK || resp.Error == "" || len(resp.Messages) != 0 {
+		t.Fatalf("forged non-button click was not rejected: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
 	}
 }
 
 func TestHandleProcessorFormEvent_RespectsConcurrencyLimit(t *testing.T) {
-	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"})
+	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"})
 	proc := &processor.Processor{Name: "ЛимитОбр", Forms: []*metadata.FormModule{form}}
 	program := mustParse(t, `
 Процедура Выполнить()
@@ -703,7 +724,7 @@ func TestHandleProcessorFormEvent_RespectsConcurrencyLimit(t *testing.T) {
 		t.Fatal("failed to reserve processor slot")
 	}
 	defer release()
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 
 	rec := postProcessorFormEventExecution(t, srv, proc.Name,
 		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
@@ -713,17 +734,18 @@ func TestHandleProcessorFormEvent_RespectsConcurrencyLimit(t *testing.T) {
 }
 
 func TestHandleProcessorFormEvent_RespectsRequestTimeout(t *testing.T) {
-	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"})
+	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"})
 	proc := &processor.Processor{Name: "ТаймаутОбр", Forms: []*metadata.FormModule{form}}
 	program := mustParse(t, `
 Процедура Выполнить()
+	НачатьТранзакцию();
 	Пока Истина Цикл
 	КонецЦикла;
 КонецПроцедуры
 `)
-	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+	srv, db := newProcessorFormEventExecutionServer(t, proc, program)
 	srv.cfg.Limits.RequestTimeoutSec = 1
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 
 	started := time.Now()
 	rec := postProcessorFormEventExecution(t, srv, proc.Name,
@@ -735,6 +757,12 @@ func TestHandleProcessorFormEvent_RespectsRequestTimeout(t *testing.T) {
 	}
 	if elapsed > 3*time.Second {
 		t.Fatalf("request timeout took too long: %v", elapsed)
+	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var one int
+	if err := db.QueryRow(readCtx, `SELECT 1`).Scan(&one); err != nil || one != 1 {
+		t.Fatalf("timeout cleanup left DB unavailable: one=%d err=%v", one, err)
 	}
 }
 
@@ -796,6 +824,85 @@ func TestHandleProcessorFormEvent_BoundHandlerRollsBackOpenTransaction(t *testin
 	}
 }
 
+func TestProcessorExecutionBoundariesRejectSuccessfulOpenTransaction(t *testing.T) {
+	program := mustParse(t, `
+Процедура Выполнить()
+	НачатьТранзакцию();
+КонецПроцедуры
+`)
+	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"})
+	proc := &processor.Processor{Name: "OpenBoundary", Forms: []*metadata.FormModule{form}}
+	srv, db := newProcessorFormEventExecutionServer(t, proc, program)
+	assertAvailable := func(stage string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var one int
+		if err := db.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil || one != 1 {
+			t.Fatalf("%s left DB unavailable: one=%d err=%v", stage, one, err)
+		}
+	}
+
+	t.Run("fallback form event", func(t *testing.T) {
+		body := processorClickBody("Выполнить")
+		resp := decodeFormEventResponse(t, postProcessorFormEventExecution(t, srv, proc.Name,
+			"application/x-www-form-urlencoded", strings.NewReader(body.Encode())).Body.Bytes())
+		if resp.OK || !strings.Contains(resp.Error, errDSLTransactionLeftOpen.Error()) {
+			t.Fatalf("open fallback transaction: ok=%v error=%q", resp.OK, resp.Error)
+		}
+		assertAvailable("fallback")
+	})
+
+	t.Run("processorRun", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/ui/processor/"+proc.Name, strings.NewReader(""))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("name", proc.Name)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		rec := httptest.NewRecorder()
+		srv.processorRun(rec, req)
+		if !strings.Contains(rec.Body.String(), errDSLTransactionLeftOpen.Error()) {
+			t.Fatalf("processorRun did not render open transaction error: %s", rec.Body.String())
+		}
+		assertAvailable("processorRun")
+	})
+
+	t.Run("offline", func(t *testing.T) {
+		_, runErr, err := srv.RunProcessor(context.Background(), srv.reg, proc.Name, nil, nil, nil)
+		if err != nil || runErr == nil || !strings.Contains(runErr.Error(), errDSLTransactionLeftOpen.Error()) {
+			t.Fatalf("offline open transaction: setupErr=%v runErr=%v", err, runErr)
+		}
+		assertAvailable("offline")
+	})
+}
+
+func TestBoundProcessorEventRejectsSuccessfulOpenTransaction(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура Нажать()
+	НачатьТранзакцию();
+КонецПроцедуры
+`)
+	form := processorExecutionForm(&metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "Кнопка",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Нажать"},
+	})
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{Name: "BoundOpenSuccess", Forms: []*metadata.FormModule{form}}
+	srv, db := newProcessorFormEventExecutionServer(t, proc, nil)
+	body := processorClickBody("Кнопка")
+	resp := decodeFormEventResponse(t, postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded", strings.NewReader(body.Encode())).Body.Bytes())
+	if resp.OK || !strings.Contains(resp.Error, errDSLTransactionLeftOpen.Error()) {
+		t.Fatalf("bound open transaction: ok=%v error=%q", resp.OK, resp.Error)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var one int
+	if err := db.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil || one != 1 {
+		t.Fatalf("bound cleanup left DB unavailable: one=%d err=%v", one, err)
+	}
+}
+
 func TestHandleProcessorFormEvent_AuditsExternalFormHandler(t *testing.T) {
 	formProgram := mustParse(t, `
 Процедура Нажать()
@@ -804,7 +911,7 @@ func TestHandleProcessorFormEvent_AuditsExternalFormHandler(t *testing.T) {
 `)
 	form := processorExecutionForm(&metadata.FormElement{
 		Kind: metadata.FormElementButton,
-		Name: "Запустить",
+		Name: "Выполнить",
 		Handlers: map[metadata.FormEventType]string{
 			metadata.FormEventOnClick: "Нажать",
 		},
@@ -821,7 +928,7 @@ func TestHandleProcessorFormEvent_AuditsExternalFormHandler(t *testing.T) {
 	if err := db.EnsureAuditSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	body := processorClickBody("Запустить")
+	body := processorClickBody("Выполнить")
 
 	rec := postProcessorFormEventExecution(t, srv, proc.Name,
 		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))

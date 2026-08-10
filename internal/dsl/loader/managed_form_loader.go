@@ -168,6 +168,19 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 	if form.Kind == "" {
 		form.Kind = "custom"
 	}
+	form.Walk(func(el *metadata.FormElement) bool {
+		if len(el.Handlers) == 0 {
+			return true
+		}
+		filtered := make(map[metadata.FormEventType]string, len(el.Handlers))
+		for event, proc := range el.Handlers {
+			if metadata.IsKnownFormEventType(event) {
+				filtered[event] = proc
+			}
+		}
+		el.Handlers = filtered
+		return true
+	})
 
 	return form, nil
 }
@@ -222,6 +235,9 @@ func (mfl *ManagedFormLoader) attachProcedures(form *metadata.FormModule, osPath
 	// form-level handlers, найденные по имени процедуры, дополняют
 	// то что было задано декларативно в YAML (YAML имеет приоритет).
 	for evt, proc := range parsed.Handlers {
+		if !metadata.IsKnownFormEventType(evt) {
+			continue
+		}
 		if _, ok := form.Handlers[evt]; !ok {
 			if form.Handlers == nil {
 				form.Handlers = make(map[metadata.FormEventType]string)
@@ -244,7 +260,10 @@ func toEventMap(in map[string]string) map[metadata.FormEventType]string {
 	}
 	out := make(map[metadata.FormEventType]string, len(in))
 	for k, v := range in {
-		out[metadata.FormEventType(k)] = v
+		event := metadata.FormEventType(k)
+		if metadata.IsKnownFormEventType(event) {
+			out[event] = v
+		}
 	}
 	return out
 }

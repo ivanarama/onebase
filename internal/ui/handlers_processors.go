@@ -157,7 +157,8 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxSize := s.effectiveUploadLimit()
-	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, proc.Params))
+	requestControls := processorRequestControlsForForm(proc, proc.ManagedForm())
+	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
 	if proc.External {
 		// Запуск внешней обработки (исполнение DSL-кода) всегда логируем.
 		s.auditExtProcRun(r, proc.Name)
@@ -179,7 +180,7 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		r,
 		proc.Params,
 		maxSize,
-		processorRequestControlsForForm(proc, proc.ManagedForm()),
+		requestControls,
 	)
 	if err != nil {
 		opStatus = "error"
@@ -212,6 +213,7 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	dslCtx, cancelDSL := context.WithCancel(opCtx)
 	defer cancelDSL()
 	dslVars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &messages)
+	defer rollbackDSLExecution(txState)
 	dslVars["Параметры"] = paramsThis
 	interpreter.InjectMaket(dslVars, proc.Layout)
 	// Параметры обработки связываем и с одноимёнными аргументами Выполнить —
@@ -224,6 +226,7 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_, callErr = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 	}
+	callErr = finishDSLExecution(txState, callErr)
 
 	var runErr string
 	if callErr != nil {
@@ -231,12 +234,11 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		runErr = callErr.Error()
 	}
 
-	liveRequest := r.WithContext(txState.Ctx())
 	if proc.ManagedForm() != nil {
-		s.renderProcessorManagedResult(w, liveRequest, proc, paramValues, messages, runErr)
+		s.renderProcessorManagedResult(w, r, proc, paramValues, messages, runErr)
 	} else {
-		refOpts := s.loadProcessorRefOpts(txState.Ctx(), proc.Params, paramValues)
-		s.render(w, liveRequest, "page-processor", map[string]any{
+		refOpts := s.loadProcessorRefOpts(r.Context(), proc.Params, paramValues)
+		s.render(w, r, "page-processor", map[string]any{
 			"Processor":          proc,
 			"ParamValues":        paramValues,
 			"RefOptions":         refOpts,
@@ -314,16 +316,23 @@ func decodeUploadText(data []byte) string {
 // the body. A byte can occupy three transport bytes (%XX), so valid declared
 // file parameters near their per-file max must not be rejected by the outer
 // reader merely because of transport expansion or because there is more than
-// one file control.
-func processorFormBodyLimit(r *http.Request, maxFileSize int64, params []processorpkg.Param) int64 {
-	fileCount := int64(0)
-	for _, p := range params {
-		if p.Type == "file" {
-			fileCount++
+// one file control. Only editable file controls rendered by the selected form
+// contribute; a form without one keeps the normal small-form limit.
+func processorFormBodyLimit(r *http.Request, maxFileSize int64, controls processorRequestControls) int64 {
+	fileParams := make(map[string]bool, len(controls.fileInputs)+len(controls.fileContent))
+	for key, names := range controls.fileInputs {
+		if len(names) > 0 {
+			fileParams[key] = true
 		}
 	}
+	for key, names := range controls.fileContent {
+		if len(names) > 0 {
+			fileParams[key] = true
+		}
+	}
+	fileCount := int64(len(fileParams))
 	if fileCount == 0 {
-		fileCount = 1
+		return defaultFormMemoryBytes
 	}
 	factor := fileCount
 	if r != nil {

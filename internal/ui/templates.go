@@ -44,6 +44,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorServiceFieldNames(proc.Params)
 		},
+		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"str": func(v any) string {
 			if v == nil {
 				return ""

@@ -473,6 +473,20 @@ function obManagedReady(fn) {
         // пересчёта/очистки выделение не нужно — гасим ошибку и шлём пусто.
         var sel = [];
         try { sel = obg.grid.getSelectedRows() || []; } catch (e) { sel = []; }
+        // tp_json is serialized in canonical _ord order, while SlickGrid
+        // selection indices follow the current visual sort. Translate selected
+        // rows to the exact array indices sent to the server.
+        var canonicalItems = obg.dataView.getItems().slice().sort(function(a, b) {
+          return (a._ord || 0) - (b._ord || 0);
+        });
+        sel = sel.map(function(displayIndex) {
+          var item = obg.dataView.getItem(displayIndex);
+          if (!item) return -1;
+          for (var i = 0; i < canonicalItems.length; i++) {
+            if (canonicalItems[i] && canonicalItems[i].id === item.id) return i;
+          }
+          return -1;
+        }).filter(function(index) { return index >= 0; });
         body.append(serviceField('_tp_selected'), sel.join(','));
       } else {
         // Legacy: read from DOM checkboxes
@@ -503,7 +517,7 @@ function obManagedReady(fn) {
       if (data.pickerData) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
-        openItemPicker(data.pickerData, elementName);
+        openItemPicker(data.pickerData, elementName, extraParams || null);
         return;
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);

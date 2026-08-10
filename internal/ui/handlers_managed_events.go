@@ -88,6 +88,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: "entity not found: " + entityName})
 		return
 	}
+	entityKind := string(entity.Kind)
+	if !s.can(r, entityKind, entity.Name, "read") && !s.can(r, entityKind, entity.Name, "write") {
+		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	if err := parseBoundedForm(r, 32<<20); err != nil {
@@ -95,7 +100,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
 		return
 	}
-
+	rawID := strings.TrimSpace(r.FormValue("_id"))
 	formKind := strings.ToLower(strings.TrimSpace(r.FormValue("_kind")))
 	if formKind == "" {
 		formKind = "object"
@@ -104,6 +109,26 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	if form == nil {
 		respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
 		return
+	}
+	isNewObject := rawID == "" && (strings.EqualFold(form.Kind, "object") || form.Kind == "" && formKind == "object")
+	if isNewObject {
+		if !s.can(r, entityKind, entity.Name, "write") {
+			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+			return
+		}
+	} else if !s.can(r, entityKind, entity.Name, "read") {
+		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+		return
+	} else if rawID != "" {
+		id, err := uuid.Parse(rawID)
+		if err != nil {
+			respondJSON(enc, formEventResponse{Error: "некорректный идентификатор записи"})
+			return
+		}
+		if !s.rowAllowsID(r.Context(), entity, "read", id) {
+			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+			return
+		}
 	}
 	progAny := form.ProgramAST
 	if progAny == nil {
@@ -125,10 +150,9 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Найти имя процедуры, которая привязана к событию.
-	procName := resolveHandlerProc(form, elementName, eventName)
-	if procName == "" {
-		// Нет привязки — это не ошибка, просто событие декларативное.
-		respondJSON(enc, formEventResponse{OK: true})
+	procName, _, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
+	if eligibilityErr != nil {
+		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
 		return
 	}
 
@@ -209,6 +233,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// откроет транзакцию, и ссылки объекта обязаны выполнять ПолучитьОбъект()
 	// внутри неё, а не ждать второго соединения (пул SQLite — одно).
 	vars, txState := s.buildDSLVarsWithMessagesTx(r.Context(), mc, &msgs)
+	defer rollbackDSLExecution(txState)
 	thisObj := s.newFormObjectThisLive(r.Context(), txState, obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
@@ -281,13 +306,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	runErr := s.interp.Run(decl, thisObj, vars)
-	// ПРАВИЛО: всё, что после Run ходит в базу, обязано брать ЖИВОЙ контекст, а не
-	// r.Context(). Обработчик мог оставить открытой DSL-транзакцию (НачатьТранзакцию
-	// и выход по ошибке без ОтменитьТранзакцию), а на SQLite пул — одно соединение:
-	// запрос по r.Context() ждал бы второе соединение, которое занято этой
-	// транзакцией, и событие вешало бы всю базу — причём ровно на пути возврата
-	// ошибки пользователю (#621, тот же класс беды, что чинил #580). txState.Ctx()
-	// отдаёт контекст открытой транзакции, а без неё — базовый r.Context().
+	// Незавершённая DSL-транзакция отменяется ДО перечитывания БД и сериализации:
+	// иначе pgx удерживает соединение после запроса, а SQLite ждёт занятое
+	// единственное соединение. Успешный выход с открытой транзакцией считается
+	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
+	runErr = finishDSLExecution(txState, runErr)
 	liveCtx := txState.Ctx()
 	// Перечитывать из базы имеет смысл только для записи, которая там есть:
 	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
@@ -850,7 +873,8 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// файл-параметр обработки мегабайтом (issue #674). Авторизация и trust-гейт
 	// выше выполняются до разбора потенциально большого multipart-тела.
 	maxSize := s.effectiveUploadLimit()
-	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, proc.Params))
+	requestControls := processorRequestControlsForForm(proc, form)
+	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
 	opCtx, finish, ok := s.beginOperation(r, opProcessorRun, proc.Name)
 	if !ok {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -866,20 +890,6 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
 		return
 	}
-	requestControls := processorRequestControlsForForm(proc, form)
-	paramValues, err := processorParamValuesFromRequest(
-		r,
-		proc.Params,
-		maxSize,
-		requestControls,
-	)
-	if err != nil {
-		opStatus = "error"
-		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
-		return
-	}
-
 	elementValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_element"))
 	eventValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_event"))
 	elementName := strings.TrimSpace(elementValue)
@@ -893,7 +903,24 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// Явно привязанный обработчик имеет безусловный приоритет. Если его нет в
 	// .form.os, это ошибка конфигурации, а не разрешение незаметно выполнить
 	// глобальную процедуру Выполнить.
-	boundProcName := resolveHandlerProc(form, elementName, eventName)
+	boundProcName, eventTarget, executeFallback, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, true)
+	if eligibilityErr != nil {
+		opStatus = "error"
+		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+		return
+	}
+	paramValues, err := processorParamValuesFromRequest(
+		r,
+		proc.Params,
+		maxSize,
+		requestControls,
+	)
+	if err != nil {
+		opStatus = "error"
+		w.WriteHeader(uploadErrorStatus(err))
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+		return
+	}
 	progAny := form.ProgramAST
 	var program *ast.Program
 	if p, ok := progAny.(*ast.Program); ok && p != nil {
@@ -927,6 +954,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		dslCtx, cancelDSL := context.WithCancel(opCtx)
 		defer cancelDSL()
 		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
+		defer rollbackDSLExecution(txState)
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, nil, false)
 		vars["Объект"] = thisObj
 		vars["ЭтотОбъект"] = thisObj
@@ -952,6 +980,11 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 			vars["ПодборРезультат"] = pr
 			vars["PickResult"] = pr
 		}
+		if err := addProcessorTPEventContext(r, proc, requestControls, eventTarget, obj, vars); err != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
 
 		var runErr error
 		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
@@ -960,16 +993,17 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		} else {
 			runErr = s.interp.Run(decl, thisObj, vars)
 		}
+		runErr = finishDSLExecution(txState, runErr)
 		if runErr != nil {
 			opStatus = operationStatus(opCtx, runErr)
-			resp := s.serializeManagedFormEventState(txState.Ctx(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
+			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
 			resp.Error = interpreter.FormatUserError(runErr)
 			resp.PickerData = picker
 			respondJSON(enc, resp)
 			return
 		}
 
-		resp := s.serializeManagedFormEventState(txState.Ctx(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
 		resp.PickerData = picker
 		respondJSON(enc, resp)
 		return
@@ -978,13 +1012,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// Без привязанного обработчика общий Выполнить разрешён только настоящей
 	// кнопке из метаданных формы. Одного присланного клиентом _event=Нажатие
 	// недостаточно.
-	if eventName == string(metadata.FormEventOnClick) {
-		element := form.GetElementByName(elementName)
-		if element == nil || element.Kind != metadata.FormElementButton {
-			respondJSON(enc, formEventResponse{OK: true})
-			return
-		}
-
+	if executeFallback {
 		procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
 		if procDecl == nil {
 			opStatus = "error"
@@ -1001,7 +1029,8 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
 		dslCtx, cancelDSL := context.WithCancel(opCtx)
 		defer cancelDSL()
-		dslVars := s.buildDSLVarsWithMessages(dslCtx, mc, &msgs)
+		dslVars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
+		defer rollbackDSLExecution(txState)
 		dslVars["Параметры"] = paramsThis
 		interpreter.InjectMaket(dslVars, proc.Layout)
 
@@ -1015,6 +1044,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		} else {
 			_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 		}
+		err = finishDSLExecution(txState, err)
 		if err != nil {
 			opStatus = operationStatus(opCtx, err)
 			respondJSON(enc, formEventResponse{
@@ -1031,7 +1061,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	respondJSON(enc, formEventResponse{OK: true})
+	respondJSON(enc, formEventResponse{Error: "недоступное событие формы"})
 }
 
 func formTablesFromRows(rows map[string][]map[string]any, form *metadata.FormModule) map[string][]map[string]any {

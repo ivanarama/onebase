@@ -226,7 +226,7 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
-  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.HotKey}} data-ob-hotkey="{{$el.HotKey}}" aria-keyshortcuts="{{$el.HotKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if hasHandler $el "Нажатие"}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.HotKey}} data-ob-hotkey="{{$el.HotKey}}" aria-keyshortcuts="{{$el.HotKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el))}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
 {{else if eq (str $el.Kind) "ПолеКартинки"}}

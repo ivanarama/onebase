@@ -125,7 +125,7 @@ func (fl *FormLoader) parseFormModule(source, entityName, formName, kind, source
 		procName := proc.Name.Literal
 
 		// Check if this is a form event handler
-		if eventType := metadata.FormEventType(procName); eventType != "" {
+		if eventType := metadata.FormEventType(procName); metadata.IsKnownFormEventType(eventType) {
 			form.Handlers[eventType] = procName
 		}
 

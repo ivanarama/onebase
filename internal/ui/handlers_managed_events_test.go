@@ -475,11 +475,10 @@ func decodeFormEventResponse(t *testing.T, b []byte) formEventResponse {
 	return resp
 }
 
-// #621: обработчик события управляемой формы оставил открытой DSL-транзакцию и
-// вышел с ошибкой. Перечитывание после Run обязано идти живым контекстом
-// (внутри той же транзакции), а не r.Context(): на SQLite пул — одно соединение,
-// и запрос по r.Context() ждал бы второе, занятое транзакцией, — событие вешало
-// бы всю базу ровно на пути возврата ошибки. Событие обязано ВЕРНУТЬ ошибку.
+// #621: обработчик события управляемой формы оставил открытую DSL-транзакцию и
+// вышел с ошибкой. Граница выполнения обязана отменить её до перечитывания и
+// ответа: на SQLite пул — одно соединение, и иначе событие вешало бы всю базу
+// ровно на пути возврата ошибки. Исходная ошибка при cleanup не теряется.
 func TestHandleManagedFormEvent_OpenTxDoesNotHang(t *testing.T) {
 	srv, ent := setupManagedEventsServer(t, `
 Процедура Бум()
@@ -538,7 +537,37 @@ func TestHandleManagedFormEvent_OpenTxDoesNotHang(t *testing.T) {
 		if resp.Error == "" {
 			t.Fatalf("ожидался непустой error")
 		}
+		if !strings.Contains(resp.Error, "боль") {
+			t.Fatalf("исходная DSL-ошибка потеряна при cleanup: %q", resp.Error)
+		}
+		readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := srv.store.QueryRow(readCtx, `SELECT 1`).Scan(new(int)); err != nil {
+			t.Fatalf("транзакция осталась открытой после ошибки: %v", err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("событие зависло: перечитывание после Run ушло мимо открытой транзакции (#621)")
+	}
+}
+
+func TestHandleManagedFormEventSuccessfulOpenTxReturnsClearErrorAndCleansUp(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ОставитьОткрытой()
+	НачатьТранзакцию();
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind: metadata.FormElementButton, Name: "Кнопка",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ОставитьОткрытой"},
+	}})
+	body := url.Values{"_element": {"Кнопка"}, "_event": {string(metadata.FormEventOnClick)}, "_kind": {"object"}}
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if resp.OK || !strings.Contains(resp.Error, errDSLTransactionLeftOpen.Error()) {
+		t.Fatalf("successful open transaction was not surfaced: ok=%v error=%q", resp.OK, resp.Error)
+	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var one int
+	if err := srv.store.QueryRow(readCtx, `SELECT 1`).Scan(&one); err != nil || one != 1 {
+		t.Fatalf("database unavailable after cleanup: one=%d err=%v", one, err)
 	}
 }

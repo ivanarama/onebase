@@ -338,6 +338,71 @@ form:
 	}
 }
 
+func TestFormLoader_OnlyKnownProcedureNamesBecomeFormEvents(t *testing.T) {
+	form, err := NewFormLoader().LoadFormModuleFromSource(`
+Процедура ПриОткрытии()
+КонецПроцедуры
+Процедура Вспомогательная()
+КонецПроцедуры
+`, "Заказ", "ФормаОбъекта", "object")
+	if err != nil {
+		t.Fatalf("LoadFormModuleFromSource: %v", err)
+	}
+	if got := form.Handlers[metadata.FormEventOnOpen]; got != "ПриОткрытии" {
+		t.Fatalf("known event handler = %q, want ПриОткрытии", got)
+	}
+	if _, exists := form.Handlers[metadata.FormEventType("Вспомогательная")]; exists {
+		t.Fatalf("helper procedure was exposed as form event: %#v", form.Handlers)
+	}
+	if form.Procedures["Вспомогательная"] == nil {
+		t.Fatal("helper procedure must remain callable from the form module")
+	}
+}
+
+func TestManagedFormLoader_FiltersUnknownYAMLAndInferredEvents(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ.form.yaml")
+	osPath := filepath.Join(dir, "заказ.form.os")
+	if err := os.WriteFile(yamlPath, []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+events:
+  ПриОткрытии: Открыть
+  СекретныйПомощник: СекретныйПомощник
+elements:
+  - kind: Кнопка
+    name: Кнопка
+    events:
+      Нажатие: Нажать
+      ПроизвольноеСобытие: СекретныйПомощник
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(osPath, []byte(`
+Процедура СекретныйПомощник()
+КонецПроцедуры
+Процедура ПриОткрытии()
+КонецПроцедуры
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	if _, ok := form.Handlers[metadata.FormEventType("СекретныйПомощник")]; ok {
+		t.Fatalf("unknown YAML/inferred form event survived merge: %#v", form.Handlers)
+	}
+	if _, ok := form.Elements[0].Handlers[metadata.FormEventType("ПроизвольноеСобытие")]; ok {
+		t.Fatalf("unknown element event survived YAML load: %#v", form.Elements[0].Handlers)
+	}
+	if form.Procedures["СекретныйПомощник"] == nil {
+		t.Fatal("filtered helper procedure must remain available for internal calls")
+	}
+}
+
 func TestManagedFormLoader_LoadEntityForms_TwoForms(t *testing.T) {
 	dir := t.TempDir()
 	entityDir := filepath.Join(dir, "forms", "контрагенты")
