@@ -178,7 +178,13 @@ func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
 // без пересчёта остатки остались бы прежними, и удаление ничего бы не изменило
 // для пользователя (дефект Д1 из аудита — ровно про это).
 func (c orphanMovementsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
-	deleted := env.DB.DeleteOrphanMovements(ctx, env.Registers, env.Entities)
+	deleted, err := env.DB.DeleteOrphanMovements(ctx, env.Registers, env.Entities)
+	if err != nil {
+		// Частично удалённое всё равно требует пересчёта итогов, поэтому число
+		// возвращаем, но ошибку не глотаем: «починено 0» на сбое читается как
+		// «чинить было нечего» (#615).
+		return int(deleted), err
+	}
 	if deleted == 0 {
 		return 0, nil
 	}

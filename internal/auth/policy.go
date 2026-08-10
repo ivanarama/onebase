@@ -133,6 +133,24 @@ func (r *Repo) SaveAuthPolicy(ctx context.Context, p Policy) error {
 // Зеркалит защиту SSOOnly в adminAuthPolicySave: включить требование без
 // единственного работающего способа войти — верный способ запереть базу (#620).
 func (r *Repo) TwoFactorLockoutRisk(ctx context.Context, p Policy) (string, error) {
+	return r.twoFactorLockoutRisk(ctx, p, "")
+}
+
+// TwoFactorLockoutRiskAfterDisable отвечает на вопрос «а если снять второй
+// фактор у этого пользователя — не запрём ли мы базу?».
+//
+// Нужен потому, что `onebase user 2fa reset` умеет ВОГНАТЬ в тупик: сняв фактор
+// у последнего администратора, который его привязал, команда оставляет политику
+// требующей второй фактор, а привязать его на входе больше некому. Справка
+// команды при этом называет её средством восстановления доступа (#615, хвост
+// #620).
+func (r *Repo) TwoFactorLockoutRiskAfterDisable(ctx context.Context, p Policy, userID string) (string, error) {
+	return r.twoFactorLockoutRisk(ctx, p, userID)
+}
+
+// excludeUser — «как если бы у этого пользователя фактор был снят»: он остаётся
+// в когорте, но перестаёт считаться привязанным.
+func (r *Repo) twoFactorLockoutRisk(ctx context.Context, p Policy, excludeUserID string) (string, error) {
 	// Самопривязка ломает тупик: любой введёт пароль и привяжет фактор сам.
 	if p.SelfEnroll2FA {
 		return "", nil
@@ -144,7 +162,7 @@ func (r *Repo) TwoFactorLockoutRisk(ctx context.Context, p Policy) (string, erro
 		if err != nil {
 			return "", err
 		}
-		bound, err := r.countUsers(ctx, "WHERE is_admin AND totp_enabled")
+		bound, err := r.countBoundAdmins(ctx, excludeUserID)
 		if err != nil {
 			return "", err
 		}
@@ -161,7 +179,7 @@ func (r *Repo) TwoFactorLockoutRisk(ctx context.Context, p Policy) (string, erro
 		if err != nil {
 			return "", err
 		}
-		bound, err := r.countRoleMembers(ctx, role, true)
+		bound, err := r.countBoundRoleMembers(ctx, role, excludeUserID)
 		if err != nil {
 			return "", err
 		}
@@ -174,6 +192,35 @@ func (r *Repo) TwoFactorLockoutRisk(ctx context.Context, p Policy) (string, erro
 
 // countUsers считает учётки по условию (bool-колонки в WHERE годятся для обоих
 // диалектов: PG boolean, SQLite integer 0/1).
+// countBoundAdmins — администраторы с привязанным вторым фактором. excludeUserID
+// вычитается из подсчёта: так проверяется «что будет, если снять фактор у него».
+func (r *Repo) countBoundAdmins(ctx context.Context, excludeUserID string) (int, error) {
+	if excludeUserID == "" {
+		return r.countUsers(ctx, "WHERE is_admin AND totp_enabled")
+	}
+	d := r.db.Dialect()
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM _users WHERE is_admin AND totp_enabled AND id <> `+d.Placeholder(1),
+		excludeUserID).Scan(&n)
+	return n, err
+}
+
+// countBoundRoleMembers — то же для членов роли.
+func (r *Repo) countBoundRoleMembers(ctx context.Context, roleName, excludeUserID string) (int, error) {
+	if excludeUserID == "" {
+		return r.countRoleMembers(ctx, roleName, true)
+	}
+	d := r.db.Dialect()
+	var n int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM _users u
+		JOIN _user_roles ur ON ur.user_id = u.id
+		JOIN _roles rl ON rl.id = ur.role_id
+		WHERE rl.name = `+d.Placeholder(1)+` AND u.totp_enabled AND u.id <> `+d.Placeholder(2),
+		roleName, excludeUserID).Scan(&n)
+	return n, err
+}
+
 func (r *Repo) countUsers(ctx context.Context, where string) (int, error) {
 	var n int
 	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM _users `+where).Scan(&n)

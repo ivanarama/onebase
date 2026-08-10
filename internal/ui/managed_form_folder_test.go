@@ -27,8 +27,8 @@ func TestHierarchyCreateHints(t *testing.T) {
 		wantParent string
 	}{
 		{"группа", ent, "is_folder=true", true, true, ""},
-		{"в группе", ent, "parent_id=P1", true, false, "P1"},
-		{"группа в группе", ent, "is_folder=true&parent_id=P1", true, true, "P1"},
+		{"в группе", ent, "parent=P1", true, false, "P1"},
+		{"группа в группе", ent, "is_folder=true&parent=P1", true, true, "P1"},
 		{"обычный элемент", ent, "", true, false, ""},
 		{"существующая запись не подхватывает query", ent, "is_folder=true", false, false, ""},
 		{"неиерархический игнорирует", flat, "is_folder=true", true, false, ""},
