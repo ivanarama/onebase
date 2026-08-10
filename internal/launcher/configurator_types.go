@@ -94,6 +94,27 @@ type saveEntity struct {
 	FullText   *[]string   `yaml:"fulltext,omitempty"`
 	Fields     []saveField `yaml:"fields"`
 	TableParts []saveTP    `yaml:"tableparts,omitempty"`
+
+	// Ключи, которые конфигуратор не редактирует, но обязан сохранить.
+	// Отсутствие любого из них в этой структуре означает молчаливую потерю при
+	// round-trip: правка реквизитов справочника стирала tile_view, indexes,
+	// list_mode, list_refresh_on, notify_changes и description (issue #670,
+	// этап 118A). Тот же класс, что закрывали в 2026-05-25 для hierarchical/
+	// numerator/predefined, — он вернулся, потому что список ключей держится
+	// на внимательности. Теперь его сторожит TestSaveEntity_CoversAllRawKeys.
+	//
+	// indexes и tile_view проводим сырыми узлами: так они переживают round-trip
+	// без зеркальных типов, а вложенные различия сохраняются точно — например
+	// tile_view.fields отличает отсутствие ключа от явного `fields: []`.
+	// Именно yaml.Node значением, а не указателем: в указатель yaml.v3
+	// последовательность не разбирает («cannot unmarshal !!seq into yaml.Node»),
+	// а нулевой Node с omitempty не попадает в вывод.
+	Description   string    `yaml:"description,omitempty"`
+	Indexes       yaml.Node `yaml:"indexes,omitempty"`
+	ListMode      string    `yaml:"list_mode,omitempty"`
+	ListRefreshOn []string  `yaml:"list_refresh_on,omitempty"`
+	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
+	TileView      yaml.Node `yaml:"tile_view,omitempty"`
 }
 
 type saveRegister struct {

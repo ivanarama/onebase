@@ -89,7 +89,7 @@ func TestRun_RefillsPageAfterFilteredRows(t *testing.T) {
 		entities: []*metadata.Entity{e},
 		allowRow: func(row map[string]any) bool { return row["Менеджер"] == "ivanov" },
 	}
-	page, err := Run(ctx, db, deps, "ромашка", 1, 0)
+	page, err := Run(ctx, db, deps, "ромашка", 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +114,11 @@ func TestRun_HiddenMatchesIndistinguishableFromAbsent(t *testing.T) {
 		entities: []*metadata.Entity{e},
 		allowRow: func(map[string]any) bool { return false }, // ничего не видно
 	}
-	hidden, err := Run(ctx, db, hiddenAll, "ромашка", 10, 0)
+	hidden, err := Run(ctx, db, hiddenAll, "ромашка", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	absent, err := Run(ctx, db, hiddenAll, "нетакогослова", 10, 0)
+	absent, err := Run(ctx, db, hiddenAll, "нетакогослова", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,14 +144,14 @@ func TestRun_HasMoreReflectsVisiblePageFill(t *testing.T) {
 	db, e := newSearchFixture(t, 5) // 5 видимых строк
 	deps := fakeDeps{entities: []*metadata.Entity{e}}
 
-	full, err := Run(ctx, db, deps, "ромашка", 2, 0)
+	full, err := Run(ctx, db, deps, "ромашка", 2, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(full.Items) != 2 || !full.HasMore {
 		t.Fatalf("полная страница должна сообщать has_more: %+v", full)
 	}
-	tail, err := Run(ctx, db, deps, "ромашка", 10, 0)
+	tail, err := Run(ctx, db, deps, "ромашка", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,11 @@ func TestRun_PaginatesWithoutRepeats(t *testing.T) {
 	db, e := newSearchFixture(t, 5)
 	deps := fakeDeps{entities: []*metadata.Entity{e}}
 
-	first, err := Run(ctx, db, deps, "ромашка", 2, 0)
+	first, err := Run(ctx, db, deps, "ромашка", 2, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Run(ctx, db, deps, "ромашка", 2, first.NextOffset)
+	second, err := Run(ctx, db, deps, "ромашка", 2, first.Cursor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestRun_SkipsEntitiesExcludedFromIndex(t *testing.T) {
 	e.FullTextSet = true
 	e.FullText = nil
 
-	page, err := Run(ctx, db, fakeDeps{entities: []*metadata.Entity{e}}, "ромашка", 10, 0)
+	page, err := Run(ctx, db, fakeDeps{entities: []*metadata.Entity{e}}, "ромашка", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestRun_SkipsEntitiesExcludedFromIndex(t *testing.T) {
 func TestRun_EmptyQueryReturnsNothing(t *testing.T) {
 	ctx := context.Background()
 	db, e := newSearchFixture(t, 2)
-	page, err := Run(ctx, db, fakeDeps{entities: []*metadata.Entity{e}}, "   ", 10, 0)
+	page, err := Run(ctx, db, fakeDeps{entities: []*metadata.Entity{e}}, "   ", 10, "")
 	if err != nil {
 		t.Fatal(err)
 	}
