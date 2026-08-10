@@ -784,6 +784,7 @@
   "ВыгрузитьВExcel: ожидается аргумент Данные (Массив)": "NachExcelExportieren: Argument Daten (Array) erwartet",
   "ВыгрузитьВExcel: первая строка (заголовки) должна быть Массивом": "NachExcelExportieren: Die erste Zeile (Überschriften) muss ein Array sein",
   "ДекодироватьФайл: требуется текст": "DateiDekodieren: Text erforderlich",
+  "навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет. Выбери ссылку целиком (%s) и дочитай поля отдельным запросом либо соедини %s явно через СОЕДИНЕНИЕ": "Referenznavigation wird nur eine Ebene tief aufgel\u00f6st: \u00ab%s.%s\u00bb ja, \u00ab%s.%s.%s\u00bb nein. W\u00e4hle die Referenz selbst (%s) und lies ihre Felder mit einer zweiten Abfrage, oder verbinde %s explizit",
   "виртуальная таблица %q требует круглые скобки: .%s(...)": "virtuelle Tabelle %q erfordert Klammern: .%s(...)",
   "документ %q не найден в конфигурации": "Dokument %q in der Konfiguration nicht gefunden",
   "доступ к файлу вне рабочего каталога базы запрещён: %s": "Zugriff auf eine Datei außerhalb des Arbeitsverzeichnisses der Datenbank ist verboten: %s",

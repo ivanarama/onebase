@@ -2296,6 +2296,58 @@ func (tr *translator) findRefDim(name string) *refDimInfo {
 	return nil
 }
 
+// dropSourceQualifier снимает уже эмитнутый квалификатор источника, стоящий
+// перед ссылочным полем: `СигналыRAG.Профиль` и `С.Профиль` — то же самое, что
+// голое `Профиль`, и должны разворачиваться в авто-JOIN. Возвращает false, если
+// перед точкой не имя и не алиас источника (тогда это не навигация по ссылке —
+// например, поле присоединённой таблицы, случайно совпавшее по имени).
+func (tr *translator) dropSourceQualifier() bool {
+	if tr.pos < 3 || tr.tokens[tr.pos-3].kind != tIdent {
+		return false
+	}
+	qualifier := strings.ToLower(tr.tokens[tr.pos-3].val)
+	scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1)
+	if !ok {
+		return false
+	}
+	if _, known := scope.qualifiers[qualifier]; !known {
+		return false
+	}
+	// Сверяемся с уже эмитнутым: квалификатор мог уйти в SQL не дословно
+	// (CAST у числовой колонки, префикс основной таблицы). Тогда это не то,
+	// что мы думаем, и трогать вывод нельзя.
+	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." || tr.parts[len(tr.parts)-2] != qualifier {
+		return false
+	}
+	tr.parts = tr.parts[:len(tr.parts)-2]
+	return true
+}
+
+// assertSingleHopNavigation отклоняет путь глубже одного перехода по ссылке
+// (`А.Б.В.Наименование`). Авто-JOIN строится только для ссылочных полей самого
+// источника, поэтому второй переход уходил в SQL дословно и падал
+// `no such column` — именем колонки, которой в схеме нет и быть не может.
+// Ошибка уровня языка запросов честнее: она называет и предел, и обход (#705).
+func (tr *translator) assertSingleHopNavigation(rd *refDimInfo) error {
+	if tr.peek(1).kind != tIdent || tr.peek(2).kind != tDot {
+		return nil
+	}
+	tail := "…"
+	if t := tr.peek(3); t.kind == tIdent {
+		tail = t.val
+	}
+	// Имя поля берём из исходного текста запроса, а не из метаданных: путь в
+	// сообщении должен читаться так же, как написан.
+	field := rd.fieldName
+	if tr.pos >= 1 && tr.tokens[tr.pos-1].kind == tIdent {
+		field = tr.tokens[tr.pos-1].val
+	}
+	return i18nerr.Errorf(
+		"навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет. "+
+			"Выбери ссылку целиком (%s) и дочитай поля отдельным запросом либо соедини %s явно через СОЕДИНЕНИЕ",
+		field, tr.peek(1).val, field, tr.peek(1).val, tail, field, rd.refEntity)
+}
+
 // emitVTSubquery emits a VT subquery with its alias, detects optional user alias (КАК),
 // and adds auto-JOINs for reference dimensions using the correct alias.
 func (tr *translator) emitVTSubquery(subq, defaultAlias string) error {
@@ -3736,6 +3788,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
+						if err := tr.assertSingleHopNavigation(rd); err != nil {
+							return Result{}, err
+						}
 						tr.emit(rd.joinAlias)
 					} else {
 						switch tr.section {
@@ -3756,7 +3811,21 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emitOwnColumn(col, lower)
 				} else if prevDot {
 					if rd := tr.findRefDim(lower); rd != nil {
-						tr.emit(rd.idCol)
+						// `Источник.Ссылка.Поле` — та же навигация, что и голое
+						// `Ссылка.Поле`, только с квалификатором источника.
+						// Без этой ветки квалификатор оставался в SQL, ссылочное
+						// поле уходило колонкой `профиль_id`, а остаток пути
+						// дописывался как есть — запрос падал низкоуровневым
+						// `no such column: сигналыrag.профиль_id.наименование`
+						// вместо того, чтобы отработать (#705).
+						if nextIsDot && tr.dropSourceQualifier() {
+							if err := tr.assertSingleHopNavigation(rd); err != nil {
+								return Result{}, err
+							}
+							tr.emit(rd.joinAlias)
+						} else {
+							tr.emit(rd.idCol)
+						}
 					} else if c, ok2 := tr.colMap[lower]; ok2 {
 						tr.emitQualifiedColumn(c, lower)
 					} else {

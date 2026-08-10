@@ -958,6 +958,7 @@
   "в свойствах документа. Здесь пишите движения регистров.": "in document properties. Write register movements here.",
   "вертикальные": "vertical",
   "виджет не найден:": "widget not found:",
+  "навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет. Выбери ссылку целиком (%s) и дочитай поля отдельным запросом либо соедини %s явно через СОЕДИНЕНИЕ": "reference navigation expands one level only: \u00ab%s.%s\u00bb yes, \u00ab%s.%s.%s\u00bb no. Select the reference itself (%s) and read its fields with a second query, or join %s explicitly",
   "виртуальная таблица %q требует круглые скобки: .%s(...)": "virtual table %q requires parentheses: .%s(...)",
   "внешний": "external",
   "внешняя": "external",
