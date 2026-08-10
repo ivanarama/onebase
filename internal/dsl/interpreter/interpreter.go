@@ -777,6 +777,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		switch o := recv.(type) {
 		case MethodCallable:
 			return o.CallMethod(method, args)
+		case string:
+			// Для ссылочных методов даём более предметную подсказку, чем общая
+			// ошибка ниже. Это частая ловушка колонок «Ссылка» из запроса, но не
+			// утверждаем, что произвольная строка обязательно получена оттуда.
+			if refMethodOnString(method) {
+				RaiseUserError(callee.Field.Literal + "() вызван у строки. Если это колонка «Ссылка» " +
+					"из результата запроса, она содержит UUID, а не ссылку с менеджером. Получите ссылку через " +
+					"Справочники.<Тип>.НайтиПоИдентификатору(Строка(Стр.Ссылка)) " +
+					"(для документов — Документы.<Тип>.НайтиПоИдентификатору)")
+			}
 		}
 		// Если object — идентификатор, не разрешившийся в значение,
 		// и это известный модуль — резолвим Module.Proc() (
@@ -806,6 +816,17 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		return nil
 	}
 	return nil
+}
+
+// refMethodOnString отвечает, является ли метод «ссылочным» — таким, который
+// имеет смысл только у Ref (Ссылка.ПолучитьОбъект() и соседи). Для остальных
+// вызовов работает общая диагностика неизвестного метода из evalCall.
+func refMethodOnString(method string) bool {
+	switch method {
+	case "получитьобъект", "getobject", "удалить", "delete", "записать", "write":
+		return true
+	}
+	return false
 }
 
 // exprSourceName восстанавливает исходный текст простого выражения-приёмника

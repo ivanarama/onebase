@@ -16,8 +16,10 @@ import (
 // memBlobStore is an in-memory BlobObjectStore for exercising the S3 branch of
 // PutBlob/OpenBlob/DeleteBlob without a real bucket.
 type memBlobStore struct {
-	objs   map[string][]byte
-	putErr error
+	objs              map[string][]byte
+	putErr            error
+	deleteErr         error
+	deleteHadDeadline bool
 }
 
 func newMemBlobStore() *memBlobStore { return &memBlobStore{objs: map[string][]byte{}} }
@@ -42,7 +44,11 @@ func (m *memBlobStore) GetObject(_ context.Context, key string) (io.ReadCloser, 
 	return io.NopCloser(bytes.NewReader(b)), int64(len(b)), nil
 }
 
-func (m *memBlobStore) DeleteObject(_ context.Context, key string) error {
+func (m *memBlobStore) DeleteObject(ctx context.Context, key string) error {
+	_, m.deleteHadDeadline = ctx.Deadline()
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	delete(m.objs, key)
 	return nil
 }
