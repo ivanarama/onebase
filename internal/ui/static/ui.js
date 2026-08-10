@@ -2227,9 +2227,28 @@ function openRefPicker(selOrId) {
   document.body.appendChild(modal);
   var list = document.getElementById('_rp-list');
   var status = document.getElementById('_rp-status');
-  function renderItems(opts) {
+  // rpActive — подсвеченная строка списка. Форма выбора обязана работать с
+  // клавиатуры целиком: ищем в поле, ↑/↓ ведут по найденному, Enter выбирает.
+  // Раньше выбрать пункт можно было только мышью.
+  var rpActive = -1;
+  function rpItems() { return list ? list.querySelectorAll('._rp-item') : []; }
+  function rpActiveId() {
+    var items = rpItems();
+    return (rpActive >= 0 && items[rpActive]) ? items[rpActive].getAttribute('data-id') : '';
+  }
+  function rpPaint() {
+    var items = rpItems();
+    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
+    if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
+      items[rpActive].scrollIntoView({ block: 'nearest' });
+    }
+  }
+  // keepId — не сбрасывать подсветку на первую строку, когда список
+  // перестраивается ответом серверного поиска, а не действием пользователя.
+  function renderItems(opts, keepId) {
     if (!list) return;
     list.innerHTML = '';
+    rpActive = -1;
     if (!opts || opts.length === 0) {
       var empty = document.createElement('div');
       empty.style.cssText = 'padding:16px;color:#94a3b8;font-size:13px;text-align:center';
@@ -2244,8 +2263,18 @@ function openRefPicker(selOrId) {
       item.setAttribute('data-label', opts[i].label);
       item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
       item.textContent = opts[i].label;
+      (function (idx) {
+        item.addEventListener('mouseenter', function () { rpActive = idx; rpPaint(); });
+      })(i);
       list.appendChild(item);
     }
+    rpActive = 0;
+    if (keepId) {
+      for (var k = 0; k < opts.length; k++) {
+        if (String(opts[k].id) === String(keepId)) { rpActive = k; break; }
+      }
+    }
+    rpPaint();
   }
   function renderLocal(q) {
     q = (q || '').toLowerCase();
@@ -2297,12 +2326,13 @@ function openRefPicker(selOrId) {
       })
       .then(function (data) {
         if (seq !== requestSeq) return;
+        var keep = rpActiveId();
         var rows = (data && data.items) || [];
         var opts = rows.map(function (row) {
           var id = row && row.id != null ? String(row.id) : '';
           return { id: id, label: String((row && row._label) || id) };
         }).filter(function (opt) { return opt.id !== ''; });
-        renderItems(opts);
+        renderItems(opts, keep);
         if (status) {
           var total = data && typeof data.total === 'number' ? data.total : opts.length;
           status.textContent = total > opts.length ? 'Показано ' + opts.length + ' из ' + total : '';
@@ -2320,6 +2350,27 @@ function openRefPicker(selOrId) {
     var q = this.value;
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(function () { loadServer(q); }, 180);
+  });
+  search.addEventListener('keydown', function (e) {
+    var items = rpItems();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!items.length) return;
+      var next = rpActive + (e.key === 'ArrowDown' ? 1 : -1);
+      if (next < 0) next = items.length - 1;
+      if (next >= items.length) next = 0;
+      rpActive = next;
+      rpPaint();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (rpActive >= 0 && items[rpActive]) { selectItem(items[rpActive]); modal.remove(); }
+      return;
+    }
+    // Esc закрываем здесь же: глобальный обработчик живёт в managed.js, а форма
+    // выбора открывается и на автогенерируемых страницах, где его нет.
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); modal.remove(); }
   });
   renderItems(localOpts);
   loadServer('');
