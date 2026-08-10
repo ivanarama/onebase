@@ -141,6 +141,27 @@ func TestGridSyncCommitsOpenEditor(t *testing.T) {
 	if !strings.Contains(js, "window.obGridSync() === false") {
 		t.Error("обработчик submit не проверяет результат obGridSync — форма запишется с непринятой правкой ячейки")
 	}
+	if !strings.Contains(body, "catch (e) {") || !strings.Contains(body, "ok = false;") {
+		t.Error("исключение commitCurrentEdit трактуется как успех — в tp_json может уйти старое значение")
+	}
+	if !strings.Contains(js, "window.obGridSync && window.obGridSync() === false) return") {
+		t.Error("obFire игнорирует отказ obGridSync и может отправить событие со старой строкой ТЧ")
+	}
+}
+
+// TestGridSyncVetoKeepsDirtyState — невалидная ячейка отменяет submit, поэтому
+// форма обязана остаться «грязной»: иначе Esc/закрытие перестанут предупреждать
+// о введённых, но не сохранённых данных.
+func TestGridSyncVetoKeepsDirtyState(t *testing.T) {
+	js := string(managedJS)
+	if strings.Contains(js, "_obMainForm.addEventListener('submit'") {
+		t.Fatal("dirty-флаг сбрасывается до veto финального submit-handler")
+	}
+	veto := strings.Index(js, "window.obGridSync() === false")
+	reset := strings.Index(js, "!e.defaultPrevented) window._obFormDirty = false")
+	if veto < 0 || reset < 0 || reset < veto {
+		t.Fatalf("dirty-флаг должен сбрасываться только после obGridSync veto: veto=%d reset=%d", veto, reset)
+	}
 }
 
 // TestRefPickerKeyboard — форма выбора (общая модалка ui.js) тоже обязана

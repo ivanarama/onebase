@@ -421,15 +421,9 @@ function obManagedReady(fn) {
   // шлёт {_pick_result}, команды ТЧ — {_tp, _tp_selected}.
   window.obFire = async function(elementName, eventName, extraParams){
    try {
-    // Зафиксировать активную правку ячейки грида: иначе её значение не попадёт
-    // в tp_json, а редактор держит editor-lock — из-за чего первый клик по
-    // кнопке лишь закрывает редактор и «не нажимается».
-    var _grids = window._obGrids || {};
-    for (var _t in _grids) {
-      var _lk = _grids[_t].grid && _grids[_t].grid.getEditorLock && _grids[_t].grid.getEditorLock();
-      if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
-    }
-    if (window.obGridSync) obGridSync();
+    // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
+    // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
+    if (window.obGridSync && window.obGridSync() === false) return;
     const form = document.getElementById('main-form');
     if (!form) return;
     const fd = new FormData(form);
@@ -551,10 +545,9 @@ function obManagedReady(fn) {
   }
   document.addEventListener('input',  function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   document.addEventListener('change', function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
-  // Сохранение формы (Записать/Провести) сбрасывает «грязный» флаг — иначе
-  // beforeunload спрашивал бы подтверждение даже при штатной отправке.
-  var _obMainForm = document.getElementById('main-form');
-  if (_obMainForm) _obMainForm.addEventListener('submit', function(){ window._obFormDirty = false; });
+  // «Грязный» флаг сбрасывает финальный submit-handler только после всех
+  // проверок. Сбрасывать его здесь нельзя: obGridSync ниже ещё может запретить
+  // отправку из-за незавершённой/невалидной правки ячейки.
   window.addEventListener('beforeunload', function(e){
     if (window._obFormDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
@@ -798,6 +791,9 @@ function obManagedInitDelegates() {
       // обработчик onValidationError, пользователю есть что исправить (или Esc).
       if (window.obGridSync() === false) { e.preventDefault(); e.stopPropagation(); return; }
     }
+    // Все синхронные veto пройдены: штатная навигация после submit не должна
+    // показывать предупреждение о несохранённых данных.
+    if (form.id === 'main-form' && !e.defaultPrevented) window._obFormDirty = false;
   });
 }
 
@@ -1370,7 +1366,12 @@ obManagedReady(obManagedInitDelegates);
       try {
         var lock = g.grid && g.grid.getEditorLock && g.grid.getEditorLock();
         if (lock && lock.isActive() && !lock.commitCurrentEdit()) ok = false;
-      } catch (e) { /* грид без редактора — синхронизируем как есть */ }
+      } catch (e) {
+        // Исключение editor-lock не означает успех: dataView может содержать
+        // старое значение. Останавливаем submit/obFire вместо тихой потери.
+        ok = false;
+        if (window.obFlash) window.obFlash('Не удалось завершить правку ячейки: ' + (e && e.message ? e.message : e), 'err');
+      }
       // Сериализуем в исходном порядке (_ord), а не в порядке текущей
       // сортировки отображения — чтобы сортировка «для просмотра» не меняла
       // порядок строк в сохраняемом документе.
