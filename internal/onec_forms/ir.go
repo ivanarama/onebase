@@ -55,6 +55,7 @@ type IRElement struct {
 	VAlign     string
 	Hint       string
 	Mask       string
+	Language   string            // язык подсветки для ПолеКода (html, bsl, sql, …)
 	Events     map[string]string // 1С имя события → имя процедуры
 	Props      map[string]any    // прочие свойства элемента (TitleLocation, EditMode, …)
 	Children   []*IRElement
