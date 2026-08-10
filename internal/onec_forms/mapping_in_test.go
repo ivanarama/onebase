@@ -213,6 +213,6 @@ func TestNormalize_PopupСтановитсяГруппой(t *testing.T) {
 		t.Errorf("вид = %q, ожидалась ГруппаФормы", el.Kind)
 	}
 	if el.Props["popup"] != true {
-		 t.Errorf("потеряна пометка popup: %v", el.Props)
+		t.Errorf("потеряна пометка popup: %v", el.Props)
 	}
 }
