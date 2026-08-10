@@ -71,34 +71,36 @@ func waitForSleep(d time.Duration, ec *execCtx) {
 	if d <= 0 {
 		return
 	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	if ec == nil || ec.deadlineDone == nil {
-		<-timer.C
+	sleepTimer := time.NewTimer(d)
+	defer sleepTimer.Stop()
+	if ec == nil || ec.deadline.IsZero() {
+		<-sleepTimer.C
 		return
 	}
+	remaining := time.Until(ec.deadline)
+	if remaining <= 0 {
+		panic(dslStop{err: errSandboxTimeout})
+	}
+	deadlineTimer := time.NewTimer(remaining)
+	defer deadlineTimer.Stop()
 	select {
-	case <-timer.C:
+	case <-sleepTimer.C:
 		// Если таймер паузы и дедлайн готовы одновременно, дедлайн имеет
 		// приоритет: запуск не должен успешно закончиться за границей бюджета.
 		ec.checkDeadline()
-	case <-ec.deadlineDone:
+	case <-deadlineTimer.C:
 		panic(dslStop{err: errSandboxTimeout})
 	}
 }
 
-// newSandboxSleepFunctions возвращает паузу, связанную с execCtx конкретного
-// запуска. Все вызовы видят один deadlineDone, поэтому каждый следующий вызов
-// расходует остаток общего MaxWallClock, а не получает новый полный лимит.
-func newSandboxSleepFunctions(ec *execCtx) map[string]any {
-	fn := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
-		waitForSleep(sleepDuration(args), ec)
-		return nil, nil
-	})
-	return map[string]any{
-		"Приостановить": fn,
-		"Пауза":         fn,
-		"Sleep":         fn,
+// isSleepBuiltinName ограничивает security-исключение ровно тремя публичными
+// именами паузы. Порядок shadowing всех остальных функций не меняется.
+func isSleepBuiltinName(lowName string) bool {
+	switch lowName {
+	case "приостановить", "пауза", "sleep":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -683,11 +683,21 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	switch callee := c.Callee.(type) {
 	case *ast.Ident:
 		fnName := callee.Tok.Literal
+		lowName := strings.ToLower(fnName)
 		var fallback FallbackBuiltinFunc
+		// В sandbox с wall-clock три имени паузы — часть security boundary,
+		// поэтому разрешаются до env/procedure shadowing. Иначе код мог сделать
+		// `Приостановить = 0`, после чего обычный dispatch игнорировал non-callable
+		// значение и проваливался в глобальный builtin с прямым ожиданием.
+		// В обычном запуске и для любых других имён порядок разрешения прежний.
+		if e.ec != nil && e.ec.forceSandboxSleep && isSleepBuiltinName(lowName) {
+			waitForSleep(sleepDuration(args), e.ec)
+			return nil
+		}
 		// Вычислить(Выражение) — разбор строки как выражения и вычисление в
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
-		if low := strings.ToLower(fnName); low == "вычислить" || low == "eval" {
+		if lowName == "вычислить" || lowName == "eval" {
 			return i.evalEvalBuiltin(args, e)
 		}
 		if val, ok := e.get(fnName); ok {

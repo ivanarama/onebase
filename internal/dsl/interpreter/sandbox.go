@@ -1,7 +1,6 @@
 package interpreter
 
 import (
-	"context"
 	"errors"
 	"time"
 
@@ -106,31 +105,24 @@ func llmDenyFn(msg string) BuiltinFunc {
 	}
 }
 
-// applySandboxLimits привязывает все блокирующие операции запуска к одному
-// wall-clock дедлайну. Возвращаемый cancel освобождает таймер context даже при
-// раннем завершении процедуры.
-func applySandboxLimits(e *env, p SandboxProfile) context.CancelFunc {
+// applySandboxLimits задаёт один абсолютный wall-clock дедлайн запуска. Таймер
+// здесь намеренно не создаётся: большинство CallSandboxed не вызывает паузу,
+// а обычные операторы проверяют дешёвый time.Time через checkDeadline.
+func applySandboxLimits(e *env, p SandboxProfile) {
 	e.ec.maxLoopIters = p.MaxLoopIters
-	if p.MaxWallClock <= 0 {
-		return func() {}
+	if p.MaxWallClock > 0 {
+		e.ec.deadline = time.Now().Add(p.MaxWallClock)
+		e.ec.forceSandboxSleep = true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), p.MaxWallClock)
-	e.ec.deadline, _ = ctx.Deadline()
-	e.ec.deadlineDone = ctx.Done()
-	return cancel
 }
 
-// applySandboxVars навязывает запреты и deadline-aware паузу после переменных
-// вызывающего. Так extraVars не могут вернуть прямой time.Sleep и обойти общий
-// лимит запуска.
+// applySandboxVars навязывает запреты после переменных вызывающего. Пауза не
+// хранится в env: её security-dispatch идёт по execCtx до shadowing, иначе DSL
+// мог бы присвоить одноимённой переменной число и провалиться в глобальный
+// builtin без дедлайна.
 func applySandboxVars(e *env, p SandboxProfile) {
 	for k, v := range p.Vars() {
 		e.setLocal(k, v)
-	}
-	if p.MaxWallClock > 0 {
-		for k, v := range newSandboxSleepFunctions(e.ec) {
-			e.setLocal(k, v)
-		}
 	}
 }
 
@@ -141,8 +133,7 @@ func applySandboxVars(e *env, p SandboxProfile) {
 // значение — в result.
 func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p SandboxProfile, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
-	cancel := applySandboxLimits(e, p)
-	defer cancel()
+	applySandboxLimits(e, p)
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -186,8 +177,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 // return a value.
 func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []any, p SandboxProfile, extraVars ...map[string]any) (result any, err error) {
 	e := i.startEnv(this)
-	cancel := applySandboxLimits(e, p)
-	defer cancel()
+	applySandboxLimits(e, p)
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {

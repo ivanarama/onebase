@@ -1,6 +1,7 @@
 package interpreter_test
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -32,6 +33,51 @@ func TestSleepSandbox_TwoPausesShareWallClock(t *testing.T) {
 	assert.NotEqual(t, "таймаут пойман", result, "жёсткий stop не должна ловить Попытка")
 	assert.Less(t, time.Since(start), 800*time.Millisecond,
 		"ожидание не было отменено дедлайном песочницы")
+}
+
+// Имена паузы в sandbox являются частью security boundary: присваивание
+// одноимённой локальной переменной не должно сбрасывать deadline-aware dispatch
+// к глобальному builtin. Проверяем все три публичных синонима через RunSandboxed.
+func TestSleepSandbox_LocalVariableCannotBypassDeadline(t *testing.T) {
+	for _, name := range []string{"Приостановить", "Пауза", "Sleep"} {
+		t.Run(name, func(t *testing.T) {
+			src := fmt.Sprintf(`Функция Тест()
+  %s = 0;
+  %s(0.5);
+  Возврат "обход";
+КонецФункции`, name, name)
+			var result any
+			start := time.Now()
+			err := interpreter.New().RunSandboxed(parseProc(t, src), nil,
+				interpreter.SandboxProfile{MaxWallClock: 100 * time.Millisecond}, &result)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "максимальное время")
+			assert.NotEqual(t, "обход", result)
+			assert.Less(t, time.Since(start), 300*time.Millisecond,
+				"локальная переменная отключила отмену ожидания %s", name)
+		})
+	}
+}
+
+// Вне sandbox пользовательская инъекция по-прежнему затеняет штатный Sleep:
+// security-исключение не меняет глобальный порядок разрешения функций.
+func TestSleepDSL_ShadowingOutsideSandboxIsUnchanged(t *testing.T) {
+	called := false
+	custom := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+		called = true
+		return nil, nil
+	})
+	src := `Функция Тест()
+  Sleep(10);
+  Возврат "готово";
+КонецФункции`
+	var result any
+	start := time.Now()
+	require.NoError(t, interpreter.New().RunWithResult(parseProc(t, src), nil, &result,
+		map[string]any{"Sleep": custom}))
+	assert.True(t, called)
+	assert.Equal(t, "готово", result)
+	assert.Less(t, time.Since(start), time.Second, "пользовательский Sleep не затенил штатный")
 }
 
 // MaxFloat проходит через публичный DSL-вызов, а не напрямую в helper. Раньше
