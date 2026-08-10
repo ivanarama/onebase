@@ -27,7 +27,13 @@ const maxSleepSeconds = 300
 //
 // Отказ поднимается через RaiseUserError, как у остальных объектов DSL (Часы,
 // коллекции): сообщение видит прикладной разработчик, и ловится оно Попыткой.
+// limitSeconds — действующий предел одной паузы: по умолчанию maxSleepSeconds,
+// а в песочнице — её собственный wall-clock (см. NewSleepFunctions).
 func sleepDuration(args []any) time.Duration {
+	return sleepDurationLimited(args, maxSleepSeconds)
+}
+
+func sleepDurationLimited(args []any, limitSeconds float64) time.Duration {
 	if len(args) == 0 {
 		RaiseUserError("Приостановить: нужно указать длительность в секундах")
 	}
@@ -37,19 +43,43 @@ func sleepDuration(args []any) time.Duration {
 		RaiseUserError("Приостановить: длительность не число")
 	case secs < 0:
 		RaiseUserError(fmt.Sprintf("Приостановить: длительность %g отрицательная", secs))
-	case secs > maxSleepSeconds:
-		RaiseUserError(fmt.Sprintf("Приостановить: %g с больше предела в %d с; "+
-			"длинную выдержку делают регламентным заданием, а не паузой в коде", secs, maxSleepSeconds))
+	case secs > limitSeconds:
+		RaiseUserError(fmt.Sprintf("Приостановить: %g с больше предела в %g с; "+
+			"длинную выдержку делают регламентным заданием, а не паузой в коде", secs, limitSeconds))
 	}
 	return time.Duration(secs * float64(time.Second))
 }
 
 func newSleepBuiltin() BuiltinFunc {
+	return newSleepBuiltinLimited(maxSleepSeconds)
+}
+
+func newSleepBuiltinLimited(limitSeconds float64) BuiltinFunc {
 	return func(args []any, _ string, _ int) (any, error) {
-		if d := sleepDuration(args); d > 0 {
+		if d := sleepDurationLimited(args, limitSeconds); d > 0 {
 			time.Sleep(d)
 		}
 		return nil, nil
+	}
+}
+
+// NewSleepFunctions — Приостановить с пониженным пределом одной паузы. Нужна
+// песочнице: её лимиты (wall-clock, итерации) проверяются МЕЖДУ операторами, а
+// спящий оператор до проверки не доходит. Без понижения предела пауза была бы
+// единственным способом занять поток дольше отведённого профилю — код с
+// `Приостановить(300)` держал бы сессию пять минут при лимите в десять секунд.
+// Сама возможность не запрещается: ждать безопасно, ограничивать надо только
+// длительность.
+func NewSleepFunctions(limit time.Duration) map[string]any {
+	limitSeconds := limit.Seconds()
+	if limit <= 0 || limitSeconds > maxSleepSeconds {
+		limitSeconds = maxSleepSeconds
+	}
+	fn := newSleepBuiltinLimited(limitSeconds)
+	return map[string]any{
+		"Приостановить": fn,
+		"Пауза":         fn,
+		"Sleep":         fn,
 	}
 }
 
@@ -58,9 +88,12 @@ func newSleepBuiltin() BuiltinFunc {
 // мгновенно — тест утверждает, что между попытками прошло сколько надо, не
 // тратя на это реальных секунд. Незамороженные часы означают обычный прогон,
 // и там выдержка настоящая.
-func newFrozenClockSleepBuiltin(clock *TestClock) BuiltinFunc {
+func newFrozenClockSleepBuiltin(clock *TestClock, pauses *Array) BuiltinFunc {
 	return func(args []any, _ string, _ int) (any, error) {
 		d := sleepDuration(args)
+		if pauses != nil {
+			recordCall(pauses, map[string]any{"Секунды": d.Seconds()})
+		}
 		if clock == nil || clock.frozen == nil {
 			if d > 0 {
 				time.Sleep(d)
