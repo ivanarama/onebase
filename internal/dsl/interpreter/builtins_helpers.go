@@ -75,6 +75,20 @@ func addYearBuiltin(args []any, _ string, _ int) (any, error) {
 	return t.AddDate(int(floatArg(args, 1)), 0, 0), nil
 }
 
+// addTimeBuiltin строит ДобавитьЧас/ДобавитьМинуту/ДобавитьСекунду: сдвиг
+// внутри суток, которого не давали ДобавитьДень/Месяц/Год. Дробная часть
+// аргумента сохраняется (ДобавитьМинуту(д, 0.5) = +30 с) — в отличие от
+// ДобавитьДень, где дробь усекается вместе с целочисленным AddDate.
+func addTimeBuiltin(unit time.Duration) func([]any, string, int) (any, error) {
+	return func(args []any, _ string, _ int) (any, error) {
+		t, ok := toTime(args, 0)
+		if !ok {
+			return nil, nil
+		}
+		return t.Add(time.Duration(floatArg(args, 1) * float64(unit))), nil
+	}
+}
+
 // dateLayouts — строковые форматы, понимаемые конструктором Дата().
 var dateLayouts = []string{
 	"2006-01-02T15:04:05", "2006-01-02 15:04:05-07:00", "2006-01-02 15:04:05", "2006-01-02T15:04",

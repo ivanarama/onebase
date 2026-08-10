@@ -50,6 +50,21 @@ func init() {
 	builtins["addday"] = addDayBuiltin
 	builtins["добавитьгод"] = addYearBuiltin
 	builtins["addyear"] = addYearBuiltin
+	// Сдвиг внутри суток. Без него единственным способом было `Дата + N`
+	// (N в секундах), а перебор очевидных вариантов вёл в тупик: дробь у
+	// ДобавитьДень усекается, Число(Дата) числом не считалось.
+	addHour := addTimeBuiltin(time.Hour)
+	addMinute := addTimeBuiltin(time.Minute)
+	addSecond := addTimeBuiltin(time.Second)
+	builtins["добавитьчас"] = addHour
+	builtins["добавитьчасов"] = addHour
+	builtins["addhour"] = addHour
+	builtins["добавитьминуту"] = addMinute
+	builtins["добавитьминут"] = addMinute
+	builtins["addminute"] = addMinute
+	builtins["добавитьсекунду"] = addSecond
+	builtins["добавитьсекунд"] = addSecond
+	builtins["addsecond"] = addSecond
 	builtins["разностьдат"] = dateDiffBuiltin
 	builtins["datediff"] = dateDiffBuiltin
 	builtins["дата"] = dateConstructor

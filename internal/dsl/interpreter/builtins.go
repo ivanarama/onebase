@@ -345,6 +345,17 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 		}
 		return decimal.Zero, nil
 	}
+	// Дата → ГГГГММДДЧЧММСС, обратно к Дата(число). Раньше дата уходила в
+	// разбор строки «2026-05-11 00:00:00 +0300 MSK», не парсилась и молча
+	// давала 0 — и это выглядело как «даты считаются числами, просто эта
+	// пустая», из-за чего арифметику времени строили на нуле. Формат выбран
+	// симметричным конструктору: Дата(Число(Д)) = Д.
+	if t, ok := args[0].(time.Time); ok {
+		if t.IsZero() {
+			return decimal.Zero, nil
+		}
+		return decimal.NewFromString(t.Format("20060102150405"))
+	}
 	s := fmt.Sprintf("%v", args[0])
 	d, err := decimal.NewFromString(strings.ReplaceAll(s, ",", "."))
 	if err != nil {
