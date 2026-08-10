@@ -93,7 +93,27 @@ func shiftBySeconds(args []any, unit float64) (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	return t.Add(time.Duration(floatArg(args, 1) * unit * float64(time.Second))), nil
+	seconds := float64(0)
+	if len(args) > 1 {
+		var numericOK bool
+		seconds, numericOK = toFloat(args[1])
+		if !numericOK {
+			if isNumeric(args[1]) {
+				RaiseUserError("сдвиг даты: число вне безопасного диапазона")
+			}
+			// Совместимость: нечисловой аргумент раньше молча означал нулевой
+			// сдвиг через floatArg.
+			seconds = 0
+		}
+	}
+	scaled := seconds * unit
+	// Целая часть предела оставляет запас от округления float64 при последующем
+	// умножении на наносекунды (точная дробная граница MaxInt64 округляется вверх).
+	const maxDurationSeconds = float64(math.MaxInt64 / int64(time.Second))
+	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled > maxDurationSeconds || scaled < -maxDurationSeconds {
+		RaiseUserError("сдвиг даты выходит за безопасный диапазон времени")
+	}
+	return t.Add(time.Duration(scaled * float64(time.Second))), nil
 }
 
 // addYearBuiltin — ДобавитьГод(дата, n). n может быть отрицательным.

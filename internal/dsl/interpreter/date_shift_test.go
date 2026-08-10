@@ -3,6 +3,7 @@ package interpreter
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +170,41 @@ func TestДата_ЧисловойВводОтклоняетДробьИНебе
 			got, ok := result.(time.Time)
 			if !ok || !got.IsZero() {
 				t.Fatalf("Дата(%v) = %T(%v), ожидалась пустая дата", input, result, result)
+			}
+		})
+	}
+}
+
+// Тот же Decimal не должен доходить до InexactFloat64 через арифметику даты
+// либо новые функции сдвига: внутри shopspring это разворачивает 10^Exponent.
+func TestДата_ОперацииСдвигаОтклоняютНебезопасныеЧислаДоExpansion(t *testing.T) {
+	huge := decimal.New(1, math.MaxInt32)
+	tiny := decimal.New(1, math.MinInt32)
+	for name, input := range map[string]any{
+		"huge_decimal": huge,
+		"tiny_decimal": tiny,
+		"max_float":    math.MaxFloat64,
+		"nan":          math.NaN(),
+		"infinity":     math.Inf(1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, expr := range []string{
+				`Дата(2026, 5, 11) + Вход`,
+				`ДобавитьСекунду(Дата(2026, 5, 11), Вход)`,
+				`ДобавитьМинуту(Дата(2026, 5, 11), Вход)`,
+				`ДобавитьЧас(Дата(2026, 5, 11), Вход)`,
+			} {
+				result := evalBreakFunc(t, `Функция Тест()
+  Попытка
+    Возврат `+expr+`;
+  Исключение
+    Возврат ОписаниеОшибки();
+  КонецПопытки;
+КонецФункции`, map[string]any{"Вход": input})
+				msg, ok := result.(string)
+				if !ok || !strings.Contains(msg, "безопасн") {
+					t.Fatalf("%s с %s = %T(%v), ожидалась безопасная ошибка", expr, name, result, result)
+				}
 			}
 		})
 	}
