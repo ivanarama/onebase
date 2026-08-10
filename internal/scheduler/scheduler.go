@@ -25,7 +25,7 @@ import (
 
 var (
 	// ErrNetworkLocked — отказ предохранителя сети (план 62) для DSL заданий.
-	ErrNetworkLocked = errors.New("сетевые возможности отключены предохранителем — включите «Разрешить сетевые операции» в конфигураторе")
+	ErrNetworkLocked = errors.New("сетевые возможности отключены предохранителем — включите «Разрешить сетевые операции» в конфигураторе либо командой: onebase settings set net.enabled вкл")
 	// ErrJobAlreadyRunning is returned when a cron tick or manual start tries
 	// to overlap another execution of the same logical job.
 	ErrJobAlreadyRunning = errors.New("scheduled job is already running")
