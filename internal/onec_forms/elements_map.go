@@ -23,6 +23,10 @@ var elementMap = map[string]metadata.FormElementType{
 	"Page":             metadata.FormElementPage,
 	"AutoCommandBar":   metadata.FormElementCommandBar,
 	"CommandBar":       metadata.FormElementCommandBar,
+	// Поле текстового документа — многострочный редактор кода/текста. В таких
+	// полях обычно правят правила обмена, шаблоны и запросы, поэтому ближайший
+	// аналог — ПолеКода с подсветкой, а не обычная textarea.
+	"TextDocumentField": metadata.FormElementCodeField,
 	// "Decoration" — мапится в LabelField + props.decoration=true (см. mapping_in).
 }
 
