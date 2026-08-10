@@ -825,6 +825,16 @@ func (tr *translator) emit(s string) {
 	tr.parts = append(tr.parts, s)
 }
 
+// dropSourceQualifier снимает последние «<источник> .» из вывода. Возвращает
+// false, если картина иная, — тогда вызывающий не меняет поведение.
+func (tr *translator) dropSourceQualifier() bool {
+	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." {
+		return false
+	}
+	tr.parts = tr.parts[:len(tr.parts)-2]
+	return true
+}
+
 func (tr *translator) build() string {
 	var sb strings.Builder
 	for i, p := range tr.parts {
@@ -3756,7 +3766,20 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emitOwnColumn(col, lower)
 				} else if prevDot {
 					if rd := tr.findRefDim(lower); rd != nil {
-						tr.emit(rd.idCol)
+						// Двухуровневая навигация: Источник.Ссылка.Реквизит.
+						// LEFT JOIN на связанную таблицу к этому моменту уже
+						// построен — не хватало только подстановки. Раньше путь
+						// уходил в SQL как есть и падал сырым «no such column:
+						// сигналыrag.профиль_id.наименование» (#705).
+						//
+						// Квалификатор источника («сигналыrag» и точку) снимаем:
+						// реквизит берётся из псевдонима присоединённой таблицы,
+						// а не из колонки-идентификатора.
+						if nextIsDot && tr.dropSourceQualifier() {
+							tr.emit(rd.joinAlias)
+						} else {
+							tr.emit(rd.idCol)
+						}
 					} else if c, ok2 := tr.colMap[lower]; ok2 {
 						tr.emitQualifiedColumn(c, lower)
 					} else {

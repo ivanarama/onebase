@@ -107,7 +107,39 @@ function obManagedReady(fn) {
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;
-  function applyValues(values){
+  // ensureRefOption добавляет в <select> недостающий <option> для значения,
+  // присвоенного обработчиком.
+  //
+  // Без этого inp.value = val на <select> без такого <option> браузер молча
+  // отрабатывает как selectedIndex = -1: поле пустеет, и следующая запись
+  // затирает ссылку в базе. А <select> ссылочного реквизита рисуется только
+  // первой страницей справочника (50 записей), так что промах — не редкость,
+  // а норма для любого живого справочника (#615).
+  //
+  // Подпись берём из refOptions ответа (сервер догрузил её той же дорогой, что
+  // и выбранное значение при отрисовке, — с маской ПДн и проверкой доступа).
+  // Если её нет, ставим сам идентификатор: он некрасив, но значение сохраняется,
+  // а это важнее подписи.
+  function ensureRefOption(sel, val, rows){
+    if (!val) return;
+    for (let i = 0; i < sel.options.length; i++){
+      if (String(sel.options[i].value) === String(val)) return;
+    }
+    let label = val;
+    if (rows) {
+      for (let i = 0; i < rows.length; i++){
+        if (rows[i] && String(rows[i].id) === String(val)) {
+          if (rows[i]._label != null && rows[i]._label !== '') label = rows[i]._label;
+          break;
+        }
+      }
+    }
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  function applyValues(values, refOptions){
     if (!values) return;
     const form = document.getElementById('main-form');
     if (!form) return;
@@ -127,6 +159,7 @@ function obManagedReady(fn) {
         // поле — дата на форме пропадала после первого же события, а следующая
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
+        if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k]);
         inp.value = val;
       }
     });
@@ -459,7 +492,7 @@ function obManagedReady(fn) {
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       window.applyTableParts(data.tableparts);
-      applyValues(data.values);
+      applyValues(data.values, data.refOptions);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
       // Обработчик записал новую форму (Объект.Записать()): дальше она работает

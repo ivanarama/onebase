@@ -130,7 +130,7 @@ func (db *DB) tableExists(ctx context.Context, table string) (bool, error) {
 // базе после этого нужен разовый backfill, иначе строка поиска в шапке есть, а
 // находит ноль объектов — и узнать об этом можно только догадавшись выполнить
 // `onebase reindex`.
-func (db *DB) EnsureFullTextSchema(ctx context.Context) (bool, error) {
+func (db *DB) EnsureFullTextSchema(ctx context.Context) (needBackfill bool, err error) {
 	d := db.dialect
 	existed, err := db.tableExists(ctx, ftsTable)
 	if err != nil {
@@ -163,7 +163,50 @@ func (db *DB) EnsureFullTextSchema(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	atomic.StoreInt32(&db.ftsState, ftsStateReady)
-	return !existed, nil
+	done, err := db.fullTextBackfillDone(ctx)
+	if err != nil {
+		return false, err
+	}
+	// Два независимых повода наполнить, и нужен любой из них.
+	//
+	// `!existed` — таблицы не было: свежая база или снесённый индекс.
+	// `!done` — она была, но отметки о доведённом до конца наполнении нет.
+	//
+	// Одного «таблицы не было» не хватало (#615): создаётся она в начале
+	// Migrate, наполняется в конце и вне транзакции, поэтому обрыв между этими
+	// точками (Ctrl+C, падение, разрыв соединения) оставлял таблицу на месте
+	// пустой. При следующем запуске она уже существовала, признак выходил
+	// false, и наполнение не повторялось НИКОГДА — строка поиска работала и
+	// молча не находила ничего. Понять это можно было, только догадавшись
+	// выполнить `onebase reindex`.
+	//
+	// Одной отметки тоже не хватает: индекс могли уронить руками, а отметка
+	// осталась бы. Поэтому проверяем оба сигнала, а не заменяем один другим.
+	return !existed || !done, nil
+}
+
+// ftsBackfillDoneKey — отметка о том, что первичное наполнение индекса
+// ДОВЕДЕНО ДО КОНЦА. Её ставит лишь успешно завершившаяся пересборка.
+//
+// Побочный эффект обновления: на базе, где индекс наполнен ещё старым кодом,
+// отметки нет, и первый же migrate пересоберёт индекс заново. Это разовая
+// работа и она идемпотентна, а альтернатива — оставить нечинёными как раз те
+// базы, где наполнение когда-то оборвалось.
+const ftsBackfillDoneKey = "fts_backfill_done"
+
+func (db *DB) fullTextBackfillDone(ctx context.Context) (bool, error) {
+	v, ok, err := db.GetSetting(ctx, ftsBackfillDoneKey)
+	if err != nil {
+		return false, fmt.Errorf("полнотекстовый индекс: чтение отметки о наполнении: %w", err)
+	}
+	return ok && v == "1", nil
+}
+
+func (db *DB) markFullTextBackfillDone(ctx context.Context) error {
+	if err := db.SaveSetting(ctx, ftsBackfillDoneKey, "1"); err != nil {
+		return fmt.Errorf("полнотекстовый индекс: отметка о наполнении: %w", err)
+	}
+	return nil
 }
 
 // IndexObject записывает объект в полнотекстовый индекс. Вызывается изнутри
@@ -270,6 +313,13 @@ func (db *DB) RebuildFullTextIndex(ctx context.Context, entities []*metadata.Ent
 		if progress != nil {
 			progress(stat)
 		}
+	}
+	// Отметка ставится здесь, а не в Migrate: это единственная точка полной
+	// пересборки (её зовут и migrate, и `onebase reindex`), и любой выход по
+	// ошибке выше отметку не оставляет. Разложить это по вызывающим значило бы
+	// снова получить инвариант, применённый в части мест.
+	if err := db.markFullTextBackfillDone(ctx); err != nil {
+		return stats, err
 	}
 	return stats, nil
 }
