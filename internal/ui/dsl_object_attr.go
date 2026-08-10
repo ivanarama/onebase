@@ -282,13 +282,10 @@ func findObjectAttributeField(entity *metadata.Entity, name string) *metadata.Fi
 }
 
 func displayField(entity *metadata.Entity) []metadata.Field {
-	if entity == nil {
-		return nil
-	}
-	for _, f := range entity.Fields {
-		if f.Type == metadata.FieldTypeString {
-			return []metadata.Field{f}
-		}
+	// Тот же выбор, что у RowLabel: по имени реквизита, а не по позиции в YAML
+	// (план 117, решение №3).
+	if f := metadata.LabelFields(entity); len(f) > 0 {
+		return f[:1]
 	}
 	return nil
 }
