@@ -224,8 +224,7 @@ func TestDSL_XML_RejectsNonFiniteFloat(t *testing.T) {
 	}
 }
 
-func TestDSL_XML_LargeAttributeMapIsLinear(t *testing.T) {
-	const attributeCount = 10_000
+func xmlDocumentWithAttributes(attributeCount int) string {
 	var doc strings.Builder
 	doc.Grow(attributeCount * 18)
 	doc.WriteString("<Корень")
@@ -238,17 +237,57 @@ func TestDSL_XML_LargeAttributeMapIsLinear(t *testing.T) {
 		doc.WriteByte('"')
 	}
 	doc.WriteString("/>")
+	return doc.String()
+}
+
+func TestDSL_XML_LargeAttributeMapIsLinear(t *testing.T) {
+	const attributeCount = 10_000
 
 	src := `Процедура Тест()
 		Дерево = ПрочитатьXML(Текст);
 		Возврат ЗаписатьXML(Дерево.Атрибуты, "Корень");
 	КонецПроцедуры`
-	result, err := evalXMLWithVarsTimeout(t, src, map[string]any{"Текст": doc.String()}, 5*time.Second)
+	result, err := evalXMLWithVarsTimeout(t, src, map[string]any{"Текст": xmlDocumentWithAttributes(attributeCount)}, 5*time.Second)
 	require.NoError(t, err)
 	out, ok := result.(string)
 	require.True(t, ok, "ожидалась строка, получено %T", result)
 	assert.True(t, strings.HasPrefix(out, "<Корень><a0>v0</a0>"), out[:min(len(out), 100)])
 	assert.True(t, strings.HasSuffix(out, "<a9999>v9999</a9999></Корень>"))
+}
+
+func TestDSL_XML_SharedSubtreeChecksTotalAttributesBeforeCopy(t *testing.T) {
+	const attributeCount = 10_000
+	src := `Процедура Тест()
+		ОбщийУзел = ПрочитатьXML(Текст);
+		Дети = Новый Массив;
+		Для Индекс = 1 По 11 Цикл
+			Дети.Добавить(ОбщийУзел);
+		КонецЦикла;
+
+		// Этот узел обязан остаться недостигнутым: общий предел превышается
+		// на одиннадцатой ссылке на ОбщийУзел, до копирования её атрибутов.
+		ПлохойУзел = Новый Структура;
+		ПлохойУзел.Вставить("Имя", "Плохой");
+		ПлохойУзел.Вставить("Текст", 1);
+		Дети.Добавить(ПлохойУзел);
+
+		Корень = Новый Структура;
+		Корень.Вставить("Имя", "Корень");
+		Корень.Вставить("Элементы", Дети);
+		Возврат ЗаписатьXML(Корень);
+	КонецПроцедуры`
+	err := evalXMLWithVarsError(t, src, map[string]any{"Текст": xmlDocumentWithAttributes(attributeCount)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "общее число атрибутов XML")
+}
+
+func TestDSL_XML_RejectsEscapedDocumentOverByteBudget(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат ЗаписатьXML(Текст, "Корень");
+	КонецПроцедуры`
+	err := evalXMLWithVarsError(t, src, map[string]any{"Текст": strings.Repeat("&", 4<<20)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "размер XML")
 }
 
 func TestDSL_XML_DateTimeBounds(t *testing.T) {
@@ -266,6 +305,21 @@ func TestDSL_XML_DateTimeBounds(t *testing.T) {
 	err = evalXMLWithVarsError(t, src, map[string]any{"Значение": oddOffset})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "кратно минуте")
+
+	for _, tc := range []struct {
+		value string
+		want  string
+	}{
+		{"2026-08-10T12:30:00+24:00", "00..23"},
+		{"2026-08-10T12:30:00+00:60", "00..59"},
+	} {
+		src = `Процедура Тест()
+			Возврат XMLЗначение("dateTime", "` + tc.value + `");
+		КонецПроцедуры`
+		err = evalXMLError(t, src)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), tc.want)
+	}
 
 	valid := time.Date(2026, 8, 10, 12, 30, 0, 123456789, time.FixedZone("MSK", 3*60*60))
 	src = `Процедура Тест()

@@ -273,7 +273,8 @@ func builtinWriteXML(args []any, file string, line int) (any, error) {
 	}
 
 	var sb strings.Builder
-	w := &xmlWriter{encoder: xml.NewEncoder(&sb)}
+	documentWriter := &xmlDocumentWriter{dst: &sb}
+	w := &xmlWriter{encoder: xml.NewEncoder(documentWriter)}
 	if err := w.writeValue(rootName, args[0], 1); err != nil {
 		panic(userError{Msg: "ЗаписатьXML: " + err.Error()})
 	}
@@ -281,6 +282,23 @@ func builtinWriteXML(args []any, file string, line int) (any, error) {
 		panic(userError{Msg: "ЗаписатьXML: " + err.Error()})
 	}
 	return sb.String(), nil
+}
+
+// xmlDocumentWriter ограничивает именно готовую XML-строку после экранирования
+// и добавления разметки. Лимита логического текста недостаточно: например,
+// каждый символ '&' кодировщик разворачивает в пять байт "&amp;".
+type xmlDocumentWriter struct {
+	dst     *strings.Builder
+	written int
+}
+
+func (w *xmlDocumentWriter) Write(p []byte) (int, error) {
+	if w.written < 0 || w.written > maxXMLDocumentBytes || len(p) > maxXMLDocumentBytes-w.written {
+		return 0, fmt.Errorf("размер XML превышает предел %d байт", maxXMLDocumentBytes)
+	}
+	n, err := w.dst.Write(p)
+	w.written += n
+	return n, err
 }
 
 type xmlWriter struct {
@@ -434,7 +452,8 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 }
 
 type xmlTreeBudget struct {
-	nodes int
+	nodes      int
+	attributes int
 }
 
 // asXMLTreeNode распознаёт Структуру, полученную из ПрочитатьXML. Наличие
@@ -489,6 +508,14 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 		if len(attrs.keys) > maxXMLAttributesPerElement {
 			return nil, true, fmt.Errorf("число атрибутов элемента «%s» превышает предел %d", name, maxXMLAttributesPerElement)
 		}
+		// Проверяем общий предел до копирования атрибутов в xmlNode. Один и тот
+		// же узел DSL может многократно встречаться в Элементы; без этой проверки
+		// дешёвое дерево с разделяемым поддеревом раздувалось до гигантской копии ещё до
+		// аналогичной проверки в xmlWriter.startElement.
+		if budget.attributes > maxXMLAttributesTotal-len(attrs.keys) {
+			return nil, true, fmt.Errorf("общее число атрибутов XML превышает предел %d", maxXMLAttributesTotal)
+		}
+		budget.attributes += len(attrs.keys)
 		seen := make(map[string]struct{}, len(attrs.keys))
 		for i, keyVal := range attrs.keys {
 			key, ok := keyVal.(string)
@@ -681,6 +708,33 @@ func safeXMLDateTimeString(value time.Time) (string, error) {
 	return value.Format(time.RFC3339Nano), nil
 }
 
+// validateRFC3339TimezoneOffset дополняет time.Parse строгой проверкой сырой
+// лексической записи. Стандартный парсер Go намеренно принимает +24:00 и минуты
+// 60, после чего нормализует, например, +00:60 в +01:00.
+func validateRFC3339TimezoneOffset(text string) error {
+	if strings.HasSuffix(text, "Z") {
+		return nil
+	}
+	if len(text) < 6 {
+		return fmt.Errorf("смещение часового пояса должно иметь вид ±HH:MM")
+	}
+	offset := text[len(text)-6:]
+	if (offset[0] != '+' && offset[0] != '-') || offset[3] != ':' ||
+		offset[1] < '0' || offset[1] > '9' || offset[2] < '0' || offset[2] > '9' ||
+		offset[4] < '0' || offset[4] > '9' || offset[5] < '0' || offset[5] > '9' {
+		return fmt.Errorf("смещение часового пояса должно иметь вид ±HH:MM")
+	}
+	hour := int(offset[1]-'0')*10 + int(offset[2]-'0')
+	if hour > 23 {
+		return fmt.Errorf("часы смещения часового пояса должны быть в диапазоне 00..23")
+	}
+	minute := int(offset[4]-'0')*10 + int(offset[5]-'0')
+	if minute > 59 {
+		return fmt.Errorf("минуты смещения часового пояса должны быть в диапазоне 00..59")
+	}
+	return nil
+}
+
 func safeXMLDecimalString(value decimal.Decimal) (string, error) {
 	if value.IsZero() {
 		return "0", nil
@@ -830,6 +884,14 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 	case "дата", "date", "datetime":
 		for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02", "20060102150405", "20060102"} {
 			if t, err := time.Parse(layout, text); err == nil {
+				if layout == time.RFC3339Nano {
+					if err := validateRFC3339TimezoneOffset(text); err != nil {
+						panic(userError{Msg: "XMLЗначение: некорректное dateTime: " + err.Error()})
+					}
+				}
+				if err := validateXMLDateTime(t); err != nil {
+					panic(userError{Msg: "XMLЗначение: некорректное dateTime: " + err.Error()})
+				}
 				return t, nil
 			}
 		}

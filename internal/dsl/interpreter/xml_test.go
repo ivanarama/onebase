@@ -185,6 +185,30 @@ func TestXML_AttributeAndTextBudgets(t *testing.T) {
 			_, _ = builtinWriteXML([]any{text, "Корень"}, "", 0)
 		})
 	})
+
+	t.Run("write exact document bytes", func(t *testing.T) {
+		const markupBytes = len("<r></r>")
+		value, err := builtinWriteXML([]any{strings.Repeat("x", maxXMLDocumentBytes-markupBytes), "r"}, "", 0)
+		if err != nil {
+			t.Fatalf("ЗаписатьXML: %v", err)
+		}
+		text, ok := value.(string)
+		if !ok {
+			t.Fatalf("ожидалась строка, получено %T", value)
+		}
+		if len(text) != maxXMLDocumentBytes {
+			t.Fatalf("размер готового XML = %d, ожидалось %d", len(text), maxXMLDocumentBytes)
+		}
+	})
+
+	t.Run("write escaped document bytes", func(t *testing.T) {
+		// Логический текст заметно меньше 16 МиБ, но после XML-экранирования
+		// каждый '&' занимает пять байт.
+		text := strings.Repeat("&", maxXMLDocumentBytes/5+1)
+		requireXMLUserError(t, "размер XML", func() {
+			_, _ = builtinWriteXML([]any{text, "r"}, "", 0)
+		})
+	})
 }
 
 func TestReadXML_RejectsUnrepresentableContent(t *testing.T) {
