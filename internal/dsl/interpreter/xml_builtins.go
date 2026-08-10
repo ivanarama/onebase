@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
@@ -63,16 +63,36 @@ type xmlNode struct {
 	Children []*xmlNode
 }
 
+type xmlLexicalToken struct {
+	end   bool
+	name  string
+	attrs []string
+}
+
 func builtinReadXML(args []any, file string, line int) (any, error) {
 	if len(args) == 0 {
 		panic(userError{Msg: "ПрочитатьXML: ожидается 1 аргумент"})
 	}
-	text := strArg(args, 0)
+	text := requireXMLStringArg(args, 0, "ПрочитатьXML", "текст")
 	node, err := parseXMLDocument(text)
 	if err != nil {
 		panic(userError{Msg: "ПрочитатьXML: " + err.Error()})
 	}
 	return xmlNodeToDSL(node), nil
+}
+
+// requireXMLStringArg не использует общий strArg: тот форматирует произвольные
+// значения через fmt.Stringer. В частности, Decimal с огромной положительной
+// экспонентой мог развернуться в гигантскую строку ещё до XML-лимитов.
+func requireXMLStringArg(args []any, index int, functionName, parameterName string) string {
+	if index >= len(args) {
+		panic(userError{Msg: functionName + ": отсутствует аргумент «" + parameterName + "»"})
+	}
+	value, ok := args[index].(string)
+	if !ok {
+		panic(userError{Msg: fmt.Sprintf("%s: аргумент «%s» должен быть строкой, получено %T", functionName, parameterName, args[index])})
+	}
+	return value
 }
 
 func parseXMLDocument(text string) (*xmlNode, error) {
@@ -85,7 +105,11 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	if len(decoderInput) > maxXMLDocumentBytes {
 		return nil, fmt.Errorf("размер XML превышает предел %d байт", maxXMLDocumentBytes)
 	}
-	dec := xml.NewDecoder(strings.NewReader(decoderInput))
+	preparedInput, lexicalTokens, err := prepareXMLDecoderInput(decoderInput)
+	if err != nil {
+		return nil, err
+	}
+	dec := xml.NewDecoder(bytes.NewReader(preparedInput))
 	dec.Strict = true
 
 	type frame struct {
@@ -98,6 +122,7 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	nodeCount := 0
 	attributeCount := 0
 	textBytes := 0
+	lexicalIndex := 0
 	var previousOffset int64
 	for {
 		tok, err := dec.Token()
@@ -115,6 +140,18 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 		previousOffset = currentOffset
 		switch t := tok.(type) {
 		case xml.StartElement:
+			if lexicalIndex >= len(lexicalTokens) || lexicalTokens[lexicalIndex].end {
+				return nil, fmt.Errorf("несогласованная лексическая структура XML")
+			}
+			lexical := lexicalTokens[lexicalIndex]
+			lexicalIndex++
+			if len(t.Attr) != len(lexical.attrs) {
+				return nil, fmt.Errorf("несогласованный список атрибутов XML")
+			}
+			t.Name = xml.Name{Local: lexical.name}
+			for i := range t.Attr {
+				t.Attr[i].Name = xml.Name{Local: lexical.attrs[i]}
+			}
 			depth := len(stack) + 1
 			if depth > maxXMLDepth {
 				return nil, fmt.Errorf("глубина XML превышает предел %d", maxXMLDepth)
@@ -168,6 +205,11 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 			}
 			stack = append(stack, &frame{node: node})
 		case xml.EndElement:
+			if lexicalIndex >= len(lexicalTokens) || !lexicalTokens[lexicalIndex].end {
+				return nil, fmt.Errorf("несогласованная лексическая структура XML")
+			}
+			t.Name = xml.Name{Local: lexicalTokens[lexicalIndex].name}
+			lexicalIndex++
 			if len(stack) == 0 {
 				return nil, fmt.Errorf("закрывающий тег «%s» не имеет открывающего", t.Name.Local)
 			}
@@ -220,7 +262,204 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	if root == nil {
 		return nil, fmt.Errorf("документ не содержит корневого элемента")
 	}
+	if lexicalIndex != len(lexicalTokens) {
+		return nil, fmt.Errorf("несогласованная лексическая структура XML")
+	}
 	return root, nil
+}
+
+// prepareXMLDecoderInput обходит ограничение encoding/xml: стандартный decoder
+// проверяет имена по устаревшим Unicode-категориям, а не по полным диапазонам
+// XML 1.0 Fifth Edition. Валидные имена временно заменяются ASCII-именами той
+// же байтовой длины; поэтому InputOffset по-прежнему указывает в исходную строку.
+// Исходные имена возвращаются из lexicalTokens, а соответствие start/end
+// проверяется до замены, так что одинаковые placeholders не ослабляют strictness.
+func prepareXMLDecoderInput(text string) ([]byte, []xmlLexicalToken, error) {
+	source := text
+	prepared := []byte(text)
+	lexicalTokens := make([]xmlLexicalToken, 0)
+	stack := make([]string, 0, maxXMLDepth)
+	nodeCount := 0
+	attributeCount := 0
+
+	for i := 0; i < len(source); {
+		if source[i] != '<' {
+			i++
+			continue
+		}
+		if strings.HasPrefix(source[i:], "<!--") {
+			return nil, nil, fmt.Errorf("комментарии XML не поддерживаются")
+		}
+		if strings.HasPrefix(source[i:], "<![CDATA[") {
+			end := strings.Index(source[i+len("<![CDATA["):], "]]>")
+			if end < 0 {
+				return nil, nil, fmt.Errorf("незавершённая секция CDATA")
+			}
+			i += len("<![CDATA[") + end + len("]]>")
+			continue
+		}
+		if strings.HasPrefix(source[i:], "<!") {
+			return nil, nil, fmt.Errorf("директивы XML не поддерживаются")
+		}
+		if strings.HasPrefix(source[i:], "<?") {
+			return nil, nil, fmt.Errorf("инструкции обработки XML не поддерживаются")
+		}
+
+		if i+1 < len(source) && source[i+1] == '/' {
+			nameStart := i + 2
+			nameEnd := scanXMLElementNameEnd(source, nameStart, true)
+			if nameEnd == nameStart {
+				return nil, nil, fmt.Errorf("закрывающий тег не содержит имени")
+			}
+			name := text[nameStart:nameEnd]
+			if err := validateXMLName(name); err != nil {
+				return nil, nil, fmt.Errorf("недопустимое имя закрывающего элемента: %w", err)
+			}
+			replaceXMLNameWithPlaceholder(prepared, nameStart, nameEnd)
+			cursor := skipXMLWhitespaceBytes(source, nameEnd)
+			if cursor >= len(source) || source[cursor] != '>' {
+				return nil, nil, fmt.Errorf("после имени закрывающего тега ожидался символ '>'")
+			}
+			if len(stack) == 0 {
+				return nil, nil, fmt.Errorf("закрывающий тег «%s» не имеет открывающего", name)
+			}
+			openName := stack[len(stack)-1]
+			if openName != name {
+				return nil, nil, fmt.Errorf("закрывающий тег «%s» не соответствует «%s»", name, openName)
+			}
+			stack = stack[:len(stack)-1]
+			lexicalTokens = append(lexicalTokens, xmlLexicalToken{end: true, name: name})
+			i = cursor + 1
+			continue
+		}
+
+		nameStart := i + 1
+		nameEnd := scanXMLElementNameEnd(source, nameStart, false)
+		if nameEnd == nameStart {
+			return nil, nil, fmt.Errorf("открывающий тег не содержит имени")
+		}
+		name := text[nameStart:nameEnd]
+		if err := validateXMLName(name); err != nil {
+			return nil, nil, fmt.Errorf("недопустимое имя открывающего элемента: %w", err)
+		}
+		nodeCount++
+		if nodeCount > maxXMLNodes {
+			return nil, nil, fmt.Errorf("число элементов XML превышает предел %d", maxXMLNodes)
+		}
+		if len(stack)+1 > maxXMLDepth {
+			return nil, nil, fmt.Errorf("глубина XML превышает предел %d", maxXMLDepth)
+		}
+		replaceXMLNameWithPlaceholder(prepared, nameStart, nameEnd)
+
+		cursor := nameEnd
+		attrs := make([]string, 0)
+		for {
+			beforeWhitespace := cursor
+			cursor = skipXMLWhitespaceBytes(source, cursor)
+			if cursor >= len(source) {
+				return nil, nil, fmt.Errorf("незавершённый открывающий тег «%s»", name)
+			}
+			if source[cursor] == '>' {
+				lexicalTokens = append(lexicalTokens, xmlLexicalToken{name: name, attrs: attrs})
+				stack = append(stack, name)
+				i = cursor + 1
+				break
+			}
+			if source[cursor] == '/' && cursor+1 < len(source) && source[cursor+1] == '>' {
+				lexicalTokens = append(lexicalTokens,
+					xmlLexicalToken{name: name, attrs: attrs},
+					xmlLexicalToken{end: true, name: name},
+				)
+				i = cursor + 2
+				break
+			}
+			if cursor == beforeWhitespace {
+				return nil, nil, fmt.Errorf("перед атрибутом элемента «%s» ожидался пробел", name)
+			}
+
+			attrStart := cursor
+			attrEnd := scanXMLAttributeNameEnd(source, attrStart)
+			if attrEnd == attrStart {
+				return nil, nil, fmt.Errorf("элемент «%s»: ожидалось имя атрибута", name)
+			}
+			attrName := text[attrStart:attrEnd]
+			if err := validateXMLAttributeName(attrName); err != nil {
+				return nil, nil, err
+			}
+			if len(attrs) >= maxXMLAttributesPerElement {
+				return nil, nil, fmt.Errorf("число атрибутов элемента «%s» превышает предел %d", name, maxXMLAttributesPerElement)
+			}
+			if attributeCount >= maxXMLAttributesTotal {
+				return nil, nil, fmt.Errorf("общее число атрибутов XML превышает предел %d", maxXMLAttributesTotal)
+			}
+			attributeCount++
+			attrs = append(attrs, attrName)
+			replaceXMLNameWithPlaceholder(prepared, attrStart, attrEnd)
+
+			cursor = skipXMLWhitespaceBytes(source, attrEnd)
+			if cursor >= len(source) || source[cursor] != '=' {
+				return nil, nil, fmt.Errorf("после имени атрибута ожидался символ '='")
+			}
+			cursor = skipXMLWhitespaceBytes(source, cursor+1)
+			if cursor >= len(source) || source[cursor] != '\'' && source[cursor] != '"' {
+				return nil, nil, fmt.Errorf("значение атрибута должно быть заключено в кавычки")
+			}
+			quote := source[cursor]
+			cursor++
+			for cursor < len(source) && source[cursor] != quote {
+				cursor++
+			}
+			if cursor >= len(source) {
+				return nil, nil, fmt.Errorf("незавершённое значение атрибута")
+			}
+			cursor++
+		}
+	}
+	if len(stack) != 0 {
+		return nil, nil, fmt.Errorf("XML неожиданно завершён внутри элемента «%s»", stack[len(stack)-1])
+	}
+	return prepared, lexicalTokens, nil
+}
+
+func scanXMLElementNameEnd(source string, start int, closing bool) int {
+	end := start
+	for end < len(source) {
+		b := source[end]
+		if isXMLWhitespaceByte(b) || b == '>' || !closing && b == '/' {
+			break
+		}
+		end++
+	}
+	return end
+}
+
+func scanXMLAttributeNameEnd(source string, start int) int {
+	end := start
+	for end < len(source) {
+		b := source[end]
+		if isXMLWhitespaceByte(b) || b == '=' || b == '/' || b == '>' {
+			break
+		}
+		end++
+	}
+	return end
+}
+
+func skipXMLWhitespaceBytes(source string, index int) int {
+	for index < len(source) && isXMLWhitespaceByte(source[index]) {
+		index++
+	}
+	return index
+}
+
+func isXMLWhitespaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func replaceXMLNameWithPlaceholder(prepared []byte, start, end int) {
+	for i := start; i < end; i++ {
+		prepared[i] = 'x'
+	}
 }
 
 func decodedXMLName(name xml.Name, kind string) (string, error) {
@@ -267,6 +506,10 @@ func builtinWriteXML(args []any, file string, line int) (any, error) {
 			panic(userError{Msg: "ЗаписатьXML: имя корня должно быть строкой"})
 		}
 		rootName = name
+	}
+	rootNameBytes := 0
+	if err := addXMLTextBytes(&rootNameBytes, len(rootName)); err != nil {
+		panic(userError{Msg: "ЗаписатьXML: " + err.Error()})
 	}
 	if err := validateXMLName(rootName); err != nil {
 		panic(userError{Msg: "ЗаписатьXML: недопустимое имя корня «" + rootName + "»: " + err.Error()})
@@ -363,11 +606,11 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 		if err != nil {
 			return fmt.Errorf("текст элемента «%s»: %w", name, err)
 		}
-		if err := validateXMLCharacters(text); err != nil {
-			return fmt.Errorf("текст элемента «%s»: %w", name, err)
-		}
 		if err := addXMLTextBytes(&w.textBytes, len(text)); err != nil {
 			return err
+		}
+		if err := validateXMLCharacters(text); err != nil {
+			return fmt.Errorf("текст элемента «%s»: %w", name, err)
 		}
 		if text != "" {
 			if err := w.encoder.EncodeToken(xml.CharData([]byte(text))); err != nil {
@@ -413,8 +656,11 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 	if w.nodes > maxXMLNodes {
 		return xml.StartElement{}, fmt.Errorf("число элементов XML превышает предел %d", maxXMLNodes)
 	}
-	if err := validateXMLName(name); err != nil {
-		return xml.StartElement{}, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
+	// Бюджет проверяется до любой линейной валидации. Это особенно важно для
+	// разделяемых DSL-узлов: одна большая строка имени может встречаться в дереве
+	// много раз, но суммарная работа всё равно остаётся ограниченной 16 МиБ.
+	if err := addXMLTextBytes(&w.textBytes, len(name)); err != nil {
+		return xml.StartElement{}, err
 	}
 	if len(attrs) > maxXMLAttributesPerElement {
 		return xml.StartElement{}, fmt.Errorf("число атрибутов элемента «%s» превышает предел %d", name, maxXMLAttributesPerElement)
@@ -423,10 +669,16 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 		return xml.StartElement{}, fmt.Errorf("общее число атрибутов XML превышает предел %d", maxXMLAttributesTotal)
 	}
 	w.attributes += len(attrs)
-	if err := addXMLTextBytes(&w.textBytes, len(name)); err != nil {
-		return xml.StartElement{}, err
+	// Сначала учитываем все строки элемента. Валидация и заполнение xml.Attr
+	// начинаются только после того, как совокупный budget гарантированно пройден.
+	for _, attr := range attrs {
+		if err := addXMLTextBytes(&w.textBytes, len(attr[0]), len(attr[1])); err != nil {
+			return xml.StartElement{}, err
+		}
 	}
-
+	if err := validateXMLName(name); err != nil {
+		return xml.StartElement{}, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
+	}
 	start := xml.StartElement{Name: xml.Name{Local: name}}
 	seen := make(map[string]struct{}, len(attrs))
 	for _, attr := range attrs {
@@ -440,9 +692,6 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 		if err := validateXMLCharacters(attr[1]); err != nil {
 			return xml.StartElement{}, fmt.Errorf("значение атрибута «%s»: %w", attr[0], err)
 		}
-		if err := addXMLTextBytes(&w.textBytes, len(attr[0]), len(attr[1])); err != nil {
-			return xml.StartElement{}, err
-		}
 		start.Attr = append(start.Attr, xml.Attr{Name: xml.Name{Local: attr[0]}, Value: attr[1]})
 	}
 	if err := w.encoder.EncodeToken(start); err != nil {
@@ -454,6 +703,7 @@ func (w *xmlWriter) startElement(name string, attrs [][2]string, depth int) (xml
 type xmlTreeBudget struct {
 	nodes      int
 	attributes int
+	textBytes  int
 }
 
 // asXMLTreeNode распознаёт Структуру, полученную из ПрочитатьXML. Наличие
@@ -479,6 +729,9 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 	name, ok := nameVal.(string)
 	if !ok {
 		return nil, true, fmt.Errorf("поле «%s» узла XML должно быть строкой", xmlFieldName)
+	}
+	if err := addXMLTextBytes(&budget.textBytes, len(name)); err != nil {
+		return nil, true, err
 	}
 	if err := validateXMLName(name); err != nil {
 		return nil, true, fmt.Errorf("недопустимое имя элемента «%s»: %w", name, err)
@@ -522,6 +775,16 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 			if !ok {
 				return nil, true, fmt.Errorf("имя атрибута узла XML должно быть строкой, получено %T", keyVal)
 			}
+			if err := addXMLTextBytes(&budget.textBytes, len(key)); err != nil {
+				return nil, true, err
+			}
+			value, ok := attrs.vals[i].(string)
+			if !ok {
+				return nil, true, fmt.Errorf("значение атрибута должно быть строкой, получено %T", attrs.vals[i])
+			}
+			if err := addXMLTextBytes(&budget.textBytes, len(value)); err != nil {
+				return nil, true, err
+			}
 			if err := validateXMLAttributeName(key); err != nil {
 				return nil, true, err
 			}
@@ -529,10 +792,6 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 				return nil, true, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", key, name)
 			}
 			seen[key] = struct{}{}
-			value, ok := attrs.vals[i].(string)
-			if !ok {
-				return nil, true, fmt.Errorf("значение атрибута «%s» должно быть строкой", key)
-			}
 			if err := validateXMLCharacters(value); err != nil {
 				return nil, true, fmt.Errorf("значение атрибута «%s»: %w", key, err)
 			}
@@ -543,6 +802,9 @@ func asXMLTreeNode(v any, depth int, budget *xmlTreeBudget) (*xmlNode, bool, err
 		text, ok := textVal.(string)
 		if !ok {
 			return nil, true, fmt.Errorf("поле «%s» узла XML должно быть строкой", xmlFieldText)
+		}
+		if err := addXMLTextBytes(&budget.textBytes, len(text)); err != nil {
+			return nil, true, err
 		}
 		if err := validateXMLCharacters(text); err != nil {
 			return nil, true, fmt.Errorf("текст элемента «%s»: %w", name, err)
@@ -593,21 +855,63 @@ func validateXMLName(name string) error {
 	if !utf8.ValidString(name) {
 		return fmt.Errorf("имя содержит некорректную UTF-8 последовательность")
 	}
-	for i, r := range []rune(name) {
+	first := true
+	for _, r := range name {
 		if r == ':' {
 			return fmt.Errorf("пространства имён и символ ':' не поддерживаются")
 		}
-		if i == 0 {
-			if r != '_' && !unicode.IsLetter(r) {
-				return fmt.Errorf("первый символ должен быть буквой или '_'")
+		if first {
+			first = false
+			if !isXMLNameStartRune(r) {
+				return fmt.Errorf("первый символ не входит в XML NameStartChar")
 			}
 			continue
 		}
-		if r != '_' && r != '-' && r != '.' && !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
+		if !isXMLNameRune(r) {
 			return fmt.Errorf("символ %q недопустим", r)
 		}
 	}
 	return nil
+}
+
+// isXMLNameStartRune и isXMLNameRune реализуют productions XML 1.0 Fifth
+// Edition. Двоеточие из NameStartChar намеренно исключено: пространства имён
+// этой моделью дерева не представлены и поэтому всегда отклоняются.
+func isXMLNameStartRune(r rune) bool {
+	switch {
+	case r == '_':
+		return true
+	case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		return true
+	case r >= 0xC0 && r <= 0xD6, r >= 0xD8 && r <= 0xF6, r >= 0xF8 && r <= 0x2FF:
+		return true
+	case r >= 0x370 && r <= 0x37D, r >= 0x37F && r <= 0x1FFF:
+		return true
+	case r >= 0x200C && r <= 0x200D, r >= 0x2070 && r <= 0x218F:
+		return true
+	case r >= 0x2C00 && r <= 0x2FEF, r >= 0x3001 && r <= 0xD7FF:
+		return true
+	case r >= 0xF900 && r <= 0xFDCF, r >= 0xFDF0 && r <= 0xFFFD:
+		return true
+	case r >= 0x10000 && r <= 0xEFFFF:
+		return true
+	default:
+		return false
+	}
+}
+
+func isXMLNameRune(r rune) bool {
+	if isXMLNameStartRune(r) {
+		return true
+	}
+	switch {
+	case r == '-' || r == '.' || r >= '0' && r <= '9' || r == 0xB7:
+		return true
+	case r >= 0x300 && r <= 0x36F, r >= 0x203F && r <= 0x2040:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateXMLCharacters(text string) error {
@@ -664,6 +968,11 @@ func xmlStringOf(v any) (string, error) {
 		return "false", nil
 	case time.Time:
 		return safeXMLDateTimeString(x)
+	case *time.Time:
+		if x == nil {
+			return "", nil
+		}
+		return safeXMLDateTimeString(*x)
 	case decimal.Decimal:
 		return safeXMLDecimalString(x)
 	case *decimal.Decimal:
@@ -675,13 +984,37 @@ func xmlStringOf(v any) (string, error) {
 		return strconv.FormatInt(x, 10), nil
 	case int:
 		return strconv.Itoa(x), nil
+	case int8:
+		return strconv.FormatInt(int64(x), 10), nil
+	case int16:
+		return strconv.FormatInt(int64(x), 10), nil
+	case int32:
+		return strconv.FormatInt(int64(x), 10), nil
+	case uint:
+		return strconv.FormatUint(uint64(x), 10), nil
+	case uint8:
+		return strconv.FormatUint(uint64(x), 10), nil
+	case uint16:
+		return strconv.FormatUint(uint64(x), 10), nil
+	case uint32:
+		return strconv.FormatUint(uint64(x), 10), nil
+	case uint64:
+		return strconv.FormatUint(x, 10), nil
+	case float32:
+		value := float64(x)
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return "", fmt.Errorf("число должно быть конечным")
+		}
+		return strconv.FormatFloat(value, 'f', -1, 32), nil
 	case float64:
 		if math.IsNaN(x) || math.IsInf(x, 0) {
 			return "", fmt.Errorf("число должно быть конечным")
 		}
 		return strconv.FormatFloat(x, 'f', -1, 64), nil
 	default:
-		return fmt.Sprintf("%v", v), nil
+		// Не вызываем fmt.Stringer: пользовательская реализация String может
+		// выделить неограниченную память до проверки XML-бюджета.
+		return "", fmt.Errorf("тип %T не поддерживается как XML-примитив", v)
 	}
 }
 
@@ -691,12 +1024,12 @@ func validateXMLDateTime(value time.Time) error {
 		return fmt.Errorf("год даты должен быть в диапазоне 0000..9999")
 	}
 	_, offset := value.Zone()
-	const daySeconds = 24 * 60 * 60
-	if offset <= -daySeconds || offset >= daySeconds {
-		return fmt.Errorf("смещение часового пояса должно быть меньше 24 часов по модулю")
-	}
 	if offset%60 != 0 {
 		return fmt.Errorf("смещение часового пояса должно быть кратно минуте")
+	}
+	const maxXSDTimezoneOffset = 14 * 60 * 60
+	if offset < -maxXSDTimezoneOffset || offset > maxXSDTimezoneOffset {
+		return fmt.Errorf("смещение часового пояса должно быть в диапазоне -14:00..+14:00")
 	}
 	return nil
 }
@@ -708,10 +1041,10 @@ func safeXMLDateTimeString(value time.Time) (string, error) {
 	return value.Format(time.RFC3339Nano), nil
 }
 
-// validateRFC3339TimezoneOffset дополняет time.Parse строгой проверкой сырой
-// лексической записи. Стандартный парсер Go намеренно принимает +24:00 и минуты
-// 60, после чего нормализует, например, +00:60 в +01:00.
-func validateRFC3339TimezoneOffset(text string) error {
+// validateXSDDateTimeTimezoneOffset дополняет time.Parse строгой проверкой
+// сырой лексической записи. Стандартный парсер Go принимает +24:00 и минуты 60,
+// а XSD ограничивает смещение диапазоном -14:00..+14:00.
+func validateXSDDateTimeTimezoneOffset(text string) error {
 	if strings.HasSuffix(text, "Z") {
 		return nil
 	}
@@ -725,12 +1058,43 @@ func validateRFC3339TimezoneOffset(text string) error {
 		return fmt.Errorf("смещение часового пояса должно иметь вид ±HH:MM")
 	}
 	hour := int(offset[1]-'0')*10 + int(offset[2]-'0')
-	if hour > 23 {
-		return fmt.Errorf("часы смещения часового пояса должны быть в диапазоне 00..23")
-	}
 	minute := int(offset[4]-'0')*10 + int(offset[5]-'0')
 	if minute > 59 {
 		return fmt.Errorf("минуты смещения часового пояса должны быть в диапазоне 00..59")
+	}
+	if hour > 14 || hour == 14 && minute != 0 {
+		return fmt.Errorf("смещение часового пояса должно быть в диапазоне -14:00..+14:00")
+	}
+	return nil
+}
+
+// validateXMLDateTimeFraction не даёт time.Parse молча усечь точность после
+// девятой цифры. Формат time.Time хранит наносекунды, поэтому более точную XSD
+// дробь безопаснее отклонить, чем принять с потерей данных. XSD использует '.'.
+func validateXMLDateTimeFraction(text string) error {
+	if len(text) <= len("2006-01-02T15:04:05") {
+		return nil
+	}
+	if text[4] != '-' || text[7] != '-' || (text[10] != 'T' && text[10] != ' ') ||
+		text[13] != ':' || text[16] != ':' {
+		return nil
+	}
+	separator := text[19]
+	if separator == ',' {
+		return fmt.Errorf("дробная часть секунды должна отделяться символом '.'")
+	}
+	if separator != '.' {
+		return nil
+	}
+	digits := 0
+	for i := 20; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
+		digits++
+		if digits > 9 {
+			return fmt.Errorf("дробная часть секунды должна содержать не более 9 цифр")
+		}
+	}
+	if digits == 0 {
+		return fmt.Errorf("после десятичной точки ожидаются цифры")
 	}
 	return nil
 }
@@ -840,6 +1204,19 @@ func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
 			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
 		}
 		return "dateTime", nil
+	case *time.Time:
+		if value == nil {
+			return "", nil
+		}
+		if err := validateXMLDateTime(*value); err != nil {
+			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
+		}
+		return "dateTime", nil
+	case float32:
+		if number := float64(value); math.IsNaN(number) || math.IsInf(number, 0) {
+			panic(userError{Msg: "XMLТипЗнч: число должно быть конечным"})
+		}
+		return "decimal", nil
 	case float64:
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			panic(userError{Msg: "XMLТипЗнч: число должно быть конечным"})
@@ -849,11 +1226,19 @@ func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
 		if value == nil {
 			return "", nil
 		}
+		if _, err := safeXMLDecimalString(*value); err != nil {
+			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
+		}
 		return "decimal", nil
-	case decimal.Decimal, int64, int:
+	case decimal.Decimal:
+		if _, err := safeXMLDecimalString(value); err != nil {
+			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
+		}
+		return "decimal", nil
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return "decimal", nil
 	default:
-		return "string", nil
+		panic(userError{Msg: fmt.Sprintf("XMLТипЗнч: тип %T не поддерживается как XML-примитив", value)})
 	}
 }
 
@@ -861,8 +1246,9 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 	if len(args) < 2 {
 		panic(userError{Msg: "XMLЗначение: ожидается 2 аргумента — имя типа и строка"})
 	}
-	typeName := strings.ToLower(strings.TrimSpace(strArg(args, 0)))
-	rawText := strArg(args, 1)
+	rawTypeName := requireXMLStringArg(args, 0, "XMLЗначение", "имя типа")
+	rawText := requireXMLStringArg(args, 1, "XMLЗначение", "текст")
+	typeName := strings.ToLower(strings.TrimSpace(rawTypeName))
 	text := strings.TrimSpace(rawText)
 	switch typeName {
 	case "строка", "string":
@@ -880,12 +1266,15 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 		case "false", "0", "ложь", "нет":
 			return false, nil
 		}
-		panic(userError{Msg: "XMLЗначение: не булево: " + text})
+		panic(userError{Msg: "XMLЗначение: некорректное булево значение"})
 	case "дата", "date", "datetime":
+		if err := validateXMLDateTimeFraction(text); err != nil {
+			panic(userError{Msg: "XMLЗначение: некорректное dateTime: " + err.Error()})
+		}
 		for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02", "20060102150405", "20060102"} {
 			if t, err := time.Parse(layout, text); err == nil {
 				if layout == time.RFC3339Nano {
-					if err := validateRFC3339TimezoneOffset(text); err != nil {
+					if err := validateXSDDateTimeTimezoneOffset(text); err != nil {
 						panic(userError{Msg: "XMLЗначение: некорректное dateTime: " + err.Error()})
 					}
 				}
@@ -895,9 +1284,9 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 				return t, nil
 			}
 		}
-		panic(userError{Msg: "XMLЗначение: не дата: " + text})
+		panic(userError{Msg: "XMLЗначение: некорректная дата"})
 	default:
-		panic(userError{Msg: "XMLЗначение: неизвестный тип «" + strArg(args, 0) + "» (ожидается Строка, Число, Дата или Булево)"})
+		panic(userError{Msg: "XMLЗначение: неизвестный тип (ожидается Строка, Число, Дата или Булево)"})
 	}
 }
 
@@ -905,7 +1294,7 @@ func builtinFindDisallowedXMLChars(args []any, file string, line int) (any, erro
 	if len(args) == 0 {
 		return int64(0), nil
 	}
-	return int64(firstDisallowedXMLCharacter(strArg(args, 0))), nil
+	return int64(firstDisallowedXMLCharacter(requireXMLStringArg(args, 0, "НайтиНедопустимыеСимволыXML", "текст"))), nil
 }
 
 // firstDisallowedXMLCharacter возвращает 1-based позицию в символах. Отдельная

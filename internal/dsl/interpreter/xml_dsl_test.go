@@ -91,6 +91,15 @@ func evalXMLWithVarsTimeout(t *testing.T, src string, vars map[string]any, timeo
 	}
 }
 
+type xmlPoisonStringer struct {
+	called *bool
+}
+
+func (p *xmlPoisonStringer) String() string {
+	*p.called = true
+	return "<Корень/>"
+}
+
 func TestDSL_ReadXML_NameAttrsText(t *testing.T) {
 	src := `Процедура Тест()
 		Дерево = ПрочитатьXML("<Заказ Номер=""7""><Строка>Стол</Строка></Заказ>");
@@ -197,14 +206,16 @@ func TestDSL_XML_RejectsUnboundedDecimal(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "без экспоненты")
 
-	src = `Процедура Тест()
-		Возврат XMLСтрока(Значение);
-	КонецПроцедуры`
-	err = evalXMLWithVarsError(t, src, map[string]any{
-		"Значение": decimal.New(1, int32(2_147_483_647)),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decimal")
+	for _, expression := range []string{"XMLСтрока(Значение)", "XMLТипЗнч(Значение)"} {
+		src = `Процедура Тест()
+			Возврат ` + expression + `;
+		КонецПроцедуры`
+		err = evalXMLWithVarsError(t, src, map[string]any{
+			"Значение": decimal.New(1, int32(2_147_483_647)),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decimal")
+	}
 }
 
 func TestDSL_XML_RejectsNonFiniteFloat(t *testing.T) {
@@ -212,6 +223,7 @@ func TestDSL_XML_RejectsNonFiniteFloat(t *testing.T) {
 	for _, value := range values {
 		for _, expression := range []string{
 			"XMLСтрока(Значение)",
+			"XMLТипЗнч(Значение)",
 			`ЗаписатьXML(Значение, "Число")`,
 		} {
 			src := `Процедура Тест()
@@ -221,6 +233,34 @@ func TestDSL_XML_RejectsNonFiniteFloat(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "конечным")
 		}
+	}
+}
+
+// Строковые XML-аргументы и XML-примитивы не должны обращаться к Stringer.
+// Decimal.String разворачивает exponent, поэтому такой неявный вызов позволял
+// маленькому значению занять гигантский объём памяти до проверки XML-лимитов.
+func TestDSL_XML_NeverCoercesUntrustedStringer(t *testing.T) {
+	cases := []string{
+		"ПрочитатьXML(Значение)",
+		`XMLЗначение(Значение, "1")`,
+		`XMLЗначение("decimal", Значение)`,
+		"НайтиНедопустимыеСимволыXML(Значение)",
+		"XMLСтрока(Значение)",
+		`ЗаписатьXML(Значение, "Корень")`,
+		"XMLТипЗнч(Значение)",
+	}
+	for _, expression := range cases {
+		t.Run(expression, func(t *testing.T) {
+			called := false
+			src := `Процедура Тест()
+				Возврат ` + expression + `;
+			КонецПроцедуры`
+			_, err := evalXMLWithVarsTimeout(t, src, map[string]any{
+				"Значение": &xmlPoisonStringer{called: &called},
+			}, 2*time.Second)
+			require.Error(t, err)
+			assert.False(t, called, "XML-функция вызвала String() до проверки типа")
+		})
 	}
 }
 
@@ -281,6 +321,145 @@ func TestDSL_XML_SharedSubtreeChecksTotalAttributesBeforeCopy(t *testing.T) {
 	assert.Contains(t, err.Error(), "общее число атрибутов XML")
 }
 
+func TestDSL_XML_SharedSubtreeChecksTextBudgetBeforeValidation(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup string
+	}{
+		{
+			name: "node text",
+			setup: `ОбщийУзел.Вставить("Имя", "Узел");
+			ОбщийУзел.Вставить("Текст", БольшаяСтрока);`,
+		},
+		{
+			name:  "node name",
+			setup: `ОбщийУзел.Вставить("Имя", БольшаяСтрока);`,
+		},
+		{
+			name: "attribute name",
+			setup: `ОбщийУзел.Вставить("Имя", "Узел");
+			Атрибуты = Новый Соответствие;
+			Атрибуты.Вставить(БольшаяСтрока, "v");
+			ОбщийУзел.Вставить("Атрибуты", Атрибуты);`,
+		},
+		{
+			name: "attribute value",
+			setup: `ОбщийУзел.Вставить("Имя", "Узел");
+			Атрибуты = Новый Соответствие;
+			Атрибуты.Вставить("a", БольшаяСтрока);
+			ОбщийУзел.Вставить("Атрибуты", Атрибуты);`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `Процедура Тест()
+				ОбщийУзел = Новый Структура;
+				` + tc.setup + `
+				Дети = Новый Массив;
+				Для Индекс = 1 По 17 Цикл
+					Дети.Добавить(ОбщийУзел);
+				КонецЦикла;
+
+				// До этого узла доходить нельзя: общий byte-budget уже исчерпан.
+				ПлохойУзел = Новый Структура;
+				ПлохойУзел.Вставить("Имя", "Плохой");
+				ПлохойУзел.Вставить("Текст", 1);
+				Дети.Добавить(ПлохойУзел);
+
+				Корень = Новый Структура;
+				Корень.Вставить("Имя", "Корень");
+				Корень.Вставить("Элементы", Дети);
+				Возврат ЗаписатьXML(Корень);
+			КонецПроцедуры`
+			_, err := evalXMLWithVarsTimeout(t, src, map[string]any{
+				"БольшаяСтрока": strings.Repeat("a", 1<<20),
+			}, 3*time.Second)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "объём текстовых данных XML")
+			assert.NotContains(t, err.Error(), "должно быть строкой")
+		})
+	}
+}
+
+func TestDSL_XML_TreeTextBudgetExactBoundary(t *testing.T) {
+	src := `Процедура Тест()
+		Узел = Новый Структура;
+		Узел.Вставить("Имя", "r");
+		Узел.Вставить("Текст", Текст);
+		Возврат ЗаписатьXML(Узел);
+	КонецПроцедуры`
+	_, err := evalXMLWithVars(t, src, map[string]any{
+		// Имя "r" + текст занимают ровно логический budget 16 МиБ.
+		"Текст": strings.Repeat("x", (16<<20)-1),
+	})
+	require.Error(t, err)
+	// Логический budget пройден; следующий, фактический document budget
+	// закономерно отклоняет добавившиеся <r></r>.
+	assert.Contains(t, err.Error(), "размер XML")
+	assert.NotContains(t, err.Error(), "объём текстовых данных XML")
+}
+
+func TestDSL_XML_NameStartAndNameCharRanges(t *testing.T) {
+	valid := []string{
+		"a\u00B7b",
+		"\u200Croot",
+		"a\u203Fb",
+		"\u3001root",
+		"\U00010000root",
+	}
+	for _, name := range valid {
+		t.Run("valid "+name, func(t *testing.T) {
+			src := `Процедура Тест()
+				Текст = ЗаписатьXML("x", Имя);
+				Возврат ПрочитатьXML(Текст).Имя;
+			КонецПроцедуры`
+			result, err := evalXMLWithVars(t, src, map[string]any{"Имя": name})
+			require.NoError(t, err)
+			assert.Equal(t, name, result)
+		})
+	}
+
+	invalid := []string{
+		"\u037Eroot",
+		"\u200Broot",
+		"\u3000root",
+		"\uFDD0root",
+		"\U000F0000root",
+	}
+	for _, name := range invalid {
+		t.Run("invalid "+name, func(t *testing.T) {
+			src := `Процедура Тест()
+				Возврат ЗаписатьXML("x", Имя);
+			КонецПроцедуры`
+			_, err := evalXMLWithVars(t, src, map[string]any{"Имя": name})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "недопустимое имя")
+
+			src = `Процедура Тест()
+				Возврат ПрочитатьXML(Текст);
+			КонецПроцедуры`
+			_, err = evalXMLWithVars(t, src, map[string]any{"Текст": "<" + name + "/>"})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "недопустимое имя")
+		})
+	}
+
+	t.Run("attribute round trip", func(t *testing.T) {
+		src := `Процедура Тест()
+			Атрибуты = Новый Соответствие;
+			Атрибуты.Вставить(ИмяАтрибута, "value");
+			Узел = Новый Структура;
+			Узел.Вставить("Имя", "root");
+			Узел.Вставить("Атрибуты", Атрибуты);
+			Обратно = ПрочитатьXML(ЗаписатьXML(Узел));
+			Возврат Обратно.Атрибуты.Получить(ИмяАтрибута);
+		КонецПроцедуры`
+		result, err := evalXMLWithVars(t, src, map[string]any{"ИмяАтрибута": "a\u203Fb"})
+		require.NoError(t, err)
+		assert.Equal(t, "value", result)
+	})
+}
+
 func TestDSL_XML_RejectsEscapedDocumentOverByteBudget(t *testing.T) {
 	src := `Процедура Тест()
 		Возврат ЗаписатьXML(Текст, "Корень");
@@ -310,7 +489,9 @@ func TestDSL_XML_DateTimeBounds(t *testing.T) {
 		value string
 		want  string
 	}{
-		{"2026-08-10T12:30:00+24:00", "00..23"},
+		{"2026-08-10T12:30:00+24:00", "-14:00..+14:00"},
+		{"2026-08-10T12:30:00+14:01", "-14:00..+14:00"},
+		{"2026-08-10T12:30:00-14:01", "-14:00..+14:00"},
 		{"2026-08-10T12:30:00+00:60", "00..59"},
 	} {
 		src = `Процедура Тест()
@@ -319,6 +500,18 @@ func TestDSL_XML_DateTimeBounds(t *testing.T) {
 		err = evalXMLError(t, src)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), tc.want)
+	}
+
+	for _, value := range []string{
+		"2026-08-10T12:30:00+14:00",
+		"2026-08-10T12:30:00-14:00",
+	} {
+		src = `Процедура Тест()
+			Возврат XMLСтрока(XMLЗначение("dateTime", Значение));
+		КонецПроцедуры`
+		result, err := evalXMLWithVars(t, src, map[string]any{"Значение": value})
+		require.NoError(t, err)
+		assert.Equal(t, value, result)
 	}
 
 	valid := time.Date(2026, 8, 10, 12, 30, 0, 123456789, time.FixedZone("MSK", 3*60*60))
@@ -330,4 +523,25 @@ func TestDSL_XML_DateTimeBounds(t *testing.T) {
 	result, err := evalXMLWithVars(t, src, map[string]any{"Значение": valid})
 	require.NoError(t, err)
 	assert.Equal(t, "2026-08-10T12:30:00.123456789+03:00", result)
+}
+
+func TestDSL_XML_DateTimeFractionNeverLosesPrecision(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат XMLСтрока(XMLЗначение("dateTime", Значение));
+	КонецПроцедуры`
+
+	result, err := evalXMLWithVars(t, src, map[string]any{
+		"Значение": "2026-08-10T12:30:00.123456789Z",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "2026-08-10T12:30:00.123456789Z", result)
+
+	for _, value := range []string{
+		"2026-08-10T12:30:00.1234567899Z",
+		"2026-08-10T12:30:00,5Z",
+	} {
+		_, err := evalXMLWithVars(t, src, map[string]any{"Значение": value})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "дробн")
+	}
 }

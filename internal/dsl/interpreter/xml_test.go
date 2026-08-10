@@ -101,6 +101,10 @@ func TestReadXML_StrictAndSingleRoot(t *testing.T) {
 		{"character reference after root", `<a/>&#9;`, "вне корневого"},
 		{"CDATA before root", `<![CDATA[ ]]><a/>`, "вне корневого"},
 		{"duplicate attributes", `<a x="1" x="2"/>`, "повторяющийся атрибут"},
+		{"attributes without whitespace", `<a x="1"y="2"/>`, "ожидался пробел"},
+		{"unquoted attribute", `<a x=1/>`, "кавычки"},
+		{"unknown entity", `<a>&unknown;</a>`, ""},
+		{"raw less-than in attribute", `<a x="<"/>`, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -537,6 +541,9 @@ func TestXMLString_RejectsDecimalExpansionBeforeString(t *testing.T) {
 			_, _ = builtinXMLString([]any{value}, "", 0)
 		})
 		requireXMLUserError(t, "decimal", func() {
+			_, _ = builtinXMLTypeOf([]any{value}, "", 0)
+		})
+		requireXMLUserError(t, "decimal", func() {
 			_, _ = builtinWriteXML([]any{value, "Число"}, "", 0)
 		})
 	}
@@ -572,8 +579,9 @@ func TestXML_DateTimeRFC3339Bounds(t *testing.T) {
 	}{
 		{time.Date(-1, 1, 1, 0, 0, 0, 0, time.UTC), "0000..9999"},
 		{time.Date(10_000, 1, 1, 0, 0, 0, 0, time.UTC), "0000..9999"},
-		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("+24", 24*60*60)), "меньше 24 часов"},
-		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("-24", -24*60*60)), "меньше 24 часов"},
+		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("+14:01", 14*60*60+60)), "-14:00..+14:00"},
+		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("-14:01", -14*60*60-60)), "-14:00..+14:00"},
+		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("+24", 24*60*60)), "-14:00..+14:00"},
 		{time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("odd", 60*60+1)), "кратно минуте"},
 	}
 	for _, tc := range invalid {
@@ -585,12 +593,12 @@ func TestXML_DateTimeRFC3339Bounds(t *testing.T) {
 		})
 	}
 
-	valid := time.Date(0, 1, 1, 0, 0, 0, 0, time.FixedZone("edge", 23*60*60+59*60))
+	valid := time.Date(0, 1, 1, 0, 0, 0, 0, time.FixedZone("edge", 14*60*60))
 	got, err := builtinXMLString([]any{valid}, "", 0)
 	if err != nil {
 		t.Fatalf("XMLСтрока: %v", err)
 	}
-	if got != "0000-01-01T00:00:00+23:59" {
+	if got != "0000-01-01T00:00:00+14:00" {
 		t.Fatalf("граничная дата = %q", got)
 	}
 }
