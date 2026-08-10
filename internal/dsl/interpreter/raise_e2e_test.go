@@ -38,3 +38,50 @@ func TestDSL_ВызватьИсключениеБезСкобокРаботае�
 		t.Errorf("результат %q — исключение не возбудилось", s)
 	}
 }
+
+func TestDSL_ВызватьИсключениеБезАргументаПеребрасываетИсходное(t *testing.T) {
+	src := `Процедура Тест()
+		Попытка
+			Попытка
+				ВызватьИсключение "исходная беда";
+			Исключение
+				ВызватьИсключение;
+			КонецПопытки;
+		Исключение
+			Возврат ОписаниеОшибки();
+		КонецПопытки;
+	КонецПроцедуры`
+	l := lexer.New(src, "rethrow.os")
+	prog, err := parser.New(l).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var result any
+	if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument), &result); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result != "исходная беда" {
+		t.Fatalf("переброшена ошибка %q, ожидалась исходная", result)
+	}
+}
+
+func TestDSL_RaiseAliasБезСкобокРаботает(t *testing.T) {
+	src := `Процедура Тест()
+		Попытка
+			Raise "boom";
+		Исключение
+			Возврат ОписаниеОшибки();
+		КонецПопытки;
+	КонецПроцедуры`
+	prog, err := parser.New(lexer.New(src, "raise.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var result any
+	if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument), &result); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result != "boom" {
+		t.Fatalf("результат %q", result)
+	}
+}

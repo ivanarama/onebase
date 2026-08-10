@@ -73,3 +73,14 @@ func TestParse_ВызватьИсключениеСоСкобками(t *testing
 		t.Fatalf("ожидался вызов с одним аргументом: %+v", es.X)
 	}
 }
+
+// Английское raise может оставаться обычным идентификатором слева от
+// присваивания: добавление операторного alias не должно ломать старые модули.
+func TestParse_RaiseAssignmentОстаётсяПрисваиванием(t *testing.T) {
+	prog := parseProc(t, `Процедура Тест()
+		raise = 1;
+	КонецПроцедуры`)
+	if _, ok := prog.Procedures[0].Body[0].(*ast.AssignStmt); !ok {
+		t.Fatalf("тип оператора %T, ожидался AssignStmt", prog.Procedures[0].Body[0])
+	}
+}
