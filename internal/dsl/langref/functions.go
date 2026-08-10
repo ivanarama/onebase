@@ -794,6 +794,17 @@ XMLЗначение("Дата", "2026-08-10T12:30:00")`,
 		Group: "Коллекции и JSON",
 	},
 	{
+		Name: "xmlтипзнч", Display: "XMLТипЗнч", Aliases: []string{"XMLTypeOf"}, Kind: KindFunc,
+		Signature: "XMLТипЗнч(Значение)",
+		Params:    []Param{{Name: "Значение", Type: "произвольный"}},
+		Returns:   "строка",
+		Doc: "Имя XSD-типа значения: string, decimal, boolean или dateTime. " +
+			"Нужно, когда вместе со значением передаётся и его тип.",
+		Example: `XMLТипЗнч(42)            // "decimal"
+XMLТипЗнч(ТекущаяДата())  // "dateTime"`,
+		Group: "Коллекции и JSON",
+	},
+	{
 		Name: "найтинедопустимыесимволыxml", Display: "НайтиНедопустимыеСимволыXML",
 		Aliases: []string{"FindDisallowedXMLCharacters"}, Kind: KindFunc,
 		Signature: "НайтиНедопустимыеСимволыXML(Текст)",

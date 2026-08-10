@@ -81,3 +81,13 @@ func TestDSL_XML_EnglishAliases(t *testing.T) {
 	КонецПроцедуры`
 	assert.Equal(t, true, evalXML(t, src))
 }
+
+func TestDSL_XMLTypeOf(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат XMLТипЗнч(42) = "decimal"
+			И XMLТипЗнч("текст") = "string"
+			И XMLТипЗнч(Истина) = "boolean"
+			И XMLТипЗнч(ТекущаяДата()) = "dateTime";
+	КонецПроцедуры`
+	assert.Equal(t, true, evalXML(t, src))
+}

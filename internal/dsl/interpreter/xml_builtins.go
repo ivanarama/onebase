@@ -274,6 +274,26 @@ func xmlStringOf(v any) string {
 	}
 }
 
+// builtinXMLTypeOf — имя XSD-типа значения. Дополняет пару XMLСтрока/XMLЗначение:
+// сериализуя значение, обычно надо сообщить приёмнику и его тип.
+func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
+	if len(args) == 0 || args[0] == nil {
+		return "", nil
+	}
+	switch args[0].(type) {
+	case string:
+		return "string", nil
+	case bool:
+		return "boolean", nil
+	case time.Time:
+		return "dateTime", nil
+	case decimal.Decimal, int64, int, float64:
+		return "decimal", nil
+	default:
+		return "string", nil
+	}
+}
+
 func builtinXMLValue(args []any, file string, line int) (any, error) {
 	if len(args) < 2 {
 		panic(userError{Msg: "XMLЗначение: ожидается 2 аргумента — имя типа и строка"})

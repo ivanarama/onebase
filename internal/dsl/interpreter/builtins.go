@@ -261,6 +261,8 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	"xmlстрока":    builtinXMLString,
 	"xmlstring":    builtinXMLString,
 	"xmlзначение":  builtinXMLValue,
+	"xmlтипзнч":    builtinXMLTypeOf,
+	"xmltypeof":    builtinXMLTypeOf,
 	"xmlvalue":     builtinXMLValue,
 	"найтинедопустимыесимволыxml": builtinFindDisallowedXMLChars,
 	"finddisallowedxmlcharacters": builtinFindDisallowedXMLChars,
