@@ -77,16 +77,22 @@ type Deps interface {
 const scanBudgetFactor = 10
 
 // Run выполняет глобальный поиск с учётом прав пользователя из ctx.
-func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, offset int) (Page, error) {
+// Продолжение листания задаётся курсором из предыдущего ответа, а не числом:
+// разбирает его сам Run, своими же text и limit. Это не удобство — иначе точка
+// входа могла бы расшифровать курсор одним запросом, а искать другим, и
+// привязка курсора к запросу (cursorScope) ничего бы не значила.
+func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit int, cursor string) (Page, error) {
 	if store == nil || deps == nil || strings.TrimSpace(text) == "" {
 		return Page{}, nil
 	}
 	if limit <= 0 {
 		limit = 20
 	}
-	if offset < 0 {
-		offset = 0
-	}
+	// Область привязки считается ПОСЛЕ нормализации limit: иначе limit=0 и
+	// limit=20 дали бы разные области при одинаковом поведении, и листание
+	// обрывалось бы на втором шаге.
+	scope := cursorScope{Text: text, Limit: limit}
+	offset := decodeCursor(cursor, scope)
 
 	byName := make(map[string]*metadata.Entity)
 	var names []string
@@ -157,14 +163,14 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit, 
 	// его видимые совпадения лежат дальше бюджета просмотра; добор ограничен
 	// бюджетом, а точную позицию всё равно прячет курсор.
 	page.HasMore = len(page.Items) == limit
-	return withCursor(page), nil
+	return withCursor(page, scope), nil
 }
 
 // withCursor проставляет непрозрачную позицию чтения. Вызывается на каждом
 // выходе из Run, чтобы наружу не уехало сырое смещение.
-func withCursor(page Page) Page {
+func withCursor(page Page, sc cursorScope) Page {
 	if page.HasMore {
-		page.Cursor = EncodeCursor(page.NextOffset)
+		page.Cursor = encodeCursor(page.NextOffset, sc)
 	}
 	return page
 }
