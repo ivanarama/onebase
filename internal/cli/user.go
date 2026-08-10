@@ -100,19 +100,44 @@ var user2FACmd = &cobra.Command{
 	Short: "Второй фактор учётной записи",
 }
 
+var user2FAResetForce bool
+
 var user2FAResetCmd = &cobra.Command{
 	Use:   "reset <login>",
 	Short: "Снять второй фактор с учётной записи (офлайн-восстановление доступа)",
 	Long: `Отключает второй фактор у учётной записи по прямому доступу к базе — без
 входа и без другого администратора.
 
-Офлайн-выход из двух тупиков (#620): утрачено устройство с аутентификатором;
-либо политика требует второй фактор, а привязать его на входе нельзя, потому что
-некому выдать одноразовый код. После сброса пользователь входит по паролю; если
-политика по-прежнему требует второй фактор, включите самопривязку в админке или
-разберитесь с политикой.`,
+Офлайн-выход, когда утрачено устройство с аутентификатором.
+
+ВАЖНО: сама по себе команда НЕ снимает требование второго фактора. Если политика
+его требует, пользователь после сброса пойдёт на первичную привязку, а она
+просит одноразовый код от администратора. Поэтому команда отказывается снимать
+фактор у последней учётной записи когорты, которая его привязала: иначе выдать
+код станет некому и база запрётся насовсем (#615).
+
+Выход из уже запертой базы — onebase user 2fa self-enroll on: разрешает
+привязку второго фактора на входе по паролю, не снимая самого требования.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runUser2FAReset,
+}
+
+var user2FASelfEnrollCmd = &cobra.Command{
+	Use:   "self-enroll <on|off>",
+	Short: "Разрешить первичную привязку второго фактора на входе (офлайн-выход из блокировки)",
+	Long: `Включает или выключает self_enroll_2fa в политике аутентификации по прямому
+доступу к базе — без входа в веб-интерфейс.
+
+Это продуктовый выход из тупика, в котором политика требует второй фактор от
+когорты, где его никто не привязал: привязка на входе просит одноразовый код от
+администратора, а выдать его некому, потому что администратор сам не может
+войти. Раньше выхода не было вовсе — только правка таблицы _settings сырым SQL.
+
+Требование второго фактора при этом остаётся в силе: меняется только то, что
+привязать его можно самому, предъявив пароль. Выключать обратно (off) стоит
+после того, как фактор привязан хотя бы у одного администратора.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runUser2FASelfEnroll,
 }
 
 func init() {
@@ -136,8 +161,54 @@ func init() {
 
 	userRoleCmd.AddCommand(userRoleAssignCmd, userRoleRevokeCmd)
 	user2FACmd.AddCommand(user2FAResetCmd)
+	user2FACmd.AddCommand(user2FASelfEnrollCmd)
+	user2FAResetCmd.Flags().BoolVar(&user2FAResetForce, "force", false,
+		"снять фактор, даже если после этого войти не сможет никто")
 	userCmd.AddCommand(userListCmd, userAddCmd, userPasswdCmd, userRmCmd, userShowInListCmd, userRoleCmd, user2FACmd)
 	rootCmd.AddCommand(userCmd)
+}
+
+func runUser2FASelfEnroll(cmd *cobra.Command, args []string) error {
+	mode := strings.ToLower(strings.TrimSpace(args[0]))
+	var on bool
+	switch mode {
+	case "on", "вкл", "true", "1":
+		on = true
+	case "off", "выкл", "false", "0":
+		on = false
+	default:
+		return fmt.Errorf("ожидается on или off, получено %q", args[0])
+	}
+	env, err := openUserEnv(cmd)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+
+	ctx := context.Background()
+	policy := env.repo.AuthPolicy(ctx)
+	if policy.SelfEnroll2FA == on {
+		outf("Самопривязка второго фактора уже %s\n", onOff(on))
+		return nil
+	}
+	policy.SelfEnroll2FA = on
+	if err := env.repo.SaveAuthPolicy(ctx, policy); err != nil {
+		return err
+	}
+	env.db.LogAction(ctx, "auth_policy_self_enroll", "policy", onOff(on), "", "", "cli", "")
+	outf("Самопривязка второго фактора %s\n", onOff(on))
+	if on {
+		outf("Теперь второй фактор можно привязать прямо на входе, предъявив пароль.\n" +
+			"После того как фактор привязан хотя бы у одного администратора, выключите: onebase user 2fa self-enroll off\n")
+	}
+	return nil
+}
+
+func onOff(v bool) string {
+	if v {
+		return "включена"
+	}
+	return "выключена"
 }
 
 func runUser2FAReset(cmd *cobra.Command, args []string) error {
@@ -152,6 +223,23 @@ func runUser2FAReset(cmd *cobra.Command, args []string) error {
 	u, err := findUserByLogin(ctx, env.repo, login)
 	if err != nil {
 		return err
+	}
+	// Снятие фактора у последнего, кто его привязал, запирает базу насовсем:
+	// политика продолжит требовать второй фактор, а выдать код привязки станет
+	// некому. Именно так команда, которую справка называет средством
+	// восстановления, работала входом в тупик (#615).
+	policy := env.repo.AuthPolicy(ctx)
+	if policy.Enabled() {
+		cohort, riskErr := env.repo.TwoFactorLockoutRiskAfterDisable(ctx, policy, u.ID)
+		if riskErr != nil {
+			return riskErr
+		}
+		if cohort != "" && !user2FAResetForce {
+			return fmt.Errorf("нельзя снять второй фактор у %s: это последняя учётная запись из %s с привязанным фактором, "+
+				"и после сброса войти не сможет никто — политика продолжит требовать второй фактор, а выдать код привязки будет некому.\n"+
+				"Разрешите привязку на входе: onebase user 2fa self-enroll on\n"+
+				"Если это осознанно (учётная запись всё равно недоступна) — повторите с --force", login, cohort)
+		}
 	}
 	if err := env.repo.DisableTOTP(ctx, u.ID); err != nil {
 		return err
