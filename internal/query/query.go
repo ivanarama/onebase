@@ -49,6 +49,10 @@ type Result struct {
 	// обойти masking через `Телефон КАК Контакт` или функцию над полем.
 	// Значение "*" означает wildcard-проекцию.
 	ProjectionFields []string
+	// BoolColumns — имена колонок результата (в нижнем регистре), читающих
+	// булево поле. Потребитель приводит их значения к булеву типу: из БД они
+	// приходят по-разному (PostgreSQL — bool, SQLite — int64), см. #704.
+	BoolColumns []string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -3657,9 +3661,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			// имена колонок, и естественный отбор `ГДЕ Активен = Истина` падал
 			// «no such column: истина» (issue #704). Слово остаётся именем там,
 			// где оно синтаксически имя: после точки (Т.Истина), в позиции алиаса
-			// (КАК Истина) и если у источника есть одноимённое поле.
+			// (КАК Истина), в ссылке на уже объявленный алиас вывода
+			// (... КАК Истина ... УПОРЯДОЧИТЬ ПО Истина) и при одноимённом поле
+			// источника.
 			_, ownField := tr.colTypes[lower]
-			if !prevDot && !prevAlias && !nextIsDot && !ownField {
+			_, isAlias := tr.aliases[lower]
+			if !prevDot && !prevAlias && !nextIsDot && !ownField && !isAlias {
 				if lit, ok := boolLiteralSQL(lower, dialectName(tr.opts.Dialect)); ok {
 					tr.emit(lit)
 					continue
@@ -3819,7 +3826,32 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		Sources:          tr.sources,
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
+		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
 	}, nil
+}
+
+// boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны
+// потребителю: булево доезжает из БД в разных Go-типах (PostgreSQL — bool,
+// SQLite — int64 из INTEGER), и без приведения одно и то же поле ведёт себя в
+// прикладном коде по-разному (issue #704).
+//
+// Разбираются только простые ссылки на поле в одном SELECT: у выражений,
+// агрегатов и ОБЪЕДИНИТЬ соответствие «колонка ↔ поле» неоднозначно, и молча
+// приводить их значения нельзя.
+func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType) []string {
+	if !p.Simple {
+		return nil
+	}
+	var cols []string
+	for _, c := range p.Columns {
+		if c.Star || c.Output == "" || len(c.Fields) != 1 {
+			continue
+		}
+		if colTypes[strings.ToLower(c.Fields[0])] == metadata.FieldTypeBool {
+			cols = append(cols, c.Output)
+		}
+	}
+	return cols
 }
 
 // boolLiteralSQL переводит булев литерал текста запроса в литерал диалекта.

@@ -967,12 +967,11 @@ func truthy(v any) bool {
 
 func equal(a, b any) bool {
 	// Числа сравниваем по значению (decimal.Equal), а не строково: иначе
-	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Булево при этом
-	// приравнивается к 1/0 — то же поле приходит как bool (PostgreSQL) или как
-	// int64 (SQLite). Строки/ссылки/даты — по-прежнему через refKey.
-	ad, aok := numericOrBool(a)
-	bd, bok := numericOrBool(b)
-	if aok && bok {
+	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Строки/ссылки/
+	// даты — по-прежнему через refKey.
+	if isNumeric(a) && isNumeric(b) {
+		ad, _ := toDecimal(a)
+		bd, _ := toDecimal(b)
 		return ad.Equal(bd)
 	}
 	return refKey(a) == refKey(b)
