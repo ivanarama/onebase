@@ -796,7 +796,10 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	dslVars["Message"] = msgFunc
 	interpreter.InjectMaket(dslVars, proc.Layout)
 
-	err := s.interp.Run(procDecl, paramsThis, dslVars)
+	// Параметры задания связываем и с одноимёнными аргументами Выполнить:
+	// объявленный параметр процедуры иначе затеняет инжектированный и приходит
+	// пустым — молча (#706). Тот же вызов, что в UI и procrun.
+	_, err := s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
 	output = strings.Join(messages, "\n")
 	return output, err
 }
