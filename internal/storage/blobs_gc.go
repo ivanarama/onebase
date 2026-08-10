@@ -21,8 +21,14 @@ type GCStats struct {
 	TotalBlobs int         // всего блобов в _blobs
 	LiveRefs   int         // уникальных живых ссылок (из image-полей)
 	Orphans    []uuid.UUID // блобы без ссылок и старше grace-окна (кандидаты/удалённые)
-	Protected  int         // блобы без ссылок, но в пределах grace-окна (не тронуты)
+	Protected  int         // всего не тронутых блобов без ссылок = ProtectedRecent + ProtectedDSL
 	Deleted    int         // фактически удалено (0 при dryRun)
+
+	// Причины защиты разделены: grace-окно временное (блоб станет кандидатом,
+	// когда состарится), а dsl-managed — постоянное. Одним числом это выглядело
+	// как «моложе grace», хотя защищённый DSL-блоб мог быть создан год назад.
+	ProtectedRecent int // без ссылок, но моложе grace-окна (или created_at неизвестен)
+	ProtectedDSL    int // созданы из DSL (СохранитьКартинку) — исключены из sweep всегда
 }
 
 // CollectImageRefs возвращает множество UUID, на которые ссылаются image-поля
@@ -120,6 +126,7 @@ func (db *DB) SweepOrphanBlobs(ctx context.Context, entities []*metadata.Entity,
 		// (ревью #11).
 		if b.dslManaged {
 			st.Protected++
+			st.ProtectedDSL++
 			continue
 		}
 		// Защищаем недавно созданные блобы (created_at строго новее cutoff) И блобы
@@ -129,6 +136,7 @@ func (db *DB) SweepOrphanBlobs(ctx context.Context, entities []*metadata.Entity,
 		// защищаем.
 		if b.createdAt == 0 || b.createdAt > cutoff {
 			st.Protected++
+			st.ProtectedRecent++
 			continue
 		}
 		st.Orphans = append(st.Orphans, b.id)

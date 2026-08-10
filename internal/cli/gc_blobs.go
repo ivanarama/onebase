@@ -22,6 +22,10 @@ var gcBlobsCmd = &cobra.Command{
 несколько записей) НЕ удаляется. Недавно загруженные блобы (моложе --min-age)
 пропускаются — они могут быть ещё не привязаны к записи.
 
+Картинки, сохранённые из DSL (СохранитьКартинку), не удаляются никогда: их UUID
+мог быть положен прикладным кодом в строковый реквизит, константу или регистр —
+туда сборка мусора не смотрит. За такими блобами следит сама конфигурация.
+
 По умолчанию работает в режиме предпросмотра (dry-run) и ничего не удаляет;
 для фактического удаления добавьте --delete.`,
 	RunE: runGcBlobs,
@@ -92,10 +96,15 @@ func runGcBlobs(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	outf("Всего блобов:        %d\n", st.TotalBlobs)
-	outf("Живых ссылок:        %d\n", st.LiveRefs)
-	outf("Защищено grace-окном: %d (моложе %s)\n", st.Protected, minAge)
-	outf("Сирот:               %d\n", len(st.Orphans))
+	outf("Всего блобов:         %d\n", st.TotalBlobs)
+	outf("Живых ссылок:         %d\n", st.LiveRefs)
+	outf("Защищено grace-окном: %d (моложе %s)\n", st.ProtectedRecent, minAge)
+	// Отдельной строкой, иначе картинки из СохранитьКартинку попадали в счётчик
+	// grace-окна и вывод уверял, что блоб «моложе 0s», хотя защищён он навсегда.
+	if st.ProtectedDSL > 0 {
+		outf("Защищено как DSL:     %d (СохранитьКартинку — sweep их не трогает)\n", st.ProtectedDSL)
+	}
+	outf("Сирот:                %d\n", len(st.Orphans))
 	if doDelete {
 		outf("Удалено:             %d\n", st.Deleted)
 		printReclaimHint(db, st.Deleted)
