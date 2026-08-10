@@ -18,6 +18,13 @@ var queryDescriptors = []Descriptor{
 		Example:   "ВЫБРАТЬ РАЗЛИЧНЫЕ Склад ИЗ РегистрНакопления.ОстаткиТоваров",
 	},
 	{
+		Name: "первые", Display: "ПЕРВЫЕ", Aliases: []string{"TOP"},
+		Kind: KindQuery, Group: "Запрос",
+		Signature: "ВЫБРАТЬ [РАЗЛИЧНЫЕ] ПЕРВЫЕ <N> <поля>",
+		Doc:       "Ограничивает результат первыми N строками (SQL LIMIT). Сочетается с РАЗЛИЧНЫЕ и УПОРЯДОЧИТЬ ПО.",
+		Example:   "ВЫБРАТЬ ПЕРВЫЕ 10 Наименование ИЗ Справочник.Номенклатура УПОРЯДОЧИТЬ ПО Наименование",
+	},
+	{
 		Name: "из", Display: "ИЗ", Aliases: []string{"FROM"},
 		Kind: KindQuery, Group: "Запрос",
 		Signature: "ИЗ <ТипИсточника>.<Имя>[.ВиртуальнаяТаблица(...)]",
@@ -67,7 +74,7 @@ var queryDescriptors = []Descriptor{
 		Example:   "УПОРЯДОЧИТЬ ПО Сумма УБЫВ",
 	},
 	{
-		Name: "имея", Display: "ИМЕЯ", Aliases: []string{"HAVING"},
+		Name: "имея", Display: "ИМЕЯ", Aliases: []string{"ИМЕЮЩИЕ", "HAVING"},
 		Kind: KindQuery, Group: "Запрос",
 		Signature: "ИМЕЯ <условие на агрегат>",
 		Doc:       "Фильтрует сгруппированные строки по условию над агрегатными функциями.",

@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -85,7 +86,58 @@ func sourcePermKind(typeUpper string) string {
 
 // Compile translates a 1C-style query to PostgreSQL SQL.
 func Compile(src string, opts CompileOpts) (Result, error) {
-	return translate(tokenize(src), opts)
+	tokens, limit := extractFirstN(tokenize(src))
+	res, err := translate(tokens, opts)
+	if err != nil || limit <= 0 {
+		return res, err
+	}
+	// LIMIT дописывается к готовому SQL, а не встраивается в трансляцию: он
+	// применяется к результату целиком, в том числе к запросу с ОБЪЕДИНИТЬ.
+	res.SQL += " LIMIT " + strconv.Itoa(limit)
+	return res, nil
+}
+
+// extractFirstN вырезает «ВЫБРАТЬ ПЕРВЫЕ N» (1С) / «SELECT TOP N» и возвращает N.
+// Ограничение количества строк — часть языка запросов 1С, и переносимые оттуда
+// модули пишут его постоянно; без разбора такой запрос доходил до СУБД как
+// «SELECT ПЕРВЫЕ 10 …» и падал с синтаксической ошибкой SQL.
+//
+// РАЗЛИЧНЫЕ и ПЕРВЫЕ сочетаются в любом порядке — как и в 1С.
+func extractFirstN(tokens []tok) ([]tok, int) {
+	if len(tokens) == 0 {
+		return tokens, 0
+	}
+	i := 0
+	if kw, ok := sqlKW(tokens[i].val); !ok || kw != "SELECT" || tokens[i].kind != tIdent {
+		return tokens, 0
+	}
+	i++
+	// пропускаем РАЗЛИЧНЫЕ/ВСЕ перед ПЕРВЫЕ
+	for i < len(tokens) && tokens[i].kind == tIdent {
+		if kw, ok := sqlKW(tokens[i].val); ok && (kw == "DISTINCT" || kw == "ALL") {
+			i++
+			continue
+		}
+		break
+	}
+	if i >= len(tokens) || tokens[i].kind != tIdent {
+		return tokens, 0
+	}
+	word := strings.ToUpper(tokens[i].val)
+	if word != "ПЕРВЫЕ" && word != "TOP" {
+		return tokens, 0
+	}
+	if i+1 >= len(tokens) || tokens[i+1].kind != tNum {
+		return tokens, 0
+	}
+	n, err := strconv.Atoi(tokens[i+1].val)
+	if err != nil || n <= 0 {
+		return tokens, 0
+	}
+	out := make([]tok, 0, len(tokens)-2)
+	out = append(out, tokens[:i]...)
+	out = append(out, tokens[i+2:]...)
+	return out, n
 }
 
 // --- tokenizer ---
@@ -352,6 +404,7 @@ var kwMap = map[string]string{
 	"УПОРЯДОЧИТЬ":   "ORDER",
 	"ПО":            "ON", // standalone ПО without СГРУППИРОВАТЬ/УПОРЯДОЧИТЬ is always JOIN ON
 	"ИМЕЯ":          "HAVING",
+	"ИМЕЮЩИЕ":       "HAVING", // синоним 1С — конфигурации оттуда пишут именно так
 	"КАК":           "AS",
 	"И":             "AND",
 	"ИЛИ":           "OR",
