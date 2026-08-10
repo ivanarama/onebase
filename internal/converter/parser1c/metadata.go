@@ -19,6 +19,16 @@ type xmlProperties struct {
 	// Accumulation registers
 	Dimensions []xmlAttribute `xml:"Dimensions>Dimension"`
 	Resources  []xmlAttribute `xml:"Resources>Resource"`
+	// Свойства кода и номера — см. комментарий у xmlV8ObjProps.
+	Hierarchical      string `xml:"Hierarchical"`
+	CodeLength        string `xml:"CodeLength"`
+	CodeType          string `xml:"CodeType"`
+	CheckUnique       string `xml:"CheckUnique"`
+	Autonumbering     string `xml:"Autonumbering"`
+	NumberType        string `xml:"NumberType"`
+	NumberLength      string `xml:"NumberLength"`
+	NumberPeriodicity string `xml:"NumberPeriodicity"`
+	Posting           string `xml:"Posting"`
 }
 
 type xmlLang struct {
@@ -65,6 +75,18 @@ type xmlV8Obj struct {
 
 type xmlV8ObjProps struct {
 	Name string `xml:"Name"`
+	// Свойства кода справочника и номера документа. До этого не читались вовсе,
+	// поэтому автонумерация, длина кода и контроль уникальности терялись молча —
+	// а импортированный документ приходил вообще без «Номера» (план 117, Д6–Д8).
+	Hierarchical      string `xml:"Hierarchical"`
+	CodeLength        string `xml:"CodeLength"`
+	CodeType          string `xml:"CodeType"`
+	CheckUnique       string `xml:"CheckUnique"`
+	Autonumbering     string `xml:"Autonumbering"`
+	NumberType        string `xml:"NumberType"`
+	NumberLength      string `xml:"NumberLength"`
+	NumberPeriodicity string `xml:"NumberPeriodicity"`
+	Posting           string `xml:"Posting"`
 }
 
 type xmlV8Children struct {
@@ -328,6 +350,37 @@ func objectNames(dir string) []string {
 	return names
 }
 
+// xmlBool разбирает булево свойство 1С: «true»/«Allow»/«Use» — да.
+func xmlBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "allow", "use", "1":
+		return true
+	}
+	return false
+}
+
+func xmlInt(v string) int {
+	n := 0
+	for _, r := range strings.TrimSpace(v) {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+// codeNumbering собирает свойства кода/номера из сырых полей выгрузки.
+func codeNumbering(auto, length, typ, unique, periodicity string) Numbering {
+	return Numbering{
+		Auto:        xmlBool(auto),
+		Length:      xmlInt(length),
+		Type:        strings.TrimSpace(typ),
+		CheckUnique: xmlBool(unique),
+		Periodicity: strings.TrimSpace(periodicity),
+	}
+}
+
 func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 	var result []*CatalogMeta
 	for _, name := range objectNames(dir) {
@@ -345,8 +398,11 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 			}
 			if obj != nil {
 				cat := &CatalogMeta{
-					Name:       orDefault(obj.Props.Name, name),
-					Attributes: convertV83Attrs(obj.ChildObjects.Attributes),
+					Name:         orDefault(obj.Props.Name, name),
+					Attributes:   convertV83Attrs(obj.ChildObjects.Attributes),
+					Hierarchical: xmlBool(obj.Props.Hierarchical),
+					Code: codeNumbering(obj.Props.Autonumbering, obj.Props.CodeLength,
+						obj.Props.CodeType, obj.Props.CheckUnique, ""),
 				}
 				for _, ts := range obj.ChildObjects.TabularSections {
 					cat.TabularSections = append(cat.TabularSections, TabularSection{
@@ -370,9 +426,12 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 			continue
 		}
 		cat := &CatalogMeta{
-			Name:       orDefault(props.Name, name),
-			Synonym:    props.Synonym.Content,
-			Attributes: convertAttrs(props.Attributes),
+			Name:         orDefault(props.Name, name),
+			Synonym:      props.Synonym.Content,
+			Attributes:   convertAttrs(props.Attributes),
+			Hierarchical: xmlBool(props.Hierarchical),
+			Code: codeNumbering(props.Autonumbering, props.CodeLength,
+				props.CodeType, props.CheckUnique, ""),
 		}
 		for _, ts := range props.TabularSections {
 			cat.TabularSections = append(cat.TabularSections, TabularSection{
@@ -396,6 +455,9 @@ func parseDocuments(dir string) ([]*DocumentMeta, error) {
 			doc := &DocumentMeta{
 				Name:       orDefault(obj.Props.Name, name),
 				Attributes: convertV83Attrs(obj.ChildObjects.Attributes),
+				Posting:    xmlBool(obj.Props.Posting),
+				Number: codeNumbering(obj.Props.Autonumbering, obj.Props.NumberLength,
+					obj.Props.NumberType, "", obj.Props.NumberPeriodicity),
 			}
 			for _, ts := range obj.ChildObjects.TabularSections {
 				doc.TabularSections = append(doc.TabularSections, TabularSection{
@@ -421,6 +483,9 @@ func parseDocuments(dir string) ([]*DocumentMeta, error) {
 			Name:       orDefault(props.Name, name),
 			Synonym:    props.Synonym.Content,
 			Attributes: convertAttrs(props.Attributes),
+			Posting:    xmlBool(props.Posting),
+			Number: codeNumbering(props.Autonumbering, props.NumberLength,
+				props.NumberType, "", props.NumberPeriodicity),
 		}
 		for _, ts := range props.TabularSections {
 			doc.TabularSections = append(doc.TabularSections, TabularSection{

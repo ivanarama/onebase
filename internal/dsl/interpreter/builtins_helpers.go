@@ -66,6 +66,36 @@ func addDayBuiltin(args []any, _ string, _ int) (any, error) {
 	return t.AddDate(0, 0, int(floatArg(args, 1))), nil
 }
 
+// Сдвиг по часам, минутам и секундам (issue #707). Раньше их не было, а
+// очевидные обходные пути не работали: ДобавитьДень(Дата, 60/86400) молча
+// отбрасывал дробную часть (int()), а Дата(Г,М,Д,ч,м,с+90) не нормализует
+// переполнение и возвращала пустую дату. Работал только `Дата + N` — но нигде
+// не был описан, и находился перебором.
+//
+// Доли принимаются: ДобавитьСекунд(Д, 0.5) сдвигает на полсекунды. Это не
+// прихоть, а следствие того, что в DSL число одно — дробное; отбрасывать
+// дробь молча значило бы повторить ровно ту беду, из-за которой issue и
+// заведён.
+func addSecondsBuiltin(args []any, _ string, _ int) (any, error) {
+	return shiftBySeconds(args, 1)
+}
+
+func addMinutesBuiltin(args []any, _ string, _ int) (any, error) {
+	return shiftBySeconds(args, 60)
+}
+
+func addHoursBuiltin(args []any, _ string, _ int) (any, error) {
+	return shiftBySeconds(args, 3600)
+}
+
+func shiftBySeconds(args []any, unit float64) (any, error) {
+	t, ok := toTime(args, 0)
+	if !ok {
+		return nil, nil
+	}
+	return t.Add(time.Duration(floatArg(args, 1) * unit * float64(time.Second))), nil
+}
+
 // addYearBuiltin — ДобавитьГод(дата, n). n может быть отрицательным.
 func addYearBuiltin(args []any, _ string, _ int) (any, error) {
 	t, ok := toTime(args, 0)
