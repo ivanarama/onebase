@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -131,9 +133,9 @@ func TestTradeImageDemo_StoresOnlyUsedCategories(t *testing.T) {
 	}
 }
 
-// Ошибка записи объекта происходит уже после СохранитьКартинку. Блоб и файл
-// на диске должны откатиться той же транзакцией, а после устранения ошибки тот
-// же процесс обязан успешно повториться.
+// Ошибка записи объекта происходит уже после СохранитьКартинку. Обычный
+// обработанный rollback должен удалить строку blob и компенсировать disk-файл;
+// после устранения ошибки тот же процесс обязан успешно повториться.
 func TestTradeImageDemo_ObjectSaveFailureRollsBackBlob(t *testing.T) {
 	ctx := context.Background()
 	proj, err := project.Load("../../examples/trade")
@@ -224,11 +226,11 @@ func TestTradeImageDemo_ObjectSaveFailureRollsBackBlob(t *testing.T) {
 	}
 }
 
-// Параллельные запуски на одном сервере проходят реальный Query → lock →
-// повторное чтение → транзакционную запись. Только один из них создаёт blob;
-// остальные после ожидания видят уже заполненное Фото и ничего не сохраняют.
+// Параллельные запуски через независимые Server проходят реальный Query →
+// lock → повторное чтение → транзакционную запись. Их process-local lockMgr не
+// пересекаются: на PostgreSQL сериализацию обязан обеспечить advisory lock, а
+// не общий mutex. Только один запуск создаёт blob и записывает его UUID в строку.
 func TestTradeImageDemo_ConcurrentRunsCreateSingleBlob(t *testing.T) {
-	ctx := context.Background()
 	proj, err := project.Load("../../examples/trade")
 	if err != nil {
 		t.Fatalf("загрузка examples/trade: %v", err)
@@ -236,75 +238,128 @@ func TestTradeImageDemo_ConcurrentRunsCreateSingleBlob(t *testing.T) {
 	defer proj.Close()
 	nomenclature := tradeNomenclature(t, proj)
 
-	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "image-concurrent.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.EnsureAuditSchema(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.EnsureBlobTable(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SaveFileStorageMode(ctx, storage.FileStorageDB); err != nil {
-		t.Fatal(err)
-	}
-	id := uuid.New()
-	if err := db.Upsert(ctx, nomenclature.Name, id, map[string]any{
-		"Наименование": "Гвоздь конкурентный",
-		"Фото":         "",
-	}, nomenclature); err != nil {
-		t.Fatal(err)
-	}
-
-	s, reg, err := NewOfflineServer(proj, db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const runners = 8
-	start := make(chan struct{})
-	errCh := make(chan error, runners)
-	var wg sync.WaitGroup
-	for i := 0; i < runners; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			_, runErr, setupErr := s.RunProcessor(ctx, reg, "ДемоФотоНоменклатуры", nil, nil, nil)
-			if setupErr != nil {
-				errCh <- setupErr
-				return
-			}
-			errCh <- runErr
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(errCh)
-	for runErr := range errCh {
-		if runErr != nil {
-			t.Fatalf("параллельный запуск завершился ошибкой: %v", runErr)
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		if err := db.Migrate(ctx, proj.Entities); err != nil {
+			t.Fatal(err)
 		}
-	}
+		if err := db.EnsureAuditSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.EnsureBlobTable(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SaveFileStorageMode(ctx, storage.FileStorageDB); err != nil {
+			t.Fatal(err)
+		}
+		id := uuid.New()
+		if err := db.Upsert(ctx, nomenclature.Name, id, map[string]any{
+			"Наименование": "Гвоздь конкурентный",
+			"Фото":         "",
+		}, nomenclature); err != nil {
+			t.Fatal(err)
+		}
+		if db.IsPostgres() {
+			// Widen the critical window deterministically. Without the advisory
+			// lock, independent servers all load the blank row, create their own
+			// blobs, then collide on optimistic UPDATE; with the lock, only the
+			// first update reaches this delay and the rest re-read filled Фото.
+			photoColumn := ""
+			for _, field := range nomenclature.Fields {
+				if field.Name == "Фото" {
+					photoColumn = metadata.ColumnName(field)
+					break
+				}
+			}
+			if photoColumn == "" {
+				t.Fatal("колонка Фото не найдена")
+			}
+			if _, err := db.Exec(ctx, `CREATE FUNCTION _test_delay_image_update()
+				RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN PERFORM pg_sleep(0.25); RETURN NEW; END; $$`); err != nil {
+				t.Fatalf("create delay function: %v", err)
+			}
+			triggerSQL := fmt.Sprintf(`CREATE TRIGGER _test_delay_image_update
+				BEFORE UPDATE OF %s ON %s FOR EACH ROW
+				EXECUTE FUNCTION _test_delay_image_update()`,
+				photoColumn, metadata.TableName(nomenclature.Name))
+			if _, err := db.Exec(ctx, triggerSQL); err != nil {
+				t.Fatalf("create delay trigger: %v", err)
+			}
+		}
 
-	var blobs int
-	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM _blobs").Scan(&blobs); err != nil {
-		t.Fatal(err)
-	}
-	if blobs != 1 {
-		t.Fatalf("параллельные запуски создали %d блобов, ожидался 1", blobs)
-	}
-	row, err := db.GetByID(ctx, nomenclature.Name, id, nomenclature)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if photo, _ := row["Фото"].(string); photo == "" {
-		t.Fatal("параллельные запуски не записали Фото")
-	}
+		type offlineRuntime struct {
+			server *Server
+			reg    *runtime.Registry
+		}
+		const runners = 8
+		runtimes := make([]offlineRuntime, runners)
+		for i := range runtimes {
+			s, reg, err := NewOfflineServer(proj, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtimes[i] = offlineRuntime{server: s, reg: reg}
+		}
+		seenLockManagers := map[*runtime.LockManager]bool{}
+		for _, rt := range runtimes {
+			if seenLockManagers[rt.server.lockMgr] {
+				t.Fatal("конкурентный тест неожиданно переиспользует process lockMgr")
+			}
+			seenLockManagers[rt.server.lockMgr] = true
+		}
+
+		start := make(chan struct{})
+		errCh := make(chan error, runners)
+		var wg sync.WaitGroup
+		for i := 0; i < runners; i++ {
+			rt := runtimes[i]
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, runErr, setupErr := rt.server.RunProcessor(ctx, rt.reg, "ДемоФотоНоменклатуры", nil, nil, nil)
+				if setupErr != nil {
+					errCh <- setupErr
+					return
+				}
+				errCh <- runErr
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errCh)
+		for runErr := range errCh {
+			if runErr != nil {
+				t.Fatalf("параллельный запуск завершился ошибкой: %v", runErr)
+			}
+		}
+
+		var blobs int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM _blobs").Scan(&blobs); err != nil {
+			t.Fatal(err)
+		}
+		if blobs != 1 {
+			t.Fatalf("параллельные запуски создали %d блобов, ожидался 1", blobs)
+		}
+		row, err := db.GetByID(ctx, nomenclature.Name, id, nomenclature)
+		if err != nil {
+			t.Fatal(err)
+		}
+		photo, _ := row["Фото"].(string)
+		photoID, err := uuid.Parse(photo)
+		if err != nil {
+			t.Fatalf("строка получила некорректный UUID Фото %q: %v", photo, err)
+		}
+		blob, rc, err := db.OpenBlob(ctx, photoID)
+		if err != nil {
+			t.Fatalf("Фото строки не указывает на единственный blob: %v", err)
+		}
+		_ = rc.Close()
+		if blob.OwnerKind != string(nomenclature.Kind) || blob.OwnerEntity != nomenclature.Name {
+			t.Fatalf("владелец единственного blob = %q/%q", blob.OwnerKind, blob.OwnerEntity)
+		}
+	})
 }
 
 func tradeNomenclature(t *testing.T, proj *project.Project) *metadata.Entity {

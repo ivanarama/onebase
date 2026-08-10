@@ -51,6 +51,10 @@ type BlobOwner struct {
 // blobsDirName — подкаталог filesDir для дискового режима хранения.
 const blobsDirName = "_blobs"
 
+// External storage is outside the database transaction. Rollback compensation
+// must not hang transaction completion indefinitely when S3 is unavailable.
+const blobExternalCleanupTimeout = 10 * time.Second
+
 var ErrBlobTooLarge = errors.New("blob exceeds maximum size")
 
 // EnsureBlobTable создаёт таблицу _blobs (метаданные + данные для db-режима).
@@ -161,19 +165,30 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 		if int64(len(data)) > maxSizeBytes {
 			return Blob{}, tooLarge()
 		}
+		blobStore := db.blobStore // rollback hook may run after runtime reconfiguration
 		key := db.blobObjectKey(id)
-		if err := db.blobStore.PutObject(ctx, key, bytes.NewReader(data), int64(len(data)), mime); err != nil {
+		if err := blobStore.PutObject(ctx, key, bytes.NewReader(data), int64(len(data)), mime); err != nil {
 			return Blob{}, fmt.Errorf("blobs: s3 put: %w", err)
 		}
-		compensate := func() { _ = db.blobStore.DeleteObject(context.Background(), key) }
+		compensate := func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), blobExternalCleanupTimeout)
+			defer cancel()
+			if err := blobStore.DeleteObject(cleanupCtx, key); err != nil {
+				// The database outcome is already final, so this cannot be returned to
+				// the caller. Keep it observable: an external orphan may require
+				// operator cleanup/reconciliation.
+				storageLog().Warn("не удалось удалить S3-блоб при компенсации записи/отката",
+					"key", key, "err", err)
+			}
+		}
 		if err := insertMeta(int64(len(data)), FileStorageS3); err != nil {
 			// Компенсируем: объект уже залит, а строки нет — убираем объект.
 			compensate()
 			return Blob{}, err
 		}
-		// Метаданные участвуют в транзакции, а S3-объект — нет. При откате
-		// транзакции/сейвпоинта удаляем внешнее содержимое, иначе останется файл без
-		// строки _blobs и последующий GC уже не сможет его обнаружить.
+		// Метаданные участвуют в транзакции, а S3-объект — нет. При обычном откате
+		// транзакции/сейвпоинта пытаемся удалить внешнее содержимое. Это компенсация,
+		// а не строгая атомарность: crash или недоступный S3 могут оставить orphan.
 		DeferUntilTxRollback(ctx, compensate)
 		return result(int64(len(data))), nil
 
@@ -207,9 +222,8 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 			removeFile(fp)
 			return Blob{}, err
 		}
-		// Как и S3, файл находится вне транзакции БД. Привязываем его время жизни
-		// к исходу транзакции, чтобы ошибка последующей записи объекта не оставляла
-		// физический orphan без строки _blobs.
+		// Как и S3, файл находится вне транзакции БД. При обработанном rollback hook
+		// компенсирует запись файла; crash между записью и hook остаётся внешним окном.
 		DeferUntilTxRollback(ctx, func() { removeFile(fp) })
 		return result(n), nil
 	}

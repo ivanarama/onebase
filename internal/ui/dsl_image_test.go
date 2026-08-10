@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/dsl/lexer"
+	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -21,6 +23,55 @@ func callDSLTestBuiltin(t *testing.T, vars map[string]any, name string, args ...
 		t.Fatalf("builtin %s не зарегистрирован", name)
 	}
 	return fn(args, "dsl-image-test.os", 1)
+}
+
+// Explicit Неопределено is how generated/application DSL commonly forwards an
+// optional argument. Exercise the parser and interpreter, not a direct Go call:
+// it must be indistinguishable from omitting owner and keep the legacy mode.
+func TestSaveImageExplicitUndefinedKeepsLegacyOwnerlessMode(t *testing.T) {
+	entity := ownerCatalog("Фотографии", metadata.Field{Name: "Картинка", Type: metadata.FieldTypeImage})
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	if err := s.store.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SaveFileStorageMode(ctx, storage.FileStorageDB); err != nil {
+		t.Fatal(err)
+	}
+	data := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nlegacy"))
+	src := `Функция Тест()
+		Возврат СохранитьКартинку("` + data + `", "image/png", Неопределено);
+	КонецФункции`
+	prog, err := parser.New(lexer.New(src, "save-image-undefined.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.Procedures) != 1 {
+		t.Fatalf("процедур = %d, ожидалась 1", len(prog.Procedures))
+	}
+	vars := s.buildDSLVars(ctx, runtime.NewMovementsCollector("processor", [16]byte{}))
+	var result any
+	if err := s.interp.RunWithResult(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument), &result, vars); err != nil {
+		t.Fatalf("public DSL run: %v", err)
+	}
+	id, err := uuid.Parse(result.(string))
+	if err != nil {
+		t.Fatalf("UUID результата: %v", err)
+	}
+	blob, rc, err := s.store.OpenBlob(ctx, id)
+	if err != nil {
+		t.Fatalf("OpenBlob: %v", err)
+	}
+	_ = rc.Close()
+	if blob.OwnerKind != "" || blob.OwnerEntity != "" {
+		t.Fatalf("Неопределено неожиданно создало владельца %q/%q", blob.OwnerKind, blob.OwnerEntity)
+	}
+	var managed int
+	if err := s.store.QueryRow(ctx, "SELECT dsl_managed FROM _blobs WHERE id=?", id.String()).Scan(&managed); err != nil {
+		t.Fatalf("dsl_managed: %v", err)
+	}
+	if managed != 1 {
+		t.Fatalf("dsl_managed=%d, ожидалось 1 для legacy owner-less режима", managed)
+	}
 }
 
 // Owner-aware СохранитьКартинку must not become a shortcut around entity/RLS

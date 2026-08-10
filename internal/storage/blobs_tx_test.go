@@ -3,14 +3,15 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// Blob metadata lives in the database, while disk/S3 bytes do not. A later
-// object-save error must therefore roll both parts back together; otherwise the
-// external object has no _blobs row and cannot even be found by gc-blobs.
+// Blob metadata lives in the database, while disk/S3 bytes do not. A handled
+// rollback after a later object-save error must run compensating cleanup;
+// otherwise the external object has no _blobs row and gc-blobs cannot find it.
 func TestBlobExternalContentFollowsTransactionOutcome(t *testing.T) {
 	ctx := context.Background()
 	t.Run("disk", func(t *testing.T) {
@@ -89,6 +90,9 @@ func TestBlobExternalContentFollowsTransactionOutcome(t *testing.T) {
 		if _, ok := store.objs[rolledBackKey]; ok {
 			t.Fatal("rolled-back blob left S3 object")
 		}
+		if !store.deleteHadDeadline {
+			t.Fatal("rollback compensation called S3 without a bounded context")
+		}
 		if _, _, err := db.OpenBlob(ctx, rolledBack.ID); err == nil {
 			t.Fatal("rolled-back S3 blob left metadata")
 		}
@@ -107,6 +111,32 @@ func TestBlobExternalContentFollowsTransactionOutcome(t *testing.T) {
 		}
 		if _, ok := store.objs[keptKey]; !ok {
 			t.Fatal("commit removed S3 object")
+		}
+	})
+
+	t.Run("s3 cleanup failure is bounded", func(t *testing.T) {
+		db, store := newS3TestDB(t)
+		tx, txCtx, err := db.BeginTx(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blob, err := db.PutBlob(txCtx, "image/png", bytes.NewBufferString("rollback"), 1<<20, BlobOwner{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := "px/blobs/" + blob.ID.String()
+		store.deleteErr = errors.New("S3 unavailable")
+		if err := tx.Rollback(txCtx); err != nil {
+			t.Fatal(err)
+		}
+		if !store.deleteHadDeadline {
+			t.Fatal("failed S3 compensation had no deadline")
+		}
+		if _, ok := store.objs[key]; !ok {
+			t.Fatal("failing fake unexpectedly removed S3 object")
+		}
+		if _, _, err := db.OpenBlob(ctx, blob.ID); err == nil {
+			t.Fatal("database metadata survived rollback after S3 cleanup failure")
 		}
 	})
 }

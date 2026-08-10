@@ -188,7 +188,8 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// Для image-поля третьим аргументом нужно передать ссылку на целевую запись:
 	// тогда blob получает владельца-сущность, а доступ на запись проверяется до
 	// сохранения. Owner-aware вариант разрешён только внутри DSL-транзакции, чтобы
-	// blob и ссылка на него фиксировались атомарно. Два аргумента сохраняют legacy-
+	// метаданные blob и ссылка имели общий исход БД; для disk/S3 обычный rollback
+	// запускает компенсационную очистку. Два аргумента сохраняют legacy-
 	// поведение для UUID в строках/константах: owner-less blob доступен любому
 	// аутентифицированному пользователю и навсегда исключён из GC.
 	putImageFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
@@ -233,7 +234,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 
 		ctx := txState.Ctx()
 		owner := storage.BlobOwner{DSLManaged: true}
-		if len(args) > 2 {
+		// Явное Неопределено эквивалентно отсутствующему optional-параметру и
+		// сохраняет совместимый owner-less режим.
+		if len(args) > 2 && args[2] != nil {
 			ref, ok := args[2].(*interpreter.Ref)
 			if !ok || ref == nil {
 				return nil, fmt.Errorf("СохранитьКартинку: владелец должен быть ссылкой на запись")
