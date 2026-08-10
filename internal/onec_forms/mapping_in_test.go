@@ -164,3 +164,36 @@ func TestNormalizeForImport_RealFile(t *testing.T) {
 		t.Errorf("first element after normalize = %q, ожидается СтраницыФормы", form.Elements[0].Kind)
 	}
 }
+
+// Реальные выгрузки 1С пишут <LabelDecoration>, а не <Decoration>: до
+// исправления такой элемент оставался с неизвестным видом и ронял check.
+func TestNormalize_LabelDecorationСтановитсяНадписью(t *testing.T) {
+	el := &IRElement{Kind: "LabelDecoration", Name: "НадписьРасписание"}
+	var warns Warnings
+	normalizeElement(el, &warns)
+	if el.Kind != "Надпись" {
+		t.Errorf("вид = %q, ожидалась Надпись", el.Kind)
+	}
+	if el.Props["decoration"] != true {
+		t.Errorf("потеряна пометка decoration: %v", el.Props)
+	}
+	for _, w := range warns {
+		if w.Code == W010_UnknownElement {
+			t.Errorf("не должно быть W010: %+v", w)
+		}
+	}
+}
+
+// Popup — подменю командной панели. Прямого аналога нет, но содержимое важнее
+// вида: переносим как группу с пометкой, а не теряем вместе с элементом.
+func TestNormalize_PopupСтановитсяГруппой(t *testing.T) {
+	el := &IRElement{Kind: "Popup", Name: "Группа6"}
+	var warns Warnings
+	normalizeElement(el, &warns)
+	if el.Kind != "ГруппаФормы" {
+		t.Errorf("вид = %q, ожидалась ГруппаФормы", el.Kind)
+	}
+	if el.Props["popup"] != true {
+		t.Errorf("потеряна пометка popup: %v", el.Props)
+	}
+}
