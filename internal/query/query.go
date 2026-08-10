@@ -50,6 +50,10 @@ type Result struct {
 	// обойти masking через `Телефон КАК Контакт` или функцию над полем.
 	// Значение "*" означает wildcard-проекцию.
 	ProjectionFields []string
+	// BoolColumns — имена колонок результата (в нижнем регистре), читающих
+	// булево поле. Потребитель приводит их значения к булеву типу: из БД они
+	// приходят по-разному (PostgreSQL — bool, SQLite — int64), см. #704.
+	BoolColumns []string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -876,6 +880,16 @@ func (tr *translator) advance() tok {
 
 func (tr *translator) emit(s string) {
 	tr.parts = append(tr.parts, s)
+}
+
+// dropSourceQualifier снимает последние «<источник> .» из вывода. Возвращает
+// false, если картина иная, — тогда вызывающий не меняет поведение.
+func (tr *translator) dropSourceQualifier() bool {
+	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." {
+		return false
+	}
+	tr.parts = tr.parts[:len(tr.parts)-2]
+	return true
 }
 
 func (tr *translator) build() string {
@@ -3696,6 +3710,21 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					prevAlias = !prevDot
 				}
 			}
+			// Булевы литералы Истина/Ложь. Без этой ветки они уезжали в SQL как
+			// имена колонок, и естественный отбор `ГДЕ Активен = Истина` падал
+			// «no such column: истина» (issue #704). Слово остаётся именем там,
+			// где оно синтаксически имя: после точки (Т.Истина), в позиции алиаса
+			// (КАК Истина), в ссылке на уже объявленный алиас вывода
+			// (... КАК Истина ... УПОРЯДОЧИТЬ ПО Истина) и при одноимённом поле
+			// источника.
+			_, ownField := tr.colTypes[lower]
+			_, isAlias := tr.aliases[lower]
+			if !prevDot && !prevAlias && !nextIsDot && !ownField && !isAlias {
+				if lit, ok := boolLiteralSQL(lower, dialectName(tr.opts.Dialect)); ok {
+					tr.emit(lit)
+					continue
+				}
+			}
 			// Ссылка / Reference → id (virtual primary-key field, like 1C).
 			// Работает и после точки (Н.Ссылка → н.id), и без алиаса
 			// (ВЫБРАТЬ Ссылка ИЗ Справочник.X → SELECT id FROM x).
@@ -3809,7 +3838,20 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emitOwnColumn(col, lower)
 				} else if prevDot {
 					if rd := tr.findRefDim(lower); rd != nil {
-						tr.emit(rd.idCol)
+						// Двухуровневая навигация: Источник.Ссылка.Реквизит.
+						// LEFT JOIN на связанную таблицу к этому моменту уже
+						// построен — не хватало только подстановки. Раньше путь
+						// уходил в SQL как есть и падал сырым «no such column:
+						// сигналыrag.профиль_id.наименование» (#705).
+						//
+						// Квалификатор источника («сигналыrag» и точку) снимаем:
+						// реквизит берётся из псевдонима присоединённой таблицы,
+						// а не из колонки-идентификатора.
+						if nextIsDot && tr.dropSourceQualifier() {
+							tr.emit(rd.joinAlias)
+						} else {
+							tr.emit(rd.idCol)
+						}
 					} else if c, ok2 := tr.colMap[lower]; ok2 {
 						tr.emitQualifiedColumn(c, lower)
 					} else {
@@ -3837,7 +3879,57 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		Sources:          tr.sources,
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
+		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
 	}, nil
+}
+
+// boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны
+// потребителю: булево доезжает из БД в разных Go-типах (PostgreSQL — bool,
+// SQLite — int64 из INTEGER), и без приведения одно и то же поле ведёт себя в
+// прикладном коде по-разному (issue #704).
+//
+// Разбираются только простые ссылки на поле в одном SELECT: у выражений,
+// агрегатов и ОБЪЕДИНИТЬ соответствие «колонка ↔ поле» неоднозначно, и молча
+// приводить их значения нельзя.
+func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType) []string {
+	if !p.Simple {
+		return nil
+	}
+	var cols []string
+	for _, c := range p.Columns {
+		if c.Star || c.Output == "" || len(c.Fields) != 1 {
+			continue
+		}
+		if colTypes[strings.ToLower(c.Fields[0])] == metadata.FieldTypeBool {
+			cols = append(cols, c.Output)
+		}
+	}
+	return cols
+}
+
+// boolLiteralSQL переводит булев литерал текста запроса в литерал диалекта.
+// SQLite хранит булево в INTEGER 0/1 (SQLiteDialect.TypeBool), и литералы там
+// пишутся числами — так же, как в DDL (boolTrueLit/boolFalseLit в storage).
+func boolLiteralSQL(lower, dialect string) (string, bool) {
+	var val bool
+	switch lower {
+	case "истина", "true":
+		val = true
+	case "ложь", "false":
+		val = false
+	default:
+		return "", false
+	}
+	switch {
+	case dialect == "sqlite" && val:
+		return "1", true
+	case dialect == "sqlite":
+		return "0", true
+	case val:
+		return "TRUE", true
+	default:
+		return "FALSE", true
+	}
 }
 
 // dialectName возвращает строковое имя диалекта SQL для opts.Dialect; nil → "pg"

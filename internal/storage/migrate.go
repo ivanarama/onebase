@@ -486,7 +486,7 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	if err := db.EnsureNumeratorSchema(ctx); err != nil {
 		return fmt.Errorf("migrate: numerators table: %w", err)
 	}
-	ftsCreated, err := db.EnsureFullTextSchema(ctx)
+	needFTSBackfill, err := db.EnsureFullTextSchema(ctx)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -564,7 +564,13 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	// нужен ровно один раз: при обновлении платформы на базе, где данные уже
 	// есть. Без него строка поиска работает, но не находит ничего, и понять
 	// это можно только догадавшись выполнить `onebase reindex`.
-	if ftsCreated {
+	//
+	// Признак берётся из отметки в _settings, а не из «таблицы не было»:
+	// наполнение идёт вне транзакции, и обрыв посреди него оставлял пустую
+	// таблицу, которая при следующем запуске выглядела как уже наполненная
+	// (#615, см. ftsBackfillDoneKey). Отметку ставит сама RebuildFullTextIndex,
+	// и только дойдя до конца.
+	if needFTSBackfill {
 		if _, err := db.RebuildFullTextIndex(ctx, entities, 0, nil); err != nil {
 			return fmt.Errorf("migrate: первичное наполнение полнотекстового индекса: %w", err)
 		}

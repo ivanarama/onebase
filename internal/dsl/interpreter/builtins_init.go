@@ -50,6 +50,13 @@ func init() {
 	builtins["addday"] = addDayBuiltin
 	builtins["добавитьгод"] = addYearBuiltin
 	builtins["addyear"] = addYearBuiltin
+	// Сдвиг по времени суток (issue #707) — симметрично ДобавитьДень/Месяц/Год.
+	builtins["добавитьсекунд"] = addSecondsBuiltin
+	builtins["addseconds"] = addSecondsBuiltin
+	builtins["добавитьминут"] = addMinutesBuiltin
+	builtins["addminutes"] = addMinutesBuiltin
+	builtins["добавитьчас"] = addHoursBuiltin
+	builtins["addhours"] = addHoursBuiltin
 	builtins["разностьдат"] = dateDiffBuiltin
 	builtins["datediff"] = dateDiffBuiltin
 	builtins["дата"] = dateConstructor
@@ -224,6 +231,11 @@ func init() {
 	typeFn := func(args []any, _ string, _ int) (any, error) {
 		return normalizeTypeName(strArg(args, 0)), nil
 	}
+	// Приостановить/Пауза/Sleep — блокирующая выдержка (issue #708).
+	sleepFn := newSleepBuiltin()
+	builtins["приостановить"] = sleepFn
+	builtins["пауза"] = sleepFn
+	builtins["sleep"] = sleepFn
 	builtins["типзнч"] = typeOfFn
 	builtins["typeof"] = typeOfFn
 	builtins["тип"] = typeFn
