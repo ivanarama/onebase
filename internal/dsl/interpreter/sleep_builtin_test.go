@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Приостановить(Секунды) — выдержка времени для backoff (issue #708).
@@ -52,6 +54,16 @@ func TestПриостановить_ПределИОтрицательные(t *
 	}
 	if !raisesUserError(func() { _, _ = fn(nil, "t.os", 1) }) {
 		t.Error("вызов без аргумента принят")
+	}
+}
+
+func TestПриостановить_DecimalСХвостовымиНулямиСохраняетЗначение(t *testing.T) {
+	d, err := decimal.NewFromString("0.100000000000000000000000000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sleepDuration([]any{d}); got != 100*time.Millisecond {
+		t.Fatalf("длительность = %v, ожидалось %v", got, 100*time.Millisecond)
 	}
 }
 

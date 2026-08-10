@@ -3,6 +3,7 @@ package interpreter
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -72,12 +73,19 @@ func sleepSeconds(v any) (float64, bool) {
 	if d.Sign() < 0 {
 		RaiseUserError("Приостановить: длительность отрицательная")
 	}
-	if exp := d.Exponent(); exp < -18 || exp > 3 {
-		RaiseUserError("Приостановить: числовое представление длительности вне безопасного диапазона")
-	}
 	coefficient := d.Coefficient()
 	if coefficient.BitLen() > 256 {
 		RaiseUserError("Приостановить: числовое представление длительности слишком велико")
+	}
+	// Decimal сохраняет scale исходного представления: 0.1000 и 0.1 имеют
+	// разные exponent, хотя означают одну длительность. Учитываем хвостовые
+	// нули коэффициента до проверки границы, не вызывая Rescale/StringFixed и
+	// не разворачивая 10^Exponent.
+	digits := coefficient.String()
+	trimmed := strings.TrimRight(digits, "0")
+	normalizedExp := int64(d.Exponent()) + int64(len(digits)-len(trimmed))
+	if normalizedExp < -18 || normalizedExp > 3 {
+		RaiseUserError("Приостановить: числовое представление длительности вне безопасного диапазона")
 	}
 	return d.InexactFloat64(), true
 }
