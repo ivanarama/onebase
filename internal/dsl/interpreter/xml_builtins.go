@@ -38,6 +38,10 @@ const (
 	xmlFieldText     = "Текст"
 	xmlFieldChildren = "Элементы"
 
+	// Неопределено не является XSD-типом, поэтому для замкнутой пары
+	// XMLТипЗнч/XMLЗначение используется явное расширение OneBase.
+	xmlUndefinedTypeName = "undefined"
+
 	// Ограничения защищают рекурсивное преобразование в коллекции DSL и обратно
 	// от переполнения стека и документов, создающих чрезмерное число объектов.
 	maxXMLDepth                = 256
@@ -1188,11 +1192,15 @@ func parseXSDDecimal(text string) (decimal.Decimal, error) {
 	return value, nil
 }
 
-// builtinXMLTypeOf — имя XSD-типа значения. Дополняет пару XMLСтрока/XMLЗначение:
-// сериализуя значение, обычно надо сообщить приёмнику и его тип.
+// builtinXMLTypeOf — имя XSD-типа значения или явного расширения OneBase для
+// Неопределено. Дополняет пару XMLСтрока/XMLЗначение: сериализуя значение,
+// обычно надо сообщить приёмнику и его тип.
 func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
-	if len(args) == 0 || args[0] == nil {
-		return "", nil
+	if len(args) == 0 {
+		panic(userError{Msg: "XMLТипЗнч: ожидается 1 аргумент"})
+	}
+	if args[0] == nil {
+		return xmlUndefinedTypeName, nil
 	}
 	switch value := args[0].(type) {
 	case string:
@@ -1206,7 +1214,7 @@ func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
 		return "dateTime", nil
 	case *time.Time:
 		if value == nil {
-			return "", nil
+			return xmlUndefinedTypeName, nil
 		}
 		if err := validateXMLDateTime(*value); err != nil {
 			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
@@ -1224,7 +1232,7 @@ func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
 		return "decimal", nil
 	case *decimal.Decimal:
 		if value == nil {
-			return "", nil
+			return xmlUndefinedTypeName, nil
 		}
 		if _, err := safeXMLDecimalString(*value); err != nil {
 			panic(userError{Msg: "XMLТипЗнч: " + err.Error()})
@@ -1251,6 +1259,11 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 	typeName := strings.ToLower(strings.TrimSpace(rawTypeName))
 	text := strings.TrimSpace(rawText)
 	switch typeName {
+	case "неопределено", xmlUndefinedTypeName, "nil":
+		if rawText != "" {
+			panic(userError{Msg: "XMLЗначение: для типа undefined ожидается пустая строка"})
+		}
+		return nil, nil
 	case "строка", "string":
 		return rawText, nil
 	case "число", "number", "decimal":
@@ -1286,7 +1299,7 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 		}
 		panic(userError{Msg: "XMLЗначение: некорректная дата"})
 	default:
-		panic(userError{Msg: "XMLЗначение: неизвестный тип (ожидается Строка, Число, Дата или Булево)"})
+		panic(userError{Msg: "XMLЗначение: неизвестный тип (ожидается Неопределено, Строка, Число, Дата или Булево)"})
 	}
 }
 

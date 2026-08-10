@@ -610,6 +610,7 @@ func TestXMLStringValue_AreInverse(t *testing.T) {
 		typeName string
 		in       any
 	}{
+		{"Неопределено", nil},
 		{"Число", decimal.RequireFromString("-17.25")},
 		{"Булево", false},
 		{"Дата", time.Date(2026, 1, 2, 3, 4, 5, 987654321, time.FixedZone("MSK", 3*60*60))},
@@ -634,32 +635,44 @@ func TestXMLStringValue_AreInverse(t *testing.T) {
 }
 
 func TestXMLTypeOf_CanBePassedToXMLValue(t *testing.T) {
-	values := []any{
-		decimal.RequireFromString("17.25"),
-		true,
-		"строка",
-		time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.FixedZone("MSK", 3*60*60)),
+	values := []struct {
+		name         string
+		value        any
+		wantTypeName string
+	}{
+		{"undefined", nil, xmlUndefinedTypeName},
+		{"nil time pointer", (*time.Time)(nil), xmlUndefinedTypeName},
+		{"nil decimal pointer", (*decimal.Decimal)(nil), xmlUndefinedTypeName},
+		{"decimal", decimal.RequireFromString("17.25"), "decimal"},
+		{"boolean", true, "boolean"},
+		{"string", "строка", "string"},
+		{"dateTime", time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.FixedZone("MSK", 3*60*60)), "dateTime"},
 	}
-	for _, value := range values {
-		typeName, err := builtinXMLTypeOf([]any{value}, "", 0)
-		if err != nil {
-			t.Fatalf("XMLТипЗнч(%v): %v", value, err)
-		}
-		text, err := builtinXMLString([]any{value}, "", 0)
-		if err != nil {
-			t.Fatalf("XMLСтрока(%v): %v", value, err)
-		}
-		back, err := builtinXMLValue([]any{typeName, text}, "", 0)
-		if err != nil {
-			t.Fatalf("XMLЗначение(%v, %v): %v", typeName, text, err)
-		}
-		again, err := builtinXMLString([]any{back}, "", 0)
-		if err != nil {
-			t.Fatalf("XMLСтрока(%v): %v", back, err)
-		}
-		if again != text {
-			t.Errorf("%T: круг дал %v вместо %v", value, again, text)
-		}
+	for _, tc := range values {
+		t.Run(tc.name, func(t *testing.T) {
+			typeName, err := builtinXMLTypeOf([]any{tc.value}, "", 0)
+			if err != nil {
+				t.Fatalf("XMLТипЗнч(%v): %v", tc.value, err)
+			}
+			if typeName != tc.wantTypeName {
+				t.Fatalf("XMLТипЗнч(%v) = %q, ожидалось %q", tc.value, typeName, tc.wantTypeName)
+			}
+			text, err := builtinXMLString([]any{tc.value}, "", 0)
+			if err != nil {
+				t.Fatalf("XMLСтрока(%v): %v", tc.value, err)
+			}
+			back, err := builtinXMLValue([]any{typeName, text}, "", 0)
+			if err != nil {
+				t.Fatalf("XMLЗначение(%v, %v): %v", typeName, text, err)
+			}
+			again, err := builtinXMLString([]any{back}, "", 0)
+			if err != nil {
+				t.Fatalf("XMLСтрока(%v): %v", back, err)
+			}
+			if again != text {
+				t.Errorf("%T: круг дал %v вместо %v", tc.value, again, text)
+			}
+		})
 	}
 }
 

@@ -152,12 +152,65 @@ func TestDSL_XML_EnglishAliases(t *testing.T) {
 
 func TestDSL_XMLTypeOf(t *testing.T) {
 	src := `Процедура Тест()
-		Возврат XMLТипЗнч(42) = "decimal"
+		Возврат XMLТипЗнч(Неопределено) = "undefined"
+			И XMLТипЗнч(42) = "decimal"
 			И XMLТипЗнч("текст") = "string"
 			И XMLТипЗнч(Истина) = "boolean"
 			И XMLТипЗнч(ТекущаяДата()) = "dateTime";
 	КонецПроцедуры`
 	assert.Equal(t, true, evalXML(t, src))
+}
+
+func TestDSL_XMLUndefinedRoundTripAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "russian",
+			src: `Процедура Тест()
+				ИмяТипа = XMLТипЗнч(Неопределено);
+				Возврат ИмяТипа = "undefined"
+					И XMLЗначение(ИмяТипа, XMLСтрока(Неопределено)) = Неопределено
+					И XMLЗначение("Неопределено", "") = Неопределено;
+			КонецПроцедуры`,
+		},
+		{
+			name: "english",
+			src: `Procedure Test()
+				TypeName = XMLTypeOf(Undefined);
+				Return TypeName = "undefined"
+					And XMLValue(TypeName, XMLString(Undefined)) = Undefined
+					And XMLValue("nil", "") = Undefined;
+			EndProcedure`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, true, evalXML(t, tc.src))
+		})
+	}
+}
+
+func TestDSL_XMLUndefinedRejectsAmbiguousInput(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		expression string
+		want       string
+	}{
+		{"missing value", `XMLТипЗнч()`, "ожидается 1 аргумент"},
+		{"empty type", `XMLЗначение("", "")`, "неизвестный тип"},
+		{"non-empty value", `XMLЗначение("undefined", "данные")`, "пустая строка"},
+		{"whitespace value", `XMLЗначение("undefined", " ")`, "пустая строка"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `Процедура Тест()
+				Возврат ` + tc.expression + `;
+			КонецПроцедуры`
+			err := evalXMLError(t, src)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }
 
 // Негативные проверки идут через публичный DSL-путь, чтобы гарантировать, что
