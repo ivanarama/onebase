@@ -211,7 +211,7 @@ func (mfl *ManagedFormLoader) attachProcedures(form *metadata.FormModule, osPath
 	if err != nil {
 		return err
 	}
-	parsed, err := mfl.innerFL.LoadFormModuleFromSource(string(source), form.EntityName, form.Name, form.Kind)
+	parsed, err := mfl.innerFL.parseFormModule(string(source), form.EntityName, form.Name, form.Kind, osPath)
 	if err != nil {
 		return err
 	}

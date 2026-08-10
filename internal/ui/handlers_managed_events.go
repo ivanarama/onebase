@@ -958,7 +958,10 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		dslVars["Параметры"] = paramsThis
 		interpreter.InjectMaket(dslVars, proc.Layout)
 
-		err := s.interp.Run(procDecl, paramsThis, dslVars)
+		// Кнопка managed-формы должна передавать параметры в объявленные
+		// аргументы Выполнить так же, как обычный POST запуска обработки.
+		procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
+		_, err := s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 		if err != nil {
 			respondJSON(enc, formEventResponse{
 				OK:       false,

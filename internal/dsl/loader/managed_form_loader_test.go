@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -298,6 +299,42 @@ func TestManagedFormLoader_LoadEntityForms_NoDir(t *testing.T) {
 	}
 	if forms != nil {
 		t.Errorf("forms = %v, want nil", forms)
+	}
+}
+
+// Модуль формы должен сохранять физический путь .form.os в AST. Это не только
+// диагностика: interpreter использует identity текущего модуля, чтобы
+// Вычислить и обычные неквалифицированные вызовы видели соседние процедуры.
+func TestManagedFormLoader_PreservesModuleSourcePath(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ.form.yaml")
+	osPath := filepath.Join(dir, "заказ.form.os")
+	if err := os.WriteFile(yamlPath, []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(osPath, []byte(`
+Функция Локальная()
+	Возврат "форма";
+КонецФункции
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	program, ok := form.ProgramAST.(*ast.Program)
+	if !ok || program == nil || len(program.Procedures) != 1 {
+		t.Fatalf("ProgramAST не содержит процедуру формы: %#v", form.ProgramAST)
+	}
+	if got := filepath.Clean(program.Procedures[0].Name.File); got != filepath.Clean(osPath) {
+		t.Fatalf("source identity = %q, want %q", got, osPath)
 	}
 }
 

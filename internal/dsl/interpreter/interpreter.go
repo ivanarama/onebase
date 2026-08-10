@@ -91,6 +91,9 @@ type Interpreter struct {
 	// 0 = defaultMaxRecursionDepth. Поле (а не глобальная константа), чтобы порог
 	// можно было задать per-Interpreter и понизить в тестах стража рекурсии.
 	MaxRecursionDepth int
+	// MaxEvalDepth ограничивает глубину вложенных Вычислить/Eval, которая не
+	// увеличивает MaxRecursionDepth. 0 = defaultMaxEvalDepth.
+	MaxEvalDepth int
 	// StrictLexicalScope включает opt-in режим, где вызванная процедура видит
 	// только свои параметры/локальные переменные и root-env запуска (extraVars,
 	// factories, This), но не локальные переменные caller-процедуры.
@@ -146,6 +149,9 @@ func (i *Interpreter) Call(proc *ast.ProcedureDecl, this This, args []any, extra
 // RunWithResult executes a function procedure and captures its return value.
 func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -183,6 +189,9 @@ func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *
 // injected into the top-level environment.
 func (i *Interpreter) Run(proc *ast.ProcedureDecl, this This, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -702,6 +711,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				fallback = bf
 			}
 		}
+		// Процедуры формы (.form.os) принадлежат текущему модулю и потому
+		// разрешаются раньше любых глобальных экспортов. Они передаются через
+		// vars["__form_procs__"] как map[lowercase]*ProcedureDecl.
+		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
+			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
+				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 {
+					return i.callUserProc(proc, e, args)
+				}
+			}
+		}
 		// СВОЁ РАНЬШЕ ЧУЖОГО. Помощник из того же файла (.proc.os /
 		// .posting.os / .rep.os) ищется ПЕРЕД экспортом чужого модуля.
 		//
@@ -715,28 +734,22 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		//
 		// Обращение к чужому экспорту остаётся квалифицированным: Модуль.Функция.
 		//
-		// Файл берём из токена самого вызова (callee.Tok.File), а не из
-		// e.ec.curFile: curFile — «последняя исполненная позиция» и портится
-		// вычислением аргументов, если среди них есть вызов из другого модуля
-		// (тогда sibling-резолв искал бы в чужом файле → unknown function).
-		if i.LookupSiblingProc != nil && callee.Tok.File != "" {
-			if proc := i.LookupSiblingProc(callee.Tok.File, fnName); proc != nil {
+		// Identity берём из кадра процедуры, а не из диагностического токена:
+		// у выражения Вычислить токен намеренно имеет файл «<Вычислить>», но
+		// область поиска соседних процедур остаётся областью вызывающего модуля.
+		// Для EvalExpr без кадра сохраняем совместимость через токен вызова.
+		sourceFile := e.sourceFile
+		if sourceFile == "" {
+			sourceFile = callee.Tok.File
+		}
+		if i.LookupSiblingProc != nil && sourceFile != "" {
+			if proc := i.LookupSiblingProc(sourceFile, fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
 			}
 		}
 		if i.LookupProc != nil {
 			if proc := i.LookupProc(fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
-			}
-		}
-		// Процедуры формы (.form.os): vars["__form_procs__"] —
-		// map[string]*ProcedureDecl (lowercase → AST). Позволяет
-		// обработчикам формы вызывать функции из того же .form.os.
-		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
-			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
-				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 {
-					return i.callUserProc(proc, e, args)
-				}
 			}
 		}
 		if fallback != nil {
@@ -824,6 +837,19 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 	if !ok {
 		panic(userError{Msg: "Вычислить: ожидается строка-выражение"})
 	}
+	limit := i.MaxEvalDepth
+	if limit <= 0 {
+		limit = defaultMaxEvalDepth
+	}
+	if e.ec.evalDepth >= limit {
+		RaiseUserError(fmt.Sprintf("Превышена максимальная глубина Вычислить (%d) — вероятно, бесконечное динамическое выражение", limit))
+	}
+	e.ec.evalDepth++
+	defer func() { e.ec.evalDepth-- }()
+
+	// Диагностическое имя остаётся синтетическим: строка выражения действительно
+	// начинается с line 1, но это не line 1 физического модуля. Лексическая
+	// identity для sibling-поиска хранится отдельно в e.sourceFile.
 	p := parser.New(lexer.New(src, "<Вычислить>"))
 	expr, err := p.ParseExpr()
 	if err != nil {
@@ -917,6 +943,7 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		defaultEnv = callEnv.frameWithModule(callEnv, moduleEnv, callEnv.depth)
 	}
 	child := callEnv.frameWithModule(parentEnv, moduleEnv, frameDepth)
+	child.sourceFile = proc.Name.File
 	for idx, param := range proc.Params {
 		if idx < len(args) {
 			child.setLocal(param.Literal, args[idx])
