@@ -249,6 +249,7 @@ const tplManagedForm = `
        {{if $el.AutoSum}}data-sg-autosum="1"{{end}}
        {{if hasHandler $el "ПриДобавленииСтроки"}}data-sg-rowadd="1"{{end}}
        {{if hasHandler $el "ПриУдаленииСтроки"}}data-sg-rowdel="1"{{end}}
+       {{if hasHandler $el "ПриАктивизацииСтроки"}}data-sg-rowactivate="1"{{end}}
        data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.Name}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
