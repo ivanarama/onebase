@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"strconv"
 	"sync"
 )
 
@@ -27,7 +28,14 @@ import (
 //
 // Ключ живёт в процессе и переживает только его: курсор — состояние листания,
 // а не ссылка, которую сохраняют в закладки. После перезапуска старый курсор
-// не расшифруется, и листание начнётся сначала — см. DecodeCursor.
+// не расшифруется, и листание начнётся сначала — см. decodeCursor.
+//
+// Курсор привязан к запросу, которым выдан (cursorScope). Без привязки шифр
+// защищал только от подделки числа, но не от переноса: курсор, полученный по
+// широкому запросу, принимался как позиция чтения по узкому, и произвольное
+// смещение получалось обходом — ровно то, ради запрета чего курсор и заведён
+// (#615). Привязка идёт дополнительными данными AEAD: подставленный чужой
+// курсор не расшифруется вовсе, а листание начнётся сначала.
 
 var (
 	cursorKeyOnce sync.Once
@@ -56,9 +64,24 @@ func cursorCipher() cipher.AEAD {
 	return cursorAEAD
 }
 
-// EncodeCursor упаковывает позицию чтения в непрозрачный курсор. Пустая строка —
-// продолжения нет (или шифр недоступен).
-func EncodeCursor(offset int) string {
+// cursorScope — запрос, которым курсор выдан. Продолжать листание можно только
+// его: другой текст или другой размер страницы — другой поток строк, и позиция
+// из чужого потока значит произвольное смещение.
+type cursorScope struct {
+	Text  string
+	Limit int
+}
+
+// aad — дополнительные данные AEAD. Разделитель \x00 обязателен: без него
+// («10»+«абв») и («1»+«0абв») дали бы одну строку, и курсоры двух разных
+// запросов стали бы взаимозаменяемы.
+func (sc cursorScope) aad() []byte {
+	return []byte(strconv.Itoa(sc.Limit) + "\x00" + sc.Text)
+}
+
+// encodeCursor упаковывает позицию чтения в непрозрачный курсор, привязанный к
+// запросу. Пустая строка — продолжения нет (или шифр недоступен).
+func encodeCursor(offset int, sc cursorScope) string {
 	aead := cursorCipher()
 	if aead == nil || offset <= 0 {
 		return ""
@@ -69,14 +92,14 @@ func EncodeCursor(offset int) string {
 	}
 	var plain [8]byte
 	binary.BigEndian.PutUint64(plain[:], uint64(offset))
-	sealed := aead.Seal(nonce, nonce, plain[:], nil)
+	sealed := aead.Seal(nonce, nonce, plain[:], sc.aad())
 	return base64.RawURLEncoding.EncodeToString(sealed)
 }
 
-// DecodeCursor разбирает курсор обратно в позицию чтения. Непригодный курсор
-// (подделка, курсор от прошлого запуска процесса) — не ошибка: листание просто
-// начинается сначала, как при первом запросе.
-func DecodeCursor(s string) int {
+// decodeCursor разбирает курсор обратно в позицию чтения. Непригодный курсор
+// (подделка, курсор от прошлого запуска процесса, курсор ДРУГОГО запроса) — не
+// ошибка: листание просто начинается сначала, как при первом запросе.
+func decodeCursor(s string, sc cursorScope) int {
 	if s == "" {
 		return 0
 	}
@@ -89,7 +112,7 @@ func DecodeCursor(s string) int {
 		return 0
 	}
 	nonce := raw[:aead.NonceSize()]
-	plain, err := aead.Open(nil, nonce, raw[aead.NonceSize():], nil)
+	plain, err := aead.Open(nil, nonce, raw[aead.NonceSize():], sc.aad())
 	if err != nil || len(plain) != 8 {
 		return 0
 	}
