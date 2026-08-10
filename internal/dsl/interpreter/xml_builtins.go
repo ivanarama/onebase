@@ -102,10 +102,7 @@ func requireXMLStringArg(args []any, index int, functionName, parameterName stri
 func parseXMLDocument(text string) (*xmlNode, error) {
 	// UTF-8 BOM допустим только один раз и только в самом начале документа.
 	// Убираем его до подсчёта сырых span'ов токенов.
-	decoderInput := text
-	if strings.HasPrefix(decoderInput, "\uFEFF") {
-		decoderInput = strings.TrimPrefix(decoderInput, "\uFEFF")
-	}
+	decoderInput := strings.TrimPrefix(text, "\uFEFF")
 	if len(decoderInput) > maxXMLDocumentBytes {
 		return nil, fmt.Errorf("размер XML превышает предел %d байт", maxXMLDocumentBytes)
 	}
@@ -585,7 +582,7 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 			break
 		}
 		if len(x.keys) != len(x.vals) {
-			return fmt.Errorf("Соответствие повреждено: число ключей и значений различается")
+			return fmt.Errorf("соответствие повреждено: число ключей и значений различается")
 		}
 		for i, k := range x.keys {
 			key, ok := k.(string)
