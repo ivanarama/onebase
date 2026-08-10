@@ -161,6 +161,9 @@ func (p *TestProfile) Reset() {
 // функции окружения.
 func (p *TestProfile) Vars() map[string]any {
 	nowFn := BuiltinFunc(func([]any, string, int) (any, error) { return p.clock.now(), nil })
+	// Выдержка под замороженными часами двигает время, а не тратит его: backoff
+	// проверяется headless и мгновенно (issue #708).
+	sleepFn := newFrozenClockSleepBuiltin(p.clock)
 	todayFn := BuiltinFunc(func([]any, string, int) (any, error) { return p.clock.today(), nil })
 
 	// Почта: shorthand пишет запись напрямую; объект ПисьмоEmail строится из
@@ -204,6 +207,7 @@ func (p *TestProfile) Vars() map[string]any {
 		// подменяемое время
 		"ТекущаяДатаВремя": nowFn, "Now": nowFn,
 		"ТекущаяДата": todayFn, "Today": todayFn,
+		"Приостановить": sleepFn, "Пауза": sleepFn, "Sleep": sleepFn,
 
 		// почта
 		"ОтправитьПисьмо": sendEmail, "SendEmail": sendEmail,

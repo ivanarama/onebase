@@ -73,13 +73,22 @@ func (c Common) Build() map[string]any {
 	if vals, err := c.Store.ListConstants(c.Ctx); err == nil {
 		constsMap = vals
 	}
+	declaredConsts := make([]string, 0)
+	for _, k := range c.Reg.Constants() {
+		if k != nil {
+			declaredConsts = append(declaredConsts, k.Name)
+		}
+	}
 	queryFactory := interpreter.NewQueryFactory(c.Ctx, c.Store, c.Reg)
 	predefined := interpreter.NewPredefinedRoot(c.Ctx, c.Store)
 
 	vars := map[string]any{
-		"Движения":                 c.Movements,
-		"Перечисления":             &interpreter.MapThis{M: enumsMap},
-		"Константы":                &interpreter.MapThis{M: constsMap},
+		"Движения":     c.Movements,
+		"Перечисления": &interpreter.MapThis{M: enumsMap},
+		// Не MapThis: тот писал бы присвоенное значение только в память
+		// процесса, и `Константы.Имя = Значение` молча не доезжало до базы
+		// (#719). ConstantsRoot пишет сквозь.
+		"Константы":                interpreter.NewConstantsRoot(c.Ctx, c.Store, declaredConsts, constsMap),
 		"__factory_Запрос":         queryFactory,
 		"__factory_Query":          queryFactory,
 		"ПредопределённыеЗначения": predefined,
@@ -124,7 +133,9 @@ func (c Common) Build() map[string]any {
 	// запуск пишется в журнал (defense-in-depth, поверх настроек аудита).
 	execGuard := c.ExecGuard
 	if execGuard == nil {
-		execGuard = func() error { return errors.New("выполнение команд ОС отключено") }
+		execGuard = func() error {
+			return errors.New("выполнение команд ОС отключено — включите: onebase settings set exec.enabled вкл")
+		}
 	}
 	var execAudit interpreter.ExecAudit
 	if c.Store != nil {

@@ -112,8 +112,8 @@ Exit-код 1 если есть error-предупреждения, иначе 0
 | `Page`              | `Страница`           |                                                  |
 | `AutoCommandBar`    | `КоманднаяПанель`    | Маппится в отдельную секцию `command_bar`        |
 | `Decoration`        | `Надпись (props.decoration=true)` | Restore при экспорте обратно в `Decoration` |
-| `TextDocumentField` | `ПолеКода`           | Многострочный редактор с подсветкой              |
-| `HTMLDocumentField` | `ПолеКода (language: html)` | Отрисовки HTML нет; разметка правится как код |
+| `LabelDecoration`   | `Надпись (props.decoration=true)` | Так пишут реальные выгрузки 1С            |
+| `Popup`             | `ГруппаФормы (props.popup=true)` | Подменю командной панели: содержимое переносится, вид помечается |
 | (неизвестный узел)  | `props.UnknownXML`   | Сырой XML, warning W010                          |
 
 ### Типы реквизитов 1С ↔ OneBase
