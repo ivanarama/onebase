@@ -8,6 +8,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/configcheck"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/project"
 )
 
@@ -123,5 +124,27 @@ func TestCheckFormPlacement_ShippedConfigsClean(t *testing.T) {
 		if len(warns) != 0 {
 			t.Errorf("%s: мёртвые формы %v", dir, codesOf(warns))
 		}
+	}
+}
+
+// У обработок тоже бывают управляемые формы: платформа их грузит и рендерит
+// (см. ui.handleProcessorFormEvent), поэтому forms/<имя обработки>/ — валидное
+// размещение. До исправления проверка знала только про сущности и объявляла
+// каждую такую форму «НЕ загружается», хотя в браузере форма открывалась.
+func TestCheckFormPlacement_ProcessorDirSilent(t *testing.T) {
+	dir, proj := placementProject(t, "консользаданий/форма.form.yaml")
+	proj.Processors = []*processor.Processor{{Name: "КонсольЗаданий"}}
+	if warns := configcheck.CheckFormPlacement(dir, proj); len(warns) != 0 {
+		t.Fatalf("ложное срабатывание на форме обработки: %v", codesOf(warns))
+	}
+}
+
+// А каталог, не совпадающий ни с сущностью, ни с обработкой, по-прежнему ловится.
+func TestCheckFormPlacement_UnknownDirWithProcessorsWarns(t *testing.T) {
+	dir, proj := placementProject(t, "чужаяпапка/форма.form.yaml")
+	proj.Processors = []*processor.Processor{{Name: "КонсольЗаданий"}}
+	warns := configcheck.CheckFormPlacement(dir, proj)
+	if len(warns) != 1 {
+		t.Fatalf("ожидалось 1 предупреждение, получено %d: %v", len(warns), codesOf(warns))
 	}
 }
