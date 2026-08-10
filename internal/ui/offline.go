@@ -116,6 +116,9 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 		dslVars[k] = v
 	}
 
-	runErr = s.interp.Run(procDecl, paramsThis, dslVars)
+	// Параметры обработки связываем и с одноимёнными аргументами Выполнить:
+	// объявленный параметр процедуры иначе затеняет инжектированный и приходит
+	// пустым — молча, со значением по умолчанию (#706).
+	_, runErr = s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
 	return messages, runErr, nil
 }

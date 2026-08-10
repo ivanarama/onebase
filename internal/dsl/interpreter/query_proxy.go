@@ -164,11 +164,55 @@ func (q *queryProxy) execute() *Array {
 			panic(userError{Msg: "Запрос: " + err.Error()})
 		}
 	}
+	normalizeBoolColumns(res.BoolColumns, rows)
 	arr := &Array{}
 	for _, row := range rows {
 		arr.items = append(arr.items, newQueryResultRow(row))
 	}
 	return arr
+}
+
+// normalizeBoolColumns приводит колонки булевых полей к типу Булево. Диалекты
+// отдают их по-разному: PostgreSQL — bool, SQLite хранит булево в INTEGER и
+// отдаёт int64. Без приведения одно и то же поле вело себя в модуле по-разному
+// в зависимости от СУБД — вплоть до выбора не той ветки (issue #704).
+//
+// Значение NULL остаётся Неопределено: «не заполнено» — не то же самое, что
+// Ложь, и подменять одно другим здесь нельзя.
+func normalizeBoolColumns(cols []string, rows []map[string]any) {
+	if len(cols) == 0 {
+		return
+	}
+	for _, row := range rows {
+		for _, col := range cols {
+			v, ok := row[col]
+			if !ok || v == nil {
+				continue
+			}
+			if b, converted := toBoolValue(v); converted {
+				row[col] = b
+			}
+		}
+	}
+}
+
+// toBoolValue приводит значение булевой колонки к bool. Неизвестные типы
+// оставляем как есть: молча превратить незнакомое значение в Ложь опаснее, чем
+// отдать его в модуль в исходном виде.
+func toBoolValue(v any) (bool, bool) {
+	switch t := v.(type) {
+	case bool:
+		return t, true
+	case int64:
+		return t != 0, true
+	case int:
+		return t != 0, true
+	case int32:
+		return t != 0, true
+	case float64:
+		return t != 0, true
+	}
+	return false, false
 }
 
 func newQueryResultRow(row map[string]any) *Struct {
