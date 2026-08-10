@@ -1065,7 +1065,7 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			"ИнформацияОбОшибке": infoFn,
 			"ErrorInfo":          infoFn,
 			"ВызватьИсключение":  rethrowFn,
-			"Raise":               rethrowFn,
+			"Raise":              rethrowFn,
 		})
 		func() {
 			defer restore()

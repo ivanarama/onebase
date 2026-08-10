@@ -85,3 +85,17 @@ func TestDSL_RaiseAliasБезСкобокРаботает(t *testing.T) {
 		t.Fatalf("результат %q", result)
 	}
 }
+
+func TestDSL_ВызватьИсключениеБезАргументаВнеОбработчикаОтклоняется(t *testing.T) {
+	src := `Процедура Тест()
+		ВызватьИсключение;
+	КонецПроцедуры`
+	prog, err := parser.New(lexer.New(src, "outside.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = interpreter.New().Run(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument))
+	if err == nil || !strings.Contains(err.Error(), "только внутри блока Исключение") {
+		t.Fatalf("ожидалась понятная ошибка о недопустимом перебросе, получено %v", err)
+	}
+}

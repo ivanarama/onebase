@@ -64,14 +64,22 @@ func FormatUserError(err error) string {
 func (e *DSLError) Unwrap() error { return e.Err }
 
 func raiseUserException(args []any, file string, line int) (any, error) {
-	if len(args) == 0 {
-		panic(userError{
-			Msg:  "ВызватьИсключение без аргумента допустимо только внутри блока Исключение",
-			File: file,
-			Line: line,
-		})
+	msg := ""
+	if len(args) > 0 {
+		msg = fmt.Sprintf("%v", args[0])
 	}
-	panic(userError{Msg: fmt.Sprintf("%v", args[0]), File: file, Line: line})
+	panic(userError{Msg: msg, File: file, Line: line})
+}
+
+func raiseWithoutCaughtException(args []any, file string, line int) (any, error) {
+	if len(args) > 0 {
+		return raiseUserException(args, file, line)
+	}
+	panic(userError{
+		Msg:  "ВызватьИсключение без аргумента допустимо только внутри блока Исключение",
+		File: file,
+		Line: line,
+	})
 }
 
 var builtins = map[string]func(args []any, file string, line int) (any, error){
@@ -81,9 +89,9 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	"message":  func(args []any, file string, line int) (any, error) { return nil, nil },
 
 	// ─── Ошибки ───────────────────────────────────────────────────────────
-	"error":                raiseUserException,
-	"raise":                raiseUserException,
-	"вызватьисключение":    raiseUserException,
+	"error":             raiseUserException,
+	"raise":             raiseWithoutCaughtException,
+	"вызватьисключение": raiseWithoutCaughtException,
 
 	// ─── Даты ─────────────────────────────────────────────────────────────
 	"today": func(args []any, file string, line int) (any, error) {
