@@ -137,7 +137,18 @@ func paramDefaultValue(def any, typ string) any {
 }
 
 func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
+	// Предел тела ставится РОВНО ОДИН раз. Раньше их было два: сначала
+	// defaultFormMemoryBytes, следом limitMultipartRequest на предел вложений —
+	// и связывал всегда первый, потому что пределы не композируются, вложенный
+	// MaxBytesReader режет по МЕНЬШЕМУ. Из-за этого параметр обработки типа file
+	// был обрезан мегабайтом вместо заявленных attachments.max_file_size_mb
+	// (issue #674).
+	//
+	// Присваивание r.Body остаётся здесь, в теле обработчика: вынеси его в
+	// хелпер — и gosec (G120) перестанет видеть предел, пометив каждый
+	// r.FormValue ниже.
+	maxSize := s.effectiveUploadLimit()
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize+uiMultipartOverhead)
 	proc := s.getProcessor(w, r)
 	if proc == nil {
 		return
@@ -158,7 +169,6 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	opStatus := "ok"
 	defer func() { finish(opStatus, 0, false) }()
 
-	maxSize := s.limitMultipartRequest(w, r)
 	if err := parseBoundedForm(r, 32<<20); err != nil {
 		opStatus = "error"
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))

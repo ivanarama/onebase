@@ -1,5 +1,15 @@
 package parser1c
 
+// Numbering — свойства кода справочника или номера документа из выгрузки 1С.
+// Раньше не читались вовсе и терялись молча (план 117, Д8).
+type Numbering struct {
+	Auto        bool   // Autonumbering
+	Length      int    // CodeLength / NumberLength
+	Type        string // CodeType / NumberType: String | Number
+	CheckUnique bool   // контроль уникальности кода
+	Periodicity string // NumberPeriodicity: Year | Month | Day | Nonperiodical
+}
+
 // CatalogMeta — справочник из Metadata.xml
 type CatalogMeta struct {
 	Name            string
@@ -7,6 +17,8 @@ type CatalogMeta struct {
 	Attributes      []Attribute
 	TabularSections []TabularSection
 	Forms           []FormSource // управляемые формы объекта (Forms/<X>/Ext/Form.xml)
+	Hierarchical    bool
+	Code            Numbering
 }
 
 // DocumentMeta — документ из Metadata.xml
@@ -16,6 +28,8 @@ type DocumentMeta struct {
 	Attributes      []Attribute
 	TabularSections []TabularSection
 	Forms           []FormSource
+	Posting         bool
+	Number          Numbering
 }
 
 // FormSource — управляемая форма объекта, найденная в выгрузке 1С.
