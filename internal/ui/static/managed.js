@@ -1511,3 +1511,42 @@ obManagedReady(function () {
     if (btn) obManagedSwitchTab(btn);
   }
 });
+
+// ─── ПолеКода: редактор с подсветкой ────────────────────────────────────────
+//
+// Монтируется на .code-editor рядом со скрываемой textarea.code-field.
+// textarea остаётся источником истины для формы: редактор пишет в неё при
+// каждом изменении, поэтому обычный submit работает и без всякой синхронизации
+// по кнопке. Без JS (или если Monaco не загрузился) textarea просто остаётся
+// видимой и редактируемой — прогрессивное улучшение, как у richtext.
+obManagedReady(function () {
+  var holders = document.querySelectorAll('.code-editor');
+  if (!holders.length) return;
+  if (typeof require === 'undefined' || window._monacoLoadErr) return; // textarea уже рабочая
+
+  require.config({ paths: { vs: '/vendor/monaco/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    for (var i = 0; i < holders.length; i++) {
+      (function (holder) {
+        if (holder.getAttribute('data-code-ready') === '1') return;
+        var ta = holder.previousElementSibling;
+        if (!ta || ta.tagName !== 'TEXTAREA' || !ta.classList.contains('code-field')) return;
+        holder.setAttribute('data-code-ready', '1');
+
+        var lang = holder.getAttribute('data-code-language') || 'plaintext';
+        var ed = monaco.editor.create(holder, {
+          value: ta.value,
+          language: lang,
+          automaticLayout: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          fontSize: 13,
+          tabSize: 4,
+          renderWhitespace: 'selection'
+        });
+        ta.style.display = 'none';
+        ed.onDidChangeModelContent(function () { ta.value = ed.getValue(); });
+      })(holders[i]);
+    }
+  });
+});

@@ -52,6 +52,18 @@ const tplManagedForm = `
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
   </fieldset>
+{{else if eq (str $el.Kind) "ПолеКода"}}
+  {{$fn := dpField $el.DataPath}}
+  {{/* textarea — рабочее поле формы: без JS редактирование остаётся возможным
+       (прогрессивное улучшение, как у richtext/Quill). Редактор монтируется на
+       соседний .code-editor и синхронизирует текст обратно в textarea. */}}
+  <div class="form-group">
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
+    <textarea name="{{$fn}}" autocomplete="off" class="code-field" rows="12" spellcheck="false"
+      style="width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px"
+      {{if $el.AccessKey}}accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>{{index $ctx.Values $fn}}</textarea>
+    {{if not $el.ReadOnly}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid #e2e8f0;border-radius:8px"></div>{{end}}
+  </div>
 {{else if eq (str $el.Kind) "ПолеВвода"}}
   {{$fn := dpField $el.DataPath}}
   {{$f := fieldByName $ctx.Entity $fn}}
@@ -663,6 +675,21 @@ const tplManagedForm = `
 <script src="/static/managed.js"></script>
 {{else}}
 <script src="/static/managed.js"></script>
+{{end}}
+
+{{if hasCodeField .Form}}
+{{/* Редактор кода для kind: ПолеКода. Monaco уже встроен в бинарь (его же
+     использует конфигуратор), поэтому внешних загрузок нет — важно для
+     офлайн-инсталляций и строгих CSP. Воркеру нужен явный baseUrl, иначе
+     AMD-загрузчик не найдёт workerMain.js. */}}
+<script>
+window.MonacoEnvironment = window.MonacoEnvironment || { getWorkerUrl: function () {
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    "self.MonacoEnvironment={baseUrl:'" + location.origin + "/vendor/monaco/'};" +
+    "importScripts('" + location.origin + "/vendor/monaco/vs/base/worker/workerMain.js');");
+}};
+</script>
+<script src="/vendor/monaco/vs/loader.js" onerror="window._monacoLoadErr=1"></script>
 {{end}}
 
 {{/* Вложения к записи (issue #152) — тот же UI, что и в авто-форме. */}}
