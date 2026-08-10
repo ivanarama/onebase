@@ -127,6 +127,7 @@ func TestPageManagedForm_Renders(t *testing.T) {
 		"Активен",      // label чекбокса
 		"Создать копию",
 		"type=\"checkbox\"",
+		"name=\"_ob_present_Активен\"",
 		"name=\"Наименование\"",
 		"name=\"Активен\"",
 		"name=\"Дата\"",

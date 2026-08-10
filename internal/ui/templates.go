@@ -2086,6 +2086,7 @@ const tplProcessor = `
     {{if eq .Type "bool"}}
     <div class="form-group" style="margin-bottom:0">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="hidden" name="_ob_present_{{$pname}}" value="1">
         <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
         <span>{{.DisplayLabel $.Lang}}</span>
       </label>

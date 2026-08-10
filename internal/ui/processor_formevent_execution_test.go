@@ -1,10 +1,8 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"io"
-	"mime/multipart"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
@@ -63,12 +61,12 @@ func postProcessorFormEventExecution(t *testing.T, srv *Server, procName, conten
 	return rec
 }
 
-func processorExecutionForm(element *metadata.FormElement) *metadata.FormModule {
+func processorExecutionForm(elements ...*metadata.FormElement) *metadata.FormModule {
 	return &metadata.FormModule{
 		Name:       "ФормаОбработки",
 		Kind:       "object",
 		LayoutKind: metadata.FormLayoutManaged,
-		Elements:   []*metadata.FormElement{element},
+		Elements:   elements,
 	}
 }
 
@@ -79,7 +77,7 @@ func processorClickBody(elementName string) url.Values {
 	return body
 }
 
-func TestHandleProcessorFormEvent_FallbackReadsMultipartFile(t *testing.T) {
+func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) {
 	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"})
 	proc := &processor.Processor{
 		Name:   "ФайловаяОбр",
@@ -90,35 +88,76 @@ func TestHandleProcessorFormEvent_FallbackReadsMultipartFile(t *testing.T) {
 Процедура Выполнить(Данные)
 	Сообщить(Данные);
 КонецПроцедуры
+	`)
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+
+	for _, tc := range []struct {
+		name  string
+		field string
+	}{
+		{name: "obFire output", field: "Данные"},
+		{name: "file-content backing field", field: "_fc_Данные"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := processorClickBody("Запустить")
+			body.Set(tc.field, "содержимое файла")
+			rec := postProcessorFormEventExecution(t, srv, proc.Name,
+				"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+			if rec.Code != 200 {
+				t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+			}
+			resp := decodeFormEventResponse(t, rec.Body.Bytes())
+			if !resp.OK || len(resp.Messages) != 1 || resp.Messages[0] != "содержимое файла" {
+				t.Fatalf("file parameter not passed: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
+			}
+		})
+	}
+}
+
+func TestHandleProcessorFormEvent_UncheckedBoolDiffersFromAbsentParam(t *testing.T) {
+	form := processorExecutionForm(
+		&metadata.FormElement{Kind: metadata.FormElementCheckbox, Name: "ПолеФлаг", DataPath: "Объект.Флаг"},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Запустить"},
+	)
+	proc := &processor.Processor{
+		Name:   "БулеваОбр",
+		Params: []processor.Param{{Name: "Флаг", Type: "bool"}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Флаг = Истина)
+	Если Флаг Тогда
+		Сообщить("true");
+	Иначе
+		Сообщить("false");
+	КонецЕсли;
+КонецПроцедуры
 `)
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
 
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	if err := mw.WriteField("_element", "Запустить"); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.WriteField("_event", string(metadata.FormEventOnClick)); err != nil {
-		t.Fatal(err)
-	}
-	part, err := mw.CreateFormFile("Данные", "input.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := part.Write([]byte("содержимое файла")); err != nil {
-		t.Fatal(err)
-	}
-	if err := mw.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	rec := postProcessorFormEventExecution(t, srv, proc.Name, mw.FormDataContentType(), &body)
-	if rec.Code != 200 {
-		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
-	}
-	resp := decodeFormEventResponse(t, rec.Body.Bytes())
-	if !resp.OK || len(resp.Messages) != 1 || resp.Messages[0] != "содержимое файла" {
-		t.Fatalf("file parameter not passed: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
+	for _, tc := range []struct {
+		name    string
+		marker  bool
+		message string
+	}{
+		{name: "rendered checkbox unchecked", marker: true, message: "false"},
+		{name: "custom form parameter absent", marker: false, message: "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := processorClickBody("Запустить")
+			if tc.marker {
+				body.Set("_ob_present_Флаг", "1")
+			}
+			rec := postProcessorFormEventExecution(t, srv, proc.Name,
+				"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+			if rec.Code != 200 {
+				t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+			}
+			resp := decodeFormEventResponse(t, rec.Body.Bytes())
+			if !resp.OK || len(resp.Messages) != 1 || resp.Messages[0] != tc.message {
+				t.Fatalf("bool presence mismatch: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
+			}
+		})
 	}
 }
 

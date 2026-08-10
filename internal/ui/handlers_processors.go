@@ -302,6 +302,12 @@ func decodeUploadText(data []byte) string {
 	return string(decoded)
 }
 
+const processorParamPresencePrefix = "_ob_present_"
+
+func processorParamPresenceName(name string) string {
+	return processorParamPresencePrefix + name
+}
+
 // processorParamValuesFromRequest извлекает только реально переданные поля.
 // Отсутствующий metadata-параметр не попадает в map и потому не затирает
 // DSL-default при BindNamedArgs; явно переданное пустое значение остаётся
@@ -310,33 +316,71 @@ func processorParamValuesFromRequest(r *http.Request, params []processorpkg.Para
 	values := make(map[string]any)
 	for _, p := range params {
 		if p.Type == "file" {
-			file, _, err := r.FormFile(p.Name)
-			if errors.Is(err, http.ErrMissingFile) {
+			// Обычная страница обработки отправляет настоящий multipart-файл.
+			// Managed obFire, напротив, преобразует FormData в urlencoded и
+			// передаёт уже прочитанное браузером содержимое обычной строкой.
+			// Не вызываем FormFile для urlencoded: он возвращает ErrNotMultipart.
+			if r.MultipartForm != nil {
+				file, _, err := r.FormFile(p.Name)
+				if err == nil {
+					data, readErr := readUploadedBytes(file, maxFileSize)
+					closeRead("загруженный файл параметра", file)
+					if readErr != nil {
+						return nil, readErr
+					}
+					values[p.Name] = decodeUploadText(data)
+					continue
+				}
+				if !errors.Is(err, http.ErrMissingFile) {
+					return nil, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+				}
+			}
+
+			// _fc_<name> — backing textarea файлового виджета. Текущий obFire
+			// переносит его содержимое в поле <name>, но принимаем оба варианта:
+			// это сохраняет прямой urlencoded-контракт и не путает содержимое с
+			// текстовым полем пути, если клиент прислал оба.
+			text, present := processorFormText(r, "_fc_"+p.Name)
+			if !present {
+				text, present = processorFormText(r, p.Name)
+			}
+			if !present {
 				continue
 			}
-			if err != nil {
-				return nil, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+			if int64(len([]byte(text))) > maxFileSize {
+				return nil, errUploadTooLarge
 			}
-			data, readErr := readUploadedBytes(file, maxFileSize)
-			closeRead("загруженный файл параметра", file)
-			if readErr != nil {
-				return nil, readErr
-			}
-			values[p.Name] = decodeUploadText(data)
+			values[p.Name] = text
 			continue
 		}
 
-		raw, present := r.Form[p.Name]
+		text, present := processorFormText(r, p.Name)
 		if !present {
+			// HTML не отправляет unchecked checkbox. Presence-marker рисуется
+			// только рядом с реально существующим bool-контролом, поэтому marker
+			// означает явное false, а полное отсутствие custom-параметра оставляет
+			// DSL-default нетронутым.
+			if p.Type == "bool" {
+				if _, rendered := r.Form[processorParamPresenceName(p.Name)]; rendered {
+					values[p.Name] = false
+				}
+			}
 			continue
-		}
-		text := ""
-		if len(raw) > 0 {
-			text = raw[0]
 		}
 		values[p.Name] = parseParamValue(text, p.Type)
 	}
 	return values, nil
+}
+
+func processorFormText(r *http.Request, name string) (string, bool) {
+	raw, present := r.Form[name]
+	if !present {
+		return "", false
+	}
+	if len(raw) == 0 {
+		return "", true
+	}
+	return raw[0], true
 }
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,

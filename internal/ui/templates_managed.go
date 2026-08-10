@@ -212,6 +212,7 @@ const tplManagedForm = `
     {{/* ПриИзменении у флажка работает так же, как у остальных полей: без
          data-ob-fire-change обработчик «поставил галку → выполнилось действие»
          молча не вызывался. */}}
+    {{if not $el.ReadOnly}}<input type="hidden" name="_ob_present_{{$fn}}" value="1">{{end}}
     <input type="checkbox" id="cb-{{$fn}}" name="{{$fn}}" value="true"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
       {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}</label>
