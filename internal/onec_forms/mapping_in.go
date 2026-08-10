@@ -96,8 +96,14 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 		}
 	}
 
-	// Маппинг типа элемента: InputField → ПолеВвода и т.д.
-	if mapped, ok := Element1CToOneBase(el.Kind); ok {
+	// Поле HTML-документа. Отрисовывать готовый HTML платформа не умеет, но
+	// содержимое — это разметка, и правят её как код: ПолеКода с языком html
+	// сохраняет и данные, и возможность редактирования.
+	if el.Kind == "HTMLDocumentField" {
+		el.Kind = string(metadata.FormElementCodeField)
+		el.Language = "html"
+	} else if mapped, ok := Element1CToOneBase(el.Kind); ok {
+		// Маппинг типа элемента: InputField → ПолеВвода и т.д.
 		el.Kind = string(mapped)
 	} else if !alreadyMapped {
 		// Неизвестный — оставляем имя XML и эмитим W010.
@@ -290,6 +296,7 @@ func irElementToMeta(el *IRElement) *metadata.FormElement {
 		VerticalAlign:   el.VAlign,
 		Hint:            el.Hint,
 		Mask:            el.Mask,
+		Language:        el.Language,
 		Handlers:        irEventsToFormEvents(el.Events),
 		Props:           el.Props,
 		UnknownXML:      el.UnknownXML,

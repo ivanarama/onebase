@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/shopspring/decimal"
 )
 
 // isBlankVal checks if a value is considered empty (nil, "", 0, false, empty collection).
@@ -14,13 +12,14 @@ func isBlankVal(v any) bool {
 	if v == nil {
 		return true
 	}
+	// Числовой ноль пуст в любом Go-типе (см. truthy): булево поле из запроса на
+	// SQLite приходит как int64, и ЗначениеЗаполнено(Ложь) отвечало «истина».
+	if zero, ok := numericZero(v); ok {
+		return zero
+	}
 	switch t := v.(type) {
 	case string:
 		return t == ""
-	case float64:
-		return t == 0
-	case decimal.Decimal:
-		return t.IsZero()
 	case bool:
 		return !t
 	case []any:

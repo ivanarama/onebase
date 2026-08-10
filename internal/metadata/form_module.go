@@ -74,6 +74,11 @@ const (
 	FormElementCommandBar       FormElementType = "КоманднаяПанель" // CommandBar
 	FormElementPicture          FormElementType = "ПолеКартинки"    // PictureField
 	FormElementCommandBarButton FormElementType = "КнопкаКП"        // CommandBar Button
+	// ПолеКода — многострочный редактор с подсветкой синтаксиса. Нужен там, где
+	// пользователь правит не текст, а код или структурированные данные: правила
+	// обмена, шаблоны, запросы, JSON/XML-настройки. Отличается от Multiline
+	// (обычная textarea) подсветкой, номерами строк и моноширинным вводом.
+	FormElementCodeField FormElementType = "ПолеКода" // CodeField
 )
 
 // knownFormElementTypes — множество поддерживаемых движком видов элементов формы.
@@ -86,6 +91,7 @@ var knownFormElementTypes = map[FormElementType]bool{
 	FormElementInputList: true, FormElementDatePicker: true, FormElementFormField: true,
 	FormElementTablePart: true, FormElementColumn: true, FormElementCommandBar: true,
 	FormElementPicture: true, FormElementCommandBarButton: true,
+	FormElementCodeField: true,
 }
 
 // IsKnownFormElementType сообщает, поддерживается ли вид элемента формы движком.
@@ -156,6 +162,10 @@ type FormElement struct {
 	AccessKey       string            `yaml:"accesskey,omitempty"`      // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey          string            `yaml:"hotkey,omitempty"`         // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
 	Multiline       bool              `yaml:"multiline,omitempty"`      // обычное поле ввода рендерится как textarea
+	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
+	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
+	// xml, yaml, markdown, javascript, plaintext.
+	Language string `yaml:"language,omitempty"`
 	// Format/DisplayFormat распознаются, но для kind: ПолеДаты НЕ применяются в
 	// рантайме: нативный <input type=date> показывает дату по локали браузера, а
 	// значение всегда ISO (issue #219). Поля заведены, чтобы onebase check мог
