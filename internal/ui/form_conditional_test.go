@@ -98,7 +98,8 @@ func TestManagedFormEventStateAddsConditionalClasses(t *testing.T) {
 		},
 	}
 	s := &Server{interp: interpreter.New()}
-	_, tableParts, _, css, msgs := s.serializeManagedFormEventState(context.Background(), form, ent, obj, form.Conditional, nil)
+	st := s.serializeManagedFormEventState(context.Background(), form, ent, obj, form.Conditional, nil)
+	tableParts, css, msgs := st.TableParts, st.ConditionalCSS, st.Messages
 	if len(msgs) != 0 {
 		t.Fatalf("unexpected messages: %v", msgs)
 	}
