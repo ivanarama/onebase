@@ -12,6 +12,17 @@
 // игнорирует, иначе шум разделяемого раннера ронял бы каждый второй PR.
 // Строка geomean тоже игнорируется: это агрегат, а не бенчмарк.
 //
+// Одной значимости мало. Раннер GitHub делит железо с другими задачами, и на
+// бенчмарках с диском разброс замеров доходит до сотен процентов. При таком
+// разбросе значимость (p) достигается легко — распределения формально
+// различаются, — но величина «vs base» не значит ничего: PR из двух правок
+// markdown получал «+79.86%» при разбросе ±152% (issue #683). Поэтому строка
+// отбрасывается, если разброс (колонки CI, они в CSV есть) не меньше самой
+// просадки: отличить одно от другого измерение не позволяет.
+//
+// Отброшенные строки печатаются, а не глотаются молча: иначе гейт начнёт
+// скрывать настоящие просадки на шумных бенчмарках, и это будет незаметно.
+//
 // Использование:
 //
 //	benchstat -format csv base.txt pr.txt | benchgate -threshold 25
@@ -32,6 +43,7 @@ type regression struct {
 	name    string
 	metric  string
 	percent float64
+	noise   float64 // максимум из CI базы и CI ветки, в процентах
 }
 
 func main() {
@@ -39,10 +51,14 @@ func main() {
 	metric := flag.String("metric", "sec/op", "метрика, по которой судим (sec/op, B/op, allocs/op)")
 	flag.Parse()
 
-	regs, err := parse(os.Stdin, *metric, *threshold)
+	regs, noisy, err := parse(os.Stdin, *metric, *threshold)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "benchgate: %v\n", err)
 		os.Exit(2)
+	}
+	for _, n := range noisy {
+		fmt.Printf("benchgate: %s пропущен — разброс замеров ±%.0f%% не меньше просадки %+.2f%%, "+
+			"величине верить нельзя\n", n.name, n.noise, n.percent)
 	}
 	if len(regs) == 0 {
 		fmt.Printf("benchgate: значимых просадок %s больше %.0f%% нет\n", *metric, *threshold)
@@ -50,7 +66,7 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "benchgate: просадка %s больше порога %.0f%%:\n", *metric, *threshold)
 	for _, r := range regs {
-		fmt.Fprintf(os.Stderr, "  %s: %+.2f%%\n", r.name, r.percent)
+		fmt.Fprintf(os.Stderr, "  %s: %+.2f%% (разброс ±%.0f%%)\n", r.name, r.percent, r.noise)
 	}
 	fmt.Fprintf(os.Stderr, "\nЕсли замедление осознанное — поднимите порог в шаге CI или\n"+
 		"объясните его в описании PR и временно снимите гейт.\n")
@@ -62,23 +78,26 @@ func main() {
 // Формат: секции по метрикам, разделённые пустой строкой. В секции первая
 // строка — имена файлов, вторая — заголовки колонок (вида
 // «,sec/op,CI,sec/op,CI,vs base,P»), дальше строки бенчмарков.
-func parse(r io.Reader, metric string, threshold float64) ([]regression, error) {
+// Возвращает просадки выше порога и отдельно строки, отброшенные из-за
+// разброса, — вызывающий их печатает.
+func parse(r io.Reader, metric string, threshold float64) (regs, noisy []regression, err error) {
 	rd := csv.NewReader(r)
 	rd.FieldsPerRecord = -1 // секции имеют разную ширину
 	records, err := rd.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("разбор CSV benchstat: %w", err)
+		return nil, nil, fmt.Errorf("разбор CSV benchstat: %w", err)
 	}
 
-	var out []regression
 	inSection := false
 	vsIdx := -1
+	var ciIdx []int
 
 	for _, rec := range records {
 		// Заголовок секции: вторая колонка — имя метрики, где-то есть «vs base».
 		if idx := indexOf(rec, "vs base"); idx >= 0 {
 			inSection = len(rec) > 1 && strings.TrimSpace(rec[1]) == metric
 			vsIdx = idx
+			ciIdx = indexesOf(rec, "CI")
 			continue
 		}
 		if !inSection || vsIdx < 0 || len(rec) <= vsIdx {
@@ -92,11 +111,46 @@ func parse(r io.Reader, metric string, threshold float64) ([]regression, error) 
 		if !ok {
 			continue // «~» — изменение незначимо
 		}
-		if pct > threshold {
-			out = append(out, regression{name: name, metric: metric, percent: pct})
+		if pct <= threshold {
+			continue
+		}
+		reg := regression{name: name, metric: metric, percent: pct, noise: maxCI(rec, ciIdx)}
+		// Разброс не меньше просадки — измерение их не различает.
+		if reg.noise >= pct {
+			noisy = append(noisy, reg)
+			continue
+		}
+		regs = append(regs, reg)
+	}
+	return regs, noisy, nil
+}
+
+// indexesOf возвращает все позиции колонки с данным заголовком (у benchstat их
+// две — по одной на каждый прогон).
+func indexesOf(rec []string, want string) []int {
+	var out []int
+	for i, v := range rec {
+		if strings.TrimSpace(v) == want {
+			out = append(out, i)
 		}
 	}
-	return out, nil
+	return out
+}
+
+// maxCI — наибольший разброс среди колонок CI строки, в процентах. Пустая или
+// неразобранная колонка считается нулём: неизвестный разброс не повод молча
+// пропустить просадку.
+func maxCI(rec []string, ciIdx []int) float64 {
+	max := 0.0
+	for _, i := range ciIdx {
+		if i >= len(rec) {
+			continue
+		}
+		if v, ok := parsePercent(rec[i]); ok && v > max {
+			max = v
+		}
+	}
+	return max
 }
 
 func indexOf(rec []string, want string) int {
