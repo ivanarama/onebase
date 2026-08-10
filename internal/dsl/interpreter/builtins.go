@@ -362,7 +362,10 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 	// симметричным конструктору для обычных DSL-дат. Не epoch-секунды: они
 	// казались бы совместимыми с `Дата + N`, но в конструктор не вернулись бы.
 	if t, ok := args[0].(time.Time); ok {
-		if t.IsZero() {
+		// Компактный формат имеет ровно четыре цифры года. Не возвращаем
+		// правдоподобное, но уже необратимое число для значений, которые
+		// dateConstructor заведомо не сможет прочитать обратно.
+		if t.IsZero() || t.Year() < 1 || t.Year() > 9999 {
 			return decimal.Zero, nil
 		}
 		return decimal.NewFromString(t.Format("20060102150405"))
