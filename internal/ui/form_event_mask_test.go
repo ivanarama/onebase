@@ -47,7 +47,7 @@ func TestSerializeManagedFormEventState_MasksProtectedField(t *testing.T) {
 	ctx := auth.ContextWithUser(context.Background(), user)
 
 	s := &Server{}
-	values, _, _, _, _ := s.serializeManagedFormEventState(ctx, form, entity, obj, nil, nil)
+	values := s.serializeManagedFormEventState(ctx, form, entity, obj, nil, nil).Values
 
 	got, ok := values["Телефон"]
 	if !ok {
@@ -85,7 +85,7 @@ func TestSerializeManagedFormEventState_UnrestrictedUserSeesRealValue(t *testing
 	ctx := auth.ContextWithUser(context.Background(), admin)
 
 	s := &Server{}
-	values, _, _, _, _ := s.serializeManagedFormEventState(ctx, &metadata.FormModule{}, entity, obj, nil, nil)
+	values := s.serializeManagedFormEventState(ctx, &metadata.FormModule{}, entity, obj, nil, nil).Values
 	if values["Телефон"] != "+7 999 123-45-67" {
 		t.Errorf("администратору реквизит пришёл искажённым: %#v", values["Телефон"])
 	}

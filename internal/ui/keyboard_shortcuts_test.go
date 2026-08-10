@@ -101,7 +101,7 @@ func TestKeyboardShortcutsContract(t *testing.T) {
 		{"obInitKeyboardShortcuts()", "инициализатор должен быть зарегистрирован, иначе клавиш нет"},
 		{"'post_and_close'", "Ctrl+Enter — «Провести и закрыть»"},
 		{"data-ob-list-create", "Insert — создать элемент списка"},
-		{"function listSelectRow", "курсор списка нужен и клавиатуре, и клику"},
+		{"function listSetSel", "курсор списка нужен и клавиатуре, и клику — через единственную точку смены выделения"},
 		{"function obListMoveCursor", "↑/↓ ведут по строкам списка"},
 		{"obIsTypingTarget", "в поле ввода стрелки и Enter принадлежат полю, а не списку"},
 	} {

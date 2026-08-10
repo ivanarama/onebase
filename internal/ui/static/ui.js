@@ -642,7 +642,18 @@ obReady(function () {
   obInitReportBlocks();
 });
 
+// Выделенная строка списка — ссылка на DOM-узел, а не id: команды меню читают
+// с неё data-*-url. Читать переменную напрямую нельзя, только через listSel():
+// узел мог быть отцеплен от документа живым обновлением списка (план 87
+// заменяет innerHTML контейнера целиком). Тогда подсветки на экране уже нет, а
+// переменная всё ещё указывает на строку — команда сработала бы по записи,
+// которую пользователь не выбирал и не видит.
 var _listSel = null;
+
+function listSel() {
+  if (_listSel && !document.contains(_listSel)) _listSel = null;
+  return _listSel;
+}
 
 function obListConfig() {
   return obReadJSONScript('ob-list-config', { labels: {} }) || { labels: {} };
@@ -666,20 +677,59 @@ function listOpen(url, title) {
   window.location.href = url;
 }
 
-function listSelectRow(tr) {
-  if (_listSel) {
-    _listSel.querySelectorAll('td').forEach(function (td) { td.style.background = ''; });
-    _listSel.classList.remove('tile-selected');
+function listSelPaint(el, on) {
+  el.querySelectorAll('td').forEach(function (td) { td.style.background = on ? '#dbeafe' : ''; });
+  el.classList.toggle('tile-selected', on);
+}
+
+// Единственное место, где меняется выделение: снимает подсветку с прежней
+// строки, ставит на новую (null — снять выделение) и приводит кнопку
+// «Действия» в соответствие новому состоянию.
+function listSetSel(tr) {
+  var prev = listSel();
+  if (prev && prev !== tr) listSelPaint(prev, false);
+  _listSel = tr || null;
+  if (_listSel) listSelPaint(_listSel, true);
+  listSyncActionsBtn();
+}
+
+// Пока строка не выбрана, кнопка «Действия» приглушена, но остаётся на месте и
+// остаётся кликабельной. Прятать её нельзя: на свежеоткрытом списке не выбрано
+// ничего, и кнопка исчезала бы при каждом открытии — пользователь просто не
+// узнал бы, что она есть. Атрибут disabled тоже не годится: браузер гасит на
+// нём клик, и объяснить причину было бы негде.
+function listSyncActionsBtn() {
+  var on = !!listSel();
+  document.querySelectorAll('[data-ob-list-actions]').forEach(function (b) {
+    b.setAttribute('aria-disabled', on ? 'false' : 'true');
+    b.title = on
+      ? obListLabel('actionsReady', 'Команды для выбранной строки')
+      : obListLabel('selectRowFirst', 'Сначала выберите строку списка');
+  });
+}
+
+// Возврат выделения после перерисовки списка: та же запись опознаётся по
+// data-open-url (в нём id, у всех трёх видов строк — таблица, плитка, дерево).
+// Записи не стало в выдаче — выделение снимается, а не остаётся на призраке.
+function listRestoreSel(key, root) {
+  var next = null;
+  if (key) {
+    var rows = (root || document).querySelectorAll('[data-ob-list-row]');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute('data-open-url') === key) { next = rows[i]; break; }
+    }
   }
-  _listSel = tr;
-  if (!tr) return;
-  tr.querySelectorAll('td').forEach(function (td) { td.style.background = '#dbeafe'; });
-  tr.classList.add('tile-selected');
+  listSetSel(next);
+}
+
+function listSelKey() {
+  var sel = listSel();
+  return sel ? (sel.getAttribute('data-open-url') || '') : '';
 }
 
 function listRowClick(e, tr) {
   if (e.target.closest('a,button')) return;
-  listSelectRow(tr);
+  listSetSel(tr);
 }
 
 function listRowDblClick(e, tr) {
@@ -725,10 +775,15 @@ function obListRows() {
 function obListMoveCursor(delta) {
   var rows = obListRows();
   if (!rows.length) return false;
-  var idx = _listSel ? rows.indexOf(_listSel) : -1;
+  // Читаем через listSel(), пишем через listSetSel(): после живого обновления
+  // списка узел прежней строки мог быть отцеплен от документа, а сама смена
+  // выделения обязана пройти через единственную точку (она же гасит/включает
+  // кнопку «Действия»).
+  var cur = listSel();
+  var idx = cur ? rows.indexOf(cur) : -1;
   var next = idx < 0 ? (delta > 0 ? 0 : rows.length - 1) : idx + delta;
   if (next < 0 || next >= rows.length) return true; // упёрлись в край — клавишу всё равно съедаем
-  listSelectRow(rows[next]);
+  listSetSel(rows[next]);
   if (rows[next].scrollIntoView) rows[next].scrollIntoView({ block: 'nearest' });
   return true;
 }
@@ -769,10 +824,11 @@ function obInitKeyboardShortcuts() {
       if (obListMoveCursor(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
       return;
     }
-    if ((e.key === 'Enter' || e.key === 'F2') && _listSel) {
+    var sel = listSel();
+    if ((e.key === 'Enter' || e.key === 'F2') && sel) {
       e.preventDefault();
-      if (e.key === 'F2') listOpen(_listSel.dataset.openUrl);
-      else listActivateRow(_listSel);
+      if (e.key === 'F2') listOpen(sel.dataset.openUrl);
+      else listActivateRow(sel);
     }
   });
 }
@@ -968,7 +1024,9 @@ function showListMenu(items, x, y) {
   items.forEach(function (item) {
     var mi = document.createElement('div');
     mi.textContent = item.label;
-    if (item.disabled) {
+    if (item.hint) {
+      mi.style.cssText = 'padding:7px 14px;margin-bottom:4px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:12px;cursor:default';
+    } else if (item.disabled) {
       mi.style.cssText = 'padding:8px 14px;color:#94a3b8;cursor:default;font-style:italic';
     } else {
       mi.style.cssText = 'padding:8px 14px;cursor:pointer' + (item.danger ? ';color:#dc2626' : '');
@@ -994,14 +1052,24 @@ function listCtxMenu(e, tr) {
   showListMenu(listMenuItems(tr), e.clientX, e.clientY);
 }
 
+// Меню для случая «строка не выбрана»: причина сверху, ниже — те же команды
+// неактивными. Это дешевле модального alert() (не требует «ОК» на предсказуемое
+// состояние) и заодно показывает, что кнопка вообще умеет.
+function listMenuNoSel() {
+  var cfg = obListConfig();
+  var labels = cfg.labels || {};
+  var items = [{ label: labels.selectRowFirst || 'Сначала выберите строку списка', hint: true }];
+  items.push({ label: labels.open || 'Открыть', disabled: true });
+  if (cfg.canDelete) items.push({ label: labels.markDelete || 'Пометить на удаление', disabled: true });
+  if (cfg.canUnpost) items.push({ label: labels.unpost || 'Отменить проведение', disabled: true });
+  return items;
+}
+
 function listActionsBtnClick(e, btn) {
   e.preventDefault();
-  if (!_listSel) {
-    alert(obListLabel('selectRowFirst', 'Сначала выберите строку списка'));
-    return;
-  }
+  var sel = listSel();
   var r = (btn || e.currentTarget).getBoundingClientRect();
-  showListMenu(listMenuItems(_listSel), r.left, r.bottom);
+  showListMenu(sel ? listMenuItems(sel) : listMenuNoSel(), r.left, r.bottom);
 }
 
 function obInitListDelegates() {
@@ -1125,10 +1193,15 @@ function obInitFeed() {
 obReady(function () {
   obInitListDelegates();
   obInitKeyboardShortcuts();
+  listSyncActionsBtn();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Delete' && _listSel && obListConfig().canDelete) {
-      listSubmit(_listSel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+    // listSel(), а не _listSel: после живого обновления списка на экране может
+    // не быть подсветки, и пометка на удаление по клавише улетала бы в строку,
+    // о выборе которой пользователь уже не помнит.
+    var sel = listSel();
+    if (e.key === 'Delete' && sel && obListConfig().canDelete) {
+      listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
     }
   });
   obInitFeed();
@@ -2825,7 +2898,15 @@ window.onebaseDevice = {
         var fresh = findByKey(doc, key);
         if (!cur || !fresh) return;
         var sc = cur.scrollTop;
+        // Строки заменяются целиком, поэтому выбранная строка отцепляется от
+        // документа. Запоминаем запись до замены и возвращаем выделение на неё
+        // после — иначе автообновление молча съедало бы выбор пользователя.
+        // Трогаем выделение, только если оно жило в ЭТОМ списке: на странице
+        // может быть несколько живых списков, чужой выбор не наше дело.
+        var selMine = cur.contains(listSel());
+        var selKey = selMine ? listSelKey() : '';
         cur.innerHTML = fresh.innerHTML; // содержимое; атрибуты контейнера сохраняются
+        if (selMine) listRestoreSel(selKey, cur);
         try { cur.scrollTop = sc; } catch (_) {}
       })
       .catch(function () {}); // офлайн/редирект логина — тихо, F5 пользователя выручит

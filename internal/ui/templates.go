@@ -686,6 +686,9 @@ tr:hover td{background:#f8fafc}
 .btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
 .btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
 .btn-sm{padding:5px 12px;font-size:13px}
+/* Кнопка, которой сейчас нечего делать (нет выбранной строки списка): гасим вид,
+   но не ставим disabled — клик по ней объясняет причину. */
+.btn[aria-disabled="true"]{opacity:.5}
 .btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
 .form-group{margin-bottom:16px}
 label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:#475569}
@@ -1092,7 +1095,9 @@ const tplList = `
     {{else}}
       {{if .CanWrite}}<a class="btn btn-primary" data-ob-list-create title="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
-    <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions title="{{t $.Lang "Команды для выбранной строки"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
+    {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
+         приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
+    <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
@@ -1367,6 +1372,7 @@ const tplList = `
     "deleteForever" (t $.Lang "Удалить навсегда")
     "deleteForeverConfirm" "Удалить запись навсегда?"
     "selectRowFirst" (t $.Lang "Сначала выберите строку списка")
+    "actionsReady" (t $.Lang "Команды для выбранной строки")
     "collapseExpand" "Свернуть/Развернуть"
     "predefined" "Предопределённый"
   )
