@@ -50,6 +50,13 @@ func init() {
 	builtins["addday"] = addDayBuiltin
 	builtins["добавитьгод"] = addYearBuiltin
 	builtins["addyear"] = addYearBuiltin
+	// Сдвиг по времени суток (issue #707) — симметрично ДобавитьДень/Месяц/Год.
+	builtins["добавитьсекунд"] = addSecondsBuiltin
+	builtins["addseconds"] = addSecondsBuiltin
+	builtins["добавитьминут"] = addMinutesBuiltin
+	builtins["addminutes"] = addMinutesBuiltin
+	builtins["добавитьчас"] = addHoursBuiltin
+	builtins["addhours"] = addHoursBuiltin
 	builtins["разностьдат"] = dateDiffBuiltin
 	builtins["datediff"] = dateDiffBuiltin
 	builtins["дата"] = dateConstructor
