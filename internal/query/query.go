@@ -3643,6 +3643,18 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					prevAlias = !prevDot
 				}
 			}
+			// Булевы литералы Истина/Ложь. Без этой ветки они уезжали в SQL как
+			// имена колонок, и естественный отбор `ГДЕ Активен = Истина` падал
+			// «no such column: истина» (issue #704). Слово остаётся именем там,
+			// где оно синтаксически имя: после точки (Т.Истина), в позиции алиаса
+			// (КАК Истина) и если у источника есть одноимённое поле.
+			_, ownField := tr.colTypes[lower]
+			if !prevDot && !prevAlias && !nextIsDot && !ownField {
+				if lit, ok := boolLiteralSQL(lower, dialectName(tr.opts.Dialect)); ok {
+					tr.emit(lit)
+					continue
+				}
+			}
 			// Ссылка / Reference → id (virtual primary-key field, like 1C).
 			// Работает и после точки (Н.Ссылка → н.id), и без алиаса
 			// (ВЫБРАТЬ Ссылка ИЗ Справочник.X → SELECT id FROM x).
@@ -3785,6 +3797,31 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
 	}, nil
+}
+
+// boolLiteralSQL переводит булев литерал текста запроса в литерал диалекта.
+// SQLite хранит булево в INTEGER 0/1 (SQLiteDialect.TypeBool), и литералы там
+// пишутся числами — так же, как в DDL (boolTrueLit/boolFalseLit в storage).
+func boolLiteralSQL(lower, dialect string) (string, bool) {
+	var val bool
+	switch lower {
+	case "истина", "true":
+		val = true
+	case "ложь", "false":
+		val = false
+	default:
+		return "", false
+	}
+	switch {
+	case dialect == "sqlite" && val:
+		return "1", true
+	case dialect == "sqlite":
+		return "0", true
+	case val:
+		return "TRUE", true
+	default:
+		return "FALSE", true
+	}
 }
 
 // dialectName возвращает строковое имя диалекта SQL для opts.Dialect; nil → "pg"

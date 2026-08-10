@@ -933,23 +933,27 @@ func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:
 		return t
-	case float64:
-		return t != 0
-	case decimal.Decimal:
-		return !t.IsZero()
 	case string:
 		return t != ""
+	}
+	// Числовой ноль ложен в любом Go-типе. Раньше здесь стояли только float64 и
+	// decimal, а целые проваливались в «всё остальное — истина»: булево поле из
+	// запроса на SQLite приходит как int64, поэтому `Если Стр.Флаг Тогда` для
+	// Ложь молча выбирал ветку «истина» (issue #704).
+	if zero, ok := numericZero(v); ok {
+		return !zero
 	}
 	return true
 }
 
 func equal(a, b any) bool {
 	// Числа сравниваем по значению (decimal.Equal), а не строково: иначе
-	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Строки/ссылки/
-	// даты — по-прежнему через refKey.
-	if isNumeric(a) && isNumeric(b) {
-		ad, _ := toDecimal(a)
-		bd, _ := toDecimal(b)
+	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Булево при этом
+	// приравнивается к 1/0 — то же поле приходит как bool (PostgreSQL) или как
+	// int64 (SQLite). Строки/ссылки/даты — по-прежнему через refKey.
+	ad, aok := numericOrBool(a)
+	bd, bok := numericOrBool(b)
+	if aok && bok {
 		return ad.Equal(bd)
 	}
 	return refKey(a) == refKey(b)

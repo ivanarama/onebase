@@ -45,3 +45,37 @@ func isNumeric(v any) bool {
 	}
 	return false
 }
+
+// numericZero сообщает, что значение — числовой ноль. Нужна отдельно от
+// сравнения с float64(0)/decimal.Zero, потому что число доезжает до модуля в
+// разных Go-типах: из результата запроса на SQLite — int64, из литерала —
+// decimal. Строки числами НЕ считаются (в отличие от toDecimal): пустоту строки
+// определяет её длина, а не разбор "0" как нуля.
+func numericZero(v any) (zero bool, ok bool) {
+	if !isNumeric(v) {
+		return false, false
+	}
+	d, _ := toDecimal(v)
+	return d.IsZero(), true
+}
+
+// numericOrBool — числовое значение для сравнения на равенство: числа как есть,
+// булево как 1/0. Одно и то же булево поле приходит в модуль разными типами —
+// PostgreSQL хранит булево как bool, SQLite как INTEGER 0/1, — поэтому без
+// приведения `Стр.Флаг = Истина` работал бы на PostgreSQL и молча не
+// срабатывал на SQLite (issue #704).
+//
+// Строки сюда не попадают: разбор "0"/"true" из строки сделал бы равными
+// значения, которые пользователь сравнивает как текст.
+func numericOrBool(v any) (decimal.Decimal, bool) {
+	if b, ok := v.(bool); ok {
+		if b {
+			return decimal.NewFromInt(1), true
+		}
+		return decimal.Zero, true
+	}
+	if !isNumeric(v) {
+		return decimal.Zero, false
+	}
+	return toDecimal(v)
+}
