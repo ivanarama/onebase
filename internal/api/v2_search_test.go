@@ -247,3 +247,33 @@ func TestAPI_V2Search_КурсорНепрозраченИНеПовторяет
 		t.Fatalf("подделанный курсор сломал выдачу: %+v", forged.Data)
 	}
 }
+
+// Спецификация обязана описывать листание тем параметром, который обработчик
+// действительно принимает.
+//
+// Здесь был описан offset, которого searchV2 не принимает вовсе и не примет:
+// сырое смещение считается по просмотренным строкам индекса и выдавало бы
+// совпадения, скрытые правами. Рабочего cursor при этом в спецификации не
+// было — то есть клиент, написанный строго по ней, листать поиск не мог, а
+// написанный по её букве offset получал молча первую страницу (#615).
+func TestOpenAPI_ПоискЛистаетсяКурсором(t *testing.T) {
+	spec := buildOpenAPIV2(nil, nil)
+	paths, ok := spec["paths"].(map[string]any)
+	if !ok {
+		t.Fatal("нет paths в спецификации")
+	}
+	get, ok := paths["/api/v2/search"].(map[string]any)["get"].(map[string]any)
+	if !ok {
+		t.Fatal("нет GET /api/v2/search")
+	}
+	names := map[string]bool{}
+	for _, p := range get["parameters"].([]any) {
+		names[p.(map[string]any)["name"].(string)] = true
+	}
+	if names["offset"] {
+		t.Error("спецификация описывает offset, которого обработчик не принимает")
+	}
+	if !names["cursor"] {
+		t.Error("спецификация не описывает cursor — листать поиск по ней нельзя")
+	}
+}
