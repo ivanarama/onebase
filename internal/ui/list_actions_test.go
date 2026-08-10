@@ -167,8 +167,8 @@ func TestListRuntime_SelectionIsValidatedAgainstDOM(t *testing.T) {
 	// Клавиша Delete и меню обязаны спрашивать выделение у listSel(), а не
 	// читать переменную: чтение напрямую — это ровно тот путь, который бьёт по
 	// отцепленной строке.
-	if !strings.Contains(js, "if (e.key === 'Delete' && sel && obListConfig().canDelete)") {
-		t.Error("обработчик Delete не сверяет выделение через listSel()")
+	if !strings.Contains(js, "var sel = obListCurrentRow();") || !strings.Contains(js, "if (!obListCanMarkDelete(sel)) return;") {
+		t.Error("обработчик Delete не сверяет текущую видимую строку через fail-closed guard")
 	}
 	if strings.Contains(js, "e.key === 'Delete' && _listSel") {
 		t.Error("обработчик Delete по-прежнему читает _listSel напрямую (сработает по отцепленной строке)")

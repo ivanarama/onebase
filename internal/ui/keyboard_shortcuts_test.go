@@ -56,6 +56,136 @@ func TestPageListCreateKeyboardMarker(t *testing.T) {
 	}
 }
 
+// В общем layout уже есть глобальный input[name=q]. Ctrl+F списка обязан быть
+// связан с отдельным стабильным узлом, иначе querySelector выбирает первый
+// поиск в шапке и пользователь печатает не в тот form.
+func TestPageListCtrlFSearchHasStableAssociation(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Контрагент", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	data := map[string]any{
+		"Entity": ent, "Rows": []map[string]any{}, "Params": storage.ListParams{},
+		"RefFilterOptions": map[string]any{}, "CanWrite": true, "CanDelete": true,
+		"Lang": "ru", "Total": 0, "Page": 1, "TotalPages": 1,
+	}
+	var rendered bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&rendered, "page-list", data); err != nil {
+		t.Fatalf("ExecuteTemplate page-list: %v", err)
+	}
+	doc, err := html.Parse(strings.NewReader(rendered.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var searches []*html.Node
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "input" {
+			if name, _ := keyboardHTMLAttr(node, "name"); name == "q" {
+				searches = append(searches, node)
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	if len(searches) < 2 {
+		t.Fatalf("ожидались глобальный и списковый q inputs, найдено %d", len(searches))
+	}
+	var listSearch *html.Node
+	for _, input := range searches {
+		if id, _ := keyboardHTMLAttr(input, "id"); id == "ob-list-search" {
+			if listSearch != nil {
+				t.Fatal("id=ob-list-search встречается больше одного раза")
+			}
+			listSearch = input
+		}
+	}
+	if listSearch == nil {
+		t.Fatal("списковый поиск не имеет стабильного id=ob-list-search")
+	}
+	if _, ok := keyboardHTMLAttr(listSearch, "data-ob-list-search"); !ok {
+		t.Fatal("списковый поиск не имеет семантического data-ob-list-search")
+	}
+	if !strings.Contains(string(uiJS), "document.getElementById('ob-list-search')") {
+		t.Fatal("Ctrl+F не связан со стабильным id спискового поиска")
+	}
+}
+
+func TestListRowShortcutMarkersRespectDeleteAvailability(t *testing.T) {
+	render := func(canDelete bool) []*html.Node {
+		t.Helper()
+		ent := &metadata.Entity{
+			Name: "Контрагент", Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		}
+		rows := []map[string]any{
+			{"id": "11111111-1111-1111-1111-111111111111", "Наименование": "Обычный"},
+			{"id": "22222222-2222-2222-2222-222222222222", "Наименование": "Предопределённый", "_is_predefined": true},
+		}
+		var rendered bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&rendered, "page-list", map[string]any{
+			"Entity": ent, "Rows": rows, "Params": storage.ListParams{},
+			"RefFilterOptions": map[string]any{}, "CanDelete": canDelete,
+			"Lang": "ru", "Total": 2, "Page": 1, "TotalPages": 1,
+		}); err != nil {
+			t.Fatalf("ExecuteTemplate page-list: %v", err)
+		}
+		doc, err := html.Parse(strings.NewReader(rendered.String()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found []*html.Node
+		var walk func(*html.Node)
+		walk = func(node *html.Node) {
+			if _, ok := keyboardHTMLAttr(node, "data-ob-list-row"); ok {
+				found = append(found, node)
+			}
+			for child := node.FirstChild; child != nil; child = child.NextSibling {
+				walk(child)
+			}
+		}
+		walk(doc)
+		return found
+	}
+
+	rows := render(true)
+	if len(rows) != 2 {
+		t.Fatalf("rendered list rows=%d, want 2", len(rows))
+	}
+	if keys, _ := keyboardHTMLAttr(rows[0], "aria-keyshortcuts"); keys != "ArrowUp ArrowDown Enter F2 Delete" {
+		t.Fatalf("deletable row shortcuts=%q", keys)
+	}
+	if keys, _ := keyboardHTMLAttr(rows[1], "aria-keyshortcuts"); keys != "ArrowUp ArrowDown Enter F2" {
+		t.Fatalf("predefined row advertises unavailable Delete: %q", keys)
+	}
+	rows = render(false)
+	if keys, _ := keyboardHTMLAttr(rows[0], "aria-keyshortcuts"); keys != "ArrowUp ArrowDown Enter F2" {
+		t.Fatalf("row without delete permission advertises Delete: %q", keys)
+	}
+}
+
+func TestDynamicRowShortcutMarkersFollowRuntimeAvailability(t *testing.T) {
+	ui := string(uiJS)
+	for _, want := range []string{
+		"if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';",
+		"var domWritable = !!(table && !obDOMTableReadOnly(table));",
+		"if (domWritable) {",
+		"btn.title = 'Delete';",
+		"btn.setAttribute('aria-keyshortcuts', 'Delete');",
+	} {
+		if !strings.Contains(ui, want) {
+			t.Errorf("ui.js dynamic row contract missing %q", want)
+		}
+	}
+	managed := string(managedJS)
+	if !strings.Contains(managed, "const domWritable = !!(domTable && domTable.getAttribute('data-ob-readonly') === '0');") ||
+		!strings.Contains(managed, "if (domWritable) {") {
+		t.Error("managed.js does not gate dynamic Delete markers on writable DOM table")
+	}
+}
+
 // TestFormActionButtonsCarryKeyHints — подсказка сочетания на самой кнопке.
 // Пользователь, который не нашёл клавишу, ведёт себя ровно так же, как если бы
 // её не было: с этого и начался разбор («или просто не нашёл как»).
@@ -136,7 +266,7 @@ func TestListDataShortcutsDoNotHijackTyping(t *testing.T) {
 		t.Fatal("typing guard должен выполняться до Insert списка")
 	}
 
-	deleteHandler := strings.Index(js, "var sel = listSel();\n    if (e.key === 'Delete'")
+	deleteHandler := strings.Index(js, "e.key !== 'Delete'")
 	if deleteHandler < 0 {
 		t.Fatal("ui.js: не найден Delete списка")
 	}
@@ -181,6 +311,7 @@ func TestGridRowKeysContract(t *testing.T) {
 		{"g.readOnly", "структурные клавиши не меняют табличную часть только для чтения"},
 		{"!commitGridEdit(g)", "невалидный редактор блокирует структурную операцию"},
 		{"Object.assign({}, src._obCellClasses", "копия строки не разделяет изменяемые стили ячеек с оригиналом"},
+		{"if (window.obGridDelRow(tpName))", "клавиша и toolbar используют одну безопасную мутацию удаления"},
 	} {
 		if !strings.Contains(js, tc.want) {
 			t.Errorf("managed.js не содержит %q — %s", tc.want, tc.why)
@@ -249,6 +380,9 @@ func TestReadOnlyGridHidesAndRejectsStructuralActions(t *testing.T) {
 	if strings.Contains(readOnly, "data-ob-grid-add") || strings.Contains(readOnly, "data-ob-grid-del") {
 		t.Fatal("readonly-таблица показывает структурные кнопки")
 	}
+	if strings.Contains(readOnly, `aria-keyshortcuts="Insert F9 Delete`) {
+		t.Fatal("readonly SlickGrid объявляет недоступные структурные клавиши")
+	}
 	permissionReadOnly := render(false, false)
 	if !strings.Contains(permissionReadOnly, `data-sg-ro="1"`) || strings.Contains(permissionReadOnly, "data-ob-grid-add") {
 		t.Fatal("CanWrite=false должен fail-closed блокировать SlickGrid")
@@ -256,6 +390,9 @@ func TestReadOnlyGridHidesAndRejectsStructuralActions(t *testing.T) {
 	editable := render(false, true)
 	if !strings.Contains(editable, "data-ob-grid-add") || !strings.Contains(editable, "data-ob-grid-del") {
 		t.Fatal("редактируемая таблица потеряла структурные кнопки")
+	}
+	if !strings.Contains(editable, `aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"`) {
+		t.Fatal("редактируемый SlickGrid не объявляет доступные структурные клавиши")
 	}
 }
 
@@ -333,8 +470,12 @@ func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
 			if marker, _ := keyboardHTMLAttr(table, "data-ob-readonly"); marker != tc.marker {
 				t.Fatalf("data-ob-readonly=%q, want %q", marker, tc.marker)
 			}
-			if keys, _ := keyboardHTMLAttr(table, "aria-keyshortcuts"); keys != "Insert F9 Delete Control+ArrowUp Control+ArrowDown" {
-				t.Fatalf("unexpected table shortcut hint %q", keys)
+			keys, hasKeys := keyboardHTMLAttr(table, "aria-keyshortcuts")
+			if tc.marker == "0" && (!hasKeys || keys != "Insert F9 Delete Control+ArrowUp Control+ArrowDown") {
+				t.Fatalf("editable table shortcut hint=%q, present=%v", keys, hasKeys)
+			}
+			if tc.marker == "1" && hasKeys {
+				t.Fatalf("readonly table announces unavailable shortcuts %q", keys)
 			}
 			if element, _ := keyboardHTMLAttr(table, "data-ob-element"); element != "СтрокиФормы" {
 				t.Fatalf("row event element=%q", element)
@@ -365,6 +506,12 @@ func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
 				_, disabled := keyboardHTMLAttr(node, "disabled")
 				if disabled != wantDisabled {
 					t.Errorf("%s disabled=%v, want %v", label, disabled, wantDisabled)
+				}
+			}
+			for label, node := range map[string]*html.Node{"remove": remove, "add": add} {
+				_, hasShortcut := keyboardHTMLAttr(node, "aria-keyshortcuts")
+				if hasShortcut == wantDisabled {
+					t.Errorf("%s shortcut marker present=%v for readonly=%v", label, hasShortcut, wantDisabled)
 				}
 			}
 		})
@@ -411,6 +558,13 @@ func TestGeneratedFormDOMTableShortcutRender(t *testing.T) {
 		if marker, _ := keyboardHTMLAttr(table, "data-ob-readonly"); marker != wantMarker {
 			t.Fatalf("CanWrite=%v: data-ob-readonly=%q, want %q", canWrite, marker, wantMarker)
 		}
+		keys, hasKeys := keyboardHTMLAttr(table, "aria-keyshortcuts")
+		if canWrite && (!hasKeys || keys != "Insert F9 Delete Control+ArrowUp Control+ArrowDown") {
+			t.Fatalf("CanWrite=true: shortcut hint=%q, present=%v", keys, hasKeys)
+		}
+		if !canWrite && hasKeys {
+			t.Fatalf("CanWrite=false announces unavailable shortcuts %q", keys)
+		}
 		field := keyboardFindHTML(table, func(node *html.Node) bool {
 			name, _ := keyboardHTMLAttr(node, "name")
 			return node.Type == html.ElementNode && node.Data == "input" && name == "tp.Строки.0.Товар"
@@ -426,6 +580,10 @@ func TestGeneratedFormDOMTableShortcutRender(t *testing.T) {
 		_, addDisabled := keyboardHTMLAttr(add, "disabled")
 		if fieldDisabled != !canWrite || addDisabled != !canWrite {
 			t.Fatalf("CanWrite=%v: field disabled=%v, add disabled=%v", canWrite, fieldDisabled, addDisabled)
+		}
+		_, addShortcut := keyboardHTMLAttr(add, "aria-keyshortcuts")
+		if addShortcut != canWrite {
+			t.Fatalf("CanWrite=%v: add shortcut marker present=%v", canWrite, addShortcut)
 		}
 	}
 }

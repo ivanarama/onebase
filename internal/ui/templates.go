@@ -1120,7 +1120,7 @@ const tplList = `
   </div>
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
-  <input type="text" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
+  <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
   {{if .Params.Search}}<a class="btn btn-sm" href="?" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
   {{if .Entity.Activity}}<input type="hidden" name="activity" value="{{.Params.ActivityScope}}">{{end}}
   {{if $.CurrentSubsystem}}<input type="hidden" name="subsystem" value="{{$.CurrentSubsystem}}">{{end}}
@@ -1194,7 +1194,7 @@ const tplList = `
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2 Delete"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
   data-tree-parent="{{index $row "parent_id"}}"
@@ -1248,7 +1248,7 @@ const tplList = `
 <div class="tile-grid" role="listbox">
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2 Delete" role="option"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"
@@ -1304,7 +1304,7 @@ const tplList = `
 </tr></thead><tbody id="list-body">
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2 Delete"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"
@@ -1591,8 +1591,7 @@ const tplForm = `
 {{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}{{$tpReadOnly := not $.CanWrite}}
 <h3>{{$tp.DisplayName $.Lang}}</h3>
 <table class="tp-table" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
-  title="Insert; F9; Delete; Ctrl+↑/↓"
-  aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown">
+  {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
   <thead><tr>
     {{range .Fields}}<th>{{.DisplayName $.Lang}}</th>{{end}}
     <th style="width:40px"></th>
@@ -1623,7 +1622,7 @@ const tplForm = `
         {{end}}
         </td>
       {{end}}
-      <td><button type="button" class="del-btn" data-ob-remove-row="tr" title="Delete" aria-keyshortcuts="Delete"{{if $tpReadOnly}} disabled{{end}}>×</button></td>
+      <td><button type="button" class="del-btn" data-ob-remove-row="tr"{{if $tpReadOnly}} disabled{{else}} title="Delete" aria-keyshortcuts="Delete"{{end}}>×</button></td>
     </tr>
   {{end}}
   </tbody>
@@ -1633,7 +1632,7 @@ const tplForm = `
 </table>
 <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin-bottom:8px"
   data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}"
-  title="Insert" aria-keyshortcuts="Insert"{{if $tpReadOnly}} disabled{{end}}>
+  {{if $tpReadOnly}}disabled{{else}}title="Insert" aria-keyshortcuts="Insert"{{end}}>
   + {{t $.Lang "Добавить строку"}}
 </button>
 {{end}}

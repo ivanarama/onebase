@@ -58,9 +58,8 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TPEnumOrder":   map[string]map[string][]string{},
 			"TPRefMeta":     map[string]map[string]any{},
 			"TablePartRows": map[string][]map[string]any{},
-			"IsProcessor":   true,
-			"Processor":     proc,
 		}
+		s.setProcessorManagedContext(r, data, proc)
 		s.prepareManagedFormData(data, mf)
 		s.render(w, r, "page-managed-form", data)
 		return
@@ -277,14 +276,25 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"TPEnumOrder":   map[string]map[string][]string{},
 		"TPRefMeta":     map[string]map[string]any{},
 		"TablePartRows": map[string][]map[string]any{},
-		"IsProcessor":   true,
-		"Processor":     proc,
 		"Messages":      messages,
 		"RunError":      runErr,
 		"Ran":           true,
 	}
+	s.setProcessorManagedContext(r, data, proc)
 	s.prepareManagedFormData(data, proc.ManagedForm())
 	s.render(w, r, "page-managed-form", data)
+}
+
+// setProcessorManagedContext задаёт единый permission-контракт управляемой
+// формы обработки. Виртуальная Entity имеет kind=catalog только ради общего
+// pipeline полей и табличных частей; права catalog/<имя>/write к ней отношения
+// не имеют. Редактирование параметров разрешено тем же processor/<имя>/run,
+// которым защищены GET формы и POST запуска. Явный CanWrite также не даёт
+// Server.render подставить право фиктивного справочника по умолчанию.
+func (s *Server) setProcessorManagedContext(r *http.Request, data map[string]any, proc *processorpkg.Processor) {
+	data["IsProcessor"] = true
+	data["Processor"] = proc
+	data["CanWrite"] = proc != nil && s.can(r, "processor", proc.Name, "run")
 }
 
 func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processorpkg.Processor {

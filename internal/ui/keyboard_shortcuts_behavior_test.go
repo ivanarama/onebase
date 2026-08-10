@@ -26,90 +26,119 @@ func TestKeyboardShortcutsBehavior(t *testing.T) {
 	const harness = `
 const fs = require('fs');
 const source = fs.readFileSync(process.argv[1], 'utf8');
-const start = source.indexOf('function obFormActionButton');
-const end = source.indexOf('\nfunction initTreeToggle', start);
-if (start < 0 || end < 0) throw new Error('shortcut runtime slice not found');
+const start = source.indexOf('var _listSel = null;');
+const end = source.indexOf('\nfunction obInitFeed', start);
+const addTpStart = source.indexOf('function addTpRow');
+const addTpEnd = source.indexOf('\nfunction recalcTpRow', addTpStart);
+if (start < 0 || end < 0 || addTpStart < 0 || addTpEnd < 0) throw new Error('shortcut runtime slice not found');
 
 function makeElement(tag, options = {}) {
   const attrs = Object.assign({}, options.attrs || {});
-  return {
+  const classes = new Set(options.classes || []);
+  const element = {
     nodeType: 1,
     tagName: String(tag || 'DIV').toUpperCase(),
     style: Object.assign({display: '', visibility: ''}, options.style || {}),
     parentElement: options.parentElement || null,
+    dataset: Object.assign({}, options.dataset || {}),
     disabled: !!options.disabled,
     isContentEditable: !!options.contentEditable,
     focusCount: 0,
     selectCount: 0,
     scrollCount: 0,
+    children: [],
+    classList: {
+      toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
+      contains(name) { return classes.has(name); }
+    },
     getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
     setAttribute(name, value) { attrs[name] = String(value); },
     hasAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name); },
     querySelectorAll() { return []; },
     querySelector() { return null; },
+    appendChild(child) { this.children.push(child); child.parentElement = this; return child; },
     contains(other) { return other === this; },
     closest(selector) {
       if (selector.includes('table[data-ob-dom-table]')) return options.table || null;
+      if (selector === '[data-ob-list-row]' && options.listRow) return this;
       if (options.interactive && /a\[href\]|button|input|textarea|select|summary|contenteditable|role=/.test(selector)) return this;
       if (options.contentEditable && selector.includes('contenteditable')) return this;
       return null;
     },
-    focus() { this.focusCount++; document.activeElement = this; },
+    focus() { this.focusCount++; document.activeElement = this; dispatch('focusin', {target: this}); },
     select() { this.selectCount++; },
     scrollIntoView() { this.scrollCount++; }
   };
+  return element;
 }
 
 const body = makeElement('body');
 let rows = [];
-let keydown = null;
+const listeners = {};
 let configPresent = false;
 let modalID = '';
 let saveClicks = 0;
 let postCloseClicks = 0;
 let domAddButton = null;
-const search = makeElement('input');
+let dynamicTbody = null;
+let activated = 0;
+let confirmCalls = 0;
+const submittedForms = [];
+const listConfig = {labels: {}, canDelete: false};
+const globalSearch = makeElement('input');
+const listSearch = makeElement('input');
 const save = {disabled: false, click() { saveClicks++; }};
 const postClose = {disabled: false, click() { postCloseClicks++; }};
 
+function dispatch(type, event) {
+  (listeners[type] || []).slice().forEach(fn => fn(event));
+}
+body.appendChild = function(node) { node.parentElement = body; };
+
 global.window = {
-  getComputedStyle(el) { return el.style; },
-  _obActiveDOMTable: null
+  getComputedStyle(el) { return el && el.style ? el.style : {}; },
+  _obActiveDOMTable: null,
+  location: {href: ''},
+  obOpenInShell() { activated++; return true; }
 };
 global.document = {
   body,
   activeElement: body,
-  addEventListener(type, fn) { if (type === 'keydown') keydown = fn; },
+  addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); },
   contains(el) { return !!el && !el.detached; },
   getElementById(id) {
     if (id === modalID) return {};
     if (id === 'ob-list-config' && configPresent) return {};
+    if (id === 'ob-list-search') return listSearch;
+    if (id === 'tp-body-Dynamic') return dynamicTbody;
     return null;
   },
   querySelector(selector) {
     if (selector.includes('post_and_close')) return postClose;
     if (selector === 'button[name="_action"][value=""]') return save;
-    if (selector === 'input[name="q"]') return search;
+    if (selector === 'input[name="q"]') return globalSearch;
     return null;
   },
   querySelectorAll(selector) {
     if (selector === '[data-ob-list-row]') return rows;
     if (selector === '[data-ob-add-tp-row],[data-ob-add-tp]' && domAddButton) return [domAddButton];
     return [];
+  },
+  createElement(tag) {
+    if (String(tag).toLowerCase() === 'form') {
+      return {method: '', action: '', parentElement: null, submit() { submittedForms.push({method: this.method, action: this.action}); }};
+    }
+    return makeElement(tag);
   }
 };
 
-let selected = null;
-let activated = 0;
-function listSel() { return selected; }
-function listSetSel(row, options) { selected = row; if (options && options.focus) row.focus(); }
-function listActivateRow() { activated++; }
-function listOpen() { activated++; }
+global.confirm = function() { confirmCalls++; return true; };
+function obReadJSONScript(id, fallback) { return id === 'ob-list-config' && configPresent ? listConfig : fallback; }
 function recalcTpTotals() {}
 
 eval(source.slice(start, end));
 obInitKeyboardShortcuts();
-if (typeof keydown !== 'function') throw new Error('keydown handler was not installed');
+if (!listeners.keydown || listeners.keydown.length < 2) throw new Error('keydown handlers were not installed');
 
 function fire(values = {}) {
   const event = Object.assign({
@@ -119,7 +148,7 @@ function fire(values = {}) {
     preventDefault() { this.defaultPrevented = true; this.prevented = true; },
     stopPropagation() { this.stopped = true; }
   }, values);
-  keydown(event);
+  dispatch('keydown', event);
   return event;
 }
 function assert(condition, message) { if (!condition) throw new Error(message); }
@@ -136,27 +165,63 @@ fire({code: 'KeyS', ctrlKey: true});
 assert(saveClicks === 0, 'shortcut escaped the create-reference modal');
 modalID = '';
 
-selected = makeElement('tr');
+const interactiveRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row'}});
+rows = [interactiveRow];
+listSetSel(interactiveRow);
 fire({key: 'Enter', target: makeElement('a', {interactive: true})});
 fire({key: 'Enter', target: makeElement('span', {contentEditable: true})});
 fire({key: 'Enter', target: makeElement('button', {interactive: true})});
 assert(activated === 0, 'list Enter hijacked an interactive target');
 
-const first = makeElement('tr');
-const hidden = makeElement('tr', {style: {display: 'none', visibility: ''}});
-const last = makeElement('tr');
+const first = makeElement('tr', {listRow: true, dataset: {openUrl: '/first'}});
+const hidden = makeElement('tr', {listRow: true, style: {display: 'none', visibility: ''}, dataset: {openUrl: '/hidden'}});
+const last = makeElement('tr', {listRow: true, dataset: {openUrl: '/last'}});
 rows = [first, hidden, last];
-selected = first;
+listSetSel(first);
 fire({key: 'ArrowDown'});
-assert(selected === last, 'ArrowDown selected a hidden tree descendant');
+assert(listSel() === last, 'ArrowDown selected a hidden tree descendant');
 assert(last.focusCount === 1, 'keyboard selection did not move DOM focus');
+
+// Browser Tab focuses the first tabindex=0 row. focusin must synchronize the
+// selection before Enter/F2 and establish ArrowDown's starting point.
+const tabFirst = makeElement('tr', {listRow: true, dataset: {openUrl: '/tab-first'}});
+const tabSecond = makeElement('tr', {listRow: true, dataset: {openUrl: '/tab-second'}});
+rows = [tabFirst, tabSecond];
+listSetSel(null);
+tabFirst.focus();
+assert(listSel() === tabFirst && tabFirst.getAttribute('aria-selected') === 'true', 'Tab focus did not synchronize list selection');
+const beforeEnter = activated;
+fire({key: 'Enter', target: tabFirst});
+fire({key: 'F2', target: tabFirst});
+assert(activated === beforeEnter + 2, 'Tab -> Enter/F2 did not open the focused row');
+fire({key: 'ArrowDown', target: tabFirst});
+assert(listSel() === tabSecond, 'ArrowDown repeated the focused first row instead of moving to the second');
 
 configPresent = false;
 fire({code: 'KeyF', ctrlKey: true});
-assert(search.focusCount === 0, 'Ctrl+F hijacked a non-list page');
+assert(globalSearch.focusCount === 0 && listSearch.focusCount === 0, 'Ctrl+F hijacked a non-list page');
 configPresent = true;
 fire({code: 'KeyF', ctrlKey: true});
-assert(search.focusCount === 1 && search.selectCount === 1, 'Ctrl+F did not focus list search');
+assert(listSearch.focusCount === 1 && listSearch.selectCount === 1, 'Ctrl+F did not focus list search');
+assert(globalSearch.focusCount === 0 && globalSearch.selectCount === 0, 'Ctrl+F focused the global q input instead of list search');
+
+listConfig.canDelete = true;
+const predefined = makeElement('tr', {listRow: true, dataset: {predefined: '1', markUrl: '/mark-predefined'}});
+rows = [predefined];
+listSetSel(null);
+predefined.focus();
+const predefinedDelete = fire({key: 'Delete', target: predefined});
+assert(!predefinedDelete.prevented && confirmCalls === 0 && submittedForms.length === 0, 'predefined Delete reached prevent/confirm/network');
+const missingURL = makeElement('tr', {listRow: true, dataset: {predefined: '', markUrl: ''}});
+rows = [missingURL];
+missingURL.focus();
+fire({key: 'Delete', target: missingURL});
+assert(confirmCalls === 0 && submittedForms.length === 0, 'Delete without endpoint reached confirm/network');
+const regular = makeElement('tr', {listRow: true, dataset: {predefined: '', markUrl: '/mark-regular'}});
+rows = [regular];
+regular.focus();
+fire({key: 'Delete', target: regular});
+assert(confirmCalls === 1 && submittedForms.length === 1 && submittedForms[0].action === '/mark-regular', 'regular Delete did not submit exactly once');
 
 // Exercise the real DOM-table implementation: it must commit/validate the
 // active editor, copy values, and rewrite server-side row indexes after moves.
@@ -182,6 +247,8 @@ window.obFire = function(element, eventName, params) {
 };
 const table = {
   nodeType: 1,
+  style: {display: '', visibility: ''},
+  parentElement: body,
   tBodies: [tbody],
   _obCurrentRow: null,
   getAttribute(name) { return Object.prototype.hasOwnProperty.call(tableAttrs, name) ? tableAttrs[name] : null; },
@@ -281,6 +348,47 @@ rowB.control.valid = true;
 tableAttrs['data-ob-readonly'] = '1';
 fire({key: 'Insert', target: rowB.control});
 assert(tbody.rows.length === beforeInvalidInsert, 'readonly DOM table accepted Insert');
+
+tableAttrs['data-ob-readonly'] = '0';
+table.style.display = 'none';
+window._obActiveDOMTable = table;
+fire({key: 'Insert', target: body});
+fire({key: 'Insert', target: rowB.control});
+assert(tbody.rows.length === beforeInvalidInsert, 'hidden remembered/direct DOM table accepted Insert');
+assert(window._obActiveDOMTable === null, 'hidden DOM table remained remembered');
+
+// Dynamic auto-form rows use the same availability contract: a writable
+// table advertises Delete, a readonly table does not expose a dead shortcut.
+let dynamicReadOnly = '0';
+const dynamicTable = {
+  nodeType: 1, style: {display: '', visibility: ''}, parentElement: body,
+  tBodies: [], _obCurrentRow: null,
+  getAttribute(name) {
+    if (name === 'data-ob-dom-table') return 'Dynamic';
+    if (name === 'data-ob-readonly') return dynamicReadOnly;
+    return null;
+  },
+  contains(node) { return node === this || (node && node.dynamicTable === this); },
+  querySelector() { return null; }
+};
+dynamicTbody = {
+  rows: [],
+  getAttribute() { return null; },
+  closest(selector) { return selector.includes('table[data-ob-dom-table]') ? dynamicTable : null; },
+  appendChild(row) { this.rows.push(row); row.dynamicTable = dynamicTable; row.parentElement = this; }
+};
+dynamicTable.tBodies = [dynamicTbody];
+function obTPRefOpts() { return {}; }
+function obTPRefMeta() { return {}; }
+eval(source.slice(addTpStart, addTpEnd));
+addTpRow('Dynamic', ['Name'], [], 0);
+let dynamicDelete = dynamicTbody.rows[0].children[1].children[0];
+assert(dynamicDelete.title === 'Delete' && dynamicDelete.getAttribute('aria-keyshortcuts') === 'Delete', 'writable dynamic row lost Delete markers');
+dynamicReadOnly = '1';
+dynamicTbody.rows = [];
+addTpRow('Dynamic', ['Name'], [], 0);
+dynamicDelete = dynamicTbody.rows[0].children[1].children[0];
+assert(!dynamicDelete.title && dynamicDelete.getAttribute('aria-keyshortcuts') === null, 'readonly dynamic row advertises unavailable Delete');
 `
 
 	cmd := exec.Command(node, "-e", harness, uiPath)
@@ -303,40 +411,99 @@ func TestManagedGridShortcutBehavior(t *testing.T) {
 	const harness = `
 const fs = require('fs');
 const source = fs.readFileSync(process.argv[1], 'utf8');
+const mutationStart = source.indexOf('window.obGridAddRow = function');
 const start = source.indexOf('function gridNameFromTarget');
 const end = source.indexOf('// SlickGrid-aware applyTableParts', start);
-if (start < 0 || end < 0) throw new Error('managed shortcut runtime slice not found');
+if (mutationStart < 0 || start < 0 || end < 0) throw new Error('managed runtime slice not found');
 
 let keydown = null;
 let modal = false;
 let hotkeyButton = null;
-const host = {getAttribute(name) { return name === 'data-sg-tp' ? 'Lines' : ''; }};
+let items = [];
+let activeCell = {row: 0, cell: 0};
+let selectionModel = null;
+let selectedRows = [];
+let selectedRowsReads = 0;
+let selectedRowsClears = 0;
+let invalidates = 0;
+const rowEvents = [];
+
+const dataView = {
+  getItems() { return items; },
+  getItem(row) { return items[row]; },
+  addItem(item) { items.push(item); },
+  setItems(next) { items = next; },
+  deleteItem(id) { items = items.filter(item => item.id !== id); },
+  getRowById(id) { const row = items.findIndex(item => item.id === id); return row < 0 ? undefined : row; }
+};
+const editorLock = {active: false, commitOK: true, isActive() { return this.active; }, commitCurrentEdit() { return this.commitOK; }};
+const grid = {
+  getEditorLock() { return editorLock; },
+  getActiveCell() { return activeCell; },
+  setActiveCell(row, cell) { activeCell = {row, cell}; },
+  getSelectionModel() { return selectionModel; },
+  getSelectedRows() { selectedRowsReads++; if (!selectionModel) throw new Error('SlickGrid Selection model is not set'); return selectedRows.slice(); },
+  setSelectedRows(rows) { if (!selectionModel) throw new Error('SlickGrid Selection model is not set'); selectedRowsClears++; selectedRows = rows.slice(); },
+  invalidate() { invalidates++; },
+  scrollRowIntoView() {}, editActiveCell() {}
+};
+const hostAttrs = {'data-sg-tp': 'Lines'};
+const host = {
+  nodeType: 1, style: {display: '', visibility: ''}, parentElement: null,
+  getAttribute(name) { return Object.prototype.hasOwnProperty.call(hostAttrs, name) ? hostAttrs[name] : null; }
+};
 const gridTarget = {closest(selector) {
   if (selector === '.ob-grid[data-sg-tp]') return host;
   return null;
 }};
-const body = {tagName: 'BODY', closest() { return null; }};
+const unknownHost = {
+  nodeType: 1, style: {display: '', visibility: ''}, parentElement: null,
+  getAttribute(name) { return name === 'data-sg-tp' ? 'Unknown' : null; }
+};
+const unknownTarget = {closest(selector) { return selector === '.ob-grid[data-sg-tp]' ? unknownHost : null; }};
+const body = {nodeType: 1, tagName: 'BODY', style: {display: '', visibility: ''}, parentElement: null, closest() { return null; }};
 const link = {tagName: 'A', closest(selector) {
   if (selector === '.ob-grid[data-sg-tp]') return null;
   if (selector.includes('a[href]')) return this;
   return null;
 }};
+const gridState = {
+  grid, dataView, div: host, readOnly: false,
+  columns: [{id: 'Name'}], columnsMeta: [{id: 'Name'}]
+};
 global.window = {
-  _obGrids: {Lines: {div: host, readOnly: false}},
+  _obGrids: {Lines: gridState},
   _obActiveGridName: '',
-  addCount: 0, copyCount: 0, moves: [],
-  obGridAddRow() { this.addCount++; },
-  obGridCopyRow() { this.copyCount++; },
-  obGridMoveRow(tp, delta) { this.moves.push([tp, delta]); }
+  _obFormDirty: false,
+  getComputedStyle(el) { return el && el.style ? el.style : {}; }
 };
 global.document = {
   activeElement: body,
   addEventListener(type, fn, capture) { if (type === 'keydown' && capture === true) keydown = fn; },
-  contains() { return true; },
+  contains(el) { return !!el && !el.detached; },
   getElementById() { return null; },
   querySelectorAll(selector) { return selector === '[data-ob-hotkey]' && hotkeyButton ? [hotkeyButton] : []; }
 };
 global.obHasBlockingModal = () => modal;
+function updateTotals() {}
+function obFireRowEvent(tpName, attr, eventName) {
+  rowEvents.push({tpName, attr, eventName, values: items.map(item => item.Name)});
+}
+window.obFireRowEvent = obFireRowEvent;
+
+function resetRows(names) {
+  items = names.map((name, index) => ({id: index, _ord: index, Name: name}));
+  activeCell = {row: 0, cell: 0};
+  selectionModel = null;
+  selectedRows = [];
+  selectedRowsReads = 0;
+  selectedRowsClears = 0;
+  rowEvents.length = 0;
+  window._obFormDirty = false;
+  gridState.readOnly = false;
+}
+
+eval(source.slice(mutationStart, start));
 eval(source.slice(start, end));
 if (typeof keydown !== 'function') throw new Error('managed capture handler was not installed');
 
@@ -351,38 +518,78 @@ function fire(values = {}) {
 }
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
+resetRows(['A', 'B']);
 fire({key: 'Insert'});
-assert(window.addCount === 1, 'exact Insert did not add a SlickGrid row');
+assert(items.length === 3 && items[2].Name === '', 'exact Insert did not mutate SlickGrid data');
+assert(rowEvents.length === 1 && rowEvents[0].eventName === 'ПриДобавленииСтроки' && rowEvents[0].values.join(',') === 'A,B,', 'Insert row-add event did not observe committed mutation');
+const afterInsert = items.length;
 fire({key: 'Insert', shiftKey: true});
-assert(window.addCount === 1, 'Shift+Insert was accepted as Insert');
+assert(items.length === afterInsert, 'Shift+Insert was accepted as Insert');
 fire({key: 'Insert', defaultPrevented: true});
-assert(window.addCount === 1, 'defaultPrevented Insert reached SlickGrid');
+assert(items.length === afterInsert, 'defaultPrevented Insert reached SlickGrid');
 
 modal = true;
 fire({key: 'Insert'});
-assert(window.addCount === 1, 'Insert escaped a blocking modal');
+assert(items.length === afterInsert, 'Insert escaped a blocking modal');
 modal = false;
 
+grid.setActiveCell(0, 0);
 hotkeyButton = {
   disabled: false,
   getAttribute(name) { if (name === 'data-ob-hotkey') return ' F9 '; return null; }
 };
 fire({key: 'F9'});
-assert(window.copyCount === 0, 'built-in F9 ignored a whitespace-padded explicit form hotkey');
+assert(items.length === afterInsert, 'built-in F9 ignored a whitespace-padded explicit form hotkey');
 hotkeyButton.disabled = true;
 fire({key: 'F9'});
-assert(window.copyCount === 1, 'disabled explicit hotkey incorrectly blocked built-in F9');
+assert(items.length === afterInsert + 1 && items[1].Name === 'A', 'disabled explicit hotkey incorrectly blocked real F9 copy');
 
+resetRows(['A', 'B', 'C']);
 fire({key: 'ArrowDown', ctrlKey: true, shiftKey: true});
-assert(window.moves.length === 0, 'Ctrl+Shift+Down was accepted as Ctrl+Down');
+assert(items.map(item => item.Name).join(',') === 'A,B,C', 'Ctrl+Shift+Down was accepted as Ctrl+Down');
 fire({key: 'ArrowDown', ctrlKey: true});
-assert(window.moves.length === 1 && window.moves[0][1] === 1, 'exact Ctrl+Down did not move the row');
+assert(items.map(item => item.Name).join(',') === 'B,A,C', 'exact Ctrl+Down did not mutate row order');
 
+const beforeLink = items.length;
 fire({key: 'Insert', target: link});
-assert(window.addCount === 1, 'remembered grid hijacked a focused link');
-window._obGrids.Lines.readOnly = true;
+assert(items.length === beforeLink, 'remembered grid hijacked a focused link');
+gridState.readOnly = true;
 fire({key: 'Insert'});
-assert(window.addCount === 1, 'readonly SlickGrid accepted Insert');
+assert(items.length === beforeLink, 'readonly SlickGrid accepted Insert');
+
+gridState.readOnly = false;
+host.style.display = 'none';
+window._obActiveGridName = 'Lines';
+fire({key: 'Insert', target: body});
+assert(items.length === beforeLink && window._obActiveGridName === '', 'hidden remembered SlickGrid accepted a shortcut or stayed active');
+host.style.display = '';
+window._obActiveGridName = 'Lines';
+fire({key: 'Insert', target: unknownTarget});
+assert(items.length === beforeLink, 'unknown direct grid fell back to remembered SlickGrid');
+
+// Toolbar Delete executes the production mutation. With no vendored
+// RowSelectionModel it must not even call the throwing selection API, must
+// remove the active row, and must fire rowdel exactly once after mutation.
+resetRows(['A', 'B', 'C']);
+grid.setActiveCell(1, 0);
+let deleted = false;
+const normalInvalidate = grid.invalidate;
+grid.invalidate = function() { throw new Error('render failed after data mutation'); };
+try { deleted = window.obGridDelRow('Lines'); } catch (error) { throw new Error('toolbar Delete threw after mutation: ' + error.message); }
+grid.invalidate = normalInvalidate;
+assert(deleted === true && items.map(item => item.Name).join(',') === 'A,C', 'no-model Delete did not remove active row');
+assert(selectedRowsReads === 0 && selectedRowsClears === 0, 'no-model Delete called an unavailable selection API');
+assert(rowEvents.length === 1 && rowEvents[0].eventName === 'ПриУдаленииСтроки' && rowEvents[0].values.join(',') === 'A,C', 'rowdel did not fire exactly once after active-row mutation');
+
+// If a real selection model is supplied by an embedding application, all
+// selected rows are deleted once and selection is cleared safely.
+resetRows(['A', 'B', 'C']);
+selectionModel = {};
+selectedRows = [0, 2, 2];
+deleted = window.obGridDelRow('Lines');
+assert(deleted === true && items.map(item => item.Name).join(',') === 'B', 'selection-model Delete lost honest multi-select semantics');
+assert(selectedRowsReads === 1 && selectedRowsClears === 1, 'selection-model Delete did not read/clear selection exactly once');
+assert(rowEvents.length === 1 && rowEvents[0].values.join(',') === 'B', 'multi-delete rowdel fired before final mutation or more than once');
 `
 
 	cmd := exec.Command(node, "-e", harness, managedPath)

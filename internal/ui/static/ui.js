@@ -817,9 +817,52 @@ function obElementVisible(el) {
   }
   return true;
 }
+window.obElementVisible = obElementVisible;
 
 function obListRows() {
   return Array.prototype.slice.call(document.querySelectorAll('[data-ob-list-row]')).filter(obElementVisible);
+}
+
+function obListFocusedRow() {
+  var active = document.activeElement;
+  var row = active && active.closest ? active.closest('[data-ob-list-row]') : null;
+  return row && document.contains(row) && obElementVisible(row) ? row : null;
+}
+
+function obListCurrentRow() {
+  return obListFocusedRow() || listSel();
+}
+
+function obListCanMarkDelete(row) {
+  var cfg = obListConfig();
+  return !!(row && row.dataset && cfg.canDelete === true &&
+    row.dataset.predefined !== '1' && String(row.dataset.markUrl || '').trim());
+}
+
+function obHandleListDeleteShortcut(e) {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || obIsInteractiveTarget(e.target)) return;
+  if (obHasBlockingModal() || e.key !== 'Delete') return;
+  var sel = obListCurrentRow();
+  // Fail closed до preventDefault/confirm/network: предопределённая строка,
+  // отсутствующее право или пустой endpoint не должны даже открыть confirm.
+  if (!obListCanMarkDelete(sel)) return;
+  e.preventDefault();
+  if (listSel() !== sel) listSetSel(sel);
+  listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+}
+
+function obInitListFocusSelection() {
+  if (window.__obListFocusSelection) return;
+  window.__obListFocusSelection = true;
+  // Строка сама является focusable option. Когда пользователь попал на неё
+  // клавишей Tab, фокус сразу становится тем же текущим элементом, что и клик:
+  // Enter/F2 работают без предварительной стрелки, а ArrowDown идёт ко второй
+  // строке, а не повторно выбирает первую.
+  document.addEventListener('focusin', function (e) {
+    if (!e.target || !e.target.closest) return;
+    var row = e.target.closest('[data-ob-list-row]');
+    if (row && document.contains(row) && obElementVisible(row) && listSel() !== row) listSetSel(row);
+  });
 }
 
 function obListMoveCursor(delta) {
@@ -829,7 +872,7 @@ function obListMoveCursor(delta) {
   // списка узел прежней строки мог быть отцеплен от документа, а сама смена
   // выделения обязана пройти через единственную точку (она же гасит/включает
   // кнопку «Действия»).
-  var cur = listSel();
+  var cur = obListCurrentRow();
   var idx = cur ? rows.indexOf(cur) : -1;
   var next = idx < 0 ? (delta > 0 ? 0 : rows.length - 1) : idx + delta;
   if (next < 0 || next >= rows.length) return true; // упёрлись в край — клавишу всё равно съедаем
@@ -890,11 +933,15 @@ window.obDOMPrepareRow = obDOMPrepareRow;
 function obDOMActiveTable(target) {
   var direct = obDOMTableFromTarget(target || document.activeElement);
   if (direct) {
+    if (!document.contains(direct) || !obElementVisible(direct)) {
+      if (window._obActiveDOMTable === direct) window._obActiveDOMTable = null;
+      return null;
+    }
     window._obActiveDOMTable = direct;
     return direct;
   }
   var remembered = window._obActiveDOMTable;
-  if (remembered && document.contains(remembered)) return remembered;
+  if (remembered && document.contains(remembered) && obElementVisible(remembered)) return remembered;
   window._obActiveDOMTable = null;
   return null;
 }
@@ -1102,6 +1149,7 @@ function obInitDOMTables() {
 function obInitKeyboardShortcuts() {
   if (window.__obKeyShortcuts) return;
   window.__obKeyShortcuts = true;
+  obInitListFocusSelection();
   document.addEventListener('keydown', function (e) {
     if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
     // Модальный подбор забирает клавиатуру себе.
@@ -1121,7 +1169,7 @@ function obInitKeyboardShortcuts() {
         return;
       }
       if (e.code === 'KeyF') {
-        var q = document.getElementById('ob-list-config') && document.querySelector('input[name="q"]');
+        var q = document.getElementById('ob-list-config') && document.getElementById('ob-list-search');
         if (q) { e.preventDefault(); q.focus(); q.select(); }
       }
       return;
@@ -1141,13 +1189,15 @@ function obInitKeyboardShortcuts() {
       if (obListMoveCursor(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
       return;
     }
-    var sel = listSel();
+    var sel = obListCurrentRow();
     if ((e.key === 'Enter' || e.key === 'F2') && sel) {
       e.preventDefault();
+      if (listSel() !== sel) listSetSel(sel);
       if (e.key === 'F2') listOpen(sel.dataset.openUrl);
       else listActivateRow(sel);
     }
   });
+  document.addEventListener('keydown', obHandleListDeleteShortcut);
 }
 
 function initTreeToggle(btn) {
@@ -1249,7 +1299,9 @@ function makeTreeRow(row) {
   tr.setAttribute('data-ob-list-row', '');
   tr.setAttribute('tabindex', '-1');
   tr.setAttribute('aria-selected', 'false');
-  tr.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown Enter F2 Delete');
+  var rowShortcuts = 'ArrowUp ArrowDown Enter F2';
+  if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';
+  tr.setAttribute('aria-keyshortcuts', rowShortcuts);
   var cells = row.cells || [];
   var treeCell = row.tree_cell || 0;
   for (var i = 0; i < cells.length; i++) {
@@ -1521,18 +1573,6 @@ obReady(function () {
   if (firstListRow) firstListRow.setAttribute('tabindex', '0');
   listSyncActionsBtn();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
-  document.addEventListener('keydown', function (e) {
-    // listSel(), а не _listSel: после живого обновления списка на экране может
-    // не быть подсветки, и пометка на удаление по клавише улетала бы в строку,
-    // о выборе которой пользователь уже не помнит.
-    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || obIsInteractiveTarget(e.target)) return;
-    if (obHasBlockingModal()) return;
-    var sel = listSel();
-    if (e.key === 'Delete' && sel && obListConfig().canDelete) {
-      e.preventDefault();
-      listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
-    }
-  });
   obInitFeed();
 });
 
@@ -2262,6 +2302,8 @@ function obTPRefMeta() {
 
 function addTpRow(tpName, fields, numFields, idx) {
   var tbody = document.getElementById('tp-body-' + tpName);
+  var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
+  var domWritable = !!(table && !obDOMTableReadOnly(table));
   var tr = document.createElement('tr');
   var refOpts = (obTPRefOpts()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
@@ -2335,10 +2377,13 @@ function addTpRow(tpName, fields, numFields, idx) {
   btn.className = 'del-btn';
   btn.textContent = '×';
   btn.setAttribute('data-ob-remove-row', 'tr');
+  if (domWritable) {
+    btn.title = 'Delete';
+    btn.setAttribute('aria-keyshortcuts', 'Delete');
+  }
   tdDel.appendChild(btn);
   tr.appendChild(tdDel);
   tbody.appendChild(tr);
-  var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
   if (table) obDOMFinishMutation(table, tr, true);
 }
 

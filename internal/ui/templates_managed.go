@@ -267,7 +267,8 @@ const tplManagedForm = `
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{jsJSON $tpRows}}'
-       {{if $tpCmds}}data-sg-cmd="1"{{end}}></div>
+       {{if $tpCmds}}data-sg-cmd="1"{{end}}
+       {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}></div>
   <input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">
   {{if not $tpReadOnly}}
   <div style="display:flex;gap:6px;margin-top:4px">
@@ -280,8 +281,7 @@ const tplManagedForm = `
 {{else}}
 <table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
   data-ob-element="{{$el.Name}}"{{if hasHandler $el "ПриДобавленииСтроки"}} data-ob-rowadd="1"{{end}}{{if hasHandler $el "ПриУдаленииСтроки"}} data-ob-rowdel="1"{{end}}
-  title="Insert; F9; Delete; Ctrl+↑/↓"
-  aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown">
+  {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
     <thead>
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
@@ -314,7 +314,7 @@ const tplManagedForm = `
           {{end}}
         </td>
         {{end}}
-        <td><button type="button" class="del-btn" data-ob-remove-row title="Delete" aria-keyshortcuts="Delete"{{if $tpReadOnly}} disabled{{end}}>×</button></td>
+        <td><button type="button" class="del-btn" data-ob-remove-row{{if $tpReadOnly}} disabled{{else}} title="Delete" aria-keyshortcuts="Delete"{{end}}>×</button></td>
       </tr>
     {{end}}
     </tbody>
@@ -324,7 +324,7 @@ const tplManagedForm = `
     </tr></tfoot>
   </table>
   <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"
-    data-ob-add-tp="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{if $tpReadOnly}} disabled{{end}}>
+    data-ob-add-tp="{{$tpName}}"{{if $tpReadOnly}} disabled{{else}} title="Insert" aria-keyshortcuts="Insert"{{end}}>
     + Добавить строку
   </button>
 {{end}}

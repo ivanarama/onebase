@@ -248,6 +248,7 @@ function obManagedReady(fn) {
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
       const domTable = tbody.closest && tbody.closest('table[data-ob-dom-table]');
+      const domWritable = !!(domTable && domTable.getAttribute('data-ob-readonly') === '0');
       const focused = domTable && document.activeElement && domTable.contains(document.activeElement);
       const focusedRow = focused && document.activeElement.closest ? document.activeElement.closest('tr') : null;
       const restoreRow = focusedRow || (domTable && domTable._obCurrentRow && domTable.contains(domTable._obCurrentRow) ? domTable._obCurrentRow : null);
@@ -338,8 +339,10 @@ function obManagedReady(fn) {
         btn.className = 'del-btn';
         btn.textContent = '×';
         btn.setAttribute('data-ob-remove-row', '');
-        btn.title = 'Delete';
-        btn.setAttribute('aria-keyshortcuts', 'Delete');
+        if (domWritable) {
+          btn.title = 'Delete';
+          btn.setAttribute('aria-keyshortcuts', 'Delete');
+        }
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
@@ -1512,24 +1515,59 @@ obManagedReady(obManagedInitDelegates);
     obFireRowEvent(tpName, "data-sg-rowadd", "ПриДобавленииСтроки");
   };
 
-  // Delete selected row from grid
+  function gridRowsForDelete(g) {
+    var rows = [];
+    var selectionModel = null;
+    try {
+      selectionModel = g.grid.getSelectionModel && g.grid.getSelectionModel();
+      if (selectionModel && g.grid.getSelectedRows) rows = g.grid.getSelectedRows() || [];
+    } catch (e) { rows = []; }
+    if (!rows.length) {
+      var ac = g.grid.getActiveCell();
+      if (ac) rows = [ac.row];
+    }
+    var unique = [];
+    var seen = {};
+    for (var i = 0; i < rows.length; i++) {
+      var row = Number(rows[i]);
+      if (!Number.isInteger(row) || row < 0 || seen[row]) continue;
+      seen[row] = true;
+      unique.push(row);
+    }
+    return unique;
+  }
+
+  // В поставке нет RowSelectionModel: обычный SlickGrid честно удаляет только
+  // активную строку. Если приложение позднее установит selection model,
+  // используем все реально выбранные строки и сохраняем multi-select семантику.
   window.obGridDelRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    if (!g || g.readOnly || !commitGridEdit(g)) return false;
     window._obActiveGridName = tpName;
-    // Без плагина выделения getSelectedRows бросает исключение — удаляем
-    // активную (текущую) строку, как в обычной таблице.
-    var sel = [];
-    try { sel = g.grid.getSelectedRows() || []; } catch (e) { sel = []; }
-    if (!sel.length) { var ac = g.grid.getActiveCell(); if (ac) sel = [ac.row]; }
-    if (!sel.length) return;
-    var items = g.dataView.getItems();
-    var toRemove = sel.map(function(r) { return items[r]; }).filter(Boolean);
-    for (var i = 0; i < toRemove.length; i++) g.dataView.deleteItem(toRemove[i].id);
+    var rows = gridRowsForDelete(g);
+    if (!rows.length) return false;
+    var toRemove = [];
+    var ids = Object.create(null);
+    for (var i = 0; i < rows.length; i++) {
+      var item = g.dataView.getItem(rows[i]);
+      if (item && !ids[item.id]) {
+        ids[item.id] = true;
+        toRemove.push(item);
+      }
+    }
+    if (!toRemove.length) return false;
+    for (var j = 0; j < toRemove.length; j++) g.dataView.deleteItem(toRemove[j].id);
     window._obFormDirty = true;
-    g.grid.invalidate();
-    g.grid.setSelectedRows([]);
-    obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки");
+    try { g.grid.invalidate(); } catch (e) {
+      if (window.console) window.console.error("SlickGrid delete refresh error [" + tpName + "]:", e);
+    }
+    try {
+      if (g.grid.getSelectionModel && g.grid.getSelectionModel() && g.grid.setSelectedRows) g.grid.setSelectedRows([]);
+    } catch (e) {}
+    try { obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки"); } catch (e) {
+      if (window.console) window.console.error("SlickGrid row-delete event error [" + tpName + "]:", e);
+    }
+    return true;
   };
 
   // reindexOrd — переписывает _ord подряд (0..n-1) по текущему порядку массива.
@@ -1621,6 +1659,20 @@ obManagedReady(obManagedInitDelegates);
     if (tpName && (window._obGrids || {})[tpName]) window._obActiveGridName = tpName;
   }
 
+  function managedElementVisible(el) {
+    if (!el) return false;
+    if (typeof window.obElementVisible === "function") return window.obElementVisible(el);
+    for (var cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+      var inlineStyle = cur.style || {};
+      if (cur.hidden || (cur.getAttribute && cur.getAttribute("aria-hidden") === "true") || inlineStyle.display === "none" || inlineStyle.visibility === "hidden") return false;
+      if (window.getComputedStyle) {
+        var style = window.getComputedStyle(cur);
+        if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      }
+    }
+    return true;
+  }
+
   // activeGridName — грид, к которому относится нажатие. Фокус внутри грида
   // имеет приоритет; после ухода на служебный focus-sink используем ПОСЛЕДНИЙ
   // грид, с которым реально взаимодействовал пользователь. Перебирать первый
@@ -1628,14 +1680,23 @@ obManagedReady(obManagedInitDelegates);
   // сохраняется у каждого.
   function activeGridName(target) {
     var grids = window._obGrids || {};
-    var direct = gridNameFromTarget(target || document.activeElement);
-    if (direct && grids[direct]) {
+    var source = target || document.activeElement;
+    var directHost = source && source.closest ? source.closest(".ob-grid[data-sg-tp]") : null;
+    var direct = directHost ? (directHost.getAttribute("data-sg-tp") || "") : "";
+    // Прямой контекст всегда окончательный. Неизвестный/ещё не
+    // зарегистрированный host не имеет права откатываться к старому гриду.
+    if (directHost) {
+      if (!direct || !grids[direct] || grids[direct].div !== directHost ||
+          !document.contains(directHost) || !managedElementVisible(directHost)) {
+        if (direct && window._obActiveGridName === direct) window._obActiveGridName = "";
+        return "";
+      }
       rememberActiveGrid(direct);
       return direct;
     }
     var remembered = window._obActiveGridName || "";
     var g = remembered && grids[remembered];
-    if (g && g.div && document.contains(g.div)) return remembered;
+    if (g && g.div && document.contains(g.div) && managedElementVisible(g.div)) return remembered;
     if (remembered) window._obActiveGridName = "";
     return "";
   }
@@ -1785,7 +1846,9 @@ obManagedReady(obManagedInitDelegates);
       syncColumnCellResize: true,
       enableTextSelectionOnCells: true,
       enableAddRow: false,
-      multiSelect: true,
+      // RowSelectionModel не поставляется с vendored SlickGrid. Не обещаем
+      // множественное выделение, пока реальная selection model не установлена.
+      multiSelect: false,
       // ВАЖНО: footer-строке нужны ОБЕ опции — createFooterRow создаёт DOM,
       // showFooterRow показывает его. Только showFooterRow без createFooterRow
       // роняет рендер (обращение к несуществующему _footerRowScroller[0]).
@@ -1877,21 +1940,13 @@ obManagedReady(obManagedInitDelegates);
       if (msg && window.obFlash) window.obFlash(msg, "err");
     });
 
-    // Delete key removes selected rows
+    // Delete uses the same mutation path as the toolbar. This keeps the
+    // no-SelectionModel fallback and row event ordering identical.
     grid.onKeyDown.subscribe(function(e) {
       var modalOpen = managedHasBlockingModal();
       if (!readOnly && !modalOpen && !e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey &&
           e.key === 'Delete' && !grid.getEditorLock().isActive()) {
-        var sel = [];
-        try { sel = grid.getSelectedRows() || []; } catch (er) { sel = []; }
-        if (!sel.length) { var ac = grid.getActiveCell(); if (ac) sel = [ac.row]; }
-        if (sel.length) {
-          var its = dataView.getItems();
-          var toRemove = sel.map(function(r) { return its[r]; }).filter(Boolean);
-          for (var i = 0; i < toRemove.length; i++) dataView.deleteItem(toRemove[i].id);
-          window._obFormDirty = true;
-          grid.invalidate();
-          obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки");
+        if (window.obGridDelRow(tpName)) {
           e.preventDefault();
           e.stopImmediatePropagation();
         }
