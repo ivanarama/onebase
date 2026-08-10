@@ -1049,6 +1049,12 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 		infoFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 			return errInfo, nil
 		})
+		rethrowFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+			if len(args) == 0 {
+				panic(*caught)
+			}
+			return raiseUserException(args, file, line)
+		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в
 		// текущем scope (не в child) — чтобы переменные, впервые присвоенные в
@@ -1058,9 +1064,13 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			"ErrorDescription":   descFn,
 			"ИнформацияОбОшибке": infoFn,
 			"ErrorInfo":          infoFn,
+			"ВызватьИсключение":  rethrowFn,
+			"Raise":              rethrowFn,
 		})
-		i.execBlock(t.Except, e)
-		restore()
+		func() {
+			defer restore()
+			i.execBlock(t.Except, e)
+		}()
 	}
 }
 
