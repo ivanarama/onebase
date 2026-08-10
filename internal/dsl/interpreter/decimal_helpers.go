@@ -45,3 +45,16 @@ func isNumeric(v any) bool {
 	}
 	return false
 }
+
+// numericZero сообщает, что значение — числовой ноль. Нужна отдельно от
+// сравнения с float64(0)/decimal.Zero, потому что число доезжает до модуля в
+// разных Go-типах: из результата запроса на SQLite — int64, из литерала —
+// decimal. Строки числами НЕ считаются (в отличие от toDecimal): пустоту строки
+// определяет её длина, а не разбор "0" как нуля.
+func numericZero(v any) (zero bool, ok bool) {
+	if !isNumeric(v) {
+		return false, false
+	}
+	d, _ := toDecimal(v)
+	return d.IsZero(), true
+}

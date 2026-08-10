@@ -952,12 +952,15 @@ func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:
 		return t
-	case float64:
-		return t != 0
-	case decimal.Decimal:
-		return !t.IsZero()
 	case string:
 		return t != ""
+	}
+	// Числовой ноль ложен в любом Go-типе. Раньше здесь стояли только float64 и
+	// decimal, а целые проваливались в «всё остальное — истина»: булево поле из
+	// запроса на SQLite приходит как int64, поэтому `Если Стр.Флаг Тогда` для
+	// Ложь молча выбирал ветку «истина» (issue #704).
+	if zero, ok := numericZero(v); ok {
+		return !zero
 	}
 	return true
 }
