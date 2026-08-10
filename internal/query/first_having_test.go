@@ -72,3 +72,18 @@ func TestCompile_ИмеющиеЭтоHaving(t *testing.T) {
 		t.Errorf("слово ИМЕЮЩИЕ осталось в SQL:\n%s", res.SQL)
 	}
 }
+
+// ЕстьNULL — подстановка значения вместо NULL. В переносимых модулях
+// встречается в каждом втором запросе с левым соединением.
+func TestCompile_ЕстьNullЭтоCoalesce(t *testing.T) {
+	res, err := Compile(`ВЫБРАТЬ ЕстьNULL(Количество, 0) КАК Кол ИЗ РегистрНакопления.Остатки`, CompileOpts{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if !strings.Contains(strings.ToUpper(res.SQL), "COALESCE(") {
+		t.Errorf("ЕстьNULL не превратилось в COALESCE:\n%s", res.SQL)
+	}
+	if strings.Contains(strings.ToUpper(res.SQL), "ЕСТЬNULL") {
+		t.Errorf("имя функции осталось в SQL:\n%s", res.SQL)
+	}
+}

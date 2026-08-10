@@ -18,6 +18,13 @@ var queryDescriptors = []Descriptor{
 		Example:   "ВЫБРАТЬ РАЗЛИЧНЫЕ Склад ИЗ РегистрНакопления.ОстаткиТоваров",
 	},
 	{
+		Name: "естьnull", Display: "ЕстьNULL", Aliases: []string{"ISNULL", "COALESCE"},
+		Kind: KindQuery, Group: "Запрос",
+		Signature: "ЕстьNULL(Значение, ЗначениеЕслиNULL)",
+		Doc:       "Подставляет второе значение, если первое NULL (SQL COALESCE). Нужен после левых соединений и виртуальных таблиц остатков.",
+		Example:   "ВЫБРАТЬ ЕстьNULL(Остатки.КоличествоОстаток, 0) КАК Кол",
+	},
+	{
 		Name: "первые", Display: "ПЕРВЫЕ", Aliases: []string{"TOP"},
 		Kind: KindQuery, Group: "Запрос",
 		Signature: "ВЫБРАТЬ [РАЗЛИЧНЫЕ] ПЕРВЫЕ <N> <поля>",

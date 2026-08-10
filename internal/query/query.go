@@ -3884,6 +3884,11 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		"round": rw("ROUND(", ")"),
 		"абс":   rw("ABS(", ")"),
 		"abs":   rw("ABS(", ")"),
+		// ЕстьNULL(Значение, ЗначениеЕслиNULL) — подстановка вместо NULL.
+		// COALESCE есть в обоих диалектах с той же семантикой.
+		"естьnull": rw("COALESCE(", ")"),
+		"isnull":   rw("COALESCE(", ")"),
+		"coalesce": rw("COALESCE(", ")"),
 	}
 	switch dialect {
 	case "sqlite":
