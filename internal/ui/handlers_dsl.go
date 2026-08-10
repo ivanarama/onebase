@@ -210,7 +210,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 				dataB64 = dataB64[i+1:]
 			}
 		}
-		if mime == "" && len(args) > 1 {
+		if mime == "" && len(args) > 1 && args[1] != nil {
 			mime = strings.TrimSpace(fmt.Sprintf("%v", args[1]))
 		}
 		if mime == "" {

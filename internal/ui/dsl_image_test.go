@@ -74,6 +74,62 @@ func TestSaveImageExplicitUndefinedKeepsLegacyOwnerlessMode(t *testing.T) {
 	}
 }
 
+// The MIME argument is optional independently of the owner argument. Exercise
+// the public parser/interpreter path: Неопределено must keep the documented
+// image/png default instead of being stringified as "<nil>".
+func TestSaveImageUndefinedMIMEDefaultsWithOwner(t *testing.T) {
+	entity := ownerCatalog("Фотографии", metadata.Field{Name: "Картинка", Type: metadata.FieldTypeImage})
+	s, baseCtx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	if err := s.store.EnsureBlobTable(baseCtx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SaveFileStorageMode(baseCtx, storage.FileStorageDB); err != nil {
+		t.Fatal(err)
+	}
+	ownerID := seedOwnerRow(t, baseCtx, s, entity, "u", map[string]any{"Картинка": ""})
+	userCtx := auth.ContextWithUser(context.Background(), rowOwnerUser("u", entity.Name, "write"))
+	data := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\nowner-default-mime"))
+	src := `Функция Тест()
+		НачатьТранзакцию();
+		UUID = СохранитьКартинку("` + data + `", Неопределено, Реф);
+		ЗафиксироватьТранзакцию();
+		Возврат UUID;
+	КонецФункции`
+	prog, err := parser.New(lexer.New(src, "save-image-owner-default-mime.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	vars := s.buildDSLVars(userCtx, runtime.NewMovementsCollector("processor", [16]byte{}))
+	vars["Реф"] = &interpreter.Ref{UUID: ownerID.String(), Type: entity.Name}
+	var result any
+	if err := s.interp.RunWithResult(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument), &result, vars); err != nil {
+		t.Fatalf("public DSL run: %v", err)
+	}
+	id, err := uuid.Parse(result.(string))
+	if err != nil {
+		t.Fatalf("UUID результата: %v", err)
+	}
+	blob, rc, err := s.store.OpenBlob(baseCtx, id)
+	if err != nil {
+		t.Fatalf("OpenBlob: %v", err)
+	}
+	_ = rc.Close()
+	if blob.Mime != "image/png" {
+		t.Fatalf("MIME = %q, ожидался image/png", blob.Mime)
+	}
+	if blob.OwnerKind != string(entity.Kind) || blob.OwnerEntity != entity.Name {
+		t.Fatalf("владелец blob = %q/%q, ожидался %q/%q",
+			blob.OwnerKind, blob.OwnerEntity, entity.Kind, entity.Name)
+	}
+	var managed int
+	if err := s.store.QueryRow(baseCtx, "SELECT dsl_managed FROM _blobs WHERE id=?", id.String()).Scan(&managed); err != nil {
+		t.Fatalf("dsl_managed: %v", err)
+	}
+	if managed != 0 {
+		t.Fatalf("dsl_managed=%d, ожидался 0 для owner-aware blob", managed)
+	}
+}
+
 // Owner-aware СохранитьКартинку must not become a shortcut around entity/RLS
 // checks. It also requires a transaction so the blob cannot be committed before
 // the record that references it.
