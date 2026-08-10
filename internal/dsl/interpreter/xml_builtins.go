@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,13 @@ const (
 	// от переполнения стека и документов, создающих чрезмерное число объектов.
 	maxXMLDepth = 256
 	maxXMLNodes = 100_000
+
+	// Decimal ограничивается до любых операций, способных развернуть exponent
+	// в строку. 10 000 цифр существенно больше прикладных numeric-значений, но
+	// оставляет предсказуемый верхний предел памяти и размера XML.
+	maxXMLDecimalLexicalLength = 10_000
+	maxXMLDecimalDigits        = 10_000
+	maxXMLDecimalOutputLength  = 10_000
 )
 
 // xmlNode — промежуточное представление между encoding/xml и коллекциями DSL.
@@ -64,7 +72,13 @@ func builtinReadXML(args []any, file string, line int) (any, error) {
 }
 
 func parseXMLDocument(text string) (*xmlNode, error) {
-	dec := xml.NewDecoder(strings.NewReader(text))
+	// UTF-8 BOM допустим только один раз и только в самом начале документа.
+	// Убираем его до подсчёта сырых span'ов токенов.
+	decoderInput := text
+	if strings.HasPrefix(decoderInput, "\uFEFF") {
+		decoderInput = strings.TrimPrefix(decoderInput, "\uFEFF")
+	}
+	dec := xml.NewDecoder(strings.NewReader(decoderInput))
 	dec.Strict = true
 
 	type frame struct {
@@ -75,6 +89,7 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	var root *xmlNode
 	var stack []*frame
 	nodeCount := 0
+	var previousOffset int64
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -83,6 +98,12 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 			}
 			return nil, err
 		}
+		currentOffset := dec.InputOffset()
+		if currentOffset < previousOffset || currentOffset > int64(len(decoderInput)) {
+			return nil, fmt.Errorf("некорректная позиция XML-декодера")
+		}
+		rawToken := decoderInput[int(previousOffset):int(currentOffset)]
+		previousOffset = currentOffset
 		switch t := tok.(type) {
 		case xml.StartElement:
 			depth := len(stack) + 1
@@ -151,7 +172,10 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 			stack = stack[:len(stack)-1]
 		case xml.CharData:
 			if len(stack) == 0 {
-				if !isXMLWhitespaceOnly(string(t)) {
+				// Проверяем именно исходные байты токена. Decoder уже превратил бы
+				// &#x20; или CDATA в пробельный CharData, хотя такие конструкции вне
+				// корня запрещены грамматикой XML-документа.
+				if !isXMLWhitespaceOnly(rawToken) {
 					return nil, fmt.Errorf("текст вне корневого элемента XML")
 				}
 				continue
@@ -265,7 +289,10 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 			break
 		}
 		for _, k := range x.Keys() {
-			key := fmt.Sprintf("%v", k)
+			key, ok := k.(string)
+			if !ok {
+				return fmt.Errorf("имя элемента из ключа Соответствия должно быть строкой, получено %T", k)
+			}
 			if err := w.writeValue(key, x.Get(k), depth+1); err != nil {
 				return err
 			}
@@ -280,7 +307,10 @@ func (w *xmlWriter) writeValue(name string, v any, depth int) error {
 			}
 		}
 	default:
-		text := xmlStringOf(v)
+		text, err := xmlStringOf(v)
+		if err != nil {
+			return fmt.Errorf("текст элемента «%s»: %w", name, err)
+		}
 		if err := validateXMLCharacters(text); err != nil {
 			return fmt.Errorf("текст элемента «%s»: %w", name, err)
 		}
@@ -519,35 +549,136 @@ func builtinXMLString(args []any, file string, line int) (any, error) {
 	if len(args) == 0 {
 		return "", nil
 	}
-	return xmlStringOf(args[0]), nil
+	text, err := xmlStringOf(args[0])
+	if err != nil {
+		panic(userError{Msg: "XMLСтрока: " + err.Error()})
+	}
+	return text, nil
 }
 
 // xmlStringOf — XML-представление примитива: числа без экспоненты, даты по
 // ISO 8601, булево как true/false (а не «Да»/«Нет»).
-func xmlStringOf(v any) string {
+func xmlStringOf(v any) (string, error) {
 	switch x := v.(type) {
 	case nil:
-		return ""
+		return "", nil
 	case string:
-		return x
+		return x, nil
 	case bool:
 		if x {
-			return "true"
+			return "true", nil
 		}
-		return "false"
+		return "false", nil
 	case time.Time:
-		return x.Format(time.RFC3339Nano)
+		return x.Format(time.RFC3339Nano), nil
 	case decimal.Decimal:
-		return x.String()
+		return safeXMLDecimalString(x)
+	case *decimal.Decimal:
+		if x == nil {
+			return "", nil
+		}
+		return safeXMLDecimalString(*x)
 	case int64:
-		return strconv.FormatInt(x, 10)
+		return strconv.FormatInt(x, 10), nil
 	case int:
-		return strconv.Itoa(x)
+		return strconv.Itoa(x), nil
 	case float64:
-		return strconv.FormatFloat(x, 'f', -1, 64)
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return "", fmt.Errorf("число должно быть конечным")
+		}
+		return strconv.FormatFloat(x, 'f', -1, 64), nil
 	default:
-		return fmt.Sprintf("%v", v)
+		return fmt.Sprintf("%v", v), nil
 	}
+}
+
+func safeXMLDecimalString(value decimal.Decimal) (string, error) {
+	if value.IsZero() {
+		return "0", nil
+	}
+
+	digits := int64(value.NumDigits())
+	if digits <= 0 || digits > maxXMLDecimalDigits {
+		return "", fmt.Errorf("decimal содержит больше %d цифр", maxXMLDecimalDigits)
+	}
+
+	signLength := int64(0)
+	if value.IsNegative() {
+		signLength = 1
+	}
+	exponent := int64(value.Exponent())
+	var outputLength int64
+	if exponent >= 0 {
+		outputLength = signLength + digits + exponent
+	} else {
+		fractionalPlaces := -exponent
+		if fractionalPlaces < digits {
+			// Цифры, десятичная точка и, возможно, знак.
+			outputLength = signLength + digits + 1
+		} else {
+			// 0., ведущие нули дробной части, цифры коэффициента и знак.
+			outputLength = signLength + 2 + fractionalPlaces
+		}
+	}
+	if outputLength > maxXMLDecimalOutputLength {
+		return "", fmt.Errorf("decimal требует больше %d символов при записи", maxXMLDecimalOutputLength)
+	}
+
+	// Decimal.String разворачивает exponent в нули. Вызывать его безопасно
+	// только после проверки верхней оценки результата выше.
+	result := value.String()
+	if len(result) > maxXMLDecimalOutputLength {
+		return "", fmt.Errorf("decimal требует больше %d символов при записи", maxXMLDecimalOutputLength)
+	}
+	return result, nil
+}
+
+func parseXSDDecimal(text string) (decimal.Decimal, error) {
+	text = strings.Trim(text, " \t\r\n")
+	if text == "" {
+		return decimal.Decimal{}, fmt.Errorf("пустое значение")
+	}
+	if len(text) > maxXMLDecimalLexicalLength {
+		return decimal.Decimal{}, fmt.Errorf("лексическая запись длиннее %d символов", maxXMLDecimalLexicalLength)
+	}
+
+	i := 0
+	if text[i] == '+' || text[i] == '-' {
+		i++
+		if i == len(text) {
+			return decimal.Decimal{}, fmt.Errorf("после знака ожидаются цифры")
+		}
+	}
+	digitCount := 0
+	for i < len(text) && text[i] >= '0' && text[i] <= '9' {
+		digitCount++
+		i++
+	}
+	if i < len(text) && text[i] == '.' {
+		i++
+		for i < len(text) && text[i] >= '0' && text[i] <= '9' {
+			digitCount++
+			i++
+		}
+	}
+	if digitCount == 0 {
+		return decimal.Decimal{}, fmt.Errorf("ожидается хотя бы одна цифра")
+	}
+	if i != len(text) {
+		return decimal.Decimal{}, fmt.Errorf("допустимы только знак, цифры и десятичная точка без экспоненты")
+	}
+	if digitCount > maxXMLDecimalDigits {
+		return decimal.Decimal{}, fmt.Errorf("decimal содержит больше %d цифр", maxXMLDecimalDigits)
+	}
+
+	value, err := decimal.NewFromString(text)
+	if err != nil {
+		return decimal.Decimal{}, fmt.Errorf("некорректная запись decimal")
+	}
+	if _, err := safeXMLDecimalString(value); err != nil {
+		return decimal.Decimal{}, err
+	}
+	return value, nil
 }
 
 // builtinXMLTypeOf — имя XSD-типа значения. Дополняет пару XMLСтрока/XMLЗначение:
@@ -556,14 +687,24 @@ func builtinXMLTypeOf(args []any, file string, line int) (any, error) {
 	if len(args) == 0 || args[0] == nil {
 		return "", nil
 	}
-	switch args[0].(type) {
+	switch value := args[0].(type) {
 	case string:
 		return "string", nil
 	case bool:
 		return "boolean", nil
 	case time.Time:
 		return "dateTime", nil
-	case decimal.Decimal, int64, int, float64:
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			panic(userError{Msg: "XMLТипЗнч: число должно быть конечным"})
+		}
+		return "decimal", nil
+	case *decimal.Decimal:
+		if value == nil {
+			return "", nil
+		}
+		return "decimal", nil
+	case decimal.Decimal, int64, int:
 		return "decimal", nil
 	default:
 		return "string", nil
@@ -575,14 +716,15 @@ func builtinXMLValue(args []any, file string, line int) (any, error) {
 		panic(userError{Msg: "XMLЗначение: ожидается 2 аргумента — имя типа и строка"})
 	}
 	typeName := strings.ToLower(strings.TrimSpace(strArg(args, 0)))
-	text := strings.TrimSpace(strArg(args, 1))
+	rawText := strArg(args, 1)
+	text := strings.TrimSpace(rawText)
 	switch typeName {
 	case "строка", "string":
-		return strArg(args, 1), nil
+		return rawText, nil
 	case "число", "number", "decimal":
-		d, err := decimal.NewFromString(text)
+		d, err := parseXSDDecimal(rawText)
 		if err != nil {
-			panic(userError{Msg: "XMLЗначение: не число: " + text})
+			panic(userError{Msg: "XMLЗначение: некорректное decimal: " + err.Error()})
 		}
 		return d, nil
 	case "булево", "boolean", "bool":

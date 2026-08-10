@@ -1,8 +1,10 @@
 package interpreter_test
 
 import (
+	"math"
 	"testing"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -33,6 +35,10 @@ func evalXML(t *testing.T, src string) any {
 }
 
 func evalXMLError(t *testing.T, src string) error {
+	return evalXMLWithVarsError(t, src, nil)
+}
+
+func evalXMLWithVarsError(t *testing.T, src string, vars map[string]any) error {
 	t.Helper()
 	l := lexer.New(src, "test.os")
 	p := parser.New(l)
@@ -43,7 +49,7 @@ func evalXMLError(t *testing.T, src string) error {
 	interp := interpreter.New()
 	obj := runtime.NewObject("Test", metadata.KindDocument)
 	var result any
-	return interp.RunWithResult(prog.Procedures[0], obj, &result)
+	return interp.RunWithResult(prog.Procedures[0], obj, &result, vars)
 }
 
 func TestDSL_ReadXML_NameAttrsText(t *testing.T) {
@@ -127,4 +133,54 @@ func TestDSL_XML_RejectsInjectedElementName(t *testing.T) {
 	err := evalXMLError(t, src)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "недопустимое имя")
+}
+
+func TestDSL_XML_RejectsEncodedWhitespaceOutsideRoot(t *testing.T) {
+	for _, doc := range []string{
+		`&#x20;<a/>`,
+		`<a/>&#9;`,
+		`<![CDATA[ ]]><a/>`,
+	} {
+		src := `Процедура Тест()
+		Возврат ПрочитатьXML("` + doc + `");
+	КонецПроцедуры`
+		err := evalXMLError(t, src)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "вне корневого")
+	}
+}
+
+func TestDSL_XML_RejectsUnboundedDecimal(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат XMLЗначение("decimal", "1e2147483647");
+	КонецПроцедуры`
+	err := evalXMLError(t, src)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "без экспоненты")
+
+	src = `Процедура Тест()
+		Возврат XMLСтрока(Значение);
+	КонецПроцедуры`
+	err = evalXMLWithVarsError(t, src, map[string]any{
+		"Значение": decimal.New(1, int32(2_147_483_647)),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decimal")
+}
+
+func TestDSL_XML_RejectsNonFiniteFloat(t *testing.T) {
+	values := []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
+	for _, value := range values {
+		for _, expression := range []string{
+			"XMLСтрока(Значение)",
+			`ЗаписатьXML(Значение, "Число")`,
+		} {
+			src := `Процедура Тест()
+			Возврат ` + expression + `;
+		КонецПроцедуры`
+			err := evalXMLWithVarsError(t, src, map[string]any{"Значение": value})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "конечным")
+		}
+	}
 }

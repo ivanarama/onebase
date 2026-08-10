@@ -2,6 +2,8 @@ package interpreter
 
 import (
 	"fmt"
+	"math"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +96,9 @@ func TestReadXML_StrictAndSingleRoot(t *testing.T) {
 		{"text before root", `данные<a/>`, "вне корневого"},
 		{"text after root", `<a/>данные`, "вне корневого"},
 		{"non XML whitespace outside root", "\u00a0<a/>", "вне корневого"},
+		{"character reference before root", `&#x20;<a/>`, "вне корневого"},
+		{"character reference after root", `<a/>&#9;`, "вне корневого"},
+		{"CDATA before root", `<![CDATA[ ]]><a/>`, "вне корневого"},
 		{"duplicate attributes", `<a x="1" x="2"/>`, "повторяющийся атрибут"},
 	}
 	for _, tc := range cases {
@@ -102,6 +107,17 @@ func TestReadXML_StrictAndSingleRoot(t *testing.T) {
 				_, _ = builtinReadXML([]any{tc.doc}, "", 0)
 			})
 		})
+	}
+}
+
+func TestReadXML_AllowsLiteralDocumentWhitespaceAndBOM(t *testing.T) {
+	v, err := builtinReadXML([]any{"\uFEFF \t\r\n<a>&#x20;</a> \t\r\n"}, "", 0)
+	if err != nil {
+		t.Fatalf("ПрочитатьXML: %v", err)
+	}
+	root := v.(*Struct)
+	if got := root.Get(xmlFieldText); got != " " {
+		t.Fatalf("ссылка внутри корня дала Текст = %q, ожидался пробел", got)
 	}
 }
 
@@ -375,6 +391,87 @@ func TestXMLValue_ParsesByType(t *testing.T) {
 	}
 	if d, ok := got.(decimal.Decimal); !ok || !d.Equal(decimal.RequireFromString("42.5")) {
 		t.Errorf("decimal = %v (%T), ожидалось 42.5", got, got)
+	}
+}
+
+func TestXMLValue_StrictBoundedDecimal(t *testing.T) {
+	valid := map[string]string{
+		"+001.2300": "1.23",
+		".5":        "0.5",
+		"5.":        "5",
+		" -0.25 ":   "-0.25",
+	}
+	for input, want := range valid {
+		got, err := builtinXMLValue([]any{"decimal", input}, "", 0)
+		if err != nil {
+			t.Fatalf("XMLЗначение(%q): %v", input, err)
+		}
+		text, err := builtinXMLString([]any{got}, "", 0)
+		if err != nil {
+			t.Fatalf("XMLСтрока(%q): %v", input, err)
+		}
+		if text != want {
+			t.Errorf("XMLСтрока(XMLЗначение(%q)) = %q, ожидалось %q", input, text, want)
+		}
+	}
+
+	invalid := []string{
+		"1e3",
+		"1E+3",
+		"NaN",
+		"+Inf",
+		".",
+		"1.2.3",
+		"\u00a01",
+		strings.Repeat("9", maxXMLDecimalLexicalLength+1),
+	}
+	for _, input := range invalid {
+		requireXMLUserError(t, "некорректное decimal", func() {
+			_, _ = builtinXMLValue([]any{"decimal", input}, "", 0)
+		})
+	}
+}
+
+func TestXMLString_RejectsDecimalExpansionBeforeString(t *testing.T) {
+	hugeCoefficient, ok := new(big.Int).SetString(strings.Repeat("9", maxXMLDecimalDigits+1), 10)
+	if !ok {
+		t.Fatal("не удалось создать большой коэффициент")
+	}
+	cases := []decimal.Decimal{
+		decimal.New(1, int32(2_147_483_647)),
+		decimal.New(1, int32(-2_147_483_648)),
+		decimal.NewFromBigInt(hugeCoefficient, 0),
+	}
+	for _, value := range cases {
+		requireXMLUserError(t, "decimal", func() {
+			_, _ = builtinXMLString([]any{value}, "", 0)
+		})
+		requireXMLUserError(t, "decimal", func() {
+			_, _ = builtinWriteXML([]any{value, "Число"}, "", 0)
+		})
+	}
+
+	unsafeKey := &Map{
+		keys: []any{decimal.New(1, int32(2_147_483_647))},
+		vals: []any{"значение"},
+	}
+	requireXMLUserError(t, "ключа Соответствия должно быть строкой", func() {
+		_, _ = builtinWriteXML([]any{unsafeKey, "Корень"}, "", 0)
+	})
+}
+
+func TestXML_NonFiniteFloatFailsClosed(t *testing.T) {
+	values := []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
+	for _, value := range values {
+		requireXMLUserError(t, "конечным", func() {
+			_, _ = builtinXMLString([]any{value}, "", 0)
+		})
+		requireXMLUserError(t, "конечным", func() {
+			_, _ = builtinWriteXML([]any{value, "Число"}, "", 0)
+		})
+		requireXMLUserError(t, "конечным", func() {
+			_, _ = builtinXMLTypeOf([]any{value}, "", 0)
+		})
 	}
 }
 
