@@ -138,7 +138,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				strings.Join(forget, ", "), n)
 			outln("")
 		} else {
-			n := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
+			n, err := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
+			if err != nil {
+				return fmt.Errorf("--forget-document: %w", err)
+			}
 			outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
 			for _, reg := range proj.Registers {
 				if !reg.TotalsUsable() {

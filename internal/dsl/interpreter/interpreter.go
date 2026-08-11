@@ -718,18 +718,30 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				fallback = bf
 			}
 		}
-		if i.LookupProc != nil {
-			if proc := i.LookupProc(fnName); proc != nil {
-				return i.callUserProc(proc, e, args)
-			}
-		}
-		// Помощник из того же файла (.proc.os / .posting.os / .rep.os).
+		// СВОЁ РАНЬШЕ ЧУЖОГО. Помощник из того же файла (.proc.os /
+		// .posting.os / .rep.os) ищется ПЕРЕД экспортом чужого модуля.
+		//
+		// Порядок был обратным, и любая экспортная функция полностью затеняла
+		// одноимённую локальную: собственная функция модуля становилась
+		// недостижимой, а неквалифицированный вызов молча уходил в чужой
+		// экспорт. При несовпадении числа параметров недостающие вставали как
+		// nil — то есть добавление нового модуля со вспомогательным именем
+		// ломало посторонний, давно зелёный код, и ошибка указывала на строку в
+		// НОВОМ файле (#717).
+		//
+		// Обращение к чужому экспорту остаётся квалифицированным: Модуль.Функция.
+		//
 		// Файл берём из токена самого вызова (callee.Tok.File), а не из
 		// e.ec.curFile: curFile — «последняя исполненная позиция» и портится
 		// вычислением аргументов, если среди них есть вызов из другого модуля
 		// (тогда sibling-резолв искал бы в чужом файле → unknown function).
 		if i.LookupSiblingProc != nil && callee.Tok.File != "" {
 			if proc := i.LookupSiblingProc(callee.Tok.File, fnName); proc != nil {
+				return i.callUserProc(proc, e, args)
+			}
+		}
+		if i.LookupProc != nil {
+			if proc := i.LookupProc(fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
 			}
 		}
@@ -771,6 +783,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		switch o := recv.(type) {
 		case MethodCallable:
 			return o.CallMethod(method, args)
+		case string:
+			// Для ссылочных методов даём более предметную подсказку, чем общая
+			// ошибка ниже. Это частая ловушка колонок «Ссылка» из запроса, но не
+			// утверждаем, что произвольная строка обязательно получена оттуда.
+			if refMethodOnString(method) {
+				RaiseUserError(callee.Field.Literal + "() вызван у строки. Если это колонка «Ссылка» " +
+					"из результата запроса, она содержит UUID, а не ссылку с менеджером. Получите ссылку через " +
+					"Справочники.<Тип>.НайтиПоИдентификатору(Строка(Стр.Ссылка)) " +
+					"(для документов — Документы.<Тип>.НайтиПоИдентификатору)")
+			}
 		}
 		// Если object — идентификатор, не разрешившийся в значение,
 		// и это известный модуль — резолвим Module.Proc() (
@@ -790,9 +812,27 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			}
 			RaiseUserError("Метод " + callee.Field.Literal + " вызван у Неопределено")
 		}
+		// Приёмник есть, но методов у его типа нет вовсе (строка, число, дата,
+		// булево). Прежде такой вызов молча возвращал Неопределено, и опечатка в
+		// имени метода — или просто неверный тип значения — превращалась в
+		// бесшумную потерю функциональности: код «отрабатывал», ничего не сделав
+		// (#718). Отказ должен быть слышен.
+		RaiseUserError("Метод " + callee.Field.Literal + " не существует у значения типа " +
+			getTypeName(recv) + " — у этого типа методов нет")
 		return nil
 	}
 	return nil
+}
+
+// refMethodOnString отвечает, является ли метод «ссылочным» — таким, который
+// имеет смысл только у Ref (Ссылка.ПолучитьОбъект() и соседи). Для остальных
+// вызовов работает общая диагностика неизвестного метода из evalCall.
+func refMethodOnString(method string) bool {
+	switch method {
+	case "получитьобъект", "getobject", "удалить", "delete", "записать", "write":
+		return true
+	}
+	return false
 }
 
 // exprSourceName восстанавливает исходный текст простого выражения-приёмника
@@ -949,12 +989,15 @@ func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:
 		return t
-	case float64:
-		return t != 0
-	case decimal.Decimal:
-		return !t.IsZero()
 	case string:
 		return t != ""
+	}
+	// Числовой ноль ложен в любом Go-типе. Раньше здесь стояли только float64 и
+	// decimal, а целые проваливались в «всё остальное — истина»: булево поле из
+	// запроса на SQLite приходит как int64, поэтому `Если Стр.Флаг Тогда` для
+	// Ложь молча выбирал ветку «истина» (issue #704).
+	if zero, ok := numericZero(v); ok {
+		return !zero
 	}
 	return true
 }
@@ -1043,6 +1086,12 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 		infoFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 			return errInfo, nil
 		})
+		rethrowFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+			if len(args) == 0 {
+				panic(*caught)
+			}
+			return raiseUserException(args, file, line)
+		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в
 		// текущем scope (не в child) — чтобы переменные, впервые присвоенные в
@@ -1052,9 +1101,13 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			"ErrorDescription":   descFn,
 			"ИнформацияОбОшибке": infoFn,
 			"ErrorInfo":          infoFn,
+			"ВызватьИсключение":  rethrowFn,
+			"Raise":              rethrowFn,
 		})
-		i.execBlock(t.Except, e)
-		restore()
+		func() {
+			defer restore()
+			i.execBlock(t.Except, e)
+		}()
 	}
 }
 

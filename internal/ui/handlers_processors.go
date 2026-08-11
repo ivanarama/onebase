@@ -220,11 +220,15 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	dslVars := s.buildDSLVarsWithMessages(opCtx, mc, &messages)
 	dslVars["Параметры"] = paramsThis
 	interpreter.InjectMaket(dslVars, proc.Layout)
+	// Параметры обработки связываем и с одноимёнными аргументами Выполнить —
+	// см. interpreter.BindNamedArgs (#706).
+	procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
 	var err error
 	if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
-		err = s.interp.RunSandboxed(procDecl, paramsThis, interpreter.SandboxProfile{MaxWallClock: timeout}, nil, dslVars)
+		_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
+			interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
 	} else {
-		err = s.interp.Run(procDecl, paramsThis, dslVars)
+		_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 	}
 
 	var runErr string

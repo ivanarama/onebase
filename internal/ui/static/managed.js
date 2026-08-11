@@ -107,7 +107,39 @@ function obManagedReady(fn) {
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;
-  function applyValues(values){
+  // ensureRefOption добавляет в <select> недостающий <option> для значения,
+  // присвоенного обработчиком.
+  //
+  // Без этого inp.value = val на <select> без такого <option> браузер молча
+  // отрабатывает как selectedIndex = -1: поле пустеет, и следующая запись
+  // затирает ссылку в базе. А <select> ссылочного реквизита рисуется только
+  // первой страницей справочника (50 записей), так что промах — не редкость,
+  // а норма для любого живого справочника (#615).
+  //
+  // Подпись берём из refOptions ответа (сервер догрузил её той же дорогой, что
+  // и выбранное значение при отрисовке, — с маской ПДн и проверкой доступа).
+  // Если её нет, ставим сам идентификатор: он некрасив, но значение сохраняется,
+  // а это важнее подписи.
+  function ensureRefOption(sel, val, rows){
+    if (!val) return;
+    for (let i = 0; i < sel.options.length; i++){
+      if (String(sel.options[i].value) === String(val)) return;
+    }
+    let label = val;
+    if (rows) {
+      for (let i = 0; i < rows.length; i++){
+        if (rows[i] && String(rows[i].id) === String(val)) {
+          if (rows[i]._label != null && rows[i]._label !== '') label = rows[i]._label;
+          break;
+        }
+      }
+    }
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  function applyValues(values, refOptions){
     if (!values) return;
     const form = document.getElementById('main-form');
     if (!form) return;
@@ -127,7 +159,12 @@ function obManagedReady(fn) {
         // поле — дата на форме пропадала после первого же события, а следующая
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
-        inp.value = val;
+        if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k]);
+        if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
+          inp._obSetCodeValue(val);
+        } else {
+          inp.value = val;
+        }
       }
     });
   }
@@ -388,15 +425,9 @@ function obManagedReady(fn) {
   // шлёт {_pick_result}, команды ТЧ — {_tp, _tp_selected}.
   window.obFire = async function(elementName, eventName, extraParams){
    try {
-    // Зафиксировать активную правку ячейки грида: иначе её значение не попадёт
-    // в tp_json, а редактор держит editor-lock — из-за чего первый клик по
-    // кнопке лишь закрывает редактор и «не нажимается».
-    var _grids = window._obGrids || {};
-    for (var _t in _grids) {
-      var _lk = _grids[_t].grid && _grids[_t].grid.getEditorLock && _grids[_t].grid.getEditorLock();
-      if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
-    }
-    if (window.obGridSync) obGridSync();
+    // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
+    // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
+    if (window.obGridSync && window.obGridSync() === false) return;
     const form = document.getElementById('main-form');
     if (!form) return;
     const fd = new FormData(form);
@@ -459,7 +490,7 @@ function obManagedReady(fn) {
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       window.applyTableParts(data.tableparts);
-      applyValues(data.values);
+      applyValues(data.values, data.refOptions);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
       // Обработчик записал новую форму (Объект.Записать()): дальше она работает
@@ -518,20 +549,20 @@ function obManagedReady(fn) {
   }
   document.addEventListener('input',  function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   document.addEventListener('change', function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
-  // Сохранение формы (Записать/Провести) сбрасывает «грязный» флаг — иначе
-  // beforeunload спрашивал бы подтверждение даже при штатной отправке.
-  var _obMainForm = document.getElementById('main-form');
-  if (_obMainForm) _obMainForm.addEventListener('submit', function(){ window._obFormDirty = false; });
+  // «Грязный» флаг сбрасывает финальный submit-handler только после всех
+  // проверок. Сбрасывать его здесь нельзя: obGridSync ниже ещё может запретить
+  // отправку из-за незавершённой/невалидной правки ячейки.
   window.addEventListener('beforeunload', function(e){
     if (window._obFormDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
 
   // Esc — отмена незаконченного ввода / закрытие формы (как в 1С). Порядок:
   //   1) открыт модальный диалог (подбор/выбор ссылки) → закрыть его;
-  //   2) активен редактор ячейки грида → отменить правку ячейки (форму НЕ
+  //   2) открыт выпадающий список ячейки-ссылки → закрыть только список;
+  //   3) активен редактор ячейки грида → отменить правку ячейки (форму НЕ
   //      закрываем);
-  //   3) фокус в поле ввода → снять фокус (отменить ввод);
-  //   4) иначе → закрыть форму (с подтверждением, если были изменения).
+  //   4) фокус в поле ввода → снять фокус (отменить ввод);
+  //   5) иначе → закрыть форму (с подтверждением, если были изменения).
   //
   // ВАЖНО: слушатель в ФАЗЕ ПЕРЕХВАТА (capture=true). В фазе всплытия SlickGrid
   // успевал отменить правку РАНЬШЕ нас, editor-lock становился неактивным, и мы
@@ -540,6 +571,12 @@ function obManagedReady(fn) {
     if (e.key !== 'Escape' && e.keyCode !== 27) return;
     var modal = document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
     if (modal) { modal.remove(); e.preventDefault(); e.stopPropagation(); return; }
+    // Выпадающий список ячейки-ссылки закрываем ДО проверки editor-lock: этот
+    // слушатель в фазе перехвата, и без отдельной ветки Esc из подбора отменял
+    // бы всю правку ячейки, а не только список.
+    if (window._obRefDropdown && window._obRefDropdown.close) {
+      window._obRefDropdown.close(); e.preventDefault(); e.stopPropagation(); return;
+    }
     var grids = window._obGrids || {};
     for (var tp in grids) {
       var lock = grids[tp].grid && grids[tp].grid.getEditorLock && grids[tp].grid.getEditorLock();
@@ -753,7 +790,14 @@ function obManagedInitDelegates() {
       e.stopPropagation();
       return;
     }
-    if (form.hasAttribute('data-ob-grid-sync') && window.obGridSync) window.obGridSync();
+    if (form.hasAttribute('data-ob-grid-sync') && window.obGridSync) {
+      // Незавершённая правка ячейки не даёт записать документ: причину показал
+      // обработчик onValidationError, пользователю есть что исправить (или Esc).
+      if (window.obGridSync() === false) { e.preventDefault(); e.stopPropagation(); return; }
+    }
+    // Все синхронные veto пройдены: штатная навигация после submit не должна
+    // показывать предупреждение о несохранённых данных.
+    if (form.id === 'main-form' && !e.defaultPrevented) window._obFormDirty = false;
   });
 }
 
@@ -821,9 +865,31 @@ obManagedReady(obManagedInitDelegates);
     return (v == null) ? "" : String(v);
   }
 
-  // Custom ref editor with dropdown search and picker button (plan 48, phase 4).
+  // Редактор ячейки-ссылки: ввод по строке + форма выбора (план 48, фаза 4).
+  //
+  // Клавиатура — как в 1С: печатаем часть наименования → список фильтруется,
+  // ↑/↓ двигают подсветку, Enter подставляет подсвеченный вариант, Tab
+  // подставляет и уходит в следующую колонку, F4 / Alt+↓ открывают форму
+  // выбора, Esc закрывает список (правку ячейки не отменяет).
+  //
+  // ВАЖНО, почему это не «улучшение», а починка: выбор пункта раньше висел
+  // ТОЛЬКО на mousedown, а isValueChanged() смотрел лишь на selectedId.
+  // Набранный текст selectedId не менял → SlickGrid считал ячейку неизменённой
+  // и не звал ни validate(), ни serializeValue() (см. commitCurrentEdit в
+  // slick.grid.js), то есть введённое молча пропадало. Набрать документ с
+  // клавиатуры было невозможно в принципе.
+  //
+  // Список = предзагруженные опции (сервер кладёт в data-sg-ref первые 50)
+  // ПЛЮС результаты серверного поиска /ui/_ref-options/<entity>?q= — без него
+  // позицию за пределами предзагруженных в ячейке было не найти вообще.
   function ObRefEditor(refField, refOptsList, args) {
-    var wrapper, input, dropBtn, list, isOpen = false, selectedId = '', defaultValue = '', pickerInterval = null;
+    var wrapper, input, dropBtn, list;
+    var isOpen = false, selectedId = '', defaultValue = '';
+    var refEntity = (args.column && args.column.refEntity) || '';
+    var serverRows = [];   // последний ответ серверного поиска
+    var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
+    var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
+    var searchTimer = null, searchSeq = 0;
 
     function label(id) {
       for (var k = 0; k < refOptsList.length; k++) {
@@ -832,118 +898,270 @@ obManagedReady(obManagedInitDelegates);
       return '';
     }
 
+    // remember — кладёт найденную сервером позицию в refOptsList. Тот же массив
+    // держит в замыкании ФОРМАТТЕР колонки, поэтому без этого выбранный «не из
+    // первых 50» элемент рисовался бы в ячейке голым UUID.
+    function remember(opt) {
+      if (!opt || opt.id === undefined || opt.id === null || opt.id === '') return;
+      for (var k = 0; k < refOptsList.length; k++) {
+        if (String(refOptsList[k].id) === String(opt.id)) return;
+      }
+      refOptsList.push({id: opt.id, _label: opt._label});
+    }
+
+    // candidates — предзагруженные опции + серверные результаты, отфильтрованные
+    // подстрокой (регистронезависимо), без дублей по id.
+    function candidates(filter) {
+      var f = String(filter == null ? '' : filter).trim().toLowerCase();
+      var out = [], seen = {};
+      function push(o) {
+        if (!o || o.id === undefined || o.id === null || o.id === '') return;
+        var key = String(o.id);
+        if (seen[key]) return;
+        var lbl = String(o._label == null ? '' : o._label);
+        if (f && lbl.toLowerCase().indexOf(f) < 0) return;
+        seen[key] = true;
+        out.push({id: o.id, _label: lbl});
+      }
+      for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
+      for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
+      return out;
+    }
+
+    function paintActive() {
+      var nodes = list.querySelectorAll('[data-idx]');
+      for (var k = 0; k < nodes.length; k++) {
+        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : '';
+      }
+      if (activeIdx >= 0 && nodes[activeIdx] && nodes[activeIdx].scrollIntoView) {
+        nodes[activeIdx].scrollIntoView({block: 'nearest'});
+      }
+    }
+
+    function renderList() {
+      list.innerHTML = '';
+      if (!shown.length) {
+        var empty = document.createElement('div');
+        empty.textContent = 'Ничего не найдено (F4 — форма выбора)';
+        empty.style.cssText = 'padding:8px 10px;color:#94a3b8;font-style:italic';
+        list.appendChild(empty);
+        return;
+      }
+      for (var k = 0; k < shown.length; k++) {
+        var item = document.createElement('div');
+        item.textContent = shown[k]._label;
+        item.setAttribute('data-id', shown[k].id);
+        item.setAttribute('data-idx', k);
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
+        (function(o, idx) {
+          item.addEventListener('mouseenter', function() { activeIdx = idx; paintActive(); });
+          // mousedown, а не click: blur поля ввода закрыл бы список раньше click.
+          item.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            pick(o);
+            args.commitChanges();
+          });
+        })(shown[k], k);
+        list.appendChild(item);
+      }
+      paintActive();
+    }
+
+    // keepId — сохранить подсветку на конкретной позиции. Нужен, когда список
+    // перестраивается не по действию пользователя: ответ серверного поиска
+    // приходит асинхронно и иначе сбрасывал бы на первую строку выбор, только
+    // что сделанный стрелками.
+    function buildList(filter, keepId) {
+      shown = candidates(filter);
+      activeIdx = -1;
+      if (keepId) {
+        for (var k = 0; k < shown.length; k++) {
+          if (String(shown[k].id) === String(keepId)) { activeIdx = k; break; }
+        }
+      }
+      // Когда что-то набрано — подсвечиваем первый вариант: Enter сразу его
+      // подставит (ввод по строке). При пустом фильтре подсветки нет, и Enter
+      // уходит в SlickGrid — просто коммитит ячейку.
+      if (activeIdx < 0) activeIdx = (String(filter == null ? '' : filter).trim() !== '' && shown.length) ? 0 : -1;
+      renderList();
+    }
+
+    function positionList() {
+      var rect = input.getBoundingClientRect();
+      // position:fixed — getBoundingClientRect отсчитывается от окна; при
+      // absolute список уезжал мимо ячейки на прокрученной форме.
+      list.style.left = rect.left + 'px';
+      list.style.top = rect.bottom + 'px';
+      list.style.width = Math.max(rect.width, 220) + 'px';
+    }
+
+    function openList() {
+      if (isOpen) return;
+      isOpen = true;
+      buildList(input.value);
+      positionList();
+      document.body.appendChild(list);
+      // Глобальному обработчику Esc (он в фазе перехвата и иначе отменил бы всю
+      // правку ячейки) нужно знать, что открыт именно наш выпадающий список.
+      window._obRefDropdown = {close: closeList};
+    }
+
+    function closeList() {
+      if (!isOpen) return;
+      isOpen = false;
+      activeIdx = -1;
+      if (list && list.parentElement) list.remove();
+      if (window._obRefDropdown && window._obRefDropdown.close === closeList) window._obRefDropdown = null;
+    }
+
+    // Серверный поиск. Эндпойнт уважает права на чтение, RLS и маскирование
+    // полей, поэтому в ячейке видно ровно то же, что в форме выбора.
+    function searchServer(q) {
+      if (!refEntity || !window.fetch) return;
+      var seq = ++searchSeq;
+      var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
+                '?limit=50&q=' + encodeURIComponent(q || '');
+      fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+        .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
+        .then(function(data) {
+          if (seq !== searchSeq) return; // ответ устарел (или редактор уже закрыт)
+          var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
+          serverRows = ((data && data.items) || []).map(function(row) {
+            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
+          }).filter(function(o) { return o.id !== ''; });
+          if (isOpen) buildList(input.value, keep);
+        })
+        .catch(function() { /* сеть/ошибка — остаются предзагруженные опции */ });
+    }
+
+    function scheduleSearch(q) {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(function() { searchServer(q); }, 180);
+    }
+
+    function pick(opt) {
+      selectedId = opt.id;
+      input.value = opt._label;
+      remember(opt);
+      closeList();
+    }
+
+    // resolveTyped — «ввод по строке»: превращает набранный текст в ссылку.
+    // Возвращает true, если значение определено (в том числе очищено).
+    function resolveTyped() {
+      var text = String(input.value == null ? '' : input.value).trim();
+      if (text === '') { selectedId = ''; return true; }
+      if (text === String(label(selectedId) || '').trim()) return true; // поверх не набирали
+      var low = text.toLowerCase();
+      var found = candidates(text);
+      for (var k = 0; k < found.length; k++) { // точное совпадение подписи важнее частичного
+        if (String(found[k]._label).trim().toLowerCase() === low) { pick(found[k]); return true; }
+      }
+      if (found.length === 1) { pick(found[0]); return true; }
+      if (activeIdx >= 0 && shown[activeIdx]) { pick(shown[activeIdx]); return true; } // Tab с открытым списком
+      return false;
+    }
+
+    // openPicker — общая форма выбора (ui.js). Ей нужен <select> как носитель
+    // значения: отдаём временный и слушаем его change, который шлёт selectItem.
+    function openPicker() {
+      if (typeof window.openRefPicker !== 'function') return;
+      var selEl = document.createElement('select');
+      selEl.setAttribute('data-ref-entity', refEntity);
+      var opts = candidates('');
+      for (var k = 0; k < opts.length; k++) {
+        var o = document.createElement('option');
+        o.value = opts[k].id;
+        o.textContent = opts[k]._label;
+        selEl.appendChild(o);
+      }
+      selEl.value = selectedId;
+      selEl.addEventListener('change', function() {
+        var id = selEl.value;
+        if (!id) return;
+        var chosen = selEl.options[selEl.selectedIndex];
+        pick({id: id, _label: chosen ? chosen.textContent : ''});
+        args.commitChanges();
+      });
+      closeList();
+      window.openRefPicker(selEl);
+    }
+
+    function onKeyDown(e) {
+      var key = e.key || '';
+      if (key === 'ArrowDown' && e.altKey) { e.preventDefault(); e.stopPropagation(); openPicker(); return; }
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        // stopPropagation обязателен: иначе SlickGrid уведёт курсор на соседнюю
+        // строку прямо из открытого списка.
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isOpen) { openList(); if (activeIdx < 0 && shown.length) { activeIdx = 0; paintActive(); } return; }
+        if (!shown.length) return;
+        var next = activeIdx + (key === 'ArrowDown' ? 1 : -1);
+        if (next < 0) next = shown.length - 1;
+        if (next >= shown.length) next = 0;
+        activeIdx = next;
+        paintActive();
+        return;
+      }
+      if (key === 'Enter') {
+        if (isOpen && activeIdx >= 0 && shown[activeIdx]) {
+          // Подставляем значение и ОСТАЁМСЯ в ячейке (ввод по строке в 1С);
+          // следующий Enter/Tab уже коммитит правку средствами SlickGrid.
+          e.preventDefault();
+          e.stopPropagation();
+          pick(shown[activeIdx]);
+          input.select();
+        }
+        return; // список закрыт — Enter уходит в грид и коммитит ячейку
+      }
+      if (key === 'Escape' || e.keyCode === 27) {
+        if (isOpen) { e.preventDefault(); e.stopPropagation(); closeList(); }
+        return; // список закрыт — Esc отменяет правку ячейки (как раньше)
+      }
+      if (key === 'F4') { e.preventDefault(); e.stopPropagation(); openPicker(); }
+    }
+
     this.init = function() {
       wrapper = document.createElement('div');
       wrapper.style.cssText = 'display:flex;align-items:center;width:100%;height:100%;gap:2px';
 
       input = document.createElement('input');
       input.type = 'text';
+      input.autocomplete = 'off';
       input.style.cssText = 'flex:1;border:none;outline:none;padding:2px 4px;font-size:13px;min-width:0';
       var cur = args.item[args.column.field];
       defaultValue = cur;
-      selectedId = (cur && typeof cur === 'object') ? (cur.id || '') : (cur || '');
+      selectedId = refId(cur);
       input.value = label(selectedId) || String(selectedId);
 
       dropBtn = document.createElement('button');
       dropBtn.type = 'button';
       dropBtn.textContent = '…';
-      dropBtn.title = 'Выбрать из списка';
+      dropBtn.title = 'Выбрать из списка (F4)';
       dropBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:12px;padding:0 4px;color:#2563eb;flex-shrink:0';
 
       wrapper.appendChild(input);
       wrapper.appendChild(dropBtn);
       args.container.appendChild(wrapper);
 
-      // Dropdown list
       list = document.createElement('div');
-      list.style.cssText = 'position:absolute;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:160px;font-size:13px';
+      list.setAttribute('data-ob-ref-list', refField);
+      list.style.cssText = 'position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:160px;font-size:13px';
 
-      function buildList(filter) {
-        list.innerHTML = '';
-        var f = (filter || '').toLowerCase();
-        var found = false;
-        for (var k = 0; k < refOptsList.length; k++) {
-          var opt = refOptsList[k];
-          if (f && opt._label.toLowerCase().indexOf(f) < 0) continue;
-          found = true;
-          var item = document.createElement('div');
-          item.textContent = opt._label;
-          item.setAttribute('data-id', opt.id);
-          item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
-          item.addEventListener('mouseenter', function() { this.style.background = '#eef2ff'; });
-          item.addEventListener('mouseleave', function() { this.style.background = ''; });
-          (function(o) {
-            item.addEventListener('mousedown', function(e) {
-              e.preventDefault();
-              selectedId = o.id;
-              input.value = o._label;
-              closeList();
-              args.commitChanges();
-            });
-          })(opt);
-          list.appendChild(item);
-        }
-        if (!found) {
-          var empty = document.createElement('div');
-          empty.textContent = 'Ничего не найдено';
-          empty.style.cssText = 'padding:8px 10px;color:#94a3b8;font-style:italic';
-          list.appendChild(empty);
-        }
-      }
-
-      function openList() {
-        if (isOpen) return;
-        isOpen = true;
-        buildList(input.value);
-        var rect = input.getBoundingClientRect();
-        list.style.left = rect.left + 'px';
-        list.style.top = rect.bottom + 'px';
-        list.style.width = Math.max(rect.width, 160) + 'px';
-        document.body.appendChild(list);
-      }
-
-      function closeList() {
-        if (!isOpen) return;
-        isOpen = false;
-        if (list.parentElement) list.remove();
-      }
-
+      input.addEventListener('keydown', onKeyDown);
       input.addEventListener('focus', openList);
       input.addEventListener('input', function() {
-        if (isOpen) buildList(input.value);
-        else openList();
+        if (isOpen) buildList(input.value); else openList();
+        scheduleSearch(input.value);
       });
       input.addEventListener('blur', function() { setTimeout(closeList, 150); });
 
+      dropBtn.addEventListener('mousedown', function(e) { e.preventDefault(); }); // не терять фокус до click
       dropBtn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        // Use existing openRefPicker mechanism
-        var selEl = document.createElement('select');
-        selEl.setAttribute('data-ref-entity', args.column.refEntity || '');
-        refOptsList.forEach(function(opt) {
-          var o = document.createElement('option');
-          o.value = opt.id; o.textContent = opt._label;
-          selEl.appendChild(o);
-        });
-        selEl.value = selectedId;
-        // Monkey-patch: picker callback sets our cell value
-        var origPicker = window.openRefPicker;
-        window.openRefPicker(selEl);
-        // Poll for picker result via the select value
-        pickerInterval = setInterval(function() {
-          var modal = document.getElementById('_ref-picker-modal');
-          if (!modal) {
-            clearInterval(pickerInterval);
-            // Picker closed - check if value changed
-            var newVal = selEl.value;
-            if (newVal !== selectedId) {
-              selectedId = newVal;
-              input.value = label(newVal);
-              args.commitChanges();
-            }
-          }
-        }, 300);
+        openPicker();
       });
 
       input.focus();
@@ -951,31 +1169,37 @@ obManagedReady(obManagedInitDelegates);
     };
 
     this.destroy = function() {
-      // ВАЖНО: closeList объявлена внутри init() и здесь недоступна — обращение
-      // к ней бросало ReferenceError, из-за чего SlickGrid не мог разрушить
-      // редактор, commitCurrentEdit падал и активная ячейка «залипала» (нельзя
-      // было перейти на другую). Закрываем выпадающий список напрямую по
-      // editor-scoped переменным list/isOpen.
+      // Гасим таймер и ответы «в полёте»: иначе поздний ответ поиска дорисовал бы
+      // список уже уничтоженного редактора.
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+      searchSeq++;
+      closeList();
       isOpen = false;
-      // Гасим polling-таймер пикера: иначе он переживёт редактор и попытается
-      // закоммитить значение в уже уничтоженную ячейку.
-      if (pickerInterval) { clearInterval(pickerInterval); pickerInterval = null; }
       if (list && list.parentElement) list.remove();
       if (wrapper && wrapper.parentElement) wrapper.remove();
     };
-    this.focus = function() { input && input.focus(); };
+    this.focus = function() { if (input) input.focus(); };
     this.getValue = function() { return selectedId; };
-    this.setValue = function(val) { selectedId = val; input.value = label(val); };
+    this.setValue = function(val) { selectedId = refId(val); input.value = label(selectedId); };
     this.loadValue = function(item) {
       var v = item[args.column.field];
       defaultValue = v;
-      selectedId = (v && typeof v === 'object') ? (v.id || '') : (v || '');
+      selectedId = refId(v);
       input.value = label(selectedId);
     };
-    this.serializeValue = function() { return selectedId; };
+    this.serializeValue = function() { resolveTyped(); return selectedId; };
     this.applyValue = function(item, state) { item[args.column.field] = state; };
-    this.isValueChanged = function() { return selectedId !== defaultValue; };
-    this.validate = function() { return {valid: true, msg: null}; };
+    // isValueChanged должен быть true и когда изменился ТОЛЬКО набранный текст:
+    // при false SlickGrid не зовёт validate()/serializeValue() и правка теряется.
+    this.isValueChanged = function() {
+      var text = String(input.value == null ? '' : input.value).trim();
+      if (text !== String(label(selectedId) || '').trim()) return true;
+      return String(selectedId) !== String(refId(defaultValue));
+    };
+    this.validate = function() {
+      if (resolveTyped()) return {valid: true, msg: null};
+      return {valid: false, msg: 'Не найдено: «' + String(input.value).trim() + '». ↑/↓ и Enter — выбрать, F4 — форма выбора'};
+    };
     this.init();
   }
 
@@ -1042,6 +1266,10 @@ obManagedReady(obManagedInitDelegates);
         }; })(warnPos);
       } else if (c.ref) {
         col.cssClass = "ob-ref";
+        // refEntity нужен редактору для серверного поиска и форме выбора: без
+        // него в ячейке были видны только предзагруженные опции, а модалка
+        // подбора уходила в локальный фильтр вместо /ui/_ref-options.
+        col.refEntity = c.ref;
         col.editor = (function(refField, refOptsList) {
           return ObRefEditor.bind(null, refField, refOptsList);
         })(c.id, refOpts[c.id] || []);
@@ -1127,10 +1355,27 @@ obManagedReady(obManagedInitDelegates);
   }
 
   // Serialize all grid data into hidden inputs (for form submit / obFire)
+  // obGridSync — переносит строки гридов в скрытые tp_json перед отправкой формы.
+  // Возвращает false, если незаконченную правку ячейки не удалось закоммитить
+  // (например, в колонке-ссылке набрано ненайденное) — записывать в таком виде
+  // нельзя: на форме пользователь видит одно, в tp_json ушло бы другое.
   window.obGridSync = function() {
     var grids = window._obGrids || {};
+    var ok = true;
     for (var tpName in grids) {
       var g = grids[tpName];
+      // Открытый редактор ячейки: без коммита значение, набранное прямо перед
+      // «Записать», в dataView не попадает и молча теряется при сохранении.
+      // Тот же приём применяется перед отправкой события формы (см. obFire).
+      try {
+        var lock = g.grid && g.grid.getEditorLock && g.grid.getEditorLock();
+        if (lock && lock.isActive() && !lock.commitCurrentEdit()) ok = false;
+      } catch (e) {
+        // Исключение editor-lock не означает успех: dataView может содержать
+        // старое значение. Останавливаем submit/obFire вместо тихой потери.
+        ok = false;
+        if (window.obFlash) window.obFlash('Не удалось завершить правку ячейки: ' + (e && e.message ? e.message : e), 'err');
+      }
       // Сериализуем в исходном порядке (_ord), а не в порядке текущей
       // сортировки отображения — чтобы сортировка «для просмотра» не меняла
       // порядок строк в сохраняемом документе.
@@ -1148,6 +1393,7 @@ obManagedReady(obManagedInitDelegates);
       var inp = document.getElementById("tp-json-" + tpName);
       if (inp) inp.value = JSON.stringify(rows);
     }
+    return ok;
   };
 
   function gridCellEventParams(tpName, args, columns, dataView) {
@@ -1394,6 +1640,14 @@ obManagedReady(obManagedInitDelegates);
       updateTotals(window._obGrids[tpName]);
     });
 
+    // Ячейка не прошла проверку (например, в колонке-ссылке набрано то, чего нет
+    // в справочнике). SlickGrid сам только подсвечивает ячейку классом invalid и
+    // держит курсор в ней — без текста причины это выглядит как «залипание».
+    grid.onValidationError.subscribe(function(e, args) {
+      var msg = args && args.validationResults && args.validationResults.msg;
+      if (msg && window.obFlash) window.obFlash(msg, "err");
+    });
+
     // Delete key removes selected rows
     grid.onKeyDown.subscribe(function(e) {
       if (e.key === 'Delete' && !grid.getEditorLock().isActive()) {
@@ -1510,4 +1764,66 @@ obManagedReady(function () {
     var btn = tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
     if (btn) obManagedSwitchTab(btn);
   }
+});
+
+// ─── ПолеКода: редактор с подсветкой ────────────────────────────────────────
+//
+// Монтируется на .code-editor рядом со скрываемой textarea.code-field.
+// textarea остаётся источником истины для формы: редактор пишет в неё при
+// каждом изменении, поэтому обычный submit работает и без всякой синхронизации
+// по кнопке. Без JS (или если Monaco не загрузился) textarea просто остаётся
+// видимой и редактируемой — прогрессивное улучшение, как у richtext.
+obManagedReady(function () {
+  var holders = document.querySelectorAll('.code-editor');
+  if (!holders.length) return;
+  if (typeof require === 'undefined' || window._monacoLoadErr) return; // textarea уже рабочая
+
+  require.config({ paths: { vs: '/vendor/monaco/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    for (var i = 0; i < holders.length; i++) {
+      (function (holder) {
+        if (holder.getAttribute('data-code-ready') === '1') return;
+        var ta = holder.previousElementSibling;
+        if (!ta || ta.tagName !== 'TEXTAREA' || !ta.classList.contains('code-field')) return;
+        holder.setAttribute('data-code-ready', '1');
+
+        var lang = holder.getAttribute('data-code-language') || 'plaintext';
+        var ed = monaco.editor.create(holder, {
+          value: ta.value,
+          language: lang,
+          automaticLayout: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          fontSize: 13,
+          tabSize: 4,
+          renderWhitespace: 'selection'
+        });
+        ta.style.display = 'none';
+
+        // Ответ обработчика формы может обновить значение поля. textarea уже
+        // получила бы новый текст, но Monaco продолжал показывать старый и при
+        // следующем вводе затирал ответ сервера. Держим оба представления
+        // синхронными и не выдаём программное обновление за правку пользователя.
+        var syncing = false;
+        ta._obSetCodeValue = function (value) {
+          value = String(value == null ? '' : value);
+          ta.value = value;
+          if (ed.getValue() === value) return;
+          syncing = true;
+          try {
+            ed.setValue(value);
+          } finally {
+            syncing = false;
+          }
+        };
+        ed.onDidChangeModelContent(function () {
+          ta.value = ed.getValue();
+          if (!syncing) ta.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        ed.onDidBlurEditorWidget(function () {
+          if (!syncing) ta.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      })(holders[i]);
+    }
+  });
 });
