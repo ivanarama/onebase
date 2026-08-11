@@ -11,6 +11,17 @@ import (
 // обрезаются непредсказуемо. 16 знаков покрывает типовые учётные расчёты.
 const divisionPrecision = 16
 
+// shopspring/decimal при делении, остатке и преобразовании в float64 строит
+// промежуточные big.Int с учётом экспоненты. Экспонента Decimal имеет
+// int32-диапазон, поэтому синтаксически короткое значение вроде
+// `1e2147483647` иначе способно вызвать panic или неконтролируемое выделение
+// памяти. Эти границы намного шире типовых учётных значений, но удерживают
+// промежуточные числа в десятках килобайт.
+const (
+	maxDecimalQuotientExponent        int32 = 4096
+	maxDecimalQuotientCoefficientBits int   = 16384
+)
+
 func init() {
 	decimal.DivisionPrecision = divisionPrecision
 }
@@ -39,6 +50,28 @@ func toDecimal(v any) (decimal.Decimal, bool) {
 	return decimal.Zero, false
 }
 
+func decimalWithinSafeBounds(d decimal.Decimal) bool {
+	exp := d.Exponent()
+	if exp < -maxDecimalQuotientExponent || exp > maxDecimalQuotientExponent {
+		return false
+	}
+	return d.Coefficient().BitLen() <= maxDecimalQuotientCoefficientBits
+}
+
+func decimalSafeForQuotient(d decimal.Decimal) bool {
+	return decimalWithinSafeBounds(d)
+}
+
+func requireSafeDecimalQuotient(left, right decimal.Decimal, line int) {
+	if decimalSafeForQuotient(left) && decimalSafeForQuotient(right) {
+		return
+	}
+	panic(userError{
+		Msg:  "число для деления или остатка вне безопасного диапазона",
+		Line: line,
+	})
+}
+
 // decimalToFiniteFloat64 ограничивает работу shopspring/decimal до вызова
 // InexactFloat64. Тот строит big.Int 10^Exponent, поэтому Decimal вида
 // 1e2147483647 иначе исчерпывает память в любом builtin, использующем toFloat.
@@ -48,11 +81,7 @@ func decimalToFiniteFloat64(d decimal.Decimal) (float64, bool) {
 	if d.IsZero() {
 		return 0, true
 	}
-	if exp := d.Exponent(); exp < -4096 || exp > 4096 {
-		return 0, false
-	}
-	coefficient := d.Coefficient()
-	if coefficient.BitLen() > 16384 {
+	if !decimalWithinSafeBounds(d) {
 		return 0, false
 	}
 	f := d.InexactFloat64()
