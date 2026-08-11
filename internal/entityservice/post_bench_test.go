@@ -77,8 +77,8 @@ func BenchmarkSave_PostDocument(b *testing.B) {
 		Store:  db,
 		Reg:    registry,
 		Interp: interp,
-		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) map[string]any {
-			return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
+		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+			return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
 		},
 	}
 

@@ -17,10 +17,11 @@ import (
 // процедуры — естественная привычка (так и в 1С), поэтому ловушку правильнее
 // убрать, а не задокументировать.
 //
-// Возвращается ПРЕФИКС аргументов, а не позиционный список с дырами: параметр,
-// которому нет одноимённого значения, не передаётся вовсе — иначе явный nil
-// затёр бы его значение по умолчанию. Если первый же параметр не совпал, не
-// передаётся ничего, и поведение остаётся прежним.
+// Возвращается позиционный список до последнего найденного параметра. Дыры в
+// нём помечаются внутренним sentinel: callUserProc отличает «значение не
+// передали» от явно переданного nil и вычисляет DSL-default только в первом
+// случае. Это позволяет передать второй именованный параметр, не затирая
+// default первого.
 func BindNamedArgs(decl *ast.ProcedureDecl, values map[string]any) []any {
 	if decl == nil || len(decl.Params) == 0 || len(values) == 0 {
 		return nil
@@ -29,16 +30,25 @@ func BindNamedArgs(decl *ast.ProcedureDecl, values map[string]any) []any {
 	for k, v := range values {
 		lower[strings.ToLower(k)] = v
 	}
-	args := make([]any, 0, len(decl.Params))
-	for _, p := range decl.Params {
+	last := -1
+	args := make([]any, len(decl.Params))
+	for idx := range args {
+		args[idx] = missingNamedArg{}
+	}
+	for idx, p := range decl.Params {
 		v, ok := lower[strings.ToLower(p.Literal)]
 		if !ok {
-			break // дальше пойдут значения по умолчанию
+			continue
 		}
-		args = append(args, v)
+		args[idx] = v
+		last = idx
 	}
-	if len(args) == 0 {
+	if last < 0 {
 		return nil
 	}
-	return args
+	return args[:last+1]
 }
+
+// missingNamedArg — внутренняя дыра в результате BindNamedArgs. Отдельный тип
+// нужен, потому что nil является полноценным явно переданным значением.
+type missingNamedArg struct{}
