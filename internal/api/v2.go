@@ -517,25 +517,6 @@ func (h *handler) documentPostPayload(w http.ResponseWriter, r *http.Request, en
 	return fields, tpRows, true
 }
 
-func (h *handler) clearMovements(ctx context.Context, entityName string, id uuid.UUID) error {
-	for _, reg := range h.reg.Registers() {
-		if err := h.store.WriteMovements(ctx, reg.Name, entityName, id, nil, reg, nil); err != nil {
-			return err
-		}
-	}
-	for _, ir := range h.reg.InfoRegisters() {
-		if err := h.store.WriteInfoMovements(ctx, ir.Name, entityName, id, nil, ir, nil); err != nil {
-			return err
-		}
-	}
-	for _, ar := range h.reg.AccountRegisters() {
-		if err := h.store.WriteAccountMovements(ctx, ar.Name, entityName, id, nil, ar, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (h *handler) entityFromV2Route(w http.ResponseWriter, r *http.Request, kind metadata.Kind) (*metadata.Entity, string, bool) {
 	entityName := capitalize(chi.URLParam(r, "name"))
 	entity := h.reg.GetEntity(entityName)

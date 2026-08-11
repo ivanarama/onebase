@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -59,28 +58,32 @@ func callsStoreDelete(fd *ast.FuncDecl) bool {
 
 func TestDeleteChokepoint_NoDirectStoreDelete(t *testing.T) {
 	var offenders []string
+	// ParseFile по явному списку, как в соседних стражах: ParseDir объявлен
+	// устаревшим и валит линтер.
 	for _, dir := range []string{".", filepath.Join("..", "api")} {
-		fset := token.NewFileSet()
-		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
-			return !strings.HasSuffix(fi.Name(), "_test.go")
-		}, 0)
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		if err != nil {
-			t.Fatalf("разбор %s: %v", dir, err)
+			t.Fatalf("список файлов %s: %v", dir, err)
 		}
-		for _, pkg := range pkgs {
-			for path, file := range pkg.Files {
-				for _, decl := range file.Decls {
-					fd, ok := decl.(*ast.FuncDecl)
-					if !ok || fd.Name == nil {
-						continue
-					}
-					if _, exempt := deleteChokepointExempt[fd.Name.Name]; exempt {
-						continue
-					}
-					if callsStoreDelete(fd) {
-						offenders = append(offenders,
-							fd.Name.Name+" ("+filepath.Base(path)+")")
-					}
+		fset := token.NewFileSet()
+		for _, path := range files {
+			if strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				t.Fatalf("разбор %s: %v", path, err)
+			}
+			for _, decl := range file.Decls {
+				fd, ok := decl.(*ast.FuncDecl)
+				if !ok || fd.Name == nil {
+					continue
+				}
+				if _, exempt := deleteChokepointExempt[fd.Name.Name]; exempt {
+					continue
+				}
+				if callsStoreDelete(fd) {
+					offenders = append(offenders, fd.Name.Name+" ("+filepath.Base(path)+")")
 				}
 			}
 		}
