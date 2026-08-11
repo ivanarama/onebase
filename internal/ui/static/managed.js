@@ -22,6 +22,53 @@ function obManagedReady(fn) {
 var obManagedFileSubmitPending = new WeakSet();
 var obManagedFileSubmitReentry = new WeakSet();
 
+function obManagedTableReadOnly(tbody) {
+  return !!tbody && tbody.getAttribute('data-ob-table-readonly') === '1';
+}
+
+function obManagedTableBodies(id, metadataAttr) {
+  var matches = [];
+  var candidates = document.querySelectorAll ? document.querySelectorAll('tbody[' + metadataAttr + ']') : [];
+  for (var i = 0; i < candidates.length; i++) {
+    var candidateID = candidates[i].id || (candidates[i].getAttribute && candidates[i].getAttribute('id'));
+    if (candidateID === id) matches.push(candidates[i]);
+  }
+  if (!matches.length) {
+    var fallback = document.getElementById(id);
+    if (fallback) matches.push(fallback);
+  }
+  return matches;
+}
+
+function obManagedWritableTableBody(id, metadataAttr) {
+  var bodies = obManagedTableBodies(id, metadataAttr);
+  for (var i = 0; i < bodies.length; i++) {
+    if (!obManagedTableReadOnly(bodies[i])) return bodies[i];
+  }
+  return null;
+}
+
+// Shared by the managed-form response renderer and the separate SlickGrid
+// runtime below. Keep this outside either IIFE: Slick submit/event sync must
+// be able to update the authoritative hidden payload in the real browser
+// scope, not only in tests that happen to provide a same-named global.
+function obManagedSetTablePartJSON(tpName, rows) {
+  var fieldName = 'tp_json.' + tpName;
+  var inputs = document.getElementsByName ? document.getElementsByName(fieldName) : [];
+  if (!inputs || !inputs.length) {
+    var fallback = document.getElementById('tp-json-' + tpName);
+    inputs = fallback ? [fallback] : [];
+  }
+  var value = JSON.stringify(rows || []);
+  for (var i = 0; i < inputs.length; i++) {
+    // Readonly duplicate placements are display-only and must never become
+    // successful form controls, even if an older/custom template rendered
+    // a disabled mirror with the canonical name.
+    if (!inputs[i].disabled) inputs[i].value = value;
+  }
+}
+window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
+
 // Отправляет текущие form-values + имя элемента/события в /ui/.../form-event,
 // получает JSON с новыми значениями и сообщениями от Сообщить(), применяет их.
 (function(){
@@ -234,25 +281,20 @@ var obManagedFileSubmitReentry = new WeakSet();
     el.textContent = css || '';
   }
   window.applyFormConditionalCSS = applyFormConditionalCSS;
-  function obManagedTableReadOnly(tbody) {
-    return !!tbody && tbody.getAttribute('data-ob-table-readonly') === '1';
-  }
-  function appendDisabledControlMirror(parent, name, value) {
-    const hidden = document.createElement('input');
-    hidden.type = 'hidden';
-    hidden.name = name;
-    hidden.value = (value == null ? '' : String(value));
-    parent.appendChild(hidden);
-  }
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
   // тот же формат используется тут для повторного создания строк.
+  // Keep every representation of the same entity table part in sync. A
+  // managed form may place one TP more than once (for example, a readonly
+  // summary and an editable grid), so getElementById alone is not sufficient.
   function applyTableParts(tps){
     if (!tps) return;
     Object.keys(tps).forEach(function(tpName){
-      const tbody = document.getElementById('tp-body-' + tpName);
-      if (!tbody) return;
+      window.obManagedSetTablePartJSON(tpName, tps[tpName] || []);
+      const tableBodies = obManagedTableBodies('tp-body-' + tpName, 'data-tp-fields');
+      if (!tableBodies.length) return;
+      tableBodies.forEach(function(tbody){
       const fieldsMeta = (tbody.getAttribute('data-tp-fields') || '').split(',').map(function(s){
         const idx = s.indexOf('|');
         if (idx < 0) return { name: s, type: 'string', ref: '' };
@@ -268,6 +310,21 @@ var obManagedFileSubmitReentry = new WeakSet();
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
       const readOnly = obManagedTableReadOnly(tbody);
+      const domTable = tbody.closest && tbody.closest('table[data-ob-dom-table]');
+      const domWritable = !!(domTable && domTable.getAttribute('data-ob-readonly') === '0');
+      const focused = domTable && document.activeElement && domTable.contains(document.activeElement);
+      const focusedRow = focused && document.activeElement.closest ? document.activeElement.closest('tr') : null;
+      const restoreRow = focusedRow || (domTable && domTable._obCurrentRow && domTable.contains(domTable._obCurrentRow) ? domTable._obCurrentRow : null);
+      const restoreIndex = restoreRow ? restoreRow.sectionRowIndex : -1;
+      const focusedName = focused && document.activeElement.getAttribute ? (document.activeElement.getAttribute('name') || '') : '';
+      const namePrefix = 'tp.' + tpName + '.';
+      var restoreField = '';
+      if (focusedName.indexOf(namePrefix) === 0) {
+        const rest = focusedName.slice(namePrefix.length);
+        const dot = rest.indexOf('.');
+        if (dot >= 0) restoreField = rest.slice(dot + 1);
+      }
+      if (domTable) domTable._obCurrentRow = null;
       tbody.innerHTML = '';
       rows.forEach(function(row, idx){
         const tr = document.createElement('tr');
@@ -305,7 +362,6 @@ var obManagedFileSubmitReentry = new WeakSet();
             });
             sel.disabled = readOnly;
             td.appendChild(sel);
-            if (readOnly) appendDisabledControlMirror(td, sel.name, cur);
           } else if (isEnum && tpEnumLabels[f.name]) {
             const enumLabMap = tpEnumLabels[f.name];
             const sel = document.createElement('select');
@@ -324,7 +380,6 @@ var obManagedFileSubmitReentry = new WeakSet();
             });
             sel.disabled = readOnly;
             td.appendChild(sel);
-            if (readOnly) appendDisabledControlMirror(td, sel.name, cur);
           } else {
             const inp = document.createElement('input');
             inp.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
@@ -340,7 +395,7 @@ var obManagedFileSubmitReentry = new WeakSet();
               inp.type = 'text';
               inp.value = (v == null ? '' : v);
             }
-            inp.readOnly = readOnly;
+            inp.disabled = readOnly;
             td.appendChild(inp);
           }
           tr.appendChild(td);
@@ -351,10 +406,38 @@ var obManagedFileSubmitReentry = new WeakSet();
         btn.className = 'del-btn';
         btn.textContent = '×';
         btn.disabled = readOnly;
-        if (!readOnly) btn.onclick = function(){ tr.remove(); };
+        if (domWritable) {
+          btn.setAttribute('data-ob-remove-row', '');
+          btn.title = 'Delete';
+          btn.setAttribute('aria-keyshortcuts', 'Delete');
+        }
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
+        if (domTable && window.obDOMPrepareRow) window.obDOMPrepareRow(domTable, tr);
+      });
+      if (domTable && tbody.rows.length) {
+        const rowIndex = restoreIndex >= 0 ? Math.min(restoreIndex, tbody.rows.length - 1) : 0;
+        const row = tbody.rows[rowIndex];
+        if (focused && window.obDOMSetCurrentRow) {
+          window.obDOMSetCurrentRow(domTable, row, false);
+          var focusTarget = null;
+          if (restoreField) {
+            const controls = row.querySelectorAll('[name]');
+            for (var controlIndex = 0; controlIndex < controls.length; controlIndex++) {
+              const name = controls[controlIndex].getAttribute('name') || '';
+              const rest = name.indexOf(namePrefix) === 0 ? name.slice(namePrefix.length) : '';
+              const dot = rest.indexOf('.');
+              if (dot >= 0 && rest.slice(dot + 1) === restoreField) { focusTarget = controls[controlIndex]; break; }
+            }
+          }
+          if (focusTarget && !focusTarget.disabled && focusTarget.focus) focusTarget.focus();
+          else if (row.focus) row.focus();
+        } else {
+          row.setAttribute('tabindex', '0');
+        }
+      }
+      if (domTable && window.obDOMReindex) window.obDOMReindex(domTable);
       });
     });
   }
@@ -374,8 +457,9 @@ var obManagedFileSubmitReentry = new WeakSet();
   function applyFormTables(vts){
     if (!vts) return;
     Object.keys(vts).forEach(function(vtName){
-      var tbody = document.getElementById('vt-body-' + vtName);
-      if (!tbody) return;
+      var tableBodies = obManagedTableBodies('vt-body-' + vtName, 'data-vt-fields');
+      if (!tableBodies.length) return;
+      tableBodies.forEach(function(tbody){
       var fieldsMeta = (tbody.getAttribute('data-vt-fields') || '').split(',').map(function(s){
         var idx = s.indexOf('|');
         if (idx < 0) return { name: s, type: 'string' };
@@ -405,11 +489,8 @@ var obManagedFileSubmitReentry = new WeakSet();
             inp.type = 'text';
             inp.value = (v == null ? '' : v);
           }
-          if (readOnly && f.type !== 'bool') inp.readOnly = true;
+          inp.disabled = readOnly;
           td.appendChild(inp);
-          if (readOnly && f.type === 'bool') {
-            appendDisabledControlMirror(td, inp.name, String(v) === 'true' ? 'true' : 'false');
-          }
           tr.appendChild(td);
         });
         var tdDel = document.createElement('td');
@@ -420,6 +501,7 @@ var obManagedFileSubmitReentry = new WeakSet();
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
+      });
       });
     });
   }
@@ -583,7 +665,7 @@ var obManagedFileSubmitReentry = new WeakSet();
     if (extraParams && extraParams._tp) {
       // Plan 48: check if SlickGrid exists for this TP
       var obg = (window._obGrids || {})[extraParams._tp];
-      if (obg) {
+      if (obg && !obg.readOnly) {
         // getSelectedRows бросает «Selection model is not set», если модель
         // выделения не установлена (плагин не завендорен). Командам подбора/
         // пересчёта/очистки выделение не нужно — гасим ошибку и шлём пусто.
@@ -606,7 +688,7 @@ var obManagedFileSubmitReentry = new WeakSet();
         body.append(serviceField('_tp_selected'), sel.join(','));
       } else {
         // Legacy: read from DOM checkboxes
-        const tbody = document.getElementById('tp-body-' + extraParams._tp);
+        const tbody = obManagedWritableTableBody('tp-body-' + extraParams._tp, 'data-tp-fields');
         if (tbody) {
           const sel = [];
           Array.prototype.forEach.call(tbody.rows, (tr, i) => {
@@ -820,8 +902,8 @@ var obManagedFileSubmitReentry = new WeakSet();
 })();
 
 // addVtRow — JS для добавления строки в ValueTable (формовый атрибут-таблица).
-function addVtRow(vtName, fields) {
-  var tbody = document.getElementById("vt-body-" + vtName);
+function addVtRow(vtName, fields, tbodyOverride) {
+  var tbody = tbodyOverride || document.getElementById("vt-body-" + vtName);
   if (!tbody || tbody.getAttribute('data-ob-table-readonly') === '1') return;
   var idx = tbody.rows.length;
   var tr = document.createElement("tr");
@@ -870,20 +952,22 @@ function obManagedParseFieldMeta(raw) {
 
 function obManagedAddTpRow(btn) {
   var tpName = btn.getAttribute('data-ob-add-tp') || '';
-  var tbody = document.getElementById('tp-body-' + tpName);
-  if (!tpName || !tbody || tbody.getAttribute('data-ob-table-readonly') === '1' || typeof addTpRow !== 'function') return;
+  var tbody = obManagedWritableTableBody('tp-body-' + tpName, 'data-tp-fields');
+  if (!tpName || !tbody || typeof addTpRow !== 'function') return;
   var meta = obManagedParseFieldMeta(tbody.getAttribute('data-tp-fields') || '');
   var fields = meta.map(function (f) { return f.name; });
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
-  addTpRow(tpName, fields, nums, tbody.rows.length);
+  addTpRow(tpName, fields, nums, tbody.rows.length, tbody);
+  var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
+  if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
 
 function obManagedAddVtRow(btn) {
   var vtName = btn.getAttribute('data-ob-add-vt') || '';
-  var tbody = document.getElementById('vt-body-' + vtName);
-  if (!vtName || !tbody || tbody.getAttribute('data-ob-table-readonly') === '1' || typeof addVtRow !== 'function') return;
+  var tbody = obManagedWritableTableBody('vt-body-' + vtName, 'data-vt-fields');
+  if (!vtName || !tbody || typeof addVtRow !== 'function') return;
   var fields = obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '').map(function (f) { return f.name; });
-  addVtRow(vtName, fields);
+  addVtRow(vtName, fields, tbody);
 }
 
 function obManagedSubmitAllowed(form) {
@@ -965,37 +1049,45 @@ function obManagedInitDelegates() {
     if (btn.hasAttribute('data-ob-remove-row')) {
       e.preventDefault();
       var tr = btn.closest && btn.closest('tr');
-      if (tr) tr.remove();
+      if (tr) {
+        var table = tr.closest && tr.closest('table[data-ob-dom-table]');
+        var body = tr.parentElement;
+        var index = tr.sectionRowIndex;
+        tr.remove();
+        if (table && body && window.obDOMFinishMutation) {
+          var next = body.rows.length ? body.rows[Math.min(Math.max(index, 0), body.rows.length - 1)] : null;
+          window.obDOMFinishMutation(table, next, false);
+          if (window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'delete');
+        }
+      }
     }
   });
 
   function obManagedNormalizeHotkey(value) {
-    var key = String(value || '').trim().toUpperCase();
-    if (key === 'F2' || key === 'F4' || key === 'F7' || key === 'F8' || key === 'F9' || key === 'F10') return key;
+    if (typeof window.obNormalizeFormHotkey === 'function') return window.obNormalizeFormHotkey(value);
     return '';
   }
 
   function obManagedEventHotkey(e) {
-    if (!e || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return '';
+    if (!e || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return '';
     return obManagedNormalizeHotkey(e.key || e.code || '');
   }
 
   document.addEventListener('keydown', function (e) {
     var hotkey = obManagedEventHotkey(e);
     if (!hotkey) return;
+    if ((typeof obHasBlockingModal === 'function' && obHasBlockingModal()) ||
+        document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal') ||
+        document.getElementById('_ref-create-modal')) return;
     var form = document.getElementById('main-form');
+    if (!form || !document.contains(form)) return;
     var target = e.target;
-    if (form && target && target !== document.body && !form.contains(target)) return;
-    var root = form || document;
-    var buttons = root.querySelectorAll('[data-ob-hotkey]');
-    for (var i = 0; i < buttons.length; i++) {
-      var btn = buttons[i];
-      if (obManagedNormalizeHotkey(btn.getAttribute('data-ob-hotkey')) !== hotkey) continue;
-      if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') continue;
-      e.preventDefault();
-      btn.click();
-      return;
-    }
+    if (target && target !== document.body && !form.contains(target)) return;
+    var btn = typeof window.obResolveActionableFormHotkey === 'function'
+      ? window.obResolveActionableFormHotkey(hotkey) : null;
+    if (!btn) return;
+    e.preventDefault();
+    btn.click();
   });
 
   document.addEventListener('change', function (e) {
@@ -1043,6 +1135,7 @@ obManagedReady(obManagedInitDelegates);
 // Grids are stored in window._obGrids = {tpName: {grid, dataView, columns}}.
 (function(){
   window._obGrids = window._obGrids || {};
+  window._obGridViews = window._obGridViews || [];
 
   // resizeGrid — пересчитывает геометрию грида и растягивает колонки на всю
   // ширину контейнера. Критично для ТЧ на вкладках/в свёрнутых группах: при
@@ -1088,6 +1181,12 @@ obManagedReady(obManagedInitDelegates);
   // _obResizeGrids — пройтись по всем гридам и пересчитать видимые. Вызывается
   // при переключении вкладок managed-формы и при ресайзе окна.
   window._obResizeGrids = function() {
+    var views = window._obGridViews || [];
+    if (views.length) {
+      for (var i = 0; i < views.length; i++) resizeGrid(views[i]);
+      return;
+    }
+    // Compatibility for callers/tests which seed only the historical map.
     var grids = window._obGrids || {};
     for (var tp in grids) resizeGrid(grids[tp]);
   };
@@ -1626,8 +1725,7 @@ obManagedReady(obManagedInitDelegates);
         }
         return row;
       });
-      var inp = document.getElementById("tp-json-" + tpName);
-      if (inp) inp.value = JSON.stringify(rows);
+      window.obManagedSetTablePartJSON(tpName, rows);
     }
     return ok;
   };
@@ -1662,7 +1760,11 @@ obManagedReady(obManagedInitDelegates);
   // — иначе впустую гоняли бы сеть. Путь тот же, что у ПриИзменении: obFire
   // синхронизирует ТЧ (obGridSync) и применяет values/tableparts из ответа.
   window.obFireRowEvent = function(tpName, attr, eventName) {
-    var div = document.getElementById("sg-" + tpName);
+    // A form may show the same TP in a readonly summary and an editable grid.
+    // Resolve the exact canonical writable host instead of the first duplicate
+    // id in DOM order.
+    var state = (window._obGrids || {})[tpName];
+    var div = state && !state.readOnly ? state.div : null;
     if (!div || div.getAttribute(attr) !== "1") return;
     var elName = div.getAttribute("data-sg-el") || tpName;
     if (window.obFire) return window.obFire(elName, eventName, {_tp: tpName});
@@ -1675,7 +1777,7 @@ obManagedReady(obManagedInitDelegates);
   window.obFireRowEventChain = function(tpName, pairs) {
     var run = function(i) {
       if (i >= pairs.length) return;
-      var res = obFireRowEvent(tpName, pairs[i][0], pairs[i][1]);
+      var res = window.obFireRowEvent(tpName, pairs[i][0], pairs[i][1]);
       if (res && typeof res.then === "function") {
         res.then(function() { run(i + 1); }, function() { run(i + 1); });
       } else {
@@ -1687,9 +1789,8 @@ obManagedReady(obManagedInitDelegates);
 
   window.obGridAddRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g || g.readOnly || (g.div && g.div.getAttribute("data-sg-ro") === "1")) return;
-    var _lk = g.grid.getEditorLock && g.grid.getEditorLock();
-    if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
+    if (!g || g.readOnly || (g.div && g.div.getAttribute("data-sg-ro") === "1") || !commitGridEdit(g)) return;
+    rememberActiveGrid(tpName);
     var nextId = 0, nextOrd = 0;
     g.dataView.getItems().forEach(function(it) {
       if (it.id >= nextId) nextId = it.id + 1;
@@ -1709,32 +1810,272 @@ obManagedReady(obManagedInitDelegates);
       g.grid.setActiveCell(rowIdx, 0);
       g.grid.editActiveCell();
     }
-    obFireRowEventChain(tpName, [
+    window.obFireRowEventChain(tpName, [
       ["data-sg-rowadd", "ПриДобавленииСтроки"],
       ["data-sg-rowafteradd", "ПослеДобавленияСтроки"],
     ]);
   };
 
-  // Delete selected row from grid
+  function gridRowsForDelete(g) {
+    var rows = [];
+    var selectionModel = null;
+    try {
+      selectionModel = g.grid.getSelectionModel && g.grid.getSelectionModel();
+      if (selectionModel && g.grid.getSelectedRows) rows = g.grid.getSelectedRows() || [];
+    } catch (e) { rows = []; }
+    if (!rows.length) {
+      var ac = g.grid.getActiveCell();
+      if (ac) rows = [ac.row];
+    }
+    var unique = [];
+    var seen = {};
+    for (var i = 0; i < rows.length; i++) {
+      var row = Number(rows[i]);
+      if (!Number.isInteger(row) || row < 0 || seen[row]) continue;
+      seen[row] = true;
+      unique.push(row);
+    }
+    return unique;
+  }
+
+  // В поставке нет RowSelectionModel: обычный SlickGrid честно удаляет только
+  // активную строку. Если приложение позднее установит selection model,
+  // используем все реально выбранные строки и сохраняем multi-select семантику.
   window.obGridDelRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g || g.readOnly || (g.div && g.div.getAttribute("data-sg-ro") === "1")) return;
-    var _lk = g.grid.getEditorLock && g.grid.getEditorLock();
-    if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
-    // Без плагина выделения getSelectedRows бросает исключение — удаляем
-    // активную (текущую) строку, как в обычной таблице.
-    var sel = [];
-    try { sel = g.grid.getSelectedRows() || []; } catch (e) { sel = []; }
-    if (!sel.length) { var ac = g.grid.getActiveCell(); if (ac) sel = [ac.row]; }
-    if (!sel.length) return;
-    var items = g.dataView.getItems();
-    var toRemove = sel.map(function(r) { return items[r]; }).filter(Boolean);
-    for (var i = 0; i < toRemove.length; i++) g.dataView.deleteItem(toRemove[i].id);
+    if (!g || g.readOnly || (g.div && g.div.getAttribute("data-sg-ro") === "1") || !commitGridEdit(g)) return false;
+    rememberActiveGrid(tpName);
+    var rows = gridRowsForDelete(g);
+    if (!rows.length) return false;
+    var toRemove = [];
+    var ids = Object.create(null);
+    for (var i = 0; i < rows.length; i++) {
+      var item = g.dataView.getItem(rows[i]);
+      if (item && !ids[item.id]) {
+        ids[item.id] = true;
+        toRemove.push(item);
+      }
+    }
+    if (!toRemove.length) return false;
+    for (var j = 0; j < toRemove.length; j++) g.dataView.deleteItem(toRemove[j].id);
+    window._obFormDirty = true;
+    try { g.grid.invalidate(); } catch (e) {
+      if (window.console) window.console.error("SlickGrid delete refresh error [" + tpName + "]:", e);
+    }
+    try {
+      if (g.grid.getSelectionModel && g.grid.getSelectionModel() && g.grid.setSelectedRows) g.grid.setSelectedRows([]);
+    } catch (e) {}
+    try { window.obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки"); } catch (e) {
+      if (window.console) window.console.error("SlickGrid row-delete event error [" + tpName + "]:", e);
+    }
+    return true;
+  };
+
+  // reindexOrd — переписывает _ord подряд (0..n-1) по текущему порядку массива.
+  // Порядок строк документа значим и хранится именно в _ord (см. obGridSync),
+  // поэтому после вставки/перемещения его надо нормализовать.
+  function reindexOrd(items) {
+    for (var i = 0; i < items.length; i++) items[i]._ord = i;
+    return items;
+  }
+
+  function byOrd(g) {
+    return g.dataView.getItems().slice().sort(function(a, b) { return (a._ord || 0) - (b._ord || 0); });
+  }
+
+  // commitGridEdit — закрыть открытый редактор перед структурной операцией.
+  // false — правку не приняли (например, в ячейке-ссылке набрано ненайденное);
+  // добавлять/двигать строки в этот момент нельзя.
+  function commitGridEdit(g) {
+    var lock = g.grid && g.grid.getEditorLock && g.grid.getEditorLock();
+    if (lock && lock.isActive()) return lock.commitCurrentEdit();
+    return true;
+  }
+
+  // obGridCopyRow — копия текущей строки сразу под ней (F9, как в 1С).
+  window.obGridCopyRow = function(tpName) {
+    var g = (window._obGrids || {})[tpName];
+    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    rememberActiveGrid(tpName);
+    var ac = g.grid.getActiveCell();
+    if (!ac) return;
+    var src = g.dataView.getItem(ac.row);
+    if (!src) return;
+    var nextId = 0;
+    g.dataView.getItems().forEach(function(it) { if (it.id >= nextId) nextId = it.id + 1; });
+    var copy = {id: nextId, _ord: (src._ord || 0) + 0.5};
+    var cols = g.columnsMeta || [];
+    for (var i = 0; i < cols.length; i++) copy[cols[i].id] = src[cols[i].id];
+    copy._obRowClass = src._obRowClass || "";
+    copy._obCellClasses = Object.assign({}, src._obCellClasses || {});
+    g.dataView.addItem(copy);
+    g.dataView.setItems(reindexOrd(byOrd(g)));
     window._obFormDirty = true;
     g.grid.invalidate();
-    g.grid.setSelectedRows([]);
-    obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки");
+    var rowIdx = g.dataView.getRowById(nextId);
+    if (rowIdx !== undefined) {
+      g.grid.scrollRowIntoView(rowIdx);
+      g.grid.setActiveCell(rowIdx, 0);
+      g.grid.editActiveCell();
+    }
+    updateTotals(g);
+    window.obFireRowEventChain(tpName, [
+      ["data-sg-rowadd", "ПриДобавленииСтроки"],
+      ["data-sg-rowafteradd", "ПослеДобавленияСтроки"],
+    ]);
   };
+
+  // obGridMoveRow — переместить текущую строку на delta позиций (Ctrl+↑/↓).
+  // Работаем в порядке _ord, а не отображения: под клиентской сортировкой
+  // «переместить вверх» иначе давало бы непредсказуемый результат. После
+  // перемещения список показывается в порядке документа.
+  window.obGridMoveRow = function(tpName, delta) {
+    var g = (window._obGrids || {})[tpName];
+    if (!g || g.readOnly || !commitGridEdit(g)) return;
+    rememberActiveGrid(tpName);
+    var ac = g.grid.getActiveCell();
+    if (!ac) return;
+    var cur = g.dataView.getItem(ac.row);
+    if (!cur) return;
+    var items = byOrd(g);
+    var pos = -1;
+    for (var i = 0; i < items.length; i++) { if (items[i].id === cur.id) { pos = i; break; } }
+    var to = pos + delta;
+    if (pos < 0 || to < 0 || to >= items.length) return;
+    items.splice(to, 0, items.splice(pos, 1)[0]);
+    g.dataView.setItems(reindexOrd(items));
+    window._obFormDirty = true;
+    g.grid.invalidate();
+    var rowIdx = g.dataView.getRowById(cur.id);
+    if (rowIdx !== undefined) {
+      g.grid.scrollRowIntoView(rowIdx);
+      g.grid.setActiveCell(rowIdx, ac.cell);
+    }
+    updateTotals(g);
+  };
+
+  function gridNameFromTarget(el) {
+    var host = el && el.closest ? el.closest(".ob-grid[data-sg-tp]") : null;
+    return host ? (host.getAttribute("data-sg-tp") || "") : "";
+  }
+
+  function rememberActiveGrid(tpName) {
+    if (tpName && (window._obGrids || {})[tpName]) {
+      window._obActiveGridName = tpName;
+      window._obActiveDOMTable = null;
+    }
+  }
+
+  function managedElementVisible(el) {
+    if (!el) return false;
+    if (typeof window.obElementVisible === "function") return window.obElementVisible(el);
+    for (var cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+      var inlineStyle = cur.style || {};
+      if (cur.hidden || (cur.getAttribute && cur.getAttribute("aria-hidden") === "true") || inlineStyle.display === "none" || inlineStyle.visibility === "hidden") return false;
+      if (window.getComputedStyle) {
+        var style = window.getComputedStyle(cur);
+        if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      }
+    }
+    return true;
+  }
+
+  // activeGridName — грид, к которому относится нажатие. Фокус внутри грида
+  // имеет приоритет; после ухода на служебный focus-sink используем ПОСЛЕДНИЙ
+  // грид, с которым реально взаимодействовал пользователь. Перебирать первый
+  // грид с activeCell нельзя: на форме их может быть несколько, и activeCell
+  // сохраняется у каждого.
+  function activeGridName(target) {
+    var grids = window._obGrids || {};
+    var source = target || document.activeElement;
+    var directHost = source && source.closest ? source.closest(".ob-grid[data-sg-tp]") : null;
+    var direct = directHost ? (directHost.getAttribute("data-sg-tp") || "") : "";
+    // Прямой контекст всегда окончательный. Неизвестный/ещё не
+    // зарегистрированный host не имеет права откатываться к старому гриду.
+    if (directHost) {
+      window._obActiveDOMTable = null;
+      if (!direct || !grids[direct] || grids[direct].div !== directHost ||
+          !document.contains(directHost) || !managedElementVisible(directHost)) {
+        if (direct && window._obActiveGridName === direct) window._obActiveGridName = "";
+        return "";
+      }
+      rememberActiveGrid(direct);
+      return direct;
+    }
+    // A concrete no-grid table target is authoritative too: never fall back
+    // to a SlickGrid that happened to be active before focus moved here.
+    if (source && source.closest && source.closest('table[data-ob-dom-table]')) {
+      window._obActiveGridName = "";
+      return "";
+    }
+    var remembered = window._obActiveGridName || "";
+    var g = remembered && grids[remembered];
+    if (g && g.div && document.contains(g.div) && managedElementVisible(g.div)) return remembered;
+    if (remembered) window._obActiveGridName = "";
+    return "";
+  }
+
+  function gridInteractiveTarget(el) {
+    if (!el || !el.closest) return false;
+    return !!el.closest('a[href],button,input,textarea,select,option,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="menuitem"]');
+  }
+
+  function managedHasBlockingModal() {
+    if (typeof obHasBlockingModal === 'function') return obHasBlockingModal();
+    return !!(document.getElementById('_ref-picker-modal') ||
+      document.getElementById('_item-picker-modal') ||
+      document.getElementById('_ref-create-modal'));
+  }
+
+  function hasActionableFormHotkey(key) {
+    return typeof window.obResolveActionableFormHotkey === 'function' &&
+      !!window.obResolveActionableFormHotkey(key);
+  }
+
+  // Клавиши работы со строками — как в 1С. Delete живёт на самом гриде
+  // (grid.onKeyDown), потому что зависит от editor-lock; остальные ловим на
+  // документе: Ins должен работать и когда фокус ушёл с грида.
+  //
+  // ВАЖНО: слушатель в ФАЗЕ ПЕРЕХВАТА. Свой обработчик SlickGrid вешает на
+  // канву грида, то есть ГЛУБЖЕ документа, и в фазе всплытия успевает разобрать
+  // клавишу первым: Ctrl+↓ у него — «перейти к последней строке», и перемещение
+  // строки не срабатывало вовсе. Отсюда же stopPropagation — чтобы после нашей
+  // обработки грид не выполнил ещё и свою.
+  if (!window._obGridKeysHook) {
+    window._obGridKeysHook = true;
+    document.addEventListener("keydown", function(e) {
+      if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
+      if (managedHasBlockingModal()) return;
+      var direct = gridNameFromTarget(e.target);
+      // Resolve concrete table ownership before interactive-target guards.
+      // A readonly editor still has to retire a stale marker from another TP.
+      var tp = activeGridName(e.target);
+      // Редактор ячейки находится внутри .ob-grid: там структурная клавиша
+      // сначала коммитит значение. Обычное поле формы вне грида нельзя
+      // перехватывать из-за когда-то активной табличной части.
+      if (!direct && gridInteractiveTarget(e.target)) return;
+      if (direct && e.target && e.target.closest && e.target.closest('a[href],button,summary,[contenteditable]:not([contenteditable="false"])')) return;
+      if (!tp) return;
+      var active = (window._obGrids || {})[tp];
+      if (!active || active.readOnly) return;
+      function take() { e.preventDefault(); e.stopPropagation(); }
+      if (e.key === "Insert" && !e.ctrlKey) {
+        take();
+        if (window.obGridAddRow) window.obGridAddRow(tp);
+        return;
+      }
+      // Явный hotkey кнопки формы важнее встроенного значения клавиши.
+      if (e.key === "F9" && !e.ctrlKey && !hasActionableFormHotkey("F9")) {
+        take();
+        if (window.obGridCopyRow) window.obGridCopyRow(tp);
+        return;
+      }
+      if (e.ctrlKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        take();
+        if (window.obGridMoveRow) window.obGridMoveRow(tp, e.key === "ArrowDown" ? 1 : -1);
+      }
+    }, true);
+  }
 
   // SlickGrid-aware applyTableParts. Оборачивает window.applyTableParts (DOM-
   // версию из obFire-IIFE): для ТЧ с гридом обновляет модель грида, для
@@ -1744,25 +2085,28 @@ obManagedReady(obManagedInitDelegates);
   window.applyTableParts = function(tps) {
     if (!tps) return;
     var grids = window._obGrids || {};
+    var views = window._obGridViews || [];
     Object.keys(tps).forEach(function(tpName) {
-      var g = grids[tpName];
-      if (!g) return;
-      var active = g.grid.getActiveCell();
-      var rows = tps[tpName] || [];
-      var cols = g.columnsMeta || [];
-      var items = rows.map(function(r, idx) {
-        var item = {id: idx, _ord: idx};
-        // == null (не || "") — иначе число 0 / false терялись бы как пустая строка.
-        for (var i = 0; i < cols.length; i++) item[cols[i].id] = (r[cols[i].id] == null ? "" : r[cols[i].id]);
-        copyFormGridStyleKeys(r, item);
-        return item;
+      var matches = views.filter(function(view) { return view.tpName === tpName; });
+      if (!matches.length && grids[tpName]) matches = [grids[tpName]];
+      matches.forEach(function(g) {
+        var active = g.grid.getActiveCell();
+        var rows = tps[tpName] || [];
+        var cols = g.columnsMeta || [];
+        var items = rows.map(function(r, idx) {
+          var item = {id: idx, _ord: idx};
+          // == null (не || "") — иначе число 0 / false терялись бы как пустая строка.
+          for (var i = 0; i < cols.length; i++) item[cols[i].id] = (r[cols[i].id] == null ? "" : r[cols[i].id]);
+          copyFormGridStyleKeys(r, item);
+          return item;
+        });
+        g.dataView.setItems(items);
+        g.grid.invalidate();
+        if (active && active.row < items.length) {
+          g.grid.setActiveCell(active.row, active.cell);
+        }
+        updateTotals(g);
       });
-      g.dataView.setItems(items);
-      g.grid.invalidate();
-      if (active && active.row < items.length) {
-        g.grid.setActiveCell(active.row, active.cell);
-      }
-      updateTotals(g);
     });
     if (origApplyTP) origApplyTP(tps);
   };
@@ -1772,8 +2116,8 @@ obManagedReady(obManagedInitDelegates);
   // ТЧ на форме все подписки замыкали бы последний грид — классический баг var
   // в цикле).
   function setupGrid(div) {
+    if (div._obGridState) return;
     var tpName = div.getAttribute("data-sg-tp");
-    if (window._obGrids[tpName]) return;
 
     // ВАЖНО: jsJSON от nil-слайса даёт литерал "null", а не "[]". Без защиты
     // от null для пустой табличной части (новый документ) JSON.parse("null")
@@ -1816,7 +2160,9 @@ obManagedReady(obManagedInitDelegates);
       syncColumnCellResize: true,
       enableTextSelectionOnCells: true,
       enableAddRow: false,
-      multiSelect: true,
+      // RowSelectionModel не поставляется с vendored SlickGrid. Не обещаем
+      // множественное выделение, пока реальная selection model не установлена.
+      multiSelect: false,
       // ВАЖНО: footer-строке нужны ОБЕ опции — createFooterRow создаёт DOM,
       // showFooterRow показывает его. Только showFooterRow без createFooterRow
       // роняет рендер (обращение к несуществующему _footerRowScroller[0]).
@@ -1827,16 +2173,30 @@ obManagedReady(obManagedInitDelegates);
 
     var grid = new Slick.Grid(div, dataView, columns, options);
 
-    // Регистрируем грид СРАЗУ после создания — ДО подписок ниже. Если что-то в
-    // подписках бросит исключение, грид всё равно в window._obGrids, и кнопки
-    // (добавить/удалить строку, подбор, сериализация) продолжат работать.
-    window._obGrids[tpName] = {
+    // Каждый DOM-host инициализируется отдельно: readonly summary должна
+    // оставаться видимой рядом с writable placement той же табличной части.
+    // Канонический реестр, однако, всегда указывает на writable grid независимо
+    // от DOM-порядка; только он участвует в изменениях и сериализации.
+    var gridState = {
       grid: grid, dataView: dataView, columns: columns,
-      columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly
+      columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly,
+      tpName: tpName
     };
+    div._obGridState = gridState;
+    window._obGridViews.push(gridState);
+    var registered = window._obGrids[tpName];
+    if (!registered || (!readOnly && registered.readOnly)) {
+      window._obGrids[tpName] = gridState;
+    }
+    // activeCell остаётся у нескольких SlickGrid одновременно. Запоминаем
+    // именно пользовательский контакт с конкретным DOM-хостом.
+    if (!readOnly) {
+      div.addEventListener("mousedown", function() { rememberActiveGrid(tpName); }, true);
+      div.addEventListener("focusin", function() { rememberActiveGrid(tpName); });
+    }
 
    try {
-    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(window._obGrids[tpName]); });
+    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(gridState); });
     dataView.onRowsChanged.subscribe(function(e, args) { grid.invalidateRows(args.rows); grid.render(); });
 
     // Сортировка по клику на заголовок (колонки sortable). Порядок ОТОБРАЖЕНИЯ;
@@ -1893,7 +2253,7 @@ obManagedReady(obManagedInitDelegates);
           grid.invalidateRow(args.row); grid.render();
         }
       }
-      updateTotals(window._obGrids[tpName]);
+      updateTotals(gridState);
     });
 
     // Ячейка не прошла проверку (например, в колонке-ссылке набрано то, чего нет
@@ -1904,20 +2264,14 @@ obManagedReady(obManagedInitDelegates);
       if (msg && window.obFlash) window.obFlash(msg, "err");
     });
 
-    // Delete key removes selected rows
+    // Delete uses the same mutation path as the toolbar. This keeps the
+    // no-SelectionModel fallback and row event ordering identical.
     grid.onKeyDown.subscribe(function(e) {
-      if (readOnly) return;
-      if (e.key === 'Delete' && !grid.getEditorLock().isActive()) {
-        var sel = [];
-        try { sel = grid.getSelectedRows() || []; } catch (er) { sel = []; }
-        if (!sel.length) { var ac = grid.getActiveCell(); if (ac) sel = [ac.row]; }
-        if (sel.length) {
-          var its = dataView.getItems();
-          var toRemove = sel.map(function(r) { return its[r]; }).filter(Boolean);
-          for (var i = 0; i < toRemove.length; i++) dataView.deleteItem(toRemove[i].id);
-          window._obFormDirty = true;
-          grid.invalidate();
-          obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки");
+      var modalOpen = managedHasBlockingModal();
+      if (!readOnly && !modalOpen && !e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey &&
+          e.key === 'Delete' && !grid.getEditorLock().isActive()) {
+        if (window.obGridDelRow(tpName)) {
+          e.preventDefault();
           e.stopImmediatePropagation();
         }
       }
@@ -2002,7 +2356,7 @@ obManagedReady(obManagedInitDelegates);
 
     // Растягиваем колонки на ширину контейнера, если грид уже виден. Для ТЧ на
     // скрытой вкладке ресайз отложится до её показа (см. хук на .managed-tab-btn).
-    resizeGrid(window._obGrids[tpName]);
+    resizeGrid(gridState);
   }
 
   // Initialize all grids

@@ -33,12 +33,13 @@ func addEntityTPEventContext(
 	r *http.Request,
 	entity *metadata.Entity,
 	form *metadata.FormModule,
+	authorities map[string]managedFormTableAuthority,
 	target browserFormEventTarget,
 	obj *runtime.Object,
 	vars map[string]any,
 ) error {
 	read := func(key string) ([]string, bool) { return formPostValues(r, key) }
-	allowed, err := editableFormTables(form, entity.TableParts)
+	allowed, err := editableFormTablesFromAuthorities(form, entity.TableParts, authorities)
 	if err != nil {
 		return err
 	}
@@ -68,31 +69,22 @@ func postFormOnlyRequest(r *http.Request) *http.Request {
 	return copy
 }
 
-// editableFormTables maps a rendered DataPath to the shared canonical
-// metadata for entity/processor table parts and form-local ValueTables.
-// Readonly ancestors make the complete subtree readonly as well.
-func editableFormTables(form *metadata.FormModule, declared []metadata.TablePart) (map[string]metadata.FormTableDefinition, error) {
+func editableFormTablesFromAuthorities(
+	form *metadata.FormModule,
+	declared []metadata.TablePart,
+	authorities map[string]managedFormTableAuthority,
+) (map[string]metadata.FormTableDefinition, error) {
 	definitions, err := metadata.FormTableDefinitions(form, declared)
 	if err != nil {
 		return nil, err
 	}
 	allowed := make(map[string]metadata.FormTableDefinition)
-	if form == nil {
-		return allowed, nil
+	for _, definition := range definitions {
+		authority := authorities[definition.Name]
+		if authority.element != nil {
+			allowed[dpFieldName(authority.element.DataPath)] = definition
+		}
 	}
-	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
-		el := visit.element
-		if el.Kind != metadata.FormElementTablePart || visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 {
-			return
-		}
-		formName := dpFieldName(el.DataPath)
-		for _, definition := range definitions {
-			if strings.EqualFold(definition.Name, formName) {
-				allowed[formName] = definition
-				break
-			}
-		}
-	})
 	return allowed, nil
 }
 

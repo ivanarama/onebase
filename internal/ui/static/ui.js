@@ -238,6 +238,21 @@ function obInitFormDirty() {
       return '';
     }
   });
+  // Auto-generated entity forms do not load managed.js, so their documented
+  // Escape shortcut has to live here. Let an open picker consume Escape first.
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented || (e.key !== 'Escape' && e.keyCode !== 27) || obHasBlockingModal()) return;
+    var cancel = document.querySelector('[data-ob-popup-cancel], [data-ob-close-tab], a.btn-cancel');
+    if (!cancel) return;
+    if (window._obFormDirty && !confirm('Данные были изменены и не записаны. Закрыть форму?')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    cancel.click();
+  }, true);
 }
 obReady(obInitFormDirty);
 
@@ -651,7 +666,13 @@ obReady(function () {
 var _listSel = null;
 
 function listSel() {
-  if (_listSel && !document.contains(_listSel)) _listSel = null;
+  if (_listSel && (!document.contains(_listSel) || !obElementVisible(_listSel))) {
+    var stale = _listSel;
+    _listSel = null;
+    listSelPaint(stale, false);
+    stale.setAttribute('aria-selected', 'false');
+    stale.setAttribute('tabindex', '-1');
+  }
   return _listSel;
 }
 
@@ -685,12 +706,54 @@ function listSelPaint(el, on) {
 // Единственное место, где меняется выделение: снимает подсветку с прежней
 // строки, ставит на новую (null — снять выделение) и приводит кнопку
 // «Действия» в соответствие новому состоянию.
-function listSetSel(tr) {
+function listSetSel(tr, options) {
   var prev = listSel();
-  if (prev && prev !== tr) listSelPaint(prev, false);
+  if (prev && prev !== tr) {
+    listSelPaint(prev, false);
+    prev.setAttribute('aria-selected', 'false');
+    prev.setAttribute('tabindex', '-1');
+  }
+  document.querySelectorAll('[data-ob-list-row]').forEach(function (row) {
+    if (row === tr) return;
+    row.setAttribute('aria-selected', 'false');
+    row.setAttribute('tabindex', '-1');
+  });
   _listSel = tr || null;
-  if (_listSel) listSelPaint(_listSel, true);
+  if (_listSel) {
+    listSelPaint(_listSel, true);
+    _listSel.setAttribute('aria-selected', 'true');
+    _listSel.setAttribute('tabindex', '0');
+    if (options && options.focus && _listSel.focus) {
+      try { _listSel.focus({ preventScroll: true }); } catch (_) { _listSel.focus(); }
+    }
+  } else {
+    var first = options && options.root
+      ? obListRowsIn(options.root)[0]
+      : obListRows()[0];
+    if (first) {
+      first.setAttribute('tabindex', '0');
+      if (options && options.focus && first.focus) {
+        try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
+      }
+    }
+  }
   listSyncActionsBtn();
+}
+
+function obListRowsIn(root) {
+  if (!root || !root.querySelectorAll) return [];
+  return Array.prototype.slice.call(root.querySelectorAll('[data-ob-list-row]')).filter(obElementVisible);
+}
+
+// A live refresh replaces every row node. Even without a selected row, each
+// refreshed list must keep one Tab entry point (the first visible row).
+function obEnsureListRovingTabindex(root) {
+  var rows = obListRowsIn(root);
+  var selected = listSel();
+  var current = selected && root.contains && root.contains(selected) ? selected : null;
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].setAttribute('tabindex', rows[i] === (current || rows[0]) ? '0' : '-1');
+  }
 }
 
 // Пока строка не выбрана, кнопка «Действия» приглушена, но остаётся на месте и
@@ -711,7 +774,7 @@ function listSyncActionsBtn() {
 // Возврат выделения после перерисовки списка: та же запись опознаётся по
 // data-open-url (в нём id, у всех трёх видов строк — таблица, плитка, дерево).
 // Записи не стало в выдаче — выделение снимается, а не остаётся на призраке.
-function listRestoreSel(key, root) {
+function listRestoreSel(key, root, options) {
   var next = null;
   if (key) {
     var rows = (root || document).querySelectorAll('[data-ob-list-row]');
@@ -719,7 +782,19 @@ function listRestoreSel(key, root) {
       if (rows[i].getAttribute('data-open-url') === key) { next = rows[i]; break; }
     }
   }
-  listSetSel(next);
+  listSetSel(next, { focus: !!(options && options.focus), root: root || document });
+  obEnsureListRovingTabindex(root || document);
+}
+
+function obReplaceLiveListContents(cur, fresh) {
+  if (!cur || !fresh) return;
+  var selected = listSel();
+  var selMine = !!(selected && cur.contains(selected));
+  var restoreFocus = !!(selMine && document.activeElement && cur.contains(document.activeElement));
+  var selKey = selMine ? listSelKey() : '';
+  cur.innerHTML = fresh.innerHTML;
+  if (selMine) listRestoreSel(selKey, cur, { focus: restoreFocus });
+  else obEnsureListRovingTabindex(cur);
 }
 
 function listSelKey() {
@@ -728,14 +803,523 @@ function listSelKey() {
 }
 
 function listRowClick(e, tr) {
-  if (e.target.closest('a,button')) return;
-  listSetSel(tr);
+  if (obIsInteractiveTarget(e.target)) return;
+  listSetSel(tr, { focus: true });
 }
 
 function listRowDblClick(e, tr) {
-  if (e.target.closest('a,button')) return;
+  if (obIsInteractiveTarget(e.target)) return;
+  listActivateRow(tr);
+}
+
+function listActivateRow(tr) {
+  if (!tr) return;
   if (tr.dataset.isFolder === '1') window.location.href = tr.dataset.folderUrl;
   else listOpen(tr.dataset.openUrl);
+}
+
+// Встроенные горячие клавиши — привычные по 1С. Живут в ui.js, потому что нужны
+// и на списках, и на формах — как автогенерируемых, так и управляемых
+// (managed.js грузится только на вторых).
+//
+//   Форма:  Ctrl+Enter — «Провести и закрыть» (нет такой кнопки — «Записать»),
+//           Ctrl+S — «Записать».
+//   Список: Ins — создать, ↑/↓ — курсор по строкам, Enter/F2 — открыть,
+//           Ctrl+F — строка поиска. Delete (пометить на удаление) — отдельно.
+//
+// Буквенные сочетания разбираем по e.code, а не по e.key: при русской раскладке
+// Ctrl+S приходит как «ы», и проверка по e.key просто не сработала бы.
+function obFormActionButton(values) {
+  for (var i = 0; i < values.length; i++) {
+    var btn = document.querySelector('button[name="_action"][value="' + values[i] + '"]');
+    if (btn && !btn.disabled) return btn;
+  }
+  return null;
+}
+
+function obIsTypingTarget(el) {
+  if (!el) return false;
+  if (el.isContentEditable || (el.closest && el.closest('[contenteditable]:not([contenteditable="false"])'))) return true;
+  if (!el.tagName) return false;
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+}
+
+function obIsInteractiveTarget(el) {
+  if (!el || !el.closest) return false;
+  return !!el.closest('a[href],button,input,textarea,select,option,summary,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="link"],[role="menuitem"]');
+}
+
+function obHasBlockingModal() {
+  return !!(document.getElementById('_ref-picker-modal') ||
+    document.getElementById('_item-picker-modal') ||
+    document.getElementById('_ref-create-modal'));
+}
+window.obHasBlockingModal = obHasBlockingModal;
+
+function obElementVisible(el) {
+  if (!el) return false;
+  for (var cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
+    if (cur.hidden || cur.getAttribute('aria-hidden') === 'true' || cur.style.display === 'none' || cur.style.visibility === 'hidden') return false;
+    if (window.getComputedStyle) {
+      var style = window.getComputedStyle(cur);
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+    }
+  }
+  return true;
+}
+window.obElementVisible = obElementVisible;
+
+function obNormalizeFormHotkey(value) {
+  var key = String(value || '').trim().toUpperCase();
+  if (key === 'F2' || key === 'F4' || key === 'F7' || key === 'F8' || key === 'F9' || key === 'F10') return key;
+  return '';
+}
+window.obNormalizeFormHotkey = obNormalizeFormHotkey;
+
+function obFormHotkeyCandidateEnabled(candidate, root) {
+  if (!candidate || typeof candidate.click !== 'function') return false;
+  for (var cur = candidate; cur && cur.nodeType === 1; cur = cur.parentElement) {
+    if (cur.disabled === true || cur.inert === true) return false;
+    if (cur.getAttribute) {
+      if (String(cur.getAttribute('aria-disabled') || '').trim().toLowerCase() === 'true') return false;
+      if (cur.hasAttribute && cur.hasAttribute('inert')) return false;
+      // matches(':disabled') follows the browser's fieldset rules, including
+      // controls disabled by an ancestor rather than by their own property.
+      if (cur.matches) {
+        try { if (cur.matches(':disabled')) return false; } catch (_) {}
+      }
+      // Minimal DOM implementations may not support :disabled. Fail closed for
+      // an explicitly disabled fieldset there as well.
+      if (String(cur.tagName || '').toUpperCase() === 'FIELDSET' &&
+          (cur.disabled === true || cur.hasAttribute('disabled'))) return false;
+    }
+    if (cur === root) break;
+  }
+  return true;
+}
+
+// obResolveActionableFormHotkey is the single authority for both dispatching
+// a form hotkey and deciding whether that hotkey suppresses a built-in table
+// action. It deliberately ignores the rest of the document: a stale, hidden,
+// detached or background-form button must never steal F9 from the active form.
+function obResolveActionableFormHotkey(key) {
+  var wanted = obNormalizeFormHotkey(key);
+  if (!wanted) return null;
+  var form = document.getElementById('main-form');
+  if (!form || !document.contains(form)) return null;
+  var candidates = form.querySelectorAll('[data-ob-hotkey]');
+  for (var i = 0; i < candidates.length; i++) {
+    var candidate = candidates[i];
+    if (obNormalizeFormHotkey(candidate.getAttribute('data-ob-hotkey')) !== wanted) continue;
+    if (!document.contains(candidate) || !form.contains(candidate)) continue;
+    // Managed buttons without an official click action are visual decoration:
+    // clicking them is a no-op and must not suppress F9's table-row copy.
+    if (!candidate.getAttribute || !String(candidate.getAttribute('data-ob-fire-click') || '').trim()) continue;
+    if (!obElementVisible(candidate) || !obFormHotkeyCandidateEnabled(candidate, form)) continue;
+    return candidate;
+  }
+  return null;
+}
+window.obResolveActionableFormHotkey = obResolveActionableFormHotkey;
+
+function obListRows() {
+  return Array.prototype.slice.call(document.querySelectorAll('[data-ob-list-row]')).filter(obElementVisible);
+}
+
+function obListFocusedRow() {
+  var active = document.activeElement;
+  var row = active && active.closest ? active.closest('[data-ob-list-row]') : null;
+  return row && document.contains(row) && obElementVisible(row) ? row : null;
+}
+
+function obListCurrentRow() {
+  return obListFocusedRow() || listSel();
+}
+
+function obListCanMarkDelete(row) {
+  var cfg = obListConfig();
+  return !!(row && row.dataset && cfg.canDelete === true &&
+    row.dataset.predefined !== '1' && String(row.dataset.markUrl || '').trim());
+}
+
+function obHandleListDeleteShortcut(e) {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || obIsInteractiveTarget(e.target)) return;
+  if (obHasBlockingModal() || e.key !== 'Delete') return;
+  var sel = obListCurrentRow();
+  // Fail closed до preventDefault/confirm/network: предопределённая строка,
+  // отсутствующее право или пустой endpoint не должны даже открыть confirm.
+  if (!obListCanMarkDelete(sel)) return;
+  e.preventDefault();
+  if (listSel() !== sel) listSetSel(sel);
+  listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+}
+
+function obInitListFocusSelection() {
+  if (window.__obListFocusSelection) return;
+  window.__obListFocusSelection = true;
+  // Строка сама является focusable option. Когда пользователь попал на неё
+  // клавишей Tab, фокус сразу становится тем же текущим элементом, что и клик:
+  // Enter/F2 работают без предварительной стрелки, а ArrowDown идёт ко второй
+  // строке, а не повторно выбирает первую.
+  document.addEventListener('focusin', function (e) {
+    if (!e.target || !e.target.closest) return;
+    var row = e.target.closest('[data-ob-list-row]');
+    if (row && document.contains(row) && obElementVisible(row) && listSel() !== row) listSetSel(row);
+  });
+}
+
+function obListMoveCursor(delta) {
+  var rows = obListRows();
+  if (!rows.length) return false;
+  // Читаем через listSel(), пишем через listSetSel(): после живого обновления
+  // списка узел прежней строки мог быть отцеплен от документа, а сама смена
+  // выделения обязана пройти через единственную точку (она же гасит/включает
+  // кнопку «Действия»).
+  var cur = obListCurrentRow();
+  var idx = cur ? rows.indexOf(cur) : -1;
+  var next = idx < 0 ? (delta > 0 ? 0 : rows.length - 1) : idx + delta;
+  if (next < 0 || next >= rows.length) return true; // упёрлись в край — клавишу всё равно съедаем
+  listSetSel(rows[next], { focus: true });
+  if (rows[next].scrollIntoView) rows[next].scrollIntoView({ block: 'nearest' });
+  return true;
+}
+
+function obHasActionableHotkey(key) {
+  return !!obResolveActionableFormHotkey(key);
+}
+
+function obDOMTableFromTarget(el) {
+  return el && el.closest ? el.closest('table[data-ob-dom-table]') : null;
+}
+
+function obSlickGridFromTarget(el) {
+  return el && el.closest ? el.closest('.ob-grid[data-sg-tp]') : null;
+}
+
+function obDOMTableReadOnly(table) {
+  // Fail closed: a DOM table is writable only when the server rendered an
+  // explicit marker. This also covers a missing CanWrite value safely.
+  return !table || table.getAttribute('data-ob-readonly') !== '0';
+}
+
+function obDOMSetCurrentRow(table, row, focus) {
+  if (!table) return;
+  var body = table.tBodies && table.tBodies[0];
+  if (!body) return;
+  if (row && row.parentElement !== body) row = null;
+  var tabRow = row || (body.rows.length ? body.rows[0] : null);
+  Array.prototype.forEach.call(body.rows, function (item) {
+    item.setAttribute('aria-selected', item === row ? 'true' : 'false');
+    item.setAttribute('tabindex', item === tabRow ? '0' : '-1');
+  });
+  table._obCurrentRow = row || null;
+  window._obActiveDOMTable = table;
+  window._obActiveGridName = '';
+  if (row && focus && row.focus) {
+    try { row.focus({ preventScroll: true }); } catch (_) { row.focus(); }
+  }
+}
+window.obDOMSetCurrentRow = obDOMSetCurrentRow;
+
+function obDOMPrepareRow(table, row) {
+  if (!table || !row) return;
+  if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '-1');
+  if (!row.hasAttribute('aria-selected')) row.setAttribute('aria-selected', 'false');
+  if (obDOMTableReadOnly(table)) {
+    row.querySelectorAll('input,select,textarea,button').forEach(function (control) {
+      if (control.hasAttribute && (control.hasAttribute('data-ob-ref-current') || control.hasAttribute('data-ob-ref-current-self'))) return;
+      control.disabled = true;
+    });
+  }
+}
+window.obDOMPrepareRow = obDOMPrepareRow;
+
+function obDOMActiveTable(target) {
+  var source = target || document.activeElement;
+  var direct = obDOMTableFromTarget(source);
+  if (direct) {
+    // A concrete DOM-table context supersedes every previously active
+    // SlickGrid, even when this table is currently hidden or detached.
+    window._obActiveGridName = '';
+    if (!document.contains(direct) || !obElementVisible(direct)) {
+      if (window._obActiveDOMTable === direct) window._obActiveDOMTable = null;
+      return null;
+    }
+    window._obActiveDOMTable = direct;
+    return direct;
+  }
+  // A concrete SlickGrid target is authoritative. Never apply a shortcut to
+  // an unrelated DOM table merely because it was active earlier.
+  if (obSlickGridFromTarget(source)) {
+    window._obActiveDOMTable = null;
+    return null;
+  }
+  var remembered = window._obActiveDOMTable;
+  if (remembered && document.contains(remembered) && obElementVisible(remembered)) return remembered;
+  window._obActiveDOMTable = null;
+  return null;
+}
+
+function obDOMCurrentRow(table) {
+  if (!table || !table.tBodies || !table.tBodies[0]) return null;
+  var body = table.tBodies[0];
+  var active = document.activeElement;
+  var direct = active && active.closest ? active.closest('tr') : null;
+  if (direct && direct.parentElement === body) return direct;
+  if (table._obCurrentRow && table._obCurrentRow.parentElement === body) return table._obCurrentRow;
+  var selected = table.querySelector('tbody ._tp-sel:checked');
+  var selectedRow = selected && selected.closest ? selected.closest('tr') : null;
+  return selectedRow && selectedRow.parentElement === body ? selectedRow : null;
+}
+
+function obDOMCommit(table) {
+  var active = document.activeElement;
+  if (!active || !table.contains(active) || !/^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName || '')) return true;
+  if (active.disabled) return true;
+  if (active.checkValidity && !active.checkValidity()) {
+    if (active.reportValidity) active.reportValidity();
+    return false;
+  }
+  if (active.blur) active.blur();
+  return true;
+}
+
+function obDOMReindex(table) {
+  if (!table || !table.tBodies || !table.tBodies[0]) return;
+  var tpName = table.getAttribute('data-ob-dom-table') || '';
+  var prefix = 'tp.' + tpName + '.';
+  Array.prototype.forEach.call(table.tBodies[0].rows, function (row, index) {
+    row.querySelectorAll('[name]').forEach(function (control) {
+      var name = control.getAttribute('name') || '';
+      if (name.indexOf(prefix) !== 0) return;
+      var suffix = name.slice(prefix.length);
+      var dot = suffix.indexOf('.');
+      if (dot >= 0) control.setAttribute('name', prefix + index + suffix.slice(dot));
+    });
+  });
+}
+window.obDOMReindex = obDOMReindex;
+
+function obDOMRefreshTotals(table) {
+  if (typeof recalcTpTotals !== 'function') return;
+  var number = table.querySelector('tbody [data-tp-num]');
+  if (number) recalcTpTotals(number);
+}
+
+function obDOMNotifyMutation(table, kind) {
+  if (!table || window._obDOMDeferRowEvent) return;
+  var attr = kind === 'add' ? 'data-ob-rowadd' : 'data-ob-rowdel';
+  if (table.getAttribute(attr) !== '1' || typeof window.obFire !== 'function') return;
+  var element = table.getAttribute('data-ob-element') || table.getAttribute('data-ob-dom-table') || '';
+  var tpName = table.getAttribute('data-ob-dom-table') || '';
+  window.obFire(element, kind === 'add' ? 'ПриДобавленииСтроки' : 'ПриУдаленииСтроки', { _tp: tpName });
+}
+window.obDOMNotifyMutation = obDOMNotifyMutation;
+
+function obDOMAddButton(table) {
+  var tpName = table.getAttribute('data-ob-dom-table') || '';
+  var buttons = document.querySelectorAll('[data-ob-add-tp-row],[data-ob-add-tp]');
+  for (var i = 0; i < buttons.length; i++) {
+    var owner = buttons[i].getAttribute('data-tp-name') || buttons[i].getAttribute('data-ob-add-tp') || '';
+    // Duplicate readonly/writable placements share the same logical table
+    // name. The readonly add button is disabled and must not shadow the sole
+    // writable control merely because it appears first in DOM order.
+    if (owner === tpName && !buttons[i].disabled) return buttons[i];
+  }
+  return null;
+}
+
+function obDOMFinishMutation(table, row, focusControl) {
+  obDOMReindex(table);
+  obDOMRefreshTotals(table);
+  window._obFormDirty = true;
+  var body = table && table.tBodies && table.tBodies[0];
+  if (!row || !body || row.parentElement !== body) {
+    obDOMSetCurrentRow(table, null, false);
+    return;
+  }
+  obDOMPrepareRow(table, row);
+  obDOMSetCurrentRow(table, row, !focusControl);
+  if (focusControl) {
+    var control = row.querySelector('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)');
+    if (control && control.focus) control.focus();
+    else obDOMSetCurrentRow(table, row, true);
+  }
+}
+window.obDOMFinishMutation = obDOMFinishMutation;
+
+function obDOMAddRow(table) {
+  if (!obDOMCommit(table)) return;
+  var button = obDOMAddButton(table);
+  var body = table.tBodies && table.tBodies[0];
+  if (!button || button.disabled || !body) return;
+  var count = body.rows.length;
+  button.click();
+  if (body.rows.length <= count) return;
+  obDOMFinishMutation(table, body.rows[body.rows.length - 1], true);
+}
+
+function obDOMCopyControlValue(source, target) {
+  if (source.type === 'checkbox' || source.type === 'radio') target.checked = source.checked;
+  else target.value = source.value;
+}
+
+function obDOMCopyRow(table) {
+  if (!obDOMCommit(table)) return;
+  var source = obDOMCurrentRow(table);
+  var body = table.tBodies && table.tBodies[0];
+  var button = obDOMAddButton(table);
+  if (!source || !body || !button || button.disabled) return;
+  var count = body.rows.length;
+  var wasDeferred = window._obDOMDeferRowEvent;
+  window._obDOMDeferRowEvent = true;
+  try { button.click(); } finally { window._obDOMDeferRowEvent = wasDeferred; }
+  if (body.rows.length <= count) return;
+  var copy = body.rows[body.rows.length - 1];
+  var from = source.querySelectorAll('input[name],select[name],textarea[name]');
+  var to = copy.querySelectorAll('input[name],select[name],textarea[name]');
+  for (var i = 0; i < from.length && i < to.length; i++) obDOMCopyControlValue(from[i], to[i]);
+  copy.className = source.className;
+  if (source.cells && copy.cells) {
+    for (var cell = 0; cell < source.cells.length && cell < copy.cells.length; cell++) copy.cells[cell].className = source.cells[cell].className;
+  }
+  if (source.nextSibling) body.insertBefore(copy, source.nextSibling);
+  obDOMFinishMutation(table, copy, true);
+  obDOMNotifyMutation(table, 'add');
+}
+
+function obDOMMoveRow(table, delta) {
+  if (!obDOMCommit(table)) return;
+  var row = obDOMCurrentRow(table);
+  var body = table.tBodies && table.tBodies[0];
+  if (!row || !body) return;
+  var rows = Array.prototype.slice.call(body.rows);
+  var index = rows.indexOf(row);
+  var next = index + delta;
+  if (index < 0 || next < 0 || next >= rows.length) return;
+  if (delta < 0) body.insertBefore(row, rows[next]);
+  else body.insertBefore(row, rows[next].nextSibling);
+  obDOMFinishMutation(table, row, false);
+}
+
+function obDOMDeleteRows(table) {
+  if (!obDOMCommit(table)) return;
+  var body = table.tBodies && table.tBodies[0];
+  if (!body) return;
+  var rows = Array.prototype.slice.call(body.rows);
+  var checked = Array.prototype.slice.call(body.querySelectorAll('._tp-sel:checked')).map(function (item) { return item.closest('tr'); }).filter(function (row) {
+    return row && row.parentElement === body;
+  });
+  var current = obDOMCurrentRow(table);
+  var remove = checked.length ? checked : (current ? [current] : []);
+  if (!remove.length) return;
+  var currentIndex = current ? rows.indexOf(current) : rows.indexOf(remove[0]);
+  var wasDeferred = window._obDOMDeferRowEvent;
+  window._obDOMDeferRowEvent = true;
+  try {
+    remove.forEach(function (row) {
+      var button = row.querySelector('[data-ob-remove-row],.del-btn');
+      if (button && button.click) button.click();
+      else row.remove();
+    });
+  } finally { window._obDOMDeferRowEvent = wasDeferred; }
+  var nextRows = Array.prototype.slice.call(body.rows);
+  var next = nextRows.length ? nextRows[Math.min(Math.max(currentIndex, 0), nextRows.length - 1)] : null;
+  obDOMFinishMutation(table, next, false);
+  obDOMNotifyMutation(table, 'delete');
+}
+
+function obHandleDOMTableShortcut(e) {
+  var direct = obDOMTableFromTarget(e.target);
+  // Remembered table shortcuts are convenient after its focus sink, but never
+  // steal keys from an unrelated interactive control.
+  if (!direct && (obSlickGridFromTarget(e.target) || obIsInteractiveTarget(e.target))) return false;
+  if (direct && e.target && e.target.closest && e.target.closest('a[href],button,summary,[contenteditable]:not([contenteditable="false"])')) return false;
+  var table = obDOMActiveTable(e.target);
+  if (!table || obDOMTableReadOnly(table)) return false;
+  var action = null;
+  if (!e.ctrlKey && e.key === 'Insert') action = function () { obDOMAddRow(table); };
+  else if (!e.ctrlKey && e.key === 'F9' && !obHasActionableHotkey('F9')) action = function () { obDOMCopyRow(table); };
+  else if (e.ctrlKey && e.key === 'ArrowUp') action = function () { obDOMMoveRow(table, -1); };
+  else if (e.ctrlKey && e.key === 'ArrowDown') action = function () { obDOMMoveRow(table, 1); };
+  else if (!e.ctrlKey && e.key === 'Delete' && (!obIsTypingTarget(e.target) || (e.target.matches && e.target.matches('._tp-sel')))) action = function () { obDOMDeleteRows(table); };
+  if (!action) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  action();
+  return true;
+}
+
+function obInitDOMTables() {
+  document.querySelectorAll('table[data-ob-dom-table]').forEach(function (table) {
+    var body = table.tBodies && table.tBodies[0];
+    if (!body) return;
+    Array.prototype.forEach.call(body.rows, function (row) { obDOMPrepareRow(table, row); });
+    if (body.rows.length) body.rows[0].setAttribute('tabindex', '0');
+  });
+  function remember(e) {
+    var table = obDOMTableFromTarget(e.target);
+    if (!table) return;
+    var row = e.target.closest && e.target.closest('tr');
+    if (row && row.parentElement === (table.tBodies && table.tBodies[0])) obDOMSetCurrentRow(table, row, false);
+    else obDOMSetCurrentRow(table, null, false);
+  }
+  document.addEventListener('mousedown', remember, true);
+  document.addEventListener('focusin', remember);
+}
+
+function obInitKeyboardShortcuts() {
+  if (window.__obKeyShortcuts) return;
+  window.__obKeyShortcuts = true;
+  obInitListFocusSelection();
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
+    // Модальный подбор забирает клавиатуру себе.
+    if (obHasBlockingModal()) return;
+
+    if (obHandleDOMTableShortcut(e)) return;
+
+    if (e.ctrlKey) {
+      if (e.key === 'Enter') {
+        var go = obFormActionButton(['post_and_close', '']);
+        if (go) { e.preventDefault(); go.click(); }
+        return;
+      }
+      if (e.code === 'KeyS') {
+        var write = obFormActionButton(['']);
+        if (write) { e.preventDefault(); write.click(); }
+        return;
+      }
+      if (e.code === 'KeyF') {
+        var q = document.getElementById('ob-list-config') && document.getElementById('ob-list-search');
+        if (q) { e.preventDefault(); q.focus(); q.select(); }
+      }
+      return;
+    }
+
+    // Ввод текста важнее списковых клавиш, включая Insert: выбранная ранее
+    // строка списка не должна превращать Insert в действие над данными,
+    // пока пользователь редактирует поиск или другое поле.
+    if (obIsInteractiveTarget(e.target)) return;
+    if (e.key === 'Insert') {
+      var create = document.querySelector('[data-ob-list-create]');
+      if (create) { e.preventDefault(); create.click(); }
+      return;
+    }
+    if (!obListRows().length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (obListMoveCursor(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
+      return;
+    }
+    var sel = obListCurrentRow();
+    if ((e.key === 'Enter' || e.key === 'F2') && sel) {
+      e.preventDefault();
+      if (listSel() !== sel) listSetSel(sel);
+      if (e.key === 'F2') listOpen(sel.dataset.openUrl);
+      else listActivateRow(sel);
+    }
+  });
+  document.addEventListener('keydown', obHandleListDeleteShortcut);
 }
 
 function initTreeToggle(btn) {
@@ -750,9 +1334,11 @@ function toggleTreeNode(btn) {
   var fid = btn.dataset.folderId;
   var expanded = btn.getAttribute('data-expanded') === '1';
   if (expanded) {
+    var selected = listSel();
     treeSetVisible(fid, false);
     btn.setAttribute('data-expanded', '0');
     btn.textContent = '▶';
+    if (selected && !obElementVisible(selected)) listSetSel(tr, { focus: true });
     return;
   }
   if (btn.getAttribute('data-loaded') === '1') {
@@ -790,7 +1376,8 @@ function treeSetVisible(parentId, visible) {
     row.style.display = visible ? '' : 'none';
     var childId = row.dataset.treeId;
     if (childId) {
-      treeSetVisible(childId, visible && row.dataset.isFolder !== '1' || row.querySelector('.tree-toggle[data-expanded="1"]') !== null);
+      var expanded = row.querySelector('.tree-toggle[data-expanded="1"]') !== null;
+      treeSetVisible(childId, visible && (row.dataset.isFolder !== '1' || expanded));
     }
   });
 }
@@ -832,6 +1419,11 @@ function makeTreeRow(row) {
   tr.dataset.activityShowUrl = row.activity_show_url || '';
   tr.dataset.openUrl = row.open_url || '';
   tr.setAttribute('data-ob-list-row', '');
+  tr.setAttribute('tabindex', '-1');
+  tr.setAttribute('aria-selected', 'false');
+  var rowShortcuts = 'ArrowUp ArrowDown Enter F2';
+  if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';
+  tr.setAttribute('aria-keyshortcuts', rowShortcuts);
   var cells = row.cells || [];
   var treeCell = row.tree_cell || 0;
   for (var i = 0; i < cells.length; i++) {
@@ -1097,17 +1689,12 @@ function obInitFeed() {
 
 obReady(function () {
   obInitListDelegates();
+  obInitDOMTables();
+  obInitKeyboardShortcuts();
+  var firstListRow = obListRows()[0];
+  if (firstListRow) firstListRow.setAttribute('tabindex', '0');
   listSyncActionsBtn();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
-  document.addEventListener('keydown', function (e) {
-    // listSel(), а не _listSel: после живого обновления списка на экране может
-    // не быть подсветки, и пометка на удаление по клавише улетала бы в строку,
-    // о выборе которой пользователь уже не помнит.
-    var sel = listSel();
-    if (e.key === 'Delete' && sel && obListConfig().canDelete) {
-      listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
-    }
-  });
   obInitFeed();
 });
 
@@ -1768,7 +2355,17 @@ function obInitFormDelegates() {
     if (removeRow) {
       e.preventDefault();
       var row = removeRow.closest(removeRow.getAttribute('data-ob-remove-row') || 'tr');
-      if (row) row.remove();
+      if (row) {
+        var domTable = row.closest('table[data-ob-dom-table]');
+        var body = row.parentElement;
+        var index = row.sectionRowIndex;
+        row.remove();
+        if (domTable && body) {
+          var next = body.rows && body.rows.length ? body.rows[Math.min(Math.max(index, 0), body.rows.length - 1)] : null;
+          obDOMFinishMutation(domTable, next, false);
+          obDOMNotifyMutation(domTable, 'delete');
+        }
+      }
       return;
     }
     var addTp = e.target.closest('[data-ob-add-tp-row]');
@@ -1777,6 +2374,8 @@ function obInitFormDelegates() {
       var tpName = addTp.getAttribute('data-tp-name') || '';
       var tbody = document.getElementById('tp-body-' + tpName);
       addTpRow(tpName, obSplitDataList(addTp.getAttribute('data-tp-fields')), obSplitDataList(addTp.getAttribute('data-tp-num-fields')), tbody ? tbody.rows.length : 0);
+      var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
+      if (table) obDOMNotifyMutation(table, 'add');
       return;
     }
     var fileClick = e.target.closest('[data-ob-file-click]');
@@ -1823,8 +2422,10 @@ function obTPRefMeta() {
   return window._tpRefMeta || {};
 }
 
-function addTpRow(tpName, fields, numFields, idx) {
-  var tbody = document.getElementById('tp-body-' + tpName);
+function addTpRow(tpName, fields, numFields, idx, tbodyOverride) {
+  var tbody = tbodyOverride || document.getElementById('tp-body-' + tpName);
+  var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
+  var domWritable = !!(table && !obDOMTableReadOnly(table));
   var tr = document.createElement('tr');
   var refOpts = (obTPRefOpts()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
@@ -1898,9 +2499,14 @@ function addTpRow(tpName, fields, numFields, idx) {
   btn.className = 'del-btn';
   btn.textContent = '×';
   btn.setAttribute('data-ob-remove-row', 'tr');
+  if (domWritable) {
+    btn.title = 'Delete';
+    btn.setAttribute('aria-keyshortcuts', 'Delete');
+  }
   tdDel.appendChild(btn);
   tr.appendChild(tdDel);
   tbody.appendChild(tr);
+  if (table) obDOMFinishMutation(table, tr, true);
 }
 
 function recalcTpRow(inp) {
@@ -2812,10 +3418,7 @@ window.onebaseDevice = {
         // после — иначе автообновление молча съедало бы выбор пользователя.
         // Трогаем выделение, только если оно жило в ЭТОМ списке: на странице
         // может быть несколько живых списков, чужой выбор не наше дело.
-        var selMine = cur.contains(listSel());
-        var selKey = selMine ? listSelKey() : '';
-        cur.innerHTML = fresh.innerHTML; // содержимое; атрибуты контейнера сохраняются
-        if (selMine) listRestoreSel(selKey, cur);
+        obReplaceLiveListContents(cur, fresh); // содержимое; атрибуты контейнера сохраняются
         try { cur.scrollTop = sc; } catch (_) {}
       })
       .catch(function () {}); // офлайн/редирект логина — тихо, F5 пользователя выручит

@@ -105,7 +105,7 @@ func TestStaticManagedJS(t *testing.T) {
 		"function obManagedInitDelegates",
 		"function obManagedNormalizeHotkey",
 		"keydown",
-		"data-ob-hotkey",
+		"window.obResolveActionableFormHotkey",
 		"data-ob-fire-click",
 		"data-ob-add-tp",
 		"obManagedSwitchTab",

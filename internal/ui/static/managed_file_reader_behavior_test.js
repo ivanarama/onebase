@@ -88,7 +88,8 @@ function resetDOM() {
     pathInput,
     content,
     form,
-    nodes: {'upload-path': pathInput, 'upload-content': content}
+    nodes: {'upload-path': pathInput, 'upload-content': content},
+    tableBodies: []
   };
   return current;
 }
@@ -115,7 +116,9 @@ function addFileControl(name, helperName) {
 
 function installTableBody(id, attributes) {
   const tbody = domNode('tbody');
+  tbody.setAttribute('id', id);
   for (const [name, value] of Object.entries(attributes || {})) tbody.setAttribute(name, value);
+  current.tableBodies.push(tbody);
   current.nodes[id] = tbody;
   return tbody;
 }
@@ -138,7 +141,16 @@ global.document = {
     documentListeners.get(type).push(listener);
   },
   querySelector() { return null; },
-  querySelectorAll() { return []; },
+  querySelectorAll(selector) {
+    if (!current || !current.tableBodies) return [];
+    if (selector === 'tbody[data-tp-fields]') {
+      return current.tableBodies.filter(body => body.hasAttribute('data-tp-fields'));
+    }
+    if (selector === 'tbody[data-vt-fields]') {
+      return current.tableBodies.filter(body => body.hasAttribute('data-vt-fields'));
+    }
+    return [];
+  },
   createElement: domNode,
   getElementById(id) {
     if (id === 'ob-managed-config') {
@@ -445,7 +457,7 @@ test('ordinary submit safely falls back to native submit without requestSubmit',
   }
 });
 
-test('table round-trip preserves readonly controls, mirrors and delete guards', () => {
+test('table round-trip keeps readonly controls display-only and guarded', () => {
   resetDOM();
   window._obGrids = {};
   window._tpRefOpts = {
@@ -465,10 +477,8 @@ test('table round-trip preserves readonly controls, mirrors and delete guards', 
   assert.equal(tpRow.children[0].children[0].disabled, true, 'selection remained enabled');
   const refCell = tpRow.children[1];
   assert.equal(refCell.children[0].disabled, true, 'reference select remained enabled');
-  assert.equal(refCell.children[1].type, 'hidden');
-  assert.equal(refCell.children[1].name, 'tp.Товары.0.Номенклатура');
-  assert.equal(refCell.children[1].value, 'ref-1');
-  assert.equal(tpRow.children[2].children[0].readOnly, true, 'number input remained editable');
+  assert.equal(refCell.children.length, 1, 'readonly reference regained a successful hidden mirror');
+  assert.equal(tpRow.children[2].children[0].disabled, true, 'number input remained successful');
   const tpDelete = tpRow.children[3].children[0];
   assert.equal(tpDelete.disabled, true);
   assert.equal(tpDelete.onclick, undefined);
@@ -480,9 +490,8 @@ test('table round-trip preserves readonly controls, mirrors and delete guards', 
   window.applyFormTables({Подбор: [{Флаг: true, Комментарий: 'текст'}]});
   const vtRow = vtBody.children[0];
   assert.equal(vtRow.children[0].children[0].disabled, true, 'bool remained enabled');
-  assert.equal(vtRow.children[0].children[1].type, 'hidden');
-  assert.equal(vtRow.children[0].children[1].value, 'true');
-  assert.equal(vtRow.children[1].children[0].readOnly, true, 'text remained editable');
+  assert.equal(vtRow.children[0].children.length, 1, 'readonly bool regained a successful hidden mirror');
+  assert.equal(vtRow.children[1].children[0].disabled, true, 'text remained successful');
   assert.equal(vtRow.children[2].children[0].disabled, true, 'VT delete remained enabled');
 
   const editableBody = installTableBody('tp-body-Редактируемые', {
@@ -492,9 +501,10 @@ test('table round-trip preserves readonly controls, mirrors and delete guards', 
   const editableRow = editableBody.children[0];
   assert.equal(editableRow.children[0].children.length, 1, 'editable ref unexpectedly got hidden mirror');
   assert.equal(editableRow.children[0].children[0].disabled, false);
-  assert.equal(editableRow.children[1].children[0].readOnly, false);
+  assert.equal(editableRow.children[1].children[0].disabled, false);
   assert.equal(editableRow.children[2].children[0].disabled, false);
-  assert.equal(typeof editableRow.children[2].children[0].onclick, 'function');
+  assert.equal(editableRow.children[2].children[0].onclick, undefined,
+    'unscoped dynamic row gained an inline delete handler');
 
   let mutated = false;
   window._obGrids = {
@@ -507,4 +517,72 @@ test('table round-trip preserves readonly controls, mirrors and delete guards', 
   window.obGridAddRow('Закрытые');
   window.obGridDelRow('Закрытые');
   assert.equal(mutated, false, 'exported grid mutators bypassed readonly');
+});
+
+for (const order of ['readonly-first', 'writable-first']) {
+  test(`NoGrid round-trip updates readonly and writable duplicates (${order})`, () => {
+    resetDOM();
+    window._obGrids = {};
+    window._tpRefOpts = {};
+    window._tpEnumLabels = {};
+    window._tpEnumOrder = {};
+    const make = readOnly => installTableBody('tp-body-Строки', Object.assign({
+      'data-tp-fields': 'Значение|string'
+    }, readOnly ? {'data-ob-table-readonly': '1'} : {}));
+    const readonly = order === 'readonly-first' ? make(true) : null;
+    const writable = make(false);
+    const readonlyBody = readonly || make(true);
+
+    window.applyTableParts({Строки: [{Значение: 'event-current'}]});
+    assert.equal(readonlyBody.children.length, 1, 'readonly duplicate was not repainted');
+    assert.equal(writable.children.length, 1, 'writable duplicate was not repainted');
+    assert.equal(readonlyBody.children[0].children[0].children[0].value, 'event-current');
+    assert.equal(readonlyBody.children[0].children[0].children[0].disabled, true);
+    assert.equal(writable.children[0].children[0].children[0].value, 'event-current');
+    assert.equal(writable.children[0].children[0].children[0].disabled, false);
+
+    let addTarget = null;
+    const previousAddTpRow = global.addTpRow;
+    global.addTpRow = function(_name, _fields, _nums, _index, target) { addTarget = target; };
+    obManagedAddTpRow({getAttribute(name) { return name === 'data-ob-add-tp' ? 'Строки' : null; }});
+    global.addTpRow = previousAddTpRow;
+    assert.equal(addTarget, writable, 'NoGrid add action targeted the first readonly duplicate');
+  });
+}
+
+for (const order of ['readonly-first', 'writable-first']) {
+  test(`ValueTable add targets writable duplicate (${order})`, () => {
+    resetDOM();
+    const make = readOnly => installTableBody('vt-body-Подбор', Object.assign({
+      'data-vt-fields': 'Значение|string'
+    }, readOnly ? {'data-ob-table-readonly': '1'} : {}));
+    const readonly = order === 'readonly-first' ? make(true) : null;
+    const writable = make(false);
+    const readonlyBody = readonly || make(true);
+
+    obManagedAddVtRow({getAttribute(name) { return name === 'data-ob-add-vt' ? 'Подбор' : null; }});
+    assert.equal(writable.children.length, 1, 'ValueTable add missed writable duplicate');
+    assert.equal(readonlyBody.children.length, 0, 'ValueTable add mutated readonly duplicate');
+  });
+}
+
+test('NoGrid command selection comes from writable duplicate', async () => {
+  resetDOM();
+  window._obGrids = {};
+  const readonly = installTableBody('tp-body-Строки', {
+    'data-ob-table-readonly': '1', 'data-tp-fields': 'Значение|string'
+  });
+  const writable = installTableBody('tp-body-Строки', {'data-tp-fields': 'Значение|string'});
+  function selectionRow(checked) {
+    const row = domNode('tr');
+    row.querySelector = selector => selector === '._tp-sel' ? {checked} : null;
+    return row;
+  }
+  readonly.appendChild(selectionRow(false));
+  readonly.appendChild(selectionRow(true));
+  writable.appendChild(selectionRow(true));
+
+  await window.obFire('Command', 'Нажатие', {_tp: 'Строки'});
+  assert.equal(fetchBodies.length, 1);
+  assert.equal(new URLSearchParams(fetchBodies[0]).get('_tp_selected'), '0');
 });

@@ -188,8 +188,7 @@ func TestManagedFormEventAddsConditionalFormattingRule(t *testing.T) {
 	body.Set("_element", "КнопкаПодсветить")
 	body.Set("_event", string(metadata.FormEventOnClick))
 	body.Set("_kind", "object")
-	body.Set("tp.Товары.0.Номенклатура", "A")
-	body.Set("tp.Товары.0.Сумма", "-10")
+	body.Set("tp_json.Товары", `[{"Номенклатура":"A","Сумма":-10}]`)
 
 	rec := executeFormEvent(t, srv, ent, body)
 	resp := decodeFormEventResponse(t, rec.Body.Bytes())
@@ -318,6 +317,7 @@ func renderConditionalManagedForm(t *testing.T, ent *metadata.Entity, form *meta
 		"Entity":             ent,
 		"Form":               form,
 		"IsNew":              true,
+		"CanWrite":           true,
 		"Values":             map[string]string{},
 		"RefOptions":         map[string]any{},
 		"EnumOptions":        map[string]any{},
