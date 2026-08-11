@@ -57,6 +57,15 @@ func init() {
 	builtins["addminutes"] = addMinutesBuiltin
 	builtins["добавитьчас"] = addHoursBuiltin
 	builtins["addhours"] = addHoursBuiltin
+	// Формы единственного числа — как у ДобавитьДень/Месяц/Год. Иначе имя
+	// приходится угадывать: соседние календарные функции единственного числа,
+	// а эти множественного, и промах даёт `unknown function` на ровном месте.
+	builtins["добавитьсекунду"] = addSecondsBuiltin
+	builtins["addsecond"] = addSecondsBuiltin
+	builtins["добавитьминуту"] = addMinutesBuiltin
+	builtins["addminute"] = addMinutesBuiltin
+	builtins["добавитьчасов"] = addHoursBuiltin
+	builtins["addhour"] = addHoursBuiltin
 	builtins["разностьдат"] = dateDiffBuiltin
 	builtins["datediff"] = dateDiffBuiltin
 	builtins["дата"] = dateConstructor

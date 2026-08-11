@@ -3,6 +3,7 @@ package interpreter
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -596,10 +597,16 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, sec)
 			}
+			if isNumeric(r) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
+			}
 		}
 		if rt, ok := r.(time.Time); ok {
 			if sec, ok2 := toFloat(l); ok2 {
 				return dateAddSeconds(rt, sec)
+			}
+			if isNumeric(l) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
 		// Строка + Строка — ВСЕГДА конкатенация, даже если обе строки состоят
@@ -636,6 +643,9 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			}
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, -sec)
+			}
+			if isNumeric(r) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
 		ld, lok := toDecimal(l)
@@ -767,6 +777,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		switch o := recv.(type) {
 		case MethodCallable:
 			return o.CallMethod(method, args)
+		case string:
+			// Для ссылочных методов даём более предметную подсказку, чем общая
+			// ошибка ниже. Это частая ловушка колонок «Ссылка» из запроса, но не
+			// утверждаем, что произвольная строка обязательно получена оттуда.
+			if refMethodOnString(method) {
+				RaiseUserError(callee.Field.Literal + "() вызван у строки. Если это колонка «Ссылка» " +
+					"из результата запроса, она содержит UUID, а не ссылку с менеджером. Получите ссылку через " +
+					"Справочники.<Тип>.НайтиПоИдентификатору(Строка(Стр.Ссылка)) " +
+					"(для документов — Документы.<Тип>.НайтиПоИдентификатору)")
+			}
 		}
 		// Если object — идентификатор, не разрешившийся в значение,
 		// и это известный модуль — резолвим Module.Proc() (
@@ -796,6 +816,17 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		return nil
 	}
 	return nil
+}
+
+// refMethodOnString отвечает, является ли метод «ссылочным» — таким, который
+// имеет смысл только у Ref (Ссылка.ПолучитьОбъект() и соседи). Для остальных
+// вызовов работает общая диагностика неизвестного метода из evalCall.
+func refMethodOnString(method string) bool {
+	switch method {
+	case "получитьобъект", "getobject", "удалить", "delete", "записать", "write":
+		return true
+	}
+	return false
 }
 
 // exprSourceName восстанавливает исходный текст простого выражения-приёмника
@@ -952,12 +983,15 @@ func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:
 		return t
-	case float64:
-		return t != 0
-	case decimal.Decimal:
-		return !t.IsZero()
 	case string:
 		return t != ""
+	}
+	// Числовой ноль ложен в любом Go-типе. Раньше здесь стояли только float64 и
+	// decimal, а целые проваливались в «всё остальное — истина»: булево поле из
+	// запроса на SQLite приходит как int64, поэтому `Если Стр.Флаг Тогда` для
+	// Ложь молча выбирал ветку «истина» (issue #704).
+	if zero, ok := numericZero(v); ok {
+		return !zero
 	}
 	return true
 }
@@ -976,7 +1010,11 @@ func equal(a, b any) bool {
 
 // dateAddSeconds сдвигает дату на sec секунд (семантика арифметики дат 1С).
 func dateAddSeconds(t time.Time, sec float64) time.Time {
-	return t.Add(time.Duration(int64(sec)) * time.Second)
+	const maxWholeSeconds = float64(math.MaxInt64 / int64(time.Second))
+	if math.IsNaN(sec) || math.IsInf(sec, 0) || sec > maxWholeSeconds || sec < -maxWholeSeconds {
+		RaiseUserError("сдвиг даты выходит за безопасный диапазон времени")
+	}
+	return safeDateResult(t.Add(time.Duration(sec * float64(time.Second))))
 }
 
 func compare(a, b any) int {
@@ -1046,6 +1084,12 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 		infoFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 			return errInfo, nil
 		})
+		rethrowFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+			if len(args) == 0 {
+				panic(*caught)
+			}
+			return raiseUserException(args, file, line)
+		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в
 		// текущем scope (не в child) — чтобы переменные, впервые присвоенные в
@@ -1055,18 +1099,25 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			"ErrorDescription":   descFn,
 			"ИнформацияОбОшибке": infoFn,
 			"ErrorInfo":          infoFn,
+			"ВызватьИсключение":  rethrowFn,
+			"Raise":              rethrowFn,
 		})
-		i.execBlock(t.Except, e)
-		restore()
+		func() {
+			defer restore()
+			i.execBlock(t.Except, e)
+		}()
 	}
 }
 
 func toFloat(v any) (float64, bool) {
 	switch t := v.(type) {
 	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return 0, false
+		}
 		return t, true
 	case decimal.Decimal:
-		return t.InexactFloat64(), true
+		return decimalToFiniteFloat64(t)
 	case int:
 		return float64(t), true
 	case int32:
@@ -1075,6 +1126,9 @@ func toFloat(v any) (float64, bool) {
 		return float64(t), true
 	case string:
 		if f, err := strconv.ParseFloat(t, 64); err == nil {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return 0, false
+			}
 			return f, true
 		}
 	}

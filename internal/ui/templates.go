@@ -302,6 +302,24 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			})
 			return found
 		},
+		// hasCodeField — есть ли на форме kind: ПолеКода. Monaco (vendor-ассеты +
+		// init) грузится только при true: редактор весит заметно, и тянуть его
+		// на каждую форму ради поля, которого там нет, незачем. Тот же приём,
+		// что с Quill для richtext.
+		"hasCodeField": func(form *metadata.FormModule) bool {
+			if form == nil {
+				return false
+			}
+			found := false
+			form.Walk(func(el *metadata.FormElement) bool {
+				if el != nil && el.Kind == metadata.FormElementCodeField {
+					found = true
+					return false
+				}
+				return true
+			})
+			return found
+		},
 		// formAttrVT returns ValueTable columns for a form attribute by name.
 		"formAttrVT": func(form *metadata.FormModule, name string) []*metadata.FormAttributeColumn {
 			if form == nil {

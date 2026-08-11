@@ -160,7 +160,11 @@ function obManagedReady(fn) {
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
         if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k]);
-        inp.value = val;
+        if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
+          inp._obSetCodeValue(val);
+        } else {
+          inp.value = val;
+        }
       }
     });
   }
@@ -421,15 +425,9 @@ function obManagedReady(fn) {
   // шлёт {_pick_result}, команды ТЧ — {_tp, _tp_selected}.
   window.obFire = async function(elementName, eventName, extraParams){
    try {
-    // Зафиксировать активную правку ячейки грида: иначе её значение не попадёт
-    // в tp_json, а редактор держит editor-lock — из-за чего первый клик по
-    // кнопке лишь закрывает редактор и «не нажимается».
-    var _grids = window._obGrids || {};
-    for (var _t in _grids) {
-      var _lk = _grids[_t].grid && _grids[_t].grid.getEditorLock && _grids[_t].grid.getEditorLock();
-      if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
-    }
-    if (window.obGridSync) obGridSync();
+    // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
+    // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
+    if (window.obGridSync && window.obGridSync() === false) return;
     const form = document.getElementById('main-form');
     if (!form) return;
     const fd = new FormData(form);
@@ -551,10 +549,9 @@ function obManagedReady(fn) {
   }
   document.addEventListener('input',  function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   document.addEventListener('change', function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
-  // Сохранение формы (Записать/Провести) сбрасывает «грязный» флаг — иначе
-  // beforeunload спрашивал бы подтверждение даже при штатной отправке.
-  var _obMainForm = document.getElementById('main-form');
-  if (_obMainForm) _obMainForm.addEventListener('submit', function(){ window._obFormDirty = false; });
+  // «Грязный» флаг сбрасывает финальный submit-handler только после всех
+  // проверок. Сбрасывать его здесь нельзя: obGridSync ниже ещё может запретить
+  // отправку из-за незавершённой/невалидной правки ячейки.
   window.addEventListener('beforeunload', function(e){
     if (window._obFormDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
@@ -798,6 +795,9 @@ function obManagedInitDelegates() {
       // обработчик onValidationError, пользователю есть что исправить (или Esc).
       if (window.obGridSync() === false) { e.preventDefault(); e.stopPropagation(); return; }
     }
+    // Все синхронные veto пройдены: штатная навигация после submit не должна
+    // показывать предупреждение о несохранённых данных.
+    if (form.id === 'main-form' && !e.defaultPrevented) window._obFormDirty = false;
   });
 }
 
@@ -1370,7 +1370,12 @@ obManagedReady(obManagedInitDelegates);
       try {
         var lock = g.grid && g.grid.getEditorLock && g.grid.getEditorLock();
         if (lock && lock.isActive() && !lock.commitCurrentEdit()) ok = false;
-      } catch (e) { /* грид без редактора — синхронизируем как есть */ }
+      } catch (e) {
+        // Исключение editor-lock не означает успех: dataView может содержать
+        // старое значение. Останавливаем submit/obFire вместо тихой потери.
+        ok = false;
+        if (window.obFlash) window.obFlash('Не удалось завершить правку ячейки: ' + (e && e.message ? e.message : e), 'err');
+      }
       // Сериализуем в исходном порядке (_ord), а не в порядке текущей
       // сортировки отображения — чтобы сортировка «для просмотра» не меняла
       // порядок строк в сохраняемом документе.
@@ -1885,4 +1890,66 @@ obManagedReady(function () {
     var btn = tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
     if (btn) obManagedSwitchTab(btn);
   }
+});
+
+// ─── ПолеКода: редактор с подсветкой ────────────────────────────────────────
+//
+// Монтируется на .code-editor рядом со скрываемой textarea.code-field.
+// textarea остаётся источником истины для формы: редактор пишет в неё при
+// каждом изменении, поэтому обычный submit работает и без всякой синхронизации
+// по кнопке. Без JS (или если Monaco не загрузился) textarea просто остаётся
+// видимой и редактируемой — прогрессивное улучшение, как у richtext.
+obManagedReady(function () {
+  var holders = document.querySelectorAll('.code-editor');
+  if (!holders.length) return;
+  if (typeof require === 'undefined' || window._monacoLoadErr) return; // textarea уже рабочая
+
+  require.config({ paths: { vs: '/vendor/monaco/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    for (var i = 0; i < holders.length; i++) {
+      (function (holder) {
+        if (holder.getAttribute('data-code-ready') === '1') return;
+        var ta = holder.previousElementSibling;
+        if (!ta || ta.tagName !== 'TEXTAREA' || !ta.classList.contains('code-field')) return;
+        holder.setAttribute('data-code-ready', '1');
+
+        var lang = holder.getAttribute('data-code-language') || 'plaintext';
+        var ed = monaco.editor.create(holder, {
+          value: ta.value,
+          language: lang,
+          automaticLayout: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          fontSize: 13,
+          tabSize: 4,
+          renderWhitespace: 'selection'
+        });
+        ta.style.display = 'none';
+
+        // Ответ обработчика формы может обновить значение поля. textarea уже
+        // получила бы новый текст, но Monaco продолжал показывать старый и при
+        // следующем вводе затирал ответ сервера. Держим оба представления
+        // синхронными и не выдаём программное обновление за правку пользователя.
+        var syncing = false;
+        ta._obSetCodeValue = function (value) {
+          value = String(value == null ? '' : value);
+          ta.value = value;
+          if (ed.getValue() === value) return;
+          syncing = true;
+          try {
+            ed.setValue(value);
+          } finally {
+            syncing = false;
+          }
+        };
+        ed.onDidChangeModelContent(function () {
+          ta.value = ed.getValue();
+          if (!syncing) ta.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        ed.onDidBlurEditorWidget(function () {
+          if (!syncing) ta.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      })(holders[i]);
+    }
+  });
 });

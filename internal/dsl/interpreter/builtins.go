@@ -63,6 +63,25 @@ func FormatUserError(err error) string {
 
 func (e *DSLError) Unwrap() error { return e.Err }
 
+func raiseUserException(args []any, file string, line int) (any, error) {
+	msg := ""
+	if len(args) > 0 {
+		msg = fmt.Sprintf("%v", args[0])
+	}
+	panic(userError{Msg: msg, File: file, Line: line})
+}
+
+func raiseWithoutCaughtException(args []any, file string, line int) (any, error) {
+	if len(args) > 0 {
+		return raiseUserException(args, file, line)
+	}
+	panic(userError{
+		Msg:  "ВызватьИсключение без аргумента допустимо только внутри блока Исключение",
+		File: file,
+		Line: line,
+	})
+}
+
 var builtins = map[string]func(args []any, file string, line int) (any, error){
 
 	// ─── Сообщения ────────────────────────────────────────────────────────
@@ -70,20 +89,9 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	"message":  func(args []any, file string, line int) (any, error) { return nil, nil },
 
 	// ─── Ошибки ───────────────────────────────────────────────────────────
-	"error": func(args []any, file string, line int) (any, error) {
-		msg := ""
-		if len(args) > 0 {
-			msg = fmt.Sprintf("%v", args[0])
-		}
-		panic(userError{Msg: msg, File: file, Line: line})
-	},
-	"вызватьисключение": func(args []any, file string, line int) (any, error) {
-		msg := ""
-		if len(args) > 0 {
-			msg = fmt.Sprintf("%v", args[0])
-		}
-		panic(userError{Msg: msg, File: file, Line: line})
-	},
+	"error":             raiseUserException,
+	"raise":             raiseWithoutCaughtException,
+	"вызватьисключение": raiseWithoutCaughtException,
 
 	// ─── Даты ─────────────────────────────────────────────────────────────
 	"today": func(args []any, file string, line int) (any, error) {
@@ -252,6 +260,20 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	"readjson":      builtinReadJSON,
 	"записатьjson":  builtinWriteJSON,
 	"writejson":     builtinWriteJSON,
+
+	// ─── XML ──────────────────────────────────────────────────────────────
+	"прочитатьxml": builtinReadXML,
+	"readxml":      builtinReadXML,
+	"записатьxml":  builtinWriteXML,
+	"writexml":     builtinWriteXML,
+	"xmlстрока":    builtinXMLString,
+	"xmlstring":    builtinXMLString,
+	"xmlзначение":  builtinXMLValue,
+	"xmlтипзнч":    builtinXMLTypeOf,
+	"xmltypeof":    builtinXMLTypeOf,
+	"xmlvalue":     builtinXMLValue,
+	"найтинедопустимыесимволыxml": builtinFindDisallowedXMLChars,
+	"finddisallowedxmlcharacters": builtinFindDisallowedXMLChars,
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -344,6 +366,23 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 			return decimal.NewFromInt(1), nil
 		}
 		return decimal.Zero, nil
+	}
+	// Дата → ГГГГММДДЧЧММСС, обратно к Дата(число) по календарным компонентам
+	// с точностью до секунды. Числовой формат не хранит наносекунды и часовой
+	// пояс. Раньше дата уходила в
+	// разбор строки «2026-05-11 00:00:00 +0300 MSK», не парсилась и молча
+	// давала 0 — и это выглядело как «даты считаются числами, просто эта
+	// пустая», из-за чего арифметику времени строили на нуле. Формат выбран
+	// симметричным конструктору для обычных DSL-дат. Не epoch-секунды: они
+	// казались бы совместимыми с `Дата + N`, но в конструктор не вернулись бы.
+	if t, ok := args[0].(time.Time); ok {
+		// Компактный формат имеет ровно четыре цифры года. Не возвращаем
+		// правдоподобное, но уже необратимое число для значений, которые
+		// dateConstructor заведомо не сможет прочитать обратно.
+		if t.IsZero() || t.Year() < 1 || t.Year() > 9999 {
+			return decimal.Zero, nil
+		}
+		return decimal.NewFromString(t.Format("20060102150405"))
 	}
 	s := fmt.Sprintf("%v", args[0])
 	d, err := decimal.NewFromString(strings.ReplaceAll(s, ",", "."))
