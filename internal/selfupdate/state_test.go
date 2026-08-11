@@ -1,9 +1,13 @@
 package selfupdate
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -65,6 +69,24 @@ func TestState_AbsentIsEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadState_DoesNotCreateLockInExistingEmptyDirectory(t *testing.T) {
+	isolatedHome(t)
+	updates, err := UpdatesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadState(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(updates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("read-only LoadState created files: %v", entries)
+	}
+}
+
 // Битый файл не должен ронять лаунчер: он обязан подняться в любом случае.
 func TestState_BrokenJSON(t *testing.T) {
 	isolatedHome(t)
@@ -119,6 +141,192 @@ func TestState_NotesTrimmed(t *testing.T) {
 	// Обрезка по рунам, а не по байтам: кириллица не должна разваливаться.
 	if !strings.HasSuffix(got.Latest.Notes, "…") || strings.Contains(got.Latest.Notes, "�") {
 		t.Fatalf("описание обрезано неаккуратно: %q", string(runes[len(runes)-5:]))
+	}
+}
+
+func TestUpdateState_ConcurrentMutationsDoNotLoseFields(t *testing.T) {
+	isolatedHome(t)
+
+	if err := SaveState(State{AutoApply: true}); err != nil {
+		t.Fatal(err)
+	}
+	const mutations = 32
+	start := make(chan struct{})
+	errs := make(chan error, mutations)
+	var wg sync.WaitGroup
+	for i := 0; i < mutations; i++ {
+		id := fmt.Sprintf("base-%02d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := UpdateState(func(st *State) error {
+				st.RestartBases = append(st.RestartBases, id)
+				return nil
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("UpdateState: %v", err)
+		}
+	}
+
+	got, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AutoApply {
+		t.Fatal("unrelated auto_apply field was lost")
+	}
+	seen := make(map[string]bool, mutations)
+	for _, id := range got.RestartBases {
+		seen[id] = true
+	}
+	if len(seen) != mutations {
+		t.Fatalf("lost concurrent state mutations: got %d unique bases, want %d (%v)", len(seen), mutations, got.RestartBases)
+	}
+}
+
+func TestUpdateState_ErrorLeavesFileUnchanged(t *testing.T) {
+	isolatedHome(t)
+	want := State{Channel: ChannelBuild, RestartBases: []string{"base-1"}}
+	if err := SaveState(want); err != nil {
+		t.Fatal(err)
+	}
+
+	sentinel := errors.New("stop mutation")
+	returned, err := UpdateState(func(st *State) error {
+		st.Channel = ChannelStable
+		st.RestartBases = nil
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("UpdateState error = %v, want %v", err, sentinel)
+	}
+	if returned.Channel != want.Channel || len(returned.RestartBases) != 1 || returned.RestartBases[0] != "base-1" {
+		t.Fatalf("failed mutation returned attempted rather than persisted state: %+v", returned)
+	}
+	got, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Channel != want.Channel || len(got.RestartBases) != 1 || got.RestartBases[0] != "base-1" {
+		t.Fatalf("failed mutation changed state: %+v", got)
+	}
+}
+
+func TestUpdateState_CrossProcessLockPreventsLostMutation(t *testing.T) {
+	home := isolatedHome(t)
+	if err := SaveState(State{}); err != nil {
+		t.Fatal(err)
+	}
+
+	controlDir := t.TempDir()
+	lockedMarker := filepath.Join(controlDir, "locked")
+	releaseMarker := filepath.Join(controlDir, "release")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestStateLockHelperProcess$", "-test.count=1") //nolint:gosec // G204: controlled re-exec of this test binary
+	cmd.Env = append(os.Environ(),
+		"ONEBASE_STATE_LOCK_HELPER=1",
+		"ONEBASE_STATE_LOCKED_MARKER="+lockedMarker,
+		"ONEBASE_STATE_RELEASE_MARKER="+releaseMarker,
+		"HOME="+home,
+		"USERPROFILE="+home,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			_ = os.WriteFile(releaseMarker, []byte("release"), 0o600)
+		}
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(lockedMarker); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("helper did not acquire the state lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	started := make(chan struct{})
+	parentDone := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := UpdateState(func(st *State) error {
+			st.RestartBases = []string{"base-parent"}
+			return nil
+		})
+		parentDone <- err
+	}()
+	<-started
+	select {
+	case err := <-parentDone:
+		t.Fatalf("parent mutation was not blocked by the helper lock (err=%v)", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	if err := os.WriteFile(releaseMarker, []byte("release"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	released = true
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("state-lock helper: %v", err)
+	}
+	if err := <-parentDone; err != nil {
+		t.Fatalf("parent UpdateState: %v", err)
+	}
+
+	got, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Channel != ChannelStable || len(got.RestartBases) != 1 || got.RestartBases[0] != "base-parent" {
+		t.Fatalf("cross-process mutations were not merged: %+v", got)
+	}
+}
+
+func TestStateLockHelperProcess(t *testing.T) {
+	if os.Getenv("ONEBASE_STATE_LOCK_HELPER") != "1" {
+		return
+	}
+	lockedMarker := os.Getenv("ONEBASE_STATE_LOCKED_MARKER")
+	releaseMarker := os.Getenv("ONEBASE_STATE_RELEASE_MARKER")
+	_, err := UpdateState(func(st *State) error {
+		st.Channel = ChannelStable
+		if err := os.WriteFile(lockedMarker, []byte("locked"), 0o600); err != nil { //nolint:gosec // G703: parent test supplies a private t.TempDir path
+			return err
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if _, err := os.Stat(releaseMarker); err == nil { //nolint:gosec // G703: parent test supplies a private t.TempDir path
+				return nil
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+			if time.Now().After(deadline) {
+				return errors.New("timed out waiting for state-lock release")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

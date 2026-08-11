@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,60 +26,130 @@ type Options struct {
 // состоянии. Ошибка сети тоже сохраняется — интерфейсу важно отличать «нет
 // обновлений» от «не смогли проверить».
 func Check(ctx context.Context, opts Options) (State, error) {
-	st, err := LoadState()
-	if err != nil {
-		// Битое состояние не мешает проверке: перезапишем его свежим.
-		oblog.Component("selfupdate").Warn("состояние обновлений перезаписывается", "err", err)
-	}
-	ch := opts.Channel
-	if ch == "" {
-		ch = st.ChannelOrDefault()
-	}
+	return check(ctx, opts, LatestRelease)
+}
 
-	st.Channel = ch
-	st.Current = version.String()
-	st.CheckedAt = time.Now().UTC()
-
-	rel, err := LatestRelease(ctx, opts.Repo, ch)
+func check(ctx context.Context, opts Options, latest func(context.Context, string, Channel) (Release, error)) (result State, resultErr error) {
+	current := version.String()
+	var (
+		ch         Channel
+		generation uint64
+	)
+	started, err := updateStateRecovering(func(st *State) error {
+		ch = opts.Channel
+		if ch == "" {
+			ch = st.ChannelOrDefault()
+		}
+		st.Channel = ch
+		st.CheckGeneration++
+		if st.CheckGeneration == 0 {
+			st.CheckGeneration = 1
+		}
+		generation = st.CheckGeneration
+		return nil
+	})
 	if err != nil {
-		st.CheckError = err.Error()
+		return started, err
+	}
+	checkedAt := time.Now().UTC()
+
+	rel, err := latest(ctx, opts.Repo, ch)
+	if err != nil {
+		checkErr := err
 		// Сохранить состояние всё равно нужно: иначе UI не узнает, что
 		// проверка была и провалилась.
-		if saveErr := SaveState(st); saveErr != nil {
+		updated, saveErr := updateStateRecovering(func(latestState *State) error {
+			if latestState.CheckGeneration != generation || latestState.Channel != ch {
+				return nil
+			}
+			latestState.Current = current
+			latestState.CheckedAt = checkedAt
+			latestState.CheckError = checkErr.Error()
+			return nil
+		})
+		if saveErr != nil {
 			oblog.Component("selfupdate").Warn("состояние обновлений не сохранено", "err", saveErr)
+			return started, checkErr
 		}
-		return st, err
+		return updated, checkErr
 	}
+	stageLock, stageLockErr := acquireStageOperationLock()
+	if stageLockErr != nil {
+		return started, stageLockErr
+	}
+	defer func() { resultErr = errors.Join(resultErr, stageLock.Unlock()) }()
 
-	st.CheckError = ""
-	st.Latest = &RelInfo{
+	latestInfo := &RelInfo{
 		Tag:         rel.Tag,
 		PublishedAt: rel.PublishedAt,
 		Notes:       rel.Notes,
 		URL:         rel.HTMLURL,
 	}
-	// Скачанное ранее обновление другой версии больше не актуально: канал мог
-	// переключиться, а сборка — уехать вперёд.
-	if st.Staged != nil && st.Staged.Tag != rel.Tag {
-		removeStage(st.Staged.Dir)
-		st.Staged = nil
+	var obsoleteStage string
+	updated, saveErr := updateStateRecovering(func(latestState *State) error {
+		if latestState.CheckGeneration != generation || latestState.Channel != ch {
+			return nil
+		}
+		latestState.Current = current
+		latestState.CheckedAt = checkedAt
+		latestState.CheckError = ""
+		latestState.Latest = latestInfo
+		// Скачанное ранее обновление другой версии больше не актуально: канал мог
+		// переключиться, а сборка — уехать вперёд.
+		if latestState.Staged != nil && latestState.Staged.Tag != rel.Tag {
+			obsoleteStage = latestState.Staged.Dir
+			latestState.Staged = nil
+		}
+		return nil
+	})
+	if saveErr == nil && obsoleteStage != "" {
+		removeStage(obsoleteStage)
 	}
-	return st, SaveState(st)
+	return updated, saveErr
 }
 
 // Fetch скачивает релиз, сверяет контрольную сумму, распаковывает бинари в
 // staging и убеждается, что распакованный бинарь действительно той версии, за
 // которую себя выдаёт. Только после этого обновление помечается готовым.
-func Fetch(ctx context.Context, rel Release) (StagedInfo, error) {
-	stageDir, err := StageDir(rel.Tag)
+func Fetch(ctx context.Context, rel Release) (result StagedInfo, resultErr error) {
+	stageLock, err := acquireStageOperationLock()
 	if err != nil {
 		return StagedInfo{}, err
 	}
-	// Каталог могли оставить прошлые попытки — начинаем с чистого.
-	removeStage(stageDir)
-	if err := os.MkdirAll(stageDir, fsmode.SecretDir); err != nil {
+	defer func() { resultErr = errors.Join(resultErr, stageLock.Unlock()) }()
+
+	stateAtStart, err := LoadState()
+	if err != nil {
+		var invalid *invalidStateError
+		if !errors.As(err, &invalid) {
+			return StagedInfo{}, err
+		}
+		oblog.Component("selfupdate").Warn("состояние обновлений перезаписывается", "err", err)
+		stateAtStart = State{}
+	}
+	if relChannel, known := releaseTagChannel(rel.Tag); known && relChannel != stateAtStart.ChannelOrDefault() {
+		return StagedInfo{}, fmt.Errorf("selfupdate: релиз %s не относится к выбранному каналу %s", rel.Tag, stateAtStart.ChannelOrDefault())
+	}
+	if stateAtStart.Latest != nil && stateAtStart.Latest.Tag != rel.Tag && !Newer(stateAtStart.Latest.Tag, rel.Tag) {
+		return StagedInfo{}, fmt.Errorf("selfupdate: релиз %s устарел, последний известный релиз — %s", rel.Tag, stateAtStart.Latest.Tag)
+	}
+	if stateAtStart.Staged != nil && stateAtStart.Staged.Tag == rel.Tag && stagedFilesAvailable(*stateAtStart.Staged) {
+		return *stateAtStart.Staged, nil
+	}
+	startChannel := stateAtStart.Channel
+	startGeneration := stateAtStart.CheckGeneration
+	startLatestTag := stateLatestTag(stateAtStart)
+
+	stageDir, err := newStageDir()
+	if err != nil {
 		return StagedInfo{}, err
 	}
+	keepStage := false
+	defer func() {
+		if !keepStage {
+			removeStage(stageDir)
+		}
+	}()
 
 	archive, err := Download(ctx, rel, stageDir)
 	if err != nil {
@@ -107,15 +178,63 @@ func Fetch(ctx context.Context, rel Release) (StagedInfo, error) {
 		StagedAt: time.Now().UTC(),
 	}
 
-	st, err := LoadState()
-	if err != nil {
-		oblog.Component("selfupdate").Warn("состояние обновлений перезаписывается", "err", err)
-	}
-	st.Staged = &staged
-	if err := SaveState(st); err != nil {
+	var obsoleteStage string
+	if _, err := updateStateRecovering(func(st *State) error {
+		if st.Channel != startChannel || st.CheckGeneration != startGeneration || stateLatestTag(*st) != startLatestTag {
+			return fmt.Errorf("selfupdate: состояние канала изменилось во время скачивания %s", rel.Tag)
+		}
+		if st.Staged != nil && st.Staged.Dir != "" && st.Staged.Dir != staged.Dir {
+			obsoleteStage = st.Staged.Dir
+		}
+		st.Latest = &RelInfo{Tag: rel.Tag, PublishedAt: rel.PublishedAt, Notes: rel.Notes, URL: rel.HTMLURL}
+		st.Staged = &staged
+		return nil
+	}); err != nil {
 		return staged, err
 	}
+	keepStage = true
+	if obsoleteStage != "" {
+		removeStage(obsoleteStage)
+	}
 	return staged, nil
+}
+
+func stateLatestTag(st State) string {
+	if st.Latest == nil {
+		return ""
+	}
+	return st.Latest.Tag
+}
+
+func releaseTagChannel(tag string) (Channel, bool) {
+	switch {
+	case strings.HasPrefix(tag, "build-"):
+		return ChannelBuild, true
+	case strings.HasPrefix(tag, "v"):
+		return ChannelStable, true
+	default:
+		return "", false
+	}
+}
+
+func stagedFilesAvailable(staged StagedInfo) bool {
+	if !staged.Verified || staged.Dir == "" || len(staged.Files) == 0 {
+		return false
+	}
+	foundBinary := false
+	for _, name := range staged.Files {
+		if name == "" || filepath.Base(name) != name {
+			return false
+		}
+		info, err := os.Stat(filepath.Join(staged.Dir, name)) //nolint:gosec // G304: name is constrained to a base name in our staging directory
+		if err != nil || !info.Mode().IsRegular() {
+			return false
+		}
+		if name == BinaryName() {
+			foundBinary = true
+		}
+	}
+	return foundBinary
 }
 
 // Apply подменяет бинари платформы в targetDir содержимым staging, складывая
@@ -128,10 +247,16 @@ func Fetch(ctx context.Context, rel Release) (StagedInfo, error) {
 // Если подмена сорвалась на середине (второй бинарь не записался), уже
 // заменённые возвращаются на место: платформа из двух разных версий хуже, чем
 // неудавшееся обновление.
-func Apply(staged StagedInfo, targetDir string) error {
+func Apply(staged StagedInfo, targetDir string) (resultErr error) {
 	if !staged.Verified {
 		return fmt.Errorf("selfupdate: обновление %s не проверено — применять нельзя", staged.Tag)
 	}
+	stageLock, err := acquireStageOperationLock()
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, stageLock.Unlock()) }()
+
 	prev, err := PrevDir()
 	if err != nil {
 		return err
@@ -185,7 +310,13 @@ func Apply(staged StagedInfo, targetDir string) error {
 }
 
 // RollbackPrev возвращает бинари предыдущей версии из ~/.onebase/updates/prev.
-func RollbackPrev(targetDir string) error {
+func RollbackPrev(targetDir string) (resultErr error) {
+	stageLock, err := acquireStageOperationLock()
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, stageLock.Unlock()) }()
+
 	prev, err := PrevDir()
 	if err != nil {
 		return err

@@ -3,9 +3,11 @@ package selfupdate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/fsmode"
@@ -20,6 +22,15 @@ import (
 // (net.enabled), и офлайн-эксплуатацию.
 const StateFileName = "state.json"
 
+// stateLockFileName is kept separate from StateFileName: state.json is
+// replaced atomically, while every process keeps this stable inode/handle
+// locked for the whole read-modify-write transaction.
+const stateLockFileName = "state.lock"
+
+// stateMu is required in addition to the OS lock. In particular, POSIX record
+// locks are process-scoped and do not serialize goroutines in one process.
+var stateMu sync.Mutex
+
 // maxNotesRunes — сколько текста релиза храним. Тело сборки содержит список
 // коммитов и растёт; для показа в модалке этого с запасом достаточно.
 const maxNotesRunes = 8000
@@ -33,6 +44,9 @@ type State struct {
 	// вместо тишины.
 	CheckedAt  time.Time `json:"checked_at,omitempty"`
 	CheckError string    `json:"check_error,omitempty"`
+	// CheckGeneration is an internal CAS token. A slower, older network check
+	// must not overwrite a newer check that has already completed.
+	CheckGeneration uint64 `json:"check_generation,omitempty"`
 	// Current — версия платформы, которой делалась проверка.
 	Current string `json:"current,omitempty"`
 	// Latest — последний известный релиз канала.
@@ -123,6 +137,17 @@ func StageDir(tag string) (string, error) {
 	return filepath.Join(updates, filepath.Base(tag)), nil
 }
 
+// newStageDir gives each download attempt its own directory. A predictable
+// per-tag path lets concurrent Fetch calls delete or overwrite each other's
+// verified files before either one publishes its State.Staged record.
+func newStageDir() (string, error) {
+	updates, err := UpdatesDir()
+	if err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(updates, ".stage-*")
+}
+
 // PrevDir возвращает каталог, куда уезжает предыдущая версия бинарей.
 func PrevDir() (string, error) {
 	updates, err := UpdatesDir()
@@ -135,12 +160,45 @@ func PrevDir() (string, error) {
 // LoadState читает состояние. Битый или недоступный файл — не повод падать:
 // возвращается пустое состояние и ошибка, которую вызывающий волен только
 // записать в журнал (лаунчер обязан подняться в любом случае).
-func LoadState() (State, error) {
+func LoadState() (state State, resultErr error) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
 	updates, err := updatesDirPath()
 	if err != nil {
 		return State{}, err
 	}
-	data, err := os.ReadFile(filepath.Join(updates, StateFileName)) //nolint:gosec // G304: путь фиксирован — файл состояния в каталоге обновлений
+	// Preserve the read-only behaviour for a new profile: merely looking at the
+	// update state must not create ~/.onebase/updates.
+	if _, err := os.Stat(updates); os.IsNotExist(err) {
+		return State{}, nil
+	} else if err != nil {
+		return State{}, err
+	}
+	lockPath := filepath.Join(updates, stateLockFileName)
+	lock, err := acquireStateReadLock(lockPath)
+	if err != nil {
+		return State{}, err
+	}
+	if lock == nil {
+		// Profiles written by older OneBase versions do not have a lock file.
+		// Read once, then retry under the lock if a current writer created it in
+		// the meantime. Thus LoadState itself remains side-effect free.
+		state, loadErr := loadStateFile(filepath.Join(updates, StateFileName))
+		lock, err = acquireStateReadLock(lockPath)
+		if err != nil {
+			return State{}, errors.Join(loadErr, err)
+		}
+		if lock == nil {
+			return state, loadErr
+		}
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Unlock()) }()
+	return loadStateFile(filepath.Join(updates, StateFileName))
+}
+
+func loadStateFile(path string) (State, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is the fixed update-state file
 	if os.IsNotExist(err) {
 		return State{}, nil
 	}
@@ -149,26 +207,121 @@ func LoadState() (State, error) {
 	}
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
-		return State{}, fmt.Errorf("selfupdate: состояние обновлений не разобрано: %w", err)
+		return State{}, &invalidStateError{err: err}
 	}
 	return s, nil
 }
 
-// SaveState атомарно записывает состояние.
-func SaveState(s State) error {
+// SaveState атомарно полностью перезаписывает состояние. Для изменения полей
+// на основе текущего состояния вызывающий должен использовать UpdateState.
+func SaveState(s State) (resultErr error) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
 	updates, err := UpdatesDir()
 	if err != nil {
 		return err
 	}
+	lock, err := acquireStateFileLock(filepath.Join(updates, stateLockFileName))
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Unlock()) }()
+	return saveStateFile(filepath.Join(updates, StateFileName), s)
+}
+
+// UpdateState changes selected state fields transactionally. The callback is
+// called after the latest on-disk state has been read and while both the
+// process mutex and the cross-process file lock are held. It must be quick,
+// must not perform blocking I/O, and must not call back into this package.
+//
+// When mutate returns an error, the file is left unchanged.
+func UpdateState(mutate func(*State) error) (State, error) {
+	return updateState(false, mutate)
+}
+
+// updateStateRecovering is used by background update checks. A malformed JSON
+// file has no fields that can be preserved safely, so these paths retain the
+// historic behaviour of replacing it with a fresh state. I/O and lock errors
+// remain fail-closed.
+func updateStateRecovering(mutate func(*State) error) (State, error) {
+	return updateState(true, mutate)
+}
+
+func updateState(recoverInvalid bool, mutate func(*State) error) (result State, resultErr error) {
+	if mutate == nil {
+		return State{}, errors.New("selfupdate: state mutation is nil")
+	}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
+	updates, err := UpdatesDir()
+	if err != nil {
+		return State{}, err
+	}
+	lock, err := acquireStateFileLock(filepath.Join(updates, stateLockFileName))
+	if err != nil {
+		return State{}, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Unlock()) }()
+
+	path := filepath.Join(updates, StateFileName)
+	state, loadErr := loadStateFile(path)
+	if loadErr != nil {
+		var invalid *invalidStateError
+		if !recoverInvalid || !errors.As(loadErr, &invalid) {
+			return State{}, loadErr
+		}
+		state = State{}
+	}
+	original := cloneState(state)
+	if err := mutate(&state); err != nil {
+		return original, err
+	}
+	writeErr := saveStateFile(path, state)
+	return state, writeErr
+}
+
+func cloneState(s State) State {
 	if s.Latest != nil {
+		latest := *s.Latest
+		s.Latest = &latest
+	}
+	if s.Staged != nil {
+		staged := *s.Staged
+		staged.Files = append([]string(nil), s.Staged.Files...)
+		s.Staged = &staged
+	}
+	if s.Prev != nil {
+		prev := *s.Prev
+		s.Prev = &prev
+	}
+	s.RestartBases = append([]string(nil), s.RestartBases...)
+	return s
+}
+
+func saveStateFile(path string, s State) error {
+	if s.Latest != nil {
+		// Do not mutate a RelInfo owned by the caller while normalising the
+		// persisted copy.
+		latest := *s.Latest
+		s.Latest = &latest
 		s.Latest.Notes = trimRunes(s.Latest.Notes, maxNotesRunes)
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFile(bytes.NewReader(data), filepath.Join(updates, StateFileName), fsmode.File)
+	return writeFile(bytes.NewReader(data), path, fsmode.File)
 }
+
+type invalidStateError struct{ err error }
+
+func (e *invalidStateError) Error() string {
+	return fmt.Sprintf("selfupdate: состояние обновлений не разобрано: %v", e.err)
+}
+
+func (e *invalidStateError) Unwrap() error { return e.err }
 
 // trimRunes обрезает строку по границе рун, а не байтов: обрыв UTF-8 посреди
 // символа превратил бы JSON в мусор при показе.
