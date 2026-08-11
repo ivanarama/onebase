@@ -83,7 +83,7 @@ func (c Common) Build() map[string]any {
 	predefined := interpreter.NewPredefinedRoot(c.Ctx, c.Store)
 
 	vars := map[string]any{
-		"Движения":     c.Movements,
+		"Движения":     movementsVar(c.Movements, c.Reg),
 		"Перечисления": &interpreter.MapThis{M: enumsMap},
 		// Не MapThis: тот писал бы присвоенное значение только в память
 		// процесса, и `Константы.Имя = Значение` молча не доезжало до базы
@@ -223,4 +223,74 @@ func (c Common) Build() map[string]any {
 		vars["Numerators"] = numerators
 	}
 	return vars
+}
+
+// ─── Движения там, где их некому записать (issue #743) ───────────────────────
+//
+// Коллектор движений подставляется в переменные DSL два десятка раз, а
+// сбрасывают его в базу ровно пять путей записи и проведения документа. В
+// остальных контекстах — регламентное задание, обработка, страница, отчёт,
+// печатная форма, консоль, событие формы — `Движения.X.Добавить()` выглядел
+// рабочим и молча выбрасывал строки. Это первое, что пробует человек, пришедший
+// из 1С, и расхождение он находит потом по остаткам.
+//
+// Отказ живёт здесь, а не в runtime: пакет runtime не возбуждает прикладных
+// ошибок сам, потому что для этого пришлось бы импортировать интерпретатор, а
+// его собственные тесты уже импортируют runtime — вышел бы цикл.
+
+func movementsVar(mc *runtime.MovementsCollector, reg *runtime.Registry) any {
+	if mc == nil || mc.Persists() {
+		return mc
+	}
+	return movementsGuard{mc: mc, reg: reg}
+}
+
+// registerDisplayName возвращает имя регистра в исходном регистре букв.
+// Обращение из DSL приходит в нижнем (`движения.остаткитоваров`), а в тексте
+// отказа имя должно читаться так, как оно объявлено в конфигурации.
+func registerDisplayName(reg *runtime.Registry, name string) string {
+	if reg == nil {
+		return name
+	}
+	if r := reg.GetRegister(name); r != nil {
+		return r.Name
+	}
+	if r := reg.GetInfoRegister(name); r != nil {
+		return r.Name
+	}
+	if r := reg.GetAccountRegister(name); r != nil {
+		return r.Name
+	}
+	return name
+}
+
+// movementsGuard подменяет объект Движения в контексте без записи: доступ к
+// любому регистру отдаёт заглушку, отказывающую на Добавить.
+type movementsGuard struct {
+	mc  *runtime.MovementsCollector
+	reg *runtime.Registry
+}
+
+func (g movementsGuard) Get(name string) any {
+	return guardedRegisterMovements{mc: g.mc, name: registerDisplayName(g.reg, name)}
+}
+func (g movementsGuard) Set(string, any) {}
+
+type guardedRegisterMovements struct {
+	mc   *runtime.MovementsCollector
+	name string
+}
+
+func (r guardedRegisterMovements) Get(string) any  { return nil }
+func (r guardedRegisterMovements) Set(string, any) {}
+
+func (r guardedRegisterMovements) CallMethod(method string, args []any) any {
+	switch strings.ToLower(method) {
+	case "добавить", "add":
+		interpreter.RaiseUserError(r.mc.DiscardMessage(r.name))
+	case "очистить", "clear":
+		// Очистка пустого набора — безобидный no-op: отказывать не за что.
+		return nil
+	}
+	return nil
 }

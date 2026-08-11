@@ -782,7 +782,7 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 	// запись ссылки на себя (Дв.X = this.Ссылка) или чтение пре-образа по своей
 	// ссылке в хуке не работали. autoNumber уже проставил Номер → displayName корректен.
 	w.ensureSelfRef()
-	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID)
+	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)
 	errMsg, hookMessages := w.s.runOnWriteCtx(ctx, w.obj, mc)
 	w.appendHookMessages(hookMessages)
@@ -867,7 +867,7 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 		return storage.ErrPostingDeletionMarked
 	}
 	w.ensureSelfRef()
-	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID)
+	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)
 	// Дата запрета проведения (свёртка базы, план 74).
 	if mc.Period != nil {

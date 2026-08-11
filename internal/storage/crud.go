@@ -469,22 +469,29 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		}
 	}
 
-	// Full-text search across all string fields.
+	// Поиск подстроки по реквизитам объекта (состав — см. metadata.SearchFields).
 	// SQLite '?' placeholders are positional with no repetition; for each
 	// field we allocate a fresh placeholder and bind the pattern again.
 	if params.Search != "" {
 		var searchParts []string
 		pattern := "%" + params.Search + "%"
-		for _, f := range entity.Fields {
-			if f.Type == metadata.FieldTypeString && f.RefEntity == "" {
-				col := metadata.ColumnName(f)
-				searchParts = append(searchParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-				args = append(args, pattern)
-				argIdx++
-			}
+		// Состав полей задаёт metadata.SearchFields: по умолчанию все строковые
+		// реквизиты (как было всегда), а блок search_fields в YAML позволяет
+		// перечислить свои — например артикул или штрихкод, которые часто хранят
+		// числом и в поиск не попадали. Приведение к тексту делает LowerLike.
+		for _, f := range metadata.SearchFields(entity) {
+			col := metadata.ColumnName(f)
+			searchParts = append(searchParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
+			args = append(args, pattern)
+			argIdx++
 		}
 		if len(searchParts) > 0 {
 			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
+		} else {
+			// Искать не по чему (пустой search_fields или объект без текстовых
+			// реквизитов). Выдача обязана быть пустой: полный список в ответ на
+			// запрос пользователь принимает за результат поиска.
+			whereParts = append(whereParts, "1=0")
 		}
 	}
 	if cond, condArgs, next, err := PredicateSQL(d, entity, params.RowFilter, argIdx); err != nil {
@@ -646,16 +653,23 @@ func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata
 	if params.Search != "" {
 		var searchParts []string
 		pattern := "%" + params.Search + "%"
-		for _, f := range entity.Fields {
-			if f.Type == metadata.FieldTypeString && f.RefEntity == "" {
-				col := metadata.ColumnName(f)
-				searchParts = append(searchParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-				args = append(args, pattern)
-				argIdx++
-			}
+		// Состав полей задаёт metadata.SearchFields: по умолчанию все строковые
+		// реквизиты (как было всегда), а блок search_fields в YAML позволяет
+		// перечислить свои — например артикул или штрихкод, которые часто хранят
+		// числом и в поиск не попадали. Приведение к тексту делает LowerLike.
+		for _, f := range metadata.SearchFields(entity) {
+			col := metadata.ColumnName(f)
+			searchParts = append(searchParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
+			args = append(args, pattern)
+			argIdx++
 		}
 		if len(searchParts) > 0 {
 			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
+		} else {
+			// Искать не по чему (пустой search_fields или объект без текстовых
+			// реквизитов). Выдача обязана быть пустой: полный список в ответ на
+			// запрос пользователь принимает за результат поиска.
+			whereParts = append(whereParts, "1=0")
 		}
 	}
 	if cond, condArgs, next, err := PredicateSQL(d, entity, params.RowFilter, argIdx); err != nil {

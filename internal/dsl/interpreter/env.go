@@ -52,6 +52,12 @@ type execCtx struct {
 	deadline     time.Time // wall-clock запуска; zero = без лимита
 	maxLoopIters int       // потолок итераций цикла; 0 = maxWhileIter
 	moduleEnvs   map[string]*env
+	// sandboxVars — неизменяемый overlay запретов одного sandbox-запуска.
+	// Он отделён от пользовательских vars, поэтому присваивание, Перем,
+	// module vars и временная публикация builtins не могут переоткрыть известное
+	// capability-имя. Карта создаётся один раз в applySandboxVars и далее только
+	// читается всеми кадрами, разделяющими execCtx.
+	sandboxVars map[string]any
 }
 
 // loopLimit — действующий потолок итераций цикла для запуска.
@@ -122,6 +128,11 @@ func (e *env) get(name string) (any, bool) {
 	low := strings.ToLower(name)
 	if low == "this" || low == "этотобъект" {
 		return e.this, true
+	}
+	if e.ec != nil && e.ec.sandboxVars != nil {
+		if v, ok := e.ec.sandboxVars[low]; ok {
+			return v, true
+		}
 	}
 	name = low
 	if v, ok := e.vars[name]; ok {
