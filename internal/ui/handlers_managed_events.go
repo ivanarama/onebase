@@ -96,6 +96,41 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// An event for an existing object is also a read of that object: below we
+	// hydrate omitted fields and table parts, expose them to DSL, and serialize
+	// the resulting state. Gate both object permission and row policy before
+	// any of those paths (including the handler-not-found fast paths).
+	existingIDRaw := strings.TrimSpace(r.FormValue("_id"))
+	if existingIDRaw != "" {
+		if !s.can(r, string(entity.Kind), entity.Name, "read") {
+			w.WriteHeader(http.StatusForbidden)
+			respondJSON(enc, formEventResponse{Error: "forbidden"})
+			return
+		}
+		existingID, err := uuid.Parse(existingIDRaw)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			respondJSON(enc, formEventResponse{Error: "invalid id"})
+			return
+		}
+		_, exists, err := s.store.EntityVersionExists(r.Context(), entity.Name, existingID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+			return
+		}
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			respondJSON(enc, formEventResponse{Error: "not found"})
+			return
+		}
+		if !s.rowAllowsID(r.Context(), entity, "read", existingID) {
+			w.WriteHeader(http.StatusForbidden)
+			respondJSON(enc, formEventResponse{Error: "forbidden"})
+			return
+		}
+	}
+
 	formKind := strings.ToLower(strings.TrimSpace(r.FormValue("_kind")))
 	if formKind == "" {
 		formKind = "object"
@@ -182,22 +217,12 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	s.mergeFormAttrValues(r.Context(), r, form, entity, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
-	if vtRows := parseValueTableRows(r, form); vtRows != nil {
+	if vtRows := parseValueTableRows(r, form, entity); vtRows != nil {
 		if obj.TablePartRows == nil {
 			obj.TablePartRows = map[string][]map[string]any{}
 		}
 		for k, v := range vtRows {
 			obj.TablePartRows[k] = v
-		}
-	}
-	// Restore after every client-controlled table parser, including form-local
-	// ValueTable attributes, so a name collision cannot bypass ReadOnly.
-	if strings.TrimSpace(r.FormValue("_id")) != "" {
-		var restoreErr error
-		obj.TablePartRows, restoreErr = s.restoreReadOnlyTableParts(r.Context(), entity, form, obj.ID, obj.TablePartRows)
-		if restoreErr != nil {
-			respondJSON(enc, formEventResponse{Error: s.errText(r, restoreErr)})
-			return
 		}
 	}
 	// Подмешать ссылки → *runtime.Ref, как при сохранении (нужно для
@@ -647,13 +672,29 @@ func buildObjectFromForm(r *http.Request, entity *metadata.Entity) *runtime.Obje
 // parseValueTableRows парсит vt.<name>.<idx>.<field> и tp_json.<name> из запроса
 // для формовых атрибутов ValueTable. В отличие от parseTablePartRows, работает
 // не с entity.TableParts, а с формовыми атрибутами типа ValueTable.
-func parseValueTableRows(r *http.Request, form *metadata.FormModule) map[string][]map[string]any {
+func parseValueTableRows(r *http.Request, form *metadata.FormModule, entity *metadata.Entity) map[string][]map[string]any {
 	if form == nil {
 		return nil
 	}
 	result := make(map[string][]map[string]any)
 	for _, attr := range form.Attributes {
-		if !strings.EqualFold(attr.TypeRef, "ValueTable") || len(attr.Columns) == 0 {
+		if attr == nil || !strings.EqualFold(attr.TypeRef, "ValueTable") || len(attr.Columns) == 0 {
+			continue
+		}
+		// Entity table parts and form-local ValueTables share Object.TablePartRows
+		// and the tp_json namespace. The object proxy resolves the entity TP first,
+		// so a case-insensitive name collision makes the ValueTable unreachable;
+		// never let its parser overwrite the real entity rows during an event.
+		collides := false
+		if entity != nil {
+			for _, tp := range entity.TableParts {
+				if strings.EqualFold(tp.Name, attr.Name) {
+					collides = true
+					break
+				}
+			}
+		}
+		if collides {
 			continue
 		}
 		name := attr.Name

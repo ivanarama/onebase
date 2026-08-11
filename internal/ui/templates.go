@@ -264,11 +264,31 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return nil
 			}
 			for i := range entity.TableParts {
-				if entity.TableParts[i].Name == name {
+				if strings.EqualFold(entity.TableParts[i].Name, name) {
 					return &entity.TableParts[i]
 				}
 			}
 			return nil
+		},
+		// formTableName canonicalizes the data_path suffix before it is used in
+		// DOM ids and submitted field names. Metadata lookup is case-insensitive,
+		// while Go maps and HTML form keys are not.
+		"formTableName": func(entity *metadata.Entity, form *metadata.FormModule, name string) string {
+			if entity != nil {
+				for i := range entity.TableParts {
+					if strings.EqualFold(entity.TableParts[i].Name, name) {
+						return entity.TableParts[i].Name
+					}
+				}
+			}
+			if form != nil {
+				for _, attr := range form.Attributes {
+					if attr != nil && strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
+						return attr.Name
+					}
+				}
+			}
+			return name
 		},
 		// tpCommandButtons возвращает дочерние элементы-кнопки табличной части —
 		// команды ТЧ (план 46). Рендерятся как тулбар над таблицей; кнопка с
@@ -326,7 +346,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return nil
 			}
 			for _, attr := range form.Attributes {
-				if attr.Name == name && strings.EqualFold(attr.TypeRef, "ValueTable") {
+				if attr != nil && strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
 					return attr.Columns
 				}
 			}

@@ -228,9 +228,24 @@ function obManagedReady(fn) {
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
   // тот же формат используется тут для повторного создания строк.
+  // Keep every representation of the same entity table part in sync. A
+  // managed form may place one TP more than once (for example, a readonly
+  // summary and an editable grid), so getElementById alone is not sufficient.
+  function setTablePartJSON(tpName, rows) {
+    var fieldName = 'tp_json.' + tpName;
+    var inputs = document.getElementsByName ? document.getElementsByName(fieldName) : [];
+    if (!inputs || !inputs.length) {
+      var fallback = document.getElementById('tp-json-' + tpName);
+      inputs = fallback ? [fallback] : [];
+    }
+    var value = JSON.stringify(rows || []);
+    for (var i = 0; i < inputs.length; i++) inputs[i].value = value;
+  }
+
   function applyTableParts(tps){
     if (!tps) return;
     Object.keys(tps).forEach(function(tpName){
+      setTablePartJSON(tpName, tps[tpName] || []);
       const tbody = document.getElementById('tp-body-' + tpName);
       if (!tbody) return;
       const fieldsMeta = (tbody.getAttribute('data-tp-fields') || '').split(',').map(function(s){
@@ -1447,8 +1462,7 @@ obManagedReady(obManagedInitDelegates);
         }
         return row;
       });
-      var inp = document.getElementById("tp-json-" + tpName);
-      if (inp) inp.value = JSON.stringify(rows);
+      setTablePartJSON(tpName, rows);
     }
     return ok;
   };
@@ -1492,7 +1506,7 @@ obManagedReady(obManagedInitDelegates);
   window.obGridAddRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
     if (!g || g.readOnly || !commitGridEdit(g)) return;
-    window._obActiveGridName = tpName;
+    rememberActiveGrid(tpName);
     var nextId = 0, nextOrd = 0;
     g.dataView.getItems().forEach(function(it) {
       if (it.id >= nextId) nextId = it.id + 1;
@@ -1543,7 +1557,7 @@ obManagedReady(obManagedInitDelegates);
   window.obGridDelRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
     if (!g || g.readOnly || !commitGridEdit(g)) return false;
-    window._obActiveGridName = tpName;
+    rememberActiveGrid(tpName);
     var rows = gridRowsForDelete(g);
     if (!rows.length) return false;
     var toRemove = [];
@@ -1595,7 +1609,7 @@ obManagedReady(obManagedInitDelegates);
   window.obGridCopyRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
     if (!g || g.readOnly || !commitGridEdit(g)) return;
-    window._obActiveGridName = tpName;
+    rememberActiveGrid(tpName);
     var ac = g.grid.getActiveCell();
     if (!ac) return;
     var src = g.dataView.getItem(ac.row);
@@ -1628,7 +1642,7 @@ obManagedReady(obManagedInitDelegates);
   window.obGridMoveRow = function(tpName, delta) {
     var g = (window._obGrids || {})[tpName];
     if (!g || g.readOnly || !commitGridEdit(g)) return;
-    window._obActiveGridName = tpName;
+    rememberActiveGrid(tpName);
     var ac = g.grid.getActiveCell();
     if (!ac) return;
     var cur = g.dataView.getItem(ac.row);
@@ -1656,7 +1670,10 @@ obManagedReady(obManagedInitDelegates);
   }
 
   function rememberActiveGrid(tpName) {
-    if (tpName && (window._obGrids || {})[tpName]) window._obActiveGridName = tpName;
+    if (tpName && (window._obGrids || {})[tpName]) {
+      window._obActiveGridName = tpName;
+      window._obActiveDOMTable = null;
+    }
   }
 
   function managedElementVisible(el) {
@@ -1686,6 +1703,7 @@ obManagedReady(obManagedInitDelegates);
     // Прямой контекст всегда окончательный. Неизвестный/ещё не
     // зарегистрированный host не имеет права откатываться к старому гриду.
     if (directHost) {
+      window._obActiveDOMTable = null;
       if (!direct || !grids[direct] || grids[direct].div !== directHost ||
           !document.contains(directHost) || !managedElementVisible(directHost)) {
         if (direct && window._obActiveGridName === direct) window._obActiveGridName = "";
@@ -1696,7 +1714,10 @@ obManagedReady(obManagedInitDelegates);
     }
     // A concrete no-grid table target is authoritative too: never fall back
     // to a SlickGrid that happened to be active before focus moved here.
-    if (source && source.closest && source.closest('table[data-ob-dom-table]')) return "";
+    if (source && source.closest && source.closest('table[data-ob-dom-table]')) {
+      window._obActiveGridName = "";
+      return "";
+    }
     var remembered = window._obActiveGridName || "";
     var g = remembered && grids[remembered];
     if (g && g.div && document.contains(g.div) && managedElementVisible(g.div)) return remembered;
@@ -1741,12 +1762,14 @@ obManagedReady(obManagedInitDelegates);
       if (e.defaultPrevented || e.altKey || e.metaKey || e.shiftKey) return;
       if (managedHasBlockingModal()) return;
       var direct = gridNameFromTarget(e.target);
+      // Resolve concrete table ownership before interactive-target guards.
+      // A readonly editor still has to retire a stale marker from another TP.
+      var tp = activeGridName(e.target);
       // Редактор ячейки находится внутри .ob-grid: там структурная клавиша
       // сначала коммитит значение. Обычное поле формы вне грида нельзя
       // перехватывать из-за когда-то активной табличной части.
       if (!direct && gridInteractiveTarget(e.target)) return;
       if (direct && e.target && e.target.closest && e.target.closest('a[href],button,summary,[contenteditable]:not([contenteditable="false"])')) return;
-      var tp = activeGridName(e.target);
       if (!tp) return;
       var active = (window._obGrids || {})[tp];
       if (!active || active.readOnly) return;

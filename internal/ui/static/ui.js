@@ -730,7 +730,12 @@ function listSetSel(tr, options) {
     var first = options && options.root
       ? obListRowsIn(options.root)[0]
       : obListRows()[0];
-    if (first) first.setAttribute('tabindex', '0');
+    if (first) {
+      first.setAttribute('tabindex', '0');
+      if (options && options.focus && first.focus) {
+        try { first.focus({ preventScroll: true }); } catch (_) { first.focus(); }
+      }
+    }
   }
   listSyncActionsBtn();
 }
@@ -962,6 +967,7 @@ function obDOMSetCurrentRow(table, row, focus) {
   });
   table._obCurrentRow = row || null;
   window._obActiveDOMTable = table;
+  window._obActiveGridName = '';
   if (row && focus && row.focus) {
     try { row.focus({ preventScroll: true }); } catch (_) { row.focus(); }
   }
@@ -985,6 +991,9 @@ function obDOMActiveTable(target) {
   var source = target || document.activeElement;
   var direct = obDOMTableFromTarget(source);
   if (direct) {
+    // A concrete DOM-table context supersedes every previously active
+    // SlickGrid, even when this table is currently hidden or detached.
+    window._obActiveGridName = '';
     if (!document.contains(direct) || !obElementVisible(direct)) {
       if (window._obActiveDOMTable === direct) window._obActiveDOMTable = null;
       return null;
@@ -994,7 +1003,10 @@ function obDOMActiveTable(target) {
   }
   // A concrete SlickGrid target is authoritative. Never apply a shortcut to
   // an unrelated DOM table merely because it was active earlier.
-  if (obSlickGridFromTarget(source)) return null;
+  if (obSlickGridFromTarget(source)) {
+    window._obActiveDOMTable = null;
+    return null;
+  }
   var remembered = window._obActiveDOMTable;
   if (remembered && document.contains(remembered) && obElementVisible(remembered)) return remembered;
   window._obActiveDOMTable = null;

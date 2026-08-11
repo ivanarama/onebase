@@ -235,7 +235,7 @@ const tplManagedForm = `
        с парсером parseTablePartRows: "tp.<TPName>.<idx>.<field>". obFire-JS
        перерисовывает tbody#mtp-body-<TPName> при изменении tableparts.
        Ссылочные колонки — select с TPRefOptions, иначе UUID без имени. */}}
-  {{$tpName := dpField $el.DataPath}}
+  {{$tpName := formTableName $ctx.Entity $ctx.Form (dpField $el.DataPath)}}
   {{$tpMeta := tablePartByName $ctx.Entity $tpName}}
   {{$tpRows := index $ctx.TablePartRows $tpName}}
   {{$tpRef := index $ctx.TPRefOptions $tpName}}
@@ -323,6 +323,7 @@ const tplManagedForm = `
       {{range $f := $tpMeta.Fields}}{{if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}<td></td>
     </tr></tfoot>
   </table>
+  {{if $tpReadOnly}}<input type="hidden" name="tp_json.{{$tpName}}" value='{{jsJSON $tpRows}}' data-ob-tp-json="{{$tpName}}">{{end}}
   <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"
     data-ob-add-tp="{{$tpName}}"{{if $tpReadOnly}} disabled{{else}} title="Insert" aria-keyshortcuts="Insert"{{end}}>
     + Добавить строку

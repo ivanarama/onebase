@@ -22,17 +22,29 @@ func TestKeyboardShortcutsBehavior(t *testing.T) {
 	if err := os.WriteFile(uiPath, uiJS, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	managedPath := filepath.Join(dir, "managed.js")
+	if err := os.WriteFile(managedPath, managedJS, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	const harness = `
 const fs = require('fs');
 const source = fs.readFileSync(process.argv[1], 'utf8');
+const managedSource = fs.readFileSync(process.argv[2], 'utf8');
 const start = source.indexOf('var _listSel = null;');
 const end = source.indexOf('\nfunction obInitFeed', start);
 const dirtyStart = source.indexOf('function obInitFormDirty()');
 const dirtyEnd = source.indexOf('\nobReady(obInitFormDirty);', dirtyStart);
 const addTpStart = source.indexOf('function addTpRow');
 const addTpEnd = source.indexOf('\nfunction recalcTpRow', addTpStart);
-if (start < 0 || end < 0 || dirtyStart < 0 || dirtyEnd < 0 || addTpStart < 0 || addTpEnd < 0) throw new Error('shortcut runtime slice not found');
+const managedMutationStart = managedSource.indexOf('window.obGridAddRow = function');
+const managedKeysStart = managedSource.indexOf('function gridNameFromTarget');
+const managedKeysEnd = managedSource.indexOf('// SlickGrid-aware applyTableParts', managedKeysStart);
+const managedApplyStart = managedSource.indexOf('function setTablePartJSON');
+const managedApplyExport = managedSource.indexOf('window.applyTableParts = applyTableParts;', managedApplyStart);
+if (start < 0 || end < 0 || dirtyStart < 0 || dirtyEnd < 0 || addTpStart < 0 || addTpEnd < 0 ||
+    managedMutationStart < 0 || managedKeysStart < 0 || managedKeysEnd < 0 ||
+    managedApplyStart < 0 || managedApplyExport < 0) throw new Error('shortcut runtime slice not found');
 
 function makeElement(tag, options = {}) {
   const attrs = Object.assign({}, options.attrs || {});
@@ -86,6 +98,7 @@ let domAddButton = null;
 let dynamicTbody = null;
 let domTableForQuery = null;
 let dirtyFormEnabled = false;
+let tablePartJSONInputs = [];
 let closeClicks = 0;
 let confirmResult = true;
 let activated = 0;
@@ -107,6 +120,8 @@ body.appendChild = function(node) { node.parentElement = body; };
 global.window = {
   getComputedStyle(el) { return el && el.style ? el.style : {}; },
   _obActiveDOMTable: null,
+  _obActiveGridName: '',
+  _obGrids: {},
   location: {href: ''},
   obOpenInShell() { activated++; return true; },
   addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
@@ -117,6 +132,7 @@ global.document = {
   title: 'Form',
   addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); },
   contains(el) { return !!el && !el.detached; },
+  getElementsByName(name) { return name === 'tp_json.ReadonlyLines' ? tablePartJSONInputs : []; },
   getElementById(id) {
     if (id === modalID) return {};
     if (id === 'ob-list-config' && configPresent) return {};
@@ -149,8 +165,16 @@ global.document = {
 global.confirm = function() { confirmCalls++; return confirmResult; };
 function obReadJSONScript(id, fallback) { return id === 'ob-list-config' && configPresent ? listConfig : fallback; }
 function recalcTpTotals() {}
+function updateTotals() {}
+function obFireRowEvent() {}
+window.obFireRowEvent = obFireRowEvent;
 
 eval(source.slice(start, end));
+eval(managedSource.slice(managedApplyStart, managedApplyExport + 'window.applyTableParts = applyTableParts;'.length));
+// managed.js is loaded at the bottom of a managed form and installs its
+// capture listener before ui.js's DOM-ready shortcut listener.
+eval(managedSource.slice(managedMutationStart, managedKeysStart));
+eval(managedSource.slice(managedKeysStart, managedKeysEnd));
 obInitKeyboardShortcuts();
 if (!listeners.keydown || listeners.keydown.length < 2) throw new Error('keydown handlers were not installed');
 
@@ -166,6 +190,11 @@ function fire(values = {}) {
   return event;
 }
 function assert(condition, message) { if (!condition) throw new Error(message); }
+
+tablePartJSONInputs = [{value: 'old'}, {value: 'stale-duplicate'}];
+window.applyTableParts({ReadonlyLines: [{Name: 'event-row'}]});
+assert(tablePartJSONInputs.every(input => input.value === '[{"Name":"event-row"}]'),
+  'form-event response did not synchronize every readonly no-grid JSON mirror');
 
 fire({key: 'Enter', ctrlKey: true, defaultPrevented: true});
 assert(postCloseClicks === 0, 'defaultPrevented Ctrl+Enter submitted the form');
@@ -357,7 +386,29 @@ assert(rowEvents[0].values.join(',') === 'B,A,A', 'row-add event fired before co
 
 // A concrete SlickGrid target must never fall back to the remembered no-grid
 // table. Exercise all structural keys against the real DOM mutation code.
-const slickHost = {nodeType: 1, style: {display: '', visibility: ''}, parentElement: body};
+let mixedItems = [{id: 0, _ord: 0, Name: 'slick-A'}];
+const mixedDataView = {
+  getItems() { return mixedItems; },
+  getItem(index) { return mixedItems[index]; },
+  addItem(item) { mixedItems.push(item); },
+  setItems(items) { mixedItems = items; },
+  deleteItem(id) { mixedItems = mixedItems.filter(item => item.id !== id); },
+  getRowById(id) { const index = mixedItems.findIndex(item => item.id === id); return index < 0 ? undefined : index; }
+};
+const mixedGrid = {
+  getEditorLock() { return {isActive() { return false; }}; },
+  getActiveCell() { return {row: 0, cell: 0}; },
+  setActiveCell() {}, scrollRowIntoView() {}, editActiveCell() {}, invalidate() {},
+  getSelectionModel() { return null; }
+};
+const slickHost = {
+  nodeType: 1, style: {display: '', visibility: ''}, parentElement: body,
+  getAttribute(name) { return name === 'data-sg-tp' ? 'SlickLines' : null; }
+};
+window._obGrids.SlickLines = {
+  grid: mixedGrid, dataView: mixedDataView, div: slickHost, readOnly: false,
+  columns: [{id: 'Name'}], columnsMeta: [{id: 'Name'}]
+};
 const slickTarget = makeElement('div', {slickGrid: slickHost});
 rows = [];
 listSetSel(null);
@@ -369,6 +420,25 @@ fire({key: 'F9', target: slickTarget});
 fire({key: 'Delete', target: slickTarget});
 assert(tbody.rows.map(row => row.control.value).join(',') === beforeForeignGrid && rowEvents.length === beforeForeignEvents,
   'SlickGrid target mutated the remembered DOM table via Insert/F9/Delete');
+
+// Real listener order on a mixed managed form: Slick A becomes active first,
+// then a mousedown in DOM table B must retire A before focus falls into a
+// neutral sink. Structural keys may keep operating on B, but never on stale A.
+mixedItems = [{id: 0, _ord: 0, Name: 'slick-A'}];
+fire({key: 'F8', target: slickTarget});
+assert(window._obActiveGridName === 'SlickLines' && window._obActiveDOMTable === null,
+  'direct Slick context did not become the exclusive active table');
+document.activeElement = rowA;
+dispatch('mousedown', {target: rowA});
+assert(window._obActiveGridName === '' && window._obActiveDOMTable === table,
+  'DOM activation left the stale Slick marker alive');
+const slickBeforeNeutral = mixedItems.map(item => item.Name).join(',');
+document.activeElement = body;
+fire({key: 'Insert', target: body});
+fire({key: 'F9', target: body});
+fire({key: 'Delete', target: body});
+assert(mixedItems.map(item => item.Name).join(',') === slickBeforeNeutral,
+  'Slick A changed after Slick A -> DOM B -> neutral listener sequence');
 
 // Header/footer rows are not data rows. Clicking either clears the current
 // tbody row, so F9/Delete cannot copy or remove a stale body row.
@@ -466,6 +536,18 @@ obReplaceLiveListContents(live, fresh);
 assert(listSel() === newSelected && newSelected.getAttribute('aria-selected') === 'true', 'refresh did not restore selected row');
 assert(document.activeElement === newSelected && newSelected.focusCount === 1, 'refresh did not restore focus from the selected list');
 
+const oldMissing = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/gone'}, dataset: {openUrl: '/gone'}});
+const newFirst = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/fresh-first'}, dataset: {openUrl: '/fresh-first'}});
+const newSecond = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/fresh-second'}, dataset: {openUrl: '/fresh-second'}});
+liveRows = [oldMissing];
+rows = liveRows;
+replacementRows = [newFirst, newSecond];
+listSetSel(oldMissing);
+oldMissing.focus();
+obReplaceLiveListContents(live, fresh);
+assert(document.activeElement === newFirst && newFirst.getAttribute('tabindex') === '0',
+  'refresh with a vanished focused selection did not focus a valid fresh row');
+
 const oldOutside = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/outside'}, dataset: {openUrl: '/outside'}});
 const newOutside = makeElement('tr', {listRow: true, attrs: {'data-open-url': '/outside'}, dataset: {openUrl: '/outside'}});
 liveRows = [oldOutside];
@@ -538,7 +620,7 @@ dynamicDelete = dynamicTbody.rows[0].children[1].children[0];
 assert(!dynamicDelete.title && dynamicDelete.getAttribute('aria-keyshortcuts') === null, 'readonly dynamic row advertises unavailable Delete');
 `
 
-	cmd := exec.Command(node, "-e", harness, uiPath)
+	cmd := exec.Command(node, "-e", harness, uiPath, managedPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node shortcut behavior harness: %v\n%s", err, out)
 	}
@@ -627,6 +709,7 @@ const gridState = {
 global.window = {
   _obGrids: {Lines: gridState},
   _obActiveGridName: '',
+  _obActiveDOMTable: domTable,
   _obFormDirty: false,
   getComputedStyle(el) { return el && el.style ? el.style : {}; }
 };
@@ -673,6 +756,7 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 
 resetRows(['A', 'B']);
 fire({key: 'Insert'});
+assert(window._obActiveDOMTable === null, 'direct Slick context left a DOM table marker active');
 assert(items.length === 3 && items[2].Name === '', 'exact Insert did not mutate SlickGrid data');
 assert(rowEvents.length === 1 && rowEvents[0].eventName === 'ПриДобавленииСтроки' && rowEvents[0].values.join(',') === 'A,B,', 'Insert row-add event did not observe committed mutation');
 const afterInsert = items.length;
@@ -730,6 +814,7 @@ fire({key: 'F9', target: domTarget});
 fire({key: 'Delete', target: domTarget});
 assert(items.map(item => item.Name).join(',') === beforeDOMTarget && rowEvents.length === 0,
   'DOM table target mutated remembered SlickGrid via Insert/F9/Delete');
+assert(window._obActiveGridName === '', 'direct DOM context left a SlickGrid marker active');
 
 // Toolbar Delete executes the production mutation. With no vendored
 // RowSelectionModel it must not even call the throwing selection API, must

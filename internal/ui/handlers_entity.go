@@ -1185,12 +1185,6 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		var restoreErr error
-		obj.TablePartRows, restoreErr = s.restoreReadOnlyTableParts(r.Context(), entity, form, id, obj.TablePartRows)
-		if restoreErr != nil {
-			s.serverError(w, r, restoreErr)
-			return
-		}
 		tpRows = obj.TablePartRows
 	}
 	// План 88: не дать пользователю, видящему поле лишь замаскированным,
@@ -1844,8 +1838,19 @@ func (s *Server) saveTablePartsDirect(ctx context.Context, entity *metadata.Enti
 func parseTablePartRows(r *http.Request, entity *metadata.Entity) map[string][]map[string]any {
 	result := make(map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
+		prefix := "tp." + tp.Name + "."
+		hasNamedRows := false
+		for key := range r.Form {
+			if strings.HasPrefix(key, prefix) {
+				hasNamedRows = true
+				break
+			}
+		}
 		// Plan 48 (SlickGrid): check for tp_json.{TPName} first.
-		if jsonBlob := r.FormValue("tp_json." + tp.Name); jsonBlob != "" {
+		// A duplicate placement may expose the same TP as a writable no-grid
+		// table and as a readonly summary. In that case named writable controls
+		// are authoritative over the summary's hidden JSON mirror.
+		if jsonBlob := r.FormValue("tp_json." + tp.Name); !hasNamedRows && jsonBlob != "" {
 			var rows []map[string]any
 			if err := json.Unmarshal([]byte(jsonBlob), &rows); err == nil {
 				// Normalize field names to original case + convert types.
@@ -1899,7 +1904,6 @@ func parseTablePartRows(r *http.Request, entity *metadata.Entity) map[string][]m
 		}
 		// collect max index
 		maxIdx := -1
-		prefix := "tp." + tp.Name + "."
 		for key := range r.Form {
 			if !strings.HasPrefix(key, prefix) {
 				continue
