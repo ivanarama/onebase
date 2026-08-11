@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -98,6 +99,149 @@ func TestResolveBrowserFormEventRejectsReadOnlyAndPlacedCommands(t *testing.T) {
 	if proc, _, _, err := resolveBrowserFormEvent(form, "АвтоКоманда", string(metadata.FormEventOnClick), false); err != nil || proc != "АвтоДействие" {
 		t.Fatalf("unplaced command: proc=%q err=%v", proc, err)
 	}
+}
+
+func TestResolveBrowserFormEventRejectsAmbiguousTargetNames(t *testing.T) {
+	tests := []struct {
+		name string
+		form *metadata.FormModule
+	}{
+		{
+			name: "duplicate elements",
+			form: &metadata.FormModule{Elements: []*metadata.FormElement{
+				{Kind: metadata.FormElementButton, Name: "Запустить", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Один"}},
+				{Kind: metadata.FormElementButton, Name: "запустить", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Два"}},
+			}},
+		},
+		{
+			name: "duplicate commands",
+			form: &metadata.FormModule{Commands: []*metadata.FormCommand{
+				{Name: "Запустить", Action: "Один"},
+				{Name: "ЗАПУСТИТЬ", Action: "Два"},
+			}},
+		},
+		{
+			name: "element and command",
+			form: &metadata.FormModule{
+				Elements: []*metadata.FormElement{{
+					Kind: metadata.FormElementButton, Name: "Запустить",
+					Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Элемент"},
+				}},
+				Commands: []*metadata.FormCommand{{Name: "запустить", Action: "Команда"}},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, _, err := resolveBrowserFormEvent(test.form, "ЗаПуСтИтЬ", string(metadata.FormEventOnClick), false); err == nil {
+				t.Fatal("ambiguous browser target was accepted")
+			}
+		})
+	}
+}
+
+func TestManagedFormEffectiveReadOnlyIsSharedByResolverControlsAndRendering(t *testing.T) {
+	button := &metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "ВложеннаяКнопка",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Нажать"},
+	}
+	field := &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ВложенноеПоле", DataPath: "Объект.Параметр",
+	}
+	page := &metadata.FormElement{Kind: metadata.FormElementPage, Name: "Страница", Children: []*metadata.FormElement{button, field}}
+	group := &metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "Группа", ReadOnly: true, Children: []*metadata.FormElement{page}}
+	form := &metadata.FormModule{
+		Name: "Форма", Kind: "custom", LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{group},
+	}
+
+	if _, _, _, err := resolveBrowserFormEvent(form, button.Name, string(metadata.FormEventOnClick), true); err == nil {
+		t.Fatal("button below readonly GroupBox/Page was accepted")
+	}
+	proc := &processor.Processor{Name: "ReadonlyAncestor", Params: []processor.Param{{Name: "Параметр", Type: "string"}}, Forms: []*metadata.FormModule{form}}
+	controls := processorRequestControlsForForm(proc, form)
+	if len(controls.paramFields[strings.ToLower("Параметр")]) != 0 {
+		t.Fatalf("readonly descendant entered processor allowlist: %+v", controls.paramFields)
+	}
+
+	entity := processorVirtualEntity(proc)
+	data := map[string]any{
+		"Entity": entity, "Processor": proc, "Form": form, "IsProcessor": true,
+		"IsNew": true, "Values": map[string]string{}, "RefOptions": map[string]any{},
+		"EnumOptions": map[string]any{}, "ChoiceOptions": map[string]any{},
+		"TPRefOptions": map[string]any{}, "TPEnumLabels": map[string]map[string]map[string]string{},
+		"TPEnumOrder": map[string]map[string][]string{}, "TPRefMeta": map[string]any{},
+		"TablePartRows": map[string][]map[string]any{}, "Lang": "ru",
+	}
+	var rendered bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&rendered, "page-managed-form", data); err != nil {
+		t.Fatal(err)
+	}
+	html := rendered.String()
+	if strings.Contains(html, `data-ob-fire-click="ВложеннаяКнопка"`) || !strings.Contains(html, `disabled`) {
+		t.Fatalf("readonly descendant rendered as fireable: %s", html)
+	}
+}
+
+func TestHandleManagedFormEventRejectsTablePartValueTableNameCollision(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура Нажать()
+	Сообщить("не должно выполняться");
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind: metadata.FormElementButton, Name: "Кнопка",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Нажать"},
+	}})
+	ent.TableParts = []metadata.TablePart{{Name: "Товары"}}
+	ent.Forms[0].Attributes = []*metadata.FormAttribute{{Name: "товары", TypeRef: "ValueTable"}}
+	body := url.Values{"_element": {"Кнопка"}, "_event": {string(metadata.FormEventOnClick)}, "_kind": {"object"}}
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if resp.OK || !strings.Contains(strings.ToLower(resp.Error), "коллиз") || len(resp.Messages) != 0 {
+		t.Fatalf("table namespace collision was accepted: %+v", resp)
+	}
+}
+
+func TestHandleManagedFormEventUsesOnlyPOSTBrowserState(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура Проверить()
+	Если Объект.Наименование = Неопределено Тогда
+		Сообщить("поле:нет");
+	Иначе
+		Сообщить("поле:" + Объект.Наименование);
+	КонецЕсли;
+	Если ПодборРезультат = Неопределено Тогда
+		Сообщить("подбор:нет");
+	Иначе
+		Сообщить("подбор:есть");
+	КонецЕсли;
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind: metadata.FormElementButton, Name: "Проверить",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Проверить"},
+	}})
+
+	t.Run("query-only target", func(t *testing.T) {
+		query := "?_element=Проверить&_event=" + url.QueryEscape(string(metadata.FormEventOnClick)) + "&_kind=object"
+		resp := decodeFormEventResponse(t, executeFormEventWithQuery(t, srv, ent, query, url.Values{}).Body.Bytes())
+		if resp.OK || resp.Error == "" || len(resp.Messages) != 0 {
+			t.Fatalf("query-only target was accepted: %+v", resp)
+		}
+	})
+
+	t.Run("query-only id kind header and picker", func(t *testing.T) {
+		body := url.Values{"_element": {"Проверить"}, "_event": {string(metadata.FormEventOnClick)}}
+		query := url.Values{
+			"_id":          {"not-a-uuid"},
+			"_kind":        {"missing-kind"},
+			"Наименование": {"query-value"},
+			"_pick_result": {`[{"id":"forged"}]`},
+		}
+		resp := decodeFormEventResponse(t, executeFormEventWithQuery(t, srv, ent, "?"+query.Encode(), body).Body.Bytes())
+		want := []string{"поле:нет", "подбор:нет"}
+		if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("query changed browser state: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+		}
+	})
 }
 
 func TestProcessorExecuteFallbackRenderedAndRunsThroughRealHTTP(t *testing.T) {

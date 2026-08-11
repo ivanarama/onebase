@@ -181,6 +181,12 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		el.Handlers = filtered
 		return true
 	})
+	// ValueTable attributes share one case-insensitive runtime namespace.
+	// Cross-collisions with entity/processor table parts are checked by the
+	// project loader once those declarations are available.
+	if _, err := metadata.FormTableDefinitions(form, nil); err != nil {
+		return nil, err
+	}
 
 	return form, nil
 }

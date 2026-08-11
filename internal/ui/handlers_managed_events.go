@@ -100,6 +100,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
 		return
 	}
+	// Every value describing browser form state comes from the POST body.
+	// Request.Form and FormValue normally merge the query string; using one
+	// normalized request prevents query-only ids, targets, fields and table rows
+	// from reaching any of the existing form parsers below.
+	r = postFormOnlyRequest(r)
 	rawID := strings.TrimSpace(r.FormValue("_id"))
 	formKind := strings.ToLower(strings.TrimSpace(r.FormValue("_kind")))
 	if formKind == "" {
@@ -108,6 +113,10 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	form := pickManagedForm(entity, formKind)
 	if form == nil {
 		respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
+		return
+	}
+	if _, err := metadata.FormTableDefinitions(form, entity.TableParts); err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
 		return
 	}
 	isNewObject := rawID == "" && (strings.EqualFold(form.Kind, "object") || form.Kind == "" && formKind == "object")
@@ -190,8 +199,17 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Гейт по сырому _id: buildObjectFromForm для новой записи генерирует
 	// случайный uuid, поэтому проверка obj.ID != uuid.Nil была бы всегда истинной
 	// и гоняла бы лишний запрос в БД на каждое событие.
-	if strings.TrimSpace(r.FormValue("_id")) != "" {
+	existingFormID := strings.TrimSpace(r.FormValue("_id"))
+	if existingFormID != "" {
 		_ = s.restoreUnsubmittedFields(r.Context(), r, entity, form, obj.ID, obj.Fields)
+	}
+	persistedID := uuid.Nil
+	if existingFormID != "" {
+		persistedID = obj.ID
+	}
+	if err := s.restoreUneditableTableParts(r.Context(), entity, form, persistedID, obj.TablePartRows); err != nil {
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+		return
 	}
 
 	// Псевдо-реквизит «Ссылка» самой записи — как в entityservice.Save. Без него
@@ -404,7 +422,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 			delete(values, k)
 		}
 	}
-	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity)
+	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity, form)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
@@ -460,35 +478,67 @@ func serializeFieldsForEntity(in map[string]any, entity *metadata.Entity) map[st
 // serializeTablePartRowsForEntity дополнительно нормализует имена полей
 // в строках ТЧ. Внутри строки ключи тоже могут оказаться lowercase после
 // MapThis.Set, поэтому ищем оригинальный регистр в entity.TableParts.Fields.
-func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *metadata.Entity) map[string][]map[string]any {
+func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *metadata.Entity, forms ...*metadata.FormModule) map[string][]map[string]any {
 	if tps == nil {
 		return nil
 	}
-	tpFields := make(map[string][]metadata.Field)
-	if entity != nil {
-		for _, tp := range entity.TableParts {
-			tpFields[tp.Name] = tp.Fields
-		}
+	var form *metadata.FormModule
+	if len(forms) > 0 {
+		form = forms[0]
 	}
+	var declared []metadata.TablePart
+	if entity != nil {
+		declared = entity.TableParts
+	}
+	definitions, _ := metadata.FormTableDefinitions(form, declared)
 	out := make(map[string][]map[string]any, len(tps))
 	for tpName, rows := range tps {
-		fields := tpFields[tpName]
+		canonicalName := tpName
+		var columns []string
+		for _, definition := range definitions {
+			if strings.EqualFold(definition.Name, tpName) {
+				canonicalName = definition.Name
+				columns = definition.Columns
+				break
+			}
+		}
 		outRows := make([]map[string]any, len(rows))
 		for i, row := range rows {
 			outRow := make(map[string]any, len(row))
+			for _, column := range columns {
+				// Старый MapThis мог оставить рядом исходный canonical key и новую
+				// lowercase-мутацию. Мутация должна побеждать детерминированно.
+				v, ok := row[strings.ToLower(column)]
+				if !ok {
+					v, ok = row[column]
+				}
+				if !ok {
+					for key, value := range row {
+						if strings.EqualFold(key, column) {
+							v, ok = value, true
+							break
+						}
+					}
+				}
+				if ok {
+					outRow[column] = serializeValue(v)
+				}
+			}
 			for fk, fv := range row {
-				outKey := fk
-				for _, f := range fields {
-					if strings.EqualFold(f.Name, fk) {
-						outKey = f.Name
+				handled := false
+				for _, column := range columns {
+					if strings.EqualFold(column, fk) {
+						handled = true
 						break
 					}
 				}
-				outRow[outKey] = serializeValue(fv)
+				if !handled {
+					outRow[fk] = serializeValue(fv)
+				}
 			}
 			outRows[i] = outRow
 		}
-		out[tpName] = outRows
+		out[canonicalName] = outRows
 	}
 	return out
 }
@@ -773,6 +823,10 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// выше выполняются до разбора потенциально большого multipart-тела.
 	maxSize := s.effectiveUploadLimit()
 	requestControls := processorRequestControlsForForm(proc, form)
+	if requestControls.formTablesErr != nil {
+		respondJSON(enc, formEventResponse{Error: requestControls.formTablesErr.Error()})
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
 	opCtx, finish, ok := s.beginOperation(r, opProcessorRun, proc.Name)
 	if !ok {
@@ -845,7 +899,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		}
 
 		virtEntity := processorVirtualEntity(proc)
-		obj := processorFormObjectFromRequest(r, virtEntity, paramValues, requestControls)
+		obj := processorFormObjectFromRequest(r, virtEntity, form, paramValues, requestControls)
 		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
 		var msgs []string
 		// An unclosed explicit DSL transaction must be rolled back when the
@@ -854,10 +908,11 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		defer cancelDSL()
 		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 		defer rollbackDSLExecution(txState)
-		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, nil, false)
+		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
 		vars["Объект"] = thisObj
 		vars["ЭтотОбъект"] = thisObj
 		vars["Параметры"] = thisObj
+		addFormAttrVars(form, virtEntity, thisObj, vars)
 		interpreter.InjectMaket(vars, proc.Layout)
 
 		formProcs := make(map[string]*ast.ProcedureDecl, len(program.Procedures))
@@ -967,19 +1022,27 @@ func formTablesFromRows(rows map[string][]map[string]any, form *metadata.FormMod
 	if rows == nil || form == nil {
 		return nil
 	}
-	vtNames := map[string]bool{}
+	vtNames := make([]string, 0)
 	for _, attr := range form.Attributes {
 		if attr != nil && strings.EqualFold(attr.TypeRef, "ValueTable") {
-			vtNames[attr.Name] = true
+			vtNames = append(vtNames, attr.Name)
 		}
 	}
 	if len(vtNames) == 0 {
 		return nil
 	}
 	result := make(map[string][]map[string]any)
-	for k, v := range rows {
-		if vtNames[k] && len(v) > 0 {
-			result[k] = v
+	for _, name := range vtNames {
+		for rowName, value := range rows {
+			if strings.EqualFold(rowName, name) {
+				if value == nil {
+					value = []map[string]any{}
+				}
+				// Наличие ключа важно даже для пустого slice: Очистить() должно
+				// приказать клиенту удалить старые строки, а не оставить их.
+				result[name] = value
+				break
+			}
 		}
 	}
 	if len(result) == 0 {

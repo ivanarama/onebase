@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/ivantit66/onebase/internal/runtime"
 )
 
-type tpContextReader func(string) (string, bool)
+type tpContextReader func(string) ([]string, bool)
 
 func addProcessorTPEventContext(
 	r *http.Request,
@@ -22,10 +23,10 @@ func addProcessorTPEventContext(
 	obj *runtime.Object,
 	vars map[string]any,
 ) error {
-	read := func(key string) (string, bool) {
-		return processorPostFormText(r, processorServiceFieldName(proc.Params, key))
+	read := func(key string) ([]string, bool) {
+		return processorPostFormValues(r, processorServiceFieldName(proc.Params, key))
 	}
-	return addValidatedTPEventContext(read, controls.tableParts, proc.TableParts, target, obj, vars)
+	return addValidatedTPEventContext(read, controls.formTables, target, obj, vars)
 }
 
 func addEntityTPEventContext(
@@ -36,68 +37,106 @@ func addEntityTPEventContext(
 	obj *runtime.Object,
 	vars map[string]any,
 ) error {
-	read := func(key string) (string, bool) { return formPostText(r, key) }
-	return addValidatedTPEventContext(read, editableFormTableParts(form, entity.TableParts), entity.TableParts, target, obj, vars)
+	read := func(key string) ([]string, bool) { return formPostValues(r, key) }
+	allowed, err := editableFormTables(form, entity.TableParts)
+	if err != nil {
+		return err
+	}
+	return addValidatedTPEventContext(read, allowed, target, obj, vars)
 }
 
 // formPostText deliberately reads PostForm rather than FormValue. Query-string
 // values are not browser form state and must never create a table-part context.
 func formPostText(r *http.Request, key string) (string, bool) {
-	if r == nil || r.PostForm == nil {
-		return "", false
-	}
-	values, ok := r.PostForm[key]
+	values, ok := formPostValues(r, key)
 	if !ok || len(values) == 0 {
 		return "", ok
 	}
 	return values[0], true
 }
 
-// editableFormTableParts maps the posted DataPath name to canonical metadata
-// only for table parts which are actually placed on the form and editable.
+func formPostValues(r *http.Request, key string) ([]string, bool) {
+	if r == nil || r.PostForm == nil {
+		return nil, false
+	}
+	values, ok := r.PostForm[key]
+	return values, ok
+}
+
+func postFormOnlyRequest(r *http.Request) *http.Request {
+	if r == nil {
+		return nil
+	}
+	body := make(url.Values, len(r.PostForm))
+	for key, values := range r.PostForm {
+		body[key] = append([]string(nil), values...)
+	}
+	copy := new(http.Request)
+	*copy = *r
+	copy.Form = body
+	copy.PostForm = body
+	return copy
+}
+
+// editableFormTables maps a rendered DataPath to the shared canonical
+// metadata for entity/processor table parts and form-local ValueTables.
 // Readonly ancestors make the complete subtree readonly as well.
-func editableFormTableParts(form *metadata.FormModule, declared []metadata.TablePart) map[string]string {
-	allowed := make(map[string]string)
+func editableFormTables(form *metadata.FormModule, declared []metadata.TablePart) (map[string]metadata.FormTableDefinition, error) {
+	definitions, err := metadata.FormTableDefinitions(form, declared)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]metadata.FormTableDefinition)
 	if form == nil {
-		return allowed
+		return allowed, nil
 	}
-	var walk func([]*metadata.FormElement, bool)
-	walk = func(elements []*metadata.FormElement, parentReadOnly bool) {
-		for _, el := range elements {
-			if el == nil {
-				continue
-			}
-			readOnly := parentReadOnly || el.ReadOnly
-			if el.Kind == metadata.FormElementTablePart {
-				if !readOnly && el.DataPath != "" && strings.Count(el.DataPath, ".") <= 1 {
-					formName := dpFieldName(el.DataPath)
-					if tp := tablePartByName(declared, formName); tp != nil {
-						allowed[formName] = tp.Name
-					}
-				}
-				continue
-			}
-			walk(el.Children, readOnly)
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if el.Kind != metadata.FormElementTablePart || visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 {
+			return
 		}
-	}
-	walk(form.Elements, false)
-	return allowed
+		formName := dpFieldName(el.DataPath)
+		for _, definition := range definitions {
+			if strings.EqualFold(definition.Name, formName) {
+				allowed[formName] = definition
+				break
+			}
+		}
+	})
+	return allowed, nil
 }
 
 func addValidatedTPEventContext(
 	read tpContextReader,
-	allowed map[string]string,
-	declared []metadata.TablePart,
+	allowed map[string]metadata.FormTableDefinition,
 	target browserFormEventTarget,
 	obj *runtime.Object,
 	vars map[string]any,
 ) error {
-	tpRaw, tpPresent := read("_tp")
-	selRaw, selPresent := read("_tp_selected")
-	rowRaw, rowPresent := read("_tp_row")
-	rowNumRaw, rowNumPresent := read("_tp_row_number")
-	colRaw, colPresent := read("_tp_col")
-	colIdxRaw, colIdxPresent := read("_tp_col_index")
+	tpRaw, tpPresent, err := readSingleTPContext(read, "_tp")
+	if err != nil {
+		return err
+	}
+	selRaw, selPresent, err := readSingleTPContext(read, "_tp_selected")
+	if err != nil {
+		return err
+	}
+	rowRaw, rowPresent, err := readSingleTPContext(read, "_tp_row")
+	if err != nil {
+		return err
+	}
+	rowNumRaw, rowNumPresent, err := readSingleTPContext(read, "_tp_row_number")
+	if err != nil {
+		return err
+	}
+	colRaw, colPresent, err := readSingleTPContext(read, "_tp_col")
+	if err != nil {
+		return err
+	}
+	colIdxRaw, colIdxPresent, err := readSingleTPContext(read, "_tp_col_index")
+	if err != nil {
+		return err
+	}
 
 	expectedElement := target.parentTablePart
 	if expectedElement == nil && target.element != nil && target.element.Kind == metadata.FormElementTablePart {
@@ -114,33 +153,33 @@ func addValidatedTPEventContext(
 		return fmt.Errorf("не указан контекст табличной части")
 	}
 
-	postedFormName, canonicalTPName, ok := canonicalAllowedTablePart(allowed, tpRaw)
+	postedFormName, tableDefinition, ok := canonicalAllowedFormTable(allowed, tpRaw)
 	if !ok {
 		return fmt.Errorf("табличная часть %q не отрисована или доступна только для чтения", strings.TrimSpace(tpRaw))
 	}
 	expectedFormName := dpFieldName(expectedElement.DataPath)
-	_, expectedCanonical, expectedOK := canonicalAllowedTablePart(allowed, expectedFormName)
-	if !expectedOK || !strings.EqualFold(expectedCanonical, canonicalTPName) {
+	_, expectedDefinition, expectedOK := canonicalAllowedFormTable(allowed, expectedFormName)
+	if !expectedOK || !strings.EqualFold(expectedDefinition.Name, tableDefinition.Name) {
 		return fmt.Errorf("контекст табличной части %q не соответствует элементу %q", postedFormName, expectedElement.Name)
-	}
-
-	tpMeta := tablePartByName(declared, canonicalTPName)
-	if tpMeta == nil {
-		return fmt.Errorf("табличная часть %q не объявлена", canonicalTPName)
 	}
 	var rows []map[string]any
 	if obj != nil {
-		rows = obj.TablePartRows[canonicalTPName]
+		rows = obj.TablePartRows[tableDefinition.Name]
 	}
 
 	var selected *interpreter.Array
 	if strings.TrimSpace(selRaw) != "" {
 		items := make([]any, 0)
+		seen := make(map[int]struct{})
 		for _, part := range strings.Split(selRaw, ",") {
 			idx, err := strconv.Atoi(strings.TrimSpace(part))
 			if err != nil || idx < 0 || idx >= len(rows) {
 				return fmt.Errorf("некорректный индекс выделенной строки табличной части")
 			}
+			if _, duplicate := seen[idx]; duplicate {
+				return fmt.Errorf("индекс выделенной строки табличной части %d указан повторно", idx)
+			}
+			seen[idx] = struct{}{}
 			items = append(items, &interpreter.MapThis{M: rows[idx]})
 		}
 		selected = interpreter.NewArray(items)
@@ -167,7 +206,7 @@ func addValidatedTPEventContext(
 		rowNumber = rowIndex + 1
 	}
 
-	columnName, columnIndex, hasColumn, err := canonicalTPColumn(tpMeta, colRaw, colPresent, colIdxRaw, colIdxPresent)
+	columnName, columnIndex, hasColumn, err := canonicalTPColumn(tableDefinition.Columns, colRaw, colPresent, colIdxRaw, colIdxPresent)
 	if err != nil {
 		return err
 	}
@@ -175,7 +214,7 @@ func addValidatedTPEventContext(
 		return fmt.Errorf("колонка табличной части указана без строки")
 	}
 
-	setTPNameVars(vars, canonicalTPName)
+	setTPNameVars(vars, tableDefinition.Name)
 	if selected != nil {
 		vars["ВыделенныеСтроки"] = selected
 		vars["SelectedRows"] = selected
@@ -200,23 +239,25 @@ func addValidatedTPEventContext(
 	return nil
 }
 
-func canonicalAllowedTablePart(allowed map[string]string, raw string) (string, string, bool) {
-	want := strings.TrimSpace(raw)
-	for formName, canonical := range allowed {
-		if strings.EqualFold(formName, want) {
-			return formName, canonical, true
-		}
+func readSingleTPContext(read tpContextReader, key string) (string, bool, error) {
+	values, present := read(key)
+	if !present {
+		return "", false, nil
 	}
-	return "", "", false
+	if len(values) != 1 {
+		return "", true, fmt.Errorf("служебное поле контекста %s указано неоднозначно", key)
+	}
+	return values[0], true, nil
 }
 
-func tablePartByName(tableParts []metadata.TablePart, name string) *metadata.TablePart {
-	for i := range tableParts {
-		if strings.EqualFold(tableParts[i].Name, name) {
-			return &tableParts[i]
+func canonicalAllowedFormTable(allowed map[string]metadata.FormTableDefinition, raw string) (string, metadata.FormTableDefinition, bool) {
+	want := strings.TrimSpace(raw)
+	for formName, definition := range allowed {
+		if strings.EqualFold(formName, want) {
+			return formName, definition, true
 		}
 	}
-	return nil
+	return "", metadata.FormTableDefinition{}, false
 }
 
 func parseTPContextInt(raw string, present bool, label string) (int, bool, error) {
@@ -230,7 +271,7 @@ func parseTPContextInt(raw string, present bool, label string) (int, bool, error
 	return n, true, nil
 }
 
-func canonicalTPColumn(tp *metadata.TablePart, nameRaw string, namePresent bool, indexRaw string, indexPresent bool) (string, int, bool, error) {
+func canonicalTPColumn(columns []string, nameRaw string, namePresent bool, indexRaw string, indexPresent bool) (string, int, bool, error) {
 	name := strings.TrimSpace(nameRaw)
 	idx, hasIndex, err := parseTPContextInt(indexRaw, indexPresent, "индекс колонки")
 	if err != nil {
@@ -240,10 +281,10 @@ func canonicalTPColumn(tp *metadata.TablePart, nameRaw string, namePresent bool,
 	nameIndex := -1
 	canonicalName := ""
 	if hasName {
-		for i := range tp.Fields {
-			if strings.EqualFold(tp.Fields[i].Name, name) {
+		for i := range columns {
+			if strings.EqualFold(columns[i], name) {
 				nameIndex = i
-				canonicalName = tp.Fields[i].Name
+				canonicalName = columns[i]
 				break
 			}
 		}
@@ -252,14 +293,14 @@ func canonicalTPColumn(tp *metadata.TablePart, nameRaw string, namePresent bool,
 		}
 	}
 	if hasIndex {
-		if idx < 0 || idx >= len(tp.Fields) {
+		if idx < 0 || idx >= len(columns) {
 			return "", 0, false, fmt.Errorf("индекс колонки табличной части вне диапазона")
 		}
 		if hasName && idx != nameIndex {
 			return "", 0, false, fmt.Errorf("имя колонки табличной части не соответствует индексу")
 		}
 		if !hasName {
-			canonicalName = tp.Fields[idx].Name
+			canonicalName = columns[idx]
 		}
 		return canonicalName, idx, true, nil
 	}

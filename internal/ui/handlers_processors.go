@@ -158,6 +158,10 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	}
 	maxSize := s.effectiveUploadLimit()
 	requestControls := processorRequestControlsForForm(proc, proc.ManagedForm())
+	if requestControls.formTablesErr != nil {
+		http.Error(w, requestControls.formTablesErr.Error(), http.StatusBadRequest)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
 	if proc.External {
 		// Запуск внешней обработки (исполнение DSL-кода) всегда логируем.
@@ -453,11 +457,12 @@ func processorAllocatedAuxiliaryParamName(params []processorpkg.Param, prefix, n
 // отрисованы текущей формой обработки. Префиксы _ob_present_ и _fc_ сами по
 // себе ничего не доказывают: такие имена разрешены у обычных параметров.
 type processorRequestControls struct {
-	paramFields  map[string][]string
-	fileInputs   map[string][]string
-	boolPresence map[string][]string
-	fileContent  map[string][]string
-	tableParts   map[string]string
+	paramFields   map[string][]string
+	fileInputs    map[string][]string
+	boolPresence  map[string][]string
+	fileContent   map[string][]string
+	formTables    map[string]metadata.FormTableDefinition
+	formTablesErr error
 }
 
 // processorRequestControlsForForm строит allow-list служебных полей по форме,
@@ -466,12 +471,14 @@ type processorRequestControls struct {
 // input для file-параметра (без _fc_ textarea).
 func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadata.FormModule) processorRequestControls {
 	params := proc.Params
+	formTables, formTablesErr := editableFormTables(form, proc.TableParts)
 	controls := processorRequestControls{
-		paramFields:  make(map[string][]string),
-		fileInputs:   make(map[string][]string),
-		boolPresence: make(map[string][]string),
-		fileContent:  make(map[string][]string),
-		tableParts:   editableFormTableParts(form, proc.TableParts),
+		paramFields:   make(map[string][]string),
+		fileInputs:    make(map[string][]string),
+		boolPresence:  make(map[string][]string),
+		fileContent:   make(map[string][]string),
+		formTables:    formTables,
+		formTablesErr: formTablesErr,
 	}
 	if form == nil {
 		for _, p := range params {
@@ -491,20 +498,20 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 	for _, p := range params {
 		paramsByName[strings.ToLower(p.Name)] = p
 	}
-	form.Walk(func(el *metadata.FormElement) bool {
-		if el == nil {
-			return false
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		// The table renderer only emits its own row controls and command
+		// buttons; arbitrary scalar children are not browser form controls.
+		if el.Kind == metadata.FormElementTablePart || visit.parentTablePart != nil {
+			return
 		}
-		if el.Kind == metadata.FormElementTablePart {
-			return false
-		}
-		if el.ReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 || !processorElementPostsParam(el.Kind) {
-			return true
+		if visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 || !processorElementPostsParam(el.Kind) {
+			return
 		}
 		fieldName := dpFieldName(el.DataPath)
 		p, ok := paramsByName[strings.ToLower(fieldName)]
 		if !ok {
-			return true
+			return
 		}
 		paramKey := strings.ToLower(p.Name)
 		controls.paramFields[paramKey] = appendUniqueProcessorControl(
@@ -523,7 +530,6 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 				controls.fileContent[paramKey], processorFileContentName(params, fieldName),
 			)
 		}
-		return true
 	})
 	return controls
 }
@@ -631,7 +637,7 @@ func processorParamValuesFromRequest(
 // query string, поэтому через него ?_fc_X=... или ?_ob_present_X=... мог бы
 // подделать состояние формы.
 func processorPostFormText(r *http.Request, name string) (string, bool) {
-	raw, present := r.PostForm[name]
+	raw, present := processorPostFormValues(r, name)
 	if !present {
 		return "", false
 	}
@@ -639,6 +645,14 @@ func processorPostFormText(r *http.Request, name string) (string, bool) {
 		return "", true
 	}
 	return raw[0], true
+}
+
+func processorPostFormValues(r *http.Request, name string) ([]string, bool) {
+	if r == nil || r.PostForm == nil {
+		return nil, false
+	}
+	raw, present := r.PostForm[name]
+	return raw, present
 }
 
 func processorControlText(r *http.Request, allowed []string) (string, bool) {
@@ -658,6 +672,7 @@ func processorControlText(r *http.Request, allowed []string) (string, bool) {
 func processorFormObjectFromRequest(
 	r *http.Request,
 	entity *metadata.Entity,
+	form *metadata.FormModule,
 	paramValues map[string]any,
 	controls processorRequestControls,
 ) *runtime.Object {
@@ -670,30 +685,35 @@ func processorFormObjectFromRequest(
 		Kind:          entity.Kind,
 		ID:            uuid.New(),
 		Fields:        fields,
-		TablePartRows: processorTablePartRowsFromRequest(r, entity, controls.tableParts),
+		TablePartRows: processorFormTableRowsFromRequest(r, entity, form, controls.formTables),
 	}
 }
 
-// processorTablePartRowsFromRequest exposes only body values belonging to
-// editable table-part controls rendered by the current form. The normalized
-// request lets the common table-part parser keep its type conversion without
-// inheriting query parameters or arbitrary unrendered table parts.
-func processorTablePartRowsFromRequest(
+// processorFormTableRowsFromRequest exposes only body values belonging to
+// editable table-part or ValueTable controls rendered by the current form. The
+// normalized request lets the common parsers keep their type conversion without
+// inheriting query parameters or arbitrary unrendered form tables.
+func processorFormTableRowsFromRequest(
 	r *http.Request,
 	entity *metadata.Entity,
-	rendered map[string]string,
+	form *metadata.FormModule,
+	rendered map[string]metadata.FormTableDefinition,
 ) map[string][]map[string]any {
 	body := make(url.Values)
 	for postedName, values := range r.PostForm {
-		for formName, canonicalName := range rendered {
+		for formName, definition := range rendered {
 			jsonName := "tp_json." + formName
 			if strings.EqualFold(postedName, jsonName) {
-				body["tp_json."+canonicalName] = append(body["tp_json."+canonicalName], values...)
+				body["tp_json."+definition.Name] = append(body["tp_json."+definition.Name], values...)
 				break
 			}
-			legacyPrefix := "tp." + formName + "."
+			legacyNamespace := "tp."
+			if definition.Source == metadata.FormTableSourceValueTable {
+				legacyNamespace = "vt."
+			}
+			legacyPrefix := legacyNamespace + formName + "."
 			if len(postedName) >= len(legacyPrefix) && strings.EqualFold(postedName[:len(legacyPrefix)], legacyPrefix) {
-				normalized := "tp." + canonicalName + "." + postedName[len(legacyPrefix):]
+				normalized := legacyNamespace + definition.Name + "." + postedName[len(legacyPrefix):]
 				body[normalized] = append(body[normalized], values...)
 				break
 			}
@@ -705,7 +725,14 @@ func processorTablePartRowsFromRequest(
 		Form:     body,
 		PostForm: body,
 	}
-	return parseTablePartRows(safeRequest, entity)
+	rows := parseTablePartRows(safeRequest, entity)
+	if rows == nil {
+		rows = make(map[string][]map[string]any)
+	}
+	for name, valueTableRows := range parseValueTableRows(safeRequest, form) {
+		rows[name] = valueTableRows
+	}
+	return rows
 }
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,

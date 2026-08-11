@@ -158,6 +158,28 @@ func TestManagedFormLoader_ParseYAML(t *testing.T) {
 	}
 }
 
+func TestManagedFormLoaderRejectsAmbiguousValueTableNames(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "collision.form.yaml")
+	doc := `schema: onebase.form/v1
+form:
+  name: Форма
+  kind: custom
+  entity: Тест
+attributes:
+  - name: Подбор
+    type: ValueTable
+  - name: ПОДБОР
+    type: valuetable
+`
+	if err := os.WriteFile(yamlPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Тест"); err == nil {
+		t.Fatal("case-insensitive ValueTable collision was accepted by loader")
+	}
+}
+
 func TestManagedFormLoader_ParsesDeleteAction(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "контрагенты.form.yaml")

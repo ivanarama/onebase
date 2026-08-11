@@ -75,6 +75,50 @@ func TestHandleProcessorFormEventCanonicalizesCollisionSafeTPContext(t *testing.
 	}
 }
 
+func TestHandleProcessorFormEventValueTableChildCommandContext(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура ВыбратьНажатие()
+	Сообщить(ИмяТабличнойЧасти);
+	Сообщить(ТекущаяКолонка);
+	Сообщить(ТекущаяСтрока.Количество);
+КонецПроцедуры
+`)
+	form := processorExecutionForm(&metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "ЭлементПодбор", DataPath: "Форма.Подбор",
+		Children: []*metadata.FormElement{{
+			Kind: metadata.FormElementButton, Name: "Выбрать",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ВыбратьНажатие"},
+		}},
+	})
+	form.Attributes = []*metadata.FormAttribute{{
+		Name: "Подбор", TypeRef: "ValueTable",
+		Columns: []*metadata.FormAttributeColumn{
+			{Name: "Товар", TypeRef: "string"},
+			{Name: "Количество", TypeRef: "number"},
+		},
+	}}
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{Name: "КонтекстValueTable", Forms: []*metadata.FormModule{form}}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	names := processorServiceFieldNames(proc.Params)
+	body := url.Values{
+		names["_element"]:       {"Выбрать"},
+		names["_event"]:         {string(metadata.FormEventOnClick)},
+		names["_tp"]:            {"подбор"},
+		names["_tp_row"]:        {"0"},
+		names["_tp_row_number"]: {"1"},
+		names["_tp_col"]:        {"количество"},
+		names["_tp_col_index"]:  {"1"},
+		"tp_json.Подбор":        {`[{"Товар":"A","Количество":3}]`},
+	}
+	resp := decodeFormEventResponse(t, postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode())).Body.Bytes())
+	want := []string{"Подбор", "Количество", "3"}
+	if !resp.OK || resp.Error != "" || strings.Join(resp.Messages, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("processor ValueTable context: ok=%v error=%q messages=%v, want=%v", resp.OK, resp.Error, resp.Messages, want)
+	}
+}
+
 func TestHandleProcessorFormEventRejectsForgedOrInconsistentTPContext(t *testing.T) {
 	srv, proc, names := processorTPContextFixture(t, false)
 	tests := []struct {
@@ -92,6 +136,18 @@ func TestHandleProcessorFormEventRejectsForgedOrInconsistentTPContext(t *testing
 			name: "selected row out of range",
 			mutate: func(body url.Values) {
 				body.Set(names["_tp_selected"], "0,9")
+			},
+		},
+		{
+			name: "duplicate selected row",
+			mutate: func(body url.Values) {
+				body.Set(names["_tp_selected"], "0,0")
+			},
+		},
+		{
+			name: "repeated selected service field",
+			mutate: func(body url.Values) {
+				body[names["_tp_selected"]] = []string{"0", "1"}
 			},
 		},
 		{
@@ -134,6 +190,26 @@ func TestHandleProcessorFormEventRejectsReadOnlyTablePartEvent(t *testing.T) {
 		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode())).Body.Bytes())
 	if resp.OK || !strings.Contains(strings.ToLower(resp.Error), "только для чтения") {
 		t.Fatalf("readonly TP event was not rejected: ok=%v error=%q", resp.OK, resp.Error)
+	}
+}
+
+func TestHandleProcessorFormEventRejectsTablePartValueTableNameCollision(t *testing.T) {
+	form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить"})
+	form.Attributes = []*metadata.FormAttribute{{Name: "строки", TypeRef: "ValueTable"}}
+	proc := &processor.Processor{
+		Name:       "КоллизияТаблиц",
+		TableParts: []metadata.TablePart{{Name: "Строки"}},
+		Forms:      []*metadata.FormModule{form},
+	}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, mustParse(t, `
+Процедура Выполнить()
+	Сообщить("не должно выполняться");
+КонецПроцедуры
+`))
+	resp := decodeFormEventResponse(t, postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(processorClickBody("Выполнить").Encode())).Body.Bytes())
+	if resp.OK || !strings.Contains(strings.ToLower(resp.Error), "коллиз") || len(resp.Messages) != 0 {
+		t.Fatalf("processor table namespace collision was accepted: %+v", resp)
 	}
 }
 

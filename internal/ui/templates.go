@@ -45,6 +45,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return processorServiceFieldNames(proc.Params)
 		},
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"str": func(v any) string {
 			if v == nil {
 				return ""
@@ -284,11 +285,37 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return nil
 			}
 			for i := range entity.TableParts {
-				if entity.TableParts[i].Name == name {
+				if strings.EqualFold(entity.TableParts[i].Name, name) {
 					return &entity.TableParts[i]
 				}
 			}
 			return nil
+		},
+		"tablePartTitle": func(tablePart *metadata.TablePart) string {
+			if tablePart == nil {
+				return ""
+			}
+			return tablePart.Title
+		},
+		// canonicalFormTableName maps the DataPath spelling to the unique
+		// canonical metadata name shared by entity/processor TP and ValueTable.
+		// Browser field names must use it: the parsers intentionally consume the
+		// canonical namespace, while DataPath matching is case-insensitive.
+		"canonicalFormTableName": func(form *metadata.FormModule, entity *metadata.Entity, name string) string {
+			var tableParts []metadata.TablePart
+			if entity != nil {
+				tableParts = entity.TableParts
+			}
+			definitions, err := metadata.FormTableDefinitions(form, tableParts)
+			if err != nil {
+				return name
+			}
+			for _, definition := range definitions {
+				if strings.EqualFold(definition.Name, name) {
+					return definition.Name
+				}
+			}
+			return name
 		},
 		// tpCommandButtons возвращает дочерние элементы-кнопки табличной части —
 		// команды ТЧ (план 46). Рендерятся как тулбар над таблицей; кнопка с
@@ -346,7 +373,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return nil
 			}
 			for _, attr := range form.Attributes {
-				if attr.Name == name && strings.EqualFold(attr.TypeRef, "ValueTable") {
+				if strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
 					return attr.Columns
 				}
 			}

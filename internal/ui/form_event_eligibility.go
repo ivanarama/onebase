@@ -13,6 +13,12 @@ type browserFormEventTarget struct {
 	command         *metadata.FormCommand
 }
 
+type browserFormElementVisit struct {
+	element           *metadata.FormElement
+	parentTablePart   *metadata.FormElement
+	effectiveReadOnly bool
+}
+
 // resolveBrowserFormEvent is the single fail-closed server-side model of what
 // managed.js/templates can emit. Metadata may describe additional server-side
 // lifecycle events, but they cannot be invoked through the browser endpoint.
@@ -38,11 +44,27 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 		return proc, target, false, nil
 	}
 
-	el, parentTP := findBrowserEventElement(form, elementName)
-	if el != nil {
+	var elements []browserFormElementVisit
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if strings.EqualFold(visit.element.Name, elementName) {
+			elements = append(elements, visit)
+		}
+	})
+	var commands []*metadata.FormCommand
+	for _, command := range unplacedCommands(form) {
+		if command != nil && strings.EqualFold(command.Name, elementName) && strings.TrimSpace(command.Action) != "" {
+			commands = append(commands, command)
+		}
+	}
+	if len(elements)+len(commands) > 1 {
+		return "", target, false, fmt.Errorf("имя цели события формы %q неоднозначно", elementName)
+	}
+	if len(elements) == 1 {
+		visit := elements[0]
+		el := visit.element
 		target.element = el
-		target.parentTablePart = parentTP
-		if el.ReadOnly || parentTP != nil && parentTP.ReadOnly {
+		target.parentTablePart = visit.parentTablePart
+		if visit.effectiveReadOnly {
 			return "", target, false, fmt.Errorf("элемент формы %q доступен только для чтения", el.Name)
 		}
 		if !browserEventAllowedForElement(el.Kind, event) {
@@ -57,14 +79,12 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 		return "", target, false, fmt.Errorf("обработчик события %q элемента %q не объявлен", eventName, el.Name)
 	}
 
-	if event != metadata.FormEventOnClick && event != metadata.FormEventOnChoice {
-		return "", target, false, fmt.Errorf("элемент формы %q не найден", elementName)
-	}
-	for _, command := range unplacedCommands(form) {
-		if command != nil && strings.EqualFold(command.Name, elementName) && strings.TrimSpace(command.Action) != "" {
-			target.command = command
-			return command.Action, target, false, nil
+	if len(commands) == 1 {
+		if event != metadata.FormEventOnClick && event != metadata.FormEventOnChoice {
+			return "", target, false, fmt.Errorf("команда формы %q не отправляет событие %q", elementName, eventName)
 		}
+		target.command = commands[0]
+		return commands[0].Action, target, false, nil
 	}
 	return "", target, false, fmt.Errorf("элемент или доступная команда формы %q не найдены", elementName)
 }
@@ -87,37 +107,52 @@ func browserEventAllowedForElement(kind metadata.FormElementType, event metadata
 	}
 }
 
-func findBrowserEventElement(form *metadata.FormModule, name string) (*metadata.FormElement, *metadata.FormElement) {
-	if form == nil {
-		return nil, nil
+func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormElementVisit)) {
+	if form == nil || visit == nil {
+		return
 	}
-	var walk func([]*metadata.FormElement, *metadata.FormElement) (*metadata.FormElement, *metadata.FormElement)
-	walk = func(elements []*metadata.FormElement, parentTP *metadata.FormElement) (*metadata.FormElement, *metadata.FormElement) {
-		for _, el := range elements {
-			if el == nil {
+	var walk func([]*metadata.FormElement, *metadata.FormElement, bool)
+	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly bool) {
+		for _, element := range elements {
+			if element == nil {
 				continue
 			}
-			if strings.EqualFold(el.Name, name) {
-				return el, parentTP
+			effectiveReadOnly := parentReadOnly || element.ReadOnly
+			visit(browserFormElementVisit{
+				element: element, parentTablePart: parentTable, effectiveReadOnly: effectiveReadOnly,
+			})
+			nextTable := parentTable
+			if element.Kind == metadata.FormElementTablePart {
+				nextTable = element
 			}
-			nextTP := parentTP
-			if el.Kind == metadata.FormElementTablePart {
-				nextTP = el
-			}
-			if found, parent := walk(el.Children, nextTP); found != nil {
-				return found, parent
-			}
+			walk(element.Children, nextTable, effectiveReadOnly)
 		}
-		return nil, nil
 	}
-	return walk(form.Elements, nil)
+	walk(form.Elements, nil, false)
+}
+
+func effectiveFormElementReadOnly(form *metadata.FormModule, target *metadata.FormElement) bool {
+	if target == nil {
+		return true
+	}
+	// managed-element is also rendered directly by focused template tests and
+	// editor previews which do not always carry the owning FormModule. Preserve
+	// the element's own flag as a safe fallback; the normal page path below
+	// replaces it with inherited state from the real tree.
+	readOnly := target.ReadOnly
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if visit.element == target {
+			readOnly = visit.effectiveReadOnly
+		}
+	})
+	return readOnly
 }
 
 // isProcessorExecuteFallbackButton is shared by the template and POST
 // resolver. Only an editable, top-level, unbound Execute/Выполнить button can
 // invoke the processor module's conventional Выполнить procedure.
 func isProcessorExecuteFallbackButton(form *metadata.FormModule, el *metadata.FormElement) bool {
-	if form == nil || el == nil || el.Kind != metadata.FormElementButton || el.ReadOnly {
+	if form == nil || el == nil || el.Kind != metadata.FormElementButton || effectiveFormElementReadOnly(form, el) {
 		return false
 	}
 	name := strings.TrimSpace(el.Name)
@@ -127,6 +162,19 @@ func isProcessorExecuteFallbackButton(form *metadata.FormModule, el *metadata.Fo
 	if strings.TrimSpace(el.Handlers[metadata.FormEventOnClick]) != "" {
 		return false
 	}
-	found, parentTP := findBrowserEventElement(form, el.Name)
-	return found == el && parentTP == nil
+	var matches []browserFormElementVisit
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if strings.EqualFold(visit.element.Name, el.Name) {
+			matches = append(matches, visit)
+		}
+	})
+	if len(matches) != 1 || matches[0].element != el || matches[0].parentTablePart != nil {
+		return false
+	}
+	for _, command := range unplacedCommands(form) {
+		if command != nil && strings.EqualFold(command.Name, el.Name) && strings.TrimSpace(command.Action) != "" {
+			return false
+		}
+	}
+	return true
 }
