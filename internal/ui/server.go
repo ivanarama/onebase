@@ -86,7 +86,8 @@ type Server struct {
 	incidents              *incident.Store // последние ошибки и паники с кодом E-… (план 116)
 	widgetCache            *widget.Cache
 	lockMgr                *runtime.LockManager   // #2 managed locks
-	entitySvc              *entityservice.Service // упсёрт + ТЧ + движения + проведение, разделяется с api
+	entitySvc              *entityservice.Service // упсёрт + ТЧ + движения + проведение + удаление, разделяется с api
+	entitySvcOnce          sync.Once              // ленивая сборка для серверов, собранных напрямую (тесты, offline)
 	aiChatLimit            *aiWindowLimiter       // лимит частоты ИИ-чата на пользователя (план 54)
 	endpointLimit          endpointLimiter        // rate-limit HTTP-сервисов (план 61)
 	loginLimit             *auth.LoginLimiter     // брутфорс-защита basic-auth сервисов (общий с формой входа)
@@ -142,7 +143,20 @@ func (s *Server) Messages() *MessageStore { return s.messages }
 // REST API (internal/api) чтобы вызывать OnWrite/OnPost + ТЧ + движения +
 // проведение по той же логике, что и UI submit/submitEdit — иначе бизнес-
 // правила работали бы только через web-форму.
-func (s *Server) EntitySvc() *entityservice.Service { return s.entitySvc }
+func (s *Server) EntitySvc() *entityservice.Service { return s.entityService() }
+
+// entityService отдаёт сервис сущностей, собирая его при первом обращении.
+// Полный сервер (New) заполняет поле сам; серверы, собранные структурным
+// литералом (тесты, offline-пути), — нет, а удаление и запись обязаны идти
+// одним путём везде, иначе хуки срабатывают выборочно.
+func (s *Server) entityService() *entityservice.Service {
+	s.entitySvcOnce.Do(func() {
+		if s.entitySvc == nil {
+			s.entitySvc = s.newEntityService(nil)
+		}
+	})
+	return s.entitySvc
+}
 
 // SSESubscriberCount returns the number of currently connected realtime
 // subscribers.

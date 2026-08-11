@@ -16,7 +16,6 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
-	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -464,21 +463,16 @@ func (h *handler) deleteObject(kind metadata.Kind) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden", "", 0)
 			return
 		}
-		if err := h.store.WithTx(r.Context(), func(ctx context.Context) error {
-			// Recorder columns intentionally have no FK: register rows may
-			// reference different document tables. Every delete path must
-			// therefore clear all movement kinds explicitly in this transaction.
-			if kind == metadata.KindDocument {
-				if err := h.clearMovements(ctx, entityName, id); err != nil {
-					return err
-				}
-			}
-			if err := exchange.RegisterOnDelete(ctx, h.store, h.reg.ExchangePlans(), entity, id); err != nil {
-				return err
-			}
-			return h.store.Delete(ctx, entityName, id)
-		}); err != nil {
+		// Через entityservice: хуки модуля объекта «ПередУдалением»/
+		// «ПослеУдаления» обязаны срабатывать и по REST — иначе запрет,
+		// написанный в конфигурации, обходится сменой способа удаления.
+		res, err := h.entitySvc.Delete(r.Context(), entity, id)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		if res.DSLError != "" {
+			writeError(w, http.StatusConflict, res.DSLError, "", 0)
 			return
 		}
 		h.dispatchHook(r.Context(), string(kind)+".delete", entityName, id)

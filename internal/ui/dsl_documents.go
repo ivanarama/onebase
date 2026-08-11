@@ -404,24 +404,22 @@ func (p *docProxy) DeleteRef(uuidStr string) error {
 	if p.entity.NotifyChanges {
 		delBefore, _ = p.s.store.GetByID(ctx, p.entity.Name, id, p.entity)
 	}
-	return p.s.store.WithTxIfNeeded(ctx, func(ctx context.Context) error {
-		if p.entity.Posting {
-			if err := p.s.clearMovements(ctx, p.entity.Name, id); err != nil {
-				return fmt.Errorf("очистка движений: %w", err)
-			}
-		}
-		if err := exchange.RegisterOnDelete(ctx, p.s.store, p.s.reg.ExchangePlans(), p.entity, id); err != nil {
-			return err
-		}
-		if err := p.s.store.Delete(ctx, p.entity.Name, id); err != nil {
-			return err
-		}
-		p.s.publishDocChange(ctx, p.entity, id, "удалён", delBefore)
-		// Веб-хук <kind>.delete (план 29) — как в UI-обработчике физического
-		// удаления. Пометка на удаление обратима и событием не считается (markRef).
-		p.s.dispatchDocWebhook(ctx, string(p.entity.Kind)+".delete", p.entity, id, nil)
-		return nil
-	})
+	// Через entityservice — тот же путь, что у UI и REST: хуки модуля объекта
+	// «ПередУдалением»/«ПослеУдаления», движения, ТЧ, планы обмена.
+	res, err := p.s.entityService().Delete(ctx, p.entity, id)
+	if err != nil {
+		return err
+	}
+	if res.DSLError != "" {
+		// Хук отменил удаление. Для вызывающего DSL-кода это обычная
+		// прикладная ошибка, ловится Попыткой.
+		interpreter.RaiseUserError(res.DSLError)
+	}
+	p.s.publishDocChange(ctx, p.entity, id, "удалён", delBefore)
+	// Веб-хук <kind>.delete (план 29) — как в UI-обработчике физического
+	// удаления. Пометка на удаление обратима и событием не считается (markRef).
+	p.s.dispatchDocWebhook(ctx, string(p.entity.Kind)+".delete", p.entity, id, nil)
+	return nil
 }
 
 // unpostRef отменяет проведение документа через entityservice.Unpost — тем же
