@@ -112,6 +112,9 @@ func llmDenyFn(msg string) BuiltinFunc {
 // значение — в result.
 func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p SandboxProfile, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	if p.MaxWallClock > 0 {
 		e.ec.deadline = time.Now().Add(p.MaxWallClock)
 	}
@@ -161,6 +164,9 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 // return a value.
 func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []any, p SandboxProfile, extraVars ...map[string]any) (result any, err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	if p.MaxWallClock > 0 {
 		e.ec.deadline = time.Now().Add(p.MaxWallClock)
 	}

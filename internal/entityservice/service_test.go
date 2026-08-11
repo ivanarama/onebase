@@ -3,11 +3,13 @@ package entityservice
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -90,5 +92,75 @@ func TestSave_UnpostClearsInfoRegisterMovements(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("движения инфорегистра не сброшены при отмене проведения: осталось %d строк: %v", len(rows), rows)
+	}
+}
+
+func TestSaveCleansBorrowedDSLTransactionScope(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "borrowed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	entity := &metadata.Entity{
+		Name:   "ТестовыйСправочник",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
+		t.Fatal(err)
+	}
+	program := mustParseProgramT(t, `
+Процедура ПриЗаписи()
+	НачатьТранзакцию();
+	ПометитьОткат();
+КонецПроцедуры`)
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{entity},
+		Programs: map[string]*ast.Program{entity.Name: program},
+	})
+
+	rollbackHooks := 0
+	svc := &Service{
+		Store: db, Reg: registry, Interp: interpreter.New(),
+		BuildVars: func(hookCtx context.Context, _ *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+			state := interpreter.NewTxState(hookCtx)
+			vars := interpreter.NewTxFunctions(state, db)
+			vars["ПометитьОткат"] = interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
+				if !storage.DeferUntilTxRollback(state.Ctx(), func() { rollbackHooks++ }) {
+					t.Fatal("DSL savepoint did not receive a rollback hook scope")
+				}
+				return nil, nil
+			})
+			return vars, state
+		},
+	}
+
+	id := uuid.New()
+	result, err := svc.Save(ctx, SaveRequest{
+		Entity: entity,
+		ID:     id,
+		IsNew:  true,
+		Fields: map[string]any{"Наименование": "не сохранять"},
+	})
+	if err != nil {
+		t.Fatalf("Save returned infrastructure error: %v", err)
+	}
+	if !strings.Contains(result.DSLError, interpreter.ErrTransactionLeftOpen.Error()) {
+		t.Fatalf("DSLError = %q, want open-transaction error", result.DSLError)
+	}
+	if rollbackHooks != 1 {
+		t.Fatalf("borrowed rollback hooks = %d, want 1", rollbackHooks)
+	}
+	if _, err := db.GetByID(ctx, entity.Name, id, entity); err == nil {
+		t.Fatal("provisional row survived borrowed savepoint/outer transaction rollback")
+	}
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	var one int
+	if err := db.QueryRow(readCtx, "SELECT 1").Scan(&one); err != nil || one != 1 {
+		t.Fatalf("database unavailable after borrowed cleanup: one=%d err=%v", one, err)
 	}
 }

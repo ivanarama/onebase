@@ -7,7 +7,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 )
 
-func evalBreakFunc(t *testing.T, code string) any {
+func evalBreakFunc(t *testing.T, code string, extra ...map[string]any) any {
 	t.Helper()
 	l := lexer.New(code, "<test>")
 	p := parser.New(l)
@@ -19,7 +19,7 @@ func evalBreakFunc(t *testing.T, code string) any {
 	i := New()
 	this := &MapThis{M: map[string]any{}}
 	var result any
-	if err := i.RunWithResult(proc, this, &result); err != nil {
+	if err := i.RunWithResult(proc, this, &result, extra...); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	return result

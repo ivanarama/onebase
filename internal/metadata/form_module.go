@@ -52,6 +52,26 @@ const (
 	FormEventOnChoice FormEventType = "Выбор" // OnChoice
 )
 
+var knownFormEventTypes = map[FormEventType]bool{
+	FormEventOnOpen: true, FormEventOnReadAtServer: true,
+	FormEventBeforeWrite: true, FormEventOnWrite: true, FormEventAfterWrite: true,
+	FormEventBeforeClose: true, FormEventOnClose: true, FormEventOnActivate: true,
+	FormEventItemChoice: true, FormEventStartChoice: true, FormEventOnChange: true,
+	FormEventOnCreate: true, FormEventBeforeDelete: true, FormEventOnDelete: true,
+	FormEventAfterDelete: true, FormEventOnRowAdded: true, FormEventOnRowChanged: true,
+	FormEventOnRowDeleted: true, FormEventOnRowActivated: true, FormEventOnClick: true,
+	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
+	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
+	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
+}
+
+// IsKnownFormEventType reports whether event is part of the platform event
+// vocabulary. Procedure names and YAML keys outside this allow-list remain
+// ordinary helpers and must never become remotely invokable form handlers.
+func IsKnownFormEventType(event FormEventType) bool {
+	return knownFormEventTypes[event]
+}
+
 // FormElementType represents types of form elements
 type FormElementType string
 

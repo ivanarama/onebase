@@ -2511,7 +2511,7 @@ obReady(function () {
   });
 });
 
-function openItemPicker(payload, elementName) {
+function openItemPicker(payload, elementName, eventContext) {
   if (!payload) return;
   var cols = payload.columns || [];
   var rows = payload.rows || [];
@@ -2748,7 +2748,12 @@ function openItemPicker(payload, elementName) {
     });
     modal.remove();
     if (typeof obFire === 'function') {
-      obFire(elementName, 'Выбор', { _pick_result: JSON.stringify(result) });
+      var params = {};
+      if (eventContext) {
+        Object.keys(eventContext).forEach(function (key) { params[key] = eventContext[key]; });
+      }
+      params._pick_result = JSON.stringify(result);
+      obFire(elementName, 'Выбор', params);
     }
   });
 }

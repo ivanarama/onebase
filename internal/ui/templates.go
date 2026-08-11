@@ -11,6 +11,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
+	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
@@ -25,6 +26,26 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 	return template.FuncMap{
 		"lower": strings.ToLower,
+		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
+			if proc == nil {
+				return processorParamPresencePrefix + name
+			}
+			return processorParamPresenceName(proc.Params, name)
+		},
+		"processorFileContentName": func(proc *processorpkg.Processor, name string) string {
+			if proc == nil {
+				return processorFileContentPrefix + name
+			}
+			return processorFileContentName(proc.Params, name)
+		},
+		"processorServiceFieldNames": func(proc *processorpkg.Processor) map[string]string {
+			if proc == nil {
+				return nil
+			}
+			return processorServiceFieldNames(proc.Params)
+		},
+		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"str": func(v any) string {
 			if v == nil {
 				return ""
@@ -270,22 +291,28 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return nil
 		},
-		// formTableName canonicalizes the data_path suffix before it is used in
-		// DOM ids and submitted field names. Metadata lookup is case-insensitive,
-		// while Go maps and HTML form keys are not.
-		"formTableName": func(entity *metadata.Entity, form *metadata.FormModule, name string) string {
-			if entity != nil {
-				for i := range entity.TableParts {
-					if strings.EqualFold(entity.TableParts[i].Name, name) {
-						return entity.TableParts[i].Name
-					}
-				}
+		"tablePartTitle": func(tablePart *metadata.TablePart) string {
+			if tablePart == nil {
+				return ""
 			}
-			if form != nil {
-				for _, attr := range form.Attributes {
-					if attr != nil && strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
-						return attr.Name
-					}
+			return tablePart.Title
+		},
+		// canonicalFormTableName maps the DataPath spelling to the unique
+		// canonical metadata name shared by entity/processor TP and ValueTable.
+		// Browser field names must use it: the parsers intentionally consume the
+		// canonical namespace, while DataPath matching is case-insensitive.
+		"canonicalFormTableName": func(form *metadata.FormModule, entity *metadata.Entity, name string) string {
+			var tableParts []metadata.TablePart
+			if entity != nil {
+				tableParts = entity.TableParts
+			}
+			definitions, err := metadata.FormTableDefinitions(form, tableParts)
+			if err != nil {
+				return name
+			}
+			for _, definition := range definitions {
+				if strings.EqualFold(definition.Name, name) {
+					return definition.Name
 				}
 			}
 			return name
@@ -2108,6 +2135,7 @@ const tplProcessor = `
     {{if eq .Type "bool"}}
     <div class="form-group" style="margin-bottom:0">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="hidden" name="{{processorParamPresenceName $.Processor $pname}}" value="1">
         <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
         <span>{{.DisplayLabel $.Lang}}</span>
       </label>
