@@ -1,6 +1,7 @@
 package debugger
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,16 +23,23 @@ func TestBreakpointLifecycleNormalizesFiles(t *testing.T) {
 	assert.Equal(t, 1, bp.MapLen)
 	assert.Equal(t, 1, bp.EntryLen)
 
-	got := s.CheckBreakpoint("post-Заказ", 12)
+	// Без вычислителя условие не проверить — точка срабатывает, а не молчит.
+	got := s.CheckBreakpoint("post-Заказ", 12, nil)
 	require.NotNil(t, got)
 	assert.Equal(t, 1, got.HitCount)
 	assert.True(t, s.HasBreakpointsForFile("заказ.posting.os"))
 	assert.Len(t, s.GetBreakpointsForFile("заказ.posting.os"), 1)
 
+	// Поиск точки счётчик не трогает: клик по колонке — не попадание.
+	found := s.FindBreakpoint("заказ.posting.os", 12)
+	require.NotNil(t, found)
+	assert.Equal(t, 1, found.HitCount)
+
 	toggled := s.ToggleBreakpoint("заказ.posting.os", 12)
 	require.NotNil(t, toggled)
 	assert.False(t, toggled.Enabled)
-	assert.Nil(t, s.CheckBreakpoint("заказ.posting.os", 12))
+	assert.Nil(t, s.CheckBreakpoint("заказ.posting.os", 12, nil))
+	assert.NotNil(t, s.FindBreakpoint("заказ.posting.os", 12))
 
 	assert.True(t, s.RemoveBreakpoint("заказ.posting.os", 12))
 	assert.False(t, s.RemoveBreakpoint("заказ.posting.os", 12))
@@ -40,6 +48,71 @@ func TestBreakpointLifecycleNormalizesFiles(t *testing.T) {
 	dc.RemoveSession(s.ID)
 	assert.Nil(t, dc.GetSession(s.ID))
 	assert.Equal(t, StateStopped, s.State)
+}
+
+// Контракт условия на уровне сессии: ложное условие пропускает строку, ошибка
+// вычисления останавливает и остаётся видимой, смена условия обнуляет прежние
+// показания.
+func TestBreakpointConditionBookkeeping(t *testing.T) {
+	s := NewDebugController().StartSession("demo.proc.os")
+	s.SetBreakpoint("demo.proc.os", 7, "Сч = 4")
+
+	falsy := func(string) (bool, error) { return false, nil }
+	assert.Nil(t, s.CheckBreakpoint("demo.proc.os", 7, falsy))
+	assert.Nil(t, s.CheckBreakpoint("demo.proc.os", 7, falsy))
+
+	bp := s.FindBreakpoint("demo.proc.os", 7)
+	require.NotNil(t, bp)
+	assert.Equal(t, 0, bp.HitCount)
+	assert.Equal(t, 2, bp.SkipCount)
+
+	truthy := func(string) (bool, error) { return true, nil }
+	require.NotNil(t, s.CheckBreakpoint("demo.proc.os", 7, truthy))
+	assert.Equal(t, 1, bp.HitCount)
+	assert.Empty(t, bp.CondError)
+
+	// Ошибка вычисления — останавливаемся и запоминаем причину.
+	broken := func(string) (bool, error) { return false, errors.New("деление на ноль") }
+	require.NotNil(t, s.CheckBreakpoint("demo.proc.os", 7, broken))
+	assert.Equal(t, 2, bp.HitCount)
+	assert.Equal(t, "деление на ноль", bp.CondError)
+
+	// Новое условие — прежние ошибка и счётчик пропусков не про него.
+	s.SetBreakpoint("demo.proc.os", 7, "Сч = 5")
+	assert.Empty(t, bp.CondError)
+	assert.Equal(t, 0, bp.SkipCount)
+
+	// Условие пустое — вычислитель не зовём вовсе.
+	s.SetBreakpoint("demo.proc.os", 7, "")
+	require.NotNil(t, s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
+		t.Fatal("вычислитель не должен вызываться для безусловной точки")
+		return false, nil
+	}))
+}
+
+// Пока считается условие, точки останова и шаги выключены: вычисление идёт на
+// потоке интерпретатора и само исполняет DSL.
+func TestBreakpointConditionSuppressesNestedStops(t *testing.T) {
+	s := NewDebugController().StartSession("demo.proc.os")
+	s.SetBreakpoint("demo.proc.os", 7, "Проверить()")
+	s.Step(StepInto)
+
+	var nested *Breakpoint
+	var nestedStep bool
+	stop := s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
+		nested = s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
+			t.Fatal("вложенная проверка не должна вычислять условие")
+			return false, nil
+		})
+		nestedStep = s.ShouldStep("demo.proc.os", 1)
+		return true, nil
+	})
+
+	require.NotNil(t, stop)
+	assert.Nil(t, nested, "точка сработала внутри вычисления собственного условия")
+	assert.False(t, nestedStep, "шаг сработал внутри вычисления условия")
+	// После выхода из вычисления шаги снова работают.
+	assert.True(t, s.ShouldStep("demo.proc.os", 1))
 }
 
 func TestCallStackSteppingAndSnapshot(t *testing.T) {

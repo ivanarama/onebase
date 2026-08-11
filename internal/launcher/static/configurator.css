@@ -314,9 +314,14 @@ html.cfg-code-light #cfg-code-theme-toggle .cth-to-light{display:none}
 .dbg-stack-row{padding:4px 0;border-bottom:1px solid #f7f8fb;font-size:11px}
 .dbg-stack-row .proc{color:#1a4a80;font-weight:600}
 .dbg-stack-row .loc{color:#64748b;font-size:10px}
-.dbg-bp-row{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f7f8fb;font-size:11px}
+.dbg-bp-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f7f8fb;font-size:11px}
 .dbg-bp-row .bp-file{color:#1a4a80;font-weight:500}
 .dbg-bp-row .bp-line{color:#64748b}
+.dbg-bp-row .bp-cond-edit{margin-left:auto;cursor:pointer;color:#94a3b8}
+.dbg-bp-row .bp-cond-edit:hover{color:#1a4a80}
+.dbg-bp-row .bp-cond{flex-basis:100%;padding-left:16px;color:#475569;font-size:10px;font-family:'Cascadia Code','Fira Code',monospace}
+.dbg-bp-row .bp-cond-skips{color:#94a3b8}
+.dbg-bp-row .bp-cond-err{flex-basis:100%;padding-left:16px;color:#ef4444;font-size:10px}
 
 .dbg-console-input{display:flex;gap:4px;padding:6px 10px;border-top:1px solid #eef0f5;flex-shrink:0}
 .dbg-console-input input{flex:1;padding:4px 8px;border:1px solid #d0d7e3;border-radius:4px;font-size:12px;font-family:'Cascadia Code','Fira Code',monospace}
@@ -332,6 +337,8 @@ html.cfg-code-light #cfg-code-theme-toggle .cth-to-light{display:none}
 
 /* ── Debug Monaco decorations ────────────────────── */
 .dbg-bp-glyph{background:#ef4444;border-radius:50%;margin-left:3px;width:12px!important;height:12px!important}
+/* Условная точка отличается цветом: иначе непонятно, почему прогон её проходит */
+.dbg-bp-glyph-cond{background:#f59e0b;box-shadow:inset 0 0 0 2px #fff2d6}
 .dbg-current-line-bg{background:rgba(217,119,6,.2)!important;border-left:3px solid #d97706}
 .dbg-current-line-glyph{background:#d97706;border-radius:50%;margin-left:3px;width:12px!important;height:12px!important}
 

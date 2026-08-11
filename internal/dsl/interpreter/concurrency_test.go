@@ -119,7 +119,7 @@ EndProcedure`)
 // countingHook — потокобезопасный DebugHook, считающий вызовы.
 type countingHook struct{ calls atomic.Int64 }
 
-func (h *countingHook) HookCheckBreakpoint(file string, line int) bool {
+func (h *countingHook) HookCheckBreakpoint(file string, line int, cond func(string) (bool, error)) bool {
 	h.calls.Add(1)
 	return false
 }

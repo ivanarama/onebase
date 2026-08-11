@@ -468,7 +468,11 @@ function startEdit(name) {
         var line = tgt.position ? tgt.position.lineNumber : (tgt.range ? tgt.range.startLineNumber : 0);
         if (line) {
           var n = name, l = line;
-          setTimeout(function(){ dbgToggleBreakpoint(n, l); }, 0);
+          // Alt+клик — условная точка: спрашиваем выражение, при котором стоять.
+          var withCond = !!(e.event && e.event.altKey);
+          setTimeout(function(){
+            if (withCond) dbgEditBPCondition(n, l); else dbgToggleBreakpoint(n, l);
+          }, 0);
         }
       } catch(err) { /* ignore Monaco internal errors */ }
     });
@@ -3235,7 +3239,10 @@ var _treeGroupOrder = window.__cfg.groupOrder; // пользовательски
 var _dbgEnabled = false;
 var _dbgPollTimer = null;
 var _dbgPollCount = 0;
-var _dbgBreakpoints = {}; // { editorId: { line: true } }
+// { editorId: { line: true | "выражение" } } — строка означает условную точку:
+// остановка происходит, только когда выражение истинно.
+var _dbgBreakpoints = {};
+var _dbgSrvBP = {}; // { "файл:строка": точка с сервера } — счётчики и ошибка условия
 var _lastVarsKey = '';
 var _lastStackHtml = '';
 var _lastDiagHtml = '';
@@ -3585,7 +3592,12 @@ function dbgPoll() {
         if (h !== _lastStackHtml) { _lastStackHtml = h; document.getElementById('dbg-stack').innerHTML = h; }
       }
 
-      // breakpoints — always render from local state
+      // breakpoints — always render from local state; с сервера берём только
+      // ошибку вычисления условия и счётчики срабатываний/пропусков
+      _dbgSrvBP = {};
+      if (snap.breakpoints) {
+        snap.breakpoints.forEach(function(b){ _dbgSrvBP[b.file + ':' + b.line] = b; });
+      }
       dbgRenderBPList();
 
       // diagnostics — show only detailed check messages in console tab
@@ -3985,11 +3997,51 @@ function dbgFindTabId(file) {
   return null;
 }
 
+// dbgBPCondition — условие точки в локальном состоянии ('' у безусловной).
+function dbgBPCondition(file, line) {
+  var v = _dbgBreakpoints[file] && _dbgBreakpoints[file][line];
+  return (typeof v === 'string') ? v : '';
+}
+
+// dbgSendBP отправляет точку на сервер. action: 'set' | 'toggle' | 'remove'.
+// Сервер разбирает условие как выражение DSL и отвечает 400 на неразбираемое —
+// показываем это сразу, а не оставляем на первый проход строки.
+function dbgSendBP(file, line, action, condition) {
+  var diagEl = document.getElementById('dbg-diag');
+  if (!_dbgEnabled) {
+    if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP saved locally (debug not enabled)</div>';
+    return;
+  }
+  if(diagEl) diagEl.innerHTML += '<div style="color:#60a5fa;font-size:10px">BP send: ' + esc(file) + ':' + line + (condition ? ' [' + esc(condition) + ']' : '') + '</div>';
+  fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({file: file, line: line, action: action, condition: condition || ''})
+  }).then(function(r){ return r.json().catch(function(){ return {error: 'HTTP ' + r.status}; }); })
+    .then(function(d){
+      if (d && d.error) {
+        if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP error: ' + esc(d.error) + '</div>';
+        // Сервер точку не принял — локальное состояние не должно врать.
+        if (condition && _dbgBreakpoints[file]) {
+          delete _dbgBreakpoints[file][line];
+          dbgRenderBPList();
+          if (monacoEditors[file]) dbgRenderBreakpoints(file);
+        }
+        alert('Точка останова: ' + d.error);
+      } else if (d && d.id) {
+        if(diagEl) diagEl.innerHTML += '<div style="color:#16a34a;font-size:10px">BP OK: ' + esc(d.file) + ':' + d.line + ' count=' + (d.bp_count||0) + '</div>';
+      } else if (d && d.status) {
+        if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP: ' + esc(d.status) + '</div>';
+      }
+    }).catch(function(e){
+      if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP fetch error: ' + esc(e.message) + '</div>';
+    });
+}
+
 function dbgToggleBreakpoint(editorId, line) {
   var diagEl = document.getElementById('dbg-diag');
   if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP click: ' + esc(editorId) + ':' + line + ' hasEd=' + !!monacoEditors[editorId] + ' enabled=' + _dbgEnabled + '</div>';
   if (!monacoEditors[editorId]) return;
-  var ed = monacoEditors[editorId];
   if (!_dbgBreakpoints[editorId]) _dbgBreakpoints[editorId] = {};
   var has = _dbgBreakpoints[editorId][line];
   if (has) {
@@ -3999,66 +4051,42 @@ function dbgToggleBreakpoint(editorId, line) {
   }
   try { dbgRenderBreakpoints(editorId); } catch(e) { console.error('renderBP', e); }
   try { dbgRenderBPList(); } catch(e) { console.error('renderBPList', e); }
-  // sync with server
-  var diagEl = document.getElementById('dbg-diag');
-  if (_dbgEnabled) {
-    if(diagEl) diagEl.innerHTML += '<div style="color:#60a5fa;font-size:10px">BP send: ' + esc(editorId) + ':' + line + '</div>';
-    fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({file: editorId, line: line, action: 'toggle'})
-    }).then(function(r){
-      if (!r.ok) { if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP error: HTTP ' + r.status + '</div>'; return r.text(); }
-      return r.json();
-    }).then(function(d){
-      if(d && d.id) {
-        if(diagEl) diagEl.innerHTML += '<div style="color:#16a34a;font-size:10px">BP OK: ' + esc(d.file) + ':' + d.line + ' count=' + (d.bp_count||0) + '</div>';
-      }
-      else if(d && d.status) { if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP: ' + d.status + '</div>'; }
-      else if(d && d.error) { if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP error: ' + d.error + '</div>'; }
-    }).catch(function(e){
-      if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP fetch error: ' + e.message + '</div>';
-    });
-  } else {
-    if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP saved locally (debug not enabled)</div>';
-  }
+  dbgSendBP(editorId, line, 'toggle', '');
+}
+
+// dbgEditBPCondition — задать/изменить/снять условие точки останова.
+// Пустая строка возвращает точку в безусловную, Отмена ничего не меняет.
+function dbgEditBPCondition(file, line) {
+  var cur = dbgBPCondition(file, line);
+  var expr = prompt('Условие остановки на строке ' + line + ' (выражение DSL, например Сч = 4).\nПусто — останавливаться всегда.', cur);
+  if (expr === null) return;
+  expr = expr.trim();
+  if (!_dbgBreakpoints[file]) _dbgBreakpoints[file] = {};
+  _dbgBreakpoints[file][line] = expr || true;
+  try { if (monacoEditors[file]) dbgRenderBreakpoints(file); } catch(e) { console.error('renderBP', e); }
+  dbgRenderBPList();
+  dbgSendBP(file, line, 'set', expr);
 }
 
 function dbgManualBP() {
   var fileInp = document.getElementById('dbg-bp-file');
   var lineInp = document.getElementById('dbg-bp-line');
+  var condInp = document.getElementById('dbg-bp-cond');
   if (!fileInp || !lineInp) return;
   var file = fileInp.value.trim();
   var line = parseInt(lineInp.value);
+  var cond = condInp ? condInp.value.trim() : '';
   if (!file || !line) { dbgWatchDebug('Укажите файл и строку'); return; }
   // Save locally
   if (!_dbgBreakpoints[file]) _dbgBreakpoints[file] = {};
-  _dbgBreakpoints[file][line] = true;
+  _dbgBreakpoints[file][line] = cond || true;
   // Also set in Monaco if available
   if (monacoEditors[file]) dbgRenderBreakpoints(file);
   dbgRenderBPList();
-  // Send to server
-  var diagEl = document.getElementById('dbg-diag');
-  if (_dbgEnabled) {
-    if(diagEl) diagEl.innerHTML += '<div style="color:#60a5fa;font-size:10px">Manual BP: ' + esc(file) + ':' + line + '</div>';
-    fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({file: file, line: line, action: 'set'})
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if(d && d.id) {
-        if(diagEl) diagEl.innerHTML += '<div style="color:#16a34a;font-size:10px">BP OK: ' + esc(d.file) + ':' + d.line + ' count=' + (d.bp_count||0) + '</div>';
-      } else if(d && d.error) {
-        if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP err: ' + d.error + '</div>';
-      }
-    }).catch(function(e){
-      if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP fetch err: ' + e.message + '</div>';
-    });
-  } else {
-    dbgWatchDebug('BP saved locally (debug not enabled)');
-  }
+  dbgSendBP(file, line, 'set', cond);
   fileInp.value = '';
   lineInp.value = '';
+  if (condInp) condInp.value = '';
 }
 
 function dbgRenderBPList() {
@@ -4068,11 +4096,22 @@ function dbgRenderBPList() {
   var h = '';
   keys.forEach(function(file){
     var lines = Object.keys(_dbgBreakpoints[file]);
+    var fileArg = "'" + esc(file).replace(/'/g,"\\'") + "'";
     lines.forEach(function(ln){
-      h += '<div class="dbg-bp-row" style="cursor:pointer" onclick="dbgGoToBP(\'' + esc(file).replace(/'/g,"\\'") + '\',' + ln + ')">'
-        + '<span style="color:#ef4444">&#9679;</span>'
-        + '<span class="bp-file">' + esc(file) + '</span>'
-        + '<span class="bp-line">:' + ln + '</span></div>';
+      var cond = dbgBPCondition(file, ln);
+      var srv = _dbgSrvBP[file + ':' + ln];
+      h += '<div class="dbg-bp-row">'
+        + '<span style="color:#ef4444;cursor:pointer" onclick="dbgGoToBP(' + fileArg + ',' + ln + ')">' + (cond ? '&#9678;' : '&#9679;') + '</span>'
+        + '<span class="bp-file" style="cursor:pointer" onclick="dbgGoToBP(' + fileArg + ',' + ln + ')">' + esc(file) + '</span>'
+        + '<span class="bp-line" style="cursor:pointer" onclick="dbgGoToBP(' + fileArg + ',' + ln + ')">:' + ln + '</span>'
+        + '<span class="bp-cond-edit" title="Условие остановки" onclick="dbgEditBPCondition(' + fileArg + ',' + ln + ')">&#9998;</span>';
+      if (cond) {
+        h += '<div class="bp-cond">когда ' + esc(cond) + (srv && srv.skip_count ? ' <span class="bp-cond-skips">пропущено: ' + srv.skip_count + '</span>' : '') + '</div>';
+      }
+      if (srv && srv.cond_error) {
+        h += '<div class="bp-cond-err">условие не вычислилось: ' + esc(srv.cond_error) + '</div>';
+      }
+      h += '</div>';
     });
   });
   if (!h) h = '<div class="dbg-empty">Нет точек останова</div>';
@@ -4097,12 +4136,15 @@ function dbgRenderBreakpoints(editorId) {
   var bps = _dbgBreakpoints[editorId] || {};
   var decos = [];
   Object.keys(bps).forEach(function(ln){
+    var cond = dbgBPCondition(editorId, ln);
     decos.push({
       range: new monaco.Range(parseInt(ln), 1, parseInt(ln), 1),
       options: {
         isWholeLine: false,
-        glyphMarginClassName: 'dbg-bp-glyph',
-        glyphMarginHoverMessage: {value: 'Точка останова: строка ' + ln},
+        glyphMarginClassName: cond ? 'dbg-bp-glyph dbg-bp-glyph-cond' : 'dbg-bp-glyph',
+        glyphMarginHoverMessage: {value: cond
+          ? 'Точка останова, строка ' + ln + ': когда ' + cond
+          : 'Точка останова: строка ' + ln + ' (Alt+клик — условие)'},
         stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
       }
     });

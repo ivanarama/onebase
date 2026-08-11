@@ -54,6 +54,14 @@ type ActiveSession struct {
 	stepFile  string // normalized file the step was initiated from; stepping stays within it
 	lastDepth int    // interpreter's actual stack depth from last HookShouldStep call
 
+	// evaluating — сессия вычисляет выражение отладчика (условие точки останова
+	// или выражение табло/консоли) на потоке интерпретатора. Пока флаг стоит,
+	// точки останова и шаги игнорируются: вычисление само исполняет DSL и
+	// иначе вошло бы в beforeStmt → CheckBreakpoint по кругу (условие
+	// `РассчитатьСумму() > 100` на своей же строке — бесконечная рекурсия,
+	// а на уже захваченном мьютексе — взаимная блокировка).
+	evaluating bool
+
 	// Channels: interpreter goroutine uses pauseChan/resumeChan,
 	// HTTP handlers signal via methods.
 	pauseChan  chan struct{} // signaled when interpreter pauses
@@ -126,6 +134,12 @@ func (s *ActiveSession) SetBreakpoint(file string, line int, condition string) *
 		s.breakpoints[key] = make(map[int]*Breakpoint)
 	}
 	if bp, ok := s.breakpoints[key][line]; ok {
+		if bp.Condition != condition {
+			// Условие переписали — прежние «ошибка условия» и счётчик пропусков
+			// относятся к старому выражению и ввели бы в заблуждение.
+			bp.CondError = ""
+			bp.SkipCount = 0
+		}
 		bp.Condition = condition
 		bp.Enabled = true
 		return bp
@@ -177,21 +191,18 @@ func (s *ActiveSession) ToggleBreakpoint(file string, line int) *Breakpoint {
 	return nil
 }
 
-// CheckBreakpoint returns the breakpoint if there's an enabled one at file:line.
-// Keys in the breakpoints map are already normalized (see SetBreakpoint), so a
-// direct map lookup is enough. Exact line match only — no fuzzy ±1, which used
-// to cause stops on the line above the breakpoint.
-func (s *ActiveSession) CheckBreakpoint(file string, line int) *Breakpoint {
+// FindBreakpoint returns the breakpoint at file:line, enabled or not, without
+// touching counters. Для запросов «есть ли здесь точка» (переключение из UI):
+// раньше для этого звали CheckBreakpoint, и клик по колонке накручивал счётчик
+// попаданий, которого не было.
+func (s *ActiveSession) FindBreakpoint(file string, line int) *Breakpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.lookupBreakpoint(normalizeFilePath(file), line)
+}
 
-	key := normalizeFilePath(file)
-	s.diagLastFile = file
-	s.diagLastLine = line
-	s.diagMessages = append(s.diagMessages, fmt.Sprintf("check raw=%q line=%d norm=%q", file, line, key))
-	if len(s.diagMessages) > 50 {
-		s.diagMessages = s.diagMessages[len(s.diagMessages)-50:]
-	}
+// lookupBreakpoint ищет точку по уже нормализованному ключу. Вызывается под s.mu.
+func (s *ActiveSession) lookupBreakpoint(key string, line int) *Breakpoint {
 	locMap, ok := s.breakpoints[key]
 	if !ok {
 		// Case-insensitive fallback in case some legacy ID slipped in.
@@ -205,12 +216,81 @@ func (s *ActiveSession) CheckBreakpoint(file string, line int) *Breakpoint {
 	if locMap == nil {
 		return nil
 	}
-	bp, ok := locMap[line]
-	if !ok || !bp.Enabled {
+	return locMap[line]
+}
+
+// CheckBreakpoint returns the breakpoint if execution must stop at file:line.
+// Keys in the breakpoints map are already normalized (see SetBreakpoint), so a
+// direct map lookup is enough. Exact line match only — no fuzzy ±1, which used
+// to cause stops on the line above the breakpoint.
+//
+// Условие (bp.Condition) вычисляется через cond — колбэк интерпретатора,
+// который считает выражение в окружении текущего оператора. Правила:
+//
+//   - условие пустое или вычислителя нет → останавливаемся, как раньше;
+//   - условие ложно → не останавливаемся, растёт SkipCount;
+//   - условие не вычислилось (опечатка, неизвестное имя) → останавливаемся и
+//     показываем ошибку в CondError. Молча не останавливаться на сломанном
+//     условии — худший из вариантов: точка стоит, отладчик её игнорирует, и
+//     человек ищет ошибку в своём коде, а не в условии.
+func (s *ActiveSession) CheckBreakpoint(file string, line int, cond func(expr string) (bool, error)) *Breakpoint {
+	key := normalizeFilePath(file)
+
+	s.mu.Lock()
+	s.diagLastFile = file
+	s.diagLastLine = line
+	s.appendDiag(fmt.Sprintf("check raw=%q line=%d norm=%q", file, line, key))
+	if s.evaluating {
+		// Внутри вычисления выражения отладчика точки не работают.
+		s.mu.Unlock()
 		return nil
 	}
-	bp.HitCount++
-	return bp
+	bp := s.lookupBreakpoint(key, line)
+	if bp == nil || !bp.Enabled {
+		s.mu.Unlock()
+		return nil
+	}
+	expr := bp.Condition
+	if expr == "" || cond == nil {
+		bp.CondError = ""
+		bp.HitCount++
+		s.mu.Unlock()
+		return bp
+	}
+	s.evaluating = true
+	s.mu.Unlock()
+
+	// Вычисляем вне мьютекса: колбэк исполняет DSL и может вернуться в сессию.
+	ok, err := cond(expr)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.evaluating = false
+	switch {
+	case err != nil:
+		bp.CondError = err.Error()
+		bp.HitCount++
+		s.appendDiag(fmt.Sprintf("cond %q line=%d error=%v (остановка)", expr, line, err))
+		return bp
+	case !ok:
+		bp.CondError = ""
+		bp.SkipCount++
+		s.appendDiag(fmt.Sprintf("cond %q line=%d = Ложь (пропуск %d)", expr, line, bp.SkipCount))
+		return nil
+	default:
+		bp.CondError = ""
+		bp.HitCount++
+		s.appendDiag(fmt.Sprintf("cond %q line=%d = Истина (остановка)", expr, line))
+		return bp
+	}
+}
+
+// appendDiag добавляет строку в кольцевой буфер диагностики. Вызывается под s.mu.
+func (s *ActiveSession) appendDiag(msg string) {
+	s.diagMessages = append(s.diagMessages, msg)
+	if len(s.diagMessages) > 50 {
+		s.diagMessages = s.diagMessages[len(s.diagMessages)-50:]
+	}
 }
 
 // normalizeFilePath converts a file path or editor ID to a canonical form
@@ -344,7 +424,16 @@ func (s *ActiveSession) Pause(loc Location, vars map[string]any, stack []StackFr
 		case <-s.doneChan:
 			return
 		case req := <-s.evalReq:
+			// Тот же предохранитель, что и у условий: выражение табло может
+			// вызвать процедуру, внутри которой стоит точка останова, — вложенная
+			// остановка на уже остановленном потоке не выйдет из Pause никогда.
+			s.mu.Lock()
+			s.evaluating = true
+			s.mu.Unlock()
 			val, err := evalFn(req.expr)
+			s.mu.Lock()
+			s.evaluating = false
+			s.mu.Unlock()
 			if err != nil {
 				req.result <- EvaluateResult{IsError: true, Error: err.Error()}
 			} else {
@@ -415,6 +504,13 @@ func (s *ActiveSession) ShouldStep(file string, currentDepth int) bool {
 	normFile := normalizeFilePath(file)
 
 	s.mu.Lock()
+	if s.evaluating {
+		// Шаги внутри вычисления выражения отладчика не считаем: иначе шаг
+		// уводил бы курсор в код, который выполняет условие точки останова,
+		// а lastDepth ушёл бы в глубину этого вычисления.
+		s.mu.Unlock()
+		return false
+	}
 	mode := s.stepMode
 	sd := s.stepDepth
 	sf := s.stepFile
@@ -520,8 +616,8 @@ func (s *ActiveSession) Evaluate(expr string, evalFn func(string) (any, error)) 
 // These methods satisfy interpreter.DebugHook interface.
 // Named HookXxx to avoid collision with ActiveSession's own methods.
 
-func (s *ActiveSession) HookCheckBreakpoint(file string, line int) bool {
-	return s.CheckBreakpoint(file, line) != nil
+func (s *ActiveSession) HookCheckBreakpoint(file string, line int, cond func(expr string) (bool, error)) bool {
+	return s.CheckBreakpoint(file, line, cond) != nil
 }
 
 func (s *ActiveSession) HookShouldStep(file string, depth int) bool {
