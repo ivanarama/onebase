@@ -18,6 +18,86 @@ func TestNewFileFunctions_GuardBlocks(t *testing.T) {
 	}
 }
 
+func TestGuardedFile_PreservesCauseAndCallLocation(t *testing.T) {
+	sentinel := errors.New("файлы запрещены")
+	fn := guardedFile(
+		FileGuard(func() error { return sentinel }),
+		BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
+			t.Fatal("файловая функция вызвана после deny")
+			return nil, nil
+		}),
+	)
+	defer func() {
+		r := recover()
+		ue, ok := r.(userError)
+		if !ok {
+			t.Fatalf("ожидалась userError, получено %T: %v", r, r)
+		}
+		if ue.File != "module.os" || ue.Line != 17 {
+			t.Fatalf("позиция = %s:%d, ожидалась module.os:17", ue.File, ue.Line)
+		}
+		if !errors.Is(ue.Err, sentinel) {
+			t.Fatalf("исходная ошибка потеряна: %v", ue.Err)
+		}
+	}()
+	_, _ = fn(nil, "module.os", 17)
+}
+
+func TestNewFileFunctions_FactoryKeepsGuardBehavior(t *testing.T) {
+	sentinel := errors.New("файлы запрещены")
+	factory, ok := NewFileFunctions(FileGuard(func() error { return sentinel }))["__factory_ЧтениеТекста"].(func([]any) any)
+	if !ok {
+		t.Fatal("фабрика ЧтениеТекста изменила сигнатуру")
+	}
+	defer func() {
+		r := recover()
+		ue, ok := r.(userError)
+		if !ok {
+			t.Fatalf("ожидалась userError, получено %T: %v", r, r)
+		}
+		if ue.File != "" || ue.Line != 0 {
+			t.Fatalf("фабрика неожиданно получила позицию: %s:%d", ue.File, ue.Line)
+		}
+		if !errors.Is(ue.Err, sentinel) {
+			t.Fatalf("исходная ошибка фабрики потеряна: %v", ue.Err)
+		}
+	}()
+	factory([]any{"ignored.txt"})
+}
+
+func TestSandboxOverlayIsUnaffectedByEnvWriters(t *testing.T) {
+	e := newEnv(nil)
+	applySandboxVars(e, SandboxProfile{DenyFile: true})
+	const name = "GetTempFileName"
+	assertDeny := func(stage string) {
+		t.Helper()
+		got, ok := e.get(name)
+		if !ok {
+			t.Fatalf("%s: overlay-имя потеряно", stage)
+		}
+		if got == "shadow" {
+			t.Fatalf("%s: пользовательское значение затенило overlay", stage)
+		}
+		if _, ok := got.(BuiltinFunc); !ok {
+			t.Fatalf("%s: overlay вернул %T, ожидалась BuiltinFunc", stage, got)
+		}
+	}
+
+	assertDeny("initial")
+	e.set(name, "shadow")
+	assertDeny("set")
+	e.setLocal(name, "shadow")
+	assertDeny("setLocal")
+	e.declare(name, "shadow")
+	assertDeny("declare")
+	e.declareModule(name, "shadow")
+	assertDeny("declareModule")
+	restore := publishTemp(e, map[string]any{name: "shadow"})
+	assertDeny("publishTemp")
+	restore()
+	assertDeny("publishTemp restore")
+}
+
 // nil-guard не блокирует: копирование реального файла проходит.
 func TestNewFileFunctions_NilGuardAllows(t *testing.T) {
 	SetFileSandbox("")

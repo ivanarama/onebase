@@ -124,6 +124,8 @@ func (l *Lexer) NextToken() token.Token {
 			return l.tok(token.MINUS_ASSIGN, "-=", line, col)
 		}
 		return l.tok(token.MINUS, "-", line, col)
+	case '%':
+		return l.tok(token.PERCENT, "%", line, col)
 	case '*':
 		if l.pos < len(l.input) && l.peek() == '=' {
 			l.next()
