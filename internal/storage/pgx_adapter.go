@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,7 +39,15 @@ func cmdTag(tag pgconn.CommandTag, err error) (CommandTag, error) {
 
 // pgxTx wraps pgx.Tx into storage.Tx.
 type pgxTx struct {
-	tx pgx.Tx
+	tx      pgx.Tx
+	release func()
+	done    sync.Once
+}
+
+func (t *pgxTx) releaseConn() {
+	if t.release != nil {
+		t.done.Do(t.release)
+	}
 }
 
 func (t *pgxTx) Exec(ctx context.Context, sql string, args ...any) (CommandTag, error) {
@@ -58,9 +67,15 @@ func (t *pgxTx) QueryRow(ctx context.Context, sql string, args ...any) Row {
 }
 
 func (t *pgxTx) Commit(ctx context.Context) error {
-	return t.tx.Commit(ctx)
+	err := t.tx.Commit(ctx)
+	// pgx closes dbTx on every Commit outcome (and kills an indeterminate
+	// connection itself), so the acquired pool slot must always be released.
+	t.releaseConn()
+	return err
 }
 
 func (t *pgxTx) Rollback(ctx context.Context) error {
-	return t.tx.Rollback(ctx)
+	err := t.tx.Rollback(ctx)
+	t.releaseConn()
+	return err
 }

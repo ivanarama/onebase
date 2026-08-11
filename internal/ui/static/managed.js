@@ -395,38 +395,118 @@ function obManagedReady(fn) {
   }
   window.applyFormTables = applyFormTables;
 
+  function beginFileRead(contentEl) {
+    const previous = contentEl._obFileReadState;
+    if (previous && typeof previous.settle === 'function') previous.settle();
+    let resolvePending;
+    let settled = false;
+    const state = {
+      token: previous ? previous.token + 1 : 1,
+      loading: true,
+      error: null,
+      pending: new Promise(function(resolve){ resolvePending = resolve; }),
+      settle: function(){
+        if (settled) return;
+        settled = true;
+        resolvePending();
+      }
+    };
+    contentEl._obFileReadState = state;
+    return state;
+  }
+
+  function finishFileRead(contentEl, state, error) {
+    if (contentEl._obFileReadState === state) {
+      state.loading = false;
+      state.error = error || null;
+    }
+    state.settle();
+  }
+
+  async function awaitCurrentFileReads(fileHelpers) {
+    for (;;) {
+      const states = fileHelpers.map(function(el){ return el._obFileReadState || null; });
+      await Promise.all(states.map(function(state){ return state ? state.pending : Promise.resolve(); }));
+      // A newer selection may have replaced a reader while obFire was waiting.
+      // The superseded promise is settled immediately; loop and await only the
+      // currently selected file instead of blocking on or sending stale data.
+      if (fileHelpers.some(function(el, i){ return (el._obFileReadState || null) !== states[i]; })) continue;
+      for (let i = 0; i < states.length; i++) {
+        if (states[i] && states[i].error) {
+          flash(states[i].error, 'err');
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+
   // obFilePick — при выборе файла: имя в текстовое поле, содержимое в скрытый
   // textarea. Кодировка: UTF-8 → fallback Windows-1251 (TextDecoder).
-  // В webview/Electron — file.path вместо содержимого.
+  // В webview/Electron — file.path вместо содержимого. Состояние чтения живёт
+  // на backing textarea: obFire ждёт актуальный Promise и не отправляет форму
+  // после ошибки чтения.
   window.obFilePick = function(input, pathId, contentId) {
-    const file = input.files[0];
-    if (!file) return;
     const pathEl = document.getElementById(pathId);
     const contentEl = contentId ? document.getElementById(contentId) : null;
     if (!pathEl) return;
+    const file = input.files && input.files[0];
+    if (!file) {
+      pathEl.value = '';
+      if (contentEl) {
+        const state = beginFileRead(contentEl);
+        contentEl.value = '';
+        delete contentEl.dataset.obFileContentReady;
+        finishFileRead(contentEl, state, null);
+      }
+      return;
+    }
     if (file.path) {
       pathEl.value = file.path;
       if (contentEl) {
+        const state = beginFileRead(contentEl);
         contentEl.value = '';
         delete contentEl.dataset.obFileContentReady;
+        finishFileRead(contentEl, state, null);
       }
       return;
     }
     pathEl.value = file.name;
     if (!contentEl) return;
+    const state = beginFileRead(contentEl);
+    contentEl.value = '';
+    delete contentEl.dataset.obFileContentReady;
     const reader = new FileReader();
     reader.onload = function() {
-      const bytes = new Uint8Array(reader.result);
-      let text;
       try {
-        text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
-      } catch(e) {
-        text = new TextDecoder('windows-1251').decode(bytes);
+        const bytes = new Uint8Array(reader.result);
+        let text;
+        try {
+          text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+        } catch(e) {
+          text = new TextDecoder('windows-1251').decode(bytes);
+        }
+        if (contentEl._obFileReadState === state) {
+          contentEl.value = text;
+          contentEl.dataset.obFileContentReady = '1';
+        }
+        finishFileRead(contentEl, state, null);
+      } catch (e) {
+        finishFileRead(contentEl, state, 'Не удалось прочитать файл «' + file.name + '»: ' + (e && e.message ? e.message : e));
       }
-      contentEl.value = text;
-      contentEl.dataset.obFileContentReady = '1';
     };
-    reader.readAsArrayBuffer(file);
+    reader.onerror = function() {
+      const detail = reader.error && reader.error.message ? ': ' + reader.error.message : '';
+      finishFileRead(contentEl, state, 'Не удалось прочитать файл «' + file.name + '»' + detail);
+    };
+    reader.onabort = function() {
+      finishFileRead(contentEl, state, 'Чтение файла «' + file.name + '» отменено');
+    };
+    try {
+      reader.readAsArrayBuffer(file);
+    } catch (e) {
+      finishFileRead(contentEl, state, 'Не удалось прочитать файл «' + file.name + '»: ' + (e && e.message ? e.message : e));
+    }
   };
 
   // obFire(elementName, eventName[, extraParams]) — extraParams (объект)
@@ -439,8 +519,9 @@ function obManagedReady(fn) {
     if (window.obGridSync && window.obGridSync() === false) return;
     const form = document.getElementById('main-form');
     if (!form) return;
-    const body = new URLSearchParams();
     const fileHelpers = Array.prototype.slice.call(form.querySelectorAll('[data-ob-file-content-for]'));
+    if (!await awaitCurrentFileReads(fileHelpers)) return;
+    const body = new URLSearchParams();
     const fileHelperDisabled = fileHelpers.map(function(el){ return el.disabled; });
     let eventFD;
     try {

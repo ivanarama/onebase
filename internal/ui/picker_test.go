@@ -1,16 +1,11 @@
 package ui
 
 import (
-	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
-
-	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
-	"github.com/ivantit66/onebase/internal/runtime"
 )
 
 // План 46, фаза 1: обработчик кнопки вызывает ПоказатьПодбор(Данные,Колонки,
@@ -126,55 +121,5 @@ func TestParsePickResult(t *testing.T) {
 	}
 	if parsePickResult("{не json") != nil {
 		t.Error("битый JSON должен давать nil")
-	}
-}
-
-// selectedTPRows: _tp + _tp_selected → Массив выбранных строк ТЧ; пропускает
-// невалидные/выходящие за границы индексы.
-func TestSelectedTPRows(t *testing.T) {
-	obj := &runtime.Object{
-		ID:   uuid.New(),
-		Type: "Реализация",
-		TablePartRows: map[string][]map[string]any{
-			"Товары": {
-				{"Номенклатура": "Болт", "Количество": "1"},
-				{"Номенклатура": "Гайка", "Количество": "2"},
-				{"Номенклатура": "Шайба", "Количество": "3"},
-			},
-		},
-	}
-	form := url.Values{}
-	form.Set("_tp", "Товары")
-	form.Set("_tp_selected", "0,2,99") // 99 за границей — игнор
-	req := httptest.NewRequest("POST", "/x", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if err := req.ParseForm(); err != nil {
-		t.Fatal(err)
-	}
-
-	arr := selectedTPRows(req, obj)
-	if arr == nil {
-		t.Fatal("ждали непустой Массив выделенных строк")
-	}
-	items := arr.Iterate()
-	if len(items) != 2 {
-		t.Fatalf("ждали 2 строки (0 и 2), получили %d", len(items))
-	}
-	r0 := items[0].(*interpreter.MapThis)
-	r1 := items[1].(*interpreter.MapThis)
-	if r0.Get("Номенклатура") != "Болт" || r1.Get("Номенклатура") != "Шайба" {
-		t.Errorf("выбраны не те строки: %v / %v", r0.M, r1.M)
-	}
-
-	// Без _tp_selected — nil.
-	form2 := url.Values{}
-	form2.Set("_tp", "Товары")
-	req2 := httptest.NewRequest("POST", "/x", strings.NewReader(form2.Encode()))
-	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if err := req2.ParseForm(); err != nil {
-		t.Fatal(err)
-	}
-	if selectedTPRows(req2, obj) != nil {
-		t.Error("без _tp_selected ждали nil")
 	}
 }

@@ -16,6 +16,10 @@ type TxDB interface {
 	Exec(ctx context.Context, sql string, args ...any) (storage.CommandTag, error)
 }
 
+type executionTxDB interface {
+	BeginTxForExecution(acquireCtx, lifetimeCtx context.Context) (storage.Tx, context.Context, error)
+}
+
 // TxState is a mutable context holder for DSL transaction management.
 // All DSL builtins that write to storage should call Ctx() to get the
 // current context — it carries the active transaction if one is open.
@@ -129,7 +133,20 @@ func (s *TxState) begin(db TxDB) {
 		if err := executionCtx.Err(); err != nil {
 			panic(userError{Msg: "НачатьТранзакцию: " + err.Error()})
 		}
-		tx, txValueCtx, err := db.BeginTx(context.WithoutCancel(executionCtx))
+		lifetimeCtx := context.WithoutCancel(executionCtx)
+		var (
+			tx         storage.Tx
+			txValueCtx context.Context
+			err        error
+		)
+		if executionDB, ok := db.(executionTxDB); ok {
+			tx, txValueCtx, err = executionDB.BeginTxForExecution(executionCtx, lifetimeCtx)
+		} else {
+			// Test/third-party TxDB implementations do not own a connection pool.
+			// Passing executionCtx still preserves the essential cancellation
+			// contract for transaction acquisition.
+			tx, txValueCtx, err = db.BeginTx(executionCtx)
+		}
 		if err != nil {
 			panic(userError{Msg: "НачатьТранзакцию: " + err.Error()})
 		}

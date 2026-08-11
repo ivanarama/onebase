@@ -117,7 +117,7 @@ func TestDSLFullTextSearch_LimitAndEmptyQuery(t *testing.T) {
 func TestDSLFullTextSearch_RegisteredInVars(t *testing.T) {
 	s, _, _ := newSearchTestServer(t)
 	s.messages = NewMessageStore()
-	vars := s.buildDSLVars(context.Background(), nil)
+	vars, _ := s.buildDSLVarsTx(context.Background(), nil)
 	for _, name := range []string{"ПолнотекстовыйПоиск", "FullTextSearch"} {
 		if _, ok := vars[name]; !ok {
 			t.Fatalf("функция %s не зарегистрирована в переменных DSL", name)

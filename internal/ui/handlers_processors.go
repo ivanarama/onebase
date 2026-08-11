@@ -471,7 +471,7 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 		fileInputs:   make(map[string][]string),
 		boolPresence: make(map[string][]string),
 		fileContent:  make(map[string][]string),
-		tableParts:   make(map[string]string),
+		tableParts:   editableFormTableParts(form, proc.TableParts),
 	}
 	if form == nil {
 		for _, p := range params {
@@ -496,15 +496,6 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 			return false
 		}
 		if el.Kind == metadata.FormElementTablePart {
-			if !el.ReadOnly && el.DataPath != "" && strings.Count(el.DataPath, ".") <= 1 {
-				fieldName := dpFieldName(el.DataPath)
-				for _, tp := range proc.TableParts {
-					if strings.EqualFold(tp.Name, fieldName) {
-						controls.tableParts[fieldName] = tp.Name
-						break
-					}
-				}
-			}
 			return false
 		}
 		if el.ReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 || !processorElementPostsParam(el.Kind) {

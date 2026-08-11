@@ -150,7 +150,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Найти имя процедуры, которая привязана к событию.
-	procName, _, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
+	procName, eventTarget, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
 	if eligibilityErr != nil {
 		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
 		return
@@ -279,14 +279,10 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		vars["PickResult"] = pr
 	}
 
-	// Команды ТЧ: выделенные строки (_tp_selected = CSV индексов строк ТЧ из
-	// _tp) → переменная ВыделенныеСтроки (Массив строк ТЧ) для обработчиков
-	// команд вида «изменить выделенные».
-	if sel := selectedTPRows(r, obj); sel != nil {
-		vars["ВыделенныеСтроки"] = sel
-		vars["SelectedRows"] = sel
+	if err := addEntityTPEventContext(r, entity, form, eventTarget, obj, vars); err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
 	}
-	addTPEventContextVars(r, obj, vars)
 
 	// Снимок полей до обработчика — по нему после Run отличаем «поле изменил сам
 	// обработчик» от «поле осталось прежним», см. refreshFieldsWrittenByHandler.
@@ -422,103 +418,6 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
 	}
-}
-
-// selectedTPRows читает _tp (имя ТЧ) и _tp_selected (CSV индексов отмеченных
-// строк) из запроса и возвращает Массив соответствующих строк ТЧ (обёрнутых
-// в MapThis) для DSL-обработчиков команд ТЧ. nil, если выделения нет.
-//
-// Индексы соответствуют отрисованным (непустым) строкам ТЧ — тем же, что
-// собирает parseTablePartRows. Если пользователь оставил полностью пустую
-// строку посередине, она отфильтровывается и при сдвиге индексов выделение
-// может не совпасть; для команд «по выделенным» это приемлемое ограничение.
-func selectedTPRows(r *http.Request, obj *runtime.Object) *interpreter.Array {
-	tpName := strings.TrimSpace(r.FormValue("_tp"))
-	selRaw := strings.TrimSpace(r.FormValue("_tp_selected"))
-	if tpName == "" || selRaw == "" {
-		return nil
-	}
-	rows := obj.TablePartRows[tpName]
-	if len(rows) == 0 {
-		return nil
-	}
-	var items []any
-	for _, part := range strings.Split(selRaw, ",") {
-		idx, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || idx < 0 || idx >= len(rows) {
-			continue
-		}
-		items = append(items, &interpreter.MapThis{M: rows[idx]})
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return interpreter.NewArray(items)
-}
-
-// addTPEventContextVars добавляет контекст события табличной части. Для
-// ПриИзменении SlickGrid присылает строку/колонку изменённой ячейки; для
-// команд ТЧ остаётся хотя бы имя табличной части. Имена без параметров
-// сохраняют совместимость существующих обработчиков.
-func addTPEventContextVars(r *http.Request, obj *runtime.Object, vars map[string]any) {
-	tpName := strings.TrimSpace(r.FormValue("_tp"))
-	if tpName == "" {
-		return
-	}
-	vars["ИмяТабличнойЧасти"] = tpName
-	vars["ТекущаяТабличнаяЧасть"] = tpName
-	vars["TablePartName"] = tpName
-
-	if colName := strings.TrimSpace(r.FormValue("_tp_col")); colName != "" {
-		vars["ТекущаяКолонка"] = colName
-		vars["ИмяКолонки"] = colName
-		vars["CurrentColumn"] = colName
-		vars["ColumnName"] = colName
-	}
-	if colIdx, ok := formEventInt(r, "_tp_col_index"); ok {
-		vars["ИндексКолонки"] = float64(colIdx)
-		vars["ColumnIndex"] = float64(colIdx)
-	}
-
-	rowIdx, rowOK := formEventInt(r, "_tp_row")
-	rowNum, rowNumOK := formEventInt(r, "_tp_row_number")
-	if !rowOK && rowNumOK {
-		rowIdx = rowNum - 1
-		rowOK = rowIdx >= 0
-	}
-	if !rowOK || rowIdx < 0 {
-		return
-	}
-	if !rowNumOK {
-		rowNum = rowIdx + 1
-	}
-	vars["ИндексСтроки"] = float64(rowIdx)
-	vars["НомерСтроки"] = float64(rowNum)
-	vars["RowIndex"] = float64(rowIdx)
-	vars["RowNumber"] = float64(rowNum)
-
-	if obj == nil || obj.TablePartRows == nil {
-		return
-	}
-	rows := obj.TablePartRows[tpName]
-	if rowIdx >= len(rows) {
-		return
-	}
-	row := &interpreter.MapThis{M: rows[rowIdx]}
-	vars["ТекущаяСтрока"] = row
-	vars["CurrentRow"] = row
-}
-
-func formEventInt(r *http.Request, key string) (int, bool) {
-	raw := strings.TrimSpace(r.FormValue(key))
-	if raw == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 // serializeFieldsForEntity нормализует имена полей к оригинальному регистру

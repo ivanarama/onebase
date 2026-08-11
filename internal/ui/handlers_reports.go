@@ -366,7 +366,8 @@ func (s *Server) runChartProc(ctx context.Context, rep *reportpkg.Report, rows [
 	}
 
 	mc := runtime.NewMovementsCollector("report", uuid.Nil)
-	dslVars := s.buildDSLVars(ctx, mc)
+	dslVars, txState := s.buildDSLVarsTx(ctx, mc)
+	defer rollbackDSLExecution(txState)
 
 	resultArray := &interpreter.Array{}
 	for _, row := range rows {
@@ -378,7 +379,8 @@ func (s *Server) runChartProc(ctx context.Context, rep *reportpkg.Report, rows [
 	dslVars["Параметры"] = &interpreter.MapThis{M: paramValues}
 
 	var result any
-	if err := s.interp.RunWithResult(procDecl, &interpreter.MapThis{M: paramValues}, &result, dslVars); err != nil {
+	runErr := s.interp.RunWithResult(procDecl, &interpreter.MapThis{M: paramValues}, &result, dslVars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		return nil
 	}
 

@@ -8,10 +8,13 @@ package ui
 
 import (
 	"bytes"
+	"context"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -32,11 +35,13 @@ func TestHandleManagedFormEvent_RowAddedFires(t *testing.T) {
 				},
 			},
 		})
+	ent.TableParts = []metadata.TablePart{{Name: "Товары"}}
 
 	body := url.Values{}
 	body.Set("_element", "Товары")
 	body.Set("_event", string(metadata.FormEventOnRowAdded))
 	body.Set("_kind", "object")
+	body.Set("_tp", "Товары")
 
 	rec := executeFormEvent(t, srv, ent, body)
 	resp := decodeFormEventResponse(t, rec.Body.Bytes())
@@ -102,6 +107,104 @@ func TestHandleManagedFormEvent_TablePartChangeContext(t *testing.T) {
 			t.Errorf("messages[%d]=%q, ожидалось %q (все messages=%v)", i, resp.Messages[i], want[i], resp.Messages)
 		}
 	}
+}
+
+func TestHandleManagedFormEventRejectsForgedTablePartContext(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура КнопкаНажатие()
+	Сообщить("button");
+КонецПроцедуры
+
+Процедура ТоварыПриИзменении()
+	Сообщить(ИмяТабличнойЧасти);
+КонецПроцедуры
+
+Процедура УслугиПриИзменении()
+	Сообщить(ИмяТабличнойЧасти);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{Kind: metadata.FormElementButton, Name: "Кнопка", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "КнопкаНажатие"}},
+		{Kind: metadata.FormElementTablePart, Name: "ЭлементТовары", DataPath: "Объект.Товары", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "ТоварыПриИзменении"}},
+		{Kind: metadata.FormElementTablePart, Name: "ЭлементУслуги", DataPath: "Объект.Услуги", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "УслугиПриИзменении"}},
+	})
+	ent.TableParts = []metadata.TablePart{
+		{Name: "Товары", Fields: []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}}},
+		{Name: "Услуги", Fields: []metadata.Field{{Name: "Цена", Type: metadata.FieldTypeNumber}}},
+	}
+
+	base := func(element string, event metadata.FormEventType) url.Values {
+		body := url.Values{}
+		body.Set("_element", element)
+		body.Set("_event", string(event))
+		body.Set("_kind", "object")
+		body.Set("tp_json.Товары", `[{"Количество":1}]`)
+		body.Set("tp_json.Услуги", `[{"Цена":2}]`)
+		return body
+	}
+	tests := []struct {
+		name  string
+		query string
+		body  url.Values
+	}{
+		{
+			name: "top-level button",
+			body: func() url.Values {
+				body := base("Кнопка", metadata.FormEventOnClick)
+				body.Set("_tp", "Товары")
+				return body
+			}(),
+		},
+		{
+			name: "handler of another table part",
+			body: func() url.Values {
+				body := base("ЭлементТовары", metadata.FormEventOnChange)
+				body.Set("_tp", "Услуги")
+				return body
+			}(),
+		},
+		{
+			name:  "query-string context",
+			query: "?_tp=Товары&_tp_row=0",
+			body:  base("ЭлементТовары", metadata.FormEventOnChange),
+		},
+		{
+			name: "unknown column",
+			body: func() url.Values {
+				body := base("ЭлементТовары", metadata.FormEventOnChange)
+				body.Set("_tp", "Товары")
+				body.Set("_tp_row", "0")
+				body.Set("_tp_row_number", "1")
+				body.Set("_tp_col", "Поддельная")
+				body.Set("_tp_col_index", "0")
+				return body
+			}(),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := executeFormEventWithQuery(t, srv, ent, tc.query, tc.body)
+			resp := decodeFormEventResponse(t, rec.Body.Bytes())
+			if resp.OK || resp.Error == "" || len(resp.Messages) != 0 {
+				t.Fatalf("forged TP context accepted: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
+			}
+		})
+	}
+}
+
+func executeFormEventWithQuery(t *testing.T, s *Server, ent *metadata.Entity, query string, body url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/ui/catalog/"+ent.Name+"/form-event"+query, strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("kind", "catalog")
+	rctx.URLParams.Add("entity", ent.Name)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	s.handleManagedFormEvent(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	return rec
 }
 
 // При объявленных ПриДобавленииСтроки/ПриУдаленииСтроки рендер грида проставляет

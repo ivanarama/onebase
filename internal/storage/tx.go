@@ -133,6 +133,46 @@ func (db *DB) BeginTx(ctx context.Context) (Tx, context.Context, error) {
 	return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
 }
 
+// BeginTxForExecution starts a transaction in two phases. Pool acquisition uses
+// acquireCtx, so a canceled request or exhausted pool cannot wait forever. Once
+// a connection has been acquired, the transaction itself is bound to
+// lifetimeCtx; DSL execution passes a detached context here so request
+// cancellation cannot make database/sql roll the transaction back behind its
+// explicit cleanup boundary.
+//
+// The returned transaction owns the acquired connection and releases it after
+// Commit or Rollback. Ordinary callers should keep using BeginTx.
+func (db *DB) BeginTxForExecution(acquireCtx, lifetimeCtx context.Context) (Tx, context.Context, error) {
+	hooks := newTxHooks()
+	if db.sqlDB != nil {
+		conn, err := db.sqlDB.Conn(acquireCtx)
+		if err != nil {
+			return nil, acquireCtx, err
+		}
+		tx, err := conn.BeginTx(lifetimeCtx, nil)
+		if err != nil {
+			_ = conn.Close()
+			return nil, acquireCtx, err
+		}
+		storTx := &sqlTx{tx: tx, conn: conn}
+		txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
+		return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+	}
+
+	conn, err := db.pool.Acquire(acquireCtx)
+	if err != nil {
+		return nil, acquireCtx, err
+	}
+	tx, err := conn.Begin(lifetimeCtx)
+	if err != nil {
+		conn.Release()
+		return nil, acquireCtx, err
+	}
+	storTx := &pgxTx{tx: tx, release: conn.Release}
+	txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
+	return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+}
+
 // Exec runs a non-query SQL statement, respecting any transaction in ctx.
 func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag, error) {
 	if db.sqlDB != nil {

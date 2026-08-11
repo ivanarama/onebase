@@ -103,6 +103,14 @@ func (r *recordingTxDB) BeginTx(ctx context.Context) (storage.Tx, context.Contex
 	return &recordingTx{Tx: tx, events: r.events}, txCtx, nil
 }
 
+func (r *recordingTxDB) BeginTxForExecution(acquireCtx, lifetimeCtx context.Context) (storage.Tx, context.Context, error) {
+	tx, txCtx, err := r.db.BeginTxForExecution(acquireCtx, lifetimeCtx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &recordingTx{Tx: tx, events: r.events}, txCtx, nil
+}
+
 func (r *recordingTxDB) Exec(ctx context.Context, sql string, args ...any) (storage.CommandTag, error) {
 	tag, err := r.db.Exec(ctx, sql, args...)
 	if err == nil && (strings.HasPrefix(sql, "ROLLBACK TO SAVEPOINT") || strings.HasPrefix(sql, "RELEASE SAVEPOINT")) {
@@ -179,4 +187,47 @@ func TestTxStateRollbackOpenRollsBackDataAndRunsHooksAfterDBCleanup(t *testing.T
 			t.Fatalf("cleanup left %d rows", count)
 		}
 	})
+}
+
+func TestBeginTransactionHonorsDeadlineWhileSQLiteConnectionIsBusy(t *testing.T) {
+	db, err := storage.ConnectSQLite(context.Background(), t.TempDir()+"/busy.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	heldTx, heldCtx, err := db.BeginTx(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = heldTx.Rollback(heldCtx) }()
+
+	executionCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	state := interpreter.NewTxState(executionCtx)
+	begin := interpreter.NewTxFunctions(state, db)["BeginTransaction"].(interpreter.BuiltinFunc)
+	done := make(chan any, 1)
+	started := time.Now()
+	go func() {
+		defer func() { done <- recover() }()
+		_, _ = begin(nil, "deadline.os", 1)
+	}()
+
+	select {
+	case recovered := <-done:
+		if recovered == nil {
+			t.Fatal("BeginTransaction unexpectedly acquired the busy SQLite connection")
+		}
+		if !strings.Contains(strings.ToLower(fmt.Sprint(recovered)), "deadline") {
+			t.Fatalf("panic = %v, want deadline error", recovered)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("BeginTransaction ignored execution deadline: %v", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("BeginTransaction hung waiting for the exhausted SQLite pool")
+	}
+	if state.HasOpen() {
+		t.Fatal("failed transaction acquisition left an owned transaction")
+	}
 }
