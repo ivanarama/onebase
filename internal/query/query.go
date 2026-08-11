@@ -151,14 +151,19 @@ func extractFirstN(tokens []tok) ([]tok, int64, bool, error) {
 				continue
 			}
 			return nil, 0, false, i18nerr.Errorf(
-				"%s требует положительное целое число записей", tokens[wordIndex].val,
+				"%s требует неотрицательное целое число записей", tokens[wordIndex].val,
 			)
 		}
 
+		// Ноль допустим: в 1С «ПЕРВЫЕ 0» — валидный запрос, возвращающий пустой
+		// результат, и `LIMIT 0` так же понимают оба наших диалекта. Текст
+		// запроса часто собирают конкатенацией с переменным размером порции, и
+		// на нулевой порции перенесённый код падал бы ошибкой компиляции — в
+		// проде и не сразу. Отрицательное по-прежнему ошибка, как и в 1С.
 		n, parseErr := strconv.ParseInt(tokens[wordIndex+1].val, 10, 64)
-		if parseErr != nil || n <= 0 {
+		if parseErr != nil || n < 0 {
 			return nil, 0, false, i18nerr.Errorf(
-				"%s требует положительное целое число записей, получено %q",
+				"%s требует неотрицательное целое число записей, получено %q",
 				tokens[wordIndex].val, tokens[wordIndex+1].val,
 			)
 		}
@@ -967,12 +972,59 @@ func (tr *translator) emit(s string) {
 
 // dropSourceQualifier снимает последние «<источник> .» из вывода. Возвращает
 // false, если картина иная, — тогда вызывающий не меняет поведение.
+//
+// Снимаем ТОЛЬКО настоящий квалификатор источника: имя или алиас из scope'а
+// текущего SELECT, и притом ушедший в SQL дословно. Без этой проверки под нож
+// шёл любой идентификатор перед ссылочным полем — `Чужой.Профиль.Наименование`
+// молча превращался бы в поле присоединённого справочника, то есть неверный
+// запрос отвечал бы данными вместо отказа. Тихо подменённый результат хуже
+// ошибки: ошибку видно сразу, подмену — на сверке отчётов через месяц.
 func (tr *translator) dropSourceQualifier() bool {
-	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." {
+	if tr.pos < 3 || tr.tokens[tr.pos-3].kind != tIdent {
+		return false
+	}
+	qualifier := strings.ToLower(tr.tokens[tr.pos-3].val)
+	scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1)
+	if !ok {
+		return false
+	}
+	if _, known := scope.qualifiers[qualifier]; !known {
+		return false
+	}
+	// Сверяемся с уже эмитнутым: квалификатор мог уйти в SQL не дословно
+	// (CAST у числовой колонки, префикс основной таблицы) — тогда две
+	// последние части не «<источник> .», и срезать их нельзя.
+	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." || tr.parts[len(tr.parts)-2] != qualifier {
 		return false
 	}
 	tr.parts = tr.parts[:len(tr.parts)-2]
 	return true
+}
+
+// assertSingleHopNavigation отклоняет путь глубже одного перехода по ссылке
+// (`А.Б.В.Наименование`). Авто-JOIN строится только для ссылочных полей самого
+// источника, поэтому второй переход уходит в SQL дословно и падает
+// `no such column` — именем колонки, которой в схеме нет и быть не может.
+// Ошибка уровня языка запросов честнее: она называет и предел, и обход (#705).
+func (tr *translator) assertSingleHopNavigation(rd *refDimInfo) error {
+	if tr.peek(1).kind != tIdent || tr.peek(2).kind != tDot {
+		return nil
+	}
+	tail := "…"
+	if t := tr.peek(3); t.kind == tIdent {
+		tail = t.val
+	}
+	// Имя поля берём из исходного текста запроса, а не из метаданных: путь в
+	// сообщении должен читаться так же, как написан.
+	field := rd.fieldName
+	if tr.pos >= 1 && tr.tokens[tr.pos-1].kind == tIdent {
+		field = tr.tokens[tr.pos-1].val
+	}
+	// Ключ — одним литералом: i18ncheck собирает ключи из исходника и склейку
+	// через + видит только первым куском.
+	return i18nerr.Errorf(
+		"навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет; выбери ссылку целиком (%s) либо соедини %s явно через СОЕДИНЕНИЕ",
+		field, tr.peek(1).val, field, tr.peek(1).val, tail, field, rd.refEntity)
 }
 
 func (tr *translator) build() string {
@@ -3901,6 +3953,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
+						if err := tr.assertSingleHopNavigation(rd); err != nil {
+							return Result{}, err
+						}
 						tr.emit(rd.joinAlias)
 					} else {
 						switch tr.section {
@@ -3931,6 +3986,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						// реквизит берётся из псевдонима присоединённой таблицы,
 						// а не из колонки-идентификатора.
 						if nextIsDot && tr.dropSourceQualifier() {
+							if err := tr.assertSingleHopNavigation(rd); err != nil {
+								return Result{}, err
+							}
 							tr.emit(rd.joinAlias)
 						} else {
 							tr.emit(rd.idCol)
