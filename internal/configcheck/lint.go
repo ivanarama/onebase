@@ -48,6 +48,7 @@ func CheckLintYAML(dir string) []Issue {
 		label := relLabel(dir, path)
 		issues = append(issues, lintYAMLFile(path, label, "Управляемая форма", formModuleYAMLSchema())...)
 		issues = append(issues, lintFormHotkeys(path, label)...)
+		issues = append(issues, lintFormDeleteEvents(path, label)...)
 		return nil
 	})
 	if walkErr != nil {
@@ -166,6 +167,51 @@ func lintYAMLNode(label, kind, path string, node *yaml.Node, schema *yamlLintSch
 type formHotkeyRef struct {
 	name string
 	line int
+}
+
+// formDeleteEvents — события удаления, объявляемые в форме. Обработчик формы
+// срабатывает только при удалении из открытой формы, а удаляют ещё из списка,
+// пачкой, из DSL и по REST. Запрет, написанный только в форме, обходится
+// сменой способа удаления — то есть не защищает. Настоящий гейт живёт в модуле
+// объекта (Процедура ПередУдалением), и предупреждение об этом говорит.
+var formDeleteEvents = map[string]string{
+	"ПередУдалением": "ПередУдалением",
+	"ПриУдалении":    "ПередУдалением",
+	"ПослеУдаления":  "ПослеУдаления",
+}
+
+// lintFormDeleteEvents предупреждает, что форменный обработчик удаления
+// закрывает один путь из пяти.
+func lintFormDeleteEvents(path, label string) []Issue {
+	data, err := os.ReadFile(path)
+	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	events := yamlMapValue(doc.Content[0], "events")
+	if events == nil || events.Kind != yaml.MappingNode {
+		return nil
+	}
+	var issues []Issue
+	for i := 0; i+1 < len(events.Content); i += 2 {
+		name := strings.TrimSpace(events.Content[i].Value)
+		moduleEvent, isDelete := formDeleteEvents[name]
+		if !isDelete {
+			continue
+		}
+		issues = append(issues, Issue{
+			File:         path,
+			Object:       label,
+			Kind:         "Управляемая форма",
+			Code:         "forms.delete-event-in-form",
+			Message:      fmt.Sprintf("событие %q объявлено в форме: оно сработает только при удалении из открытой формы, а из списка, пачкой, из DSL и по REST объект удалится без него", name),
+			SuggestedFix: fmt.Sprintf("Перенесите проверку в модуль объекта: Процедура %s() в src/<объект>.os — она выполняется на всех путях удаления.", moduleEvent),
+		})
+	}
+	return issues
 }
 
 func lintFormHotkeys(path, label string) []Issue {

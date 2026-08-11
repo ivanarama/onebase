@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/entityservice"
-	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
@@ -282,18 +281,16 @@ func (h *handler) deleteObjectV2(kind metadata.Kind) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden", "", 0)
 			return
 		}
-		if err := h.store.WithTx(r.Context(), func(ctx context.Context) error {
-			if kind == metadata.KindDocument {
-				if err := h.clearMovements(ctx, entityName, id); err != nil {
-					return err
-				}
-			}
-			if err := exchange.RegisterOnDelete(ctx, h.store, h.reg.ExchangePlans(), entity, id); err != nil {
-				return err
-			}
-			return h.store.Delete(ctx, entityName, id)
-		}); err != nil {
+		// Через entityservice: хуки модуля объекта «ПередУдалением»/
+		// «ПослеУдаления» обязаны срабатывать и по REST — иначе запрет,
+		// написанный в конфигурации, обходится сменой способа удаления.
+		res, err := h.entitySvc.Delete(r.Context(), entity, id)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		if res.DSLError != "" {
+			writeError(w, http.StatusConflict, res.DSLError, "", 0)
 			return
 		}
 		h.dispatchHook(r.Context(), string(kind)+".delete", entityName, id)

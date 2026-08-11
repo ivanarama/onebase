@@ -12,6 +12,7 @@ package entityservice
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -82,6 +83,11 @@ type Service struct {
 	// получает obj напрямую, что для документов без ТЧ тоже работает. ctxSrc
 	// передаёт живой контекст DSL-транзакции объектным методам.
 	MakeThis func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, entity *metadata.Entity) interpreter.This
+
+	// RegisterExchangeDelete регистрирует удаление в планах обмена (план 86).
+	// Вынесено швом, потому что exchange живёт в ui-слое; nil = обмен не
+	// настроен. Без регистрации узлы разъехались бы молча.
+	RegisterExchangeDelete func(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error
 
 	// Hooks — диспетчер исходящих веб-хуков (план 29). nil = веб-хуки не
 	// настроены. Событие отправляется ПОСЛЕ успешной транзакции (асинхронно):
@@ -477,6 +483,173 @@ func (s *Service) unpostInTx(
 		return &hookRunError{err: runErr}
 	}
 	return s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys())
+}
+
+// DeleteResult — результат Service.Delete. Как и у Save, отказ прикладного
+// хука — не технический сбой: DSLError != "" при err == nil.
+type DeleteResult struct {
+	ID          uuid.UUID
+	DSLError    string   // хук отменил удаление — объект на месте
+	DSLMessages []string // сообщения из builtin Сообщить
+}
+
+// Delete физически удаляет объект, выполняя хуки модуля объекта
+// «ПередУдалением» (может отменить удаление) и «ПослеУдаления».
+//
+// Единая точка на все пути удаления — одиночное из UI, две пачки, DSL и REST.
+// Это не про переиспользование кода: хук, который срабатывает не везде, — не
+// защита. Раньше события удаления были объявлены только в метаданных форм и не
+// вызывались НИОТКУДА, поэтому `ПередУдалением: ПроверитьСсылки` молчал, а
+// объект удалялся. Форма же — один путь из пяти: даже ожив её, мы оставили бы
+// удаление из списка и по REST без проверки.
+//
+// Хук идёт ВНУТРИ транзакции удаления и до самого удаления: ВызватьИсключение в
+// нём откатывает всё, включая уже снятые движения. «ПослеУдаления» выполняется
+// после удаления в той же транзакции — он видит мир без объекта, и его ошибка
+// возвращает объект на место.
+func (s *Service) Delete(ctx context.Context, entity *metadata.Entity, id uuid.UUID) (DeleteResult, error) {
+	result := DeleteResult{ID: id}
+	lockCollector := runtime.NewLockCollector()
+	defer lockCollector.ReleaseAll()
+
+	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
+		return s.deleteInTx(txCtx, entity, id, &result.DSLMessages, lockCollector)
+	})
+	if err != nil {
+		var hookErr *hookRunError
+		if errors.As(err, &hookErr) {
+			result.DSLError = interpreter.FormatUserError(hookErr.err)
+			return result, nil
+		}
+		return DeleteResult{}, err
+	}
+	return result, nil
+}
+
+func (s *Service) deleteInTx(
+	txCtx context.Context,
+	entity *metadata.Entity,
+	id uuid.UUID,
+	messages *[]string,
+	lockCollector *runtime.LockCollector,
+) error {
+	// Объект читается ОДИН раз, до удаления, и отдаётся обоим хукам:
+	// «ПослеУдаления» иначе увидел бы пустоту и не смог бы ни записать в
+	// журнал, ни убрать связанные данные.
+	obj, err := s.deleteHookObject(txCtx, entity, id)
+	if err != nil {
+		return err
+	}
+	if err := s.runDeleteHook(txCtx, entity, id, "BeforeDelete", obj, messages, lockCollector); err != nil {
+		return err
+	}
+	// Движения снимаются до удаления регистратора: иначе остались бы строки,
+	// ссылающиеся на несуществующий документ.
+	if entity.Posting {
+		if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+			return err
+		}
+	}
+	// Строки ТЧ — до объекта: иначе они остаются сиротами, ссылающимися на
+	// несуществующего родителя (та же грабля описана в handlers_entity).
+	for _, tp := range entity.TableParts {
+		table := metadata.TablePartTableName(entity.Name, tp.Name)
+		if _, err := s.Store.Exec(txCtx, "DELETE FROM "+table+" WHERE parent_id = "+s.Store.Dialect().Placeholder(1), id); err != nil {
+			return err
+		}
+	}
+	if s.RegisterExchangeDelete != nil {
+		if err := s.RegisterExchangeDelete(txCtx, entity, id); err != nil {
+			return err
+		}
+	}
+	if err := s.Store.Delete(txCtx, entity.Name, id); err != nil {
+		return err
+	}
+	return s.runDeleteHook(txCtx, entity, id, "AfterDelete", obj, messages, lockCollector)
+}
+
+// runDeleteHook исполняет хук удаления, если он объявлен. obj прочитан до
+// удаления (см. deleteInTx) — «ПослеУдаления» получает данные удалённого
+// объекта, иначе он не смог бы ничего про него сказать.
+func (s *Service) runDeleteHook(
+	txCtx context.Context,
+	entity *metadata.Entity,
+	id uuid.UUID,
+	event string,
+	obj *runtime.Object,
+	messages *[]string,
+	lockCollector *runtime.LockCollector,
+) error {
+	proc := s.Reg.GetProcedure(entity.Name, event)
+	if proc == nil {
+		return nil
+	}
+	if obj == nil {
+		return nil // объекта уже нет — звать хук не о чем
+	}
+	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	if s.PrepareHook != nil {
+		s.PrepareHook(hookCtx, entity, obj)
+	}
+	if s.EnrichTPRows != nil {
+		for _, tp := range entity.TableParts {
+			if rows, ok := obj.TablePartRows[tp.Name]; ok {
+				s.EnrichTPRows(hookCtx, tp, rows)
+			}
+		}
+	}
+	// Коллектор движений детач-ный: при удалении писать движения некуда, и
+	// молча проглотить их было бы тем же дефектом, что чинили в #743.
+	var vars map[string]any
+	var txState *interpreter.TxState
+	if s.BuildVars != nil {
+		vars, txState = s.BuildVars(hookCtx, runtime.NewMovementsCollector(entity.Name, id), messages)
+	}
+	defer interpreter.RollbackTxExecution(txState)
+	var thisVal interpreter.This = obj
+	if s.MakeThis != nil {
+		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
+	}
+	runErr := s.Interp.Run(proc, thisVal, vars)
+	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
+		return &hookRunError{err: runErr}
+	}
+	return s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys())
+}
+
+// deleteHookObject читает удаляемый объект вместе с табличными частями.
+// Возвращает (nil, nil), если записи уже нет.
+func (s *Service) deleteHookObject(txCtx context.Context, entity *metadata.Entity, id uuid.UUID) (*runtime.Object, error) {
+	fields, err := s.Store.GetByID(txCtx, entity.Name, id, entity)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Записи уже нет: для «ПослеУдаления» это норма (объект только что
+		// удалён этой же транзакцией), для «ПередУдалением» — гонка с чужим
+		// удалением. Хук в обоих случаях звать не о чем.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("удаление %s: чтение объекта: %w", entity.Name, err)
+	}
+	if fields == nil {
+		return nil, nil
+	}
+	tpRows := make(map[string][]map[string]any, len(entity.TableParts))
+	for _, tp := range entity.TableParts {
+		rows, err := s.Store.GetTablePartRows(txCtx, entity.Name, tp.Name, id, tp)
+		if err != nil {
+			return nil, fmt.Errorf("удаление %s: чтение ТЧ %s: %w", entity.Name, tp.Name, err)
+		}
+		tpRows[tp.Name] = rows
+	}
+	obj := &runtime.Object{Type: entity.Name, Kind: entity.Kind, ID: id, Fields: fields, TablePartRows: tpRows}
+	if obj.Fields == nil {
+		obj.Fields = map[string]any{}
+	}
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	obj.Fields["ссылка"] = selfRef
+	obj.Fields["reference"] = selfRef
+	return obj, nil
 }
 
 // Unpost cancels document posting atomically: removes every movement, sets
