@@ -204,7 +204,7 @@ type SaveResult struct {
 // как err != nil (включая storage.ErrVersionConflict при !IsNew с конфликтом
 // версий — caller должен проверить errors.Is).
 func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
-	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID)
+	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
 	SetPeriodFromFields(mc, req.Entity, req.Fields)
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
@@ -735,7 +735,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 		tps[tp.Name] = rows
 	}
 
-	mc := runtime.NewMovementsCollector(ent.Name, id)
+	mc := runtime.NewMovementsCollector(ent.Name, id).WillPersist()
 	SetPeriodFromFields(mc, ent, fields)
 	// Дата запрета проведения (свёртка базы, план 74): в замороженный период не
 	// перепроводим, иначе движения вернутся и дадут двойной счёт с опорными остатками.
