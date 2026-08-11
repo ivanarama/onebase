@@ -269,7 +269,15 @@ func TestListURLHelpers(t *testing.T) {
 		t.Fatal("шаблонам недоступен listHidden")
 	}
 
-	src := url.Values{"q": {"Болт"}, "f.Цена": {"10"}, "f.Дата.from": {"2026-01-01"}, "page": {"5"}}
+	src := url.Values{
+		"q":           {"Болт"},
+		"f.Цена":      {"10"},
+		"f.Дата.from": {"2026-01-01"},
+		"page":        {"5"},
+		"submit":      {"shadow-native-form-method"},
+		"method":      {"POST"},
+		"unknown":     {"not-list-state"},
+	}
 	got := linkQuery(t, string(listURL(src, "view", "tiles", "f.*", "")))
 	wantParams(t, got, "listURL", map[string]string{
 		"q":           "Болт",
@@ -278,6 +286,11 @@ func TestListURLHelpers(t *testing.T) {
 		"f.Дата.from": "",
 		"page":        "",
 	})
+	for _, key := range []string{"submit", "method", "unknown"} {
+		if got.Has(key) {
+			t.Errorf("listURL перенёс посторонний параметр %q", key)
+		}
+	}
 
 	if u := listURL(src, "q", ""); strings.Contains(string(u), "q=") {
 		t.Errorf("listURL: пустое значение не убрало параметр: %s", u)
@@ -297,6 +310,138 @@ func TestListURLHelpers(t *testing.T) {
 	if strings.Contains(h, `"><script>`) {
 		t.Errorf("listHidden не экранирует значение: %s", h)
 	}
+	poisoned := string(listHidden(url.Values{"q": {"Болт"}, "submit": {"x"}, "action": {"/elsewhere"}}))
+	if strings.Contains(poisoned, `name="submit"`) || strings.Contains(poisoned, `name="action"`) {
+		t.Errorf("listHidden допускает DOM clobbering через постороннее имя поля: %s", poisoned)
+	}
+}
+
+func TestTreeSearchAndFilterLeaveTreeMode(t *testing.T) {
+	query := url.Values{
+		"view":      {"tree"},
+		"q":         {"Болт"},
+		"f.Цена":    {"10"},
+		"subsystem": {"Склад"},
+	}
+	page := renderListState(t, query, storage.ListParams{
+		Search:  "Болт",
+		Filters: map[string]storage.FilterValue{"Цена": {Value: "10"}},
+	}, map[string]any{"TreeView": true})
+
+	searchForm := sectionBetween(t, page, `<form method="GET" style="display:flex`, "</form>")
+	filterForm := sectionBetween(t, page, `<form method="GET" action="">`, "</form>")
+	for name, form := range map[string]string{"поиска": searchForm, "отбора": filterForm} {
+		for _, m := range hiddenInputRe.FindAllStringSubmatch(form, -1) {
+			if html.UnescapeString(m[1]) == "view" {
+				t.Errorf("форма %s сохранила view=tree: дерево не применяет поиск и отбор", name)
+			}
+		}
+	}
+	if !strings.Contains(searchForm, `name="f.Цена" value="10"`) {
+		t.Error("форма поиска потеряла действующий отбор при выходе из дерева")
+	}
+	if !strings.Contains(filterForm, `name="q" value="Болт"`) {
+		t.Error("форма отбора потеряла поиск при выходе из дерева")
+	}
+}
+
+func TestListAutoSubmitCannotBeClobberedByNamedControl(t *testing.T) {
+	js := string(uiJS)
+	for _, want := range []string{
+		"window.HTMLFormElement && window.HTMLFormElement.prototype",
+		"nativeSubmit.call(form)",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("автосабмит списка не содержит защиту %q", want)
+		}
+	}
+	if strings.Contains(js, "input.form.submit();") {
+		t.Error("автосабмит вызывает clobberable input.form.submit() напрямую")
+	}
+}
+
+func TestListPaginationAndModeKeepSort(t *testing.T) {
+	query := url.Values{
+		"q":         {"Болт"},
+		"sort":      {"Цена"},
+		"dir":       {"desc"},
+		"f.Цена":    {"10"},
+		"view":      {"tiles"},
+		"parent":    {"22222222-2222-2222-2222-222222222222"},
+		"lm":        {"pages"},
+		"subsystem": {"Склад"},
+		"page":      {"2"},
+	}
+	params := storage.ListParams{
+		Search: "Болт", Sort: "Цена", Dir: "desc",
+		Filters: map[string]storage.FilterValue{"Цена": {Value: "10"}},
+	}
+	page := renderListState(t, query, params, map[string]any{
+		"TilesView": true, "Page": 2, "Total": 100, "TotalPages": 5,
+		"HasPrev": true, "HasNext": true, "PrevPage": 1, "NextPage": 3,
+	})
+
+	for label, wantPage := range map[string]string{"← Назад": "1", "Вперёд →": "3"} {
+		got := linkQuery(t, linkHrefByText(t, page, label))
+		wantParams(t, got, label, map[string]string{
+			"page": wantPage, "sort": "Цена", "dir": "desc", "q": "Болт",
+			"f.Цена": "10", "view": "tiles", "parent": "22222222-2222-2222-2222-222222222222",
+		})
+	}
+	mode := linkQuery(t, linkHrefByText(t, page, "≣ Лента"))
+	wantParams(t, mode, "переключатель ленты", map[string]string{
+		"lm": "feed", "page": "", "sort": "Цена", "dir": "desc", "q": "Болт",
+	})
+
+	query.Set("lm", "feed")
+	query.Set("page", "1")
+	feedPage := renderListState(t, query, params, map[string]any{
+		"TilesView": true, "Feed": true, "Page": 1, "Total": 100, "TotalPages": 5,
+		"HasNext": true, "NextPage": 2,
+	})
+	more := linkQuery(t, linkHrefByText(t, feedPage, "Показать ещё"))
+	wantParams(t, more, "fallback ленты", map[string]string{
+		"lm": "feed", "page": "2", "sort": "Цена", "dir": "desc", "q": "Болт",
+	})
+}
+
+func TestGroupNavigationKeepsListState(t *testing.T) {
+	const nextParent = "11111111-1111-1111-1111-111111111111"
+	query := url.Values{
+		"q":         {"Болт"},
+		"sort":      {"Цена"},
+		"dir":       {"desc"},
+		"f.Цена":    {"10"},
+		"view":      {"tiles"},
+		"lm":        {"feed"},
+		"parent":    {"22222222-2222-2222-2222-222222222222"},
+		"subsystem": {"Склад"},
+		"page":      {"4"},
+	}
+	page := renderListState(t, query, storage.ListParams{Search: "Болт", Sort: "Цена", Dir: "desc"}, map[string]any{
+		"TilesView":   true,
+		"Rows":        []map[string]any{{"id": nextParent, "is_folder": true, "Наименование": "Крепёж"}},
+		"Breadcrumbs": []map[string]string{{"ID": "33333333-3333-3333-3333-333333333333", "Label": "Метизы"}},
+	})
+
+	folderMatch := regexp.MustCompile(`data-folder-url="([^"]*)"`).FindStringSubmatch(page)
+	if folderMatch == nil {
+		t.Fatal("у группы нет data-folder-url")
+	}
+	folder := linkQuery(t, folderMatch[1])
+	wantParams(t, folder, "вход в группу", map[string]string{
+		"parent": nextParent, "q": "Болт", "sort": "Цена", "dir": "desc",
+		"f.Цена": "10", "view": "tiles", "lm": "feed", "subsystem": "Склад", "page": "",
+	})
+
+	root := linkQuery(t, linkHrefByText(t, page, "Корень"))
+	wantParams(t, root, "breadcrumb корня", map[string]string{
+		"parent": "", "q": "Болт", "sort": "Цена", "dir": "desc", "view": "tiles", "lm": "feed",
+	})
+	crumb := linkQuery(t, linkHrefByText(t, page, "Метизы"))
+	wantParams(t, crumb, "breadcrumb группы", map[string]string{
+		"parent": "33333333-3333-3333-3333-333333333333", "q": "Болт", "sort": "Цена", "dir": "desc",
+	})
 }
 
 // TestJournalExcelLinkStartsQuery — ссылка выгрузки журнала начинает строку
@@ -346,6 +491,46 @@ func TestJournalExcelLinkStartsQuery(t *testing.T) {
 	}
 }
 
+func TestJournalFilterResetKeepsSubsystem(t *testing.T) {
+	j := &metadata.Journal{
+		Name:    "Заказы",
+		Columns: []metadata.JournalColumn{{Label: "Номер", Field: "Номер"}},
+		Filters: []metadata.JournalFilter{{Field: "Дата", Type: "date_range"}},
+	}
+	query := url.Values{
+		"subsystem":   {"Продажи"},
+		"f.Дата.from": {"2026-01-01"},
+		"offset":      {"100"},
+	}
+	var buf bytes.Buffer
+	err := tmpl.ExecuteTemplate(&buf, "page-journal", map[string]any{
+		"Journal":                j,
+		"JournalColumns":         j.Columns,
+		"JournalSettingsColumns": journalSettingsColumns(j, nil),
+		"JournalSettingsJSON":    journalSettingsJSON(j, nil),
+		"Rows":                   []map[string]any{},
+		"Params": storage.ListParams{Filters: map[string]storage.FilterValue{
+			"Дата": {From: "2026-01-01"},
+		}},
+		"FilterOptions":    map[string][]map[string]any{},
+		"ColFormats":       map[string]string{},
+		"RequestURI":       "/ui/journal/заказы?subsystem=Продажи&f.Дата.from=2026-01-01&offset=100",
+		"CurrentSubsystem": "Продажи",
+		"Query":            query,
+		"Cfg":              Config{},
+		"Lang":             "ru",
+	})
+	if err != nil {
+		t.Fatalf("execute page-journal: %v", err)
+	}
+	reset := linkQuery(t, linkHrefByText(t, buf.String(), "Сбросить"))
+	wantParams(t, reset, "сброс отбора журнала", map[string]string{
+		"subsystem":   "Продажи",
+		"f.Дата.from": "",
+		"offset":      "",
+	})
+}
+
 // sectionBetween вырезает кусок разметки от start до первого следующего end.
 func sectionBetween(t *testing.T, page, start, end string) string {
 	t.Helper()
@@ -359,4 +544,14 @@ func sectionBetween(t *testing.T, page, start, end string) string {
 		t.Fatalf("фрагмент %q не закрыт %q", start, end)
 	}
 	return rest[:j]
+}
+
+func linkHrefByText(t *testing.T, page, text string) string {
+	t.Helper()
+	re := regexp.MustCompile(`<a[^>]*href="([^"]*)"[^>]*>[^<]*` + regexp.QuoteMeta(text) + `[^<]*</a>`)
+	match := re.FindStringSubmatch(page)
+	if match == nil {
+		t.Fatalf("в разметке нет ссылки с текстом %q", text)
+	}
+	return match[1]
 }
