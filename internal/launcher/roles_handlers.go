@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -22,32 +23,20 @@ type roleOp struct{ Op, Label string }
 
 type rolePermSection struct {
 	Kind  string // singular: catalog/document/register/inforeg/report
+	Key   string // канонический ключ секции в YAML роли
 	Title string
 	Ops   []roleOp
 }
 
 // rolePermSections defines which operations are editable per object kind.
+// Права и операции вне этого списка (processors, row_access, field_access,
+// disclose) редактор не показывает и не трогает — см. roles_yaml.go.
 var rolePermSections = []rolePermSection{
-	{"catalog", "Справочники", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}}},
-	{"document", "Документы", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}, {"post", "Проведение"}, {"unpost", "Отмена"}}},
-	{"register", "Регистры (накопления и бухгалтерии)", []roleOp{{"read", "Чтение"}, {"write", "Запись"}}},
-	{"inforeg", "Регистры сведений", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}}},
-	{"report", "Отчёты", []roleOp{{"run", "Запуск"}}},
-}
-
-// rolePermYAML mirrors auth.Permission for clean YAML output (no id field).
-type rolePermYAML struct {
-	Catalogs  map[string][]string `yaml:"catalogs,omitempty"`
-	Documents map[string][]string `yaml:"documents,omitempty"`
-	Registers map[string][]string `yaml:"registers,omitempty"`
-	InfoRegs  map[string][]string `yaml:"inforegs,omitempty"`
-	Reports   map[string][]string `yaml:"reports,omitempty"`
-}
-
-type roleYAMLOut struct {
-	Name        string       `yaml:"name"`
-	Description string       `yaml:"description,omitempty"`
-	Permissions rolePermYAML `yaml:"permissions"`
+	{"catalog", "catalogs", "Справочники", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}}},
+	{"document", "documents", "Документы", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}, {"post", "Проведение"}, {"unpost", "Отмена"}}},
+	{"register", "registers", "Регистры (накопления и бухгалтерии)", []roleOp{{"read", "Чтение"}, {"write", "Запись"}}},
+	{"inforeg", "inforegs", "Регистры сведений", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}}},
+	{"report", "reports", "Отчёты", []roleOp{{"run", "Запуск"}}},
 }
 
 // permTriplets flattens an auth.Permission into "kind|entity|op" strings used by
@@ -163,7 +152,7 @@ func (h *handler) cfgAdminRoles(w http.ResponseWriter, r *http.Request) {
 	      <div style="flex:2;min-width:200px"><label style="font-size:11px;color:#666">Описание</label><input name="description" id="cfg-role-desc" style="width:100%;padding:5px 7px;border:1px solid #ccc;border-radius:3px;font-size:12px"></div>
 	    </div>
 	    <div style="font-size:11px;color:#666;margin-bottom:6px">Права на объекты:</div>`)
-	sb.WriteString(roleMatrixHTML(data))
+	sb.WriteString(roleMatrixHTML(data, staleRolePerms(roles, data)))
 	sb.WriteString(`
 	    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
 	      <button type="button" onclick="cfgRoleSave()" style="background:#16a34a;color:#fff;border:none;padding:6px 16px;border-radius:3px;cursor:pointer;font-size:12px">Сохранить</button>
@@ -240,8 +229,8 @@ function cfgRoleDel(name){
 	writeBody(w, []byte(sb.String()))
 }
 
-// roleMatrixHTML builds the entity × operation checkbox matrix.
-func roleMatrixHTML(data *configuratorData) string {
+// roleObjectsByKind собирает имена объектов конфигурации по видам прав.
+func roleObjectsByKind(data *configuratorData) map[string][]string {
 	ents := map[string][]string{}
 	for _, c := range data.Catalogs {
 		ents["catalog"] = append(ents["catalog"], c.Name)
@@ -261,16 +250,83 @@ func roleMatrixHTML(data *configuratorData) string {
 	for _, rp := range data.Reports {
 		ents["report"] = append(ents["report"], rp.Name)
 	}
+	return ents
+}
+
+// staleRolePerms собирает права ролей на объекты, которых в конфигурации уже
+// нет: справочник создали, выдали на него права, потом удалили — строка в роли
+// осталась. «Проверка конфигурации» такие ссылки показывает (CheckCrossRefs), а
+// в матрице строки для них не было: снять право через интерфейс было нечем.
+//
+// Сравнение регистронезависимое — как в проверке конфигурации; в матрицу имя
+// попадает в том написании, в каком лежит в роли, иначе чекбокс не совпадёт с
+// триплетом роли и право осталось бы неснимаемым.
+//
+// Незагруженная конфигурация (data.Error) стирает все объекты разом, и тогда
+// «нет в конфигурации» получили бы вообще все права роли — админ снял бы по
+// подсказке рабочие права. Пока конфигурация не прочитана, отличить удалённый
+// объект от невидимого нельзя, поэтому не помечаем ничего.
+func staleRolePerms(roles []*auth.Role, data *configuratorData) map[string][]string {
+	if data == nil || data.Error != "" {
+		return nil
+	}
+	known := map[string]map[string]bool{}
+	for kind, list := range roleObjectsByKind(data) {
+		set := make(map[string]bool, len(list))
+		for _, name := range list {
+			set[strings.ToLower(name)] = true
+		}
+		known[kind] = set
+	}
+
+	seen := map[string]bool{}
+	stale := map[string][]string{}
+	for _, role := range roles {
+		for kind, m := range rolePermMaps(role.Permissions) {
+			for entity := range m {
+				if entity == "" || known[kind][strings.ToLower(entity)] {
+					continue
+				}
+				if key := kind + "|" + entity; !seen[key] {
+					seen[key] = true
+					stale[kind] = append(stale[kind], entity)
+				}
+			}
+		}
+	}
+	for kind := range stale {
+		sort.Strings(stale[kind])
+	}
+	return stale
+}
+
+// rolePermMaps раскладывает права по видам объектов, которыми управляет матрица.
+func rolePermMaps(p auth.Permission) map[string]map[string][]string {
+	return map[string]map[string][]string{
+		"catalog":  p.Catalogs,
+		"document": p.Documents,
+		"register": p.Registers,
+		"inforeg":  p.InfoRegs,
+		"report":   p.Reports,
+	}
+}
+
+// roleMatrixHTML builds the entity × operation checkbox matrix. Объекты из
+// stale дописываются к своим секциям отдельными помеченными строками — только
+// так остаточное право на удалённый объект можно снять из интерфейса.
+func roleMatrixHTML(data *configuratorData, stale map[string][]string) string {
+	ents := roleObjectsByKind(data)
 
 	var sb strings.Builder
 	any := false
+	anyStale := false
 	for _, sec := range rolePermSections {
-		list := ents[sec.Kind]
-		if len(list) == 0 {
+		list, missing := ents[sec.Kind], stale[sec.Kind]
+		if len(list)+len(missing) == 0 {
 			continue
 		}
 		any = true
-		fmt.Fprintf(&sb, `<details style="margin-bottom:6px"><summary style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0">%s (%d)</summary>`, escHTML(sec.Title), len(list))
+		fmt.Fprintf(&sb, `<details style="margin-bottom:6px"><summary style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0">%s (%d)</summary>`, escHTML(sec.Title), len(list)+len(missing))
 		sb.WriteString(`<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11px;margin:4px 0 8px">`)
 		sb.WriteString(`<tr style="background:#eef2f7"><th style="text-align:left;padding:3px 8px;font-weight:600">Объект</th>`)
 		for _, op := range sec.Ops {
@@ -278,22 +334,41 @@ func roleMatrixHTML(data *configuratorData) string {
 				escHTML(op.Label), sec.Kind, op.Op)
 		}
 		sb.WriteString(`</tr>`)
-		for ri, ent := range list {
-			bg := ""
-			if ri%2 == 1 {
-				bg = ` style="background:#fafafa"`
+		row := func(ent string, ri int, gone bool) {
+			style := ""
+			if gone {
+				style = ` style="background:#fff7ed"`
+			} else if ri%2 == 1 {
+				style = ` style="background:#fafafa"`
 			}
-			fmt.Fprintf(&sb, `<tr%s><td style="padding:3px 8px">%s</td>`, bg, escHTML(ent))
+			label := escHTML(ent)
+			if gone {
+				anyStale = true
+				label = `<span style="color:#9a3412">` + label +
+					` <span title="Объекта нет в конфигурации">⚠ нет в конфигурации</span></span>`
+			}
+			fmt.Fprintf(&sb, `<tr%s><td style="padding:3px 8px">%s</td>`, style, label)
 			for _, op := range sec.Ops {
 				val := sec.Kind + "|" + ent + "|" + op.Op
 				fmt.Fprintf(&sb, `<td style="text-align:center;padding:3px 8px"><input type="checkbox" name="perm" value="%s"></td>`, escHTML(val))
 			}
 			sb.WriteString(`</tr>`)
 		}
+		for ri, ent := range list {
+			row(ent, ri, false)
+		}
+		for _, ent := range missing {
+			row(ent, 0, true)
+		}
 		sb.WriteString(`</table></div></details>`)
 	}
 	if !any {
 		return `<div style="font-size:11px;color:#999;padding:6px 0">Объекты конфигурации не загружены.</div>`
+	}
+	if anyStale {
+		sb.WriteString(`<div style="font-size:11px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:3px;padding:6px 8px;margin-top:6px">` +
+			`⚠ Строки «нет в конфигурации» — права на удалённые объекты; их показывает «Проверка конфигурации». ` +
+			`Снимите галочки и сохраните роль, чтобы убрать их.</div>`)
 	}
 	return sb.String()
 }
@@ -321,8 +396,17 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 	desc := strings.TrimSpace(r.FormValue("description"))
 
 	// Parse "kind|entity|op" triplets into permission maps.
-	maps := map[string]map[string][]string{
-		"catalog": {}, "document": {}, "register": {}, "inforeg": {}, "report": {},
+	edits := make([]roleSectionEdit, 0, len(rolePermSections))
+	byKind := make(map[string]int, len(rolePermSections))
+	for _, sec := range rolePermSections {
+		managed := make(map[string]bool, len(sec.Ops))
+		for _, op := range sec.Ops {
+			managed[op.Op] = true
+		}
+		byKind[sec.Kind] = len(edits)
+		edits = append(edits, roleSectionEdit{
+			kind: sec.Kind, key: sec.Key, managed: managed, perms: map[string][]string{},
+		})
 	}
 	for _, v := range r.Form["perm"] {
 		parts := strings.SplitN(v, "|", 3)
@@ -330,56 +414,43 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		kind, ent, op := parts[0], parts[1], parts[2]
-		m, ok := maps[kind]
-		if !ok {
+		i, ok := byKind[kind]
+		if !ok || !edits[i].managed[op] {
 			continue
 		}
-		m[ent] = append(m[ent], op)
-	}
-	nilEmpty := func(m map[string][]string) map[string][]string {
-		if len(m) == 0 {
-			return nil
-		}
-		return m
+		edits[i].perms[ent] = append(edits[i].perms[ent], op)
 	}
 
-	role := &auth.Role{
-		Name:        name,
-		Description: desc,
-		Permissions: auth.Permission{
-			Catalogs:  nilEmpty(maps["catalog"]),
-			Documents: nilEmpty(maps["document"]),
-			Registers: nilEmpty(maps["register"]),
-			InfoRegs:  nilEmpty(maps["inforeg"]),
-			Reports:   nilEmpty(maps["report"]),
-		},
-	}
-
-	out := roleYAMLOut{
-		Name:        name,
-		Description: desc,
-		Permissions: rolePermYAML{
-			Catalogs:  nilEmpty(maps["catalog"]),
-			Documents: nilEmpty(maps["document"]),
-			Registers: nilEmpty(maps["register"]),
-			InfoRegs:  nilEmpty(maps["inforeg"]),
-			Reports:   nilEmpty(maps["report"]),
-		},
-	}
-	content, err := yaml.Marshal(out)
+	// Матрица владеет лишь частью файла роли, поэтому правим существующий YAML,
+	// а не собираем его заново: processors, row_access (план 79), field_access
+	// (план 88) и операции вроде disclose иначе исчезали бы при первом же
+	// сохранении роли из конфигуратора — вместе с комментариями.
+	targetPath := "roles/" + nameToFilename(name) + ".yaml"
+	existingPath, existing := h.roleConfigFile(r.Context(), b, origName, name)
+	content, err := applyRoleMatrixToYAML(existing, name, desc, edits)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
 		return
 	}
-
-	targetPath := "roles/" + nameToFilename(name) + ".yaml"
+	// Живая роль в _roles должна повторять записанный файл целиком, иначе
+	// сохранение из интерфейса снимет построчный доступ и маскирование в
+	// рантайме, оставив их в конфигурации.
+	role, err := auth.ParseRole(content)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	role.Name, role.Description = name, desc
 
 	// On edit, remove any stale role file(s) for the original name (handles
 	// rename and non-canonical filenames) before writing the new one.
 	var stalePaths []string
+	if existingPath != "" && existingPath != targetPath {
+		stalePaths = append(stalePaths, existingPath)
+	}
 	if origName != "" {
 		for path, rname := range h.roleConfigFiles(r.Context(), b) {
-			if rname == origName && path != targetPath {
+			if rname == origName && path != targetPath && path != existingPath {
 				stalePaths = append(stalePaths, path)
 			}
 		}
@@ -726,25 +797,9 @@ func (h *handler) deleteRoleConfigFiles(ctx context.Context, b *Base, relPaths [
 	return nil
 }
 
-// roleConfigFiles returns map[configPath]roleName for every roles/*.yaml entry.
-func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]string {
-	out := map[string]string{}
-	// Имя роли из её YAML. Битый файл даёт пустое имя, и роль выпадает из
-	// карты: при переименовании её старый файл не попадёт в stalePaths и
-	// останется в конфигурации рядом с новым — две записи одной роли.
-	// Пропустить такой файл всё равно приходится (имени в нём нет), но молчать
-	// об этом незачем.
-	readName := func(path string, content []byte) string {
-		var hdr struct {
-			Name string `yaml:"name"`
-		}
-		if err := yaml.Unmarshal(content, &hdr); err != nil {
-			respondLog().Warn("роль пропущена: файл не разобран",
-				"path", path, "err", err)
-			return ""
-		}
-		return hdr.Name
-	}
+// roleConfigContents returns map[configPath]content for every roles/*.yaml entry.
+func (h *handler) roleConfigContents(ctx context.Context, b *Base) map[string][]byte {
+	out := map[string][]byte{}
 	if b.ConfigSource == "database" {
 		db, err := OpenDB(ctx, b)
 		if err != nil {
@@ -762,7 +817,7 @@ func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]strin
 			if rows.Scan(&path, &content) != nil {
 				continue
 			}
-			out[path] = readName(path, content)
+			out[path] = content
 		}
 		return out
 	}
@@ -780,9 +835,62 @@ func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]strin
 			respondLog().Warn("роль пропущена: файл не прочитан", "path", e.Name(), "err", rerr)
 			continue
 		}
-		out["roles/"+e.Name()] = readName("roles/"+e.Name(), content)
+		out["roles/"+e.Name()] = content
 	}
 	return out
+}
+
+// roleConfigFiles returns map[configPath]roleName for every roles/*.yaml entry.
+func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]string {
+	out := map[string]string{}
+	for path, content := range h.roleConfigContents(ctx, b) {
+		out[path] = roleNameFromYAML(path, content)
+	}
+	return out
+}
+
+// roleConfigFile ищет файл роли по имени (первое непустое из names) и отдаёт
+// его путь и содержимое. Нужен сохранению: правка роли переписывает исходный
+// YAML, а не заменяет его сгенерированным.
+func (h *handler) roleConfigFile(ctx context.Context, b *Base, names ...string) (string, []byte) {
+	contents := h.roleConfigContents(ctx, b)
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		// Порядок обхода карты не определён, поэтому при нескольких файлах
+		// одной роли берём лексикографически первый — тот же, что и в прошлый
+		// раз, иначе правки уходили бы то в один файл, то в другой.
+		var found string
+		for path := range contents {
+			if roleNameFromYAML(path, contents[path]) != name {
+				continue
+			}
+			if found == "" || path < found {
+				found = path
+			}
+		}
+		if found != "" {
+			return found, contents[found]
+		}
+	}
+	return "", nil
+}
+
+// roleNameFromYAML читает имя роли из её YAML. Битый файл даёт пустое имя, и
+// роль выпадает из карты: при переименовании её старый файл не попадёт в
+// stalePaths и останется в конфигурации рядом с новым — две записи одной роли.
+// Пропустить такой файл всё равно приходится (имени в нём нет), но молчать об
+// этом незачем.
+func roleNameFromYAML(path string, content []byte) string {
+	var hdr struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(content, &hdr); err != nil {
+		respondLog().Warn("роль пропущена: файл не разобран", "path", path, "err", err)
+		return ""
+	}
+	return hdr.Name
 }
 
 // escJS escapes a string for a single-quoted JS literal inside a <script> block.
