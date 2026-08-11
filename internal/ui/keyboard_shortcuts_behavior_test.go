@@ -620,7 +620,7 @@ dynamicDelete = dynamicTbody.rows[0].children[1].children[0];
 assert(!dynamicDelete.title && dynamicDelete.getAttribute('aria-keyshortcuts') === null, 'readonly dynamic row advertises unavailable Delete');
 `
 
-	cmd := exec.Command(node, "-e", harness, uiPath, managedPath)
+	cmd := exec.Command(node, "-e", harness, uiPath, managedPath) //nolint:gosec // test-only executable resolved by exec.LookPath
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node shortcut behavior harness: %v\n%s", err, out)
 	}
@@ -942,7 +942,7 @@ assert(selectedRowsReads === 1 && selectedRowsClears === 1, 'selection-model Del
 assert(rowEvents.length === 1 && rowEvents[0].values.join(',') === 'B', 'multi-delete rowdel fired before final mutation or more than once');
 `
 
-	cmd := exec.Command(node, "-e", harness, managedPath, uiPath)
+	cmd := exec.Command(node, "-e", harness, managedPath, uiPath) //nolint:gosec // test-only executable resolved by exec.LookPath
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node managed shortcut behavior harness: %v\n%s", err, out)
 	}
