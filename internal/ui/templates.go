@@ -118,6 +118,29 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return value
 		},
+		// detailPanel — payload боковой панели для строки списка (план 118B).
+		// Собирается на сервере из УЖЕ отрисованной строки: второй путь чтения
+		// пришлось бы заново проводить через права, строковые политики и маску.
+		"detailPanel": func(fields []metadata.Field, row map[string]any,
+			enumLabels map[string]map[string]string, lang string) string {
+			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang)
+		},
+		"entityFields": func(e *metadata.Entity) []metadata.Field { return e.Fields },
+		// journalFields — колонки журнала как поля панели. Журнал сводит разные
+		// виды документов, поэтому состав задан им самим, а не сущностью.
+		"journalFields": func(j *metadata.Journal) []metadata.Field {
+			if j == nil {
+				return nil
+			}
+			out := make([]metadata.Field, 0, len(j.Columns))
+			for _, c := range j.Columns {
+				out = append(out, metadata.Field{Name: c.Field, Title: c.Label, Titles: c.Labels, Type: metadata.FieldTypeString})
+			}
+			return out
+		},
+		"inforegFields": func(ir *metadata.InfoRegister) []metadata.Field {
+			return append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)
+		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
@@ -1140,6 +1163,27 @@ const tplIndex = `
 `
 
 const tplList = `
+{{define "detail-panel"}}
+<aside class="ob-detail" id="ob-detail" hidden aria-label="{{t $.Lang "Детали записи"}}">
+  <div class="ob-detail-grip" data-ob-detail-grip title="{{t $.Lang "Потяните, чтобы изменить ширину"}}"></div>
+  <div class="ob-detail-body">
+    <div class="ob-detail-head">
+      <strong data-ob-detail-title></strong>
+      <button type="button" class="ob-detail-close" data-ob-detail-close title="{{t $.Lang "Скрыть панель"}}">✕</button>
+    </div>
+    <div class="ob-detail-tabs" data-ob-detail-tabs></div>
+    <div class="ob-detail-fields" data-ob-detail-fields></div>
+    <p class="ob-detail-empty" data-ob-detail-empty>{{t $.Lang "Выберите строку"}}</p>
+  </div>
+</aside>
+{{end}}
+
+{{define "detail-panel-toggle"}}
+<div class="view-switch">
+  <a class="view-btn" href="#" data-ob-detail-toggle title="{{t $.Lang "Детали записи"}}">▤</a>
+</div>
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
@@ -1151,6 +1195,7 @@ const tplList = `
       <a class="view-btn{{if .TilesView}} active{{end}}" href="?view=tiles{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{filterQuery .Params}}" title="{{t $.Lang "Плитка"}}">▦</a>
       {{if .Entity.Hierarchical}}<a class="view-btn{{if .TreeView}} active{{end}}" href="?view=tree{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Дерево"}}">📂</a>{{end}}
     </div>
+    {{template "detail-panel-toggle" .}}
     {{if and .Entity.Activity (not .TreeView)}}
     <div class="view-switch" title="{{t $.Lang "Активность"}}">
       <a class="view-btn{{if eq .Params.ActivityScope "active"}} active{{end}}" href="?{{activityQuery .Params "active"}}{{if .TilesView}}&view=tiles{{end}}{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Активные"}}</a>
@@ -1240,6 +1285,7 @@ const tplList = `
 </details>
 
 {{$obRefresh := liveListRefreshOn .Entity}}
+<div class="ob-list-wrap">
 <div class="card" data-ob-live="{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}"{{if $obRefresh}} data-ob-refresh-on="{{$obRefresh}}"{{end}}>
 {{if .TreeView}}
 {{/* ===== TREE VIEW ===== */}}
@@ -1376,7 +1422,8 @@ const tplList = `
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
+  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
@@ -1403,6 +1450,8 @@ const tplList = `
 <p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="?">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
 {{end}}
 {{end}}
+</div>
+{{template "detail-panel" .}}
 </div>
 {{if and .Feed (not .TreeView)}}
 {{/* Лента: догрузка по скроллу. Без JS «Показать ещё» = переход на след. страницу. */}}
@@ -2507,6 +2556,8 @@ const tplInfoReg = `
   {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
 </div>
 {{template "reg-filter-form" (dict "Fields" .InfoReg.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/inforeg/%s" (lower .InfoReg.Name)) "Lang" $.Lang)}}
+<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
+<div class="ob-list-wrap">
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
@@ -2515,7 +2566,8 @@ const tplInfoReg = `
   {{range .InfoReg.Resources}}<th>{{.DisplayName $.Lang}}</th>{{end}}
   {{if .CanDelete}}<th></th>{{end}}
 </tr></thead><tbody>
-{{range .Rows}}{{$row := .}}<tr>
+{{range .Rows}}{{$row := .}}<tr data-ob-list-row tabindex="-1" aria-selected="false"
+  data-ob-detail='{{detailPanel (inforegFields $.InfoReg) $row nil $.Lang}}'>
   {{if $.InfoReg.Periodic}}<td>{{index $row "period"}}</td>{{end}}
   {{range $.InfoReg.Dimensions}}<td>{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
   {{range $.InfoReg.Resources}}<td style="font-weight:600">{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
@@ -2530,6 +2582,8 @@ const tplInfoReg = `
 </tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">{{t $.Lang "Записей нет"}}</p>{{end}}
+</div>
+{{template "detail-panel" .}}
 </div></main></div></body></html>
 {{end}}
 
@@ -2721,6 +2775,8 @@ const tplJournal = `
 </details>
 
 {{if .JournalWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
+<div class="ob-list-wrap">
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
@@ -2730,7 +2786,10 @@ const tplJournal = `
 </tr></thead>
 <tbody>
 {{range .Rows}}{{$row := .}}
-<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-journal-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}">
+<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-journal-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}"
+  data-ob-list-row tabindex="-1" aria-selected="false"
+  data-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}"
+  data-ob-detail='{{detailPanel (journalFields $.Journal) $row nil $.Lang}}'>
   <td style="{{journalCellStyle $row "_doc_kind"}}">{{index . "_doc_kind"}}</td>
   {{range $.JournalColumns}}
     {{$v := index $row .Field}}
@@ -2744,6 +2803,8 @@ const tplJournal = `
 {{else}}
 <p class="empty">{{t $.Lang "Документов нет"}}</p>
 {{end}}
+</div>
+{{template "detail-panel" .}}
 </div>
 
 {{if or .HasPrev .HasNext}}
