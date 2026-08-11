@@ -11,7 +11,7 @@ func TestRoleMatrixIncludesAccountRegisters(t *testing.T) {
 	data := &configuratorData{
 		AccountRegisters: []cfgAccountRegister{{Name: "Хозрасчётный"}},
 	}
-	html := roleMatrixHTML(data)
+	html := roleMatrixHTML(data, nil)
 	if !strings.Contains(html, "Хозрасчётный") {
 		t.Fatalf("регбух не попал в матрицу прав: %s", html)
 	}
