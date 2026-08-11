@@ -662,14 +662,6 @@ func buildObjectFromForm(
 	}, nil
 }
 
-// parseValueTableRows preserves the historical helper shape for focused tests.
-// Request handlers use parseValueTableRowsForManagedForm and propagate its
-// metadata errors.
-func parseValueTableRows(r *http.Request, form *metadata.FormModule, entity *metadata.Entity) map[string][]map[string]any {
-	rows, _ := parseValueTableRowsForManagedForm(r, form, entity, true)
-	return rows
-}
-
 // parseValueTableRowsForManagedForm parses only the representation rendered by
 // a writable placement. ValueTable currently always uses DOM vt.* controls;
 // tp_json.* is therefore never trusted for it merely because a client sent it.

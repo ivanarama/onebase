@@ -69,17 +69,6 @@ func postFormOnlyRequest(r *http.Request) *http.Request {
 	return copy
 }
 
-// editableFormTables maps a rendered DataPath to the shared canonical
-// metadata for entity/processor table parts and form-local ValueTables.
-// Readonly ancestors make the complete subtree readonly as well.
-func editableFormTables(form *metadata.FormModule, declared []metadata.TablePart) (map[string]metadata.FormTableDefinition, error) {
-	authorities, err := managedFormTableAuthorities(form, declared, true)
-	if err != nil {
-		return nil, err
-	}
-	return editableFormTablesFromAuthorities(form, declared, authorities)
-}
-
 func editableFormTablesFromAuthorities(
 	form *metadata.FormModule,
 	declared []metadata.TablePart,
