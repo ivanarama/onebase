@@ -705,6 +705,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	switch callee := c.Callee.(type) {
 	case *ast.Ident:
 		fnName := callee.Tok.Literal
+		lowName := strings.ToLower(fnName)
 		var fallback FallbackBuiltinFunc
 		// Обычный AST всегда несёт identity собственного исходника в токене.
 		// Только выражения, разобранные динамически для Вычислить/отладчика,
@@ -713,7 +714,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		// Вычислить(Выражение) — разбор строки как выражения и вычисление в
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
-		if low := strings.ToLower(fnName); low == "вычислить" || low == "eval" {
+		if lowName == "вычислить" || lowName == "eval" {
 			return i.evalEvalBuiltin(args, e)
 		}
 		if val, ok := e.get(fnName); ok {
@@ -777,6 +778,15 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				}
 			}
 			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, fnName)})
+		}
+		// Только штатный builtin паузы получает deadline-aware dispatch. Это
+		// закрывает провал к прямому ожиданию после одноимённой non-callable
+		// переменной, но не ломает обычный порядок разрешения: пользовательская
+		// процедура либо доверенная инъекция Sleep/Wait по-прежнему может
+		// затенить builtin и сама контролируется общим дедлайном между операторами.
+		if e.ec != nil && !e.ec.deadline.IsZero() && isSleepBuiltinName(lowName) {
+			waitForSleep(sleepDuration(args), e.ec)
+			return nil
 		}
 		result, err := fn(args, callee.Tok.File, callee.Tok.Line)
 		if err != nil {
