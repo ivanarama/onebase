@@ -912,6 +912,9 @@ function obResolveActionableFormHotkey(key) {
     var candidate = candidates[i];
     if (obNormalizeFormHotkey(candidate.getAttribute('data-ob-hotkey')) !== wanted) continue;
     if (!document.contains(candidate) || !form.contains(candidate)) continue;
+    // Managed buttons without an official click action are visual decoration:
+    // clicking them is a no-op and must not suppress F9's table-row copy.
+    if (!candidate.getAttribute || !String(candidate.getAttribute('data-ob-fire-click') || '').trim()) continue;
     if (!obElementVisible(candidate) || !obFormHotkeyCandidateEnabled(candidate, form)) continue;
     return candidate;
   }
@@ -1118,7 +1121,10 @@ function obDOMAddButton(table) {
   var buttons = document.querySelectorAll('[data-ob-add-tp-row],[data-ob-add-tp]');
   for (var i = 0; i < buttons.length; i++) {
     var owner = buttons[i].getAttribute('data-tp-name') || buttons[i].getAttribute('data-ob-add-tp') || '';
-    if (owner === tpName) return buttons[i];
+    // Duplicate readonly/writable placements share the same logical table
+    // name. The readonly add button is disabled and must not shadow the sole
+    // writable control merely because it appears first in DOM order.
+    if (owner === tpName && !buttons[i].disabled) return buttons[i];
   }
   return null;
 }
@@ -2416,8 +2422,8 @@ function obTPRefMeta() {
   return window._tpRefMeta || {};
 }
 
-function addTpRow(tpName, fields, numFields, idx) {
-  var tbody = document.getElementById('tp-body-' + tpName);
+function addTpRow(tpName, fields, numFields, idx, tbodyOverride) {
+  var tbody = tbodyOverride || document.getElementById('tp-body-' + tpName);
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
   var tr = document.createElement('tr');

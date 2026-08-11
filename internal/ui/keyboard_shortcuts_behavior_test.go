@@ -40,11 +40,13 @@ const addTpEnd = source.indexOf('\nfunction recalcTpRow', addTpStart);
 const managedMutationStart = managedSource.indexOf('window.obGridAddRow = function');
 const managedKeysStart = managedSource.indexOf('function gridNameFromTarget');
 const managedKeysEnd = managedSource.indexOf('// SlickGrid-aware applyTableParts', managedKeysStart);
-const managedApplyStart = managedSource.indexOf('function setTablePartJSON');
+const managedBodiesStart = managedSource.indexOf('function obManagedTableReadOnly');
+const managedBodiesEnd = managedSource.indexOf('// Отправляет текущие form-values', managedBodiesStart);
+const managedApplyStart = managedSource.indexOf('function applyTableParts');
 const managedApplyExport = managedSource.indexOf('window.applyTableParts = applyTableParts;', managedApplyStart);
 if (start < 0 || end < 0 || dirtyStart < 0 || dirtyEnd < 0 || addTpStart < 0 || addTpEnd < 0 ||
     managedMutationStart < 0 || managedKeysStart < 0 || managedKeysEnd < 0 ||
-    managedApplyStart < 0 || managedApplyExport < 0) throw new Error('shortcut runtime slice not found');
+    managedBodiesStart < 0 || managedBodiesEnd < 0 || managedApplyStart < 0 || managedApplyExport < 0) throw new Error('shortcut runtime slice not found');
 
 function makeElement(tag, options = {}) {
   const attrs = Object.assign({}, options.attrs || {});
@@ -94,7 +96,7 @@ let configPresent = false;
 let modalID = '';
 let saveClicks = 0;
 let postCloseClicks = 0;
-let domAddButton = null;
+let domAddButtons = [];
 let dynamicTbody = null;
 let domTableForQuery = null;
 let dirtyFormEnabled = false;
@@ -150,7 +152,7 @@ global.document = {
   },
   querySelectorAll(selector) {
     if (selector === '[data-ob-list-row]') return rows;
-    if (selector === '[data-ob-add-tp-row],[data-ob-add-tp]' && domAddButton) return [domAddButton];
+    if (selector === '[data-ob-add-tp-row],[data-ob-add-tp]') return domAddButtons;
     if (selector === 'table[data-ob-dom-table]' && domTableForQuery) return [domTableForQuery];
     return [];
   },
@@ -170,6 +172,7 @@ function obFireRowEvent() {}
 window.obFireRowEvent = obFireRowEvent;
 
 eval(source.slice(start, end));
+eval(managedSource.slice(managedBodiesStart, managedBodiesEnd));
 eval(managedSource.slice(managedApplyStart, managedApplyExport + 'window.applyTableParts = applyTableParts;'.length));
 // managed.js is loaded at the bottom of a managed form and installs its
 // capture listener before ui.js's DOM-ready shortcut listener.
@@ -361,7 +364,7 @@ tbody.appendChild(rowA);
 tbody.appendChild(rowB);
 domTableForQuery = table;
 obInitDOMTables();
-domAddButton = {
+const domAddButton = {
   disabled: false,
   getAttribute(name) {
     if (name === 'data-tp-name') return 'Lines';
@@ -370,6 +373,45 @@ domAddButton = {
   },
   click() { tbody.appendChild(makeDOMRow('', tbody.rows.length)); }
 };
+const readonlyDuplicateAddButton = {
+  disabled: true,
+  getAttribute(name) {
+    if (name === 'data-tp-name') return 'Lines';
+    if (name === 'data-ob-add-tp') return null;
+    return null;
+  },
+  click() { throw new Error('readonly duplicate add button was clicked'); }
+};
+
+// A readonly NoGrid duplicate must not shadow the writable add control. Both
+// Insert and F9 must work regardless of the two placements' DOM order.
+for (const order of ['readonly-first', 'writable-first']) {
+  domAddButtons = order === 'readonly-first'
+    ? [readonlyDuplicateAddButton, domAddButton]
+    : [domAddButton, readonlyDuplicateAddButton];
+  table._obCurrentRow = rowA;
+  document.activeElement = rowA.control;
+  const beforeInsert = tbody.rows.length;
+  fire({key: 'Insert', target: rowA});
+  assert(tbody.rows.length === beforeInsert + 1, 'Insert failed with duplicate add buttons (' + order + ')');
+  let inserted = tbody.rows.find(row => row !== rowA && row !== rowB);
+  inserted.parentElement = null;
+  tbody.rows.splice(tbody.rows.indexOf(inserted), 1);
+  obDOMReindex(table);
+
+  table._obCurrentRow = rowA;
+  document.activeElement = rowA.control;
+  const beforeCopy = tbody.rows.length;
+  fire({key: 'F9', target: rowA});
+  assert(tbody.rows.length === beforeCopy + 1, 'F9 failed with duplicate add buttons (' + order + ')');
+  const copied = tbody.rows.find(row => row !== rowA && row !== rowB);
+  assert(copied && copied.control.value === 'A', 'F9 copied the wrong row with duplicate add buttons (' + order + ')');
+  copied.parentElement = null;
+  tbody.rows.splice(tbody.rows.indexOf(copied), 1);
+  obDOMReindex(table);
+}
+rowEvents.length = 0;
+domAddButtons = [domAddButton];
 
 table._obCurrentRow = rowA;
 window._obActiveDOMTable = table;
@@ -770,8 +812,10 @@ function hotkeyElement(tag, options = {}) {
 }
 
 function hotkeyButton(options = {}) {
+  const attrs = Object.assign({'data-ob-hotkey': ' F9 '}, options.attrs || {});
+  if (options.action !== false) attrs['data-ob-fire-click'] = options.actionName || 'Run';
   return hotkeyElement('button', Object.assign({}, options, {
-    attrs: Object.assign({'data-ob-hotkey': ' F9 '}, options.attrs || {})
+    attrs
   }));
 }
 
@@ -786,6 +830,7 @@ function nonActionableHotkeyButtons() {
   const inertParent = hotkeyElement('div', {attrs: {inert: ''}, inert: true});
   return [
     ['own hidden', hotkeyButton({hidden: true})],
+    ['handlerless', hotkeyButton({action: false})],
     ['ancestor aria-hidden', hotkeyButton({parent: ariaHiddenParent})],
     ['ancestor inline display', hotkeyButton({parent: displayParent})],
     ['ancestor computed display', hotkeyButton({parent: computedDisplayParent})],

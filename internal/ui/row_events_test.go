@@ -143,7 +143,8 @@ func TestHandleManagedFormEvent_ValueTableChildCommandContext(t *testing.T) {
 		"_tp_row_number": {"1"},
 		"_tp_col":        {"количество"},
 		"_tp_col_index":  {"1"},
-		"tp_json.Подбор": {`[{"Номенклатура":"A","Количество":2}]`},
+		"vt.Подбор.0.Номенклатура": {"A"},
+		"vt.Подбор.0.Количество":   {"2"},
 	}
 	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
 	want := []string{"Подбор", "Количество", "1", "2"}
@@ -178,10 +179,11 @@ func TestHandleManagedFormEvent_ValueTableMutationsRoundTrip(t *testing.T) {
 
 	t.Run("add canonical columns", func(t *testing.T) {
 		body := url.Values{
-			"_element":       {"Добавить"},
-			"_event":         {string(metadata.FormEventOnClick)},
-			"_kind":          {"object"},
-			"tp_json.Подбор": {`[{"Номенклатура":"A","Количество":2}]`},
+			"_element": {"Добавить"},
+			"_event":   {string(metadata.FormEventOnClick)},
+			"_kind":    {"object"},
+			"vt.Подбор.0.Номенклатура": {"A"},
+			"vt.Подбор.0.Количество":   {"2"},
 		}
 		resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
 		rows := resp.FormTables["Подбор"]
@@ -198,10 +200,11 @@ func TestHandleManagedFormEvent_ValueTableMutationsRoundTrip(t *testing.T) {
 
 	t.Run("clear emits empty table", func(t *testing.T) {
 		body := url.Values{
-			"_element":       {"Очистить"},
-			"_event":         {string(metadata.FormEventOnClick)},
-			"_kind":          {"object"},
-			"tp_json.Подбор": {`[{"Номенклатура":"A","Количество":2}]`},
+			"_element": {"Очистить"},
+			"_event":   {string(metadata.FormEventOnClick)},
+			"_kind":    {"object"},
+			"vt.Подбор.0.Номенклатура": {"A"},
+			"vt.Подбор.0.Количество":   {"2"},
 		}
 		resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
 		rows, present := resp.FormTables["Подбор"]
@@ -463,7 +466,7 @@ func TestManagedFormGridRowEventAttrs(t *testing.T) {
 	}
 }
 
-func TestManagedFormInheritedReadonlyNoGridTablesCarryRoundTripState(t *testing.T) {
+func TestManagedFormInheritedReadonlyNoGridTablesAreDisplayOnly(t *testing.T) {
 	tpElement := &metadata.FormElement{
 		Kind: metadata.FormElementTablePart, Name: "ЭлементТовары",
 		DataPath: "Объект.Товары", NoGrid: true,
@@ -518,9 +521,13 @@ func TestManagedFormInheritedReadonlyNoGridTablesCarryRoundTripState(t *testing.
 		`type="hidden" name="tp.Товары.0.Номенклатура" value="ref-1"`,
 		`type="hidden" name="vt.Подбор.0.Флаг" value="true"`,
 	} {
-		if !strings.Contains(html, mirror) {
-			t.Fatalf("нет readonly hidden mirror %q: %s", mirror, html)
+		if strings.Contains(html, mirror) {
+			t.Fatalf("readonly table still submits hidden mirror %q: %s", mirror, html)
 		}
+	}
+	if !strings.Contains(html, `<option value="ref-1" selected>Товар</option>`) ||
+		!strings.Contains(html, `name="vt.Подбор.0.Флаг" value="true" checked disabled`) {
+		t.Fatalf("readonly TP/VT lost display state: %s", html)
 	}
 	if strings.Contains(html, `data-ob-add-tp="Товары"`) || strings.Contains(html, `data-ob-add-vt="Подбор"`) || strings.Contains(html, `data-ob-remove-row`) {
 		t.Fatalf("readonly TP/VT rendered mutable controls: %s", html)

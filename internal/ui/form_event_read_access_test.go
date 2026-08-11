@@ -95,6 +95,29 @@ func TestManagedFormEvent_ExistingRecordRequiresReadPermissionBeforeHydration(t 
 	assertFormEventHandlerDidNotRun(t, srv, ent, id, rec)
 }
 
+func TestManagedFormEvent_ReadOnlyUserCannotWriteFromButtonHandler(t *testing.T) {
+	srv, ent, id := formEventReadGateFixture(t)
+	user := &auth.User{Login: "reader", Roles: []*auth.Role{{Permissions: auth.Permission{
+		Catalogs: map[string][]string{ent.Name: {"read"}},
+	}}}}
+	body := url.Values{
+		"_element": {"Check"}, "_event": {string(metadata.FormEventOnClick)},
+		"_kind": {"object"}, "_id": {id.String()},
+	}
+	rec := runFormEventAs(t, srv, ent, body, user)
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.OK || strings.TrimSpace(resp.Error) == "" {
+		t.Fatalf("read-only handler write was accepted: status=%d response=%#v", rec.Code, resp)
+	}
+	row, err := srv.store.GetByID(t.Context(), ent.Name, id, ent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Probe"] != "untouched" {
+		t.Fatalf("read-only handler changed DB row: %#v", row)
+	}
+}
+
 func TestManagedFormEvent_ForgedIDRequiresReadRowPolicyBeforeHydration(t *testing.T) {
 	srv, ent, id := formEventReadGateFixture(t)
 	user := &auth.User{Login: "bob", Roles: []*auth.Role{{Permissions: auth.Permission{

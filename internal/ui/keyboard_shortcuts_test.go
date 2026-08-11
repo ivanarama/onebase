@@ -22,30 +22,151 @@ func TestNormalizedFormHotkey(t *testing.T) {
 	}
 }
 
+func TestTemplateHandlerPredicatesRequireNonblankCode(t *testing.T) {
+	funcs := templateFuncs(nil)
+	hasHandler := funcs["hasHandler"].(func(*metadata.FormElement, string) bool)
+	hasFormHandler := funcs["hasFormHandler"].(func(*metadata.FormModule, string) bool)
+	for name, code := range map[string]string{"empty": "", "whitespace": " \t\n "} {
+		t.Run(name, func(t *testing.T) {
+			element := &metadata.FormElement{Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: code,
+			}}
+			if hasHandler(element, string(metadata.FormEventOnClick)) {
+				t.Fatal("blank element handler was treated as actionable")
+			}
+			form := &metadata.FormModule{Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnOpen: code,
+			}}
+			if hasFormHandler(form, string(metadata.FormEventOnOpen)) {
+				t.Fatal("blank form handler was treated as actionable")
+			}
+		})
+	}
+}
+
 func TestManagedButtonRendersOnlyNormalizedSupportedHotkey(t *testing.T) {
-	render := func(hotkey string) string {
+	render := func(button *metadata.FormElement, ctx map[string]any) string {
 		t.Helper()
-		button := &metadata.FormElement{Kind: metadata.FormElementButton, Name: "Action", HotKey: hotkey}
+		if ctx == nil {
+			ctx = map[string]any{}
+		}
+		ctx["CanWrite"] = true
 		var output bytes.Buffer
 		if err := tmpl.ExecuteTemplate(&output, "managed-element", map[string]any{
 			"El":  button,
-			"Ctx": map[string]any{"CanWrite": true},
+			"Ctx": ctx,
 		}); err != nil {
 			t.Fatalf("render managed button: %v", err)
 		}
 		return output.String()
 	}
 
-	supported := render(" f7 ")
-	for _, marker := range []string{`data-ob-hotkey="F7"`, `aria-keyshortcuts="F7"`, `title="F7"`} {
+	ordinary := &metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "Action", HotKey: " f7 ",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Run"},
+	}
+	supported := render(ordinary, nil)
+	for _, marker := range []string{`data-ob-hotkey="F7"`, `aria-keyshortcuts="F7"`, `title="F7"`, `data-ob-fire-click="Action"`} {
 		if !strings.Contains(supported, marker) {
 			t.Errorf("normalized F7 lost %s: %s", marker, supported)
 		}
 	}
-	unsupported := render("Ctrl+F9")
+	ordinary.HotKey = "Ctrl+F9"
+	unsupported := render(ordinary, nil)
 	for _, marker := range []string{"data-ob-hotkey", "aria-keyshortcuts", `title="Ctrl+F9"`} {
 		if strings.Contains(unsupported, marker) {
 			t.Errorf("unsupported hotkey rendered %s: %s", marker, unsupported)
+		}
+	}
+
+	handlerless := render(&metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "Noop", HotKey: "F9",
+	}, nil)
+	for _, marker := range []string{"data-ob-hotkey", "aria-keyshortcuts", `title="F9"`, "data-ob-fire-click"} {
+		if strings.Contains(handlerless, marker) {
+			t.Errorf("handlerless button advertised %s: %s", marker, handlerless)
+		}
+	}
+	for name, handler := range map[string]string{"Empty": "", "Whitespace": " \t\n "} {
+		html := render(&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: name, HotKey: "F9",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: handler},
+		}, nil)
+		for _, marker := range []string{"data-ob-hotkey", "aria-keyshortcuts", `title="F9"`, "data-ob-fire-click"} {
+			if strings.Contains(html, marker) {
+				t.Errorf("%s click handler advertised %s: %s", strings.ToLower(name), marker, html)
+			}
+		}
+	}
+
+	fallback := &metadata.FormElement{Kind: metadata.FormElementButton, Name: "Выполнить", HotKey: " f9 "}
+	processorForm := &metadata.FormModule{Elements: []*metadata.FormElement{fallback}}
+	fallbackHTML := render(fallback, map[string]any{"IsProcessor": true, "Form": processorForm})
+	for _, marker := range []string{`data-ob-hotkey="F9"`, `aria-keyshortcuts="F9"`, `title="F9"`, `data-ob-fire-click="Выполнить"`} {
+		if !strings.Contains(fallbackHTML, marker) {
+			t.Errorf("processor execute fallback lost %s: %s", marker, fallbackHTML)
+		}
+	}
+}
+
+func TestManagedTableCommandHotkeyRequiresClickHandler(t *testing.T) {
+	render := func(valueTable bool) string {
+		t.Helper()
+		noop := &metadata.FormElement{Kind: metadata.FormElementButton, Name: "Noop", HotKey: "F9"}
+		empty := &metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Empty", HotKey: "F8",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: ""},
+		}
+		whitespace := &metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Whitespace", HotKey: "F9",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: " \t\n "},
+		}
+		action := &metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Action", HotKey: " f7 ",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Run"},
+		}
+		table := &metadata.FormElement{
+			Kind: metadata.FormElementTablePart, Name: "Table", NoGrid: true,
+			DataPath: "Object.Lines", Children: []*metadata.FormElement{noop, empty, whitespace, action},
+		}
+		entity := &metadata.Entity{TableParts: []metadata.TablePart{{
+			Name: "Lines", Fields: []metadata.Field{{Name: "Name", Type: metadata.FieldTypeString}},
+		}}}
+		form := &metadata.FormModule{Elements: []*metadata.FormElement{table}}
+		if valueTable {
+			table.DataPath = "Form.Scratch"
+			entity.TableParts = nil
+			form.Attributes = []*metadata.FormAttribute{{
+				Name: "Scratch", TypeRef: "ValueTable",
+				Columns: []*metadata.FormAttributeColumn{{Name: "Name", TypeRef: "string"}},
+			}}
+		}
+		ctx := map[string]any{
+			"Entity": entity, "Form": form, "CanWrite": true,
+			"TablePartRows": map[string][]map[string]any{},
+			"TPRefOptions":  map[string]any{},
+			"TPEnumLabels":  map[string]map[string]map[string]string{},
+		}
+		var output bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&output, "managed-element", map[string]any{"El": table, "Ctx": ctx}); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	for _, valueTable := range []bool{false, true} {
+		html := render(valueTable)
+		for _, marker := range []string{
+			`data-ob-hotkey="F8"`, `data-ob-hotkey="F9"`,
+			`data-ob-fire-click="Empty"`, `data-ob-fire-click="Whitespace"`,
+		} {
+			if strings.Contains(html, marker) {
+				t.Fatalf("non-actionable table command advertised %s (ValueTable=%v): %s", marker, valueTable, html)
+			}
+		}
+		for _, marker := range []string{`data-ob-hotkey="F7"`, `data-ob-fire-click="Action"`} {
+			if !strings.Contains(html, marker) {
+				t.Fatalf("handled table command lost %s (ValueTable=%v): %s", marker, valueTable, html)
+			}
 		}
 	}
 }
@@ -544,9 +665,9 @@ func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
 				t.Fatal("rendered NoGrid table lost a field or structural button")
 			}
 			wantDisabled := tc.marker == "1"
-			_, fieldReadOnly := keyboardHTMLAttr(field, "readonly")
-			if fieldReadOnly != wantDisabled {
-				t.Errorf("field readonly=%v, want %v", fieldReadOnly, wantDisabled)
+			_, fieldDisabled := keyboardHTMLAttr(field, "disabled")
+			if fieldDisabled != wantDisabled {
+				t.Errorf("field disabled=%v, want %v", fieldDisabled, wantDisabled)
 			}
 			for label, node := range map[string]*html.Node{"remove": remove, "add": add} {
 				_, disabled := keyboardHTMLAttr(node, "disabled")

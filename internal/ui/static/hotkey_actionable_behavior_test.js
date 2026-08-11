@@ -93,7 +93,9 @@ function reset() {
 
 function button(options = {}) {
   const parent = options.parent === undefined ? mainForm : options.parent;
-  return element('button', {'data-ob-hotkey': options.hotkey || ' F9 ', ...(options.attrs || {})}, {
+  const attrs = {'data-ob-hotkey': options.hotkey || ' F9 ', ...(options.attrs || {})};
+  if (options.action !== false) attrs['data-ob-fire-click'] = options.actionName || 'Run';
+  return element('button', attrs, {
     parent,
     style: options.style,
     computedStyle: options.computedStyle,
@@ -114,6 +116,7 @@ function nonActionableCandidates() {
   const inertParent = element('div', {inert: ''}, {parent: mainForm, inert: true});
   return [
     ['own hidden', button({hidden: true})],
+    ['handlerless', button({action: false})],
     ['ancestor aria-hidden', button({parent: ariaHiddenParent})],
     ['ancestor inline display', button({parent: displayParent})],
     ['ancestor computed display', button({parent: computedDisplayParent})],

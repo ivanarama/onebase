@@ -252,8 +252,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if el == nil || el.Handlers == nil {
 				return false
 			}
-			_, ok := el.Handlers[metadata.FormEventType(eventName)]
-			return ok
+			handler, ok := el.Handlers[metadata.FormEventType(eventName)]
+			return ok && strings.TrimSpace(handler) != ""
 		},
 		// hasFormHandler — есть ли у формы (а не элемента) обработчик события.
 		// Используется в managed-шаблоне для авто-вызова ПриОткрытииФормы при
@@ -262,8 +262,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if form == nil || form.Handlers == nil {
 				return false
 			}
-			_, ok := form.Handlers[metadata.FormEventType(eventName)]
-			return ok
+			handler, ok := form.Handlers[metadata.FormEventType(eventName)]
+			return ok && strings.TrimSpace(handler) != ""
 		},
 		// deleteHidden — скрыта ли кнопка «Удалить» формы через
 		// actions.delete.visible=false (issue #151). По умолчанию (нет actions

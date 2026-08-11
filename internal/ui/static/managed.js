@@ -22,6 +22,53 @@ function obManagedReady(fn) {
 var obManagedFileSubmitPending = new WeakSet();
 var obManagedFileSubmitReentry = new WeakSet();
 
+function obManagedTableReadOnly(tbody) {
+  return !!tbody && tbody.getAttribute('data-ob-table-readonly') === '1';
+}
+
+function obManagedTableBodies(id, metadataAttr) {
+  var matches = [];
+  var candidates = document.querySelectorAll ? document.querySelectorAll('tbody[' + metadataAttr + ']') : [];
+  for (var i = 0; i < candidates.length; i++) {
+    var candidateID = candidates[i].id || (candidates[i].getAttribute && candidates[i].getAttribute('id'));
+    if (candidateID === id) matches.push(candidates[i]);
+  }
+  if (!matches.length) {
+    var fallback = document.getElementById(id);
+    if (fallback) matches.push(fallback);
+  }
+  return matches;
+}
+
+function obManagedWritableTableBody(id, metadataAttr) {
+  var bodies = obManagedTableBodies(id, metadataAttr);
+  for (var i = 0; i < bodies.length; i++) {
+    if (!obManagedTableReadOnly(bodies[i])) return bodies[i];
+  }
+  return null;
+}
+
+// Shared by the managed-form response renderer and the separate SlickGrid
+// runtime below. Keep this outside either IIFE: Slick submit/event sync must
+// be able to update the authoritative hidden payload in the real browser
+// scope, not only in tests that happen to provide a same-named global.
+function obManagedSetTablePartJSON(tpName, rows) {
+  var fieldName = 'tp_json.' + tpName;
+  var inputs = document.getElementsByName ? document.getElementsByName(fieldName) : [];
+  if (!inputs || !inputs.length) {
+    var fallback = document.getElementById('tp-json-' + tpName);
+    inputs = fallback ? [fallback] : [];
+  }
+  var value = JSON.stringify(rows || []);
+  for (var i = 0; i < inputs.length; i++) {
+    // Readonly duplicate placements are display-only and must never become
+    // successful form controls, even if an older/custom template rendered
+    // a disabled mirror with the canonical name.
+    if (!inputs[i].disabled) inputs[i].value = value;
+  }
+}
+window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
+
 // Отправляет текущие form-values + имя элемента/события в /ui/.../form-event,
 // получает JSON с новыми значениями и сообщениями от Сообщить(), применяет их.
 (function(){
@@ -234,16 +281,6 @@ var obManagedFileSubmitReentry = new WeakSet();
     el.textContent = css || '';
   }
   window.applyFormConditionalCSS = applyFormConditionalCSS;
-  function obManagedTableReadOnly(tbody) {
-    return !!tbody && tbody.getAttribute('data-ob-table-readonly') === '1';
-  }
-  function appendDisabledControlMirror(parent, name, value) {
-    const hidden = document.createElement('input');
-    hidden.type = 'hidden';
-    hidden.name = name;
-    hidden.value = (value == null ? '' : String(value));
-    parent.appendChild(hidden);
-  }
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -251,23 +288,13 @@ var obManagedFileSubmitReentry = new WeakSet();
   // Keep every representation of the same entity table part in sync. A
   // managed form may place one TP more than once (for example, a readonly
   // summary and an editable grid), so getElementById alone is not sufficient.
-  function setTablePartJSON(tpName, rows) {
-    var fieldName = 'tp_json.' + tpName;
-    var inputs = document.getElementsByName ? document.getElementsByName(fieldName) : [];
-    if (!inputs || !inputs.length) {
-      var fallback = document.getElementById('tp-json-' + tpName);
-      inputs = fallback ? [fallback] : [];
-    }
-    var value = JSON.stringify(rows || []);
-    for (var i = 0; i < inputs.length; i++) inputs[i].value = value;
-  }
-
   function applyTableParts(tps){
     if (!tps) return;
     Object.keys(tps).forEach(function(tpName){
-      setTablePartJSON(tpName, tps[tpName] || []);
-      const tbody = document.getElementById('tp-body-' + tpName);
-      if (!tbody) return;
+      window.obManagedSetTablePartJSON(tpName, tps[tpName] || []);
+      const tableBodies = obManagedTableBodies('tp-body-' + tpName, 'data-tp-fields');
+      if (!tableBodies.length) return;
+      tableBodies.forEach(function(tbody){
       const fieldsMeta = (tbody.getAttribute('data-tp-fields') || '').split(',').map(function(s){
         const idx = s.indexOf('|');
         if (idx < 0) return { name: s, type: 'string', ref: '' };
@@ -335,7 +362,6 @@ var obManagedFileSubmitReentry = new WeakSet();
             });
             sel.disabled = readOnly;
             td.appendChild(sel);
-            if (readOnly) appendDisabledControlMirror(td, sel.name, cur);
           } else if (isEnum && tpEnumLabels[f.name]) {
             const enumLabMap = tpEnumLabels[f.name];
             const sel = document.createElement('select');
@@ -354,7 +380,6 @@ var obManagedFileSubmitReentry = new WeakSet();
             });
             sel.disabled = readOnly;
             td.appendChild(sel);
-            if (readOnly) appendDisabledControlMirror(td, sel.name, cur);
           } else {
             const inp = document.createElement('input');
             inp.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
@@ -370,7 +395,7 @@ var obManagedFileSubmitReentry = new WeakSet();
               inp.type = 'text';
               inp.value = (v == null ? '' : v);
             }
-            inp.readOnly = readOnly;
+            inp.disabled = readOnly;
             td.appendChild(inp);
           }
           tr.appendChild(td);
@@ -413,6 +438,7 @@ var obManagedFileSubmitReentry = new WeakSet();
         }
       }
       if (domTable && window.obDOMReindex) window.obDOMReindex(domTable);
+      });
     });
   }
 
@@ -431,8 +457,9 @@ var obManagedFileSubmitReentry = new WeakSet();
   function applyFormTables(vts){
     if (!vts) return;
     Object.keys(vts).forEach(function(vtName){
-      var tbody = document.getElementById('vt-body-' + vtName);
-      if (!tbody) return;
+      var tableBodies = obManagedTableBodies('vt-body-' + vtName, 'data-vt-fields');
+      if (!tableBodies.length) return;
+      tableBodies.forEach(function(tbody){
       var fieldsMeta = (tbody.getAttribute('data-vt-fields') || '').split(',').map(function(s){
         var idx = s.indexOf('|');
         if (idx < 0) return { name: s, type: 'string' };
@@ -462,11 +489,8 @@ var obManagedFileSubmitReentry = new WeakSet();
             inp.type = 'text';
             inp.value = (v == null ? '' : v);
           }
-          if (readOnly && f.type !== 'bool') inp.readOnly = true;
+          inp.disabled = readOnly;
           td.appendChild(inp);
-          if (readOnly && f.type === 'bool') {
-            appendDisabledControlMirror(td, inp.name, String(v) === 'true' ? 'true' : 'false');
-          }
           tr.appendChild(td);
         });
         var tdDel = document.createElement('td');
@@ -477,6 +501,7 @@ var obManagedFileSubmitReentry = new WeakSet();
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
+      });
       });
     });
   }
@@ -640,7 +665,7 @@ var obManagedFileSubmitReentry = new WeakSet();
     if (extraParams && extraParams._tp) {
       // Plan 48: check if SlickGrid exists for this TP
       var obg = (window._obGrids || {})[extraParams._tp];
-      if (obg) {
+      if (obg && !obg.readOnly) {
         // getSelectedRows бросает «Selection model is not set», если модель
         // выделения не установлена (плагин не завендорен). Командам подбора/
         // пересчёта/очистки выделение не нужно — гасим ошибку и шлём пусто.
@@ -663,7 +688,7 @@ var obManagedFileSubmitReentry = new WeakSet();
         body.append(serviceField('_tp_selected'), sel.join(','));
       } else {
         // Legacy: read from DOM checkboxes
-        const tbody = document.getElementById('tp-body-' + extraParams._tp);
+        const tbody = obManagedWritableTableBody('tp-body-' + extraParams._tp, 'data-tp-fields');
         if (tbody) {
           const sel = [];
           Array.prototype.forEach.call(tbody.rows, (tr, i) => {
@@ -877,8 +902,8 @@ var obManagedFileSubmitReentry = new WeakSet();
 })();
 
 // addVtRow — JS для добавления строки в ValueTable (формовый атрибут-таблица).
-function addVtRow(vtName, fields) {
-  var tbody = document.getElementById("vt-body-" + vtName);
+function addVtRow(vtName, fields, tbodyOverride) {
+  var tbody = tbodyOverride || document.getElementById("vt-body-" + vtName);
   if (!tbody || tbody.getAttribute('data-ob-table-readonly') === '1') return;
   var idx = tbody.rows.length;
   var tr = document.createElement("tr");
@@ -927,22 +952,22 @@ function obManagedParseFieldMeta(raw) {
 
 function obManagedAddTpRow(btn) {
   var tpName = btn.getAttribute('data-ob-add-tp') || '';
-  var tbody = document.getElementById('tp-body-' + tpName);
-  if (!tpName || !tbody || tbody.getAttribute('data-ob-table-readonly') === '1' || typeof addTpRow !== 'function') return;
+  var tbody = obManagedWritableTableBody('tp-body-' + tpName, 'data-tp-fields');
+  if (!tpName || !tbody || typeof addTpRow !== 'function') return;
   var meta = obManagedParseFieldMeta(tbody.getAttribute('data-tp-fields') || '');
   var fields = meta.map(function (f) { return f.name; });
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
-  addTpRow(tpName, fields, nums, tbody.rows.length);
+  addTpRow(tpName, fields, nums, tbody.rows.length, tbody);
   var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
   if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
 
 function obManagedAddVtRow(btn) {
   var vtName = btn.getAttribute('data-ob-add-vt') || '';
-  var tbody = document.getElementById('vt-body-' + vtName);
-  if (!vtName || !tbody || tbody.getAttribute('data-ob-table-readonly') === '1' || typeof addVtRow !== 'function') return;
+  var tbody = obManagedWritableTableBody('vt-body-' + vtName, 'data-vt-fields');
+  if (!vtName || !tbody || typeof addVtRow !== 'function') return;
   var fields = obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '').map(function (f) { return f.name; });
-  addVtRow(vtName, fields);
+  addVtRow(vtName, fields, tbody);
 }
 
 function obManagedSubmitAllowed(form) {
@@ -1110,6 +1135,7 @@ obManagedReady(obManagedInitDelegates);
 // Grids are stored in window._obGrids = {tpName: {grid, dataView, columns}}.
 (function(){
   window._obGrids = window._obGrids || {};
+  window._obGridViews = window._obGridViews || [];
 
   // resizeGrid — пересчитывает геометрию грида и растягивает колонки на всю
   // ширину контейнера. Критично для ТЧ на вкладках/в свёрнутых группах: при
@@ -1155,6 +1181,12 @@ obManagedReady(obManagedInitDelegates);
   // _obResizeGrids — пройтись по всем гридам и пересчитать видимые. Вызывается
   // при переключении вкладок managed-формы и при ресайзе окна.
   window._obResizeGrids = function() {
+    var views = window._obGridViews || [];
+    if (views.length) {
+      for (var i = 0; i < views.length; i++) resizeGrid(views[i]);
+      return;
+    }
+    // Compatibility for callers/tests which seed only the historical map.
     var grids = window._obGrids || {};
     for (var tp in grids) resizeGrid(grids[tp]);
   };
@@ -1693,7 +1725,7 @@ obManagedReady(obManagedInitDelegates);
         }
         return row;
       });
-      setTablePartJSON(tpName, rows);
+      window.obManagedSetTablePartJSON(tpName, rows);
     }
     return ok;
   };
@@ -1728,7 +1760,11 @@ obManagedReady(obManagedInitDelegates);
   // — иначе впустую гоняли бы сеть. Путь тот же, что у ПриИзменении: obFire
   // синхронизирует ТЧ (obGridSync) и применяет values/tableparts из ответа.
   window.obFireRowEvent = function(tpName, attr, eventName) {
-    var div = document.getElementById("sg-" + tpName);
+    // A form may show the same TP in a readonly summary and an editable grid.
+    // Resolve the exact canonical writable host instead of the first duplicate
+    // id in DOM order.
+    var state = (window._obGrids || {})[tpName];
+    var div = state && !state.readOnly ? state.div : null;
     if (!div || div.getAttribute(attr) !== "1") return;
     var elName = div.getAttribute("data-sg-el") || tpName;
     if (window.obFire) window.obFire(elName, eventName, {_tp: tpName});
@@ -2026,25 +2062,28 @@ obManagedReady(obManagedInitDelegates);
   window.applyTableParts = function(tps) {
     if (!tps) return;
     var grids = window._obGrids || {};
+    var views = window._obGridViews || [];
     Object.keys(tps).forEach(function(tpName) {
-      var g = grids[tpName];
-      if (!g) return;
-      var active = g.grid.getActiveCell();
-      var rows = tps[tpName] || [];
-      var cols = g.columnsMeta || [];
-      var items = rows.map(function(r, idx) {
-        var item = {id: idx, _ord: idx};
-        // == null (не || "") — иначе число 0 / false терялись бы как пустая строка.
-        for (var i = 0; i < cols.length; i++) item[cols[i].id] = (r[cols[i].id] == null ? "" : r[cols[i].id]);
-        copyFormGridStyleKeys(r, item);
-        return item;
+      var matches = views.filter(function(view) { return view.tpName === tpName; });
+      if (!matches.length && grids[tpName]) matches = [grids[tpName]];
+      matches.forEach(function(g) {
+        var active = g.grid.getActiveCell();
+        var rows = tps[tpName] || [];
+        var cols = g.columnsMeta || [];
+        var items = rows.map(function(r, idx) {
+          var item = {id: idx, _ord: idx};
+          // == null (не || "") — иначе число 0 / false терялись бы как пустая строка.
+          for (var i = 0; i < cols.length; i++) item[cols[i].id] = (r[cols[i].id] == null ? "" : r[cols[i].id]);
+          copyFormGridStyleKeys(r, item);
+          return item;
+        });
+        g.dataView.setItems(items);
+        g.grid.invalidate();
+        if (active && active.row < items.length) {
+          g.grid.setActiveCell(active.row, active.cell);
+        }
+        updateTotals(g);
       });
-      g.dataView.setItems(items);
-      g.grid.invalidate();
-      if (active && active.row < items.length) {
-        g.grid.setActiveCell(active.row, active.cell);
-      }
-      updateTotals(g);
     });
     if (origApplyTP) origApplyTP(tps);
   };
@@ -2054,8 +2093,8 @@ obManagedReady(obManagedInitDelegates);
   // ТЧ на форме все подписки замыкали бы последний грид — классический баг var
   // в цикле).
   function setupGrid(div) {
+    if (div._obGridState) return;
     var tpName = div.getAttribute("data-sg-tp");
-    if (window._obGrids[tpName]) return;
 
     // ВАЖНО: jsJSON от nil-слайса даёт литерал "null", а не "[]". Без защиты
     // от null для пустой табличной части (новый документ) JSON.parse("null")
@@ -2111,20 +2150,30 @@ obManagedReady(obManagedInitDelegates);
 
     var grid = new Slick.Grid(div, dataView, columns, options);
 
-    // Регистрируем грид СРАЗУ после создания — ДО подписок ниже. Если что-то в
-    // подписках бросит исключение, грид всё равно в window._obGrids, и кнопки
-    // (добавить/удалить строку, подбор, сериализация) продолжат работать.
-    window._obGrids[tpName] = {
+    // Каждый DOM-host инициализируется отдельно: readonly summary должна
+    // оставаться видимой рядом с writable placement той же табличной части.
+    // Канонический реестр, однако, всегда указывает на writable grid независимо
+    // от DOM-порядка; только он участвует в изменениях и сериализации.
+    var gridState = {
       grid: grid, dataView: dataView, columns: columns,
-      columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly
+      columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly,
+      tpName: tpName
     };
+    div._obGridState = gridState;
+    window._obGridViews.push(gridState);
+    var registered = window._obGrids[tpName];
+    if (!registered || (!readOnly && registered.readOnly)) {
+      window._obGrids[tpName] = gridState;
+    }
     // activeCell остаётся у нескольких SlickGrid одновременно. Запоминаем
     // именно пользовательский контакт с конкретным DOM-хостом.
-    div.addEventListener("mousedown", function() { rememberActiveGrid(tpName); }, true);
-    div.addEventListener("focusin", function() { rememberActiveGrid(tpName); });
+    if (!readOnly) {
+      div.addEventListener("mousedown", function() { rememberActiveGrid(tpName); }, true);
+      div.addEventListener("focusin", function() { rememberActiveGrid(tpName); });
+    }
 
    try {
-    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(window._obGrids[tpName]); });
+    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(gridState); });
     dataView.onRowsChanged.subscribe(function(e, args) { grid.invalidateRows(args.rows); grid.render(); });
 
     // Сортировка по клику на заголовок (колонки sortable). Порядок ОТОБРАЖЕНИЯ;
@@ -2181,7 +2230,7 @@ obManagedReady(obManagedInitDelegates);
           grid.invalidateRow(args.row); grid.render();
         }
       }
-      updateTotals(window._obGrids[tpName]);
+      updateTotals(gridState);
     });
 
     // Ячейка не прошла проверку (например, в колонке-ссылке набрано то, чего нет
@@ -2231,7 +2280,7 @@ obManagedReady(obManagedInitDelegates);
 
     // Растягиваем колонки на ширину контейнера, если грид уже виден. Для ТЧ на
     // скрытой вкладке ресайз отложится до её показа (см. хук на .managed-tab-btn).
-    resizeGrid(window._obGrids[tpName]);
+    resizeGrid(gridState);
   }
 
   // Initialize all grids
