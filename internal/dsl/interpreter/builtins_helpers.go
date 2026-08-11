@@ -54,7 +54,7 @@ func addMonthBuiltin(args []any, _ string, _ int) (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	return t.AddDate(0, int(floatArg(args, 1)), 0), nil
+	return addCalendarDate(t, 0, calendarShiftArg(args), 0), nil
 }
 
 // addDayBuiltin — ДобавитьДень(дата, n). n может быть отрицательным.
@@ -63,7 +63,44 @@ func addDayBuiltin(args []any, _ string, _ int) (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	return t.AddDate(0, 0, int(floatArg(args, 1))), nil
+	return addCalendarDate(t, 0, 0, calendarShiftArg(args)), nil
+}
+
+const maxCalendarShift = math.MaxInt32 / 2
+
+// calendarShiftArg сохраняет прежнее усечение дробной части к нулю, но не
+// допускает implementation-dependent float64 -> int overflow. Граница в
+// половину int32 едина на всех поддерживаемых архитектурах, оставляет запас
+// для календарных компонентов time.AddDate и всё равно намного шире любого
+// прикладного сдвига.
+func calendarShiftArg(args []any) int {
+	if len(args) < 2 {
+		return 0
+	}
+	shift, ok := toFloat(args[1])
+	if !ok {
+		if isNumeric(args[1]) {
+			RaiseUserError("календарный сдвиг: число вне безопасного диапазона")
+		}
+		// Совместимость с floatArg: нечисловое значение означало нулевой сдвиг.
+		return 0
+	}
+	shift = math.Trunc(shift)
+	if shift > float64(maxCalendarShift) || shift < -float64(maxCalendarShift) {
+		RaiseUserError("календарный сдвиг выходит за безопасный диапазон")
+	}
+	return int(shift)
+}
+
+// addCalendarDate не выпускает time.Time, который затем невозможно отдать как
+// RFC 3339/JSON. AddDate умеет считать намного дальше четырёхзначных лет, но
+// такой результат падает уже при сериализации и выглядит как серверная ошибка.
+func addCalendarDate(t time.Time, years, months, days int) time.Time {
+	shifted := t.AddDate(years, months, days)
+	if shifted.Year() < 0 || shifted.Year() > 9999 {
+		RaiseUserError("календарный сдвиг выводит дату за безопасный диапазон 0000–9999")
+	}
+	return shifted
 }
 
 // Сдвиг по часам, минутам и секундам (issue #707). Раньше их не было, а
@@ -122,7 +159,7 @@ func addYearBuiltin(args []any, _ string, _ int) (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	return t.AddDate(int(floatArg(args, 1)), 0, 0), nil
+	return addCalendarDate(t, calendarShiftArg(args), 0, 0), nil
 }
 
 // dateLayouts — строковые форматы, понимаемые конструктором Дата().
@@ -159,15 +196,26 @@ func numericDateString(v any) (string, bool) {
 	if !ok || d.Sign() <= 0 {
 		return "", false
 	}
-	exp := d.Exponent()
-	if exp < -14 || exp >= 14 {
-		return "", false
-	}
 	coefficient := d.Coefficient()
-	if coefficient.BitLen() > 128 || !d.IsInteger() {
+	if coefficient.BitLen() > 128 {
 		return "", false
 	}
-	s := d.StringFixed(0)
+	// Деление Decimal сохраняет DivisionPrecision во внутреннем exponent:
+	// 20260511/1 численно целое, но представлено коэффициентом с хвостовыми
+	// нулями и отрицательным exponent. Нормализуем только уже имеющиеся нули,
+	// не вызывая IsInteger/StringFixed: на pathological exponent они способны
+	// развернуть гигантскую степень десяти.
+	digits := coefficient.String()
+	trimmed := strings.TrimRight(digits, "0")
+	effectiveExp := int64(d.Exponent()) + int64(len(digits)-len(trimmed))
+	if effectiveExp < 0 {
+		return "", false
+	}
+	digitCount := int64(len(trimmed)) + effectiveExp
+	if digitCount != 8 && (digitCount < 11 || digitCount > 14) {
+		return "", false
+	}
+	s := trimmed + strings.Repeat("0", int(effectiveExp))
 	switch len(s) {
 	case 8, 14:
 		// Already a complete date or date-time representation.

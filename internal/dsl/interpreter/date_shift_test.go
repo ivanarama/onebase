@@ -75,6 +75,23 @@ func TestДобавить_СекундыЭквивалентныСложению
 	}
 }
 
+func TestДатаАрифметика_СохраняетДолиСекунды(t *testing.T) {
+	cases := map[string]time.Time{
+		`Дата(2026, 8, 10, 12, 0, 0) + 0.5`: shiftBase.Add(500 * time.Millisecond),
+		`0.5 + Дата(2026, 8, 10, 12, 0, 0)`: shiftBase.Add(500 * time.Millisecond),
+		`Дата(2026, 8, 10, 12, 0, 0) - 0.5`: shiftBase.Add(-500 * time.Millisecond),
+	}
+	for expr, want := range cases {
+		t.Run(expr, func(t *testing.T) {
+			got := evalBreakFunc(t, "Функция Тест()\n  Возврат "+expr+";\nКонецФункции")
+			date, ok := got.(time.Time)
+			if !ok || !date.Equal(want) {
+				t.Fatalf("%s = %T(%v), ожидалось %v", expr, got, got, want)
+			}
+		})
+	}
+}
+
 // Число(Дата) даёт ГГГГММДДЧЧММСС и разбирается обратно конструктором по
 // календарным компонентам с точностью до секунды.
 // Раньше дата уходила в разбор строки «2026-05-11 00:00:00 +0300 MSK», не
@@ -96,6 +113,22 @@ func TestЧисло_ДатаRoundTrip(t *testing.T) {
 	}
 	if d.Year() != 2026 || d.Month() != 5 || d.Day() != 11 || d.Hour() != 10 || d.Minute() != 30 || d.Second() != 45 {
 		t.Errorf("round-trip потерял значение: %v", d)
+	}
+}
+
+func TestДата_ЦелыйDecimalПослеДеленияНеЗависитОтExponent(t *testing.T) {
+	cases := map[string]time.Time{
+		`Дата(20260511 / 1)`: time.Date(2026, 5, 11, 0, 0, 0, 0, time.Local),
+		`Дата(Число(Дата(2026, 5, 11, 10, 30, 45)) / 1)`: time.Date(2026, 5, 11, 10, 30, 45, 0, time.Local),
+	}
+	for expr, want := range cases {
+		t.Run(expr, func(t *testing.T) {
+			got := evalBreakFunc(t, "Функция Тест()\n  Возврат "+expr+";\nКонецФункции")
+			date, ok := got.(time.Time)
+			if !ok || !date.Equal(want) {
+				t.Fatalf("%s = %T(%v), ожидалось %v", expr, got, got, want)
+			}
+		})
 	}
 }
 
@@ -205,6 +238,66 @@ func TestДата_ОперацииСдвигаОтклоняютНебезопа
 				if !ok || !strings.Contains(msg, "безопасн") {
 					t.Fatalf("%s с %s = %T(%v), ожидалась безопасная ошибка", expr, name, result, result)
 				}
+			}
+		})
+	}
+}
+
+func TestДобавить_КалендарныеСдвигиОтклоняютПереполнение(t *testing.T) {
+	for _, input := range []any{
+		decimal.RequireFromString("9223372036854775807"),
+		decimal.RequireFromString("-9223372036854775808"),
+		math.MaxFloat64,
+	} {
+		for _, fn := range []func([]any, string, int) (any, error){
+			addDayBuiltin,
+			addMonthBuiltin,
+			addYearBuiltin,
+		} {
+			if !raisesUserError(func() { _, _ = fn([]any{shiftBase, input}, "t.os", 1) }) {
+				t.Fatalf("календарный сдвиг %v принят без безопасной ошибки", input)
+			}
+		}
+	}
+}
+
+func TestДобавить_КалендарныеСдвигиНеВозвращаютНесериализуемыйГод(t *testing.T) {
+	for _, input := range []float64{float64(maxCalendarShift), -float64(maxCalendarShift)} {
+		for _, fn := range []func([]any, string, int) (any, error){
+			addDayBuiltin,
+			addMonthBuiltin,
+			addYearBuiltin,
+		} {
+			if !raisesUserError(func() { _, _ = fn([]any{shiftBase, input}, "t.os", 1) }) {
+				t.Fatalf("сдвиг %v вернул дату за JSON-диапазоном", input)
+			}
+		}
+	}
+}
+
+func TestДобавить_КалендарныеСдвигиПоПрежнемуУсекаютДробьКНулю(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func([]any, string, int) (any, error)
+		arg  float64
+		want time.Time
+	}{
+		{"день плюс", addDayBuiltin, 1.9, shiftBase.AddDate(0, 0, 1)},
+		{"день минус", addDayBuiltin, -1.9, shiftBase.AddDate(0, 0, -1)},
+		{"месяц плюс", addMonthBuiltin, 1.9, shiftBase.AddDate(0, 1, 0)},
+		{"месяц минус", addMonthBuiltin, -1.9, shiftBase.AddDate(0, -1, 0)},
+		{"год плюс", addYearBuiltin, 1.9, shiftBase.AddDate(1, 0, 0)},
+		{"год минус", addYearBuiltin, -1.9, shiftBase.AddDate(-1, 0, 0)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.fn([]any{shiftBase, tc.arg}, "t.os", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			date, ok := got.(time.Time)
+			if !ok || !date.Equal(tc.want) {
+				t.Fatalf("получено %T(%v), ожидалось %v", got, got, tc.want)
 			}
 		})
 	}
