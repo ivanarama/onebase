@@ -1920,6 +1920,47 @@ obManagedReady(obManagedInitDelegates);
       });
     }
 
+    // ПриАктивизацииСтроки: серверное событие при переходе на другую строку ТЧ.
+    // Событие было объявлено в метаданных, но НИКОГДА не вызывалось — форма
+    // могла объявить обработчик, а сработать он не мог. Обход у прикладного
+    // разработчика тут отсутствует: пересчитать зависимую надпись «по текущей
+    // строке» было нечем.
+    //
+    // Три условия, без которых это стало бы хуже, чем ничего:
+    //   * подписка только при объявленном обработчике (data-sg-rowactivate) —
+    //     иначе гоняли бы сеть на каждое движение курсора у всех форм;
+    //   * реакция на смену СТРОКИ, а не ячейки: переход по колонкам внутри
+    //     строки — не активизация строки (так же в 1С);
+    //   * дебаунс: прокрутка стрелкой вниз через 50 строк — это одна активация
+    //     конечной строки, а не 50 запросов подряд.
+    if (div.getAttribute("data-sg-rowactivate") === "1") {
+      var actElName = div.getAttribute("data-sg-el") || tpName;
+      var actTimer = null;
+      var actLastRow = -1;
+      var fireRowActivated = function(args) {
+        var row = (args && typeof args.row === "number") ? args.row : -1;
+        if (row < 0 || row === actLastRow) return;
+        actLastRow = row;
+        var item = null;
+        try { item = dataView.getItem(row); } catch (er) { item = null; }
+        var params = gridCellEventParams(tpName, {row: row, cell: (args && args.cell), item: item}, columns, dataView);
+        if (actTimer) clearTimeout(actTimer);
+        actTimer = setTimeout(function() {
+          if (window.obFire) window.obFire(actElName, "ПриАктивизацииСтроки", params);
+        }, 250);
+      };
+      grid.onActiveCellChanged.subscribe(function(e, args) { fireRowActivated(args); });
+      // Клик по строке при включённом выделении строк не всегда меняет активную
+      // ячейку (например, повторный клик по уже активной строке после
+      // перерисовки), поэтому слушаем и выделение.
+      if (grid.onSelectedRowsChanged) {
+        grid.onSelectedRowsChanged.subscribe(function(e, args) {
+          var rows = (args && args.rows) || [];
+          if (rows.length) fireRowActivated({row: rows[0]});
+        });
+      }
+    }
+
    } catch (err) {
      // Подписки/настройка дали сбой. Грид уже зарегистрирован выше, поэтому
      // базовые операции работают. Показываем причину, чтобы не гадать вслепую.
