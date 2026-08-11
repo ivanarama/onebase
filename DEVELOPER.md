@@ -1496,6 +1496,7 @@ Decimal записывается в строгой XSD-форме без `e`/`E`
 
 **Английские псевдонимы:** `ReadXML` / `WriteXML` / `XMLString` / `XMLValue` / `XMLTypeOf` /
 `FindDisallowedXMLCharacters`
+
 ---
 
 ## Предопределённые элементы справочников

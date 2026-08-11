@@ -18,7 +18,7 @@ import (
 
 // Проверяем тем же путём, что и пользователь: исходник модуля → лексер →
 // парсер → интерпретатор.
-func evalEnv(t *testing.T, src string) any {
+func evalEnv(t *testing.T, src string, extraVars ...map[string]any) any {
 	t.Helper()
 	prog, err := parser.New(lexer.New(src, "test.os")).ParseProgram()
 	require.NoError(t, err)
@@ -27,7 +27,7 @@ func evalEnv(t *testing.T, src string) any {
 	interp := interpreter.New()
 	obj := runtime.NewObject("Test", metadata.KindDocument)
 	var result any
-	require.NoError(t, interp.RunWithResult(prog.Procedures[0], obj, &result))
+	require.NoError(t, interp.RunWithResult(prog.Procedures[0], obj, &result, extraVars...))
 	return result
 }
 
@@ -60,11 +60,25 @@ func TestDSL_ВременныйФайл_РасширениеСТочкойИБе
 }
 
 func TestDSL_ВременныйФайл_БезАргументаПолучаетTMP(t *testing.T) {
-	src := `Процедура Тест()
-		Возврат ПолучитьИмяВременногоФайла();
-	КонецПроцедуры`
-	out, _ := evalEnv(t, src).(string)
-	assert.Equal(t, ".tmp", filepath.Ext(out))
+	for _, fn := range []string{"ПолучитьИмяВременногоФайла", "GetTempFileName"} {
+		for _, tc := range []struct {
+			name string
+			args string
+			ext  string
+		}{
+			{name: "omitted", ext: ".tmp"},
+			{name: "undefined", args: "Неопределено", ext: ".tmp"},
+			{name: "explicit empty", args: `""`, ext: ""},
+		} {
+			t.Run(fn+"/"+tc.name, func(t *testing.T) {
+				src := `Процедура Тест()
+					Возврат ` + fn + `(` + tc.args + `);
+				КонецПроцедуры`
+				out, _ := evalEnv(t, src).(string)
+				assert.Equal(t, tc.ext, filepath.Ext(out))
+			})
+		}
+	}
 }
 
 func TestDSL_КаталогВременныхФайловИРазделитель(t *testing.T) {
@@ -201,6 +215,35 @@ func TestDSL_ОшибкиФункцийОкруженияЛовятсяСПоз�
 			assert.Greater(t, info.Get("НомерСтроки").(float64), float64(0))
 			assert.Contains(t, info.Get("Описание"), tc.want)
 		})
+	}
+}
+
+func TestDSL_ПустойСпособКодированияНеСтановитсяРежимомПоУмолчанию(t *testing.T) {
+	for _, fn := range []string{"КодироватьСтроку", "EncodeString", "РаскодироватьСтроку", "DecodeString"} {
+		for _, tc := range []struct {
+			name  string
+			mode  string
+			extra map[string]any
+		}{
+			{name: "empty", mode: `""`},
+			{name: "whitespace", mode: `"   "`},
+			{name: "empty MapThis", mode: "Режим", extra: map[string]any{
+				"Режим": &interpreter.MapThis{M: map[string]any{}},
+			}},
+		} {
+			t.Run(fn+"/"+tc.name, func(t *testing.T) {
+				src := `Процедура Тест()
+					Попытка
+						` + fn + `("a%2Fb", ` + tc.mode + `);
+						Возврат "не поймано";
+					Исключение
+						Возврат ОписаниеОшибки();
+					КонецПопытки;
+				КонецПроцедуры`
+				result := evalEnv(t, src, tc.extra)
+				assert.Contains(t, result, "неизвестный способ URL-кодирования")
+			})
+		}
 	}
 }
 

@@ -223,18 +223,24 @@ type FileGuard func() error
 // checkFile паникует userError'ом, если guard запрещает файловые операции.
 // Сообщение человеческое и ловится Попыткой (как checkNet, план 62).
 func checkFile(guard FileGuard) {
+	checkFileAt(guard, "", 0)
+}
+
+// checkFileAt — location-aware вариант для BuiltinFunc. Фабрики сохраняют
+// прежнюю сигнатуру func([]any) any и вызывают checkFile без позиции.
+func checkFileAt(guard FileGuard, file string, line int) {
 	if guard == nil {
 		return
 	}
 	if err := guard(); err != nil {
-		panic(userError{Msg: err.Error()})
+		panic(userError{Msg: err.Error(), File: file, Line: line, Err: err})
 	}
 }
 
 // guardedFile оборачивает файловый builtin проверкой guard'а.
 func guardedFile(guard FileGuard, fn BuiltinFunc) BuiltinFunc {
 	return func(args []any, file string, line int) (any, error) {
-		checkFile(guard)
+		checkFileAt(guard, file, line)
 		return fn(args, file, line)
 	}
 }

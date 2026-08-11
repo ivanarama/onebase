@@ -123,7 +123,7 @@ func TestDecimalQuotientSafetyEnvelope(t *testing.T) {
 	for _, d := range []decimal.Decimal{
 		decimal.New(1, math.MaxInt32),
 		decimal.New(1, math.MinInt32),
-		decimal.NewFromBigInt(new(big.Int).Lsh(big.NewInt(1), maxDecimalQuotientCoefficientBits), 0),
+		decimal.NewFromBigInt(new(big.Int).Lsh(big.NewInt(1), uint(maxDecimalQuotientCoefficientBits)), 0),
 	} {
 		if decimalSafeForQuotient(d) {
 			t.Fatalf("опасный Decimal признан безопасным: exponent=%d bits=%d", d.Exponent(), d.Coefficient().BitLen())
@@ -131,7 +131,7 @@ func TestDecimalQuotientSafetyEnvelope(t *testing.T) {
 	}
 
 	boundary := decimal.NewFromBigInt(
-		new(big.Int).Lsh(big.NewInt(1), maxDecimalQuotientCoefficientBits-1),
+		new(big.Int).Lsh(big.NewInt(1), uint(maxDecimalQuotientCoefficientBits-1)),
 		maxDecimalQuotientExponent,
 	)
 	if !decimalSafeForQuotient(boundary) {

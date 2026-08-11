@@ -19,7 +19,7 @@ const divisionPrecision = 16
 // промежуточные числа в десятках килобайт.
 const (
 	maxDecimalQuotientExponent        int32 = 4096
-	maxDecimalQuotientCoefficientBits       = 16384
+	maxDecimalQuotientCoefficientBits int   = 16384
 )
 
 func init() {

@@ -96,7 +96,7 @@ func dslTempDir() (string, error) {
 		}
 		// MkdirAll не меняет права уже существующего каталога. Подтягиваем его
 		// к приватному режиму и не выдаём путь, если это не удалось.
-		if err := os.Chmod(dir, 0o700); err != nil {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: directory needs execute bit; 0700 is least privilege
 			return "", fmt.Errorf("защитить каталог временных файлов: %w", err)
 		}
 		return withTrailingPathSeparator(dir), nil
@@ -123,9 +123,6 @@ func tempFileNameFn(args []any, _ string, _ int) (any, error) {
 		return nil, fmt.Errorf("ПолучитьИмяВременногоФайла: ожидается не более 1 аргумента, получено %d", len(args))
 	}
 	ext := ".tmp"
-	if len(args) > 0 {
-		ext = ""
-	}
 	if len(args) > 0 && args[0] != nil {
 		var err error
 		ext, err = normalizeTempExtension(strArg(args, 0))
@@ -280,7 +277,7 @@ func wholeURLMode(args []any) (bool, error) {
 	}
 	mode := strings.ToLower(strings.TrimSpace(strArg(args, 1)))
 	switch mode {
-	case "", "кодировкаurl", "urlencoding", "component", "value", "query":
+	case "кодировкаurl", "urlencoding", "component", "value", "query":
 		return false, nil
 	case "urlвкодировкеurl", "urlinurlcoding", "urlinurlencoding", "path", "url":
 		return true, nil
