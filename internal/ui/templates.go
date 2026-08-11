@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -553,6 +554,52 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.URL("&" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
 		},
+		// listURL — адрес того же списка с изменённой частью состояния.
+		// current — параметры текущего запроса, дальше пары «ключ значение»:
+		// пустое значение убирает ключ, ключ вида "f.*" — все параметры с этим
+		// префиксом. Остальное состояние (поиск q, отбор f.*, сортировка,
+		// папка parent, вид view, лента lm, раздел) переносится как есть:
+		// одно действие меняет ровно одно, поэтому переключение вида не
+		// сбрасывает поиск, а сортировка не выкидывает из папки. Номер
+		// страницы сбрасывается всегда — после такого перехода набор строк
+		// другой, и старый offset указывает не туда.
+		"listURL": func(current any, kv ...string) template.URL {
+			vals := cloneQuery(current)
+			vals.Del("page")
+			for i := 0; i+1 < len(kv); i += 2 {
+				setQueryValue(vals, kv[i], kv[i+1])
+			}
+			if len(vals) == 0 {
+				return "?"
+			}
+			return template.URL("?" + vals.Encode()) //nolint:gosec // G203: url.Values.Encode экранирует и ключи, и значения
+		},
+		// listHidden переносит то же состояние в GET-форму скрытыми полями:
+		// own — параметры, которыми владеет сама форма (для них в разметке уже
+		// есть свои поля), "f.*" исключает весь отбор.
+		"listHidden": func(current any, own ...string) template.HTML {
+			vals := cloneQuery(current)
+			vals.Del("page")
+			for _, name := range own {
+				setQueryValue(vals, name, "")
+			}
+			keys := make([]string, 0, len(vals))
+			for k := range vals {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			var b strings.Builder
+			for _, k := range keys {
+				for _, v := range vals[k] {
+					b.WriteString(`<input type="hidden" name="`)
+					b.WriteString(template.HTMLEscapeString(k))
+					b.WriteString(`" value="`)
+					b.WriteString(template.HTMLEscapeString(v))
+					b.WriteString(`">`)
+				}
+			}
+			return template.HTML(b.String()) //nolint:gosec // G203: имена и значения пропущены через HTMLEscapeString
+		},
 		"reportParamQuery": func(params any, values map[string]any) string {
 			// Use reflection-free approach: just iterate over values map
 			parts := []string{}
@@ -660,6 +707,37 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// pageChart конвертирует чарт-блок страницы в widget.ChartData для echartsJSON.
 		"pageChart": pageChartData,
 	}
+}
+
+// cloneQuery — копия параметров запроса, пригодная для правки. Тип any, а не
+// url.Values: в шаблон данные приходят через map[string]any, и там, где запрос
+// не прокинут (юнит-тесты рендера), значение окажется nil.
+func cloneQuery(current any) url.Values {
+	vals := url.Values{}
+	src, _ := current.(url.Values)
+	for k, v := range src {
+		vals[k] = append([]string(nil), v...)
+	}
+	return vals
+}
+
+// setQueryValue ставит значение параметра; пустое значение убирает параметр, а
+// ключ с «*» на конце — все параметры с таким префиксом (например "f.*" — весь
+// отбор списка).
+func setQueryValue(vals url.Values, key, value string) {
+	if prefix, ok := strings.CutSuffix(key, "*"); ok {
+		for k := range vals {
+			if strings.HasPrefix(k, prefix) {
+				vals.Del(k)
+			}
+		}
+		return
+	}
+	if value == "" {
+		vals.Del(key)
+		return
+	}
+	vals.Set(key, value)
 }
 
 func templateSource() string {
@@ -1136,8 +1214,10 @@ const tplList = `
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <div class="view-switch">
-      <a class="view-btn{{if and (not .TreeView) (not .TilesView)}} active{{end}}" href="?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}{{if $.CurrentSubsystem}}subsystem={{$.CurrentSubsystem}}{{end}}{{filterQuery .Params}}" title="{{t $.Lang "Список"}}">☰</a>
-      <a class="view-btn{{if .TilesView}} active{{end}}" href="?view=tiles{{if .ParentStr}}&parent={{.ParentStr}}{{end}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{filterQuery .Params}}" title="{{t $.Lang "Плитка"}}">▦</a>
+      {{/* Переключение вида меняет только вид: поиск, отбор и сортировка
+           остаются — их сбрасывает лишь явная очистка. */}}
+      <a class="view-btn{{if and (not .TreeView) (not .TilesView)}} active{{end}}" href="{{listURL $.Query "view" ""}}" title="{{t $.Lang "Список"}}">☰</a>
+      <a class="view-btn{{if .TilesView}} active{{end}}" href="{{listURL $.Query "view" "tiles"}}" title="{{t $.Lang "Плитка"}}">▦</a>
       {{if .Entity.Hierarchical}}<a class="view-btn{{if .TreeView}} active{{end}}" href="?view=tree{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Дерево"}}">📂</a>{{end}}
     </div>
     {{if and .Entity.Activity (not .TreeView)}}
@@ -1168,9 +1248,11 @@ const tplList = `
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
   <input type="text" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-auto-submit="320">
-  {{if .Params.Search}}<a class="btn btn-sm" href="?" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
-  {{if .Entity.Activity}}<input type="hidden" name="activity" value="{{.Params.ActivityScope}}">{{end}}
-  {{if $.CurrentSubsystem}}<input type="hidden" name="subsystem" value="{{$.CurrentSubsystem}}">{{end}}
+  {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
+  {{/* Форма владеет только q — остальное состояние списка (вид, папка,
+       отбор, сортировка, раздел) уезжает скрытыми полями, иначе поиск
+       выкидывал бы из плитки и из папки. */}}
+  {{listHidden $.Query "q"}}
 </form>
 {{if .Breadcrumbs}}
 <nav class="breadcrumb">
@@ -1220,11 +1302,10 @@ const tplList = `
   </div>
   <div class="filter-actions">
     <button class="btn btn-primary btn-sm" type="submit">{{t $.Lang "Применить"}}</button>
-    <a class="btn btn-sm" href="?" style="background:#e2e8f0;color:#475569">{{t $.Lang "Сбросить"}}</a>
+    <a class="btn btn-sm" href="{{listURL $.Query "f.*" ""}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "Сбросить"}}</a>
   </div>
-  {{if $entity.Activity}}<input type="hidden" name="activity" value="{{$params.ActivityScope}}">{{end}}
-  {{if $params.Sort}}<input type="hidden" name="sort" value="{{$params.Sort}}"><input type="hidden" name="dir" value="{{$params.Dir}}">{{end}}
-  {{if $.CurrentSubsystem}}<input type="hidden" name="subsystem" value="{{$.CurrentSubsystem}}">{{end}}
+  {{/* Форма владеет отбором f.* — поиск, вид, папку и сортировку переносим. */}}
+  {{listHidden $.Query "f.*"}}
   </form>
 </details>
 
@@ -1332,7 +1413,7 @@ const tplList = `
 </div>{{end}}
 </div>
 {{else}}
-<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="?">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
+<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="{{listURL $.Query "q" ""}}">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
 {{end}}
 {{else}}
 {{/* ===== LIST VIEW (default) ===== */}}
@@ -1342,7 +1423,7 @@ const tplList = `
   {{if eq (str .Entity.Kind) "document"}}<th style="width:36px">✓</th>{{end}}
   {{range listColumns .Entity}}
   <th>
-    <a href="?sort={{.Name}}&dir={{nextDir $params .Name}}{{filterQuery $params}}">
+    <a href="{{listURL $.Query "sort" .Name "dir" (nextDir $params .Name)}}">
       {{.DisplayName $.Lang}} {{sortIcon $params .Name}}
     </a>
   </th>
@@ -1389,7 +1470,7 @@ const tplList = `
 </tbody></table>
 </div>
 {{else}}
-<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="?">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
+<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="{{listURL $.Query "q" ""}}">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
 {{end}}
 {{end}}
 </div>
@@ -2629,7 +2710,9 @@ const tplJournal = `
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
     <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Всего:"}} {{.Total}}</span>
-    <a class="btn btn-sm" href="/ui/journal/{{lower .Journal.Name}}/excel{{filterQuery .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
+    {{/* listQuerySuffix, а не filterQuery: тут строка запроса начинается, а не
+         продолжается — с «&» отбор уезжал в путь и ссылка давала 404. */}}
+    <a class="btn btn-sm" href="/ui/journal/{{lower .Journal.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
 {{$j := .Journal}}{{$params := .Params}}{{$fmts := .ColFormats}}
