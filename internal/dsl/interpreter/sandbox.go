@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -36,11 +37,15 @@ func RestrictedProfile() SandboxProfile {
 	}
 }
 
-// Vars возвращает extraVars, навязывающие запреты возможностей профиля
-// (сеть/email/файлы/ИИ). RunSandboxed мержит их ПОСЛЕ обычных переменных
-// запуска, чтобы deny-guard'ы перекрыли стандартные функции. Возможности без
-// выставленного запрета не трогаются — остаются обычные функции (с глобальным
-// предохранителем сети, план 62). Для нулевого профиля карта пуста.
+// Vars возвращает известные имена возможностей, которые должен закрыть профиль
+// (сеть/email/файлы/ИИ). RunSandboxed и CallSandboxed помещают их в неизменяемый
+// overlay запуска: обычные vars, Перем и присваивания не могут затенить deny.
+// Возможности без выставленного запрета не трогаются — остаются обычные функции
+// (с глобальным предохранителем сети, план 62). Для нулевого профиля карта пуста.
+//
+// Это защита известных глобальных имён, а не object-capability membrane:
+// доверенный Go-вызывающий не должен передавать уже готовый сетевой/файловый
+// объект под произвольным новым именем. Такие объекты остаются его trust boundary.
 func (p SandboxProfile) Vars() map[string]any {
 	m := map[string]any{}
 	if p.DenyNet {
@@ -115,20 +120,29 @@ func applySandboxLimits(e *env, p SandboxProfile) {
 	}
 }
 
-// applySandboxVars навязывает запреты после переменных вызывающего. Штатная
-// пауза не хранится в env: при провале к глобальному builtin evalCall применяет
-// к ней общий deadline запуска.
+// applySandboxVars один раз строит immutable overlay известных capability-имён.
+// Ключи нормализуются здесь, а env.get читает overlay раньше пользовательских,
+// модульных и родительских vars. set/setLocal/declare/publishTemp пишут только в
+// обычные карты и потому не могут переоткрыть запрет. Штатная пауза в overlay не
+// входит: при провале к глобальному builtin evalCall применяет общий deadline.
 func applySandboxVars(e *env, p SandboxProfile) {
-	for k, v := range p.Vars() {
-		e.setLocal(k, v)
+	vars := p.Vars()
+	if len(vars) == 0 {
+		return
 	}
+	overlay := make(map[string]any, len(vars))
+	for k, v := range vars {
+		overlay[strings.ToLower(k)] = v
+	}
+	e.ec.sandboxVars = overlay
 }
 
 // RunSandboxed исполняет процедуру с ресурсными лимитами профиля (wall-clock и
 // итерации) и запретами возможностей (сеть/файлы/ИИ). Запреты навязываются
-// автоматически — p.Vars() мержится ПОСЛЕ extraVars вызывающего, поэтому
-// переоткрыть запрещённую возможность через extraVars нельзя. Возвращаемое
-// значение — в result.
+// автоматически — p.Vars() становится приоритетным immutable overlay, поэтому
+// переоткрыть известную возможность через extraVars, Перем или присваивание
+// нельзя. Произвольный готовый capability-объект под другим именем остаётся
+// ответственностью доверенного Go-вызывающего. Возвращаемое значение — в result.
 func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p SandboxProfile, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
 	if proc != nil {
@@ -156,10 +170,10 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 			e.setLocal(k, v)
 		}
 	}
-	// Запреты профиля навязываем ПОСЛЕДНИМИ: они перекрывают любые extraVars,
-	// поэтому вызывающий не может (случайно или намеренно) переоткрыть
-	// запрещённую возможность. Раньше Vars() передавался вызывающим вручную —
-	// забытый или неверно упорядоченный вызов молча открывал песочницу.
+	// Запреты профиля навязываем после extraVars и храним отдельно от них:
+	// overlay остаётся приоритетным даже после последующих присваиваний DSL.
+	// Раньше Vars() передавался вызывающим вручную — забытый или неверно
+	// упорядоченный вызов молча открывал песочницу.
 	applySandboxVars(e, p)
 	if i.StrictLexicalScope {
 		if result != nil {
