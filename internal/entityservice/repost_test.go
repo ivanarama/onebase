@@ -63,8 +63,8 @@ func TestRepost_WritesMovementsAndPosts(t *testing.T) {
 	interp.LookupProc = registry.GetModuleProc
 	svc := &Service{
 		Store: db, Reg: registry, Interp: interp,
-		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) map[string]any {
-			return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
+		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+			return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
 		},
 	}
 
@@ -140,9 +140,9 @@ func TestRepost_HookRunsInsideTx(t *testing.T) {
 	hookSawTx := false
 	svc := &Service{
 		Store: db, Reg: registry, Interp: interp,
-		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) map[string]any {
+		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
 			hookSawTx = storage.HasTx(c)
-			return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
+			return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
 		},
 	}
 

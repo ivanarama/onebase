@@ -78,12 +78,9 @@ func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) m
 	if form == nil || entity == nil {
 		return out
 	}
-	var walk func(el *metadata.FormElement)
-	walk = func(el *metadata.FormElement) {
-		if el == nil {
-			return
-		}
-		if string(el.Kind) == "Флажок" && !el.ReadOnly && el.DataPath != "" {
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if string(el.Kind) == "Флажок" && !visit.effectiveReadOnly && el.DataPath != "" {
 			// Поле шапки: data_path вида «Объект.Флаг». Путь табличной части
 			// («Объект.Товары.Цена») к полю шапки отношения не имеет, даже если
 			// имя последнего сегмента совпало с полем сущности.
@@ -94,14 +91,71 @@ func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) m
 				}
 			}
 		}
-		for _, c := range el.Children {
-			walk(c)
-		}
-	}
-	for _, el := range form.Elements {
-		walk(el)
-	}
+	})
 	return out
+}
+
+// editableManagedEntityTableParts returns persistent table parts which have at
+// least one editable representation on the managed form. Unplaced and
+// effectively readonly tables are partial-form state: their browser payload is
+// neither complete (disabled selects/checkboxes are omitted) nor authoritative.
+func editableManagedEntityTableParts(form *metadata.FormModule, entity *metadata.Entity) map[string]bool {
+	result := make(map[string]bool)
+	if form == nil || entity == nil {
+		return result
+	}
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if el.Kind != metadata.FormElementTablePart || visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 {
+			return
+		}
+		name := dpFieldName(el.DataPath)
+		for _, tablePart := range entity.TableParts {
+			if strings.EqualFold(tablePart.Name, name) {
+				result[tablePart.Name] = true
+				break
+			}
+		}
+	})
+	return result
+}
+
+// restoreUneditableTableParts protects table parts which a managed form does
+// not allow the user to edit. For an existing object their persisted rows are
+// restored (partial-write preservation); for a new object forged rows are
+// removed. In both cases incomplete/forged browser state cannot reach form
+// hooks, Объект.Записать(), or the ordinary Save path. Server-side hooks remain
+// free to populate those tables after this boundary.
+func (s *Server) restoreUneditableTableParts(
+	ctx context.Context,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	id uuid.UUID,
+	rows map[string][]map[string]any,
+) error {
+	if entity == nil || form == nil || rows == nil {
+		return nil
+	}
+	editable := editableManagedEntityTableParts(form, entity)
+	for _, tablePart := range entity.TableParts {
+		if editable[tablePart.Name] {
+			continue
+		}
+		for postedName := range rows {
+			if strings.EqualFold(postedName, tablePart.Name) {
+				delete(rows, postedName)
+			}
+		}
+		if id == uuid.Nil {
+			continue
+		}
+		stored, err := s.store.GetTablePartRows(ctx, entity.Name, tablePart.Name, id, tablePart)
+		if err != nil {
+			return err
+		}
+		rows[tablePart.Name] = stored
+	}
+	return nil
 }
 
 // normalizeRestoredValue приводит прочитанное из БД значение к типу, который

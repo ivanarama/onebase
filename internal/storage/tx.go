@@ -12,6 +12,10 @@ import (
 
 type txKey struct{}
 
+type pgExecutionBeginner interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
 var txScopeSequence atomic.Uint64
 
 // IsNotFound reports the portable no-row condition for both storage drivers.
@@ -131,6 +135,56 @@ func (db *DB) BeginTx(ctx context.Context) (Tx, context.Context, error) {
 	storTx := &pgxTx{tx: tx}
 	txCtx := context.WithValue(context.WithValue(ctx, txKey{}, tx), txHooksKey{}, hooks)
 	return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+}
+
+// BeginTxForExecution starts a transaction in two phases. Pool acquisition uses
+// acquireCtx, so a canceled request or exhausted pool cannot wait forever. The
+// SQLite transaction starts with lifetimeCtx because database/sql binds its
+// lifetime to that context. PostgreSQL uses acquireCtx for the BEGIN command
+// itself, while the returned transaction context and all later operations use
+// lifetimeCtx. DSL execution passes a detached context there so request
+// cancellation cannot roll an acquired transaction back behind its explicit
+// cleanup boundary.
+//
+// The returned transaction owns the acquired connection and releases it after
+// Commit or Rollback. Ordinary callers should keep using BeginTx.
+func (db *DB) BeginTxForExecution(acquireCtx, lifetimeCtx context.Context) (Tx, context.Context, error) {
+	hooks := newTxHooks()
+	if db.sqlDB != nil {
+		conn, err := db.sqlDB.Conn(acquireCtx)
+		if err != nil {
+			return nil, acquireCtx, err
+		}
+		tx, err := conn.BeginTx(lifetimeCtx, nil)
+		if err != nil {
+			_ = conn.Close()
+			return nil, acquireCtx, err
+		}
+		storTx := &sqlTx{tx: tx, conn: conn}
+		txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
+		return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+	}
+
+	conn, err := db.pool.Acquire(acquireCtx)
+	if err != nil {
+		return nil, acquireCtx, err
+	}
+	tx, err := beginPGTransactionForExecution(conn, acquireCtx)
+	if err != nil {
+		conn.Release()
+		return nil, acquireCtx, err
+	}
+	storTx := &pgxTx{tx: tx, release: conn.Release}
+	txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
+	return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+}
+
+// beginPGTransactionForExecution deliberately uses the acquisition context for
+// the BEGIN command itself. pgx does not bind transaction lifetime to this
+// context, so subsequent operations still use the detached lifetimeCtx stored
+// by BeginTxForExecution, while a blocked BEGIN remains cancelable.
+func beginPGTransactionForExecution(conn pgExecutionBeginner, acquireCtx context.Context) (pgx.Tx, error) {
+	return conn.Begin(acquireCtx)
 }
 
 // Exec runs a non-query SQL statement, respecting any transaction in ctx.

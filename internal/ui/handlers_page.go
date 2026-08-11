@@ -82,12 +82,14 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var msgs []string
-	builder, paramsObj, dslVars := s.pageProcEnv(r, &msgs)
+	builder, paramsObj, dslVars, txState := s.pageProcEnv(r, &msgs)
+	defer rollbackDSLExecution(txState)
 
-	if _, err := s.interp.Call(proc, builder, []any{builder, paramsObj}, dslVars); err != nil {
+	_, runErr := s.interp.Call(proc, builder, []any{builder, paramsObj}, dslVars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		s.render(w, r, "page-custom", map[string]any{
 			"PageTitle": title,
-			"PageError": s.errText(r, err),
+			"PageError": s.errText(r, runErr),
 		})
 		return
 	}
@@ -195,11 +197,13 @@ func (s *Server) pageAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var msgs []string
-	builder, paramsObj, dslVars := s.pageProcEnv(r, &msgs)
-	if _, err := s.interp.Call(proc, builder, []any{builder, paramsObj}, dslVars); err != nil {
+	builder, paramsObj, dslVars, txState := s.pageProcEnv(r, &msgs)
+	defer rollbackDSLExecution(txState)
+	_, runErr := s.interp.Call(proc, builder, []any{builder, paramsObj}, dslVars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		// Ошибку действия кладём в стор сообщений: после редиректа страница
 		// перерисуется штатно, а баннер не потеряется.
-		s.messages.Push(userKeyFromRequest(r), s.errText(r, err))
+		s.messages.Push(userKeyFromRequest(r), s.errText(r, runErr))
 	}
 
 	http.Redirect(w, r, "/ui/page/"+pg.Name+pageQuery(r), http.StatusSeeOther)
@@ -208,7 +212,7 @@ func (s *Server) pageAction(w http.ResponseWriter, r *http.Request) {
 // pageProcEnv готовит окружение вызова обработчика страницы: построитель блоков,
 // Параметры из query string и dslVars со сбором Сообщить в msgs. Общий код для
 // GET (ПриФормировании) и POST (КнопкаДействие).
-func (s *Server) pageProcEnv(r *http.Request, msgs *[]string) (*interpreter.DSLPageBuilder, *interpreter.Map, map[string]any) {
+func (s *Server) pageProcEnv(r *http.Request, msgs *[]string) (*interpreter.DSLPageBuilder, *interpreter.Map, map[string]any, *interpreter.TxState) {
 	params := map[string]string{}
 	for k, vs := range r.URL.Query() {
 		if len(vs) > 0 {
@@ -221,12 +225,12 @@ func (s *Server) pageProcEnv(r *http.Request, msgs *[]string) (*interpreter.DSLP
 	// Кладём язык запроса в контекст, чтобы НСтр(текст) в обработчике страницы
 	// (и в процедуре-действии) переводил на язык пользователя (план 66, п.3).
 	ctx := withLang(r.Context(), s.resolveLang(r))
-	dslVars := s.buildDSLVarsWithMessages(ctx, mc, msgs)
+	dslVars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
 	dslVars["Страница"] = builder
 	dslVars["Page"] = builder
 	dslVars["Параметры"] = paramsObj
 	dslVars["Parameters"] = paramsObj
-	return builder, paramsObj, dslVars
+	return builder, paramsObj, dslVars, txState
 }
 
 // pageQuery возвращает query string запроса с ведущим «?» (или пустую строку) —

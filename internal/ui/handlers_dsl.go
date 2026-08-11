@@ -55,11 +55,6 @@ func langFromCtx(ctx context.Context) string {
 	return ""
 }
 
-func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollector) map[string]any {
-	vars, _ := s.buildDSLVarsTx(ctx, mc)
-	return vars
-}
-
 // buildDSLVarsTx дополнительно отдаёт «живой» источник контекста (TxState).
 // Он нужен вызывающему, чтобы менеджеры ссылок, построенные ДО открытия
 // DSL-транзакции, всё равно выполняли ПолучитьОбъект()/Записать() ВНУТРИ неё:
@@ -86,7 +81,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// поэтому запись участвует в открытой DSL-транзакции.
 	// Caller подключается ДО создания CatalogsRoot.WithManagerCaller —
 	// он использует ctx как контекст для вызова процедур менеджера.
-	mgrCaller := &managerCaller{s: s, ctx: ctx}
+	mgrCaller := &managerCaller{s: s, ctxSrc: txState}
 	rowAccess := s.dslRowAccessChecker()
 	catalogs := interpreter.NewCatalogsRoot(txState, s.store, s.reg).
 		WithManagerCaller(mgrCaller).
@@ -330,12 +325,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	return vars, txState
 }
 
-func (s *Server) buildDSLVarsWithMessages(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
-	vars, _ := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
-	return vars
-}
-
-// buildDSLVarsWithMessagesTx — то же, что buildDSLVarsWithMessages, но отдаёт и
+// buildDSLVarsWithMessagesTx добавляет Сообщить к полному окружению и отдаёт
 // «живой» источник контекста (см. buildDSLVarsTx).
 func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
 	ctx = withDSLMessageCollector(ctx, msgs)
@@ -377,9 +367,11 @@ func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *run
 		}
 	}
 	var msgs []string
-	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
-	if err := s.interp.Run(proc, obj, vars); err != nil {
-		return interpreter.FormatUserError(err), msgs
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
+	runErr := s.interp.Run(proc, obj, vars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
+		return interpreter.FormatUserError(runErr), msgs
 	}
 	return "", msgs
 }
@@ -398,20 +390,22 @@ func (s *Server) callManagerProc(ctx context.Context, entityName, method string,
 		return nil, false, nil
 	}
 	mc := runtime.NewMovementsCollector(entityName, uuid.Nil)
-	vars := s.buildDSLVars(ctx, mc)
+	vars, txState := s.buildDSLVarsTx(ctx, mc)
+	defer rollbackDSLExecution(txState)
 	result, err := s.interp.Call(proc, nil, args, vars)
+	err = finishDSLExecution(txState, err)
 	return result, true, err
 }
 
 // managerCaller адаптер для interpreter.ManagerCaller. Используется в
 // buildDSLVars для подключения fallback к CatalogsRoot.
 type managerCaller struct {
-	s   *Server
-	ctx context.Context
+	s      *Server
+	ctxSrc interpreter.CtxSource
 }
 
 func (m *managerCaller) CallManager(entityName, method string, args []any) (any, bool, error) {
-	return m.s.callManagerProc(m.ctx, entityName, method, args)
+	return m.s.callManagerProc(m.ctxSrc.Ctx(), entityName, method, args)
 }
 
 func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) (string, []string) {
@@ -428,9 +422,11 @@ func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runt
 		s.enrichHeaderRefs(ctx, entity, obj)
 	}
 	var msgs []string
-	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
-	if err := s.interp.Run(proc, obj, vars); err != nil {
-		return interpreter.FormatUserError(err), msgs
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
+	runErr := s.interp.Run(proc, obj, vars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
+		return interpreter.FormatUserError(runErr), msgs
 	}
 	return "", msgs
 }
