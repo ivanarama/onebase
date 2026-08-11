@@ -1777,7 +1777,7 @@ obManagedReady(obManagedInitDelegates);
   window.obFireRowEventChain = function(tpName, pairs) {
     var run = function(i) {
       if (i >= pairs.length) return;
-      var res = obFireRowEvent(tpName, pairs[i][0], pairs[i][1]);
+      var res = window.obFireRowEvent(tpName, pairs[i][0], pairs[i][1]);
       if (res && typeof res.then === "function") {
         res.then(function() { run(i + 1); }, function() { run(i + 1); });
       } else {
@@ -1810,7 +1810,7 @@ obManagedReady(obManagedInitDelegates);
       g.grid.setActiveCell(rowIdx, 0);
       g.grid.editActiveCell();
     }
-    obFireRowEventChain(tpName, [
+    window.obFireRowEventChain(tpName, [
       ["data-sg-rowadd", "ПриДобавленииСтроки"],
       ["data-sg-rowafteradd", "ПослеДобавленияСтроки"],
     ]);
@@ -1865,7 +1865,7 @@ obManagedReady(obManagedInitDelegates);
     try {
       if (g.grid.getSelectionModel && g.grid.getSelectionModel() && g.grid.setSelectedRows) g.grid.setSelectedRows([]);
     } catch (e) {}
-    try { obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки"); } catch (e) {
+    try { window.obFireRowEvent(tpName, "data-sg-rowdel", "ПриУдаленииСтроки"); } catch (e) {
       if (window.console) window.console.error("SlickGrid row-delete event error [" + tpName + "]:", e);
     }
     return true;
@@ -1919,7 +1919,10 @@ obManagedReady(obManagedInitDelegates);
       g.grid.editActiveCell();
     }
     updateTotals(g);
-    obFireRowEvent(tpName, "data-sg-rowadd", "ПриДобавленииСтроки");
+    window.obFireRowEventChain(tpName, [
+      ["data-sg-rowadd", "ПриДобавленииСтроки"],
+      ["data-sg-rowafteradd", "ПослеДобавленияСтроки"],
+    ]);
   };
 
   // obGridMoveRow — переместить текущую строку на delta позиций (Ctrl+↑/↓).

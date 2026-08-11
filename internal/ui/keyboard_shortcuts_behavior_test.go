@@ -37,7 +37,7 @@ const dirtyStart = source.indexOf('function obInitFormDirty()');
 const dirtyEnd = source.indexOf('\nobReady(obInitFormDirty);', dirtyStart);
 const addTpStart = source.indexOf('function addTpRow');
 const addTpEnd = source.indexOf('\nfunction recalcTpRow', addTpStart);
-const managedMutationStart = managedSource.indexOf('window.obGridAddRow = function');
+const managedMutationStart = managedSource.indexOf('window.obFireRowEventChain = function');
 const managedKeysStart = managedSource.indexOf('function gridNameFromTarget');
 const managedKeysEnd = managedSource.indexOf('// SlickGrid-aware applyTableParts', managedKeysStart);
 const managedBodiesStart = managedSource.indexOf('function obManagedTableReadOnly');
@@ -687,7 +687,7 @@ func TestManagedGridShortcutBehavior(t *testing.T) {
 const fs = require('fs');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const uiSource = fs.readFileSync(process.argv[2], 'utf8');
-const mutationStart = source.indexOf('window.obGridAddRow = function');
+const mutationStart = source.indexOf('window.obFireRowEventChain = function');
 const start = source.indexOf('function gridNameFromTarget');
 const end = source.indexOf('// SlickGrid-aware applyTableParts', start);
 const resolverStart = uiSource.indexOf('function obElementVisible');
@@ -726,7 +726,12 @@ const grid = {
   invalidate() { invalidates++; },
   scrollRowIntoView() {}, editActiveCell() {}
 };
-const hostAttrs = {'data-sg-tp': 'Lines'};
+const hostAttrs = {
+  'data-sg-tp': 'Lines',
+  'data-sg-rowadd': '1',
+  'data-sg-rowdel': '1',
+  'data-sg-rowafteradd': '1'
+};
 const host = {
   nodeType: 1, style: {display: '', visibility: ''}, parentElement: null,
   getAttribute(name) { return Object.prototype.hasOwnProperty.call(hostAttrs, name) ? hostAttrs[name] : null; }
@@ -785,6 +790,7 @@ global.document = {
 global.obHasBlockingModal = () => modal;
 function updateTotals() {}
 function obFireRowEvent(tpName, attr, eventName) {
+  if (host.getAttribute(attr) !== '1') return;
   rowEvents.push({tpName, attr, eventName, values: items.map(item => item.Name)});
 }
 window.obFireRowEvent = obFireRowEvent;
@@ -879,7 +885,8 @@ resetRows(['A', 'B']);
 fire({key: 'Insert'});
 assert(window._obActiveDOMTable === null, 'direct Slick context left a DOM table marker active');
 assert(items.length === 3 && items[2].Name === '', 'exact Insert did not mutate SlickGrid data');
-assert(rowEvents.length === 1 && rowEvents[0].eventName === 'ПриДобавленииСтроки' && rowEvents[0].values.join(',') === 'A,B,', 'Insert row-add event did not observe committed mutation');
+assert(rowEvents.length === 2 && rowEvents[0].eventName === 'ПриДобавленииСтроки' && rowEvents[1].eventName === 'ПослеДобавленияСтроки', 'Insert did not emit the row-add event chain in order');
+assert(rowEvents[0].values.join(',') === 'A,B,' && rowEvents[1].values.join(',') === 'A,B,', 'Insert row-add event chain did not observe committed mutation');
 const afterInsert = items.length;
 fire({key: 'Insert', shiftKey: true});
 assert(items.length === afterInsert, 'Shift+Insert was accepted as Insert');
@@ -895,6 +902,13 @@ grid.setActiveCell(0, 0);
 hotkeyButtons = [hotkeyButton()];
 fire({key: 'F9'});
 assert(items.length === afterInsert, 'built-in F9 ignored a whitespace-padded explicit form hotkey');
+
+resetRows(['A', 'B']);
+hotkeyButtons = [];
+fire({key: 'F9'});
+assert(items.map(item => item.Name).join(',') === 'A,A,B', 'exact F9 did not copy the active SlickGrid row');
+assert(rowEvents.length === 2 && rowEvents[0].eventName === 'ПриДобавленииСтроки' && rowEvents[1].eventName === 'ПослеДобавленияСтроки', 'F9 did not emit the row-add event chain in order');
+assert(rowEvents[0].values.join(',') === 'A,A,B' && rowEvents[1].values.join(',') === 'A,A,B', 'F9 row-add event chain fired before the copied row was committed');
 
 for (const [name, candidate] of nonActionableHotkeyButtons()) {
   resetRows(['A', 'B']);
