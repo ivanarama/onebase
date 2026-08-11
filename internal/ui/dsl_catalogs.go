@@ -9,6 +9,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
+	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -29,6 +30,11 @@ func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Serv
 		BuildVars:    s.buildDSLVarsWithMessagesTx,
 		MakeThis: func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
 			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
+		},
+		// Регистрация удаления в планах обмена (план 86): exchange живёт в
+		// ui-слое, поэтому в сервис попадает швом.
+		RegisterExchangeDelete: func(ctx context.Context, e *metadata.Entity, id uuid.UUID) error {
+			return exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), e, id)
 		},
 		// Исходящие веб-хуки (план 29): save/post диспетчеризуются из Save.
 		Hooks: hooks,
