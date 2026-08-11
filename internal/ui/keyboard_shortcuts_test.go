@@ -10,6 +10,46 @@ import (
 	"golang.org/x/net/html"
 )
 
+func TestNormalizedFormHotkey(t *testing.T) {
+	tests := map[string]string{
+		" f2 ": "F2", "f4": "F4", " F7": "F7", "f8 ": "F8", "f9": "F9", " f10 ": "F10",
+		"": "", "F1": "", "F11": "", "Ctrl+F9": "", "Delete": "",
+	}
+	for input, want := range tests {
+		if got := normalizedFormHotkey(input); got != want {
+			t.Errorf("normalizedFormHotkey(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestManagedButtonRendersOnlyNormalizedSupportedHotkey(t *testing.T) {
+	render := func(hotkey string) string {
+		t.Helper()
+		button := &metadata.FormElement{Kind: metadata.FormElementButton, Name: "Action", HotKey: hotkey}
+		var output bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&output, "managed-element", map[string]any{
+			"El":  button,
+			"Ctx": map[string]any{"CanWrite": true},
+		}); err != nil {
+			t.Fatalf("render managed button: %v", err)
+		}
+		return output.String()
+	}
+
+	supported := render(" f7 ")
+	for _, marker := range []string{`data-ob-hotkey="F7"`, `aria-keyshortcuts="F7"`, `title="F7"`} {
+		if !strings.Contains(supported, marker) {
+			t.Errorf("normalized F7 lost %s: %s", marker, supported)
+		}
+	}
+	unsupported := render("Ctrl+F9")
+	for _, marker := range []string{"data-ob-hotkey", "aria-keyshortcuts", `title="Ctrl+F9"`} {
+		if strings.Contains(unsupported, marker) {
+			t.Errorf("unsupported hotkey rendered %s: %s", marker, unsupported)
+		}
+	}
+}
+
 // Набор фиксирует встроенные горячие клавиши, привычные по 1С: Ins/F9/Ctrl+↑↓
 // в табличной части, Ctrl+Enter и Ctrl+S на форме, Ins/↑↓/Enter/F2/Ctrl+F
 // в списке. Поведение клиентское; здесь — серверные маркеры, на которые оно
@@ -481,8 +521,10 @@ func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
 				t.Fatalf("row event element=%q", element)
 			}
 			for _, marker := range []string{"data-ob-rowadd", "data-ob-rowdel"} {
-				if value, _ := keyboardHTMLAttr(table, marker); value != "1" {
-					t.Errorf("%s=%q, want 1", marker, value)
+				value, present := keyboardHTMLAttr(table, marker)
+				wantPresent := tc.marker == "0"
+				if present != wantPresent || present && value != "1" {
+					t.Errorf("%s=%q present=%v, want present=%v", marker, value, present, wantPresent)
 				}
 			}
 
@@ -491,18 +533,22 @@ func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
 				return node.Type == html.ElementNode && node.Data == "input" && name == "tp.Строки.0.Товар"
 			})
 			remove := keyboardFindHTML(table, func(node *html.Node) bool {
-				_, ok := keyboardHTMLAttr(node, "data-ob-remove-row")
-				return node.Type == html.ElementNode && node.Data == "button" && ok
+				className, _ := keyboardHTMLAttr(node, "class")
+				return node.Type == html.ElementNode && node.Data == "button" && strings.Contains(className, "del-btn")
 			})
 			add := keyboardFindHTML(doc, func(node *html.Node) bool {
-				name, ok := keyboardHTMLAttr(node, "data-ob-add-tp")
-				return node.Type == html.ElementNode && node.Data == "button" && ok && name == "Строки"
+				style, _ := keyboardHTMLAttr(node, "style")
+				return node.Type == html.ElementNode && node.Data == "button" && strings.Contains(style, "margin:0 0 12px")
 			})
 			if field == nil || remove == nil || add == nil {
 				t.Fatal("rendered NoGrid table lost a field or structural button")
 			}
 			wantDisabled := tc.marker == "1"
-			for label, node := range map[string]*html.Node{"field": field, "remove": remove, "add": add} {
+			_, fieldReadOnly := keyboardHTMLAttr(field, "readonly")
+			if fieldReadOnly != wantDisabled {
+				t.Errorf("field readonly=%v, want %v", fieldReadOnly, wantDisabled)
+			}
+			for label, node := range map[string]*html.Node{"remove": remove, "add": add} {
 				_, disabled := keyboardHTMLAttr(node, "disabled")
 				if disabled != wantDisabled {
 					t.Errorf("%s disabled=%v, want %v", label, disabled, wantDisabled)
@@ -512,6 +558,14 @@ func TestManagedNoGridShortcutsAndReadOnlyRender(t *testing.T) {
 				_, hasShortcut := keyboardHTMLAttr(node, "aria-keyshortcuts")
 				if hasShortcut == wantDisabled {
 					t.Errorf("%s shortcut marker present=%v for readonly=%v", label, hasShortcut, wantDisabled)
+				}
+				dataAttr := "data-ob-remove-row"
+				if label == "add" {
+					dataAttr = "data-ob-add-tp"
+				}
+				_, hasAction := keyboardHTMLAttr(node, dataAttr)
+				if hasAction == wantDisabled {
+					t.Errorf("%s action marker present=%v for readonly=%v", label, hasAction, wantDisabled)
 				}
 			}
 		})

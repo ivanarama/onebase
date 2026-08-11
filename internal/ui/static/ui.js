@@ -869,6 +869,56 @@ function obElementVisible(el) {
 }
 window.obElementVisible = obElementVisible;
 
+function obNormalizeFormHotkey(value) {
+  var key = String(value || '').trim().toUpperCase();
+  if (key === 'F2' || key === 'F4' || key === 'F7' || key === 'F8' || key === 'F9' || key === 'F10') return key;
+  return '';
+}
+window.obNormalizeFormHotkey = obNormalizeFormHotkey;
+
+function obFormHotkeyCandidateEnabled(candidate, root) {
+  if (!candidate || typeof candidate.click !== 'function') return false;
+  for (var cur = candidate; cur && cur.nodeType === 1; cur = cur.parentElement) {
+    if (cur.disabled === true || cur.inert === true) return false;
+    if (cur.getAttribute) {
+      if (String(cur.getAttribute('aria-disabled') || '').trim().toLowerCase() === 'true') return false;
+      if (cur.hasAttribute && cur.hasAttribute('inert')) return false;
+      // matches(':disabled') follows the browser's fieldset rules, including
+      // controls disabled by an ancestor rather than by their own property.
+      if (cur.matches) {
+        try { if (cur.matches(':disabled')) return false; } catch (_) {}
+      }
+      // Minimal DOM implementations may not support :disabled. Fail closed for
+      // an explicitly disabled fieldset there as well.
+      if (String(cur.tagName || '').toUpperCase() === 'FIELDSET' &&
+          (cur.disabled === true || cur.hasAttribute('disabled'))) return false;
+    }
+    if (cur === root) break;
+  }
+  return true;
+}
+
+// obResolveActionableFormHotkey is the single authority for both dispatching
+// a form hotkey and deciding whether that hotkey suppresses a built-in table
+// action. It deliberately ignores the rest of the document: a stale, hidden,
+// detached or background-form button must never steal F9 from the active form.
+function obResolveActionableFormHotkey(key) {
+  var wanted = obNormalizeFormHotkey(key);
+  if (!wanted) return null;
+  var form = document.getElementById('main-form');
+  if (!form || !document.contains(form)) return null;
+  var candidates = form.querySelectorAll('[data-ob-hotkey]');
+  for (var i = 0; i < candidates.length; i++) {
+    var candidate = candidates[i];
+    if (obNormalizeFormHotkey(candidate.getAttribute('data-ob-hotkey')) !== wanted) continue;
+    if (!document.contains(candidate) || !form.contains(candidate)) continue;
+    if (!obElementVisible(candidate) || !obFormHotkeyCandidateEnabled(candidate, form)) continue;
+    return candidate;
+  }
+  return null;
+}
+window.obResolveActionableFormHotkey = obResolveActionableFormHotkey;
+
 function obListRows() {
   return Array.prototype.slice.call(document.querySelectorAll('[data-ob-list-row]')).filter(obElementVisible);
 }
@@ -932,13 +982,7 @@ function obListMoveCursor(delta) {
 }
 
 function obHasActionableHotkey(key) {
-  var wanted = String(key || '').trim().toUpperCase();
-  var buttons = document.querySelectorAll('[data-ob-hotkey]');
-  for (var i = 0; i < buttons.length; i++) {
-    var value = String(buttons[i].getAttribute('data-ob-hotkey') || '').trim().toUpperCase();
-    if (value === wanted && !buttons[i].disabled && buttons[i].getAttribute('aria-disabled') !== 'true') return true;
-  }
-  return false;
+  return !!obResolveActionableFormHotkey(key);
 }
 
 function obDOMTableFromTarget(el) {

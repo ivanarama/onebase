@@ -46,6 +46,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
+		"normalizedFormHotkey":           normalizedFormHotkey,
 		"str": func(v any) string {
 			if v == nil {
 				return ""
@@ -659,6 +660,16 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"pageRaw": func(s string) template.HTML { return template.HTML(s) }, //nolint:gosec // G203: источник — только ДобавитьСыройHTML, прошедший allowlist sanitizePageHTML
 		// pageChart конвертирует чарт-блок страницы в widget.ChartData для echartsJSON.
 		"pageChart": pageChartData,
+	}
+}
+
+func normalizedFormHotkey(value string) string {
+	key := strings.ToUpper(strings.TrimSpace(value))
+	switch key {
+	case "F2", "F4", "F7", "F8", "F9", "F10":
+		return key
+	default:
+		return ""
 	}
 }
 

@@ -90,6 +90,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	entityKind := string(entity.Kind)
 	if !s.can(r, entityKind, entity.Name, "read") && !s.can(r, entityKind, entity.Name, "write") {
+		w.WriteHeader(http.StatusForbidden)
 		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 		return
 	}
@@ -122,19 +123,34 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	isNewObject := rawID == "" && (strings.EqualFold(form.Kind, "object") || form.Kind == "" && formKind == "object")
 	if isNewObject {
 		if !s.can(r, entityKind, entity.Name, "write") {
+			w.WriteHeader(http.StatusForbidden)
 			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 			return
 		}
 	} else if !s.can(r, entityKind, entity.Name, "read") {
+		w.WriteHeader(http.StatusForbidden)
 		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 		return
 	} else if rawID != "" {
 		id, err := uuid.Parse(rawID)
 		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
 			respondJSON(enc, formEventResponse{Error: "некорректный идентификатор записи"})
 			return
 		}
+		_, exists, err := s.store.EntityVersionExists(r.Context(), entity.Name, id)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+			return
+		}
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			respondJSON(enc, formEventResponse{Error: "запись не найдена"})
+			return
+		}
 		if !s.rowAllowsID(r.Context(), entity, "read", id) {
+			w.WriteHeader(http.StatusForbidden)
 			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 			return
 		}

@@ -636,18 +636,26 @@ func TestManagedGridShortcutBehavior(t *testing.T) {
 	if err := os.WriteFile(managedPath, managedJS, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	uiPath := filepath.Join(dir, "ui.js")
+	if err := os.WriteFile(uiPath, uiJS, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	const harness = `
 const fs = require('fs');
 const source = fs.readFileSync(process.argv[1], 'utf8');
+const uiSource = fs.readFileSync(process.argv[2], 'utf8');
 const mutationStart = source.indexOf('window.obGridAddRow = function');
 const start = source.indexOf('function gridNameFromTarget');
 const end = source.indexOf('// SlickGrid-aware applyTableParts', start);
-if (mutationStart < 0 || start < 0 || end < 0) throw new Error('managed runtime slice not found');
+const resolverStart = uiSource.indexOf('function obElementVisible');
+const resolverEnd = uiSource.indexOf('\nfunction obListRows', resolverStart);
+if (mutationStart < 0 || start < 0 || end < 0 || resolverStart < 0 || resolverEnd < 0) throw new Error('managed runtime slice not found');
 
 let keydown = null;
 let modal = false;
-let hotkeyButton = null;
+let hotkeyButtons = [];
+let mainForm = null;
 let items = [];
 let activeCell = {row: 0, cell: 0};
 let selectionModel = null;
@@ -696,7 +704,19 @@ const domTarget = {closest(selector) {
   if (selector.includes('table[data-ob-dom-table]')) return domTable;
   return null;
 }};
-const body = {nodeType: 1, tagName: 'BODY', style: {display: '', visibility: ''}, parentElement: null, closest() { return null; }};
+const body = {
+  nodeType: 1, tagName: 'BODY', style: {display: '', visibility: ''}, parentElement: null,
+  getAttribute() { return null; }, hasAttribute() { return false; }, closest() { return null; }
+};
+mainForm = {
+  nodeType: 1, tagName: 'FORM', style: {display: '', visibility: ''}, parentElement: body,
+  getAttribute() { return null; }, hasAttribute() { return false; },
+  contains(node) { for (let cur = node; cur; cur = cur.parentElement) if (cur === this) return true; return false; },
+  querySelectorAll(selector) { return selector === '[data-ob-hotkey]' ? hotkeyButtons : []; }
+};
+host.parentElement = mainForm;
+unknownHost.parentElement = mainForm;
+domTable.parentElement = mainForm;
 const link = {tagName: 'A', closest(selector) {
   if (selector === '.ob-grid[data-sg-tp]') return null;
   if (selector.includes('a[href]')) return this;
@@ -711,14 +731,14 @@ global.window = {
   _obActiveGridName: '',
   _obActiveDOMTable: domTable,
   _obFormDirty: false,
-  getComputedStyle(el) { return el && el.style ? el.style : {}; }
+  getComputedStyle(el) { return el && (el.computedStyle || el.style) ? (el.computedStyle || el.style) : {}; }
 };
 global.document = {
   activeElement: body,
   addEventListener(type, fn, capture) { if (type === 'keydown' && capture === true) keydown = fn; },
-  contains(el) { return !!el && !el.detached; },
-  getElementById() { return null; },
-  querySelectorAll(selector) { return selector === '[data-ob-hotkey]' && hotkeyButton ? [hotkeyButton] : []; }
+  contains(el) { for (let cur = el; cur; cur = cur.parentElement) if (cur === body) return !el.detached; return false; },
+  getElementById(id) { return id === 'main-form' ? mainForm : null; },
+  querySelectorAll() { return []; }
 };
 global.obHasBlockingModal = () => modal;
 function updateTotals() {}
@@ -726,6 +746,61 @@ function obFireRowEvent(tpName, attr, eventName) {
   rowEvents.push({tpName, attr, eventName, values: items.map(item => item.Name)});
 }
 window.obFireRowEvent = obFireRowEvent;
+
+function hotkeyElement(tag, options = {}) {
+  const attrs = Object.assign({}, options.attrs || {});
+  return {
+    nodeType: 1, tagName: String(tag || 'DIV').toUpperCase(), parentElement: options.parent === undefined ? mainForm : options.parent,
+    style: Object.assign({display: '', visibility: ''}, options.style || {}),
+    computedStyle: Object.assign({display: '', visibility: ''}, options.computedStyle || {}),
+    hidden: options.hidden === true, disabled: options.disabled === true, inert: options.inert === true,
+    clicks: 0,
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
+    hasAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name); },
+    matches(selector) {
+      if (selector !== ':disabled') return false;
+      if (this.disabled) return true;
+      for (let cur = this.parentElement; cur; cur = cur.parentElement) {
+        if (cur.tagName === 'FIELDSET' && (cur.disabled || cur.hasAttribute('disabled'))) return true;
+      }
+      return false;
+    },
+    click() { this.clicks++; }
+  };
+}
+
+function hotkeyButton(options = {}) {
+  return hotkeyElement('button', Object.assign({}, options, {
+    attrs: Object.assign({'data-ob-hotkey': ' F9 '}, options.attrs || {})
+  }));
+}
+
+function nonActionableHotkeyButtons() {
+  const ariaHiddenParent = hotkeyElement('div', {attrs: {'aria-hidden': 'true'}});
+  const displayParent = hotkeyElement('div', {style: {display: 'none'}});
+  const computedDisplayParent = hotkeyElement('div', {computedStyle: {display: 'none'}});
+  const visibilityParent = hotkeyElement('div', {style: {visibility: 'hidden'}});
+  const computedVisibilityParent = hotkeyElement('div', {computedStyle: {visibility: 'hidden'}});
+  const disabledFieldset = hotkeyElement('fieldset', {attrs: {disabled: ''}, disabled: true});
+  const ariaDisabledParent = hotkeyElement('div', {attrs: {'aria-disabled': 'true'}});
+  const inertParent = hotkeyElement('div', {attrs: {inert: ''}, inert: true});
+  return [
+    ['own hidden', hotkeyButton({hidden: true})],
+    ['ancestor aria-hidden', hotkeyButton({parent: ariaHiddenParent})],
+    ['ancestor inline display', hotkeyButton({parent: displayParent})],
+    ['ancestor computed display', hotkeyButton({parent: computedDisplayParent})],
+    ['ancestor inline visibility', hotkeyButton({parent: visibilityParent})],
+    ['ancestor computed visibility', hotkeyButton({parent: computedVisibilityParent})],
+    ['own disabled', hotkeyButton({disabled: true})],
+    ['disabled fieldset', hotkeyButton({parent: disabledFieldset})],
+    ['own aria-disabled', hotkeyButton({attrs: {'aria-disabled': 'true'}})],
+    ['ancestor aria-disabled', hotkeyButton({parent: ariaDisabledParent})],
+    ['own inert', hotkeyButton({attrs: {inert: ''}, inert: true})],
+    ['ancestor inert', hotkeyButton({parent: inertParent})],
+    ['detached', hotkeyButton({parent: null})],
+    ['outside main form', hotkeyButton({parent: body})]
+  ];
+}
 
 function resetRows(names) {
   items = names.map((name, index) => ({id: index, _ord: index, Name: name}));
@@ -739,6 +814,7 @@ function resetRows(names) {
   gridState.readOnly = false;
 }
 
+eval(uiSource.slice(resolverStart, resolverEnd));
 eval(source.slice(mutationStart, start));
 eval(source.slice(start, end));
 if (typeof keydown !== 'function') throw new Error('managed capture handler was not installed');
@@ -771,15 +847,40 @@ assert(items.length === afterInsert, 'Insert escaped a blocking modal');
 modal = false;
 
 grid.setActiveCell(0, 0);
-hotkeyButton = {
-  disabled: false,
-  getAttribute(name) { if (name === 'data-ob-hotkey') return ' F9 '; return null; }
-};
+hotkeyButtons = [hotkeyButton()];
 fire({key: 'F9'});
 assert(items.length === afterInsert, 'built-in F9 ignored a whitespace-padded explicit form hotkey');
-hotkeyButton.disabled = true;
+
+for (const [name, candidate] of nonActionableHotkeyButtons()) {
+  resetRows(['A', 'B']);
+  hotkeyButtons = [candidate];
+  const before = items.length;
+  fire({key: 'F9'});
+  assert(items.length === before + 1, name + ': Slick F9 did not copy exactly once');
+  assert(candidate.clicks === 0, name + ': Slick capture clicked a nonactionable candidate');
+}
+
+// Resolver walks past a hidden first match and lets the visible second button
+// suppress the built-in copy. A hidden-only or missing-form candidate does not.
+resetRows(['A', 'B']);
+const hiddenFirst = hotkeyButton({hidden: true});
+const visibleSecond = hotkeyButton();
+hotkeyButtons = [hiddenFirst, visibleSecond];
 fire({key: 'F9'});
-assert(items.length === afterInsert + 1 && items[1].Name === 'A', 'disabled explicit hotkey incorrectly blocked real F9 copy');
+assert(items.length === 2 && window.obResolveActionableFormHotkey('F9') === visibleSecond,
+  'hidden first Slick hotkey blocked a visible second candidate');
+hotkeyButtons = [hiddenFirst];
+fire({key: 'F9'});
+assert(items.length === 3 && hiddenFirst.clicks === 0, 'hidden Slick hotkey consumed or received F9');
+const savedForm = mainForm;
+const missingFormCandidate = hotkeyButton();
+hotkeyButtons = [missingFormCandidate];
+mainForm = null;
+fire({key: 'F9'});
+assert(items.length === 4, 'missing main form suppressed built-in Slick F9');
+assert(missingFormCandidate.clicks === 0, 'missing main form clicked its stale hotkey candidate');
+mainForm = savedForm;
+hotkeyButtons = [];
 
 resetRows(['A', 'B', 'C']);
 fire({key: 'ArrowDown', ctrlKey: true, shiftKey: true});
@@ -841,7 +942,7 @@ assert(selectedRowsReads === 1 && selectedRowsClears === 1, 'selection-model Del
 assert(rowEvents.length === 1 && rowEvents[0].values.join(',') === 'B', 'multi-delete rowdel fired before final mutation or more than once');
 `
 
-	cmd := exec.Command(node, "-e", harness, managedPath)
+	cmd := exec.Command(node, "-e", harness, managedPath, uiPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node managed shortcut behavior harness: %v\n%s", err, out)
 	}

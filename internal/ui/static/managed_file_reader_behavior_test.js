@@ -494,7 +494,8 @@ test('table round-trip preserves readonly controls, mirrors and delete guards', 
   assert.equal(editableRow.children[0].children[0].disabled, false);
   assert.equal(editableRow.children[1].children[0].readOnly, false);
   assert.equal(editableRow.children[2].children[0].disabled, false);
-  assert.equal(typeof editableRow.children[2].children[0].onclick, 'function');
+  assert.equal(editableRow.children[2].children[0].onclick, undefined,
+    'unscoped dynamic row gained an inline delete handler');
 
   let mutated = false;
   window._obGrids = {

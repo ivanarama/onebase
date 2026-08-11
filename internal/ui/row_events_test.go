@@ -428,6 +428,7 @@ func TestManagedFormGridRowEventAttrs(t *testing.T) {
 	data := map[string]any{
 		"Entity":        ent,
 		"Form":          form,
+		"CanWrite":      true,
 		"IsNew":         true,
 		"Values":        map[string]string{},
 		"RefOptions":    map[string]any{},

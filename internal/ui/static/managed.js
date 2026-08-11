@@ -284,7 +284,7 @@ var obManagedFileSubmitReentry = new WeakSet();
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
       const readOnly = obManagedTableReadOnly(tbody);
       const domTable = tbody.closest && tbody.closest('table[data-ob-dom-table]');
-      const domWritable = !!(domTable && !readOnly && domTable.getAttribute('data-ob-readonly') === '0');
+      const domWritable = !!(domTable && domTable.getAttribute('data-ob-readonly') === '0');
       const focused = domTable && document.activeElement && domTable.contains(document.activeElement);
       const focusedRow = focused && document.activeElement.closest ? document.activeElement.closest('tr') : null;
       const restoreRow = focusedRow || (domTable && domTable._obCurrentRow && domTable.contains(domTable._obCurrentRow) ? domTable._obCurrentRow : null);
@@ -1039,8 +1039,7 @@ function obManagedInitDelegates() {
   });
 
   function obManagedNormalizeHotkey(value) {
-    var key = String(value || '').trim().toUpperCase();
-    if (key === 'F2' || key === 'F4' || key === 'F7' || key === 'F8' || key === 'F9' || key === 'F10') return key;
+    if (typeof window.obNormalizeFormHotkey === 'function') return window.obNormalizeFormHotkey(value);
     return '';
   }
 
@@ -1056,18 +1055,14 @@ function obManagedInitDelegates() {
         document.getElementById('_ref-picker-modal') || document.getElementById('_item-picker-modal') ||
         document.getElementById('_ref-create-modal')) return;
     var form = document.getElementById('main-form');
+    if (!form || !document.contains(form)) return;
     var target = e.target;
-    if (form && target && target !== document.body && !form.contains(target)) return;
-    var root = form || document;
-    var buttons = root.querySelectorAll('[data-ob-hotkey]');
-    for (var i = 0; i < buttons.length; i++) {
-      var btn = buttons[i];
-      if (obManagedNormalizeHotkey(btn.getAttribute('data-ob-hotkey')) !== hotkey) continue;
-      if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') continue;
-      e.preventDefault();
-      btn.click();
-      return;
-    }
+    if (target && target !== document.body && !form.contains(target)) return;
+    var btn = typeof window.obResolveActionableFormHotkey === 'function'
+      ? window.obResolveActionableFormHotkey(hotkey) : null;
+    if (!btn) return;
+    e.preventDefault();
+    btn.click();
   });
 
   document.addEventListener('change', function (e) {
@@ -1974,13 +1969,8 @@ obManagedReady(obManagedInitDelegates);
   }
 
   function hasActionableFormHotkey(key) {
-    var buttons = document.querySelectorAll('[data-ob-hotkey]');
-    for (var i = 0; i < buttons.length; i++) {
-      var btn = buttons[i];
-      if (String(btn.getAttribute('data-ob-hotkey') || '').trim().toUpperCase() !== key) continue;
-      if (!btn.disabled && btn.getAttribute('aria-disabled') !== 'true') return true;
-    }
-    return false;
+    return typeof window.obResolveActionableFormHotkey === 'function' &&
+      !!window.obResolveActionableFormHotkey(key);
   }
 
   // Клавиши работы со строками — как в 1С. Delete живёт на самом гриде

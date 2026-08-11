@@ -3,11 +3,9 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
-	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -54,7 +52,7 @@ func readonlyTablePartFixture(t *testing.T, program string) (*Server, *metadata.
 	return srv, ent, tp
 }
 
-func renderReadonlyTablePartJSON(t *testing.T, ent *metadata.Entity, rows []map[string]any) string {
+func renderReadonlyTablePartHTML(t *testing.T, ent *metadata.Entity, rows []map[string]any) string {
 	t.Helper()
 	data := map[string]any{
 		"Entity":        ent,
@@ -76,15 +74,7 @@ func renderReadonlyTablePartJSON(t *testing.T, ent *metadata.Entity, rows []map[
 	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
 		t.Fatalf("render managed form: %v", err)
 	}
-	body := buf.String()
-	match := regexp.MustCompile(`name="tp_json\.Lines" value='([^']*)'`).FindStringSubmatch(body)
-	if len(match) != 2 {
-		t.Fatalf("readonly no_grid did not render canonical hidden tp_json.Lines:\n%s", body)
-	}
-	if regexp.MustCompile(`name="tp_json\.lines"`).MatchString(body) {
-		t.Fatal("table-part form key kept data_path case instead of metadata case")
-	}
-	return html.UnescapeString(match[1])
+	return buf.String()
 }
 
 func assertStoredTablePartName(t *testing.T, srv *Server, ent *metadata.Entity, tp metadata.TablePart, id uuid.UUID, want string) {
@@ -114,18 +104,17 @@ func onlyStoredID(t *testing.T, srv *Server, ent *metadata.Entity) uuid.UUID {
 	return id
 }
 
-func TestReadonlyNoGrid_BasedOnRowsRenderAndSurviveSave(t *testing.T) {
+func TestReadonlyNoGrid_DoesNotRenderOrTrustBrowserJSONMirror(t *testing.T) {
 	srv, ent, tp := readonlyTablePartFixture(t, `
 Процедура Run()
 КонецПроцедуры
 `)
-	payload := renderReadonlyTablePartJSON(t, ent, []map[string]any{{"Name": "based-on-row"}})
-	var decoded []map[string]any
-	if err := json.Unmarshal([]byte(payload), &decoded); err != nil || len(decoded) != 1 || decoded[0]["Name"] != "based-on-row" {
-		t.Fatalf("hidden JSON = %q, decoded=%#v, err=%v", payload, decoded, err)
+	rendered := renderReadonlyTablePartHTML(t, ent, []map[string]any{{"Name": "based-on-row"}})
+	if strings.Contains(rendered, `name="tp_json.Lines"`) || strings.Contains(rendered, `name="tp_json.lines"`) {
+		t.Fatal("readonly no_grid rendered an authoritative browser JSON mirror")
 	}
 
-	body := url.Values{"Name": {"new"}, "tp_json.Lines": {payload}}
+	body := url.Values{"Name": {"new"}, "tp_json.Lines": {`[{"Name":"forged"}]`}}
 	req := reqWithChi(http.MethodPost, "/ui/catalog/"+ent.Name+"/new", body,
 		map[string]string{"entity": ent.Name})
 	rec := httptest.NewRecorder()
@@ -133,10 +122,16 @@ func TestReadonlyNoGrid_BasedOnRowsRenderAndSurviveSave(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	assertStoredTablePartName(t, srv, ent, tp, onlyStoredID(t, srv, ent), "based-on-row")
+	rows, err := srv.store.GetTablePartRows(t.Context(), ent.Name, tp.Name, onlyStoredID(t, srv, ent), tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("forged readonly table rows were stored: %#v", rows)
+	}
 }
 
-func TestReadonlyNoGrid_NewEventRowsSurviveSave(t *testing.T) {
+func TestReadonlyNoGrid_NewEventRowsCannotBeReplayedAsBrowserState(t *testing.T) {
 	srv, ent, tp := readonlyTablePartFixture(t, `
 Процедура Run()
 	Row = Объект.Lines.Добавить();
@@ -166,10 +161,16 @@ func TestReadonlyNoGrid_NewEventRowsSurviveSave(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	assertStoredTablePartName(t, srv, ent, tp, onlyStoredID(t, srv, ent), "event-row")
+	rows, err := srv.store.GetTablePartRows(t.Context(), ent.Name, tp.Name, onlyStoredID(t, srv, ent), tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("replayed readonly event rows were stored: %#v", rows)
+	}
 }
 
-func TestReadonlyNoGrid_ExistingEventRowsSurviveSave(t *testing.T) {
+func TestReadonlyNoGrid_ExistingEventRowsCannotOverwritePersistedRows(t *testing.T) {
 	srv, ent, tp := readonlyTablePartFixture(t, `
 Процедура Run()
 	Объект.Lines.Очистить();
@@ -210,7 +211,7 @@ func TestReadonlyNoGrid_ExistingEventRowsSurviveSave(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	assertStoredTablePartName(t, srv, ent, tp, id, "event-updated")
+	assertStoredTablePartName(t, srv, ent, tp, id, "stored-before-event")
 }
 
 func TestParseTablePartRows_WritableDuplicateWinsReadonlyJSONMirror(t *testing.T) {
@@ -232,8 +233,8 @@ func TestParseTablePartRows_WritableDuplicateWinsReadonlyJSONMirror(t *testing.T
 	}
 }
 
-func TestManagedFormEvent_ValueTableNameCollisionDoesNotOverwriteEntityTablePart(t *testing.T) {
-	srv, ent, tp := readonlyTablePartFixture(t, `
+func TestManagedFormEvent_ValueTableNameCollisionFailsClosed(t *testing.T) {
+	srv, ent, _ := readonlyTablePartFixture(t, `
 Процедура Run()
 КонецПроцедуры
 `)
@@ -247,8 +248,7 @@ func TestManagedFormEvent_ValueTableNameCollisionDoesNotOverwriteEntityTablePart
 		"vt.lines.0.Note": {"form-table-row"},
 	}
 	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
-	rows := resp.TableParts[tp.Name]
-	if !resp.OK || len(rows) != 1 || rows[0]["Name"] != "entity-row" {
-		t.Fatalf("ValueTable collision overwrote entity TP: %#v", resp)
+	if resp.OK || !strings.Contains(strings.ToLower(resp.Error), "коллиз") || len(resp.TableParts) != 0 {
+		t.Fatalf("ValueTable collision did not fail closed: %#v", resp)
 	}
 }
