@@ -416,9 +416,33 @@ func isCompoundAssign(t token.Type) bool {
 	return false
 }
 
+// raiseKeywords — написания оператора «возбудить исключение». В 1С это оператор,
+// а не функция: скобки не обязательны («ВызватьИсключение ОписаниеОшибки;»).
+// Без разбора такая строка выглядела для парсера как два выражения подряд и
+// давала невнятное «выражение без эффекта», хотя это рабочий код.
+var raiseKeywords = map[string]bool{"вызватьисключение": true, "raise": true}
+
 // parseExprOrAssign disambiguates assignment vs expression statement.
 // "left = right;" is assignment only when left is a simple Ident, MemberExpr or IndexExpr.
 func (p *Parser) parseExprOrAssign() (ast.Stmt, error) {
+	// ВызватьИсключение [Выражение]; — форма без скобок.
+	if p.cur.Type == token.IDENT && raiseKeywords[strings.ToLower(p.cur.Literal)] &&
+		p.peek.Type != token.LPAREN && p.peek.Type != token.ASSIGN &&
+		!isCompoundAssign(p.peek.Type) && p.peek.Type != token.DOT && p.peek.Type != token.LBRACKET {
+		callee := &ast.Ident{Tok: p.cur}
+		p.advance()
+		call := &ast.CallExpr{Callee: callee}
+		if p.cur.Type != token.SEMICOLON && p.cur.Type != token.EOF {
+			arg, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			call.Args = append(call.Args, arg)
+		}
+		p.consumeSemi()
+		return &ast.ExprStmt{X: call}, nil
+	}
+
 	left, err := p.parseMathExpr()
 	if err != nil {
 		return nil, err
@@ -563,7 +587,7 @@ func (p *Parser) parseTerm() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	for p.cur.Type == token.STAR || p.cur.Type == token.SLASH {
+	for p.cur.Type == token.STAR || p.cur.Type == token.SLASH || p.cur.Type == token.PERCENT {
 		op := p.cur
 		p.advance()
 		right, err := p.parsePrimary()

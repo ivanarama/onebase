@@ -14,6 +14,52 @@ type MovementsCollector struct {
 	DocID   uuid.UUID
 	Period  *time.Time // auto-filled from document's first date field
 	pending map[string][]map[string]any
+	// persists — сбрасывает ли этот коллектор накопленное в базу. По умолчанию
+	// НЕТ, и это сознательно: коллектор подставляется в переменные DSL два
+	// десятка раз (регламентное задание, обработка, страница, отчёт, печатная
+	// форма, консоль, событие формы…), а сбрасывают его ровно пять путей записи
+	// и проведения документа. Раньше разница была невидимой — в остальных
+	// контекстах Движения.X.Добавить() выглядел рабочим и молча выбрасывал
+	// строки. Теперь опасное состояние надо запрашивать явно (WillPersist), и
+	// забытый вызов ломает запись громко, а не портит данные тихо.
+	persists bool
+}
+
+// WillPersist помечает коллектор как сбрасываемый в базу: вызывающий обязан
+// после исполнения хука записать mc.All() (saveMovements/writeMovements).
+// Возвращает сам коллектор — удобно в цепочке при создании.
+func (mc *MovementsCollector) WillPersist() *MovementsCollector {
+	mc.persists = true
+	return mc
+}
+
+// Persists сообщает, будет ли накопленное записано. Для проверок вызывающих.
+func (mc *MovementsCollector) Persists() bool { return mc.persists }
+
+// contextLabels — человекочитаемые имена контекстов, в которых коллектор
+// заведомо ничего не пишет. Ключи совпадают с DocType на местах создания.
+var contextLabels = map[string]string{
+	"scheduler": "регламентное задание",
+	"processor": "обработка",
+	"report":    "отчёт",
+	"page":      "страница",
+	"console":   "консоль кода",
+	"intake":    "приём сообщений",
+	"service":   "HTTP-сервис",
+}
+
+// DiscardMessage — текст отказа при попытке накопить движения там, где их
+// некому записать. Называет и причину, и куда переносить код. Печатает его
+// dslvars: сам runtime прикладных ошибок не возбуждает (иначе пришлось бы
+// импортировать интерпретатор, а его тесты уже импортируют runtime).
+func (mc *MovementsCollector) DiscardMessage(register string) string {
+	where := contextLabels[mc.DocType]
+	if where == "" {
+		where = "текущий контекст: " + mc.DocType
+	}
+	return "Движения." + register + ".Добавить(): здесь движения сохранять некуда — " +
+		"они принадлежат документу-регистратору и записываются только при его записи или проведении (" + where + "). " +
+		"Перенесите формирование движений в ОбработкаПроведения документа."
 }
 
 func NewMovementsCollector(docType string, docID uuid.UUID) *MovementsCollector {

@@ -143,16 +143,17 @@ func TestPageList_ActionsButtonStartsInactive(t *testing.T) {
 
 // TestListRuntime_SelectionIsValidatedAgainstDOM — выделение строки живёт в
 // переменной ui.js, а живой список (план 87) заменяет строки контейнера целиком.
-// Отцепленный от документа узел выглядит как «ничего не выбрано» (подсветки
-// нет), но переменная остаётся непустой — команды и клавиша Delete сработали бы
-// по записи, которую пользователь не выбирал и не видит. Поэтому источник
-// правды один: listSel() со сверкой document.contains.
+// Отцепленный от документа или скрытый свёрнутым деревом узел выглядит как
+// «ничего не выбрано» (подсветки нет), но переменная остаётся непустой — команды
+// и Delete сработали бы по записи, которую пользователь не выбирал и не видит.
+// Поэтому источник правды один: listSel() со сверкой DOM и видимости.
 func TestListRuntime_SelectionIsValidatedAgainstDOM(t *testing.T) {
 	js := string(uiJS)
 
 	for _, want := range []string{
 		"function listSel()",
-		"if (_listSel && !document.contains(_listSel)) _listSel = null;",
+		"if (_listSel && (!document.contains(_listSel) || !obElementVisible(_listSel)))",
+		"function obElementVisible(",
 		"function listSetSel(",
 		"function listSyncActionsBtn(",
 		"function listRestoreSel(",
@@ -166,8 +167,8 @@ func TestListRuntime_SelectionIsValidatedAgainstDOM(t *testing.T) {
 	// Клавиша Delete и меню обязаны спрашивать выделение у listSel(), а не
 	// читать переменную: чтение напрямую — это ровно тот путь, который бьёт по
 	// отцепленной строке.
-	if !strings.Contains(js, "if (e.key === 'Delete' && sel && obListConfig().canDelete)") {
-		t.Error("обработчик Delete не сверяет выделение через listSel()")
+	if !strings.Contains(js, "var sel = obListCurrentRow();") || !strings.Contains(js, "if (!obListCanMarkDelete(sel)) return;") {
+		t.Error("обработчик Delete не сверяет текущую видимую строку через fail-closed guard")
 	}
 	if strings.Contains(js, "e.key === 'Delete' && _listSel") {
 		t.Error("обработчик Delete по-прежнему читает _listSel напрямую (сработает по отцепленной строке)")
@@ -177,10 +178,11 @@ func TestListRuntime_SelectionIsValidatedAgainstDOM(t *testing.T) {
 	}
 
 	// Живое обновление списка не должно молча съедать выбор пользователя.
-	if !strings.Contains(js, "listRestoreSel(selKey, cur)") {
+	if !strings.Contains(js, "listRestoreSel(selKey, cur, { focus: restoreFocus })") ||
+		!strings.Contains(js, "obReplaceLiveListContents(cur, fresh)") {
 		t.Error("после живого обновления списка выделение не восстанавливается")
 	}
-	if !strings.Contains(js, "var selMine = cur.contains(listSel());") {
+	if !strings.Contains(js, "var selMine = !!(selected && cur.contains(selected));") {
 		t.Error("живое обновление трогает выделение, не проверив, что оно принадлежит этому списку")
 	}
 }

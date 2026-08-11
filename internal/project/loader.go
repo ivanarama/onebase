@@ -537,6 +537,11 @@ func (p *Project) loadProcessorForms() error {
 		if err != nil {
 			return fmt.Errorf("load managed forms for processor %s: %w", proc.Name, err)
 		}
+		for _, form := range managed {
+			if _, err := metadata.FormTableDefinitions(form, proc.TableParts); err != nil {
+				return fmt.Errorf("validate managed form %s for processor %s: %w", form.Name, proc.Name, err)
+			}
+		}
 		proc.Forms = managed
 	}
 	return nil
@@ -847,6 +852,11 @@ func (p *Project) loadFormModules() error {
 		managed, err := managedLoader.LoadEntityForms(p.Dir, ent.Name)
 		if err != nil {
 			return fmt.Errorf("load managed forms for %s: %w", ent.Name, err)
+		}
+		for _, form := range managed {
+			if _, err := metadata.FormTableDefinitions(form, ent.TableParts); err != nil {
+				return fmt.Errorf("validate managed form %s for %s: %w", form.Name, ent.Name, err)
+			}
 		}
 
 		// 2. Авто-формы (legacy): src/<entity>*.form.os.

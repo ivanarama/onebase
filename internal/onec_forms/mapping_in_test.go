@@ -165,6 +165,25 @@ func TestNormalizeForImport_RealFile(t *testing.T) {
 	}
 }
 
+// HTMLDocumentField: показать готовый HTML платформа не умеет, но содержимое —
+// разметка, и её правят как код. Теряться такое поле не должно.
+func TestNormalize_HTMLDocumentFieldСтановитсяПолемКода(t *testing.T) {
+	el := &IRElement{Kind: "HTMLDocumentField", Name: "Просмотр"}
+	var warns Warnings
+	normalizeElement(el, &warns)
+	if el.Kind != "ПолеКода" {
+		t.Errorf("вид = %q, ожидалось ПолеКода", el.Kind)
+	}
+	if el.Language != "html" {
+		t.Errorf("язык = %q, ожидался html", el.Language)
+	}
+	for _, w := range warns {
+		if w.Code == W010_UnknownElement {
+			t.Errorf("HTMLDocumentField ошибочно признан неизвестным элементом: %+v", w)
+		}
+	}
+}
+
 // Реальные выгрузки 1С пишут <LabelDecoration>, а не <Decoration>: до
 // исправления такой элемент оставался с неизвестным видом и ронял check.
 func TestNormalize_LabelDecorationСтановитсяНадписью(t *testing.T) {

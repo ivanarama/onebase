@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -49,6 +50,10 @@ type Result struct {
 	// обойти masking через `Телефон КАК Контакт` или функцию над полем.
 	// Значение "*" означает wildcard-проекцию.
 	ProjectionFields []string
+	// BoolColumns — имена колонок результата (в нижнем регистре), читающих
+	// булево поле. Потребитель приводит их значения к булеву типу: из БД они
+	// приходят по-разному (PostgreSQL — bool, SQLite — int64), см. #704.
+	BoolColumns []string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -85,7 +90,146 @@ func sourcePermKind(typeUpper string) string {
 
 // Compile translates a 1C-style query to PostgreSQL SQL.
 func Compile(src string, opts CompileOpts) (Result, error) {
-	return translate(tokenize(src), opts)
+	tokens, limit, hasLimit, err := extractFirstN(tokenize(src))
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := translate(tokens, opts)
+	if err != nil || !hasLimit {
+		return res, err
+	}
+	// Для простого внешнего SELECT LIMIT можно безопасно дописать к готовому SQL:
+	// он окажется после WHERE/GROUP/HAVING/ORDER BY. Составные запросы выше
+	// отклоняются: ПЕРВЫЕ относится к отдельной ветви ОБЪЕДИНИТЬ, а глобальный
+	// LIMIT молча изменил бы результат.
+	res.SQL += " LIMIT " + strconv.FormatInt(limit, 10)
+	return res, nil
+}
+
+// extractFirstN вырезает «ВЫБРАТЬ ПЕРВЫЕ N» (1С) / «SELECT TOP N» и возвращает N.
+// Ограничение количества строк — часть языка запросов 1С, и переносимые оттуда
+// модули пишут его постоянно; без разбора такой запрос доходил до СУБД как
+// «SELECT ПЕРВЫЕ 10 …» и падал с синтаксической ошибкой SQL.
+//
+// РАЗЛИЧНЫЕ и ПЕРВЫЕ сочетаются в любом порядке — как и в 1С.
+func extractFirstN(tokens []tok) ([]tok, int64, bool, error) {
+	limitIndex := -1
+	var limit int64
+	depth := 0
+	topLevelUnion := false
+
+	for selectIndex := 0; selectIndex < len(tokens); selectIndex++ {
+		t := tokens[selectIndex]
+		switch t.kind {
+		case tLParen:
+			depth++
+			continue
+		case tRParen:
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if t.kind != tIdent {
+			continue
+		}
+		kw, isKeyword := sqlKW(t.val)
+		if isKeyword && kw == "UNION" && depth == 0 {
+			topLevelUnion = true
+			continue
+		}
+		if !isKeyword || kw != "SELECT" {
+			continue
+		}
+
+		wordIndex := firstModifierIndex(tokens, selectIndex)
+		if wordIndex < 0 {
+			continue
+		}
+		if wordIndex+1 >= len(tokens) || tokens[wordIndex+1].kind != tNum {
+			if firstLooksLikeBareField(tokens, wordIndex) {
+				continue
+			}
+			return nil, 0, false, i18nerr.Errorf(
+				"%s требует неотрицательное целое число записей", tokens[wordIndex].val,
+			)
+		}
+
+		// Ноль допустим: в 1С «ПЕРВЫЕ 0» — валидный запрос, возвращающий пустой
+		// результат, и `LIMIT 0` так же понимают оба наших диалекта. Текст
+		// запроса часто собирают конкатенацией с переменным размером порции, и
+		// на нулевой порции перенесённый код падал бы ошибкой компиляции — в
+		// проде и не сразу. Отрицательное по-прежнему ошибка, как и в 1С.
+		n, parseErr := strconv.ParseInt(tokens[wordIndex+1].val, 10, 64)
+		if parseErr != nil || n < 0 {
+			return nil, 0, false, i18nerr.Errorf(
+				"%s требует неотрицательное целое число записей, получено %q",
+				tokens[wordIndex].val, tokens[wordIndex+1].val,
+			)
+		}
+		if selectIndex != 0 || depth != 0 || limitIndex >= 0 {
+			return nil, 0, false, i18nerr.Errorf(
+				"%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается",
+				tokens[wordIndex].val,
+			)
+		}
+		limitIndex = wordIndex
+		limit = n
+	}
+
+	if limitIndex < 0 {
+		return tokens, 0, false, nil
+	}
+	if topLevelUnion {
+		return nil, 0, false, i18nerr.Errorf(
+			"ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви",
+		)
+	}
+	out := make([]tok, 0, len(tokens)-2)
+	out = append(out, tokens[:limitIndex]...)
+	out = append(out, tokens[limitIndex+2:]...)
+	return out, limit, true, nil
+}
+
+func firstModifierIndex(tokens []tok, selectIndex int) int {
+	i := selectIndex + 1
+	for i < len(tokens) && tokens[i].kind == tIdent {
+		if kw, ok := sqlKW(tokens[i].val); ok && (kw == "DISTINCT" || kw == "ALL") {
+			i++
+			continue
+		}
+		break
+	}
+	if i >= len(tokens) || tokens[i].kind != tIdent {
+		return -1
+	}
+	word := strings.ToUpper(tokens[i].val)
+	if word != "ПЕРВЫЕ" && word != "TOP" {
+		return -1
+	}
+	return i
+}
+
+// Первые/Top остаётся допустимым именем поля или функции. Ошибкой считаем
+// только форму, похожую на модификатор с потерянным/неверным количеством.
+func firstLooksLikeBareField(tokens []tok, wordIndex int) bool {
+	if wordIndex+1 >= len(tokens) {
+		return true
+	}
+	next := tokens[wordIndex+1]
+	switch next.kind {
+	case tEOF, tComma, tDot, tLParen, tRParen:
+		return true
+	case tIdent:
+		kw, ok := sqlKW(next.val)
+		return ok && (kw == "FROM" || kw == "AS")
+	case tOp:
+		// «ПЕРВЫЕ -1»/«TOP +1» — почти наверняка неверный лимит. Для поля
+		// с таким именем арифметика остаётся доступна через квалификатор Т.Первые.
+		return next.val != "+" && next.val != "-"
+	default:
+		return false
+	}
 }
 
 // --- tokenizer ---
@@ -352,6 +496,7 @@ var kwMap = map[string]string{
 	"УПОРЯДОЧИТЬ":   "ORDER",
 	"ПО":            "ON", // standalone ПО without СГРУППИРОВАТЬ/УПОРЯДОЧИТЬ is always JOIN ON
 	"ИМЕЯ":          "HAVING",
+	"ИМЕЮЩИЕ":       "HAVING", // синоним 1С — конфигурации оттуда пишут именно так
 	"КАК":           "AS",
 	"И":             "AND",
 	"ИЛИ":           "OR",
@@ -827,12 +972,59 @@ func (tr *translator) emit(s string) {
 
 // dropSourceQualifier снимает последние «<источник> .» из вывода. Возвращает
 // false, если картина иная, — тогда вызывающий не меняет поведение.
+//
+// Снимаем ТОЛЬКО настоящий квалификатор источника: имя или алиас из scope'а
+// текущего SELECT, и притом ушедший в SQL дословно. Без этой проверки под нож
+// шёл любой идентификатор перед ссылочным полем — `Чужой.Профиль.Наименование`
+// молча превращался бы в поле присоединённого справочника, то есть неверный
+// запрос отвечал бы данными вместо отказа. Тихо подменённый результат хуже
+// ошибки: ошибку видно сразу, подмену — на сверке отчётов через месяц.
 func (tr *translator) dropSourceQualifier() bool {
-	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." {
+	if tr.pos < 3 || tr.tokens[tr.pos-3].kind != tIdent {
+		return false
+	}
+	qualifier := strings.ToLower(tr.tokens[tr.pos-3].val)
+	scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1)
+	if !ok {
+		return false
+	}
+	if _, known := scope.qualifiers[qualifier]; !known {
+		return false
+	}
+	// Сверяемся с уже эмитнутым: квалификатор мог уйти в SQL не дословно
+	// (CAST у числовой колонки, префикс основной таблицы) — тогда две
+	// последние части не «<источник> .», и срезать их нельзя.
+	if len(tr.parts) < 2 || tr.parts[len(tr.parts)-1] != "." || tr.parts[len(tr.parts)-2] != qualifier {
 		return false
 	}
 	tr.parts = tr.parts[:len(tr.parts)-2]
 	return true
+}
+
+// assertSingleHopNavigation отклоняет путь глубже одного перехода по ссылке
+// (`А.Б.В.Наименование`). Авто-JOIN строится только для ссылочных полей самого
+// источника, поэтому второй переход уходит в SQL дословно и падает
+// `no such column` — именем колонки, которой в схеме нет и быть не может.
+// Ошибка уровня языка запросов честнее: она называет и предел, и обход (#705).
+func (tr *translator) assertSingleHopNavigation(rd *refDimInfo) error {
+	if tr.peek(1).kind != tIdent || tr.peek(2).kind != tDot {
+		return nil
+	}
+	tail := "…"
+	if t := tr.peek(3); t.kind == tIdent {
+		tail = t.val
+	}
+	// Имя поля берём из исходного текста запроса, а не из метаданных: путь в
+	// сообщении должен читаться так же, как написан.
+	field := rd.fieldName
+	if tr.pos >= 1 && tr.tokens[tr.pos-1].kind == tIdent {
+		field = tr.tokens[tr.pos-1].val
+	}
+	// Ключ — одним литералом: i18ncheck собирает ключи из исходника и склейку
+	// через + видит только первым куском.
+	return i18nerr.Errorf(
+		"навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет; выбери ссылку целиком (%s) либо соедини %s явно через СОЕДИНЕНИЕ",
+		field, tr.peek(1).val, field, tr.peek(1).val, tail, field, rd.refEntity)
 }
 
 func (tr *translator) build() string {
@@ -3653,6 +3845,21 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					prevAlias = !prevDot
 				}
 			}
+			// Булевы литералы Истина/Ложь. Без этой ветки они уезжали в SQL как
+			// имена колонок, и естественный отбор `ГДЕ Активен = Истина` падал
+			// «no such column: истина» (issue #704). Слово остаётся именем там,
+			// где оно синтаксически имя: после точки (Т.Истина), в позиции алиаса
+			// (КАК Истина), в ссылке на уже объявленный алиас вывода
+			// (... КАК Истина ... УПОРЯДОЧИТЬ ПО Истина) и при одноимённом поле
+			// источника.
+			_, ownField := tr.colTypes[lower]
+			_, isAlias := tr.aliases[lower]
+			if !prevDot && !prevAlias && !nextIsDot && !ownField && !isAlias {
+				if lit, ok := boolLiteralSQL(lower, dialectName(tr.opts.Dialect)); ok {
+					tr.emit(lit)
+					continue
+				}
+			}
 			// Ссылка / Reference → id (virtual primary-key field, like 1C).
 			// Работает и после точки (Н.Ссылка → н.id), и без алиаса
 			// (ВЫБРАТЬ Ссылка ИЗ Справочник.X → SELECT id FROM x).
@@ -3746,6 +3953,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
+						if err := tr.assertSingleHopNavigation(rd); err != nil {
+							return Result{}, err
+						}
 						tr.emit(rd.joinAlias)
 					} else {
 						switch tr.section {
@@ -3776,6 +3986,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						// реквизит берётся из псевдонима присоединённой таблицы,
 						// а не из колонки-идентификатора.
 						if nextIsDot && tr.dropSourceQualifier() {
+							if err := tr.assertSingleHopNavigation(rd); err != nil {
+								return Result{}, err
+							}
 							tr.emit(rd.joinAlias)
 						} else {
 							tr.emit(rd.idCol)
@@ -3807,7 +4020,57 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		Sources:          tr.sources,
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
+		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
 	}, nil
+}
+
+// boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны
+// потребителю: булево доезжает из БД в разных Go-типах (PostgreSQL — bool,
+// SQLite — int64 из INTEGER), и без приведения одно и то же поле ведёт себя в
+// прикладном коде по-разному (issue #704).
+//
+// Разбираются только простые ссылки на поле в одном SELECT: у выражений,
+// агрегатов и ОБЪЕДИНИТЬ соответствие «колонка ↔ поле» неоднозначно, и молча
+// приводить их значения нельзя.
+func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType) []string {
+	if !p.Simple {
+		return nil
+	}
+	var cols []string
+	for _, c := range p.Columns {
+		if c.Star || c.Output == "" || len(c.Fields) != 1 {
+			continue
+		}
+		if colTypes[strings.ToLower(c.Fields[0])] == metadata.FieldTypeBool {
+			cols = append(cols, c.Output)
+		}
+	}
+	return cols
+}
+
+// boolLiteralSQL переводит булев литерал текста запроса в литерал диалекта.
+// SQLite хранит булево в INTEGER 0/1 (SQLiteDialect.TypeBool), и литералы там
+// пишутся числами — так же, как в DDL (boolTrueLit/boolFalseLit в storage).
+func boolLiteralSQL(lower, dialect string) (string, bool) {
+	var val bool
+	switch lower {
+	case "истина", "true":
+		val = true
+	case "ложь", "false":
+		val = false
+	default:
+		return "", false
+	}
+	switch {
+	case dialect == "sqlite" && val:
+		return "1", true
+	case dialect == "sqlite":
+		return "0", true
+	case val:
+		return "TRUE", true
+	default:
+		return "FALSE", true
+	}
 }
 
 // dialectName возвращает строковое имя диалекта SQL для opts.Dialect; nil → "pg"
@@ -3854,6 +4117,11 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		"round": rw("ROUND(", ")"),
 		"абс":   rw("ABS(", ")"),
 		"abs":   rw("ABS(", ")"),
+		// ЕстьNULL(Значение, ЗначениеЕслиNULL) — подстановка вместо NULL.
+		// COALESCE есть в обоих диалектах с той же семантикой.
+		"естьnull": rw("COALESCE(", ")"),
+		"isnull":   rw("COALESCE(", ")"),
+		"coalesce": rw("COALESCE(", ")"),
 	}
 	switch dialect {
 	case "sqlite":

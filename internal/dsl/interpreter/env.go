@@ -47,10 +47,17 @@ func (m *MapThis) Set(name string, v any) {
 type execCtx struct {
 	curFile      string // last executed statement location (for error reporting)
 	curLine      int
+	evalDepth    int       // текущая глубина вложенных Вычислить/Eval
 	debug        DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
 	deadline     time.Time // wall-clock запуска; zero = без лимита
 	maxLoopIters int       // потолок итераций цикла; 0 = maxWhileIter
 	moduleEnvs   map[string]*env
+	// sandboxVars — неизменяемый overlay запретов одного sandbox-запуска.
+	// Он отделён от пользовательских vars, поэтому присваивание, Перем,
+	// module vars и временная публикация builtins не могут переоткрыть известное
+	// capability-имя. Карта создаётся один раз в applySandboxVars и далее только
+	// читается всеми кадрами, разделяющими execCtx.
+	sandboxVars map[string]any
 }
 
 // loopLimit — действующий потолок итераций цикла для запуска.
@@ -77,6 +84,10 @@ type env struct {
 	moduleVars map[string]bool
 	this       This
 	ec         *execCtx
+	// sourceFile — identity текущего модуля. В отличие от ec.curFile она
+	// лексически привязана к кадру процедуры и не меняется при вычислении
+	// аргументов или динамического выражения Вычислить.
+	sourceFile string
 	// depth — глубина вызова процедур/функций (корень = 1). Растёт на каждый
 	// callUserProc; используется стражем рекурсии (см. limits.go). O(1) и
 	// потокобезопасно: счётчик живёт в цепочке env конкретного запуска.
@@ -94,7 +105,16 @@ func (e *env) frameWithModule(parent, module *env, depth int) *env {
 	if root == nil {
 		root = e
 	}
-	return &env{vars: make(map[string]any), parent: parent, root: root, module: module, this: e.this, ec: e.ec, depth: depth}
+	return &env{
+		vars:       make(map[string]any),
+		parent:     parent,
+		root:       root,
+		module:     module,
+		this:       e.this,
+		ec:         e.ec,
+		sourceFile: e.sourceFile,
+		depth:      depth,
+	}
 }
 
 func (e *env) rootEnv() *env {
@@ -108,6 +128,11 @@ func (e *env) get(name string) (any, bool) {
 	low := strings.ToLower(name)
 	if low == "this" || low == "этотобъект" {
 		return e.this, true
+	}
+	if e.ec != nil && e.ec.sandboxVars != nil {
+		if v, ok := e.ec.sandboxVars[low]; ok {
+			return v, true
+		}
 	}
 	name = low
 	if v, ok := e.vars[name]; ok {

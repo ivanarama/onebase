@@ -434,7 +434,7 @@ func TestCallcenterApproval_SubmitAndApprove(t *testing.T) {
 		t.Fatalf("create request: %s", request.DSLError)
 	}
 
-	vars := f.server.buildDSLVars(f.ctx, nil)
+	vars, _ := f.server.buildDSLVarsTx(f.ctx, nil)
 	requestRef := f.documentRef(vars, "Заявка", request.ID)
 	taskValue, err := f.callApproval(vars, "ОтправитьНаСогласование", requestRef, "operator", "supervisor")
 	if err != nil {
@@ -487,7 +487,7 @@ func TestCallcenterApproval_EnforcesSeparationOfDuties(t *testing.T) {
 		t.Fatalf("create request: %s", request.DSLError)
 	}
 
-	vars := f.server.buildDSLVars(f.ctx, nil)
+	vars, _ := f.server.buildDSLVarsTx(f.ctx, nil)
 	requestRef := f.documentRef(vars, "Заявка", request.ID)
 	if _, err := f.callApproval(vars, "ОтправитьНаСогласование", requestRef, "operator", "operator"); err == nil ||
 		!strings.Contains(err.Error(), "собственную заявку") {
@@ -525,7 +525,7 @@ func TestCallcenterApproval_RejectCreatesReworkTask(t *testing.T) {
 		t.Fatalf("create request: %s", request.DSLError)
 	}
 
-	vars := f.server.buildDSLVars(f.ctx, nil)
+	vars, _ := f.server.buildDSLVarsTx(f.ctx, nil)
 	requestRef := f.documentRef(vars, "Заявка", request.ID)
 	taskValue, err := f.callApproval(vars, "ОтправитьНаСогласование", requestRef, "operator", "supervisor")
 	if err != nil {
@@ -589,7 +589,7 @@ func TestCallcenterApproval_TaskAndRequestRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vars := f.server.buildDSLVars(f.ctx, nil)
+	vars, _ := f.server.buildDSLVarsTx(f.ctx, nil)
 	taskRef := f.documentRef(vars, "Задача", taskID)
 	if _, err := f.callApproval(vars, "ВыполнитьЗадачу", taskRef, "supervisor", "Утверждено", "ok"); err == nil || !strings.Contains(err.Error(), "REQ-STREET") {
 		t.Fatalf("expected request validation error, got %v", err)

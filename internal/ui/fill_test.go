@@ -100,7 +100,7 @@ func TestFill_OnFillHook_CopiesFieldsAndTablePart(t *testing.T) {
 	interp.LookupProc = registry.GetModuleProc
 	svc := &entityservice.Service{
 		Store: db, Reg: registry, Interp: interp,
-		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+		MakeThis: func(ctx context.Context, _ interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
 			return &formObjectThis{obj: obj, entity: e}
 		},
 	}

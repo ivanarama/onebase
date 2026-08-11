@@ -16,7 +16,7 @@ package ui
 // Иначе работает старая авто-форма (tplForm) — backward-compat.
 const tplManagedForm = `
 {{define "managed-element"}}
-{{$el := .El}}{{$ctx := .Ctx}}
+{{$el := .El}}{{$ctx := .Ctx}}{{$ro := effectiveFormElementReadOnly $ctx.Form $el}}
 {{if eq (str $el.Kind) "ГруппаФормы"}}
   <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
@@ -52,6 +52,19 @@ const tplManagedForm = `
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
   </fieldset>
+{{else if eq (str $el.Kind) "ПолеКода"}}
+  {{$fn := dpField $el.DataPath}}
+  {{$hChg := hasHandler $el "ПриИзменении"}}
+  {{/* textarea — рабочее поле формы: без JS редактирование остаётся возможным
+       (прогрессивное улучшение, как у richtext/Quill). Редактор монтируется на
+       соседний .code-editor и синхронизирует текст обратно в textarea. */}}
+  <div class="form-group">
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
+    <textarea name="{{$fn}}" autocomplete="off" class="code-field" rows="12" spellcheck="false"
+      style="width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px"
+      {{if $el.AccessKey}}accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
+    {{if not $ro}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid #e2e8f0;border-radius:8px"></div>{{end}}
+  </div>
 {{else if eq (str $el.Kind) "ПолеВвода"}}
   {{$fn := dpField $el.DataPath}}
   {{$f := fieldByName $ctx.Entity $fn}}
@@ -61,8 +74,8 @@ const tplManagedForm = `
     {{if $f}}
       {{if isRef (str $f.Type)}}
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $f.InlineCreateEnabled false}} data-ref-allow-create="1"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-            <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
+          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $f.InlineCreateEnabled false}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+            <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
@@ -72,7 +85,7 @@ const tplManagedForm = `
                «Открыть карточку» остаётся и остаётся РАБОЧЕЙ: посмотреть связанный
                объект — не редактирование, и на readonly-поле это как раз то, что
                нужно (открыть звонок, клиента, документ-основание). */}}
-          {{if not $el.ReadOnly}}
+          {{if not $ro}}
           <button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{end}}
           {{/* Открывать нечего, пока значение не выбрано — на пустом поле кнопка
@@ -82,27 +95,27 @@ const tplManagedForm = `
           {{end}}
         </div>
       {{else if isEnum (str $f.Type)}}
-        <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-          <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
+        <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
           {{range index $ctx.EnumOptions $fn}}
           <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
           {{end}}
         </select>
       {{else if eq (str $f.Type) "date"}}
-        <input type="datetime-local" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="datetime-local" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else if eq (str $f.Type) "bool"}}
-        <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
           <option value="false" {{if eq (index $ctx.Values $fn) "false"}}selected{{end}}>Нет</option>
           <option value="true" {{if eq (index $ctx.Values $fn) "true"}}selected{{end}}>Да</option>
         </select>
       {{else if eq (str $f.Type) "number"}}
-        <input type="text" autocomplete="off" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $ctx.Values $fn}}" title="Введите число; десятичный разделитель — запятая или точка"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="text" autocomplete="off" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $ctx.Values $fn}}" title="Введите число; десятичный разделитель — запятая или точка"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else if isRichText (str $f.Type)}}
         {{/* textarea — скрытое form-backing поле; Quill (этап 2) монтируется на
              .richtext-editor и синхронизирует HTML обратно перед submit. Без JS
              textarea остаётся рабочим (прогрессивное улучшение). */}}
-        <textarea name="{{$fn}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>{{index $ctx.Values $fn}}</textarea>
-        {{if not $el.ReadOnly}}<div class="richtext-editor"></div>{{end}}
+        <textarea name="{{$fn}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>{{index $ctx.Values $fn}}</textarea>
+        {{if not $ro}}<div class="richtext-editor"></div>{{end}}
       {{else if isImage (str $f.Type)}}
         {{/* Поле-картинка (image): скрытый input хранит ссылку (UUID), превью +
              загрузка/очистка — зеркало автоген-формы (templates.go, ветка isImage).
@@ -113,7 +126,7 @@ const tplManagedForm = `
         <div class="img-field">
           <input type="hidden" name="{{$fn}}" value="{{$iv}}">
           <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
-          {{if not $el.ReadOnly}}
+          {{if not $ro}}
           <div class="img-actions">
             <label class="btn btn-sm btn-secondary">{{t $ctx.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $ctx.Entity.Kind)}}/{{lower $ctx.Entity.Name}}/_image"></label>
             <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $ctx.Lang "Очистить"}}</button>
@@ -122,23 +135,27 @@ const tplManagedForm = `
         </div>
       {{else if eq (str $el.Type) "file"}}
         <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}>
-          <textarea name="_fc_{{$fn}}" id="file-content-{{$fn}}" style="display:none"></textarea>
+          <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
+          {{if not $ro}}
+          <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$fn}}" data-ob-file-content-for="{{$fn}}" style="display:none"></textarea>
           <input type="file" id="file-pick-{{$fn}}" style="display:none" data-ob-file-pick-path="file-path-{{$fn}}" data-ob-file-pick-content="file-content-{{$fn}}">
           <button type="button" data-ob-file-trigger="file-pick-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
+          {{end}}
         </div>
       {{else if $el.Multiline}}
-        <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
+        <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
       {{else}}
-        <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
     {{else if eq (str $el.Type) "file"}}
       {{/* Поле не найдено в Entity, но элемент объявлен как file */}}
       <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}>
-        <textarea name="_fc_{{$fn}}" id="file-content-{{$fn}}" style="display:none"></textarea>
+        <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
+        {{if not $ro}}
+        <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$fn}}" data-ob-file-content-for="{{$fn}}" style="display:none"></textarea>
         <input type="file" id="file-pick-{{$fn}}" style="display:none" data-ob-file-pick-path="file-path-{{$fn}}" data-ob-file-pick-content="file-content-{{$fn}}">
         <button type="button" data-ob-file-trigger="file-pick-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
+        {{end}}
       </div>
     {{else}}
       {{$attr := attrByName $ctx.Form $fn}}
@@ -152,25 +169,25 @@ const tplManagedForm = `
              пустой select, теряющий текущее значение при записи. Нет опций —
              остаётся прежний текстовый ввод со значением. */}}
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-            <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
+          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+            <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
-          <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $el.ReadOnly}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
+          <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
         </div>
       {{else if $attr}}
         {{/* Объявленный скалярный реквизит формы — обычное поле ввода. Жёлтая
              подсветка ниже адресована ОПЕЧАТКЕ в data_path; штатный реквизит
              формы работает полноценно (обработчик читает его голым именем и как
              Объект.<Реквизит>), и предупреждать о нём не о чем. */}}
-        <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else}}
         {{/* Ни поля сущности, ни реквизита формы с таким именем — почти всегда
              опечатка в data_path: подсвечиваем, чтобы это не осталось незамеченным. */}}
-        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" style="background:#fef9c3"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
-          title="Реквизит формы '{{$el.DataPath}}' не найден среди полей сущности"{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" style="background:#fef9c3"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}
+          title="Реквизит формы '{{$el.DataPath}}' не найден среди полей сущности"{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
     {{end}}
     {{if $el.Hint}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
@@ -184,8 +201,8 @@ const tplManagedForm = `
   {{$hChg := hasHandler $el "ПриИзменении"}}
   <div class="form-group">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
-    <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if hasHandler $el "НачалоВыбора"}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-      <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
+    <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and (not $ro) (hasHandler $el "НачалоВыбора")}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+      <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
       {{range index $ctx.ChoiceOptions $el.Name}}
       <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
       {{end}}
@@ -199,8 +216,9 @@ const tplManagedForm = `
     {{/* ПриИзменении у флажка работает так же, как у остальных полей: без
          data-ob-fire-change обработчик «поставил галку → выполнилось действие»
          молча не вызывался. */}}
+    {{if not $ro}}<input type="hidden" name="{{if $ctx.IsProcessor}}{{processorParamPresenceName $ctx.Processor $fn}}{{else}}_ob_present_{{$fn}}{{end}}" value="1">{{end}}
     <input type="checkbox" id="cb-{{$fn}}" name="{{$fn}}" value="true"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
-      {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+      {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}</label>
   </div>
 {{else if eq (str $el.Kind) "Надпись"}}
@@ -208,7 +226,9 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
-  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.HotKey}} data-ob-hotkey="{{$el.HotKey}}" aria-keyshortcuts="{{$el.HotKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if hasHandler $el "Нажатие"}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  {{$clickAction := or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el))}}
+  {{$hotKey := ""}}{{if and (not $ro) $clickAction}}{{$hotKey = normalizedFormHotkey $el.HotKey}}{{end}}
+  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
@@ -222,19 +242,23 @@ const tplManagedForm = `
        с парсером parseTablePartRows: "tp.<TPName>.<idx>.<field>". obFire-JS
        перерисовывает tbody#mtp-body-<TPName> при изменении tableparts.
        Ссылочные колонки — select с TPRefOptions, иначе UUID без имени. */}}
-  {{$tpName := dpField $el.DataPath}}
+  {{$tpName := canonicalFormTableName $ctx.Form $ctx.Entity (dpField $el.DataPath)}}
   {{$tpMeta := tablePartByName $ctx.Entity $tpName}}
   {{$tpRows := index $ctx.TablePartRows $tpName}}
   {{$tpRef := index $ctx.TPRefOptions $tpName}}
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
-  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or $tpMeta.Title $tpName)}}</h3>
+  {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
+  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $tpMeta}}
   {{if $tpCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $tpCmds}}
+    {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
+    {{$clickAction := hasHandler . "Нажатие"}}
+    {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
     <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe"
-      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if .HotKey}}data-ob-hotkey="{{.HotKey}}" aria-keyshortcuts="{{.HotKey}}" {{end}}{{if $el.ReadOnly}}disabled{{end}}{{if hasHandler . "Нажатие"}} data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
+      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{end}}{{if and (not $cmdRO) $clickAction}} data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
     {{end}}
@@ -244,25 +268,31 @@ const tplManagedForm = `
   <div id="sg-{{$tpName}}" class="ob-grid" style="height:{{if gt (len $tpRows) 8}}300{{else}}200{{end}}px;width:100%"
        data-sg-tp="{{$tpName}}"
        data-sg-el="{{$el.Name}}"
-       {{if $el.ReadOnly}}data-sg-ro="1"{{end}}
-       {{if hasHandler $el "ПриИзменении"}}data-sg-recalc="1"{{end}}
+       {{if $tpReadOnly}}data-sg-ro="1"{{end}}
+       {{if and (not $tpReadOnly) (hasHandler $el "ПриИзменении")}}data-sg-recalc="1"{{end}}
        {{if $el.AutoSum}}data-sg-autosum="1"{{end}}
-       {{if hasHandler $el "ПриДобавленииСтроки"}}data-sg-rowadd="1"{{end}}
-       {{if hasHandler $el "ПриУдаленииСтроки"}}data-sg-rowdel="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}}data-sg-rowadd="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}}data-sg-rowdel="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриАктивизацииСтроки")}}data-sg-rowactivate="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриИзмененииСтроки")}}data-sg-rowchange="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
        data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.Name}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{jsJSON $tpRows}}'
-       {{if $tpCmds}}data-sg-cmd="1"{{end}}></div>
-  <input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">
+       {{if $tpCmds}}data-sg-cmd="1"{{end}}
+       {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}></div>
+  {{if not $tpReadOnly}}<input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">{{end}}
   <div style="display:flex;gap:6px;margin-top:4px">
-    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"
-      data-ob-grid-add="{{$tpName}}">+ Добавить строку</button>
-    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"
-      data-ob-grid-del="{{$tpName}}">− Удалить строку</button>
+    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"{{if $tpReadOnly}} disabled{{else}}
+      data-ob-grid-add="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>+ Добавить строку</button>
+    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"{{if $tpReadOnly}} disabled{{else}}
+      data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete"{{end}}>− Удалить строку</button>
   </div>
 {{else}}
-<table class="tp-table" data-tp="{{$tpName}}">
+<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
+  data-ob-element="{{$el.Name}}"{{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}} data-ob-rowadd="1"{{end}}{{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}} data-ob-rowdel="1"{{end}}
+  {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
     <thead>
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
@@ -270,32 +300,32 @@ const tplManagedForm = `
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}">
+    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}">
     {{range $i, $row := $tpRows}}
-      <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
-        {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"></td>{{end}}
+      <tr{{with formRowClass $row}} class="{{.}}"{{end}} tabindex="-1" aria-selected="false">
+        {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"{{if $tpReadOnly}} disabled{{end}}></td>{{end}}
         {{range $f := $tpMeta.Fields}}
         <td{{with formCellClass $row $f.Name}} class="{{.}}"{{end}}>
           {{$v := index $row $f.Name}}
           {{if isRef (str $f.Type)}}
             <div style="display:flex;gap:4px;align-items:center">
-              <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}>
-                <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
+              <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+                <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
                 {{range index $tpRef $f.Name}}
                 <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}>{{index . "_label"}}</option>
                 {{end}}
               </select>
-              <button type="button" data-ob-ref-picker="closest" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
+              <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
               <button type="button" data-ob-ref-current="closest" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>
             </div>
           {{else if eq (str $f.Type) "number"}}
-            <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}" data-ob-recalc-tp-row>
+            <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
           {{else}}
-            <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-ob-recalc-tp-row>
+            <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
           {{end}}
         </td>
         {{end}}
-        <td><button type="button" class="del-btn" data-ob-remove-row>×</button></td>
+        <td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row title="Delete" aria-keyshortcuts="Delete"{{end}}>×</button></td>
       </tr>
     {{end}}
     </tbody>
@@ -304,23 +334,26 @@ const tplManagedForm = `
       {{range $f := $tpMeta.Fields}}{{if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}<td></td>
     </tr></tfoot>
   </table>
-  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"
-    data-ob-add-tp="{{$tpName}}">
+  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
+    data-ob-add-tp="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>
     + Добавить строку
-{{end}}
   </button>
+{{end}}
   {{else}}
   {{/* ValueTable: формовый атрибут-таблица (не документная ТЧ). */}}
   {{$vtCols := formAttrVT $ctx.Form $tpName}}
   {{if $vtCols}}
   {{$vtRows := index $ctx.TablePartRows $tpName}}
   {{$vtCmds := tpCommandButtons $el}}
-  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or $tpMeta.Title $tpName)}}</h3>
+  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $vtCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $vtCmds}}
+    {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
+    {{$clickAction := hasHandler . "Нажатие"}}
+    {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
     <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe"
-      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if .HotKey}}data-ob-hotkey="{{.HotKey}}" aria-keyshortcuts="{{.HotKey}}" {{end}}data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}">
+      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{else if $clickAction}}data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
     {{end}}
@@ -333,28 +366,28 @@ const tplManagedForm = `
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="vt-body-{{$tpName}}" data-vt-fields="{{range $i, $c := $vtCols}}{{if $i}},{{end}}{{$c.Name}}|{{$c.TypeRef}}{{end}}">
+    <tbody id="vt-body-{{$tpName}}" {{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-vt-fields="{{range $i, $c := $vtCols}}{{if $i}},{{end}}{{$c.Name}}|{{$c.TypeRef}}{{end}}">
     {{range $i, $row := $vtRows}}
       <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
         {{range $c := $vtCols}}
         <td{{with formCellClass $row $c.Name}} class="{{.}}"{{end}}>
           {{$v := index $row $c.Name}}
           {{if eq (lower $c.TypeRef) "number"}}
-            <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}">
+            <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}"{{if $tpReadOnly}} disabled{{end}}>
           {{else if eq (lower $c.TypeRef) "bool"}}
-            <input type="checkbox" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="true" {{if eq (str $v) "true"}}checked{{end}}>
+            <input type="checkbox" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="true" {{if eq (str $v) "true"}}checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
           {{else}}
-            <input type="text" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}">
+            <input type="text" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{end}}>
           {{end}}
         </td>
         {{end}}
-        <td><button type="button" class="del-btn" data-ob-remove-row>×</button></td>
+        <td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row{{end}}>×</button></td>
       </tr>
     {{end}}
     </tbody>
   </table>
-  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"
-    data-ob-add-vt="{{$tpName}}">
+  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
+    data-ob-add-vt="{{$tpName}}"{{end}}>
     + Добавить строку
   </button>
   {{else}}
@@ -372,7 +405,7 @@ const tplManagedForm = `
   {{$dv := index $ctx.Values $fn}}
   <div class="form-group">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
-    <input type="date" name="{{$fn}}" value="{{if ge (len $dv) 10}}{{slice $dv 0 10}}{{else}}{{$dv}}{{end}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} readonly{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+    <input type="date" name="{{$fn}}" value="{{if ge (len $dv) 10}}{{slice $dv 0 10}}{{else}}{{$dv}}{{end}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
   </div>
 {{else if eq (str $el.Kind) "Переключатель"}}
   {{/* Поле с набором значений: радио-переключатель (по умолчанию) или список
@@ -387,8 +420,8 @@ const tplManagedForm = `
   <div class="form-group">
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $el.Required}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if eq $el.View "select"}}
-      <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-        <option value="">{{if $el.ReadOnly}}—{{else}}— выбрать —{{end}}</option>
+      <select name="{{$fn}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
         {{if $enum}}
           {{range index $ctx.EnumOptions $fn}}<option value="{{.Value}}" {{if eq .Value $cur}}selected{{end}}>{{.Label}}</option>{{end}}
         {{else}}
@@ -398,9 +431,9 @@ const tplManagedForm = `
     {{else}}
       <div class="switch-options" style="display:flex;flex-wrap:wrap;gap:12px;padding:4px 0">
         {{if $enum}}
-          {{range $i, $opt := index $ctx.EnumOptions $fn}}<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="{{$fn}}" value="{{$opt.Value}}"{{if and (eq $i 0) $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if eq $opt.Value $cur}} checked{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}> {{$opt.Label}}</label>{{end}}
+          {{range $i, $opt := index $ctx.EnumOptions $fn}}<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="{{$fn}}" value="{{$opt.Value}}"{{if and (eq $i 0) $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if eq $opt.Value $cur}} checked{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}> {{$opt.Label}}</label>{{end}}
         {{else}}
-          {{range $i, $opt := $el.Options}}<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="{{$fn}}" value="{{$opt.ValueStr}}"{{if and (eq $i 0) $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if eq $opt.ValueStr $cur}} checked{{end}}{{if $el.ReadOnly}} disabled{{end}}{{if $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}> {{$opt.Label}}</label>{{end}}
+          {{range $i, $opt := $el.Options}}<label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="{{$fn}}" value="{{$opt.ValueStr}}"{{if and (eq $i 0) $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if eq $opt.ValueStr $cur}} checked{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}> {{$opt.Label}}</label>{{end}}
         {{end}}
       </div>
     {{end}}
@@ -496,11 +529,11 @@ const tplManagedForm = `
       {{end}}
     {{end}}
   {{end}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if .CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
+      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -613,7 +646,7 @@ const tplManagedForm = `
 
 <div style="margin-top:16px">
   {{if .IsPopup}}
-  {{if .CanWrite}}<button class="btn btn-primary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-primary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
   <a href="#" data-ob-ref-cancel class="btn btn-cancel">Отмена</a>
   {{else if .IsProcessor}}
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки */}}
@@ -637,6 +670,7 @@ const tplManagedForm = `
   "url" (printf "/ui/processor/%s/form-event" (lower .Processor.Name))
   "docId" ""
   "autoOpen" (hasFormHandler .Form "ПриОткрытии")
+  "serviceFields" (processorServiceFieldNames .Processor)
 )}}</script>
 {{else}}
 <script type="application/json" id="ob-managed-config">{{jsJSON (dict
@@ -663,6 +697,21 @@ const tplManagedForm = `
 <script src="/static/managed.js"></script>
 {{else}}
 <script src="/static/managed.js"></script>
+{{end}}
+
+{{if hasCodeField .Form}}
+{{/* Редактор кода для kind: ПолеКода. Monaco уже встроен в бинарь (его же
+     использует конфигуратор), поэтому внешних загрузок нет — важно для
+     офлайн-инсталляций и строгих CSP. Воркеру нужен явный baseUrl, иначе
+     AMD-загрузчик не найдёт workerMain.js. */}}
+<script>
+window.MonacoEnvironment = window.MonacoEnvironment || { getWorkerUrl: function () {
+  return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+    "self.MonacoEnvironment={baseUrl:'" + location.origin + "/vendor/monaco/'};" +
+    "importScripts('" + location.origin + "/vendor/monaco/vs/base/worker/workerMain.js');");
+}};
+</script>
+<script src="/vendor/monaco/vs/loader.js" onerror="window._monacoLoadErr=1"></script>
 {{end}}
 
 {{/* Вложения к записи (issue #152) — тот же UI, что и в авто-форме. */}}

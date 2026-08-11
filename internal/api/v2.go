@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/entityservice"
-	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
@@ -282,18 +281,16 @@ func (h *handler) deleteObjectV2(kind metadata.Kind) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden", "", 0)
 			return
 		}
-		if err := h.store.WithTx(r.Context(), func(ctx context.Context) error {
-			if kind == metadata.KindDocument {
-				if err := h.clearMovements(ctx, entityName, id); err != nil {
-					return err
-				}
-			}
-			if err := exchange.RegisterOnDelete(ctx, h.store, h.reg.ExchangePlans(), entity, id); err != nil {
-				return err
-			}
-			return h.store.Delete(ctx, entityName, id)
-		}); err != nil {
+		// Через entityservice: хуки модуля объекта «ПередУдалением»/
+		// «ПослеУдаления» обязаны срабатывать и по REST — иначе запрет,
+		// написанный в конфигурации, обходится сменой способа удаления.
+		res, err := h.entitySvc.Delete(r.Context(), entity, id)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		if res.DSLError != "" {
+			writeError(w, http.StatusConflict, res.DSLError, "", 0)
 			return
 		}
 		h.dispatchHook(r.Context(), string(kind)+".delete", entityName, id)
@@ -518,25 +515,6 @@ func (h *handler) documentPostPayload(w http.ResponseWriter, r *http.Request, en
 		tpRows[tp.Name] = rows
 	}
 	return fields, tpRows, true
-}
-
-func (h *handler) clearMovements(ctx context.Context, entityName string, id uuid.UUID) error {
-	for _, reg := range h.reg.Registers() {
-		if err := h.store.WriteMovements(ctx, reg.Name, entityName, id, nil, reg, nil); err != nil {
-			return err
-		}
-	}
-	for _, ir := range h.reg.InfoRegisters() {
-		if err := h.store.WriteInfoMovements(ctx, ir.Name, entityName, id, nil, ir, nil); err != nil {
-			return err
-		}
-	}
-	for _, ar := range h.reg.AccountRegisters() {
-		if err := h.store.WriteAccountMovements(ctx, ar.Name, entityName, id, nil, ar, nil); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (h *handler) entityFromV2Route(w http.ResponseWriter, r *http.Request, kind metadata.Kind) (*metadata.Entity, string, bool) {

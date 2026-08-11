@@ -88,6 +88,14 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: "entity not found: " + entityName})
 		return
 	}
+	entityKind := string(entity.Kind)
+	canRead := s.can(r, entityKind, entity.Name, "read")
+	canWrite := s.can(r, entityKind, entity.Name, "write")
+	if !canRead && !canWrite {
+		w.WriteHeader(http.StatusForbidden)
+		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	if err := parseBoundedForm(r, 32<<20); err != nil {
@@ -95,7 +103,12 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
 		return
 	}
-
+	// Every value describing browser form state comes from the POST body.
+	// Request.Form and FormValue normally merge the query string; using one
+	// normalized request prevents query-only ids, targets, fields and table rows
+	// from reaching any of the existing form parsers below.
+	r = postFormOnlyRequest(r)
+	rawID := strings.TrimSpace(r.FormValue("_id"))
 	formKind := strings.ToLower(strings.TrimSpace(r.FormValue("_kind")))
 	if formKind == "" {
 		formKind = "object"
@@ -105,30 +118,89 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
 		return
 	}
+	tableAuthorities, err := managedFormTableAuthorities(form, entity.TableParts, canWrite)
+	if err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
+	}
+	isNewObject := rawID == "" && (strings.EqualFold(form.Kind, "object") || form.Kind == "" && formKind == "object")
+	if isNewObject {
+		if !canWrite {
+			w.WriteHeader(http.StatusForbidden)
+			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+			return
+		}
+	} else if !canRead {
+		w.WriteHeader(http.StatusForbidden)
+		respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+		return
+	} else if rawID != "" {
+		id, err := uuid.Parse(rawID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			respondJSON(enc, formEventResponse{Error: "некорректный идентификатор записи"})
+			return
+		}
+		_, exists, err := s.store.EntityVersionExists(r.Context(), entity.Name, id)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+			return
+		}
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			respondJSON(enc, formEventResponse{Error: "запись не найдена"})
+			return
+		}
+		if !s.rowAllowsID(r.Context(), entity, "read", id) {
+			w.WriteHeader(http.StatusForbidden)
+			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
+			return
+		}
+	}
+	elementName := strings.TrimSpace(r.FormValue("_element"))
+	eventName := strings.TrimSpace(r.FormValue("_event"))
 	progAny := form.ProgramAST
 	if progAny == nil {
-		// .form.os не загружен или не распарсен — обработчики недоступны.
+		// Preserve the historical no-op for forms without a loaded .form.os, but
+		// still enforce table authority: a missing AST must not turn a forged
+		// TP/ValueTable target into an accepted event for a read-only user.
+		if eventName != "" {
+			_, eventTarget, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
+			isTableTarget := eventTarget.parentTablePart != nil ||
+				eventTarget.element != nil && eventTarget.element.Kind == metadata.FormElementTablePart
+			if isTableTarget {
+				if err := validateManagedFormTableEventTarget(tableAuthorities, eventTarget); err != nil {
+					respondJSON(enc, formEventResponse{Error: err.Error()})
+					return
+				}
+			}
+			if !isTableTarget && strings.TrimSpace(r.FormValue("_tp")) != "" && eligibilityErr != nil {
+				respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+				return
+			}
+		}
 		respondJSON(enc, formEventResponse{OK: true})
 		return
 	}
-	program, ok := progAny.(*ast.Program)
-	if !ok || program == nil {
-		respondJSON(enc, formEventResponse{Error: "form AST type mismatch"})
-		return
-	}
-
-	elementName := strings.TrimSpace(r.FormValue("_element"))
-	eventName := strings.TrimSpace(r.FormValue("_event"))
 	if eventName == "" {
 		respondJSON(enc, formEventResponse{Error: "_event required"})
 		return
 	}
 
 	// Найти имя процедуры, которая привязана к событию.
-	procName := resolveHandlerProc(form, elementName, eventName)
-	if procName == "" {
-		// Нет привязки — это не ошибка, просто событие декларативное.
-		respondJSON(enc, formEventResponse{OK: true})
+	procName, eventTarget, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
+	if eligibilityErr != nil {
+		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+		return
+	}
+	if err := validateManagedFormTableEventTarget(tableAuthorities, eventTarget); err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
+	}
+	program, ok := progAny.(*ast.Program)
+	if !ok || program == nil {
+		respondJSON(enc, formEventResponse{Error: "form AST type mismatch"})
 		return
 	}
 
@@ -156,7 +228,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Построить объект из текущих form-values.
-	obj := buildObjectFromForm(r, entity)
+	obj, err := buildObjectFromForm(r, entity, form, canWrite)
+	if err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
+	}
 
 	// Дочитать поля, которых нет на форме (или которые пришли disabled), из БД —
 	// тем же правилом, что и при сохранении. Без этого обработчик видит nil у
@@ -166,8 +242,17 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Гейт по сырому _id: buildObjectFromForm для новой записи генерирует
 	// случайный uuid, поэтому проверка obj.ID != uuid.Nil была бы всегда истинной
 	// и гоняла бы лишний запрос в БД на каждое событие.
-	if strings.TrimSpace(r.FormValue("_id")) != "" {
+	existingFormID := strings.TrimSpace(r.FormValue("_id"))
+	if existingFormID != "" {
 		_ = s.restoreUnsubmittedFields(r.Context(), r, entity, form, obj.ID, obj.Fields)
+	}
+	persistedID := uuid.Nil
+	if existingFormID != "" {
+		persistedID = obj.ID
+	}
+	if err := s.restoreUneditableTableParts(r.Context(), entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+		return
 	}
 
 	// Псевдо-реквизит «Ссылка» самой записи — как в entityservice.Save. Без него
@@ -182,7 +267,12 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	s.mergeFormAttrValues(r.Context(), r, form, entity, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
-	if vtRows := parseValueTableRows(r, form); vtRows != nil {
+	vtRows, err := parseValueTableRowsForManagedForm(r, form, entity, canWrite)
+	if err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
+	}
+	if vtRows != nil {
 		if obj.TablePartRows == nil {
 			obj.TablePartRows = map[string][]map[string]any{}
 		}
@@ -209,6 +299,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// откроет транзакцию, и ссылки объекта обязаны выполнять ПолучитьОбъект()
 	// внутри неё, а не ждать второго соединения (пул SQLite — одно).
 	vars, txState := s.buildDSLVarsWithMessagesTx(r.Context(), mc, &msgs)
+	defer rollbackDSLExecution(txState)
 	thisObj := s.newFormObjectThisLive(r.Context(), txState, obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
@@ -254,14 +345,10 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		vars["PickResult"] = pr
 	}
 
-	// Команды ТЧ: выделенные строки (_tp_selected = CSV индексов строк ТЧ из
-	// _tp) → переменная ВыделенныеСтроки (Массив строк ТЧ) для обработчиков
-	// команд вида «изменить выделенные».
-	if sel := selectedTPRows(r, obj); sel != nil {
-		vars["ВыделенныеСтроки"] = sel
-		vars["SelectedRows"] = sel
+	if err := addEntityTPEventContext(r, entity, form, tableAuthorities, eventTarget, obj, vars); err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
 	}
-	addTPEventContextVars(r, obj, vars)
 
 	// Снимок полей до обработчика — по нему после Run отличаем «поле изменил сам
 	// обработчик» от «поле осталось прежним», см. refreshFieldsWrittenByHandler.
@@ -281,13 +368,11 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	runErr := s.interp.Run(decl, thisObj, vars)
-	// ПРАВИЛО: всё, что после Run ходит в базу, обязано брать ЖИВОЙ контекст, а не
-	// r.Context(). Обработчик мог оставить открытой DSL-транзакцию (НачатьТранзакцию
-	// и выход по ошибке без ОтменитьТранзакцию), а на SQLite пул — одно соединение:
-	// запрос по r.Context() ждал бы второе соединение, которое занято этой
-	// транзакцией, и событие вешало бы всю базу — причём ровно на пути возврата
-	// ошибки пользователю (#621, тот же класс беды, что чинил #580). txState.Ctx()
-	// отдаёт контекст открытой транзакции, а без неё — базовый r.Context().
+	// Незавершённая DSL-транзакция отменяется ДО перечитывания БД и сериализации:
+	// иначе pgx удерживает соединение после запроса, а SQLite ждёт занятое
+	// единственное соединение. Успешный выход с открытой транзакцией считается
+	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
+	runErr = finishDSLExecution(txState, runErr)
 	liveCtx := txState.Ctx()
 	// Перечитывать из базы имеет смысл только для записи, которая там есть:
 	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
@@ -385,7 +470,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 			delete(values, k)
 		}
 	}
-	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity)
+	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity, form)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
@@ -399,103 +484,6 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
 	}
-}
-
-// selectedTPRows читает _tp (имя ТЧ) и _tp_selected (CSV индексов отмеченных
-// строк) из запроса и возвращает Массив соответствующих строк ТЧ (обёрнутых
-// в MapThis) для DSL-обработчиков команд ТЧ. nil, если выделения нет.
-//
-// Индексы соответствуют отрисованным (непустым) строкам ТЧ — тем же, что
-// собирает parseTablePartRows. Если пользователь оставил полностью пустую
-// строку посередине, она отфильтровывается и при сдвиге индексов выделение
-// может не совпасть; для команд «по выделенным» это приемлемое ограничение.
-func selectedTPRows(r *http.Request, obj *runtime.Object) *interpreter.Array {
-	tpName := strings.TrimSpace(r.FormValue("_tp"))
-	selRaw := strings.TrimSpace(r.FormValue("_tp_selected"))
-	if tpName == "" || selRaw == "" {
-		return nil
-	}
-	rows := obj.TablePartRows[tpName]
-	if len(rows) == 0 {
-		return nil
-	}
-	var items []any
-	for _, part := range strings.Split(selRaw, ",") {
-		idx, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || idx < 0 || idx >= len(rows) {
-			continue
-		}
-		items = append(items, &interpreter.MapThis{M: rows[idx]})
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	return interpreter.NewArray(items)
-}
-
-// addTPEventContextVars добавляет контекст события табличной части. Для
-// ПриИзменении SlickGrid присылает строку/колонку изменённой ячейки; для
-// команд ТЧ остаётся хотя бы имя табличной части. Имена без параметров
-// сохраняют совместимость существующих обработчиков.
-func addTPEventContextVars(r *http.Request, obj *runtime.Object, vars map[string]any) {
-	tpName := strings.TrimSpace(r.FormValue("_tp"))
-	if tpName == "" {
-		return
-	}
-	vars["ИмяТабличнойЧасти"] = tpName
-	vars["ТекущаяТабличнаяЧасть"] = tpName
-	vars["TablePartName"] = tpName
-
-	if colName := strings.TrimSpace(r.FormValue("_tp_col")); colName != "" {
-		vars["ТекущаяКолонка"] = colName
-		vars["ИмяКолонки"] = colName
-		vars["CurrentColumn"] = colName
-		vars["ColumnName"] = colName
-	}
-	if colIdx, ok := formEventInt(r, "_tp_col_index"); ok {
-		vars["ИндексКолонки"] = float64(colIdx)
-		vars["ColumnIndex"] = float64(colIdx)
-	}
-
-	rowIdx, rowOK := formEventInt(r, "_tp_row")
-	rowNum, rowNumOK := formEventInt(r, "_tp_row_number")
-	if !rowOK && rowNumOK {
-		rowIdx = rowNum - 1
-		rowOK = rowIdx >= 0
-	}
-	if !rowOK || rowIdx < 0 {
-		return
-	}
-	if !rowNumOK {
-		rowNum = rowIdx + 1
-	}
-	vars["ИндексСтроки"] = float64(rowIdx)
-	vars["НомерСтроки"] = float64(rowNum)
-	vars["RowIndex"] = float64(rowIdx)
-	vars["RowNumber"] = float64(rowNum)
-
-	if obj == nil || obj.TablePartRows == nil {
-		return
-	}
-	rows := obj.TablePartRows[tpName]
-	if rowIdx >= len(rows) {
-		return
-	}
-	row := &interpreter.MapThis{M: rows[rowIdx]}
-	vars["ТекущаяСтрока"] = row
-	vars["CurrentRow"] = row
-}
-
-func formEventInt(r *http.Request, key string) (int, bool) {
-	raw := strings.TrimSpace(r.FormValue(key))
-	if raw == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 // serializeFieldsForEntity нормализует имена полей к оригинальному регистру
@@ -538,35 +526,67 @@ func serializeFieldsForEntity(in map[string]any, entity *metadata.Entity) map[st
 // serializeTablePartRowsForEntity дополнительно нормализует имена полей
 // в строках ТЧ. Внутри строки ключи тоже могут оказаться lowercase после
 // MapThis.Set, поэтому ищем оригинальный регистр в entity.TableParts.Fields.
-func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *metadata.Entity) map[string][]map[string]any {
+func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *metadata.Entity, forms ...*metadata.FormModule) map[string][]map[string]any {
 	if tps == nil {
 		return nil
 	}
-	tpFields := make(map[string][]metadata.Field)
-	if entity != nil {
-		for _, tp := range entity.TableParts {
-			tpFields[tp.Name] = tp.Fields
-		}
+	var form *metadata.FormModule
+	if len(forms) > 0 {
+		form = forms[0]
 	}
+	var declared []metadata.TablePart
+	if entity != nil {
+		declared = entity.TableParts
+	}
+	definitions, _ := metadata.FormTableDefinitions(form, declared)
 	out := make(map[string][]map[string]any, len(tps))
 	for tpName, rows := range tps {
-		fields := tpFields[tpName]
+		canonicalName := tpName
+		var columns []string
+		for _, definition := range definitions {
+			if strings.EqualFold(definition.Name, tpName) {
+				canonicalName = definition.Name
+				columns = definition.Columns
+				break
+			}
+		}
 		outRows := make([]map[string]any, len(rows))
 		for i, row := range rows {
 			outRow := make(map[string]any, len(row))
+			for _, column := range columns {
+				// Старый MapThis мог оставить рядом исходный canonical key и новую
+				// lowercase-мутацию. Мутация должна побеждать детерминированно.
+				v, ok := row[strings.ToLower(column)]
+				if !ok {
+					v, ok = row[column]
+				}
+				if !ok {
+					for key, value := range row {
+						if strings.EqualFold(key, column) {
+							v, ok = value, true
+							break
+						}
+					}
+				}
+				if ok {
+					outRow[column] = serializeValue(v)
+				}
+			}
 			for fk, fv := range row {
-				outKey := fk
-				for _, f := range fields {
-					if strings.EqualFold(f.Name, fk) {
-						outKey = f.Name
+				handled := false
+				for _, column := range columns {
+					if strings.EqualFold(column, fk) {
+						handled = true
 						break
 					}
 				}
-				outRow[outKey] = serializeValue(fv)
+				if !handled {
+					outRow[fk] = serializeValue(fv)
+				}
 			}
 			outRows[i] = outRow
 		}
-		out[tpName] = outRows
+		out[canonicalName] = outRows
 	}
 	return out
 }
@@ -612,9 +632,17 @@ func resolveHandlerProc(form *metadata.FormModule, elementName, eventName string
 // buildObjectFromForm восстанавливает *runtime.Object из POST-формы.
 // Использует те же helper'ы что и сохранение документа (formToFields,
 // parseTablePartRows), чтобы поведение было идентично.
-func buildObjectFromForm(r *http.Request, entity *metadata.Entity) *runtime.Object {
+func buildObjectFromForm(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	canWrite bool,
+) (*runtime.Object, error) {
 	fields := formToFields(r, entity)
-	tpRows := parseTablePartRows(r, entity)
+	tpRows, err := parseTablePartRowsForManagedForm(r, entity, form, canWrite)
+	if err != nil {
+		return nil, err
+	}
 	idStr := strings.TrimSpace(r.FormValue("_id"))
 	var id uuid.UUID
 	if idStr != "" {
@@ -631,154 +659,124 @@ func buildObjectFromForm(r *http.Request, entity *metadata.Entity) *runtime.Obje
 		ID:            id,
 		Fields:        fields,
 		TablePartRows: tpRows,
-	}
+	}, nil
 }
 
-// parseValueTableRows парсит vt.<name>.<idx>.<field> и tp_json.<name> из запроса
-// для формовых атрибутов ValueTable. В отличие от parseTablePartRows, работает
-// не с entity.TableParts, а с формовыми атрибутами типа ValueTable.
-func parseValueTableRows(r *http.Request, form *metadata.FormModule) map[string][]map[string]any {
+// parseValueTableRowsForManagedForm parses only the representation rendered by
+// a writable placement. ValueTable currently always uses DOM vt.* controls;
+// tp_json.* is therefore never trusted for it merely because a client sent it.
+func parseValueTableRowsForManagedForm(
+	r *http.Request,
+	form *metadata.FormModule,
+	entity *metadata.Entity,
+	canWrite bool,
+) (map[string][]map[string]any, error) {
 	if form == nil {
-		return nil
+		return nil, nil
+	}
+	declared := []metadata.TablePart(nil)
+	if entity != nil {
+		declared = entity.TableParts
+	}
+	sources, err := managedFormTablePayloadSources(form, declared, canWrite)
+	if err != nil {
+		return nil, err
+	}
+	var bodyValues map[string][]string
+	if r != nil {
+		bodyValues = r.PostForm
 	}
 	result := make(map[string][]map[string]any)
 	for _, attr := range form.Attributes {
-		if !strings.EqualFold(attr.TypeRef, "ValueTable") || len(attr.Columns) == 0 {
+		if attr == nil || !strings.EqualFold(attr.TypeRef, "ValueTable") || len(attr.Columns) == 0 {
+			continue
+		}
+		allowedSources := sources[attr.Name]
+		if allowedSources == 0 {
 			continue
 		}
 		name := attr.Name
-		// SlickGrid-style JSON payload.
-		if jsonBlob := r.FormValue("tp_json." + name); jsonBlob != "" {
-			var rows []map[string]any
-			if err := json.Unmarshal([]byte(jsonBlob), &rows); err == nil {
-				cleaned := make([]map[string]any, 0, len(rows))
-				for _, row := range rows {
-					if len(row) == 0 {
-						continue
-					}
-					converted := make(map[string]any, len(row))
-					for _, col := range attr.Columns {
-						raw := ""
-						if v, ok := row[col.Name]; ok {
-							raw = fmt.Sprintf("%v", v)
-						} else {
-							for k, v := range row {
-								if strings.EqualFold(k, col.Name) {
-									raw = fmt.Sprintf("%v", v)
-									break
-								}
-							}
-						}
-						switch strings.ToLower(col.TypeRef) {
-						case "number":
-							if n, err := strconv.ParseFloat(raw, 64); err == nil {
-								converted[col.Name] = n
-							} else {
-								converted[col.Name] = raw
-							}
-						case "bool":
-							converted[col.Name] = raw == "true"
-						default:
-							converted[col.Name] = raw
-						}
-					}
-					empty := true
-					for _, col := range attr.Columns {
-						if v, ok := converted[col.Name]; ok && fmt.Sprintf("%v", v) != "" {
-							empty = false
-							break
-						}
-					}
-					if !empty {
-						cleaned = append(cleaned, converted)
-					}
+		columns := make([]string, 0, len(attr.Columns))
+		for _, column := range attr.Columns {
+			columns = append(columns, column.Name)
+		}
+		var rawRows []map[string]any
+		switch allowedSources {
+		case managedFormTableJSONPayload:
+			blob, present, valueErr := managedFormSinglePayloadValue(bodyValues, "tp_json."+name)
+			if valueErr != nil {
+				return nil, valueErr
+			}
+			if !present {
+				continue
+			}
+			decoded, decodeErr := decodeManagedFormJSONRows(blob, columns)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("некорректный JSON payload таблицы %q: %w", name, decodeErr)
+			}
+			rawRows = decoded
+		case managedFormTableNamedPayload:
+			namedRows, present, namedErr := managedFormNamedTableRows(bodyValues, "vt", name, columns)
+			if namedErr != nil {
+				return nil, namedErr
+			}
+			if !present {
+				continue
+			}
+			rawRows = make([]map[string]any, 0, len(namedRows))
+			for _, namedRow := range namedRows {
+				rawRow := make(map[string]any, len(namedRow))
+				for column, value := range namedRow {
+					rawRow[column] = value
 				}
-				result[name] = cleaned
-				continue
+				rawRows = append(rawRows, rawRow)
 			}
-		}
-		// Legacy vt.<name>.<idx>.<field> parsing.
-		maxIdx := -1
-		prefix := "vt." + name + "."
-		for key := range r.Form {
-			if !strings.HasPrefix(key, prefix) {
-				continue
-			}
-			rest := strings.TrimPrefix(key, prefix)
-			parts := strings.SplitN(rest, ".", 2)
-			if len(parts) < 2 {
-				continue
-			}
-			if idx, err := strconv.Atoi(parts[0]); err == nil && idx > maxIdx {
-				maxIdx = idx
-			}
-		}
-		if maxIdx < 0 {
+		default:
 			continue
 		}
-		rows := make([]map[string]any, maxIdx+1)
-		for i := range rows {
-			rows[i] = make(map[string]any)
-		}
-		for key, vals := range r.Form {
-			if !strings.HasPrefix(key, prefix) {
-				continue
-			}
-			rest := strings.TrimPrefix(key, prefix)
-			parts := strings.SplitN(rest, ".", 2)
-			if len(parts) < 2 {
-				continue
-			}
-			idx, err := strconv.Atoi(parts[0])
-			if err != nil {
-				continue
-			}
-			fieldName := parts[1]
-			if len(vals) > 0 {
-				rows[idx][fieldName] = vals[0]
-			}
-		}
-		var cleaned []map[string]any
-		for _, row := range rows {
-			empty := true
-			for _, col := range attr.Columns {
-				if v, ok := row[col.Name]; ok && fmt.Sprintf("%v", v) != "" {
-					empty = false
-					break
-				}
-			}
-			if empty {
-				continue
-			}
-			converted := make(map[string]any, len(row))
-			for _, col := range attr.Columns {
-				// row[col.Name] может отсутствовать (колонка не пришла в форме) —
-				// fmt.Sprintf("%v", nil) дал бы "<nil>". Берём "" при отсутствии.
-				raw := ""
-				if v, ok := row[col.Name]; ok {
-					raw = fmt.Sprintf("%v", v)
-				}
-				switch strings.ToLower(col.TypeRef) {
-				case "number":
-					if n, err := strconv.ParseFloat(raw, 64); err == nil {
-						converted[col.Name] = n
-					} else {
-						converted[col.Name] = raw
-					}
-				case "bool":
-					converted[col.Name] = raw == "true"
-				default:
-					converted[col.Name] = raw
-				}
-			}
-			cleaned = append(cleaned, converted)
-		}
-		result[name] = cleaned
+		result[name] = convertManagedValueTableRows(rawRows, attr)
 	}
 	if len(result) == 0 {
-		return nil
+		return nil, nil
 	}
-	return result
+	return result, nil
+}
+
+func convertManagedValueTableRows(rows []map[string]any, attr *metadata.FormAttribute) []map[string]any {
+	cleaned := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		empty := true
+		for _, column := range attr.Columns {
+			if value, present := row[column.Name]; present && fmt.Sprintf("%v", value) != "" {
+				empty = false
+				break
+			}
+		}
+		if empty {
+			continue
+		}
+		converted := make(map[string]any, len(attr.Columns))
+		for _, column := range attr.Columns {
+			raw := ""
+			if value, present := row[column.Name]; present {
+				raw = fmt.Sprintf("%v", value)
+			}
+			switch strings.ToLower(column.TypeRef) {
+			case "number":
+				if number, err := strconv.ParseFloat(raw, 64); err == nil {
+					converted[column.Name] = number
+				} else {
+					converted[column.Name] = raw
+				}
+			case "bool":
+				converted[column.Name] = raw == "true"
+			default:
+				converted[column.Name] = raw
+			}
+		}
+		cleaned = append(cleaned, converted)
+	}
+	return cleaned
 }
 
 func serializeValue(v any) any {
@@ -816,17 +814,6 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
-	// Один предел, а не два вложенных: пределы не композируются, и прежний
-	// MaxBytesReader на defaultFormMemoryBytes связывал раньше, обрезая
-	// файл-параметр обработки мегабайтом (issue #674). Присваивание r.Body —
-	// здесь, а не в хелпере: иначе gosec (G120) не видит предел.
-	r.Body = http.MaxBytesReader(w, r.Body, s.effectiveUploadLimit()+uiMultipartOverhead)
-	if err := parseBoundedForm(r, 32<<20); err != nil {
-		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
-		return
-	}
-
 	procName := chi.URLParam(r, "name")
 	if procName == "" {
 		respondJSON(enc, formEventResponse{Error: "processor name required"})
@@ -856,114 +843,204 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	elementName := strings.TrimSpace(r.FormValue("_element"))
-	eventName := strings.TrimSpace(r.FormValue("_event"))
+	// Один предел, а не два вложенных: пределы не композируются, и прежний
+	// MaxBytesReader на defaultFormMemoryBytes связывал раньше, обрезая
+	// файл-параметр обработки мегабайтом (issue #674). Авторизация и trust-гейт
+	// выше выполняются до разбора потенциально большого multipart-тела.
+	maxSize := s.effectiveUploadLimit()
+	requestControls := processorRequestControlsForForm(proc, form)
+	if requestControls.formTablesErr != nil {
+		respondJSON(enc, formEventResponse{Error: requestControls.formTablesErr.Error()})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
+	opCtx, finish, ok := s.beginOperation(r, opProcessorRun, proc.Name)
+	if !ok {
+		w.WriteHeader(http.StatusTooManyRequests)
+		respondJSON(enc, formEventResponse{Error: "слишком много одновременно выполняемых обработок, повторите позже"})
+		return
+	}
+	opStatus := "ok"
+	defer func() { finish(opStatus, 0, false) }()
+
+	if err := parseBoundedForm(r, 32<<20); err != nil {
+		opStatus = "error"
+		w.WriteHeader(uploadErrorStatus(err))
+		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
+		return
+	}
+	elementValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_element"))
+	eventValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_event"))
+	elementName := strings.TrimSpace(elementValue)
+	eventName := strings.TrimSpace(eventValue)
 	if eventName == "" {
+		opStatus = "error"
 		respondJSON(enc, formEventResponse{Error: "_event required"})
 		return
 	}
 
-	// Try form-level handler (from .form.os AST)
+	// Явно привязанный обработчик имеет безусловный приоритет. Если его нет в
+	// .form.os, это ошибка конфигурации, а не разрешение незаметно выполнить
+	// глобальную процедуру Выполнить.
+	boundProcName, eventTarget, executeFallback, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, true)
+	if eligibilityErr != nil {
+		opStatus = "error"
+		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+		return
+	}
+	if err := validateManagedFormTableEventTarget(requestControls.tableAuthorities, eventTarget); err != nil {
+		opStatus = "error"
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
+	}
+	paramValues, err := processorParamValuesFromRequest(
+		r,
+		proc.Params,
+		maxSize,
+		requestControls,
+	)
+	if err != nil {
+		opStatus = "error"
+		w.WriteHeader(uploadErrorStatus(err))
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+		return
+	}
 	progAny := form.ProgramAST
 	var program *ast.Program
-	if progAny != nil {
-		if p, ok := progAny.(*ast.Program); ok && p != nil {
-			program = p
-		}
+	if p, ok := progAny.(*ast.Program); ok && p != nil {
+		program = p
 	}
-
-	if program != nil {
-		procName := resolveHandlerProc(form, elementName, eventName)
-		if procName != "" {
-			var decl *ast.ProcedureDecl
+	if boundProcName != "" {
+		var decl *ast.ProcedureDecl
+		if program != nil {
 			for _, p := range program.Procedures {
-				if strings.EqualFold(p.Name.Literal, procName) {
+				if strings.EqualFold(p.Name.Literal, boundProcName) {
 					decl = p
 					break
 				}
 			}
-			if decl != nil {
-				virtEntity := processorVirtualEntity(proc)
-				obj := buildObjectFromForm(r, virtEntity)
-				mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-				var msgs []string
-				vars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
-				thisObj := s.newFormObjectThis(r.Context(), obj, virtEntity, nil)
-				vars["Объект"] = thisObj
-				vars["ЭтотОбъект"] = thisObj
-				vars["Параметры"] = thisObj
-				interpreter.InjectMaket(vars, proc.Layout)
-
-				// Передаём все процедуры формы для вызовов из .form.os.
-				formProcs := make(map[string]*ast.ProcedureDecl, len(program.Procedures))
-				for _, p := range program.Procedures {
-					formProcs[strings.ToLower(p.Name.Literal)] = p
-				}
-				vars["__form_procs__"] = formProcs
-
-				// Подбор (план 46), как в handleManagedFormEvent: фаза 1 копит
-				// payload через ПоказатьПодбор → pickerData в ответе; фаза 2
-				// отдаёт _pick_result в ПодборРезультат для обработчика Выбор.
-				var picker *pickerPayload
-				pickerFn := newPickerBuiltin(&picker)
-				vars["ПоказатьПодбор"] = pickerFn
-				vars["ShowPicker"] = pickerFn
-				condRuntime := newFormConditionalRuntime(form)
-				for k, v := range condRuntime.builtins() {
-					vars[k] = v
-				}
-				if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
-					vars["ПодборРезультат"] = pr
-					vars["PickResult"] = pr
-				}
-
-				if runErr := s.interp.Run(decl, thisObj, vars); runErr != nil {
-					resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
-					resp.Error = interpreter.FormatUserError(runErr)
-					resp.PickerData = picker
-					respondJSON(enc, resp)
-					return
-				}
-
-				resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
-				resp.PickerData = picker
-				respondJSON(enc, resp)
-				return
-			}
 		}
-	}
-
-	// No form handler — for "Нажатие" on execute button, run processor logic
-	if eventName == string(metadata.FormEventOnClick) {
+		if decl == nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: "процедура «" + boundProcName + "» не найдена в .form.os"})
+			return
+		}
 		if proc.External {
-			// Исполнение внешней обработки (DSL) всегда логируем — как в processorRun.
 			s.auditExtProcRun(r, proc.Name)
 		}
-		paramValues := map[string]any{}
-		for _, p := range proc.Params {
-			paramValues[p.Name] = parseParamValue(r.FormValue(p.Name), p.Type)
+
+		virtEntity := processorVirtualEntity(proc)
+		obj, err := processorFormObjectFromRequest(r, virtEntity, form, paramValues, requestControls)
+		if err != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
+		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
+		var msgs []string
+		// An unclosed explicit DSL transaction must be rolled back when the
+		// request ends even when operation timeouts are disabled.
+		dslCtx, cancelDSL := context.WithCancel(opCtx)
+		defer cancelDSL()
+		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
+		defer rollbackDSLExecution(txState)
+		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
+		vars["Объект"] = thisObj
+		vars["ЭтотОбъект"] = thisObj
+		vars["Параметры"] = thisObj
+		addFormAttrVars(form, virtEntity, thisObj, vars)
+		interpreter.InjectMaket(vars, proc.Layout)
+
+		formProcs := make(map[string]*ast.ProcedureDecl, len(program.Procedures))
+		for _, p := range program.Procedures {
+			formProcs[strings.ToLower(p.Name.Literal)] = p
+		}
+		vars["__form_procs__"] = formProcs
+
+		var picker *pickerPayload
+		pickerFn := newPickerBuiltin(&picker)
+		vars["ПоказатьПодбор"] = pickerFn
+		vars["ShowPicker"] = pickerFn
+		condRuntime := newFormConditionalRuntime(form)
+		for k, v := range condRuntime.builtins() {
+			vars[k] = v
+		}
+		pickResult, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_pick_result"))
+		if pr := parsePickResult(pickResult); pr != nil {
+			vars["ПодборРезультат"] = pr
+			vars["PickResult"] = pr
+		}
+		if err := addProcessorTPEventContext(r, proc, requestControls, eventTarget, obj, vars); err != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
 		}
 
+		var runErr error
+		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
+			runErr = s.interp.RunSandboxed(decl, thisObj,
+				interpreter.SandboxProfile{MaxWallClock: timeout}, nil, vars)
+		} else {
+			runErr = s.interp.Run(decl, thisObj, vars)
+		}
+		runErr = finishDSLExecution(txState, runErr)
+		if runErr != nil {
+			opStatus = operationStatus(opCtx, runErr)
+			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
+			resp.Error = interpreter.FormatUserError(runErr)
+			resp.PickerData = picker
+			respondJSON(enc, resp)
+			return
+		}
+
+		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp.PickerData = picker
+		respondJSON(enc, resp)
+		return
+	}
+
+	// Без привязанного обработчика общий Выполнить разрешён только настоящей
+	// кнопке из метаданных формы. Одного присланного клиентом _event=Нажатие
+	// недостаточно.
+	if executeFallback {
 		procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
 		if procDecl == nil {
-			respondJSON(enc, formEventResponse{OK: true})
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: "процедура Выполнить() не найдена в обработке «" + proc.Name + "»"})
 			return
+		}
+		if proc.External {
+			s.auditExtProcRun(r, proc.Name)
 		}
 
 		var msgs []string
 
 		paramsThis := &interpreter.MapThis{M: paramValues}
 		mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-		dslVars := s.buildDSLVarsWithMessages(r.Context(), mc, &msgs)
+		dslCtx, cancelDSL := context.WithCancel(opCtx)
+		defer cancelDSL()
+		dslVars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
+		defer rollbackDSLExecution(txState)
 		dslVars["Параметры"] = paramsThis
 		interpreter.InjectMaket(dslVars, proc.Layout)
 
-		err := s.interp.Run(procDecl, paramsThis, dslVars)
+		// Кнопка managed-формы должна передавать параметры в объявленные
+		// аргументы Выполнить так же, как обычный POST запуска обработки.
+		procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
+		var err error
+		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
+			_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
+				interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
+		} else {
+			_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
+		}
+		err = finishDSLExecution(txState, err)
 		if err != nil {
+			opStatus = operationStatus(opCtx, err)
 			respondJSON(enc, formEventResponse{
 				OK:       false,
 				Messages: msgs,
-				Error:    err.Error(),
+				Error:    interpreter.FormatUserError(err),
 			})
 			return
 		}
@@ -974,26 +1051,34 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	respondJSON(enc, formEventResponse{OK: true})
+	respondJSON(enc, formEventResponse{Error: "недоступное событие формы"})
 }
 
 func formTablesFromRows(rows map[string][]map[string]any, form *metadata.FormModule) map[string][]map[string]any {
 	if rows == nil || form == nil {
 		return nil
 	}
-	vtNames := map[string]bool{}
+	vtNames := make([]string, 0)
 	for _, attr := range form.Attributes {
 		if attr != nil && strings.EqualFold(attr.TypeRef, "ValueTable") {
-			vtNames[attr.Name] = true
+			vtNames = append(vtNames, attr.Name)
 		}
 	}
 	if len(vtNames) == 0 {
 		return nil
 	}
 	result := make(map[string][]map[string]any)
-	for k, v := range rows {
-		if vtNames[k] && len(v) > 0 {
-			result[k] = v
+	for _, name := range vtNames {
+		for rowName, value := range rows {
+			if strings.EqualFold(rowName, name) {
+				if value == nil {
+					value = []map[string]any{}
+				}
+				// Наличие ключа важно даже для пустого slice: Очистить() должно
+				// приказать клиенту удалить старые строки, а не оставить их.
+				result[name] = value
+				break
+			}
 		}
 	}
 	if len(result) == 0 {

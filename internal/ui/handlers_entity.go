@@ -444,7 +444,28 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		return
 	}
 	fields = formToFields(r, entity)
-	tpRows = parseTablePartRows(r, entity)
+	if form := pickManagedForm(entity, "object"); form != nil {
+		var parseErr error
+		tpRows, parseErr = parseTablePartRowsForManagedForm(r, entity, form, true)
+		if parseErr != nil {
+			http.Error(w, s.errText(r, parseErr), http.StatusBadRequest)
+			return
+		}
+		// ValueTable attributes are form-local and are not persisted by
+		// entityservice, but ПередЗаписью/ПриЗаписи must see the exact browser
+		// state under Объект.<ValueTable>. Keep them in the runtime row namespace
+		// through the hooks; Save still writes only entity.TableParts.
+		valueTables, parseErr := parseValueTableRowsForManagedForm(r, form, entity, true)
+		if parseErr != nil {
+			http.Error(w, s.errText(r, parseErr), http.StatusBadRequest)
+			return
+		}
+		for name, rows := range valueTables {
+			tpRows[name] = rows
+		}
+	} else {
+		tpRows = parseTablePartRows(r, entity)
+	}
 
 	if entity.Hierarchical {
 		// Только если ключи реально пришли в теле. Авто-форма их рендерит
@@ -511,7 +532,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 // ВызватьИсключение. Контекст совпадает с веткой DSLError в submit/submitEdit.
 func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, errMsg string, msgs []string, tpRows map[string][]map[string]any) {
 	values := formValues(r, entity)
-	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity)
+	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
 	lang := s.resolveLang(r)
@@ -550,6 +571,12 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	obj, fields, tpRows, action, ok := s.parseSubmitForm(w, r, entity, nil)
 	if !ok {
 		return
+	}
+	if form := pickManagedForm(entity, "object"); form != nil {
+		if err := s.restoreUneditableTableParts(r.Context(), entity, form, uuid.Nil, obj.TablePartRows, true); err != nil {
+			s.serverError(w, r, err)
+			return
+		}
 	}
 	if err := s.autoFillRowAccessFields(r.Context(), entity, "write", obj.Fields); err != nil {
 		s.renderForbidden(w, r)
@@ -590,7 +617,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.DSLError != "" {
 		values := formValues(r, entity)
-		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity)
+		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
 		langErr := s.resolveLang(r)
@@ -1185,6 +1212,11 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
+		if err := s.restoreUneditableTableParts(r.Context(), entity, form, id, obj.TablePartRows, true); err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		tpRows = obj.TablePartRows
 	}
 	// План 88: не дать пользователю, видящему поле лишь замаскированным,
 	// перезаписать реальное значение маской/подделкой — восстанавливаем
@@ -1239,7 +1271,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.DSLError != "" {
 		values := formValues(r, entity)
-		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity)
+		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
 		langSubmit := s.resolveLang(r)
@@ -1322,7 +1354,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	obj.TablePartRows = tpRows
 
-	mc := runtime.NewMovementsCollector(entity.Name, id)
+	mc := runtime.NewMovementsCollector(entity.Name, id).WillPersist()
 	setPeriodFromFields(mc, entity, obj.Fields)
 
 	docURL := "/ui/" + strings.ToLower(string(entity.Kind)) + "/" + entity.Name + "/" + id.String()
@@ -1580,24 +1612,20 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	if entity.NotifyChanges {
 		delBefore, _ = s.store.GetByID(r.Context(), entity.Name, id, entity)
 	}
-	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-		if entity.Posting {
-			if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-				return err
-			}
-		}
-		if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
-			return err
-		}
-		if err := s.store.Delete(ctx, entity.Name, id); err != nil {
-			return err
-		}
-		s.publishDocChange(ctx, entity, id, "удалён", delBefore)
-		return nil
-	}); err != nil {
+	// Удаление идёт через entityservice: там хуки модуля объекта
+	// «ПередУдалением»/«ПослеУдаления», снятие движений, ТЧ и регистрация в
+	// планах обмена — одинаково для UI, пачек, DSL и REST.
+	delRes, err := s.entityService().Delete(r.Context(), entity, id)
+	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
+	if delRes.DSLError != "" {
+		// Хук отменил удаление — объект на месте, показываем причину.
+		http.Error(w, s.errText(r, errors.New(delRes.DSLError)), http.StatusConflict)
+		return
+	}
+	s.publishDocChange(r.Context(), entity, id, "удалён", delBefore)
 	// Веб-хук <kind>.delete (план 29) — только физическое удаление
 	// (пометка на удаление обратима и событием не считается).
 	if s.cfg.Webhooks.Enabled() {
@@ -1646,27 +1674,11 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 					skipped++
 					continue
 				}
-				if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-					if entity.Posting {
-						if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-							return err
-						}
-					}
-					// Ошибку удаления ТЧ нельзя проглатывать внутри транзакции:
-					// дальше удаляется сам объект, транзакция коммитится, и
-					// строки табличной части остаются сиротами — ссылаются на
-					// несуществующего родителя. Возврат ошибки откатывает всё.
-					for _, tp := range entity.TableParts {
-						if _, err := s.store.Exec(ctx, "DELETE FROM "+metadata.TablePartTableName(entity.Name, tp.Name)+" WHERE parent_id = "+s.store.Dialect().Placeholder(1), id); err != nil {
-							return err
-						}
-					}
-					if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
-						return err
-					}
-					return s.store.Delete(ctx, entity.Name, id)
-				}); err != nil {
-					// Удаление не прошло (откат транзакции) — не рапортуем успех.
+				// Через entityservice: хуки удаления, движения, ТЧ и планы
+				// обмена в одной транзакции. Отказ хука — такой же пропуск,
+				// как непройденная проверка ссылок: объект остаётся.
+				res, err := s.entityService().Delete(r.Context(), entity, id)
+				if err != nil || res.DSLError != "" {
 					skipped++
 					continue
 				}
@@ -1744,18 +1756,11 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			continue
 		}
-		if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-			if entity.Posting {
-				if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-					return err
-				}
-			}
-			if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
-				return err
-			}
-			return s.store.Delete(ctx, entity.Name, id)
-		}); err != nil {
-			// Удаление не прошло (откат транзакции) — не рапортуем успех.
+		// Через entityservice — как и остальные пути. Заодно этот путь
+		// перестал оставлять строки ТЧ сиротами: раньше он, в отличие от
+		// соседнего, их не удалял.
+		res, err := s.entityService().Delete(r.Context(), entity, id)
+		if err != nil || res.DSLError != "" {
 			skipped++
 			continue
 		}
@@ -1833,66 +1838,152 @@ func (s *Server) saveTablePartsDirect(ctx context.Context, entity *metadata.Enti
 	return nil
 }
 
-// parseTablePartRows reads tp.{TpName}.{idx}.{FieldName} form values.
+// parseTablePartRows keeps the legacy/autogenerated-form contract. Managed
+// forms must use parseTablePartRowsForManagedForm so duplicate readonly
+// placements cannot make the wrong browser namespace authoritative.
 func parseTablePartRows(r *http.Request, entity *metadata.Entity) map[string][]map[string]any {
+	rows, _ := parseTablePartRowsForManagedForm(r, entity, nil, true)
+	return rows
+}
+
+// parseTablePartRowsForManagedForm reads only the representation which the
+// server metadata says is writable: NoGrid posts tp.*, SlickGrid posts
+// tp_json.*. Readonly placements and a read-only user's entire form are never
+// authoritative, even if a forged payload uses a normally valid namespace.
+func parseTablePartRowsForManagedForm(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	canWrite bool,
+) (map[string][]map[string]any, error) {
+	if form != nil {
+		return parseManagedTablePartRows(r, entity, form, canWrite)
+	}
+	return parseLegacyTablePartRows(r, entity), nil
+}
+
+func parseManagedTablePartRows(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	canWrite bool,
+) (map[string][]map[string]any, error) {
 	result := make(map[string][]map[string]any)
+	sources, err := managedFormTablePayloadSources(form, entity.TableParts, canWrite)
+	if err != nil {
+		return nil, err
+	}
+	var bodyValues map[string][]string
+	if r != nil {
+		bodyValues = r.PostForm
+	}
 	for _, tp := range entity.TableParts {
-		// Plan 48 (SlickGrid): check for tp_json.{TPName} first.
-		if jsonBlob := r.FormValue("tp_json." + tp.Name); jsonBlob != "" {
-			var rows []map[string]any
-			if err := json.Unmarshal([]byte(jsonBlob), &rows); err == nil {
-				// Normalize field names to original case + convert types.
-				cleaned := make([]map[string]any, 0, len(rows))
-				for _, row := range rows {
-					if len(row) == 0 {
-						continue
-					}
-					converted := make(map[string]any, len(row))
-					for _, f := range tp.Fields {
-						// Normalize case: try exact, then case-insensitive match.
-						var raw string
-						if v, ok := row[f.Name]; ok {
-							raw = fmt.Sprintf("%v", v)
-						} else {
-							for k, v := range row {
-								if strings.EqualFold(k, f.Name) {
-									raw = fmt.Sprintf("%v", v)
-									break
-								}
-							}
-						}
-						switch f.Type {
-						case metadata.FieldTypeNumber:
-							if n, err := strconv.ParseFloat(raw, 64); err == nil {
-								converted[f.Name] = n
-							} else {
-								converted[f.Name] = raw
-							}
-						case metadata.FieldTypeBool:
-							converted[f.Name] = raw == "true"
-						default:
-							converted[f.Name] = raw
-						}
-					}
-					// Skip rows where all fields are blank (like legacy path).
-					empty := true
-					for _, f := range tp.Fields {
-						if v, ok := converted[f.Name]; ok && fmt.Sprintf("%v", v) != "" {
-							empty = false
-							break
-						}
-					}
-					if !empty {
-						cleaned = append(cleaned, converted)
+		columns := make([]string, 0, len(tp.Fields))
+		for _, field := range tp.Fields {
+			columns = append(columns, field.Name)
+		}
+		switch sources[tp.Name] {
+		case managedFormTableJSONPayload:
+			blob, present, valueErr := managedFormSinglePayloadValue(bodyValues, "tp_json."+tp.Name)
+			if valueErr != nil {
+				return nil, valueErr
+			}
+			if !present {
+				result[tp.Name] = []map[string]any{}
+				continue
+			}
+			rawRows, decodeErr := decodeManagedFormJSONRows(blob, columns)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("некорректный JSON payload таблицы %q: %w", tp.Name, decodeErr)
+			}
+			result[tp.Name] = convertManagedTablePartRows(rawRows, tp)
+		case managedFormTableNamedPayload:
+			namedRows, _, namedErr := managedFormNamedTableRows(bodyValues, "tp", tp.Name, columns)
+			if namedErr != nil {
+				return nil, namedErr
+			}
+			rawRows := make([]map[string]any, 0, len(namedRows))
+			for _, namedRow := range namedRows {
+				rawRow := make(map[string]any, len(namedRow))
+				for name, value := range namedRow {
+					rawRow[name] = value
+				}
+				rawRows = append(rawRows, rawRow)
+			}
+			result[tp.Name] = convertManagedTablePartRows(rawRows, tp)
+		default:
+			result[tp.Name] = []map[string]any{}
+		}
+	}
+	return result, nil
+}
+
+func convertManagedTablePartRows(rows []map[string]any, tablePart metadata.TablePart) []map[string]any {
+	cleaned := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		converted := make(map[string]any, len(tablePart.Fields))
+		for _, field := range tablePart.Fields {
+			raw := ""
+			if value, present := row[field.Name]; present {
+				raw = fmt.Sprintf("%v", value)
+			} else {
+				for postedName, value := range row {
+					if strings.EqualFold(postedName, field.Name) {
+						raw = fmt.Sprintf("%v", value)
+						break
 					}
 				}
-				result[tp.Name] = cleaned
-				continue // skip legacy named-input parsing for this TP
+			}
+			switch field.Type {
+			case metadata.FieldTypeNumber:
+				if number, err := strconv.ParseFloat(raw, 64); err == nil {
+					converted[field.Name] = number
+				} else {
+					converted[field.Name] = raw
+				}
+			case metadata.FieldTypeBool:
+				converted[field.Name] = raw == "true"
+			default:
+				converted[field.Name] = raw
+			}
+		}
+		empty := true
+		for _, field := range tablePart.Fields {
+			if value, present := converted[field.Name]; present && fmt.Sprintf("%v", value) != "" {
+				empty = false
+				break
+			}
+		}
+		if !empty {
+			cleaned = append(cleaned, converted)
+		}
+	}
+	return cleaned
+}
+
+func parseLegacyTablePartRows(r *http.Request, entity *metadata.Entity) map[string][]map[string]any {
+	result := make(map[string][]map[string]any)
+	for _, tp := range entity.TableParts {
+		prefix := "tp." + tp.Name + "."
+		hasNamedRows := false
+		for key := range r.Form {
+			if strings.HasPrefix(key, prefix) {
+				hasNamedRows = true
+				break
+			}
+		}
+		if jsonBlob := r.FormValue("tp_json." + tp.Name); !hasNamedRows && jsonBlob != "" {
+			var rows []map[string]any
+			if err := json.Unmarshal([]byte(jsonBlob), &rows); err == nil {
+				result[tp.Name] = convertManagedTablePartRows(rows, tp)
+				continue
 			}
 		}
 		// collect max index
 		maxIdx := -1
-		prefix := "tp." + tp.Name + "."
 		for key := range r.Form {
 			if !strings.HasPrefix(key, prefix) {
 				continue

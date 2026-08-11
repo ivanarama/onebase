@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -58,9 +59,8 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TPEnumOrder":   map[string]map[string][]string{},
 			"TPRefMeta":     map[string]map[string]any{},
 			"TablePartRows": map[string][]map[string]any{},
-			"IsProcessor":   true,
-			"Processor":     proc,
 		}
+		s.setProcessorManagedContext(r, data, proc)
 		s.prepareManagedFormData(data, mf)
 		s.render(w, r, "page-managed-form", data)
 		return
@@ -147,8 +147,6 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	// Присваивание r.Body остаётся здесь, в теле обработчика: вынеси его в
 	// хелпер — и gosec (G120) перестанет видеть предел, пометив каждый
 	// r.FormValue ниже.
-	maxSize := s.effectiveUploadLimit()
-	r.Body = http.MaxBytesReader(w, r.Body, maxSize+uiMultipartOverhead)
 	proc := s.getProcessor(w, r)
 	if proc == nil {
 		return
@@ -157,6 +155,13 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		s.renderForbidden(w, r)
 		return
 	}
+	maxSize := s.effectiveUploadLimit()
+	requestControls := processorRequestControlsForForm(proc, proc.ManagedForm())
+	if requestControls.formTablesErr != nil {
+		http.Error(w, requestControls.formTablesErr.Error(), http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
 	if proc.External {
 		// Запуск внешней обработки (исполнение DSL-кода) всегда логируем.
 		s.auditExtProcRun(r, proc.Name)
@@ -174,25 +179,16 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
-	paramValues := map[string]any{}
-	for _, p := range proc.Params {
-		if p.Type == "file" {
-			file, _, err := r.FormFile(p.Name)
-			if err == nil {
-				data, err := readUploadedBytes(file, maxSize)
-				closeRead("загруженный файл параметра", file)
-				if err != nil {
-					opStatus = "error"
-					http.Error(w, s.errText(r, err), uploadErrorStatus(err))
-					return
-				}
-				paramValues[p.Name] = decodeUploadText(data)
-				continue
-			}
-			paramValues[p.Name] = ""
-			continue
-		}
-		paramValues[p.Name] = parseParamValue(r.FormValue(p.Name), p.Type)
+	paramValues, err := processorParamValuesFromRequest(
+		r,
+		proc.Params,
+		maxSize,
+		requestControls,
+	)
+	if err != nil {
+		opStatus = "error"
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
 	}
 
 	procDecl := s.reg.GetProcedure(proc.Name, "Выполнить")
@@ -217,24 +213,28 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 
 	paramsThis := &interpreter.MapThis{M: paramValues}
 	mc := runtime.NewMovementsCollector("processor", uuid.Nil)
-	dslVars := s.buildDSLVarsWithMessages(opCtx, mc, &messages)
+	dslCtx, cancelDSL := context.WithCancel(opCtx)
+	defer cancelDSL()
+	dslVars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &messages)
+	defer rollbackDSLExecution(txState)
 	dslVars["Параметры"] = paramsThis
 	interpreter.InjectMaket(dslVars, proc.Layout)
 	// Параметры обработки связываем и с одноимёнными аргументами Выполнить —
 	// см. interpreter.BindNamedArgs (#706).
 	procArgs := interpreter.BindNamedArgs(procDecl, paramValues)
-	var err error
-	if timeout := s.operationTimeout(opProcessorRun); timeout > 0 {
-		_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
+	var callErr error
+	if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
+		_, callErr = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
 			interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
 	} else {
-		_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
+		_, callErr = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 	}
+	callErr = finishDSLExecution(txState, callErr)
 
 	var runErr string
-	if err != nil {
-		opStatus = operationStatus(opCtx, err)
-		runErr = err.Error()
+	if callErr != nil {
+		opStatus = operationStatus(opCtx, callErr)
+		runErr = callErr.Error()
 	}
 
 	if proc.ManagedForm() != nil {
@@ -277,14 +277,25 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"TPEnumOrder":   map[string]map[string][]string{},
 		"TPRefMeta":     map[string]map[string]any{},
 		"TablePartRows": map[string][]map[string]any{},
-		"IsProcessor":   true,
-		"Processor":     proc,
 		"Messages":      messages,
 		"RunError":      runErr,
 		"Ran":           true,
 	}
+	s.setProcessorManagedContext(r, data, proc)
 	s.prepareManagedFormData(data, proc.ManagedForm())
 	s.render(w, r, "page-managed-form", data)
+}
+
+// setProcessorManagedContext задаёт единый permission-контракт управляемой
+// формы обработки. Виртуальная Entity имеет kind=catalog только ради общего
+// pipeline полей и табличных частей; права catalog/<имя>/write к ней отношения
+// не имеют. Редактирование параметров разрешено тем же processor/<имя>/run,
+// которым защищены GET формы и POST запуска. Явный CanWrite также не даёт
+// Server.render подставить право фиктивного справочника по умолчанию.
+func (s *Server) setProcessorManagedContext(r *http.Request, data map[string]any, proc *processorpkg.Processor) {
+	data["IsProcessor"] = true
+	data["Processor"] = proc
+	data["CanWrite"] = proc != nil && s.can(r, "processor", proc.Name, "run")
 }
 
 func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processorpkg.Processor {
@@ -313,6 +324,442 @@ func decodeUploadText(data []byte) string {
 		return string(data)
 	}
 	return string(decoded)
+}
+
+// processorFormBodyLimit accounts for URL encoding before ParseForm decodes
+// the body. A byte can occupy three transport bytes (%XX), so valid declared
+// file parameters near their per-file max must not be rejected by the outer
+// reader merely because of transport expansion or because there is more than
+// one file control. Only editable file controls rendered by the selected form
+// contribute; a form without one keeps the normal small-form limit.
+func processorFormBodyLimit(r *http.Request, maxFileSize int64, controls processorRequestControls) int64 {
+	fileParams := make(map[string]bool, len(controls.fileInputs)+len(controls.fileContent))
+	for key, names := range controls.fileInputs {
+		if len(names) > 0 {
+			fileParams[key] = true
+		}
+	}
+	for key, names := range controls.fileContent {
+		if len(names) > 0 {
+			fileParams[key] = true
+		}
+	}
+	fileCount := int64(len(fileParams))
+	if fileCount == 0 {
+		return defaultFormMemoryBytes
+	}
+	factor := fileCount
+	if r != nil {
+		mediaType := strings.TrimSpace(strings.SplitN(strings.ToLower(r.Header.Get("Content-Type")), ";", 2)[0])
+		if mediaType == "application/x-www-form-urlencoded" {
+			factor *= 3
+		}
+	}
+	maxInt64 := int64(^uint64(0) >> 1)
+	if maxFileSize > (maxInt64-uiMultipartOverhead)/factor {
+		return maxInt64
+	}
+	return maxFileSize*factor + uiMultipartOverhead
+}
+
+// processorSandboxTimeout keeps parsing and DSL execution inside the one
+// operation deadline created by beginOperation. Starting a fresh full sandbox
+// timeout after parsing would let the request run for almost twice the limit.
+func processorSandboxTimeout(ctx context.Context, configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return 0
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return time.Nanosecond
+		}
+		if remaining < configured {
+			return remaining
+		}
+	}
+	return configured
+}
+
+const (
+	processorParamPresencePrefix = "_ob_present_"
+	processorFileContentPrefix   = "_fc_"
+	processorServiceFieldPrefix  = "_ob_service_"
+)
+
+var processorServiceFields = []string{
+	"_element",
+	"_event",
+	"_kind",
+	"_id",
+	"_pick_result",
+	"_tp",
+	"_tp_selected",
+	"_tp_row",
+	"_tp_row_number",
+	"_tp_col",
+	"_tp_col_index",
+}
+
+func processorParamPresenceName(params []processorpkg.Param, name string) string {
+	return processorAllocatedAuxiliaryParamName(params, processorParamPresencePrefix, name)
+}
+
+func processorFileContentName(params []processorpkg.Param, name string) string {
+	return processorAllocatedAuxiliaryParamName(params, processorFileContentPrefix, name)
+}
+
+func processorServiceFieldName(params []processorpkg.Param, name string) string {
+	for _, p := range params {
+		if strings.EqualFold(p.Name, name) {
+			return processorAuxiliaryParamName(params, processorServiceFieldPrefix, strings.TrimPrefix(name, "_"))
+		}
+	}
+	return name
+}
+
+func processorServiceFieldNames(params []processorpkg.Param) map[string]string {
+	names := make(map[string]string, len(processorServiceFields))
+	for _, name := range processorServiceFields {
+		names[name] = processorServiceFieldName(params, name)
+	}
+	return names
+}
+
+// processorAuxiliaryParamName сохраняет привычное имя helper-поля, пока оно
+// не совпадает с легальным параметром обработки. При совпадении выбирается
+// ближайшее свободное имя: namespace параметров не резервируется, а сервер и
+// шаблон получают один и тот же детерминированный результат.
+func processorAuxiliaryParamName(params []processorpkg.Param, prefix, name string) string {
+	declared := make(map[string]bool, len(params))
+	for _, p := range params {
+		declared[strings.ToLower(p.Name)] = true
+	}
+	aux := prefix + name
+	for declared[strings.ToLower(aux)] {
+		aux += "_"
+	}
+	return aux
+}
+
+// processorAllocatedAuxiliaryParamName additionally reserves helper names
+// already allocated to preceding parameters. Otherwise Flag and Flag_ could
+// both become _ob_present_Flag_ when _ob_present_Flag is a legal parameter.
+func processorAllocatedAuxiliaryParamName(params []processorpkg.Param, prefix, name string) string {
+	reserved := make(map[string]bool, len(params)*2)
+	for _, p := range params {
+		reserved[strings.ToLower(p.Name)] = true
+	}
+	for _, p := range params {
+		aux := prefix + p.Name
+		for reserved[strings.ToLower(aux)] {
+			aux += "_"
+		}
+		if strings.EqualFold(p.Name, name) {
+			return aux
+		}
+		reserved[strings.ToLower(aux)] = true
+	}
+	return processorAuxiliaryParamName(params, prefix, name)
+}
+
+// processorRequestControls описывает служебные поля, которые действительно
+// отрисованы текущей формой обработки. Префиксы _ob_present_ и _fc_ сами по
+// себе ничего не доказывают: такие имена разрешены у обычных параметров.
+type processorRequestControls struct {
+	paramFields      map[string][]string
+	fileInputs       map[string][]string
+	boolPresence     map[string][]string
+	fileContent      map[string][]string
+	formTables       map[string]metadata.FormTableDefinition
+	tableAuthorities map[string]managedFormTableAuthority
+	formTablesErr    error
+}
+
+// processorRequestControlsForForm строит allow-list служебных полей по форме,
+// которую сервер только что отдал пользователю. nil означает legacy-форму:
+// она рисует checkbox-marker для каждого bool-параметра и настоящий multipart
+// input для file-параметра (без _fc_ textarea).
+func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadata.FormModule) processorRequestControls {
+	params := proc.Params
+	tableAuthorities, formTablesErr := managedFormTableAuthorities(form, proc.TableParts, true)
+	var formTables map[string]metadata.FormTableDefinition
+	if formTablesErr == nil {
+		formTables, formTablesErr = editableFormTablesFromAuthorities(form, proc.TableParts, tableAuthorities)
+	}
+	controls := processorRequestControls{
+		paramFields:      make(map[string][]string),
+		fileInputs:       make(map[string][]string),
+		boolPresence:     make(map[string][]string),
+		fileContent:      make(map[string][]string),
+		formTables:       formTables,
+		tableAuthorities: tableAuthorities,
+		formTablesErr:    formTablesErr,
+	}
+	if form == nil {
+		for _, p := range params {
+			key := strings.ToLower(p.Name)
+			controls.paramFields[key] = append(controls.paramFields[key], p.Name)
+			if p.Type == "bool" {
+				controls.boolPresence[key] = append(controls.boolPresence[key], processorParamPresenceName(params, p.Name))
+			}
+			if p.Type == "file" {
+				controls.fileInputs[key] = append(controls.fileInputs[key], p.Name)
+			}
+		}
+		return controls
+	}
+
+	paramsByName := make(map[string]processorpkg.Param, len(params))
+	for _, p := range params {
+		paramsByName[strings.ToLower(p.Name)] = p
+	}
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		// The table renderer only emits its own row controls and command
+		// buttons; arbitrary scalar children are not browser form controls.
+		if el.Kind == metadata.FormElementTablePart || visit.parentTablePart != nil {
+			return
+		}
+		if visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 || !processorElementPostsParam(el.Kind) {
+			return
+		}
+		fieldName := dpFieldName(el.DataPath)
+		p, ok := paramsByName[strings.ToLower(fieldName)]
+		if !ok {
+			return
+		}
+		paramKey := strings.ToLower(p.Name)
+		controls.paramFields[paramKey] = appendUniqueProcessorControl(
+			controls.paramFields[paramKey], fieldName,
+		)
+		switch {
+		case p.Type == "bool" && el.Kind == metadata.FormElementCheckbox:
+			controls.boolPresence[paramKey] = appendUniqueProcessorControl(
+				controls.boolPresence[paramKey], processorParamPresenceName(params, fieldName),
+			)
+		case p.Type == "file" && el.Kind == metadata.FormElementField && strings.EqualFold(el.Type, "file"):
+			controls.fileInputs[paramKey] = appendUniqueProcessorControl(
+				controls.fileInputs[paramKey], fieldName,
+			)
+			controls.fileContent[paramKey] = appendUniqueProcessorControl(
+				controls.fileContent[paramKey], processorFileContentName(params, fieldName),
+			)
+		}
+	})
+	return controls
+}
+
+func processorElementPostsParam(kind metadata.FormElementType) bool {
+	switch kind {
+	case metadata.FormElementField,
+		metadata.FormElementCodeField,
+		metadata.FormElementInputList,
+		metadata.FormElementCheckbox,
+		metadata.FormElementDatePicker,
+		metadata.FormElementSwitch:
+		return true
+	default:
+		return false
+	}
+}
+
+func appendUniqueProcessorControl(names []string, name string) []string {
+	for _, existing := range names {
+		if existing == name {
+			return names
+		}
+	}
+	return append(names, name)
+}
+
+// processorParamValuesFromRequest извлекает только реально переданные поля.
+// Отсутствующий metadata-параметр не попадает в map и потому не затирает
+// DSL-default при BindNamedArgs; явно переданное пустое значение остаётся
+// полноценным значением (parseParamValue может представить его как nil).
+func processorParamValuesFromRequest(
+	r *http.Request,
+	params []processorpkg.Param,
+	maxFileSize int64,
+	controls processorRequestControls,
+) (map[string]any, error) {
+	values := make(map[string]any)
+	for _, p := range params {
+		paramKey := strings.ToLower(p.Name)
+		paramFields := controls.paramFields[paramKey]
+		if p.Type == "file" {
+			// Обычная страница обработки отправляет настоящий multipart-файл.
+			// Managed obFire, напротив, преобразует FormData в urlencoded и
+			// передаёт уже прочитанное браузером содержимое обычной строкой.
+			// Не вызываем FormFile для urlencoded: он возвращает ErrNotMultipart.
+			if r.MultipartForm != nil {
+				for _, fieldName := range controls.fileInputs[paramKey] {
+					file, _, err := r.FormFile(fieldName)
+					if err == nil {
+						data, readErr := readUploadedBytes(file, maxFileSize)
+						closeRead("загруженный файл параметра", file)
+						if readErr != nil {
+							return nil, readErr
+						}
+						values[p.Name] = decodeUploadText(data)
+						break
+					}
+					if !errors.Is(err, http.ErrMissingFile) {
+						return nil, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+					}
+				}
+				if _, present := values[p.Name]; present {
+					continue
+				}
+			}
+
+			// _fc_<name> — backing textarea файлового виджета. Текущий obFire
+			// переносит его содержимое в поле <name>, но принимаем оба варианта:
+			// это сохраняет прямой urlencoded-контракт и не путает содержимое с
+			// текстовым полем пути, если клиент прислал оба.
+			text, present := processorControlText(r, controls.fileContent[paramKey])
+			if !present {
+				text, present = processorControlText(r, paramFields)
+			}
+			if !present {
+				continue
+			}
+			if int64(len([]byte(text))) > maxFileSize {
+				return nil, errUploadTooLarge
+			}
+			values[p.Name] = text
+			continue
+		}
+
+		text, present := processorControlText(r, paramFields)
+		if !present {
+			// HTML не отправляет unchecked checkbox. Presence-marker рисуется
+			// только рядом с реально существующим bool-контролом, поэтому marker
+			// означает явное false, а полное отсутствие custom-параметра оставляет
+			// DSL-default нетронутым.
+			if p.Type == "bool" {
+				if _, rendered := processorControlText(r, controls.boolPresence[paramKey]); rendered {
+					values[p.Name] = false
+				}
+			}
+			continue
+		}
+		values[p.Name] = parseParamValue(text, p.Type)
+	}
+	return values, nil
+}
+
+// processorPostFormText читает только тело запроса. r.Form объединяет body с
+// query string, поэтому через него ?_fc_X=... или ?_ob_present_X=... мог бы
+// подделать состояние формы.
+func processorPostFormText(r *http.Request, name string) (string, bool) {
+	raw, present := processorPostFormValues(r, name)
+	if !present {
+		return "", false
+	}
+	if len(raw) == 0 {
+		return "", true
+	}
+	return raw[0], true
+}
+
+func processorPostFormValues(r *http.Request, name string) ([]string, bool) {
+	if r == nil || r.PostForm == nil {
+		return nil, false
+	}
+	raw, present := r.PostForm[name]
+	return raw, present
+}
+
+func processorControlText(r *http.Request, allowed []string) (string, bool) {
+	for _, name := range allowed {
+		if text, present := processorPostFormText(r, name); present {
+			return text, true
+		}
+	}
+	return "", false
+}
+
+// processorFormObjectFromRequest builds the object visible to a bound .form.os
+// handler from the same validated parameter values as the processor call. It
+// deliberately does not use buildObjectFromForm: that generic entity helper
+// reads r.FormValue and therefore accepts query values and every entity field,
+// including controls which this processor form did not render as editable.
+func processorFormObjectFromRequest(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	paramValues map[string]any,
+	controls processorRequestControls,
+) (*runtime.Object, error) {
+	fields := make(map[string]any, len(paramValues))
+	for name, value := range paramValues {
+		fields[name] = value
+	}
+	rows, err := processorFormTableRowsFromRequest(r, entity, form, controls.formTables)
+	if err != nil {
+		return nil, err
+	}
+	return &runtime.Object{
+		Type:          entity.Name,
+		Kind:          entity.Kind,
+		ID:            uuid.New(),
+		Fields:        fields,
+		TablePartRows: rows,
+	}, nil
+}
+
+// processorFormTableRowsFromRequest exposes only body values belonging to
+// editable table-part or ValueTable controls rendered by the current form. The
+// normalized request lets the common parsers keep their type conversion without
+// inheriting query parameters or arbitrary unrendered form tables.
+func processorFormTableRowsFromRequest(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	rendered map[string]metadata.FormTableDefinition,
+) (map[string][]map[string]any, error) {
+	body := make(url.Values)
+	for postedName, values := range r.PostForm {
+		for formName, definition := range rendered {
+			jsonName := "tp_json." + formName
+			if strings.EqualFold(postedName, jsonName) {
+				body["tp_json."+definition.Name] = append(body["tp_json."+definition.Name], values...)
+				break
+			}
+			legacyNamespace := "tp."
+			if definition.Source == metadata.FormTableSourceValueTable {
+				legacyNamespace = "vt."
+			}
+			legacyPrefix := legacyNamespace + formName + "."
+			if len(postedName) >= len(legacyPrefix) && strings.EqualFold(postedName[:len(legacyPrefix)], legacyPrefix) {
+				normalized := legacyNamespace + definition.Name + "." + postedName[len(legacyPrefix):]
+				body[normalized] = append(body[normalized], values...)
+				break
+			}
+		}
+	}
+	safeRequest := &http.Request{
+		Method:   http.MethodPost,
+		Header:   http.Header{"Content-Type": {"application/x-www-form-urlencoded"}},
+		Form:     body,
+		PostForm: body,
+	}
+	rows, err := parseTablePartRowsForManagedForm(safeRequest, entity, form, true)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = make(map[string][]map[string]any)
+	}
+	valueTables, err := parseValueTableRowsForManagedForm(safeRequest, form, entity, true)
+	if err != nil {
+		return nil, err
+	}
+	for name, valueTableRows := range valueTables {
+		rows[name] = valueTableRows
+	}
+	return rows, nil
 }
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,

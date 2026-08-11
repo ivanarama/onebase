@@ -80,6 +80,9 @@ type rawEntity struct {
 	// FullText — указатель, чтобы отличить отсутствие ключа (умолчание: все
 	// строковые реквизиты) от явного `fulltext: []` (объект вне поиска).
 	FullText *[]string `yaml:"fulltext"`
+	// Search — тоже указатель: отсутствие ключа (умолчание: все строковые
+	// реквизиты) надо отличать от явного `search_fields: []` (поиск выключен).
+	Search *[]string `yaml:"search_fields"`
 }
 
 type rawTileView struct {
@@ -150,6 +153,10 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	if raw.FullText != nil {
 		e.FullText = trimStringList(*raw.FullText)
 		e.FullTextSet = true
+	}
+	if raw.Search != nil {
+		e.Search = trimStringList(*raw.Search)
+		e.SearchSet = true
 	}
 	if raw.Numerator != nil {
 		n := &Numerator{
@@ -278,6 +285,7 @@ type rawInfoRegister struct {
 	Title      string            `yaml:"title"`
 	Titles     map[string]string `yaml:"titles"`
 	Periodic   bool              `yaml:"periodic"`
+	Recorder   bool              `yaml:"recorder"`
 	Dimensions []rawField        `yaml:"dimensions"`
 	Resources  []rawField        `yaml:"resources"`
 }
@@ -294,7 +302,8 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 	if raw.Name == "" {
 		return nil, fmt.Errorf("%s: missing name", path)
 	}
-	ir := &InfoRegister{Name: raw.Name, Title: raw.Title, Titles: raw.Titles, Periodic: raw.Periodic}
+	ir := &InfoRegister{Name: raw.Name, Title: raw.Title, Titles: raw.Titles,
+		Periodic: raw.Periodic, Recorder: raw.Recorder}
 	for _, rf := range raw.Dimensions {
 		ir.Dimensions = append(ir.Dimensions, parseField(rf))
 	}

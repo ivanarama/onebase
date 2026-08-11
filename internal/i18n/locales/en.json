@@ -958,6 +958,9 @@
   "в свойствах документа. Здесь пишите движения регистров.": "in document properties. Write register movements here.",
   "вертикальные": "vertical",
   "виджет не найден:": "widget not found:",
+  "навигация по ссылке разворачивается на один уровень: «%s.%s» — да, «%s.%s.%s» — нет; выбери ссылку целиком (%s) либо соедини %s явно через СОЕДИНЕНИЕ": "reference navigation expands one level only: «%s.%s» yes, «%s.%s.%s» no; select the reference itself (%s) or join %s explicitly",
+  "регистр сведений %s периодический: период обязателен": "information register %s is periodic: period is required",
+  "регистр сведений %s непериодический: период указывать нельзя": "information register %s is not periodic: period must not be set",
   "виртуальная таблица %q требует круглые скобки: .%s(...)": "virtual table %q requires parentheses: .%s(...)",
   "внешний": "external",
   "внешняя": "external",
@@ -1175,5 +1178,9 @@
   "Откатываю и перезапускаю...": "Rolling back and restarting...",
   "обновление выполняется из лаунчера": "update it from the launcher",
   "превышен размер данных формы: форматированный текст с картинками не должен превышать %d МБ в одном поле": "form data too large: rich text with images must not exceed %d MB per field",
-  "превышен размер данных формы (не более %d МБ)": "form data too large (limit %d MB)"
+  "превышен размер данных формы (не более %d МБ)": "form data too large (limit %d MB)",
+  "%s требует неотрицательное целое число записей": "%s requires a non-negative integer row count",
+  "%s требует неотрицательное целое число записей, получено %q": "%s requires a non-negative integer row count, got %q",
+  "%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается": "%s in nested queries and UNION branches is not supported yet",
+  "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "FIRST/TOP in a query with UNION is not supported yet: the limit applies to an individual branch"
 }
