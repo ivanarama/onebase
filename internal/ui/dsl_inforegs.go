@@ -53,13 +53,6 @@ type infoRegProxy struct {
 func (p *infoRegProxy) Get(_ string) any    { return nil }
 func (p *infoRegProxy) Set(_ string, _ any) {}
 
-func (p *infoRegProxy) ctx() context.Context {
-	if p.ctxSrc != nil {
-		return p.ctxSrc.Ctx()
-	}
-	return context.Background()
-}
-
 func (p *infoRegProxy) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "создатьменеджерзаписи", "createrecordmanager":
