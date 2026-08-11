@@ -1612,24 +1612,20 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	if entity.NotifyChanges {
 		delBefore, _ = s.store.GetByID(r.Context(), entity.Name, id, entity)
 	}
-	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-		if entity.Posting {
-			if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-				return err
-			}
-		}
-		if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
-			return err
-		}
-		if err := s.store.Delete(ctx, entity.Name, id); err != nil {
-			return err
-		}
-		s.publishDocChange(ctx, entity, id, "удалён", delBefore)
-		return nil
-	}); err != nil {
+	// Удаление идёт через entityservice: там хуки модуля объекта
+	// «ПередУдалением»/«ПослеУдаления», снятие движений, ТЧ и регистрация в
+	// планах обмена — одинаково для UI, пачек, DSL и REST.
+	delRes, err := s.entityService().Delete(r.Context(), entity, id)
+	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
+	if delRes.DSLError != "" {
+		// Хук отменил удаление — объект на месте, показываем причину.
+		http.Error(w, s.errText(r, errors.New(delRes.DSLError)), http.StatusConflict)
+		return
+	}
+	s.publishDocChange(r.Context(), entity, id, "удалён", delBefore)
 	// Веб-хук <kind>.delete (план 29) — только физическое удаление
 	// (пометка на удаление обратима и событием не считается).
 	if s.cfg.Webhooks.Enabled() {
@@ -1678,27 +1674,11 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 					skipped++
 					continue
 				}
-				if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-					if entity.Posting {
-						if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-							return err
-						}
-					}
-					// Ошибку удаления ТЧ нельзя проглатывать внутри транзакции:
-					// дальше удаляется сам объект, транзакция коммитится, и
-					// строки табличной части остаются сиротами — ссылаются на
-					// несуществующего родителя. Возврат ошибки откатывает всё.
-					for _, tp := range entity.TableParts {
-						if _, err := s.store.Exec(ctx, "DELETE FROM "+metadata.TablePartTableName(entity.Name, tp.Name)+" WHERE parent_id = "+s.store.Dialect().Placeholder(1), id); err != nil {
-							return err
-						}
-					}
-					if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
-						return err
-					}
-					return s.store.Delete(ctx, entity.Name, id)
-				}); err != nil {
-					// Удаление не прошло (откат транзакции) — не рапортуем успех.
+				// Через entityservice: хуки удаления, движения, ТЧ и планы
+				// обмена в одной транзакции. Отказ хука — такой же пропуск,
+				// как непройденная проверка ссылок: объект остаётся.
+				res, err := s.entityService().Delete(r.Context(), entity, id)
+				if err != nil || res.DSLError != "" {
 					skipped++
 					continue
 				}
@@ -1776,18 +1756,11 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			continue
 		}
-		if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-			if entity.Posting {
-				if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-					return err
-				}
-			}
-			if err := exchange.RegisterOnDelete(ctx, s.store, s.reg.ExchangePlans(), entity, id); err != nil {
-				return err
-			}
-			return s.store.Delete(ctx, entity.Name, id)
-		}); err != nil {
-			// Удаление не прошло (откат транзакции) — не рапортуем успех.
+		// Через entityservice — как и остальные пути. Заодно этот путь
+		// перестал оставлять строки ТЧ сиротами: раньше он, в отличие от
+		// соседнего, их не удалял.
+		res, err := s.entityService().Delete(r.Context(), entity, id)
+		if err != nil || res.DSLError != "" {
 			skipped++
 			continue
 		}
