@@ -25,7 +25,7 @@ import (
 
 var (
 	// ErrNetworkLocked — отказ предохранителя сети (план 62) для DSL заданий.
-	ErrNetworkLocked = errors.New("сетевые возможности отключены предохранителем — включите «Разрешить сетевые операции» в конфигураторе")
+	ErrNetworkLocked = errors.New("сетевые возможности отключены предохранителем — включите «Разрешить сетевые операции» в конфигураторе либо командой: onebase settings set net.enabled вкл")
 	// ErrJobAlreadyRunning is returned when a cron tick or manual start tries
 	// to overlap another execution of the same logical job.
 	ErrJobAlreadyRunning = errors.New("scheduled job is already running")
@@ -796,7 +796,10 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	dslVars["Message"] = msgFunc
 	interpreter.InjectMaket(dslVars, proc.Layout)
 
-	err := s.interp.Run(procDecl, paramsThis, dslVars)
+	// Параметры задания связываем и с одноимёнными аргументами Выполнить:
+	// объявленный параметр процедуры иначе затеняет инжектированный и приходит
+	// пустым — молча (#706). Тот же вызов, что в UI и procrun.
+	_, err := s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
 	output = strings.Join(messages, "\n")
 	return output, err
 }

@@ -99,6 +99,9 @@ func TestSweepOrphanBlobs(t *testing.T) {
 	if st.Deleted != 0 || st.Protected != 1 {
 		t.Fatalf("grace-окно: deleted=%d protected=%d (ожидалось 0/1)", st.Deleted, st.Protected)
 	}
+	if st.ProtectedRecent != 1 || st.ProtectedDSL != 0 {
+		t.Fatalf("причина защиты: recent=%d dsl=%d (ожидалось 1/0)", st.ProtectedRecent, st.ProtectedDSL)
+	}
 	if err := openClosed(t, db, mustUUID(t, orphan)); err != nil {
 		t.Fatalf("orphan в пределах grace не должен удаляться: %v", err)
 	}
@@ -157,6 +160,15 @@ func TestSweepOrphanBlobs_DSLManaged(t *testing.T) {
 	if err := openClosed(t, db, mustUUID(t, orphan)); err == nil {
 		t.Fatal("не-managed orphan должен быть удалён")
 	}
+	// Причина защиты различима: постоянная (dsl-managed), а не «моложе grace».
+	// Одним счётчиком отчёт команды уверял, что блоб моложе grace-окна, даже
+	// когда grace=0 и блоб создан давно.
+	if st.ProtectedDSL != 1 || st.ProtectedRecent != 0 {
+		t.Fatalf("ProtectedDSL=%d ProtectedRecent=%d, ожидалось 1/0", st.ProtectedDSL, st.ProtectedRecent)
+	}
+	if st.Protected != st.ProtectedDSL+st.ProtectedRecent+st.ProtectedLegacy {
+		t.Fatalf("Protected=%d не равно сумме причин (%d+%d+%d)", st.Protected, st.ProtectedDSL, st.ProtectedRecent, st.ProtectedLegacy)
+	}
 }
 
 // TestSweepOrphanBlobs_LegacyZeroCreatedAt: легаси-блоб с created_at=0 (неизвестное
@@ -192,6 +204,10 @@ func TestSweepOrphanBlobs_LegacyZeroCreatedAt(t *testing.T) {
 	}
 	if st.Protected != 1 {
 		t.Fatalf("protected=%d, ожидалось 1", st.Protected)
+	}
+	if st.ProtectedLegacy != 1 || st.ProtectedRecent != 0 || st.ProtectedDSL != 0 {
+		t.Fatalf("причина защиты: legacy=%d recent=%d dsl=%d, ожидалось 1/0/0",
+			st.ProtectedLegacy, st.ProtectedRecent, st.ProtectedDSL)
 	}
 	if err := openClosed(t, db, mustUUID(t, legacy)); err != nil {
 		t.Fatalf("легаси-блоб (created_at=0) не должен удаляться: %v", err)

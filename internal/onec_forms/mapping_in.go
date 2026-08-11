@@ -53,14 +53,35 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 		return
 	}
 
-	// Декорация — это LabelField с пометкой. В XML 1С действительно может
-	// встретиться <Decoration>; на наших фикстурах — нет, но логика готова.
-	if el.Kind == "Decoration" {
+	// Декорация — это LabelField с пометкой. В выгрузках встречаются оба
+	// написания: <Decoration> и <LabelDecoration> (реальные формы 1С пишут
+	// второе — на нём импорт спотыкался и оставлял неизвестный вид).
+	// alreadyMapped — вид уже приведён к каноническому имени OneBase явным
+	// правилом ниже. Без этого флага такой элемент попадал в общий маппинг
+	// «1С → OneBase», не находился там (потому что имя уже наше) и получал
+	// ложное W010 «без соответствия».
+	alreadyMapped := false
+
+	if el.Kind == "Decoration" || el.Kind == "LabelDecoration" {
 		el.Kind = string(metadata.FormElementLabel)
 		if el.Props == nil {
 			el.Props = map[string]any{}
 		}
 		el.Props["decoration"] = true
+		alreadyMapped = true
+	}
+
+	// Popup — всплывающая группа (подменю командной панели). Прямого аналога
+	// нет: в вебе меню раскрывается само. Переносим содержимое как обычную
+	// группу и помечаем — при экспорте обратно пометка вернёт Popup, а до тех
+	// пор элементы группы видны, а не теряются вместе с неизвестным видом.
+	if el.Kind == "Popup" {
+		el.Kind = string(metadata.FormElementGroupBox)
+		if el.Props == nil {
+			el.Props = map[string]any{}
+		}
+		el.Props["popup"] = true
+		alreadyMapped = true
 	}
 
 	// CommandBarButton (определяется по полю <Type>CommandBarButton</Type>
@@ -75,10 +96,16 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 		}
 	}
 
-	// Маппинг типа элемента: InputField → ПолеВвода и т.д.
-	if mapped, ok := Element1CToOneBase(el.Kind); ok {
+	// Поле HTML-документа. Отрисовывать готовый HTML платформа не умеет, но
+	// содержимое — это разметка, и правят её как код: ПолеКода с языком html
+	// сохраняет и данные, и возможность редактирования.
+	if el.Kind == "HTMLDocumentField" {
+		el.Kind = string(metadata.FormElementCodeField)
+		el.Language = "html"
+	} else if mapped, ok := Element1CToOneBase(el.Kind); ok {
+		// Маппинг типа элемента: InputField → ПолеВвода и т.д.
 		el.Kind = string(mapped)
-	} else {
+	} else if !alreadyMapped {
 		// Неизвестный — оставляем имя XML и эмитим W010.
 		warns.Add(Warning{
 			Severity: SeverityWarn,
@@ -269,6 +296,7 @@ func irElementToMeta(el *IRElement) *metadata.FormElement {
 		VerticalAlign:   el.VAlign,
 		Hint:            el.Hint,
 		Mask:            el.Mask,
+		Language:        el.Language,
 		Handlers:        irEventsToFormEvents(el.Events),
 		Props:           el.Props,
 		UnknownXML:      el.UnknownXML,

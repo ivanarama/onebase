@@ -228,7 +228,14 @@ func (h *Handlers) currentChallenge(r *http.Request) (Challenge, string, bool) {
 // подсунуть чужой секрет.
 func (h *Handlers) TwoFactorQR(w http.ResponseWriter, r *http.Request) {
 	ch, _, ok := h.currentChallenge(r)
-	if !ok || ch.Secret == "" {
+	// Гейт — EnrollAuthorized, тот же, по которому страница решает показывать
+	// ли QR. Раньше проверялось только «секрет есть», а это следствие, а не
+	// разрешение: держалось оно на том, что секрет в challenge появляется лишь
+	// после кода привязки. Инвариант верный, но незаписанный — картинка отдавала
+	// секрет по условию, которое к правам отношения не имеет, и любая правка,
+	// заводящая секрет раньше (скажем, доделанная настройка 2FA в JSON-потоке),
+	// молча превращала бы это в выдачу второго фактора по одному паролю (#615).
+	if !ok || !ch.EnrollAuthorized || ch.Secret == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -333,7 +340,11 @@ func (h *Handlers) TwoFactorSubmit(w http.ResponseWriter, r *http.Request) {
 // показывает QR. Секрет появляется только здесь — привязать второй фактор по
 // одному паролю нельзя (issue #577).
 func (h *Handlers) completeBindTicket(w http.ResponseWriter, r *http.Request, ch Challenge, token, code string) {
-	if err := h.Repo.ConsumeBindTicket(r.Context(), ch.UserID, code, time.Now()); err != nil {
+	// Проверяем, но не гасим: билет сгорит, когда фактор действительно привяжут
+	// (completeEnrollment). Прежнее гашение здесь оставляло сорвавшуюся привязку
+	// и без второго фактора, и без кода — за новым надо было к администратору
+	// (#615).
+	if err := h.Repo.VerifyBindTicket(r.Context(), ch.UserID, code, time.Now()); err != nil {
 		h.failSecondFactor(w, r, ch, token, err)
 		return
 	}
@@ -348,12 +359,18 @@ func (h *Handlers) completeBindTicket(w http.ResponseWriter, r *http.Request, ch
 	if !h.challenges().Update(token, func(c *Challenge) {
 		c.EnrollAuthorized = true
 		c.Secret = secret
+		c.bindCode = code
 		c.attempts = 0
 	}) {
 		h.clearChallengeCookie(w, r)
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
+	// Отсчёт TTL шёл от ввода пароля, а впереди самый долгий шаг: поставить
+	// приложение, отсканировать QR, дождаться окна кода. Продлеваем на полный
+	// TTL — иначе привязка срывалась по времени тем чаще, чем дольше искали
+	// телефон (#615).
+	h.challenges().Renew(token)
 	ch.EnrollAuthorized = true
 	ch.Secret = secret
 	h.renderTwoFactor(w, ch, "")
@@ -377,6 +394,14 @@ func (h *Handlers) completeEnrollment(w http.ResponseWriter, r *http.Request, ch
 	if err := h.Repo.EnableTOTP(r.Context(), ch.UserID, ch.Secret, step); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	// Билет гасим здесь: привязка состоялась. Ошибку только логируем — второй
+	// фактор уже включён, и разворачивать это ради непогашенного билета хуже,
+	// чем оставить его дожить до истечения (он одноразовый и с TTL).
+	if ch.bindCode != "" {
+		if err := h.Repo.ConsumeBindTicket(r.Context(), ch.UserID, ch.bindCode, time.Now()); err != nil {
+			authLog().Warn("не удалось погасить код привязки после настройки 2FA", "логин", ch.Login, "err", err)
+		}
 	}
 	codes, err := h.Repo.ReplaceBackupCodes(r.Context(), ch.UserID)
 	if err != nil {

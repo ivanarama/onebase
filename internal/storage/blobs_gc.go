@@ -21,8 +21,15 @@ type GCStats struct {
 	TotalBlobs int         // всего блобов в _blobs
 	LiveRefs   int         // уникальных живых ссылок (из image-полей)
 	Orphans    []uuid.UUID // блобы без ссылок и старше grace-окна (кандидаты/удалённые)
-	Protected  int         // блобы без ссылок, но в пределах grace-окна (не тронуты)
+	Protected  int         // всего не тронутых блобов без ссылок (сумма причин ниже)
 	Deleted    int         // фактически удалено (0 при dryRun)
+
+	// Причины защиты разделены: grace-окно временное (блоб станет кандидатом,
+	// когда состарится), legacy-время неизвестно, а dsl-managed — постоянное.
+	// Одним числом каждая из них ошибочно выглядела как «моложе grace».
+	ProtectedRecent int // без ссылок, но моложе grace-окна
+	ProtectedLegacy int // created_at=0: возраст неизвестен, поэтому удалять небезопасно
+	ProtectedDSL    int // созданы из DSL (СохранитьКартинку) — исключены из sweep всегда
 }
 
 // CollectImageRefs возвращает множество UUID, на которые ссылаются image-поля
@@ -120,15 +127,22 @@ func (db *DB) SweepOrphanBlobs(ctx context.Context, entities []*metadata.Entity,
 		// (ревью #11).
 		if b.dslManaged {
 			st.Protected++
+			st.ProtectedDSL++
 			continue
 		}
-		// Защищаем недавно созданные блобы (created_at строго новее cutoff) И блобы
-		// с created_at=0 — это легаси/неизвестное время создания: при положительном
-		// grace «0 > cutoff» ложно, поэтому считать их «старыми» нельзя, иначе
-		// удалили бы блоб с неопределённым возрастом (ревью #18). Консервативно —
-		// защищаем.
-		if b.createdAt == 0 || b.createdAt > cutoff {
+		// created_at=0 — это легаси/неизвестное время создания. Считать такой blob
+		// «старым» нельзя, но и называть его моложе grace-окна неверно (особенно при
+		// --min-age=0), поэтому причина защиты учитывается отдельно.
+		if b.createdAt == 0 {
 			st.Protected++
+			st.ProtectedLegacy++
+			continue
+		}
+		// Недавно созданные блобы (created_at строго новее cutoff) могут быть ещё
+		// не привязаны к записи, поэтому их временно защищает grace-окно.
+		if b.createdAt > cutoff {
+			st.Protected++
+			st.ProtectedRecent++
 			continue
 		}
 		st.Orphans = append(st.Orphans, b.id)

@@ -1087,7 +1087,18 @@ func searchPath(errors map[string]any) map[string]any {
 			"parameters": []any{
 				map[string]any{"name": "q", "in": "query", "required": true, "schema": map[string]any{"type": "string"}},
 				map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": searchMaxLimit}},
-				map[string]any{"name": "offset", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 0}},
+				// Листание — только курсором из meta.next_cursor предыдущего
+				// ответа. Здесь был описан offset, которого обработчик не
+				// принимает вовсе (и не примет: сырое смещение считается по
+				// просмотренным строкам индекса и выдавало бы совпадения,
+				// скрытые правами). Клиент по такой спецификации листать не
+				// мог: рабочего параметра в ней не было, а нерабочий был.
+				map[string]any{
+					"name": "cursor", "in": "query",
+					"description": "Opaque position from meta.next_cursor of the previous response. " +
+						"Valid only for the same q and limit; anything else restarts from the beginning.",
+					"schema": map[string]any{"type": "string"},
+				},
 			},
 			"responses": mergeResponses(map[string]any{
 				"200": responseWithSchema("OK", "#/components/schemas/SearchEnvelope"),
