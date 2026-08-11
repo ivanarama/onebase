@@ -3,6 +3,7 @@ package webassets
 import (
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -107,6 +108,62 @@ func TestSlickGridHandlerServesCriticalFiles(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
 		t.Errorf("Cache-Control = %q, want max-age", cc)
+	}
+}
+
+// TestLucideHandlerServesSprite guards the icon sprite: навигация ссылается на
+// него из каждой страницы через <use href="/vendor/lucide/sprite.svg#имя">, так
+// что недоступный путь = страница без иконок.
+func TestLucideHandlerServesSprite(t *testing.T) {
+	h := http.StripPrefix("/vendor/lucide/", LucideHandler())
+	req := httptest.NewRequest(http.MethodGet, "/vendor/lucide/sprite.svg", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sprite.svg: status = %d, want 200", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("sprite.svg: empty body")
+	}
+	// Тип обязателен: с text/plain браузер не отрисует <use>.
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "image/svg+xml") {
+		t.Errorf("Content-Type = %q, want image/svg+xml", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
+		t.Errorf("Cache-Control = %q, want max-age", cc)
+	}
+
+	// A path outside the embedded tree must 404, not leak the filesystem.
+	req = httptest.NewRequest(http.MethodGet, "/vendor/lucide/nonexistent.svg", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("absent file: status = %d, want 404", rec.Code)
+	}
+}
+
+// TestLucideSymbolNamesMatchSprite — список имён не отдельный артефакт, а разбор
+// самого спрайта: проверяем, что разбор нашёл все <symbol> и ничего лишнего.
+func TestLucideSymbolNamesMatchSprite(t *testing.T) {
+	names := LucideSymbolNames()
+	if len(names) < 1000 {
+		t.Fatalf("имён всего %d — похоже, спрайт подменили огрызком", len(names))
+	}
+	if !sort.StringsAreSorted(names) {
+		t.Error("имена не отсортированы (datalist конфигуратора ждёт порядок)")
+	}
+	data, err := lucideFS.ReadFile("lucide/sprite.svg")
+	if err != nil {
+		t.Fatalf("спрайт не читается: %v", err)
+	}
+	if got, want := len(names), strings.Count(string(data), "<symbol "); got != want {
+		t.Errorf("разобрано %d имён при %d символах в спрайте", got, want)
+	}
+	// Каждое имя обязано быть настоящим id символа.
+	for _, n := range []string{names[0], names[len(names)/2], names[len(names)-1], "square", "shopping-cart"} {
+		if !strings.Contains(string(data), `<symbol id="`+n+`"`) {
+			t.Errorf("имя %q не найдено среди символов спрайта", n)
+		}
 	}
 }
 

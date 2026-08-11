@@ -136,6 +136,9 @@ func (s *Server) ListenAndServe() error {
 	// SlickGrid (6pac fork, MIT) — грид для редактируемых табличных частей в
 	// managed-формах. Самохостинг вместо CDN: UI работает офлайн.
 	r.Handle("/vendor/slickgrid/*", noStore(http.StripPrefix("/vendor/slickgrid/", webassets.SlickGridHandler())))
+	// Lucide (ISC) — тот же спрайт иконок, что и у базы: превью поля «Иконка» в
+	// конфигураторе рисует ту же графику, что потом появится в навигации.
+	r.Handle("/vendor/lucide/*", noStore(http.StripPrefix("/vendor/lucide/", webassets.LucideHandler())))
 
 	// Launcher pages (no auth)
 	r.Get("/", s.h.index)

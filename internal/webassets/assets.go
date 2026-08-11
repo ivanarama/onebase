@@ -11,6 +11,9 @@ package webassets
 import (
 	"io/fs"
 	"net/http"
+	"regexp"
+	"sort"
+	"sync"
 
 	"embed"
 )
@@ -50,6 +53,17 @@ var slickgridFS embed.FS
 //
 //go:embed quill
 var quillFS embed.FS
+
+// Lucide (ISC) — весь набор иконок одним SVG-спрайтом: каждая иконка это
+// <symbol id="имя">, а страница ссылается на неё через <use>. Спрайт заменил
+// курируемый набор инлайн-SVG в бинаре (план 72, подход A): теперь работает
+// любое имя Lucide, а расширение набора не требует правки кода. Файл — источник
+// правды и для разметки, и для списка имён (LucideSymbolNames), поэтому апгрейд
+// версии = подмена одного файла. Самохостинг вместо CDN: иконки рисуются без
+// интернета, как и остальные вендоренные ассеты.
+//
+//go:embed lucide/sprite.svg
+var lucideFS embed.FS
 
 // MonacoHandler serves the embedded Monaco tree. Mount it under
 // /vendor/monaco/ in every server that renders a Monaco editor.
@@ -97,6 +111,51 @@ func SlickGridHandler() http.Handler {
 		fileSrv.ServeHTTP(w, req)
 	})
 }
+
+// LucideHandler serves the embedded Lucide sprite. Mount it under
+// /vendor/lucide/ in every server that renders icons (base UI navigation,
+// launcher configurator preview) — <use href="/vendor/lucide/sprite.svg#name">
+// works only if the sprite lives on the same origin as the page.
+func LucideHandler() http.Handler {
+	sub, err := fs.Sub(lucideFS, "lucide")
+	if err != nil {
+		return http.NotFoundHandler()
+	}
+	fileSrv := http.FileServer(http.FS(sub))
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		fileSrv.ServeHTTP(w, req)
+	})
+}
+
+// LucideSymbolNames возвращает отсортированные идентификаторы всех <symbol>
+// спрайта — это и есть множество доступных имён иконок. Разбирается сам
+// вендоренный файл, а не отдельный сгенерированный список: список не может
+// разойтись со спрайтом, потому что его нет. Результат считается один раз.
+func LucideSymbolNames() []string {
+	lucideNamesOnce.Do(func() {
+		data, err := lucideFS.ReadFile("lucide/sprite.svg")
+		if err != nil {
+			return
+		}
+		names := make([]string, 0, 2048)
+		for _, m := range lucideSymbolIDRe.FindAllSubmatch(data, -1) {
+			names = append(names, string(m[1]))
+		}
+		sort.Strings(names)
+		lucideNames = names
+	})
+	return lucideNames
+}
+
+var (
+	lucideNamesOnce sync.Once
+	lucideNames     []string
+	// Идентификатор символа Lucide — kebab-case из латиницы и цифр. Узкий класс
+	// символов не даёт ничему постороннему из спрайта попасть в имя, которое
+	// потом подставляется в href.
+	lucideSymbolIDRe = regexp.MustCompile(`<symbol id="([a-z0-9-]+)"`)
+)
 
 // QuillHandler serves the embedded Quill bundle. Mount it under /vendor/quill/
 // in the base UI server — richtext-fields on entity forms load quill.js and

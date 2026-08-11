@@ -37,11 +37,13 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 	"lower":  strings.ToLower,
 	"join":   strings.Join,
 	"printf": fmt.Sprintf,
-	// Иконки навигации (план 72): рендер инлайн-SVG Lucide, список имён и JSON для
-	// живого превью в конфигураторе. Один источник — internal/ui (карта lucideIcons).
-	"lucideIcon":      ui.LucideIcon,
-	"lucideNames":     ui.LucideNames,
-	"lucideIconsJSON": ui.LucideIconsJSON,
+	// Иконки навигации (планы 72/73): ссылка на символ общего спрайта, список имён
+	// для подсказки и синонимы для живого превью. Один источник — internal/ui, а
+	// за ним сам спрайт internal/webassets/lucide/sprite.svg.
+	"lucideIcon":        ui.LucideIcon,
+	"lucideNames":       ui.LucideNames,
+	"lucideAliasesJSON": ui.LucideAliasesJSON,
+	"lucideSpriteURL":   func() string { return ui.LucideSpriteURL },
 	"js": func(v any) template.JS {
 		// json.Marshal экранирует <, >, & в \uXXXX; возвращаем template.JS,
 		// чтобы html/template не экранировал повторно (двойное экранирование).

@@ -87,13 +87,12 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 (Redis/NATS-hub + общий стор сессий) и **P3-2** полный RLS против реальных данных —
 браться при упоре в потолок вертикали, каждому нужен свой план.
 
-### Не начато вообще (5)
+### Не начато вообще (4)
 
 | № | Фича | Эстимейт | Проверка |
 |---|---|---|---|
 | **84** | Enterprise-auth (TOTP/OIDC/LDAP) | 7–10 дней | грепы `totp|oidc|ldap|2fa` по `internal/`,`cmd/` — пусто |
 | **60B** | Marketplace конфигураций | — | нет `internal/marketplace`, `onebase install`; часть A (версионирование) закрыта |
-| **73** | Lucide через SVG-спрайт | — | сам план отложен «до дефицита иконок» |
 | **46** | PWA в App Store / Google Play | — | нужен `/.well-known/assetlinks.json`; обёртки вне репозитория |
 | — | `dev-workflow-improvements` | ~3–4 дня | нет hot reload Go, `--open`, browser sync |
 
@@ -328,6 +327,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 `52-syntax-assistant(-impl)`, `55-impl-htmltemplate-embed*`, `57-stage*`,
 `59-stage1/stage2-impl` (с косметическими follow-up'ами внутри),
 `63-issues-48-49-fixes`, `71-visual-form-designer`, `72-form-events-audit`,
+`73-lucide-sprite` (весь Lucide спрайтом, курируемый набор из 44 иконок убран),
 `77-dsl-scope-isolation` (фаза 2 — сделать строгую видимость дефолтом — открыта),
 `78-multi-session-*`, `86-data-exchange-demo`, `sqlite-support`.
 
