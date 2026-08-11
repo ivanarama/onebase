@@ -511,3 +511,68 @@ func TestStrictLexicalScope_LocalVarShadowsModuleVar(t *testing.T) {
 		t.Fatalf("strict local/module shadow result = %v, want local:module", got)
 	}
 }
+
+// Default AST принадлежит вызываемой процедуре B, хотя для legacy-совместимости
+// его переменные вычисляются в scope caller A. Резолв процедур обязан идти по
+// файлу B; то же правило действует для вложенного synthetic Вычислить.
+func TestDefaultExpression_UsesCalleeSourceAndCallerVariables(t *testing.T) {
+	const callerSource = `
+Функция Помощник(Значение)
+	Возврат "A:" + Значение;
+КонецФункции
+
+Функция Тест()
+	Значение = "caller";
+	Возврат Цель();
+КонецФункции`
+
+	for _, tc := range []struct {
+		name        string
+		defaultExpr string
+	}{
+		{name: "обычный AST", defaultExpr: "Помощник(Значение)"},
+		{name: "Вычислить", defaultExpr: `Вычислить("Помощник(Значение)")`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller, err := parser.New(lexer.New(callerSource, "caller-a.os")).ParseProgram()
+			if err != nil {
+				t.Fatalf("parse caller: %v", err)
+			}
+			calleeSource := `
+Функция Помощник(Значение)
+	Возврат "B:" + Значение;
+КонецФункции
+
+Функция Цель(Параметр = ` + tc.defaultExpr + `)
+	Возврат Параметр;
+КонецФункции`
+			callee, err := parser.New(lexer.New(calleeSource, "callee-b.os")).ParseProgram()
+			if err != nil {
+				t.Fatalf("parse callee: %v", err)
+			}
+
+			all := append(append([]*ast.ProcedureDecl{}, caller.Procedures...), callee.Procedures...)
+			find := func(file, name string) *ast.ProcedureDecl {
+				for _, proc := range all {
+					if proc.Name.File == file && strings.EqualFold(proc.Name.Literal, name) {
+						return proc
+					}
+				}
+				return nil
+			}
+			in := New()
+			in.LookupSiblingProc = find
+			in.LookupProc = func(name string) *ast.ProcedureDecl {
+				return find("callee-b.os", name)
+			}
+
+			var result any
+			if err := in.RunWithResult(find("caller-a.os", "Тест"), nil, &result); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if result != "B:caller" {
+				t.Fatalf("default разрешился в scope caller: %v", result)
+			}
+		})
+	}
+}

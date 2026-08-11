@@ -551,6 +551,12 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if form := pickManagedForm(entity, "object"); form != nil {
+		if err := s.restoreUneditableTableParts(r.Context(), entity, form, uuid.Nil, obj.TablePartRows); err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+	}
 	if err := s.autoFillRowAccessFields(r.Context(), entity, "write", obj.Fields); err != nil {
 		s.renderForbidden(w, r)
 		return
@@ -1182,6 +1188,10 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// возможность перекрыть восстановленное значение.
 	if form := pickManagedForm(entity, "object"); form != nil {
 		if err := s.restoreUnsubmittedFields(r.Context(), r, entity, form, id, obj.Fields); err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		if err := s.restoreUneditableTableParts(r.Context(), entity, form, id, obj.TablePartRows); err != nil {
 			s.serverError(w, r, err)
 			return
 		}

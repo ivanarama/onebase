@@ -236,7 +236,7 @@ func TestDSL_ПоискПоЗащищённомуРеквизитуСправо�
 	catalogProxy := func(policies auth.FieldPolicies) *interpreter.CatalogProxy {
 		t.Helper()
 		uctx := auth.ContextWithUser(ctx, uiMaskUser([]string{"read"}, policies))
-		vars := s.buildDSLVars(uctx, nil)
+		vars, _ := s.buildDSLVarsTx(uctx, nil)
 		root, ok := vars["Справочники"].(*interpreter.CatalogsRoot)
 		if !ok {
 			t.Fatalf("Справочники → %T", vars["Справочники"])
@@ -370,7 +370,7 @@ func TestDSL_ЗначениеРеквизитаОбъектаМаскирует�
 	}
 	uctx := auth.ContextWithUser(ctx, uiMaskUser([]string{"read"},
 		auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}}))
-	vars := s.buildDSLVars(uctx, nil)
+	vars, _ := s.buildDSLVarsTx(uctx, nil)
 
 	fn, ok := vars["ЗначениеРеквизитаОбъекта"].(interpreter.BuiltinFunc)
 	if !ok {
@@ -401,7 +401,7 @@ func TestDSL_ЗначенияРеквизитовОбъектовМаскиру�
 	}
 	uctx := auth.ContextWithUser(ctx, uiMaskUser([]string{"read"},
 		auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}}))
-	vars := s.buildDSLVars(uctx, nil)
+	vars, _ := s.buildDSLVarsTx(uctx, nil)
 	fn, ok := vars["ЗначенияРеквизитовОбъектов"].(interpreter.BuiltinFunc)
 	if !ok {
 		t.Fatalf("ЗначенияРеквизитовОбъектов → %T", vars["ЗначенияРеквизитовОбъектов"])

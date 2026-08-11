@@ -67,10 +67,13 @@ type MockRoot struct {
 	http  *Array
 	exec  *Array
 	llm   *Array
+	// pauses хранит сами выдержки: одного сдвига замороженных часов мало,
+	// поскольку тестовый код мог передвинуть их вручную.
+	pauses *Array
 }
 
 func newMockRoot() *MockRoot {
-	return &MockRoot{email: &Array{}, http: &Array{}, exec: &Array{}, llm: &Array{}}
+	return &MockRoot{email: &Array{}, http: &Array{}, exec: &Array{}, llm: &Array{}, pauses: &Array{}}
 }
 
 func (m *MockRoot) Get(name string) any {
@@ -83,6 +86,8 @@ func (m *MockRoot) Get(name string) any {
 		return m.exec
 	case "ии", "ai", "llm":
 		return m.llm
+	case "паузы", "pauses", "sleeps":
+		return m.pauses
 	}
 	return nil
 }
@@ -94,6 +99,7 @@ func (m *MockRoot) reset() {
 	m.http.items = nil
 	m.exec.items = nil
 	m.llm.items = nil
+	m.pauses.items = nil
 }
 
 func recordCall(arr *Array, fields map[string]any) {
@@ -163,7 +169,7 @@ func (p *TestProfile) Vars() map[string]any {
 	nowFn := BuiltinFunc(func([]any, string, int) (any, error) { return p.clock.now(), nil })
 	// Выдержка под замороженными часами двигает время, а не тратит его: backoff
 	// проверяется headless и мгновенно (issue #708).
-	sleepFn := newFrozenClockSleepBuiltin(p.clock)
+	sleepFn := newFrozenClockSleepBuiltin(p.clock, p.mock.pauses)
 	todayFn := BuiltinFunc(func([]any, string, int) (any, error) { return p.clock.today(), nil })
 
 	// Почта: shorthand пишет запись напрямую; объект ПисьмоEmail строится из
@@ -207,7 +213,8 @@ func (p *TestProfile) Vars() map[string]any {
 		// подменяемое время
 		"ТекущаяДатаВремя": nowFn, "Now": nowFn,
 		"ТекущаяДата": todayFn, "Today": todayFn,
-		"Приостановить": sleepFn, "Пауза": sleepFn, "Sleep": sleepFn,
+		"Приостановить": sleepFn, "Пауза": sleepFn, "Подождать": sleepFn,
+		"Sleep": sleepFn, "Wait": sleepFn,
 
 		// почта
 		"ОтправитьПисьмо": sendEmail, "SendEmail": sendEmail,
