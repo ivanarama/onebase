@@ -285,6 +285,7 @@ type rawInfoRegister struct {
 	Title      string            `yaml:"title"`
 	Titles     map[string]string `yaml:"titles"`
 	Periodic   bool              `yaml:"periodic"`
+	Recorder   bool              `yaml:"recorder"`
 	Dimensions []rawField        `yaml:"dimensions"`
 	Resources  []rawField        `yaml:"resources"`
 }
@@ -301,7 +302,8 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 	if raw.Name == "" {
 		return nil, fmt.Errorf("%s: missing name", path)
 	}
-	ir := &InfoRegister{Name: raw.Name, Title: raw.Title, Titles: raw.Titles, Periodic: raw.Periodic}
+	ir := &InfoRegister{Name: raw.Name, Title: raw.Title, Titles: raw.Titles,
+		Periodic: raw.Periodic, Recorder: raw.Recorder}
 	for _, rf := range raw.Dimensions {
 		ir.Dimensions = append(ir.Dimensions, parseField(rf))
 	}
