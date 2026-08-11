@@ -659,6 +659,19 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		if (l == nil && rok) || (r == nil && lok) {
 			return decimal.Zero
 		}
+	case token.PERCENT:
+		ld, lok := toDecimal(l)
+		rd, rok := toDecimal(r)
+		// Остаток берём от целых частей — как в 1С: 7 % 2 = 1.
+		if rok && rd.IsZero() {
+			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
+		}
+		if lok && rok {
+			return ld.Mod(rd)
+		}
+		if l == nil && rok {
+			return decimal.Zero
+		}
 	case token.SLASH:
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)

@@ -743,6 +743,54 @@ var functionDescriptors = []Descriptor{
 		Group:     "Коллекции и JSON",
 	},
 	{
+		Name: "каталогвременныхфайлов", Display: "КаталогВременныхФайлов", Aliases: []string{"TempFilesDir"}, Kind: KindFunc,
+		Signature: "КаталогВременныхФайлов()",
+		Returns:   "строка",
+		Doc: "Каталог для временных файлов. При включённой файловой песочнице возвращает " +
+			"подкаталог внутри неё, чтобы путь оставался доступным файловым функциям.",
+		Group: "Файлы",
+	},
+	{
+		Name: "получитьимявременногофайла", Display: "ПолучитьИмяВременногоФайла", Aliases: []string{"GetTempFileName"}, Kind: KindFunc,
+		Signature: "ПолучитьИмяВременногоФайла([Расширение])",
+		Params:    []Param{{Name: "Расширение", Type: "строка", Optional: true, Doc: "с точкой или без — «txt» и «.txt» равнозначны"}},
+		Returns:   "строка",
+		Doc:       "Уникальное имя файла во временном каталоге. Сам файл не создаётся — возвращается только путь.",
+		Example:   `Путь = ПолучитьИмяВременногоФайла("xml");`,
+		Group:     "Файлы",
+	},
+	{
+		Name: "получитьразделительпути", Display: "ПолучитьРазделительПути", Aliases: []string{"GetPathSeparator"}, Kind: KindFunc,
+		Signature: "ПолучитьРазделительПути()",
+		Returns:   "строка",
+		Doc:       "Разделитель каталогов текущей операционной системы.",
+		Group:     "Файлы",
+	},
+	{
+		Name: "кодироватьстроку", Display: "КодироватьСтроку", Aliases: []string{"EncodeString"}, Kind: KindFunc,
+		Signature: "КодироватьСтроку(Строка[, Способ])",
+		Params: []Param{
+			{Name: "Строка", Type: "строка"},
+			{Name: "Способ", Type: "строка", Optional: true, Doc: "КодировкаURL (по умолчанию) или URLВКодировкеURL — сохраняет структуру пути"},
+		},
+		Returns: "строка",
+		Doc:     "Процентное кодирование для URL: значение параметра можно безопасно подставить в адрес.",
+		Example: `URL = "https://api.example.com/search?q=" + КодироватьСтроку(Запрос);`,
+		Group:   "Строки",
+	},
+	{
+		Name: "раскодироватьстроку", Display: "РаскодироватьСтроку", Aliases: []string{"DecodeString"}, Kind: KindFunc,
+		Signature: "РаскодироватьСтроку(Строка[, Способ])",
+		Params: []Param{
+			{Name: "Строка", Type: "строка"},
+			{Name: "Способ", Type: "строка", Optional: true},
+		},
+		Returns: "строка",
+		Doc: "Обратное к КодироватьСтроку. Строку, которую не удалось разобрать, возвращает как есть: " +
+			"обмен данными не должен падать из-за одного кривого параметра.",
+		Group: "Строки",
+	},
+	{
 		Name: "выгрузитьвexcel", Display: "ВыгрузитьВExcel", Aliases: []string{"ExportExcel"}, Kind: KindFunc,
 		Signature: "ВыгрузитьВExcel(Данные[, Заголовок])",
 		Params: []Param{
