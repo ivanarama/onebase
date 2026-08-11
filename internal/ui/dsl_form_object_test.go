@@ -176,6 +176,35 @@ func TestFormTpProxy_AddRowModifiesObject(t *testing.T) {
 	}
 }
 
+func TestFormObjectThis_ValueTableAddUsesCanonicalColumnMetadata(t *testing.T) {
+	form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{{
+		Name: "Подбор", TypeRef: "ValueTable",
+		Columns: []*metadata.FormAttributeColumn{
+			{Name: "Номенклатура", TypeRef: "string"},
+			{Name: "Количество", TypeRef: "number"},
+		},
+	}}}
+	obj := &runtime.Object{TablePartRows: map[string][]map[string]any{}}
+	this := &formObjectThis{obj: obj, form: form}
+	proxy, ok := this.Get("подбор").(*formTpProxy)
+	if !ok {
+		t.Fatalf("Get(ValueTable) = %T, ожидался *formTpProxy", this.Get("подбор"))
+	}
+	row, ok := proxy.CallMethod("Добавить", nil).(interpreter.This)
+	if !ok {
+		t.Fatalf("Добавить() = %T, ожидался interpreter.This", proxy.CallMethod("Добавить", nil))
+	}
+	row.Set("количество", float64(5))
+
+	got := obj.TablePartRows["Подбор"]
+	if len(got) != 1 || got[0]["Количество"] != float64(5) {
+		t.Fatalf("ValueTable row = %#v, ожидалась каноническая колонка Количество=5", got)
+	}
+	if _, lower := got[0]["количество"]; lower {
+		t.Fatalf("ValueTable row сохранил lowercase-дубликат: %#v", got[0])
+	}
+}
+
 // Очистить должен сбросить ТЧ к nil (а не оставить старые строки).
 func TestFormTpProxy_Clear(t *testing.T) {
 	obj := &runtime.Object{

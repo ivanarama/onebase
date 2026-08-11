@@ -137,7 +137,7 @@ func TestObjectAttributeValue(t *testing.T) {
 		t.Fatalf("parse DSL bulk sample: %v", err)
 	}
 	interp := interpreter.New()
-	vars := s.buildDSLVars(ctx, runtime.NewMovementsCollector("test", uuid.Nil))
+	vars, _ := s.buildDSLVarsTx(ctx, runtime.NewMovementsCollector("test", uuid.Nil))
 	vars["СсылкаНом"] = номРеф
 	var result any
 	if err := interp.RunWithResult(prog.Procedures[0], nil, &result, vars); err != nil {

@@ -200,7 +200,7 @@ func TestTelephony_LookupByNumber(t *testing.T) {
 // "<кол-во> <внешнийId>|<направление>|клиент:<да|нет>;…" для простых проверок.
 func readCallsSummary(t *testing.T, s *Server, ctx context.Context) string {
 	t.Helper()
-	vars := s.buildDSLVars(ctx, nil)
+	vars, _ := s.buildDSLVarsTx(ctx, nil)
 	prog := mustParse(t, `Функция Проверка() Экспорт
   З = Новый Запрос;
   З.Текст = "ВЫБРАТЬ ВнешнийId, Направление, Клиент, ДлительностьМинут ИЗ Документ.Звонок";
@@ -237,7 +237,7 @@ func readCallsSummary(t *testing.T, s *Server, ctx context.Context) string {
 // = набираемый номер) и НЕ складывает числовые строки через "+" (готча DSL).
 func TestTelephony_OriginateURL(t *testing.T) {
 	s, ctx, _ := newCallcenterServer(t)
-	vars := s.buildDSLVars(ctx, nil)
+	vars, _ := s.buildDSLVarsTx(ctx, nil)
 	proc := s.reg.GetModuleNamespacedProc("Телефония", "АдресОригинации")
 	if proc == nil {
 		t.Fatal("функция Телефония.АдресОригинации не найдена в модуле")
@@ -264,7 +264,7 @@ func TestTelephony_PanelRenders(t *testing.T) {
 	}
 	builder := interpreter.NewPageBuilder()
 	params := interpreter.NewStringMap(map[string]string{})
-	vars := s.buildDSLVars(ctx, nil)
+	vars, _ := s.buildDSLVarsTx(ctx, nil)
 	vars["Страница"] = builder
 	vars["Параметры"] = params
 	if _, err := s.interp.Call(proc, builder, []any{builder, params}, vars); err != nil {

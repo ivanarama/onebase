@@ -48,7 +48,7 @@ func TestSaveImageExplicitUndefinedKeepsLegacyOwnerlessMode(t *testing.T) {
 	if len(prog.Procedures) != 1 {
 		t.Fatalf("процедур = %d, ожидалась 1", len(prog.Procedures))
 	}
-	vars := s.buildDSLVars(ctx, runtime.NewMovementsCollector("processor", [16]byte{}))
+	vars, _ := s.buildDSLVarsTx(ctx, runtime.NewMovementsCollector("processor", [16]byte{}))
 	var result any
 	if err := s.interp.RunWithResult(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument), &result, vars); err != nil {
 		t.Fatalf("public DSL run: %v", err)
@@ -99,7 +99,7 @@ func TestSaveImageUndefinedMIMEDefaultsWithOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	vars := s.buildDSLVars(userCtx, runtime.NewMovementsCollector("processor", [16]byte{}))
+	vars, _ := s.buildDSLVarsTx(userCtx, runtime.NewMovementsCollector("processor", [16]byte{}))
 	vars["Реф"] = &interpreter.Ref{UUID: ownerID.String(), Type: entity.Name}
 	var result any
 	if err := s.interp.RunWithResult(prog.Procedures[0], runtime.NewObject("Test", metadata.KindDocument), &result, vars); err != nil {

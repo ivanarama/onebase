@@ -131,6 +131,9 @@ func applySandboxVars(e *env, p SandboxProfile) {
 // значение — в result.
 func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p SandboxProfile, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	applySandboxLimits(e, p)
 	defer func() {
 		if r := recover(); r != nil {
@@ -175,6 +178,9 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 // return a value.
 func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []any, p SandboxProfile, extraVars ...map[string]any) (result any, err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	applySandboxLimits(e, p)
 	defer func() {
 		if r := recover(); r != nil {
