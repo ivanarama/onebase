@@ -1332,7 +1332,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	obj.TablePartRows = tpRows
 
-	mc := runtime.NewMovementsCollector(entity.Name, id)
+	mc := runtime.NewMovementsCollector(entity.Name, id).WillPersist()
 	setPeriodFromFields(mc, entity, obj.Fields)
 
 	docURL := "/ui/" + strings.ToLower(string(entity.Kind)) + "/" + entity.Name + "/" + id.String()
