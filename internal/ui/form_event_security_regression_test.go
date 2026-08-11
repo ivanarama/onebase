@@ -292,7 +292,7 @@ func TestProcessorExecuteFallbackRenderedAndRunsThroughRealHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer postResp.Body.Close()
+	defer func() { _ = postResp.Body.Close() }()
 	var response formEventResponse
 	if err := json.NewDecoder(postResp.Body).Decode(&response); err != nil {
 		t.Fatal(err)

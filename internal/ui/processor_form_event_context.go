@@ -45,16 +45,6 @@ func addEntityTPEventContext(
 	return addValidatedTPEventContext(read, allowed, target, obj, vars)
 }
 
-// formPostText deliberately reads PostForm rather than FormValue. Query-string
-// values are not browser form state and must never create a table-part context.
-func formPostText(r *http.Request, key string) (string, bool) {
-	values, ok := formPostValues(r, key)
-	if !ok || len(values) == 0 {
-		return "", ok
-	}
-	return values[0], true
-}
-
 func formPostValues(r *http.Request, key string) ([]string, bool) {
 	if r == nil || r.PostForm == nil {
 		return nil, false
