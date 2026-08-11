@@ -331,26 +331,23 @@ func (s *Server) infoRegSubmit(w http.ResponseWriter, r *http.Request) {
 
 	dims := parseInfoRegFields(r, ir.Dimensions)
 	resources := parseInfoRegFields(r, ir.Resources)
-	if existing, ok := s.infoRegExistingPolicyRow(r.Context(), ir, dims, periodPtr); ok {
-		if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "write", storage.InfoRegisterPredicateEntity(ir), existing) {
-			return
-		}
-	}
-	row := infoRegPolicyRow(ir, dims, resources, periodPtr)
-	if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "write", storage.InfoRegisterPredicateEntity(ir), row) {
-		return
-	}
 
-	// Запись и регистрация изменения в планах обмена (план 86) — в одной
-	// транзакции. RegisterInfoRegOnSave пропускает периодические регистры и те,
-	// что не входят в состав обмена.
-	plans := s.reg.ExchangePlans()
-	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-		if err := s.store.InfoRegSet(ctx, ir, dims, resources, periodPtr); err != nil {
-			return err
+	// Общая точка записи (см. inforeg_write.go): строковая политика по
+	// существующей и по новой записи, upsert и регистрация в планах обмена в
+	// одной транзакции. DSL идёт туда же — копия разошлась бы именно в
+	// проверке, которую легче всего забыть.
+	denied := false
+	allow := func(ctx context.Context, row map[string]any) error {
+		if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "write", storage.InfoRegisterPredicateEntity(ir), row) {
+			denied = true
+			return errRowPolicyDenied
 		}
-		return exchange.RegisterInfoRegOnSave(ctx, s.store, plans, ir, dims, false)
-	}); err != nil {
+		return nil
+	}
+	if err := s.infoRegWrite(r.Context(), ir, dims, resources, periodPtr, allow); err != nil {
+		if denied {
+			return // rowAllowedFor уже отправил ответ
+		}
 		s.render(w, r, "page-inforeg-form", map[string]any{
 			"InfoReg": ir,
 			"Values":  formValuesFromRequest(r, ir),

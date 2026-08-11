@@ -383,7 +383,7 @@ func registerYAMLSchema() *yamlLintSchema {
 }
 
 func infoRegisterYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "title", "periodic"), map[string]*yamlLintSchema{
+	return with(obj("name", "title", "periodic", "recorder"), map[string]*yamlLintSchema{
 		"titles":     freeMap(),
 		"dimensions": seq(fieldYAMLSchema()),
 		"resources":  seq(fieldYAMLSchema()),

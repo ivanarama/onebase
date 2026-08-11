@@ -413,10 +413,17 @@ func (r *Register) DisplayName(lang string) string {
 }
 
 type InfoRegister struct {
-	Name       string
-	Title      string
-	Titles     map[string]string
-	Periodic   bool    // if true, (period, dim...) is PK; otherwise just (dim...)
+	Name     string
+	Title    string
+	Titles   map[string]string
+	Periodic bool // if true, (period, dim...) is PK; otherwise just (dim...)
+	// Recorder — регистр подчинён регистратору: записи в него делает проведение
+	// документа (Движения.X.Добавить), а не прикладной код. Программная запись
+	// такого регистра отклоняется: она разошлась бы с проведением, и ближайшее
+	// перепроведение документа снесло бы её без предупреждения. Умолчание —
+	// НЕЗАВИСИМЫЙ регистр: так ведут себя все существующие конфигурации, и
+	// молчаливая смена смысла у них недопустима.
+	Recorder   bool
 	Dimensions []Field // key fields
 	Resources  []Field // value fields
 }

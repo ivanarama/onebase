@@ -266,6 +266,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	vars["Documents"] = documents
 	vars["РегистрыНакопления"] = accumRegs
 	vars["AccumulationRegisters"] = accumRegs
+	infoRegs := newInfoRegsRoot(s, txState)
+	vars["РегистрыСведений"] = infoRegs
+	vars["InfoRegisters"] = infoRegs
 	vars["БлокировкаДанных"] = lockFactory
 	vars["DataLock"] = lockFactory
 	vars["ТекущийПользователь"] = currentUserFn
