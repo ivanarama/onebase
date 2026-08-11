@@ -69,11 +69,14 @@ func TestPageList_ActivityControlsAndActions(t *testing.T) {
 		}},
 		"Params":           storage.ListParams{ActivityScope: metadata.ActivityScopeInactive},
 		"RefFilterOptions": map[string]any{},
-		"CanWrite":         true,
-		"Lang":             "ru",
-		"Total":            1,
-		"Page":             1,
-		"TotalPages":       1,
+		// Состояние списка формы поиска и отбора берут из параметров запроса —
+		// ровно то, что отдаёт обработчик после клика по «Скрытые».
+		"Query":      url.Values{"activity": {metadata.ActivityScopeInactive}},
+		"CanWrite":   true,
+		"Lang":       "ru",
+		"Total":      1,
+		"Page":       1,
+		"TotalPages": 1,
 	})
 
 	for _, want := range []string{
