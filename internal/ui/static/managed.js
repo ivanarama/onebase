@@ -1767,7 +1767,24 @@ obManagedReady(obManagedInitDelegates);
     var div = state && !state.readOnly ? state.div : null;
     if (!div || div.getAttribute(attr) !== "1") return;
     var elName = div.getAttribute("data-sg-el") || tpName;
-    if (window.obFire) window.obFire(elName, eventName, {_tp: tpName});
+    if (window.obFire) return window.obFire(elName, eventName, {_tp: tpName});
+  };
+
+  // obFireRowEventChain — «При…», затем «После…» ПОСЛЕДОВАТЕЛЬНО. Параллельно
+  // их пускать нельзя: оба ответа применяют значения к форме, и второй затёр бы
+  // первый, а порядок зависел бы от сети. События независимы — объявить можно
+  // любое одно.
+  window.obFireRowEventChain = function(tpName, pairs) {
+    var run = function(i) {
+      if (i >= pairs.length) return;
+      var res = obFireRowEvent(tpName, pairs[i][0], pairs[i][1]);
+      if (res && typeof res.then === "function") {
+        res.then(function() { run(i + 1); }, function() { run(i + 1); });
+      } else {
+        run(i + 1);
+      }
+    };
+    run(0);
   };
 
   window.obGridAddRow = function(tpName) {
@@ -1793,7 +1810,10 @@ obManagedReady(obManagedInitDelegates);
       g.grid.setActiveCell(rowIdx, 0);
       g.grid.editActiveCell();
     }
-    obFireRowEvent(tpName, "data-sg-rowadd", "ПриДобавленииСтроки");
+    obFireRowEventChain(tpName, [
+      ["data-sg-rowadd", "ПриДобавленииСтроки"],
+      ["data-sg-rowafteradd", "ПослеДобавленияСтроки"],
+    ]);
   };
 
   function gridRowsForDelete(g) {
@@ -2259,14 +2279,26 @@ obManagedReady(obManagedInitDelegates);
     // ТЧ есть такой обработчик (data-sg-recalc) — иначе впустую гоняли бы сеть
     // на каждый ввод. Debounce 250 мс коалесцирует быстрые правки (вопрос O3).
     // Деньги считаются на сервере (decimal), клиент лишь отображает результат.
-    if (div.getAttribute("data-sg-recalc") === "1") {
+    if (div.getAttribute("data-sg-recalc") === "1" || div.getAttribute("data-sg-rowchange") === "1") {
       var elName = div.getAttribute("data-sg-el") || tpName;
       var recalcTimer = null;
+      var wantChange = div.getAttribute("data-sg-recalc") === "1";
+      var wantRowChange = div.getAttribute("data-sg-rowchange") === "1";
       grid.onCellChange.subscribe(function(e, args) {
         var params = gridCellEventParams(tpName, args, columns, dataView);
         if (recalcTimer) clearTimeout(recalcTimer);
         recalcTimer = setTimeout(function() {
-          if (window.obFire) window.obFire(elName, "ПриИзменении", params);
+          if (!window.obFire) return;
+          // Последовательно: оба ответа применяют значения к форме, и
+          // параллельный запуск дал бы гонку «кто последний записал».
+          var chain = wantChange ? window.obFire(elName, "ПриИзменении", params) : null;
+          if (!wantRowChange) return;
+          var next = function() { window.obFire(elName, "ПриИзмененииСтроки", params); };
+          if (chain && typeof chain.then === "function") {
+            chain.then(next, next);
+          } else {
+            next();
+          }
         }, 250);
       });
     }

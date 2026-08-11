@@ -102,7 +102,8 @@ func browserEventAllowedForElement(kind metadata.FormElementType, event metadata
 	case metadata.FormElementTablePart:
 		return event == metadata.FormEventOnChange || event == metadata.FormEventOnRowAdded ||
 			event == metadata.FormEventOnRowDeleted || event == metadata.FormEventOnChoice ||
-			event == metadata.FormEventOnRowActivated
+			event == metadata.FormEventOnRowActivated || event == metadata.FormEventOnRowChanged ||
+			event == metadata.FormEventAfterRowAdd
 	default:
 		return false
 	}

@@ -274,6 +274,8 @@ const tplManagedForm = `
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}}data-sg-rowadd="1"{{end}}
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}}data-sg-rowdel="1"{{end}}
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПриАктивизацииСтроки")}}data-sg-rowactivate="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриИзмененииСтроки")}}data-sg-rowchange="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
        data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.Name}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
