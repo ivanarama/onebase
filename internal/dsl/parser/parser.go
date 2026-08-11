@@ -587,7 +587,7 @@ func (p *Parser) parseTerm() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	for p.cur.Type == token.STAR || p.cur.Type == token.SLASH {
+	for p.cur.Type == token.STAR || p.cur.Type == token.SLASH || p.cur.Type == token.PERCENT {
 		op := p.cur
 		p.advance()
 		right, err := p.parsePrimary()

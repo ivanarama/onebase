@@ -223,18 +223,24 @@ type FileGuard func() error
 // checkFile паникует userError'ом, если guard запрещает файловые операции.
 // Сообщение человеческое и ловится Попыткой (как checkNet, план 62).
 func checkFile(guard FileGuard) {
+	checkFileAt(guard, "", 0)
+}
+
+// checkFileAt — location-aware вариант для BuiltinFunc. Фабрики сохраняют
+// прежнюю сигнатуру func([]any) any и вызывают checkFile без позиции.
+func checkFileAt(guard FileGuard, file string, line int) {
 	if guard == nil {
 		return
 	}
 	if err := guard(); err != nil {
-		panic(userError{Msg: err.Error()})
+		panic(userError{Msg: err.Error(), File: file, Line: line, Err: err})
 	}
 }
 
 // guardedFile оборачивает файловый builtin проверкой guard'а.
 func guardedFile(guard FileGuard, fn BuiltinFunc) BuiltinFunc {
 	return func(args []any, file string, line int) (any, error) {
-		checkFile(guard)
+		checkFileAt(guard, file, line)
 		return fn(args, file, line)
 	}
 }
@@ -278,6 +284,14 @@ func NewFileFunctions(guard FileGuard) map[string]any {
 	m["createdirectory"] = guardedFile(guard, makeDirFn)
 	m["найтифайлы"] = guardedFile(guard, findFilesFn)
 	m["findfiles"] = guardedFile(guard, findFilesFn)
+
+	// Эти функции не читают и не создают сам файл, но раскрывают путь хоста и
+	// выдают пригодное для последующей записи имя. Поэтому DenyFile обязан
+	// перекрывать их тем же guard'ом, что и остальные файловые возможности.
+	m["каталогвременныхфайлов"] = guardedFile(guard, catchableEnvBuiltin(tempDirFn))
+	m["tempfilesdir"] = guardedFile(guard, catchableEnvBuiltin(tempDirFn))
+	m["получитьимявременногофайла"] = guardedFile(guard, catchableEnvBuiltin(tempFileNameFn))
+	m["gettempfilename"] = guardedFile(guard, catchableEnvBuiltin(tempFileNameFn))
 
 	return m
 }

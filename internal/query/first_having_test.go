@@ -69,17 +69,33 @@ func TestCompile_ПервыеБезЧислаНеТрогаем(t *testing.T) {
 
 func TestCompile_ПервыеПроверяетКоличество(t *testing.T) {
 	for _, src := range []string{
-		`ВЫБРАТЬ ПЕРВЫЕ 0 Наименование ИЗ Справочник.Товар`,
 		`ВЫБРАТЬ ПЕРВЫЕ 1.5 Наименование ИЗ Справочник.Товар`,
 		`ВЫБРАТЬ ПЕРВЫЕ -1 Наименование ИЗ Справочник.Товар`,
 		`SELECT TOP 999999999999999999999999 Name FROM Catalog.Товар`,
 	} {
 		t.Run(src, func(t *testing.T) {
 			_, err := Compile(src, CompileOpts{})
-			if err == nil || !strings.Contains(err.Error(), "положительное целое число") {
+			if err == nil || !strings.Contains(err.Error(), "неотрицательное целое число") {
 				t.Fatalf("ожидалась понятная ошибка количества, получено %v", err)
 			}
 		})
+	}
+}
+
+// «ПЕРВЫЕ 0» в 1С — валидный запрос с пустым результатом, и LIMIT 0 понимают оба
+// наших диалекта. Отклонять его нельзя: текст запроса часто собирают
+// конкатенацией с переменным размером порции, и на нулевой порции перенесённый
+// код падал бы ошибкой компиляции — в проде и не сразу (#741).
+func TestCompile_ПервыеНольДопустим(t *testing.T) {
+	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 0 Наименование ИЗ Справочник.Товар`, CompileOpts{})
+	if err != nil {
+		t.Fatalf("ПЕРВЫЕ 0 отклонено: %v", err)
+	}
+	if !strings.HasSuffix(res.SQL, "LIMIT 0") {
+		t.Errorf("ожидался LIMIT 0 в конце SQL:\n%s", res.SQL)
+	}
+	if strings.Contains(strings.ToUpper(res.SQL), "ПЕРВЫЕ") {
+		t.Errorf("слово ПЕРВЫЕ осталось в SQL:\n%s", res.SQL)
 	}
 }
 

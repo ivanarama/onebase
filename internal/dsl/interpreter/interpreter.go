@@ -105,6 +105,7 @@ type Interpreter struct {
 // из DebugSource в его execCtx.
 func (i *Interpreter) startEnv(this This) *env {
 	e := newEnv(this)
+	installEnvironmentConstants(e)
 	if i.DebugSource != nil {
 		e.ec.debug = i.DebugSource()
 	}
@@ -681,6 +682,23 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		if (l == nil && rok) || (r == nil && lok) {
 			return decimal.Zero
 		}
+	case token.PERCENT:
+		ld, lok := toDecimal(l)
+		rd, rok := toDecimal(r)
+		// Остаток десятичный, без усечения операндов: 7.5 % 2 = 1.5.
+		// Условие деления на ноль такое же, как у SLASH: ошибка возникает,
+		// только когда операция вообще применима — иначе «abc % 0» падал бы
+		// делением на ноль там, где обычное деление возвращает Неопределено.
+		if rok && rd.IsZero() && (lok || l == nil) {
+			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
+		}
+		if lok && rok {
+			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
+			return ld.Mod(rd)
+		}
+		if l == nil && rok {
+			return decimal.Zero
+		}
 	case token.SLASH:
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)
@@ -691,6 +709,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
 		}
 		if lok && rok {
+			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
 			return ld.Div(rd)
 		}
 		if l == nil && rok {
@@ -1206,6 +1225,7 @@ func applyCompoundOp(op token.Type, old, val any) any {
 			return ld.Mul(rd)
 		case token.SLASH_ASSIGN:
 			if !rd.IsZero() {
+				requireSafeDecimalQuotient(ld, rd, 0)
 				return ld.Div(rd)
 			}
 			return decimal.Zero

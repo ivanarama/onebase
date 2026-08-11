@@ -64,6 +64,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateFullText(e); err != nil {
 			return err
 		}
+		if err := validateSearchFields(e); err != nil {
+			return err
+		}
 		for _, tp := range e.TableParts {
 			for _, f := range tp.Fields {
 				if IsRichText(f.Type) {
@@ -218,6 +221,37 @@ func validateFullText(e *Entity) error {
 		key := strings.ToLower(f.Name)
 		if seen[key] {
 			return fmt.Errorf("entity %s: реквизит %s указан в fulltext дважды", e.Name, f.Name)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+// validateSearchFields проверяет блок `search_fields:`: перечисленные реквизиты
+// должны существовать в шапке и не быть ссылками. Тип здесь, в отличие от
+// fulltext, не ограничен строкой — смысл блока как раз в том, чтобы добавить в
+// поиск артикул или штрихкод, которые часто хранят числом.
+//
+// Ссылка отклоняется: в колонке лежит UUID, поиск подстроки по нему всегда даёт
+// пустую выдачу. Молча пропустить такой реквизит значит оставить автора
+// конфигурации с неработающим поиском и без объяснения причины.
+func validateSearchFields(e *Entity) error {
+	if !e.SearchSet {
+		return nil
+	}
+	seen := make(map[string]bool, len(e.Search))
+	for _, name := range e.Search {
+		f := findEntityFieldFold(e, name)
+		if f == nil {
+			return fmt.Errorf("entity %s: search_fields ссылается на неизвестный реквизит %s", e.Name, name)
+		}
+		if f.RefEntity != "" {
+			return fmt.Errorf("entity %s: реквизит %s — ссылка, искать по ней подстроку нельзя (в колонке UUID); укажите реквизит справочника-владельца",
+				e.Name, f.Name)
+		}
+		key := strings.ToLower(f.Name)
+		if seen[key] {
+			return fmt.Errorf("entity %s: реквизит %s указан в search_fields дважды", e.Name, f.Name)
 		}
 		seen[key] = true
 	}

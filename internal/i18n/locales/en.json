@@ -1177,8 +1177,8 @@
   "обновление выполняется из лаунчера": "update it from the launcher",
   "превышен размер данных формы: форматированный текст с картинками не должен превышать %d МБ в одном поле": "form data too large: rich text with images must not exceed %d MB per field",
   "превышен размер данных формы (не более %d МБ)": "form data too large (limit %d MB)",
-  "%s требует положительное целое число записей": "%s requires a positive integer row count",
-  "%s требует положительное целое число записей, получено %q": "%s requires a positive integer row count, got %q",
+  "%s требует неотрицательное целое число записей": "%s requires a non-negative integer row count",
+  "%s требует неотрицательное целое число записей, получено %q": "%s requires a non-negative integer row count, got %q",
   "%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается": "%s in nested queries and UNION branches is not supported yet",
   "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "FIRST/TOP in a query with UNION is not supported yet: the limit applies to an individual branch"
 }
