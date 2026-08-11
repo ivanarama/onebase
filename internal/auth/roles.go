@@ -119,6 +119,11 @@ func PermissionHas(p Permission, kind, entity, op string) bool {
 // файле, её надо сначала опознать под тем именем, которым её назвал автор.
 func PermissionKindFromKey(key string) string { return permissionKindFromKey(key) }
 
+// IsPermissionWrapperKey сообщает, что ключ открывает вложенный контейнер
+// прав (permissions/policies/права и поддерживаемые синонимы). Редакторы YAML
+// должны обходить такие контейнеры тем же способом, что и runtime parser.
+func IsPermissionWrapperKey(key string) bool { return permissionWrapperKey(key) }
+
 // SplitPermissionOps разбирает запись операций роли: список «read, write» в
 // одной строке раскладывается на отдельные операции, регистр приводится к
 // нижнему. Экспортирован по той же причине, что и PermissionKindFromKey —

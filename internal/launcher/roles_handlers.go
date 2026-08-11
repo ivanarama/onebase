@@ -3,18 +3,19 @@ package launcher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/fsmode"
-	"gopkg.in/yaml.v3"
 )
 
 // ── Roles & permissions management for the configurator ───────────────────────
@@ -38,6 +39,11 @@ var rolePermSections = []rolePermSection{
 	{"inforeg", "inforegs", "Регистры сведений", []roleOp{{"read", "Чтение"}, {"write", "Запись"}, {"delete", "Удаление"}}},
 	{"report", "reports", "Отчёты", []roleOp{{"run", "Запуск"}}},
 }
+
+// Role saves and deletes are read-modify-write operations over two stores. A
+// single launcher process must not let two of them choose the same source
+// snapshot and then publish conflicting files.
+var roleConfigMutationMu sync.Mutex
 
 // permTriplets flattens an auth.Permission into "kind|entity|op" strings used by
 // the matrix checkboxes (matching the value attribute on the client).
@@ -154,8 +160,13 @@ func (h *handler) cfgAdminRoles(w http.ResponseWriter, r *http.Request) {
 	    <div style="font-size:11px;color:#666;margin-bottom:6px">Права на объекты:</div>`)
 	sb.WriteString(roleMatrixHTML(data, staleRolePerms(roles, data)))
 	sb.WriteString(`
-	    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-	      <button type="button" onclick="cfgRoleSave()" style="background:#16a34a;color:#fff;border:none;padding:6px 16px;border-radius:3px;cursor:pointer;font-size:12px">Сохранить</button>
+	    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">`)
+	if data != nil && data.Error == "" {
+		sb.WriteString(`<button type="button" onclick="cfgRoleSave()" style="background:#16a34a;color:#fff;border:none;padding:6px 16px;border-radius:3px;cursor:pointer;font-size:12px">Сохранить</button>`)
+	} else {
+		sb.WriteString(`<button type="button" disabled title="Конфигурация не загружена" style="background:#94a3b8;color:#fff;border:none;padding:6px 16px;border-radius:3px;font-size:12px">Сохранить</button>`)
+	}
+	sb.WriteString(`
 	      <button type="button" onclick="document.getElementById('cfg-role-editor').style.display='none'" style="background:#e2e8f0;color:#333;border:none;padding:6px 12px;border-radius:3px;cursor:pointer;font-size:12px">Отмена</button>
 	      <span id="cfg-role-err" style="color:#c00;font-size:11px"></span>
 	    </div>
@@ -187,11 +198,11 @@ function cfgRoleEdit(name){
   document.getElementById('cfg-role-name').value=name;
   document.getElementById('cfg-role-desc').value=cfgRolesDesc[name]||'';
   cfgRoleClearChecks();
-  var triplets=cfgRolesPerm[name]||[];
-  var set={};
-  triplets.forEach(function(t){set[t]=true});
-  document.querySelectorAll('#cfg-role-form input[name=perm]').forEach(function(i){
-    if(set[i.value])i.checked=true;
+	var triplets=cfgRolesPerm[name]||[];
+	var set={};
+	triplets.forEach(function(t){set[String(t).toLowerCase()]=true});
+	document.querySelectorAll('#cfg-role-form input[name=perm]').forEach(function(i){
+	  if(set[String(i.value).toLowerCase()])i.checked=true;
   });
   document.getElementById('cfg-role-err').textContent='';
   document.getElementById('cfg-role-editor').style.display='block';
@@ -283,8 +294,11 @@ func staleRolePerms(roles []*auth.Role, data *configuratorData) map[string][]str
 	stale := map[string][]string{}
 	for _, role := range roles {
 		for kind, m := range rolePermMaps(role.Permissions) {
-			for entity := range m {
+			for entity, ops := range m {
 				if entity == "" || known[kind][strings.ToLower(entity)] {
+					continue
+				}
+				if !roleHasManagedOp(kind, ops) {
 					continue
 				}
 				if key := kind + "|" + entity; !seen[key] {
@@ -298,6 +312,25 @@ func staleRolePerms(roles []*auth.Role, data *configuratorData) map[string][]str
 		sort.Strings(stale[kind])
 	}
 	return stale
+}
+
+func roleHasManagedOp(kind string, ops []string) bool {
+	for _, section := range rolePermSections {
+		if section.Kind != kind {
+			continue
+		}
+		for _, raw := range ops {
+			for _, op := range auth.SplitPermissionOps(raw) {
+				for _, managed := range section.Ops {
+					if op == managed.Op {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	return false
 }
 
 // rolePermMaps раскладывает права по видам объектов, которыми управляет матрица.
@@ -368,7 +401,7 @@ func roleMatrixHTML(data *configuratorData, stale map[string][]string) string {
 	if anyStale {
 		sb.WriteString(`<div style="font-size:11px;color:#9a3412;background:#fff7ed;border:1px solid #fed7aa;border-radius:3px;padding:6px 8px;margin-top:6px">` +
 			`⚠ Строки «нет в конфигурации» — права на удалённые объекты; их показывает «Проверка конфигурации». ` +
-			`Снимите галочки и сохраните роль, чтобы убрать их.</div>`)
+			`Снятие галочек убирает только показанные операции; права вне матрицы редактируются в YAML.</div>`)
 	}
 	return sb.String()
 }
@@ -388,11 +421,30 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
-	if name == "" {
+	if !validObjectName(name) {
 		writeJSON(w, 400, map[string]any{"error": tr(lang, "Укажите имя роли")})
 		return
 	}
 	origName := strings.TrimSpace(r.FormValue("orig_name"))
+	if origName != "" && !validObjectName(origName) {
+		writeJSON(w, 400, map[string]any{"error": tr(lang, "Недопустимое имя объекта")})
+		return
+	}
+	if origName != "" && origName != name && strings.EqualFold(origName, name) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "case-only role rename is not supported"})
+		return
+	}
+	roleConfigMutationMu.Lock()
+	defer roleConfigMutationMu.Unlock()
+
+	// The form is a full matrix snapshot. If metadata cannot be loaded now,
+	// treating the missing rows as unchecked would revoke all managed rights.
+	// The server-side check is authoritative; a hidden client flag is not.
+	data := h.loadCfgData(r.Context(), b, "tree")
+	if data == nil || data.Error != "" {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": tr(lang, "Конфигурация не загружена")})
+		return
+	}
 	desc := strings.TrimSpace(r.FormValue("description"))
 
 	// Parse "kind|entity|op" triplets into permission maps.
@@ -413,12 +465,14 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 		if len(parts) != 3 {
 			continue
 		}
-		kind, ent, op := parts[0], parts[1], parts[2]
+		kind, ent, op := parts[0], strings.TrimSpace(parts[1]), parts[2]
 		i, ok := byKind[kind]
-		if !ok || !edits[i].managed[op] {
+		if !ok || ent == "" || !edits[i].managed[op] {
 			continue
 		}
-		edits[i].perms[ent] = append(edits[i].perms[ent], op)
+		if !containsRoleOp(edits[i].perms[ent], op) {
+			edits[i].perms[ent] = append(edits[i].perms[ent], op)
+		}
 	}
 
 	// Матрица владеет лишь частью файла роли, поэтому правим существующий YAML,
@@ -426,7 +480,54 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 	// (план 88) и операции вроде disclose иначе исчезали бы при первом же
 	// сохранении роли из конфигуратора — вместе с комментариями.
 	targetPath := "roles/" + nameToFilename(name) + ".yaml"
-	existingPath, existing := h.roleConfigFile(r.Context(), b, origName, name)
+	if err := configdb.ValidatePath(targetPath); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	contents, roleFiles, err := h.roleConfigSnapshot(r.Context(), b)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	var existingPath string
+	var existing []byte
+	if origName != "" {
+		existingPath, existing = roleConfigFileFromSnapshot(contents, roleFiles, origName)
+		if existingPath == "" {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "role source not found in configuration"})
+			return
+		}
+	}
+	if existingPath != "" && existingPath != targetPath && strings.EqualFold(existingPath, targetPath) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "case-only role path rename is not supported"})
+		return
+	}
+	if roleConfigTargetOccupied(roleFiles, existingPath, targetPath, name) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": tr(lang, "Имя роли уже используется")})
+		return
+	}
+	// _roles has an exact UNIQUE(name), while authorization treats names
+	// case-insensitively. Check that stronger invariant before touching config.
+	db, err := getAuthDB(r.Context(), b)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	repo := auth.NewRepo(db)
+	if err := repo.EnsureSchema(r.Context()); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	liveRoles, err := repo.ListRoles(r.Context())
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	if liveRoleTargetOccupied(liveRoles, origName, name) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "role name is already in use"})
+		return
+	}
+
 	content, err := applyRoleMatrixToYAML(existing, name, desc, edits)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
@@ -449,7 +550,7 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 		stalePaths = append(stalePaths, existingPath)
 	}
 	if origName != "" {
-		for path, rname := range h.roleConfigFiles(r.Context(), b) {
+		for path, rname := range roleFiles {
 			if rname == origName && path != targetPath && path != existingPath {
 				stalePaths = append(stalePaths, path)
 			}
@@ -460,16 +561,6 @@ func (h *handler) cfgAdminRoleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := getAuthDB(r.Context(), b)
-	if err != nil {
-		writeJSON(w, 500, map[string]any{"error": err.Error()})
-		return
-	}
-	repo := auth.NewRepo(db)
-	if err := repo.EnsureSchema(r.Context()); err != nil {
-		writeJSON(w, 500, map[string]any{"error": tr(lang, "Ошибка синхронизации") + ": " + err.Error()})
-		return
-	}
 	// If renamed, drop the old live role row (assignments cascade away).
 	//
 	// Сбой удаления нельзя пропускать дальше: старая строка роли переживёт
@@ -503,12 +594,21 @@ func (h *handler) cfgAdminRoleDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
-	if req.Name == "" {
+	req.Name = strings.TrimSpace(req.Name)
+	if !validObjectName(req.Name) {
 		writeJSON(w, 400, map[string]any{"error": "empty name"})
 		return
 	}
+	roleConfigMutationMu.Lock()
+	defer roleConfigMutationMu.Unlock()
+
+	_, roleFiles, err := h.roleConfigSnapshot(r.Context(), b)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
 	var paths []string
-	for path, rname := range h.roleConfigFiles(r.Context(), b) {
+	for path, rname := range roleFiles {
 		if rname == req.Name {
 			paths = append(paths, path)
 		}
@@ -743,12 +843,178 @@ func (h *handler) saveRoleConfigFile(ctx context.Context, b *Base, relPath strin
 			Message:     "save role " + roleName,
 		})
 	}
-	for _, p := range stalePaths {
-		if err := h.deleteConfigFile(ctx, b, p); err != nil {
+	return saveRoleConfigFileOnDisk(b.Path, relPath, content, stalePaths)
+}
+
+// saveRoleConfigFileOnDisk stages and syncs complete content before mutation.
+// Existing/renamed roles keep their inode and security metadata; ordinary
+// rewrite failures restore the previous bytes (and source path for a rename).
+func saveRoleConfigFileOnDisk(root, relPath string, content []byte, stalePaths []string) error {
+	target, err := configdb.SafeJoin(root, relPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), fsmode.Dir); err != nil {
+		return err
+	}
+	type staleRolePath struct {
+		full string
+		info os.FileInfo
+	}
+	staleFiles := make([]staleRolePath, 0, len(stalePaths))
+	seenStale := make(map[string]bool, len(stalePaths))
+	for _, stalePath := range stalePaths {
+		if stalePath == relPath {
+			continue
+		}
+		if strings.EqualFold(stalePath, relPath) {
+			return fmt.Errorf("case-only role path rename is unsafe: %s -> %s", stalePath, relPath)
+		}
+		if seenStale[stalePath] {
+			continue
+		}
+		seenStale[stalePath] = true
+		stale, err := configdb.SafeJoin(root, stalePath)
+		if err != nil {
 			return err
 		}
+		info, err := os.Lstat(stale)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("role source %s is not a regular file", stalePath)
+		}
+		staleFiles = append(staleFiles, staleRolePath{full: stale, info: info})
 	}
-	return h.saveConfigFile(ctx, b, relPath, content)
+	if len(staleFiles) > 1 {
+		return fmt.Errorf("refusing non-atomic removal of %d old role files", len(staleFiles))
+	}
+
+	mode := fsmode.File
+	targetExists := false
+	if info, statErr := os.Lstat(target); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("role target %s is not a regular file", relPath)
+		}
+		targetExists = true
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	} else if len(staleFiles) > 0 {
+		// A rename should retain the source file's permissions. Snapshot
+		// validation makes stalePaths contain at most one matching role file.
+		mode = staleFiles[0].info.Mode().Perm()
+	}
+	if targetExists && len(staleFiles) > 0 {
+		return fmt.Errorf("role target %s already exists during rename", relPath)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".onebase-role-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		if tmpName != "" {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		return err
+	}
+	n, writeErr := tmp.Write(content)
+	if writeErr != nil || n != len(content) {
+		if writeErr == nil {
+			writeErr = fmt.Errorf("short role write: %d of %d bytes", n, len(content))
+		}
+		closeErr := tmp.Close()
+		closed = true
+		return errors.Join(writeErr, closeErr)
+	}
+	if err := tmp.Sync(); err != nil {
+		closeErr := tmp.Close()
+		closed = true
+		return errors.Join(err, closeErr)
+	}
+	if err := tmp.Close(); err != nil {
+		closed = true
+		return err
+	}
+	closed = true
+
+	// Replacing an existing inode with the temp file would discard its owner,
+	// POSIX ACL/xattrs or Windows DACL. Rewrite that inode only after the full
+	// new content has been staged and synced; ordinary write failures are
+	// compensated in place with the previous bytes.
+	if targetExists || len(staleFiles) == 1 {
+		if err := os.Remove(tmpName); err != nil {
+			return err
+		}
+		tmpName = ""
+	}
+	if targetExists {
+		previous, err := os.ReadFile(target) //nolint:gosec // target is guarded by SafeJoin
+		if err != nil {
+			return err
+		}
+		return rewriteRoleFileInPlace(target, content, previous)
+	}
+	if len(staleFiles) == 1 {
+		stale := staleFiles[0]
+		previous, err := os.ReadFile(stale.full) //nolint:gosec // stale.full is guarded by SafeJoin
+		if err != nil {
+			return err
+		}
+		// Moving the source inode first preserves all of its security metadata
+		// across a rename. If the following rewrite fails, restore both bytes
+		// and path.
+		if err := os.Rename(stale.full, target); err != nil {
+			return err
+		}
+		if err := rewriteRoleFileInPlace(target, content, previous); err != nil {
+			return errors.Join(err, os.Rename(target, stale.full))
+		}
+		return nil
+	}
+
+	// A newly created role has no metadata to preserve. Temp and target share a
+	// directory, so publication is atomic and readers never see partial YAML.
+	if err := os.Rename(tmpName, target); err != nil {
+		return err
+	}
+	tmpName = ""
+	return nil
+}
+
+func rewriteRoleFileInPlace(path string, content, rollback []byte) error {
+	if err := writeRoleBytesInPlace(path, content); err != nil {
+		restoreErr := writeRoleBytesInPlace(path, rollback)
+		return errors.Join(err, restoreErr)
+	}
+	return nil
+}
+
+func writeRoleBytesInPlace(path string, content []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0) //nolint:gosec // validated internal role path
+	if err != nil {
+		return err
+	}
+	n, writeErr := f.Write(content)
+	if writeErr != nil || n != len(content) {
+		if writeErr == nil {
+			writeErr = fmt.Errorf("short role write: %d of %d bytes", n, len(content))
+		}
+		return errors.Join(writeErr, f.Close())
+	}
+	if err := f.Sync(); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 func (h *handler) deleteConfigFile(ctx context.Context, b *Base, relPath string) error {
@@ -797,100 +1063,151 @@ func (h *handler) deleteRoleConfigFiles(ctx context.Context, b *Base, relPaths [
 	return nil
 }
 
-// roleConfigContents returns map[configPath]content for every roles/*.yaml entry.
-func (h *handler) roleConfigContents(ctx context.Context, b *Base) map[string][]byte {
-	out := map[string][]byte{}
+// roleConfigSnapshot reads and parses the complete editable role set. Missing
+// roles/ is a valid empty set; every other storage or YAML error is returned so
+// a read-modify-write handler cannot mistake an unreadable role for absence.
+func (h *handler) roleConfigSnapshot(ctx context.Context, b *Base) (map[string][]byte, map[string]string, error) {
+	contents := make(map[string][]byte)
 	if b.ConfigSource == "database" {
 		db, err := OpenDB(ctx, b)
 		if err != nil {
-			return out
+			return nil, nil, err
 		}
 		defer db.Close()
-		rows, err := db.Query(ctx, `SELECT path, content FROM _onebase_config WHERE path LIKE 'roles/%'`)
+		files, err := configdb.New(db).ListByPrefix(ctx, "roles/")
 		if err != nil {
-			return out
+			return nil, nil, err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var path string
-			var content []byte
-			if rows.Scan(&path, &content) != nil {
+		for _, file := range files {
+			if err := configdb.ValidatePath(file.Path); err != nil {
+				return nil, nil, fmt.Errorf("invalid role config path %q: %w", file.Path, err)
+			}
+			rel := strings.TrimPrefix(file.Path, "roles/")
+			if !strings.HasSuffix(rel, ".yaml") {
 				continue
 			}
-			out[path] = content
+			if rel == "" || strings.Contains(rel, "/") {
+				return nil, nil, fmt.Errorf("nested role YAML is not supported: %s", file.Path)
+			}
+			contents[file.Path] = append([]byte(nil), file.Content...)
 		}
-		return out
-	}
-	dir := filepath.Join(b.Path, "roles")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
+	} else {
+		dir, err := configdb.SafeJoin(b.Path, "roles")
+		if err != nil {
+			return nil, nil, err
 		}
-		content, rerr := os.ReadFile(filepath.Join(dir, e.Name())) //nolint:gosec // G304: имя из os.ReadDir по каталогу roles/ самой базы
-		if rerr != nil {
-			respondLog().Warn("роль пропущена: файл не прочитан", "path", e.Name(), "err", rerr)
-			continue
+		dirInfo, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			return contents, map[string]string{}, nil
 		}
-		out["roles/"+e.Name()] = content
+		if err != nil {
+			return nil, nil, fmt.Errorf("stat roles directory: %w", err)
+		}
+		if !dirInfo.IsDir() {
+			return nil, nil, fmt.Errorf("roles path is not a directory: %s", dir)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read roles directory: %w", err)
+		}
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".yaml") {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return nil, nil, fmt.Errorf("stat role %s: %w", entry.Name(), err)
+			}
+			if !info.Mode().IsRegular() {
+				return nil, nil, fmt.Errorf("role %s is not a regular file", entry.Name())
+			}
+			relPath := "roles/" + entry.Name()
+			full, err := configdb.SafeJoin(b.Path, relPath)
+			if err != nil {
+				return nil, nil, err
+			}
+			content, err := os.ReadFile(full) //nolint:gosec // path is guarded by SafeJoin
+			if err != nil {
+				return nil, nil, fmt.Errorf("read role %s: %w", relPath, err)
+			}
+			contents[relPath] = content
+		}
 	}
-	return out
+
+	paths := make([]string, 0, len(contents))
+	for path := range contents {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	roleFiles := make(map[string]string, len(paths))
+	for _, path := range paths {
+		for existingPath := range roleFiles {
+			if strings.EqualFold(existingPath, path) {
+				return nil, nil, fmt.Errorf("role path collision: %s and %s", existingPath, path)
+			}
+		}
+		role, err := parseRoleYAMLStrict(contents[path])
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse role %s: %w", path, err)
+		}
+		name := strings.TrimSpace(role.Name)
+		if name == "" || name != role.Name || !validObjectName(name) {
+			return nil, nil, fmt.Errorf("role %s has an invalid name", path)
+		}
+		if err := configdb.ValidatePath("roles/" + nameToFilename(name) + ".yaml"); err != nil {
+			return nil, nil, fmt.Errorf("role %s has an unsafe name: %w", path, err)
+		}
+		for existingPath, existingName := range roleFiles {
+			if strings.EqualFold(existingName, name) {
+				return nil, nil, fmt.Errorf("role name collision %q in %s and %s", name, existingPath, path)
+			}
+		}
+		roleFiles[path] = name
+	}
+	return contents, roleFiles, nil
 }
 
-// roleConfigFiles returns map[configPath]roleName for every roles/*.yaml entry.
-func (h *handler) roleConfigFiles(ctx context.Context, b *Base) map[string]string {
-	out := map[string]string{}
-	for path, content := range h.roleConfigContents(ctx, b) {
-		out[path] = roleNameFromYAML(path, content)
+func roleConfigFileFromSnapshot(contents map[string][]byte, roleFiles map[string]string, names ...string) (string, []byte) {
+	paths := make([]string, 0, len(roleFiles))
+	for path := range roleFiles {
+		paths = append(paths, path)
 	}
-	return out
-}
-
-// roleConfigFile ищет файл роли по имени (первое непустое из names) и отдаёт
-// его путь и содержимое. Нужен сохранению: правка роли переписывает исходный
-// YAML, а не заменяет его сгенерированным.
-func (h *handler) roleConfigFile(ctx context.Context, b *Base, names ...string) (string, []byte) {
-	contents := h.roleConfigContents(ctx, b)
+	sort.Strings(paths)
 	for _, name := range names {
 		if name == "" {
 			continue
 		}
-		// Порядок обхода карты не определён, поэтому при нескольких файлах
-		// одной роли берём лексикографически первый — тот же, что и в прошлый
-		// раз, иначе правки уходили бы то в один файл, то в другой.
-		var found string
-		for path := range contents {
-			if roleNameFromYAML(path, contents[path]) != name {
-				continue
+		for _, path := range paths {
+			if roleFiles[path] == name {
+				return path, contents[path]
 			}
-			if found == "" || path < found {
-				found = path
-			}
-		}
-		if found != "" {
-			return found, contents[found]
 		}
 	}
 	return "", nil
 }
 
-// roleNameFromYAML читает имя роли из её YAML. Битый файл даёт пустое имя, и
-// роль выпадает из карты: при переименовании её старый файл не попадёт в
-// stalePaths и останется в конфигурации рядом с новым — две записи одной роли.
-// Пропустить такой файл всё равно приходится (имени в нём нет), но молчать об
-// этом незачем.
-func roleNameFromYAML(path string, content []byte) string {
-	var hdr struct {
-		Name string `yaml:"name"`
+func roleConfigTargetOccupied(roleFiles map[string]string, sourcePath, targetPath, targetName string) bool {
+	for path, name := range roleFiles {
+		if path == sourcePath {
+			continue
+		}
+		if strings.EqualFold(path, targetPath) || strings.EqualFold(name, targetName) {
+			return true
+		}
 	}
-	if err := yaml.Unmarshal(content, &hdr); err != nil {
-		respondLog().Warn("роль пропущена: файл не разобран", "path", path, "err", err)
-		return ""
+	return false
+}
+
+func liveRoleTargetOccupied(roles []*auth.Role, originalName, targetName string) bool {
+	for _, role := range roles {
+		if originalName != "" && role.Name == originalName {
+			continue
+		}
+		if strings.EqualFold(role.Name, targetName) {
+			return true
+		}
 	}
-	return hdr.Name
+	return false
 }
 
 // escJS escapes a string for a single-quoted JS literal inside a <script> block.
