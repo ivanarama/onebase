@@ -89,7 +89,7 @@ func TestRowEvents_AfterRowAddFires(t *testing.T) {
 
 // Флаги проставляются независимо: объявить можно любое одно событие.
 func TestRowEvents_GridFlagsIndependent(t *testing.T) {
-	render := func(handlers map[metadata.FormEventType]string) string {
+	render := func(canWrite bool, handlers map[metadata.FormEventType]string) string {
 		el := &metadata.FormElement{
 			Kind: metadata.FormElementTablePart, Name: "ЭлементТовары",
 			TitleMap: map[string]string{"ru": "Товары"},
@@ -106,7 +106,7 @@ func TestRowEvents_GridFlagsIndependent(t *testing.T) {
 			Forms:      []*metadata.FormModule{form},
 		}
 		data := map[string]any{
-			"Entity": ent, "Form": form, "IsNew": true,
+			"Entity": ent, "Form": form, "IsNew": true, "CanWrite": canWrite,
 			"Values": map[string]string{}, "RefOptions": map[string]any{},
 			"EnumOptions": map[string]any{}, "ChoiceOptions": map[string]any{},
 			"TPRefOptions":  map[string]any{},
@@ -123,7 +123,7 @@ func TestRowEvents_GridFlagsIndependent(t *testing.T) {
 		return buf.String()
 	}
 
-	only := render(map[metadata.FormEventType]string{metadata.FormEventOnRowChanged: "Ф"})
+	only := render(true, map[metadata.FormEventType]string{metadata.FormEventOnRowChanged: "Ф"})
 	if !strings.Contains(only, `data-sg-rowchange="1"`) {
 		t.Error("нет data-sg-rowchange при объявленном ПриИзмененииСтроки")
 	}
@@ -131,14 +131,22 @@ func TestRowEvents_GridFlagsIndependent(t *testing.T) {
 		t.Error("data-sg-rowafteradd проставлен без обработчика")
 	}
 
-	after := render(map[metadata.FormEventType]string{metadata.FormEventAfterRowAdd: "Ф"})
+	after := render(true, map[metadata.FormEventType]string{metadata.FormEventAfterRowAdd: "Ф"})
 	if !strings.Contains(after, `data-sg-rowafteradd="1"`) {
 		t.Error("нет data-sg-rowafteradd при объявленном ПослеДобавленияСтроки")
 	}
 
-	none := render(nil)
+	none := render(true, nil)
 	if strings.Contains(none, "data-sg-rowchange") || strings.Contains(none, "data-sg-rowafteradd") {
 		t.Error("флаги проставлены без обработчиков — форма гоняла бы сеть впустую")
+	}
+
+	readOnly := render(false, map[metadata.FormEventType]string{
+		metadata.FormEventOnRowChanged: "ИзменитьСтроку",
+		metadata.FormEventAfterRowAdd:  "ПослеДобавления",
+	})
+	if strings.Contains(readOnly, "data-sg-rowchange") || strings.Contains(readOnly, "data-sg-rowafteradd") {
+		t.Error("CanWrite=false объявляет недоступные события строк")
 	}
 }
 

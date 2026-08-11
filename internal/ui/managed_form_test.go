@@ -85,6 +85,9 @@ func TestPageManagedForm_Renders(t *testing.T) {
 						TitleMap:  map[string]string{"ru": "Создать копию"},
 						AccessKey: "7",
 						HotKey:    "F7",
+						Handlers: map[metadata.FormEventType]string{
+							metadata.FormEventOnClick: "Копировать",
+						},
 					},
 				},
 			},

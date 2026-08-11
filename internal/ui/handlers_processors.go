@@ -59,9 +59,8 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TPEnumOrder":   map[string]map[string][]string{},
 			"TPRefMeta":     map[string]map[string]any{},
 			"TablePartRows": map[string][]map[string]any{},
-			"IsProcessor":   true,
-			"Processor":     proc,
 		}
+		s.setProcessorManagedContext(r, data, proc)
 		s.prepareManagedFormData(data, mf)
 		s.render(w, r, "page-managed-form", data)
 		return
@@ -278,14 +277,25 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"TPEnumOrder":   map[string]map[string][]string{},
 		"TPRefMeta":     map[string]map[string]any{},
 		"TablePartRows": map[string][]map[string]any{},
-		"IsProcessor":   true,
-		"Processor":     proc,
 		"Messages":      messages,
 		"RunError":      runErr,
 		"Ran":           true,
 	}
+	s.setProcessorManagedContext(r, data, proc)
 	s.prepareManagedFormData(data, proc.ManagedForm())
 	s.render(w, r, "page-managed-form", data)
+}
+
+// setProcessorManagedContext задаёт единый permission-контракт управляемой
+// формы обработки. Виртуальная Entity имеет kind=catalog только ради общего
+// pipeline полей и табличных частей; права catalog/<имя>/write к ней отношения
+// не имеют. Редактирование параметров разрешено тем же processor/<имя>/run,
+// которым защищены GET формы и POST запуска. Явный CanWrite также не даёт
+// Server.render подставить право фиктивного справочника по умолчанию.
+func (s *Server) setProcessorManagedContext(r *http.Request, data map[string]any, proc *processorpkg.Processor) {
+	data["IsProcessor"] = true
+	data["Processor"] = proc
+	data["CanWrite"] = proc != nil && s.can(r, "processor", proc.Name, "run")
 }
 
 func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processorpkg.Processor {
@@ -457,12 +467,13 @@ func processorAllocatedAuxiliaryParamName(params []processorpkg.Param, prefix, n
 // отрисованы текущей формой обработки. Префиксы _ob_present_ и _fc_ сами по
 // себе ничего не доказывают: такие имена разрешены у обычных параметров.
 type processorRequestControls struct {
-	paramFields   map[string][]string
-	fileInputs    map[string][]string
-	boolPresence  map[string][]string
-	fileContent   map[string][]string
-	formTables    map[string]metadata.FormTableDefinition
-	formTablesErr error
+	paramFields      map[string][]string
+	fileInputs       map[string][]string
+	boolPresence     map[string][]string
+	fileContent      map[string][]string
+	formTables       map[string]metadata.FormTableDefinition
+	tableAuthorities map[string]managedFormTableAuthority
+	formTablesErr    error
 }
 
 // processorRequestControlsForForm строит allow-list служебных полей по форме,
@@ -471,14 +482,19 @@ type processorRequestControls struct {
 // input для file-параметра (без _fc_ textarea).
 func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadata.FormModule) processorRequestControls {
 	params := proc.Params
-	formTables, formTablesErr := editableFormTables(form, proc.TableParts)
+	tableAuthorities, formTablesErr := managedFormTableAuthorities(form, proc.TableParts, true)
+	var formTables map[string]metadata.FormTableDefinition
+	if formTablesErr == nil {
+		formTables, formTablesErr = editableFormTablesFromAuthorities(form, proc.TableParts, tableAuthorities)
+	}
 	controls := processorRequestControls{
-		paramFields:   make(map[string][]string),
-		fileInputs:    make(map[string][]string),
-		boolPresence:  make(map[string][]string),
-		fileContent:   make(map[string][]string),
-		formTables:    formTables,
-		formTablesErr: formTablesErr,
+		paramFields:      make(map[string][]string),
+		fileInputs:       make(map[string][]string),
+		boolPresence:     make(map[string][]string),
+		fileContent:      make(map[string][]string),
+		formTables:       formTables,
+		tableAuthorities: tableAuthorities,
+		formTablesErr:    formTablesErr,
 	}
 	if form == nil {
 		for _, p := range params {
@@ -675,18 +691,22 @@ func processorFormObjectFromRequest(
 	form *metadata.FormModule,
 	paramValues map[string]any,
 	controls processorRequestControls,
-) *runtime.Object {
+) (*runtime.Object, error) {
 	fields := make(map[string]any, len(paramValues))
 	for name, value := range paramValues {
 		fields[name] = value
+	}
+	rows, err := processorFormTableRowsFromRequest(r, entity, form, controls.formTables)
+	if err != nil {
+		return nil, err
 	}
 	return &runtime.Object{
 		Type:          entity.Name,
 		Kind:          entity.Kind,
 		ID:            uuid.New(),
 		Fields:        fields,
-		TablePartRows: processorFormTableRowsFromRequest(r, entity, form, controls.formTables),
-	}
+		TablePartRows: rows,
+	}, nil
 }
 
 // processorFormTableRowsFromRequest exposes only body values belonging to
@@ -698,7 +718,7 @@ func processorFormTableRowsFromRequest(
 	entity *metadata.Entity,
 	form *metadata.FormModule,
 	rendered map[string]metadata.FormTableDefinition,
-) map[string][]map[string]any {
+) (map[string][]map[string]any, error) {
 	body := make(url.Values)
 	for postedName, values := range r.PostForm {
 		for formName, definition := range rendered {
@@ -725,14 +745,21 @@ func processorFormTableRowsFromRequest(
 		Form:     body,
 		PostForm: body,
 	}
-	rows := parseTablePartRows(safeRequest, entity)
+	rows, err := parseTablePartRowsForManagedForm(safeRequest, entity, form, true)
+	if err != nil {
+		return nil, err
+	}
 	if rows == nil {
 		rows = make(map[string][]map[string]any)
 	}
-	for name, valueTableRows := range parseValueTableRows(safeRequest, form) {
+	valueTables, err := parseValueTableRowsForManagedForm(safeRequest, form, entity, true)
+	if err != nil {
+		return nil, err
+	}
+	for name, valueTableRows := range valueTables {
 		rows[name] = valueTableRows
 	}
-	return rows
+	return rows, nil
 }
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,

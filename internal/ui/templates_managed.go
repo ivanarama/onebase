@@ -226,7 +226,9 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
-  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $el.HotKey}} data-ob-hotkey="{{$el.HotKey}}" aria-keyshortcuts="{{$el.HotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) (or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el)))}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  {{$clickAction := or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el))}}
+  {{$hotKey := ""}}{{if and (not $ro) $clickAction}}{{$hotKey = normalizedFormHotkey $el.HotKey}}{{end}}
+  <button type="button" class="btn btn-secondary managed-btn"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
@@ -246,14 +248,17 @@ const tplManagedForm = `
   {{$tpRef := index $ctx.TPRefOptions $tpName}}
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
+  {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $tpMeta}}
   {{if $tpCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $tpCmds}}
-    {{$cmdRO := effectiveFormElementReadOnly $ctx.Form .}}
+    {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
+    {{$clickAction := hasHandler . "Нажатие"}}
+    {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
     <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe"
-      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if .HotKey}}data-ob-hotkey="{{.HotKey}}" aria-keyshortcuts="{{.HotKey}}" {{end}}{{if $cmdRO}}disabled{{end}}{{if and (not $cmdRO) (hasHandler . "Нажатие")}} data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
+      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{end}}{{if and (not $cmdRO) $clickAction}} data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
     {{end}}
@@ -263,28 +268,31 @@ const tplManagedForm = `
   <div id="sg-{{$tpName}}" class="ob-grid" style="height:{{if gt (len $tpRows) 8}}300{{else}}200{{end}}px;width:100%"
        data-sg-tp="{{$tpName}}"
        data-sg-el="{{$el.Name}}"
-       {{if $ro}}data-sg-ro="1"{{end}}
-       {{if and (not $ro) (hasHandler $el "ПриИзменении")}}data-sg-recalc="1"{{end}}
+       {{if $tpReadOnly}}data-sg-ro="1"{{end}}
+       {{if and (not $tpReadOnly) (hasHandler $el "ПриИзменении")}}data-sg-recalc="1"{{end}}
        {{if $el.AutoSum}}data-sg-autosum="1"{{end}}
-       {{if and (not $ro) (hasHandler $el "ПриДобавленииСтроки")}}data-sg-rowadd="1"{{end}}
-       {{if and (not $ro) (hasHandler $el "ПриУдаленииСтроки")}}data-sg-rowdel="1"{{end}}
-       {{if and (not $ro) (hasHandler $el "ПриАктивизацииСтроки")}}data-sg-rowactivate="1"{{end}}
-       {{if and (not $ro) (hasHandler $el "ПриИзмененииСтроки")}}data-sg-rowchange="1"{{end}}
-       {{if and (not $ro) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}}data-sg-rowadd="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}}data-sg-rowdel="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриАктивизацииСтроки")}}data-sg-rowactivate="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПриИзмененииСтроки")}}data-sg-rowchange="1"{{end}}
+	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
        data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.Name}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{jsJSON $tpRows}}'
-       {{if $tpCmds}}data-sg-cmd="1"{{end}}></div>
-  <input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">
+       {{if $tpCmds}}data-sg-cmd="1"{{end}}
+       {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}></div>
+  {{if not $tpReadOnly}}<input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">{{end}}
   <div style="display:flex;gap:6px;margin-top:4px">
-    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"{{if $ro}} disabled{{else}}
-      data-ob-grid-add="{{$tpName}}"{{end}}>+ Добавить строку</button>
-    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"{{if $ro}} disabled{{else}}
-      data-ob-grid-del="{{$tpName}}"{{end}}>− Удалить строку</button>
+    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"{{if $tpReadOnly}} disabled{{else}}
+      data-ob-grid-add="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>+ Добавить строку</button>
+    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"{{if $tpReadOnly}} disabled{{else}}
+      data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete"{{end}}>− Удалить строку</button>
   </div>
 {{else}}
-<table class="tp-table" data-tp="{{$tpName}}">
+<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
+  data-ob-element="{{$el.Name}}"{{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}} data-ob-rowadd="1"{{end}}{{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}} data-ob-rowdel="1"{{end}}
+  {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
     <thead>
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
@@ -292,33 +300,32 @@ const tplManagedForm = `
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $ro}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}">
+    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}">
     {{range $i, $row := $tpRows}}
-      <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
-        {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"{{if $ro}} disabled{{end}}></td>{{end}}
+      <tr{{with formRowClass $row}} class="{{.}}"{{end}} tabindex="-1" aria-selected="false">
+        {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"{{if $tpReadOnly}} disabled{{end}}></td>{{end}}
         {{range $f := $tpMeta.Fields}}
         <td{{with formCellClass $row $f.Name}} class="{{.}}"{{end}}>
           {{$v := index $row $f.Name}}
           {{if isRef (str $f.Type)}}
             <div style="display:flex;gap:4px;align-items:center">
-              <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
-                <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
+              <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+                <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
                 {{range index $tpRef $f.Name}}
                 <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}>{{index . "_label"}}</option>
                 {{end}}
               </select>
-              {{if $ro}}<input type="hidden" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{refID $v}}">{{end}}
-              <button type="button" data-ob-ref-picker="closest"{{if $ro}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
+              <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
               <button type="button" data-ob-ref-current="closest" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>
             </div>
           {{else if eq (str $f.Type) "number"}}
-            <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $ro}} readonly{{else}} data-ob-recalc-tp-row{{end}}>
+            <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
           {{else}}
-            <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}"{{if $ro}} readonly{{else}} data-ob-recalc-tp-row{{end}}>
+            <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
           {{end}}
         </td>
         {{end}}
-        <td><button type="button" class="del-btn"{{if $ro}} disabled{{else}} data-ob-remove-row{{end}}>×</button></td>
+        <td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row title="Delete" aria-keyshortcuts="Delete"{{end}}>×</button></td>
       </tr>
     {{end}}
     </tbody>
@@ -327,11 +334,11 @@ const tplManagedForm = `
       {{range $f := $tpMeta.Fields}}{{if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}<td></td>
     </tr></tfoot>
   </table>
-  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $ro}} disabled{{else}}
-    data-ob-add-tp="{{$tpName}}"{{end}}>
+  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
+    data-ob-add-tp="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>
     + Добавить строку
-{{end}}
   </button>
+{{end}}
   {{else}}
   {{/* ValueTable: формовый атрибут-таблица (не документная ТЧ). */}}
   {{$vtCols := formAttrVT $ctx.Form $tpName}}
@@ -342,9 +349,11 @@ const tplManagedForm = `
   {{if $vtCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $vtCmds}}
-    {{$cmdRO := effectiveFormElementReadOnly $ctx.Form .}}
+    {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
+    {{$clickAction := hasHandler . "Нажатие"}}
+    {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
     <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe"
-      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if .HotKey}}data-ob-hotkey="{{.HotKey}}" aria-keyshortcuts="{{.HotKey}}" {{end}}{{if $cmdRO}}disabled{{else if hasHandler . "Нажатие"}}data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
+      {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{else if $clickAction}}data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
     {{end}}
@@ -357,28 +366,27 @@ const tplManagedForm = `
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="vt-body-{{$tpName}}" {{if $ro}}data-ob-table-readonly="1" {{end}}data-vt-fields="{{range $i, $c := $vtCols}}{{if $i}},{{end}}{{$c.Name}}|{{$c.TypeRef}}{{end}}">
+    <tbody id="vt-body-{{$tpName}}" {{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-vt-fields="{{range $i, $c := $vtCols}}{{if $i}},{{end}}{{$c.Name}}|{{$c.TypeRef}}{{end}}">
     {{range $i, $row := $vtRows}}
       <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
         {{range $c := $vtCols}}
         <td{{with formCellClass $row $c.Name}} class="{{.}}"{{end}}>
           {{$v := index $row $c.Name}}
           {{if eq (lower $c.TypeRef) "number"}}
-            <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}"{{if $ro}} readonly{{end}}>
+            <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}"{{if $tpReadOnly}} disabled{{end}}>
           {{else if eq (lower $c.TypeRef) "bool"}}
-            <input type="checkbox" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="true" {{if eq (str $v) "true"}}checked{{end}}{{if $ro}} disabled{{end}}>
-            {{if $ro}}<input type="hidden" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{if eq (str $v) "true"}}true{{else}}false{{end}}">{{end}}
+            <input type="checkbox" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="true" {{if eq (str $v) "true"}}checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
           {{else}}
-            <input type="text" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}"{{if $ro}} readonly{{end}}>
+            <input type="text" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{end}}>
           {{end}}
         </td>
         {{end}}
-        <td><button type="button" class="del-btn"{{if $ro}} disabled{{else}} data-ob-remove-row{{end}}>×</button></td>
+        <td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row{{end}}>×</button></td>
       </tr>
     {{end}}
     </tbody>
   </table>
-  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $ro}} disabled{{else}}
+  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
     data-ob-add-vt="{{$tpName}}"{{end}}>
     + Добавить строку
   </button>
@@ -521,11 +529,11 @@ const tplManagedForm = `
       {{end}}
     {{end}}
   {{end}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if .CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
+      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -638,7 +646,7 @@ const tplManagedForm = `
 
 <div style="margin-top:16px">
   {{if .IsPopup}}
-  {{if .CanWrite}}<button class="btn btn-primary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-primary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
   <a href="#" data-ob-ref-cancel class="btn btn-cancel">Отмена</a>
   {{else if .IsProcessor}}
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки */}}

@@ -102,14 +102,15 @@ func TestHandleProcessorFormEventValueTableChildCommandContext(t *testing.T) {
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
 	names := processorServiceFieldNames(proc.Params)
 	body := url.Values{
-		names["_element"]:       {"Выбрать"},
-		names["_event"]:         {string(metadata.FormEventOnClick)},
-		names["_tp"]:            {"подбор"},
-		names["_tp_row"]:        {"0"},
-		names["_tp_row_number"]: {"1"},
-		names["_tp_col"]:        {"количество"},
-		names["_tp_col_index"]:  {"1"},
-		"tp_json.Подбор":        {`[{"Товар":"A","Количество":3}]`},
+		names["_element"]:        {"Выбрать"},
+		names["_event"]:          {string(metadata.FormEventOnClick)},
+		names["_tp"]:             {"подбор"},
+		names["_tp_row"]:         {"0"},
+		names["_tp_row_number"]:  {"1"},
+		names["_tp_col"]:         {"количество"},
+		names["_tp_col_index"]:   {"1"},
+		"vt.Подбор.0.Товар":      {"A"},
+		"vt.Подбор.0.Количество": {"3"},
 	}
 	resp := decodeFormEventResponse(t, postProcessorFormEventExecution(t, srv, proc.Name,
 		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode())).Body.Bytes())
