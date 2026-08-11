@@ -260,6 +260,20 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	"readjson":      builtinReadJSON,
 	"записатьjson":  builtinWriteJSON,
 	"writejson":     builtinWriteJSON,
+
+	// ─── XML ──────────────────────────────────────────────────────────────
+	"прочитатьxml": builtinReadXML,
+	"readxml":      builtinReadXML,
+	"записатьxml":  builtinWriteXML,
+	"writexml":     builtinWriteXML,
+	"xmlстрока":    builtinXMLString,
+	"xmlstring":    builtinXMLString,
+	"xmlзначение":  builtinXMLValue,
+	"xmlтипзнч":    builtinXMLTypeOf,
+	"xmltypeof":    builtinXMLTypeOf,
+	"xmlvalue":     builtinXMLValue,
+	"найтинедопустимыесимволыxml": builtinFindDisallowedXMLChars,
+	"finddisallowedxmlcharacters": builtinFindDisallowedXMLChars,
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
