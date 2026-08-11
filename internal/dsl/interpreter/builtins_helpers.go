@@ -92,15 +92,18 @@ func calendarShiftArg(args []any) int {
 	return int(shift)
 }
 
-// addCalendarDate не выпускает time.Time, который затем невозможно отдать как
-// RFC 3339/JSON. AddDate умеет считать намного дальше четырёхзначных лет, но
-// такой результат падает уже при сериализации и выглядит как серверная ошибка.
-func addCalendarDate(t time.Time, years, months, days int) time.Time {
-	shifted := t.AddDate(years, months, days)
-	if shifted.Year() < 0 || shifted.Year() > 9999 {
-		RaiseUserError("календарный сдвиг выводит дату за безопасный диапазон 0000–9999")
+// safeDateResult не выпускает time.Time, который затем невозможно отдать как
+// RFC 3339/JSON. time.Date, Add и AddDate умеют считать за четырёхзначными
+// годами, но такой результат падает уже при сериализации вне Попытка/Исключение.
+func safeDateResult(t time.Time) time.Time {
+	if t.Year() < 0 || t.Year() > 9999 {
+		RaiseUserError("результат даты выходит за безопасный диапазон 0000..9999")
 	}
-	return shifted
+	return t
+}
+
+func addCalendarDate(t time.Time, years, months, days int) time.Time {
+	return safeDateResult(t.AddDate(years, months, days))
 }
 
 // Сдвиг по часам, минутам и секундам (issue #707). Раньше их не было, а
@@ -144,13 +147,7 @@ func shiftBySeconds(args []any, unit float64) (any, error) {
 		}
 	}
 	scaled := seconds * unit
-	// Целая часть предела оставляет запас от округления float64 при последующем
-	// умножении на наносекунды (точная дробная граница MaxInt64 округляется вверх).
-	const maxDurationSeconds = float64(math.MaxInt64 / int64(time.Second))
-	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled > maxDurationSeconds || scaled < -maxDurationSeconds {
-		RaiseUserError("сдвиг даты выходит за безопасный диапазон времени")
-	}
-	return t.Add(time.Duration(scaled * float64(time.Second))), nil
+	return dateAddSeconds(t, scaled), nil
 }
 
 // addYearBuiltin — ДобавитьГод(дата, n). n может быть отрицательным.
@@ -228,6 +225,27 @@ func numericDateString(v any) (string, bool) {
 	return s, true
 }
 
+// dateComponentArg preserves the constructor's historical truncation and
+// non-numeric-to-zero compatibility, but avoids implementation-dependent
+// float64-to-int overflow before time.Date performs documented normalization.
+func dateComponentArg(args []any, i int) int {
+	if i >= len(args) {
+		return 0
+	}
+	component, ok := toFloat(args[i])
+	if !ok {
+		if isNumeric(args[i]) {
+			RaiseUserError("компонент даты: число вне безопасного диапазона")
+		}
+		return 0
+	}
+	component = math.Trunc(component)
+	if component > float64(maxCalendarShift) || component < -float64(maxCalendarShift) {
+		RaiseUserError("компонент даты выходит за безопасный диапазон")
+	}
+	return int(component)
+}
+
 // dateConstructor реализует функцию Дата():
 //
 //	Дата(Год, Месяц, День[, Час, Минута, Секунда])
@@ -239,7 +257,7 @@ func dateConstructor(args []any, _ string, _ int) (any, error) {
 	if len(args) == 1 {
 		switch v := args[0].(type) {
 		case time.Time:
-			return v, nil
+			return safeDateResult(v), nil
 		case string:
 			if t, ok := parseDateString(v); ok {
 				return t, nil
@@ -257,17 +275,18 @@ func dateConstructor(args []any, _ string, _ int) (any, error) {
 	if len(args) < 3 {
 		return time.Time{}, nil
 	}
-	mo := int(floatArg(args, 1))
-	d := int(floatArg(args, 2))
+	y := dateComponentArg(args, 0)
+	mo := dateComponentArg(args, 1)
+	d := dateComponentArg(args, 2)
 	if mo < 1 {
 		mo = 1
 	}
 	if d < 1 {
 		d = 1
 	}
-	return time.Date(int(floatArg(args, 0)), time.Month(mo), d,
-		int(floatArg(args, 3)), int(floatArg(args, 4)), int(floatArg(args, 5)),
-		0, time.Local), nil
+	return safeDateResult(time.Date(y, time.Month(mo), d,
+		dateComponentArg(args, 3), dateComponentArg(args, 4), dateComponentArg(args, 5),
+		0, time.Local)), nil
 }
 
 func dateDiffBuiltin(args []any, _ string, _ int) (any, error) {

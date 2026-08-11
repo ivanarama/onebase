@@ -275,6 +275,67 @@ func TestДобавить_КалендарныеСдвигиНеВозвраща
 	}
 }
 
+func TestДата_ВсеПутиОтклоняютНесериализуемыйГодВнутриDSL(t *testing.T) {
+	for _, expr := range []string{
+		`Дата(9999, 12, 31, 23, 59, 59) + 1`,
+		`ДобавитьСекунду(Дата(9999, 12, 31, 23, 59, 59), 1)`,
+		`ДобавитьМинуту(Дата(9999, 12, 31, 23, 59, 0), 1)`,
+		`ДобавитьЧас(Дата(9999, 12, 31, 23, 0, 0), 1)`,
+		`Дата(0, 1, 1) - 1`,
+		`Дата(10000, 1, 1)`,
+		`Дата(9999, 12, 31, 23, 59, 90)`,
+	} {
+		t.Run(expr, func(t *testing.T) {
+			result := evalBreakFunc(t, `Функция Тест()
+  Попытка
+    Возврат `+expr+`;
+  Исключение
+    Возврат ОписаниеОшибки();
+  КонецПопытки;
+КонецФункции`)
+			msg, ok := result.(string)
+			if !ok || !strings.Contains(msg, "0000..9999") {
+				t.Fatalf("%s = %T(%v), ожидалась ловимая ошибка диапазона года", expr, result, result)
+			}
+		})
+	}
+
+	invalidHostDate := time.Date(10000, 1, 1, 0, 0, 0, 0, time.Local)
+	result := evalBreakFunc(t, `Функция Тест()
+  Попытка
+    Возврат Дата(Вход);
+  Исключение
+    Возврат ОписаниеОшибки();
+  КонецПопытки;
+КонецФункции`, map[string]any{"Вход": invalidHostDate})
+	if msg, ok := result.(string); !ok || !strings.Contains(msg, "0000..9999") {
+		t.Fatalf("Дата(time.Time года 10000) = %T(%v)", result, result)
+	}
+}
+
+func TestДата_КомпонентыПроверяютсяДоПреобразованияВInt(t *testing.T) {
+	for _, input := range []any{
+		math.MaxFloat64,
+		decimal.New(1, math.MaxInt32),
+	} {
+		if !raisesUserError(func() {
+			_, _ = dateConstructor([]any{input, 1.0, 1.0}, "t.os", 1)
+		}) {
+			t.Fatalf("небезопасный компонент %v принят без ошибки", input)
+		}
+	}
+}
+
+func TestДата_ГраничныйСекундныйСдвигОстаётсяДопустимым(t *testing.T) {
+	result := evalBreakFunc(t, `Функция Тест()
+  Возврат Дата(9999, 12, 31, 23, 59, 58) + 1;
+КонецФункции`)
+	got, ok := result.(time.Time)
+	if !ok || got.Year() != 9999 || got.Second() != 59 {
+		t.Fatalf("безопасный граничный сдвиг = %T(%v)", result, result)
+	}
+}
+
 func TestДобавить_КалендарныеСдвигиПоПрежнемуУсекаютДробьКНулю(t *testing.T) {
 	cases := []struct {
 		name string

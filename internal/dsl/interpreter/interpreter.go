@@ -1014,7 +1014,7 @@ func dateAddSeconds(t time.Time, sec float64) time.Time {
 	if math.IsNaN(sec) || math.IsInf(sec, 0) || sec > maxWholeSeconds || sec < -maxWholeSeconds {
 		RaiseUserError("сдвиг даты выходит за безопасный диапазон времени")
 	}
-	return t.Add(time.Duration(sec * float64(time.Second)))
+	return safeDateResult(t.Add(time.Duration(sec * float64(time.Second))))
 }
 
 func compare(a, b any) int {
