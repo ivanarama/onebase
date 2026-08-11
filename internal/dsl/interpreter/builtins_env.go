@@ -75,32 +75,67 @@ func pathSeparatorFn(args []any, _ string, _ int) (any, error) {
 	return string(filepath.Separator), nil
 }
 
+// Наборы символов, которые 1С оставляет незакодированными. Сверено прогоном
+// на живой платформе 8.3, а не по документации:
+//
+//	КодироватьСтроку("-_.~!*()'+/:@?#[]$,;= ", КодировкаURL)
+//	  → -_.~%21%2A%28%29%27%2B%2F%3A%40%3F%23%5B%5D%24%2C%3B%3D%20
+//	КодироватьСтроку(то же, URLВКодировкеURL)
+//	  → -_.~!*()'+/:@?#[]$,;=%20
+//
+// Отсюда два вывода, из-за которых нельзя взять url.QueryEscape:
+// пробел кодируется как %20 (а не «+»), и в режиме URL сохраняются
+// зарезервированные символы адреса.
+const (
+	unreservedURLValue = "-_.~"
+	unreservedURLWhole = "-_.~!*()'+/:@?#[]$,;="
+)
+
 // КодироватьСтроку(Строка[, Способ]) — процентное кодирование для URL.
 //
-// Способ: «КодировкаURL» (по умолчанию) кодирует значение параметра целиком,
-// включая «/» и «&»; «URLВКодировкеURL» сохраняет структуру пути и кодирует
-// только небезопасные символы. Имена способов совпадают с 1С, чтобы
-// перенесённый код читался без правок; принимаются и короткие url/path.
+// Способ: «КодировкаURL» (по умолчанию) кодирует значение параметра целиком;
+// «URLВКодировкеURL» сохраняет структуру адреса и кодирует только небезопасные
+// символы. Имена способов совпадают с 1С, чтобы перенесённый код читался без
+// правок; принимаются и короткие url/path.
 func encodeStringFn(args []any, _ string, _ int) (any, error) {
-	src := strArg(args, 0)
+	keep := unreservedURLValue
 	if pathMode(args) {
-		return (&url.URL{Path: src}).EscapedPath(), nil
+		keep = unreservedURLWhole
 	}
-	return url.QueryEscape(src), nil
+	return percentEncode(strArg(args, 0), keep), nil
+}
+
+// percentEncode кодирует всё, кроме букв, цифр и символов из keep.
+// Работает по байтам UTF-8 — так же, как это делает платформа.
+func percentEncode(src, keep string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+			strings.IndexByte(keep, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0F])
+	}
+	return b.String()
 }
 
 // РаскодироватьСтроку(Строка[, Способ]) — обратное преобразование.
-// Неразбираемая строка возвращается как есть: обмен данными не должен падать
-// из-за одного кривого значения в параметре.
+//
+// ⚠️ «+» остаётся плюсом, а не превращается в пробел: проверено на 1С —
+// РаскодироватьСтроку("a+b") возвращает «a+b». Именно поэтому здесь
+// url.PathUnescape, а не QueryUnescape.
+//
+// Неразбираемую последовательность (например «%zz») возвращаем как есть —
+// платформа ведёт себя так же, и обмен данными не должен падать из-за одного
+// кривого значения в параметре.
 func decodeStringFn(args []any, _ string, _ int) (any, error) {
 	src := strArg(args, 0)
-	if pathMode(args) {
-		if out, err := url.PathUnescape(src); err == nil {
-			return out, nil
-		}
-		return src, nil
-	}
-	if out, err := url.QueryUnescape(src); err == nil {
+	if out, err := url.PathUnescape(src); err == nil {
 		return out, nil
 	}
 	return src, nil
