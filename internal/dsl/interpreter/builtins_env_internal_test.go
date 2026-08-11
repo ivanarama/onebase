@@ -29,10 +29,7 @@ func TestTempFileFunctionsCoveredByFileGuard(t *testing.T) {
 
 func TestTempFileNameRejectsPathSyntaxAndUsesRandomToken(t *testing.T) {
 	SetFileSandbox("")
-	fn, ok := NewFileFunctions(nil)["получитьимявременногофайла"].(BuiltinFunc)
-	if !ok {
-		t.Fatal("получитьимявременногофайла должна быть BuiltinFunc")
-	}
+	fn := tempFileNameFn
 
 	invalid := []string{
 		"../../../../", `..\..\secret`, "x/y", `x\y`, "x:y", "x\x00y",
@@ -65,6 +62,28 @@ func TestTempFileNameRejectsPathSyntaxAndUsesRandomToken(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("функция создала файл %q: %v", path, err)
 		}
+	}
+}
+
+func TestTempDirAlwaysEndsWithNativeSeparator(t *testing.T) {
+	SetFileSandbox("")
+	hostDir, err := dslTempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := withTrailingPathSeparator(os.TempDir()); hostDir != want {
+		t.Fatalf("каталог хоста = %q, ожидался %q", hostDir, want)
+	}
+
+	root := t.TempDir()
+	SetFileSandbox(root)
+	defer SetFileSandbox("")
+	sandboxDir, err := dslTempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := withTrailingPathSeparator(filepath.Join(root, "tmp")); sandboxDir != want {
+		t.Fatalf("каталог песочницы = %q, ожидался %q", sandboxDir, want)
 	}
 }
 

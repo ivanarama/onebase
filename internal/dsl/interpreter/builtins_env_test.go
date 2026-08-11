@@ -59,6 +59,14 @@ func TestDSL_ВременныйФайл_РасширениеСТочкойИБе
 	assert.NotContains(t, filepath.Base(out), "..")
 }
 
+func TestDSL_ВременныйФайл_БезАргументаПолучаетTMP(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат ПолучитьИмяВременногоФайла();
+	КонецПроцедуры`
+	out, _ := evalEnv(t, src).(string)
+	assert.Equal(t, ".tmp", filepath.Ext(out))
+}
+
 func TestDSL_КаталогВременныхФайловИРазделитель(t *testing.T) {
 	src := `Процедура Тест()
 		Возврат КаталогВременныхФайлов() + "|" + ПолучитьРазделительПути();
@@ -66,8 +74,19 @@ func TestDSL_КаталогВременныхФайловИРазделител�
 	out, _ := evalEnv(t, src).(string)
 	parts := strings.SplitN(out, "|", 2)
 	require.Len(t, parts, 2)
-	assert.Equal(t, os.TempDir(), parts[0])
+	wantDir := os.TempDir()
+	if !strings.HasSuffix(wantDir, string(filepath.Separator)) {
+		wantDir += string(filepath.Separator)
+	}
+	assert.Equal(t, wantDir, parts[0])
 	assert.Equal(t, string(filepath.Separator), parts[1])
+}
+
+func TestDSL_КаталогВременныхФайловПоддерживаетПрямуюКонкатенацию(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат КаталогВременныхФайлов() + "probe.tmp";
+	КонецПроцедуры`
+	assert.Equal(t, filepath.Join(os.TempDir(), "probe.tmp"), evalEnv(t, src))
 }
 
 // Поведение сверено прогоном на платформе 1С 8.3 (fastex на живой базе), а не
@@ -99,6 +118,111 @@ func TestDSL_НаборНезакодированныхСимволов(t *testi
 		Возврат КодироватьСтроку("-_.~!*()'+/:@?#[]$,;= ", "URLВКодировкеURL");
 	КонецПроцедуры`
 	assert.Equal(t, "-_.~!*()'+/:@?#[]$,;=%20", evalEnv(t, src2))
+}
+
+func TestDSL_СпособКодированияСтрокиСовместимС1С(t *testing.T) {
+	for _, mode := range []string{
+		"СпособКодированияСтроки.URLВКодировкеURL",
+		"URLВКодировкеURL",
+		"StringEncodingMethod.URLInURLCoding",
+		"URLInURLCoding",
+		"StringEncodingMethod.URLInURLEncoding",
+		"URLInURLEncoding",
+	} {
+		src := `Процедура Тест()
+			Возврат КодироватьСтроку("https://example.test/a b?q=x y", ` + mode + `);
+		КонецПроцедуры`
+		assert.Equal(t, "https://example.test/a%20b?q=x%20y", evalEnv(t, src), mode)
+	}
+}
+
+func TestDSL_РежимКомпонентаИзПеречисления(t *testing.T) {
+	for _, mode := range []string{
+		"СпособКодированияСтроки.КодировкаURL",
+		"КодировкаURL",
+		"StringEncodingMethod.URLEncoding",
+		"URLEncoding",
+	} {
+		src := `Процедура Тест()
+			Возврат КодироватьСтроку("a/b", ` + mode + `);
+		КонецПроцедуры`
+		assert.Equal(t, "a%2Fb", evalEnv(t, src), mode)
+	}
+}
+
+func TestDSL_UTF8ТретийАргументПоддерживается(t *testing.T) {
+	for _, encoding := range []string{
+		"КодировкаТекста.UTF8",
+		"TextEncoding.UTF8",
+		`"UTF-8"`,
+		`"utf_8"`,
+	} {
+		src := `Процедура Тест()
+			Возврат РаскодироватьСтроку(КодироватьСтроку("а/б", КодировкаURL, ` + encoding + `), КодировкаURL, ` + encoding + `);
+		КонецПроцедуры`
+		assert.Equal(t, "а/б", evalEnv(t, src), encoding)
+	}
+}
+
+func TestDSL_ОшибкиФункцийОкруженияЛовятсяСПозицией(t *testing.T) {
+	tests := []struct {
+		name string
+		call string
+		want string
+	}{
+		{name: "invalid extension", call: `ПолучитьИмяВременногоФайла("../txt")`, want: "расширени"},
+		{name: "missing encode argument", call: `КодироватьСтроку()`, want: "первый аргумент"},
+		{name: "missing decode argument", call: `DecodeString()`, want: "первый аргумент"},
+		{name: "undefined encode argument", call: `EncodeString(Неопределено)`, want: "первый аргумент"},
+		{name: "unknown mode", call: `EncodeString("a/b", "URLВКодировкеUR1")`, want: "неизвестный способ"},
+		{name: "unknown enum member", call: `КодироватьСтроку("a/b", СпособКодированияСтроки.URLВКодировкеUR1)`, want: "способ URL-кодирования"},
+		{name: "unsupported encoding", call: `КодироватьСтроку("текст", КодировкаURL, "Windows-1251")`, want: "неподдерживаемая кодировка"},
+		{name: "temp dir extra argument", call: `TempFilesDir(1)`, want: "0 аргументов"},
+		{name: "temp name extra argument", call: `GetTempFileName("tmp", "лишний")`, want: "не более 1 аргумента"},
+		{name: "separator extra argument", call: `GetPathSeparator(1)`, want: "0 аргументов"},
+		{name: "encode extra argument", call: `EncodeString("a", КодировкаURL, UTF8, "лишний")`, want: "не более 3 аргументов"},
+		{name: "decode extra argument", call: `DecodeString("a", КодировкаURL, UTF8, "лишний")`, want: "не более 3 аргументов"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `Процедура Тест()
+				Попытка
+					` + tc.call + `;
+					Возврат "не поймано";
+				Исключение
+					Возврат ИнформацияОбОшибке();
+				КонецПопытки;
+			КонецПроцедуры`
+			result := evalEnv(t, src)
+			info, ok := result.(*interpreter.Struct)
+			require.True(t, ok, "ошибка не перехвачена: %#v", result)
+			assert.Equal(t, "test.os", info.Get("Источник"))
+			assert.Greater(t, info.Get("НомерСтроки").(float64), float64(0))
+			assert.Contains(t, info.Get("Описание"), tc.want)
+		})
+	}
+}
+
+func TestDSL_ОшибкаСозданияВременногоКаталогаЛовится(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(root, []byte("x"), 0o600))
+	interpreter.SetFileSandbox(root)
+	defer interpreter.SetFileSandbox("")
+
+	src := `Процедура Тест()
+		Попытка
+			КаталогВременныхФайлов();
+			Возврат "не поймано";
+		Исключение
+			Возврат ИнформацияОбОшибке();
+		КонецПопытки;
+	КонецПроцедуры`
+	info, ok := evalEnv(t, src).(*interpreter.Struct)
+	require.True(t, ok, "ошибка ОС не была перехвачена")
+	assert.Equal(t, "test.os", info.Get("Источник"))
+	assert.Greater(t, info.Get("НомерСтроки").(float64), float64(0))
+	assert.Contains(t, info.Get("Описание"), "создать каталог временных файлов")
 }
 
 // «+» при раскодировании остаётся плюсом: проверено на 1С —

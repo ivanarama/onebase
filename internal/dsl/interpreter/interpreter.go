@@ -102,6 +102,7 @@ type Interpreter struct {
 // из DebugSource в его execCtx.
 func (i *Interpreter) startEnv(this This) *env {
 	e := newEnv(this)
+	installEnvironmentConstants(e)
 	if i.DebugSource != nil {
 		e.ec.debug = i.DebugSource()
 	}
