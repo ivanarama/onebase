@@ -428,19 +428,22 @@ func (s *Server) codeConsoleExec(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
 	proc := prog.Procedures[0]
 
-	runErr := ""
-	if err := s.interp.Run(proc, nil, vars); err != nil {
-		runErr = err.Error()
+	runErr := s.interp.Run(proc, nil, vars)
+	runErr = finishDSLExecution(txState, runErr)
+	runErrText := ""
+	if runErr != nil {
+		runErrText = runErr.Error()
 	}
 
 	resp := map[string]any{
 		"output": msgs,
 	}
-	if runErr != "" {
-		resp["error"] = runErr
+	if runErrText != "" {
+		resp["error"] = runErrText
 	}
 
 	jsonResp(w, 200, resp)

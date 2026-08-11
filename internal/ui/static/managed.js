@@ -17,6 +17,11 @@ function obManagedReady(fn) {
   else fn();
 }
 
+// WeakSet не даёт повторному requestSubmit() снова попасть в асинхронное
+// ожидание FileReader и защищает от нескольких отправок, пока чтение ещё идёт.
+var obManagedFileSubmitPending = new WeakSet();
+var obManagedFileSubmitReentry = new WeakSet();
+
 // Отправляет текущие form-values + имя элемента/события в /ui/.../form-event,
 // получает JSON с новыми значениями и сообщениями от Сообщить(), применяет их.
 (function(){
@@ -24,6 +29,11 @@ function obManagedReady(fn) {
   if (!cfg.url) return;
   var URL = String(cfg.url || '');
   var DOC_ID = cfg.docId == null ? '' : String(cfg.docId);
+  var SERVICE_FIELDS = cfg.serviceFields && typeof cfg.serviceFields === 'object' ? cfg.serviceFields : {};
+  function serviceField(name){
+    var mapped = SERVICE_FIELDS[name];
+    return typeof mapped === 'string' && mapped ? mapped : name;
+  }
   // Реквизиты формы (attributes с save:false) переживают полную перезагрузку.
   // «Записать» уходит POST'ом с редиректом, страница рисуется заново — и всё,
   // что оператор выбрал в реквизите формы, пропадало (в 1С форма живёт в памяти
@@ -146,7 +156,7 @@ function obManagedReady(fn) {
     Object.keys(values).forEach(function(k){
       const v = values[k];
       // Пропускаем файловые поля: не подставляем содержимое в поле пути
-      const fc = form.querySelector('[name="_fc_' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
+      const fc = form.querySelector('[data-ob-file-content-for="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
       if (fc) return;
       const inp = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
       if (!inp) return;
@@ -160,7 +170,11 @@ function obManagedReady(fn) {
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
         if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k]);
-        inp.value = val;
+        if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
+          inp._obSetCodeValue(val);
+        } else {
+          inp.value = val;
+        }
       }
     });
   }
@@ -220,6 +234,16 @@ function obManagedReady(fn) {
     el.textContent = css || '';
   }
   window.applyFormConditionalCSS = applyFormConditionalCSS;
+  function obManagedTableReadOnly(tbody) {
+    return !!tbody && tbody.getAttribute('data-ob-table-readonly') === '1';
+  }
+  function appendDisabledControlMirror(parent, name, value) {
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.name = name;
+    hidden.value = (value == null ? '' : String(value));
+    parent.appendChild(hidden);
+  }
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -243,6 +267,7 @@ function obManagedReady(fn) {
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
+      const readOnly = obManagedTableReadOnly(tbody);
       tbody.innerHTML = '';
       rows.forEach(function(row, idx){
         const tr = document.createElement('tr');
@@ -252,6 +277,7 @@ function obManagedReady(fn) {
           tdSel.style.textAlign = 'center';
           const cbSel = document.createElement('input');
           cbSel.type = 'checkbox'; cbSel.className = '_tp-sel';
+          cbSel.disabled = readOnly;
           tdSel.appendChild(cbSel);
           tr.appendChild(tdSel);
         }
@@ -277,7 +303,9 @@ function obManagedReady(fn) {
               if (String(opt.id) === cur) o.selected = true;
               sel.appendChild(o);
             });
+            sel.disabled = readOnly;
             td.appendChild(sel);
+            if (readOnly) appendDisabledControlMirror(td, sel.name, cur);
           } else if (isEnum && tpEnumLabels[f.name]) {
             const enumLabMap = tpEnumLabels[f.name];
             const sel = document.createElement('select');
@@ -294,7 +322,9 @@ function obManagedReady(fn) {
               if (val === cur) o.selected = true;
               sel.appendChild(o);
             });
+            sel.disabled = readOnly;
             td.appendChild(sel);
+            if (readOnly) appendDisabledControlMirror(td, sel.name, cur);
           } else {
             const inp = document.createElement('input');
             inp.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
@@ -310,6 +340,7 @@ function obManagedReady(fn) {
               inp.type = 'text';
               inp.value = (v == null ? '' : v);
             }
+            inp.readOnly = readOnly;
             td.appendChild(inp);
           }
           tr.appendChild(td);
@@ -319,7 +350,8 @@ function obManagedReady(fn) {
         btn.type = 'button';
         btn.className = 'del-btn';
         btn.textContent = '×';
-        btn.onclick = function(){ tr.remove(); };
+        btn.disabled = readOnly;
+        if (!readOnly) btn.onclick = function(){ tr.remove(); };
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
@@ -350,6 +382,7 @@ function obManagedReady(fn) {
         return { name: s.slice(0, idx), type: (s.slice(idx + 1) || 'string').toLowerCase() };
       });
       var rows = vts[vtName] || [];
+      var readOnly = obManagedTableReadOnly(tbody);
       tbody.innerHTML = '';
       rows.forEach(function(row, idx){
         var tr = document.createElement('tr');
@@ -367,17 +400,23 @@ function obManagedReady(fn) {
           } else if (f.type === 'bool') {
             inp.type = 'checkbox'; inp.value = 'true';
             if (String(v) === 'true') inp.checked = true;
+            inp.disabled = readOnly;
           } else {
             inp.type = 'text';
             inp.value = (v == null ? '' : v);
           }
+          if (readOnly && f.type !== 'bool') inp.readOnly = true;
           td.appendChild(inp);
+          if (readOnly && f.type === 'bool') {
+            appendDisabledControlMirror(td, inp.name, String(v) === 'true' ? 'true' : 'false');
+          }
           tr.appendChild(td);
         });
         var tdDel = document.createElement('td');
         var btn = document.createElement('button');
         btn.type = 'button'; btn.className = 'del-btn'; btn.textContent = '×';
-        btn.onclick = function(){ tr.remove(); };
+        btn.disabled = readOnly;
+        if (!readOnly) btn.onclick = function(){ tr.remove(); };
         tdDel.appendChild(btn);
         tr.appendChild(tdDel);
         tbody.appendChild(tr);
@@ -386,34 +425,119 @@ function obManagedReady(fn) {
   }
   window.applyFormTables = applyFormTables;
 
+  function beginFileRead(contentEl) {
+    const previous = contentEl._obFileReadState;
+    if (previous && typeof previous.settle === 'function') previous.settle();
+    let resolvePending;
+    let settled = false;
+    const state = {
+      token: previous ? previous.token + 1 : 1,
+      loading: true,
+      error: null,
+      pending: new Promise(function(resolve){ resolvePending = resolve; }),
+      settle: function(){
+        if (settled) return;
+        settled = true;
+        resolvePending();
+      }
+    };
+    contentEl._obFileReadState = state;
+    return state;
+  }
+
+  function finishFileRead(contentEl, state, error) {
+    if (contentEl._obFileReadState === state) {
+      state.loading = false;
+      state.error = error || null;
+    }
+    state.settle();
+  }
+
+  async function awaitCurrentFileReads(fileHelpers) {
+    for (;;) {
+      const states = fileHelpers.map(function(el){ return el._obFileReadState || null; });
+      await Promise.all(states.map(function(state){ return state ? state.pending : Promise.resolve(); }));
+      // A newer selection may have replaced a reader while obFire was waiting.
+      // The superseded promise is settled immediately; loop and await only the
+      // currently selected file instead of blocking on or sending stale data.
+      if (fileHelpers.some(function(el, i){ return (el._obFileReadState || null) !== states[i]; })) continue;
+      for (let i = 0; i < states.length; i++) {
+        if (states[i] && states[i].error) {
+          flash(states[i].error, 'err');
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+
   // obFilePick — при выборе файла: имя в текстовое поле, содержимое в скрытый
   // textarea. Кодировка: UTF-8 → fallback Windows-1251 (TextDecoder).
-  // В webview/Electron — file.path вместо содержимого.
+  // В webview/Electron — file.path вместо содержимого. Состояние чтения живёт
+  // на backing textarea: obFire ждёт актуальный Promise и не отправляет форму
+  // после ошибки чтения.
   window.obFilePick = function(input, pathId, contentId) {
-    const file = input.files[0];
-    if (!file) return;
     const pathEl = document.getElementById(pathId);
     const contentEl = contentId ? document.getElementById(contentId) : null;
     if (!pathEl) return;
+    const file = input.files && input.files[0];
+    if (!file) {
+      pathEl.value = '';
+      if (contentEl) {
+        const state = beginFileRead(contentEl);
+        contentEl.value = '';
+        delete contentEl.dataset.obFileContentReady;
+        finishFileRead(contentEl, state, null);
+      }
+      return;
+    }
     if (file.path) {
       pathEl.value = file.path;
-      if (contentEl) contentEl.value = '';
+      if (contentEl) {
+        const state = beginFileRead(contentEl);
+        contentEl.value = '';
+        delete contentEl.dataset.obFileContentReady;
+        finishFileRead(contentEl, state, null);
+      }
       return;
     }
     pathEl.value = file.name;
     if (!contentEl) return;
-    const reader = new FileReader();
-    reader.onload = function() {
-      const bytes = new Uint8Array(reader.result);
-      let text;
-      try {
-        text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
-      } catch(e) {
-        text = new TextDecoder('windows-1251').decode(bytes);
-      }
-      contentEl.value = text;
-    };
-    reader.readAsArrayBuffer(file);
+    const state = beginFileRead(contentEl);
+    contentEl.value = '';
+    delete contentEl.dataset.obFileContentReady;
+    try {
+      if (typeof window.FileReader !== 'function') throw new Error('FileReader API недоступен');
+      const reader = new window.FileReader();
+      reader.onload = function() {
+        try {
+          const bytes = new Uint8Array(reader.result);
+          let text;
+          try {
+            text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+          } catch(e) {
+            text = new TextDecoder('windows-1251').decode(bytes);
+          }
+          if (contentEl._obFileReadState === state) {
+            contentEl.value = text;
+            contentEl.dataset.obFileContentReady = '1';
+          }
+          finishFileRead(contentEl, state, null);
+        } catch (e) {
+          finishFileRead(contentEl, state, 'Не удалось прочитать файл «' + file.name + '»: ' + (e && e.message ? e.message : e));
+        }
+      };
+      reader.onerror = function() {
+        const detail = reader.error && reader.error.message ? ': ' + reader.error.message : '';
+        finishFileRead(contentEl, state, 'Не удалось прочитать файл «' + file.name + '»' + detail);
+      };
+      reader.onabort = function() {
+        finishFileRead(contentEl, state, 'Чтение файла «' + file.name + '» отменено');
+      };
+      reader.readAsArrayBuffer(file);
+    } catch (e) {
+      finishFileRead(contentEl, state, 'Не удалось прочитать файл «' + file.name + '»: ' + (e && e.message ? e.message : e));
+    }
   };
 
   // obFire(elementName, eventName[, extraParams]) — extraParams (объект)
@@ -421,29 +545,37 @@ function obManagedReady(fn) {
   // шлёт {_pick_result}, команды ТЧ — {_tp, _tp_selected}.
   window.obFire = async function(elementName, eventName, extraParams){
    try {
-    // Зафиксировать активную правку ячейки грида: иначе её значение не попадёт
-    // в tp_json, а редактор держит editor-lock — из-за чего первый клик по
-    // кнопке лишь закрывает редактор и «не нажимается».
-    var _grids = window._obGrids || {};
-    for (var _t in _grids) {
-      var _lk = _grids[_t].grid && _grids[_t].grid.getEditorLock && _grids[_t].grid.getEditorLock();
-      if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
-    }
-    if (window.obGridSync) obGridSync();
+    // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
+    // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
+    if (window.obGridSync && window.obGridSync() === false) return;
     const form = document.getElementById('main-form');
     if (!form) return;
-    const fd = new FormData(form);
-    fd.set('_element', elementName || '');
-    fd.set('_event', eventName || '');
-    fd.set('_kind', 'object');
-    if (DOC_ID) fd.set('_id', DOC_ID);
+    const fileHelpers = Array.prototype.slice.call(form.querySelectorAll('[data-ob-file-content-for]'));
+    if (!await awaitCurrentFileReads(fileHelpers)) return;
+    // FileReader может работать долго; за это время активная grid-ячейка могла
+    // измениться уже после первого snapshot. Непосредственно перед FormData
+    // повторяем commit/sync и при любом veto оставляем событие неотправленным.
+    if (window.obGridSync && window.obGridSync() === false) return;
     const body = new URLSearchParams();
-    fd.forEach((v, k) => {
-      if (k.startsWith('_fc_')) return; // skip file-content helper fields
+    const fileHelperDisabled = fileHelpers.map(function(el){ return el.disabled; });
+    let eventFD;
+    try {
+      fileHelpers.forEach(function(el){ el.disabled = true; });
+      eventFD = new FormData(form);
+    } finally {
+      fileHelpers.forEach(function(el, i){ el.disabled = fileHelperDisabled[i]; });
+    }
+    eventFD.set(serviceField('_element'), elementName || '');
+    eventFD.set(serviceField('_event'), eventName || '');
+    eventFD.set(serviceField('_kind'), 'object');
+    if (DOC_ID) eventFD.set(serviceField('_id'), DOC_ID);
+    eventFD.forEach((v, k) => {
       if (typeof v !== 'string') { body.append(k, ''); return; }
-      // If a _fc_ counterpart exists with content, prefer it over the path
-      const fcEl = form.querySelector('[name="_fc_' + k + '"]');
-      if (fcEl && fcEl.value) { body.append(k, fcEl.value); }
+      // If the rendered file helper has content, prefer it over the path.
+      // The data attribute identifies the actual control without reserving
+      // all legal parameter names beginning with _fc_.
+      const fcEl = form.querySelector('[data-ob-file-content-for="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
+      if (fcEl && (fcEl.value || fcEl.dataset.obFileContentReady === '1')) { body.append(k, fcEl.value); }
       else { body.append(k, v); }
     });
     // Команда над ТЧ: подмешать индексы выделенных строк (_tp_selected) по
@@ -457,7 +589,21 @@ function obManagedReady(fn) {
         // пересчёта/очистки выделение не нужно — гасим ошибку и шлём пусто.
         var sel = [];
         try { sel = obg.grid.getSelectedRows() || []; } catch (e) { sel = []; }
-        body.append('_tp_selected', sel.join(','));
+        // tp_json is serialized in canonical _ord order, while SlickGrid
+        // selection indices follow the current visual sort. Translate selected
+        // rows to the exact array indices sent to the server.
+        var canonicalItems = obg.dataView.getItems().slice().sort(function(a, b) {
+          return (a._ord || 0) - (b._ord || 0);
+        });
+        sel = sel.map(function(displayIndex) {
+          var item = obg.dataView.getItem(displayIndex);
+          if (!item) return -1;
+          for (var i = 0; i < canonicalItems.length; i++) {
+            if (canonicalItems[i] && canonicalItems[i].id === item.id) return i;
+          }
+          return -1;
+        }).filter(function(index) { return index >= 0; });
+        body.append(serviceField('_tp_selected'), sel.join(','));
       } else {
         // Legacy: read from DOM checkboxes
         const tbody = document.getElementById('tp-body-' + extraParams._tp);
@@ -467,12 +613,12 @@ function obManagedReady(fn) {
             const cb = tr.querySelector('._tp-sel');
             if (cb && cb.checked) sel.push(i);
           });
-          body.append('_tp_selected', sel.join(','));
+          body.append(serviceField('_tp_selected'), sel.join(','));
         }
       }
     }
     if (extraParams) {
-      Object.keys(extraParams).forEach(k => body.append(k, extraParams[k]));
+      Object.keys(extraParams).forEach(k => body.append(serviceField(k), extraParams[k]));
     }
     try {
       const res = await fetch(URL, {
@@ -487,7 +633,7 @@ function obManagedReady(fn) {
       if (data.pickerData) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
-        openItemPicker(data.pickerData, elementName);
+        openItemPicker(data.pickerData, elementName, extraParams || null);
         return;
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
@@ -540,7 +686,82 @@ function obManagedReady(fn) {
   // Сохранить реквизиты формы перед полной отправкой и вернуть после перезагрузки.
   obManagedReady(restoreFormAttrs);
   document.addEventListener('submit', function(e){
-    if (e.target && e.target.id === 'main-form') stashFormAttrs();
+    const form = e.target;
+    if (!form || !form.querySelectorAll) return;
+    if (form.id === 'main-form') stashFormAttrs();
+
+    const fileHelpers = Array.prototype.slice.call(form.querySelectorAll('[data-ob-file-content-for]'));
+    if (!fileHelpers.length || obManagedFileSubmitReentry.has(form)) return;
+
+    // В том числе implicit submit по Enter должен быть остановлен до первого
+    // await: иначе браузер успеет отправить пустой backing textarea.
+    e.preventDefault();
+    e.stopPropagation();
+    if (obManagedFileSubmitPending.has(form)) return;
+    if (!obManagedSubmitAllowed(form)) return;
+    obManagedFileSubmitPending.add(form);
+
+    const submitter = e.submitter || null;
+    Promise.resolve(awaitCurrentFileReads(fileHelpers)).then(function(ok){
+      if (!ok) return;
+      // Пока FileReader работал, пользователь мог закончить другую ячейку
+      // SlickGrid. Повторно коммитим/sync-им grid state непосредственно перед
+      // native submit; confirm второй раз не показываем.
+      try {
+        if (!obManagedGridSubmitAllowed(form)) return;
+      } catch (err) {
+        flash('Не удалось синхронизировать таблицу: ' + (err && err.message ? err.message : err), 'err');
+        return;
+      }
+
+      const proto = window.HTMLFormElement && window.HTMLFormElement.prototype;
+      const requestSubmit = proto && typeof proto.requestSubmit === 'function'
+        ? proto.requestSubmit
+        : (typeof form.requestSubmit === 'function' ? form.requestSubmit : null);
+      const nativeSubmit = proto && typeof proto.submit === 'function'
+        ? proto.submit
+        : (typeof form.submit === 'function' ? form.submit : null);
+
+      obManagedFileSubmitReentry.add(form);
+      try {
+        if (requestSubmit) {
+          // submitter мог исчезнуть из DOM за время чтения; тогда безопаснее
+          // повторить implicit submit без него, чем получить NotFoundError.
+          if (submitter && (!('form' in submitter) || submitter.form === form) && !submitter.disabled) {
+            requestSubmit.call(form, submitter);
+          } else {
+            requestSubmit.call(form);
+          }
+          return;
+        }
+        if (!nativeSubmit) throw new Error('браузер не поддерживает отправку формы');
+
+        // Старый браузер без requestSubmit(): validation/confirm уже выполнены
+        // выше. Временное поле сохраняет name/value нажатой submit-кнопки.
+        let submitterInput = null;
+        if (submitter && submitter.name && !submitter.disabled) {
+          submitterInput = document.createElement('input');
+          submitterInput.type = 'hidden';
+          submitterInput.name = submitter.name;
+          submitterInput.value = submitter.value || '';
+          form.appendChild(submitterInput);
+        }
+        try {
+          if (form.id === 'main-form') window._obFormDirty = false;
+          nativeSubmit.call(form);
+        } finally {
+          if (submitterInput) submitterInput.remove();
+        }
+      } catch (err) {
+        flash('Не удалось отправить форму: ' + (err && err.message ? err.message : err), 'err');
+      } finally {
+        obManagedFileSubmitReentry.delete(form);
+      }
+    }).catch(function(err){
+      flash('Не удалось дождаться чтения файла: ' + (err && err.message ? err.message : err), 'err');
+    }).finally(function(){
+      obManagedFileSubmitPending.delete(form);
+    });
   }, true);
 
   window._obFormDirty = false;
@@ -551,20 +772,20 @@ function obManagedReady(fn) {
   }
   document.addEventListener('input',  function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   document.addEventListener('change', function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
-  // Сохранение формы (Записать/Провести) сбрасывает «грязный» флаг — иначе
-  // beforeunload спрашивал бы подтверждение даже при штатной отправке.
-  var _obMainForm = document.getElementById('main-form');
-  if (_obMainForm) _obMainForm.addEventListener('submit', function(){ window._obFormDirty = false; });
+  // «Грязный» флаг сбрасывает финальный submit-handler только после всех
+  // проверок. Сбрасывать его здесь нельзя: obGridSync ниже ещё может запретить
+  // отправку из-за незавершённой/невалидной правки ячейки.
   window.addEventListener('beforeunload', function(e){
     if (window._obFormDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
 
   // Esc — отмена незаконченного ввода / закрытие формы (как в 1С). Порядок:
   //   1) открыт модальный диалог (подбор/выбор ссылки) → закрыть его;
-  //   2) активен редактор ячейки грида → отменить правку ячейки (форму НЕ
+  //   2) открыт выпадающий список ячейки-ссылки → закрыть только список;
+  //   3) активен редактор ячейки грида → отменить правку ячейки (форму НЕ
   //      закрываем);
-  //   3) фокус в поле ввода → снять фокус (отменить ввод);
-  //   4) иначе → закрыть форму (с подтверждением, если были изменения).
+  //   4) фокус в поле ввода → снять фокус (отменить ввод);
+  //   5) иначе → закрыть форму (с подтверждением, если были изменения).
   //
   // ВАЖНО: слушатель в ФАЗЕ ПЕРЕХВАТА (capture=true). В фазе всплытия SlickGrid
   // успевал отменить правку РАНЬШЕ нас, editor-lock становился неактивным, и мы
@@ -573,6 +794,12 @@ function obManagedReady(fn) {
     if (e.key !== 'Escape' && e.keyCode !== 27) return;
     var modal = document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
     if (modal) { modal.remove(); e.preventDefault(); e.stopPropagation(); return; }
+    // Выпадающий список ячейки-ссылки закрываем ДО проверки editor-lock: этот
+    // слушатель в фазе перехвата, и без отдельной ветки Esc из подбора отменял
+    // бы всю правку ячейки, а не только список.
+    if (window._obRefDropdown && window._obRefDropdown.close) {
+      window._obRefDropdown.close(); e.preventDefault(); e.stopPropagation(); return;
+    }
     var grids = window._obGrids || {};
     for (var tp in grids) {
       var lock = grids[tp].grid && grids[tp].grid.getEditorLock && grids[tp].grid.getEditorLock();
@@ -595,7 +822,7 @@ function obManagedReady(fn) {
 // addVtRow — JS для добавления строки в ValueTable (формовый атрибут-таблица).
 function addVtRow(vtName, fields) {
   var tbody = document.getElementById("vt-body-" + vtName);
-  if (!tbody) return;
+  if (!tbody || tbody.getAttribute('data-ob-table-readonly') === '1') return;
   var idx = tbody.rows.length;
   var tr = document.createElement("tr");
   var fieldTypes = (tbody.getAttribute("data-vt-fields") || "").split(",");
@@ -644,7 +871,7 @@ function obManagedParseFieldMeta(raw) {
 function obManagedAddTpRow(btn) {
   var tpName = btn.getAttribute('data-ob-add-tp') || '';
   var tbody = document.getElementById('tp-body-' + tpName);
-  if (!tpName || !tbody || typeof addTpRow !== 'function') return;
+  if (!tpName || !tbody || tbody.getAttribute('data-ob-table-readonly') === '1' || typeof addTpRow !== 'function') return;
   var meta = obManagedParseFieldMeta(tbody.getAttribute('data-tp-fields') || '');
   var fields = meta.map(function (f) { return f.name; });
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
@@ -654,9 +881,24 @@ function obManagedAddTpRow(btn) {
 function obManagedAddVtRow(btn) {
   var vtName = btn.getAttribute('data-ob-add-vt') || '';
   var tbody = document.getElementById('vt-body-' + vtName);
-  if (!vtName || !tbody || typeof addVtRow !== 'function') return;
+  if (!vtName || !tbody || tbody.getAttribute('data-ob-table-readonly') === '1' || typeof addVtRow !== 'function') return;
   var fields = obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '').map(function (f) { return f.name; });
   addVtRow(vtName, fields);
+}
+
+function obManagedSubmitAllowed(form) {
+  var msg = form.getAttribute('data-ob-confirm');
+  if (msg && !confirm(msg)) return false;
+  return obManagedGridSubmitAllowed(form);
+}
+
+function obManagedGridSubmitAllowed(form) {
+  if (form.hasAttribute('data-ob-grid-sync') && window.obGridSync) {
+    // Незавершённая правка ячейки не даёт записать документ: причину показал
+    // обработчик onValidationError, пользователю есть что исправить (или Esc).
+    if (window.obGridSync() === false) return false;
+  }
+  return true;
 }
 
 function obManagedInitDelegates() {
@@ -667,6 +909,7 @@ function obManagedInitDelegates() {
     // и dropdown «Печать ▾»/«Ввести на основании» не открывался бы — issue #309.
     var btn = e.target && e.target.closest ? e.target.closest('[data-ob-ref-picker],[data-ob-ref-current],[data-ob-file-trigger],[data-ob-fire-click],[data-ob-grid-add],[data-ob-grid-del],[data-ob-add-tp],[data-ob-add-vt],[data-ob-remove-row],[data-ob-ref-cancel]') : null;
     if (!btn) return;
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
 
     if (btn.hasAttribute('data-ob-ref-cancel')) {
       e.preventDefault();
@@ -780,13 +1023,17 @@ function obManagedInitDelegates() {
   document.addEventListener('submit', function (e) {
     var form = e.target;
     if (!form || !form.getAttribute) return;
-    var msg = form.getAttribute('data-ob-confirm');
-    if (msg && !confirm(msg)) {
+    // Первый submit с файловым helper уже синхронно остановил capture-handler;
+    // повторный requestSubmit проходит сюда после успешного чтения и не должен
+    // второй раз показывать confirm или синхронизировать грид.
+    if (!obManagedFileSubmitReentry.has(form) && !obManagedSubmitAllowed(form)) {
       e.preventDefault();
       e.stopPropagation();
       return;
     }
-    if (form.hasAttribute('data-ob-grid-sync') && window.obGridSync) window.obGridSync();
+    // Все синхронные veto пройдены: штатная навигация после submit не должна
+    // показывать предупреждение о несохранённых данных.
+    if (form.id === 'main-form' && !e.defaultPrevented) window._obFormDirty = false;
   });
 }
 
@@ -854,9 +1101,31 @@ obManagedReady(obManagedInitDelegates);
     return (v == null) ? "" : String(v);
   }
 
-  // Custom ref editor with dropdown search and picker button (plan 48, phase 4).
+  // Редактор ячейки-ссылки: ввод по строке + форма выбора (план 48, фаза 4).
+  //
+  // Клавиатура — как в 1С: печатаем часть наименования → список фильтруется,
+  // ↑/↓ двигают подсветку, Enter подставляет подсвеченный вариант, Tab
+  // подставляет и уходит в следующую колонку, F4 / Alt+↓ открывают форму
+  // выбора, Esc закрывает список (правку ячейки не отменяет).
+  //
+  // ВАЖНО, почему это не «улучшение», а починка: выбор пункта раньше висел
+  // ТОЛЬКО на mousedown, а isValueChanged() смотрел лишь на selectedId.
+  // Набранный текст selectedId не менял → SlickGrid считал ячейку неизменённой
+  // и не звал ни validate(), ни serializeValue() (см. commitCurrentEdit в
+  // slick.grid.js), то есть введённое молча пропадало. Набрать документ с
+  // клавиатуры было невозможно в принципе.
+  //
+  // Список = предзагруженные опции (сервер кладёт в data-sg-ref первые 50)
+  // ПЛЮС результаты серверного поиска /ui/_ref-options/<entity>?q= — без него
+  // позицию за пределами предзагруженных в ячейке было не найти вообще.
   function ObRefEditor(refField, refOptsList, args) {
-    var wrapper, input, dropBtn, list, isOpen = false, selectedId = '', defaultValue = '', pickerInterval = null;
+    var wrapper, input, dropBtn, list;
+    var isOpen = false, selectedId = '', defaultValue = '';
+    var refEntity = (args.column && args.column.refEntity) || '';
+    var serverRows = [];   // последний ответ серверного поиска
+    var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
+    var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
+    var searchTimer = null, searchSeq = 0;
 
     function label(id) {
       for (var k = 0; k < refOptsList.length; k++) {
@@ -865,118 +1134,270 @@ obManagedReady(obManagedInitDelegates);
       return '';
     }
 
+    // remember — кладёт найденную сервером позицию в refOptsList. Тот же массив
+    // держит в замыкании ФОРМАТТЕР колонки, поэтому без этого выбранный «не из
+    // первых 50» элемент рисовался бы в ячейке голым UUID.
+    function remember(opt) {
+      if (!opt || opt.id === undefined || opt.id === null || opt.id === '') return;
+      for (var k = 0; k < refOptsList.length; k++) {
+        if (String(refOptsList[k].id) === String(opt.id)) return;
+      }
+      refOptsList.push({id: opt.id, _label: opt._label});
+    }
+
+    // candidates — предзагруженные опции + серверные результаты, отфильтрованные
+    // подстрокой (регистронезависимо), без дублей по id.
+    function candidates(filter) {
+      var f = String(filter == null ? '' : filter).trim().toLowerCase();
+      var out = [], seen = {};
+      function push(o) {
+        if (!o || o.id === undefined || o.id === null || o.id === '') return;
+        var key = String(o.id);
+        if (seen[key]) return;
+        var lbl = String(o._label == null ? '' : o._label);
+        if (f && lbl.toLowerCase().indexOf(f) < 0) return;
+        seen[key] = true;
+        out.push({id: o.id, _label: lbl});
+      }
+      for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
+      for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
+      return out;
+    }
+
+    function paintActive() {
+      var nodes = list.querySelectorAll('[data-idx]');
+      for (var k = 0; k < nodes.length; k++) {
+        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : '';
+      }
+      if (activeIdx >= 0 && nodes[activeIdx] && nodes[activeIdx].scrollIntoView) {
+        nodes[activeIdx].scrollIntoView({block: 'nearest'});
+      }
+    }
+
+    function renderList() {
+      list.innerHTML = '';
+      if (!shown.length) {
+        var empty = document.createElement('div');
+        empty.textContent = 'Ничего не найдено (F4 — форма выбора)';
+        empty.style.cssText = 'padding:8px 10px;color:#94a3b8;font-style:italic';
+        list.appendChild(empty);
+        return;
+      }
+      for (var k = 0; k < shown.length; k++) {
+        var item = document.createElement('div');
+        item.textContent = shown[k]._label;
+        item.setAttribute('data-id', shown[k].id);
+        item.setAttribute('data-idx', k);
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
+        (function(o, idx) {
+          item.addEventListener('mouseenter', function() { activeIdx = idx; paintActive(); });
+          // mousedown, а не click: blur поля ввода закрыл бы список раньше click.
+          item.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            pick(o);
+            args.commitChanges();
+          });
+        })(shown[k], k);
+        list.appendChild(item);
+      }
+      paintActive();
+    }
+
+    // keepId — сохранить подсветку на конкретной позиции. Нужен, когда список
+    // перестраивается не по действию пользователя: ответ серверного поиска
+    // приходит асинхронно и иначе сбрасывал бы на первую строку выбор, только
+    // что сделанный стрелками.
+    function buildList(filter, keepId) {
+      shown = candidates(filter);
+      activeIdx = -1;
+      if (keepId) {
+        for (var k = 0; k < shown.length; k++) {
+          if (String(shown[k].id) === String(keepId)) { activeIdx = k; break; }
+        }
+      }
+      // Когда что-то набрано — подсвечиваем первый вариант: Enter сразу его
+      // подставит (ввод по строке). При пустом фильтре подсветки нет, и Enter
+      // уходит в SlickGrid — просто коммитит ячейку.
+      if (activeIdx < 0) activeIdx = (String(filter == null ? '' : filter).trim() !== '' && shown.length) ? 0 : -1;
+      renderList();
+    }
+
+    function positionList() {
+      var rect = input.getBoundingClientRect();
+      // position:fixed — getBoundingClientRect отсчитывается от окна; при
+      // absolute список уезжал мимо ячейки на прокрученной форме.
+      list.style.left = rect.left + 'px';
+      list.style.top = rect.bottom + 'px';
+      list.style.width = Math.max(rect.width, 220) + 'px';
+    }
+
+    function openList() {
+      if (isOpen) return;
+      isOpen = true;
+      buildList(input.value);
+      positionList();
+      document.body.appendChild(list);
+      // Глобальному обработчику Esc (он в фазе перехвата и иначе отменил бы всю
+      // правку ячейки) нужно знать, что открыт именно наш выпадающий список.
+      window._obRefDropdown = {close: closeList};
+    }
+
+    function closeList() {
+      if (!isOpen) return;
+      isOpen = false;
+      activeIdx = -1;
+      if (list && list.parentElement) list.remove();
+      if (window._obRefDropdown && window._obRefDropdown.close === closeList) window._obRefDropdown = null;
+    }
+
+    // Серверный поиск. Эндпойнт уважает права на чтение, RLS и маскирование
+    // полей, поэтому в ячейке видно ровно то же, что в форме выбора.
+    function searchServer(q) {
+      if (!refEntity || !window.fetch) return;
+      var seq = ++searchSeq;
+      var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
+                '?limit=50&q=' + encodeURIComponent(q || '');
+      fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+        .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
+        .then(function(data) {
+          if (seq !== searchSeq) return; // ответ устарел (или редактор уже закрыт)
+          var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
+          serverRows = ((data && data.items) || []).map(function(row) {
+            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
+          }).filter(function(o) { return o.id !== ''; });
+          if (isOpen) buildList(input.value, keep);
+        })
+        .catch(function() { /* сеть/ошибка — остаются предзагруженные опции */ });
+    }
+
+    function scheduleSearch(q) {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(function() { searchServer(q); }, 180);
+    }
+
+    function pick(opt) {
+      selectedId = opt.id;
+      input.value = opt._label;
+      remember(opt);
+      closeList();
+    }
+
+    // resolveTyped — «ввод по строке»: превращает набранный текст в ссылку.
+    // Возвращает true, если значение определено (в том числе очищено).
+    function resolveTyped() {
+      var text = String(input.value == null ? '' : input.value).trim();
+      if (text === '') { selectedId = ''; return true; }
+      if (text === String(label(selectedId) || '').trim()) return true; // поверх не набирали
+      var low = text.toLowerCase();
+      var found = candidates(text);
+      for (var k = 0; k < found.length; k++) { // точное совпадение подписи важнее частичного
+        if (String(found[k]._label).trim().toLowerCase() === low) { pick(found[k]); return true; }
+      }
+      if (found.length === 1) { pick(found[0]); return true; }
+      if (activeIdx >= 0 && shown[activeIdx]) { pick(shown[activeIdx]); return true; } // Tab с открытым списком
+      return false;
+    }
+
+    // openPicker — общая форма выбора (ui.js). Ей нужен <select> как носитель
+    // значения: отдаём временный и слушаем его change, который шлёт selectItem.
+    function openPicker() {
+      if (typeof window.openRefPicker !== 'function') return;
+      var selEl = document.createElement('select');
+      selEl.setAttribute('data-ref-entity', refEntity);
+      var opts = candidates('');
+      for (var k = 0; k < opts.length; k++) {
+        var o = document.createElement('option');
+        o.value = opts[k].id;
+        o.textContent = opts[k]._label;
+        selEl.appendChild(o);
+      }
+      selEl.value = selectedId;
+      selEl.addEventListener('change', function() {
+        var id = selEl.value;
+        if (!id) return;
+        var chosen = selEl.options[selEl.selectedIndex];
+        pick({id: id, _label: chosen ? chosen.textContent : ''});
+        args.commitChanges();
+      });
+      closeList();
+      window.openRefPicker(selEl);
+    }
+
+    function onKeyDown(e) {
+      var key = e.key || '';
+      if (key === 'ArrowDown' && e.altKey) { e.preventDefault(); e.stopPropagation(); openPicker(); return; }
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        // stopPropagation обязателен: иначе SlickGrid уведёт курсор на соседнюю
+        // строку прямо из открытого списка.
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isOpen) { openList(); if (activeIdx < 0 && shown.length) { activeIdx = 0; paintActive(); } return; }
+        if (!shown.length) return;
+        var next = activeIdx + (key === 'ArrowDown' ? 1 : -1);
+        if (next < 0) next = shown.length - 1;
+        if (next >= shown.length) next = 0;
+        activeIdx = next;
+        paintActive();
+        return;
+      }
+      if (key === 'Enter') {
+        if (isOpen && activeIdx >= 0 && shown[activeIdx]) {
+          // Подставляем значение и ОСТАЁМСЯ в ячейке (ввод по строке в 1С);
+          // следующий Enter/Tab уже коммитит правку средствами SlickGrid.
+          e.preventDefault();
+          e.stopPropagation();
+          pick(shown[activeIdx]);
+          input.select();
+        }
+        return; // список закрыт — Enter уходит в грид и коммитит ячейку
+      }
+      if (key === 'Escape' || e.keyCode === 27) {
+        if (isOpen) { e.preventDefault(); e.stopPropagation(); closeList(); }
+        return; // список закрыт — Esc отменяет правку ячейки (как раньше)
+      }
+      if (key === 'F4') { e.preventDefault(); e.stopPropagation(); openPicker(); }
+    }
+
     this.init = function() {
       wrapper = document.createElement('div');
       wrapper.style.cssText = 'display:flex;align-items:center;width:100%;height:100%;gap:2px';
 
       input = document.createElement('input');
       input.type = 'text';
+      input.autocomplete = 'off';
       input.style.cssText = 'flex:1;border:none;outline:none;padding:2px 4px;font-size:13px;min-width:0';
       var cur = args.item[args.column.field];
       defaultValue = cur;
-      selectedId = (cur && typeof cur === 'object') ? (cur.id || '') : (cur || '');
+      selectedId = refId(cur);
       input.value = label(selectedId) || String(selectedId);
 
       dropBtn = document.createElement('button');
       dropBtn.type = 'button';
       dropBtn.textContent = '…';
-      dropBtn.title = 'Выбрать из списка';
+      dropBtn.title = 'Выбрать из списка (F4)';
       dropBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:12px;padding:0 4px;color:#2563eb;flex-shrink:0';
 
       wrapper.appendChild(input);
       wrapper.appendChild(dropBtn);
       args.container.appendChild(wrapper);
 
-      // Dropdown list
       list = document.createElement('div');
-      list.style.cssText = 'position:absolute;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:160px;font-size:13px';
+      list.setAttribute('data-ob-ref-list', refField);
+      list.style.cssText = 'position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:160px;font-size:13px';
 
-      function buildList(filter) {
-        list.innerHTML = '';
-        var f = (filter || '').toLowerCase();
-        var found = false;
-        for (var k = 0; k < refOptsList.length; k++) {
-          var opt = refOptsList[k];
-          if (f && opt._label.toLowerCase().indexOf(f) < 0) continue;
-          found = true;
-          var item = document.createElement('div');
-          item.textContent = opt._label;
-          item.setAttribute('data-id', opt.id);
-          item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
-          item.addEventListener('mouseenter', function() { this.style.background = '#eef2ff'; });
-          item.addEventListener('mouseleave', function() { this.style.background = ''; });
-          (function(o) {
-            item.addEventListener('mousedown', function(e) {
-              e.preventDefault();
-              selectedId = o.id;
-              input.value = o._label;
-              closeList();
-              args.commitChanges();
-            });
-          })(opt);
-          list.appendChild(item);
-        }
-        if (!found) {
-          var empty = document.createElement('div');
-          empty.textContent = 'Ничего не найдено';
-          empty.style.cssText = 'padding:8px 10px;color:#94a3b8;font-style:italic';
-          list.appendChild(empty);
-        }
-      }
-
-      function openList() {
-        if (isOpen) return;
-        isOpen = true;
-        buildList(input.value);
-        var rect = input.getBoundingClientRect();
-        list.style.left = rect.left + 'px';
-        list.style.top = rect.bottom + 'px';
-        list.style.width = Math.max(rect.width, 160) + 'px';
-        document.body.appendChild(list);
-      }
-
-      function closeList() {
-        if (!isOpen) return;
-        isOpen = false;
-        if (list.parentElement) list.remove();
-      }
-
+      input.addEventListener('keydown', onKeyDown);
       input.addEventListener('focus', openList);
       input.addEventListener('input', function() {
-        if (isOpen) buildList(input.value);
-        else openList();
+        if (isOpen) buildList(input.value); else openList();
+        scheduleSearch(input.value);
       });
       input.addEventListener('blur', function() { setTimeout(closeList, 150); });
 
+      dropBtn.addEventListener('mousedown', function(e) { e.preventDefault(); }); // не терять фокус до click
       dropBtn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        // Use existing openRefPicker mechanism
-        var selEl = document.createElement('select');
-        selEl.setAttribute('data-ref-entity', args.column.refEntity || '');
-        refOptsList.forEach(function(opt) {
-          var o = document.createElement('option');
-          o.value = opt.id; o.textContent = opt._label;
-          selEl.appendChild(o);
-        });
-        selEl.value = selectedId;
-        // Monkey-patch: picker callback sets our cell value
-        var origPicker = window.openRefPicker;
-        window.openRefPicker(selEl);
-        // Poll for picker result via the select value
-        pickerInterval = setInterval(function() {
-          var modal = document.getElementById('_ref-picker-modal');
-          if (!modal) {
-            clearInterval(pickerInterval);
-            // Picker closed - check if value changed
-            var newVal = selEl.value;
-            if (newVal !== selectedId) {
-              selectedId = newVal;
-              input.value = label(newVal);
-              args.commitChanges();
-            }
-          }
-        }, 300);
+        openPicker();
       });
 
       input.focus();
@@ -984,31 +1405,37 @@ obManagedReady(obManagedInitDelegates);
     };
 
     this.destroy = function() {
-      // ВАЖНО: closeList объявлена внутри init() и здесь недоступна — обращение
-      // к ней бросало ReferenceError, из-за чего SlickGrid не мог разрушить
-      // редактор, commitCurrentEdit падал и активная ячейка «залипала» (нельзя
-      // было перейти на другую). Закрываем выпадающий список напрямую по
-      // editor-scoped переменным list/isOpen.
+      // Гасим таймер и ответы «в полёте»: иначе поздний ответ поиска дорисовал бы
+      // список уже уничтоженного редактора.
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+      searchSeq++;
+      closeList();
       isOpen = false;
-      // Гасим polling-таймер пикера: иначе он переживёт редактор и попытается
-      // закоммитить значение в уже уничтоженную ячейку.
-      if (pickerInterval) { clearInterval(pickerInterval); pickerInterval = null; }
       if (list && list.parentElement) list.remove();
       if (wrapper && wrapper.parentElement) wrapper.remove();
     };
-    this.focus = function() { input && input.focus(); };
+    this.focus = function() { if (input) input.focus(); };
     this.getValue = function() { return selectedId; };
-    this.setValue = function(val) { selectedId = val; input.value = label(val); };
+    this.setValue = function(val) { selectedId = refId(val); input.value = label(selectedId); };
     this.loadValue = function(item) {
       var v = item[args.column.field];
       defaultValue = v;
-      selectedId = (v && typeof v === 'object') ? (v.id || '') : (v || '');
+      selectedId = refId(v);
       input.value = label(selectedId);
     };
-    this.serializeValue = function() { return selectedId; };
+    this.serializeValue = function() { resolveTyped(); return selectedId; };
     this.applyValue = function(item, state) { item[args.column.field] = state; };
-    this.isValueChanged = function() { return selectedId !== defaultValue; };
-    this.validate = function() { return {valid: true, msg: null}; };
+    // isValueChanged должен быть true и когда изменился ТОЛЬКО набранный текст:
+    // при false SlickGrid не зовёт validate()/serializeValue() и правка теряется.
+    this.isValueChanged = function() {
+      var text = String(input.value == null ? '' : input.value).trim();
+      if (text !== String(label(selectedId) || '').trim()) return true;
+      return String(selectedId) !== String(refId(defaultValue));
+    };
+    this.validate = function() {
+      if (resolveTyped()) return {valid: true, msg: null};
+      return {valid: false, msg: 'Не найдено: «' + String(input.value).trim() + '». ↑/↓ и Enter — выбрать, F4 — форма выбора'};
+    };
     this.init();
   }
 
@@ -1075,6 +1502,10 @@ obManagedReady(obManagedInitDelegates);
         }; })(warnPos);
       } else if (c.ref) {
         col.cssClass = "ob-ref";
+        // refEntity нужен редактору для серверного поиска и форме выбора: без
+        // него в ячейке были видны только предзагруженные опции, а модалка
+        // подбора уходила в локальный фильтр вместо /ui/_ref-options.
+        col.refEntity = c.ref;
         col.editor = (function(refField, refOptsList) {
           return ObRefEditor.bind(null, refField, refOptsList);
         })(c.id, refOpts[c.id] || []);
@@ -1160,10 +1591,27 @@ obManagedReady(obManagedInitDelegates);
   }
 
   // Serialize all grid data into hidden inputs (for form submit / obFire)
+  // obGridSync — переносит строки гридов в скрытые tp_json перед отправкой формы.
+  // Возвращает false, если незаконченную правку ячейки не удалось закоммитить
+  // (например, в колонке-ссылке набрано ненайденное) — записывать в таком виде
+  // нельзя: на форме пользователь видит одно, в tp_json ушло бы другое.
   window.obGridSync = function() {
     var grids = window._obGrids || {};
+    var ok = true;
     for (var tpName in grids) {
       var g = grids[tpName];
+      // Открытый редактор ячейки: без коммита значение, набранное прямо перед
+      // «Записать», в dataView не попадает и молча теряется при сохранении.
+      // Тот же приём применяется перед отправкой события формы (см. obFire).
+      try {
+        var lock = g.grid && g.grid.getEditorLock && g.grid.getEditorLock();
+        if (lock && lock.isActive() && !lock.commitCurrentEdit()) ok = false;
+      } catch (e) {
+        // Исключение editor-lock не означает успех: dataView может содержать
+        // старое значение. Останавливаем submit/obFire вместо тихой потери.
+        ok = false;
+        if (window.obFlash) window.obFlash('Не удалось завершить правку ячейки: ' + (e && e.message ? e.message : e), 'err');
+      }
       // Сериализуем в исходном порядке (_ord), а не в порядке текущей
       // сортировки отображения — чтобы сортировка «для просмотра» не меняла
       // порядок строк в сохраняемом документе.
@@ -1181,6 +1629,7 @@ obManagedReady(obManagedInitDelegates);
       var inp = document.getElementById("tp-json-" + tpName);
       if (inp) inp.value = JSON.stringify(rows);
     }
+    return ok;
   };
 
   function gridCellEventParams(tpName, args, columns, dataView) {
@@ -1221,7 +1670,7 @@ obManagedReady(obManagedInitDelegates);
 
   window.obGridAddRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g) return;
+    if (!g || g.readOnly || (g.div && g.div.getAttribute("data-sg-ro") === "1")) return;
     var _lk = g.grid.getEditorLock && g.grid.getEditorLock();
     if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
     var nextId = 0, nextOrd = 0;
@@ -1249,7 +1698,7 @@ obManagedReady(obManagedInitDelegates);
   // Delete selected row from grid
   window.obGridDelRow = function(tpName) {
     var g = (window._obGrids || {})[tpName];
-    if (!g) return;
+    if (!g || g.readOnly || (g.div && g.div.getAttribute("data-sg-ro") === "1")) return;
     var _lk = g.grid.getEditorLock && g.grid.getEditorLock();
     if (_lk && _lk.isActive()) _lk.commitCurrentEdit();
     // Без плагина выделения getSelectedRows бросает исключение — удаляем
@@ -1363,7 +1812,7 @@ obManagedReady(obManagedInitDelegates);
     // (добавить/удалить строку, подбор, сериализация) продолжат работать.
     window._obGrids[tpName] = {
       grid: grid, dataView: dataView, columns: columns,
-      columnsMeta: colsRaw, refOpts: refOpts, div: div
+      columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly
     };
 
    try {
@@ -1427,8 +1876,17 @@ obManagedReady(obManagedInitDelegates);
       updateTotals(window._obGrids[tpName]);
     });
 
+    // Ячейка не прошла проверку (например, в колонке-ссылке набрано то, чего нет
+    // в справочнике). SlickGrid сам только подсвечивает ячейку классом invalid и
+    // держит курсор в ней — без текста причины это выглядит как «залипание».
+    grid.onValidationError.subscribe(function(e, args) {
+      var msg = args && args.validationResults && args.validationResults.msg;
+      if (msg && window.obFlash) window.obFlash(msg, "err");
+    });
+
     // Delete key removes selected rows
     grid.onKeyDown.subscribe(function(e) {
+      if (readOnly) return;
       if (e.key === 'Delete' && !grid.getEditorLock().isActive()) {
         var sel = [];
         try { sel = grid.getSelectedRows() || []; } catch (er) { sel = []; }
@@ -1543,4 +2001,66 @@ obManagedReady(function () {
     var btn = tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
     if (btn) obManagedSwitchTab(btn);
   }
+});
+
+// ─── ПолеКода: редактор с подсветкой ────────────────────────────────────────
+//
+// Монтируется на .code-editor рядом со скрываемой textarea.code-field.
+// textarea остаётся источником истины для формы: редактор пишет в неё при
+// каждом изменении, поэтому обычный submit работает и без всякой синхронизации
+// по кнопке. Без JS (или если Monaco не загрузился) textarea просто остаётся
+// видимой и редактируемой — прогрессивное улучшение, как у richtext.
+obManagedReady(function () {
+  var holders = document.querySelectorAll('.code-editor');
+  if (!holders.length) return;
+  if (typeof require === 'undefined' || window._monacoLoadErr) return; // textarea уже рабочая
+
+  require.config({ paths: { vs: '/vendor/monaco/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    for (var i = 0; i < holders.length; i++) {
+      (function (holder) {
+        if (holder.getAttribute('data-code-ready') === '1') return;
+        var ta = holder.previousElementSibling;
+        if (!ta || ta.tagName !== 'TEXTAREA' || !ta.classList.contains('code-field')) return;
+        holder.setAttribute('data-code-ready', '1');
+
+        var lang = holder.getAttribute('data-code-language') || 'plaintext';
+        var ed = monaco.editor.create(holder, {
+          value: ta.value,
+          language: lang,
+          automaticLayout: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          fontSize: 13,
+          tabSize: 4,
+          renderWhitespace: 'selection'
+        });
+        ta.style.display = 'none';
+
+        // Ответ обработчика формы может обновить значение поля. textarea уже
+        // получила бы новый текст, но Monaco продолжал показывать старый и при
+        // следующем вводе затирал ответ сервера. Держим оба представления
+        // синхронными и не выдаём программное обновление за правку пользователя.
+        var syncing = false;
+        ta._obSetCodeValue = function (value) {
+          value = String(value == null ? '' : value);
+          ta.value = value;
+          if (ed.getValue() === value) return;
+          syncing = true;
+          try {
+            ed.setValue(value);
+          } finally {
+            syncing = false;
+          }
+        };
+        ed.onDidChangeModelContent(function () {
+          ta.value = ed.getValue();
+          if (!syncing) ta.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        ed.onDidBlurEditorWidget(function () {
+          if (!syncing) ta.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      })(holders[i]);
+    }
+  });
 });

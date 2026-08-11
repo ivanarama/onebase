@@ -642,7 +642,18 @@ obReady(function () {
   obInitReportBlocks();
 });
 
+// Выделенная строка списка — ссылка на DOM-узел, а не id: команды меню читают
+// с неё data-*-url. Читать переменную напрямую нельзя, только через listSel():
+// узел мог быть отцеплен от документа живым обновлением списка (план 87
+// заменяет innerHTML контейнера целиком). Тогда подсветки на экране уже нет, а
+// переменная всё ещё указывает на строку — команда сработала бы по записи,
+// которую пользователь не выбирал и не видит.
 var _listSel = null;
+
+function listSel() {
+  if (_listSel && !document.contains(_listSel)) _listSel = null;
+  return _listSel;
+}
 
 function obListConfig() {
   return obReadJSONScript('ob-list-config', { labels: {} }) || { labels: {} };
@@ -666,15 +677,59 @@ function listOpen(url, title) {
   window.location.href = url;
 }
 
+function listSelPaint(el, on) {
+  el.querySelectorAll('td').forEach(function (td) { td.style.background = on ? '#dbeafe' : ''; });
+  el.classList.toggle('tile-selected', on);
+}
+
+// Единственное место, где меняется выделение: снимает подсветку с прежней
+// строки, ставит на новую (null — снять выделение) и приводит кнопку
+// «Действия» в соответствие новому состоянию.
+function listSetSel(tr) {
+  var prev = listSel();
+  if (prev && prev !== tr) listSelPaint(prev, false);
+  _listSel = tr || null;
+  if (_listSel) listSelPaint(_listSel, true);
+  listSyncActionsBtn();
+}
+
+// Пока строка не выбрана, кнопка «Действия» приглушена, но остаётся на месте и
+// остаётся кликабельной. Прятать её нельзя: на свежеоткрытом списке не выбрано
+// ничего, и кнопка исчезала бы при каждом открытии — пользователь просто не
+// узнал бы, что она есть. Атрибут disabled тоже не годится: браузер гасит на
+// нём клик, и объяснить причину было бы негде.
+function listSyncActionsBtn() {
+  var on = !!listSel();
+  document.querySelectorAll('[data-ob-list-actions]').forEach(function (b) {
+    b.setAttribute('aria-disabled', on ? 'false' : 'true');
+    b.title = on
+      ? obListLabel('actionsReady', 'Команды для выбранной строки')
+      : obListLabel('selectRowFirst', 'Сначала выберите строку списка');
+  });
+}
+
+// Возврат выделения после перерисовки списка: та же запись опознаётся по
+// data-open-url (в нём id, у всех трёх видов строк — таблица, плитка, дерево).
+// Записи не стало в выдаче — выделение снимается, а не остаётся на призраке.
+function listRestoreSel(key, root) {
+  var next = null;
+  if (key) {
+    var rows = (root || document).querySelectorAll('[data-ob-list-row]');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute('data-open-url') === key) { next = rows[i]; break; }
+    }
+  }
+  listSetSel(next);
+}
+
+function listSelKey() {
+  var sel = listSel();
+  return sel ? (sel.getAttribute('data-open-url') || '') : '';
+}
+
 function listRowClick(e, tr) {
   if (e.target.closest('a,button')) return;
-  if (_listSel) {
-    _listSel.querySelectorAll('td').forEach(function (td) { td.style.background = ''; });
-    _listSel.classList.remove('tile-selected');
-  }
-  _listSel = tr;
-  tr.querySelectorAll('td').forEach(function (td) { td.style.background = '#dbeafe'; });
-  tr.classList.add('tile-selected');
+  listSetSel(tr);
 }
 
 function listRowDblClick(e, tr) {
@@ -874,7 +929,9 @@ function showListMenu(items, x, y) {
   items.forEach(function (item) {
     var mi = document.createElement('div');
     mi.textContent = item.label;
-    if (item.disabled) {
+    if (item.hint) {
+      mi.style.cssText = 'padding:7px 14px;margin-bottom:4px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:12px;cursor:default';
+    } else if (item.disabled) {
       mi.style.cssText = 'padding:8px 14px;color:#94a3b8;cursor:default;font-style:italic';
     } else {
       mi.style.cssText = 'padding:8px 14px;cursor:pointer' + (item.danger ? ';color:#dc2626' : '');
@@ -900,14 +957,24 @@ function listCtxMenu(e, tr) {
   showListMenu(listMenuItems(tr), e.clientX, e.clientY);
 }
 
+// Меню для случая «строка не выбрана»: причина сверху, ниже — те же команды
+// неактивными. Это дешевле модального alert() (не требует «ОК» на предсказуемое
+// состояние) и заодно показывает, что кнопка вообще умеет.
+function listMenuNoSel() {
+  var cfg = obListConfig();
+  var labels = cfg.labels || {};
+  var items = [{ label: labels.selectRowFirst || 'Сначала выберите строку списка', hint: true }];
+  items.push({ label: labels.open || 'Открыть', disabled: true });
+  if (cfg.canDelete) items.push({ label: labels.markDelete || 'Пометить на удаление', disabled: true });
+  if (cfg.canUnpost) items.push({ label: labels.unpost || 'Отменить проведение', disabled: true });
+  return items;
+}
+
 function listActionsBtnClick(e, btn) {
   e.preventDefault();
-  if (!_listSel) {
-    alert(obListLabel('selectRowFirst', 'Сначала выберите строку списка'));
-    return;
-  }
+  var sel = listSel();
   var r = (btn || e.currentTarget).getBoundingClientRect();
-  showListMenu(listMenuItems(_listSel), r.left, r.bottom);
+  showListMenu(sel ? listMenuItems(sel) : listMenuNoSel(), r.left, r.bottom);
 }
 
 function obInitListDelegates() {
@@ -1030,10 +1097,15 @@ function obInitFeed() {
 
 obReady(function () {
   obInitListDelegates();
+  listSyncActionsBtn();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Delete' && _listSel && obListConfig().canDelete) {
-      listSubmit(_listSel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+    // listSel(), а не _listSel: после живого обновления списка на экране может
+    // не быть подсветки, и пометка на удаление по клавише улетала бы в строку,
+    // о выборе которой пользователь уже не помнит.
+    var sel = listSel();
+    if (e.key === 'Delete' && sel && obListConfig().canDelete) {
+      listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
     }
   });
   obInitFeed();
@@ -1883,7 +1955,7 @@ obReady(function () {
   });
 });
 
-function openItemPicker(payload, elementName) {
+function openItemPicker(payload, elementName, eventContext) {
   if (!payload) return;
   var cols = payload.columns || [];
   var rows = payload.rows || [];
@@ -2120,7 +2192,12 @@ function openItemPicker(payload, elementName) {
     });
     modal.remove();
     if (typeof obFire === 'function') {
-      obFire(elementName, 'Выбор', { _pick_result: JSON.stringify(result) });
+      var params = {};
+      if (eventContext) {
+        Object.keys(eventContext).forEach(function (key) { params[key] = eventContext[key]; });
+      }
+      params._pick_result = JSON.stringify(result);
+      obFire(elementName, 'Выбор', params);
     }
   });
 }
@@ -2155,9 +2232,28 @@ function openRefPicker(selOrId) {
   document.body.appendChild(modal);
   var list = document.getElementById('_rp-list');
   var status = document.getElementById('_rp-status');
-  function renderItems(opts) {
+  // rpActive — подсвеченная строка списка. Форма выбора обязана работать с
+  // клавиатуры целиком: ищем в поле, ↑/↓ ведут по найденному, Enter выбирает.
+  // Раньше выбрать пункт можно было только мышью.
+  var rpActive = -1;
+  function rpItems() { return list ? list.querySelectorAll('._rp-item') : []; }
+  function rpActiveId() {
+    var items = rpItems();
+    return (rpActive >= 0 && items[rpActive]) ? items[rpActive].getAttribute('data-id') : '';
+  }
+  function rpPaint() {
+    var items = rpItems();
+    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
+    if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
+      items[rpActive].scrollIntoView({ block: 'nearest' });
+    }
+  }
+  // keepId — не сбрасывать подсветку на первую строку, когда список
+  // перестраивается ответом серверного поиска, а не действием пользователя.
+  function renderItems(opts, keepId) {
     if (!list) return;
     list.innerHTML = '';
+    rpActive = -1;
     if (!opts || opts.length === 0) {
       var empty = document.createElement('div');
       empty.style.cssText = 'padding:16px;color:#94a3b8;font-size:13px;text-align:center';
@@ -2172,8 +2268,18 @@ function openRefPicker(selOrId) {
       item.setAttribute('data-label', opts[i].label);
       item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
       item.textContent = opts[i].label;
+      (function (idx) {
+        item.addEventListener('mouseenter', function () { rpActive = idx; rpPaint(); });
+      })(i);
       list.appendChild(item);
     }
+    rpActive = 0;
+    if (keepId) {
+      for (var k = 0; k < opts.length; k++) {
+        if (String(opts[k].id) === String(keepId)) { rpActive = k; break; }
+      }
+    }
+    rpPaint();
   }
   function renderLocal(q) {
     q = (q || '').toLowerCase();
@@ -2225,12 +2331,13 @@ function openRefPicker(selOrId) {
       })
       .then(function (data) {
         if (seq !== requestSeq) return;
+        var keep = rpActiveId();
         var rows = (data && data.items) || [];
         var opts = rows.map(function (row) {
           var id = row && row.id != null ? String(row.id) : '';
           return { id: id, label: String((row && row._label) || id) };
         }).filter(function (opt) { return opt.id !== ''; });
-        renderItems(opts);
+        renderItems(opts, keep);
         if (status) {
           var total = data && typeof data.total === 'number' ? data.total : opts.length;
           status.textContent = total > opts.length ? 'Показано ' + opts.length + ' из ' + total : '';
@@ -2248,6 +2355,27 @@ function openRefPicker(selOrId) {
     var q = this.value;
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(function () { loadServer(q); }, 180);
+  });
+  search.addEventListener('keydown', function (e) {
+    var items = rpItems();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!items.length) return;
+      var next = rpActive + (e.key === 'ArrowDown' ? 1 : -1);
+      if (next < 0) next = items.length - 1;
+      if (next >= items.length) next = 0;
+      rpActive = next;
+      rpPaint();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (rpActive >= 0 && items[rpActive]) { selectItem(items[rpActive]); modal.remove(); }
+      return;
+    }
+    // Esc закрываем здесь же: глобальный обработчик живёт в managed.js, а форма
+    // выбора открывается и на автогенерируемых страницах, где его нет.
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); modal.remove(); }
   });
   renderItems(localOpts);
   loadServer('');
@@ -2679,7 +2807,15 @@ window.onebaseDevice = {
         var fresh = findByKey(doc, key);
         if (!cur || !fresh) return;
         var sc = cur.scrollTop;
+        // Строки заменяются целиком, поэтому выбранная строка отцепляется от
+        // документа. Запоминаем запись до замены и возвращаем выделение на неё
+        // после — иначе автообновление молча съедало бы выбор пользователя.
+        // Трогаем выделение, только если оно жило в ЭТОМ списке: на странице
+        // может быть несколько живых списков, чужой выбор не наше дело.
+        var selMine = cur.contains(listSel());
+        var selKey = selMine ? listSelKey() : '';
         cur.innerHTML = fresh.innerHTML; // содержимое; атрибуты контейнера сохраняются
+        if (selMine) listRestoreSel(selKey, cur);
         try { cur.scrollTop = sc; } catch (_) {}
       })
       .catch(function () {}); // офлайн/редирект логина — тихо, F5 пользователя выручит

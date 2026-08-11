@@ -27,8 +27,8 @@ func newEntityserviceFacade(db *storage.DB, reg *runtime.Registry, interp *inter
 		Interp: interp,
 		// Тот же набор DSL-переменных, что даёт REST-слой (Перечисления,
 		// Константы, Запрос, Движения) — этого достаточно эталонному OnPost.
-		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) map[string]any {
-			return dslvars.Common{Ctx: c, Reg: reg, Store: db, Movements: mc}.Build()
+		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+			return dslvars.Common{Ctx: c, Reg: reg, Store: db, Movements: mc}.Build(), nil
 		},
 	}
 	return &entityserviceFacade{svc: svc}

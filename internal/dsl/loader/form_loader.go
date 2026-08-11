@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,7 +88,19 @@ func upperFirst(s string) string {
 
 // LoadFormModuleFromSource loads form module from DSL source
 func (fl *FormLoader) LoadFormModuleFromSource(source, entityName, formName, kind string) (*metadata.FormModule, error) {
-	l := lexer.New(source, "")
+	// У исходника из памяти нет физического пути, но модулю всё равно нужна
+	// стабильная identity: по ней интерпретатор ограничивает поиск соседних
+	// процедур текущей формой. Угловые скобки явно отличают её от настоящего
+	// файла в диагностике.
+	sourceID := fmt.Sprintf("<form:%s/%s>", entityName, formName)
+	return fl.parseFormModule(source, entityName, formName, kind, sourceID)
+}
+
+// parseFormModule разбирает модуль формы, сохраняя identity его источника в
+// токенах AST. Для файлового пути это настоящее имя .form.os, для исходника из
+// памяти — синтетическая, но стабильная identity из LoadFormModuleFromSource.
+func (fl *FormLoader) parseFormModule(source, entityName, formName, kind, sourceID string) (*metadata.FormModule, error) {
+	l := lexer.New(source, sourceID)
 	p := parser.New(l)
 	program, err := p.ParseProgram()
 	if err != nil {
@@ -112,7 +125,7 @@ func (fl *FormLoader) LoadFormModuleFromSource(source, entityName, formName, kin
 		procName := proc.Name.Literal
 
 		// Check if this is a form event handler
-		if eventType := metadata.FormEventType(procName); eventType != "" {
+		if eventType := metadata.FormEventType(procName); metadata.IsKnownFormEventType(eventType) {
 			form.Handlers[eventType] = procName
 		}
 
@@ -130,7 +143,7 @@ func (fl *FormLoader) loadFormModule(filePath, entityName, formName, kind string
 		return nil, err
 	}
 
-	return fl.LoadFormModuleFromSource(string(source), entityName, formName, kind)
+	return fl.parseFormModule(string(source), entityName, formName, kind, filePath)
 }
 
 // astToFormProcedure converts AST procedure to FormProcedure

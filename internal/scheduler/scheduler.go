@@ -82,8 +82,9 @@ func (s *Scheduler) SetMessageSink(f func(userID, text string)) {
 	s.msgSink = f
 }
 
-// VarsBuilder строит DSL-окружение для запуска обработки задания.
-type VarsBuilder func(ctx context.Context, mc *runtime.MovementsCollector) map[string]any
+// VarsBuilder строит DSL-окружение и возвращает его transaction state.
+// Scheduler владеет state до конца одного запуска и гарантирует cleanup.
+type VarsBuilder func(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState)
 
 // SetVarsBuilder подключает внешний сборщик DSL-окружения (см. поле varsBuilder).
 func (s *Scheduler) SetVarsBuilder(b VarsBuilder) {
@@ -780,11 +781,13 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	// Полное DSL-окружение (Справочники/Документы/вложения/транзакции) строит
 	// внешний VarsBuilder (ui), если подключён; иначе — базовый набор Common.
 	var dslVars map[string]any
+	var txState *interpreter.TxState
 	if varsBuilder != nil {
-		dslVars = varsBuilder(ctx, mc)
+		dslVars, txState = varsBuilder(ctx, mc)
 	} else {
 		dslVars = s.buildDSLVars(ctx, mc)
 	}
+	defer interpreter.RollbackTxExecution(txState)
 	if dslVars == nil {
 		dslVars = make(map[string]any)
 	}
@@ -800,6 +803,7 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	// объявленный параметр процедуры иначе затеняет инжектированный и приходит
 	// пустым — молча (#706). Тот же вызов, что в UI и procrun.
 	_, err := s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
+	err = interpreter.FinishTxExecution(txState, err)
 	output = strings.Join(messages, "\n")
 	return output, err
 }

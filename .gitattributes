@@ -1,11 +1,17 @@
+# Markdown — всегда LF. На Windows с core.autocrlf=true правка любого .md
+# перезаписывает файл целиком в CRLF: дифф раздувается на тысячи строк,
+# содержательная часть в ревью не видна, а docs/features.md после этого
+# конфликтует с каждым соседним PR (он и так правится почти в каждом).
+*.[mM][dD] text eol=lf
+
 # Golden-фикстуры для onec_forms — хранятся в LF, бинарное сравнение в
 # тестах. Без -text Windows autocrlf конвертирует в CRLF при checkout и
 # roundtrip-тесты падают на «expected LF, got CRLF».
-internal/onec_forms/fixtures/* -text
+internal/onec_forms/fixtures/* -text !eol
 
 # Вендоренный Monaco — минифицированные ассеты, храним байт-в-байт без
 # нормализации EOL, чтобы апгрейд версии давал чистый предсказуемый diff.
-internal/webassets/monaco/** -text
+internal/webassets/monaco/** -text !eol
 
 # Вендоренный Quill (snow theme, BSD-3) — минифицированный bundle + CSS,
 # храним байт-в-байт без нормализации EOL.

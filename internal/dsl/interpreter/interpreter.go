@@ -3,6 +3,7 @@ package interpreter
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,9 @@ type Interpreter struct {
 	// 0 = defaultMaxRecursionDepth. Поле (а не глобальная константа), чтобы порог
 	// можно было задать per-Interpreter и понизить в тестах стража рекурсии.
 	MaxRecursionDepth int
+	// MaxEvalDepth ограничивает глубину вложенных Вычислить/Eval, которая не
+	// увеличивает MaxRecursionDepth. 0 = defaultMaxEvalDepth.
+	MaxEvalDepth int
 	// StrictLexicalScope включает opt-in режим, где вызванная процедура видит
 	// только свои параметры/локальные переменные и root-env запуска (extraVars,
 	// factories, This), но не локальные переменные caller-процедуры.
@@ -122,6 +126,9 @@ func (i *Interpreter) EvalExpr(expr ast.Expr, this This) any {
 // через callUserProc (включая обработку дефолтов).
 func (i *Interpreter) Call(proc *ast.ProcedureDecl, this This, args []any, extraVars ...map[string]any) (result any, err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -146,6 +153,9 @@ func (i *Interpreter) Call(proc *ast.ProcedureDecl, this This, args []any, extra
 // RunWithResult executes a function procedure and captures its return value.
 func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -183,6 +193,9 @@ func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *
 // injected into the top-level environment.
 func (i *Interpreter) Run(proc *ast.ProcedureDecl, this This, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -596,10 +609,16 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, sec)
 			}
+			if isNumeric(r) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
+			}
 		}
 		if rt, ok := r.(time.Time); ok {
 			if sec, ok2 := toFloat(l); ok2 {
 				return dateAddSeconds(rt, sec)
+			}
+			if isNumeric(l) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
 		// Строка + Строка — ВСЕГДА конкатенация, даже если обе строки состоят
@@ -636,6 +655,9 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			}
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, -sec)
+			}
+			if isNumeric(r) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
 		ld, lok := toDecimal(l)
@@ -683,11 +705,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	switch callee := c.Callee.(type) {
 	case *ast.Ident:
 		fnName := callee.Tok.Literal
+		lowName := strings.ToLower(fnName)
 		var fallback FallbackBuiltinFunc
+		// Обычный AST всегда несёт identity собственного исходника в токене.
+		// Только выражения, разобранные динамически для Вычислить/отладчика,
+		// наследуют lexical identity текущего кадра.
+		sourceFile := callSourceFile(callee.Tok.File, e)
 		// Вычислить(Выражение) — разбор строки как выражения и вычисление в
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
-		if low := strings.ToLower(fnName); low == "вычислить" || low == "eval" {
+		if lowName == "вычислить" || lowName == "eval" {
 			return i.evalEvalBuiltin(args, e)
 		}
 		if val, ok := e.get(fnName); ok {
@@ -700,6 +727,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			}
 			if bf, ok2 := val.(FallbackBuiltinFunc); ok2 {
 				fallback = bf
+			}
+		}
+		// Процедуры формы (.form.os) принадлежат текущему модулю и потому
+		// разрешаются раньше любых глобальных экспортов. Они передаются через
+		// vars["__form_procs__"] как map[lowercase]*ProcedureDecl.
+		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
+			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
+				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 && sourceFile != "" && proc.Name.File == sourceFile {
+					return i.callUserProc(proc, e, args)
+				}
 			}
 		}
 		// СВОЁ РАНЬШЕ ЧУЖОГО. Помощник из того же файла (.proc.os /
@@ -715,28 +752,14 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		//
 		// Обращение к чужому экспорту остаётся квалифицированным: Модуль.Функция.
 		//
-		// Файл берём из токена самого вызова (callee.Tok.File), а не из
-		// e.ec.curFile: curFile — «последняя исполненная позиция» и портится
-		// вычислением аргументов, если среди них есть вызов из другого модуля
-		// (тогда sibling-резолв искал бы в чужом файле → unknown function).
-		if i.LookupSiblingProc != nil && callee.Tok.File != "" {
-			if proc := i.LookupSiblingProc(callee.Tok.File, fnName); proc != nil {
+		if i.LookupSiblingProc != nil && sourceFile != "" {
+			if proc := i.LookupSiblingProc(sourceFile, fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
 			}
 		}
 		if i.LookupProc != nil {
 			if proc := i.LookupProc(fnName); proc != nil {
 				return i.callUserProc(proc, e, args)
-			}
-		}
-		// Процедуры формы (.form.os): vars["__form_procs__"] —
-		// map[string]*ProcedureDecl (lowercase → AST). Позволяет
-		// обработчикам формы вызывать функции из того же .form.os.
-		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
-			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
-				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 {
-					return i.callUserProc(proc, e, args)
-				}
 			}
 		}
 		if fallback != nil {
@@ -756,6 +779,15 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			}
 			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, fnName)})
 		}
+		// Только штатный builtin паузы получает deadline-aware dispatch. Это
+		// закрывает провал к прямому ожиданию после одноимённой non-callable
+		// переменной, но не ломает обычный порядок разрешения: пользовательская
+		// процедура либо доверенная инъекция Sleep/Wait по-прежнему может
+		// затенить builtin и сама контролируется общим дедлайном между операторами.
+		if e.ec != nil && !e.ec.deadline.IsZero() && isSleepBuiltinName(lowName) {
+			waitForSleep(sleepDuration(args), e.ec)
+			return nil
+		}
 		result, err := fn(args, callee.Tok.File, callee.Tok.Line)
 		if err != nil {
 			panic(dslStop{err: err})
@@ -767,6 +799,16 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		switch o := recv.(type) {
 		case MethodCallable:
 			return o.CallMethod(method, args)
+		case string:
+			// Для ссылочных методов даём более предметную подсказку, чем общая
+			// ошибка ниже. Это частая ловушка колонок «Ссылка» из запроса, но не
+			// утверждаем, что произвольная строка обязательно получена оттуда.
+			if refMethodOnString(method) {
+				RaiseUserError(callee.Field.Literal + "() вызван у строки. Если это колонка «Ссылка» " +
+					"из результата запроса, она содержит UUID, а не ссылку с менеджером. Получите ссылку через " +
+					"Справочники.<Тип>.НайтиПоИдентификатору(Строка(Стр.Ссылка)) " +
+					"(для документов — Документы.<Тип>.НайтиПоИдентификатору)")
+			}
 		}
 		// Если object — идентификатор, не разрешившийся в значение,
 		// и это известный модуль — резолвим Module.Proc() (
@@ -798,6 +840,31 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	return nil
 }
 
+// callSourceFile отделяет диагностическое имя динамического выражения от
+// identity модуля, в области которого оно исполняется. Для обычного AST файл
+// токена всегда авторитетен — это важно, например, для default-выражения
+// процедуры B, вычисляемого в variable scope вызывающей процедуры A.
+func callSourceFile(tokenFile string, e *env) string {
+	switch tokenFile {
+	case "<Вычислить>", "<console>":
+		if e != nil {
+			return e.sourceFile
+		}
+	}
+	return tokenFile
+}
+
+// refMethodOnString отвечает, является ли метод «ссылочным» — таким, который
+// имеет смысл только у Ref (Ссылка.ПолучитьОбъект() и соседи). Для остальных
+// вызовов работает общая диагностика неизвестного метода из evalCall.
+func refMethodOnString(method string) bool {
+	switch method {
+	case "получитьобъект", "getobject", "удалить", "delete", "записать", "write":
+		return true
+	}
+	return false
+}
+
 // exprSourceName восстанавливает исходный текст простого выражения-приёмника
 // («Ссылка», «Объект.Ссылка») для сообщений об ошибках. Для всего сложнее
 // цепочки идентификаторов возвращает "" — тогда сообщение остаётся прежним.
@@ -824,6 +891,19 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 	if !ok {
 		panic(userError{Msg: "Вычислить: ожидается строка-выражение"})
 	}
+	limit := i.MaxEvalDepth
+	if limit <= 0 {
+		limit = defaultMaxEvalDepth
+	}
+	if e.ec.evalDepth >= limit {
+		RaiseUserError(fmt.Sprintf("Превышена максимальная глубина Вычислить (%d) — вероятно, бесконечное динамическое выражение", limit))
+	}
+	e.ec.evalDepth++
+	defer func() { e.ec.evalDepth-- }()
+
+	// Диагностическое имя остаётся синтетическим: строка выражения действительно
+	// начинается с line 1, но это не line 1 физического модуля. Лексическая
+	// identity для sibling-поиска хранится отдельно в e.sourceFile.
 	p := parser.New(lexer.New(src, "<Вычислить>"))
 	expr, err := p.ParseExpr()
 	if err != nil {
@@ -917,10 +997,13 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		defaultEnv = callEnv.frameWithModule(callEnv, moduleEnv, callEnv.depth)
 	}
 	child := callEnv.frameWithModule(parentEnv, moduleEnv, frameDepth)
+	child.sourceFile = proc.Name.File
 	for idx, param := range proc.Params {
 		if idx < len(args) {
-			child.setLocal(param.Literal, args[idx])
-			continue
+			if _, missing := args[idx].(missingNamedArg); !missing {
+				child.setLocal(param.Literal, args[idx])
+				continue
+			}
 		}
 		// Параметр без переданного значения — пробуем дефолт. В legacy
 		// дефолт вычисляется в callEnv; в strict lexical — в module-env/root,
@@ -928,7 +1011,12 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		// child ещё не имеет других параметров — сознательно не даём дефолтам
 		// ссылаться на «соседей» (1С-семантика).
 		if idx < len(proc.Defaults) && proc.Defaults[idx] != nil {
-			child.setLocal(param.Literal, i.evalExpr(proc.Defaults[idx], defaultEnv))
+			// Значения переменных берём из прежнего defaultEnv, но lexical
+			// identity принадлежит AST вызываемой процедуры. Shallow-copy не
+			// копирует карты/цепочку scope и потому сохраняет legacy visibility.
+			exprEnv := *defaultEnv
+			exprEnv.sourceFile = proc.Name.File
+			child.setLocal(param.Literal, i.evalExpr(proc.Defaults[idx], &exprEnv))
 		} else {
 			child.setLocal(param.Literal, nil)
 		}
@@ -952,12 +1040,15 @@ func truthy(v any) bool {
 	switch t := v.(type) {
 	case bool:
 		return t
-	case float64:
-		return t != 0
-	case decimal.Decimal:
-		return !t.IsZero()
 	case string:
 		return t != ""
+	}
+	// Числовой ноль ложен в любом Go-типе. Раньше здесь стояли только float64 и
+	// decimal, а целые проваливались в «всё остальное — истина»: булево поле из
+	// запроса на SQLite приходит как int64, поэтому `Если Стр.Флаг Тогда` для
+	// Ложь молча выбирал ветку «истина» (issue #704).
+	if zero, ok := numericZero(v); ok {
+		return !zero
 	}
 	return true
 }
@@ -976,7 +1067,11 @@ func equal(a, b any) bool {
 
 // dateAddSeconds сдвигает дату на sec секунд (семантика арифметики дат 1С).
 func dateAddSeconds(t time.Time, sec float64) time.Time {
-	return t.Add(time.Duration(int64(sec)) * time.Second)
+	const maxWholeSeconds = float64(math.MaxInt64 / int64(time.Second))
+	if math.IsNaN(sec) || math.IsInf(sec, 0) || sec > maxWholeSeconds || sec < -maxWholeSeconds {
+		RaiseUserError("сдвиг даты выходит за безопасный диапазон времени")
+	}
+	return safeDateResult(t.Add(time.Duration(sec * float64(time.Second))))
 }
 
 func compare(a, b any) int {
@@ -1046,6 +1141,12 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 		infoFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 			return errInfo, nil
 		})
+		rethrowFn := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+			if len(args) == 0 {
+				panic(*caught)
+			}
+			return raiseUserException(args, file, line)
+		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в
 		// текущем scope (не в child) — чтобы переменные, впервые присвоенные в
@@ -1055,18 +1156,25 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			"ErrorDescription":   descFn,
 			"ИнформацияОбОшибке": infoFn,
 			"ErrorInfo":          infoFn,
+			"ВызватьИсключение":  rethrowFn,
+			"Raise":              rethrowFn,
 		})
-		i.execBlock(t.Except, e)
-		restore()
+		func() {
+			defer restore()
+			i.execBlock(t.Except, e)
+		}()
 	}
 }
 
 func toFloat(v any) (float64, bool) {
 	switch t := v.(type) {
 	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return 0, false
+		}
 		return t, true
 	case decimal.Decimal:
-		return t.InexactFloat64(), true
+		return decimalToFiniteFloat64(t)
 	case int:
 		return float64(t), true
 	case int32:
@@ -1075,6 +1183,9 @@ func toFloat(v any) (float64, bool) {
 		return float64(t), true
 	case string:
 		if f, err := strconv.ParseFloat(t, 64); err == nil {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return 0, false
+			}
 			return f, true
 		}
 	}

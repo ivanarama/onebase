@@ -55,11 +55,6 @@ func langFromCtx(ctx context.Context) string {
 	return ""
 }
 
-func (s *Server) buildDSLVars(ctx context.Context, mc *runtime.MovementsCollector) map[string]any {
-	vars, _ := s.buildDSLVarsTx(ctx, mc)
-	return vars
-}
-
 // buildDSLVarsTx дополнительно отдаёт «живой» источник контекста (TxState).
 // Он нужен вызывающему, чтобы менеджеры ссылок, построенные ДО открытия
 // DSL-транзакции, всё равно выполняли ПолучитьОбъект()/Записать() ВНУТРИ неё:
@@ -86,7 +81,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// поэтому запись участвует в открытой DSL-транзакции.
 	// Caller подключается ДО создания CatalogsRoot.WithManagerCaller —
 	// он использует ctx как контекст для вызова процедур менеджера.
-	mgrCaller := &managerCaller{s: s, ctx: ctx}
+	mgrCaller := &managerCaller{s: s, ctxSrc: txState}
 	rowAccess := s.dslRowAccessChecker()
 	catalogs := interpreter.NewCatalogsRoot(txState, s.store, s.reg).
 		WithManagerCaller(mgrCaller).
@@ -181,11 +176,17 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		return s.objectAttributeValues(txState.Ctx(), args)
 	})
 
-	// СохранитьКартинку(ДанныеBase64, ТипMIME="") → UUID бинарника в blob-хранилище.
+	// СохранитьКартинку(ДанныеBase64, ТипMIME="", Владелец=Неопределено) → UUID
+	// бинарника в blob-хранилище.
 	// Поле типа image хранит именно этот UUID. Данные — base64 картинки (сырой или
 	// в виде data-URL «data:image/png;base64,...»); тип по умолчанию image/png.
-	// Возвращает UUID (пустую строку при пустом аргументе). Используется txState.Ctx(),
-	// поэтому blob создаётся в открытой DSL-транзакции вместе с записью справочника.
+	// Для image-поля третьим аргументом нужно передать ссылку на целевую запись:
+	// тогда blob получает владельца-сущность, а доступ на запись проверяется до
+	// сохранения. Owner-aware вариант разрешён только внутри DSL-транзакции, чтобы
+	// метаданные blob и ссылка имели общий исход БД; для disk/S3 обычный rollback
+	// запускает компенсационную очистку. Два аргумента сохраняют legacy-
+	// поведение для UUID в строках/константах: owner-less blob доступен любому
+	// аутентифицированному пользователю и навсегда исключён из GC.
 	putImageFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
 		if len(args) < 1 {
 			return nil, fmt.Errorf("СохранитьКартинку: нужен аргумент — данные картинки в Base64")
@@ -204,7 +205,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 				dataB64 = dataB64[i+1:]
 			}
 		}
-		if mime == "" && len(args) > 1 {
+		if mime == "" && len(args) > 1 && args[1] != nil {
 			mime = strings.TrimSpace(fmt.Sprintf("%v", args[1]))
 		}
 		if mime == "" {
@@ -225,13 +226,34 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		if err != nil {
 			return nil, fmt.Errorf("СохранитьКартинку: некорректный Base64: %w", err)
 		}
-		// Без владельца: builtin вызывается из произвольного модуля и не знает
-		// целевую сущность. Отдача таких блобов требует лишь аутентификации.
-		// DSLManaged=true исключает блоб из сборки мусора: его UUID мог быть сохранён
-		// прикладным кодом в строковое поле/константу/реквизит инфорегистра, которые
-		// GC не сканирует (он смотрит только image-поля), иначе sweep удалил бы
-		// используемую картинку (ревью #11).
-		blob, err := s.store.PutBlob(txState.Ctx(), mime, bytes.NewReader(data), s.maxFileSizeBytes, storage.BlobOwner{DSLManaged: true})
+
+		ctx := txState.Ctx()
+		owner := storage.BlobOwner{DSLManaged: true}
+		// Явное Неопределено эквивалентно отсутствующему optional-параметру и
+		// сохраняет совместимый owner-less режим.
+		if len(args) > 2 && args[2] != nil {
+			ref, ok := args[2].(*interpreter.Ref)
+			if !ok || ref == nil {
+				return nil, fmt.Errorf("СохранитьКартинку: владелец должен быть ссылкой на запись")
+			}
+			if !storage.HasTx(ctx) {
+				return nil, fmt.Errorf("СохранитьКартинку: картинку для поля объекта нужно сохранять внутри транзакции")
+			}
+			id, parseErr := uuid.Parse(strings.TrimSpace(ref.UUID))
+			if parseErr != nil || strings.TrimSpace(ref.Type) == "" {
+				return nil, fmt.Errorf("СохранитьКартинку: некорректная ссылка владельца")
+			}
+			entity := s.reg.GetEntity(ref.Type)
+			if entity == nil {
+				return nil, fmt.Errorf("СохранитьКартинку: тип владельца %q не найден", ref.Type)
+			}
+			if accessErr := s.checkDSLRowAccess(ctx, entity, "write", id, nil); accessErr != nil {
+				return nil, fmt.Errorf("СохранитьКартинку: нет доступа к владельцу: %w", accessErr)
+			}
+			owner = storage.BlobOwner{Kind: string(entity.Kind), Entity: entity.Name}
+		}
+
+		blob, err := s.store.PutBlob(ctx, mime, bytes.NewReader(data), s.maxFileSizeBytes, owner)
 		if err != nil {
 			return nil, fmt.Errorf("СохранитьКартинку: %w", err)
 		}
@@ -303,12 +325,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	return vars, txState
 }
 
-func (s *Server) buildDSLVarsWithMessages(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
-	vars, _ := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
-	return vars
-}
-
-// buildDSLVarsWithMessagesTx — то же, что buildDSLVarsWithMessages, но отдаёт и
+// buildDSLVarsWithMessagesTx добавляет Сообщить к полному окружению и отдаёт
 // «живой» источник контекста (см. buildDSLVarsTx).
 func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
 	ctx = withDSLMessageCollector(ctx, msgs)
@@ -350,9 +367,11 @@ func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *run
 		}
 	}
 	var msgs []string
-	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
-	if err := s.interp.Run(proc, obj, vars); err != nil {
-		return interpreter.FormatUserError(err), msgs
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
+	runErr := s.interp.Run(proc, obj, vars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
+		return interpreter.FormatUserError(runErr), msgs
 	}
 	return "", msgs
 }
@@ -371,20 +390,22 @@ func (s *Server) callManagerProc(ctx context.Context, entityName, method string,
 		return nil, false, nil
 	}
 	mc := runtime.NewMovementsCollector(entityName, uuid.Nil)
-	vars := s.buildDSLVars(ctx, mc)
+	vars, txState := s.buildDSLVarsTx(ctx, mc)
+	defer rollbackDSLExecution(txState)
 	result, err := s.interp.Call(proc, nil, args, vars)
+	err = finishDSLExecution(txState, err)
 	return result, true, err
 }
 
 // managerCaller адаптер для interpreter.ManagerCaller. Используется в
 // buildDSLVars для подключения fallback к CatalogsRoot.
 type managerCaller struct {
-	s   *Server
-	ctx context.Context
+	s      *Server
+	ctxSrc interpreter.CtxSource
 }
 
 func (m *managerCaller) CallManager(entityName, method string, args []any) (any, bool, error) {
-	return m.s.callManagerProc(m.ctx, entityName, method, args)
+	return m.s.callManagerProc(m.ctxSrc.Ctx(), entityName, method, args)
 }
 
 func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) (string, []string) {
@@ -401,9 +422,11 @@ func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runt
 		s.enrichHeaderRefs(ctx, entity, obj)
 	}
 	var msgs []string
-	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
-	if err := s.interp.Run(proc, obj, vars); err != nil {
-		return interpreter.FormatUserError(err), msgs
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
+	runErr := s.interp.Run(proc, obj, vars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
+		return interpreter.FormatUserError(runErr), msgs
 	}
 	return "", msgs
 }

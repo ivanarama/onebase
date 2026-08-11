@@ -177,7 +177,10 @@ func (f *formObjectThis) Get(name string) any {
 	if f.form != nil {
 		for _, attr := range f.form.Attributes {
 			if strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
-				return &formTpProxy{obj: f.obj, tpName: attr.Name, refResolver: f.refResolver}
+				return &formTpProxy{
+					obj: f.obj, tpName: attr.Name,
+					tp: formAttributeTablePart(attr), refResolver: f.refResolver,
+				}
 			}
 		}
 	}
@@ -216,6 +219,26 @@ func (f *formObjectThis) Get(name string) any {
 		}
 	}
 	return v
+}
+
+// formAttributeTablePart даёт ValueTable тот же metadata-aware row proxy, что
+// и обычной табличной части. Persisted TablePart для неё не существует, но для
+// канонизации имён колонок и ссылочных значений достаточно временного описания.
+func formAttributeTablePart(attr *metadata.FormAttribute) *metadata.TablePart {
+	if attr == nil {
+		return nil
+	}
+	tp := &metadata.TablePart{Name: attr.Name, Fields: make([]metadata.Field, 0, len(attr.Columns))}
+	for _, column := range attr.Columns {
+		if column == nil {
+			continue
+		}
+		tp.Fields = append(tp.Fields, metadata.Field{
+			Name:      column.Name,
+			RefEntity: attrRefEntityName(column.TypeRef),
+		})
+	}
+	return tp
 }
 
 func (f *formObjectThis) Set(name string, v any) {

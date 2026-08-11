@@ -1,6 +1,10 @@
 package interpreter
 
-import "github.com/shopspring/decimal"
+import (
+	"math"
+
+	"github.com/shopspring/decimal"
+)
 
 // divisionPrecision — глобальная точность деления decimal (план 42, решение #1).
 // Деление в decimal требует заданной точности, иначе бесконечные дроби (10/3)
@@ -35,6 +39,29 @@ func toDecimal(v any) (decimal.Decimal, bool) {
 	return decimal.Zero, false
 }
 
+// decimalToFiniteFloat64 ограничивает работу shopspring/decimal до вызова
+// InexactFloat64. Тот строит big.Int 10^Exponent, поэтому Decimal вида
+// 1e2147483647 иначе исчерпывает память в любом builtin, использующем toFloat.
+// Границы существенно шире диапазона float64, но удерживают промежуточные
+// big.Int в нескольких килобайтах и отсекают бесконечный результат.
+func decimalToFiniteFloat64(d decimal.Decimal) (float64, bool) {
+	if d.IsZero() {
+		return 0, true
+	}
+	if exp := d.Exponent(); exp < -4096 || exp > 4096 {
+		return 0, false
+	}
+	coefficient := d.Coefficient()
+	if coefficient.BitLen() > 16384 {
+		return 0, false
+	}
+	f := d.InexactFloat64()
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
+}
+
 // isNumeric сообщает, является ли значение числом (decimal/float/int) без
 // парсинга строк. Используется в equal для числового сравнения: строки и даты
 // должны и дальше сравниваться через refKey, а не приводиться к числу.
@@ -44,4 +71,17 @@ func isNumeric(v any) bool {
 		return true
 	}
 	return false
+}
+
+// numericZero сообщает, что значение — числовой ноль. Нужна отдельно от
+// сравнения с float64(0)/decimal.Zero, потому что число доезжает до модуля в
+// разных Go-типах: из результата запроса на SQLite — int64, из литерала —
+// decimal. Строки числами НЕ считаются (в отличие от toDecimal): пустоту строки
+// определяет её длина, а не разбор "0" как нуля.
+func numericZero(v any) (zero bool, ok bool) {
+	if !isNumeric(v) {
+		return false, false
+	}
+	d, _ := toDecimal(v)
+	return d.IsZero(), true
 }

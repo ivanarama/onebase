@@ -11,6 +11,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
+	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
@@ -25,6 +26,26 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 	return template.FuncMap{
 		"lower": strings.ToLower,
+		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
+			if proc == nil {
+				return processorParamPresencePrefix + name
+			}
+			return processorParamPresenceName(proc.Params, name)
+		},
+		"processorFileContentName": func(proc *processorpkg.Processor, name string) string {
+			if proc == nil {
+				return processorFileContentPrefix + name
+			}
+			return processorFileContentName(proc.Params, name)
+		},
+		"processorServiceFieldNames": func(proc *processorpkg.Processor) map[string]string {
+			if proc == nil {
+				return nil
+			}
+			return processorServiceFieldNames(proc.Params)
+		},
+		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"str": func(v any) string {
 			if v == nil {
 				return ""
@@ -264,11 +285,37 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return nil
 			}
 			for i := range entity.TableParts {
-				if entity.TableParts[i].Name == name {
+				if strings.EqualFold(entity.TableParts[i].Name, name) {
 					return &entity.TableParts[i]
 				}
 			}
 			return nil
+		},
+		"tablePartTitle": func(tablePart *metadata.TablePart) string {
+			if tablePart == nil {
+				return ""
+			}
+			return tablePart.Title
+		},
+		// canonicalFormTableName maps the DataPath spelling to the unique
+		// canonical metadata name shared by entity/processor TP and ValueTable.
+		// Browser field names must use it: the parsers intentionally consume the
+		// canonical namespace, while DataPath matching is case-insensitive.
+		"canonicalFormTableName": func(form *metadata.FormModule, entity *metadata.Entity, name string) string {
+			var tableParts []metadata.TablePart
+			if entity != nil {
+				tableParts = entity.TableParts
+			}
+			definitions, err := metadata.FormTableDefinitions(form, tableParts)
+			if err != nil {
+				return name
+			}
+			for _, definition := range definitions {
+				if strings.EqualFold(definition.Name, name) {
+					return definition.Name
+				}
+			}
+			return name
 		},
 		// tpCommandButtons возвращает дочерние элементы-кнопки табличной части —
 		// команды ТЧ (план 46). Рендерятся как тулбар над таблицей; кнопка с
@@ -302,13 +349,31 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			})
 			return found
 		},
+		// hasCodeField — есть ли на форме kind: ПолеКода. Monaco (vendor-ассеты +
+		// init) грузится только при true: редактор весит заметно, и тянуть его
+		// на каждую форму ради поля, которого там нет, незачем. Тот же приём,
+		// что с Quill для richtext.
+		"hasCodeField": func(form *metadata.FormModule) bool {
+			if form == nil {
+				return false
+			}
+			found := false
+			form.Walk(func(el *metadata.FormElement) bool {
+				if el != nil && el.Kind == metadata.FormElementCodeField {
+					found = true
+					return false
+				}
+				return true
+			})
+			return found
+		},
 		// formAttrVT returns ValueTable columns for a form attribute by name.
 		"formAttrVT": func(form *metadata.FormModule, name string) []*metadata.FormAttributeColumn {
 			if form == nil {
 				return nil
 			}
 			for _, attr := range form.Attributes {
-				if attr.Name == name && strings.EqualFold(attr.TypeRef, "ValueTable") {
+				if strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
 					return attr.Columns
 				}
 			}
@@ -686,6 +751,9 @@ tr:hover td{background:#f8fafc}
 .btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
 .btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
 .btn-sm{padding:5px 12px;font-size:13px}
+/* Кнопка, которой сейчас нечего делать (нет выбранной строки списка): гасим вид,
+   но не ставим disabled — клик по ней объясняет причину. */
+.btn[aria-disabled="true"]{opacity:.5}
 .btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
 .form-group{margin-bottom:16px}
 label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:#475569}
@@ -1092,7 +1160,9 @@ const tplList = `
     {{else}}
       {{if .CanWrite}}<a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
-    <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions title="{{t $.Lang "Команды для выбранной строки"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
+    {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
+         приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
+    <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
@@ -1367,6 +1437,7 @@ const tplList = `
     "deleteForever" (t $.Lang "Удалить навсегда")
     "deleteForeverConfirm" "Удалить запись навсегда?"
     "selectRowFirst" (t $.Lang "Сначала выберите строку списка")
+    "actionsReady" (t $.Lang "Команды для выбранной строки")
     "collapseExpand" "Свернуть/Развернуть"
     "predefined" "Предопределённый"
   )
@@ -2062,6 +2133,7 @@ const tplProcessor = `
     {{if eq .Type "bool"}}
     <div class="form-group" style="margin-bottom:0">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="hidden" name="{{processorParamPresenceName $.Processor $pname}}" value="1">
         <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
         <span>{{.DisplayLabel $.Lang}}</span>
       </label>
