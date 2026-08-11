@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,8 +14,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/dsl/loader"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -53,6 +57,189 @@ func TestHandleManagedFormEvent_ButtonFiresSoobshchit(t *testing.T) {
 	}
 	if len(resp.Messages) != 1 || resp.Messages[0] != "hello" {
 		t.Errorf("messages=%v, ожидалось [\"hello\"]", resp.Messages)
+	}
+}
+
+// Реальный путь ManagedFormLoader → HTTP handler: локальная функция .form.os
+// должна выигрывать у одноимённого глобального экспорта и при обычном вызове,
+// и внутри Вычислить. Этот тест одновременно страхует сохранение source identity
+// загрузчиком: динамическое выражение исполняется в области модуля формы.
+func TestHandleManagedFormEvent_RealLoaderPrefersLocalProcedureInEval(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "контрагент.form.yaml")
+	osPath := filepath.Join(dir, "контрагент.form.os")
+	if err := os.WriteFile(yamlPath, []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Контрагент
+elements:
+  - kind: Кнопка
+    name: КнопкаТест
+    events:
+      Нажатие: ТестНажатие
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(osPath, []byte(`
+Процедура ТестНажатие()
+	Сообщить(Кто());
+	Сообщить(Вычислить("Кто()"));
+	Сообщить(ИзГлобального());
+КонецПроцедуры
+
+Функция Кто()
+	Возврат "ФОРМА";
+КонецФункции
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := loader.NewManagedFormLoader().LoadFormFile(yamlPath, "Контрагент")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+
+	ent := &metadata.Entity{
+		Name:   "Контрагент",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	global := mustParse(t, `
+Функция Кто() Экспорт
+	Возврат "ГЛОБАЛЬНАЯ";
+КонецФункции
+
+Функция ИзГлобального() Экспорт
+	Возврат Кто();
+КонецФункции
+`)
+	registry.LoadModules(map[string]*ast.Program{"Коллизия": global})
+	if registry.GetModuleProc("Кто") == nil {
+		t.Fatal("тестовая глобальная экспортная функция не зарегистрировалась")
+	}
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	interp.LookupSiblingProc = registry.GetSiblingProc
+	srv := &Server{
+		store:    db,
+		reg:      registry,
+		interp:   interp,
+		lockMgr:  runtime.NewLockManager(),
+		messages: NewMessageStore(),
+	}
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаТест")
+	body.Set("_event", string(metadata.FormEventOnClick))
+	body.Set("_kind", "object")
+	body.Set("Наименование", "X")
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if len(resp.Messages) != 3 || resp.Messages[0] != "ФОРМА" || resp.Messages[1] != "ФОРМА" || resp.Messages[2] != "ГЛОБАЛЬНАЯ" {
+		t.Fatalf("локальная процедура формы не выиграла коллизию: messages=%v", resp.Messages)
+	}
+}
+
+// Production-path managed-кнопки обработки: если у формы нет собственного
+// обработчика Нажатие, fallback вызывает Выполнить и обязан связать значения
+// полей с одноимёнными параметрами декларации, как основной processorRun.
+func TestHandleProcessorFormEvent_FallbackBindsNamedArguments(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "параметры.form.yaml")
+	if err := os.WriteFile(yamlPath, []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбработки
+  kind: object
+  entity: ПараметрыОбр
+elements:
+  - kind: ПолеВвода
+    name: ПолеМодель
+    data_path: Объект.ModelName
+  - kind: ПолеВвода
+    name: ПолеБэкенд
+    data_path: Объект.Backend
+  - kind: Кнопка
+    name: Выполнить
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := loader.NewManagedFormLoader().LoadFormFile(yamlPath, "ПараметрыОбр")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	proc := &processor.Processor{
+		Name: "ПараметрыОбр",
+		Params: []processor.Param{
+			{Name: "Missing", Type: "string"},
+			{Name: "ModelName", Type: "string"},
+			{Name: "Backend", Type: "string"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	program := mustParse(t, `
+Процедура Выполнить(Missing = "dsl-default", Backend, ModelName)
+	Сообщить(Missing + ":" + ModelName + ":" + Backend);
+КонецПроцедуры
+`)
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Programs: map[string]*ast.Program{proc.Name: program}})
+	registry.LoadProcessors([]*processor.Processor{proc})
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Migrate(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		store:    db,
+		reg:      registry,
+		interp:   interp,
+		lockMgr:  runtime.NewLockManager(),
+		messages: NewMessageStore(),
+	}
+
+	body := url.Values{}
+	body.Set("_element", "Выполнить")
+	body.Set("_event", string(metadata.FormEventOnClick))
+	body.Set("ModelName", "gemma")
+	body.Set("Backend", "ollama")
+	req := httptest.NewRequest("POST", "/ui/processor/ПараметрыОбр/form-event", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("name", proc.Name)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	srv.handleProcessorFormEvent(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d, body=%s", rec.Code, rec.Body.String())
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if len(resp.Messages) != 1 || resp.Messages[0] != "dsl-default:gemma:ollama" {
+		t.Fatalf("именованный аргумент Выполнить потерян: messages=%v", resp.Messages)
 	}
 }
 
@@ -288,11 +475,10 @@ func decodeFormEventResponse(t *testing.T, b []byte) formEventResponse {
 	return resp
 }
 
-// #621: обработчик события управляемой формы оставил открытой DSL-транзакцию и
-// вышел с ошибкой. Перечитывание после Run обязано идти живым контекстом
-// (внутри той же транзакции), а не r.Context(): на SQLite пул — одно соединение,
-// и запрос по r.Context() ждал бы второе, занятое транзакцией, — событие вешало
-// бы всю базу ровно на пути возврата ошибки. Событие обязано ВЕРНУТЬ ошибку.
+// #621: обработчик события управляемой формы оставил открытую DSL-транзакцию и
+// вышел с ошибкой. Граница выполнения обязана отменить её до перечитывания и
+// ответа: на SQLite пул — одно соединение, и иначе событие вешало бы всю базу
+// ровно на пути возврата ошибки. Исходная ошибка при cleanup не теряется.
 func TestHandleManagedFormEvent_OpenTxDoesNotHang(t *testing.T) {
 	srv, ent := setupManagedEventsServer(t, `
 Процедура Бум()
@@ -351,7 +537,37 @@ func TestHandleManagedFormEvent_OpenTxDoesNotHang(t *testing.T) {
 		if resp.Error == "" {
 			t.Fatalf("ожидался непустой error")
 		}
+		if !strings.Contains(resp.Error, "боль") {
+			t.Fatalf("исходная DSL-ошибка потеряна при cleanup: %q", resp.Error)
+		}
+		readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := srv.store.QueryRow(readCtx, `SELECT 1`).Scan(new(int)); err != nil {
+			t.Fatalf("транзакция осталась открытой после ошибки: %v", err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("событие зависло: перечитывание после Run ушло мимо открытой транзакции (#621)")
+	}
+}
+
+func TestHandleManagedFormEventSuccessfulOpenTxReturnsClearErrorAndCleansUp(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ОставитьОткрытой()
+	НачатьТранзакцию();
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind: metadata.FormElementButton, Name: "Кнопка",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ОставитьОткрытой"},
+	}})
+	body := url.Values{"_element": {"Кнопка"}, "_event": {string(metadata.FormEventOnClick)}, "_kind": {"object"}}
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if resp.OK || !strings.Contains(resp.Error, errDSLTransactionLeftOpen.Error()) {
+		t.Fatalf("successful open transaction was not surfaced: ok=%v error=%q", resp.OK, resp.Error)
+	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var one int
+	if err := srv.store.QueryRow(readCtx, `SELECT 1`).Scan(&one); err != nil || one != 1 {
+		t.Fatalf("database unavailable after cleanup: one=%d err=%v", one, err)
 	}
 }

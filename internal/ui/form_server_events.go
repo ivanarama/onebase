@@ -105,8 +105,9 @@ func (s *Server) runFormReadHook(ctx context.Context, entity *metadata.Entity, f
 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string
-	vars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
-	thisObj := s.newFormObjectThis(ctx, obj, entity, form)
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
+	thisObj := s.newFormObjectThisLive(ctx, txState, obj, entity, form, false)
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
@@ -116,7 +117,8 @@ func (s *Server) runFormReadHook(ctx context.Context, entity *metadata.Entity, f
 	}
 	vars["__form_procs__"] = formProcs
 
-	return s.interp.Run(decl, thisObj, vars)
+	runErr := s.interp.Run(decl, thisObj, vars)
+	return finishDSLExecution(txState, runErr)
 }
 
 // runFormWriteHook исполняет серверный обработчик события записи формы
@@ -151,8 +153,9 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 	ctx = trustedDSLContext(ctx)
 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
-	vars := s.buildDSLVarsWithMessages(ctx, mc, msgs)
-	thisObj := s.newFormObjectThis(ctx, obj, entity, form)
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
+	defer rollbackDSLExecution(txState)
+	thisObj := s.newFormObjectThisLive(ctx, txState, obj, entity, form, false)
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
@@ -162,7 +165,8 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 	}
 	vars["__form_procs__"] = formProcs
 
-	return s.interp.Run(decl, thisObj, vars)
+	runErr := s.interp.Run(decl, thisObj, vars)
+	return finishDSLExecution(txState, runErr)
 }
 
 // runPreSaveFormHooks исполняет ПередЗаписью и ПриЗаписи (если объявлены) ДО

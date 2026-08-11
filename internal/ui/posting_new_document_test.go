@@ -64,9 +64,9 @@ func newSelfRefPostingServer(t *testing.T) (context.Context, *storage.DB, *Serve
 		Interp:       interp,
 		PrepareHook:  s.enrichHeaderRefs,
 		EnrichTPRows: s.enrichTPRowsWithRefs,
-		BuildVars:    s.buildDSLVarsWithMessages,
-		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
-			return s.newFormObjectThis(ctx, obj, e, nil)
+		BuildVars:    s.buildDSLVarsWithMessagesTx,
+		MakeThis: func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
 		},
 	}
 	return ctx, db, s, doc, cat
@@ -327,9 +327,9 @@ func TestSaveNewDocument_PostHookFailureLeavesNothing(t *testing.T) {
 		Store: db, Reg: registry, Interp: interp,
 		PrepareHook:  s.enrichHeaderRefs,
 		EnrichTPRows: s.enrichTPRowsWithRefs,
-		BuildVars:    s.buildDSLVarsWithMessages,
-		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
-			return s.newFormObjectThis(ctx, obj, e, nil)
+		BuildVars:    s.buildDSLVarsWithMessagesTx,
+		MakeThis: func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
 		},
 	}
 

@@ -150,7 +150,7 @@ func newUnpostFixture(t *testing.T, hookSource string) (*Service, *storage.DB, c
 		Store:  db,
 		Reg:    registry,
 		Interp: interp,
-		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
+		BuildVars: func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
 			vars := dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
 			vars["Сообщить"] = interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
 				if len(args) > 0 && msgs != nil {
@@ -158,7 +158,7 @@ func newUnpostFixture(t *testing.T, hookSource string) (*Service, *storage.DB, c
 				}
 				return nil, nil
 			})
-			return vars
+			return vars, nil
 		},
 	}
 

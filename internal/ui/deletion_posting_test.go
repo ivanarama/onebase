@@ -74,9 +74,9 @@ func newPostingDoc(t *testing.T) (context.Context, *storage.DB, *Server, *docPro
 		Interp:       interp,
 		PrepareHook:  s.enrichHeaderRefs,
 		EnrichTPRows: s.enrichTPRowsWithRefs,
-		BuildVars:    s.buildDSLVarsWithMessages,
-		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
-			return s.newFormObjectThis(ctx, obj, e, nil)
+		BuildVars:    s.buildDSLVarsWithMessagesTx,
+		MakeThis: func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
 		},
 	}
 	dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get("ПоступлениеТоваров").(*docProxy)

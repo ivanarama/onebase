@@ -433,7 +433,8 @@ func (s *Server) buildDSLPF(w http.ResponseWriter, r *http.Request, entity *meta
 
 	// 6. Build DSL environment
 	mc := runtime.NewMovementsCollector(entity.Name, id)
-	dslVars := s.buildDSLVars(r.Context(), mc)
+	dslVars, txState := s.buildDSLVarsTx(r.Context(), mc)
+	defer rollbackDSLExecution(txState)
 
 	// Embed table parts into document row for Документ.Товары access
 	for tpName, rows := range tpRows {
@@ -452,8 +453,9 @@ func (s *Server) buildDSLPF(w http.ResponseWriter, r *http.Request, entity *meta
 
 	// 7. Execute the DSL function
 	var result any
-	if err := s.interp.RunWithResult(procDecl, docData, &result, dslVars); err != nil {
-		http.Error(w, "DSL error: "+s.errText(r, err), 500)
+	runErr := s.interp.RunWithResult(procDecl, docData, &result, dslVars)
+	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
+		http.Error(w, "DSL error: "+s.errText(r, runErr), 500)
 		return nil, false
 	}
 

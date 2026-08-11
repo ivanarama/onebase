@@ -399,7 +399,7 @@ func TestPageNStr_DefaultsToRequestLanguage(t *testing.T) {
 	req := httptest.NewRequest("GET", "/ui/page/Тест?период=Июнь", nil)
 
 	var msgs []string
-	builder, paramsObj, dslVars := s.pageProcEnv(req, &msgs)
+	builder, paramsObj, dslVars, _ := s.pageProcEnv(req, &msgs)
 	proc := registry.GetPageProcedure("Тест", "ПриФормировании")
 	if proc == nil {
 		t.Fatal("процедура ПриФормировании не найдена")

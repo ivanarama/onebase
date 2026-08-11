@@ -271,7 +271,8 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 
 	var msgs []string
 	mc := runtime.NewMovementsCollector("service", uuid.Nil)
-	dslVars := s.buildDSLVarsWithMessages(ctx, mc, &msgs)
+	dslVars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
 	// Запрос доступен и как параметр обработчика, и как глобальная переменная —
 	// чтобы работали оба стиля: Функция H(Запрос) и Функция H() с чтением Запрос.
 	dslVars["Запрос"] = reqObj
@@ -284,6 +285,7 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 	} else {
 		result, err = s.interp.Call(procDecl, reqObj, []any{reqObj}, dslVars)
 	}
+	err = finishDSLExecution(txState, err)
 	if err != nil {
 		opStatus = operationStatus(opCtx, err)
 		writeServiceError(w, http.StatusInternalServerError, err.Error())

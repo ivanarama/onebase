@@ -256,9 +256,8 @@ func (r *dslRefAttrResolver) hasRow(entityName, idStr string) bool {
 }
 
 func lookupMapCI(m map[string]any, name string) (string, any, bool) {
-	low := strings.ToLower(name)
 	for k, v := range m {
-		if strings.ToLower(k) == low {
+		if strings.EqualFold(k, name) {
 			return k, v, true
 		}
 	}
@@ -272,7 +271,7 @@ type refAwareMapThis struct {
 }
 
 func newRefAwareMapThis(row map[string]any, tp *metadata.TablePart, resolver *dslRefAttrResolver) interpreter.This {
-	if resolver == nil || tp == nil {
+	if tp == nil {
 		return &interpreter.MapThis{M: row}
 	}
 	return &refAwareMapThis{row: row, tp: tp, resolver: resolver}
@@ -293,21 +292,28 @@ func (m *refAwareMapThis) Set(name string, v any) {
 	if m == nil {
 		return
 	}
-	low := strings.ToLower(name)
 	for k := range m.row {
-		if strings.ToLower(k) == low {
+		if strings.EqualFold(k, name) {
 			m.row[k] = v
 			return
 		}
 	}
-	// Новый ключ — с исходным регистром, как interpreter.MapThis: lowercase
-	// давал бы строки ТЧ с ключами, не совпадающими с именами полей метаданных.
+	// Новую колонку пишем с каноническим именем метаданных. Это важно и без
+	// ref-resolver (например, для ValueTable): обычный MapThis нормализует новый
+	// ключ в lowercase, а browser response адресует колонки точными именами.
+	if fd := tablePartField(m.tp, name); fd != nil {
+		m.row[fd.Name] = v
+		return
+	}
 	m.row[name] = v
 }
 
 func (m *refAwareMapThis) wrapValue(name string, v any) any {
 	fd := tablePartField(m.tp, name)
 	if fd == nil || fd.RefEntity == "" {
+		return v
+	}
+	if m.resolver == nil {
 		return v
 	}
 	if ref, ok := v.(*interpreter.Ref); ok {

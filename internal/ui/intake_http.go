@@ -226,7 +226,8 @@ func (h *dslIntakeHandler) Handle(ctx context.Context, env intake.Envelope) (int
 	conv := interpreter.JSONValueToDSL(env.Top) // конверт как *Map (как результат ПрочитатьJSON)
 	var msgs []string
 	mc := runtime.NewMovementsCollector("intake", uuid.Nil)
-	dslVars := h.s.buildDSLVarsWithMessages(ctx, mc, &msgs)
+	dslVars, txState := h.s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	defer rollbackDSLExecution(txState)
 	dslVars["Конверт"] = conv
 	dslVars["Envelope"] = conv
 
@@ -240,6 +241,7 @@ func (h *dslIntakeHandler) Handle(ctx context.Context, env intake.Envelope) (int
 	} else {
 		result, err = h.s.interp.Call(h.proc, nil, []any{conv}, dslVars)
 	}
+	err = finishDSLExecution(txState, err)
 	if err != nil {
 		return intake.HandlerResult{}, err
 	}
