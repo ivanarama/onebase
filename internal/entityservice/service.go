@@ -69,16 +69,19 @@ type Service struct {
 	// BuildVars собирает DSL-extraVars для контекста caller'а. mc — обязательный
 	// (Движения). msgs (если не nil) — collector для builtin Сообщить, чтобы
 	// caller мог отдать сообщения пользователю/в журнал.
+	// Второй результат — состояние транзакций, которым caller обязан владеть до
+	// завершения DSL-хука; Service гарантированно закрывает его на success/error/panic.
 	// Может быть nil — DSL-хук запустится без extraVars (тогда Сообщить, HTTP,
 	// Справочники и т.п. в нём не будут работать).
-	BuildVars func(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any
+	BuildVars func(ctx context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState)
 
-	// MakeThis оборачивает (ctx, obj, entity) в this для интерпретатора так, чтобы
+	// MakeThis оборачивает (ctx, ctxSrc, obj, entity) в this для интерпретатора так, чтобы
 	// внутри DSL-хука работали методы табличных частей: this.Товары.Добавить(),
 	// this.Товары.Количество(), `Для Каждого Стр Из this.Товары`. Реализация
 	// живёт в ui-слое (formObjectThis), здесь только хук. Если nil — Run
-	// получает obj напрямую, что для документов без ТЧ тоже работает.
-	MakeThis func(ctx context.Context, obj *runtime.Object, entity *metadata.Entity) interpreter.This
+	// получает obj напрямую, что для документов без ТЧ тоже работает. ctxSrc
+	// передаёт живой контекст DSL-транзакции объектным методам.
+	MakeThis func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, entity *metadata.Entity) interpreter.This
 
 	// Hooks — диспетчер исходящих веб-хуков (план 29). nil = веб-хуки не
 	// настроены. Событие отправляется ПОСЛЕ успешной транзакции (асинхронно):
@@ -295,15 +298,18 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			}
 			txHookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
 			var vars map[string]any
+			var txState *interpreter.TxState
 			if s.BuildVars != nil {
-				vars = s.BuildVars(txHookCtx, mc, &msgs)
+				vars, txState = s.BuildVars(txHookCtx, mc, &msgs)
 			}
+			defer interpreter.RollbackTxExecution(txState)
 			var thisVal interpreter.This = obj
 			if s.MakeThis != nil {
-				thisVal = s.MakeThis(txHookCtx, obj, req.Entity)
+				thisVal = s.MakeThis(txHookCtx, txState, obj, req.Entity)
 			}
-			if err := s.Interp.Run(proc, thisVal, vars); err != nil {
-				return &hookRunError{err: err}
+			runErr := s.Interp.Run(proc, thisVal, vars)
+			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
+				return &hookRunError{err: runErr}
 			}
 		}
 
@@ -457,15 +463,18 @@ func (s *Service) unpostInTx(
 	SetPeriodFromFields(movements, entity, obj.Fields)
 
 	var vars map[string]any
+	var txState *interpreter.TxState
 	if s.BuildVars != nil {
-		vars = s.BuildVars(hookCtx, movements, messages)
+		vars, txState = s.BuildVars(hookCtx, movements, messages)
 	}
+	defer interpreter.RollbackTxExecution(txState)
 	var thisVal interpreter.This = obj
 	if s.MakeThis != nil {
-		thisVal = s.MakeThis(hookCtx, obj, entity)
+		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	if err := s.Interp.Run(proc, thisVal, vars); err != nil {
-		return &hookRunError{err: err}
+	runErr := s.Interp.Run(proc, thisVal, vars)
+	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
+		return &hookRunError{err: runErr}
 	}
 	return s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys())
 }
@@ -616,11 +625,13 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 
 	var msgs []string
 	var vars map[string]any
+	var txState *interpreter.TxState
 	if s.BuildVars != nil {
-		vars = s.BuildVars(ctx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
+		vars, txState = s.BuildVars(ctx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
 	} else {
 		vars = make(map[string]any)
 	}
+	defer interpreter.RollbackTxExecution(txState)
 	// Имя параметра процедуры — как объявил пользователь (ДанныеЗаполнения,
 	// Основание, Src и т.п.). Если параметров нет — хук вызывается без
 	// источника (странный случай, но не ошибка).
@@ -632,14 +643,15 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	// фабрику; иначе — голый *Object (для документов без ТЧ всё равно работает).
 	var thisVal interpreter.This = recvObj
 	if s.MakeThis != nil {
-		thisVal = s.MakeThis(ctx, recvObj, req.Receiver)
+		thisVal = s.MakeThis(ctx, txState, recvObj, req.Receiver)
 	}
-	if err := s.Interp.Run(proc, thisVal, vars); err != nil {
+	runErr := s.Interp.Run(proc, thisVal, vars)
+	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)
-		if dslErr, ok := err.(*interpreter.DSLError); ok {
+		if dslErr, ok := runErr.(*interpreter.DSLError); ok {
 			return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows, DSLError: dslErr.UserMessage(), DSLMessages: msgs}, nil
 		}
-		return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows, DSLError: err.Error(), DSLMessages: msgs}, nil
+		return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows, DSLError: runErr.Error(), DSLMessages: msgs}, nil
 	}
 	normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)
 	return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows, DSLMessages: msgs}, nil
@@ -774,15 +786,18 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 			hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
 			var msgs []string
 			var vars map[string]any
+			var txState *interpreter.TxState
 			if s.BuildVars != nil {
-				vars = s.BuildVars(hookCtx, mc, &msgs)
+				vars, txState = s.BuildVars(hookCtx, mc, &msgs)
 			}
+			defer interpreter.RollbackTxExecution(txState)
 			var thisVal interpreter.This = obj
 			if s.MakeThis != nil {
-				thisVal = s.MakeThis(hookCtx, obj, ent)
+				thisVal = s.MakeThis(hookCtx, txState, obj, ent)
 			}
-			if err := s.Interp.Run(proc, thisVal, vars); err != nil {
-				return fmt.Errorf("перепроведение %s: ОбработкаПроведения: %w", ent.Name, err)
+			runErr := s.Interp.Run(proc, thisVal, vars)
+			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
+				return fmt.Errorf("перепроведение %s: ОбработкаПроведения: %w", ent.Name, runErr)
 			}
 		}
 		if err := s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys()); err != nil {

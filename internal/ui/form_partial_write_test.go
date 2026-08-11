@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,6 +165,115 @@ func TestSubmitEdit_ManagedForm_ReadOnlyCheckboxPreserved(t *testing.T) {
 	row, _ := s.store.GetByID(ctx, ent.Name, id, ent)
 	if !isTruthyStored(row["Активен"]) {
 		t.Errorf("значение readonly-флажка потеряно: %v", row["Активен"])
+	}
+}
+
+func TestSubmitEdit_ManagedForm_InheritedReadOnlyCheckboxPreserved(t *testing.T) {
+	ent := partialWriteEntity()
+	cb := &metadata.FormElement{Kind: metadata.FormElementCheckbox, Name: "ФлагАктивен", DataPath: "Объект.Активен"}
+	group := &metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "ТолькоЧтение", ReadOnly: true, Children: []*metadata.FormElement{cb}}
+	ent.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНаим", "Объект.Наименование"), group)}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"Наименование": "Ромашка", "Активен": true,
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"Наименование": {"Ромашка"}}
+	r := reqWithChi("POST", "/ui/catalog/Клиент/"+id.String(), form,
+		map[string]string{"entity": "Клиент", "id": id.String()})
+	s.submitEdit(httptest.NewRecorder(), r)
+
+	row, _ := s.store.GetByID(ctx, ent.Name, id, ent)
+	if !isTruthyStored(row["Активен"]) {
+		t.Errorf("значение унаследованного readonly-флажка потеряно: %v", row["Активен"])
+	}
+}
+
+func TestSubmitEdit_ManagedForm_InheritedReadOnlyTablePartPreserved(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		TableParts: []metadata.TablePart{{
+			Name: "Товары",
+			Fields: []metadata.Field{
+				{Name: "Номенклатура", Type: metadata.FieldType("reference:Заказ"), RefEntity: "Заказ"},
+				{Name: "Комментарий", Type: metadata.FieldTypeString},
+			},
+		}},
+	}
+	table := &metadata.FormElement{Kind: metadata.FormElementTablePart, Name: "ЭлементТовары", DataPath: "Объект.Товары", NoGrid: true}
+	group := &metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "ТолькоЧтение", ReadOnly: true, Children: []*metadata.FormElement{table}}
+	ent.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНаим", "Объект.Наименование"), group)}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	id := uuid.New()
+	refID := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": "Заказ"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.UpsertTablePartRows(ctx, ent.Name, "Товары", id, []map[string]any{{
+		"Номенклатура": refID.String(), "Комментарий": "исходное",
+	}}, ent.TableParts[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	// Disabled reference select браузер не пришлёт; forged текстовая колонка не
+	// должна превращать неполную readonly-строку в источник истины.
+	post := url.Values{
+		"Наименование":            {"Заказ-2"},
+		"tp.Товары.0.Комментарий": {"подделка"},
+	}
+	r := reqWithChi("POST", "/ui/document/Заказ/"+id.String(), post,
+		map[string]string{"entity": "Заказ", "id": id.String()})
+	s.submitEdit(httptest.NewRecorder(), r)
+
+	rows, err := s.store.GetTablePartRows(ctx, ent.Name, "Товары", id, ent.TableParts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["Комментарий"] != "исходное" || fmt.Sprint(rows[0]["Номенклатура"]) != refID.String() {
+		t.Fatalf("readonly ТЧ изменилась из неполного/forged POST: %#v", rows)
+	}
+}
+
+func TestSubmitNew_ManagedFormRejectsForgedReadOnlyTablePart(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		TableParts: []metadata.TablePart{{
+			Name: "Товары", Fields: []metadata.Field{{Name: "Комментарий", Type: metadata.FieldTypeString}},
+		}},
+	}
+	table := &metadata.FormElement{Kind: metadata.FormElementTablePart, Name: "ЭлементТовары", DataPath: "Объект.Товары", ReadOnly: true}
+	ent.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНаим", "Объект.Наименование"), table)}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	post := url.Values{
+		"Наименование":   {"Новый"},
+		"tp_json.Товары": {`[{"Комментарий":"подделка"}]`},
+	}
+	r := reqWithChi("POST", "/ui/document/Заказ", post, map[string]string{"entity": "Заказ"})
+	rec := httptest.NewRecorder()
+	s.submit(rec, r)
+
+	location := rec.Header().Get("Location")
+	parts := strings.Split(strings.Trim(location, "/"), "/")
+	if len(parts) == 0 {
+		t.Fatalf("submit не вернул Location: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	id, err := uuid.Parse(parts[len(parts)-1])
+	if err != nil {
+		t.Fatalf("не удалось извлечь id из Location %q: %v", location, err)
+	}
+	rows, err := s.store.GetTablePartRows(ctx, ent.Name, "Товары", id, ent.TableParts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("forged readonly ТЧ сохранилась в новом объекте: %#v", rows)
 	}
 }
 

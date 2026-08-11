@@ -46,7 +46,7 @@ func runDSLRowAccessFunc(t *testing.T, s *Server, ctx context.Context, src strin
 	t.Helper()
 	prog := mustParse(t, src)
 	var result any
-	vars := s.buildDSLVars(ctx, runtime.NewMovementsCollector("test", uuid.Nil))
+	vars, _ := s.buildDSLVarsTx(ctx, runtime.NewMovementsCollector("test", uuid.Nil))
 	if err := s.interp.RunWithResult(prog.Procedures[0], nil, &result, vars); err != nil {
 		t.Fatalf("run DSL: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestDSLQuery_RowAccessFiltersRows(t *testing.T) {
 func TestDSLCatalogFind_RowAccessHidesRows(t *testing.T) {
 	s, _, _ := dslRLSTestServer(t)
 	ctx := auth.ContextWithUser(context.Background(), dslRLSTestUser("u", "Товар", "read"))
-	vars := s.buildDSLVars(ctx, runtime.NewMovementsCollector("test", uuid.Nil))
+	vars, _ := s.buildDSLVarsTx(ctx, runtime.NewMovementsCollector("test", uuid.Nil))
 	catalogs := vars["Справочники"].(*interpreter.CatalogsRoot)
 	proxy := catalogs.Get("Товар").(*interpreter.CatalogProxy)
 
@@ -94,7 +94,7 @@ func TestDSLCatalogMatch_FiltersEveryDuplicateBeforeCounting(t *testing.T) {
 		t.Fatalf("upsert allowed duplicate: %v", err)
 	}
 	userCtx := auth.ContextWithUser(context.Background(), dslRLSTestUser("u", cat.Name, "read"))
-	vars := s.buildDSLVars(userCtx, runtime.NewMovementsCollector("test", uuid.Nil))
+	vars, _ := s.buildDSLVarsTx(userCtx, runtime.NewMovementsCollector("test", uuid.Nil))
 	proxy := vars["Справочники"].(*interpreter.CatalogsRoot).Get(cat.Name).(*interpreter.CatalogProxy)
 
 	found, ok := proxy.CallMethod("найтипонаименованию", []any{"Same"}).(*interpreter.Ref)

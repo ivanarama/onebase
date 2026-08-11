@@ -65,11 +65,11 @@ func readOnlyFormFields(form *metadata.FormModule) map[string]bool {
 	if form == nil {
 		return out
 	}
-	form.Walk(func(el *metadata.FormElement) bool {
-		if el != nil && el.ReadOnly && el.DataPath != "" && strings.Count(el.DataPath, ".") <= 1 {
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if visit.effectiveReadOnly && el.DataPath != "" && strings.Count(el.DataPath, ".") <= 1 {
 			out[strings.ToLower(dpFieldName(el.DataPath))] = true
 		}
-		return true
 	})
 	return out
 }

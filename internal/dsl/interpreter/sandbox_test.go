@@ -2,6 +2,7 @@ package interpreter_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,58 @@ func parseProc(t *testing.T, src string) *ast.ProcedureDecl {
 	require.NoError(t, err)
 	require.NotEmpty(t, prog.Procedures)
 	return prog.Procedures[0]
+}
+
+// Sandboxed entrypoints обязаны устанавливать ту же lexical source identity,
+// что Run/Call: иначе synthetic Вычислить теряет sibling-процедуры файла.
+func TestSandbox_EvalKeepsEntrySourceIdentity(t *testing.T) {
+	prog, err := parser.New(lexer.New(`
+Функция Помощник()
+	Возврат "локальная";
+КонецФункции
+
+Функция Тест()
+	Возврат Вычислить("Помощник()");
+КонецФункции
+`, "sandbox-local.os")).ParseProgram()
+	require.NoError(t, err)
+	byName := make(map[string]*ast.ProcedureDecl, len(prog.Procedures))
+	for _, proc := range prog.Procedures {
+		byName[strings.ToLower(proc.Name.Literal)] = proc
+	}
+
+	for _, tc := range []struct {
+		name string
+		run  func(*interpreter.Interpreter) (any, error)
+	}{
+		{
+			name: "RunSandboxed",
+			run: func(in *interpreter.Interpreter) (any, error) {
+				var result any
+				err := in.RunSandboxed(byName["тест"], nil, interpreter.SandboxProfile{}, &result)
+				return result, err
+			},
+		},
+		{
+			name: "CallSandboxed",
+			run: func(in *interpreter.Interpreter) (any, error) {
+				return in.CallSandboxed(byName["тест"], nil, nil, interpreter.SandboxProfile{})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := interpreter.New()
+			in.LookupSiblingProc = func(file, name string) *ast.ProcedureDecl {
+				if file == "sandbox-local.os" {
+					return byName[strings.ToLower(name)]
+				}
+				return nil
+			}
+			result, err := tc.run(in)
+			require.NoError(t, err)
+			assert.Equal(t, "локальная", result)
+		})
+	}
 }
 
 // Бесконечный цикл с пустым телом останавливается по wall-clock,

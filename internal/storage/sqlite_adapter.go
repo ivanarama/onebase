@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"sync"
 )
 
 // sqlRows wraps sql.Rows into storage.Rows.
@@ -28,7 +29,9 @@ func (s sqlRow) Scan(dst ...any) error { return s.r.Scan(dst...) }
 
 // sqlTx wraps *sql.Tx into storage.Tx.
 type sqlTx struct {
-	tx *sql.Tx
+	tx   *sql.Tx
+	conn *sql.Conn
+	done sync.Once
 }
 
 func (t *sqlTx) Exec(ctx context.Context, sql string, args ...any) (CommandTag, error) {
@@ -55,5 +58,20 @@ func (t *sqlTx) QueryRow(ctx context.Context, sql string, args ...any) Row {
 	return sqlRow{r: t.tx.QueryRowContext(ctx, sql, args...)}
 }
 
-func (t *sqlTx) Commit(_ context.Context) error   { return t.tx.Commit() }
-func (t *sqlTx) Rollback(_ context.Context) error { return t.tx.Rollback() }
+func (t *sqlTx) closeConn() {
+	if t.conn != nil {
+		t.done.Do(func() { _ = t.conn.Close() })
+	}
+}
+
+func (t *sqlTx) Commit(_ context.Context) error {
+	err := t.tx.Commit()
+	t.closeConn()
+	return err
+}
+
+func (t *sqlTx) Rollback(_ context.Context) error {
+	err := t.tx.Rollback()
+	t.closeConn()
+	return err
+}

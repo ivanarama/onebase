@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -157,6 +158,28 @@ func TestManagedFormLoader_ParseYAML(t *testing.T) {
 	}
 }
 
+func TestManagedFormLoaderRejectsAmbiguousValueTableNames(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "collision.form.yaml")
+	doc := `schema: onebase.form/v1
+form:
+  name: Форма
+  kind: custom
+  entity: Тест
+attributes:
+  - name: Подбор
+    type: ValueTable
+  - name: ПОДБОР
+    type: valuetable
+`
+	if err := os.WriteFile(yamlPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Тест"); err == nil {
+		t.Fatal("case-insensitive ValueTable collision was accepted by loader")
+	}
+}
+
 func TestManagedFormLoader_ParsesDeleteAction(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := filepath.Join(dir, "контрагенты.form.yaml")
@@ -298,6 +321,107 @@ func TestManagedFormLoader_LoadEntityForms_NoDir(t *testing.T) {
 	}
 	if forms != nil {
 		t.Errorf("forms = %v, want nil", forms)
+	}
+}
+
+// Модуль формы должен сохранять физический путь .form.os в AST. Это не только
+// диагностика: interpreter использует identity текущего модуля, чтобы
+// Вычислить и обычные неквалифицированные вызовы видели соседние процедуры.
+func TestManagedFormLoader_PreservesModuleSourcePath(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ.form.yaml")
+	osPath := filepath.Join(dir, "заказ.form.os")
+	if err := os.WriteFile(yamlPath, []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(osPath, []byte(`
+Функция Локальная()
+	Возврат "форма";
+КонецФункции
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	program, ok := form.ProgramAST.(*ast.Program)
+	if !ok || program == nil || len(program.Procedures) != 1 {
+		t.Fatalf("ProgramAST не содержит процедуру формы: %#v", form.ProgramAST)
+	}
+	if got := filepath.Clean(program.Procedures[0].Name.File); got != filepath.Clean(osPath) {
+		t.Fatalf("source identity = %q, want %q", got, osPath)
+	}
+}
+
+func TestFormLoader_OnlyKnownProcedureNamesBecomeFormEvents(t *testing.T) {
+	form, err := NewFormLoader().LoadFormModuleFromSource(`
+Процедура ПриОткрытии()
+КонецПроцедуры
+Процедура Вспомогательная()
+КонецПроцедуры
+`, "Заказ", "ФормаОбъекта", "object")
+	if err != nil {
+		t.Fatalf("LoadFormModuleFromSource: %v", err)
+	}
+	if got := form.Handlers[metadata.FormEventOnOpen]; got != "ПриОткрытии" {
+		t.Fatalf("known event handler = %q, want ПриОткрытии", got)
+	}
+	if _, exists := form.Handlers[metadata.FormEventType("Вспомогательная")]; exists {
+		t.Fatalf("helper procedure was exposed as form event: %#v", form.Handlers)
+	}
+	if form.Procedures["Вспомогательная"] == nil {
+		t.Fatal("helper procedure must remain callable from the form module")
+	}
+}
+
+func TestManagedFormLoader_FiltersUnknownYAMLAndInferredEvents(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ.form.yaml")
+	osPath := filepath.Join(dir, "заказ.form.os")
+	if err := os.WriteFile(yamlPath, []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+events:
+  ПриОткрытии: Открыть
+  СекретныйПомощник: СекретныйПомощник
+elements:
+  - kind: Кнопка
+    name: Кнопка
+    events:
+      Нажатие: Нажать
+      ПроизвольноеСобытие: СекретныйПомощник
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(osPath, []byte(`
+Процедура СекретныйПомощник()
+КонецПроцедуры
+Процедура ПриОткрытии()
+КонецПроцедуры
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	if _, ok := form.Handlers[metadata.FormEventType("СекретныйПомощник")]; ok {
+		t.Fatalf("unknown YAML/inferred form event survived merge: %#v", form.Handlers)
+	}
+	if _, ok := form.Elements[0].Handlers[metadata.FormEventType("ПроизвольноеСобытие")]; ok {
+		t.Fatalf("unknown element event survived YAML load: %#v", form.Elements[0].Handlers)
+	}
+	if form.Procedures["СекретныйПомощник"] == nil {
+		t.Fatal("filtered helper procedure must remain available for internal calls")
 	}
 }
 

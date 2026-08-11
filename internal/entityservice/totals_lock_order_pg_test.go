@@ -97,8 +97,8 @@ func TestSave_ConcurrentPostingsToTwoTotalsRegistersDoNotDeadlock(t *testing.T) 
 	newService := func() *Service {
 		return &Service{
 			Store: db, Reg: registry, Interp: interp,
-			BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) map[string]any {
-				return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
+			BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+				return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
 			},
 		}
 	}
