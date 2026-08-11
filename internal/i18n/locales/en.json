@@ -1180,5 +1180,20 @@
   "%s требует неотрицательное целое число записей": "%s requires a non-negative integer row count",
   "%s требует неотрицательное целое число записей, получено %q": "%s requires a non-negative integer row count, got %q",
   "%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается": "%s in nested queries and UNION branches is not supported yet",
-  "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "FIRST/TOP in a query with UNION is not supported yet: the limit applies to an individual branch"
+  "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "FIRST/TOP in a query with UNION is not supported yet: the limit applies to an individual branch",
+  "Закрытие окна информационных баз": "Closing the information bases window",
+  "Работают информационные базы:": "Information bases are running:",
+  "Продолжить их работу в фоновом режиме? Регламентные задания, обмены и подключённые пользователи не пострадают. Окно запуска закроется — откройте его снова, чтобы остановить базы.": "Keep them running in the background? Scheduled jobs, data exchanges and connected users will not be affected. The launcher window will close — open it again to stop the bases.",
+  "Больше не спрашивать": "Don't ask again",
+  "Продолжить в фоне": "Keep running",
+  "Остановить все": "Stop all",
+  "Останавливаем базы…": "Stopping bases…",
+  "порт": "port",
+  "Остановить все работающие базы?": "Stop all running bases?",
+  "Открытые окна Предприятия и подключённые пользователи потеряют связь.": "Open Enterprise windows and connected users will lose their connection.",
+  "и ещё баз:": "and more bases:",
+  "Продолжить их работу в фоновом режиме?": "Keep them running in the background?",
+  "Да — базы продолжат работать: регламентные задания, обмены и подключённые пользователи не пострадают. Окно запуска закроется — откройте его снова, чтобы остановить базы.": "Yes — the bases keep running: scheduled jobs, data exchanges and connected users are not affected. The launcher window will close — open it again to stop the bases.",
+  "Нет — остановить все базы: открытые окна Предприятия и подключённые пользователи потеряют связь.": "No — stop all bases: open Enterprise windows and connected users will lose their connection.",
+  "Отмена — не закрывать окно.": "Cancel — keep the window open."
 }

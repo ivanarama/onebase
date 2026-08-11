@@ -217,6 +217,7 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 
 	selID := r.URL.Query().Get("sel")
 	var selected *baseVM
+	runningCount := 0
 	vms := make([]*baseVM, 0, len(bases))
 	for _, b := range bases {
 		st := statuses[b.ID]
@@ -226,6 +227,9 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 			vm.LogoBase64 = "/bases/" + b.ID + "/configurator/logo"
 		}
 		vms = append(vms, vm)
+		if vm.Running {
+			runningCount++
+		}
 		if b.ID == selID {
 			selected = vm
 		}
@@ -235,10 +239,11 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(w, r, "page-index", map[string]any{
-		"Title":    tr(resolveLang(r), "onebase — Информационные базы"),
-		"Bases":    vms,
-		"Selected": selected,
-		"NativeOK": NativeIsolatedSupported(),
+		"Title":        tr(resolveLang(r), "onebase — Информационные базы"),
+		"Bases":        vms,
+		"Selected":     selected,
+		"NativeOK":     NativeIsolatedSupported(),
+		"RunningCount": runningCount,
 		// Состояние обновлений читается из файла, без обращения к сети:
 		// проверку делает фоновая горутина (план 92).
 		"Update": h.updatesState(),
@@ -607,15 +612,7 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("sel")
 
-	// Collect all known base ports so we can kill processes even if not tracked.
-	var ports []int
-	if bases, err := h.store.List(); err == nil {
-		for _, b := range bases {
-			ports = append(ports, b.Port)
-		}
-	}
-	h.runner.StopAll(ports)
-	h.clearStatus() // все базы остановлены — сбрасываем весь кэш статусов
+	h.stopAllBases()
 
 	redirect := "/"
 	if sel != "" {
@@ -963,6 +960,11 @@ func errText(r *http.Request, err error) string {
 func render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	if _, ok := data["Lang"]; !ok {
 		data["Lang"] = resolveLang(r)
+	}
+	if lang, ok := data["Lang"].(string); ok {
+		// Нативный диалог закрытия окна рисуется вне HTTP-запроса — язык он
+		// берёт отсюда (см. currentLang).
+		rememberLang(lang)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {

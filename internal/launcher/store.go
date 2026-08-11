@@ -33,8 +33,18 @@ type Base struct {
 	Host string `yaml:"host,omitempty"`
 }
 
+// LauncherSettings — настройки самого лаунчера (не базы), лежат в том же
+// ibases.yaml рядом со списком баз.
+type LauncherSettings struct {
+	// OnClose — что делать при закрытии окна информационных баз, когда базы
+	// работают: OnCloseAsk (спросить, по умолчанию), OnCloseBackground
+	// (оставить работать), OnCloseStop (остановить все). См. closepolicy.go.
+	OnClose string `yaml:"on_close,omitempty"`
+}
+
 type storeFile struct {
-	Bases []*Base `yaml:"bases"`
+	Bases    []*Base          `yaml:"bases"`
+	Settings LauncherSettings `yaml:"settings,omitempty"`
 }
 
 // Store persists the list of information bases in ~/.onebase/ibases.yaml.
@@ -58,10 +68,12 @@ func NewStore() (*Store, error) {
 	return &Store{path: filepath.Join(dir, "ibases.yaml")}, nil
 }
 
-func (s *Store) load() ([]*Base, error) {
+// loadFile читает реестр целиком (список баз + настройки лаунчера).
+// Отсутствующий файл — не ошибка: это первый запуск.
+func (s *Store) loadFile() (*storeFile, error) {
 	data, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return &storeFile{}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -70,11 +82,49 @@ func (s *Store) load() ([]*Base, error) {
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return nil, err
 	}
+	return &f, nil
+}
+
+func (s *Store) load() ([]*Base, error) {
+	f, err := s.loadFile()
+	if err != nil {
+		return nil, err
+	}
 	return f.Bases, nil
 }
 
+// save перезаписывает файл целиком, поэтому настройки лаунчера сначала
+// вычитываются — иначе любая правка списка баз их бы стирала.
 func (s *Store) save(bases []*Base) error {
-	data, err := yaml.Marshal(&storeFile{Bases: bases})
+	f, err := s.loadFile()
+	if err != nil {
+		return err
+	}
+	f.Bases = bases
+	return s.write(f)
+}
+
+// Settings возвращает настройки лаунчера (нулевые, если файла ещё нет).
+func (s *Store) Settings() (LauncherSettings, error) {
+	f, err := s.loadFile()
+	if err != nil {
+		return LauncherSettings{}, err
+	}
+	return f.Settings, nil
+}
+
+// SetOnClose запоминает поведение при закрытии окна («больше не спрашивать»).
+func (s *Store) SetOnClose(policy string) error {
+	f, err := s.loadFile()
+	if err != nil {
+		return err
+	}
+	f.Settings.OnClose = policy
+	return s.write(f)
+}
+
+func (s *Store) write(f *storeFile) error {
+	data, err := yaml.Marshal(f)
 	if err != nil {
 		return err
 	}

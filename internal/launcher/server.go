@@ -103,7 +103,8 @@ func (s *Server) Done() <-chan struct{} { return s.quit }
 // работать. Раньше здесь был StopAll («иначе дети-зомби»), но с усыновлением
 // (handler.baseRunning) следующий экземпляр лаунчера видит живые базы,
 // открывает их и умеет останавливать — зомби больше не проблема. Явная
-// остановка всего — кнопка «Стоп всё» (killAll).
+// остановка всего — кнопка «Стоп всё» (killAll) или ответ «Нет» в диалоге
+// закрытия окна (closepolicy.go).
 func (s *Server) Close() {
 	CloseAuthPools()
 	if s.httpSrv != nil {
@@ -283,6 +284,9 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/one-time-code", s.h.oneTimeCodeProxy)
 
 	r.Post("/killall", s.h.killAll)
+	// Диалог закрытия окна (что делать с работающими базами) — см. closepolicy.go.
+	r.Get("/close-info", s.h.closeInfo)
+	r.Post("/close-policy", s.h.setClosePolicy)
 	r.Post("/quit", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		s.requestQuit()

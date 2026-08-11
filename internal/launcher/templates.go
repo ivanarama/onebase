@@ -80,6 +80,18 @@ body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#E
 .btn-cancel{background:#f5f4ee;color:#333;border:1px solid #ACA899;padding:6px 16px;border-radius:2px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
 .btn-cancel:hover{background:#e8e6dc}
 .err{background:#fff0f0;border:1px solid #ffb3b3;color:#c00;padding:8px 10px;border-radius:2px;margin-bottom:12px;font-size:13px}
+.btn-danger{background:#b91c1c;color:#fff;border:1px solid #b91c1c;padding:6px 16px;border-radius:2px;cursor:pointer;font-size:13px}
+.btn-danger:hover{background:#991b1b}
+
+/* modal (диалог закрытия окна) */
+.modal-back{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal{background:#fff;border:1px solid #ACA899;border-radius:2px;box-shadow:0 6px 24px rgba(0,0,0,.25);width:520px;max-width:calc(100% - 40px);padding:18px 20px}
+.modal h3{font-size:14px;font-weight:600;margin-bottom:12px}
+.modal p{font-size:12px;color:#444;margin-bottom:10px;line-height:1.45}
+.modal ul{margin:0 0 10px 20px;font-size:12px;color:#333}
+.modal label{font-size:12px;color:#555;display:flex;align-items:center;gap:6px}
+.modal label input{width:auto}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 
 /* result pages */
 .result-page{max-width:640px;margin:20px auto;background:#fff;border:1px solid #ACA899;padding:20px;border-radius:2px}
@@ -126,7 +138,7 @@ const tplIndex = `
   <a class="tbtn" href="/report-problem{{if .Selected}}?base={{.Selected.ID}}{{end}}" title="{{t $.Lang "Собрать отчёт об ошибке одним файлом"}}">
     <svg viewBox="0 0 24 24"><path d="M20 8h-2.81a5.99 5.99 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a6.02 6.02 0 0 0-2.83 0L8.41 3 7 4.41l1.62 1.63A5.99 5.99 0 0 0 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81a6 6 0 0 0 10.38 0H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg> {{t $.Lang "Сообщить об ошибке"}}
   </a>
-  <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return doPost(this)" title="{{t $.Lang "Остановить все базы"}}">
+  <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return confirmKillAll(this)" title="{{t $.Lang "Остановить все базы"}}">
     <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> {{t $.Lang "Стоп всё"}}
   </a>
   {{/* with, а не if: у части рендер-тестов данных об обновлении нет вовсе */}}
@@ -213,8 +225,27 @@ const tplIndex = `
 {{end}}
 </div>
 
+<div id="close-modal" class="modal-back" style="display:none">
+  <div class="modal">
+    <h3>{{t $.Lang "Закрытие окна информационных баз"}}</h3>
+    <div id="close-modal-ask">
+      <p>{{t $.Lang "Работают информационные базы:"}}</p>
+      <ul id="close-modal-list"></ul>
+      <p>{{t $.Lang "Продолжить их работу в фоновом режиме? Регламентные задания, обмены и подключённые пользователи не пострадают. Окно запуска закроется — откройте его снова, чтобы остановить базы."}}</p>
+      <label><input type="checkbox" id="close-modal-remember"> {{t $.Lang "Больше не спрашивать"}}</label>
+      <div class="modal-btns">
+        <button class="btn-ok" onclick="return closeChoice('background')">{{t $.Lang "Продолжить в фоне"}}</button>
+        <button class="btn-danger" onclick="return closeChoice('stop')">{{t $.Lang "Остановить все"}}</button>
+        <button class="btn-cancel" onclick="return closeChoice('cancel')">{{t $.Lang "Отмена"}}</button>
+      </div>
+    </div>
+    <p id="close-modal-progress" style="display:none">⏳ {{t $.Lang "Останавливаем базы…"}}</p>
+  </div>
+</div>
+
 <script>
 var _sel = '{{if .Selected}}{{.Selected.ID}}{{end}}';
+var _runningCount = {{.RunningCount}};
 // GUI-сборка под Windows умеет нативные WebView2-окна — «Предприятие»
 // открывается в таком окне (без адресной строки), а не через window.open,
 // который в WebView2 убегает во внешний браузер. В остальных сборках — браузер.
@@ -232,10 +263,86 @@ function doPost(el) {
   form.submit();
   return false;
 }
+// Закрытие лаунчера. Базы намеренно переживают закрытие окна, но молча это
+// делать нельзя: пользователь думает, что вышел, а серверы баз держат порт,
+// файл БД и сеансы. Поэтому при живых базах спрашиваем — если только выбор уже
+// не сохранён настройкой (см. closepolicy.go).
 function quitLauncher() {
+  fetch('/close-info')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var running = (d && d.running) || [];
+      var policy = (d && d.policy) || 'ask';
+      if (running.length === 0 || policy === 'background') { quitNow(); return; }
+      if (policy === 'stop') { stopAllThenQuit(); return; }
+      showCloseModal(running);
+    })
+    // Состояние баз выяснить не удалось — ведём себя как раньше и закрываемся:
+    // держать пользователя в окне из-за сбоя запроса неправильно.
+    .catch(function(){ quitNow(); });
+  return false;
+}
+function showCloseModal(running) {
+  var list = document.getElementById('close-modal-list');
+  list.innerHTML = '';
+  for (var i = 0; i < running.length; i++) {
+    var li = document.createElement('li');
+    li.textContent = running[i].name + ' ({{t $.Lang "порт"}} ' + running[i].port + ')';
+    list.appendChild(li);
+  }
+  document.getElementById('close-modal').style.display = 'flex';
+  // Фокус на безопасном варианте: Enter не должен случайно останавливать базы.
+  var first = document.querySelector('#close-modal .btn-ok');
+  if (first) first.focus();
+}
+// Esc = «Отмена», как в системном диалоге закрытия окна. Пока идёт остановка
+// баз, отменять уже нечего — вопрос снят с экрана.
+document.addEventListener('keydown', function(ev) {
+  if (ev.key !== 'Escape') return;
+  var m = document.getElementById('close-modal');
+  var ask = document.getElementById('close-modal-ask');
+  if (m && m.style.display === 'flex' && ask && ask.style.display !== 'none') closeChoice('cancel');
+});
+function closeChoice(kind) {
+  if (kind === 'cancel') {
+    document.getElementById('close-modal').style.display = 'none';
+    return false;
+  }
+  if (document.getElementById('close-modal-remember').checked) {
+    // Настройку дописываем до выхода: после /quit процесс уже не ответит.
+    fetch('/close-policy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'policy=' + encodeURIComponent(kind)
+    }).catch(function(){}).then(function(){ finishClose(kind); });
+    return false;
+  }
+  finishClose(kind);
+  return false;
+}
+function finishClose(kind) {
+  if (kind === 'stop') stopAllThenQuit(); else quitNow();
+}
+function stopAllThenQuit() {
+  var ask = document.getElementById('close-modal-ask');
+  if (ask) ask.style.display = 'none';
+  var prog = document.getElementById('close-modal-progress');
+  if (prog) prog.style.display = 'block';
+  document.getElementById('close-modal').style.display = 'flex';
+  // Остановка идёт до выхода: убить лаунчер раньше — значит бросить базы
+  // недоостановленными, ровно от чего пользователь и отказался.
+  fetch('/killall', {method:'POST'}).catch(function(){}).then(function(){ quitNow(); });
+}
+function quitNow() {
   fetch('/quit', {method:'POST'}).catch(function(){});
   setTimeout(function(){ window.close(); }, 200);
-  return false;
+}
+function confirmKillAll(el) {
+  if (_runningCount > 0 && !confirm('{{t $.Lang "Остановить все работающие базы?"}}\n\n' +
+      '{{t $.Lang "Открытые окна Предприятия и подключённые пользователи потеряют связь."}}')) {
+    return false;
+  }
+  return doPost(el);
 }
 function toggleIsoMenu(ev) {
   if (ev) { if (ev.preventDefault) ev.preventDefault(); if (ev.stopPropagation) ev.stopPropagation(); }
