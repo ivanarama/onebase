@@ -167,6 +167,7 @@ func allSchemas() map[string]map[string]any {
 				"item_form":             arrayOf(stringSchema("Имя поля")),
 				"list_mode":             stringSchema("pages|feed"),
 				"fulltext":              arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
+				"search_fields":         arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
 				"numerator": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
