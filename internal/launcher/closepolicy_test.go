@@ -63,6 +63,26 @@ func TestCloseDialogText_LimitsLongList(t *testing.T) {
 	}
 }
 
+// Язык нативного диалога брать неоткуда — HTTP-запроса в момент закрытия окна
+// нет, поэтому он берётся от последней отрисованной страницы лаунчера.
+func TestCurrentLang_FollowsLastRenderedPage(t *testing.T) {
+	prev := currentLang()
+	t.Cleanup(func() { rememberLang(prev) })
+
+	if prev == "" {
+		t.Fatal("язык по умолчанию не должен быть пустым — диалог остался бы без перевода")
+	}
+	rememberLang("en")
+	if got := currentLang(); got != "en" {
+		t.Errorf("после страницы на en ожидался en, получено %q", got)
+	}
+	// Пустой язык (страница без Lang) не должен затирать запомненный.
+	rememberLang("")
+	if got := currentLang(); got != "en" {
+		t.Errorf("пустой язык затёр запомненный: %q", got)
+	}
+}
+
 // closeFixture: реестр из двух баз — одна работает, вторая нет.
 func closeFixture(t *testing.T) *handler {
 	t.Helper()
