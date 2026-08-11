@@ -662,8 +662,11 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 	case token.PERCENT:
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)
-		// Остаток берём от целых частей — как в 1С: 7 % 2 = 1.
-		if rok && rd.IsZero() {
+		// Остаток десятичный, без усечения операндов: 7.5 % 2 = 1.5.
+		// Условие деления на ноль такое же, как у SLASH: ошибка возникает,
+		// только когда операция вообще применима — иначе «abc % 0» падал бы
+		// делением на ноль там, где обычное деление возвращает Неопределено.
+		if rok && rd.IsZero() && (lok || l == nil) {
 			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
 		}
 		if lok && rok {
