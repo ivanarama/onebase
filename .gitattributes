@@ -32,3 +32,9 @@ internal/launcher/static/*.css text eol=lf
 internal/ui/pwa/sw.js text eol=lf
 internal/ui/pwa/offline.html text eol=lf
 internal/ui/pwa/manifest.webmanifest text eol=lf
+
+# Markdown — всегда LF. На Windows с core.autocrlf=true правка любого .md
+# перезаписывает файл целиком в CRLF: дифф раздувается на тысячи строк,
+# содержательная часть в ревью не видна, а docs/features.md после этого
+# конфликтует с каждым соседним PR (он и так правится почти в каждом).
+*.md text eol=lf
