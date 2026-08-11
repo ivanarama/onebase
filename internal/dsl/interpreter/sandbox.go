@@ -105,6 +105,25 @@ func llmDenyFn(msg string) BuiltinFunc {
 	}
 }
 
+// applySandboxLimits задаёт один абсолютный wall-clock дедлайн запуска. Таймер
+// здесь намеренно не создаётся: большинство CallSandboxed не вызывает паузу,
+// а обычные операторы проверяют дешёвый time.Time через checkDeadline.
+func applySandboxLimits(e *env, p SandboxProfile) {
+	e.ec.maxLoopIters = p.MaxLoopIters
+	if p.MaxWallClock > 0 {
+		e.ec.deadline = time.Now().Add(p.MaxWallClock)
+	}
+}
+
+// applySandboxVars навязывает запреты после переменных вызывающего. Штатная
+// пауза не хранится в env: при провале к глобальному builtin evalCall применяет
+// к ней общий deadline запуска.
+func applySandboxVars(e *env, p SandboxProfile) {
+	for k, v := range p.Vars() {
+		e.setLocal(k, v)
+	}
+}
+
 // RunSandboxed исполняет процедуру с ресурсными лимитами профиля (wall-clock и
 // итерации) и запретами возможностей (сеть/файлы/ИИ). Запреты навязываются
 // автоматически — p.Vars() мержится ПОСЛЕ extraVars вызывающего, поэтому
@@ -112,10 +131,10 @@ func llmDenyFn(msg string) BuiltinFunc {
 // значение — в result.
 func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p SandboxProfile, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
-	if p.MaxWallClock > 0 {
-		e.ec.deadline = time.Now().Add(p.MaxWallClock)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
 	}
-	e.ec.maxLoopIters = p.MaxLoopIters
+	applySandboxLimits(e, p)
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -141,9 +160,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 	// поэтому вызывающий не может (случайно или намеренно) переоткрыть
 	// запрещённую возможность. Раньше Vars() передавался вызывающим вручную —
 	// забытый или неверно упорядоченный вызов молча открывал песочницу.
-	for k, v := range p.Vars() {
-		e.setLocal(k, v)
-	}
+	applySandboxVars(e, p)
 	if i.StrictLexicalScope {
 		if result != nil {
 			*result = i.callEntryProc(proc, e, nil)
@@ -161,10 +178,10 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 // return a value.
 func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []any, p SandboxProfile, extraVars ...map[string]any) (result any, err error) {
 	e := i.startEnv(this)
-	if p.MaxWallClock > 0 {
-		e.ec.deadline = time.Now().Add(p.MaxWallClock)
+	if proc != nil {
+		e.sourceFile = proc.Name.File
 	}
-	e.ec.maxLoopIters = p.MaxLoopIters
+	applySandboxLimits(e, p)
 	defer func() {
 		if r := recover(); r != nil {
 			switch s := r.(type) {
@@ -182,9 +199,7 @@ func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []a
 			e.setLocal(k, v)
 		}
 	}
-	for k, v := range p.Vars() {
-		e.setLocal(k, v)
-	}
+	applySandboxVars(e, p)
 	result = i.callUserProc(proc, e, args)
 	return
 }

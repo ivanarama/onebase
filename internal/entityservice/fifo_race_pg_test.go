@@ -101,7 +101,7 @@ func TestSave_ConcurrentFIFOPostingsDoNotDoubleSpend(t *testing.T) {
 		lockMgr := runtime.NewLockManager()
 		return &Service{
 			Store: db, Reg: registry, Interp: interp,
-			BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) map[string]any {
+			BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
 				vars := dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
 				vars["БлокировкаДанных"] = interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
 					lo := runtime.NewLockObjectWithCollector(lockMgr, runtime.LockCollectorFromContext(c))
@@ -115,7 +115,7 @@ func TestSave_ConcurrentFIFOPostingsDoNotDoubleSpend(t *testing.T) {
 					})
 					return lo, nil
 				})
-				return vars
+				return vars, nil
 			},
 		}
 	}

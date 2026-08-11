@@ -110,7 +110,7 @@ func TestCatalogsRoot_ManagerMethod(t *testing.T) {
 	// подключённым ManagerCaller. Тянем catalogs из vars вместо
 	// прямого создания CatalogsRoot — это гарантирует, что caller
 	// подключён в проде так же, как в тесте.
-	vars := s.buildDSLVars(ctx, runtime.NewMovementsCollector(cat.Name, [16]byte{}))
+	vars, _ := s.buildDSLVarsTx(ctx, runtime.NewMovementsCollector(cat.Name, [16]byte{}))
 	catsAny := vars["Справочники"]
 	cats, ok := catsAny.(*interpreter.CatalogsRoot)
 	if !ok {

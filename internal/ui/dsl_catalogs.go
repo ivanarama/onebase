@@ -26,9 +26,9 @@ func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Serv
 		Interp:       s.interp,
 		PrepareHook:  s.enrichHeaderRefs,
 		EnrichTPRows: s.enrichTPRowsWithRefs,
-		BuildVars:    s.buildDSLVarsWithMessages,
-		MakeThis: func(ctx context.Context, obj *runtime.Object, e *metadata.Entity) interpreter.This {
-			return s.newFormObjectThis(ctx, obj, e, nil)
+		BuildVars:    s.buildDSLVarsWithMessagesTx,
+		MakeThis: func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
 		},
 		// Исходящие веб-хуки (план 29): save/post диспетчеризуются из Save.
 		Hooks: hooks,
@@ -41,8 +41,9 @@ func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Serv
 // BuildJobDSLVars — полное DSL-окружение для регламентных заданий (план 101):
 // scheduler вызывает его вместо собственного базового набора, чтобы задания
 // имели Справочники/Документы/вложения/транзакции — как обработки из UI/procrun.
-func (s *Server) BuildJobDSLVars(ctx context.Context, mc *runtime.MovementsCollector) map[string]any {
-	return s.buildDSLVars(ctx, mc)
+// Вместе с картой возвращается TxState: scheduler закрывает его после запуска.
+func (s *Server) BuildJobDSLVars(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState) {
+	return s.buildDSLVarsTx(ctx, mc)
 }
 
 // catFactory реализует interpreter.CatalogObjectFactory: объекты справочников,
