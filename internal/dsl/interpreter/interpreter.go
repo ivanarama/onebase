@@ -670,6 +670,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
 		}
 		if lok && rok {
+			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
 			return ld.Mod(rd)
 		}
 		if l == nil && rok {
@@ -685,6 +686,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
 		}
 		if lok && rok {
+			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
 			return ld.Div(rd)
 		}
 		if l == nil && rok {
@@ -1145,6 +1147,7 @@ func applyCompoundOp(op token.Type, old, val any) any {
 			return ld.Mul(rd)
 		case token.SLASH_ASSIGN:
 			if !rd.IsZero() {
+				requireSafeDecimalQuotient(ld, rd, 0)
 				return ld.Div(rd)
 			}
 			return decimal.Zero

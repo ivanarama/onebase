@@ -95,6 +95,25 @@ func TestSandbox_FileDeniedCatchable(t *testing.T) {
 	assert.Contains(t, result.(string), "файловые операции запрещены")
 }
 
+// Пути временного каталога — часть файловой capability: строгий профиль не
+// должен ни раскрывать путь хоста, ни выдавать имя для последующей записи.
+func TestSandbox_TempPathsDeniedCatchable(t *testing.T) {
+	for _, call := range []string{"КаталогВременныхФайлов()", `ПолучитьИмяВременногоФайла("txt")`} {
+		src := `Процедура Тест()
+		Попытка
+			Значение = ` + call + `;
+			Возврат "без ошибки: " + Строка(Значение);
+		Исключение
+			Возврат ОписаниеОшибки();
+		КонецПопытки;
+	КонецПроцедуры`
+		var result any
+		err := interpreter.New().RunSandboxed(parseProc(t, src), nil, interpreter.RestrictedProfile(), &result)
+		require.NoError(t, err)
+		assert.Contains(t, result.(string), "файловые операции запрещены", call)
+	}
+}
+
 // Строгий профиль запрещает сеть/почту; запрет ловится Попыткой.
 func TestSandbox_NetDeniedCatchable(t *testing.T) {
 	src := `Процедура Тест()
