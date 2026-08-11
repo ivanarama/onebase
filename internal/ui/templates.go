@@ -47,6 +47,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
+		"normalizedFormHotkey":           normalizedFormHotkey,
 		"str": func(v any) string {
 			if v == nil {
 				return ""
@@ -252,8 +253,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if el == nil || el.Handlers == nil {
 				return false
 			}
-			_, ok := el.Handlers[metadata.FormEventType(eventName)]
-			return ok
+			handler, ok := el.Handlers[metadata.FormEventType(eventName)]
+			return ok && strings.TrimSpace(handler) != ""
 		},
 		// hasFormHandler — есть ли у формы (а не элемента) обработчик события.
 		// Используется в managed-шаблоне для авто-вызова ПриОткрытииФормы при
@@ -262,8 +263,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if form == nil || form.Handlers == nil {
 				return false
 			}
-			_, ok := form.Handlers[metadata.FormEventType(eventName)]
-			return ok
+			handler, ok := form.Handlers[metadata.FormEventType(eventName)]
+			return ok && strings.TrimSpace(handler) != ""
 		},
 		// deleteHidden — скрыта ли кнопка «Удалить» формы через
 		// actions.delete.visible=false (issue #151). По умолчанию (нет actions
@@ -374,7 +375,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return nil
 			}
 			for _, attr := range form.Attributes {
-				if strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
+				if attr != nil && strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
 					return attr.Columns
 				}
 			}
@@ -738,6 +739,16 @@ func setQueryValue(vals url.Values, key, value string) {
 		return
 	}
 	vals.Set(key, value)
+}
+
+func normalizedFormHotkey(value string) string {
+	key := strings.ToUpper(strings.TrimSpace(value))
+	switch key {
+	case "F2", "F4", "F7", "F8", "F9", "F10":
+		return key
+	default:
+		return ""
+	}
 }
 
 func templateSource() string {
@@ -1234,11 +1245,11 @@ const tplList = `
     {{if .Entity.Hierarchical}}
       {{if .UpURL}}<a class="btn btn-secondary btn-sm" href="{{.UpURL}}">{{t $.Lang "↑ Наверх"}}</a>{{end}}
       {{if .CanWrite}}
-      <a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>
+      <a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>
       <a class="btn btn-secondary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?is_folder=true{{if .ParentStr}}&parent={{.ParentStr}}{{end}}">{{t $.Lang "📁 Группа"}}</a>
       {{end}}
     {{else}}
-      {{if .CanWrite}}<a class="btn btn-primary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
+      {{if .CanWrite}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
@@ -1247,7 +1258,7 @@ const tplList = `
   </div>
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
-  <input type="text" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-auto-submit="320">
+  <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
   {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
   {{/* Форма владеет только q — остальное состояние списка (вид, папка,
        отбор, сортировка, раздел) уезжает скрытыми полями, иначе поиск
@@ -1322,7 +1333,7 @@ const tplList = `
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
   data-tree-parent="{{index $row "parent_id"}}"
@@ -1373,10 +1384,10 @@ const tplList = `
 {{/* ===== TILES VIEW (плитка) ===== */}}
 {{if .Rows}}
 {{$tile := tileView .Entity}}
-<div class="tile-grid">
+<div class="tile-grid" role="listbox">
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
-  data-ob-list-row
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"
@@ -1432,7 +1443,7 @@ const tplList = `
 </tr></thead><tbody id="list-body">
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"
@@ -1554,11 +1565,11 @@ const tplForm = `
       {{end}}
     {{end}}
   {{end}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if $.CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
+      {{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -1716,9 +1727,10 @@ const tplForm = `
 </div>
 {{end}}
 
-{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}
+{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}{{$tpReadOnly := not $.CanWrite}}
 <h3>{{$tp.DisplayName $.Lang}}</h3>
-<table class="tp-table">
+<table class="tp-table" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
+  {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
   <thead><tr>
     {{range .Fields}}<th>{{.DisplayName $.Lang}}</th>{{end}}
     <th style="width:40px"></th>
@@ -1726,30 +1738,30 @@ const tplForm = `
   <tbody id="tp-body-{{$tpName}}">
   {{$existingRows := index $.TablePartRows $tpName}}
   {{range $i, $row := $existingRows}}
-    <tr>
+    <tr tabindex="-1" aria-selected="false">
       {{range $tp.Fields}}{{$fn := .Name}}
         <td>
         {{if isRef (str .Type)}}
           <div style="display:flex;gap:4px;align-items:center">
-            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if .InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}>
+            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if .InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
-            <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+            <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}"{{if $tpReadOnly}} disabled{{end}}>...</button>
             <button type="button" data-ob-ref-current-self style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
           </div>
         {{else if eq (str .Type) "number"}}
           <input type="number" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
-            data-tp-num="{{$fn}}" data-ob-tp-recalc>
+            data-tp-num="{{$fn}}" data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
         {{else}}
           <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
-            data-ob-tp-recalc>
+            data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
         {{end}}
         </td>
       {{end}}
-      <td><button type="button" class="del-btn" data-ob-remove-row="tr">×</button></td>
+      <td><button type="button" class="del-btn" data-ob-remove-row="tr"{{if $tpReadOnly}} disabled{{else}} title="Delete" aria-keyshortcuts="Delete"{{end}}>×</button></td>
     </tr>
   {{end}}
   </tbody>
@@ -1758,17 +1770,18 @@ const tplForm = `
   </tr></tfoot>
 </table>
 <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin-bottom:8px"
-  data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}">
+  data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}"
+  {{if $tpReadOnly}}disabled{{else}}title="Insert" aria-keyshortcuts="Insert"{{end}}>
   + {{t $.Lang "Добавить строку"}}
 </button>
 {{end}}
 
 <div style="margin-top:16px">
   {{if .IsPopup}}
-  {{if .CanWrite}}<button class="btn btn-primary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-primary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
   <a href="#" data-ob-popup-cancel class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>
   {{else}}
-  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form">{{t $.Lang "Записать"}}</button>{{end}}
+  {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>
   {{end}}
 </div>

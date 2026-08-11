@@ -2,13 +2,304 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
+
+type managedFormTablePayloadSource uint8
+
+const (
+	managedFormTableNamedPayload managedFormTablePayloadSource = 1 << iota
+	managedFormTableJSONPayload
+)
+
+type managedFormTableAuthority struct {
+	source  managedFormTablePayloadSource
+	element *metadata.FormElement
+}
+
+// managedFormTableAuthorities derives one authoritative browser control and
+// encoding per canonical table from server-owned form metadata. A placement is
+// writable only when both the metadata tree and the caller's actual permission
+// allow writes. Client-provided markers can never promote another namespace.
+//
+// Even two writable placements using the same renderer are ambiguous: they
+// keep independent browser state but submit the same canonical namespace. The
+// form must therefore have exactly zero or one writable placement per table.
+func managedFormTableAuthorities(
+	form *metadata.FormModule,
+	declared []metadata.TablePart,
+	canWrite bool,
+) (map[string]managedFormTableAuthority, error) {
+	definitions, err := metadata.FormTableDefinitions(form, declared)
+	if err != nil {
+		return nil, err
+	}
+	authorities := make(map[string]managedFormTableAuthority)
+	if form == nil || !canWrite {
+		return authorities, nil
+	}
+	var policyErr error
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if policyErr != nil {
+			return
+		}
+		el := visit.element
+		if el.Kind != metadata.FormElementTablePart || visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 {
+			return
+		}
+		formName := dpFieldName(el.DataPath)
+		for _, definition := range definitions {
+			if !strings.EqualFold(definition.Name, formName) {
+				continue
+			}
+			source := managedFormTableJSONPayload
+			// ValueTable currently has only the DOM renderer and therefore posts
+			// vt.* regardless of the element's NoGrid flag. NoGrid selects the
+			// representation only for persistent entity/processor table parts.
+			if definition.Source == metadata.FormTableSourceValueTable || el.NoGrid {
+				source = managedFormTableNamedPayload
+			}
+			if previous, exists := authorities[definition.Name]; exists && previous.element != nil {
+				policyErr = fmt.Errorf(
+					"неоднозначные редактируемые представления таблицы формы %q: элементы %q и %q",
+					definition.Name, previous.element.Name, el.Name,
+				)
+				return
+			}
+			authorities[definition.Name] = managedFormTableAuthority{source: source, element: el}
+			return
+		}
+	})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	return authorities, nil
+}
+
+func managedFormTablePayloadSources(
+	form *metadata.FormModule,
+	declared []metadata.TablePart,
+	canWrite bool,
+) (map[string]managedFormTablePayloadSource, error) {
+	authorities, err := managedFormTableAuthorities(form, declared, canWrite)
+	if err != nil {
+		return nil, err
+	}
+	sources := make(map[string]managedFormTablePayloadSource, len(authorities))
+	for name, authority := range authorities {
+		sources[name] = authority.source
+	}
+	return sources, nil
+}
+
+// validateManagedFormTableEventTarget binds table and child-command events to
+// the exact server-authorized placement. This prevents a readonly duplicate
+// from borrowing authority from another writable element for the same table.
+func validateManagedFormTableEventTarget(
+	authorities map[string]managedFormTableAuthority,
+	target browserFormEventTarget,
+) error {
+	tableElement := target.parentTablePart
+	if target.element != nil && target.element.Kind == metadata.FormElementTablePart {
+		tableElement = target.element
+	}
+	if tableElement == nil {
+		return nil
+	}
+	for _, authority := range authorities {
+		if authority.element == tableElement {
+			return nil
+		}
+	}
+	return fmt.Errorf("табличная часть %q доступна только для чтения", tableElement.Name)
+}
+
+// managedFormSinglePayloadValue resolves one protocol key from POST body only.
+// Case variants map to the same canonical key and are therefore duplicates,
+// just like multiple values submitted under one exact key.
+func managedFormSinglePayloadValue(values map[string][]string, canonicalKey string) (string, bool, error) {
+	matchedKey := ""
+	matchedValue := ""
+	for key, submitted := range values {
+		if !strings.EqualFold(key, canonicalKey) {
+			continue
+		}
+		if matchedKey != "" {
+			return "", true, fmt.Errorf("ключ payload %q указан повторно как %q и %q", canonicalKey, matchedKey, key)
+		}
+		if len(submitted) != 1 {
+			return "", true, fmt.Errorf("ключ payload %q должен иметь ровно одно значение", canonicalKey)
+		}
+		matchedKey = key
+		matchedValue = submitted[0]
+	}
+	return matchedValue, matchedKey != "", nil
+}
+
+func managedFormCanonicalColumn(columns []string, raw string) (string, bool) {
+	for _, column := range columns {
+		if strings.EqualFold(column, raw) {
+			return column, true
+		}
+	}
+	return "", false
+}
+
+// managedFormFoldKey returns one representative per unicode.SimpleFold orbit,
+// preserving strings.EqualFold's rune-by-rune equivalence while allowing
+// duplicate JSON keys to be detected with an O(1) map lookup.
+func managedFormFoldKey(value string) string {
+	var folded strings.Builder
+	folded.Grow(len(value))
+	for _, r := range value {
+		canonical := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < canonical {
+				canonical = next
+			}
+		}
+		folded.WriteRune(canonical)
+	}
+	return folded.String()
+}
+
+// managedFormNamedTableRows canonicalizes tp./vt. body keys against server
+// metadata and rejects two client keys which address the same row+column.
+// Unknown columns remain ignored for compatibility, but can never make a row
+// authoritative or collide with a declared column.
+func managedFormNamedTableRows(
+	values map[string][]string,
+	namespace string,
+	tableName string,
+	columns []string,
+) ([]map[string]string, bool, error) {
+	rowsByIndex := make(map[int]map[string]string)
+	seen := make(map[string]string)
+	present := false
+	for key, submitted := range values {
+		parts := strings.Split(key, ".")
+		if len(parts) < 2 || !strings.EqualFold(parts[0], namespace) || !strings.EqualFold(parts[1], tableName) {
+			continue
+		}
+		if len(parts) != 4 {
+			return nil, false, fmt.Errorf("некорректный ключ payload таблицы %q: %q", tableName, key)
+		}
+		rowIndex, err := strconv.Atoi(parts[2])
+		if err != nil || rowIndex < 0 {
+			return nil, false, fmt.Errorf("некорректный индекс строки таблицы %q в ключе %q", tableName, key)
+		}
+		column, known := managedFormCanonicalColumn(columns, parts[3])
+		if !known {
+			continue
+		}
+		canonicalKey := strconv.Itoa(rowIndex) + "." + column
+		if previous, duplicate := seen[canonicalKey]; duplicate {
+			return nil, false, fmt.Errorf("ключ payload таблицы %q указан повторно как %q и %q", tableName, previous, key)
+		}
+		if len(submitted) != 1 {
+			return nil, false, fmt.Errorf("ключ payload таблицы %q %q должен иметь ровно одно значение", tableName, key)
+		}
+		seen[canonicalKey] = key
+		if rowsByIndex[rowIndex] == nil {
+			rowsByIndex[rowIndex] = make(map[string]string)
+		}
+		rowsByIndex[rowIndex][column] = submitted[0]
+		present = true
+	}
+	if !present {
+		return nil, false, nil
+	}
+	indices := make([]int, 0, len(rowsByIndex))
+	for rowIndex := range rowsByIndex {
+		indices = append(indices, rowIndex)
+	}
+	sort.Ints(indices)
+	rows := make([]map[string]string, 0, len(indices))
+	for _, rowIndex := range indices {
+		rows = append(rows, rowsByIndex[rowIndex])
+	}
+	return rows, true, nil
+}
+
+// decodeManagedFormJSONRows accepts exactly one JSON array of objects. It uses
+// streaming tokens so duplicate object keys (including case variants) cannot
+// be silently overwritten by encoding/json's map decoder.
+func decodeManagedFormJSONRows(blob string, columns []string) ([]map[string]any, error) {
+	if strings.TrimSpace(blob) == "" {
+		return nil, fmt.Errorf("JSON payload пуст")
+	}
+	decoder := json.NewDecoder(strings.NewReader(blob))
+	decoder.UseNumber()
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '[' {
+		return nil, fmt.Errorf("ожидался JSON-массив строк")
+	}
+	rows := make([]map[string]any, 0)
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+			return nil, fmt.Errorf("строка таблицы должна быть JSON-объектом")
+		}
+		row := make(map[string]any)
+		seenKeys := make(map[string]string)
+		for decoder.More() {
+			keyToken, keyErr := decoder.Token()
+			if keyErr != nil {
+				return nil, keyErr
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, fmt.Errorf("имя поля строки таблицы должно быть строкой")
+			}
+			foldedKey := managedFormFoldKey(key)
+			if previous, duplicate := seenKeys[foldedKey]; duplicate {
+				return nil, fmt.Errorf("поле JSON-строки указано повторно как %q и %q", previous, key)
+			}
+			seenKeys[foldedKey] = key
+			var value any
+			if err := decoder.Decode(&value); err != nil {
+				return nil, err
+			}
+			if canonical, known := managedFormCanonicalColumn(columns, key); known {
+				row[canonical] = value
+			}
+		}
+		if token, err = decoder.Token(); err != nil {
+			return nil, err
+		} else if delimiter, ok := token.(json.Delim); !ok || delimiter != '}' {
+			return nil, fmt.Errorf("некорректное завершение JSON-строки")
+		}
+		rows = append(rows, row)
+	}
+	if token, err = decoder.Token(); err != nil {
+		return nil, err
+	} else if delimiter, ok := token.(json.Delim); !ok || delimiter != ']' {
+		return nil, fmt.Errorf("некорректное завершение JSON-массива")
+	}
+	if _, err = decoder.Token(); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("после JSON-массива обнаружены лишние данные")
+		}
+		return nil, err
+	}
+	return rows, nil
+}
 
 // Частичная запись управляемой формы.
 //
@@ -95,31 +386,6 @@ func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) m
 	return out
 }
 
-// editableManagedEntityTableParts returns persistent table parts which have at
-// least one editable representation on the managed form. Unplaced and
-// effectively readonly tables are partial-form state: their browser payload is
-// neither complete (disabled selects/checkboxes are omitted) nor authoritative.
-func editableManagedEntityTableParts(form *metadata.FormModule, entity *metadata.Entity) map[string]bool {
-	result := make(map[string]bool)
-	if form == nil || entity == nil {
-		return result
-	}
-	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
-		el := visit.element
-		if el.Kind != metadata.FormElementTablePart || visit.effectiveReadOnly || el.DataPath == "" || strings.Count(el.DataPath, ".") > 1 {
-			return
-		}
-		name := dpFieldName(el.DataPath)
-		for _, tablePart := range entity.TableParts {
-			if strings.EqualFold(tablePart.Name, name) {
-				result[tablePart.Name] = true
-				break
-			}
-		}
-	})
-	return result
-}
-
 // restoreUneditableTableParts protects table parts which a managed form does
 // not allow the user to edit. For an existing object their persisted rows are
 // restored (partial-write preservation); for a new object forged rows are
@@ -132,11 +398,19 @@ func (s *Server) restoreUneditableTableParts(
 	form *metadata.FormModule,
 	id uuid.UUID,
 	rows map[string][]map[string]any,
+	canWrite bool,
 ) error {
 	if entity == nil || form == nil || rows == nil {
 		return nil
 	}
-	editable := editableManagedEntityTableParts(form, entity)
+	editable := make(map[string]bool)
+	authorities, err := managedFormTableAuthorities(form, entity.TableParts, canWrite)
+	if err != nil {
+		return err
+	}
+	for _, tablePart := range entity.TableParts {
+		editable[tablePart.Name] = authorities[tablePart.Name].source != 0
+	}
 	for _, tablePart := range entity.TableParts {
 		if editable[tablePart.Name] {
 			continue

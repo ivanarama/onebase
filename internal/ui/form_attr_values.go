@@ -16,7 +16,7 @@ import (
 // Реквизиты формы в событийном пути.
 //
 // formToFields строит Объект только из entity.Fields, а единственный разбор
-// form.Attributes — parseValueTableRows и только для TypeRef == "ValueTable".
+// form.Attributes — parseValueTableRowsForManagedForm и только для TypeRef == "ValueTable".
 // Поэтому значение, выбранное на форме в реквизите формы (attributes с
 // save:false), обработчику .form.os было не видно: Объект.Склад давал nil.
 // После #522 такие реквизиты получили рабочий пикер, и это стало заметно —
