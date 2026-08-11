@@ -199,7 +199,10 @@ func allSchemas() map[string]map[string]any {
 			},
 		},
 		"register": fieldGroupSchema("OneBase accumulation register", field, []string{"dimensions", "resources", "attributes"}, map[string]any{"kind": stringSchema("balance|turnover")}),
-		"inforeg":  fieldGroupSchema("OneBase information register", field, []string{"dimensions", "resources"}, map[string]any{"periodic": map[string]any{"type": "boolean"}}),
+		"inforeg": fieldGroupSchema("OneBase information register", field, []string{"dimensions", "resources"}, map[string]any{
+			"periodic": map[string]any{"type": "boolean"},
+			"recorder": map[string]any{"type": "boolean", "description": "регистр подчинён регистратору: строки формирует проведение документа, программная запись отклоняется"},
+		}),
 		"enum": {
 			"$schema":              "https://json-schema.org/draft/2020-12/schema",
 			"title":                "OneBase enum",
