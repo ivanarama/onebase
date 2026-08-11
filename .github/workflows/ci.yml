@@ -216,6 +216,11 @@ jobs:
           # Без этой строки postgres-подтесты матричных тестов пакета
           # пропускались: TEST_DATABASE_URL задан только в этом джобе.
           go test -race -count=1 -timeout 15m -tags integration ./internal/dsl/interpreter
+          # Owner-aware image demo has a PostgreSQL-only inter-server race
+          # regression. Select the exact matrix subtest so this job does not
+          # expand into the full internal/ui suite.
+          go test -race -count=1 -timeout 5m ./internal/ui \
+            -run '^TestTradeImageDemo_ConcurrentRunsCreateSingleBlob$/^postgres$'
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck

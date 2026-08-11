@@ -57,7 +57,7 @@ func newAPITestHandlerWithReports(t *testing.T, entities []*metadata.Entity, rep
 	// API-вариант BuildVars: используем dslvars.Common — даёт OnWrite доступ
 	// к Перечислениям/Константам/Запрос/Предопределённым + HTTP/Email/Движения.
 	// Полный UI-вариант (locks/users/Сообщить-store/Документы) для API избыточен.
-	buildVars := func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
+	buildVars := func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
 		vars := dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
 		// Минимальная реализация Сообщить — кладёт в msgs slice. Для теста этого достаточно.
 		vars["Сообщить"] = interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
@@ -67,7 +67,7 @@ func newAPITestHandlerWithReports(t *testing.T, entities []*metadata.Entity, rep
 			return nil, nil
 		})
 		vars["Message"] = vars["Сообщить"]
-		return vars
+		return vars, nil
 	}
 
 	svc := &entityservice.Service{
@@ -1539,8 +1539,8 @@ func TestAPI_PostDocument_WritesMovements(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 
-	buildVars := func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
-		return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
+	buildVars := func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
+		return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
 	}
 	svc := &entityservice.Service{Store: db, Reg: registry, Interp: interp, BuildVars: buildVars}
 	h := &handler{reg: registry, store: db, interp: interp, entitySvc: svc}
@@ -1681,8 +1681,8 @@ func TestAPI_PostDocument_EmptyBody_KeepsTableParts(t *testing.T) {
 	})
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
-	buildVars := func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) map[string]any {
-		return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build()
+	buildVars := func(c context.Context, mc *runtime.MovementsCollector, msgs *[]string) (map[string]any, *interpreter.TxState) {
+		return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
 	}
 	svc := &entityservice.Service{Store: db, Reg: registry, Interp: interp, BuildVars: buildVars}
 	h := &handler{reg: registry, store: db, interp: interp, entitySvc: svc}
