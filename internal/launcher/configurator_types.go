@@ -91,7 +91,11 @@ type saveEntity struct {
 	// объект из глобального поиска (план 82). Без этого поля правка объекта из
 	// конфигуратора молча вытирала блок, то есть возвращала в поиск то, что
 	// администратор оттуда убрал.
-	FullText   *[]string   `yaml:"fulltext,omitempty"`
+	FullText *[]string `yaml:"fulltext,omitempty"`
+	// Search — тоже указатель и по той же причине: «ключа нет» (искать по всем
+	// строковым реквизитам) и «search_fields: []» (поиск по строке выключен)
+	// значат разное, и потерять второе при правке объекта нельзя.
+	Search     *[]string   `yaml:"search_fields,omitempty"`
 	Fields     []saveField `yaml:"fields"`
 	TableParts []saveTP    `yaml:"tableparts,omitempty"`
 
