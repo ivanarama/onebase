@@ -42,16 +42,17 @@ const (
 	CONTINUE // Продолжить / Continue
 	WHILE    // Пока / While
 
-	ASSIGN // =
-	NEQ    // <>
-	LT     // <
-	GT     // >
-	LTE    // <=
-	GTE    // >=
-	PLUS   // +
-	MINUS  // -
-	STAR   // *
-	SLASH  // /
+	ASSIGN  // =
+	NEQ     // <>
+	LT      // <
+	GT      // >
+	LTE     // <=
+	GTE     // >=
+	PLUS    // +
+	MINUS   // -
+	STAR    // *
+	SLASH   // /
+	PERCENT // % — остаток от деления
 
 	PLUS_ASSIGN  // +=
 	MINUS_ASSIGN // -=
@@ -262,6 +263,8 @@ func (t Type) String() string {
 		return "*"
 	case SLASH:
 		return "/"
+	case PERCENT:
+		return "%"
 	case PLUS_ASSIGN:
 		return "+="
 	case MINUS_ASSIGN:

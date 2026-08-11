@@ -96,3 +96,46 @@ func TestFirstHavingCoalesceMatrix(t *testing.T) {
 		}
 	})
 }
+
+// «ПЕРВЫЕ 0» обязано отдавать пустой результат, а не падать и не игнорировать
+// лимит. LIMIT 0 понимают оба диалекта, но проверяем исполнением: молча
+// вернувшиеся все строки были бы хуже ошибки компиляции, которую мы сняли (#741).
+func TestFirstZeroMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ent := &metadata.Entity{
+			Name:   "ПервыеНольМатрица",
+			Kind:   metadata.KindCatalog,
+			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		}
+		if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+			t.Fatalf("миграция: %v", err)
+		}
+		for _, name := range []string{"A1", "A2", "B1"} {
+			if err := db.Upsert(ctx, ent.Name, uuid.New(),
+				map[string]any{"Наименование": name}, ent); err != nil {
+				t.Fatalf("запись: %v", err)
+			}
+		}
+
+		res, err := query.Compile(
+			`ВЫБРАТЬ ПЕРВЫЕ 0 Наименование ИЗ Справочник.ПервыеНольМатрица УПОРЯДОЧИТЬ ПО Наименование`,
+			query.CompileOpts{Entities: []*metadata.Entity{ent}, Dialect: db.Dialect()},
+		)
+		if err != nil {
+			t.Fatalf("компиляция ПЕРВЫЕ 0: %v", err)
+		}
+		rows, err := db.Query(ctx, res.SQL, res.Args...)
+		if err != nil {
+			t.Fatalf("исполнение ПЕРВЫЕ 0: %v\nSQL: %s", err, res.SQL)
+		}
+		defer rows.Close()
+		n := 0
+		for rows.Next() {
+			n++
+		}
+		if n != 0 {
+			t.Fatalf("ПЕРВЫЕ 0 вернуло %d строк, ожидалось 0\nSQL: %s", n, res.SQL)
+		}
+	})
+}
