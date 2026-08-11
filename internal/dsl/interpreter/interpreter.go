@@ -3,6 +3,7 @@ package interpreter
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -596,10 +597,16 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, sec)
 			}
+			if isNumeric(r) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
+			}
 		}
 		if rt, ok := r.(time.Time); ok {
 			if sec, ok2 := toFloat(l); ok2 {
 				return dateAddSeconds(rt, sec)
+			}
+			if isNumeric(l) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
 		// Строка + Строка — ВСЕГДА конкатенация, даже если обе строки состоят
@@ -636,6 +643,9 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			}
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, -sec)
+			}
+			if isNumeric(r) {
+				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
 		ld, lok := toDecimal(l)
@@ -1000,7 +1010,11 @@ func equal(a, b any) bool {
 
 // dateAddSeconds сдвигает дату на sec секунд (семантика арифметики дат 1С).
 func dateAddSeconds(t time.Time, sec float64) time.Time {
-	return t.Add(time.Duration(int64(sec)) * time.Second)
+	const maxWholeSeconds = float64(math.MaxInt64 / int64(time.Second))
+	if math.IsNaN(sec) || math.IsInf(sec, 0) || sec > maxWholeSeconds || sec < -maxWholeSeconds {
+		RaiseUserError("сдвиг даты выходит за безопасный диапазон времени")
+	}
+	return safeDateResult(t.Add(time.Duration(sec * float64(time.Second))))
 }
 
 func compare(a, b any) int {
@@ -1098,9 +1112,12 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 func toFloat(v any) (float64, bool) {
 	switch t := v.(type) {
 	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return 0, false
+		}
 		return t, true
 	case decimal.Decimal:
-		return t.InexactFloat64(), true
+		return decimalToFiniteFloat64(t)
 	case int:
 		return float64(t), true
 	case int32:
@@ -1109,6 +1126,9 @@ func toFloat(v any) (float64, bool) {
 		return float64(t), true
 	case string:
 		if f, err := strconv.ParseFloat(t, 64); err == nil {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return 0, false
+			}
 			return f, true
 		}
 	}
