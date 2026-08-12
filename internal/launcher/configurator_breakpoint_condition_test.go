@@ -33,8 +33,8 @@ func TestConfiguratorJS_BreakpointConditionWired(t *testing.T) {
 		"function dbgRestoreLocalBP",  // rollback к подтверждённому состоянию
 		"var _dbgBPSync",              // очередь и confirmed state на file:line
 		"function dbgBPSyncState",
-		"state.tail.then",             // изменения одной точки сериализованы
-		"action = 'remove'",           // toggle отправляется как явное состояние
+		"state.tail.then",   // изменения одной точки сериализованы
+		"action = 'remove'", // toggle отправляется как явное состояние
 		"dbgRestoreLocalBP(file, line, state.confirmed)",
 	} {
 		if !strings.Contains(js, want) {
