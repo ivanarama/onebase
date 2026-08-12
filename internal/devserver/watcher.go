@@ -19,6 +19,27 @@ func watcherLog() *slog.Logger {
 	return oblog.Component("devserver.watcher")
 }
 
+// watchOpts настраивает, что именно наблюдается.
+//
+//	accept  — пускать ли событие по этому пути к onChange (nil = пускать всё);
+//	skipDir — не брать каталог в наблюдение и не спускаться в него вовсе
+//	          (nil = брать всё дерево). Отличается от accept тем, что экономит
+//	          дескрипторы наблюдения: у .git и node_modules подкаталогов больше,
+//	          чем у самого проекта, а изменений, ради которых стоит перезагружаться,
+//	          в них не бывает.
+type watchOpts struct {
+	accept  func(path string, isDir bool, op fsnotify.Op) bool
+	skipDir func(path string) bool
+	// watchDirs are additional directories watched non-recursively. They cover
+	// manifest inputs in skipped subtrees plus go.work/local-replace modules
+	// outside the primary source tree.
+	watchDirs []string
+	// debounce runs after an accepted event has settled. It can refresh dynamic
+	// filters and add newly discovered external input directories before deciding
+	// whether the public callback is necessary.
+	debounce func() (notify bool, watchDirs []string)
+}
+
 // WatchContext watches dir and all its subdirectories, calling onChange after
 // a debounce period. fsnotify is not recursive, so every subdirectory is added
 // explicitly; directories created later are picked up on the fly.
@@ -26,7 +47,7 @@ func watcherLog() *slog.Logger {
 // done is closed after the watcher goroutine and any running callback have
 // stopped, so callers can safely release resources referenced by onChange.
 func WatchContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
-	return watchContext(ctx, dir, nil, onChange)
+	return watchContext(ctx, dir, watchOpts{}, onChange)
 }
 
 // WatchProjectContext watches only source/config files that can affect a
@@ -41,7 +62,7 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 		"roles": {}, "scheduled": {}, "services": {}, "src": {},
 		"subsystems": {}, "widgets": {},
 	}
-	return watchContext(ctx, dir, func(path string, isDir bool) bool {
+	return watchContext(ctx, dir, watchOpts{accept: func(path string, isDir bool, _ fsnotify.Op) bool {
 		if isDir {
 			rel, err := filepath.Rel(dir, path)
 			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
@@ -55,7 +76,36 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 		return strings.HasSuffix(lower, ".yaml") ||
 			strings.HasSuffix(lower, ".yml") ||
 			strings.HasSuffix(lower, ".os")
+	}}, onChange)
+}
+
+// WatchGoContext наблюдает за входами сборки платформы, полученными из `go list`:
+// Go/cgo/assembly sources, module/workspace files and assets matched by go:embed.
+// Он нужен режиму пересборки (`onebase dev --reload-binary`), где изменение
+// этих входов запускает `go build` и перезапуск процесса сервера.
+//
+// Каталоги, где входов сборки обычно не бывает (.git с его тысячами объектов,
+// node_modules, служебные .idea/.vscode), обходятся стороной; отдельные файлы из
+// них, если `go list` всё же назвал их входами, добавляются явно.
+func WatchGoContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
+	tracker := newGoBuildInputTracker(ctx, dir)
+	return watchContext(ctx, dir, watchOpts{
+		accept:    tracker.accept,
+		skipDir:   skipGoDir,
+		watchDirs: tracker.watchDirs(),
+		debounce:  tracker.refresh,
 	}, onChange)
+}
+
+// skipGoDir отсеивает каталоги, которые не содержат исходников платформы.
+func skipGoDir(path string) bool {
+	base := filepath.Base(path)
+	if base == "node_modules" {
+		return true
+	}
+	// Скрытые каталоги: .git, .idea, .vscode, .github/workflows тоже (yaml CI
+	// на бинарь не влияет). Точка и «..» скрытыми не считаются.
+	return len(base) > 1 && strings.HasPrefix(base, ".") && base != ".."
 }
 
 // debounceWindow — сколько тишины ждать после правки, прежде чем звать onChange.
@@ -65,19 +115,31 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 // два вызова (флейк TestWatchContext_Debounces).
 var debounceWindow = 300 * time.Millisecond
 
-func watchContext(ctx context.Context, dir string, accept func(string, bool) bool, onChange func()) (<-chan struct{}, error) {
+func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func()) (<-chan struct{}, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if onChange == nil {
 		return nil, fmt.Errorf("devserver: onChange callback is nil")
 	}
+	accept := opts.accept
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
 	watchedDirs := make(map[string]struct{})
+	addDir := func(path string) error {
+		path = filepath.Clean(path)
+		if _, ok := watchedDirs[path]; ok {
+			return nil
+		}
+		if err := w.Add(path); err != nil {
+			return err
+		}
+		watchedDirs[path] = struct{}{}
+		return nil
+	}
 	// addTree рекурсивно добавляет root и все его подкаталоги в наблюдение.
 	addTree := func(root string) error {
 		return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
@@ -85,10 +147,13 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 				return walkErr
 			}
 			if d.IsDir() {
-				if err := w.Add(path); err != nil {
+				// Сам root пропускать нельзя: его выбрал вызывающий, а не обход.
+				if opts.skipDir != nil && path != root && opts.skipDir(path) {
+					return fs.SkipDir
+				}
+				if err := addDir(path); err != nil {
 					return fmt.Errorf("watch %s: %w", path, err)
 				}
-				watchedDirs[filepath.Clean(path)] = struct{}{}
 			}
 			return nil
 		})
@@ -97,6 +162,17 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 		_ = w.Close()
 		return nil, fmt.Errorf("devserver: watch tree: %w", err)
 	}
+	addWatchDirs := func(dirs []string) {
+		for _, extra := range dirs {
+			if extra == "" {
+				continue
+			}
+			if err := addDir(extra); err != nil {
+				watcherLog().Warn("watch additional build-input directory failed", "path", extra, "err", err)
+			}
+		}
+	}
+	addWatchDirs(opts.watchDirs)
 
 	debounce := time.NewTimer(0)
 	<-debounce.C // drain initial tick
@@ -131,8 +207,13 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 				if event.Has(fsnotify.Create) {
 					if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
 						isDir = true
-						if err := addTree(event.Name); err != nil {
-							watcherLog().Warn("watch new directory failed", "path", event.Name, "err", err)
+						// Каталог из чёрного списка не берём и созданным
+						// на ходу: правило одно и то же, откуда бы каталог
+						// ни взялся (`git clone` подкаталога, распаковка).
+						if opts.skipDir == nil || !opts.skipDir(event.Name) {
+							if err := addTree(event.Name); err != nil {
+								watcherLog().Warn("watch new directory failed", "path", event.Name, "err", err)
+							}
 						}
 					}
 				}
@@ -146,7 +227,7 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 				}
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
 					event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					if accept != nil && !accept(event.Name, isDir) {
+					if accept != nil && !accept(event.Name, isDir, event.Op) {
 						continue
 					}
 					resetDebounce()
@@ -157,6 +238,15 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 				}
 				watcherLog().Warn("watcher error", "err", err)
 			case <-debounce.C:
+				notify := true
+				if opts.debounce != nil {
+					var dirs []string
+					notify, dirs = opts.debounce()
+					addWatchDirs(dirs)
+				}
+				if !notify {
+					continue
+				}
 				func() {
 					defer func() {
 						if recovered := recover(); recovered != nil {

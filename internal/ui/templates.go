@@ -984,7 +984,7 @@ body{padding-bottom:32px}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
 </style>
-</head><body>
+</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}">
 {{end}}
 `
 
