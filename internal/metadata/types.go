@@ -187,7 +187,7 @@ func (n *Numerator) PeriodOrDefault(kind Kind) string {
 // колонку и завести новую пустую».
 const (
 	StandardCodeField   = "Код"
-	StandardCodeFieldID = "std.code"
+	StandardCodeFieldID = "std_code"
 )
 
 // PredefinedItem describes a catalog record that is always present in the DB
