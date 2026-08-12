@@ -100,7 +100,10 @@
    (`storage/dialect.go:88-89`), SQLite `datetime('now')` имеет секундную
    точность (`:149-153`), а одна внешняя транзакция может выполнить несколько
    логических записей. Поэтому под той же record-lock вычисляется монотонный
-   `event_no`; именно он определяет latest. `at` берётся после lock через новый
+   `event_no`; именно он определяет latest. В `UpsertVersioned` после lock/read
+   сначала проверяется `_version == expectedVersion` и при несовпадении
+   возвращается ровно `ErrVersionConflict`; stage-check выполняется только для
+   актуальной версии. `at` берётся после lock через новый
    dialect statement-time (`clock_timestamp()` / SQLite `strftime(...%f...)`)
    и нужен только для отображения и длительности.
 
@@ -163,17 +166,18 @@ stages:
 явной миграцией бизнес-данных и истории, не косметическим rename этого плана.
 `field` остаётся удобной ссылкой по текущему имени, но при загрузке обязательно
 разрешается в непустой устойчивый `Field.ID` (план 81). Модель `Stages` хранит и
-текущее имя для доступа к колонке, и `FieldID` как identity истории. При
-переименовании конфигуратор меняет `stages.field` вместе с `Field.Name`, сохраняя
-`Field.ID`. Текущий web-конфигуратор имя существующего поля не редактирует
-(`configurator_field_ids.go`), а его raw `yaml.Node` обязан лишь сохранить блок.
-При ручном rename автор меняет и `stages.field`; будущий rename UI обязан найти
-ссылку по прежнему `Field.ID` и переписать имя атомарно. Поэтому rename не
-начинает новую последовательность событий и не прячет прежнюю историю.
+текущее имя для доступа к колонке, и `FieldID` как identity истории. Любая
+поддерживаемая rename-операция обязана менять `Field.Name` и `stages.field`
+атомарно, сохраняя `Field.ID`. Текущий web-конфигуратор имя существующего поля не
+редактирует (`configurator_field_ids.go`), а его raw `yaml.Node` лишь сохраняет
+блок. Поэтому сейчас при ручном rename автор меняет обе ссылки; будущий rename UI
+обязан найти `stages.field` по прежнему `Field.ID` и переписать имя атомарно.
+Rename не начинает новую последовательность событий и не прячет историю.
 При локальном создании допустим только `initial`; пустое или неизвестное значение
-считается нарушением. Доверенные migration/replication writers могут
-синтетически создать объект сразу на другом **известном** этапе и всегда
-помечают источник. Запись с неизменившимся этапом не создаёт событие истории.
+считается нарушением. Доверенный migration-writer может синтетически создать
+объект сразу на другом **известном** этапе; replication-writer обходит adjacency,
+но для legacy пустого/неизвестного значения сохраняет `warn`/`strict` policy и
+всегда помечает источник. Запись с неизменившимся этапом не создаёт событие.
 
 Статическая валидация до запуска проверяет весь контракт:
 
@@ -207,7 +211,7 @@ stages:
 | `from_stage`, `to_stage` | было / стало (`from_stage` пуст при создании) |
 | `at` | wall-clock момент на принимающей БД, снятый после record-lock; не используется как tie-breaker |
 | `user_id`, `user_login` | nullable-актор из `auditUserFromCtx` только для `source=local`; migration/exchange принудительно не подделывают пользователя |
-| `source`, `source_ref` | `local` / `exchange` / `migration` и опциональный узел/пакет — происхождение синтетического перехода |
+| `source`, `source_ref` | `local` / `exchange` / `migration` и опциональный structurally encoded provenance синтетического перехода |
 | `violation` | `true` для пропущенного в режиме `warn` недопустимого перехода |
 
 Ограничение `UNIQUE (entity_name, field_id, record_id, event_no)` защищает
@@ -215,7 +219,10 @@ stages:
 `(entity_name, field_id, record_id, event_no DESC)` — последнее событие и история
 объекта; `(entity_name, field_id, to_stage, at)` — фильтр истории по этапу. Миграция
 сущности дополнительно создаёт индекс её **текущего stage-поля**, иначе отчёт
-вынужден сканировать всю бизнес-таблицу независимо от индексов истории.
+вынужден сканировать всю бизнес-таблицу независимо от индексов истории. Identity
+этого индекса строится из устойчивого `Field.ID`, а не имени колонки; миграция
+сверяет catalog definition с текущей колонкой и при rename переименовывает либо
+пересоздаёт прежний индекс, не оставляя рядом второй name-based индекс.
 
 Отчёт группирует текущие, не помеченные на удаление строки таблицы сущности по
 полю-этапу и присоединяет событие с максимальным `event_no` для каждого
@@ -225,7 +232,8 @@ stages:
 
 Время на этапе считается как разница между текущим моментом и последней
 записью по объекту. Арифметика дат в запросах уже есть (issue #707, PR #727).
-Если история отсутствует или `latest.to_stage` не равен текущему значению,
+Если история отсутствует, `latest.to_stage` не равен текущему значению или
+`latest.at > now` после отката wall clock,
 длительность — «неизвестно», а runtime report показывает рассинхронизацию;
 подставлять время чужого этапа и считать такую строку просроченной нельзя.
 Wall-clock не участвует в выборе latest даже при одинаковых или сдвинутых часах.
@@ -253,24 +261,31 @@ Wall-clock не участвует в выборе latest даже при оди
   `checkStageTransition` и диалектная сериализация. `AuditDiff` as-is сюда не
   вызывается. Неизменившийся
   stage не создаёт событие. Пустое/неизвестное значение и local create не в
-  `initial` проходят обычную `warn`/`strict` семантику; trusted
-  exchange/migration всё равно принимают только известные непустые значения.
+  `initial` проходят обычную `warn`/`strict` семантику; migration принимает
+  только известные непустые значения, а exchange сохраняет `enforce` для legacy
+  live rows, хотя обходит adjacency.
 - **`internal/storage/crud.go` И `internal/storage/optimistic_lock.go`** — гейт
   ставится в **обе** обычные точки записи. Только при `entity.Stages != nil`
   публичная функция оборачивает полный цикл в `WithTxScope`; внутренний
   `...InTx` требует tx-context, берёт PG advisory lock до чтения либо применяет
-  SQLite CAS, затем делает read → check → write → history. В
-  `UpsertVersioned` успешность остаётся связана с `UPDATE … WHERE _version`:
-  stale version не пишет историю. Ошибка чтения не маскируется под создание.
+  SQLite CAS, затем делает read → version check → stage check → write → history.
+  В `UpsertVersioned` stale `_version` всегда возвращает `ErrVersionConflict` до
+  stage-validation, а успешность остаётся связана с финальным
+  `UPDATE … WHERE _version`: stale version не пишет history/warning. Ошибка
+  чтения не маскируется под создание.
   При `strict` возвращается локализованная ошибка, при `warn` — обязательное
   event с `violation=true`; внешний runtime warning ставится через
   `DeferUntilTxCommit`, чтобы rollback/savepoint не оставлял ложный лог. Только
   SQL-history пишется немедленно внутри транзакции.
 - **Provisional create** — для staged entity новая callback-операция
   `WithProvisionalCreate(..., fields, hook)` владеет scope целиком: внутренне
-  вставляет техническую строку без history, вызывает hook, затем всегда делает
-  финальный `UpsertPreserveVersion` по мутированному `fields` и пишет ровно одно
-  create-event. Прямой публичный `UpsertProvisional` для staged entity
+  после record-lock строго доказывает `NotFound`, делает insert-only
+  `INSERT … ON CONFLICT DO NOTHING` без history и проверяет `RowsAffected == 1`
+  **до** hook. Existing/concurrent UUID возвращает create/version conflict, не
+  запускает hook и не мутирует строку. Затем callback всегда делает финальный
+  `UpsertPreserveVersion` по мутированному `fields` и пишет ровно одно create-
+  event. Текущий `UpsertProvisional` с `ON CONFLICT UPDATE` здесь не
+  переиспользуется; его прямой публичный вызов для staged entity
   отвергается; без `stages` его контракт не меняется. Так нельзя случайно commit
   provisional row без history. Финальный stage проверяется относительно пустого
   состояния: если hook сменил initial на иной stage, это create-нарушение
@@ -296,14 +311,17 @@ Wall-clock не участвует в выборе latest даже при оди
   deadlock при разном порядке YAML. SQLite использует ту же цельность scope и
   проверяемый conflict/CAS между двумя handles, а не снимок, начатый до
   сериализации. После разрешения всей `nameToUUID` для фактического ID берётся и
-  обычный `(entity,id)` record-lock, чтобы sync сериализовался с пользовательской
-  записью. Direct upserts, существующие FTS hooks и history входят в тот же
+  набор всех фактических `(entity,id)` record-locks, сортируется и берётся одним
+  batch до первого old-read/direct upsert, чтобы item/YAML order не определял
+  lock order. Direct upserts, существующие FTS hooks и history входят в тот же
   scope; старое значение и фактический record ID читаются строго. Отсутствующий stage при
   INSERT получает `initial`, а при conflict не обновляет stage. Явно заданное
   известное значение может создать или переместить predefined мимо adjacency,
-  но пишет ровно одно synthetic event `source=migration`,
-  `source_ref=entity/predefined_name`, actor `NULL`; одинаковое значение события
-  не пишет. Это сознательная trusted migration-семантика, а не скрытый bypass.
+  но пишет ровно одно synthetic event `source=migration`. `source_ref` — не
+  разделённая `/` строка, а canonical compact JSON array от `encoding/json`
+  `["migration", entity, predefined_name]`; actor `NULL`. Одинаковое значение
+  события не пишет. Это сознательная trusted migration-семантика, а не скрытый
+  bypass.
 - **Ранний подъём схемы** — `EnsureStageHistorySchema` вызывается в самом начале
   `DB.Migrate`, **до** `SyncAllPredefined` (`migrate.go:558`), поэтому общий
   chokepoint покрывает `migrate`, `run`, `deploy`, dev, test и schema migration
@@ -315,27 +333,37 @@ Wall-clock не участвует в выборе latest даже при оди
   получают таблицу через ранний `DB.Migrate` внутри своего общего restore scope,
   до clear/import. Поэтому новый archive импортируется и в target, где таблицы
   ещё не было; отдельный ad-hoc Ensure в DemoReset не нужен.
-- **`internal/exchange/` + узкий storage-writer** — для staged entity весь
-  per-object цикл `local queue/version/read → conflict decision/hook → apply →
-  queue cleanup/history` выполняется в одном scope. На PostgreSQL `(entity,id)`
-  advisory/row lock берётся **до** чтения local state и держится до конца; иначе
-  обычный save между решением конфликта и `applyObject` будет молча перетёрт по
-  устаревшему решению. На SQLite write-intent берётся до чтения (либо весь цикл
-  защищён final CAS с безопасным полным retry); нельзя начинать snapshot до
-  сериализации. Conflict hook исполняется внутри scope как обычный local writer:
+- **`internal/exchange/` + узкий storage-writer** — после полной validation
+  пакета собираются все staged `(entity,id)`, сортируются и на PostgreSQL
+  получают transaction advisory locks до object loop. Весь пакет и каждый цикл
+  `local queue/version/read → conflict decision/hook → apply → queue
+  cleanup/history` выполняются в одном scope; locks держатся до commit. Иначе два
+  пакета с обратным порядком объектов дедлочатся либо обычный save между решением
+  конфликта и `applyObject` молча перетирается по устаревшему решению. На SQLite
+  top-level `ApplyPackage` получает write-intent в самом начале транзакции, **до**
+  `GetExchangeThisNode`, `GetExchangePeer` и любых SELECT. При busy/deadlock/CAS-
+  конфликте пакет откатывается, `recv_no` не продвигается и возвращается
+  нормализованный conflict; автоматический полный retry запрещён, потому что
+  conflict hook может иметь внешние side effects. Hook исполняется внутри scope
+  как обычный local writer:
   PG lock reentrant в той же tx, nested savepoint допустим, adjacency не
   обходится, его отдельный local event сохраняется. Только после решения
   «incoming wins» вызывается `ApplyReplicatedEntity(ctx, ..., plan, fromNode,
-  messageNo)`. Метод фиксирует `source=exchange`, канонический
-  `source_ref=plan/from_node/message_no`, actor `NULL`, использует уже удерживаемую
-  record-lock/event sequence, обходит только adjacency, но отвергает
-  пустой/неизвестный destination обычного живого объекта.
+  messageNo)`. Метод фиксирует `source=exchange`; `source_ref` — canonical compact
+  JSON array от `encoding/json`:
+  `["exchange", plan, from_node, message_no]`, а не неоднозначная строка с `/`;
+  actor `NULL`. Он использует уже удерживаемую record-lock/event
+  sequence и обходит только adjacency, но к пустому/неизвестному stage любого
+  результирующего live-object применяет тот же `enforce`: `warn` принимает его с
+  `violation=true`, `strict` отклоняет. Так legacy rows, ради которых default —
+  `warn`, не ломают replication.
   Tombstone — отдельная узкая операция: существующая строка сохраняет stage и
   получает только replication version/deletion state, без stage-event;
   tombstone отсутствующей строки создаёт технический deleted placeholder raw-
   веткой и тоже не проходит create-stage gate. Последующее resurrection обязано
-  принести известный непустой stage и пишет единственный synthetic
-  `empty→known`; duplicate tombstone/resurrection идемпотентны.
+  принести stage и проходит тот же `enforce`: нормальный known stage пишет
+  единственный synthetic `empty→known`, legacy invalid при `warn` — violation-
+  event, при `strict` — rollback. Duplicate tombstone/resurrection идемпотентны.
   Replication capability **не кладётся** в context всей `ApplyPackage`, иначе
   DSL conflict hook (`dslvars/exchange_hook.go:39-60`) унаследует bypass для
   собственных локальных записей. Exported storage method не объявляется
@@ -343,7 +371,11 @@ Wall-clock не участвует в выборе latest даже при оди
   bypass и только exchange chokepoint вызывает специальный writer.
 - **Universal backup/restore и DemoReset** — добавить `_stage_history` в единый
   `backup.systemTables` (`universal.go:75`): это автоматически включает export,
-  manifest allowlist, clear/import и проверку counts. `DemoReset` уже вызывает
+  manifest allowlist, clear/import и проверку counts. Сам `ExportUniversal`
+  держит **один read-consistent snapshot для всех DB-backed частей**: SQLite —
+  одна read transaction, PostgreSQL — `REPEATABLE READ READ ONLY`; последовательные
+  autocommit SELECT таблиц и history запрещены, иначе архив может совместить
+  object до перехода с history после него. `DemoReset` уже вызывает
   `migrateSchema` внутри restore-транзакции, а она — ранний `DB.Migrate`; затем
   clear обязан удалить возможные synthetic migration/predefined events, и import
   устанавливает ровно history из архива. Таблица не
@@ -435,15 +467,15 @@ Wall-clock не участвует в выборе latest даже при оди
 |---|---|
 | Переименование stage-поля отрезает прежнюю историю | `stages.field` разрешается в обязательный устойчивый `Field.ID`; `_stage_history`, latest и индексы используют `field_id`, а текущее имя — только для доступа к бизнес-колонке. Rename/round-trip тест сохраняет одну последовательность `event_no` |
 | Конфигуратор или schema/lint не знает новый YAML-блок | сырой `yaml.Node` в `saveEntity`, structural key guard и round-trip; JSON Schema и nested lint обновляются в том же изменении |
-| Обмен данными (план 86): пакет может не содержать промежуточные переходы источника | per-object scope и record-lock охватывают local state, conflict hook/decision и apply. Только incoming-wins вызывает узкий replication-writer и пишет synthetic event при фактической смене stage: `source=exchange`, `source_ref=plan/from_node/message_no`, actor `NULL`; `at` означает время появления на приёмнике. Hook остаётся обычным local writer без bypass. Unknown live stage отвергается; tombstone сохраняет/не создаёт stage и не пишет event, resurrection требует known stage. Повторный `message_no`/version пропускается. Точный перенос акторов/времени — отдельное расширение формата |
-| `SyncPredefined` обходит обычные Upsert и preallocate-ит весь список до item-loop | это явный третий writer: один scope на весь sync, отсортированные name-locks/entity-lock до всей preallocation, затем record-lock; known-value validation, atomic direct upsert + mandatory `source=migration` history; omitted field вставляет initial и не сбрасывает существующий stage |
-| Restore / DemoReset должны воспроизводить историю, но не повторно применять переходы | `_stage_history` входит в `systemTables`/manifest и атомарно публикуется вместе с объектами. DemoReset migration/predefined может временно писать events до clear, но commit содержит точно архивную history; users/roles импортируются, sessions очищаются, target `_scheduled_runs` сохраняется. Без FK на `_users`. Старый архив без таблицы очищает target-history и даёт пустую |
+| Обмен данными (план 86): пакет может не содержать промежуточные переходы источника | один package scope: PG заранее сортирует/берёт все staged record-locks, SQLite получает top-level write-intent до SELECT; conflict/hook/apply атомарны, retry side-effectful hook запрещён. Только incoming-wins вызывает replication-writer и пишет synthetic event при смене stage: `source=exchange`, canonical JSON `source_ref`, actor `NULL`; `warn` переносит legacy invalid stage как violation, `strict` отвергает. Tombstone не пишет stage-event, resurrection проходит policy. Duplicate message/version пропускается |
+| `SyncPredefined` обходит обычные Upsert и preallocate-ит весь список до item-loop | это явный третий writer: один scope на весь sync, отсортированные name-locks/entity-lock до preallocation, затем один sorted batch всех фактических record-locks до old-read; known-value validation, atomic direct upsert + mandatory `source=migration` history; omitted field вставляет initial и не сбрасывает существующий stage |
+| Restore / DemoReset должны воспроизводить историю, но не повторно применять переходы | export читает все DB-backed tables в одном SQLite read snapshot / PG `REPEATABLE READ READ ONLY`; `_stage_history` входит в `systemTables`/manifest и атомарно публикуется вместе с объектами. DemoReset migration/predefined может временно писать events до clear, но commit содержит точно архивную history; users/roles импортируются, sessions очищаются, target `_scheduled_runs` сохраняется. Без FK на `_users`. Старый архив без таблицы очищает target-history и даёт пустую |
 | Два конкурентных перехода читают один исходный этап | PG advisory lock берётся до read и действует также для отсутствующей строки; SQLite staged CAS/create-conflict работает между двумя DB handles. Один запрос видит результат другого либо получает нормализованный version/busy conflict. Тест запрещает историю `A→B`, `A→C`, если фактическая цепочка `B→C` не разрешена |
 | Несколько events имеют одинаковый `at` или commit идут не в порядке старта tx | latest определяется только монотонным `event_no`; `at` остаётся wall-clock атрибутом и не участвует в причинном порядке |
 | Проведение и пометка удаления (план 50) меняют объект, не трогая этап | гейт срабатывает только при **изменении** поля-этапа — эти пути его не касаются |
 | Маска/RLS раскрывает stage или хотя бы число скрытых объектов | entity-read + row predicate + field mask применяются до history query/aggregate; masked stage полностью подавляет history/graph/report, direct URL fail-closed |
 | Кто вправе двигать этап | в первой версии — обычные права на запись объекта. Права «на переход» (роль X может только Согласование→Утверждена) — отдельный вопрос, сознательно вне плана |
-| `_stage_history` растёт | v1 не удаляет строки автоматически. Будущая retention-policy обязана сохранить latest event каждого живого `(entity, field_id, record)` либо сначала материализовать `entered_at`; слепая audit-cleanup ломает duration и запрещена |
+| `_stage_history` растёт | v1 не удаляет строки автоматически. Будущая retention-policy обязана сохранить latest event каждой **физически существующей** записи, включая `deletion_mark`/tombstone-placeholder, либо сначала материализовать `entered_at`; lifecycle физически отсутствующих строк задаётся отдельно. Иначе resurrection теряет duration/sequence; слепая audit-cleanup запрещена |
 | Конфигурация без stages получила новые lock/error semantics | stage-wrapper условен по `entity.Stages != nil`; regression фиксирует прежний обычный write-path |
 
 ## Тесты
@@ -473,7 +505,10 @@ Wall-clock не участвует в выборе latest даже при оди
   операции откатывает её savepoint; caller ловит ошибку, unrelated outer work
   успешно commit. Полный outer rollback откатывает object и history;
 - ошибка чтения old row не трактуется как создание; version conflict и SQLite
-  busy-snapshot не пишут history;
+  busy-snapshot не пишут history. Матрица stale expected version + уже
+  зафиксированный current stage, относительно которого requested transition
+  invalid, обязана вернуть `ErrVersionConflict` (не stage-error) и 0
+  history/warning;
 - concurrent update открывает два соединения. Для SQLite это **два DB handles к
   одному файлу**, не два goroutine на одноконнектном handle. Допустима только
   цепочка относительно реально зафиксированного stage;
@@ -486,27 +521,36 @@ Wall-clock не участвует в выборе latest даже при оди
   раннего `now()`;
 - provisional callback + hook даёт только финальный create-event; прямой staged
   `UpsertProvisional` отвергается, hook error не оставляет строку, смена stage в
-  hook проверяет `warn`/`strict`; write/post в одной tx даёт причинные номера;
+  hook проверяет `warn`/`strict`; write/post в одной tx даёт причинные номера.
+  Два handles конкурентно вызывают `WithProvisionalCreate` для одного UUID:
+  insert-only проходит ровно у одного, hook запускается один раз, остаются одна
+  final row и один create-event, loser не обновляет provisional/final state;
 - `SyncPredefined`: omitted stage при первом insert даёт initial и одно
   migration-event, повторный sync не сбрасывает текущий stage; явный
   create либо update с фактической сменой stage пишет ровно один migration-event,
   а update с тем же значением — ни одного; actor
-  `NULL`; два параллельных PG sync списка с двумя взаимными/self references
-  стартуют до preallocation, сериализуются отсортированными name-locks (или
-  entity-lock), сохраняют одинаковые фактические UUID и ссылки и не путают
-  record ID; SQLite-вариант открывает два handles к одному файлу и проверяет ту
+  `NULL`; два параллельных PG sync списка одного валидного **ацикличного** графа
+  (включая допустимый self-reference и cross-reference без взаимного цикла), но
+  с разным YAML order стартуют до preallocation, сериализуются name-locks и
+  единым sorted record-lock batch, сохраняют одинаковые UUID/ссылки и не путают
+  record ID; `source_ref` round-trip однозначен для Unicode и `/` в entity/name.
+  SQLite-вариант открывает два handles к одному файлу и проверяет ту
   же гарантию/нормализованный conflict; history schema существует до вызова из
   `DB.Migrate` и в `procrun`;
 - exchange: local-wins не пишет **exchange-event**, incoming-wins при фактической
-  смене stage пишет ровно один с полным provenance и actor `NULL`; unknown live
-  stage отклоняется, duplicate message/version идемпотентен. Paused concurrency-
+  смене stage пишет ровно один с canonical JSON provenance (Unicode и `/`
+  round-trip) и actor `NULL`; legacy empty/unknown source проходит package →
+  receiver при `warn` с `violation=true`, а при `strict` отклоняется; duplicate
+  message/version идемпотентен. Два PG-пакета с теми же staged объектами в
+  обратном порядке не зависают: locks взяты sorted до object loop. Paused concurrency-
   тест ставит обычный local save между старым местом чтения и apply: PG lock /
   SQLite write-intent не позволяет принять решение по stale state. Если conflict
   hook сам делает локальную запись, она проходит обычный гейт под reentrant lock
   и имеет отдельный `source=local`; tombstone на пустом receiver создаёт deleted
-  placeholder и 0 events, затем resurrection с known stage даёт 1 event, оба
-  duplicate-вызова ничего не добавляют; CLI load на базе без таблицы сначала
-  выполняет Ensure;
+  placeholder и 0 events, затем resurrection проходит `enforce` и даёт 1 event,
+  оба duplicate-вызова ничего не добавляют. Инъекция busy/deadlock после запуска
+  hook откатывает пакет, не двигает `recv_no` и **не** запускает hook повторно;
+  CLI load на базе без таблицы сначала выполняет Ensure;
 - security integration: прямой URL без entity/row access не читает history,
   скрытые RLS-строки не попадают в counts, маска stage подавляет history, graph и
   report до SQL; обычная audit history удаляет `hide` field-event и одинаково
@@ -522,15 +566,22 @@ Wall-clock не участвует в выборе latest даже при оди
   сохраняет target `_scheduled_runs` и умеет стартовать без заранее созданной таблицы.
   Fault/test hook после migrate и до clear может увидеть временный migration-
   event, но после успешного commit остаётся точно history архива и ни одного
-  synthetic restore-event;
+  synthetic restore-event. Latch между dump business row и history одновременно
+  коммитит transition: SQLite read tx и PG `REPEATABLE READ READ ONLY` дают архив
+  целиком before либо after, никогда current/latest из разных snapshots;
 - render/behavior tests обеих `page-form` и `page-managed-form`: существующий
   доступный staged-object получает partial, conditional ECharts и одну
   инициализацию; new, non-staged, masked и RLS-denied object не получают ни
   graph payload, ни conditional script; HTMX replacement не дублирует instance;
 - без `stages` обычные writes не получают новый savepoint/lock/CAS, а
   `examples/*` проходят `onebase check` и свои тесты без правок;
+- stage duration при `latest.at > now` после rollback часов — «неизвестно» и не
+  overdue;
+- rename stage-колонки с прежним `Field.ID` оставляет ровно один актуальный
+  business-table index по catalog definition, а не старый+новый по именам;
 - retention-contract test (когда появится cleanup) запрещает удалить latest
-  event живой записи; до тех пор автоматической чистки нет.
+  event любой extant записи, включая tombstone/deletion mark, и проверяет
+  tombstone → resurrection; до тех пор автоматической чистки нет.
 
 ## Verification
 
@@ -548,29 +599,32 @@ Wall-clock не участвует в выборе latest даже при оди
    без новой JS-зависимости.
 5. То же самое из DSL-обработки; пакет обмена применяет отдельную явно
    доверенную replication-семантику и оставляет синтетическую историю с
-   `plan/from_node/message_no`, а обычный storage-вызов и запись из conflict hook
-   перескочить этап не могут. Изменение predefined оставляет `source=migration`.
+   canonical JSON provenance `["exchange", plan, from_node, message_no]`, а
+   обычный storage-вызов и запись из conflict hook перескочить этап не могут.
+   Изменение predefined оставляет `source=migration` и структурный provenance.
 
 ## Эстимейт
 
-22–29 рабочих дней:
+25–34 рабочих дня:
 
 | Этап | Дней |
 |---|---|
 | декларация + полная валидация + статический `check` | 2–3 |
-| транзакционный гейт, canonical accessor, PG lock/SQLite CAS, deterministic sequence | 5–6 |
-| `_stage_history` + migration/predefined + ранний `Ensure*` + backup/DemoReset | 4–5 |
-| exchange provenance, hook isolation и узкий replication-writer | 2–3 |
+| транзакционный гейт, canonical accessor, PG lock/SQLite CAS, deterministic sequence | 6–8 |
+| `_stage_history` + migration/predefined + ранний `Ensure*` + snapshot backup/DemoReset | 5–7 |
+| exchange package-locking, provenance, hook isolation и replication-writer | 4–5 |
 | защищённый отчёт «где застряло» (RBAC/RLS/mask) | 3–4 |
 | схема на ECharts | 2 |
-| матричные/concurrency/security тесты, i18n×16, tooling/docs | 4–6 |
+| матричные/concurrency/security тесты, i18n×16, tooling/docs | 3–5 |
 
-**Минимальный срез — 14–19 дней**: декларация и static validation + обе обычные
+**Минимальный срез — 16–22 дня**: декларация и static validation + обе обычные
 точки гейта + canonical accessor/сериализация + deterministic history +
 migration/predefined + ранний Ensure и backup/restore + exchange writer вместе с
 tombstone/resurrection и concurrency-контрактом. Только такой срез даёт общую
-гарантию переходов и «кто когда двигал» для уже поддерживаемых writers; runtime
-report, graph и DB-aware diagnostic CLI не входят и добавляются поверх без смены
+гарантию переходов и **хранит** данные «кто/когда» для всех поддерживаемых
+writers. Он намеренно не экспонирует per-record history в UI: общий защищённый
+loader с entity RBAC, RLS и scalar masks входит в полный срез вместе с runtime
+report. Graph и DB-aware diagnostic CLI также добавляются поверх без смены
 формата истории.
 
 ## Отношение к плану 85
