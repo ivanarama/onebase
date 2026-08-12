@@ -1315,6 +1315,15 @@ function obInitKeyboardShortcuts() {
       if (listSel() !== sel) listSetSel(sel);
       if (e.key === 'F2') listOpen(sel.dataset.openUrl);
       else listActivateRow(sel);
+      return;
+    }
+    // F9 в списке — «Создать копированием», как в 1С. В форме та же клавиша
+    // копирует строку ТЧ, но туда обработчик не доходит: obHandleDOMTableShortcut
+    // выше забирает F9 себе, когда активна таблица ТЧ.
+    if (e.key === 'F9' && sel && sel.dataset.copyUrl) {
+      e.preventDefault();
+      if (listSel() !== sel) listSetSel(sel);
+      listOpen(sel.dataset.copyUrl);
     }
   });
   document.addEventListener('keydown', obHandleListDeleteShortcut);
@@ -1416,11 +1425,13 @@ function makeTreeRow(row) {
   tr.dataset.activityHideUrl = row.activity_hide_url || '';
   tr.dataset.activityShowUrl = row.activity_show_url || '';
   tr.dataset.openUrl = row.open_url || '';
+  tr.dataset.copyUrl = row.copy_url || '';
   tr.dataset.obDetail = row.detail || '';
   tr.setAttribute('data-ob-list-row', '');
   tr.setAttribute('tabindex', '-1');
   tr.setAttribute('aria-selected', 'false');
   var rowShortcuts = 'ArrowUp ArrowDown Enter F2';
+  if (row.copy_url) rowShortcuts += ' F9';
   if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';
   tr.setAttribute('aria-keyshortcuts', rowShortcuts);
   var cells = row.cells || [];
@@ -1482,6 +1493,11 @@ function listMenuItems(tr) {
     items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(tr.dataset.openUrl); } });
   } else {
     items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(tr.dataset.openUrl); } });
+  }
+  // «Скопировать» (F9): открывает форму создания, заполненную значениями строки.
+  // Пустой data-copy-url = нет права записи, пункт не показываем.
+  if (tr.dataset.copyUrl) {
+    items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(tr.dataset.copyUrl); } });
   }
   if (cfg.canWrite && tr.dataset.activityEnabled === '1') {
     if (tr.dataset.activityInactive === '1') {

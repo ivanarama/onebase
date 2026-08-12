@@ -104,6 +104,7 @@ let tablePartJSONInputs = [];
 let closeClicks = 0;
 let confirmResult = true;
 let activated = 0;
+const openedURLs = [];
 let confirmCalls = 0;
 const submittedForms = [];
 const listConfig = {labels: {}, canDelete: false};
@@ -125,7 +126,7 @@ global.window = {
   _obActiveGridName: '',
   _obGrids: {},
   location: {href: ''},
-  obOpenInShell() { activated++; return true; },
+  obOpenInShell(url) { activated++; openedURLs.push(url); return true; },
   addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
 };
 global.document = {
@@ -242,6 +243,30 @@ fire({key: 'F2', target: tabFirst});
 assert(activated === beforeEnter + 2, 'Tab -> Enter/F2 did not open the focused row');
 fire({key: 'ArrowDown', target: tabFirst});
 assert(listSel() === tabSecond, 'ArrowDown repeated the focused first row instead of moving to the second');
+
+// F9 в списке — «Создать копированием» (issue #762). Открывается форма
+// создания по data-copy-url; пустой url = нет права записи, клавиша молчит и
+// не гасит событие. Пункт меню строки живёт по тому же признаку.
+window._obActiveDOMTable = null;
+window._obActiveGridName = '';
+const copyRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row', copyUrl: '/ui/catalog/x/new?copy=42'}});
+rows = [copyRow];
+listSetSel(null);
+copyRow.focus();
+openedURLs.length = 0;
+const copied = fire({key: 'F9', target: copyRow});
+assert(copied.defaultPrevented && openedURLs.length === 1 && openedURLs[0] === '/ui/catalog/x/new?copy=42',
+  'list F9 did not open the copy form');
+assert(listMenuItems(copyRow).some(item => item.label === 'Скопировать'), 'row menu lost the copy command');
+
+const noCopyRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row', copyUrl: ''}});
+rows = [noCopyRow];
+listSetSel(null);
+noCopyRow.focus();
+openedURLs.length = 0;
+const notCopied = fire({key: 'F9', target: noCopyRow});
+assert(!notCopied.defaultPrevented && openedURLs.length === 0, 'list F9 opened a copy without a copy url');
+assert(!listMenuItems(noCopyRow).some(item => item.label === 'Скопировать'), 'row menu offered copy without a copy url');
 
 configPresent = false;
 fire({code: 'KeyF', ctrlKey: true});
