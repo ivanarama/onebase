@@ -423,7 +423,7 @@ func (s *Server) applyCopyFromQuery(r *http.Request, entity *metadata.Entity, sr
 		if dec, ok := fieldDecisionByName(decisions, f.Name); ok && dec.Masked() {
 			continue
 		}
-		v, ok := maskCIKeyValue(snapshot.row, f.Name)
+		v, ok := maskCIKeyValue(snapshot.renderRow, f.Name)
 		if !ok || v == nil {
 			continue
 		}

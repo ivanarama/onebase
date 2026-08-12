@@ -16,6 +16,7 @@ const copySourceFormField = "_copy_source_id"
 
 type copySourceSnapshot struct {
 	row           map[string]any
+	renderRow     map[string]any
 	tablePartRows map[string][]map[string]any
 }
 
@@ -83,13 +84,28 @@ func (s *Server) loadAuthorizedCopySource(
 		return nil, &copySourceLoadError{status: http.StatusNotFound, message: "Копируемая запись не найдена"}
 	}
 
-	snapshot := &copySourceSnapshot{row: row, tablePartRows: tablePartRows}
+	renderRow := cloneRecord(row)
+	// The canonical row remains untouched for server-side restoration. The
+	// separately masked view is the only row allowed into browser values.
+	s.maskRecord(r.Context(), entity, renderRow)
+	snapshot := &copySourceSnapshot{row: row, renderRow: renderRow, tablePartRows: tablePartRows}
 	if form := pickObjectFormWithReadHook(entity); form != nil {
 		if hookErr := s.runFormReadHookOnObject(r.Context(), entity, form, hookObject); hookErr != nil {
 			return nil, copySourceForbidden()
 		}
 	}
 	return snapshot, nil
+}
+
+func cloneRecord(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]any, len(source))
+	for name, value := range source {
+		result[name] = value
+	}
+	return result
 }
 
 func copySourceForbidden() error {
