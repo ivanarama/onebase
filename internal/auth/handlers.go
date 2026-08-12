@@ -18,6 +18,11 @@ func authLog() *slog.Logger { return oblog.Component("auth") }
 // запас на порядки больше любого разумного значения и при этом конечен.
 const maxLoginFormBytes = int64(64 << 10)
 
+// maxCredentialLen — верхний предел длины логина и пароля. bcrypt всё равно
+// использует лишь первые 72 байта пароля, а логин — короткое поле; ограничение
+// отсекает патологически длинные значения до хеширования (issue #776).
+const maxCredentialLen = 1024
+
 var loginTmpl = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>Вход — onebase</title>
@@ -268,11 +273,19 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
+	// Публичный неаутентифицированный маршрут: тело ограничиваем тем же
+	// пределом, что и форму входа. Без этого клиент мог слать сколь угодно
+	// большое тело и заставлять сервер аллоцировать под него память (issue #776).
+	r.Body = http.MaxBytesReader(w, r.Body, maxLoginFormBytes)
 	var req struct {
 		Login    string `json:"login"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.Login) > maxCredentialLen || len(req.Password) > maxCredentialLen {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
