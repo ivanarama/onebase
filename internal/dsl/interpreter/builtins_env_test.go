@@ -412,3 +412,16 @@ func TestDSL_СоставноеДелениеОтклоняетОпасныеDec
 	out, _ := evalEnv(t, src).(string)
 	assert.Contains(t, out, "безопасного диапазона")
 }
+
+// TestChars_1CNames: Символы должен отдавать настоящие управляющие символы.
+// Раньше объекта не было, и обращение к его полю молча подставляло nil, из-за
+// чего в строку уезжал литерал «<nil>» вместо переноса, а check это пропускал.
+func TestChars_1CNames(t *testing.T) {
+	src := `Процедура Тест()
+		Возврат "A" + Символы.ПС + "B" + Chars.LF + Символы.Таб + Символы.ВК + Символы.НПП;
+	КонецПроцедуры`
+	out, _ := evalEnv(t, src).(string)
+	assert.Equal(t, "A\nB\n\t\r ", out)
+	assert.NotContains(t, out, "<nil>", "Символы не должен подставлять nil")
+	assert.Equal(t, 2, strings.Count(out, "\n"), "ПС и LF — один и тот же перенос")
+}

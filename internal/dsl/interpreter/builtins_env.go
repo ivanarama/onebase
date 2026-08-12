@@ -61,10 +61,25 @@ func installEnvironmentConstants(e *env) {
 		"UTF8": "UTF-8",
 	}}
 
+	// Непечатаемые символы под именами 1С. Без этого объекта `Символы.ПС` не
+	// падал, а молча давал nil: это обращение к полю неизвестного
+	// идентификатора, а не вызов функции, поэтому check его пропускал, и в
+	// строку вместо переноса уезжал литерал «<nil>».
+	chars := &MapThis{M: map[string]any{
+		"ПС": "\n", "LF": "\n",
+		"ВК": "\r", "CR": "\r",
+		"Таб": "\t", "Tab": "\t",
+		"ВТаб": "\v", "VTab": "\v",
+		"ПФ": "\f", "FF": "\f",
+		"НПП": " ", "NBSp": " ",
+	}}
+
 	e.setLocal("СпособКодированияСтроки", stringEncodingMethod)
 	e.setLocal("StringEncodingMethod", stringEncodingMethod)
 	e.setLocal("КодировкаТекста", textEncoding)
 	e.setLocal("TextEncoding", textEncoding)
+	e.setLocal("Символы", chars)
+	e.setLocal("Chars", chars)
 
 	// Короткие имена встречаются в перенесённых конфигурациях и остаются
 	// однозначными в поддерживаемом подмножестве API.
