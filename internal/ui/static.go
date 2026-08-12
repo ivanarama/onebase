@@ -73,4 +73,7 @@ func mountStatic(r chi.Router) {
 	// пользовательском режиме: формы сущностей с richtext-реквизитами здесь.
 	// Конфигуратор лаунчера правит метаданные, а не данные — Quill ему не нужен.
 	r.Handle("/vendor/quill/*", http.StripPrefix("/vendor/quill/", webassets.QuillHandler()))
+	// Lucide — спрайт иконок навигации (план 73): <use> ссылается на символ по
+	// этому пути, поэтому он нужен на каждой странице с панелью разделов.
+	r.Handle("/vendor/lucide/*", http.StripPrefix("/vendor/lucide/", webassets.LucideHandler()))
 }
