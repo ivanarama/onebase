@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -52,35 +51,10 @@ func FormatNumber(prefix string, length, number int) string {
 // добавляется к ключу — например, scope: Организация даст у каждой
 // организации свой счётчик ( Формат: "<period>|<scopeValue>",
 // либо просто "<period>" если scope не задан.
+// Deprecated: используйте PeriodKeyFor — он выбирает дату детерминированно, по
+// объявленному порядку реквизитов. Здесь дата берётся перебором map, поэтому у
+// документа с двумя датами ключ был случайным (Д13 плана 117). Оставлено ради
+// совместимости внешних вызовов и делегирует в новую функцию.
 func ComputePeriodKey(num *metadata.Numerator, fields map[string]any) string {
-	var periodPart string
-	if num.Period != "none" {
-		var date time.Time
-		for _, v := range fields {
-			if t, ok := v.(time.Time); ok && !t.IsZero() {
-				date = t
-				break
-			}
-		}
-		if date.IsZero() {
-			date = time.Now()
-		}
-		if num.Period == "month" {
-			periodPart = date.Format("2006-01")
-		} else {
-			periodPart = date.Format("2006")
-		}
-	}
-
-	if num.Scope == "" {
-		return periodPart
-	}
-	scopeVal := ""
-	if v, ok := fields[num.Scope]; ok && v != nil {
-		scopeVal = fmt.Sprintf("%v", v)
-	}
-	if periodPart == "" {
-		return scopeVal
-	}
-	return periodPart + "|" + scopeVal
+	return PeriodKeyFor(nil, num, fields)
 }

@@ -73,6 +73,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateDetailPanel(e); err != nil {
 			return err
 		}
+		if err := validateNumerator(e); err != nil {
+			return err
+		}
 		for _, tp := range e.TableParts {
 			for _, f := range tp.Fields {
 				if IsRichText(f.Type) {
@@ -260,6 +263,49 @@ func validateSearchFields(e *Entity) error {
 			return fmt.Errorf("entity %s: реквизит %s указан в search_fields дважды", e.Name, f.Name)
 		}
 		seen[key] = true
+	}
+	return nil
+}
+
+// validateNumerator проверяет блок `numerator:` (план 117B). У справочника он
+// объявляет стандартный «Код», у документа — «Номер»; до 117B блок у
+// справочника парсился и МОЛЧА ничего не делал.
+func validateNumerator(e *Entity) error {
+	n := e.Numerator
+	if n == nil {
+		return nil
+	}
+	switch e.Kind {
+	case KindCatalog, KindDocument:
+	default:
+		return fmt.Errorf("entity %s: нумератор применим только к справочникам и документам", e.Name)
+	}
+	switch strings.ToLower(n.Period) {
+	case "none", "year", "month", "day", "":
+	default:
+		return fmt.Errorf("entity %s: numerator.period = %q — допустимы none, year, month, day", e.Name, n.Period)
+	}
+	// Сброс счётчика у справочника означал бы выдачу уже занятого кода: код
+	// живёт с элементом всю жизнь, а не начинается заново каждый год.
+	if e.Kind == KindCatalog && strings.EqualFold(n.Period, "year") || e.Kind == KindCatalog && strings.EqualFold(n.Period, "month") {
+		return fmt.Errorf("entity %s: numerator.period = %q у справочника — сброс счётчика выдал бы уже занятый код; используйте none", e.Name, n.Period)
+	}
+	if n.Scope != "" && findEntityFieldFold(e, n.Scope) == nil {
+		return fmt.Errorf("entity %s: numerator.scope ссылается на неизвестный реквизит %s", e.Name, n.Scope)
+	}
+	// Стандартное поле обязано остаться строкой: НайтиПоКоду, представление и
+	// обмен работают с текстом, а префикс числовым не бывает.
+	std := StandardCodeField
+	if e.Kind == KindDocument {
+		std = "Номер"
+	}
+	if f := findEntityFieldFold(e, std); f != nil {
+		if f.Type != FieldTypeString {
+			return fmt.Errorf("entity %s: при объявленном нумераторе реквизит %s обязан быть строкой (сейчас %s)", e.Name, std, f.Type)
+		}
+		if f.RefEntity != "" || f.EnumName != "" {
+			return fmt.Errorf("entity %s: при объявленном нумераторе реквизит %s не может быть ссылкой или перечислением", e.Name, std)
+		}
 	}
 	return nil
 }

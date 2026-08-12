@@ -131,12 +131,14 @@ func (r *NumeratorsRoot) nextNumber(args []any) any {
 				panic(userError{Msg: fmt.Sprintf("СледующийНомер: для %s требуется область нумерации %s", entity.Name, num.Scope)})
 			}
 		}
-		periodKey := storage.ComputePeriodKey(num, fields)
+		// Тот же расчёт, что у UI и REST (план 117C): период выбирается
+		// детерминированно, префикс раскрывает маски даты.
+		periodKey := storage.PeriodKeyFor(entity, num, fields)
 		n, err := r.store.NextNumber(r.ctx.Ctx(), entity.Name, periodKey)
 		if err != nil {
 			panic(userError{Msg: "СледующийНомер: " + err.Error()})
 		}
-		return storage.FormatNumber(num.Prefix, num.Length, n)
+		return storage.FormatNumber(storage.ExpandPrefix(num.Prefix, storage.NumberPeriodDate(entity, fields)), num.Length, n)
 	}
 	n, err := r.store.NextNum(r.ctx.Ctx(), entity.Name)
 	if err != nil {

@@ -157,7 +157,38 @@ type Numerator struct {
 	// нумерации. Например, scope: "Организация" даст отдельные счётчики
 	// для каждой организации.
 	Scope string
+	// BasePrefix включает подстановку префикса ЭТОЙ базы (план 117D). Префикс
+	// живёт в данных базы, а не в конфигурации: конфигурация одинакова во всех
+	// базах, поэтому «понять, откуда загружено» через неё невозможно by design.
+	BasePrefix bool
+	// Unique требует уникальности значения (план 117E).
+	Unique bool
 }
+
+// PeriodOrDefault возвращает период сброса счётчика с умолчанием по виду
+// объекта: у документа — год (номера принято начинать заново), у справочника
+// сброса нет — код элемента живёт с ним всю жизнь.
+func (n *Numerator) PeriodOrDefault(kind Kind) string {
+	if n == nil {
+		return ""
+	}
+	if n.Period != "" {
+		return n.Period
+	}
+	if kind == KindCatalog {
+		return "none"
+	}
+	return "year"
+}
+
+// Стандартный «Код» справочника (план 117B). Имя фиксировано: по нему ищет
+// НайтиПоКоду, на него ссылается представление и обмен. ID устойчив, чтобы
+// миграция понимала переименование как переименование, а не как «удалить
+// колонку и завести новую пустую».
+const (
+	StandardCodeField   = "Код"
+	StandardCodeFieldID = "std.code"
+)
 
 // PredefinedItem describes a catalog record that is always present in the DB
 // and cannot be deleted. Synced from YAML on every startup.

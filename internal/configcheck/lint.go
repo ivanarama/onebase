@@ -378,7 +378,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		"fields":       seq(fieldYAMLSchema()),
 		"tableparts":   seq(tablePartYAMLSchema()),
 		"indexes":      seq(indexYAMLSchema()),
-		"numerator":    obj("prefix", "length", "period", "scope"),
+		"numerator":    obj("prefix", "length", "period", "scope", "base_prefix", "unique"),
 		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
 		"tile_view":    obj("image", "title", "subtitle", "fields"),
 		"activity":     obj("field", "default_scope", "hide_from_choice"),
