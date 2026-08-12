@@ -3,6 +3,7 @@ package debugger
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,40 @@ func TestBreakpointConditionSuppressesNestedStops(t *testing.T) {
 	assert.False(t, nestedStep, "шаг сработал внутри вычисления условия")
 	// После выхода из вычисления шаги снова работают.
 	assert.True(t, s.ShouldStep("demo.proc.os", 1))
+}
+
+// resumeChan буферизован, чтобы «Продолжить» не терялось в окне между сигналом
+// паузы и входом потока интерпретатора в ожидание. Обратная сторона буфера —
+// протухший сигнал: «Продолжить», нажатое когда никто не стоит, не должно
+// снимать следующую остановку, иначе человек её просто не увидит.
+func TestPauseDropsStaleResume(t *testing.T) {
+	s := NewDebugController().StartSession("demo.proc.os")
+
+	s.Continue() // никто не остановлен — сигнал обязан протухнуть
+
+	done := make(chan struct{})
+	go func() {
+		s.Pause(Location{File: "demo.proc.os", Line: 3}, nil, nil, nil, "breakpoint")
+		close(done)
+	}()
+
+	select {
+	case <-s.PauseChan():
+	case <-time.After(2 * time.Second):
+		t.Fatal("остановка не произошла")
+	}
+	select {
+	case <-done:
+		t.Fatal("протухшее «Продолжить» сняло остановку — человек её не увидел бы")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	s.Continue()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("«Продолжить» не сняло остановку")
+	}
 }
 
 func TestCallStackSteppingAndSnapshot(t *testing.T) {

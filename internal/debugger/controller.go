@@ -64,7 +64,13 @@ type ActiveSession struct {
 
 	// Channels: interpreter goroutine uses pauseChan/resumeChan,
 	// HTTP handlers signal via methods.
-	pauseChan  chan struct{} // signaled when interpreter pauses
+	pauseChan chan struct{} // signaled when interpreter pauses
+	// resumeChan буферизован на 1: Continue/Step шлют в него неблокирующе, а
+	// между сигналом «я остановился» и входом в select у потока интерпретатора
+	// есть окно. На небуферизованном канале «Продолжить», попавшее в это окно,
+	// уходило в default — сигнал терялся, и прогон висел остановленным навсегда
+	// (тем заметнее, чем быстрее клиент отвечает на паузу). Протухший сигнал
+	// снимается в начале Pause.
 	resumeChan chan struct{} // signaled by HTTP handler to resume
 	doneChan   chan struct{} // closed when session ends
 	stopOnce   sync.Once     // ensures doneChan is closed only once
@@ -91,7 +97,7 @@ func (dc *DebugController) StartSession(modulePath string) *ActiveSession {
 		breakpoints: make(map[string]map[int]*Breakpoint),
 		vars:        make(map[string]any),
 		pauseChan:   make(chan struct{}, 1),
-		resumeChan:  make(chan struct{}),
+		resumeChan:  make(chan struct{}, 1),
 		doneChan:    make(chan struct{}),
 		evalReq:     make(chan evalRequest),
 	}
@@ -402,6 +408,14 @@ func (s *ActiveSession) StackDepth() int {
 // It blocks until Continue/Step/Stop is called from an HTTP handler.
 // The evalFn callback is called for expression evaluation requests during pause.
 func (s *ActiveSession) Pause(loc Location, vars map[string]any, stack []StackFrame, evalFn func(string) (any, error), reason string) {
+	// Выбрасываем «Продолжить», пришедшее, когда никто не стоял: буфер
+	// resumeChan существует ради обратного случая (см. ниже), и без чистки
+	// протухший сигнал снял бы следующую остановку, не показав её человеку.
+	select {
+	case <-s.resumeChan:
+	default:
+	}
+
 	s.mu.Lock()
 	s.State = StatePaused
 	s.currentLoc = &loc
@@ -671,7 +685,7 @@ func (g *GlobalDebugController) Enable() *ActiveSession {
 		breakpoints: make(map[string]map[int]*Breakpoint),
 		vars:        make(map[string]any),
 		pauseChan:   make(chan struct{}, 1),
-		resumeChan:  make(chan struct{}),
+		resumeChan:  make(chan struct{}, 1),
 		doneChan:    make(chan struct{}),
 		evalReq:     make(chan evalRequest),
 	}
