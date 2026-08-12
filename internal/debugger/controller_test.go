@@ -91,29 +91,45 @@ func TestBreakpointConditionBookkeeping(t *testing.T) {
 	}))
 }
 
-// Пока считается условие, точки останова и шаги выключены: вычисление идёт на
-// потоке интерпретатора и само исполняет DSL.
-func TestBreakpointConditionSuppressesNestedStops(t *testing.T) {
+// Вычислитель работает без мьютекса сессии. Если за это время человек сменил
+// условие, результат старого выражения не должен ни остановить уже другой
+// breakpoint, ни загрязнить его ошибку/счётчики.
+func TestBreakpointConditionDiscardsResultAfterConcurrentEdit(t *testing.T) {
 	s := NewDebugController().StartSession("demo.proc.os")
-	s.SetBreakpoint("demo.proc.os", 7, "Проверить()")
-	s.Step(StepInto)
+	s.SetBreakpoint("demo.proc.os", 7, "СтароеУсловие()")
 
-	var nested *Breakpoint
-	var nestedStep bool
-	stop := s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
-		nested = s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
-			t.Fatal("вложенная проверка не должна вычислять условие")
-			return false, nil
+	started := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan *Breakpoint, 1)
+	go func() {
+		result <- s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
+			close(started)
+			<-release
+			return false, errors.New("ошибка старого условия")
 		})
-		nestedStep = s.ShouldStep("demo.proc.os", 1)
-		return true, nil
-	})
+	}()
 
-	require.NotNil(t, stop)
-	assert.Nil(t, nested, "точка сработала внутри вычисления собственного условия")
-	assert.False(t, nestedStep, "шаг сработал внутри вычисления условия")
-	// После выхода из вычисления шаги снова работают.
-	assert.True(t, s.ShouldStep("demo.proc.os", 1))
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("вычисление старого условия не началось")
+	}
+	s.SetBreakpoint("demo.proc.os", 7, "НовоеУсловие()")
+	close(release)
+
+	select {
+	case got := <-result:
+		assert.Nil(t, got, "устаревший результат всё-таки остановил исполнение")
+	case <-time.After(2 * time.Second):
+		t.Fatal("вычисление старого условия не завершилось")
+	}
+
+	bp := s.FindBreakpoint("demo.proc.os", 7)
+	require.NotNil(t, bp)
+	assert.Equal(t, "НовоеУсловие()", bp.Condition)
+	assert.Empty(t, bp.CondError)
+	assert.Zero(t, bp.HitCount)
+	assert.Zero(t, bp.SkipCount)
 }
 
 // resumeChan буферизован, чтобы «Продолжить» не терялось в окне между сигналом

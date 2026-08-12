@@ -54,14 +54,6 @@ type ActiveSession struct {
 	stepFile  string // normalized file the step was initiated from; stepping stays within it
 	lastDepth int    // interpreter's actual stack depth from last HookShouldStep call
 
-	// evaluating — сессия вычисляет выражение отладчика (условие точки останова
-	// или выражение табло/консоли) на потоке интерпретатора. Пока флаг стоит,
-	// точки останова и шаги игнорируются: вычисление само исполняет DSL и
-	// иначе вошло бы в beforeStmt → CheckBreakpoint по кругу (условие
-	// `РассчитатьСумму() > 100` на своей же строке — бесконечная рекурсия,
-	// а на уже захваченном мьютексе — взаимная блокировка).
-	evaluating bool
-
 	// Channels: interpreter goroutine uses pauseChan/resumeChan,
 	// HTTP handlers signal via methods.
 	pauseChan chan struct{} // signaled when interpreter pauses
@@ -146,6 +138,9 @@ func (s *ActiveSession) SetBreakpoint(file string, line int, condition string) *
 			bp.CondError = ""
 			bp.SkipCount = 0
 		}
+		if bp.Condition != condition || !bp.Enabled {
+			bp.revision++
+		}
 		bp.Condition = condition
 		bp.Enabled = true
 		return bp
@@ -157,6 +152,7 @@ func (s *ActiveSession) SetBreakpoint(file string, line int, condition string) *
 		Enabled:   true,
 		Condition: condition,
 		CreatedAt: time.Now(),
+		revision:  1,
 	}
 	s.breakpoints[key][line] = bp
 	bp.MapLen = len(s.breakpoints)
@@ -191,6 +187,7 @@ func (s *ActiveSession) ToggleBreakpoint(file string, line int) *Breakpoint {
 	if locMap, ok := s.breakpoints[key]; ok {
 		if bp, ok := locMap[line]; ok {
 			bp.Enabled = !bp.Enabled
+			bp.revision++
 			return bp
 		}
 	}
@@ -246,24 +243,19 @@ func (s *ActiveSession) CheckBreakpoint(file string, line int, cond func(expr st
 	s.diagLastFile = file
 	s.diagLastLine = line
 	s.appendDiag(fmt.Sprintf("check raw=%q line=%d norm=%q", file, line, key))
-	if s.evaluating {
-		// Внутри вычисления выражения отладчика точки не работают.
-		s.mu.Unlock()
-		return nil
-	}
 	bp := s.lookupBreakpoint(key, line)
 	if bp == nil || !bp.Enabled {
 		s.mu.Unlock()
 		return nil
 	}
 	expr := bp.Condition
+	revision := bp.revision
 	if expr == "" || cond == nil {
 		bp.CondError = ""
 		bp.HitCount++
 		s.mu.Unlock()
 		return bp
 	}
-	s.evaluating = true
 	s.mu.Unlock()
 
 	// Вычисляем вне мьютекса: колбэк исполняет DSL и может вернуться в сессию.
@@ -271,7 +263,14 @@ func (s *ActiveSession) CheckBreakpoint(file string, line int, cond func(expr st
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.evaluating = false
+	// The callback runs without s.mu because it may execute arbitrary DSL. The
+	// user can edit/remove the breakpoint while that happens. Never let the old
+	// expression update counters/errors or stop execution after such a change.
+	current := s.lookupBreakpoint(key, line)
+	if current != bp || !bp.Enabled || bp.Condition != expr || bp.revision != revision {
+		s.appendDiag(fmt.Sprintf("cond %q line=%d: результат отброшен — точка изменена", expr, line))
+		return nil
+	}
 	switch {
 	case err != nil:
 		bp.CondError = err.Error()
@@ -438,16 +437,7 @@ func (s *ActiveSession) Pause(loc Location, vars map[string]any, stack []StackFr
 		case <-s.doneChan:
 			return
 		case req := <-s.evalReq:
-			// Тот же предохранитель, что и у условий: выражение табло может
-			// вызвать процедуру, внутри которой стоит точка останова, — вложенная
-			// остановка на уже остановленном потоке не выйдет из Pause никогда.
-			s.mu.Lock()
-			s.evaluating = true
-			s.mu.Unlock()
 			val, err := evalFn(req.expr)
-			s.mu.Lock()
-			s.evaluating = false
-			s.mu.Unlock()
 			if err != nil {
 				req.result <- EvaluateResult{IsError: true, Error: err.Error()}
 			} else {
@@ -518,13 +508,6 @@ func (s *ActiveSession) ShouldStep(file string, currentDepth int) bool {
 	normFile := normalizeFilePath(file)
 
 	s.mu.Lock()
-	if s.evaluating {
-		// Шаги внутри вычисления выражения отладчика не считаем: иначе шаг
-		// уводил бы курсор в код, который выполняет условие точки останова,
-		// а lastDepth ушёл бы в глубину этого вычисления.
-		s.mu.Unlock()
-		return false
-	}
 	mode := s.stepMode
 	sd := s.stepDepth
 	sf := s.stepFile

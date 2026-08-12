@@ -58,6 +58,11 @@ type Breakpoint struct {
 	SkipCount int       `json:"skip_count"` // сколько раз условие оказалось ложным
 	CreatedAt time.Time `json:"created_at"`
 
+	// revision changes whenever the breakpoint's execution semantics change.
+	// It is intentionally not serialized: CheckBreakpoint uses it only to
+	// discard a condition result that raced with Set/Toggle/Remove.
+	revision uint64
+
 	// Diagnostic fields (not part of the breakpoint data)
 	MapLen   int `json:"map_len"`
 	EntryLen int `json:"entry_len"`

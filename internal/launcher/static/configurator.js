@@ -4003,17 +4003,46 @@ function dbgBPCondition(file, line) {
   return (typeof v === 'string') ? v : '';
 }
 
+// Snapshot/restore keeps the optimistic UI honest when the server rejects a
+// breakpoint update (most often a syntactically invalid condition). In
+// particular, editing an existing point must restore its old condition rather
+// than deleting it locally while it remains active on the server.
+function dbgCaptureLocalBP(file, line) {
+  var points = _dbgBreakpoints[file];
+  var had = !!(points && Object.prototype.hasOwnProperty.call(points, line));
+  return {had: had, value: had ? points[line] : undefined};
+}
+function dbgRestoreLocalBP(file, line, rollback) {
+  if (!rollback) return;
+  // A slower failed request must not undo a newer edit that has already
+  // replaced its optimistic value.
+  if (rollback.applied) {
+    var current = dbgCaptureLocalBP(file, line);
+    if (current.had !== rollback.applied.had || current.value !== rollback.applied.value) return;
+  }
+  if (rollback.had) {
+    if (!_dbgBreakpoints[file]) _dbgBreakpoints[file] = {};
+    _dbgBreakpoints[file][line] = rollback.value;
+  } else if (_dbgBreakpoints[file]) {
+    delete _dbgBreakpoints[file][line];
+    if (!Object.keys(_dbgBreakpoints[file]).length) delete _dbgBreakpoints[file];
+  }
+  dbgRenderBPList();
+  if (monacoEditors[file]) dbgRenderBreakpoints(file);
+}
+
 // dbgSendBP отправляет точку на сервер. action: 'set' | 'toggle' | 'remove'.
 // Сервер разбирает условие как выражение DSL и отвечает 400 на неразбираемое —
 // показываем это сразу, а не оставляем на первый проход строки.
-function dbgSendBP(file, line, action, condition) {
+function dbgSendBP(file, line, action, condition, rollback) {
   var diagEl = document.getElementById('dbg-diag');
   if (!_dbgEnabled) {
     if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP saved locally (debug not enabled)</div>';
-    return;
+    return Promise.resolve();
   }
+  if (rollback) rollback.applied = dbgCaptureLocalBP(file, line);
   if(diagEl) diagEl.innerHTML += '<div style="color:#60a5fa;font-size:10px">BP send: ' + esc(file) + ':' + line + (condition ? ' [' + esc(condition) + ']' : '') + '</div>';
-  fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
+  return fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({file: file, line: line, action: action, condition: condition || ''})
@@ -4021,12 +4050,8 @@ function dbgSendBP(file, line, action, condition) {
     .then(function(d){
       if (d && d.error) {
         if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP error: ' + esc(d.error) + '</div>';
-        // Сервер точку не принял — локальное состояние не должно врать.
-        if (condition && _dbgBreakpoints[file]) {
-          delete _dbgBreakpoints[file][line];
-          dbgRenderBPList();
-          if (monacoEditors[file]) dbgRenderBreakpoints(file);
-        }
+        // Сервер не применил изменение — возвращаем точное прежнее состояние.
+        dbgRestoreLocalBP(file, line, rollback);
         alert('Точка останова: ' + d.error);
       } else if (d && d.id) {
         if(diagEl) diagEl.innerHTML += '<div style="color:#16a34a;font-size:10px">BP OK: ' + esc(d.file) + ':' + d.line + ' count=' + (d.bp_count||0) + '</div>';
@@ -4042,6 +4067,7 @@ function dbgToggleBreakpoint(editorId, line) {
   var diagEl = document.getElementById('dbg-diag');
   if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP click: ' + esc(editorId) + ':' + line + ' hasEd=' + !!monacoEditors[editorId] + ' enabled=' + _dbgEnabled + '</div>';
   if (!monacoEditors[editorId]) return;
+  var rollback = dbgCaptureLocalBP(editorId, line);
   if (!_dbgBreakpoints[editorId]) _dbgBreakpoints[editorId] = {};
   var has = _dbgBreakpoints[editorId][line];
   if (has) {
@@ -4051,7 +4077,7 @@ function dbgToggleBreakpoint(editorId, line) {
   }
   try { dbgRenderBreakpoints(editorId); } catch(e) { console.error('renderBP', e); }
   try { dbgRenderBPList(); } catch(e) { console.error('renderBPList', e); }
-  dbgSendBP(editorId, line, 'toggle', '');
+  dbgSendBP(editorId, line, 'toggle', '', rollback);
 }
 
 // dbgEditBPCondition — задать/изменить/снять условие точки останова.
@@ -4061,11 +4087,12 @@ function dbgEditBPCondition(file, line) {
   var expr = prompt('Условие остановки на строке ' + line + ' (выражение DSL, например Сч = 4).\nПусто — останавливаться всегда.', cur);
   if (expr === null) return;
   expr = expr.trim();
+  var rollback = dbgCaptureLocalBP(file, line);
   if (!_dbgBreakpoints[file]) _dbgBreakpoints[file] = {};
   _dbgBreakpoints[file][line] = expr || true;
   try { if (monacoEditors[file]) dbgRenderBreakpoints(file); } catch(e) { console.error('renderBP', e); }
   dbgRenderBPList();
-  dbgSendBP(file, line, 'set', expr);
+  dbgSendBP(file, line, 'set', expr, rollback);
 }
 
 function dbgManualBP() {
@@ -4077,13 +4104,14 @@ function dbgManualBP() {
   var line = parseInt(lineInp.value);
   var cond = condInp ? condInp.value.trim() : '';
   if (!file || !line) { dbgWatchDebug('Укажите файл и строку'); return; }
+  var rollback = dbgCaptureLocalBP(file, line);
   // Save locally
   if (!_dbgBreakpoints[file]) _dbgBreakpoints[file] = {};
   _dbgBreakpoints[file][line] = cond || true;
   // Also set in Monaco if available
   if (monacoEditors[file]) dbgRenderBreakpoints(file);
   dbgRenderBPList();
-  dbgSendBP(file, line, 'set', cond);
+  dbgSendBP(file, line, 'set', cond, rollback);
   fileInp.value = '';
   lineInp.value = '';
   if (condInp) condInp.value = '';

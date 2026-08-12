@@ -306,8 +306,15 @@ func (i *Interpreter) beforeStmt(s ast.Stmt, e *env) {
 //     собой, после чего ошибка основного кода показала бы чужой файл и строку.
 func (i *Interpreter) evalDebugExpr(expr string, e *env) (res any, err error) {
 	savedFile, savedLine := e.ec.curFile, e.ec.curLine
+	savedDebug := e.ec.debug
+	// The guard belongs to this execution context, not to the shared debug
+	// session. A debugger expression may execute DSL itself; disabling the hook
+	// here prevents recursive breakpoints/steps in this run without making
+	// concurrent runs silently skip their own breakpoints.
+	e.ec.debug = nil
 	defer func() {
 		e.ec.curFile, e.ec.curLine = savedFile, savedLine
+		e.ec.debug = savedDebug
 		if r := recover(); r != nil {
 			res = nil
 			switch v := r.(type) {
@@ -344,7 +351,7 @@ func stackDepth(e *env) int {
 func (i *Interpreter) evaluateExprString(expr string, e *env) (any, error) {
 	l := lexer.New(expr, "<console>")
 	p := parser.New(l)
-	parsed, err := p.ParseExpr()
+	parsed, err := p.ParseStandaloneExpr()
 	if err != nil {
 		return nil, err
 	}
@@ -971,7 +978,7 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 	// начинается с line 1, но это не line 1 физического модуля. Лексическая
 	// identity для sibling-поиска хранится отдельно в e.sourceFile.
 	p := parser.New(lexer.New(src, "<Вычислить>"))
-	expr, err := p.ParseExpr()
+	expr, err := p.ParseStandaloneExpr()
 	if err != nil {
 		panic(userError{Msg: "Вычислить: " + err.Error()})
 	}

@@ -141,7 +141,7 @@ func (s *Server) debugGlobalBreakpoint(w http.ResponseWriter, r *http.Request) {
 // validateBreakpointCondition разбирает условие точки останова как выражение DSL.
 func validateBreakpointCondition(expr string) error {
 	p := parser.New(lexer.New(expr, "<условие точки останова>"))
-	if _, err := p.ParseExpr(); err != nil {
+	if _, err := p.ParseStandaloneExpr(); err != nil {
 		return fmt.Errorf("условие точки останова: %w", err)
 	}
 	return nil
@@ -253,7 +253,7 @@ func (s *Server) debugGlobalEvaluate(w http.ResponseWriter, r *http.Request) {
 func standaloneEval(s *Server, expr string) (any, error) {
 	l := lexer.New(expr, "<console>")
 	p := parser.New(l)
-	parsed, err := p.ParseExpr()
+	parsed, err := p.ParseStandaloneExpr()
 	if err != nil {
 		return nil, err
 	}

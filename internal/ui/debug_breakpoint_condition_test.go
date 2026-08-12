@@ -352,12 +352,20 @@ func TestBreakpointCondition_BrokenConditionStopsAndReportsError(t *testing.T) {
 // сюрприз до первого прохода строки.
 func TestBreakpointCondition_SyntaxCheckedOnSet(t *testing.T) {
 	d := newDebugSession(t, debugLoopModule)
-	code, resp := d.setBreakpoint(t, debugLoopBodyLine, "Сч >")
-	if code != 400 {
-		t.Fatalf("код %d, ожидалось 400; ответ %v", code, resp)
-	}
-	if msg, _ := resp["error"].(string); !strings.Contains(msg, "условие точки останова") {
-		t.Fatalf("невнятная ошибка: %v", resp)
+	for _, condition := range []string{
+		"Сч >",
+		"Сч = 4; Лишнее",
+		"Сч = 4 Лишнее",
+		"Сч = 4;;",
+	} {
+		code, resp := d.setBreakpoint(t, debugLoopBodyLine, condition)
+		if code != 400 {
+			t.Errorf("условие %q: код %d, ожидалось 400; ответ %v", condition, code, resp)
+			continue
+		}
+		if msg, _ := resp["error"].(string); !strings.Contains(msg, "условие точки останова") {
+			t.Errorf("условие %q: невнятная ошибка: %v", condition, resp)
+		}
 	}
 	if bp := d.sess.FindBreakpoint("циклотладки.proc.os", debugLoopBodyLine); bp != nil {
 		t.Fatal("точка с неразбираемым условием всё-таки создана")

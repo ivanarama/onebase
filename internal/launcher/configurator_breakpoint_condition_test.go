@@ -29,6 +29,9 @@ func TestConfiguratorJS_BreakpointConditionWired(t *testing.T) {
 		"dbg-bp-cond",                 // поле условия в панели точек
 		"cond_error",                  // ошибка вычисления видна человеку
 		"dbg-bp-glyph-cond",           // условная точка отличается на глаз
+		"function dbgCaptureLocalBP",  // снимок до оптимистичного изменения
+		"function dbgRestoreLocalBP",  // точный rollback при 400
+		"dbgRestoreLocalBP(file, line, rollback)",
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("в configurator.js нет %q — условие точки останова не доедет до сервера", want)
