@@ -67,6 +67,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateSearchFields(e); err != nil {
 			return err
 		}
+		if err := validateDetailPanel(e); err != nil {
+			return err
+		}
 		for _, tp := range e.TableParts {
 			for _, f := range tp.Fields {
 				if IsRichText(f.Type) {
@@ -254,6 +257,65 @@ func validateSearchFields(e *Entity) error {
 			return fmt.Errorf("entity %s: реквизит %s указан в search_fields дважды", e.Name, f.Name)
 		}
 		seen[key] = true
+	}
+	return nil
+}
+
+// validateDetailPanel проверяет блок `detail_panel:`: перечисленные реквизиты
+// должны существовать в шапке. Опечатка иначе давала бы пустую строку в панели
+// без объяснения — автор искал бы причину в данных, а не в YAML.
+//
+// Тяжёлые вкладки (табличные части, вложения) отклоняются явно: ключи
+// зарезервированы под 118D, и молчаливое игнорирование выглядело бы как
+// «объявил, но не работает» — тот самый класс дефектов, что мы чинили.
+func validateDetailPanel(e *Entity) error {
+	dp := e.DetailPanel
+	if dp == nil {
+		return nil
+	}
+	if dp.Width != 0 && (dp.Width < DetailPanelMinWidth || dp.Width > DetailPanelMaxWidth) {
+		return fmt.Errorf("entity %s: detail_panel.width должен быть от %d до %d px", e.Name, DetailPanelMinWidth, DetailPanelMaxWidth)
+	}
+	check := func(where string, names []string) error {
+		for _, name := range names {
+			if findEntityFieldFold(e, name) == nil {
+				return fmt.Errorf("entity %s: detail_panel%s ссылается на неизвестный реквизит %s", e.Name, where, name)
+			}
+		}
+		return nil
+	}
+	if dp.Title != "" && findEntityFieldFold(e, dp.Title) == nil {
+		return fmt.Errorf("entity %s: detail_panel.title ссылается на неизвестный реквизит %s", e.Name, dp.Title)
+	}
+	if err := check(".fields", dp.Fields); err != nil {
+		return err
+	}
+	tabsConfigured := dp.TabsSet || len(dp.Tabs) > 0
+	if dp.FieldsSet && tabsConfigured {
+		return fmt.Errorf("entity %s: detail_panel — задайте либо fields, либо tabs, но не оба", e.Name)
+	}
+	if dp.TabsSet && len(dp.Tabs) == 0 {
+		return fmt.Errorf("entity %s: detail_panel.tabs не может быть пустым; для явно пустой панели используйте fields: []", e.Name)
+	}
+	seen := map[string]bool{}
+	for _, tab := range dp.Tabs {
+		if strings.TrimSpace(tab.Name) == "" {
+			return fmt.Errorf("entity %s: detail_panel.tabs — у закладки нет имени (name)", e.Name)
+		}
+		key := strings.ToLower(tab.Name)
+		if seen[key] {
+			return fmt.Errorf("entity %s: detail_panel.tabs — закладка %s объявлена дважды", e.Name, tab.Name)
+		}
+		seen[key] = true
+		if tab.TablePartsSet || tab.AttachmentsSet {
+			return fmt.Errorf("entity %s: detail_panel.tabs[%s]: tableparts/attachments зарезервированы для 118D и пока не поддерживаются", e.Name, tab.Name)
+		}
+		if len(tab.Fields) == 0 {
+			return fmt.Errorf("entity %s: detail_panel.tabs[%s].fields не может быть пустым", e.Name, tab.Name)
+		}
+		if err := check(".tabs["+tab.Name+"].fields", tab.Fields); err != nil {
+			return err
+		}
 	}
 	return nil
 }

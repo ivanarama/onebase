@@ -12,7 +12,10 @@ import (
 	"io/fs"
 	"math/big"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,6 +25,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/extform"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/secrets"
@@ -31,6 +35,8 @@ import (
 // ErrLegacyFormat is returned by ImportUniversal when the archive is not in
 // the universal v2 format.
 var ErrLegacyFormat = errors.New("archive is not in universal format (use legacy restore)")
+
+var errNoConfigEntries = errors.New("no configuration entries found")
 
 // ImportReport summarises what was loaded during ImportUniversal.
 type ImportReport struct {
@@ -61,8 +67,11 @@ func disableUnreadableTOTP(ctx context.Context, db *storage.DB) ([]string, error
 	return reset, nil
 }
 
-// systemTables is the ordered list of system tables included in the universal
-// backup. The order matters for import (users before sessions, etc.).
+// systemTables is the ordered list of portable system tables included in a
+// universal backup. Besides core auth and application state, this must include
+// DB-only artifacts and operational cursors whose loss could duplicate business
+// operations after restore. Target-local credentials and derived indexes are
+// deliberately excluded (see clearRestoreTables).
 var systemTables = []string{
 	"_users",
 	// Резервные коды второго фактора (план 84). Без них восстановленная база
@@ -74,10 +83,30 @@ var systemTables = []string{
 	"_user_roles",
 	"_constants",
 	"_numerators",
+	"_sequences",
+	"_schema_fields",
+	"_blobs",
 	"_attachments",
 	"_audit",
+	"_ai_audit",
+	"_intake_log",
+	"_intake_dlq",
+	"_rollup",
 	"_scheduled_runs",
 	"_report_presets",
+	"_config_versions",
+	"_ext_printforms",
+	"_ext_reports",
+	"_ext_processors",
+}
+
+// preMigrationSystemTables influence how migrateSchema interprets the target's
+// existing physical schema. They are restored before migration and skipped by
+// the regular system-table pass. In particular, loading _schema_fields only
+// after migration would let an unrelated target map rename/add the wrong
+// columns and would then overwrite the source map too late.
+var preMigrationSystemTables = map[string]bool{
+	"_schema_fields": true,
 }
 
 // exchangeTables are exported separately so restore can distinguish a safe
@@ -117,6 +146,18 @@ func ExportUniversal(
 	baseName string,
 	w io.Writer,
 ) (err error) {
+	restoreOperationMu.Lock()
+	defer restoreOperationMu.Unlock()
+	if err := rejectSQLiteInsideConfigTree(db, configSource, configDir); err != nil {
+		return err
+	}
+	if err := rejectSQLiteInsideRestoreTree(db, attachmentsDir, "attachment"); err != nil {
+		return err
+	}
+	externalObjects, err := validateUniversalExportExternalObjects(ctx, db, attachmentsDir)
+	if err != nil {
+		return err
+	}
 	zw := zip.NewWriter(w)
 	// Close дописывает центральный каталог zip — без него архив нечитаем.
 	// На успешном пути эта ошибка основная, на пути ошибки — вторичная, но
@@ -135,6 +176,9 @@ func ExportUniversal(
 	manifest := make(map[string]int)
 	for _, tbl := range appTables {
 		entryName := "data/" + tbl + ".jsonl"
+		if !canonicalManifestTableKey(entryName) {
+			return fmt.Errorf("export: non-portable application table name %q", tbl)
+		}
 		fw, err := zw.Create(entryName)
 		if err != nil {
 			return err
@@ -148,6 +192,13 @@ func ExportUniversal(
 
 	// --- 2. SYSTEM tables -----------------------------------------------------
 	for _, tbl := range systemTables {
+		exists, err := tableExistsChecked(ctx, db, tbl)
+		if err != nil {
+			return fmt.Errorf("export: inspect system table %s: %w", tbl, err)
+		}
+		if !exists {
+			continue
+		}
 		entryName := "system/" + tbl + ".jsonl"
 		fw, err := zw.Create(entryName)
 		if err != nil {
@@ -155,26 +206,32 @@ func ExportUniversal(
 		}
 		n, err := dumpTableJSONL(ctx, db, tbl, fw)
 		if err != nil {
-			// System table may not exist (e.g. fresh base) — skip silently.
-			_ = n
-		} else {
-			manifest[entryName] = n
+			return fmt.Errorf("export table %s: %w", tbl, err)
 		}
+		manifest[entryName] = n
 	}
 	// Exchange queues/watermarks are non-secret and required for lossless DR.
 	// Clone restore ignores this directory and resets its local node identity.
 	hasExchangeState := false
 	for _, tbl := range exchangeTables {
+		exists, err := tableExistsChecked(ctx, db, tbl)
+		if err != nil {
+			return fmt.Errorf("export: inspect exchange table %s: %w", tbl, err)
+		}
+		if !exists {
+			continue
+		}
 		entryName := "exchange/" + tbl + ".jsonl"
 		fw, err := zw.Create(entryName)
 		if err != nil {
 			return err
 		}
 		n, err := dumpTableJSONL(ctx, db, tbl, fw)
-		if err == nil {
-			manifest[entryName] = n
-			hasExchangeState = true
+		if err != nil {
+			return fmt.Errorf("export table %s: %w", tbl, err)
 		}
+		manifest[entryName] = n
+		hasExchangeState = true
 	}
 
 	// --- 3. SAFE SETTINGS -----------------------------------------------------
@@ -193,11 +250,16 @@ func ExportUniversal(
 	hasAttachments := false
 	if attachmentsDir != "" {
 		if _, err := os.Stat(attachmentsDir); err == nil {
-			fileCount, ferr := exportAttachments(attachmentsDir, zw)
-			if ferr == nil && fileCount > 0 {
+			fileCount, ferr := exportAttachmentsExpected(attachmentsDir, zw, externalObjects)
+			if ferr != nil {
+				return fmt.Errorf("export attachments: %w", ferr)
+			}
+			if fileCount > 0 {
 				hasAttachments = true
 				manifest["attachments/"] = fileCount
 			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("export attachments: stat %s: %w", attachmentsDir, err)
 		}
 	}
 
@@ -239,7 +301,11 @@ func ExportUniversal(
 func listAppTables(ctx context.Context, db *storage.DB) ([]string, error) {
 	var q string
 	if db.IsSQLite() {
-		q = `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\_%' ESCAPE '\' ORDER BY name`
+		q = `SELECT name FROM sqlite_master
+			 WHERE type='table'
+			   AND name NOT LIKE '\_%' ESCAPE '\'
+			   AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
+			 ORDER BY name`
 	} else {
 		q = `SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT LIKE '\_%' ESCAPE '\' ORDER BY tablename`
 	}
@@ -251,12 +317,15 @@ func listAppTables(ctx context.Context, db *storage.DB) ([]string, error) {
 	var tables []string
 	for rows.Next() {
 		var name string
-		if rows.Scan(&name) != nil {
-			continue
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan application table name: %w", err)
 		}
 		tables = append(tables, name)
 	}
-	return tables, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate application table names: %w", err)
+	}
+	return tables, nil
 }
 
 // dumpTableJSONL streams all rows of tableName into w as JSONL.
@@ -321,6 +390,9 @@ func dumpTableJSONL(ctx context.Context, db *storage.DB, tableName string, w io.
 		if err != nil {
 			return n, err
 		}
+		if len(line)+1 > maxUniversalJSONLLineBytes {
+			return n, fmt.Errorf("dump %s: row %d exceeds the portable JSONL line limit of %d bytes", tableName, n+1, maxUniversalJSONLLineBytes)
+		}
 		if err := writeJSONLine(bw, line); err != nil {
 			return n, fmt.Errorf("dump %s: строка %d: %w", tableName, n+1, err)
 		}
@@ -347,8 +419,26 @@ func writeJSONLine(bw *bufio.Writer, line []byte) error {
 	return bw.WriteByte('\n')
 }
 
+// schemaMetadataDB is the narrow database surface needed by schema metadata
+// readers. Keeping it as an interface makes metadata failures testable without
+// weakening the storage.DB abstraction used by the rest of the backup code.
+type schemaMetadataDB interface {
+	IsSQLite() bool
+	Query(context.Context, string, ...any) (storage.Rows, error)
+}
+
+type tableExistenceDB interface {
+	IsSQLite() bool
+	QueryRow(context.Context, string, ...any) storage.Row
+}
+
+type safeSettingsDB interface {
+	schemaMetadataDB
+	tableExistenceDB
+}
+
 // detectByteCols returns the set of columns in tableName that store binary data.
-func detectByteCols(ctx context.Context, db *storage.DB, tableName string) (map[string]bool, error) {
+func detectByteCols(ctx context.Context, db schemaMetadataDB, tableName string) (map[string]bool, error) {
 	// Check our hardcoded list first.
 	result := make(map[string]bool)
 	for key := range byteColumns {
@@ -362,7 +452,7 @@ func detectByteCols(ctx context.Context, db *storage.DB, tableName string) (map[
 	if db.IsSQLite() {
 		rows, err := db.Query(ctx, "PRAGMA table_info("+sqliteQuote(tableName)+")")
 		if err != nil {
-			return result, nil
+			return nil, fmt.Errorf("query binary columns for %s: %w", tableName, err)
 		}
 		defer rows.Close()
 		for rows.Next() {
@@ -370,33 +460,40 @@ func detectByteCols(ctx context.Context, db *storage.DB, tableName string) (map[
 			var name, ctype string
 			var notnull, pk int
 			var dflt any
-			if rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk) != nil {
-				continue
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				return nil, fmt.Errorf("scan binary column for %s: %w", tableName, err)
 			}
 			if strings.ToUpper(ctype) == "BLOB" {
 				result[name] = true
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate binary columns for %s: %w", tableName, err)
 		}
 	} else {
 		rows, err := db.Query(ctx,
 			`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND data_type='bytea'`,
 			tableName)
 		if err != nil {
-			return result, nil
+			return nil, fmt.Errorf("query binary columns for %s: %w", tableName, err)
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var col string
-			if rows.Scan(&col) == nil {
-				result[col] = true
+			if err := rows.Scan(&col); err != nil {
+				return nil, fmt.Errorf("scan binary column for %s: %w", tableName, err)
 			}
+			result[col] = true
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate binary columns for %s: %w", tableName, err)
 		}
 	}
 	return result, nil
 }
 
 // detectJSONCols returns the set of columns in tableName that have JSON/JSONB type.
-func detectJSONCols(ctx context.Context, db *storage.DB, tableName string) (map[string]bool, error) {
+func detectJSONCols(ctx context.Context, db schemaMetadataDB, tableName string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	if db.IsSQLite() {
 		return result, nil // SQLite doesn't enforce JSON types
@@ -406,20 +503,24 @@ func detectJSONCols(ctx context.Context, db *storage.DB, tableName string) (map[
 		 WHERE table_schema='public' AND table_name=$1 AND data_type IN ('json','jsonb')`,
 		tableName)
 	if err != nil {
-		return result, nil
+		return nil, fmt.Errorf("query JSON columns for %s: %w", tableName, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var col string
-		if rows.Scan(&col) == nil {
-			result[col] = true
+		if err := rows.Scan(&col); err != nil {
+			return nil, fmt.Errorf("scan JSON column for %s: %w", tableName, err)
 		}
+		result[col] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate JSON columns for %s: %w", tableName, err)
 	}
 	return result, nil
 }
 
 // detectBoolCols returns the set of columns with boolean type (PG bool / SQLite INTEGER affinity used as bool).
-func detectBoolCols(ctx context.Context, db *storage.DB, tableName string) (map[string]bool, error) {
+func detectBoolCols(ctx context.Context, db schemaMetadataDB, tableName string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	if db.IsSQLite() {
 		return result, nil
@@ -429,14 +530,18 @@ func detectBoolCols(ctx context.Context, db *storage.DB, tableName string) (map[
 		 WHERE table_schema='public' AND table_name=$1 AND data_type='boolean'`,
 		tableName)
 	if err != nil {
-		return result, nil
+		return nil, fmt.Errorf("query boolean columns for %s: %w", tableName, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var col string
-		if rows.Scan(&col) == nil {
-			result[col] = true
+		if err := rows.Scan(&col); err != nil {
+			return nil, fmt.Errorf("scan boolean column for %s: %w", tableName, err)
 		}
+		result[col] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate boolean columns for %s: %w", tableName, err)
 	}
 	return result, nil
 }
@@ -444,12 +549,12 @@ func detectBoolCols(ctx context.Context, db *storage.DB, tableName string) (map[
 // detectByteaCols returns the set of columns with bytea type in PostgreSQL.
 // Used during import to decide whether to base64-decode btype values:
 // only true bytea columns get decoded; text/jsonb columns keep the original string.
-func detectByteaCols(ctx context.Context, db *storage.DB, tableName string) (map[string]bool, error) {
+func detectByteaCols(ctx context.Context, db schemaMetadataDB, tableName string) (map[string]bool, error) {
 	result := make(map[string]bool)
 	if db.IsSQLite() {
 		rows, err := db.Query(ctx, "PRAGMA table_info("+sqliteQuote(tableName)+")")
 		if err != nil {
-			return result, nil
+			return nil, fmt.Errorf("query bytea columns for %s: %w", tableName, err)
 		}
 		defer rows.Close()
 		for rows.Next() {
@@ -457,12 +562,15 @@ func detectByteaCols(ctx context.Context, db *storage.DB, tableName string) (map
 			var name, ctype string
 			var notnull, pk int
 			var dflt any
-			if rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk) != nil {
-				continue
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				return nil, fmt.Errorf("scan bytea column for %s: %w", tableName, err)
 			}
 			if strings.ToUpper(ctype) == "BLOB" {
 				result[name] = true
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate bytea columns for %s: %w", tableName, err)
 		}
 		return result, nil
 	}
@@ -471,14 +579,18 @@ func detectByteaCols(ctx context.Context, db *storage.DB, tableName string) (map
 		 WHERE table_schema='public' AND table_name=$1 AND data_type='bytea'`,
 		tableName)
 	if err != nil {
-		return result, nil
+		return nil, fmt.Errorf("query bytea columns for %s: %w", tableName, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var col string
-		if rows.Scan(&col) == nil {
-			result[col] = true
+		if err := rows.Scan(&col); err != nil {
+			return nil, fmt.Errorf("scan bytea column for %s: %w", tableName, err)
 		}
+		result[col] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate bytea columns for %s: %w", tableName, err)
 	}
 	return result, nil
 }
@@ -623,7 +735,7 @@ func skipConfigPath(rel string) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(rel, "backups/")
+	return rel == "backups" || strings.HasPrefix(rel, "backups/")
 }
 
 // exportConfig writes config files into the config/ directory inside zw.
@@ -634,13 +746,20 @@ func exportConfig(ctx context.Context, db *storage.DB, configSource, configDir s
 			return err
 		}
 		defer rows.Close()
+		count := 0
 		for rows.Next() {
 			var path string
 			var content []byte
-			if rows.Scan(&path, &content) != nil {
-				continue
+			if err := rows.Scan(&path, &content); err != nil {
+				return fmt.Errorf("scan config row: %w", err)
 			}
-			entryPath := "config/" + strings.ReplaceAll(path, `\`, "/")
+			if err := configdb.ValidatePath(path); err != nil {
+				return fmt.Errorf("unsafe config path %q: %w", path, err)
+			}
+			entryPath := "config/" + path
+			if _, err := portableArchivePath(entryPath, false); err != nil {
+				return fmt.Errorf("non-portable config path %q: %w", path, err)
+			}
 			fw, err := zw.Create(entryPath)
 			if err != nil {
 				return err
@@ -650,16 +769,27 @@ func exportConfig(ctx context.Context, db *storage.DB, configSource, configDir s
 			if _, err := fw.Write(content); err != nil {
 				return fmt.Errorf("export config %s: %w", entryPath, err)
 			}
+			count++
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if count == 0 {
+			return errNoConfigEntries
+		}
+		return nil
 	}
 
 	// File source: walk configDir.
-	return filepath.WalkDir(configDir, func(path string, d fs.DirEntry, err error) error {
+	count := 0
+	err := filepath.WalkDir(configDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return fmt.Errorf("walk config %s: %w", path, err)
 		}
-		rel, _ := filepath.Rel(configDir, path)
+		rel, err := filepath.Rel(configDir, path)
+		if err != nil {
+			return fmt.Errorf("resolve config path %s: %w", path, err)
+		}
 		rel = strings.ReplaceAll(rel, `\`, "/")
 		if skipConfigPath(rel) {
 			if d.IsDir() {
@@ -670,28 +800,51 @@ func exportConfig(ctx context.Context, db *storage.DB, configSource, configDir s
 		if d.IsDir() {
 			return nil
 		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("inspect config %s: %w", rel, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported config file type: %s", rel)
+		}
+		entryPath := "config/" + rel
+		if _, err := portableArchivePath(entryPath, false); err != nil {
+			return fmt.Errorf("non-portable config path %q: %w", rel, err)
+		}
 		content, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 		if err != nil {
-			return nil
+			return fmt.Errorf("read config %s: %w", rel, err)
 		}
-		fw, err := zw.Create("config/" + rel)
+		fw, err := zw.Create(entryPath)
 		if err != nil {
 			return err
 		}
 		if _, err := fw.Write(content); err != nil {
 			return fmt.Errorf("export config %s: %w", rel, err)
 		}
+		count++
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errNoConfigEntries
+	}
+	return nil
 }
 
-func exportSafeSettings(ctx context.Context, db *storage.DB, zw *zip.Writer) (int, error) {
-	if !tableExists(ctx, db, "_settings") {
+func exportSafeSettings(ctx context.Context, db safeSettingsDB, zw *zip.Writer) (int, error) {
+	exists, err := tableExistsChecked(ctx, db, "_settings")
+	if err != nil {
+		return 0, fmt.Errorf("inspect _settings table: %w", err)
+	}
+	if !exists {
 		return 0, nil
 	}
 	rows, err := db.Query(ctx, `SELECT key, value FROM _settings ORDER BY key`)
 	if err != nil {
-		return 0, nil
+		return 0, fmt.Errorf("query safe settings: %w", err)
 	}
 	defer rows.Close()
 
@@ -699,14 +852,14 @@ func exportSafeSettings(ctx context.Context, db *storage.DB, zw *zip.Writer) (in
 	for rows.Next() {
 		var key, value string
 		if err := rows.Scan(&key, &value); err != nil {
-			continue
+			return 0, fmt.Errorf("scan safe setting: %w", err)
 		}
 		if safeSettingKeys[key] || strings.HasPrefix(strings.ToLower(key), "exchange.this_node.") {
 			selected = append(selected, map[string]string{"key": key, "value": value})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("iterate safe settings: %w", err)
 	}
 	if len(selected) == 0 {
 		return 0, nil
@@ -733,17 +886,38 @@ func exportSafeSettings(ctx context.Context, db *storage.DB, zw *zip.Writer) (in
 
 // exportAttachments copies attachment binary files into attachments/ in the ZIP.
 func exportAttachments(attachmentsDir string, zw *zip.Writer) (int, error) {
+	return exportAttachmentsExpected(attachmentsDir, zw, nil)
+}
+
+func exportAttachmentsExpected(attachmentsDir string, zw *zip.Writer, expected externalObjectSet) (int, error) {
 	count := 0
 	err := filepath.WalkDir(attachmentsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(attachmentsDir, path)
+		if err != nil {
+			return fmt.Errorf("resolve attachment path %s: %w", path, err)
+		}
+		rel = strings.ReplaceAll(rel, `\`, "/")
+		if d.IsDir() && strings.EqualFold(rel, "_attach_tmp") {
+			return fs.SkipDir
+		}
 		if d.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(attachmentsDir, path)
-		rel = strings.ReplaceAll(rel, `\`, "/")
-		fw, err := zw.Create("attachments/" + rel)
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("inspect attachment %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported attachment file type: %s", path)
+		}
+		entryPath := "attachments/" + rel
+		if _, err := portableArchivePath(entryPath, false); err != nil {
+			return fmt.Errorf("non-portable attachment path %q: %w", rel, err)
+		}
+		fw, err := zw.Create(entryPath)
 		if err != nil {
 			return err
 		}
@@ -751,13 +925,22 @@ func exportAttachments(attachmentsDir string, zw *zip.Writer) (int, error) {
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(fw, f)
+		written, copyErr := io.Copy(fw, f)
 		closeErr := f.Close()
 		if copyErr != nil {
 			return copyErr
 		}
 		if closeErr != nil {
 			return closeErr
+		}
+		if expected != nil {
+			wanted, ok := expected[strings.ToLower(rel)]
+			if !ok || wanted.rel != rel {
+				return fmt.Errorf("attachment file %q changed after external-object preflight", rel)
+			}
+			if written != wanted.size {
+				return fmt.Errorf("attachment file %q changed size during export: wrote %d, expected %d", rel, written, wanted.size)
+			}
 		}
 		count++
 		return nil
@@ -823,6 +1006,40 @@ func ImportUniversalWithOptions(
 	size int64,
 	opts ImportOptions,
 ) (*ImportReport, error) {
+	restoreOperationMu.Lock()
+	defer restoreOperationMu.Unlock()
+	if err := rejectSQLiteInsideConfigTree(db, configDest, cfgFileDir); err != nil {
+		return nil, err
+	}
+	if err := rejectSQLiteInsideRestoreTree(db, attachmentsDir, "attachment"); err != nil {
+		return nil, err
+	}
+	opCtx, cancelOperation := detachedRestoreContext(ctx)
+	defer cancelOperation()
+	durableSession, err := db.BeginDurableSession(opCtx)
+	if err != nil {
+		return nil, fmt.Errorf("import: begin durable database session: %w", err)
+	}
+	opCtx = durableSession.Context()
+	defer func() {
+		if err := durableSession.Close(); err != nil {
+			backupLog().Warn("import: failed to restore database durability mode", "err", err)
+		}
+	}()
+	var recoveryDestinations []string
+	switch configDest {
+	case "file":
+		recoveryDestinations = append(recoveryDestinations, cfgFileDir)
+	case "database":
+	default:
+		return nil, fmt.Errorf("import: unknown configuration destination %q", configDest)
+	}
+	if attachmentsDir != "" {
+		recoveryDestinations = append(recoveryDestinations, attachmentsDir)
+	}
+	if err := recoverPendingRestoreLocked(opCtx, db, recoveryDestinations...); err != nil {
+		return nil, fmt.Errorf("import: recover previous restore: %w", err)
+	}
 	if opts.ExchangeMode == "" {
 		opts.ExchangeMode = ExchangeRestoreClone
 	}
@@ -871,144 +1088,543 @@ func ImportUniversalWithOptions(
 			return nil, err
 		}
 	}
+	if err := validateUniversalManifest(tmpDir); err != nil {
+		return nil, err
+	}
+	if _, err := validateUniversalArchiveExternalObjects(tmpDir, attachmentsDir); err != nil {
+		return nil, err
+	}
 
-	// --- 3. Import configuration ----------------------------------------------
+	// --- 3. Prepare filesystem snapshots without touching live paths ----------
 	configDir := filepath.Join(tmpDir, "config")
-	if _, err := os.Stat(configDir); err == nil {
-		if err := importConfig(ctx, db, configDest, cfgFileDir, configDir); err != nil {
-			return nil, fmt.Errorf("import config: %w", err)
-		}
+	if err := validateExtractedConfig(configDir); err != nil {
+		return nil, fmt.Errorf("import config: %w", err)
 	}
-
-	// --- 4. Run schema migration ----------------------------------------------
-	if err := migrateSchema(ctx, db, configDest, cfgFileDir); err != nil {
-		return nil, fmt.Errorf("import: schema migration: %w", err)
-	}
-
-	// --- 5. Import data and system tables -------------------------------------
-	report := &ImportReport{Tables: make(map[string]int)}
-
-	// Disable FK constraint enforcement for the bulk load: tables are imported
-	// in alphabetical order which may not respect FK dependency order (e.g.
-	// поступлениетоваров → склады where с > п alphabetically).
-	fkCleanup, err := db.DisableFKForImport(ctx)
+	manifest, err := readUniversalManifest(filepath.Join(tmpDir, "manifest.json"))
 	if err != nil {
-		return report, fmt.Errorf("import: disable FK: %w", err)
+		return nil, fmt.Errorf("import: manifest: %w", err)
 	}
-	fkDisabled := true
+
+	var swaps []*directorySwap
+	if configDest == "file" {
+		configSwap, err := prepareDirectorySwap(ctx, configDir, cfgFileDir, fsmode.File,
+			[]string{".git", ".svn", ".hg", "backups"})
+		if err != nil {
+			return nil, fmt.Errorf("import: prepare config snapshot: %w", err)
+		}
+		swaps = append(swaps, configSwap)
+	}
+
+	if attachmentsDir != "" {
+		if configDest == "file" && directoriesOverlap(cfgFileDir, attachmentsDir) {
+			_ = rollbackDirectorySwaps(swaps)
+			return nil, fmt.Errorf("import: config and attachment destinations overlap")
+		}
+		attachSrc := filepath.Join(tmpDir, "attachments")
+		if _, statErr := os.Stat(attachSrc); os.IsNotExist(statErr) {
+			attachSrc = "" // an empty snapshot must remove old attachment files
+		} else if statErr != nil {
+			_ = rollbackDirectorySwaps(swaps)
+			return nil, fmt.Errorf("import: inspect attachments: %w", statErr)
+		}
+		attachmentSwap, err := prepareDirectorySwap(ctx, attachSrc, attachmentsDir, fsmode.SecretFile, nil)
+		if err != nil {
+			_ = rollbackDirectorySwaps(swaps)
+			return nil, fmt.Errorf("import: prepare attachment snapshot: %w", err)
+		}
+		swaps = append(swaps, attachmentSwap)
+	}
+	unownedSwaps := true
 	defer func() {
-		if fkDisabled {
-			_ = fkCleanup()
+		if unownedSwaps {
+			_ = rollbackDirectorySwaps(swaps)
 		}
 	}()
 
-	// Application/system tables, safe settings and safety switches are one
-	// database transaction. A malformed row can no longer leave half of the
-	// tables cleared and half restored.
-	if importErr := db.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
-		dataDir := filepath.Join(tmpDir, "data")
-		if _, err := os.Stat(dataDir); err == nil {
-			if err := importDir(txCtx, db, dataDir, report, nil); err != nil {
-				return fmt.Errorf("import data: %w", err)
+	var intent *restoreIntent
+	if len(swaps) != 0 {
+		intent, err = newRestoreIntent(db, swaps)
+		if err != nil {
+			return nil, err
+		}
+		if err := intent.Begin(opCtx); err != nil {
+			return nil, err
+		}
+		// From here the durable intent owns the staged trees. A panic or
+		// process exit must leave them intact for the next recovery pass.
+		unownedSwaps = false
+	}
+	intentCleanupNeeded := intent != nil
+	defer func() {
+		if intentCleanupNeeded {
+			_ = intent.Rollback(opCtx, swaps)
+		}
+	}()
+	rollbackFiles := func() error {
+		if intent != nil {
+			err := intent.Rollback(opCtx, swaps)
+			if err == nil {
+				intentCleanupNeeded = false
+			}
+			return err
+		}
+		return rollbackDirectorySwaps(swaps)
+	}
+
+	// --- 4. One database transaction for config, schema, data and safeguards --
+	report := &ImportReport{Tables: make(map[string]int)}
+	fkTransactional := !db.IsSQLite()
+	var fkCleanup func() error
+	fkDisabled := false
+	cleanupFK := func() error {
+		if !fkDisabled {
+			return nil
+		}
+		fkDisabled = false
+		return fkCleanup()
+	}
+	if !fkTransactional {
+		fkCleanup, err = db.DisableFKForImport(opCtx)
+		if err != nil {
+			return report, errors.Join(fmt.Errorf("import: disable FK: %w", err), rollbackFiles())
+		}
+		fkDisabled = true
+		defer func() {
+			if fkDisabled {
+				_ = fkCleanup()
+			}
+		}()
+	}
+
+	// The committed restore marker and imported rows must reach stable storage
+	// before durable filesystem snapshots can be finalized. The SQLite durable
+	// session has been pinned since before recovery and intent.Begin.
+	tx, txCtx, err := db.BeginTx(opCtx)
+	if err != nil {
+		return report, errors.Join(err, cleanupFK(), rollbackFiles())
+	}
+	txOpen := true
+	defer func() {
+		if txOpen {
+			_ = tx.Rollback(txCtx)
+		}
+	}()
+	if fkTransactional {
+		fkCleanup, err = db.DisableFKForImport(txCtx)
+		if err != nil {
+			txOpen = false
+			return report, errors.Join(fmt.Errorf("import: disable FK: %w", err), tx.Rollback(txCtx), rollbackFiles())
+		}
+		fkDisabled = true
+	}
+	rollbackDB := func(cause error) error {
+		txOpen = false
+		rollbackErr := tx.Rollback(txCtx)
+		if fkTransactional {
+			// PostgreSQL FK DDL belongs to this transaction; Rollback restored
+			// the original constraints even when cleanupFK was never reached.
+			fkDisabled = false
+		}
+		return errors.Join(cause, rollbackErr, cleanupFK())
+	}
+
+	schemaConfigDir := cfgFileDir
+	if configDest == "file" {
+		// Migrate and rebuild against the validated snapshot, before it becomes
+		// visible at the live project path.
+		schemaConfigDir = configDir
+	}
+	importErr := func() error {
+		if configDest == "database" {
+			if err := importConfig(txCtx, db, configDest, cfgFileDir, configDir); err != nil {
+				return fmt.Errorf("import config: %w", err)
 			}
 		}
-
-		sysDir := filepath.Join(tmpDir, "system")
-		if _, err := os.Stat(sysDir); err == nil {
-			if err := importDir(txCtx, db, sysDir, report, nil); err != nil {
-				return fmt.Errorf("import system: %w", err)
-			}
+		if err := restorePreMigrationSystemTables(txCtx, db, filepath.Join(tmpDir, "system"), report); err != nil {
+			return fmt.Errorf("import: pre-migration system state: %w", err)
+		}
+		if err := migrateSchema(txCtx, db, configDest, schemaConfigDir); err != nil {
+			return fmt.Errorf("import: schema migration: %w", err)
+		}
+		if err := clearRestoreTables(txCtx, db, opts.ExchangeMode, archiveHasExchangeState); err != nil {
+			return err
 		}
 
+		for _, item := range []struct {
+			dir, label string
+			skip       map[string]bool
+		}{
+			{filepath.Join(tmpDir, "data"), "data", nil},
+			{filepath.Join(tmpDir, "system"), "system", preMigrationSystemTables},
+		} {
+			if _, err := os.Stat(item.dir); err == nil {
+				if err := importDir(txCtx, db, item.dir, report, item.skip); err != nil {
+					return fmt.Errorf("import %s: %w", item.label, err)
+				}
+			} else if !os.IsNotExist(err) {
+				return err
+			}
+		}
 		if opts.ExchangeMode == ExchangeRestoreDisasterRecovery && archiveHasExchangeState {
 			exchangeDir := filepath.Join(tmpDir, "exchange")
 			if _, err := os.Stat(exchangeDir); err == nil {
 				if err := importDir(txCtx, db, exchangeDir, report, nil); err != nil {
 					return fmt.Errorf("import exchange state: %w", err)
 				}
+			} else if !os.IsNotExist(err) {
+				return err
 			}
 		}
+		if err := verifyImportedTableCounts(manifest, report, opts.ExchangeMode, archiveHasExchangeState); err != nil {
+			return err
+		}
 
+		if err := clearPortableSettings(txCtx, db); err != nil {
+			return fmt.Errorf("import settings: clear old portable values: %w", err)
+		}
 		settingsFile := filepath.Join(tmpDir, "settings", "safe.jsonl")
 		if _, err := os.Stat(settingsFile); err == nil {
-			n, err := importSafeSettings(txCtx, db, settingsFile, opts.ExchangeMode == ExchangeRestoreDisasterRecovery && archiveHasExchangeState)
+			n, err := importSafeSettings(txCtx, db, settingsFile,
+				opts.ExchangeMode == ExchangeRestoreDisasterRecovery && archiveHasExchangeState)
 			if err != nil {
 				return fmt.Errorf("import settings: %w", err)
 			}
 			if n > 0 {
 				report.Tables["_settings"] = n
 			}
+		} else if !os.IsNotExist(err) {
+			return err
 		}
+
 		effectiveExchangeMode := opts.ExchangeMode
 		if effectiveExchangeMode == ExchangeRestoreDisasterRecovery && !archiveHasExchangeState {
-			// Old universal archives cannot safely reconstruct replication state;
-			// restore them as isolated clones instead of retaining stale target
-			// queues/node identity.
 			effectiveExchangeMode = ExchangeRestoreClone
 		}
 		if err := resetExchangeSecretsAndCloneState(txCtx, db, effectiveExchangeMode); err != nil {
 			return fmt.Errorf("import: сброс состояния обмена: %w", err)
 		}
-
-		// Restored copies must not silently contact production systems or run OS
-		// commands. These switches commit atomically with the imported data.
 		if err := db.SaveNetworkEnabled(txCtx, false); err != nil {
 			return fmt.Errorf("import: сброс предохранителя сети: %w", err)
 		}
 		if err := db.SaveExecEnabled(txCtx, false); err != nil {
 			return fmt.Errorf("import: сброс переключателя команд ОС: %w", err)
 		}
-		return nil
-	}); importErr != nil {
-		cleanupErr := fkCleanup()
-		fkDisabled = false
-		if cleanupErr != nil {
-			return report, errors.Join(importErr, fmt.Errorf("import: restore FK constraints: %w", cleanupErr))
-		}
-		return report, importErr
-	}
-	if err := fkCleanup(); err != nil {
-		return report, fmt.Errorf("import: restore FK constraints: %w", err)
-	}
-	fkDisabled = false
 
-	// Полнотекстовый индекс восстановленной базы (план 82) — после коммита
-	// данных, см. rebuildSearchIndex.
-	if err := rebuildSearchIndex(ctx, db, configDest, cfgFileDir); err != nil {
-		return report, fmt.Errorf("import: пересборка полнотекстового индекса: %w", err)
-	}
-
-	// Attachment files are copied only after the database transaction commits;
-	// every individual destination is published atomically.
-	attachSrc := filepath.Join(tmpDir, "attachments")
-	if _, err := os.Stat(attachSrc); err == nil {
-		n, err := restoreAttachments(attachSrc, attachmentsDir)
+		reset, err := disableUnreadableTOTP(txCtx, db)
 		if err != nil {
-			return report, fmt.Errorf("import attachments: %w", err)
+			return fmt.Errorf("import: гашение нечитаемого второго фактора: %w", err)
 		}
+		report.TOTPReset = reset
+		if err := rebuildSearchIndex(txCtx, db, configDest, schemaConfigDir); err != nil {
+			return fmt.Errorf("import: пересборка полнотекстового индекса: %w", err)
+		}
+		return nil
+	}()
+	if importErr != nil {
+		return report, errors.Join(rollbackDB(importErr), rollbackFiles())
+	}
+	if fkTransactional {
+		if err := cleanupFK(); err != nil {
+			return report, errors.Join(rollbackDB(fmt.Errorf("import: restore and validate FK constraints: %w", err)),
+				rollbackFiles())
+		}
+	}
+	if intent != nil {
+		if err := intent.MarkCommitted(txCtx); err != nil {
+			return report, errors.Join(rollbackDB(err), rollbackFiles())
+		}
+	}
+
+	for _, swap := range swaps {
+		if err := swap.Publish(); err != nil {
+			return report, errors.Join(fmt.Errorf("import: publish filesystem snapshot: %w", err),
+				rollbackDB(nil), rollbackFiles())
+		}
+	}
+	if err := tx.Commit(txCtx); err != nil {
+		txOpen = false
+		commitErr := fmt.Errorf("import: commit database snapshot: %w", err)
+		if intent != nil {
+			// The outcome is unknown; never let an ordinary deferred rollback
+			// choose a file direction after this boundary.
+			intentCleanupNeeded = false
+			commitErr = intent.ResolveCommitError(opCtx, swaps, commitErr)
+		}
+		return report, errors.Join(commitErr, cleanupFK())
+	}
+	txOpen = false
+	fkErr := cleanupFK()
+	var finalizeErr error
+	if intent != nil {
+		// The database committed. If finalization fails, leave the committed
+		// marker and trees for startup recovery; rolling them back is unsafe.
+		intentCleanupNeeded = false
+		finalizeErr = intent.Finalize(opCtx, swaps)
+	} else {
+		finalizeErr = commitDirectorySwaps(swaps)
+	}
+	if err := errors.Join(fkErr, finalizeErr); err != nil {
+		return report, fmt.Errorf("import: finalize restored snapshot: %w", err)
+	}
+	if n, ok := manifest["attachments/"]; ok {
 		report.Files = n
 	}
-
-	// Второй фактор, чей секрет зашифрован мастер-ключом другой установки, текущим
-	// ключом не расшифровывается: владелец такой учётки войти не сможет (TOTP не
-	// проверяется, а резервные коды конечны). При политике «2FA обязателен для
-	// администраторов» и единственном админе восстановленная база стала бы
-	// неадминистрируемой. Гасим нечитаемый второй фактор и сообщаем, кому его
-	// перепривязать (#611). Ошибку не глотаем: оставить учётку запертой молча
-	// хуже, чем сорвать восстановление явно.
-	reset, err := disableUnreadableTOTP(ctx, db)
-	if err != nil {
-		return report, fmt.Errorf("import: гашение нечитаемого второго фактора: %w", err)
-	}
-	report.TOTPReset = reset
-
 	return report, nil
 }
 
+// validateExtractedConfig rejects an empty or non-regular configuration tree
+// before any database or live-filesystem mutation. Reserved project metadata
+// is preserved from the target and therefore must never also come from the
+// archive.
+func validateExtractedConfig(configDir string) error {
+	rootInfo, err := os.Lstat(configDir)
+	if err != nil {
+		return err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return fmt.Errorf("configuration root is not a real directory")
+	}
+
+	files := 0
+	err = filepath.WalkDir(configDir, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(configDir, filePath)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if skipConfigPath(rel) {
+			return fmt.Errorf("archive contains reserved configuration path %q", rel)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symbolic link is not allowed: %s", rel)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported configuration file type: %s", rel)
+		}
+		files++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if files == 0 {
+		return errNoConfigEntries
+	}
+	return nil
+}
+
+func canonicalDirectoryPath(raw string) string {
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return filepath.Clean(raw)
+	}
+	abs = filepath.Clean(abs)
+	current := abs
+	var missing []string
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func directoriesOverlap(a, b string) bool {
+	a = canonicalDirectoryPath(a)
+	b = canonicalDirectoryPath(b)
+	contains := func(parent, child string) bool {
+		rel, err := filepath.Rel(parent, child)
+		return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
+	}
+	return contains(a, b) || contains(b, a)
+}
+
+func rejectSQLiteInsideConfigTree(db *storage.DB, configMode, configDir string) error {
+	if configMode != "file" {
+		return nil
+	}
+	return rejectSQLiteInsideRestoreTree(db, configDir, "file configuration")
+}
+
+func rejectSQLiteInsideRestoreTree(db *storage.DB, treeDir, treeLabel string) error {
+	if db == nil || treeDir == "" || db.SQLitePath() == "" {
+		return nil
+	}
+	root := canonicalDirectoryPath(treeDir)
+	databaseFile := canonicalDirectoryPath(db.SQLitePath())
+	rel, err := filepath.Rel(root, databaseFile)
+	if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+		return fmt.Errorf("universal backup: SQLite database %s is inside the %s tree %s", databaseFile, treeLabel, root)
+	}
+	return nil
+}
+
+// restorePreMigrationSystemTables replaces state that participates in schema
+// planning before migrateSchema sees the target database. The replacement is
+// intentionally performed even for an old archive without the table: stale
+// target metadata must never steer restoration of an unrelated snapshot.
+func restorePreMigrationSystemTables(ctx context.Context, db *storage.DB, systemDir string, report *ImportReport) error {
+	if err := db.EnsureSchemaMapSchema(ctx); err != nil {
+		return fmt.Errorf("ensure _schema_fields: %w", err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM _schema_fields`); err != nil {
+		return fmt.Errorf("clear _schema_fields: %w", err)
+	}
+
+	filePath := filepath.Join(systemDir, "_schema_fields.jsonl")
+	if _, err := os.Stat(filePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect _schema_fields archive: %w", err)
+	}
+	n, err := importTableJSONL(ctx, db, "_schema_fields", filePath)
+	if err != nil {
+		return fmt.Errorf("restore _schema_fields: %w", err)
+	}
+	report.Tables["_schema_fields"] = n
+	return nil
+}
+
+// clearRestoreTables gives full restore replacement semantics: rows that are
+// absent from the archive must not survive from the previous target. Runtime
+// credentials are deliberately invalidated rather than exported.
+func clearRestoreTables(ctx context.Context, db *storage.DB, mode ExchangeRestoreMode, archiveHasExchange bool) error {
+	appTables, err := listAppTables(ctx, db)
+	if err != nil {
+		return fmt.Errorf("import: list application tables: %w", err)
+	}
+	for _, tableName := range appTables {
+		if _, err := db.Exec(ctx, "DELETE FROM "+quotedIdent(db, tableName)); err != nil {
+			return fmt.Errorf("import: clear application table %s: %w", tableName, err)
+		}
+	}
+
+	// These tables contain target-local credentials or potentially secret-bearing
+	// delivery diagnostics and are never portable across a full restore.
+	// Configuration history is portable and is restored through systemTables;
+	// live sessions, bearer/binding tokens, and webhook logs are not.
+	for _, tableName := range []string{"_sessions", "_api_tokens", "_auth_bind_tickets", "_webhook_log"} {
+		exists, err := tableExistsChecked(ctx, db, tableName)
+		if err != nil {
+			return fmt.Errorf("import: inspect runtime table %s: %w", tableName, err)
+		}
+		if exists {
+			if _, err := db.Exec(ctx, "DELETE FROM "+quotedIdent(db, tableName)); err != nil {
+				return fmt.Errorf("import: clear runtime table %s: %w", tableName, err)
+			}
+		}
+	}
+
+	for _, tableName := range systemTables {
+		if preMigrationSystemTables[tableName] {
+			continue
+		}
+		exists, err := tableExistsChecked(ctx, db, tableName)
+		if err != nil {
+			return fmt.Errorf("import: inspect system table %s: %w", tableName, err)
+		}
+		if exists {
+			if _, err := db.Exec(ctx, "DELETE FROM "+quotedIdent(db, tableName)); err != nil {
+				return fmt.Errorf("import: clear system table %s: %w", tableName, err)
+			}
+		}
+	}
+
+	if mode == ExchangeRestoreDisasterRecovery && archiveHasExchange {
+		for _, tableName := range exchangeTables {
+			exists, err := tableExistsChecked(ctx, db, tableName)
+			if err != nil {
+				return fmt.Errorf("import: inspect exchange table %s: %w", tableName, err)
+			}
+			if exists {
+				if _, err := db.Exec(ctx, "DELETE FROM "+quotedIdent(db, tableName)); err != nil {
+					return fmt.Errorf("import: clear exchange table %s: %w", tableName, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func verifyImportedTableCounts(manifest map[string]int, report *ImportReport, mode ExchangeRestoreMode, archiveHasExchange bool) error {
+	keys := make([]string, 0, len(manifest))
+	for key := range manifest {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		shouldVerify := strings.HasPrefix(key, "data/") || strings.HasPrefix(key, "system/")
+		if strings.HasPrefix(key, "exchange/") {
+			shouldVerify = mode == ExchangeRestoreDisasterRecovery && archiveHasExchange
+		}
+		if !shouldVerify {
+			continue
+		}
+		tableName := strings.TrimSuffix(path.Base(key), ".jsonl")
+		actual, ok := report.Tables[tableName]
+		if !ok {
+			return fmt.Errorf("import: manifest table %s was not imported", tableName)
+		}
+		if expected := manifest[key]; actual != expected {
+			return fmt.Errorf("import: table %s: imported %d rows, manifest requires %d", tableName, actual, expected)
+		}
+	}
+	return nil
+}
+
+func clearPortableSettings(ctx context.Context, db *storage.DB) error {
+	exists, err := tableExistsChecked(ctx, db, "_settings")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	d := db.Dialect()
+	for key := range safeSettingKeys {
+		if _, err := db.Exec(ctx, "DELETE FROM _settings WHERE key = "+d.Placeholder(1), key); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), "exchange.this_node.%")
+	return err
+}
+
 const (
-	maxUniversalArchiveEntries  = 100_000
-	maxUniversalArchiveExpanded = uint64(64 << 30)
+	maxUniversalArchiveEntries = 100_000
+	// MaxUniversalArchiveExpanded is shared with launcher pre-validation so a
+	// universal archive accepted here cannot be rejected earlier by the UI.
+	MaxUniversalArchiveExpanded = uint64(64 << 30)
+	maxUniversalArchiveExpanded = MaxUniversalArchiveExpanded
 	maxUniversalMetaBytes       = int64(1 << 20)
+	maxUniversalManifestBytes   = int64(16 << 20)
+	// A DB-backed blob is base64-encoded inside one JSONL row. The default
+	// upload limit is 50 MiB, so the old 4 MiB scanner limit let export create
+	// archives which its own importer could never read. Keep the bound finite
+	// while leaving room for base64 and row metadata.
+	maxUniversalJSONLLineBytes = 128 << 20
 )
 
 func validateUniversalArchive(zr *zip.Reader) error {
@@ -1018,15 +1634,11 @@ func validateUniversalArchive(zr *zip.Reader) error {
 	seen := make(map[string]struct{}, len(zr.File))
 	var expanded uint64
 	for _, f := range zr.File {
-		name := strings.ReplaceAll(f.Name, `\`, "/")
-		clean := filepath.Clean(filepath.FromSlash(name))
-		if name == "" || strings.ContainsRune(name, 0) || filepath.IsAbs(clean) ||
-			strings.HasPrefix(name, "/") ||
-			(len(name) >= 2 && ((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) && name[1] == ':') ||
-			clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		name, pathErr := portableArchivePath(f.Name, f.FileInfo().IsDir())
+		if pathErr != nil {
 			return fmt.Errorf("недопустимый путь в архиве: %s", f.Name)
 		}
-		key := strings.ToLower(clean)
+		key := strings.ToLower(name)
 		if _, ok := seen[key]; ok {
 			return fmt.Errorf("повторяющаяся запись в архиве: %s", f.Name)
 		}
@@ -1039,6 +1651,351 @@ func validateUniversalArchive(zr *zip.Reader) error {
 			return fmt.Errorf("распакованный архив превышает допустимый размер")
 		}
 		expanded += f.UncompressedSize64
+	}
+	return nil
+}
+
+// portableArchivePath accepts only canonical, cross-platform ZIP paths. This
+// prevents aliases such as backslashes, dot segments, NTFS alternate streams
+// and Windows device names from escaping duplicate checks or extraction rules.
+func portableArchivePath(raw string, isDir bool) (string, error) {
+	if raw == "" || strings.ContainsRune(raw, 0) || strings.Contains(raw, `\`) || strings.HasPrefix(raw, "/") {
+		return "", errors.New("non-portable archive path")
+	}
+	name := raw
+	if isDir {
+		name = strings.TrimSuffix(name, "/")
+		if name == "" || strings.HasSuffix(name, "/") {
+			return "", errors.New("non-canonical directory path")
+		}
+	} else if strings.HasSuffix(name, "/") {
+		return "", errors.New("file path has a directory suffix")
+	}
+	if path.Clean(name) != name || name == "." || name == ".." || strings.HasPrefix(name, "../") {
+		return "", errors.New("non-canonical archive path")
+	}
+	for _, segment := range strings.Split(name, "/") {
+		if segment == "" || strings.HasSuffix(segment, ".") || strings.HasSuffix(segment, " ") || strings.Contains(segment, ":") {
+			return "", errors.New("non-portable archive path segment")
+		}
+		for _, r := range segment {
+			if r < 0x20 || r == 0x7f {
+				return "", errors.New("control character in archive path")
+			}
+		}
+		device := strings.ToLower(segment)
+		if dot := strings.IndexByte(device, '.'); dot >= 0 {
+			device = device[:dot]
+		}
+		if device == "con" || device == "prn" || device == "aux" || device == "nul" ||
+			(len(device) == 4 && (strings.HasPrefix(device, "com") || strings.HasPrefix(device, "lpt")) && device[3] >= '1' && device[3] <= '9') {
+			return "", errors.New("reserved device name in archive path")
+		}
+	}
+	return name, nil
+}
+
+// validateUniversalManifest verifies the complete extracted payload before the
+// importer writes configuration, migrates schemas, clears tables or publishes
+// attachments. The manifest is an allow-list: every listed JSONL file must be
+// present and valid, and every actual JSONL/attachment payload must be listed.
+func validateUniversalManifest(tmpDir string) error {
+	manifest, err := readUniversalManifest(filepath.Join(tmpDir, "manifest.json"))
+	if err != nil {
+		return fmt.Errorf("import: manifest: %w", err)
+	}
+
+	listedJSONL := make(map[string]int)
+	attachmentsExpected, attachmentsListed := 0, false
+	for key, count := range manifest {
+		switch {
+		case key == "attachments/":
+			attachmentsExpected, attachmentsListed = count, true
+		case key == "settings/safe.jsonl" || canonicalManifestTableKey(key):
+			listedJSONL[key] = count
+		default:
+			return fmt.Errorf("import: manifest: недопустимый ключ %q", key)
+		}
+	}
+
+	actualJSONL := make(map[string]struct{}, len(listedJSONL))
+	attachmentsActual := 0
+	if err := filepath.WalkDir(tmpDir, func(filePath string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("обход %s: %w", filePath, walkErr)
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(tmpDir, filePath)
+		if err != nil {
+			return fmt.Errorf("относительный путь %s: %w", filePath, err)
+		}
+		rel = filepath.ToSlash(rel)
+		portableRel := strings.ReplaceAll(rel, `\`, "/")
+		lowerRel := strings.ToLower(portableRel)
+		if lowerRel == "attachments" || strings.HasPrefix(lowerRel, "attachments/") {
+			if !strings.HasPrefix(rel, "attachments/") {
+				return fmt.Errorf("неканонический путь attachment %q", rel)
+			}
+			attachmentsActual++
+			return nil
+		}
+		if manifestJSONLPath(rel) {
+			if !canonicalManifestJSONLKey(rel) {
+				return fmt.Errorf("неканонический JSONL-путь %q", rel)
+			}
+			actualJSONL[rel] = struct{}{}
+			if _, ok := listedJSONL[rel]; !ok {
+				return fmt.Errorf("JSONL-файл %q отсутствует в manifest.json", rel)
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("import: manifest: %w", err)
+	}
+
+	if attachmentsActual > 0 && !attachmentsListed {
+		return fmt.Errorf("import: manifest: %d файлов attachments не перечислены", attachmentsActual)
+	}
+	if attachmentsListed && attachmentsExpected != attachmentsActual {
+		return fmt.Errorf("import: manifest: файлов attachments: указано %d, найдено %d", attachmentsExpected, attachmentsActual)
+	}
+
+	for key, expected := range listedJSONL {
+		if _, ok := actualJSONL[key]; !ok {
+			return fmt.Errorf("import: manifest: перечисленный файл %q отсутствует", key)
+		}
+		got, err := validateJSONLPayload(filepath.Join(tmpDir, filepath.FromSlash(key)))
+		if err != nil {
+			return fmt.Errorf("import: manifest: %s: %w", key, err)
+		}
+		if got != expected {
+			return fmt.Errorf("import: manifest: %s: строк данных %d, ожидалось %d", key, got, expected)
+		}
+	}
+	return nil
+}
+
+func canonicalManifestTableKey(key string) bool {
+	if key == "" || strings.ContainsRune(key, 0) || strings.Contains(key, `\`) {
+		return false
+	}
+	for _, prefix := range []string{"data/", "system/", "exchange/"} {
+		if strings.HasPrefix(key, prefix) {
+			name := strings.TrimPrefix(key, prefix)
+			if name == "" || strings.Contains(name, "/") || !strings.HasSuffix(name, ".jsonl") || name == ".jsonl" || path.Clean(key) != key {
+				return false
+			}
+			tableName := strings.TrimSuffix(name, ".jsonl")
+			switch prefix {
+			case "data/":
+				// Application tables never start with the platform-reserved
+				// underscore and SQLite reserves its own sqlite_ namespace.
+				return !strings.HasPrefix(tableName, "_") && !strings.HasPrefix(strings.ToLower(tableName), "sqlite_")
+			case "system/":
+				return stringInSlice(systemTables, tableName)
+			case "exchange/":
+				return stringInSlice(exchangeTables, tableName)
+			}
+		}
+	}
+	return false
+}
+
+func stringInSlice(items []string, wanted string) bool {
+	for _, item := range items {
+		if item == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalManifestJSONLKey(key string) bool {
+	return key == "settings/safe.jsonl" || canonicalManifestTableKey(key)
+}
+
+func manifestJSONLPath(rel string) bool {
+	lowerRel := strings.ToLower(strings.ReplaceAll(rel, `\`, "/"))
+	if !strings.HasSuffix(lowerRel, ".jsonl") {
+		return false
+	}
+	for _, prefix := range []string{"data/", "system/", "exchange/", "settings/"} {
+		if strings.HasPrefix(lowerRel, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func readUniversalManifest(filePath string) (map[string]int, error) {
+	f, err := os.Open(filePath) //nolint:gosec // G304: fixed manifest path below the private extraction directory
+	if err != nil {
+		return nil, err
+	}
+	defer closeRead("manifest.json", f)
+	data, err := io.ReadAll(io.LimitReader(f, maxUniversalManifestBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxUniversalManifestBytes {
+		return nil, fmt.Errorf("manifest.json превышает допустимый размер")
+	}
+
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("разбор JSON: %w", err)
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("ожидался JSON-объект")
+	}
+	manifest := make(map[string]int)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("разбор ключа: %w", err)
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, fmt.Errorf("ключ manifest.json не является строкой")
+		}
+		if _, duplicate := manifest[key]; duplicate {
+			return nil, fmt.Errorf("повторяющийся ключ %q", key)
+		}
+		var number json.Number
+		if err := dec.Decode(&number); err != nil {
+			return nil, fmt.Errorf("значение %q должно быть целым числом: %w", key, err)
+		}
+		value, err := strconv.ParseInt(number.String(), 10, 64)
+		if err != nil || value < 0 || value > int64(int(^uint(0)>>1)) {
+			return nil, fmt.Errorf("значение %q должно быть неотрицательным целым числом", key)
+		}
+		manifest[key] = int(value)
+	}
+	if tok, err := dec.Token(); err != nil {
+		return nil, fmt.Errorf("завершение JSON-объекта: %w", err)
+	} else if delim, ok := tok.(json.Delim); !ok || delim != '}' {
+		return nil, fmt.Errorf("некорректное завершение JSON-объекта")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("после JSON-объекта есть лишние данные")
+		}
+		return nil, fmt.Errorf("после JSON-объекта есть лишние данные: %w", err)
+	}
+	return manifest, nil
+}
+
+func validateJSONLPayload(filePath string) (int, error) {
+	f, err := os.Open(filePath) //nolint:gosec // G304: path comes from a canonical manifest key below the private extraction directory
+	if err != nil {
+		return 0, err
+	}
+	defer closeRead("JSONL-файл", f)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), maxUniversalJSONLLineBytes)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return 0, err
+		}
+		return 0, fmt.Errorf("пустой JSONL-файл")
+	}
+	var schema struct {
+		Schema int      `json:"_schema"`
+		Btypes []string `json:"btypes,omitempty"`
+	}
+	if err := decodeStrictJSONObject(scanner.Bytes(), &schema); err != nil {
+		return 0, fmt.Errorf("строка схемы: %w", err)
+	}
+	if schema.Schema != 1 {
+		return 0, fmt.Errorf("неподдерживаемая схема %d", schema.Schema)
+	}
+	rows := 0
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			return rows, fmt.Errorf("пустая строка данных %d", rows+1)
+		}
+		var row map[string]json.RawMessage
+		if err := decodeStrictJSONObject(line, &row); err != nil {
+			return rows, fmt.Errorf("строка данных %d: %w", rows+1, err)
+		}
+		if row == nil {
+			return rows, fmt.Errorf("строка данных %d не является JSON-объектом", rows+1)
+		}
+		if len(row) == 0 {
+			return rows, fmt.Errorf("строка данных %d не содержит ни одной колонки", rows+1)
+		}
+		rows++
+	}
+	if err := scanner.Err(); err != nil {
+		return rows, err
+	}
+	return rows, nil
+}
+
+func decodeStrictJSONObject(data []byte, dst any) error {
+	if err := rejectDuplicateJSONObjectKeys(data); err != nil {
+		return err
+	}
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("лишние JSON-данные")
+		}
+		return fmt.Errorf("лишние JSON-данные: %w", err)
+	}
+	return nil
+}
+
+// rejectDuplicateJSONObjectKeys rejects ambiguous top-level object members.
+// encoding/json otherwise keeps the last value, so an archive row such as
+// {"id":"first","id":"second"} would validate and then silently change
+// identity during import.
+func rejectDuplicateJSONObjectKeys(data []byte) error {
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("ожидался JSON-объект")
+	}
+	seen := make(map[string]struct{})
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return fmt.Errorf("ключ JSON-объекта не является строкой")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("повторяющийся ключ JSON-объекта %q", key)
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+	}
+	if tok, err := dec.Token(); err != nil {
+		return err
+	} else if delim, ok := tok.(json.Delim); !ok || delim != '}' {
+		return fmt.Errorf("некорректное завершение JSON-объекта")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("после JSON-объекта есть лишние данные")
+		}
+		return err
 	}
 	return nil
 }
@@ -1096,21 +2053,29 @@ func importSafeSettings(ctx context.Context, db *storage.DB, filePath string, in
 }
 
 func resetExchangeSecretsAndCloneState(ctx context.Context, db *storage.DB, mode ExchangeRestoreMode) error {
-	if tableExists(ctx, db, "_settings") {
+	settingsExist, err := tableExistsChecked(ctx, db, "_settings")
+	if err != nil {
+		return fmt.Errorf("inspect _settings before resetting exchange state: %w", err)
+	}
+	if settingsExist {
 		// Tokens are intentionally never exported and an old target token must not
 		// survive either restore mode.
-		if _, err := db.Exec(ctx, `DELETE FROM _settings WHERE key LIKE 'exchange.token.%'`); err != nil {
+		if _, err := db.Exec(ctx, `DELETE FROM _settings WHERE LOWER(key) LIKE 'exchange.token.%'`); err != nil {
 			return err
 		}
 		if mode == ExchangeRestoreClone {
-			if _, err := db.Exec(ctx, `DELETE FROM _settings WHERE key LIKE 'exchange.this_node.%'`); err != nil {
+			if _, err := db.Exec(ctx, `DELETE FROM _settings WHERE LOWER(key) LIKE 'exchange.this_node.%'`); err != nil {
 				return err
 			}
 		}
 	}
 	if mode == ExchangeRestoreClone {
 		for _, table := range exchangeTables {
-			if !tableExists(ctx, db, table) {
+			exists, err := tableExistsChecked(ctx, db, table)
+			if err != nil {
+				return fmt.Errorf("inspect %s before resetting exchange state: %w", table, err)
+			}
+			if !exists {
 				continue
 			}
 			if _, err := db.Exec(ctx, "DELETE FROM "+quotedIdent(db, table)); err != nil {
@@ -1324,11 +2289,6 @@ func rebuildSearchIndex(ctx context.Context, db *storage.DB, configDest, cfgFile
 		return err
 	}
 	defer proj.Close()
-	if len(proj.Entities) == 0 {
-		// Конфигурации нет — индексировать нечего, а пересборка с пустым
-		// списком объектов вычистила бы индекс целиком.
-		return nil
-	}
 	if _, err := db.RebuildFullTextIndex(ctx, proj.Entities, 0, nil); err != nil {
 		return err
 	}
@@ -1375,6 +2335,11 @@ func migrateSchema(ctx context.Context, db *storage.DB, configDest, cfgFileDir s
 	if err := db.EnsureAccountsTable(ctx); err != nil {
 		return fmt.Errorf("ensure accounts table: %w", err)
 	}
+	// _accounts is derived entirely from the restored configuration. Upsert-only
+	// synchronization would otherwise leave plans/accounts from the old target.
+	if _, err := db.Exec(ctx, `DELETE FROM _accounts`); err != nil {
+		return fmt.Errorf("clear derived accounts: %w", err)
+	}
 	if err := db.SyncAccounts(ctx, proj.ChartsOfAccounts); err != nil {
 		return fmt.Errorf("sync accounts: %w", err)
 	}
@@ -1395,6 +2360,37 @@ func migrateSchema(ctx context.Context, db *storage.DB, configDest, cfgFileDir s
 	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return fmt.Errorf("ensure blobs: %w", err)
+	}
+	// Migrate currently creates these tables as a side effect, but universal
+	// restore treats them as first-class portable state. Keep the contract
+	// explicit so an empty project or a future migration refactor cannot make a
+	// valid archive fail midway through import.
+	if err := db.EnsureSeqTable(ctx); err != nil {
+		return fmt.Errorf("ensure sequences: %w", err)
+	}
+	if err := db.EnsureSchemaMapSchema(ctx); err != nil {
+		return fmt.Errorf("ensure schema field map: %w", err)
+	}
+	if err := db.EnsureIntakeSchema(ctx); err != nil {
+		return fmt.Errorf("ensure intake state: %w", err)
+	}
+	if err := db.EnsureAIAuditSchema(ctx); err != nil {
+		return fmt.Errorf("ensure AI audit: %w", err)
+	}
+	if err := db.EnsureRollupTable(ctx); err != nil {
+		return fmt.Errorf("ensure rollup history: %w", err)
+	}
+	if err := configdb.New(db).EnsureVersionSchema(ctx); err != nil {
+		return fmt.Errorf("ensure configuration history: %w", err)
+	}
+	if err := extform.New(db).EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure external print forms: %w", err)
+	}
+	if err := extform.NewReports(db).EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure external reports: %w", err)
+	}
+	if err := extform.NewProcessors(db).EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure external processors: %w", err)
 	}
 	if err := db.EnsureExchangeSchema(ctx); err != nil {
 		return fmt.Errorf("ensure exchange schema: %w", err)
@@ -1420,7 +2416,10 @@ func importDir(ctx context.Context, db *storage.DB, dir string, report *ImportRe
 	}
 
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".jsonl") {
@@ -1453,7 +2452,7 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 	defer closeRead("файл резервной копии", f)
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxUniversalJSONLLineBytes)
 
 	// Read schema line.
 	if !scanner.Scan() {
@@ -1472,8 +2471,14 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 		btypes[c] = true
 	}
 
-	// Check table exists; skip if not (e.g. a table from a different config version).
-	if !tableExists(ctx, db, tableName) {
+	// Check table exists; skip if not (e.g. a table from a different config
+	// version), but never turn a catalog-query failure into "not found" on this
+	// destructive import path.
+	exists, err := tableExistsChecked(ctx, db, tableName)
+	if err != nil {
+		return 0, fmt.Errorf("inspect table %s: %w", tableName, err)
+	}
+	if !exists {
 		return 0, nil
 	}
 
@@ -1483,14 +2488,26 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 		return 0, fmt.Errorf("get columns for %s: %w", tableName, err)
 	}
 
-	// Detect JSON/JSONB columns so we can cast values on insert.
-	jsonCols, _ := detectJSONCols(ctx, db, tableName)
+	// Detect JSON/JSONB columns so we can cast values on insert. This must
+	// succeed before clearing the table: guessing column types after a metadata
+	// failure can corrupt values and would make the restore unnecessarily
+	// destructive.
+	jsonCols, err := detectJSONCols(ctx, db, tableName)
+	if err != nil {
+		return 0, fmt.Errorf("detect JSON columns for %s: %w", tableName, err)
+	}
 
 	// Detect boolean columns so we can convert numeric 0/1 → bool (PG OID 16).
-	boolCols, _ := detectBoolCols(ctx, db, tableName)
+	boolCols, err := detectBoolCols(ctx, db, tableName)
+	if err != nil {
+		return 0, fmt.Errorf("detect boolean columns for %s: %w", tableName, err)
+	}
 
 	// Detect bytea columns so we only base64-decode btypes for actual binary columns.
-	byteaCols, _ := detectByteaCols(ctx, db, tableName)
+	byteaCols, err := detectByteaCols(ctx, db, tableName)
+	if err != nil {
+		return 0, fmt.Errorf("detect bytea columns for %s: %w", tableName, err)
+	}
 
 	// Clear existing data — we do a full replace.
 	if _, err := db.Exec(ctx, "DELETE FROM "+quotedIdent(db, tableName)); err != nil {
@@ -1498,7 +2515,6 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 	}
 
 	n := 0
-	colsChecked := false
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		// json.Unmarshal replaces invalid UTF-8 inside JSON string
@@ -1522,17 +2538,21 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 			return n, fmt.Errorf("parse row %d: %w", n+1, err)
 		}
 
-		// On first data row discover columns that exist in the archive but not in
-		// the target table (e.g. stale columns from schema evolution in source DB).
-		// Add them so no data is silently dropped during a full restore.
-		if !colsChecked {
-			colsChecked = true
-			for col := range raw {
-				if !existingCols[col] {
-					_ = db.AddColumnIfMissing(ctx, tableName, col, db.Dialect().TypeText())
-					existingCols[col] = true
-				}
+		// Discover columns on every row. Older exporters did not guarantee that
+		// the first row populated every column, so checking only that row could
+		// silently discard a column that first appeared later in the archive.
+		missing := make([]string, 0)
+		for col := range raw {
+			if !existingCols[col] {
+				missing = append(missing, col)
 			}
+		}
+		sort.Strings(missing)
+		for _, col := range missing {
+			if err := db.AddColumnIfMissing(ctx, tableName, col, db.Dialect().TypeText()); err != nil {
+				return n, fmt.Errorf("add archive column %s.%s: %w", tableName, col, err)
+			}
+			existingCols[col] = true
 		}
 
 		if err := insertRow(ctx, db, tableName, raw, btypes, existingCols, jsonCols, boolCols, byteaCols); err != nil {
@@ -1629,29 +2649,34 @@ func insertRow(ctx context.Context, db *storage.DB, tableName string, raw map[st
 			// JSON/JSONB column: pass raw JSON object directly (unwrap if stringified).
 			goVal = jsonColValue(rawVal)
 		} else {
-			// Decode the JSON value as a generic Go type.
+			// Decode without routing integers through float64. Universal
+			// snapshots may contain BIGINT values above 2^53, which the default
+			// encoding/json conversion would silently round.
 			// Strings cover UUIDs, timestamps, numeric amounts.
 			// Booleans and numbers are decoded natively.
 			// PG handles implicit TEXT→UUID/TIMESTAMPTZ/NUMERIC casts.
 			var v any
-			if err := json.Unmarshal(rawVal, &v); err != nil {
+			dec := json.NewDecoder(strings.NewReader(string(rawVal)))
+			dec.UseNumber()
+			if err := dec.Decode(&v); err != nil {
 				return fmt.Errorf("col %s: unmarshal: %w", col, err)
 			}
 			switch tv := v.(type) {
-			case float64:
-				// Preserve integer values as int64 to avoid ".0" in text columns.
-				if tv == float64(int64(tv)) {
-					goVal = int64(tv)
+			case json.Number:
+				if iv, err := tv.Int64(); err == nil {
+					goVal = iv
 				} else {
-					goVal = tv
+					// Keep decimals, exponents and integers outside int64 as their
+					// exact lexical value. Both dialects coerce this into the target
+					// numeric affinity/type; converting to float64 here would lose
+					// precision before the database ever sees it.
+					goVal = tv.String()
 				}
 				// Boolean columns: numeric 0/1 must become Go bool,
 				// otherwise the PG driver rejects int64 for OID 16.
 				if boolCols[col] {
 					switch iv := goVal.(type) {
 					case int64:
-						goVal = iv != 0
-					case float64:
 						goVal = iv != 0
 					}
 				}
@@ -1678,10 +2703,13 @@ func insertRow(ctx context.Context, db *storage.DB, tableName string, raw map[st
 	}
 
 	if len(cols) == 0 {
-		return nil
+		return errors.New("row has no columns")
 	}
 
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING",
+	// A universal backup is a complete snapshot. Conflicting keys therefore
+	// mean that the archive is internally inconsistent; silently ignoring them
+	// would make the reported row count differ from the restored database.
+	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		quotedIdent(db, tableName),
 		strings.Join(cols, ", "),
 		strings.Join(placeholders, ", "),
@@ -1704,9 +2732,13 @@ func getTableCols(ctx context.Context, db *storage.DB, tableName string) (map[st
 			var name, ctype string
 			var notnull, pk int
 			var dflt any
-			if rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk) == nil {
-				cols[name] = true
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+				return nil, fmt.Errorf("scan column for %s: %w", tableName, err)
 			}
+			cols[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate columns for %s: %w", tableName, err)
 		}
 	} else {
 		rows, err := db.Query(ctx,
@@ -1718,34 +2750,31 @@ func getTableCols(ctx context.Context, db *storage.DB, tableName string) (map[st
 		defer rows.Close()
 		for rows.Next() {
 			var name string
-			if rows.Scan(&name) == nil {
-				cols[name] = true
+			if err := rows.Scan(&name); err != nil {
+				return nil, fmt.Errorf("scan column for %s: %w", tableName, err)
 			}
+			cols[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate columns for %s: %w", tableName, err)
 		}
 	}
 	return cols, nil
 }
 
-// tableExists reports whether tableName exists in the target DB.
-// Ошибка запроса трактуется как «таблицы нет» — так же, как было до проверки
-// (Scan при ошибке оставлял exists=false), но теперь это записано явно, а не
-// получается само собой из проигнорированного возврата.
-func tableExists(ctx context.Context, db *storage.DB, tableName string) bool {
+func tableExistsChecked(ctx context.Context, db tableExistenceDB, tableName string) (bool, error) {
 	var exists bool
-	var err error
 	if db.IsSQLite() {
-		err = db.QueryRow(ctx,
+		err := db.QueryRow(ctx,
 			`SELECT COUNT(*)>0 FROM sqlite_master WHERE type='table' AND name=?`, tableName,
 		).Scan(&exists)
+		return exists, err
 	} else {
-		err = db.QueryRow(ctx,
+		err := db.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, tableName,
 		).Scan(&exists)
+		return exists, err
 	}
-	if err != nil {
-		return false
-	}
-	return exists
 }
 
 // restoreAttachments copies attachment binary files from srcDir to dstDir.
@@ -1762,7 +2791,10 @@ func restoreAttachments(srcDir, dstDir string) (int, error) {
 		if d.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(srcDir, path)
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
 		rel = filepath.FromSlash(rel)
 		dst := filepath.Join(dstDir, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), fsmode.Dir); err != nil {

@@ -357,19 +357,26 @@ func indexYAMLSchema() *yamlLintSchema {
 }
 
 func entityYAMLSchema() *yamlLintSchema {
+	detailTab := with(obj("name", "fields", "tableparts", "attachments"), map[string]*yamlLintSchema{
+		"titles": freeMap(),
+	})
+	detailPanel := with(obj("title", "width", "fields"), map[string]*yamlLintSchema{
+		"tabs": seq(detailTab),
+	})
 	return with(obj(
 		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
 		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
-		"fulltext", "search_fields",
+		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
-		"titles":     freeMap(),
-		"fields":     seq(fieldYAMLSchema()),
-		"tableparts": seq(tablePartYAMLSchema()),
-		"indexes":    seq(indexYAMLSchema()),
-		"numerator":  obj("prefix", "length", "period", "scope"),
-		"predefined": seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
-		"tile_view":  obj("image", "title", "subtitle", "fields"),
-		"activity":   obj("field", "default_scope", "hide_from_choice"),
+		"titles":       freeMap(),
+		"fields":       seq(fieldYAMLSchema()),
+		"tableparts":   seq(tablePartYAMLSchema()),
+		"indexes":      seq(indexYAMLSchema()),
+		"numerator":    obj("prefix", "length", "period", "scope"),
+		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
+		"tile_view":    obj("image", "title", "subtitle", "fields"),
+		"activity":     obj("field", "default_scope", "hide_from_choice"),
+		"detail_panel": detailPanel,
 	})
 }
 

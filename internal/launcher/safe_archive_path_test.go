@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/backup"
 )
 
 // safeArchivePath защищает распаковку ZIP/OBZ-архивов (config/import-zip,
@@ -101,5 +103,36 @@ func TestValidateArchiveRejectsSpecialFiles(t *testing.T) {
 	}
 	if err := validateArchiveEntries(t.TempDir(), zr.File, maxFormArchiveExpanded); err == nil {
 		t.Fatal("символическая ссылка в архиве должна быть отклонена")
+	}
+}
+
+func TestFullArchiveLimitsMatchUniversalImporter(t *testing.T) {
+	if maxFullArchiveExpanded != backup.MaxUniversalArchiveExpanded {
+		t.Fatalf("launcher expanded limit = %d, universal importer limit = %d",
+			maxFullArchiveExpanded, backup.MaxUniversalArchiveExpanded)
+	}
+	if maxFullArchiveUpload != int64(maxFullArchiveExpanded)+maxFullArchiveUploadOverhead {
+		t.Fatalf("full upload limit = %d, want expanded limit plus %d bytes overhead",
+			maxFullArchiveUpload, maxFullArchiveUploadOverhead)
+	}
+	if maxFullArchiveUpload <= int64(maxFullArchiveExpanded) {
+		t.Fatalf("full upload limit %d leaves no room for ZIP and multipart overhead",
+			maxFullArchiveUpload)
+	}
+
+	atLimit := &zip.File{FileHeader: zip.FileHeader{
+		Name:               "payload.bin",
+		UncompressedSize64: maxFullArchiveExpanded,
+	}}
+	if err := validateArchiveEntries(t.TempDir(), []*zip.File{atLimit}, maxFullArchiveExpanded); err != nil {
+		t.Fatalf("archive at universal expanded-size limit was rejected: %v", err)
+	}
+
+	overLimit := &zip.File{FileHeader: zip.FileHeader{
+		Name:               "payload.bin",
+		UncompressedSize64: maxFullArchiveExpanded + 1,
+	}}
+	if err := validateArchiveEntries(t.TempDir(), []*zip.File{overLimit}, maxFullArchiveExpanded); err == nil {
+		t.Fatal("archive above universal expanded-size limit was accepted")
 	}
 }

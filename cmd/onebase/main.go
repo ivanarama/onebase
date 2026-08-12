@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/ivantit66/onebase/internal/cli"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
+	"github.com/ivantit66/onebase/internal/selfupdate"
 )
 
 func main() {
@@ -20,8 +22,44 @@ func main() {
 		reexec()
 		return
 	}
+	if !isBinaryVersionProbeInvocation(os.Args[1:]) && !binaryWriterCommand(os.Args[1:]) {
+		consumer, err := selfupdate.AcquireBinaryConsumerLeaseIfWritable()
+		if errors.Is(err, selfupdate.ErrPendingBinaryTransaction) && commandName(os.Args[1:]) == "update" {
+			_ = os.Setenv(selfupdate.EnvBinaryPendingEntry, "1")
+			err = nil
+		}
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "onebase: binary package is unavailable during update recovery: %v\n", err)
+			os.Exit(1)
+		}
+		if consumer != nil {
+			defer func() {
+				if err := consumer.Release(); err != nil {
+					oblog.Component("cli").Warn("binary consumer lease release failed", "err", err)
+				}
+			}()
+		}
+	}
 
 	cli.Execute()
+}
+
+func isBinaryVersionProbeInvocation(args []string) bool {
+	return len(args) == 1 && args[0] == "--version"
+}
+
+func binaryWriterCommand(args []string) bool {
+	return commandName(args) == "start"
+}
+
+func commandName(args []string) string {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return arg
+	}
+	return ""
 }
 
 func writeStartupLog() {

@@ -28,8 +28,9 @@ var windowCmd = &cobra.Command{
 		if title == "" {
 			title = "onebase"
 		}
-		// nil-канал: окно живёт до закрытия пользователем.
-		return launcher.OpenWindow(url, title, nil)
+		// nil-канал: окно живёт до закрытия пользователем. Координатор закрытия
+		// тоже nil — это окно Предприятия, базами оно не распоряжается.
+		return launcher.OpenWindow(url, title, nil, nil)
 	},
 }
 

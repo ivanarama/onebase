@@ -131,21 +131,27 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		// понимает, что сервер перезапустили, и берёт страницу заново.
 		s.devGeneration = strconv.FormatInt(time.Now().UnixNano(), 36)
 	}
-	// Отладчик подключается к исполнению через DebugSource: каждый запуск DSL
-	// захватывает текущую сессию глобального контроллера в свой execCtx.
-	// Устанавливается однократно здесь, до начала обслуживания HTTP, — сам
-	// Interpreter после этого неизменяем (план 52: раньше debug_handlers
-	// мутировали interp.DebugHook на лету, что гонило с конкурентными запусками).
+	s.attachDebugger(interp)
+	if sched != nil {
+		sched.SetMessageSink(func(userID, text string) { s.messages.Push(userID, text) })
+	}
+	return s
+}
+
+// attachDebugger подключает отладчик к исполнению через DebugSource: каждый
+// запуск DSL захватывает текущую сессию глобального контроллера в свой execCtx.
+// Устанавливается однократно при сборке сервера, до начала обслуживания HTTP, —
+// сам Interpreter после этого неизменяем (план 52: раньше debug_handlers
+// мутировали interp.DebugHook на лету, что гонило с конкурентными запусками).
+// Общая для New и NewOfflineServer: точки останова должны вести себя одинаково
+// на любом сервере, а не только на том, который сам себе прописал источник.
+func (s *Server) attachDebugger(interp *interpreter.Interpreter) {
 	interp.DebugSource = func() interpreter.DebugHook {
 		if sess := s.globalDebug.Session(); sess != nil {
 			return sess
 		}
 		return nil
 	}
-	if sched != nil {
-		sched.SetMessageSink(func(userID, text string) { s.messages.Push(userID, text) })
-	}
-	return s
 }
 
 // Messages returns the per-user message store (used to inject Сообщить sink).

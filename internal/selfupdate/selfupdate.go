@@ -144,12 +144,12 @@ func SwapBinary(targetPath, newPath string) (string, error) {
 		// Остаток прошлой попытки: Windows не переименует поверх существующего.
 		return "", fmt.Errorf("selfupdate: убрать прежнюю резервную копию %s: %w", backupPath, err)
 	}
-	if err := os.Rename(targetPath, backupPath); err != nil {
+	if err := durableRename(targetPath, backupPath, false); err != nil {
 		return "", fmt.Errorf("selfupdate: освободить имя бинаря: %w", err)
 	}
 
 	restore := func(cause error) error {
-		if rErr := os.Rename(backupPath, targetPath); rErr != nil {
+		if rErr := durableRename(backupPath, targetPath, false); rErr != nil {
 			return fmt.Errorf("selfupdate: %w; вернуть старый бинарь не удалось: %v", cause, rErr)
 		}
 		return cause
@@ -218,8 +218,10 @@ func writeFile(r io.Reader, path string, perm os.FileMode) error {
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err := out.Chmod(perm); err != nil {
-		return err
+	if runtime.GOOS != "windows" {
+		if err := out.Chmod(perm); err != nil {
+			return err
+		}
 	}
 	if _, err := io.Copy(out, r); err != nil {
 		return err
@@ -230,22 +232,10 @@ func writeFile(r io.Reader, path string, perm os.FileMode) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		if runtime.GOOS != "windows" {
-			return err
-		}
-		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
-			return err
-		}
-		if err := os.Rename(tmp, path); err != nil {
-			return err
-		}
+	if err := durableRename(tmp, path, true); err != nil {
+		return err
 	}
 	committed = true
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
 	return nil
 }
 

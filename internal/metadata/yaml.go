@@ -77,12 +77,30 @@ type rawEntity struct {
 	ListRefreshOn      []string          `yaml:"list_refresh_on"`
 	NotifyChanges      bool              `yaml:"notify_changes"`
 	TileView           *rawTileView      `yaml:"tile_view"`
+	DetailPanel        *rawDetailPanel   `yaml:"detail_panel"`
 	// FullText — указатель, чтобы отличить отсутствие ключа (умолчание: все
 	// строковые реквизиты) от явного `fulltext: []` (объект вне поиска).
 	FullText *[]string `yaml:"fulltext"`
 	// Search — тоже указатель: отсутствие ключа (умолчание: все строковые
 	// реквизиты) надо отличать от явного `search_fields: []` (поиск выключен).
 	Search *[]string `yaml:"search_fields"`
+}
+
+type rawDetailPanel struct {
+	Title  string               `yaml:"title"`
+	Width  int                  `yaml:"width"`
+	Fields *[]string            `yaml:"fields"`
+	Tabs   *[]rawDetailPanelTab `yaml:"tabs"`
+}
+
+type rawDetailPanelTab struct {
+	Name   string            `yaml:"name"`
+	Titles map[string]string `yaml:"titles"`
+	Fields []string          `yaml:"fields"`
+	// Зарезервировано под 118D (тяжёлые вкладки): читаем, чтобы `check` мог
+	// сказать «пока не поддерживается», а не молча проглотить ключ.
+	TableParts  *[]string `yaml:"tableparts"`
+	Attachments *bool     `yaml:"attachments"`
 }
 
 type rawTileView struct {
@@ -149,6 +167,36 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 			e.TileView.Fields = trimStringList(*raw.TileView.Fields)
 			e.TileView.FieldsSet = true
 		}
+	}
+	if raw.DetailPanel != nil {
+		dp := &DetailPanel{
+			Title: strings.TrimSpace(raw.DetailPanel.Title),
+			Width: raw.DetailPanel.Width,
+		}
+		if raw.DetailPanel.Fields != nil {
+			dp.Fields = trimStringList(*raw.DetailPanel.Fields)
+			dp.FieldsSet = true
+		}
+		if raw.DetailPanel.Tabs != nil {
+			dp.TabsSet = true
+			for _, rt := range *raw.DetailPanel.Tabs {
+				tab := DetailPanelTab{
+					Name:   strings.TrimSpace(rt.Name),
+					Titles: rt.Titles,
+					Fields: trimStringList(rt.Fields),
+				}
+				if rt.TableParts != nil {
+					tab.TableParts = trimStringList(*rt.TableParts)
+					tab.TablePartsSet = true
+				}
+				if rt.Attachments != nil {
+					tab.Attachments = *rt.Attachments
+					tab.AttachmentsSet = true
+				}
+				dp.Tabs = append(dp.Tabs, tab)
+			}
+		}
+		e.DetailPanel = dp
 	}
 	if raw.FullText != nil {
 		e.FullText = trimStringList(*raw.FullText)

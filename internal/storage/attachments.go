@@ -157,6 +157,9 @@ func (db *DB) ListAttachments(ctx context.Context, ownerKind, ownerName string, 
 // file_storage=s3) and records metadata. In s3 mode the content is staged to a
 // temp file to bound memory, then uploaded; the row records loc='s3'.
 func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string, ownerID uuid.UUID, filename, mimeType, uploadedBy string, r io.Reader, maxSizeBytes int64) (Attachment, error) {
+	if err := validateAttachmentOwnerName(ownerName); err != nil {
+		return Attachment{}, err
+	}
 	d := db.dialect
 	id := uuid.New()
 
@@ -291,6 +294,9 @@ func (db *DB) OpenAttachment(ctx context.Context, id uuid.UUID) (io.ReadSeekClos
 	if err != nil {
 		return nil, nil, err
 	}
+	if a.SizeBytes < 0 {
+		return nil, nil, fmt.Errorf("attachments: attachment %s has negative size %d", a.ID, a.SizeBytes)
+	}
 	if a.Loc == FileStorageS3 {
 		if db.blobStore == nil {
 			return nil, nil, fmt.Errorf("attachments: вложение %s в S3, но клиент S3 не сконфигурирован (file_storage.s3)", a.ID)
@@ -312,7 +318,10 @@ func (db *DB) OpenAttachment(ctx context.Context, id uuid.UUID) (io.ReadSeekClos
 		}
 		return &tempDirFile{File: f, dir: dir}, a, nil
 	}
-	f, err := os.Open(filepath.Join(db.filesDir, a.OwnerName, id.String()))
+	if a.Loc != "" && a.Loc != FileStorageDisk {
+		return nil, nil, fmt.Errorf("attachments: attachment %s has unsupported location %q", a.ID, a.Loc)
+	}
+	f, err := openAttachmentDiskFile(db.filesDir, a)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -337,7 +346,38 @@ func (db *DB) MaterializeAttachment(ctx context.Context, id uuid.UUID) (string, 
 		}
 		return filepath.Join(dir, a.ID.String()), func() { removeFile(dir) }, a, nil
 	}
-	return filepath.Join(db.filesDir, a.OwnerName, id.String()), nil, a, nil
+	if a.Loc != "" && a.Loc != FileStorageDisk {
+		return "", nil, nil, fmt.Errorf("attachments: attachment %s has unsupported location %q", a.ID, a.Loc)
+	}
+	f, err := openAttachmentDiskFile(db.filesDir, a)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return "", nil, nil, err
+	}
+	return path, nil, a, nil
+}
+
+func openAttachmentDiskFile(filesDir string, a *Attachment) (*os.File, error) {
+	if a.SizeBytes < 0 {
+		return nil, fmt.Errorf("attachments: attachment %s has negative size %d", a.ID, a.SizeBytes)
+	}
+	f, err := os.Open(filepath.Join(filesDir, a.OwnerName, a.ID.String()))
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != a.SizeBytes {
+		_ = f.Close()
+		return nil, fmt.Errorf("attachments: disk attachment %s size mismatch: metadata=%d file=%d", a.ID, a.SizeBytes, info.Size())
+	}
+	return f, nil
 }
 
 // downloadAttachmentTemp fetches an S3-backed attachment into a fresh temp dir
@@ -346,11 +386,14 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 	if db.blobStore == nil {
 		return "", fmt.Errorf("attachments: вложение %s в S3, но клиент S3 не сконфигурирован (file_storage.s3)", a.ID)
 	}
-	rc, _, err := db.blobStore.GetObject(ctx, db.attachmentObjectKey(a.OwnerName, a.ID))
+	rc, objectSize, err := db.blobStore.GetObject(ctx, db.attachmentObjectKey(a.OwnerName, a.ID))
 	if err != nil {
 		return "", err
 	}
 	defer closeRead("объект вложения в хранилище", rc)
+	if objectSize >= 0 && objectSize != a.SizeBytes {
+		return "", fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d object=%d", a.ID, a.SizeBytes, objectSize)
+	}
 	base := filepath.Join(db.filesDir, "_attach_tmp")
 	if err := os.MkdirAll(base, fsmode.Dir); err != nil {
 		return "", err
@@ -364,9 +407,20 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 		removeFile(dir)
 		return "", err
 	}
-	if _, err := io.Copy(f, rc); err != nil {
+	n, err := io.CopyN(f, rc, a.SizeBytes)
+	if err != nil {
 		discardPartial(f, dir)
-		return "", err
+		return "", fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d content=%d: %w", a.ID, a.SizeBytes, n, err)
+	}
+	var extra [1]byte
+	extraN, extraErr := io.ReadFull(rc, extra[:])
+	if extraN != 0 {
+		discardPartial(f, dir)
+		return "", fmt.Errorf("attachments: S3 attachment %s contains more than metadata size %d", a.ID, a.SizeBytes)
+	}
+	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
+		discardPartial(f, dir)
+		return "", extraErr
 	}
 	if err := f.Close(); err != nil {
 		removeFile(dir)
@@ -439,6 +493,9 @@ func scanAttachment(row attachmentScanner) (*Attachment, error) {
 	if err := row.Scan(&idStr, &a.OwnerKind, &a.OwnerName, &ownerIDStr, &a.Filename, &a.MimeType, &a.SizeBytes, &uploadedAtRaw, &a.UploadedBy, &a.Loc); err != nil {
 		return nil, err
 	}
+	if err := validateAttachmentOwnerName(a.OwnerName); err != nil {
+		return nil, err
+	}
 	a.UploadedAt = parseAuditTime(uploadedAtRaw)
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -451,4 +508,32 @@ func scanAttachment(row attachmentScanner) (*Attachment, error) {
 	}
 	a.OwnerID = ownerID
 	return &a, nil
+}
+
+// validateAttachmentOwnerName keeps every disk-backed attachment beneath its
+// storage root on both Unix and Windows. Owner names are metadata identifiers,
+// never filesystem paths.
+func validateAttachmentOwnerName(name string) error {
+	if name == "" || !utf8.ValidString(name) || len(name) > 255 ||
+		name == "." || name == ".." || strings.ContainsAny(name, `/\\:`) ||
+		strings.TrimRight(name, " .") != name {
+		return fmt.Errorf("attachments: unsafe owner_name %q", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("attachments: unsafe owner_name %q", name)
+		}
+	}
+
+	upper := strings.ToUpper(name)
+	base := upper
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	if upper == "_BLOBS" || upper == "_ATTACH_TMP" || base == "CON" ||
+		base == "PRN" || base == "AUX" || base == "NUL" ||
+		(len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9') {
+		return fmt.Errorf("attachments: reserved owner_name %q", name)
+	}
+	return nil
 }

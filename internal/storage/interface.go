@@ -13,6 +13,10 @@ type Row interface {
 	Scan(dst ...any) error
 }
 
+type errorRow struct{ err error }
+
+func (row errorRow) Scan(...any) error { return row.err }
+
 // Rows is a multi-row query result. Matches pgx.Rows / sql.Rows.
 type Rows interface {
 	Next() bool

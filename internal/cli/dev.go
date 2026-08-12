@@ -25,7 +25,6 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/scheduler"
-	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/version"
 	"github.com/spf13/cobra"
@@ -74,15 +73,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 
 	ctx := context.Background()
-	var (
-		db  *storage.DB
-		err error
-	)
-	if dbType == "sqlite" {
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
-	} else {
-		db, err = storage.Connect(ctx, dsn)
-	}
+	db, err := openCLIStorage(ctx, dbType, sqlitePath, dsn)
 	if err != nil {
 		return err
 	}

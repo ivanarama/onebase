@@ -96,7 +96,7 @@ func richCfgData(tab string) *configuratorData {
 		AllEntityNames: []string{"Номенклатура", "Реализация"},
 		AllEnumNames:   []string{"ВидыНоменклатуры"},
 		PlatformVer:    "test",
-		UIServerURL:    "http://localhost:8080",
+		UIServerURL:    "http://127.0.0.1:8080",
 		DSNMasked:      "sqlite://test.db",
 	}
 }

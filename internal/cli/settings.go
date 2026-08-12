@@ -106,9 +106,9 @@ func init() {
 func openSettingsDB(cmd *cobra.Command) (*storage.DB, error) {
 	sqlitePath, _ := cmd.Flags().GetString("sqlite")
 	if sqlitePath != "" {
-		return storage.ConnectSQLite(context.Background(), sqlitePath)
+		return openCLIStorage(context.Background(), "sqlite", sqlitePath, "")
 	}
-	return storage.Connect(context.Background(), dsnFromFlags(cmd))
+	return openCLIStorage(context.Background(), "postgres", "", dsnFromFlags(cmd))
 }
 
 func runSettingsList(cmd *cobra.Command, _ []string) error {

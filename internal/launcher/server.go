@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,14 @@ func init() {
 }
 
 var staticHTTP http.Handler
+
+const (
+	launcherCookieMigrationPath   = "/launcher-cookie-migration"
+	launcherCookieMigrationMarker = "onebase_launcher_cookie_origin_v2"
+	legacySharedSessionCookieName = "onebase_session"
+	launcherCookieMigrationTTL    = 400 * 24 * time.Hour
+	launcherQuitDelay             = 100 * time.Millisecond
+)
 
 // noStore гасит кэширование embed-статики (configurator.js, Monaco, ECharts,
 // SlickGrid). Эти байты живут в бинаре и обновляются только при пересборке, а
@@ -58,11 +68,12 @@ func (w *noStoreResponseWriter) Write(p []byte) (int, error) {
 
 // Server is the launcher HTTP server (list of registered bases).
 type Server struct {
-	h        *handler
-	ln       net.Listener
-	quit     chan struct{}
-	quitOnce sync.Once
-	httpSrv  *http.Server
+	h            *handler
+	ln           net.Listener
+	quit         chan struct{}
+	quitOnce     sync.Once
+	httpSrv      *http.Server
+	scheduleQuit func(time.Duration, func())
 }
 
 // requestQuit просит лаунчер завершиться: закрывает канал Done, на котором
@@ -70,6 +81,18 @@ type Server struct {
 // и применение обновления, — а повторный close(chan) паникует.
 func (s *Server) requestQuit() {
 	s.quitOnce.Do(func() { close(s.quit) })
+}
+
+func (s *Server) handleQuit(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	// Let the browser finish receiving the fetch response before OpenWindow
+	// observes Done and closes the HTTP server. Closing synchronously here races
+	// the response write and makes the UI report a failed quit intermittently.
+	if s.scheduleQuit != nil {
+		s.scheduleQuit(launcherQuitDelay, s.requestQuit)
+	} else {
+		time.AfterFunc(launcherQuitDelay, s.requestQuit)
+	}
 }
 
 // NewServer creates a launcher server bound to a random available port.
@@ -91,8 +114,71 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 	return srv, nil
 }
 
-// URL returns the base URL of the launcher server.
-func (s *Server) URL() string { return "http://" + s.ln.Addr().String() }
+// URL returns the browser origin of the launcher server. The listener remains
+// pinned to 127.0.0.1, but the launcher deliberately uses the distinct
+// `localhost` cookie host: information-base windows use 127.0.0.1, and cookies
+// are scoped by host rather than port. Reusing 127.0.0.1 here would disclose
+// the configurator admin session to every base (or foreign listener) opened on
+// another loopback port.
+func (s *Server) URL() string {
+	return "http://localhost:" + strconv.Itoa(s.ln.Addr().(*net.TCPAddr).Port)
+}
+
+// EntryURL is the URL opened by the launcher window. It deliberately starts on
+// the legacy 127.0.0.1 origin once per browser profile so cookies issued by an
+// older launcher can be expired there, then redirects to the isolated localhost
+// origin returned by URL. The marker is scoped to this path and carries no
+// secret, so it is never sent to ordinary information-base requests.
+func (s *Server) EntryURL() string {
+	return "http://127.0.0.1:" + strconv.Itoa(s.ln.Addr().(*net.TCPAddr).Port) +
+		launcherCookieMigrationPath
+}
+
+func (s *Server) migrateLegacyLauncherCookies(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+
+	// Never clear the new localhost-scoped configurator cookie if somebody
+	// manually opens the migration path on the canonical origin.
+	host := r.Host
+	if splitHost, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = splitHost
+	}
+	if host != "127.0.0.1" {
+		http.Redirect(w, r, s.URL()+"/", http.StatusFound)
+		return
+	}
+
+	expire := func(name string) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+			Expires:  time.Unix(0, 0),
+		})
+	}
+	// This name has never belonged to Enterprise. Any copy on 127.0.0.1 is
+	// stale (for example from a pre-release build), so removing it every time is
+	// harmless. The historically shared name is removed only on first migration
+	// to avoid logging active Enterprise windows out on every launcher restart.
+	expire(configuratorSessionCookieName)
+	if marker, err := r.Cookie(launcherCookieMigrationMarker); err != nil || marker.Value != "1" {
+		expire(legacySharedSessionCookieName)
+		http.SetCookie(w, &http.Cookie{
+			Name:     launcherCookieMigrationMarker,
+			Value:    "1",
+			Path:     launcherCookieMigrationPath,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(launcherCookieMigrationTTL / time.Second),
+			Expires:  time.Now().Add(launcherCookieMigrationTTL),
+		})
+	}
+
+	http.Redirect(w, r, s.URL()+"/", http.StatusFound)
+}
 
 // Done returns a channel that is closed when /quit is received.
 func (s *Server) Done() <-chan struct{} { return s.quit }
@@ -103,16 +189,26 @@ func (s *Server) Done() <-chan struct{} { return s.quit }
 // работать. Раньше здесь был StopAll («иначе дети-зомби»), но с усыновлением
 // (handler.baseRunning) следующий экземпляр лаунчера видит живые базы,
 // открывает их и умеет останавливать — зомби больше не проблема. Явная
-// остановка всего — кнопка «Стоп всё» (killAll).
+// остановка всего — кнопка «Стоп всё» (killAll) или ответ «Нет» в диалоге
+// закрытия окна (closepolicy.go).
 func (s *Server) Close() {
-	CloseAuthPools()
 	if s.httpSrv != nil {
 		bestEffort("закрыть HTTP-сервер лаунчера", s.httpSrv.Close())
 	}
+	// Stop/cancel request handlers before waiting for their per-base DB read
+	// leases; otherwise a long configurator request can deadlock shutdown.
+	CloseAuthPools()
 }
 
 func (s *Server) ListenAndServe() error {
 	r := chi.NewRouter()
+	r.Use(s.h.rejectWhileUpdateQuiescing)
+	// Reject DNS-rebinding hosts before Origin-based CSRF checks. An attacker
+	// can point an arbitrary domain at 127.0.0.1; in that case Origin and Host
+	// still match each other even though the request did not originate from the
+	// launcher. The launcher itself only ever emits these two exact loopback
+	// authorities, including its random listener port.
+	r.Use(s.requireLauncherHost)
 	// Как chi middleware.Recoverer, но с кодом инцидента в ответе (план 116).
 	// Логина у лаунчера нет — он обслуживает одного локального пользователя.
 	r.Use(incident.Recoverer(s.h.incidents, nil))
@@ -136,8 +232,14 @@ func (s *Server) ListenAndServe() error {
 	// SlickGrid (6pac fork, MIT) — грид для редактируемых табличных частей в
 	// managed-формах. Самохостинг вместо CDN: UI работает офлайн.
 	r.Handle("/vendor/slickgrid/*", noStore(http.StripPrefix("/vendor/slickgrid/", webassets.SlickGridHandler())))
+	// Lucide (ISC) — тот же спрайт иконок, что и у базы: превью поля «Иконка» в
+	// конфигураторе рисует ту же графику, что потом появится в навигации. В URL
+	// есть хеш содержимого, поэтому здесь не нужен общий noStore для старых
+	// неверсионированных vendor-ассетов: спрайт можно безопасно кэшировать.
+	r.Handle("/vendor/lucide/*", launcherLucideHandler())
 
 	// Launcher pages (no auth)
+	r.Get(launcherCookieMigrationPath, s.migrateLegacyLauncherCookies)
 	r.Get("/", s.h.index)
 	r.Get("/browse-dir", s.h.browseDir)
 	r.Get("/browse-file", s.h.browseFile)
@@ -156,20 +258,21 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/start-isolated", s.h.startIsolated)
 	r.Post("/bases/{id}/profiles/clean", s.h.cleanProfiles)
 	r.Post("/bases/{id}/stop", s.h.stop)
-	r.Post("/bases/{id}/config/export", s.h.configExport)
-	r.Post("/bases/{id}/config/import", s.h.configImport)
+	r.With(s.h.cfgDBReadMiddleware).Post("/bases/{id}/config/export", s.h.configExport)
+	r.With(s.h.cfgDBReadMiddleware).Post("/bases/{id}/config/import", s.h.configImport)
 
 	// Configurator login/logout (no auth)
-	r.Get("/bases/{id}/configurator/login", s.h.cfgLoginPage)
-	r.Post("/bases/{id}/configurator/login", s.h.cfgLoginSubmit)
+	r.With(s.h.cfgDBReadMiddleware).Get("/bases/{id}/configurator/login", s.h.cfgLoginPage)
+	r.With(s.h.cfgDBReadMiddleware).Post("/bases/{id}/configurator/login", s.h.cfgLoginSubmit)
 	// Второй фактор входа в конфигуратор (план 84).
-	r.Get("/bases/{id}/configurator/2fa", s.h.cfg2FAPage)
-	r.Post("/bases/{id}/configurator/2fa", s.h.cfg2FASubmit)
-	r.Get("/bases/{id}/configurator/logout", s.h.cfgLogout)
-	r.Get("/bases/{id}/configurator/logo", s.h.configuratorLogo)
+	r.With(s.h.cfgDBReadMiddleware).Get("/bases/{id}/configurator/2fa", s.h.cfg2FAPage)
+	r.With(s.h.cfgDBReadMiddleware).Post("/bases/{id}/configurator/2fa", s.h.cfg2FASubmit)
+	r.With(s.h.cfgDBReadMiddleware).Get("/bases/{id}/configurator/logout", s.h.cfgLogout)
+	r.With(s.h.cfgDBReadMiddleware).Get("/bases/{id}/configurator/logo", s.h.configuratorLogo)
 
 	// Configurator routes (auth required — admin only)
 	r.Group(func(r chi.Router) {
+		r.Use(s.h.cfgDBReadMiddleware)
 		r.Use(s.h.cfgAuthMiddleware)
 		r.Get("/bases/{id}/configurator", s.h.configuratorPage)
 		r.Post("/bases/{id}/configurator/convert", s.h.configuratorConvert)
@@ -268,8 +371,25 @@ func (s *Server) ListenAndServe() error {
 		r.Post("/bases/{id}/configurator/backup/{file}/delete", s.h.backupDelete)
 		r.Post("/bases/{id}/configurator/backup/settings", s.h.backupSettings)
 		r.Post("/bases/{id}/configurator/backup/upload", s.h.backupUpload)
+	})
+	// Full export authenticates under cfgAuthMiddleware's short read lease, then
+	// takes the exclusive cfg lease and revalidates the credential against a
+	// fresh connection before stopping or reading the base. Keeping it out of the
+	// read-middleware group is essential: upgrading an RWMutex read lease to
+	// exclusive would deadlock.
+	r.Group(func(r chi.Router) {
+		r.Use(s.h.cfgAuthMiddleware)
+		r.Use(s.h.cfgDBExclusiveMiddleware)
+		r.Use(s.h.cfgAuthExclusiveRecheckMiddleware)
+		r.Post("/bases/{id}/configurator/backup/full-export", s.h.backupFullExport)
+	})
+	// Restore handlers follow the same recheck protocol and retain the exclusive
+	// pool lease for the whole destructive operation.
+	r.Group(func(r chi.Router) {
+		r.Use(s.h.cfgAuthMiddleware)
+		r.Use(s.h.cfgDBExclusiveMiddleware)
+		r.Use(s.h.cfgAuthExclusiveRecheckMiddleware)
 		r.Post("/bases/{id}/configurator/backup/{file}/restore", s.h.backupRestore)
-		r.Get("/bases/{id}/configurator/backup/full-export", s.h.backupFullExport)
 		r.Post("/bases/{id}/configurator/backup/full-import", s.h.backupFullImport)
 	})
 
@@ -283,10 +403,11 @@ func (s *Server) ListenAndServe() error {
 	r.Post("/bases/{id}/one-time-code", s.h.oneTimeCodeProxy)
 
 	r.Post("/killall", s.h.killAll)
-	r.Post("/quit", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		s.requestQuit()
-	})
+	// Диалог закрытия окна (что делать с работающими базами) — см. closepolicy.go.
+	r.Get("/close-info", s.h.closeInfo)
+	r.Post("/close-policy", s.h.setClosePolicy)
+	r.Post("/close-stop", s.h.closeStop)
+	r.Post("/quit", s.handleQuit)
 
 	// Обновление платформы (план 92). Маршруты локальные — лаунчер слушает
 	// только 127.0.0.1, — но сами хендлеры ещё раз сверяются с политикой и
@@ -311,4 +432,34 @@ func (s *Server) ListenAndServe() error {
 		IdleTimeout:       120 * time.Second,
 	}
 	return s.httpSrv.Serve(s.ln)
+}
+
+func launcherLucideHandler() http.Handler {
+	return http.StripPrefix("/vendor/lucide/", webassets.LucideHandler())
+}
+
+func (s *Server) requireLauncherHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.isLauncherHost(r.Host) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "unrecognized launcher host", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) isLauncherHost(authority string) bool {
+	if s == nil || s.ln == nil {
+		return false
+	}
+	tcpAddr, ok := s.ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	host, port, err := net.SplitHostPort(authority)
+	if err != nil || port != strconv.Itoa(tcpAddr.Port) {
+		return false
+	}
+	return strings.EqualFold(host, "localhost") || host == "127.0.0.1"
 }
