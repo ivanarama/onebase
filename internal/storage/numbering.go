@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"fmt"
+
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
@@ -117,7 +119,14 @@ func (db *DB) GenerateNumber(ctx context.Context, entity *metadata.Entity, field
 	if err != nil {
 		return "", err
 	}
-	return FormatNumber(ExpandPrefix(num.Prefix, date), num.Length, n), nil
+	prefix := ExpandPrefix(num.Prefix, date)
+	// Префикс базы идёт ПЕРЕД префиксом объекта: сначала «откуда», потом «что».
+	// Подставляется только по явному base_prefix: true — иначе включение
+	// префикса на базе молча изменило бы формат всех номеров сразу.
+	if num.BasePrefix {
+		prefix = db.GetBasePrefix(ctx) + prefix
+	}
+	return FormatNumber(prefix, num.Length, n), nil
 }
 
 // AutoNumberField возвращает имя реквизита, который заполняет автонумерация:
@@ -151,4 +160,73 @@ func formatScopeValue(v any) string {
 		return t.Format(time.RFC3339)
 	}
 	return strings.TrimSpace(fmt.Sprintf("%v", v))
+}
+
+// SetAutoNumberValue проставляет значение автонумерации ОДНОЙ колонке.
+//
+// Узкая функция намеренно: дозаполнение кода не должно идти через Upsert,
+// который пишет запись целиком — не перечисленные в карте реквизиты он обнулил
+// бы, а ссылки в прочитанной строке приходят представлением, а не UUID. Здесь
+// меняется ровно один столбец, остальные данные не участвуют.
+//
+// Значение проставляется только если оно ещё пусто: условие в SQL, а не в Go,
+// поэтому параллельная запись не перетирается.
+func (db *DB) SetAutoNumberValue(ctx context.Context, entity *metadata.Entity, id uuid.UUID, field, value string) error {
+	if entity == nil || field == "" {
+		return nil
+	}
+	var col string
+	for _, f := range entity.Fields {
+		if strings.EqualFold(f.Name, field) {
+			col = metadata.ColumnName(f)
+			break
+		}
+	}
+	if col == "" {
+		return fmt.Errorf("%s: нет реквизита %s", entity.Name, field)
+	}
+	d := db.dialect
+	q := fmt.Sprintf("UPDATE %s SET %s = %s WHERE id = %s AND (%s IS NULL OR %s = '')",
+		metadata.TableName(entity.Name), col, d.Placeholder(1), d.Placeholder(2), col, col)
+	return db.exec(ctx, q, value, id)
+}
+
+// ─── Префикс базы (план 117D) ────────────────────────────────────────────────
+//
+// Префикс живёт в ДАННЫХ базы, а не в конфигурации, и это существо решения:
+// конфигурация одинакова во всех базах, поэтому «понять, из какой базы
+// загружен объект» через неё невозможно by design — обе выдали бы один и тот
+// же префикс. В 1С это работает так же: префиксацию даёт не платформа, а
+// константа информационной базы.
+//
+// Отсюда же следует, что при восстановлении базы из копии в ДРУГУЮ базу
+// префикс надо гасить: иначе клон выдавал бы коды оригинала, и обмен склеил бы
+// разные объекты.
+
+const basePrefixKey = "base.prefix"
+
+// GetBasePrefix возвращает префикс этой базы («» — не задан).
+func (db *DB) GetBasePrefix(ctx context.Context) string {
+	var v string
+	err := db.QueryRow(ctx,
+		`SELECT value FROM _settings WHERE key = `+db.dialect.Placeholder(1), basePrefixKey).Scan(&v)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+// SaveBasePrefix сохраняет префикс этой базы. Пустая строка снимает его.
+func (db *DB) SaveBasePrefix(ctx context.Context, prefix string) error {
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		return err
+	}
+	q := fmt.Sprintf(
+		`INSERT INTO _settings (key, value) VALUES (%s, %s)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		db.dialect.Placeholder(1), db.dialect.Placeholder(2))
+	if _, err := db.Exec(ctx, q, basePrefixKey, strings.TrimSpace(prefix)); err != nil {
+		return fmt.Errorf("settings: save %s: %w", basePrefixKey, err)
+	}
+	return nil
 }

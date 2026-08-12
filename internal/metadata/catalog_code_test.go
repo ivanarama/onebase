@@ -171,3 +171,18 @@ func TestValidateNumerator(t *testing.T) {
 		})
 	}
 }
+
+// Регрессия: идентификатор синтезированного «Кода» обязан проходить валидацию
+// ID. С точкой («std.code») ЛЮБОЙ справочник с numerator: переставал грузиться —
+// project.Load падал ещё до всякой работы. Поймано тестом команды renumber,
+// закреплено здесь.
+func TestCatalogCode_IDPassesValidation(t *testing.T) {
+	e := writeCatalog(t, `name: Контрагенты
+numerator: {prefix: "К-", length: 6}
+fields:
+  - {name: Наименование, type: string}
+`)
+	if err := Validate([]*Entity{e}, nil); err != nil {
+		t.Fatalf("справочник с numerator: не проходит валидацию: %v", err)
+	}
+}
