@@ -1554,10 +1554,20 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 			hookErrMsg = errMsg
 			return errPostingHookFailed
 		}
+		// OnPost мог изменить расчётные реквизиты шапки — персистим их без
+		// второго инкремента _version, как это делают проведение через форму,
+		// REST и DSL. Раньше проведение из списка эти изменения теряло (#775).
+		if err := s.store.UpsertPreserveVersion(ctx, entity.Name, id, obj.Fields, entity); err != nil {
+			return err
+		}
 		if err := s.saveMovements(ctx, entity.Name, id, mc); err != nil {
 			return err
 		}
-		return s.store.SetPosted(ctx, entity.Name, id, true)
+		if err := s.store.SetPosted(ctx, entity.Name, id, true); err != nil {
+			return err
+		}
+		// Регистрация изменения в планах обмена (план 86) — в той же транзакции.
+		return exchange.RegisterOnSave(ctx, s.store, s.reg.ExchangePlans(), entity, id, false)
 	}); err != nil {
 		if hookErrMsg != "" {
 			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape(hookErrMsg), http.StatusSeeOther)
@@ -1566,6 +1576,11 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Пост-коммит эффекты, которые проведение из списка раньше пропускало
+	// (#775): живой список и веб-хук document.post — как в проведении через
+	// форму, REST и DSL. Симметрично unpostDocument/удалению.
+	s.publishDocChange(r.Context(), entity, id, "проведён", nil)
+	s.dispatchDocWebhook(r.Context(), "document.post", entity, id, obj.Fields)
 	http.Redirect(w, r, docURL, http.StatusSeeOther)
 }
 
