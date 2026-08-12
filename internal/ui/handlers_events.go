@@ -29,6 +29,26 @@ func (s *Server) notifier() interpreter.Notifier {
 	return hubNotifier{hub: s.hub}
 }
 
+// Имена служебных событий dev-режима. Русские, как и остальные события шины:
+// клиент их не согласовывает заранее, а раздаёт как onebase:<имя>.
+const (
+	// DevGenerationEvent — метка запуска процесса, уходит клиенту первым кадром
+	// при каждом подключении к шине.
+	DevGenerationEvent = "dev.поколение"
+	// DevReloadEvent — конфигурация перечитана, странице пора обновиться.
+	DevReloadEvent = "dev.перезагрузка"
+)
+
+// PublishEvent отправляет событие подписчикам шины: target — логин, роль,
+// идентификатор пользователя или «*» (всем). Нужен вызывающим за пределами
+// пакета: dev-сервер публикует «конфигурация перезагрузилась» после hot reload.
+func (s *Server) PublishEvent(target, name string, data any) {
+	if s == nil || s.hub == nil {
+		return
+	}
+	s.hub.Publish(target, realtime.Event{Name: name, Data: data})
+}
+
 // eventsStream — SSE-эндпоинт GET /ui/events: подписывает текущего пользователя
 // на real-time-шину и стримит адресованные ему события кадрами
 // «event: <имя>\ndata: <json>\n\n». Монтируется в защищённой группе, поэтому
@@ -62,6 +82,20 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Accel-Buffering", "no") // не буферизировать за reverse-proxy (nginx)
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+
+	// Dev-режим: сервер представляется меткой своего запуска. Клиент сравнивает
+	// её с прошлой и, увидев другую, перечитывает страницу — так браузер
+	// подхватывает пересборку платформы, при которой SSE-соединение просто
+	// рвётся и переподключается, а сказать «я уже другой» иначе нечем.
+	if s.devGeneration != "" {
+		frame, err := json.Marshal(map[string]any{"name": DevGenerationEvent, "data": s.devGeneration})
+		if err == nil {
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", frame); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()

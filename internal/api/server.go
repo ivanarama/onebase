@@ -221,6 +221,14 @@ func (s *Server) InvalidateWidgetCache() {
 	}
 }
 
+// PublishEvent рассылает событие подписчикам real-time-шины (см. ui.Server).
+// Через него dev-сервер сообщает браузеру, что конфигурация перечитана.
+func (s *Server) PublishEvent(target, name string, data any) {
+	if s != nil && s.uiSrv != nil {
+		s.uiSrv.PublishEvent(target, name, data)
+	}
+}
+
 // healthzHandler — readiness-проба: 200, только если БД отвечает, иначе 503.
 // Публична и без токена (в отличие от /metrics): её дёргают reverse-proxy,
 // systemd WatchdogSec и команда `onebase update` при проверке нового бинаря.

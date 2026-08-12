@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,11 @@ type Config struct {
 	LoginLimit *auth.LoginLimiter
 	Limits     RuntimeLimits
 	Metrics    *metrics.Registry
+	// Dev включает сервисные события для разработчика (`onebase dev`): страница
+	// сама перечитывается после перезагрузки конфигурации и после перезапуска
+	// процесса. В обычном режиме этого нет намеренно: рестарт прода не должен
+	// обновлять страницу под руками у пользователя, стирая заполненную форму.
+	Dev bool
 }
 
 type Server struct {
@@ -96,6 +102,7 @@ type Server struct {
 	extprocessors          *extform.ProcessorRepo // внешний контур: обработки из БД
 	tmpl                   *template.Template
 	hub                    *realtime.Hub // real-time-шина уведомлений сервер→браузер (план 74)
+	devGeneration          string        // метка запуска процесса для dev-режима (см. eventsStream)
 	ops                    *operationLimiter
 	exportJobsMu           sync.Mutex
 	exportJobs             *exportJobStore
@@ -119,6 +126,11 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), incidents: incident.NewStore(incident.DefaultLimit), widgetCache: widget.NewCache(60 * time.Second), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
 	s.entitySvc = s.newEntityService(cfg.Webhooks)
+	if cfg.Dev {
+		// Метка живёт ровно столько, сколько процесс: по её смене браузер
+		// понимает, что сервер перезапустили, и берёт страницу заново.
+		s.devGeneration = strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
 	// Отладчик подключается к исполнению через DebugSource: каждый запуск DSL
 	// захватывает текущую сессию глобального контроллера в свой execCtx.
 	// Устанавливается однократно здесь, до начала обслуживания HTTP, — сам

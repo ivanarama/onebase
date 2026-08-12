@@ -3341,6 +3341,7 @@ window.onebaseDevice = {
     window.addEventListener('onebase:ui.открытьФорму', function (ev) { openFormTab(ev.detail); });
   }
   var sseOpened = false;
+  var devGeneration = null; // метка запуска dev-сервера, см. обработку ниже
   function connect() {
     if (typeof EventSource === 'undefined') return;
     var es = new EventSource('/ui/events');
@@ -3363,6 +3364,25 @@ window.onebaseDevice = {
         return;
       }
       if (!msg || !msg.name) return;
+      // Служебные события dev-режима (onebase dev). В обычном режиме сервер их
+      // не шлёт вовсе, поэтому перезагрузка страницы под руками у пользователя
+      // прода невозможна.
+      if (msg.name === 'dev.поколение') {
+        // Другая метка запуска = процесс сервера перезапустили (пересобрали
+        // Go-код). HTML, шаблоны и сам ui.js в браузере устарели — берём заново.
+        if (devGeneration !== null && devGeneration !== msg.data) {
+          location.reload();
+          return;
+        }
+        devGeneration = msg.data;
+        return;
+      }
+      if (msg.name === 'dev.перезагрузка') {
+        // Конфигурацию перечитали без рестарта: формы и метаданные страницы
+        // могли измениться, поэтому обновляем её целиком, как по F5.
+        location.reload();
+        return;
+      }
       emitOnebaseEvent('onebase:' + msg.name, msg.data);
       forwardOnebaseEvent(msg);
       if (msg.name === 'уведомление' || msg.name === 'notify') {

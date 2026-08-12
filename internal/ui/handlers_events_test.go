@@ -211,3 +211,110 @@ func readDataFrame(t *testing.T, r io.Reader) string {
 		}
 	}
 }
+
+// Dev-режим: сервер представляется меткой запуска первым же кадром. По ней
+// браузер отличает «переподключился к тому же процессу» от «процесс
+// пересобрали и перезапустили» — во втором случае страницу надо перечитать.
+func TestEventsStream_SendsDevGenerationFirst(t *testing.T) {
+	s := &Server{hub: realtime.NewHub(), devGeneration: "поколение-1"}
+	srv := httptest.NewServer(http.HandlerFunc(s.eventsStream))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /ui/events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var frame struct {
+		Name string `json:"name"`
+		Data string `json:"data"`
+	}
+	frameJSON := readDataFrame(t, resp.Body)
+	if err := json.Unmarshal([]byte(frameJSON), &frame); err != nil {
+		t.Fatalf("кадр не разобрался как JSON: %v (%q)", err, frameJSON)
+	}
+	if frame.Name != DevGenerationEvent || frame.Data != "поколение-1" {
+		t.Fatalf("первый кадр = %+v, ожидалось %s с меткой запуска", frame, DevGenerationEvent)
+	}
+}
+
+// Вне dev-режима служебного кадра нет вовсе: иначе рестарт прод-сервера
+// перезагружал бы страницу пользователю прямо поверх заполняемой формы.
+func TestEventsStream_NoDevGenerationInNormalMode(t *testing.T) {
+	hub := realtime.NewHub()
+	s := &Server{hub: hub}
+	srv := httptest.NewServer(http.HandlerFunc(s.eventsStream))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /ui/events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	waitSubscriber(t, hub)
+	hub.Publish("*", realtime.Event{Name: "уведомление", Data: "привет"})
+
+	frameJSON := readDataFrame(t, resp.Body)
+	var frame struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(frameJSON), &frame); err != nil {
+		t.Fatalf("кадр не разобрался как JSON: %v (%q)", err, frameJSON)
+	}
+	if frame.Name != "уведомление" {
+		t.Fatalf("первым кадром пришло %q, а вне dev-режима ожидалось только опубликованное событие", frame.Name)
+	}
+}
+
+// PublishEvent — путь, которым dev-сервер сообщает браузеру «конфигурация
+// перечитана» после hot reload.
+func TestPublishEvent_DeliversDevReload(t *testing.T) {
+	hub := realtime.NewHub()
+	s := &Server{hub: hub}
+	srv := httptest.NewServer(http.HandlerFunc(s.eventsStream))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /ui/events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	waitSubscriber(t, hub)
+	s.PublishEvent("*", DevReloadEvent, nil)
+
+	frameJSON := readDataFrame(t, resp.Body)
+	var frame struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(frameJSON), &frame); err != nil {
+		t.Fatalf("кадр не разобрался как JSON: %v (%q)", err, frameJSON)
+	}
+	if frame.Name != DevReloadEvent {
+		t.Fatalf("пришло %q, ожидалось %q", frame.Name, DevReloadEvent)
+	}
+}
+
+// Метка запуска появляется только при Config.Dev — сам факт dev-режима задаёт
+// CLI, а не сборка.
+func TestNew_DevGenerationFollowsConfig(t *testing.T) {
+	dev := New(runtime.NewRegistry(), nil, interpreter.New(), nil, Config{Dev: true}, nil)
+	if dev.devGeneration == "" {
+		t.Error("в dev-режиме метка запуска не выставлена")
+	}
+	prod := New(runtime.NewRegistry(), nil, interpreter.New(), nil, Config{}, nil)
+	if prod.devGeneration != "" {
+		t.Errorf("вне dev-режима метка запуска = %q, ожидалась пустая", prod.devGeneration)
+	}
+}
