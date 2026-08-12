@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // G505: SHA1 берётся для СТАБИЛЬНОГО ИМЕНИ ИНДЕКСА, а не для защиты
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -189,6 +191,41 @@ func (db *DB) lockStageRecord(ctx context.Context, entityName string, id uuid.UU
 	return db.AdvisoryXactLock(ctx, []string{stageLockKey(entityName, id)})
 }
 
+// StageRecordRef — ссылка на объект для пакетной блокировки.
+type StageRecordRef struct {
+	Entity string
+	ID     uuid.UUID
+}
+
+// LockStageRecords берёт блокировки сразу на набор объектов в устойчивом
+// порядке — до того, как начнётся их обработка.
+//
+// Нужно приёмке пакета обмена: она применяет много объектов в одной
+// транзакции, и если два встречных пакета содержат одни и те же объекты в
+// разном порядке, поочерёдная блокировка внутри цикла даёт классический
+// взаимоблок. Порядок здесь задаётся сортировкой ключа, а не порядком объектов
+// в пакете, поэтому оба пакета берут блокировки одинаково.
+//
+// На SQLite advisory-локов нет: там роль защиты играют CAS по ревизии и
+// нормализация SQLITE_BUSY в конфликт (пакет целиком откатывается).
+func (db *DB) LockStageRecords(ctx context.Context, refs []StageRecordRef) error {
+	if len(refs) == 0 || !db.IsPostgres() {
+		return nil
+	}
+	keys := make([]string, 0, len(refs))
+	seen := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		key := stageLockKey(ref.Entity, ref.ID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return db.AdvisoryXactLock(ctx, keys)
+}
+
 // stageTransition — вычисленный переход поля-этапа одной записи.
 type stageTransition struct {
 	Field   string
@@ -309,6 +346,69 @@ func isSQLiteBusyErr(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_busy")
+}
+
+// stageIndexName — имя индекса по полю-этапу.
+//
+// Идентичность строится из УСТОЙЧИВОГО идентификатора реквизита, а не из имени
+// колонки: обычные индексы именуются хешем от колонок, и переименование
+// реквизита оставило бы рядом второй индекс на прежнюю колонку — тот бы уже
+// ничего не ускорял, но продолжал бы обновляться на каждой записи.
+func stageIndexName(entityName, fieldID string) string {
+	sum := sha1.Sum([]byte("stage|" + strings.ToLower(entityName) + "|" + strings.ToLower(fieldID))) //nolint:gosec // G401/G505: SHA1 берётся для СТАБИЛЬНОГО ИМЕНИ ИНДЕКСА, а не для защиты
+	return "idx_stage_" + fmt.Sprintf("%x", sum[:6])
+}
+
+// ensureStageIndex создаёт (и при переименовании реквизита переносит) индекс по
+// полю-этапу.
+//
+// Он нужен отчёту «где застряло»: тот группирует объекты по этапу, и без
+// индекса по самой бизнес-таблице никакие индексы истории не спасают — сводка
+// сканирует таблицу целиком.
+func (db *DB) ensureStageIndex(ctx context.Context, e *metadata.Entity) error {
+	if !stagedEntity(e) {
+		return nil
+	}
+	f := e.StageField()
+	table := metadata.TableName(e.Name)
+	col := metadata.ColumnName(*f)
+	name := stageIndexName(e.Name, stageFieldID(f))
+
+	// Индекс с этим именем мог остаться от прежнего имени реквизита: имя
+	// устойчиво, а колонка — нет.
+	def, exists, err := db.indexDefinition(ctx, name)
+	if err != nil {
+		return fmt.Errorf("migrate %s: индекс этапа: %w", e.Name, err)
+	}
+	if exists && !strings.Contains(strings.ToLower(def), strings.ToLower(col)) {
+		if _, err := db.Exec(ctx, "DROP INDEX IF EXISTS "+name); err != nil {
+			return fmt.Errorf("migrate %s: перенос индекса этапа: %w", e.Name, err)
+		}
+	}
+	if _, err := db.Exec(ctx, "CREATE INDEX IF NOT EXISTS "+name+" ON "+table+" ("+col+")"); err != nil {
+		return fmt.Errorf("migrate %s: индекс этапа: %w", e.Name, err)
+	}
+	return nil
+}
+
+// indexDefinition возвращает текст определения индекса по имени.
+func (db *DB) indexDefinition(ctx context.Context, name string) (string, bool, error) {
+	d := db.dialect
+	q := "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = " + d.Placeholder(1)
+	if db.IsPostgres() {
+		q = "SELECT indexdef FROM pg_indexes WHERE indexname = " + d.Placeholder(1) + " AND schemaname = ANY(current_schemas(false))"
+	}
+	var def *string
+	if err := db.QueryRow(ctx, q, name).Scan(&def); err != nil {
+		if IsNotFound(errors.Unwrap(err)) || IsNotFound(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if def == nil {
+		return "", true, nil
+	}
+	return *def, true, nil
 }
 
 // stagedEntity сообщает, ведёт ли сущность этапы (и есть ли у неё поле-этап).

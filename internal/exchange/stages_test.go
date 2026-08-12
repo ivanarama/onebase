@@ -7,6 +7,7 @@ package exchange_test
 // рвало бы обмен. Но история фиксирует, что переход внешний.
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -116,5 +117,101 @@ func TestStagesExchangeAppliesForeignStageAndMarksSource(t *testing.T) {
 	}
 	if len(ref) != 4 || ref[0] != "exchange" || ref[1] != "Обмен" || ref[2] != "center" {
 		t.Fatalf("происхождение %v", ref)
+	}
+}
+
+// Tombstone удалённого на источнике объекта не проходит гейт этапов и не
+// сочиняет переход: у объекта, которого больше нет, этап не меняется.
+// Последующее «воскрешение» приносит этап и записывается одним синтетическим
+// событием — иначе после восстановления объект оказался бы на маршруте без
+// единой записи о том, как он там оказался.
+func TestStagesExchangeTombstoneAndResurrection(t *testing.T) {
+	ent := stagesCatalog()
+	res := fakeResolver{"Заявка": ent}
+	plan := stagesPlan()
+	source, sourceCtx := newBase(t, ent)
+	target, targetCtx := newBase(t, ent)
+	if err := source.SaveExchangeThisNode(sourceCtx, plan.Name, "center"); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.SaveExchangeThisNode(targetCtx, plan.Name, "fil01"); err != nil {
+		t.Fatal(err)
+	}
+
+	// На источнике объект живёт и удаляется физически → в пакет уходит tombstone.
+	id := uuid.New()
+	if err := source.Upsert(sourceCtx, ent.Name, id, map[string]any{
+		"Наименование": "Заявка", "Состояние": "Черновик"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.WithTx(sourceCtx, func(txCtx context.Context) error {
+		if err := exchange.RegisterOnDelete(txCtx, source, []*metadata.ExchangePlan{plan}, ent, id); err != nil {
+			return err
+		}
+		return source.Delete(txCtx, ent.Name, id)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := exchange.BuildPackage(sourceCtx, source, res, plan, "fil01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exchange.ApplyPackage(targetCtx, target, res, plan, data, exchange.ApplyOptions{}); err != nil {
+		t.Fatalf("ApplyPackage(tombstone): %v", err)
+	}
+	hist, err := target.StageHistory(targetCtx, ent.Name, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 0 {
+		t.Fatalf("tombstone сочинил переход: %+v", hist)
+	}
+
+	// Воскрешение: объект заново заводится на источнике и приезжает с этапом.
+	// Версия должна перерасти ту, с которой приезжал tombstone, иначе приёмка
+	// отбросит пакет как устаревший — это правило версий обмена, к этапам
+	// отношения не имеющее.
+	if err := source.Upsert(sourceCtx, ent.Name, id, map[string]any{
+		"Наименование": "Заявка снова", "Состояние": "Черновик"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	for sv := int64(1); sv <= 2; sv++ {
+		stage := "Черновик"
+		if sv == 2 {
+			stage = "НаСогласовании"
+		}
+		v := sv
+		if err := source.UpsertVersioned(sourceCtx, ent.Name, id, map[string]any{
+			"Наименование": "Заявка снова", "Состояние": stage}, ent, &v); err != nil {
+			t.Fatalf("шаг маршрута на источнике: %v", err)
+		}
+	}
+	v, _ := source.EntityVersion(sourceCtx, ent.Name, id)
+	if err := source.RegisterExchangeChange(sourceCtx, storage.ExchangeChange{
+		Plan: plan.Name, ObjectType: ent.Name, ObjectID: id.String(),
+		NodeCode: "fil01", Version: v, ChangedAt: 2000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data2, err := exchange.BuildPackage(sourceCtx, source, res, plan, "fil01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lr2, err := exchange.ApplyPackage(targetCtx, target, res, plan, data2, exchange.ApplyOptions{})
+	if err != nil {
+		t.Fatalf("ApplyPackage(воскрешение): %v", err)
+	}
+	if lr2.Applied != 1 {
+		t.Fatalf("воскрешение не применилось: %+v", lr2)
+	}
+	hist, err = target.StageHistory(targetCtx, ent.Name, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 1 {
+		t.Fatalf("воскрешение записало %d событий, ожидалось 1: %+v", len(hist), hist)
+	}
+	if hist[0].ToStage != "НаСогласовании" || hist[0].Source != storage.StageSourceExchange {
+		t.Fatalf("событие воскрешения: %+v", hist[0])
 	}
 }

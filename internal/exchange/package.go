@@ -559,6 +559,14 @@ func ApplyPackage(ctx context.Context, store *storage.DB, resolver EntityResolve
 			return nil
 		}
 
+		// Блокировки на все объекты пакета берутся ДО цикла применения и в
+		// порядке, заданном ключом, а не порядком объектов в пакете (план 121).
+		// Иначе два встречных пакета с одними и теми же объектами в разном
+		// порядке блокируют их поочерёдно навстречу друг другу и встают.
+		if err := store.LockStageRecords(ctx, stagedPackageRefs(resolver, pkg)); err != nil {
+			return err
+		}
+
 		// Транзит хаб→спицы (план 86, фаза 2): если этот узел — хаб, применённые
 		// изменения ретранслируются остальным спицам (кроме источника). Пусто, если
 		// узел не хаб или топология плоская — тогда обмен работает как раньше.
@@ -638,6 +646,27 @@ func ApplyPackage(ctx context.Context, store *storage.DB, resolver EntityResolve
 		res.Reposted++
 	}
 	return res, nil
+}
+
+// stagedPackageRefs — объекты пакета, принадлежащие сущностям с объявленными
+// этапами: только их запись сериализуется, и только их надо блокировать.
+func stagedPackageRefs(resolver EntityResolver, pkg *Package) []storage.StageRecordRef {
+	var refs []storage.StageRecordRef
+	for _, obj := range pkg.Objects {
+		if obj.Kind != "" {
+			continue // константа или регистр сведений — не объект с этапами
+		}
+		ent := resolver.GetEntity(obj.Type)
+		if ent == nil || ent.Stages == nil {
+			continue
+		}
+		id, err := uuid.Parse(obj.ID)
+		if err != nil {
+			continue
+		}
+		refs = append(refs, storage.StageRecordRef{Entity: ent.Name, ID: id})
+	}
+	return refs
 }
 
 // replicationSourceRef — происхождение реплицированного перехода: канонический

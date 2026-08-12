@@ -619,3 +619,61 @@ func TestStagesPredefinedRejectsUnknownStage(t *testing.T) {
 		}
 	})
 }
+
+// TestStagesSurviveFieldRename — переименование реквизита-этапа не рвёт
+// накопленную историю и не оставляет рядом второй индекс.
+//
+// Идентичность здесь — устойчивый Field.ID (план 81): имя реквизита меняют, и
+// если привязываться к нему, вся прежняя история перестаёт относиться к
+// объекту, а отчёт молча показывает «время неизвестно» по всем строкам.
+func TestStagesSurviveFieldRename(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		before := stagesEntity(metadata.StageEnforceStrict)
+		before.Fields[1].ID = "state"
+		migrateStages(t, ctx, db, before)
+
+		id := uuid.New()
+		if err := db.Upsert(ctx, before.Name, id, stageFields("Заявка", "Черновик"), before); err != nil {
+			t.Fatal(err)
+		}
+		var v int64 = 1
+		if err := db.UpsertVersioned(ctx, before.Name, id, stageFields("Заявка", "НаСогласовании"), before, &v); err != nil {
+			t.Fatal(err)
+		}
+
+		// Реквизит переименован, устойчивый идентификатор тот же.
+		after := stagesEntity(metadata.StageEnforceStrict)
+		after.Fields[1].ID = "state"
+		after.Fields[1].Name = "СостояниеЗаявки"
+		after.Stages.Field = "СостояниеЗаявки"
+		if err := db.Migrate(ctx, []*metadata.Entity{after}); err != nil {
+			t.Fatalf("миграция после переименования: %v", err)
+		}
+
+		hist, err := db.StageHistory(ctx, after.Name, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hist) != 2 {
+			t.Fatalf("после переименования история потерялась: %+v", hist)
+		}
+		// Следующий переход продолжает ту же последовательность, а не начинает
+		// новую: иначе «последним» станет событие с номером 1.
+		fields := map[string]any{"Наименование": "Заявка", "СостояниеЗаявки": "Утверждена"}
+		v2 := int64(2)
+		if err := db.UpsertVersioned(ctx, after.Name, id, fields, after, &v2); err != nil {
+			t.Fatalf("переход после переименования: %v", err)
+		}
+		hist, err = db.StageHistory(ctx, after.Name, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hist) != 3 || hist[0].EventNo != 3 {
+			t.Fatalf("последовательность событий не продолжена: %+v", hist)
+		}
+		if hist[0].FromStage != "НаСогласовании" || hist[0].ToStage != "Утверждена" {
+			t.Fatalf("переход после переименования: %q → %q", hist[0].FromStage, hist[0].ToStage)
+		}
+	})
+}
