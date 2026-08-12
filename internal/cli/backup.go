@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -167,8 +168,41 @@ func runRestore(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	// Префикс базы гасим после восстановления: копия могла уехать в ДРУГУЮ
+	// базу, и клон с префиксом оригинала выдавал бы те же коды — обмен склеил
+	// бы разные объекты (план 117D). Задать заново: onebase base prefix --set.
+	if prev := resetPrefixAfterRestore(cmd.Context(), restoreDB, sqliteTarget); prev != "" {
+		outf("Префикс базы %q снят: задайте его заново командой onebase base prefix --set\n", prev)
+	}
 	outln("Восстановление завершено.")
 	return nil
+}
+
+// resetPrefixAfterRestore открывает восстановленную базу и снимает префикс.
+// Ошибки не роняют восстановление: база уже восстановлена, и отказ на этом
+// шаге сделал бы успешную операцию похожей на провал. Возвращает прежнее
+// значение (пусто — префикса не было или открыть базу не удалось).
+func resetPrefixAfterRestore(ctx context.Context, dsn, sqlitePath string) string {
+	var (
+		db  *storage.DB
+		err error
+	)
+	if sqlitePath != "" {
+		db, err = storage.ConnectSQLite(ctx, sqlitePath)
+	} else {
+		db, err = storage.Connect(ctx, dsn)
+	}
+	if err != nil {
+		errln("не удалось снять префикс базы после восстановления:", err)
+		return ""
+	}
+	defer db.Close()
+	prev, err := resetBasePrefixAfterRestore(ctx, db)
+	if err != nil {
+		errln("не удалось снять префикс базы после восстановления:", err)
+		return ""
+	}
+	return prev
 }
 
 var (
