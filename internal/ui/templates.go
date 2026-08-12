@@ -69,7 +69,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"formRowClass":  formRowClass,
 		"formCellClass": formCellClass,
 		"add":           func(a, b int) int { return a + b },
-		// lucideIcon рендерит инлайн-SVG иконки навигации по имени Lucide (план 72).
+		// lucideIcon рендерит иконку навигации по имени Lucide ссылкой на общий
+		// спрайт /vendor/lucide/sprite.svg (планы 72/73).
 		"lucideIcon": LucideIcon,
 		"t": func(lang, key string) string {
 			if bundle != nil {
@@ -125,6 +126,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"detailPanel": func(fields []metadata.Field, row map[string]any,
 			enumLabels map[string]map[string]string, lang string) string {
 			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang)
+		},
+		// detailPanelEntity — payload с учётом блока detail_panel: сущности.
+		"detailPanelEntity": func(e *metadata.Entity, row map[string]any,
+			enumLabels map[string]map[string]string, lang string) string {
+			return detailPanelForEntity(e, row, enumLabels, lang)
 		},
 		"entityFields": func(e *metadata.Entity) []metadata.Field { return e.Fields },
 		// journalFields — колонки журнала как поля панели. Журнал сводит разные
@@ -1496,7 +1502,7 @@ const tplList = `
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
+  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}

@@ -5,12 +5,74 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ivantit66/onebase/internal/backup"
+	"github.com/ivantit66/onebase/internal/dblock"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // OpenDB opens a storage.DB for the given base, routing by DBType.
 // Defaults to SQLite when db_type is empty and db is empty (backward compat).
 func OpenDB(ctx context.Context, b *Base) (*storage.DB, error) {
+	lease, b, err := acquireBaseReadLease(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	db, err := openDBUnchecked(ctx, b)
+	if err != nil {
+		_ = lease.Close()
+		return nil, err
+	}
+	db.AddCloseHook(lease.Close)
+	if err := backup.CheckNoPendingRestore(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("launcher: database has an interrupted restore: %w", err)
+	}
+	return db, nil
+}
+
+func acquireBaseReadLease(ctx context.Context, b *Base) (dblock.Lease, *Base, error) {
+	if b == nil {
+		return nil, nil, fmt.Errorf("launcher: base is nil")
+	}
+	copyBase := *b
+	switch copyBase.DBType {
+	case "sqlite":
+		if copyBase.DBPath == "" {
+			return nil, nil, fmt.Errorf("launcher: sqlite base %q has empty db_path", copyBase.Name)
+		}
+		lease, canonical, err := dblock.AcquireSQLiteSharedTarget(copyBase.DBPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("launcher: database lifetime lock: %w", err)
+		}
+		copyBase.DBPath = canonical
+		return lease, &copyBase, nil
+	case "", "postgres":
+		if copyBase.DB == "" {
+			path := copyBase.DBPath
+			if path == "" {
+				path = os.TempDir() + string(os.PathSeparator) + "onebase_" + copyBase.ID + ".db"
+			}
+			lease, canonical, err := dblock.AcquireSQLiteSharedTarget(path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("launcher: database lifetime lock: %w", err)
+			}
+			copyBase.DBPath = canonical
+			return lease, &copyBase, nil
+		}
+		lease, err := dblock.AcquirePostgresShared(ctx, copyBase.DB)
+		if err != nil {
+			return nil, nil, fmt.Errorf("launcher: database lifetime lock: %w", err)
+		}
+		return lease, &copyBase, nil
+	default:
+		return nil, nil, fmt.Errorf("launcher: unknown db_type %q", copyBase.DBType)
+	}
+}
+
+// openDBUnchecked only opens the physical database. Every ordinary launcher
+// consumer must use OpenDB so a durable restore marker fails closed until
+// startup recovery resolves it.
+func openDBUnchecked(ctx context.Context, b *Base) (*storage.DB, error) {
 	switch b.DBType {
 	case "sqlite":
 		if b.DBPath == "" {
@@ -30,4 +92,15 @@ func OpenDB(ctx context.Context, b *Base) (*storage.DB, error) {
 	default:
 		return nil, fmt.Errorf("launcher: unknown db_type %q", b.DBType)
 	}
+}
+
+// openDBForRestore is the narrow escape hatch used by universal import, which
+// must open the database in order to resolve a durable marker. Requiring the
+// cfg-exclusive lease in the context makes accidental use by ordinary
+// configurator handlers fail closed instead of relying on caller convention.
+func openDBForRestore(ctx context.Context, b *Base) (*storage.DB, error) {
+	if b == nil || !cfgDBExclusiveLeaseHeld(ctx, b.ID) {
+		return nil, fmt.Errorf("launcher: restore database open requires the exclusive configurator lease")
+	}
+	return openDBUnchecked(ctx, b)
 }

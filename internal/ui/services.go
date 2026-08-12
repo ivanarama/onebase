@@ -388,7 +388,7 @@ func (s *Server) resolveServiceAuth(svc *httpservice.Service, w http.ResponseWri
 			writeServiceError(w, http.StatusUnauthorized, "требуется аутентификация")
 			return nil, false
 		}
-		u, err := s.authRepo.LookupSession(r.Context(), token)
+		u, err := s.authRepo.LookupSessionKind(r.Context(), token, auth.SessionKindEnterprise)
 		if err != nil {
 			writeServiceError(w, http.StatusUnauthorized, "недействительная сессия")
 			return nil, false

@@ -125,6 +125,20 @@ func TestUpdateOffline_RequiresChecksum(t *testing.T) {
 	}
 }
 
+func TestApplyStagedBlocksGenerationBoundRecovery(t *testing.T) {
+	binDir := t.TempDir()
+	cmd := updateCmdFor(t, binDir)
+	if err := selfupdate.SaveState(selfupdate.State{
+		RestartRecords: []selfupdate.RestartRecord{{ID: "base-1", Generation: "ct1:pending"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := applyStaged(cmd, updateContext{targetDir: binDir}, selfupdate.StagedInfo{Tag: "build-999", Verified: true})
+	if err == nil || !strings.Contains(err.Error(), "восстановлен") {
+		t.Fatalf("generation-bound recovery did not block CLI apply: %v", err)
+	}
+}
+
 // Служба не указана — это допустимый режим (десктопная установка с лаунчером),
 // команда не должна на этом падать.
 func TestResolveService_OptionalService(t *testing.T) {

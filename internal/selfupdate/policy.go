@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -182,4 +183,24 @@ func CanWriteBinaryDir(dir string) bool {
 	_ = f.Close()
 	_ = os.Remove(name)
 	return true
+}
+
+// CanSafelyUpdateBinaryDir additionally requires installation-scoped consumer
+// coordination to be enforceable. Shared/read-only system installations may
+// be executable by users who cannot join the lock protocol, so self-update is
+// deliberately limited to private per-user installations.
+func CanSafelyUpdateBinaryDir(dir string) bool {
+	return ValidateBinaryUpdateTarget(dir) == nil
+}
+
+// ValidateBinaryUpdateTarget explains why dir cannot participate in the full
+// consumer/writer lifecycle protocol. A writable directory alone is not
+// sufficient when other users can execute the same package without access to
+// its coordination files.
+func ValidateBinaryUpdateTarget(dir string) error {
+	if !CanWriteBinaryDir(dir) {
+		return errors.New("selfupdate: installation directory is not writable by the current user")
+	}
+	_, err := targetCoordinationPermissions(dir)
+	return err
 }

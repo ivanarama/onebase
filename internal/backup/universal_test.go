@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -36,6 +37,7 @@ func newSQLite(t *testing.T, name string) *storage.DB {
 	if err != nil {
 		t.Fatalf("ConnectSQLite %s: %v", name, err)
 	}
+	db.SetFilesDir(filepath.Join(t.TempDir(), name+"-files"))
 	t.Cleanup(db.Close)
 	return db
 }
@@ -167,7 +169,7 @@ func TestMarshalUnmarshalBytes(t *testing.T) {
 
 	// Export.
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, db, "file", t.TempDir(), "", "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, db, "file", testConfigDir(t), "", "test", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 
@@ -242,7 +244,7 @@ func TestMetaTxtUniversalFormat(t *testing.T) {
 	db := newSQLite(t, "meta")
 
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, db, "file", t.TempDir(), "", "MyBase", &buf); err != nil {
+	if err := ExportUniversal(ctx, db, "file", testConfigDir(t), "", "MyBase", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 
@@ -279,7 +281,7 @@ func TestUniversalSafeSettingsRoundTrip(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, src, "file", t.TempDir(), "", "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, src, "file", testConfigDir(t), "", "test", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 	tmpDir := t.TempDir()
@@ -350,7 +352,7 @@ func TestUniversalExchangeStateRestoreModes(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, src, "file", t.TempDir(), "", "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, src, "file", testConfigDir(t), "", "test", &buf); err != nil {
 		t.Fatal(err)
 	}
 
@@ -420,7 +422,7 @@ func TestUniversalReportPresetsRoundTrip(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, src, "file", t.TempDir(), "", "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, src, "file", testConfigDir(t), "", "test", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 	tmpDir := t.TempDir()
@@ -472,7 +474,7 @@ func TestDemoResetImportsSafeSettings(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, src, "file", t.TempDir(), "", "demo", &buf); err != nil {
+	if err := ExportUniversal(ctx, src, "file", testConfigDir(t), "", "demo", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 	obzPath := filepath.Join(t.TempDir(), "demo.obz")
@@ -481,6 +483,9 @@ func TestDemoResetImportsSafeSettings(t *testing.T) {
 	}
 
 	dst := newSQLite(t, "demo-settings-dst")
+	if err := configdb.New(dst).EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := dst.EnsureSettingsSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +528,7 @@ func TestJSONLRoundTripSQLite(t *testing.T) {
 
 	// Export.
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, src, "file", t.TempDir(), "", "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, src, "file", testConfigDir(t), "", "test", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 
@@ -569,19 +574,20 @@ func TestAttachmentsExportRestore(t *testing.T) {
 	db := newSQLite(t, "att")
 
 	attDir := t.TempDir()
-	// Write a fake attachment file.
-	subDir := filepath.Join(attDir, "Реализация")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
+	db.SetFilesDir(attDir)
+	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		t.Fatal(err)
 	}
-	attFile := filepath.Join(subDir, "abc123-uuid")
 	attContent := []byte("hello attachment content")
-	if err := os.WriteFile(attFile, attContent, 0o644); err != nil {
+	attachment, err := db.UploadAttachment(ctx, "document", "Реализация", uuid.New(),
+		"invoice.txt", "text/plain", "tester", bytes.NewReader(attContent), 1<<20)
+	if err != nil {
 		t.Fatal(err)
 	}
+	attachmentEntry := "attachments/Реализация/" + attachment.ID.String()
 
 	var buf bytes.Buffer
-	if err := ExportUniversal(ctx, db, "file", t.TempDir(), attDir, "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, db, "file", testConfigDir(t), attDir, "test", &buf); err != nil {
 		t.Fatalf("ExportUniversal: %v", err)
 	}
 
@@ -592,7 +598,7 @@ func TestAttachmentsExportRestore(t *testing.T) {
 	}
 	found := false
 	for _, f := range zr.File {
-		if f.Name == "attachments/Реализация/abc123-uuid" {
+		if f.Name == attachmentEntry {
 			found = true
 			// Verify content.
 			rc, _ := f.Open()
@@ -603,7 +609,9 @@ func TestAttachmentsExportRestore(t *testing.T) {
 			}
 		}
 	}
-	_ = found // File may appear under any encoding variant of the path
+	if !found {
+		t.Fatalf("attachment %q is missing from archive", attachmentEntry)
+	}
 
 	// Verify META.txt has has_attachments=true.
 	meta, _ := readMeta(zr)
@@ -618,7 +626,7 @@ func TestAttachmentsExportRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	attSrc := filepath.Join(tmpDir, "attachments")
-	existing := filepath.Join(dstAttDir, "Реализация", "abc123-uuid")
+	existing := filepath.Join(dstAttDir, "Реализация", attachment.ID.String())
 	if err := os.MkdirAll(filepath.Dir(existing), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1114,7 +1122,7 @@ func TestImportUniversal_НечитаемыйВторойФакторГасит�
 	// Тест идёт через ПОЛНЫЙ цикл export→import, а не дёргает disableUnreadableTOTP
 	// напрямую: гашение должно быть подключено в ImportUniversalWithOptions, иначе
 	// покрытие есть, а поведения нет (#611).
-	cfgDir := t.TempDir() // конфигурация не нужна: проверяем только системные таблицы
+	cfgDir := testConfigDir(t) // содержимое конфигурации не важно: проверяем только системные таблицы
 
 	src := newSQLite(t, "totp-src")
 	repo := auth.NewRepo(src)

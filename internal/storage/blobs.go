@@ -236,32 +236,66 @@ func (db *DB) OpenBlob(ctx context.Context, id uuid.UUID) (Blob, io.ReadCloser, 
 	var mime string
 	var size int64
 	var data []byte
+	var dataNull bool
 	var ownerKind, ownerEntity, loc string
 	err := db.QueryRow(ctx,
-		fmt.Sprintf(`SELECT mime, size, data, owner_kind, owner_entity, loc FROM _blobs WHERE id=%s`, d.Placeholder(1)),
-		id.String()).Scan(&mime, &size, &data, &ownerKind, &ownerEntity, &loc)
+		fmt.Sprintf(`SELECT mime, size, data, data IS NULL, owner_kind, owner_entity, loc FROM _blobs WHERE id=%s`, d.Placeholder(1)),
+		id.String()).Scan(&mime, &size, &data, &dataNull, &ownerKind, &ownerEntity, &loc)
 	if err != nil {
 		return Blob{}, nil, err
 	}
 	b := Blob{ID: id, Mime: mime, Size: size, OwnerKind: ownerKind, OwnerEntity: ownerEntity}
+	if size < 0 {
+		return Blob{}, nil, fmt.Errorf("blobs: blob %s has negative size %d", id, size)
+	}
 	if loc == FileStorageS3 {
 		if db.blobStore == nil {
 			return Blob{}, nil, fmt.Errorf("blobs: блоб %s в S3, но клиент S3 не сконфигурирован", id)
 		}
-		rc, _, err := db.blobStore.GetObject(ctx, db.blobObjectKey(id))
+		rc, objectSize, err := db.blobStore.GetObject(ctx, db.blobObjectKey(id))
 		if err != nil {
 			return Blob{}, nil, err
 		}
+		if objectSize >= 0 && objectSize != size {
+			_ = rc.Close()
+			return Blob{}, nil, fmt.Errorf("blobs: S3 blob %s size mismatch: metadata=%d object=%d", id, size, objectSize)
+		}
 		return b, rc, nil
 	}
-	// db-режим или легаси-строка с содержимым в колонке data.
-	if len(data) > 0 {
+	// An explicit db location is authoritative even for a zero-byte blob. A
+	// NULL value is corruption, not a signal to fall back to an unrelated disk
+	// file. Legacy rows (empty loc) use data presence to choose their backend.
+	if loc == FileStorageDB {
+		if dataNull {
+			return Blob{}, nil, fmt.Errorf("blobs: blob %s has loc=db but NULL data", id)
+		}
+		if int64(len(data)) != size {
+			return Blob{}, nil, fmt.Errorf("blobs: blob %s size mismatch: metadata=%d data=%d", id, size, len(data))
+		}
 		return b, io.NopCloser(bytes.NewReader(data)), nil
 	}
-	// disk-режим или легаси-строка без данных → файл на диске.
+	if loc == "" && !dataNull {
+		if int64(len(data)) != size {
+			return Blob{}, nil, fmt.Errorf("blobs: legacy blob %s size mismatch: metadata=%d data=%d", id, size, len(data))
+		}
+		return b, io.NopCloser(bytes.NewReader(data)), nil
+	}
+	if loc != "" && loc != FileStorageDisk {
+		return Blob{}, nil, fmt.Errorf("blobs: blob %s has unsupported location %q", id, loc)
+	}
+	// disk mode, or a legacy row with NULL data, is backed by a file.
 	f, err := os.Open(filepath.Join(db.filesDir, blobsDirName, id.String()))
 	if err != nil {
 		return Blob{}, nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return Blob{}, nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != size {
+		_ = f.Close()
+		return Blob{}, nil, fmt.Errorf("blobs: disk blob %s size mismatch: metadata=%d file=%d", id, size, info.Size())
 	}
 	return b, f, nil
 }

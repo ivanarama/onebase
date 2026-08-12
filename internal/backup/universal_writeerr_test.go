@@ -59,8 +59,9 @@ func TestExportUniversal_WriteErrorIsReported(t *testing.T) {
 	// в разы, поэтому фиксированные лимиты вроде 64 КБ могут оказаться БОЛЬШЕ
 	// всего архива — тогда обрыва не происходит и nil корректен. Лимиты берём
 	// долями от измеренного размера.
+	configDir := testConfigDir(t)
 	var probe countingWriter
-	if err := ExportUniversal(ctx, db, "file", t.TempDir(), "", "test", &probe); err != nil {
+	if err := ExportUniversal(ctx, db, "file", configDir, "", "test", &probe); err != nil {
 		t.Fatalf("контрольная выгрузка не удалась: %v", err)
 	}
 	if probe.n < 100 {
@@ -75,7 +76,7 @@ func TestExportUniversal_WriteErrorIsReported(t *testing.T) {
 	// следующая выгрузка уложилась в 4211 и завершилась успешно).
 	for _, limit := range []int{0, probe.n / 4, probe.n / 2, probe.n * 3 / 4} {
 		w := &errAfterWriter{limit: limit}
-		err := ExportUniversal(ctx, db, "file", t.TempDir(), "", "test", w)
+		err := ExportUniversal(ctx, db, "file", configDir, "", "test", w)
 		if err == nil {
 			t.Errorf("limit=%d из %d: выгрузка вернула nil при сбое записи — бэкап молча обрезан",
 				limit, probe.n)
@@ -99,7 +100,7 @@ func TestExportUniversal_SuccessStillWorks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf countingWriter
-	if err := ExportUniversal(ctx, db, "file", t.TempDir(), "", "test", &buf); err != nil {
+	if err := ExportUniversal(ctx, db, "file", testConfigDir(t), "", "test", &buf); err != nil {
 		t.Fatalf("успешная выгрузка вернула ошибку: %v", err)
 	}
 	if buf.n == 0 {
