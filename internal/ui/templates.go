@@ -2975,7 +2975,7 @@ const tplHistory = `
   <td style="white-space:nowrap;color:#94a3b8">{{.At.Format "02.01.2006 15:04:05"}}</td>
   <td>{{.UserLogin}}</td>
   <td style="color:#94a3b8">{{if .From}}{{.From}}{{else}}— {{t $.Lang "создание"}} —{{end}}</td>
-  <td style="color:#1d4ed8;font-weight:600">{{.To}}</td>
+  <td style="color:#1d4ed8;font-weight:600">{{.To}}{{if .Violation}} <span title="{{t $.Lang "Переход не предусмотрен маршрутом и прошёл только потому, что маршрут объявлен в режиме warn"}}" style="color:#b45309;font-weight:600">⚠</span>{{end}}</td>
   <td style="color:#94a3b8;font-size:12px">{{stageSourceLabel .Source}}</td>
 </tr>{{end}}
 </tbody>

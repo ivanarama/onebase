@@ -311,6 +311,10 @@ type stageHistoryRow struct {
 	From      string
 	To        string
 	Source    string
+	// Violation — переход был недопустим и прошёл только потому, что маршрут
+	// объявлен в режиме warn. Показывать это обязательно: объект стоит не там,
+	// где предполагает маршрут, и другого следа этому нет.
+	Violation bool
 }
 
 // loadStageHistory читает историю переходов объекта для карточки. Пустой
@@ -347,15 +351,21 @@ func (s *Server) loadStageHistory(r *http.Request, entity *metadata.Entity, id u
 		rows = append(rows, stageHistoryRow{
 			At: ch.At, UserLogin: ch.UserLogin,
 			From: label(ch.FromStage), To: label(ch.ToStage), Source: ch.Source,
+			Violation: ch.Violation,
 		})
 	}
 	return rows
 }
 
-// stageSourceLabel — человекочитаемый источник записи истории.
+// stageSourceLabel — человекочитаемый источник записи истории. Обычная запись
+// метки не получает: подпись «локально» у каждой строки была бы шумом.
 func stageSourceLabel(src string) string {
-	if src == storage.StageSourceExchange {
+	switch src {
+	case storage.StageSourceExchange:
 		return "обмен"
+	case storage.StageSourceMigration:
+		return "конфигурация"
+	default:
+		return ""
 	}
-	return ""
 }
