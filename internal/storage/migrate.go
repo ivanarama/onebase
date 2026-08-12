@@ -490,6 +490,14 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// История переходов между этапами (план 121). Стоит здесь, а не только
+	// поимённо в командах: от этой таблицы зависит запись объекта, у которого
+	// объявлен блок `stages`, — ровно как от таблицы нумераторов и от FTS.
+	// Список ручных вызовов Ensure*Schema по командам пополнять забывают, и
+	// компилятор об этом молчит; путь через Migrate забыть нельзя.
+	if err := db.EnsureStageHistorySchema(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	ordered := orderByDependency(entities)
 	for _, e := range ordered {
 		if _, err := db.Exec(ctx, CreateTableSQL(d, e)); err != nil {

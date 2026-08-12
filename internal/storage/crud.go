@@ -84,6 +84,15 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 		oldRow = existing
 	}
 
+	// Гейт переходов между этапами (план 121) — до построения запроса, на уже
+	// прочитанном старом значении. Вторая точка записи — UpsertVersioned
+	// (optimistic_lock.go), там стоит такая же пара вызовов: разъехаться им
+	// нельзя, иначе правка объекта из формы пройдёт мимо проверки.
+	stageTr, err := db.checkStageTransition(ctx, entityName, entity, oldRow, fields)
+	if err != nil {
+		return err
+	}
+
 	table := metadata.TableName(entityName)
 	cols := []string{"id"}
 	placeholders := []string{d.Placeholder(1)}
@@ -168,6 +177,22 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	// (entityservice.Save, ui/dsl_documents, обмен, приёмка) — общий у них
 	// только этот upsert.
 	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+		return err
+	}
+
+	// История переходов (план 121) — в той же транзакции, что и запись, и
+	// безусловно: журнал регистрации ниже выключается настройкой, а отчёт «где
+	// застряло» обязан работать всегда.
+	//
+	// Режим аудита здесь СОЗНАТЕЛЬНО не учитывается. Провизорная вставка нового
+	// объекта (upsertAuditSkip) — это и есть момент, когда «» → начальный этап;
+	// её запись в истории откатится вместе с транзакцией, если хук упадёт.
+	// А upsertAuditCreate («финальная запись созданного») зовут не только из
+	// entityservice: DSL-проведение дописывает им реквизиты после
+	// ОбработкаПроведения (ui/dsl_documents.go). Считать эту запись созданием
+	// значило бы при каждом проведении отвергать документ в strict-режиме и
+	// сочинять в истории переход «из ниоткуда».
+	if err := db.logStageTransition(ctx, entityName, id, stageTr); err != nil {
 		return err
 	}
 

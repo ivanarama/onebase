@@ -45,6 +45,16 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 		oldRow = existing
 	}
 
+	// Гейт переходов между этапами (план 121). Точек записи две, и это вторая:
+	// через неё идут ВСЕ правки существующих объектов (форма UI, REST с If-Match,
+	// DSL), поэтому гейт только в upsert пропускал бы ровно тот случай, ради
+	// которого он написан. Пара «проверка до записи + история после» здесь
+	// обязана повторять crud.go:upsert.
+	stageTr, err := db.checkStageTransition(ctx, entityName, entity, oldRow, fields)
+	if err != nil {
+		return err
+	}
+
 	sets := []string{}
 	args := []any{}
 	argIdx := 1
@@ -110,6 +120,11 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 	// собственный UPDATE мимо upsert хук индексации не задевал: в выдаче
 	// оставалось прежнее значение — в том числе стёртый пользователем телефон.
 	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+		return err
+	}
+	// История переходов (план 121) — безусловно и в той же транзакции, как в
+	// crud.go:upsert.
+	if err := db.logStageTransition(ctx, entityName, id, stageTr); err != nil {
 		return err
 	}
 	if oldRow != nil {

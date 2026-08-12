@@ -724,6 +724,11 @@ func needsRepost(ctx context.Context, store *storage.DB, resolver EntityResolver
 }
 
 func applyObject(ctx context.Context, store *storage.DB, ent *metadata.Entity, id uuid.UUID, obj PackageObject) error {
+	// Этапы (план 121): объект приезжает из другой базы, где маршрут он уже
+	// прошёл по её правилам и её конфигурации. Гейт переходов здесь отключаем —
+	// иначе расхождение блоков `stages` между узлами рвало бы обмен, — но
+	// история перехода пишется и запоминает, что он внешний.
+	ctx = storage.WithExternalStageWrite(ctx, storage.StageSourceExchange)
 	_, exists, err := store.EntityVersionExists(ctx, ent.Name, id)
 	if err != nil {
 		return err
