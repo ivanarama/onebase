@@ -55,6 +55,9 @@ func registerDevFlags(cmd *cobra.Command) {
 }
 
 func runDev(cmd *cobra.Command, _ []string) error {
+	if cmd.Flags().Changed("db") && cmd.Flags().Changed("sqlite") {
+		return errors.New("--db and --sqlite are mutually exclusive")
+	}
 	// --reload-binary уводит в супервизор: сервер поднимает не этот процесс, а
 	// пересобранный им дочерний (см. dev_reload.go).
 	if reloadBinary, _ := cmd.Flags().GetBool("reload-binary"); reloadBinary {
@@ -234,7 +237,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 		if initial && nextAppCfg.Backup != nil {
 			if err := backup.RegisterAutoBackup(nextAppCfg.Backup, backup.AutoTarget{
+				DBType:     dbType,
 				DSN:        dsn,
+				SQLitePath: sqlitePath,
 				ProjectDir: dir,
 			}, sched); err != nil {
 				devLog.Warn("auto backup job registration failed", "err", err)
@@ -246,7 +251,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			outln("[dev] metadata/DSL/scheduled reloaded; app.yaml runtime settings require restart")
 			// Страница в браузере перечитывает себя сама: правка формы или
 			// модуля видна без F5 (browser sync, только в dev-режиме).
-			srv.PublishEvent("*", ui.DevReloadEvent, nil)
+			srv.PublishDevReload()
 		}
 		return nil
 	}
@@ -357,6 +362,12 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
+	listener, err := srv.Listen()
+	if err != nil {
+		return fmt.Errorf("listen on 127.0.0.1:%d: %w", port, err)
+	}
+	defer func() { _ = listener.Close() }()
+
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	defer schedCancel()
 	schedDone := make(chan struct{})
@@ -365,25 +376,32 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		sched.Start(schedCtx)
 	}()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	serveErr := make(chan error, 1)
 	go func() {
-		defer wg.Done()
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			devLog.Error("server failed", "err", err)
+		listenErr := srv.Serve(listener)
+		if errors.Is(listenErr, http.ErrServerClosed) {
+			listenErr = nil
+		} else if listenErr != nil {
+			devLog.Error("server failed", "err", listenErr)
 		}
+		serveErr <- listenErr
 	}()
 
 	outf("onebase dev running on :%d\n", port)
 	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser {
-		openCtx, cancelOpen := context.WithCancel(ctx)
-		defer cancelOpen()
-		go openBrowserWhenReady(openCtx, port)
+		openInBrowser("127.0.0.1", port)
 	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
-	<-quit
+	serveResultReceived := false
+	var listenErr error
+	select {
+	case <-quit:
+	case <-srv.Done():
+	case listenErr = <-serveErr:
+		serveResultReceived = true
+	}
 	if stopWatch != nil {
 		stopWatch()
 		stopWatch = nil
@@ -391,8 +409,10 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	schedCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
-	wg.Wait()
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if !serveResultReceived {
+		listenErr = <-serveErr
+	}
 	<-schedDone
-	return nil
+	return errors.Join(listenErr, shutdownErr)
 }

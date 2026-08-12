@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	oblog "github.com/ivantit66/onebase/internal/logging"
+	"github.com/ivantit66/onebase/internal/processcontrol"
 )
 
 // Supervisor — режим пересборки для разработчика платформы (`onebase dev
@@ -47,6 +47,10 @@ type Supervisor struct {
 	// OnReady зовётся, когда сервер ответил на /health. restart=false — первый
 	// запуск (по нему `--open` открывает браузер), true — после пересборки.
 	OnReady func(restart bool)
+	// ControlToken/BaseID authenticate readiness and graceful stop of the exact
+	// child process. Empty values are generated once for the supervisor run.
+	ControlToken string
+	BaseID       string
 
 	// Подменяются в тестах: сборка и запуск — единственное, что ходит наружу.
 	build func(ctx context.Context, outPath string) ([]byte, error)
@@ -71,6 +75,20 @@ func supervisorLog() *slog.Logger { return oblog.Component("devserver.supervisor
 func (s *Supervisor) Run(ctx context.Context) error {
 	if s.SourceDir == "" {
 		return fmt.Errorf("devserver: не задан каталог исходников")
+	}
+	if s.ControlToken == "" {
+		var err error
+		s.ControlToken, err = processcontrol.NewNonce()
+		if err != nil {
+			return fmt.Errorf("devserver: control token: %w", err)
+		}
+	}
+	if s.BaseID == "" {
+		var err error
+		s.BaseID, err = processcontrol.NewNonce()
+		if err != nil {
+			return fmt.Errorf("devserver: base identity: %w", err)
+		}
 	}
 	binDir, err := os.MkdirTemp("", "onebase-dev")
 	if err != nil {
@@ -226,6 +244,10 @@ func (s *Supervisor) spawn(bin string) (*child, error) {
 	if env == nil {
 		env = os.Environ()
 	}
+	env = replaceEnvironment(env, map[string]string{
+		"ONEBASE_CONTROL_TOKEN": s.ControlToken,
+		"ONEBASE_BASE_ID":       s.BaseID,
+	})
 	cmd, err := start(bin, s.Args, env, s.out())
 	if err != nil {
 		return nil, err
@@ -233,6 +255,27 @@ func (s *Supervisor) spawn(bin string) (*child, error) {
 	c := &child{cmd: cmd, bin: bin, exit: make(chan error, 1)}
 	go func() { c.exit <- cmd.Wait() }()
 	return c, nil
+}
+
+func replaceEnvironment(env []string, values map[string]string) []string {
+	out := make([]string, 0, len(env)+len(values))
+	for _, item := range env {
+		name, _, _ := strings.Cut(item, "=")
+		replaced := false
+		for key := range values {
+			if strings.EqualFold(name, key) {
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, item)
+		}
+	}
+	for _, key := range []string{"ONEBASE_CONTROL_TOKEN", "ONEBASE_BASE_ID"} {
+		out = append(out, key+"="+values[key])
+	}
+	return out
 }
 
 func startProcess(bin string, args, env []string, out io.Writer) (*exec.Cmd, error) {
@@ -249,10 +292,23 @@ func (s *Supervisor) stop(c *child) {
 	if c == nil || c.cmd == nil || c.cmd.Process == nil {
 		return
 	}
-	terminate(c.cmd.Process)
+	gracefulRequested := false
+	if s.Port > 0 && s.ControlToken != "" && s.BaseID != "" {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := processcontrol.RequestStop(stopCtx, s.Port, s.ControlToken, s.BaseID, c.cmd.Process.Pid)
+		cancel()
+		if err == nil {
+			gracefulRequested = true
+		} else {
+			supervisorLog().Debug("graceful control stop failed; falling back to owned process signal", "pid", c.cmd.Process.Pid, "err", err)
+		}
+	}
+	if !gracefulRequested {
+		terminate(c.cmd.Process)
+	}
 	select {
 	case <-c.exit:
-	case <-time.After(5 * time.Second):
+	case <-time.After(gracefulStopTimeout):
 		// Не отреагировал на сигнал — добиваем, иначе порт останется занят.
 		if err := c.cmd.Process.Kill(); err != nil {
 			supervisorLog().Debug("не удалось завершить процесс сервера", "err", err)
@@ -268,14 +324,16 @@ func (s *Supervisor) stop(c *child) {
 	}
 }
 
-// awaitReady ждёт, пока пересобранный сервер ответит на /health, и зовёт OnReady.
+var gracefulStopTimeout = 35 * time.Second
+
+// awaitReady ждёт HMAC identity точного дочернего PID и зовёт OnReady.
 // Пока сервер не ответил, открывать браузер или сообщать «готово» рано: первый
 // запуск делает миграцию схемы БД и порт открывает только после неё.
 func (s *Supervisor) awaitReady(ctx context.Context, c *child, restart bool) {
 	if c == nil {
 		return
 	}
-	if s.Port > 0 && !s.waitHealthy(ctx, c) {
+	if s.Port > 0 && !s.waitIdentity(ctx, c) {
 		return
 	}
 	if s.OnReady != nil {
@@ -287,8 +345,7 @@ func (s *Supervisor) awaitReady(ctx context.Context, c *child, restart bool) {
 // создаёт схему до открытия порта, поэтому запас большой (как у лаунчера).
 var readyTimeout = 2 * time.Minute
 
-func (s *Supervisor) waitHealthy(ctx context.Context, c *child) bool {
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+func (s *Supervisor) waitIdentity(ctx context.Context, c *child) bool {
 	deadline := time.Now().Add(readyTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -301,43 +358,16 @@ func (s *Supervisor) waitHealthy(ctx context.Context, c *child) bool {
 			return false
 		default:
 		}
-		if healthOK(client, s.Port) {
+		probeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		_, err := processcontrol.ProbeIdentity(probeCtx, s.Port, s.ControlToken, s.BaseID, c.cmd.Process.Pid)
+		cancel()
+		if err == nil {
 			return true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	s.logf("[dev] сервер не ответил на порту %d за %s", s.Port, readyTimeout)
+	s.logf("[dev] дочерний процесс не подтвердил identity на порту %d за %s", s.Port, readyTimeout)
 	return false
-}
-
-// WaitHealthy ждёт, пока сервер на порту ответит на /health. Используется для
-// `--open`: открывать браузер до готовности сервера — значит показать
-// «соединение не установлено» вместо базы.
-func WaitHealthy(ctx context.Context, port int, timeout time.Duration) bool {
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return false
-		default:
-		}
-		if healthOK(client, port) {
-			return true
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return false
-}
-
-func healthOK(client *http.Client, port int) bool {
-	url := fmt.Sprintf("http://127.0.0.1:%d/health", port)
-	resp, err := client.Get(url) //nolint:gosec // G107: адрес собран из порта дочернего процесса на loopback
-	if err != nil {
-		return false
-	}
-	resp.Body.Close() //nolint:errcheck,gosec // G104: опрос готовности, тело не читаем
-	return resp.StatusCode == http.StatusOK
 }
 
 // GoTool возвращает путь к компилятору Go. PATH — не единственный источник:

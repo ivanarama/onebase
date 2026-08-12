@@ -3340,8 +3340,23 @@ window.onebaseDevice = {
     window.addEventListener('onebase:ui.оповещение', function (ev) { richToast(ev.detail); });
     window.addEventListener('onebase:ui.открытьФорму', function (ev) { openFormTab(ev.detail); });
   }
+  // BEGIN onebase-dev-system-handler (executed directly by the Node regression test)
+  function obHandleDevSystem(msg, devEnabled, state, reload) {
+    if (!devEnabled || !msg || !msg.system) return false;
+    if (msg.system === 'dev-generation') {
+      if (state.generation !== null && state.generation !== msg.data) reload();
+      state.generation = msg.data;
+      return true;
+    }
+    if (msg.system === 'dev-reload') {
+      reload();
+      return true;
+    }
+    return false;
+  }
+  // END onebase-dev-system-handler
   var sseOpened = false;
-  var devGeneration = null; // метка запуска dev-сервера, см. обработку ниже
+  var devState = { generation: null };
   function connect() {
     if (typeof EventSource === 'undefined') return;
     var es = new EventSource('/ui/events');
@@ -3363,26 +3378,13 @@ window.onebaseDevice = {
       } catch (e) {
         return;
       }
-      if (!msg || !msg.name) return;
-      // Служебные события dev-режима (onebase dev). В обычном режиме сервер их
-      // не шлёт вовсе, поэтому перезагрузка страницы под руками у пользователя
-      // прода невозможна.
-      if (msg.name === 'dev.поколение') {
-        // Другая метка запуска = процесс сервера перезапустили (пересобрали
-        // Go-код). HTML, шаблоны и сам ui.js в браузере устарели — берём заново.
-        if (devGeneration !== null && devGeneration !== msg.data) {
-          location.reload();
-          return;
-        }
-        devGeneration = msg.data;
-        return;
-      }
-      if (msg.name === 'dev.перезагрузка') {
-        // Конфигурацию перечитали без рестарта: формы и метаданные страницы
-        // могли измениться, поэтому обновляем её целиком, как по F5.
-        location.reload();
-        return;
-      }
+      if (!msg) return;
+      // Only the server can create a system envelope, and the rendered page
+      // must independently opt in to dev behavior. A DSL notification with a
+      // look-alike name remains an ordinary onebase:<name> event.
+      var devEnabled = !!(document.body && document.body.getAttribute('data-ob-dev') === '1');
+      if (obHandleDevSystem(msg, devEnabled, devState, function () { location.reload(); })) return;
+      if (!msg.name) return;
       emitOnebaseEvent('onebase:' + msg.name, msg.data);
       forwardOnebaseEvent(msg);
       if (msg.name === 'уведомление' || msg.name === 'notify') {

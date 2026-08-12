@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -270,11 +271,12 @@ func (s *Server) InvalidateWidgetCache() {
 	}
 }
 
-// PublishEvent рассылает событие подписчикам real-time-шины (см. ui.Server).
-// Через него dev-сервер сообщает браузеру, что конфигурация перечитана.
-func (s *Server) PublishEvent(target, name string, data any) {
+// PublishDevReload sends the trusted system envelope used by browser sync.
+// DSL notifications cannot construct this envelope even if they reuse the
+// visible event name.
+func (s *Server) PublishDevReload() {
 	if s != nil && s.uiSrv != nil {
-		s.uiSrv.PublishEvent(target, name, data)
+		s.uiSrv.PublishDevReload()
 	}
 }
 
@@ -337,6 +339,18 @@ func (s *Server) H2CEnabled() bool { return s != nil && s.h2c }
 
 func (s *Server) ListenAndServe() error {
 	return s.srv.ListenAndServe()
+}
+
+// Listen reserves the configured address synchronously. CLI callers use it
+// before announcing readiness or opening a browser, so a foreign /health on
+// an occupied port can never be mistaken for this server.
+func (s *Server) Listen() (net.Listener, error) {
+	return net.Listen("tcp", s.srv.Addr)
+}
+
+// Serve serves an already-reserved listener.
+func (s *Server) Serve(listener net.Listener) error {
+	return s.srv.Serve(listener)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

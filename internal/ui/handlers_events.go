@@ -29,24 +29,19 @@ func (s *Server) notifier() interpreter.Notifier {
 	return hubNotifier{hub: s.hub}
 }
 
-// Имена служебных событий dev-режима. Русские, как и остальные события шины:
-// клиент их не согласовывает заранее, а раздаёт как onebase:<имя>.
 const (
-	// DevGenerationEvent — метка запуска процесса, уходит клиенту первым кадром
-	// при каждом подключении к шине.
-	DevGenerationEvent = "dev.поколение"
-	// DevReloadEvent — конфигурация перечитана, странице пора обновиться.
-	DevReloadEvent = "dev.перезагрузка"
+	devGenerationSystem = "dev-generation"
+	devReloadSystem     = "dev-reload"
 )
 
-// PublishEvent отправляет событие подписчикам шины: target — логин, роль,
-// идентификатор пользователя или «*» (всем). Нужен вызывающим за пределами
-// пакета: dev-сервер публикует «конфигурация перезагрузилась» после hot reload.
-func (s *Server) PublishEvent(target, name string, data any) {
+// PublishDevReload emits a trusted system frame. The DSL notifier only fills
+// Name/Data, so user code cannot forge browser reloads by choosing a reserved
+// notification name.
+func (s *Server) PublishDevReload() {
 	if s == nil || s.hub == nil {
 		return
 	}
-	s.hub.Publish(target, realtime.Event{Name: name, Data: data})
+	s.hub.Publish("*", realtime.Event{System: devReloadSystem})
 }
 
 // eventsStream — SSE-эндпоинт GET /ui/events: подписывает текущего пользователя
@@ -88,7 +83,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 	// подхватывает пересборку платформы, при которой SSE-соединение просто
 	// рвётся и переподключается, а сказать «я уже другой» иначе нечем.
 	if s.devGeneration != "" {
-		frame, err := json.Marshal(map[string]any{"name": DevGenerationEvent, "data": s.devGeneration})
+		frame, err := json.Marshal(map[string]any{"system": devGenerationSystem, "data": s.devGeneration})
 		if err == nil {
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", frame); err != nil {
 				return
@@ -115,7 +110,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 			// Кадр — дефолтное message-событие с {name,data} в JSON: клиент один
 			// раз парсит и ретранслирует в window CustomEvent('onebase:<name>'),
 			// поэтому имена событий не нужно согласовывать с сервером заранее.
-			frame, err := json.Marshal(map[string]any{"name": ev.Name, "data": ev.Data})
+			frame, err := json.Marshal(map[string]any{"name": ev.Name, "data": ev.Data, "system": ev.System})
 			if err != nil {
 				continue
 			}

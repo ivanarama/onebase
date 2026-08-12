@@ -230,15 +230,15 @@ func TestEventsStream_SendsDevGenerationFirst(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	var frame struct {
-		Name string `json:"name"`
-		Data string `json:"data"`
+		System string `json:"system"`
+		Data   string `json:"data"`
 	}
 	frameJSON := readDataFrame(t, resp.Body)
 	if err := json.Unmarshal([]byte(frameJSON), &frame); err != nil {
 		t.Fatalf("кадр не разобрался как JSON: %v (%q)", err, frameJSON)
 	}
-	if frame.Name != DevGenerationEvent || frame.Data != "поколение-1" {
-		t.Fatalf("первый кадр = %+v, ожидалось %s с меткой запуска", frame, DevGenerationEvent)
+	if frame.System != devGenerationSystem || frame.Data != "поколение-1" {
+		t.Fatalf("первый кадр = %+v, ожидалось %s с меткой запуска", frame, devGenerationSystem)
 	}
 }
 
@@ -274,9 +274,9 @@ func TestEventsStream_NoDevGenerationInNormalMode(t *testing.T) {
 	}
 }
 
-// PublishEvent — путь, которым dev-сервер сообщает браузеру «конфигурация
+// PublishDevReload — путь, которым dev-сервер сообщает браузеру «конфигурация
 // перечитана» после hot reload.
-func TestPublishEvent_DeliversDevReload(t *testing.T) {
+func TestPublishDevReload_DeliversTrustedSystemFrame(t *testing.T) {
 	hub := realtime.NewHub()
 	s := &Server{hub: hub}
 	srv := httptest.NewServer(http.HandlerFunc(s.eventsStream))
@@ -292,17 +292,47 @@ func TestPublishEvent_DeliversDevReload(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	waitSubscriber(t, hub)
-	s.PublishEvent("*", DevReloadEvent, nil)
+	s.PublishDevReload()
 
 	frameJSON := readDataFrame(t, resp.Body)
 	var frame struct {
-		Name string `json:"name"`
+		System string `json:"system"`
 	}
 	if err := json.Unmarshal([]byte(frameJSON), &frame); err != nil {
 		t.Fatalf("кадр не разобрался как JSON: %v (%q)", err, frameJSON)
 	}
-	if frame.Name != DevReloadEvent {
-		t.Fatalf("пришло %q, ожидалось %q", frame.Name, DevReloadEvent)
+	if frame.System != devReloadSystem {
+		t.Fatalf("пришло %q, ожидалось %q", frame.System, devReloadSystem)
+	}
+}
+
+func TestDSLNotification_CannotForgeDevSystemFrame(t *testing.T) {
+	hub := realtime.NewHub()
+	s := &Server{hub: hub}
+	srv := httptest.NewServer(http.HandlerFunc(s.eventsStream))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /ui/events: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	waitSubscriber(t, hub)
+	hubNotifier{hub: hub}.Publish("*", devReloadSystem, nil)
+
+	var frame struct {
+		Name   string `json:"name"`
+		System string `json:"system"`
+	}
+	frameJSON := readDataFrame(t, resp.Body)
+	if err := json.Unmarshal([]byte(frameJSON), &frame); err != nil {
+		t.Fatalf("кадр не разобрался как JSON: %v (%q)", err, frameJSON)
+	}
+	if frame.Name != devReloadSystem || frame.System != "" {
+		t.Fatalf("DSL notification escaped ordinary envelope: %+v", frame)
 	}
 }
 

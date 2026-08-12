@@ -5,12 +5,12 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/debugger"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -129,7 +129,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	if cfg.Dev {
 		// Метка живёт ровно столько, сколько процесс: по её смене браузер
 		// понимает, что сервер перезапустили, и берёт страницу заново.
-		s.devGeneration = strconv.FormatInt(time.Now().UnixNano(), 36)
+		s.devGeneration = uuid.NewString()
 	}
 	s.attachDebugger(interp)
 	if sched != nil {

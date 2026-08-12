@@ -70,6 +70,43 @@ func TestDevChildArgs_DropsSupervisorFlags(t *testing.T) {
 	}
 }
 
+func TestDevChildArgs_DoesNotMaterializeDatabaseURLInArgv(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:secret@db.example/onebase")
+	cmd := devCmdWith(t, "--reload-binary")
+	args := devChildArgs(cmd)
+	if _, ok := argValue(args, "--db"); ok {
+		t.Fatalf("inherited DATABASE_URL leaked into child argv: %v", args)
+	}
+	if strings.Contains(strings.Join(args, " "), "secret") {
+		t.Fatalf("database password leaked into child argv: %v", args)
+	}
+}
+
+func TestRunDev_RejectsDBAndSQLiteTogether(t *testing.T) {
+	cmd := devCmdWith(t, "--db", "postgres://localhost/dev", "--sqlite", "dev.db")
+	err := runDev(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("runDev error = %v, want mutually-exclusive flags error", err)
+	}
+}
+
+func TestBrowserURLUsesReachableHost(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		want string
+	}{
+		{"127.0.0.1", "http://127.0.0.1:8123"},
+		{"0.0.0.0", "http://localhost:8123"},
+		{"::", "http://localhost:8123"},
+		{"::1", "http://[::1]:8123"},
+		{"devbox.local", "http://devbox.local:8123"},
+	} {
+		if got := browserURL(tc.host, 8123); got != tc.want {
+			t.Errorf("browserURL(%q) = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}
+
 func TestGoModuleRoot_FindsRootAbove(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n"), 0o600); err != nil {

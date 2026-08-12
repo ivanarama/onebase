@@ -3,12 +3,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
-	"time"
 
 	"github.com/ivantit66/onebase/internal/devserver"
 	"github.com/ivantit66/onebase/internal/launcher"
@@ -44,7 +45,7 @@ func runDevSupervisor(cmd *cobra.Command) error {
 			if restart || !openBrowser {
 				return
 			}
-			openInBrowser(port)
+			openInBrowser("127.0.0.1", port)
 		},
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -61,7 +62,6 @@ func devChildArgs(cmd *cobra.Command) []string {
 	port, _ := cmd.Flags().GetInt("port")
 	configSource, _ := cmd.Flags().GetString("config-source")
 	sqlitePath, _ := cmd.Flags().GetString("sqlite")
-	dsn := dsnFromFlags(cmd)
 
 	args := []string{"dev", "--project", dir, "--port", strconv.Itoa(port), "--config-source", configSource}
 	if sqlitePath != "" {
@@ -69,7 +69,16 @@ func devChildArgs(cmd *cobra.Command) []string {
 		// к PostgreSQL дочернему процессу не нужна и только сбила бы выбор СУБД.
 		return append(args, "--sqlite", sqlitePath)
 	}
-	return append(args, "--db", dsn)
+	// DATABASE_URL stays in the inherited environment. Copying it to argv would
+	// expose the password in process listings. Only an explicitly supplied
+	// command-line value remains a command-line value in the child.
+	if cmd.Flags().Changed("db") {
+		dsn, _ := cmd.Flags().GetString("db")
+		if dsn != "" {
+			return append(args, "--db", dsn)
+		}
+	}
+	return args
 }
 
 // goModuleRoot поднимается от start вверх до каталога с go.mod — это корень
@@ -96,19 +105,17 @@ func goModuleRoot(start string) (string, error) {
 }
 
 // openInBrowser открывает UI базы во внешнем браузере.
-func openInBrowser(port int) {
-	url := fmt.Sprintf("http://localhost:%d", port)
-	outf("[open] открываю %s\n", url)
-	launcher.OpenBrowser(url)
+func browserURL(host string, port int) string {
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
-// openBrowserWhenReady ждёт, пока сервер начнёт отвечать на /health, и открывает
-// его в браузере. Открывать раньше нельзя: порт поднимается только после
-// миграции схемы, и вкладка встретила бы «не удаётся установить соединение».
-func openBrowserWhenReady(ctx context.Context, port int) {
-	if !devserver.WaitHealthy(ctx, port, 2*time.Minute) {
-		errln("[open] сервер не ответил — откройте адрес в браузере вручную")
-		return
-	}
-	openInBrowser(port)
+func openInBrowser(host string, port int) {
+	address := browserURL(host, port)
+	outf("[open] открываю %s\n", address)
+	launcher.OpenBrowser(address)
 }
