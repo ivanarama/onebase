@@ -23,6 +23,30 @@ func acquireStateFileLock(path string) (*stateFileLock, error) {
 	return lockStateFile(f, windows.LOCKFILE_EXCLUSIVE_LOCK)
 }
 
+func acquireTargetFileLock(path string) (*stateFileLock, error) {
+	f, err := openTargetLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return lockStateFileRange(f, windows.LOCKFILE_EXCLUSIVE_LOCK, 0)
+}
+
+func acquireTargetReadFileLock(path string) (*stateFileLock, error) {
+	f, err := openTargetLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return lockStateFileRange(f, 0, 0)
+}
+
+func acquireTargetIntentFileLock(path string) (*stateFileLock, error) {
+	f, err := openTargetLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return lockStateFileRange(f, windows.LOCKFILE_EXCLUSIVE_LOCK, 0)
+}
+
 func acquireStateReadLock(path string) (*stateFileLock, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: path is the fixed update-state lock file
 	if os.IsNotExist(err) {
@@ -35,7 +59,11 @@ func acquireStateReadLock(path string) (*stateFileLock, error) {
 }
 
 func lockStateFile(f *os.File, flags uint32) (*stateFileLock, error) {
-	lock := &stateFileLock{file: f}
+	return lockStateFileRange(f, flags, 0)
+}
+
+func lockStateFileRange(f *os.File, flags uint32, offset uint32) (*stateFileLock, error) {
+	lock := &stateFileLock{file: f, overlapped: windows.Overlapped{Offset: offset}}
 	if err := windows.LockFileEx(
 		windows.Handle(f.Fd()),
 		flags,

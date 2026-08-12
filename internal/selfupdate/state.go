@@ -35,6 +35,10 @@ var stateMu sync.Mutex
 // коммитов и растёт; для показа в модалке этого с запасом достаточно.
 const maxNotesRunes = 8000
 
+// stateSaveBeforeWrite is a package-test seam for deterministic lost-ACK and
+// durable-transaction recovery tests. Production leaves it nil.
+var stateSaveBeforeWrite func(string, State) error
+
 // State — состояние обновлений платформы для текущего пользователя.
 type State struct {
 	// Channel — выбранный канал (пусто = DefaultChannel).
@@ -55,13 +59,31 @@ type State struct {
 	Staged *StagedInfo `json:"staged,omitempty"`
 	// Prev — версия, с которой обновились: на неё можно откатиться.
 	Prev *RelInfo `json:"prev,omitempty"`
-	// RestartBases — базы, работавшие в момент применения обновления. Новый
-	// лаунчер поднимает их обратно и очищает список.
+	// RestartBases is the legacy, ID-only recovery format. Current launchers
+	// never start these entries because an ID may have been deleted and reused;
+	// they clear them fail-closed and write RestartRecords instead.
 	RestartBases []string `json:"restart_bases,omitempty"`
+	// RestartRecords binds recovery to the persistent generation of the exact
+	// Store record that was stopped. Generation is a one-way fingerprint of its
+	// lifecycle control token, never the token itself.
+	RestartRecords []RestartRecord `json:"restart_records,omitempty"`
 	// AutoApply — применять скачанное обновление при следующем старте лаунчера
 	// без вопросов. По умолчанию выключено: на канале build молча менять
 	// платформу нельзя.
 	AutoApply bool `json:"auto_apply,omitempty"`
+}
+
+// RestartRecord identifies one logical Store record across launcher restarts.
+// ID alone is insufficient because IDs can be deleted and subsequently reused.
+type RestartRecord struct {
+	ID         string `json:"id"`
+	Generation string `json:"generation"`
+}
+
+// RecoveryPending reports whether either the current generation-bound schema
+// or the legacy ID-only schema still contains recovery work.
+func (s State) RecoveryPending() bool {
+	return len(s.RestartRecords) != 0 || len(s.RestartBases) != 0
 }
 
 // RelInfo — сведения о релизе, которые нужны интерфейсу.
@@ -70,6 +92,9 @@ type RelInfo struct {
 	PublishedAt time.Time `json:"published_at,omitempty"`
 	Notes       string    `json:"notes,omitempty"`
 	URL         string    `json:"url,omitempty"`
+	// TargetDir binds a rollback record to the installation whose binaries
+	// were saved. The rollback payload itself carries the same identity.
+	TargetDir string `json:"target_dir,omitempty"`
 }
 
 // StagedInfo — что лежит в staging-каталоге.
@@ -297,6 +322,7 @@ func cloneState(s State) State {
 		s.Prev = &prev
 	}
 	s.RestartBases = append([]string(nil), s.RestartBases...)
+	s.RestartRecords = append([]RestartRecord(nil), s.RestartRecords...)
 	return s
 }
 
@@ -311,6 +337,11 @@ func saveStateFile(path string, s State) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
+	}
+	if stateSaveBeforeWrite != nil {
+		if err := stateSaveBeforeWrite(path, s); err != nil {
+			return err
+		}
 	}
 	return writeFile(bytes.NewReader(data), path, fsmode.File)
 }

@@ -303,6 +303,55 @@ test('remembered background orders policy before quit', async () => {
   assert.equal(h.state.closeCalls, 1);
 });
 
+test('remembered stop with an empty snapshot still closes the Start race through close-stop', async () => {
+  const h = createHarness();
+  h.enqueue(200, {running: [], policy: 'stop'});
+  h.enqueue(200, {ok: true, remaining: []});
+
+  h.context.quitLauncher();
+  await drain();
+
+  assert.deepEqual(urls(h), ['/close-info', '/close-stop']);
+  assert.equal(h.calls[0].options.cache, 'no-store');
+  assert.equal(urls(h).includes('/quit'), false);
+  assert.equal(h.state.closeCalls, 1);
+});
+
+test('failed policy rollback can be dismissed without an infinite retry loop', async () => {
+  const h = createHarness();
+  h.enqueue(200, {running: [{name: 'Main', port: 8080}], policy: 'ask'});
+  h.enqueue(500, {error: 'uncertain write'});
+  h.enqueue(500, {error: 'rollback disk failure'});
+
+  h.context.quitLauncher();
+  await drain();
+  h.elements.remember.checked = true;
+  h.context.closeChoice('background');
+  await drain();
+  h.context.closeChoice('cancel');
+  await drain();
+  assert.equal(h.context._closeFlow.state, 'error');
+  assert.match(h.elements.errorText.textContent, /rollback disk failure/);
+
+  const before = urls(h).slice();
+  h.context.closeChoice('cancel');
+  await drain();
+  assert.equal(h.context._closeFlow.state, 'idle');
+  assert.equal(h.elements.modal.style.display, 'none');
+  assert.deepEqual(urls(h), before);
+});
+
+test('uncontrollable occupied port is labelled and disables stop', async () => {
+  const h = createHarness();
+  h.enqueue(200, {running: [{name: 'Foreign', port: 8080, controllable: false}], policy: 'ask'});
+
+  h.context.quitLauncher();
+  await drain();
+  assert.equal(h.context._closeFlow.state, 'prompt');
+  assert.equal(h.elements.stop.disabled, true);
+  assert.match(h.elements.list.children[0].textContent, /8080/);
+});
+
 test('Stop all confirmation never trusts stale rendered running count', () => {
   const h = createHarness();
   h.context._runningCount = 0;

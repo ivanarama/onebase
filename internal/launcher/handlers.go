@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -61,6 +62,9 @@ func sanitizeFileName(name string) string {
 	name = strings.TrimSpace(name)
 	var b strings.Builder
 	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
 		switch r {
 		case '\\', '/', ':', '*', '?', '"', '<', '>', '|':
 			b.WriteRune('_')
@@ -99,6 +103,13 @@ type handler struct {
 	// (start/stop/…) сбрасывают запись базы, чтобы статус обновился сразу.
 	statusMu    sync.Mutex
 	statusCache map[string]baseStatus
+	// updateMu serializes every selfupdate state mutation, including the quiet
+	// watcher, so a stale network result cannot erase restart recovery state.
+	updateMu sync.Mutex
+	// updateQuiescing is permanent for this process. Once its on-disk binary
+	// generation changed, the old in-memory launcher must reject all further
+	// requests while handing off (or after a failed restart).
+	updateQuiescing atomic.Bool
 }
 
 // baseStatus — закэшированный результат дорогих проверок одной базы.
@@ -175,6 +186,9 @@ func (h *handler) baseStatuses(bases []*Base) map[string]baseStatus {
 // probeBase выполняет дорогие проверки одной базы — статус живости и данные
 // app.yaml. Вызывается из горутины baseStatuses, поэтому без общих блокировок.
 func (h *handler) probeBase(b *Base) baseStatus {
+	gate := cfgAuthDBGate(b.ID)
+	gate.RLock()
+	defer gate.RUnlock()
 	st := baseStatus{running: h.baseRunning(b), fetched: time.Now()}
 	var cfg struct {
 		Name    string `yaml:"name"`
@@ -244,6 +258,7 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		"Selected":     selected,
 		"NativeOK":     NativeIsolatedSupported(),
 		"RunningCount": runningCount,
+		"ClosePolicy":  h.onClosePolicy(),
 		// Состояние обновлений читается из файла, без обращения к сети:
 		// проверку делает фоновая горутина (план 92).
 		"Update": h.updatesState(),
@@ -309,6 +324,20 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			"IsNew": true, "Base": b, "Error": tr(lang, "Укажите строку подключения к PostgreSQL"),
 		})
 		return
+	}
+	// Creating a database-backed registration may open or initialize the same
+	// database that a restore is replacing. Share the global lifecycle gate so
+	// the alias preflight and the destructive restore cannot be bypassed by a
+	// concurrent create request.
+	if h.runner != nil {
+		if err := h.runner.holdStarts(); err != nil {
+			render(w, r, "page-form", map[string]any{
+				"Title": tr(lang, "onebase — Добавить базу"), "IsNew": true, "Base": b,
+				"Error": tr(lang, "Другая операция с базами ещё выполняется") + ": " + err.Error(),
+			})
+			return
+		}
+		defer h.runner.AllowStarts()
 	}
 
 	scaffold := r.FormValue("scaffold") == "1"
@@ -424,16 +453,67 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := h.store.Update(b); err != nil {
+	releaseDB := acquireCfgDBExclusive(b.ID)
+	defer releaseDB()
+	if h.runner != nil {
+		if err := h.runner.holdStarts(); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		defer h.runner.AllowStarts()
+	}
+	current, err := h.store.Get(b.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if h.runner != nil && runtimeConfigChanged(current, b) && h.runner.RuntimeStatus(current).Occupied {
+		render(w, r, "page-form", map[string]any{
+			"Title": tr(lang, "onebase — Изменить базу"), "IsNew": false, "Base": b,
+			"Error": tr(lang, "Сначала остановите базу: параметры запуска нельзя менять у работающего процесса"),
+		})
+		return
+	}
+	// Preserve fields that are not editable by this form and may have changed
+	// while it was open (notably LastOpened and the lifecycle control secret).
+	b.ID = current.ID
+	b.ControlToken = current.ControlToken
+	b.Created = current.Created
+	b.LastOpened = current.LastOpened
+	err = h.store.Update(b)
+	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	http.Redirect(w, r, "/?sel="+b.ID, http.StatusFound)
 }
 
+func runtimeConfigChanged(a, b *Base) bool {
+	if a == nil || b == nil {
+		return true
+	}
+	return a.ConfigSource != b.ConfigSource || a.Path != b.Path || a.DB != b.DB ||
+		a.DBType != b.DBType || a.DBPath != b.DBPath || a.Port != b.Port || a.Host != b.Host
+}
+
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	h.runner.Stop(id)
+	releaseDB := acquireCfgDBExclusive(id)
+	defer releaseDB()
+	if err := h.runner.holdStarts(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	defer h.runner.AllowStarts()
+	b, err := h.store.Get(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := h.runner.stopBaseHeld(b); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	// Сбой удаления нельзя проглатывать: редирект на список выглядит как
 	// выполненное удаление, а база остаётся в реестре — пользователь решит, что
 	// интерфейс завис, и нажмёт «удалить» ещё раз.
@@ -472,6 +552,20 @@ func (h *handler) baseRunning(b *Base) bool {
 // её сервера. Общий пролог обработчиков start / startIsolated / startNative:
 // при ошибке пишет JSON-ответ и возвращает false.
 func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Base, lang string) bool {
+	// Mint the persistent identity before the first liveness/adoption probe.
+	// Public /health on a tokenless legacy record is forgeable by any process
+	// that won the saved port; treating that response as this base would hand
+	// the browser the foreign listener's URL. A pre-token onebase process must
+	// therefore be stopped manually once, after which every generation proves
+	// its HMAC identity.
+	if b.ControlToken == "" {
+		token, err := h.store.EnsureControlToken(b.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errText(r, err)})
+			return false
+		}
+		b.ControlToken = token
+	}
 	if !h.baseRunning(b) {
 		if b.DBType != "sqlite" {
 			if err := storage.EnsureDatabase(r.Context(), b.DB); err != nil {
@@ -484,11 +578,10 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 			return false
 		}
 		h.invalidateStatus(b.ID) // статус в списке должен обновиться сразу
-		b.LastOpened = time.Now()
 		// База уже запущена — отказывать пользователю из-за несохранённой
 		// отметки времени неправильно. Но сбой записи реестра означает, что не
 		// сохранится и всё остальное, поэтому Warn, а не тишина.
-		if err := h.store.Update(b); err != nil {
+		if err := h.store.TouchLastOpened(b.ID, time.Now()); err != nil {
 			respondLog().Warn("не удалось сохранить отметку последнего открытия базы",
 				"baseID", b.ID, "err", err)
 		}
@@ -594,16 +687,14 @@ func (h *handler) cleanProfiles(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	h.runner.Stop(id)
-	// Усыновлённая база (запущена прежним экземпляром лаунчера) в procs не
-	// числится — по явному «Остановить» добиваем процесс на её порту, как
-	// это уже делает «Стоп всё».
-	if b, err := h.store.Get(id); err == nil && !portFree(b.Port) {
-		killByPort(b.Port)
-		if !waitPortFree(b.Port, 3*time.Second) {
-			respondLog().Warn("база не остановилась: порт остался занят",
-				"baseID", id, "port", b.Port)
-		}
+	b, err := h.store.Get(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := h.runner.StopBase(b); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
 	}
 	h.invalidateStatus(id) // индикатор «остановлена» — сразу, не через TTL
 	http.Redirect(w, r, "/?sel="+id, http.StatusFound)
@@ -612,7 +703,10 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("sel")
 
-	h.stopAllBases()
+	if err := h.stopAllBases(false); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 
 	redirect := "/"
 	if sel != "" {
@@ -705,6 +799,14 @@ func (h *handler) configuratorRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := resolveLang(r)
+	if b.ControlToken == "" {
+		token, tokenErr := h.store.EnsureControlToken(b.ID)
+		if tokenErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": errText(r, tokenErr)})
+			return
+		}
+		b.ControlToken = token
+	}
 	if b.DBType != "sqlite" {
 		if err := storage.EnsureDatabase(r.Context(), b.DB); err != nil {
 			writeJSON(w, 500, map[string]any{"error": tr(lang, "Не удалось создать БД") + ": " + err.Error()})
@@ -715,8 +817,7 @@ func (h *handler) configuratorRestart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}
-	b.LastOpened = time.Now()
-	if err := h.store.Update(b); err != nil {
+	if err := h.store.TouchLastOpened(b.ID, time.Now()); err != nil {
 		respondLog().Warn("не удалось сохранить отметку последнего открытия базы",
 			"baseID", b.ID, "err", err)
 	}

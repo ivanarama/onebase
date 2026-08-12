@@ -7,7 +7,14 @@ package selfupdate
 // serializes the package within the single runtime.
 type stateFileLock struct{}
 
-func acquireStateFileLock(string) (*stateFileLock, error) { return &stateFileLock{}, nil }
+func acquireStateFileLock(string) (*stateFileLock, error)  { return &stateFileLock{}, nil }
+func acquireTargetFileLock(string) (*stateFileLock, error) { return &stateFileLock{}, nil }
+func acquireTargetReadFileLock(string) (*stateFileLock, error) {
+	return &stateFileLock{}, nil
+}
+func acquireTargetIntentFileLock(string) (*stateFileLock, error) {
+	return &stateFileLock{}, nil
+}
 
 func acquireStateReadLock(string) (*stateFileLock, error) { return nil, nil }
 

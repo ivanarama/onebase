@@ -54,6 +54,48 @@ func TestState_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestRestartRecordsRoundTripAndRecoveryPending(t *testing.T) {
+	isolatedHome(t)
+	want := State{RestartRecords: []RestartRecord{{ID: "base-1", Generation: "ct1:abc"}}}
+	if !want.RecoveryPending() {
+		t.Fatal("generation-bound recovery record is not reported pending")
+	}
+	if err := SaveState(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.RestartRecords) != 1 || got.RestartRecords[0] != want.RestartRecords[0] {
+		t.Fatalf("restart records round trip: got %+v, want %+v", got.RestartRecords, want.RestartRecords)
+	}
+
+	clone := cloneState(got)
+	clone.RestartRecords[0].Generation = "changed"
+	if got.RestartRecords[0].Generation != "ct1:abc" {
+		t.Fatal("cloneState shares RestartRecords backing array")
+	}
+}
+
+func TestLegacyRestartBasesRemainReadableAndPending(t *testing.T) {
+	isolatedHome(t)
+	updates, err := UpdatesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(updates, StateFileName), []byte(`{"restart_bases":["legacy"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.RestartBases) != 1 || got.RestartBases[0] != "legacy" || !got.RecoveryPending() {
+		t.Fatalf("legacy recovery state not loaded safely: %+v", got)
+	}
+}
+
 func TestState_AbsentIsEmpty(t *testing.T) {
 	isolatedHome(t)
 

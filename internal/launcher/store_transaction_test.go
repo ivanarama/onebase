@@ -315,6 +315,89 @@ func TestStoreUpdateDoesNotEraseConcurrentControlToken(t *testing.T) {
 	}
 }
 
+func TestBaseListMutationsPreserveUnknownBaseFieldsAndComments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ibases.yaml")
+	raw := `bases:
+  - id: b1
+    name: Before
+    config_source: file
+    db: ""
+    port: 8080
+    created: 2026-01-01T00:00:00Z
+    future_base: keep-me # future-base-comment
+  - id: b2
+    name: Second
+    config_source: file
+    db: ""
+    port: 8081
+    created: 2026-01-01T00:00:00Z
+    future_second: keep-too
+`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := &Store{path: path}
+	b, err := st.Get("b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Name = "After"
+	if err := st.Update(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Move("b2", -1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Add(&Base{ID: "b3", Name: "Third", ConfigSource: "file", Port: 8082}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"name: After", "future_base: keep-me", "future-base-comment",
+		"future_second: keep-too", "id: b3",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("base mutation lost %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestTouchLastOpenedDoesNotRevertConcurrentEdit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ibases.yaml")
+	st := &Store{path: path}
+	if err := st.Add(&Base{ID: "b1", Name: "Before", ConfigSource: "file", Port: 8080}); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := st.Get("b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := st.Get("b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest.Name = "After"
+	latest.Port = 9090
+	if err := st.Update(latest); err != nil {
+		t.Fatal(err)
+	}
+	openedAt := time.Now().UTC().Round(time.Second)
+	if err := st.TouchLastOpened(stale.ID, openedAt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Get("b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "After" || got.Port != 9090 || !got.LastOpened.Equal(openedAt) {
+		t.Fatalf("timestamp mutation reverted concurrent edit: %+v", got)
+	}
+}
+
 func TestStoreTempIsUniquePrivateAndLeavesPredictablePathUntouched(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ibases.yaml")
@@ -369,5 +452,40 @@ func TestStoreTempIsUniquePrivateAndLeavesPredictablePathUntouched(t *testing.T)
 	// Два staged temp ещё существуют намеренно; mutation не должна добавить третий.
 	if len(leftovers) != 2 {
 		t.Fatalf("atomic write оставил неожиданные temp: %v", leftovers)
+	}
+}
+
+func TestStoreAddRejectsDuplicatePersistentIdentity(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.Add(&Base{ID: "same", Name: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Add(&Base{ID: "same", Name: "replacement"}); err == nil {
+		t.Fatal("duplicate base ID was accepted")
+	}
+	bases, err := st.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bases) != 1 || bases[0].Name != "first" {
+		t.Fatalf("failed duplicate Add changed the registry: %+v", bases)
+	}
+}
+
+func TestStoreSnapshotRejectsAmbiguousOrNullBases(t *testing.T) {
+	for name, body := range map[string]string{
+		"duplicate": "bases:\n  - {id: same, name: first}\n  - {id: same, name: second}\n",
+		"null":      "bases:\n  - null\n",
+		"empty-id":  "bases:\n  - {name: unnamed}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+			if err := os.WriteFile(st.path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := st.Snapshot(); err == nil {
+				t.Fatal("ambiguous registry was accepted")
+			}
+		})
 	}
 }

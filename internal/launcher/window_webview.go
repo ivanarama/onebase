@@ -452,7 +452,7 @@ func (s *windowSession) handleStopFinished() {
 		return
 	}
 	err, timedOut := s.stopErr, s.stopTimedOut
-	if err == nil && !timedOut {
+	if err == nil {
 		s.phase = windowTerminating
 		s.mu.Unlock()
 		// We are in the owning UI thread. Posting WM_QUIT here terminates the

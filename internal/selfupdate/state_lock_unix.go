@@ -22,6 +22,30 @@ func acquireStateFileLock(path string) (*stateFileLock, error) {
 	return lockStateFile(f, unix.F_WRLCK)
 }
 
+func acquireTargetFileLock(path string) (*stateFileLock, error) {
+	f, err := openTargetLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return lockStateFileRange(f, unix.F_WRLCK, 0)
+}
+
+func acquireTargetReadFileLock(path string) (*stateFileLock, error) {
+	f, err := openTargetLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return lockStateFileRange(f, unix.F_RDLCK, 0)
+}
+
+func acquireTargetIntentFileLock(path string) (*stateFileLock, error) {
+	f, err := openTargetLockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return lockStateFileRange(f, unix.F_WRLCK, 0)
+}
+
 func acquireStateReadLock(path string) (*stateFileLock, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: path is the fixed update-state lock file
 	if os.IsNotExist(err) {
@@ -34,10 +58,14 @@ func acquireStateReadLock(path string) (*stateFileLock, error) {
 }
 
 func lockStateFile(f *os.File, lockType int16) (*stateFileLock, error) {
+	return lockStateFileRange(f, lockType, 0)
+}
+
+func lockStateFileRange(f *os.File, lockType int16, offset int64) (*stateFileLock, error) {
 	lock := unix.Flock_t{
 		Type:   lockType,
 		Whence: 0,
-		Start:  0,
+		Start:  offset,
 		Len:    1,
 	}
 	var err error

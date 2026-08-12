@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPlanForClose(t *testing.T) {
@@ -22,7 +24,7 @@ func TestPlanForClose(t *testing.T) {
 		want    closePlan
 	}{
 		{"нет живых баз — молча закрываем", OnCloseAsk, 0, planKeepRunning},
-		{"нет живых баз, настройка «останавливать» — нечего останавливать", OnCloseStop, 0, planKeepRunning},
+		{"нет живых баз, но stop-политика должна закрыть гонку со Start", OnCloseStop, 0, planStopAll},
 		{"есть живые базы — спрашиваем", OnCloseAsk, 2, planAsk},
 		{"пустая настройка = спрашиваем", "", 1, planAsk},
 		{"мусор в настройке = спрашиваем", "junk", 1, planAsk},
@@ -46,6 +48,13 @@ func TestCloseDialogText_ExplainsButtons(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("в тексте диалога нет %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestCloseDialogText_ExplainsUncontrollablePort(t *testing.T) {
+	text := closeDialogText("ru", []RunningBase{{Name: "Unknown", Port: 8080, Controllable: false}})
+	if !strings.Contains(text, "автоматическая остановка недоступна") {
+		t.Fatalf("диалог скрыл блокирующий процесс:\n%s", text)
 	}
 }
 
@@ -115,6 +124,9 @@ func closeInfoReq(t *testing.T, h *handler) map[string]any {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код ответа %d: %s", rec.Code, rec.Body.String())
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, ожидался no-store", got)
+	}
 	var got map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("разбор ответа: %v (%s)", err, rec.Body.String())
@@ -147,6 +159,69 @@ func TestCloseInfo_EmptyRunningIsArray(t *testing.T) {
 	h.closeInfo(rec, httptest.NewRequest(http.MethodGet, "/close-info", nil))
 	if !strings.Contains(rec.Body.String(), `"running":[]`) {
 		t.Errorf("ожидался пустой массив running: %s", rec.Body.String())
+	}
+}
+
+func TestCloseInfo_RegistryErrorIsNotReportedAsNoRunningBases(t *testing.T) {
+	st := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	if err := os.WriteFile(st.path, []byte("bases: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{store: st, runner: NewRunner()}
+	rec := httptest.NewRecorder()
+	h.closeInfo(rec, httptest.NewRequest(http.MethodGet, "/close-info", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("битый registry обязан дать 500, получено %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"running":[]`) {
+		t.Fatalf("ошибка registry замаскирована под отсутствие баз: %s", rec.Body.String())
+	}
+}
+
+func TestCloseState_IgnoresStalePageStatusCache(t *testing.T) {
+	h := closeFixture(t)
+	h.statusCache = map[string]baseStatus{
+		"live": {running: false, fetched: time.Now()},
+	}
+	running, _, err := h.closeState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 1 || running[0].Name != "Торговля" {
+		t.Fatalf("close state переиспользовал stale UI cache: %+v", running)
+	}
+}
+
+func TestCloseStop_FailureKeepsLauncherOpen(t *testing.T) {
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.Header().Set("X-OneBase-Version", "legacy")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(health.Close)
+	u, _ := url.Parse(health.URL)
+	port, _ := strconv.Atoi(u.Port())
+	st := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	if err := st.Add(&Base{ID: "legacy", Name: "Старая", Port: port}); err != nil {
+		t.Fatal(err)
+	}
+	quit := make(chan struct{}, 1)
+	h := &handler{store: st, runner: NewRunner(), quitFn: func() { quit <- struct{}{} }}
+	rec := httptest.NewRecorder()
+	h.closeStop(rec, httptest.NewRequest(http.MethodPost, "/close-stop", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("неподтверждённая остановка: %d: %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-quit:
+		t.Fatal("launcher завершился после ошибки остановки")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if portFree(port) {
+		t.Fatal("legacy-процесс был убит по номеру порта")
 	}
 }
 

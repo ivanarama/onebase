@@ -129,7 +129,8 @@ func (h *Handlers) IssueOneTimeCode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	if _, err := h.Repo.LookupSession(r.Context(), cookie.Value); err != nil {
+	user, err := h.Repo.LookupSessionKind(r.Context(), cookie.Value, SessionKindConfigurator)
+	if err != nil || user == nil || !user.IsAdmin {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -353,7 +354,7 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("onebase_session"); err == nil {
 		if h.Auditor != nil {
-			if user, err2 := h.Repo.LookupSession(r.Context(), cookie.Value); err2 == nil {
+			if user, err2 := h.Repo.LookupSessionKind(r.Context(), cookie.Value, SessionKindEnterprise); err2 == nil {
 				h.Auditor.LogAction(r.Context(), "logout", "", "", "", user.ID, user.Login, r.RemoteAddr)
 			}
 		}
@@ -410,13 +411,22 @@ func (h *Handlers) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	token, ok := h.Codes.Exchange(code)
+	configuratorToken, ok := h.Codes.Exchange(code)
 	if !ok {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	if _, err := h.Repo.LookupSession(r.Context(), token); err != nil {
+	user, err := h.Repo.LookupSessionKind(r.Context(), configuratorToken, SessionKindConfigurator)
+	if err != nil || user == nil || !user.IsAdmin {
 		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	// Crossing from the configurator to Enterprise is an explicit privilege
+	// transition. Issue a separate Enterprise session instead of relabelling or
+	// reusing the configurator bearer token in the base browser origin.
+	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	h.setSessionCookie(w, r, token)

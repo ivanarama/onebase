@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -158,7 +160,7 @@ func runUpdateCheck(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	current := version.String()
+	current := binaryVersionOr(uc.targetDir, version.String())
 	available := st.UpdateAvailable(current)
 
 	if asJSON {
@@ -213,7 +215,7 @@ func runUpdateNetwork(cmd *cobra.Command) error {
 		return fmt.Errorf("обновление из сети запрещено политикой (см. %s); офлайн-путь: --from <файл> --sha256 <hex>",
 			filepath.Join(uc.targetDir, selfupdate.PolicyFileName))
 	}
-	current := version.String()
+	current := binaryVersionOr(uc.targetDir, version.String())
 
 	ctx := context.Background()
 	st, err := selfupdate.Check(ctx, selfupdate.Options{Repo: uc.repo, Channel: uc.channel})
@@ -232,7 +234,7 @@ func runUpdateNetwork(cmd *cobra.Command) error {
 	// Скачиваем, только если этой версии ещё нет в staging: повторный вызов
 	// после `--download` не должен тянуть архив второй раз.
 	staged := st.Staged
-	if !st.StagedReady() || staged.Tag != st.Latest.Tag {
+	if !st.StagedReady() || staged.Tag != st.Latest.Tag || !selfupdate.StagedFilesAvailable(*staged) {
 		rel, err := selfupdate.LatestRelease(ctx, uc.repo, uc.channel)
 		if err != nil {
 			return err
@@ -257,58 +259,131 @@ func runUpdateNetwork(cmd *cobra.Command) error {
 
 // applyStaged останавливает службу (если она указана), подменяет бинари и
 // убеждается, что новая версия работает. Если нет — возвращает прежнюю.
-func applyStaged(cmd *cobra.Command, uc updateContext, staged selfupdate.StagedInfo) error {
+func applyStaged(cmd *cobra.Command, uc updateContext, staged selfupdate.StagedInfo) (resultErr error) {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	svcName, healthzURL, err := resolveService(cmd)
 	if err != nil {
 		return err
 	}
-	if !selfupdate.CanWriteBinaryDir(uc.targetDir) {
-		return fmt.Errorf("нет прав на запись в %s — обновление платформы доступно только владельцу установки", uc.targetDir)
+	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
+		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", uc.targetDir, err)
 	}
-	// Версию для отката спрашиваем у заменяемого бинаря, а не у себя: с
-	// --target обновляют чужую установку, и версия процесса CLI там ни при чём.
-	prevTag := binaryVersionOr(uc.targetDir, version.String())
-
+	lease, err := selfupdate.AcquireOperationLease()
+	if err != nil {
+		return err
+	}
+	serviceStopped := false
+	restartServiceOnError := false
+	defer func() {
+		if resultErr != nil && serviceStopped && restartServiceOnError {
+			if releaseErr := lease.ReleaseTargetReservation(); releaseErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("освободить lifecycle-блокировку перед запуском службы: %w", releaseErr))
+				return
+			}
+			if restartErr := startService(svcName, timeout); restartErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("служба %s не запустилась после безопасного отказа обновления: %w", svcName, restartErr))
+			}
+		}
+	}()
+	defer func() {
+		if releaseErr := lease.Release(); releaseErr != nil {
+			outf("Предупреждение: блокировка обновления не освобождена: %v\n", releaseErr)
+		}
+	}()
+	if err := lease.ReserveTarget(uc.targetDir); err != nil {
+		return err
+	}
 	if svcName != "" {
 		outf("Останавливаю службу %s ...\n", svcName)
 		if err := stopService(svcName, timeout); err != nil {
 			return err
 		}
+		serviceStopped = true
+	}
+	recovered, err := lease.RecoverWithResult(uc.targetDir)
+	if err != nil {
+		return fmt.Errorf("recover interrupted update: %w", err)
+	}
+	if recovered || os.Getenv(selfupdate.EnvBinaryPendingEntry) == "1" {
+		return fmt.Errorf("interrupted update was recovered; restart this command from the installed binary")
+	}
+	restartServiceOnError = true
+
+	latest, err := selfupdate.LoadState()
+	if err != nil {
+		return err
+	}
+	if latest.RecoveryPending() {
+		return fmt.Errorf("не завершено восстановление баз после предыдущего обновления")
+	}
+	if !sameCLIStaged(latest.Staged, &staged) || !selfupdate.StagedFilesAvailable(staged) {
+		return fmt.Errorf("скачанное обновление изменилось или больше недоступно; скачайте его заново")
+	}
+	// Версию для отката спрашиваем у заменяемого бинаря, а не у себя: с
+	// --target обновляют чужую установку, и версия процесса CLI там ни при чём.
+	prevTag := binaryVersionOr(uc.targetDir, version.String())
+	if _, err := selfupdate.UpdateState(func(st *selfupdate.State) error {
+		if st.RecoveryPending() || !sameCLIStaged(st.Staged, &staged) {
+			return fmt.Errorf("состояние обновления изменилось; повторите операцию")
+		}
+		// Prev becomes truthful only after Apply has created the new rollback
+		// snapshot. Persisting it before the swap can expose an older snapshot
+		// under the new version label after a crash.
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	if err := selfupdate.Apply(staged, uc.targetDir); err != nil {
-		if svcName != "" {
-			// Бинари на месте (Apply откатывает себя сам) — поднимаем службу.
-			_ = startService(svcName, timeout)
+	if err := lease.ApplyWithRollbackState(staged, uc.targetDir, prevTag); err != nil {
+		if selfupdate.RecoveryPending(err) {
+			restartServiceOnError = false
 		}
+		snapshotErr := lease.ValidateRollbackSnapshot(uc.targetDir)
+		_, _ = selfupdate.UpdateState(func(st *selfupdate.State) error {
+			if snapshotErr != nil {
+				st.Prev = nil
+			}
+			if sameCLIStaged(st.Staged, &staged) && !selfupdate.StagedFilesAvailable(staged) {
+				st.Staged = nil
+			}
+			return nil
+		})
 		return err
 	}
 	outf("Бинари заменены на %s.\n", staged.Tag)
 
+	if svcName != "" {
+		if err := lease.ReleaseTargetReservation(); err != nil {
+			return fmt.Errorf("освободить lifecycle-блокировку перед проверочным запуском службы: %w", err)
+		}
+	}
 	if err := verifyAfterSwap(uc.targetDir, svcName, healthzURL, staged.Tag, timeout); err != nil {
 		fmt.Fprintf(os.Stderr, "Новая версия не подтвердилась (%v) — откатываюсь.\n", err)
 		if svcName != "" {
 			_ = stopService(svcName, timeout)
-		}
-		if rbErr := selfupdate.RollbackPrev(uc.targetDir); rbErr != nil {
-			return fmt.Errorf("КРИТИЧНО: откат не удался: %w (исходная ошибка: %v)", rbErr, err)
-		}
-		if svcName != "" {
-			if rsErr := startService(svcName, timeout); rsErr != nil {
-				return fmt.Errorf("откат выполнен, но служба не стартовала: %w", rsErr)
+			serviceStopped = true
+			if reserveErr := lease.ReserveTarget(uc.targetDir); reserveErr != nil {
+				restartServiceOnError = false
+				return fmt.Errorf("КРИТИЧНО: не удалось вернуть lifecycle-блокировку для отката: %w (исходная ошибка: %v)", reserveErr, err)
 			}
 		}
+		if rbErr := lease.RollbackPrev(uc.targetDir); rbErr != nil {
+			if selfupdate.RecoveryPending(rbErr) {
+				restartServiceOnError = false
+			}
+			return fmt.Errorf("КРИТИЧНО: откат не удался: %w (исходная ошибка: %v)", rbErr, err)
+		}
+		_, _ = selfupdate.UpdateState(func(st *selfupdate.State) error {
+			st.Prev = nil
+			if sameCLIStaged(st.Staged, &staged) {
+				st.Staged = nil
+			}
+			return nil
+		})
 		return fmt.Errorf("обновление откачено, работает прежняя версия: %w", err)
 	}
+	serviceStopped = false
 
-	// Запоминаем, с какой версии обновились: по ней предлагается откат.
-	st, _ := selfupdate.LoadState()
-	st.Prev = &selfupdate.RelInfo{Tag: prevTag}
-	st.Staged = nil
-	if err := selfupdate.SaveState(st); err != nil {
-		outf("Предупреждение: состояние обновлений не сохранено: %v\n", err)
-	}
 	outf("Готово: платформа обновлена до %s.\n", staged.Tag)
 	if svcName == "" {
 		outln("Запущенные процессы продолжают работать на прежней версии — перезапустите их.")
@@ -346,7 +421,7 @@ func verifyAfterSwap(targetDir, svcName, healthzURL, wantTag string, timeout tim
 	return selfupdate.PollHealthzVersion(context.Background(), healthzURL, wantTag, timeout, time.Second)
 }
 
-func runUpdateRollback(cmd *cobra.Command) error {
+func runUpdateRollback(cmd *cobra.Command) (resultErr error) {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	uc, err := newUpdateContext(cmd)
 	if err != nil {
@@ -356,19 +431,71 @@ func runUpdateRollback(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if !selfupdate.CanWriteBinaryDir(uc.targetDir) {
-		return fmt.Errorf("нет прав на запись в %s", uc.targetDir)
+	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
+		return fmt.Errorf("установка %s не поддерживает безопасный откат: %w", uc.targetDir, err)
 	}
-
+	lease, err := selfupdate.AcquireOperationLease()
+	if err != nil {
+		return err
+	}
+	serviceStopped := false
+	restartServiceOnError := false
+	defer func() {
+		if resultErr != nil && serviceStopped && restartServiceOnError {
+			if releaseErr := lease.ReleaseTargetReservation(); releaseErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("освободить lifecycle-блокировку перед запуском службы: %w", releaseErr))
+				return
+			}
+			if restartErr := startService(svcName, timeout); restartErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("служба %s не запустилась после безопасного отказа отката: %w", svcName, restartErr))
+			}
+		}
+	}()
+	defer func() {
+		if releaseErr := lease.Release(); releaseErr != nil {
+			outf("Предупреждение: блокировка обновления не освобождена: %v\n", releaseErr)
+		}
+	}()
+	if err := lease.ReserveTarget(uc.targetDir); err != nil {
+		return err
+	}
 	if svcName != "" {
 		outf("Останавливаю службу %s ...\n", svcName)
 		if err := stopService(svcName, timeout); err != nil {
 			return err
 		}
+		serviceStopped = true
 	}
-	if err := selfupdate.RollbackPrev(uc.targetDir); err != nil {
-		if svcName != "" {
-			_ = startService(svcName, timeout)
+	recovered, err := lease.RecoverWithResult(uc.targetDir)
+	if err != nil {
+		return fmt.Errorf("recover interrupted update: %w", err)
+	}
+	if recovered || os.Getenv(selfupdate.EnvBinaryPendingEntry) == "1" {
+		return fmt.Errorf("interrupted update was recovered; restart this command from the installed binary")
+	}
+	restartServiceOnError = true
+	latest, err := selfupdate.LoadState()
+	if err != nil {
+		return err
+	}
+	if latest.RecoveryPending() {
+		return fmt.Errorf("не завершено восстановление баз после предыдущего обновления")
+	}
+	if latest.Prev == nil {
+		return fmt.Errorf("нет предыдущей версии для отката")
+	}
+	targetDir, err := selfupdate.CanonicalTargetDir(uc.targetDir)
+	if err != nil {
+		return err
+	}
+	if latest.Prev.TargetDir == "" || latest.Prev.TargetDir != targetDir {
+		return fmt.Errorf("предыдущая версия сохранена для другой установки")
+	}
+	expectedPrevTag := latest.Prev.Tag
+
+	if err := lease.RollbackPrev(uc.targetDir); err != nil {
+		if selfupdate.RecoveryPending(err) {
+			restartServiceOnError = false
 		}
 		return err
 	}
@@ -377,26 +504,41 @@ func runUpdateRollback(cmd *cobra.Command) error {
 		return err
 	}
 	if svcName != "" {
+		if err := lease.ReleaseTargetReservation(); err != nil {
+			return fmt.Errorf("освободить lifecycle-блокировку перед запуском службы: %w", err)
+		}
 		if err := startService(svcName, timeout); err != nil {
 			return err
 		}
+		serviceStopped = false
 		if err := selfupdate.PollHealthzVersion(context.Background(), healthzURL, got, timeout, time.Second); err != nil {
 			return err
 		}
 	}
 
-	st, _ := selfupdate.LoadState()
-	st.Prev = nil
-	if err := selfupdate.SaveState(st); err != nil {
+	if _, err := selfupdate.UpdateState(func(st *selfupdate.State) error {
+		if st.Prev != nil && st.Prev.Tag == expectedPrevTag && st.Prev.TargetDir == targetDir {
+			st.Prev = nil
+		}
+		return nil
+	}); err != nil {
 		outf("Предупреждение: состояние обновлений не сохранено: %v\n", err)
 	}
 	outf("Откат выполнен: работает версия %s.\n", got)
 	return nil
 }
 
+func sameCLIStaged(a, b *selfupdate.StagedInfo) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Tag == b.Tag && a.Dir == b.Dir && a.Verified == b.Verified &&
+		a.StagedAt.Equal(b.StagedAt) && slices.Equal(a.Files, b.Files)
+}
+
 // runUpdateOffline — прежний путь для машин без интернета: обновление приносят
 // файлом, контрольную сумму называет тот, кто его принёс.
-func runUpdateOffline(cmd *cobra.Command) error {
+func runUpdateOffline(cmd *cobra.Command) (resultErr error) {
 	from, _ := cmd.Flags().GetString("from")
 	sha, _ := cmd.Flags().GetString("sha256")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
@@ -412,8 +554,8 @@ func runUpdateOffline(cmd *cobra.Command) error {
 	if strings.TrimSpace(sha) == "" {
 		return fmt.Errorf("укажите --sha256: обновление без проверки контрольной суммы запрещено")
 	}
-	if !selfupdate.CanWriteBinaryDir(uc.targetDir) {
-		return fmt.Errorf("нет прав на запись в %s — обновление платформы доступно только владельцу установки", uc.targetDir)
+	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
+		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", uc.targetDir, err)
 	}
 
 	// 1. Проверить артефакт обновления, затем извлечь бинари во временный каталог.
@@ -436,38 +578,109 @@ func runUpdateOffline(cmd *cobra.Command) error {
 		return err
 	}
 	staged := selfupdate.StagedInfo{Tag: tag, Dir: stageDir, Files: offlineNames(files), Verified: true}
-
-	// 2. Дальше путь общий с сетевым: остановить службу, подменить, проверить,
-	// при неудаче — откатиться.
+	lease, err := selfupdate.AcquireOperationLease()
+	if err != nil {
+		return err
+	}
+	serviceStopped := false
+	restartServiceOnError := false
+	defer func() {
+		if resultErr != nil && serviceStopped && restartServiceOnError {
+			if releaseErr := lease.ReleaseTargetReservation(); releaseErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("освободить lifecycle-блокировку перед запуском службы: %w", releaseErr))
+				return
+			}
+			if restartErr := startService(svcName, timeout); restartErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("служба %s не запустилась после безопасного отказа обновления: %w", svcName, restartErr))
+			}
+		}
+	}()
+	defer func() {
+		if releaseErr := lease.Release(); releaseErr != nil {
+			outf("Предупреждение: блокировка обновления не освобождена: %v\n", releaseErr)
+		}
+	}()
+	if err := lease.ReserveTarget(uc.targetDir); err != nil {
+		return err
+	}
 	if svcName != "" {
 		outf("Останавливаю службу %s ...\n", svcName)
 		if err := stopService(svcName, timeout); err != nil {
 			return err
 		}
+		serviceStopped = true
 	}
-	if err := selfupdate.Apply(staged, uc.targetDir); err != nil {
-		if svcName != "" {
-			_ = startService(svcName, timeout)
+	recovered, err := lease.RecoverWithResult(uc.targetDir)
+	if err != nil {
+		return fmt.Errorf("recover interrupted update: %w", err)
+	}
+	if recovered || os.Getenv(selfupdate.EnvBinaryPendingEntry) == "1" {
+		return fmt.Errorf("interrupted update was recovered; restart this command from the installed binary")
+	}
+	restartServiceOnError = true
+	latest, err := selfupdate.LoadState()
+	if err != nil {
+		return err
+	}
+	if latest.RecoveryPending() {
+		return fmt.Errorf("не завершено восстановление баз после предыдущего обновления")
+	}
+	prevTag := binaryVersionOr(uc.targetDir, version.String())
+
+	// 2. Дальше путь общий с сетевым: остановить службу, подменить, проверить,
+	// при неудаче — откатиться.
+	if _, err := selfupdate.UpdateState(func(st *selfupdate.State) error {
+		if st.RecoveryPending() {
+			return fmt.Errorf("не завершено восстановление баз после предыдущего обновления")
+		}
+		// Validate recovery state without advertising a rollback snapshot that
+		// Apply has not created yet.
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := lease.ApplyWithRollbackState(staged, uc.targetDir, prevTag); err != nil {
+		if selfupdate.RecoveryPending(err) {
+			restartServiceOnError = false
+		}
+		if lease.ValidateRollbackSnapshot(uc.targetDir) != nil {
+			_, _ = selfupdate.UpdateState(func(st *selfupdate.State) error {
+				st.Prev = nil
+				return nil
+			})
 		}
 		return err
 	}
 	outf("Бинари заменены на %s.\n", tag)
 
+	if svcName != "" {
+		if err := lease.ReleaseTargetReservation(); err != nil {
+			return fmt.Errorf("освободить lifecycle-блокировку перед проверочным запуском службы: %w", err)
+		}
+	}
 	if err := verifyAfterSwap(uc.targetDir, svcName, healthzURL, tag, timeout); err != nil {
 		fmt.Fprintf(os.Stderr, "Новая версия не подтвердилась (%v) — откатываюсь.\n", err)
 		if svcName != "" {
 			_ = stopService(svcName, timeout)
-		}
-		if rbErr := selfupdate.RollbackPrev(uc.targetDir); rbErr != nil {
-			return fmt.Errorf("КРИТИЧНО: откат не удался: %w (исходная ошибка: %v)", rbErr, err)
-		}
-		if svcName != "" {
-			if rsErr := startService(svcName, timeout); rsErr != nil {
-				return fmt.Errorf("откат выполнен, но служба не стартовала: %w", rsErr)
+			serviceStopped = true
+			if reserveErr := lease.ReserveTarget(uc.targetDir); reserveErr != nil {
+				restartServiceOnError = false
+				return fmt.Errorf("КРИТИЧНО: не удалось вернуть lifecycle-блокировку для отката: %w (исходная ошибка: %v)", reserveErr, err)
 			}
 		}
+		if rbErr := lease.RollbackPrev(uc.targetDir); rbErr != nil {
+			if selfupdate.RecoveryPending(rbErr) {
+				restartServiceOnError = false
+			}
+			return fmt.Errorf("КРИТИЧНО: откат не удался: %w (исходная ошибка: %v)", rbErr, err)
+		}
+		_, _ = selfupdate.UpdateState(func(st *selfupdate.State) error {
+			st.Prev = nil
+			return nil
+		})
 		return fmt.Errorf("обновление откачено, работает прежняя версия: %w", err)
 	}
+	serviceStopped = false
 	outf("Готово: платформа обновлена до %s.\n", tag)
 	return nil
 }

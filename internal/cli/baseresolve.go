@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/dblock"
 	"github.com/ivantit66/onebase/internal/launcher"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/spf13/cobra"
@@ -23,6 +26,10 @@ type baseConfig struct {
 	// это обязательно: файла нет, а путь из Dir исчезнет вместе с Cleanup.
 	ConfigInDB bool
 	cleanup    func()
+	// materializedDB keeps the shared lifetime lease used to export DB-backed
+	// configuration. The first OpenDB reuses this exact handle so configuration
+	// and data cannot cross restore generations between resolve and execution.
+	materializedDB *storage.DB
 }
 
 // Cleanup убирает временный каталог (для db-config). Идемпотентна — безопасно
@@ -36,13 +43,52 @@ func (bc *baseConfig) Cleanup() {
 
 // OpenDB открывает подключение к БД базы по разрешённым параметрам.
 func (bc *baseConfig) OpenDB(ctx context.Context) (*storage.DB, error) {
+	if bc.materializedDB != nil {
+		db := bc.materializedDB
+		bc.materializedDB = nil
+		return db, nil
+	}
 	if bc.DBType == "sqlite" {
 		if bc.SQLitePath == "" {
 			return nil, fmt.Errorf("для SQLite укажите путь к файлу базы")
 		}
-		return storage.ConnectSQLite(ctx, bc.SQLitePath)
+		return openCLIStorage(ctx, "sqlite", bc.SQLitePath, "")
 	}
-	return storage.Connect(ctx, bc.DSN)
+	return openCLIStorage(ctx, "postgres", "", bc.DSN)
+}
+
+// openCLIStorage is the fail-closed entry point for ordinary CLI consumers.
+// Recovery-capable commands (run/restore) deliberately use the raw storage
+// constructors and resolve the durable intent before serving or mutating data.
+func openCLIStorage(ctx context.Context, dbType, sqlitePath, dsn string) (*storage.DB, error) {
+	var (
+		db     *storage.DB
+		lease  dblock.Lease
+		err    error
+		target = sqlitePath
+	)
+	if dbType == "sqlite" {
+		lease, target, err = dblock.AcquireSQLiteSharedTarget(sqlitePath)
+	} else {
+		lease, err = dblock.AcquirePostgresShared(ctx, dsn)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("database lifetime lock: %w", err)
+	}
+	if dbType == "sqlite" {
+		db, err = storage.ConnectSQLite(ctx, target)
+	} else {
+		db, err = storage.Connect(ctx, dsn)
+	}
+	if err != nil {
+		return nil, errors.Join(err, lease.Close())
+	}
+	db.AddCloseHook(lease.Close)
+	if err := backup.CheckNoPendingRestore(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("database has an interrupted restore: %w", err)
+	}
+	return db, nil
 }
 
 // addBaseFlags регистрирует стандартные флаги выбора базы.
@@ -91,7 +137,13 @@ func resolveBase(cmd *cobra.Command) (*baseConfig, error) {
 // materializeDBConfig выгружает конфигурацию из БД во временный каталог, чтобы
 // project.Load / configcheck.CheckDir могли работать с файлами.
 func (bc *baseConfig) materializeDBConfig(ctx context.Context) (string, func(), error) {
-	db, err := bc.OpenDB(ctx)
+	var db *storage.DB
+	var err error
+	if bc.DBType == "sqlite" {
+		db, err = openCLIStorage(ctx, "sqlite", bc.SQLitePath, "")
+	} else {
+		db, err = openCLIStorage(ctx, "postgres", "", bc.DSN)
+	}
 	if err != nil {
 		return "", nil, err
 	}
@@ -105,5 +157,11 @@ func (bc *baseConfig) materializeDBConfig(ctx context.Context) (string, func(), 
 		removeTemp(tmp)
 		return "", nil, err
 	}
-	return tmp, func() { db.Close(); removeTemp(tmp) }, nil
+	bc.materializedDB = db
+	return tmp, func() {
+		// OpenDB may already have handed this handle to the command. Close is
+		// idempotent, so Cleanup safely backstops both consumed and config-only use.
+		db.Close()
+		removeTemp(tmp)
+	}, nil
 }

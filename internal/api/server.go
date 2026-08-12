@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
+	"github.com/ivantit66/onebase/internal/processcontrol"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -25,11 +28,12 @@ import (
 )
 
 type Server struct {
-	srv     *http.Server
-	handler http.Handler
-	uiSrv   *ui.Server
-	hooks   *webhook.Dispatcher
-	h2c     bool // cleartext HTTP/2 к апстриму включён (ONEBASE_H2C), план 111 P2-1
+	srv         *http.Server
+	handler     http.Handler
+	uiSrv       *ui.Server
+	hooks       *webhook.Dispatcher
+	processDone <-chan struct{}
+	h2c         bool // cleartext HTTP/2 к апстриму включён (ONEBASE_H2C), план 111 P2-1
 }
 
 // New строит HTTP-сервер базы. host «» = 127.0.0.1 (см. addr.go): наружу
@@ -38,6 +42,11 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// Debug API защищён внутренним токеном. Без него (плоский `onebase run`,
 	// опубликованная база) debug-маршруты не монтируются вовсе.
 	debugToken := os.Getenv("ONEBASE_DEBUG_TOKEN")
+	controlToken := os.Getenv("ONEBASE_CONTROL_TOKEN")
+	baseID := os.Getenv("ONEBASE_BASE_ID")
+	processDone := make(chan struct{})
+	var processStopOnce sync.Once
+	processInstance, processInstanceErr := processcontrol.NewNonce()
 	uiCfg.DebugToken = debugToken
 	// Единый лимитер попыток входа: форма /login и basic-auth HTTP-сервисов
 	// троттлятся вместе, чтобы брутфорс нельзя было размазать по двум каналам.
@@ -120,6 +129,45 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	r.Post("/auth/one-time-code", authH.IssueOneTimeCode)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	r.Get("/healthz", healthzHandler(store))
+
+	// Управление жизненным циклом базы из лаунчера. Persistent control secret
+	// никогда не передаётся по HTTP: identity доказывается challenge-response
+	// HMAC, а stop подписан для конкретного instance процесса. Debug bearer
+	// намеренно отдельный и живёт только в запустившем launcher-процессе.
+	if controlToken != "" && baseID != "" && processInstanceErr == nil {
+		r.Route("/debug/process", func(r chi.Router) {
+			r.Get("/identity", func(w http.ResponseWriter, req *http.Request) {
+				challenge := req.URL.Query().Get(processcontrol.ChallengeQuery)
+				if !processcontrol.ValidNonce(challenge) {
+					http.Error(w, "invalid challenge", http.StatusBadRequest)
+					return
+				}
+				identity := processcontrol.Identity{
+					BaseID:   baseID,
+					PID:      os.Getpid(),
+					Instance: processInstance,
+				}
+				identity.Proof = processcontrol.IdentityProof(controlToken, identity.BaseID,
+					identity.PID, identity.Instance, challenge)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(identity)
+			})
+			r.Post("/stop", func(w http.ResponseWriter, req *http.Request) {
+				nonce := req.Header.Get(processcontrol.HeaderNonce)
+				instance := req.Header.Get(processcontrol.HeaderInstance)
+				want := processcontrol.StopProof(controlToken, baseID, instance, nonce)
+				if req.Header.Get(processcontrol.HeaderBaseID) != baseID ||
+					instance != processInstance || !processcontrol.ValidNonce(nonce) ||
+					!processcontrol.Verify(req.Header.Get(processcontrol.HeaderProof), want) {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+				processStopOnce.Do(func() { close(processDone) })
+			})
+		})
+	}
 
 	// PWA-ассеты (manifest, service worker, offline-страница, иконки) — публичны.
 	// Браузер фечит manifest/иконки без credentials, а install-промпт работает
@@ -205,7 +253,8 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		IdleTimeout:       120 * time.Second,
 	}
 	configureH2C(httpSrv, enableH2C)
-	return &Server{handler: r, uiSrv: uiSrv, hooks: uiCfg.Webhooks, h2c: enableH2C, srv: httpSrv}
+	return &Server{handler: r, uiSrv: uiSrv, hooks: uiCfg.Webhooks,
+		processDone: processDone, h2c: enableH2C, srv: httpSrv}
 }
 
 func envBool(name string) bool {
@@ -268,6 +317,11 @@ func hasBearerAuthorization(r *http.Request) bool {
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// Done закрывается, когда аутентифицированный launcher попросил процесс базы
+// корректно завершиться. Обычные запуски без launcher-токена этот канал не
+// закрывают и по-прежнему завершаются только сигналом ОС.
+func (s *Server) Done() <-chan struct{} { return s.processDone }
 
 // H2CEnabled сообщает, обслуживает ли сетевой listener cleartext HTTP/2 (h2c).
 // Используется CLI для строки о режиме в баннере старта (план 111, P2-1).

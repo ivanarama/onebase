@@ -480,9 +480,16 @@ function showCloseBusy(message) {
 function showCloseModal(running) {
   var list = document.getElementById('close-modal-list');
   list.innerHTML = '';
+  var hasBlocker = false;
+	for (var blockerIndex = 0; blockerIndex < running.length; blockerIndex++) {
+	  if (running[blockerIndex].controllable === false) hasBlocker = true;
+	}
   for (var i = 0; i < running.length && i < _closeListLimit; i++) {
     var li = document.createElement('li');
     li.textContent = String(running[i].name || '') + ' ({{t $.Lang "порт"}} ' + running[i].port + ')';
+	  if (running[i].controllable === false) {
+	    li.textContent += ' — {{t $.Lang "порт занят; автоматическая остановка недоступна"}}';
+	  }
     list.appendChild(li);
   }
   if (running.length > _closeListLimit) {
@@ -497,6 +504,9 @@ function showCloseModal(running) {
   document.getElementById('close-modal-error').style.display = 'none';
   document.getElementById('close-modal').setAttribute('aria-busy', 'false');
   setCloseActionButtonsDisabled(false);
+	var stopButton = document.getElementById('close-modal-stop');
+	stopButton.disabled = hasBlocker;
+	stopButton.title = hasBlocker ? '{{t $.Lang "Сначала остановите неподтверждённый процесс вручную"}}' : '';
   openCloseModal();
   // Фокус на безопасном варианте: Enter не должен случайно останавливать базы.
   focusCloseElement(document.getElementById('close-modal-background'));
@@ -553,23 +563,28 @@ function resetCloseFlow() {
 }
 
 function loadCloseInfo() {
-  closeRequestJSON('/close-info').then(function(data) {
+	closeRequestJSON('/close-info', {cache: 'no-store'}).then(function(data) {
     if (!data || !Array.isArray(data.running)) throw new Error(_closeMessages.invalidResponse);
     _closeFlow.running = data.running;
     _closePolicy = closePolicyValue(data.policy);
     _closeFlow.policyBefore = _closePolicy;
     syncClosePolicyControl();
-    if (data.running.length === 0 || _closePolicy === 'background') {
+	if (_closePolicy === 'background') {
       _closeFlow.choice = 'background';
       executeQuit();
       return;
     }
-    if (_closePolicy === 'stop') {
+	if (_closePolicy === 'stop') {
       _closeFlow.choice = 'stop';
       executeStop();
       return;
     }
-    showCloseModal(data.running);
+	if (data.running.length === 0) {
+	  _closeFlow.choice = 'background';
+	  executeQuit();
+	  return;
+	}
+	showCloseModal(data.running);
   }).catch(function(err) {
     showCloseError('info', err);
   });
@@ -682,6 +697,13 @@ function restoreClosePolicy(continueAfter) {
 }
 
 function cancelCloseAfterError() {
+	if (_closeFlow.errorStage === 'rollback' || _closeFlow.errorStage === 'rollback-continue') {
+	  // The rollback result is uncertain, but repeatedly calling the same
+	  // failing endpoint would trap the entire launcher behind an inert modal.
+	  // Keep the locally last-known policy and return control to the user.
+	  resetCloseFlow();
+	  return;
+	}
   if (_closeFlow.policyWriteAttempted && _closeFlow.policyBefore !== _closeFlow.choice) {
     restoreClosePolicy(false);
     return;

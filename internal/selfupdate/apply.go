@@ -1,12 +1,15 @@
 package selfupdate
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -34,11 +37,19 @@ func check(ctx context.Context, opts Options, latest func(context.Context, strin
 	var (
 		ch         Channel
 		generation uint64
+		oldStage   string
 	)
 	started, err := updateStateRecovering(func(st *State) error {
 		ch = opts.Channel
 		if ch == "" {
 			ch = st.ChannelOrDefault()
+		}
+		if st.ChannelOrDefault() != ch {
+			if st.Staged != nil {
+				oldStage = st.Staged.Dir
+			}
+			st.Latest = nil
+			st.Staged = nil
 		}
 		st.Channel = ch
 		st.CheckGeneration++
@@ -50,6 +61,16 @@ func check(ctx context.Context, opts Options, latest func(context.Context, strin
 	})
 	if err != nil {
 		return started, err
+	}
+	if oldStage != "" {
+		stageLock, lockErr := acquireStageOperationLock()
+		if lockErr != nil {
+			return started, lockErr
+		}
+		removeManagedStage(oldStage)
+		if unlockErr := stageLock.Unlock(); unlockErr != nil {
+			return started, unlockErr
+		}
 	}
 	checkedAt := time.Now().UTC()
 
@@ -103,7 +124,7 @@ func check(ctx context.Context, opts Options, latest func(context.Context, strin
 		return nil
 	})
 	if saveErr == nil && obsoleteStage != "" {
-		removeStage(obsoleteStage)
+		removeManagedStage(obsoleteStage)
 	}
 	return updated, saveErr
 }
@@ -194,7 +215,7 @@ func Fetch(ctx context.Context, rel Release) (result StagedInfo, resultErr error
 	}
 	keepStage = true
 	if obsoleteStage != "" {
-		removeStage(obsoleteStage)
+		removeManagedStage(obsoleteStage)
 	}
 	return staged, nil
 }
@@ -237,6 +258,12 @@ func stagedFilesAvailable(staged StagedInfo) bool {
 	return foundBinary
 }
 
+// StagedFilesAvailable verifies that every recorded staging file still exists
+// and that the package contains the main executable.
+func StagedFilesAvailable(staged StagedInfo) bool {
+	return stagedFilesAvailable(staged)
+}
+
 // Apply подменяет бинари платформы в targetDir содержимым staging, складывая
 // прежние в ~/.onebase/updates/prev для отката.
 //
@@ -248,109 +275,269 @@ func stagedFilesAvailable(staged StagedInfo) bool {
 // заменённые возвращаются на место: платформа из двух разных версий хуже, чем
 // неудавшееся обновление.
 func Apply(staged StagedInfo, targetDir string) (resultErr error) {
+	lease, err := AcquireOperationLease()
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, lease.Release()) }()
+	return lease.Apply(staged, targetDir)
+}
+
+// Apply replaces binaries while an OperationLease is already held.
+func (l *OperationLease) Apply(staged StagedInfo, targetDir string) error {
+	if !l.valid() {
+		return errors.New("selfupdate: operation lease is not held")
+	}
+	if err := l.bindTarget(targetDir); err != nil {
+		return err
+	}
+	return applyLocked(staged, l.targetDir)
+}
+
+// ApplyWithRollbackState applies a complete package and durably publishes the
+// matching rollback metadata in State. Callers that know the installed release
+// tag should use this method so a crash between the file swap and their next
+// state write cannot lose or mislabel the rollback snapshot.
+func (l *OperationLease) ApplyWithRollbackState(staged StagedInfo, targetDir, previousTag string) error {
+	if !l.valid() {
+		return errors.New("selfupdate: operation lease is not held")
+	}
+	if strings.TrimSpace(previousTag) == "" {
+		return errors.New("selfupdate: previous release tag is empty")
+	}
 	if !staged.Verified {
-		return fmt.Errorf("selfupdate: обновление %s не проверено — применять нельзя", staged.Tag)
+		return fmt.Errorf("selfupdate: update %s is not verified", staged.Tag)
 	}
-	stageLock, err := acquireStageOperationLock()
+	if strings.TrimSpace(staged.Tag) == "" {
+		return errors.New("selfupdate: staged release tag is empty")
+	}
+	if err := l.bindTarget(targetDir); err != nil {
+		return err
+	}
+	targetDir = l.targetDir
+	recovered, err := recoverUpdateTransactionLockedWithResult(targetDir)
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, stageLock.Unlock()) }()
-
-	prev, err := PrevDir()
+	if recovered {
+		return ErrRecoveredGenerationChanged
+	}
+	names, err := validateApplyInputs(staged, targetDir)
 	if err != nil {
 		return err
 	}
-	removeStage(prev)
-	if err := os.MkdirAll(prev, fsmode.SecretDir); err != nil {
+	if err := runApplyTransaction(staged, targetDir, names, previousTag); err != nil {
 		return err
 	}
+	removeManagedStage(staged.Dir)
+	return nil
+}
 
-	type swapped struct{ target, backup string }
-	var done []swapped
-
-	rollbackAll := func() {
-		for _, s := range done {
-			if err := Rollback(s.target, s.backup); err != nil {
-				oblog.Component("selfupdate").Error("не удалось вернуть бинарь после сорвавшегося обновления",
-					"target", s.target, "err", err)
-			}
-		}
+func applyLocked(staged StagedInfo, targetDir string) error {
+	if !staged.Verified {
+		return fmt.Errorf("selfupdate: update %s is not verified", staged.Tag)
 	}
+	if strings.TrimSpace(staged.Tag) == "" {
+		return errors.New("selfupdate: staged release tag is empty")
+	}
+	recovered, err := recoverUpdateTransactionLockedWithResult(targetDir)
+	if err != nil {
+		return err
+	}
+	if recovered {
+		return ErrRecoveredGenerationChanged
+	}
+	names, err := validateApplyInputs(staged, targetDir)
+	if err != nil {
+		return err
+	}
+	if err := runApplyTransaction(staged, targetDir, names, ""); err != nil {
+		return err
+	}
+	removeManagedStage(staged.Dir)
+	return nil
+}
 
+const prevTargetFileName = ".target.json"
+
+type prevTargetManifest struct {
+	TargetDir string `json:"target_dir"`
+}
+
+// CanonicalTargetDir returns a stable identity for an installation directory.
+// Windows paths are case-insensitive, so their identity is normalized too.
+func CanonicalTargetDir(targetDir string) (string, error) {
+	abs, err := filepath.Abs(targetDir)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+		abs = filepath.Clean(resolved)
+	} else if !os.IsNotExist(resolveErr) {
+		return "", resolveErr
+	}
+	if runtime.GOOS == "windows" {
+		abs = strings.ToLower(abs)
+	}
+	return abs, nil
+}
+
+func writePrevTarget(prev, targetDir string) error {
+	canonical, err := CanonicalTargetDir(targetDir)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(prevTargetManifest{TargetDir: canonical})
+	if err != nil {
+		return err
+	}
+	return writeFile(bytes.NewReader(data), filepath.Join(prev, prevTargetFileName), fsmode.SecretFile)
+}
+
+func validatePrevTarget(prev, targetDir string) error {
+	var manifest prevTargetManifest
+	if err := readStrictJSONFile(filepath.Join(prev, prevTargetFileName), &manifest); err != nil {
+		return fmt.Errorf("selfupdate: назначение сохранённого отката повреждено: %w", err)
+	}
+	want, err := CanonicalTargetDir(targetDir)
+	if err != nil {
+		return err
+	}
+	if manifest.TargetDir == "" || manifest.TargetDir != want {
+		return fmt.Errorf("selfupdate: откат сохранён для %q, а не для %q", manifest.TargetDir, want)
+	}
+	return nil
+}
+
+// validateApplyInputs completes every non-mutating check before Apply removes
+// the previous rollback snapshot. This makes a repeated Apply of a stage that
+// another process has already consumed fail without destroying that snapshot.
+func validateApplyInputs(staged StagedInfo, targetDir string) ([]string, error) {
+	if err := validatePlainDirectory(staged.Dir); err != nil {
+		return nil, fmt.Errorf("selfupdate: staging directory is unsafe: %w", err)
+	}
+	if pathsOverlap(staged.Dir, targetDir) {
+		return nil, fmt.Errorf("selfupdate: staging %s пересекается с каталогом установки %s", staged.Dir, targetDir)
+	}
+	if prev, err := PrevDir(); err != nil {
+		return nil, err
+	} else if pathsOverlap(staged.Dir, prev) {
+		return nil, fmt.Errorf("selfupdate: staging %s пересекается с каталогом отката %s", staged.Dir, prev)
+	}
+	seen := make(map[string]struct{}, len(staged.Files))
+	allowed := make(map[string]struct{}, len(PackageBinaries()))
+	for _, name := range PackageBinaries() {
+		allowed[canonicalTransactionName(name)] = struct{}{}
+	}
+	names := make([]string, 0, len(staged.Files))
 	for _, name := range staged.Files {
-		src := filepath.Join(staged.Dir, name)
-		dst := filepath.Join(targetDir, name)
-		if _, err := os.Stat(dst); os.IsNotExist(err) {
+		if err := validateTransactionName(name); err != nil {
+			return nil, fmt.Errorf("selfupdate: недопустимое имя бинаря %q", name)
+		}
+		key := canonicalTransactionName(name)
+		if _, ok := allowed[key]; !ok {
+			return nil, fmt.Errorf("selfupdate: binary %q is not part of this platform package", name)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("selfupdate: бинарь %q указан в staging дважды", name)
+		}
+		seen[key] = struct{}{}
+
+		srcInfo, err := os.Lstat(filepath.Join(staged.Dir, name))
+		if err != nil {
+			return nil, fmt.Errorf("selfupdate: бинарь staging %q недоступен: %w", name, err)
+		}
+		if !srcInfo.Mode().IsRegular() {
+			return nil, fmt.Errorf("selfupdate: бинарь staging %q не является обычным файлом", name)
+		}
+		targetInfo, err := os.Lstat(filepath.Join(targetDir, name))
+		if os.IsNotExist(err) {
 			// Такого бинаря в установке нет (например, поставили без GUI) —
 			// не добавляем его, чтобы обновление не меняло состав установки.
 			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("selfupdate: проверить установленный бинарь %q: %w", name, err)
 		}
-		backup, err := SwapBinary(dst, src)
-		if err != nil {
-			rollbackAll()
-			return err
+		if !targetInfo.Mode().IsRegular() {
+			return nil, fmt.Errorf("selfupdate: установленный бинарь %q не является обычным файлом", name)
 		}
-		done = append(done, swapped{target: dst, backup: backup})
+		names = append(names, name)
 	}
-	if len(done) == 0 {
-		return fmt.Errorf("selfupdate: в %s не найдено ни одного бинаря платформы", targetDir)
+	// Never leave an installed companion executable at the old version. Older
+	// packages may omit the GUI binary, but such a package is only safe for an
+	// installation that does not contain that companion.
+	for _, required := range PackageBinaries() {
+		if _, included := seen[canonicalTransactionName(required)]; included {
+			continue
+		}
+		info, statErr := os.Lstat(filepath.Join(targetDir, required))
+		switch {
+		case os.IsNotExist(statErr):
+			continue
+		case statErr != nil:
+			return nil, fmt.Errorf("selfupdate: проверить установленный бинарь %q: %w", required, statErr)
+		case !info.Mode().IsRegular():
+			return nil, fmt.Errorf("selfupdate: установленный бинарь %q не является обычным файлом", required)
+		default:
+			return nil, fmt.Errorf("selfupdate: пакет не содержит установленный бинарь %q", required)
+		}
 	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("selfupdate: в %s не найдено ни одного бинаря платформы", targetDir)
+	}
+	return names, nil
+}
 
-	// Успех: прежние бинари переезжают в prev, staging больше не нужен.
-	for _, s := range done {
-		if err := moveFile(s.backup, filepath.Join(prev, filepath.Base(s.target))); err != nil {
-			// Откат станет недоступен, но платформа уже обновлена и работает —
-			// валить операцию из-за этого нельзя.
-			oblog.Component("selfupdate").Warn("прежний бинарь не сохранён для отката", "file", s.backup, "err", err)
-		}
+func pathsOverlap(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil || absA == "" || absB == "" {
+		return false
 	}
-	removeStage(staged.Dir)
-	return nil
+	if resolved, err := filepath.EvalSymlinks(absA); err == nil {
+		absA = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absB); err == nil {
+		absB = resolved
+	}
+	contains := func(parent, child string) bool {
+		rel, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(child))
+		return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
+	}
+	return contains(absA, absB) || contains(absB, absA)
 }
 
 // RollbackPrev возвращает бинари предыдущей версии из ~/.onebase/updates/prev.
 func RollbackPrev(targetDir string) (resultErr error) {
-	stageLock, err := acquireStageOperationLock()
+	lease, err := AcquireOperationLease()
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = errors.Join(resultErr, stageLock.Unlock()) }()
+	defer func() { resultErr = errors.Join(resultErr, lease.Release()) }()
+	return lease.RollbackPrev(targetDir)
+}
 
-	prev, err := PrevDir()
+// RollbackPrev restores the previous binaries while an OperationLease is held.
+func (l *OperationLease) RollbackPrev(targetDir string) error {
+	if !l.valid() {
+		return errors.New("selfupdate: operation lease is not held")
+	}
+	if err := l.bindTarget(targetDir); err != nil {
+		return err
+	}
+	return rollbackPrevLocked(l.targetDir)
+}
+
+func rollbackPrevLocked(targetDir string) error {
+	recovered, err := recoverUpdateTransactionLockedWithResult(targetDir)
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(prev)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("selfupdate: возвращаться не на что — предыдущая версия не сохранена (откат доступен только сразу после обновления)")
+	if recovered {
+		return ErrRecoveredGenerationChanged
 	}
-	if err != nil {
-		return fmt.Errorf("selfupdate: предыдущая версия недоступна: %w", err)
-	}
-	var restored int
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		src := filepath.Join(prev, e.Name())
-		dst := filepath.Join(targetDir, e.Name())
-		if _, err := os.Stat(dst); os.IsNotExist(err) {
-			continue
-		}
-		if err := Rollback(dst, src); err != nil {
-			return err
-		}
-		restored++
-	}
-	if restored == 0 {
-		return fmt.Errorf("selfupdate: в %s нет бинарей для отката", prev)
-	}
-	// Откат одноразовый: вернувшись на предыдущую версию, «предыдущей» больше
-	// нет. Иначе повторный вызов нашёл бы те же файлы и отчитался успехом, хотя
-	// откатываться уже некуда.
-	removeStage(prev)
-	return nil
+	return runRollbackTransaction(targetDir)
 }
 
 // binaryVersion — точка подмены в тестах: проверку «скачали не ту версию»
@@ -366,7 +553,8 @@ func BinaryVersion(path string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput() //nolint:gosec // G204: путь к бинарю собран нами (staging или каталог установки), не из пользовательского ввода
+	cmd := exec.CommandContext(ctx, path, "--version") //nolint:gosec // G204: путь к бинарю собран нами (staging или каталог установки), не из пользовательского ввода
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("не удалось определить версию бинаря %s: %w: %s", filepath.Base(path), err, strings.TrimSpace(string(out)))
 	}
@@ -377,23 +565,6 @@ func BinaryVersion(path string) (string, error) {
 	return fields[len(fields)-1], nil
 }
 
-// moveFile переносит файл, переживая переезд между томами (TEMP и каталог
-// установки бывают на разных дисках, и тогда Rename не работает).
-func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	f, err := os.Open(src) //nolint:gosec // G304: путь наш — резервная копия бинаря
-	if err != nil {
-		return err
-	}
-	defer oblog.CloseQuiet("selfupdate", "резервную копию", f)
-	if err := writeFile(f, dst, 0o755); err != nil {
-		return err
-	}
-	return os.Remove(src)
-}
-
 func removeStage(dir string) {
 	if dir == "" {
 		return
@@ -401,6 +572,43 @@ func removeStage(dir string) {
 	if err := os.RemoveAll(dir); err != nil {
 		oblog.Component("selfupdate").Warn("не удалось очистить каталог обновления", "dir", dir, "err", err)
 	}
+}
+
+// removeManagedStage ignores paths loaded from state.json unless they are a
+// direct child of our updates directory. A damaged state file must never turn
+// cleanup into recursive deletion of an arbitrary user directory.
+func removeManagedStage(dir string) {
+	updates, err := updatesDirPath()
+	if err != nil {
+		oblog.Component("selfupdate").Warn("не удалось определить каталог обновлений", "err", err)
+		return
+	}
+	absUpdates, err := filepath.Abs(updates)
+	if err != nil {
+		return
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil || filepath.Dir(filepath.Clean(absDir)) != filepath.Clean(absUpdates) {
+		oblog.Component("selfupdate").Warn("отклонена очистка staging вне каталога обновлений", "dir", dir)
+		return
+	}
+	name := filepath.Base(absDir)
+	if !strings.HasPrefix(name, ".stage-") && !strings.HasPrefix(name, "build-") && !strings.HasPrefix(name, "v") {
+		oblog.Component("selfupdate").Warn("отклонена очистка зарезервированного пути в каталоге обновлений", "dir", dir)
+		return
+	}
+	info, err := os.Lstat(absDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			oblog.Component("selfupdate").Warn("не удалось проверить staging перед очисткой", "dir", dir, "err", err)
+		}
+		return
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		oblog.Component("selfupdate").Warn("отклонена очистка staging, который не является обычным каталогом", "dir", dir)
+		return
+	}
+	removeStage(absDir)
 }
 
 // sortedNames возвращает имена файлов в порядке PackageBinaries: основной

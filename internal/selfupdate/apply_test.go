@@ -18,13 +18,16 @@ import (
 func installation(t *testing.T) (targetDir string, staged StagedInfo) {
 	t.Helper()
 	targetDir = filepath.Join(t.TempDir(), "bin")
-	stageDir := filepath.Join(t.TempDir(), "stage")
+	stageDir, err := newStageDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, d := range []string{targetDir, stageDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	names := []string{"onebase-a", "onebase-b"}
+	names := PackageBinaries()
 	for _, n := range names {
 		if err := os.WriteFile(filepath.Join(targetDir, n), []byte("СТАРЫЙ-"+n), 0o755); err != nil { //nolint:gosec // G306: это исполняемый файл
 			t.Fatal(err)
@@ -72,7 +75,7 @@ func TestApply_ReplacesAllBinariesAndKeepsPrev(t *testing.T) {
 		t.Fatalf("каталог обновления не очищен (err=%v)", err)
 	}
 	// Резервных копий рядом с бинарями остаться не должно.
-	if _, err := os.Stat(filepath.Join(targetDir, "onebase-a.old")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(targetDir, staged.Files[0]+".old")); !os.IsNotExist(err) {
 		t.Fatal(".old остался рядом с бинарём")
 	}
 }
@@ -92,11 +95,36 @@ func TestRollbackPrev_RestoresPreviousBinaries(t *testing.T) {
 			t.Fatalf("%s не откачен: %q", n, got)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(targetDir, prevTargetFileName)); !os.IsNotExist(err) {
+		t.Fatalf("rollback metadata must not be installed as a binary: %v", err)
+	}
 
 	// Откат одноразовый: второй вызов обязан честно сказать, что возвращаться
 	// уже некуда, а не отчитаться успехом о той же самой версии.
 	if err := RollbackPrev(targetDir); err == nil {
 		t.Fatal("повторный откат должен отказывать — предыдущей версии больше нет")
+	}
+}
+
+func TestRollbackPrev_RejectsDifferentInstallation(t *testing.T) {
+	isolatedHome(t)
+	targetDir, staged := installation(t)
+	if err := Apply(staged, targetDir); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	otherTarget, _ := installation(t)
+
+	if err := RollbackPrev(otherTarget); err == nil {
+		t.Fatal("rollback snapshot from one installation was accepted for another")
+	}
+	if got := read(t, filepath.Join(otherTarget, staged.Files[0])); got != "СТАРЫЙ-"+staged.Files[0] {
+		t.Fatalf("other installation was modified: %q", got)
+	}
+	if got := read(t, filepath.Join(targetDir, staged.Files[0])); got != "НОВЫЙ-"+staged.Files[0] {
+		t.Fatalf("source installation was modified by rejected rollback: %q", got)
+	}
+	if err := RollbackPrev(targetDir); err != nil {
+		t.Fatalf("correctly targeted rollback failed after rejection: %v", err)
 	}
 }
 
@@ -118,7 +146,7 @@ func TestApply_TwiceInARow(t *testing.T) {
 		t.Fatalf("первое применение: %v", err)
 	}
 	// Имитируем остаток прошлой попытки, который не успели убрать.
-	if err := os.WriteFile(filepath.Join(targetDir, "onebase-a.old"), []byte("остаток"), 0o755); err != nil { //nolint:gosec // G306: это исполняемый файл
+	if err := os.WriteFile(filepath.Join(targetDir, staged.Files[0]+".old"), []byte("остаток"), 0o755); err != nil { //nolint:gosec // G306: это исполняемый файл
 		t.Fatal(err)
 	}
 
@@ -132,8 +160,59 @@ func TestApply_TwiceInARow(t *testing.T) {
 	if err := Apply(next, targetDir); err != nil {
 		t.Fatalf("второе применение: %v", err)
 	}
-	if got := read(t, filepath.Join(targetDir, "onebase-a")); got != "НОВЕЙШИЙ-onebase-a" {
+	if got := read(t, filepath.Join(targetDir, staged.Files[0])); got != "НОВЕЙШИЙ-"+staged.Files[0] {
 		t.Fatalf("бинарь не заменён вторым обновлением: %q", got)
+	}
+}
+
+func TestApply_ConsumedStageDoesNotDestroyRollbackSnapshot(t *testing.T) {
+	isolatedHome(t)
+	targetDir, staged := installation(t)
+	if err := Apply(staged, targetDir); err != nil {
+		t.Fatalf("первое применение: %v", err)
+	}
+	prev, err := PrevDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Apply(staged, targetDir); err == nil {
+		t.Fatal("повторное применение исчезнувшего staging должно отказать")
+	}
+	for _, name := range staged.Files {
+		if got := read(t, filepath.Join(prev, name)); got != "СТАРЫЙ-"+name {
+			t.Fatalf("копия для отката %s потеряна: %q", name, got)
+		}
+		if got := read(t, filepath.Join(targetDir, name)); got != "НОВЫЙ-"+name {
+			t.Fatalf("рабочий бинарь %s изменён: %q", name, got)
+		}
+	}
+}
+
+func TestApply_RejectsPathTraversalBeforeMutation(t *testing.T) {
+	isolatedHome(t)
+	targetDir, staged := installation(t)
+	staged.Files = []string{"../" + staged.Files[0]}
+
+	if err := Apply(staged, targetDir); err == nil {
+		t.Fatal("staging с выходом из каталога должен быть отклонён")
+	}
+	if got := read(t, filepath.Join(targetDir, PackageBinaries()[0])); got != "СТАРЫЙ-"+PackageBinaries()[0] {
+		t.Fatalf("бинарь изменился после отклонённого staging: %q", got)
+	}
+}
+
+func TestRemoveManagedStageRefusesExternalDirectory(t *testing.T) {
+	isolatedHome(t)
+	external := t.TempDir()
+	marker := filepath.Join(external, "keep")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removeManagedStage(external)
+	if got := read(t, marker); got != "keep" {
+		t.Fatalf("внешний каталог изменён: %q", got)
 	}
 }
 
@@ -145,7 +224,7 @@ func TestApply_UnverifiedRefused(t *testing.T) {
 	if err := Apply(staged, targetDir); err == nil {
 		t.Fatal("непроверенное обновление применять нельзя")
 	}
-	if got := read(t, filepath.Join(targetDir, "onebase-a")); got != "СТАРЫЙ-onebase-a" {
+	if got := read(t, filepath.Join(targetDir, staged.Files[0])); got != "СТАРЫЙ-"+staged.Files[0] {
 		t.Fatalf("бинарь всё-таки подменили: %q", got)
 	}
 }
@@ -155,14 +234,17 @@ func TestApply_UnverifiedRefused(t *testing.T) {
 func TestApply_SkipsBinariesAbsentInInstallation(t *testing.T) {
 	isolatedHome(t)
 	targetDir, staged := installation(t)
-	if err := os.Remove(filepath.Join(targetDir, "onebase-b")); err != nil {
+	if len(staged.Files) < 2 {
+		t.Skip("platform package has no optional companion")
+	}
+	if err := os.Remove(filepath.Join(targetDir, staged.Files[1])); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := Apply(staged, targetDir); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(targetDir, "onebase-b")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(targetDir, staged.Files[1])); !os.IsNotExist(err) {
 		t.Fatal("обновление добавило бинарь, которого не было в установке")
 	}
 }
@@ -174,7 +256,10 @@ func TestApply_RollsBackOnPartialFailure(t *testing.T) {
 	targetDir, staged := installation(t)
 	// Файл заявлен в обновлении, но в staging его нет — подмена сорвётся на
 	// втором шаге, когда первый бинарь уже заменён.
-	if err := os.Remove(filepath.Join(staged.Dir, "onebase-b")); err != nil {
+	if len(staged.Files) < 2 {
+		t.Skip("platform package has no second binary")
+	}
+	if err := os.Remove(filepath.Join(staged.Dir, staged.Files[1])); err != nil {
 		t.Fatal(err)
 	}
 
