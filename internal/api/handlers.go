@@ -760,6 +760,11 @@ func writeSaveError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "version conflict: object was modified by another client", "", 0)
 	case errors.Is(err, storage.ErrForeignKeyViolation):
 		writeError(w, http.StatusUnprocessableEntity, "ссылка на несуществующий объект", "", 0)
+	case errors.Is(err, storage.ErrCodeDuplicate):
+		// Занятый код — ошибка данных клиента, а не сбой сервера. Текст здесь
+		// уже человеческий (план 117E) и называет поле и значение, поэтому
+		// отдаём его как есть, а не подменяем общей формулировкой.
+		writeError(w, http.StatusUnprocessableEntity, err.Error(), "", 0)
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 	}
