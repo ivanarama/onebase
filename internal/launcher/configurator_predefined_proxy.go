@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/fsmode"
@@ -196,14 +197,27 @@ func (h *handler) oneTimeCodeProxy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]string{"error": "Требуется вход администратора"})
 		return
 	}
-	cookie, err := r.Cookie("onebase_session")
+	cookie, err := r.Cookie(configuratorSessionCookieName)
 	if err != nil || cookie.Value == "" {
 		// Нет сессии пользовательского режима — клиент откроет /ui без bootstrap.
 		writeJSON(w, 200, map[string]string{"code": ""})
 		return
 	}
+	client, cleanup, err := singleConnectionControlClient(b.Port, 5*time.Second)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "UI server unreachable: " + err.Error()})
+		return
+	}
+	defer cleanup()
+	expectedPID, _ := h.runner.trackedProcessPID(b.ID)
+	if _, err := controlProcessIdentityWithClient(b, expectedPID, client); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Не удалось безопасно подтвердить процесс базы. Перезапустите базу и повторите попытку.",
+		})
+		return
+	}
 
-	url := fmt.Sprintf("http://localhost:%d/auth/one-time-code", b.Port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/auth/one-time-code", b.Port)
 	// Адрес не пользовательский: схема и хост фиксированы, порт берётся
 	// из реестра баз лаунчера. Внешний URL сюда подставить нельзя.
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, nil) //nolint:gosec // G704: цель — localhost:<порт базы> из реестра
@@ -213,7 +227,7 @@ func (h *handler) oneTimeCodeProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	req.AddCookie(&http.Cookie{Name: "onebase_session", Value: cookie.Value})
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: адрес собран выше из localhost и порта базы из реестра
+	resp, err := client.Do(req) //nolint:gosec // G704: fixed authenticated localhost connection
 	if err != nil {
 		writeJSON(w, 502, map[string]string{"error": "UI server unreachable: " + err.Error()})
 		return
@@ -250,25 +264,46 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uiURL := fmt.Sprintf("http://localhost:%d/debug/global/%s", b.Port, action)
+	// Внутренний токен — процесс базы примет debug-запрос только с ним.
+	tok := h.runner.DebugToken(baseID)
+	if tok == "" {
+		// Debug bearer process-local и намеренно не хранится: отправка
+		// persistent control secret процессу лишь по номеру порта раскрывала бы
+		// его чужому listener. После рестарта launcher базу надо перезапустить.
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Перезапустите базу из текущего лаунчера, чтобы открыть отладчик",
+		})
+		return
+	}
+	client, cleanup, err := singleConnectionControlClient(b.Port, controlProbeTimeout)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "UI server unreachable: " + err.Error()})
+		return
+	}
+	defer cleanup()
+	expectedPID, tracked := h.runner.trackedProcessPID(baseID)
+	if !tracked {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Перезапустите базу из текущего лаунчера, чтобы открыть отладчик"})
+		return
+	}
+	if _, err := controlProcessIdentityWithClient(b, expectedPID, client); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Процесс базы изменился; перезапустите базу и повторите попытку"})
+		return
+	}
+	client.Timeout = 0 // evaluate/profile requests may legitimately be long-running
 
-	// Адрес не пользовательский: схема и хост фиксированы, порт берётся
-	// из реестра баз лаунчера. Внешний URL сюда подставить нельзя.
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, uiURL, r.Body) //nolint:gosec // G704: цель — localhost:<порт базы> из реестра
+	uiURL := fmt.Sprintf("http://127.0.0.1:%d/debug/global/%s", b.Port, action)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, uiURL, r.Body) //nolint:gosec // G704: authenticated fixed localhost connection
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	// Forward Content-Type from original request
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		req.Header.Set("Content-Type", ct)
 	}
-	// Внутренний токен — процесс базы примет debug-запрос только с ним.
-	if tok := h.runner.DebugToken(baseID); tok != "" {
-		req.Header.Set("X-OneBase-Debug-Token", tok)
-	}
+	req.Header.Set("X-OneBase-Debug-Token", tok)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: адрес собран из фиксированной схемы и хоста, внешний URL подставить нельзя
+	resp, err := client.Do(req) //nolint:gosec // G704: fixed authenticated localhost connection
 	if err != nil {
 		writeJSON(w, 502, map[string]string{"error": "UI server unreachable: " + err.Error()})
 		return

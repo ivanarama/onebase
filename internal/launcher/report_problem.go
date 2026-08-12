@@ -95,6 +95,9 @@ func (h *handler) reportInput(r *http.Request, vm reportVM) bugreport.Input {
 		Now:      time.Now(),
 	}
 	if b, err := h.store.Get(vm.BaseID); err == nil && b != nil {
+		gate := cfgAuthDBGate(b.ID)
+		gate.RLock()
+		defer gate.RUnlock()
 		in.ConfigSource = b.ConfigSource
 		in.DBKind = b.DBType
 		var cfg struct {
@@ -184,6 +187,9 @@ func (h *handler) appSupportContact(r *http.Request, baseID string) string {
 	if err != nil || b == nil {
 		return ""
 	}
+	gate := cfgAuthDBGate(b.ID)
+	gate.RLock()
+	defer gate.RUnlock()
 	var cfg struct {
 		Support string `yaml:"support"`
 	}
