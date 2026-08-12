@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -159,6 +160,13 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "))
 	}
 	if err := db.exec(ctx, sql, args...); err != nil {
+		// Дубль кода/номера — ошибка пользователя, а не сбой: он ввёл занятое
+		// значение. Текст драйвера («UNIQUE constraint failed: контрагенты.код»)
+		// ему ничего не говорит, поэтому подменяем его на человеческий и не
+		// оборачиваем в «upsert <объект>» (план 117E).
+		if explained := ExplainUniqueViolation(err, entity, fields); errors.Is(explained, ErrCodeDuplicate) {
+			return explained
+		}
 		return fmt.Errorf("upsert %s: %w", entityName, classifyConstraintErr(err))
 	}
 

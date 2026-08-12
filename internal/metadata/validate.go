@@ -290,6 +290,15 @@ func validateNumerator(e *Entity) error {
 	if n.Scope != "" && findEntityFieldFold(e, n.Scope) == nil {
 		return fmt.Errorf("entity %s: numerator.scope ссылается на неизвестный реквизит %s", e.Name, n.Scope)
 	}
+	// Уникальность глобальна по объекту, а счётчик со сбросом выдаёт одно и то
+	// же значение в каждом новом периоде: «Р-0001» в 2026-м и «Р-0001» в
+	// 2027-м. Такая конфигурация сломалась бы не при обновлении, а первого
+	// января — на данных, которые по замыслу верны. Различает периоды маска
+	// даты в префиксе, поэтому требуем её, а не запрещаем сочетание.
+	if n.Unique && !strings.EqualFold(n.PeriodOrDefault(e.Kind), "none") && !strings.ContainsRune(n.Prefix, '{') {
+		return fmt.Errorf("entity %s: numerator.unique вместе с period = %q требует маску даты в prefix (например \"%s{YYYY}-\"), иначе счётчик выдаст занятое значение в следующем периоде",
+			e.Name, n.PeriodOrDefault(e.Kind), n.Prefix)
+	}
 	// Стандартное поле обязано остаться строкой: НайтиПоКоду, представление и
 	// обмен работают с текстом, а префикс числовым не бывает.
 	std := StandardCodeField
