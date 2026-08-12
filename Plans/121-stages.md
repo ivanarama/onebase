@@ -134,9 +134,9 @@
 ```yaml
 name: Заявка
 fields:
-  - { name: Состояние, type: enum:СостояниеЗаявки }
+  - { id: f_state, name: Состояние, type: enum:СостояниеЗаявки }
 stages:
-  field: Состояние                  # поле-перечисление, ведущее этапы
+  field: Состояние                  # текущее имя поля; identity берётся из его id
   order: [Черновик, НаСогласовании, Утверждена, Отклонена]
   initial: Черновик                 # опц.; по умолчанию первый элемент order
   transitions:                      # допустимые переходы; всё, чего нет, — запрещено
@@ -157,6 +157,16 @@ stages:
 
 Значения этапов не дублируются — они берутся из перечисления, объявленного в
 `enums/`. `order` задаёт порядок для отчёта и схемы, `transitions` — правила.
+Имена значений enum здесь являются хранимыми идентификаторами, как и сейчас в
+`metadata.Enum.Values`; локализуемая подпись берётся через `ValueTitle`. Поэтому
+смена подписи безопасна, а переименование самого enum-идентификатора остаётся
+явной миграцией бизнес-данных и истории, не косметическим rename этого плана.
+`field` остаётся удобной ссылкой по текущему имени, но при загрузке обязательно
+разрешается в непустой устойчивый `Field.ID` (план 81). Модель `Stages` хранит и
+текущее имя для доступа к колонке, и `FieldID` как identity истории. При
+переименовании конфигуратор меняет `stages.field` вместе с `Field.Name`, сохраняя
+`Field.ID`; ручная правка обязана обновить имя сама. Поэтому rename не начинает
+новую последовательность событий и не прячет прежнюю историю.
 При локальном создании допустим только `initial`; пустое или неизвестное значение
 считается нарушением. Доверенные migration/replication writers могут
 синтетически создать объект сразу на другом **известном** этапе и всегда
@@ -167,7 +177,8 @@ stages:
 - `order` непуст, не содержит дублей после канонизации и покрывает **все**
   значения enum; `initial` входит в `order` (если отсутствует — это первый
   элемент);
-- `field` существует, имеет тип `enum`, у сущности ровно один блок `stages`;
+- `field` существует, имеет тип `enum`, имеет непустой валидный `id` по правилам
+  плана 81, у сущности ровно один блок `stages`;
 - каждый `from` и `to` входит в `order`, одно ребро не объявлено дважды,
   self-edge запрещён как бессмысленный (неизменившийся stage вообще не является
   событием), все этапы достижимы из `initial`; циклы допустимы, терминальные
@@ -188,18 +199,18 @@ stages:
 |---|---|
 | `id` | PK |
 | `entity_name`, `record_id` | объект |
-| `field` | поле-этап (в первой версии у сущности один блок `stages`; колонка не зашивает это ограничение в формат истории) |
-| `event_no` | монотонный номер события внутри `(entity_name, field, record_id)`, назначенный под той же блокировкой; источник истины для latest |
+| `field_id` | устойчивый `Field.ID` поля-этапа; имя намеренно не является identity и берётся из текущих метаданных |
+| `event_no` | монотонный номер события внутри `(entity_name, field_id, record_id)`, назначенный под той же блокировкой; источник истины для latest |
 | `from_stage`, `to_stage` | было / стало (`from_stage` пуст при создании) |
 | `at` | wall-clock момент на принимающей БД, снятый после record-lock; не используется как tie-breaker |
 | `user_id`, `user_login` | nullable-актор из `auditUserFromCtx` только для `source=local`; migration/exchange принудительно не подделывают пользователя |
 | `source`, `source_ref` | `local` / `exchange` / `migration` и опциональный узел/пакет — происхождение синтетического перехода |
 | `violation` | `true` для пропущенного в режиме `warn` недопустимого перехода |
 
-Ограничение `UNIQUE (entity_name, field, record_id, event_no)` защищает
+Ограничение `UNIQUE (entity_name, field_id, record_id, event_no)` защищает
 последовательность. Индексы:
-`(entity_name, field, record_id, event_no DESC)` — последнее событие и история
-объекта; `(entity_name, field, to_stage, at)` — фильтр истории по этапу. Миграция
+`(entity_name, field_id, record_id, event_no DESC)` — последнее событие и история
+объекта; `(entity_name, field_id, to_stage, at)` — фильтр истории по этапу. Миграция
 сущности дополнительно создаёт индекс её **текущего stage-поля**, иначе отчёт
 вынужден сканировать всю бизнес-таблицу независимо от индексов истории.
 
@@ -218,10 +229,18 @@ Wall-clock не участвует в выборе latest даже при оди
 
 ## Изменения в коде
 
-- **`internal/metadata/`** — `rawEntity.Stages`, модель `Stages` и полная
-  статическая валидация из предыдущего раздела. Она же проверяет явные значения
-  stage у predefined. Конфигурация без `stages` получает `nil` в модели и не
-  включает stage-ветку записи.
+- **`internal/metadata/`** — `rawEntity.Stages`, модель `Stages` с разрешённым
+  `FieldID` и полная статическая валидация из предыдущего раздела. Она же
+  проверяет явные значения stage у predefined. Конфигурация без `stages`
+  получает `nil` в модели и не включает stage-ветку записи.
+- **Все поверхности метаданных** — `internal/cli/schema.go` описывает `stages`
+  и его вложенные ключи в JSON Schema, а `internal/configcheck/lint.go` добавляет
+  верхнеуровневый ключ и nested-schema, чтобы опечатка не проходила как
+  неизвестное расширение. `internal/launcher/configurator_types.go` сохраняет
+  блок сырым `yaml.Node`: обычная правка полей через `saveEntity` не вправе его
+  стереть. `save_entity_keys_test.go` остаётся structural guard, а отдельный
+  round-trip тест покрывает непустой `stages`, включая порядок transitions и
+  сохранение `Field.ID`; rename поля обновляет `stages.field`, но не identity.
 - **`internal/storage/stage.go`** (новый) — единый `canonicalFieldValue` с
   persistence-compatible exact/lowercase lookup и признаком presence;
   существующий `fieldValueDialect` переводится на него, а `stageFieldValue`
@@ -262,13 +281,19 @@ Wall-clock не участвует в выборе latest даже при оди
   `DeferUntilTxCommit`: rollback объекта или savepoint обязан тем же SQL rollback
   откатить history.
 - **`internal/storage/predefined.go`** — третий writer не прячется под общими
-  Upsert. Для staged entity весь item (direct upsert, существующий FTS hook и
-  history) образует один `WithTxScope`; PG lock берётся по логическому ключу
-  `(entity, predefined_name)` **до** поиска/генерации UUID, иначе два
-  параллельных migrate выберут разные ID для одного conflict-target. После
-  разрешения фактического ID берётся и обычный `(entity,id)` record-lock, чтобы
-  sync сериализовался с пользовательской записью. Старое значение и фактический
-  record ID читаются строго. Отсутствующий stage при
+  Upsert. Текущий `SyncPredefined` сначала preallocate-ит UUID **всему** списку,
+  чтобы разрешить self/cross-reference, и лишь затем проходит items; поэтому
+  блокировка внутри item уже опаздывает. Для staged entity один `WithTxScope`
+  охватывает весь sync. До первого поиска/генерации UUID он валидирует имена и
+  берёт все логические PG-lock `(entity, predefined_name)` в отсортированном
+  порядке (эквивалентно допустим один стабильный entity-level sync-lock). Это
+  запрещает двум migrate раздать разные UUID одному conflict-target и не создаёт
+  deadlock при разном порядке YAML. SQLite использует ту же цельность scope и
+  проверяемый conflict/CAS между двумя handles, а не снимок, начатый до
+  сериализации. После разрешения всей `nameToUUID` для фактического ID берётся и
+  обычный `(entity,id)` record-lock, чтобы sync сериализовался с пользовательской
+  записью. Direct upserts, существующие FTS hooks и history входят в тот же
+  scope; старое значение и фактический record ID читаются строго. Отсутствующий stage при
   INSERT получает `initial`, а при conflict не обновляет stage. Явно заданное
   известное значение может создать или переместить predefined мимо adjacency,
   но пишет ровно одно synthetic event `source=migration`,
@@ -316,7 +341,19 @@ Wall-clock не участвует в выборе latest даже при оди
   чтения сущности, доступ к конкретной строке и видимость stage-поля. Нельзя
   копировать текущий прямой `recordHistory → AuditByRecord`
   (`ui/admin.go:1092-1113`): вводится общий авторизованный loader и существующий
-  endpoint также переводится на него. Агрегат получает SQL predicate через
+  endpoint также переводится на него. Loader применяет текущие scalar field
+  policies и к обычному audit: `hide` удаляет field-event целиком, `mask_*`
+  преобразует **оба** `OldValue`/`NewValue` через `access.MaskValue`, `full`
+  оставляет их, а неизвестное/удалённое поле и неизвестная стратегия закрываются
+  без выдачи raw value. Решение принимается до reference lookup; для разрешённых
+  ссылок label получает маски целевой сущности, затем к итоговым двум scalar
+  значениям применяется политика исходного поля непосредственно перед render /
+  JSON. Так enrichment или его ошибка не превращают UUID/старое значение в
+  обход маски. При `mask_admin` тот же redactor применяется к record history и
+  к `enrichAuditEntriesGlobal`, до передачи в админский шаблон.
+  Для stage-поля любая политика, кроме `full`, подавляет history, graph и report
+  целиком: частично замаскированные enum labels всё равно раскрывали бы equality,
+  counts и маршрут. Агрегат получает SQL predicate через
   `rowFilterFor` (`ui/row_access.go:170-182`) **до** `GROUP BY`; скрытые строки
   не попадают даже в counts. Его params несут `RowFilterEvaluated` и повторяют
   storage fail-closed guard из `List` (`storage/crud.go:383-390`), чтобы новый
@@ -362,22 +399,30 @@ Wall-clock не участвует в выборе latest даже при оди
 
 | Риск | Решение |
 |---|---|
+| Переименование stage-поля отрезает прежнюю историю | `stages.field` разрешается в обязательный устойчивый `Field.ID`; `_stage_history`, latest и индексы используют `field_id`, а текущее имя — только для доступа к бизнес-колонке. Rename/round-trip тест сохраняет одну последовательность `event_no` |
+| Конфигуратор или schema/lint не знает новый YAML-блок | сырой `yaml.Node` в `saveEntity`, structural key guard и round-trip; JSON Schema и nested lint обновляются в том же изменении |
 | Обмен данными (план 86): пакет может не содержать промежуточные переходы источника | только `applyObject` после validation/conflict-resolution вызывает узкий replication-writer. Он пишет одно синтетическое событие с `source=exchange`, `source_ref=plan/from_node/message_no`, actor `NULL`; `at` означает время появления на приёмнике. Hook исполняется раньше без bypass. Unknown stage отвергается. Повторный `message_no`/version пропускается без второго event. Точный перенос акторов/времени — отдельное расширение формата |
-| `SyncPredefined` обходит обычные Upsert | это явный третий writer: known-value validation, atomic direct upsert + mandatory `source=migration` history; omitted field вставляет initial и не сбрасывает существующий stage |
+| `SyncPredefined` обходит обычные Upsert и preallocate-ит весь список до item-loop | это явный третий writer: один scope на весь sync, отсортированные name-locks/entity-lock до всей preallocation, затем record-lock; known-value validation, atomic direct upsert + mandatory `source=migration` history; omitted field вставляет initial и не сбрасывает существующий stage |
 | Restore / DemoReset должны воспроизводить историю, но не повторно применять переходы | raw restore не вызывает гейт, зато `_stage_history` входит в `systemTables`/manifest и атомарно публикуется вместе с объектами. Без FK на `_users`. Round-trip и DemoReset тесты сравнивают историю; старый архив без таблицы очищает target-history и даёт пустую |
 | Два конкурентных перехода читают один исходный этап | PG advisory lock берётся до read и действует также для отсутствующей строки; SQLite staged CAS/create-conflict работает между двумя DB handles. Один запрос видит результат другого либо получает нормализованный version/busy conflict. Тест запрещает историю `A→B`, `A→C`, если фактическая цепочка `B→C` не разрешена |
 | Несколько events имеют одинаковый `at` или commit идут не в порядке старта tx | latest определяется только монотонным `event_no`; `at` остаётся wall-clock атрибутом и не участвует в причинном порядке |
 | Проведение и пометка удаления (план 50) меняют объект, не трогая этап | гейт срабатывает только при **изменении** поля-этапа — эти пути его не касаются |
 | Маска/RLS раскрывает stage или хотя бы число скрытых объектов | entity-read + row predicate + field mask применяются до history query/aggregate; masked stage полностью подавляет history/graph/report, direct URL fail-closed |
 | Кто вправе двигать этап | в первой версии — обычные права на запись объекта. Права «на переход» (роль X может только Согласование→Утверждена) — отдельный вопрос, сознательно вне плана |
-| `_stage_history` растёт | v1 не удаляет строки автоматически. Будущая retention-policy обязана сохранить latest event каждого живого `(entity, field, record)` либо сначала материализовать `entered_at`; слепая audit-cleanup ломает duration и запрещена |
+| `_stage_history` растёт | v1 не удаляет строки автоматически. Будущая retention-policy обязана сохранить latest event каждого живого `(entity, field_id, record)` либо сначала материализовать `entered_at`; слепая audit-cleanup ломает duration и запрещена |
 | Конфигурация без stages получила новые lock/error semantics | stage-wrapper условен по `entity.Stages != nil`; regression фиксирует прежний обычный write-path |
 
 ## Тесты
 
 - **metadata/static check**: валидные графы, цикл, terminal node; пустой/duplicate
   `order`, enum value вне `order`, unknown/duplicate/self edge, unreachable node,
-  invalid initial/enforce/deadline и unknown predefined отвергаются;
+  invalid initial/enforce/deadline, stage-поле без устойчивого `id` и unknown
+  predefined отвергаются; rename с тем же `Field.ID` продолжает прежнюю
+  `(entity, field_id, record)` history/event sequence;
+- JSON Schema принимает полный `stages` и отвергает лишние nested keys;
+  `configcheck` сообщает точный путь опечатки; configurator save/rename
+  round-trip сохраняет блок, transitions и identity (плюс structural
+  `save_entity_keys_test` не требует exemption);
 - **матричный** `dbtest.ForEachDialect`: local gate, обязательная история,
   `event_no`, latest и защищённый агрегат одинаковы на SQLite/PostgreSQL;
 - публичные `entityservice`, `Документы.X.Записать` и запись справочника меняют
@@ -410,9 +455,12 @@ Wall-clock не участвует в выборе latest даже при оди
 - `SyncPredefined`: omitted stage при первом insert даёт initial и одно
   migration-event, повторный sync не сбрасывает текущий stage; явный
   create/update пишет ровно один migration-event, actor
-  `NULL`; два параллельных PG sync одного predefined сериализуются по имени и не
-  путают record ID; history schema существует до вызова из `DB.Migrate` и в
-  `procrun`;
+  `NULL`; два параллельных PG sync списка с двумя взаимными/self references
+  стартуют до preallocation, сериализуются отсортированными name-locks (или
+  entity-lock), сохраняют одинаковые фактические UUID и ссылки и не путают
+  record ID; SQLite-вариант открывает два handles к одному файлу и проверяет ту
+  же гарантию/нормализованный conflict; history schema существует до вызова из
+  `DB.Migrate` и в `procrun`;
 - exchange: local-wins не пишет **exchange-event**, incoming-wins пишет ровно
   один с полным provenance и actor `NULL`, unknown stage отклоняется, duplicate
   message/version идемпотентен. Если conflict hook сам делает локальную запись,
@@ -420,7 +468,10 @@ Wall-clock не участвует в выборе latest даже при оди
   без таблицы сначала выполняет Ensure;
 - security integration: прямой URL без entity/row access не читает history,
   скрытые RLS-строки не попадают в counts, маска stage подавляет history, graph и
-  report до SQL; guarded aggregate без `RowFilterEvaluated` падает fail-closed;
+  report до SQL; обычная audit history удаляет `hide` field-event и одинаково
+  маскирует `OldValue`/`NewValue` для `mask_tail`/`mask_city`/`mask_all`, включая
+  reference/date, неизвестное поле и включённый `mask_admin`, не оставляя raw
+  fallback; guarded aggregate без `RowFilterEvaluated` падает fail-closed;
   escaping graph payload не позволяет закрыть `<script>`;
 - universal portable round-trip включает `_stage_history`, manifest allowlist её
   принимает, старый archive без файла очищает target-history и при full restore,
