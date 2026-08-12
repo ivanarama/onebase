@@ -286,3 +286,287 @@ func TestWatchProjectContextTracksMetadataDirectoryRename(t *testing.T) {
 	}
 	t.Fatal("renaming a watched metadata directory did not trigger reload")
 }
+
+// WatchGoContext реагирует на правку .go и молчит на всё остальное: конфигурацию
+// в dev-режиме перезагружает отдельный наблюдатель, пересобирать ради неё бинарь
+// незачем.
+func TestWatchGoContext_IgnoresProjectSources(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(dir, "документ.yaml"), []byte("name: Счёт"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "проведение.os"), []byte("// код"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := changes.Load(); got != 0 {
+		t.Fatalf("конфигурация вызвала пересборку %d раз", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main // правка"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if changes.Load() > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("правка .go не вызвала onChange")
+}
+
+// go.mod и go.sum — тоже вход сборки: смена зависимости меняет бинарь.
+func TestWatchGoContext_TracksGoMod(t *testing.T) {
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(modPath, []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(modPath, []byte("module x\n\ngo 1.25.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if changes.Load() > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("правка go.mod не вызвала onChange")
+}
+
+func TestWatchGoContext_TracksBuildInputs(t *testing.T) {
+	t.Setenv("CGO_ENABLED", "1")
+	dir := t.TempDir()
+	assets := filepath.Join(dir, "assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod":             "module example.com/watchinputs\n\ngo 1.25.0\n",
+		"main.go":            "package main\n\n/*\n#include \"native.h\"\n*/\nimport \"C\"\nimport _ \"embed\"\n\n//go:embed assets/message.txt\nvar message string\n\nfunc main() { _ = message; _ = C.onebase_native() }\n",
+		"assets/message.txt": "initial\n",
+		"native.c":           "int onebase_native(void) { return 1; }\n",
+		"native.h":           "int onebase_native(void);\n",
+		"native.s":           "// assembly build input\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	for _, test := range []struct {
+		name    string
+		content string
+	}{
+		{"assets/message.txt", "edited\n"},
+		{"native.c", "int onebase_native(void) { return 2; }\n"},
+		{"native.h", "int onebase_native_v2(void);\n"},
+		{"native.s", "// edited assembly build input\n"},
+	} {
+		before := changes.Load()
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(test.name)), []byte(test.content), 0o644); err != nil {
+			t.Fatalf("edit %s: %v", test.name, err)
+		}
+		waitFor(t, test.name+" change", func() bool { return changes.Load() > before })
+		time.Sleep(debounceWindow + 100*time.Millisecond)
+	}
+
+	// Creating an unrelated file may refresh the manifest, but must not rebuild.
+	before := changes.Load()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("edited docs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(debounceWindow + 300*time.Millisecond)
+	if got := changes.Load(); got != before {
+		t.Fatalf("README edit triggered rebuild: calls before=%d after=%d", before, got)
+	}
+}
+
+func TestWatchGoContext_TracksNewEmbeddedFile(t *testing.T) {
+	dir := t.TempDir()
+	assets := filepath.Join(dir, "assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/embedwatch\n\ngo 1.25.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mainSource := "package main\n\nimport \"embed\"\n\n//go:embed assets/*\nvar assets embed.FS\n\nfunc main() { _, _ = assets.ReadFile(\"assets/first.txt\") }\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "first.txt"), []byte("first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	if err := os.WriteFile(filepath.Join(assets, "second.txt"), []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "new go:embed input", func() bool { return changes.Load() > 0 })
+}
+
+func TestWatchGoContext_TracksGoWork(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/workwatch\n\ngo 1.25.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workPath := filepath.Join(dir, "go.work")
+	if err := os.WriteFile(workPath, []byte("go 1.25.0\n\nuse .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	if err := os.WriteFile(workPath, []byte("go 1.25.0\n\nuse (\n\t.\n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "go.work change", func() bool { return changes.Load() > 0 })
+}
+
+func TestWatchGoContext_TracksLocalReplaceOutsideRoot(t *testing.T) {
+	parent := t.TempDir()
+	appDir := filepath.Join(parent, "app")
+	depDir := filepath.Join(parent, "dep")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(depDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "go.mod"), []byte("module example.com/dep\n\ngo 1.25.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	depPath := filepath.Join(depDir, "dep.go")
+	if err := os.WriteFile(depPath, []byte("package dep\n\nconst Value = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appMod := "module example.com/app\n\ngo 1.25.0\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ../dep\n"
+	if err := os.WriteFile(filepath.Join(appDir, "go.mod"), []byte(appMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "main.go"), []byte("package main\n\nimport \"example.com/dep\"\n\nfunc main() { _ = dep.Value }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, appDir, func() { changes.Add(1) })
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	if err := os.WriteFile(depPath, []byte("package dep\n\nconst Value = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "local replace change", func() bool { return changes.Load() > 0 })
+}
+
+// Служебные каталоги в наблюдение не берутся вовсе: .git переписывается на
+// каждой команде git, и пересборка по этим событиям шла бы непрерывно.
+func TestWatchGoContext_SkipsServiceDirs(t *testing.T) {
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, ".git", "objects")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	// Файл с расширением .go внутри пропущенного каталога — событий быть не должно
+	// (в node_modules и .git такие файлы попадают как чужие исходники и мусор).
+	if err := os.WriteFile(filepath.Join(gitDir, "hook.go"), []byte("package hooks"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.go"), []byte("package pkg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := changes.Load(); got != 0 {
+		t.Fatalf("служебный каталог вызвал пересборку %d раз", got)
+	}
+}

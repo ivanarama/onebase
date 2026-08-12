@@ -119,10 +119,12 @@ type saveEntity struct {
 	ListRefreshOn []string  `yaml:"list_refresh_on,omitempty"`
 	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
 	TileView      yaml.Node `yaml:"tile_view,omitempty"`
-	// Stages — маршрут этапов (план 121). Сырым узлом, как indexes и tile_view:
-	// конфигуратор его не редактирует, но потерять не вправе — вместе с блоком
-	// исчезли бы гейт переходов и отчёт «где застряло», причём молча, после
-	// обычной правки реквизита.
+	// DetailPanel — состав боковой панели деталей (план 118C). Конфигуратор его
+	// не редактирует (прецедент tile_view), но обязан сохранить: иначе правка
+	// реквизитов из UI молча вытирала бы блок.
+	DetailPanel yaml.Node `yaml:"detail_panel,omitempty"`
+	// Stages — маршрут этапов (план 121). По той же причине и тем же способом:
+	// вместе с блоком молча исчезли бы гейт переходов и отчёт «где застряло».
 	Stages yaml.Node `yaml:"stages,omitempty"`
 }
 

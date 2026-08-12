@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -72,6 +73,70 @@ func TestBlobRoundtrip_DiskAndDB(t *testing.T) {
 			t.Fatalf("содержимое (db) не совпало: %d байт", len(got))
 		}
 	})
+}
+
+func TestOpenBlobZeroByteDBAndCorruptLocations(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := ConnectSQLite(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	defer db.Close()
+	db.filesDir = filepath.Join(dir, "files")
+	if err := db.EnsureBlobTable(ctx); err != nil {
+		t.Fatalf("EnsureBlobTable: %v", err)
+	}
+	if err := db.SaveFileStorageMode(ctx, FileStorageDB); err != nil {
+		t.Fatalf("SaveFileStorageMode: %v", err)
+	}
+
+	empty, err := db.PutBlob(ctx, "application/octet-stream", bytes.NewReader(nil), 1, BlobOwner{})
+	if err != nil {
+		t.Fatalf("PutBlob(empty): %v", err)
+	}
+	if got := readBlobBytes(t, db, empty.ID); len(got) != 0 {
+		t.Fatalf("empty db blob returned %d bytes", len(got))
+	}
+
+	d := db.dialect
+	if _, err := db.Exec(ctx, fmt.Sprintf("UPDATE _blobs SET data=NULL WHERE id=%s", d.Placeholder(1)), empty.ID.String()); err != nil {
+		t.Fatalf("corrupt data: %v", err)
+	}
+	if _, _, err := db.OpenBlob(ctx, empty.ID); err == nil {
+		t.Fatal("loc=db with NULL data must fail closed")
+	}
+	if _, err := db.Exec(ctx, fmt.Sprintf("UPDATE _blobs SET loc='unknown', data=NULL WHERE id=%s", d.Placeholder(1)), empty.ID.String()); err != nil {
+		t.Fatalf("corrupt location: %v", err)
+	}
+	if _, _, err := db.OpenBlob(ctx, empty.ID); err == nil {
+		t.Fatal("unknown blob location must fail closed")
+	}
+}
+
+func TestOpenBlobRejectsDiskSizeMismatch(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := ConnectSQLite(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.filesDir = filepath.Join(dir, "files")
+	if err := db.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := db.PutBlob(ctx, "application/octet-stream", bytes.NewReader([]byte("original")), 1024, BlobOwner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(db.filesDir, blobsDirName, b.ID.String()), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.OpenBlob(ctx, b.ID); err == nil {
+		t.Fatal("OpenBlob must reject a disk file whose size disagrees with metadata")
+	}
 }
 
 // TestBlobOwnerRoundtrip проверяет, что владелец (сущность), указанный при

@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -19,19 +22,27 @@ import (
 	"github.com/ivantit66/onebase/internal/bugreport"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
+	"github.com/ivantit66/onebase/internal/processcontrol"
 )
 
 type managedProc struct {
-	cmd        *exec.Cmd
-	port       int
-	startedAt  time.Time
-	debugToken string // секрет для X-OneBase-Debug-Token (прокси отладчика)
+	cmd          *exec.Cmd
+	port         int
+	startedAt    time.Time
+	debugToken   string // секрет для X-OneBase-Debug-Token (прокси отладчика)
+	controlToken string
+	done         chan struct{}
 }
 
 // Runner tracks running base processes.
 type Runner struct {
-	mu    sync.Mutex
-	procs map[string]*managedProc
+	mu       sync.Mutex
+	procs    map[string]*managedProc
+	stopping bool
+	// lifecycleMu сериализует stop/restart/restore/delete/update. stopping при
+	// этом запрещает обычному Start войти между остановкой и разрушительной
+	// операцией; internal startHeld используется владельцем lease при Restart.
+	lifecycleMu sync.Mutex
 	// exits отмечает базы, чей процесс завершился после последнего Start.
 	// WaitReady по этому признаку отличает «упал при старте» (ошибка с хвостом
 	// лога сразу) от «ещё запускается» (ждём дольше).
@@ -100,9 +111,16 @@ func runArgs(base *Base) []string {
 	return args
 }
 
-func (r *Runner) Start(base *Base) error {
+func (r *Runner) Start(base *Base) error { return r.start(base, false) }
+
+func (r *Runner) startHeld(base *Base) error { return r.start(base, true) }
+
+func (r *Runner) start(base *Base, lifecycleHeld bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.stopping && !lifecycleHeld {
+		return i18nerr.Errorf("лаунчер останавливает базы — новый запуск временно запрещён")
+	}
 
 	if _, ok := r.procs[base.ID]; ok {
 		return i18nerr.Errorf("база %q уже запущена", base.Name)
@@ -140,8 +158,16 @@ func (r *Runner) Start(base *Base) error {
 
 	args := runArgs(base)
 
-	// Per-base секрет для debug API: процесс базы примет запросы к /debug/global/*
-	// только с этим токеном (см. ui.MountDebug). Конфигуратор-прокси его прикладывает.
+	// Persistent per-base secret нужен только HMAC lifecycle-control. Основной
+	// launcher сохраняет его до запуска, чтобы безопасно усыновить процесс.
+	controlToken := base.ControlToken
+	if controlToken == "" {
+		closeRead("журнал базы", logFile)
+		return errors.New("control token базы не сохранён; запуск отменён")
+	}
+	// Debug bearer intentionally is process-local. Persisting/reusing it would
+	// let an untrusted process on the registered port steal a credential that
+	// unlocks evaluate/pprof/metrics. Adopted lifecycle control uses HMAC above.
 	debugToken, err := generateDebugToken()
 	if err != nil {
 		closeRead("журнал базы", logFile)
@@ -151,7 +177,10 @@ func (r *Runner) Start(base *Base) error {
 	cmd := exec.Command(exe, args...) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	cmd.Env = append(os.Environ(), "ONEBASE_DEBUG_TOKEN="+debugToken)
+	cmd.Env = append(os.Environ(),
+		"ONEBASE_DEBUG_TOKEN="+debugToken,
+		"ONEBASE_CONTROL_TOKEN="+controlToken,
+		"ONEBASE_BASE_ID="+base.ID)
 	noWindow(cmd)
 
 	if err := cmd.Start(); err != nil {
@@ -159,7 +188,9 @@ func (r *Runner) Start(base *Base) error {
 		return fmt.Errorf("runner: start: %w", err)
 	}
 
-	r.procs[base.ID] = &managedProc{cmd: cmd, port: base.Port, startedAt: time.Now(), debugToken: debugToken}
+	done := make(chan struct{})
+	r.procs[base.ID] = &managedProc{cmd: cmd, port: base.Port, startedAt: time.Now(),
+		debugToken: debugToken, controlToken: controlToken, done: done}
 	delete(r.exits, base.ID)
 
 	go func() {
@@ -168,6 +199,7 @@ func (r *Runner) Start(base *Base) error {
 		// recordExit из cmd.ProcessState. Возвращать её некуда — горутина.
 		bestEffort("дождаться завершения процесса базы", cmd.Wait())
 		closeRead("журнал базы", logFile)
+		close(done)
 		r.recordExit(base.ID, cmd)
 	}()
 
@@ -196,100 +228,498 @@ func (r *Runner) recordExit(baseID string, cmd *exec.Cmd) {
 // платформы» прогоняет весь пакет заново — рекурсивно и без конца.
 var exePath = os.Executable
 
-// Stop снимает отслеживаемый процесс базы. Возврата нет намеренно: результат
-// всегда был nil, и проверка его ничего бы не значила. Сама по себе отправка
-// сигнала успех не гарантирует — подтверждение только одно, освобождение порта,
-// поэтому вызывающие, которым важно, что база действительно встала (перед
-// восстановлением, переименованием файла БД), обязаны спросить waitPortFree.
-func (r *Runner) Stop(baseID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+const (
+	controlProbeTimeout = 1500 * time.Millisecond
+	controlStopTimeout  = 35 * time.Second
+)
 
-	mp, ok := r.procs[baseID]
-	if !ok {
-		return
-	}
-	killProc(mp.cmd.Process)
-	delete(r.procs, baseID)
+// BaseRuntimeStatus отделяет «на порту отвечает onebase» от «лаунчер умеет
+// доказуемо обратиться именно к этому процессу». Второе требуется для Stop:
+// убивать произвольный PID только потому, что он занял сохранённый порт, нельзя.
+type BaseRuntimeStatus struct {
+	Running      bool
+	Controllable bool
+	// Occupied distinguishes a definitely stopped base from an unresponsive or
+	// foreign listener. Destructive operations must fail closed in the latter
+	// case even when onebase identity could not be established.
+	Occupied bool
 }
 
-// StopAll kills all running base processes (tracked + any still listening on extraPorts)
-// and waits for ports to free.
-func (r *Runner) StopAll(extraPorts []int) {
-	r.mu.Lock()
-	type procInfo struct {
-		proc *os.Process
-		port int
+// RuntimeStatus возвращает свежий, ограниченный таймаутом статус без чтения
+// app.yaml/БД конфигурации. Процесс текущего Runner известен по os.Process;
+// переживший перезапуск — по persistent control-token и base ID.
+func (r *Runner) RuntimeStatus(base *Base) BaseRuntimeStatus {
+	if base == nil {
+		return BaseRuntimeStatus{}
 	}
-	var all []procInfo
+	r.mu.Lock()
+	mp, tracked := r.procs[base.ID]
+	tracked = tracked && managedProcMatchesBase(mp, base)
+	r.mu.Unlock()
+	if tracked {
+		return BaseRuntimeStatus{Running: true, Controllable: true, Occupied: true}
+	}
+	if portFree(base.Port) {
+		return BaseRuntimeStatus{}
+	}
+	if base.ControlToken != "" {
+		if controlIdentity(base, 0) {
+			return BaseRuntimeStatus{Running: true, Controllable: true, Occupied: true}
+		}
+		// Once a persistent identity exists, an HMAC failure means this listener
+		// is not the registered process. Do not downgrade to forgeable /health.
+		return BaseRuntimeStatus{Occupied: true}
+	}
+	// Совместимость с процессами, запущенными старым launcher: показываем их
+	// как работающие, но не выдаём право на kill-by-port. /healthz маркирован
+	// версией onebase и не требует доступной БД для самой идентификации.
+	if onebaseHealthMarker(base) {
+		return BaseRuntimeStatus{Running: true, Occupied: true}
+	}
+	return BaseRuntimeStatus{Occupied: true}
+}
+
+// managedProcMatchesBase distinguishes a Store record from a different record
+// that reused its ID while the old process was still tracked. Production
+// managed processes always carry a control token; the tokenless branch keeps
+// compatibility with in-package test doubles and pre-token in-memory records.
+func managedProcMatchesBase(mp *managedProc, base *Base) bool {
+	if mp == nil || base == nil {
+		return false
+	}
+	if mp.controlToken != "" || base.ControlToken != "" {
+		return mp.controlToken != "" && base.ControlToken != "" && mp.controlToken == base.ControlToken
+	}
+	// Compatibility for tokenless in-package test doubles and pre-token
+	// in-memory records. Without a token, port is the strongest available key.
+	return mp.port == base.Port
+}
+
+func (r *Runner) tracksBaseGeneration(base *Base) bool {
+	if base == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return managedProcMatchesBase(r.procs[base.ID], base)
+}
+
+func localControlClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		// Never follow a redirect from a configured localhost port. Besides
+		// changing the authenticated peer, redirects make local probes an SSRF.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func controlProcessIdentity(base *Base, expectedPID int) (processcontrol.Identity, error) {
+	return controlProcessIdentityWithClient(base, expectedPID, localControlClient(controlProbeTimeout))
+}
+
+func controlProcessIdentityWithClient(base *Base, expectedPID int, client *http.Client) (processcontrol.Identity, error) {
+	if base == nil || base.ControlToken == "" {
+		return processcontrol.Identity{}, errors.New("control token is empty")
+	}
+	challenge, err := processcontrol.NewNonce()
+	if err != nil {
+		return processcontrol.Identity{}, err
+	}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/debug/process/identity?%s",
+		base.Port, (url.Values{processcontrol.ChallengeQuery: []string{challenge}}).Encode())
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return processcontrol.Identity{}, err
+	}
+	defer resp.Body.Close() //nolint:errcheck,gosec // probe body; status/JSON determine identity
+	if resp.StatusCode != http.StatusOK {
+		return processcontrol.Identity{}, fmt.Errorf("identity HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return processcontrol.Identity{}, err
+	}
+	var got processcontrol.Identity
+	if err := json.Unmarshal(data, &got); err != nil {
+		return processcontrol.Identity{}, err
+	}
+	want := processcontrol.IdentityProof(base.ControlToken, got.BaseID, got.PID,
+		got.Instance, challenge)
+	if got.BaseID != base.ID || got.PID <= 0 || got.Instance == "" ||
+		!processcontrol.Verify(got.Proof, want) {
+		return processcontrol.Identity{}, errors.New("identity proof mismatch")
+	}
+	if expectedPID > 0 && got.PID != expectedPID {
+		return processcontrol.Identity{}, fmt.Errorf("identity PID %d does not match tracked process PID %d", got.PID, expectedPID)
+	}
+	return got, nil
+}
+
+// singleConnectionControlClient authenticates and sends a sensitive follow-up
+// over one already-open TCP connection. If that connection closes, the
+// transport refuses to redial, so a process that races to reoccupy the port
+// never receives the follow-up credential.
+func singleConnectionControlClient(port int, timeout time.Duration) (*http.Client, func(), error) {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	var dialMu sync.Mutex
+	used := false
+	transport := &http.Transport{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			dialMu.Lock()
+			defer dialMu.Unlock()
+			if used {
+				return nil, errors.New("authenticated control connection is closed")
+			}
+			used = true
+			return conn, nil
+		},
+		DisableKeepAlives: false,
+		MaxConnsPerHost:   1,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	cleanup := func() {
+		transport.CloseIdleConnections()
+		_ = conn.Close()
+	}
+	return client, cleanup, nil
+}
+
+func controlIdentity(base *Base, expectedPID int) bool {
+	_, err := controlProcessIdentity(base, expectedPID)
+	return err == nil
+}
+
+func onebaseHealthMarker(base *Base) bool {
+	client := localControlClient(controlProbeTimeout)
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", base.Port))
+	if err == nil {
+		marked := resp.Header.Get("X-OneBase-Version") != ""
+		resp.Body.Close() //nolint:errcheck,gosec // only headers identify the server
+		if marked {
+			return true
+		}
+	}
+	// Старые onebase до version-header имели публичный /health = 200. Такой
+	// ответ недостаточен для управления процессом, но для защиты данных его
+	// консервативно считаем работающей (неуправляемой) базой: лучше показать
+	// лишний индикатор/отказать в restore, чем писать поверх живой SQLite.
+	resp, err = client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", base.Port))
+	if err != nil {
+		return false
+	}
+	resp.Body.Close() //nolint:errcheck,gosec // liveness status only
+	return resp.StatusCode == http.StatusOK
+}
+
+type processExitWaiter interface {
+	Wait(time.Duration) bool
+	Close() error
+}
+
+var openProcessExitWaiter = newProcessExitWaiter
+
+func requestControlStop(base *Base, expectedPID int) error {
+	// Prove identity and deliver the signed stop request over one already-open
+	// connection. If the proven process exits between the two requests, the
+	// transport must fail instead of redialling a different process that won
+	// the same port.
+	client, closeClient, err := singleConnectionControlClient(base.Port, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("подключиться к процессу базы %q: %w", base.Name, err)
+	}
+	defer closeClient()
+
+	identity, err := controlProcessIdentityWithClient(base, expectedPID, client)
+	if err != nil {
+		return fmt.Errorf("подтвердить процесс базы %q: %w", base.Name, err)
+	}
+	waiter, err := openProcessExitWaiter(identity.PID)
+	if err != nil {
+		return fmt.Errorf("открыть процесс базы %q (PID %d): %w", base.Name, identity.PID, err)
+	}
+	defer waiter.Close() //nolint:errcheck // wait result, not handle cleanup, determines success
+
+	nonce, err := processcontrol.NewNonce()
+	if err != nil {
+		return fmt.Errorf("подписать остановку базы %q: %w", base.Name, err)
+	}
+	req, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://127.0.0.1:%d/debug/process/stop", base.Port), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set(processcontrol.HeaderBaseID, base.ID)
+	req.Header.Set(processcontrol.HeaderInstance, identity.Instance)
+	req.Header.Set(processcontrol.HeaderNonce, nonce)
+	req.Header.Set(processcontrol.HeaderProof,
+		processcontrol.StopProof(base.ControlToken, base.ID, identity.Instance, nonce))
+	resp, err := client.Do(req)
+	if err != nil {
+		if waiter.Wait(0) && portFree(base.Port) { // процесс мог завершиться между identity и POST
+			return nil
+		}
+		return fmt.Errorf("остановить базу %q через control API: %w", base.Name, err)
+	}
+	resp.Body.Close() //nolint:errcheck,gosec // response body is empty JSON acknowledgement
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("остановить базу %q через control API: HTTP %d", base.Name, resp.StatusCode)
+	}
+	// Listener закрывается в начале http.Server.Shutdown, раньше scheduler,
+	// активных handlers и DB cleanup. Поэтому успех подтверждает только exit
+	// того PID/process generation, который доказал HMAC identity.
+	if !waiter.Wait(controlStopTimeout) {
+		return fmt.Errorf("процесс базы %q (PID %d) не завершился за %s",
+			base.Name, identity.PID, controlStopTimeout)
+	}
+	if !portFree(base.Port) {
+		return fmt.Errorf("процесс базы %q (PID %d) завершился, но порт %d уже занят другим процессом",
+			base.Name, identity.PID, base.Port)
+	}
+	return nil
+}
+
+// holdStarts берёт внутрипроцессный lifecycle lease. Пока он удерживается,
+// обычный Start и другая destructive-операция получают отказ, поэтому база не
+// может снова открыть БД между stop и restore/delete/update.
+func (r *Runner) holdStarts() error {
+	if !r.lifecycleMu.TryLock() {
+		return errors.New("другая операция с базами уже выполняется")
+	}
+	r.mu.Lock()
+	r.stopping = true
+	r.mu.Unlock()
+	return nil
+}
+
+func waitManagedProcessExit(mp *managedProc, timeout time.Duration) bool {
+	if mp == nil {
+		return true
+	}
+	if mp.done == nil {
+		// Совместимость тестовых/fake managedProc; production Start всегда
+		// создаёт done и тем самым подтверждает именно exit, а не только порт.
+		return waitPortFree(mp.port, timeout)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-mp.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func (r *Runner) forgetManagedProc(baseID string, mp *managedProc) {
+	r.mu.Lock()
+	if current := r.procs[baseID]; current == mp {
+		delete(r.procs, baseID)
+	}
+	r.mu.Unlock()
+}
+
+func (r *Runner) stopTrackedHeld(base *Base, mp *managedProc) error {
+	port := base.Port
+	if mp != nil {
+		port = mp.port
+	}
+	var gracefulErr error
+	if mp != nil && mp.cmd != nil && mp.controlToken != "" {
+		owned := *base
+		owned.Port = mp.port
+		owned.ControlToken = mp.controlToken
+		expectedPID := 0
+		if mp.cmd.Process != nil {
+			expectedPID = mp.cmd.Process.Pid
+		}
+		gracefulErr = requestControlStop(&owned, expectedPID)
+		if gracefulErr == nil {
+			r.forgetManagedProc(base.ID, mp)
+			return nil
+		}
+	}
+	// Только доказанно наш os.Process можно завершить жёстко. Это fallback для
+	// процесса, который завис до поднятия control endpoint или не уложился в
+	// graceful timeout; kill-by-port для adopted/чужих процессов не используется.
+	if mp != nil && mp.cmd != nil {
+		killProc(mp.cmd.Process)
+	}
+	if waitManagedProcessExit(mp, 5*time.Second) {
+		r.forgetManagedProc(base.ID, mp)
+		if !portFree(port) {
+			return fmt.Errorf("собственный процесс базы %q завершён, но порт %d занят другим процессом", base.Name, port)
+		}
+		if gracefulErr != nil {
+			respondLog().Warn("graceful stop базы не удался; завершён собственный процесс",
+				"base", base.Name, "err", gracefulErr)
+		}
+		return nil
+	}
+	if gracefulErr != nil {
+		return fmt.Errorf("база %q не завершилась после graceful stop (%v) и fallback", base.Name, gracefulErr)
+	}
+	return fmt.Errorf("процесс базы %q не завершился", base.Name)
+}
+
+// StopBase безопасно останавливает одну базу под lifecycle lease.
+func (r *Runner) StopBase(base *Base) error {
+	if err := r.holdStarts(); err != nil {
+		return err
+	}
+	defer r.AllowStarts()
+	return r.stopBaseHeld(base)
+}
+
+// stopBaseHeld требует уже взятый lifecycle lease.
+func (r *Runner) stopBaseHeld(base *Base) error {
+	if base == nil {
+		return nil
+	}
+	r.mu.Lock()
+	mp, tracked := r.procs[base.ID]
+	r.mu.Unlock()
+	if tracked && managedProcMatchesBase(mp, base) {
+		return r.stopTrackedHeld(base, mp)
+	}
+	st := r.RuntimeStatus(base)
+	if st.Controllable {
+		return requestControlStop(base, 0)
+	}
+	if st.Running {
+		return fmt.Errorf("база %q работает, но запущена не этим лаунчером и не поддерживает безопасную остановку; остановите её вручную один раз", base.Name)
+	}
+	if !portFree(base.Port) {
+		return fmt.Errorf("порт %d базы %q занят другим процессом; он не был остановлен", base.Port, base.Name)
+	}
+	return nil
+}
+
+// StopAll останавливает все процессы текущего Runner и все аутентифицированно
+// усыновлённые базы из snapshot. Пока операция идёт, Start отклоняется. При
+// holdStarts=true запрет остаётся после успеха: close/update должен исключить
+// запуск новой базы между проверенной остановкой и завершением launcher.
+func (r *Runner) StopAll(bases []*Base, holdStarts bool) error {
+	if err := r.holdStarts(); err != nil {
+		return err
+	}
+	return r.stopAllHeld(bases, holdStarts)
+}
+
+// stopAllHeld требует lifecycle lease и делает полный preflight до первого
+// stop. Неуправляемая/неизвестная занятость порта поэтому не оставляет уже
+// остановленные базы при отказе операции.
+func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) error {
+	type procInfo struct {
+		id   string
+		name string
+		port int
+		mp   *managedProc
+	}
+
+	r.mu.Lock()
+	trackedProcs := make(map[string]*managedProc, len(r.procs))
+	all := make([]procInfo, 0, len(r.procs))
 	for id, mp := range r.procs {
-		all = append(all, procInfo{mp.cmd.Process, mp.port})
-		delete(r.procs, id)
+		trackedProcs[id] = mp
+		all = append(all, procInfo{id: id, port: mp.port, mp: mp})
 	}
 	r.mu.Unlock()
 
-	for _, pi := range all {
-		killProc(pi.proc)
-	}
-
-	// Kill any processes still occupying the ports (survived launcher restart or are untracked).
-	seen := make(map[int]bool)
-	for _, pi := range all {
-		seen[pi.port] = true
-	}
-	for _, port := range extraPorts {
-		if !seen[port] {
-			killByPort(port)
-			seen[port] = true
+	names := make(map[string]string, len(bases))
+	for _, base := range bases {
+		if base != nil {
+			names[base.ID] = base.Name
 		}
 	}
-	// Also try port-based kill for tracked ports in case killProc was not enough.
-	for _, pi := range all {
-		killByPort(pi.port)
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var errs []error
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		errMu.Lock()
+		errs = append(errs, err)
+		errMu.Unlock()
 	}
-
-	for port := range seen {
-		if !waitPortFree(port, 3*time.Second) {
-			respondLog().Warn("порт базы не освободился после остановки", "port", port)
+	// Preflight every untracked registered base before touching any process.
+	statuses := make([]BaseRuntimeStatus, len(bases))
+	for i, base := range bases {
+		if base == nil || managedProcMatchesBase(trackedProcs[base.ID], base) {
+			continue
+		}
+		i, base := i, base
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses[i] = r.RuntimeStatus(base)
+		}()
+	}
+	wg.Wait()
+	for i, base := range bases {
+		if base == nil || managedProcMatchesBase(trackedProcs[base.ID], base) {
+			continue
+		}
+		if statuses[i].Occupied && !statuses[i].Controllable {
+			recordErr(fmt.Errorf("база %q или её порт %d заняты процессом без подтверждённого безопасного управления",
+				base.Name, base.Port))
 		}
 	}
+	if err := errors.Join(errs...); err != nil {
+		r.AllowStarts()
+		return err
+	}
+
+	for i := range all {
+		all[i].name = names[all[i].id]
+		pi := all[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			base := &Base{ID: pi.id, Name: pi.name, Port: pi.port}
+			recordErr(r.stopTrackedHeld(base, pi.mp))
+		}()
+	}
+	for i, base := range bases {
+		base := base
+		if base == nil || managedProcMatchesBase(trackedProcs[base.ID], base) || !statuses[i].Controllable {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recordErr(requestControlStop(base, 0))
+		}()
+	}
+	wg.Wait()
+	err := errors.Join(errs...)
+	if err != nil || !holdStarts {
+		r.AllowStarts()
+	}
+	return err
 }
 
-// killByPort finds and kills any process listening on the given TCP port.
-func killByPort(port int) {
-	switch runtime.GOOS {
-	case "windows":
-		// runPowerShell runs with -WindowStyle Hidden — no CMD flash.
-		_, psErr := runPowerShell(fmt.Sprintf(
-			`$c = Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue
-			 if ($c) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }`,
-			port))
-		bestEffort("завершить процесс на порту через PowerShell", psErr)
-	case "darwin":
-		target := fmt.Sprintf(":%d", port)
-		out, _ := exec.Command("lsof", "-ti", target).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-		if pid := strings.TrimSpace(string(out)); pid != "" {
-			for _, p := range strings.Fields(pid) {
-				// Результат не решающий: успех проверяется опросом порта в
-				// waitPortFree, а процесс мог завершиться и сам.
-				//nolint:gosec // G204: pid получен от lsof, не от пользователя
-				bestEffort("завершить процесс "+p, exec.Command("kill", "-9", p).Run())
-			}
-		}
-	case "linux":
-		target := fmt.Sprintf(":%d", port)
-		out, _ := exec.Command("sh", "-c", fmt.Sprintf("ss -tlnp 2>/dev/null | grep '%s '", target)).Output() //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-		for _, line := range strings.Split(string(out), "\n") {
-			if idx := strings.Index(line, "pid="); idx >= 0 {
-				rest := line[idx+4:]
-				if end := strings.IndexAny(rest, ",\n "); end > 0 {
-					//nolint:gosec // G204: pid разобран из вывода ss, не от пользователя
-					bestEffort("завершить процесс "+rest[:end],
-						exec.Command("kill", "-9", rest[:end]).Run())
-				}
-			}
-		}
+// AllowStarts снимает gate после обычного «Стоп всё» или неудачного update.
+func (r *Runner) AllowStarts() {
+	r.mu.Lock()
+	if !r.stopping {
+		r.mu.Unlock()
+		return
 	}
+	r.stopping = false
+	r.mu.Unlock()
+	r.lifecycleMu.Unlock()
 }
 
 // killProc terminates a tracked process directly — no external utilities, no CMD windows.
@@ -298,7 +728,7 @@ func killProc(p *os.Process) {
 		return
 	}
 	// Процесс мог завершиться сам между проверкой и Kill — это не ошибка
-	// вызывающего. Успех остановки подтверждается освобождением порта.
+	// вызывающего. Успех остановки подтверждается завершением этого же process generation.
 	bestEffort("завершить процесс базы", p.Kill())
 }
 
@@ -359,25 +789,14 @@ func (r *Runner) RunningIDs() []string {
 	return ids
 }
 
-// Healthy сообщает, отвечает ли на порту базы её /health — то есть база уже
-// работает, даже если запущена не этим экземпляром лаунчера (прежний
-// экземпляр, пересборка exe, ручной запуск). Используется для «усыновления»
-// живой базы вместо ошибки «порт занят».
+// Healthy сообщает свежую живость базы, включая безопасно усыновлённый процесс
+// и совместимый старый onebase с маркированным /healthz.
 func (r *Runner) Healthy(base *Base) bool {
-	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/health", base.Port))
-	if err != nil {
-		return false
-	}
-	// Закрываем литерально, а не через closeRead: bodyclose (блокирующий
-	// линтер) распознаёт только прямой resp.Body.Close() и на обёртке
-	// сообщает «response body must be closed».
-	resp.Body.Close() //nolint:errcheck,gosec // G104: тело не читаем, закрытие здесь вторично
-	return resp.StatusCode == http.StatusOK
+	return r.RuntimeStatus(base).Running
 }
 
 func (r *Runner) BaseURL(base *Base) string {
-	return fmt.Sprintf("http://localhost:%d", base.Port)
+	return fmt.Sprintf("http://127.0.0.1:%d", base.Port)
 }
 
 func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
@@ -410,17 +829,17 @@ func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
 // Restart останавливает базу (если запущена), дожидается освобождения порта и
 // запускает её заново. Используется, чтобы запущенная сессия Предприятия
 // подхватила изменения конфигурации без ручного захода в лаунчер.
-// Базы, запущенные прежним экземпляром лаунчера, в procs не числятся —
-// добиваем процесс на порту, иначе Start упрётся в «порт занят».
+// База, пережившая перезапуск launcher, останавливает себя через control API;
+// произвольный процесс на сохранённом порту никогда не завершается.
 func (r *Runner) Restart(base *Base) error {
-	r.Stop(base.ID)
-	if !portFree(base.Port) {
-		killByPort(base.Port)
+	if err := r.holdStarts(); err != nil {
+		return err
 	}
-	// Порт мог не освободиться — тогда Start ниже вернёт «порт занят», и эта
-	// ошибка дойдёт до пользователя. Отдельно проверять нечего.
-	waitPortFree(base.Port, 3*time.Second)
-	return r.Start(base)
+	defer r.AllowStarts()
+	if err := r.stopBaseHeld(base); err != nil {
+		return err
+	}
+	return r.startHeld(base)
 }
 
 // startupGraceTimeout — сколько ждать готовности процесса базы, запущенного этим
@@ -440,8 +859,8 @@ var startupGraceTimeout = 2 * time.Minute
 //
 // Для «усыновлённых» баз (запущены не этим лаунчером) действует переданный timeout.
 func (r *Runner) WaitReady(base *Base, timeout time.Duration) error {
-	url := fmt.Sprintf("http://localhost:%d/health", base.Port)
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", base.Port)
+	client := localControlClient(500 * time.Millisecond)
 	// procExited ловит и мгновенное падение — процесс, успевший завершиться
 	// между Start и WaitReady, из procs уже удалён.
 	tracked := r.IsRunning(base.ID) || r.procExited(base.ID)
@@ -450,13 +869,27 @@ func (r *Runner) WaitReady(base *Base, timeout time.Duration) error {
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
-		if err == nil {
-			// Литерально — по той же причине, что и в Healthy: bodyclose не
-			// видит закрытия через обёртку.
-			resp.Body.Close() //nolint:errcheck,gosec // G104: опрос готовности, тело не читаем
-			if resp.StatusCode == http.StatusOK {
+		if tracked {
+			// Public /health=200 недостаточно: при гонке за портом он мог прийти
+			// от другого процесса. HMAC identity доказывает именно запущенную базу.
+			expectedPID, stillTracked := r.trackedProcessPID(base.ID)
+			if stillTracked && controlIdentity(base, expectedPID) {
 				return nil
+			}
+		} else if base.ControlToken != "" {
+			// An adopted base has a persistent identity too. Do not fall back to
+			// public /health after authenticating it in baseRunning: the original
+			// process may have exited and a foreign listener may have won the port.
+			if controlIdentity(base, 0) {
+				return nil
+			}
+		} else {
+			resp, err := client.Get(healthURL)
+			if err == nil {
+				resp.Body.Close() //nolint:errcheck,gosec // readiness status only
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
 			}
 		}
 		if tracked && !r.IsRunning(base.ID) {
@@ -473,6 +906,19 @@ func (r *Runner) WaitReady(base *Base, timeout time.Duration) error {
 		return i18nerr.Errorf("база не ответила на порту %d за %s, но процесс ещё работает — вероятно, идёт первая миграция схемы БД; подождите и откройте базу ещё раз (лог: %s)", base.Port, timeout, logPath)
 	}
 	return i18nerr.Errorf("сервер не ответил на порту %d за %s", base.Port, timeout)
+}
+
+func (r *Runner) trackedProcessPID(baseID string) (int, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	mp, ok := r.procs[baseID]
+	if !ok {
+		return 0, false
+	}
+	if mp.cmd == nil || mp.cmd.Process == nil {
+		return 0, true
+	}
+	return mp.cmd.Process.Pid, true
 }
 
 // procExited сообщает, завершался ли процесс базы после последнего Start.

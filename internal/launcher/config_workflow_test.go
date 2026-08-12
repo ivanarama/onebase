@@ -60,7 +60,7 @@ func TestCfgAdminUserCreate_FirstAdminStartsConfiguratorSession(t *testing.T) {
 	}
 	var sessionCookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == "onebase_session" {
+		if c.Name == configuratorSessionCookieName {
 			sessionCookie = c
 			break
 		}
@@ -68,7 +68,7 @@ func TestCfgAdminUserCreate_FirstAdminStartsConfiguratorSession(t *testing.T) {
 	if sessionCookie == nil || sessionCookie.Value == "" {
 		t.Fatalf("first admin response did not start configurator session: %v", rec.Header())
 	}
-	user, err := repo.LookupSession(ctx, sessionCookie.Value)
+	user, err := repo.LookupSessionKind(ctx, sessionCookie.Value, auth.SessionKindConfigurator)
 	if err != nil {
 		t.Fatalf("LookupSession: %v", err)
 	}
@@ -178,6 +178,187 @@ func TestCfgAuthMiddlewareFailsClosedWhenDatabaseCannotOpen(t *testing.T) {
 	}
 	if called {
 		t.Fatal("protected configurator handler was called after auth database error")
+	}
+}
+
+func TestCfgAuthMiddlewareRejectsEnterpriseSession(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "configurator-kind.db")
+	t.Cleanup(CloseAuthPools)
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := auth.NewRepo(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	user, err := repo.Create(ctx, "kind-admin", "secret123", "Kind Admin", true)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	enterprise, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindEnterprise})
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	configurator, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindConfigurator})
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+
+	store := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	base := &Base{ID: "configurator-kind", Name: "Kind", ConfigSource: "database", DBType: "sqlite", DBPath: dbPath}
+	if err := store.save([]*Base{base}); err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{store: store, runner: NewRunner()}
+	reached := false
+	protected := h.cfgAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	enterpriseReq := requestWithBaseID(httptest.NewRequest(http.MethodGet,
+		"/bases/"+base.ID+"/configurator", nil), base.ID)
+	enterpriseReq.AddCookie(&http.Cookie{Name: configuratorSessionCookieName, Value: enterprise})
+	enterpriseRec := httptest.NewRecorder()
+	protected.ServeHTTP(enterpriseRec, enterpriseReq)
+	if reached || enterpriseRec.Code != http.StatusFound {
+		t.Fatalf("Enterprise token reached configurator: reached=%v status=%d", reached, enterpriseRec.Code)
+	}
+
+	configuratorReq := requestWithBaseID(httptest.NewRequest(http.MethodGet,
+		"/bases/"+base.ID+"/configurator", nil), base.ID)
+	configuratorReq.AddCookie(&http.Cookie{Name: configuratorSessionCookieName, Value: configurator})
+	configuratorRec := httptest.NewRecorder()
+	protected.ServeHTTP(configuratorRec, configuratorReq)
+	if !reached || configuratorRec.Code != http.StatusNoContent {
+		t.Fatalf("configurator token was rejected: reached=%v status=%d", reached, configuratorRec.Code)
+	}
+}
+
+func TestCfgExclusiveAuthRecheckClosesAuthorizationRace(t *testing.T) {
+	type testCase struct {
+		name          string
+		startWithUser bool
+		mutateInGap   func(context.Context, *storage.DB, *auth.Repo, string) error
+		wantReached   bool
+		wantStatus    int
+	}
+	cases := []testCase{
+		{
+			name: "first user created after open-access check",
+			mutateInGap: func(ctx context.Context, _ *storage.DB, repo *auth.Repo, _ string) error {
+				_, err := repo.Create(ctx, "first-admin", "secret123", "First Admin", true)
+				return err
+			},
+			wantStatus: http.StatusFound,
+		},
+		{
+			name:          "configurator session revoked in gap",
+			startWithUser: true,
+			mutateInGap: func(ctx context.Context, _ *storage.DB, repo *auth.Repo, token string) error {
+				return repo.DeleteSession(ctx, token)
+			},
+			wantStatus: http.StatusFound,
+		},
+		{
+			name:          "configurator session changed to wrong kind in gap",
+			startWithUser: true,
+			mutateInGap: func(ctx context.Context, db *storage.DB, _ *auth.Repo, _ string) error {
+				_, err := db.Exec(ctx, `UPDATE _sessions SET kind = ?`, auth.SessionKindEnterprise)
+				return err
+			},
+			wantStatus: http.StatusFound,
+		},
+		{
+			name:          "current configurator admin remains authorized",
+			startWithUser: true,
+			wantReached:   true,
+			wantStatus:    http.StatusNoContent,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			dbPath := filepath.Join(t.TempDir(), "exclusive-auth.db")
+			db, err := storage.ConnectSQLite(ctx, dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := auth.NewRepo(db)
+			if err := repo.EnsureSchema(ctx); err != nil {
+				db.Close()
+				t.Fatal(err)
+			}
+			var token string
+			if tc.startWithUser {
+				user, createErr := repo.Create(ctx, "exclusive-admin", "secret123", "Exclusive Admin", true)
+				if createErr != nil {
+					db.Close()
+					t.Fatal(createErr)
+				}
+				token, err = repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindConfigurator})
+				if err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+			}
+			db.Close()
+
+			store := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+			base := &Base{ID: "exclusive-auth-" + strings.ReplaceAll(tc.name, " ", "-"),
+				Name: "Exclusive auth", ConfigSource: "database", DBType: "sqlite", DBPath: dbPath}
+			if err := store.save([]*Base{base}); err != nil {
+				t.Fatal(err)
+			}
+			h := &handler{store: store, runner: NewRunner()}
+			t.Cleanup(CloseAuthPools)
+
+			reached := false
+			final := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusNoContent)
+			})
+			chain := h.cfgAuthExclusiveRecheckMiddleware(final)
+			chain = h.cfgDBExclusiveMiddleware(chain)
+			if tc.mutateInGap != nil {
+				next := chain
+				chain = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					gapDB, gapErr := storage.ConnectSQLite(r.Context(), dbPath)
+					if gapErr != nil {
+						t.Fatalf("open gap database: %v", gapErr)
+					}
+					gapRepo := auth.NewRepo(gapDB)
+					gapErr = tc.mutateInGap(r.Context(), gapDB, gapRepo, token)
+					gapDB.Close()
+					if gapErr != nil {
+						t.Fatalf("mutate authorization in gap: %v", gapErr)
+					}
+					next.ServeHTTP(w, r)
+				})
+			}
+			chain = h.cfgAuthMiddleware(chain)
+
+			req := requestWithBaseID(httptest.NewRequest(http.MethodPost,
+				"/bases/"+base.ID+"/configurator/backup/full-import", nil), base.ID)
+			if token != "" {
+				req.AddCookie(&http.Cookie{Name: configuratorSessionCookieName, Value: token})
+			}
+			rec := httptest.NewRecorder()
+			chain.ServeHTTP(rec, req)
+
+			if reached != tc.wantReached || rec.Code != tc.wantStatus {
+				t.Fatalf("exclusive auth result: reached=%v status=%d, want reached=%v status=%d body=%s",
+					reached, rec.Code, tc.wantReached, tc.wantStatus, rec.Body.String())
+			}
+		})
 	}
 }
 

@@ -636,11 +636,6 @@ function obInitJournalDelegates() {
       jlMove(move, parseInt(move.getAttribute('data-ob-jl-move') || '0', 10));
       return;
     }
-    var row = e.target.closest('[data-ob-journal-open-url]');
-    if (row) {
-      if (e.target.closest('a,button')) return;
-      window.location.href = row.getAttribute('data-ob-journal-open-url') || '#';
-    }
   });
   document.addEventListener('submit', function (e) {
     var form = e.target;
@@ -1320,6 +1315,15 @@ function obInitKeyboardShortcuts() {
       if (listSel() !== sel) listSetSel(sel);
       if (e.key === 'F2') listOpen(sel.dataset.openUrl);
       else listActivateRow(sel);
+      return;
+    }
+    // F9 в списке — «Создать копированием», как в 1С. В форме та же клавиша
+    // копирует строку ТЧ, но туда обработчик не доходит: obHandleDOMTableShortcut
+    // выше забирает F9 себе, когда активна таблица ТЧ.
+    if (e.key === 'F9' && sel && sel.dataset.copyUrl) {
+      e.preventDefault();
+      if (listSel() !== sel) listSetSel(sel);
+      listOpen(sel.dataset.copyUrl);
     }
   });
   document.addEventListener('keydown', obHandleListDeleteShortcut);
@@ -1421,10 +1425,13 @@ function makeTreeRow(row) {
   tr.dataset.activityHideUrl = row.activity_hide_url || '';
   tr.dataset.activityShowUrl = row.activity_show_url || '';
   tr.dataset.openUrl = row.open_url || '';
+  tr.dataset.copyUrl = row.copy_url || '';
+  tr.dataset.obDetail = row.detail || '';
   tr.setAttribute('data-ob-list-row', '');
   tr.setAttribute('tabindex', '-1');
   tr.setAttribute('aria-selected', 'false');
   var rowShortcuts = 'ArrowUp ArrowDown Enter F2';
+  if (row.copy_url) rowShortcuts += ' F9';
   if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';
   tr.setAttribute('aria-keyshortcuts', rowShortcuts);
   var cells = row.cells || [];
@@ -1486,6 +1493,11 @@ function listMenuItems(tr) {
     items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(tr.dataset.openUrl); } });
   } else {
     items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(tr.dataset.openUrl); } });
+  }
+  // «Скопировать» (F9): открывает форму создания, заполненную значениями строки.
+  // Пустой data-copy-url = нет права записи, пункт не показываем.
+  if (tr.dataset.copyUrl) {
+    items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(tr.dataset.copyUrl); } });
   }
   if (cfg.canWrite && tr.dataset.activityEnabled === '1') {
     if (tr.dataset.activityInactive === '1') {
@@ -3344,7 +3356,23 @@ window.onebaseDevice = {
     window.addEventListener('onebase:ui.оповещение', function (ev) { richToast(ev.detail); });
     window.addEventListener('onebase:ui.открытьФорму', function (ev) { openFormTab(ev.detail); });
   }
+  // BEGIN onebase-dev-system-handler (executed directly by the Node regression test)
+  function obHandleDevSystem(msg, devEnabled, state, reload) {
+    if (!devEnabled || !msg || !msg.system) return false;
+    if (msg.system === 'dev-generation') {
+      if (state.generation !== null && state.generation !== msg.data) reload();
+      state.generation = msg.data;
+      return true;
+    }
+    if (msg.system === 'dev-reload') {
+      reload();
+      return true;
+    }
+    return false;
+  }
+  // END onebase-dev-system-handler
   var sseOpened = false;
+  var devState = { generation: null };
   function connect() {
     if (typeof EventSource === 'undefined') return;
     var es = new EventSource('/ui/events');
@@ -3366,7 +3394,13 @@ window.onebaseDevice = {
       } catch (e) {
         return;
       }
-      if (!msg || !msg.name) return;
+      if (!msg) return;
+      // Only the server can create a system envelope, and the rendered page
+      // must independently opt in to dev behavior. A DSL notification with a
+      // look-alike name remains an ordinary onebase:<name> event.
+      var devEnabled = !!(document.body && document.body.getAttribute('data-ob-dev') === '1');
+      if (obHandleDevSystem(msg, devEnabled, devState, function () { location.reload(); })) return;
+      if (!msg.name) return;
       emitOnebaseEvent('onebase:' + msg.name, msg.data);
       forwardOnebaseEvent(msg);
       if (msg.name === 'уведомление' || msg.name === 'notify') {
@@ -3572,10 +3606,11 @@ function obDetailRender() {
   if (emptyEl) emptyEl.hidden = true;
   if (titleEl) titleEl.textContent = data.title || '';
 
-  var active = obDetailRead('tab') || data.tabs[0].title;
+  function tabKey(tab) { return tab.key || tab.title; }
+  var active = obDetailRead('tab') || tabKey(data.tabs[0]);
   var found = false;
-  data.tabs.forEach(function (t) { if (t.title === active) found = true; });
-  if (!found) active = data.tabs[0].title;
+  data.tabs.forEach(function (t) { if (tabKey(t) === active) found = true; });
+  if (!found) active = tabKey(data.tabs[0]);
 
   if (tabsEl) {
     tabsEl.innerHTML = '';
@@ -3583,10 +3618,10 @@ function obDetailRender() {
       data.tabs.forEach(function (tab) {
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'ob-detail-tab' + (tab.title === active ? ' active' : '');
+        btn.className = 'ob-detail-tab' + (tabKey(tab) === active ? ' active' : '');
         btn.textContent = tab.title;
         btn.addEventListener('click', function () {
-          obDetailStore('tab', tab.title);
+          obDetailStore('tab', tabKey(tab));
           obDetailRender();
         });
         tabsEl.appendChild(btn);
@@ -3597,7 +3632,7 @@ function obDetailRender() {
   if (fieldsEl) {
     fieldsEl.innerHTML = '';
     data.tabs.forEach(function (tab) {
-      if (tab.title !== active) return;
+      if (tabKey(tab) !== active) return;
       (tab.fields || []).forEach(function (f) {
         var wrap = document.createElement('div');
         wrap.className = 'ob-detail-field';
@@ -3626,8 +3661,10 @@ function obDetailRender() {
 function obDetailApplyWidth() {
   var panel = obDetailEl();
   if (!panel) return;
-  var w = parseInt(obDetailRead('w') || '320', 10);
-  if (isNaN(w)) w = 320;
+  var saved = obDetailRead('w');
+  var configured = panel.getAttribute('data-ob-default-width') || '320';
+  var w = parseInt(saved === null ? configured : saved, 10);
+  if (isNaN(w) || w === 0) w = 320;
   w = Math.max(OB_DETAIL_MIN, Math.min(OB_DETAIL_MAX, w));
   panel.style.width = w + 'px';
 }
@@ -3635,7 +3672,10 @@ function obDetailApplyWidth() {
 function obDetailToggle(on) {
   obDetailStore('on', on ? '1' : '0');
   var btn = document.querySelector('[data-ob-detail-toggle]');
-  if (btn) btn.classList.toggle('active', on);
+  if (btn) {
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
   obDetailApplyWidth();
   obDetailRender();
 }
@@ -3646,6 +3686,7 @@ function initDetailPanel() {
   var btn = document.querySelector('[data-ob-detail-toggle]');
   if (btn) {
     btn.classList.toggle('active', obDetailEnabled());
+    btn.setAttribute('aria-expanded', obDetailEnabled() ? 'true' : 'false');
     btn.addEventListener('click', function (e) {
       e.preventDefault();
       obDetailToggle(!obDetailEnabled());

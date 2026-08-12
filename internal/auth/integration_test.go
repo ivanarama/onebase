@@ -184,7 +184,7 @@ func TestMiddleware_WithUsers_RequiresSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{})
+	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindEnterprise})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

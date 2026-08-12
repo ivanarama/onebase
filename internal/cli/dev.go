@@ -38,21 +38,46 @@ var devCmd = &cobra.Command{
 }
 
 func init() {
-	devCmd.Flags().String("project", ".", "path to project directory")
-	devCmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
-	devCmd.Flags().Int("port", 8080, "HTTP server port")
-	devCmd.Flags().String("config-source", "file", "configuration source: file or database")
+	registerDevFlags(devCmd)
+}
+
+// registerDevFlags объявляет флаги команды. Отдельной функцией — чтобы тест
+// собирал аргументы дочернего процесса на тех же флагах, что и сама команда, а
+// не на своей копии, которая могла бы с ней разойтись.
+func registerDevFlags(cmd *cobra.Command) {
+	cmd.Flags().String("project", ".", "path to project directory")
+	cmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
+	cmd.Flags().String("sqlite", "", "путь к файлу базы SQLite (вместо --db)")
+	cmd.Flags().Int("port", 8080, "HTTP server port")
+	cmd.Flags().String("config-source", "file", "configuration source: file or database")
+	cmd.Flags().Bool("open", false, "открыть базу в браузере, когда сервер будет готов")
+	cmd.Flags().Bool("reload-binary", false, "пересобирать платформу и перезапускать сервер при изменении Go-кода (для разработки самой платформы)")
+	cmd.Flags().String("source", ".", "каталог дерева исходников платформы для --reload-binary (ищется go.mod вверх по дереву)")
 }
 
 func runDev(cmd *cobra.Command, _ []string) error {
+	if cmd.Flags().Changed("db") && cmd.Flags().Changed("sqlite") {
+		return errors.New("--db and --sqlite are mutually exclusive")
+	}
+	// --reload-binary уводит в супервизор: сервер поднимает не этот процесс, а
+	// пересобранный им дочерний (см. dev_reload.go).
+	if reloadBinary, _ := cmd.Flags().GetBool("reload-binary"); reloadBinary {
+		return runDevSupervisor(cmd)
+	}
+
 	devLog := oblog.Component("cli.dev")
 	dir, _ := cmd.Flags().GetString("project")
 	dsn := dsnFromFlags(cmd)
+	sqlitePath, _ := cmd.Flags().GetString("sqlite")
 	port, _ := cmd.Flags().GetInt("port")
 	configSource, _ := cmd.Flags().GetString("config-source")
+	dbType := "postgres"
+	if sqlitePath != "" {
+		dbType = "sqlite"
+	}
 
 	ctx := context.Background()
-	db, err := storage.Connect(ctx, dsn)
+	db, err := openCLIStorage(ctx, dbType, sqlitePath, dsn)
 	if err != nil {
 		return err
 	}
@@ -215,10 +240,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			appBundle = bundle
 		}
 		if initial && nextAppCfg.Backup != nil {
-			if err := backup.RegisterAutoBackup(nextAppCfg.Backup, backup.AutoTarget{
-				DSN:        dsn,
-				ProjectDir: dir,
-			}, sched); err != nil {
+			target, targetErr := devAutoBackupTarget(db, dbType, dsn, dir)
+			if targetErr != nil {
+				return targetErr
+			}
+			if err := backup.RegisterAutoBackup(nextAppCfg.Backup, target, sched); err != nil {
 				devLog.Warn("auto backup job registration failed", "err", err)
 			}
 		}
@@ -226,6 +252,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			outln("[dev] loaded")
 		} else {
 			outln("[dev] metadata/DSL/scheduled reloaded; app.yaml runtime settings require restart")
+			// Страница в браузере перечитывает себя сама: правка формы или
+			// модуля видна без F5 (browser sync, только в dev-режиме).
+			srv.PublishDevReload()
 		}
 		return nil
 	}
@@ -244,15 +273,18 @@ func runDev(cmd *cobra.Command, _ []string) error {
 
 	uiCfg := ui.Config{
 		DSN:              dsn,
-		DatabaseType:     "postgres",
-		DatabaseLocation: runtimeDatabaseLocation("postgres", dsn, ""),
+		DatabaseType:     dbType,
+		DatabaseLocation: runtimeDatabaseLocation(dbType, dsn, sqlitePath),
 		ConfigSource:     configSource,
-		ConfigLocation:   runtimeConfigLocation(configSource, dir, "postgres", dsn, ""),
+		ConfigLocation:   runtimeConfigLocation(configSource, dir, dbType, dsn, sqlitePath),
 		PlatVersion:      version.String(),
 		PlatCommit:       version.Commit(),
 		PlatDate:         version.CommitDate(),
 		PlatAuthor:       version.Author,
 		PlatLicense:      version.License,
+		// Dev-режим: браузер получает метку запуска процесса и сам обновляет
+		// страницу после перезагрузки конфигурации или перезапуска сервера.
+		Dev: true,
 	}
 	if appCfg != nil {
 		uiCfg.AppName = appCfg.Name
@@ -333,6 +365,12 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
+	listener, err := srv.Listen()
+	if err != nil {
+		return fmt.Errorf("listen on 127.0.0.1:%d: %w", port, err)
+	}
+	defer func() { _ = listener.Close() }()
+
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	defer schedCancel()
 	schedDone := make(chan struct{})
@@ -341,20 +379,32 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		sched.Start(schedCtx)
 	}()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	serveErr := make(chan error, 1)
 	go func() {
-		defer wg.Done()
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			devLog.Error("server failed", "err", err)
+		listenErr := srv.Serve(listener)
+		if errors.Is(listenErr, http.ErrServerClosed) {
+			listenErr = nil
+		} else if listenErr != nil {
+			devLog.Error("server failed", "err", listenErr)
 		}
+		serveErr <- listenErr
 	}()
 
 	outf("onebase dev running on :%d\n", port)
+	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser {
+		openInBrowser("127.0.0.1", port)
+	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
-	<-quit
+	serveResultReceived := false
+	var listenErr error
+	select {
+	case <-quit:
+	case <-srv.Done():
+	case listenErr = <-serveErr:
+		serveResultReceived = true
+	}
 	if stopWatch != nil {
 		stopWatch()
 		stopWatch = nil
@@ -362,8 +412,27 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	schedCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
-	wg.Wait()
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if !serveResultReceived {
+		listenErr = <-serveErr
+	}
 	<-schedDone
-	return nil
+	return errors.Join(listenErr, shutdownErr)
+}
+
+func devAutoBackupTarget(db *storage.DB, dbType, dsn, projectDir string) (backup.AutoTarget, error) {
+	target := backup.AutoTarget{DBType: dbType, DSN: dsn, ProjectDir: projectDir}
+	if dbType != "sqlite" {
+		return target, nil
+	}
+	if db == nil || !db.IsSQLite() {
+		return backup.AutoTarget{}, errors.New("automatic backup: SQLite database is not open")
+	}
+	// Use the exact canonical file that the lifetime lock and open handle refer
+	// to. Re-resolving the CLI spelling could follow a retargeted symlink.
+	target.SQLitePath = db.SQLitePath()
+	if target.SQLitePath == "" {
+		return backup.AutoTarget{}, errors.New("automatic backup requires file-backed SQLite; in-memory databases cannot be backed up")
+	}
+	return target, nil
 }

@@ -131,6 +131,7 @@ const cfgFoot = `{{define "cfg-foot"}}
     <div style="padding:6px 0;border-bottom:1px solid #eef;display:flex;gap:4px;flex-shrink:0">
       <input id="dbg-bp-file" type="text" placeholder="{{t $.Lang "Файл"}} (post-...)" style="flex:2;min-width:0;padding:3px 6px;border:1px solid #d0d7e3;border-radius:4px;font-size:11px">
       <input id="dbg-bp-line" type="number" placeholder="{{t $.Lang "Стр"}}" style="width:50px;padding:3px 6px;border:1px solid #d0d7e3;border-radius:4px;font-size:11px">
+      <input id="dbg-bp-cond" type="text" placeholder="{{t $.Lang "Условие"}}" title="{{t $.Lang "Останавливаться, только когда выражение истинно"}}" style="flex:2;min-width:0;padding:3px 6px;border:1px solid #d0d7e3;border-radius:4px;font-size:11px;font-family:'Cascadia Code','Fira Code',monospace">
       <button onclick="dbgManualBP()" style="background:#1a4a80;color:#fff;border:none;padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer">+</button>
     </div>
     <div id="dbg-bp-list"><div class="dbg-empty">{{t $.Lang "Нет точек останова"}}</div></div>
@@ -318,15 +319,51 @@ function T(k){ return (window.__cfgI18n[k] || k); }
 </style>
 <script>
 (function(){
-  var ICONS = {{lucideIconsJSON}};
+  // План 73: превью собирает <use> на общий спрайт. Разметку иконок сюда больше
+  // не вшиваем — множество валидных имён берём из того же datalist, что рисует
+  // подсказку, а синонимы приходят отдельной маленькой картой.
+  var ALIASES = {{lucideAliasesJSON}};
+  var SPRITE = {{lucideSpriteURL}};
+  var known = null;
+  function knownNames(){
+    if(known) return known;
+    known = Object.create(null);
+    var list = document.getElementById('lucide-icons');
+    var opts = list ? list.getElementsByTagName('option') : [];
+    for(var i=0;i<opts.length;i++) known[opts[i].value] = true;
+    return known;
+  }
   function normalizeIconName(v){
     return String(v || '').trim().toLowerCase().replace(/[ _-]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  function iconMarkup(name){
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'lucide ob-icon');
+    svg.setAttribute('width', '1em');
+    svg.setAttribute('height', '1em');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', SPRITE + '#' + name);
+    svg.appendChild(use);
+    return svg;
   }
   function setPreview(inp){
     var box = inp.parentNode && inp.parentNode.querySelector('.icon-preview');
     if(!box) return;
     var key = normalizeIconName(inp.value);
-    box.innerHTML = key ? (ICONS[key] || ICONS.square || '') : '';
+    if(ALIASES[key]) key = ALIASES[key];
+    box.textContent = '';
+    if(!key) return;
+    // Неизвестное имя показываем квадратом — как и сервер при рендере навигации,
+    // иначе битая ссылка на символ молча рисовала бы пустоту.
+    if(!knownNames()[key]) key = 'square';
+    box.appendChild(iconMarkup(key));
   }
   function wireAll(){
     var list = document.querySelectorAll('input[data-icon-preview]');

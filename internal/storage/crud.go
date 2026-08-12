@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -79,6 +80,15 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	var oldRow map[string]any
 	isNew := false
 	if existing, err := db.GetByID(ctx, entityName, id, entity); err != nil {
+		// Для аудита чтение старого значения best-effort: не прочитали — считаем
+		// объект новым, худшее последствие — неточная строка в журнале. Для гейта
+		// этапов (план 121) так нельзя: сбой чтения означал бы «объекта нет», то
+		// есть создание, а создание на начальном этапе разрешено всегда — ошибка
+		// БД открывала бы проход мимо маршрута. Поэтому у сущности с этапами
+		// «новый объект» — только настоящее отсутствие строки.
+		if entity != nil && entity.Stages != nil && !IsNotFound(errors.Unwrap(err)) && !IsNotFound(err) {
+			return fmt.Errorf("upsert %s: чтение текущего этапа: %w", entityName, err)
+		}
 		isNew = true
 	} else {
 		oldRow = existing

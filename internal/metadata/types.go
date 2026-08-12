@@ -246,6 +246,8 @@ type Entity struct {
 	// старое автоправило: картинка из image-поля, заголовок из первого поля,
 	// остальные реквизиты ниже.
 	TileView *TileView
+	// DetailPanel — состав боковой панели деталей (план 118C). Nil = автокомпоновка.
+	DetailPanel *DetailPanel
 	// FullText — реквизиты шапки, попадающие в полнотекстовый индекс (план 82).
 	// Nil (блока нет в YAML) означает умолчание: все строковые реквизиты, см.
 	// FullTextFields. Явный пустой список — объект исключён из глобального поиска.
@@ -340,6 +342,53 @@ func findEntityFieldFold(e *Entity, name string) *Field {
 		}
 	}
 	return nil
+}
+
+// DetailPanel описывает состав боковой панели деталей списка (план 118C).
+// Nil — автокомпоновка: все реквизиты шапки, картинки и размеченный текст на
+// своих закладках. Блок задаёт СОСТАВ, а не факт включения: панель включает
+// пользователь кнопкой, и молча показывать её всем нельзя.
+type DetailPanel struct {
+	Title string // реквизит-заголовок карточки; пусто — представление записи
+	Width int    // ширина по умолчанию, px; 0 — 320
+	// Fields — короткая форма без закладок, как tile_view.fields.
+	Fields []string
+	// FieldsSet отличает отсутствующий ключ fields от явного fields: [].
+	FieldsSet bool
+	Tabs      []DetailPanelTab
+	// TabsSet отличает отсутствующий ключ tabs (автокомпоновка) от tabs: [].
+	// Явная пустая раскладка не должна fail-open'ом показывать все поля.
+	TabsSet bool
+}
+
+// DetailPanelTab — закладка панели с явным составом.
+type DetailPanelTab struct {
+	Name   string
+	Titles map[string]string
+	Fields []string
+	// Reserved for plan 118D. Set flags preserve even explicit empty/false YAML
+	// declarations so validation can reject unsupported promises instead of
+	// silently ignoring them.
+	TableParts     []string
+	TablePartsSet  bool
+	Attachments    bool
+	AttachmentsSet bool
+}
+
+const (
+	DetailPanelDefaultWidth = 320
+	DetailPanelMinWidth     = 220
+	DetailPanelMaxWidth     = 640
+)
+
+// DisplayName возвращает заголовок закладки с учётом языка.
+func (t DetailPanelTab) DisplayName(lang string) string {
+	if lang != "" {
+		if v, ok := t.Titles[lang]; ok && v != "" {
+			return v
+		}
+	}
+	return t.Name
 }
 
 // TileView описывает, какие реквизиты использовать в плиточной карточке списка.

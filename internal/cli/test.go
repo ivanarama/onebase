@@ -149,10 +149,22 @@ func openDBForIsolation(ctx context.Context, bc *baseConfig, isolation string) (
 		return nil, "", nil, fmt.Errorf("--isolation schema доступна только на PostgreSQL (для SQLite используйте transaction или :memory:)")
 	}
 	schema := storage.NewEphemeralSchemaName()
+	// ConnectWithSchema deliberately bypasses baseConfig.OpenDB, so guard the
+	// public restore marker and acquire its lifetime lease before that connector
+	// performs any database-wide setup or creates the ephemeral schema.
+	guard, guardErr := openCLIStorage(ctx, "postgres", "", bc.DSN)
+	if guardErr != nil {
+		return nil, "", nil, guardErr
+	}
 	db, err = storage.ConnectWithSchema(ctx, bc.DSN, schema)
 	if err != nil {
+		guard.Close()
 		return nil, "", nil, err
 	}
+	db.AddCloseHook(func() error {
+		guard.Close()
+		return nil
+	})
 	if err = db.CreateSchema(ctx, schema); err != nil {
 		db.Close()
 		return nil, "", nil, fmt.Errorf("создать временную схему %s: %w", schema, err)

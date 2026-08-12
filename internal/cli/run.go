@@ -12,11 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/api"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/configdb"
+	"github.com/ivantit66/onebase/internal/dblock"
 	"github.com/ivantit66/onebase/internal/devserver"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/extform"
@@ -51,6 +53,9 @@ func init() {
 	// hot reload .os/.yaml без перезапуска. По умолчанию off,
 	// для прода обычно не нужен. Включается флагом --watch.
 	runCmd.Flags().Bool("watch", false, "reload project metadata, DSL and scheduled jobs when configuration changes")
+	// Открытие браузера — по явному флагу: `run` запускают и службой, и из
+	// скриптов, где открывать вкладку некому и незачем.
+	runCmd.Flags().Bool("open", false, "открыть базу в браузере, когда сервер будет готов")
 	// Демо-режим через флаги — работает независимо от источника конфигурации.
 	// Удобно для --config-source database, где app.yaml не лежит файлом и
 	// блок demo: некуда вписать. Флаги имеют приоритет над app.yaml.
@@ -59,7 +64,177 @@ func init() {
 	runCmd.Flags().String("demo-message", "", "текст баннера демо-режима")
 }
 
-func runServer(cmd *cobra.Command, _ []string) error {
+func acquireServerDatabaseLease(ctx context.Context, dbType, sqlitePath, dsn string, shared bool) (dblock.Lease, string, error) {
+	if dbType == "sqlite" {
+		if sqlitePath == "" {
+			return nil, "", fmt.Errorf("--sqlite path is required for sqlite databases")
+		}
+		if shared {
+			return dblock.AcquireSQLiteSharedTarget(sqlitePath)
+		}
+		return dblock.AcquireSQLiteTarget(sqlitePath)
+	}
+	if shared {
+		lease, err := dblock.AcquirePostgresShared(ctx, dsn)
+		return lease, sqlitePath, err
+	}
+	lease, err := dblock.AcquirePostgres(ctx, dsn)
+	return lease, sqlitePath, err
+}
+
+// scheduledDemoResetRequest is returned by one server generation only after
+// its HTTP listener and scheduler have stopped. The outer runServer loop then
+// lets the generation's deferred DB/lease cleanup run before performing the
+// destructive reset under an exclusive database lifetime lease.
+type scheduledDemoResetRequest struct {
+	dbType     string
+	dsn        string
+	sqlitePath string
+	filesDir   string
+	backupPath string
+	run        scheduler.RunInfo
+}
+
+func (r *scheduledDemoResetRequest) Error() string {
+	return "scheduled demo reset requested"
+}
+
+func updateScheduledDemoResetRun(request *scheduledDemoResetRequest, db *storage.DB, runErr error) error {
+	if request == nil || request.run.ID == uuid.Nil || request.run.StartedAt.IsZero() {
+		return nil
+	}
+	status := "success"
+	errText := ""
+	if runErr != nil {
+		status = "error"
+		errText = runErr.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return db.UpdateScheduledRun(ctx, request.run.ID, status, "", errText, time.Since(request.run.StartedAt).Milliseconds())
+}
+
+func recordScheduledDemoResetResult(request *scheduledDemoResetRequest, runErr error) error {
+	if request == nil || request.run.ID == uuid.Nil || request.run.StartedAt.IsZero() {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lease, sqlitePath, err := acquireServerDatabaseLease(ctx, request.dbType, request.sqlitePath, request.dsn, true)
+	if err != nil {
+		return fmt.Errorf("record scheduled demo reset result lock: %w", err)
+	}
+	var db *storage.DB
+	if request.dbType == "sqlite" {
+		db, err = storage.ConnectSQLite(ctx, sqlitePath)
+	} else {
+		db, err = storage.Connect(ctx, request.dsn)
+	}
+	if err != nil {
+		return errors.Join(fmt.Errorf("record scheduled demo reset result open database: %w", err), lease.Close())
+	}
+	completionErr := updateScheduledDemoResetRun(request, db, runErr)
+	db.Close()
+	return errors.Join(completionErr, lease.Close())
+}
+
+func warnScheduledDemoResetResult(request *scheduledDemoResetRequest, runErr error) {
+	if err := recordScheduledDemoResetResult(request, runErr); err != nil {
+		oblog.Component("cli.run").Warn("scheduled demo reset history remains accepted because its actual result could not be recorded", "err", err)
+	}
+}
+
+func performScheduledDemoReset(ctx context.Context, request *scheduledDemoResetRequest) (*backup.ImportReport, error) {
+	if request == nil {
+		return nil, errors.New("scheduled demo reset request is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if request.filesDir == "" {
+		filesErr := errors.New("scheduled demo reset files directory is empty")
+		warnScheduledDemoResetResult(request, filesErr)
+		return nil, filesErr
+	}
+
+	lease, sqlitePath, err := acquireServerDatabaseLease(ctx, request.dbType, request.sqlitePath, request.dsn, false)
+	if err != nil {
+		lockErr := fmt.Errorf("scheduled demo reset exclusive database lock: %w", err)
+		warnScheduledDemoResetResult(request, lockErr)
+		return nil, lockErr
+	}
+
+	var db *storage.DB
+	if request.dbType == "sqlite" {
+		// Open the exact canonical target returned with the exclusive lease. In
+		// particular, do not resolve a registry symlink again after locking it.
+		db, err = storage.ConnectSQLite(ctx, sqlitePath)
+	} else {
+		db, err = storage.Connect(ctx, request.dsn)
+	}
+	if err != nil {
+		openErr := errors.Join(err, lease.Close())
+		warnScheduledDemoResetResult(request, openErr)
+		return nil, openErr
+	}
+	db.SetFilesDir(request.filesDir)
+
+	report, resetErr := backup.DemoReset(ctx, db, request.backupPath)
+	// The database pool must be gone before another shared/exclusive lifetime
+	// lease can observe this database as available.
+	db.Close()
+	operationErr := errors.Join(resetErr, lease.Close())
+	// Refine accepted -> success only after the destructive lease was cleanly
+	// released. On any operation/cleanup error, do not reopen the database ahead
+	// of startup restore-journal recovery; accepted remains truthful and the
+	// concrete failure is logged by the outer loop.
+	if operationErr == nil {
+		warnScheduledDemoResetResult(request, nil)
+	}
+	return report, operationErr
+}
+
+func runServer(cmd *cobra.Command, args []string) error {
+	runLog := oblog.Component("cli.run")
+	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	var browserOnce sync.Once
+	for {
+		err := runServerGeneration(ctx, cmd, args, &browserOnce)
+		var request *scheduledDemoResetRequest
+		if !errors.As(err, &request) {
+			return err
+		}
+		if ctx.Err() != nil {
+			if recordErr := recordScheduledDemoResetResult(request, errors.New("scheduled demo reset canceled by process signal")); recordErr != nil {
+				runLog.Error("record canceled scheduled demo reset failed", "err", recordErr)
+			}
+			return nil
+		}
+
+		report, resetErr := performScheduledDemoReset(ctx, request)
+		if resetErr != nil {
+			// A malformed backup or a competing consumer must not turn one failed
+			// scheduled reset into permanent demo-site downtime. The next server
+			// generation also performs restore-journal recovery before serving.
+			runLog.Error("scheduled demo reset failed; restarting server without reporting reset success", "err", resetErr)
+			if ctx.Err() != nil {
+				return nil
+			}
+			continue
+		}
+		rows := 0
+		for _, count := range report.Tables {
+			rows += count
+		}
+		runLog.Info("scheduled demo reset completed; restarting server", "tables", len(report.Tables), "rows", rows)
+		if ctx.Err() != nil {
+			return nil
+		}
+	}
+}
+
+func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, browserOnce *sync.Once) (resultErr error) {
 	runLog := oblog.Component("cli.run")
 	baseID, _ := cmd.Flags().GetString("id")
 
@@ -82,6 +257,15 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		configSource = base.ConfigSource
 		dbType = base.DBType
 		sqlitePath = base.DBPath
+		// Registry entries created before db_type was introduced used an empty
+		// DB field for SQLite. Keep the lock target identical to runner.runArgs
+		// and launcher.OpenDB, including their deterministic fallback path.
+		if dbType == "" && dsn == "" {
+			dbType = "sqlite"
+			if sqlitePath == "" {
+				sqlitePath = filepath.Join(os.TempDir(), "onebase_"+base.ID+".db")
+			}
+		}
 		outf("Запуск базы: %s\n", base.Name)
 	} else {
 		dir, _ = cmd.Flags().GetString("project")
@@ -94,28 +278,117 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	ctx := context.Background()
 	var (
-		db  *storage.DB
-		err error
+		db            *storage.DB
+		databaseLease dblock.Lease
+		poolCfg       storage.PoolConfig
+		err           error
 	)
-	if dbType == "sqlite" {
-		if sqlitePath == "" {
-			return fmt.Errorf("--sqlite path is required for sqlite databases")
+	acquireDatabaseLease := func(shared bool) (dblock.Lease, error) {
+		lease, canonical, leaseErr := acquireServerDatabaseLease(ctx, dbType, sqlitePath, dsn, shared)
+		if leaseErr == nil && dbType == "sqlite" {
+			sqlitePath = canonical
 		}
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
-	} else {
-		var poolCfg storage.PoolConfig
-		if configSource != "database" {
-			// app.yaml lives on disk in file mode → read pool sizing before we
-			// open the pool. Under --config-source=database it lives in the DB
-			// (which needs this very connection), so size the pool via the DSN.
-			if ac, e := project.LoadConfig(dir); e == nil && ac.DB != nil {
-				poolCfg = storage.PoolConfig{MaxConns: ac.DB.PoolMaxConns, MinConns: ac.DB.PoolMinConns}
-			}
-		}
-		db, err = storage.ConnectWithPool(ctx, dsn, poolCfg)
+		return lease, leaseErr
 	}
+	openDatabase := func(cfg storage.PoolConfig) (*storage.DB, error) {
+		if dbType == "sqlite" {
+			return storage.ConnectSQLite(ctx, sqlitePath)
+		}
+		return storage.ConnectWithPool(ctx, dsn, cfg)
+	}
+
+	// The normal start path is a database consumer, not a destructive writer.
+	// Keep a shared lease continuously from marker inspection through serving so
+	// configurator/CLI pools can coexist and no restore can start in between.
+	// Upgrade to an exclusive recovery phase only when a durable marker proves
+	// that startup recovery is actually required.
+	databaseLease, err = acquireDatabaseLease(true)
+	if err != nil {
+		return fmt.Errorf("database lifetime lock: %w", err)
+	}
+	// Registered before db.Close below: LIFO cleanup closes all application
+	// connections before publishing the database as available to another process.
+	defer func() {
+		if closeErr := databaseLease.Close(); closeErr != nil {
+			wrapped := fmt.Errorf("release database lifetime lock: %w", closeErr)
+			var resetRequest *scheduledDemoResetRequest
+			if errors.As(resultErr, &resetRequest) {
+				// Never preserve the typed reset request across an uncertain shared
+				// lease release: errors.As in the outer loop is the reset permit.
+				resultErr = wrapped
+			} else {
+				resultErr = errors.Join(resultErr, wrapped)
+			}
+			runLog.Warn("database lifetime lock release failed", "err", closeErr)
+		}
+	}()
+
+	recoverRestore := func(recoveryDB *storage.DB) error {
+		destinations := []string{recoveryDB.FilesDir()}
+		if configSource != "database" {
+			destinations = append(destinations, dir)
+		}
+		if recoveryErr := backup.RecoverPendingRestore(ctx, recoveryDB, destinations...); recoveryErr != nil {
+			return fmt.Errorf("recover interrupted restore: %w", recoveryErr)
+		}
+		return nil
+	}
+	probeRestoreMarker := func() (bool, error) {
+		if dbType == "sqlite" {
+			return backup.HasPendingRestoreSQLite(ctx, sqlitePath)
+		}
+		return backup.HasPendingRestorePostgres(ctx, dsn)
+	}
+	// Do not use storage.Connect for this preflight: normal SQLite setup changes
+	// journal mode and normal PostgreSQL setup performs compatibility DDL. A
+	// pending restore must be detected before either kind of mutation occurs.
+	markerPending, err := probeRestoreMarker()
+	if err != nil {
+		return fmt.Errorf("inspect restore recovery marker read-only: %w", err)
+	}
+
+	if markerPending {
+		if closeErr := databaseLease.Close(); closeErr != nil {
+			return fmt.Errorf("release shared database lifetime lock for recovery: %w", closeErr)
+		}
+		exclusiveLease, leaseErr := acquireDatabaseLease(false)
+		if leaseErr != nil {
+			return fmt.Errorf("database recovery requires exclusive lifetime lock: %w", leaseErr)
+		}
+		databaseLease = exclusiveLease
+
+		recoveryDB, openErr := openDatabase(storage.PoolConfig{})
+		if openErr != nil {
+			return openErr
+		}
+		recoveryErr := recoverRestore(recoveryDB)
+		recoveryDB.Close()
+		if recoveryErr != nil {
+			return recoveryErr
+		}
+		// No database connection may span the exclusive-to-shared handoff. A
+		// competing restore can win the conversion gap on platforms that cannot
+		// atomically downgrade; the final marker check below then observes its
+		// completed generation or fails closed on its recovery journal.
+		if err := databaseLease.Downgrade(ctx); err != nil {
+			return fmt.Errorf("database lifetime lock downgrade: %w", err)
+		}
+		markerPending, err = probeRestoreMarker()
+		if err != nil {
+			return fmt.Errorf("recheck restore recovery marker read-only: %w", err)
+		}
+		if markerPending {
+			return fmt.Errorf("%w: marker remains after startup recovery", backup.ErrRestoreRecoveryRequired)
+		}
+	}
+
+	if dbType != "sqlite" && configSource != "database" {
+		if ac, loadErr := project.LoadConfig(dir); loadErr == nil && ac.DB != nil {
+			poolCfg = storage.PoolConfig{MaxConns: ac.DB.PoolMaxConns, MinConns: ac.DB.PoolMinConns}
+		}
+	}
+	db, err = openDatabase(poolCfg)
 	if err != nil {
 		return err
 	}
@@ -361,6 +634,9 @@ func runServer(cmd *cobra.Command, _ []string) error {
 	if err := sched.LoadJobs(proj.ScheduledJobs); err != nil {
 		return fmt.Errorf("scheduler: %w", err)
 	}
+	demoResetRequests := make(chan *scheduledDemoResetRequest, 1)
+	var demoResetRequestMu sync.Mutex
+	demoResetRequested := false
 
 	// Флаги --demo-* включают демо-режим независимо от источника конфига и
 	// имеют приоритет над блоком demo: в app.yaml.
@@ -414,15 +690,44 @@ func runServer(cmd *cobra.Command, _ []string) error {
 			// Важно для --config-source database (dir = "."), где иначе абсолютный
 			// путь превратился бы в относительный.
 			if filepath.IsAbs(appCfg.Demo.ResetBackup) {
-				backupPath = appCfg.Demo.ResetBackup
+				backupPath = filepath.Clean(appCfg.Demo.ResetBackup)
 			} else {
-				backupPath = filepath.Join(dir, appCfg.Demo.ResetBackup)
+				backupPath, err = filepath.Abs(filepath.Join(dir, appCfg.Demo.ResetBackup))
+				if err != nil {
+					return fmt.Errorf("resolve demo reset backup path: %w", err)
+				}
 			}
 		}
-		dbRef := db // capture
 		if err := sched.RegisterGoJob("DemoReset", "Сброс демо-данных", schedule, func(ctx context.Context) error {
-			_, err := backup.DemoReset(ctx, dbRef, backupPath)
-			return err
+			if backupPath == "" {
+				return nil
+			}
+			runInfo, ok := scheduler.CurrentRun(ctx)
+			if !ok {
+				return errors.New("scheduled demo reset run identity is unavailable")
+			}
+			request := &scheduledDemoResetRequest{
+				dbType:     dbType,
+				dsn:        dsn,
+				sqlitePath: sqlitePath,
+				filesDir:   db.FilesDir(),
+				backupPath: backupPath,
+				run:        runInfo,
+			}
+			demoResetRequestMu.Lock()
+			defer demoResetRequestMu.Unlock()
+			if demoResetRequested {
+				return errors.New("scheduled demo reset is already pending")
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case demoResetRequests <- request:
+				demoResetRequested = true
+				// Finalize the scheduler callback as accepted, never as a false
+				// reset success. The offline phase later refines this same row.
+				return scheduler.Accepted("offline demo reset request accepted")
+			}
 		}); err != nil {
 			runLog.Warn("demo reset job registration failed", "err", err)
 		}
@@ -575,37 +880,117 @@ func runServer(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	listener, err := srv.Listen()
+	if err != nil {
+		return fmt.Errorf("listen on %s:%d: %w", host, port, err)
+	}
+	defer func() { _ = listener.Close() }()
+
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	defer schedCancel()
-	schedDone := make(chan struct{})
+	schedDone := make(chan error, 1)
+	schedReady := make(chan struct{})
 	go func() {
-		defer close(schedDone)
-		sched.Start(schedCtx)
+		schedDone <- sched.RunReady(schedCtx, schedReady)
 	}()
+	select {
+	case <-schedReady:
+	case startErr := <-schedDone:
+		if startErr == nil {
+			return nil
+		}
+		return fmt.Errorf("start scheduler: %w", startErr)
+	}
 
 	outf("onebase running on %s:%d\n", host, port)
 	if srv.H2CEnabled() {
 		outln("  HTTP/2 без TLS (h2c) включён для апстрима (ONEBASE_H2C) — см. docs/reverse-proxy.md")
 	}
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(quit)
+	serveErr := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			runLog.Error("server failed", "err", err)
+		listenErr := srv.Serve(listener)
+		if errors.Is(listenErr, http.ErrServerClosed) {
+			listenErr = nil
+		} else if listenErr != nil {
+			runLog.Error("server failed", "err", listenErr)
 		}
+		serveErr <- listenErr
 	}()
-	<-quit
+	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser && browserOnce != nil {
+		browserOnce.Do(func() { openInBrowser(host, port) })
+	}
+	var listenErr error
+	var demoResetRequest *scheduledDemoResetRequest
+	serveResultReceived := false
+	terminalStop := false
+	select {
+	case <-ctx.Done():
+		terminalStop = true
+	case <-srv.Done():
+		terminalStop = true
+		// Аутентифицированный launcher попросил базу завершиться. Дальше идёт
+		// тот же graceful shutdown, что и для SIGTERM: задания и HTTP-запросы
+		// получают время закончить работу, база не убивается по номеру порта.
+	case listenErr = <-serveErr:
+		serveResultReceived = true
+		terminalStop = true
+		// Bind/listener failure is terminal too. Waiting only for a signal here
+		// would leave a headless process holding the DB and scheduler forever.
+	case demoResetRequest = <-demoResetRequests:
+		// The Go job has only handed off a request. The destructive work starts
+		// after this generation fully stops and all its deferred cleanup runs.
+	}
+	// Permanently reject cron callbacks and HTTP RunNow requests before either
+	// drain starts. Existing jobs still have live UI/webhook dependencies while
+	// the scheduler waits for them; finishShutdown cannot reopen this seal.
+	sched.BeginQuiesce()
 	if stopWatch != nil {
 		stopWatch()
 		stopWatch = nil
 	}
 	schedCancel()
+	schedulerErr := <-schedDone
+	if demoResetRequest == nil {
+		// The terminal event may have won the first select concurrently with the
+		// handoff. Scheduler drain proves no later enqueue can still appear.
+		select {
+		case demoResetRequest = <-demoResetRequests:
+		default:
+		}
+	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	err = srv.Shutdown(shutdownCtx)
-	<-schedDone
-	return err
+	if !serveResultReceived {
+		// Shutdown closes the listener, so ListenAndServe must now report. Waiting
+		// here also captures a listener failure that raced with the reset request.
+		listenErr = <-serveErr
+	}
+	shutdownErr := errors.Join(listenErr, err, schedulerErr)
+	if demoResetRequest == nil {
+		return shutdownErr
+	}
+	abortReset := func(cause error) error {
+		return updateScheduledDemoResetRun(demoResetRequest, db, cause)
+	}
+	if terminalStop {
+		return errors.Join(shutdownErr, abortReset(errors.New("scheduled demo reset canceled because server is stopping")))
+	}
+	if shutdownErr != nil {
+		abortErr := errors.New("scheduled demo reset aborted because server shutdown was not clean")
+		return errors.Join(shutdownErr, abortReset(errors.Join(abortErr, shutdownErr)))
+	}
+	// A signal or authenticated launcher quit always wins over an overlapping
+	// cron reset, even if the reset request happened to win the first select.
+	if ctx.Err() != nil {
+		return abortReset(errors.New("scheduled demo reset canceled by process signal"))
+	}
+	select {
+	case <-srv.Done():
+		return abortReset(errors.New("scheduled demo reset canceled by launcher stop request"))
+	default:
+	}
+	return demoResetRequest
 }
 
 // configReloadInterval — период опроса истории версий конфигурации в

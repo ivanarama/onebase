@@ -89,15 +89,13 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 (Redis/NATS-hub + общий стор сессий) и **P3-2** полный RLS против реальных данных —
 браться при упоре в потолок вертикали, каждому нужен свой план.
 
-### Не начато вообще (5)
+### Не начато вообще (4)
 
 | № | Фича | Эстимейт | Проверка |
 |---|---|---|---|
 | **84** | Enterprise-auth (TOTP/OIDC/LDAP) | 7–10 дней | грепы `totp|oidc|ldap|2fa` по `internal/`,`cmd/` — пусто |
 | **60B** | Marketplace конфигураций | — | нет `internal/marketplace`, `onebase install`; часть A (версионирование) закрыта |
-| **73** | Lucide через SVG-спрайт | — | сам план отложен «до дефицита иконок» |
 | **46** | PWA в App Store / Google Play | — | нужен `/.well-known/assetlinks.json`; обёртки вне репозитория |
-| — | `dev-workflow-improvements` | ~3–4 дня | нет hot reload Go, `--open`, browser sync |
 
 ## Реализованные этапы
 
@@ -275,7 +273,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 90 | [90-inbound-intake-idempotency-dlq.md](90-inbound-intake-idempotency-dlq.md) | Идемпотентность входящих, карантин/DLQ, replay | 🟡 90A–90C закрыты. Осталось 90D: `dlq.max_retries`/`dlq.on` парсятся и валидируются, но **нигде не применяются** (авто-повторов нет, replay только вручную); нет TTL-очистки `_intake_log`; `internal/intake` не переиспользован в `internal/exchange` |
 | 91 | [91-agent-protocol-generation.md](91-agent-protocol-generation.md) | Протокол проверки результата в ai-guide (AGENTS.md) | ✅ Реализовано |
 | 92 | [92-platform-selfupdate.md](92-platform-selfupdate.md) | Автообновление платформы: каналы build/stable, кнопка в лаунчере, сетевой `onebase update` | ✅ Реализовано (92A–92C). Отличия от плана: страница `/updates` вместо модалки; попутно исправлено самообновление на Windows (`SwapBinary` копировала бинарь вместо переименования). Не сделано осознанно: подпись артефактов, дельта-обновления |
-| 99 | [99-debugger.md](99-debugger.md) | Отладчик DSL (точки останова, шаги, стек) — `internal/debugger/*` | 🟡 Ядро закрыто. Осталось: условные точки останова (`Condition` сохраняется, но в `CheckBreakpoint` не вычисляется), автосохранение точек между сессиями, F9/F5, правка значений переменных |
+| 99 | [99-debugger.md](99-debugger.md) | Отладчик DSL (точки останова, шаги, стек) — `internal/debugger/*` | 🟡 Ядро закрыто, **условные точки останова закрыты 2026-08-12** (вычисление условия в окружении оператора, отказ-с-остановкой на сломанном условии, проверка синтаксиса при установке, Alt+клик в конфигураторе). Осталось: автосохранение точек между сессиями, F9/F5, правка значений переменных |
 | 100 | [100-ai-assistant-actions.md](100-ai-assistant-actions.md) | Действия ИИ-ассистента в UI — `ui/ai_actions.go` | ✅ Реализовано |
 | 104 | [104-catalog-object-tableparts.md](104-catalog-object-tableparts.md) | Табличные части и хук `ПриЗаписи` у объектов справочников | ✅ Реализовано |
 | 105 | [105-dsl-attachments.md](105-dsl-attachments.md) | Вложения из DSL | ✅ Реализовано |
@@ -292,10 +290,10 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 115 | [115-process-hardening.md](115-process-hardening.md) | Гейты, чокпоинты инвариантов, матрица диалектов (по итогам ревью недели) | ✅ Реализовано |
 | 116 | [116-bug-report.md](116-bug-report.md) | «Сообщить об ошибке»: код инцидента + отчёт одним файлом (лаунчер / Предприятие / `onebase support`) | ✅ Реализовано 2026-08-07 (116A–116E). Контакт платформы `version.SupportContact` пока пуст |
 | 117 | [117-standard-code-and-base-prefix.md](117-standard-code-and-base-prefix.md) | Стандартный «Код» справочников, единая точка автонумерации, префикс базы для кодов и номеров | ⬜ Проект 2026-08-08 (issue #658), не начато. Этап 117A (фиксы конвертера 1С) берётся отдельно |
-| 118 | [118-list-detail-panel.md](118-list-detail-panel.md) | Боковая панель деталей активной записи списка (+ закладки внутри панели) | 🟡 118A и 118B сделаны (панель с автокомпоновкой в списках, журналах и регистрах сведений); 118C (`detail_panel:`) и 118D (тяжёлые вкладки) не начаты |
+| 118 | [118-list-detail-panel.md](118-list-detail-panel.md) | Боковая панель деталей активной записи списка (+ закладки внутри панели) | 🟡 118A–118C сделаны (панель, автокомпоновка, блок `detail_panel:`); 118D (тяжёлые вкладки) не начат |
 | 119 | [119-inforeg-write-api.md](119-inforeg-write-api.md) | Программная запись регистров сведений из DSL (менеджер записи, набор записей) | 🟡 119A и 119B сделаны; 119C (линт и справка) не начат |
 | 120 | [120-websocket-client.md](120-websocket-client.md) | WebSocket-клиент: исходящее соединение как транспорт приёмки (`transport: ws`) | ⬜ Проект 2026-08-11 (issue #738), не начато. Есть открытые вопросы к автору заявки |
-| 121 | [121-stages.md](121-stages.md) | Этапы: декларативные состояния сущности, гейт переходов в обеих точках записи storage, история переходов, отчёт «где застряло», схема на ECharts | ✅ Реализовано 2026-08-12. Гейт стоит в обеих точках записи storage (`upsert` и `UpsertVersioned`), история `_stage_history` пишется безусловно и в той же транзакции, отчёт «где застряло» и схема маршрута — в `/ui/stages`. Нового вида объекта метаданных не завёл — блок `stages` у существующей сущности |
+| 121 | [121-stages.md](121-stages.md) | Этапы: декларативные состояния сущности, гейт переходов в точках записи storage, история переходов, отчёт «где застряло», схема на ECharts | 🟡 Базовый срез сделан 2026-08-12 (PR #772): декларация `stages`, гейт в обеих обычных точках записи (`upsert` и `UpsertVersioned`), `_stage_history` в той же транзакции, отчёт `/ui/stages` со схемой, check/describe/impact/ai-guide и пример. НЕ сделано из ужесточённой редакции плана (PR #768): сериализация read→check→write под блокировкой (конкурентные записи могут пройти гейт оба), writer для `SyncAllPredefined`, fail-closed чтение старого значения, причинный `event_no`, отдельный storage-writer обмена |
 
 ### Направление Н — планы вне таблиц (сведено аудитом 2026-08-02)
 
@@ -323,7 +321,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 75 | [75-telephony-cti.md](75-telephony-cti.md) | 🟡 Режим «монитор» закрыт целиком; опциональный WebRTC-софтфон (вендоринг SIP.js, `/vendor/sip/*`) не начат, нет регламента `СверкаДлительности` |
 | 31 | [31-home-page-widgets.md](31-home-page-widgets.md) | 🟡 Из фазы 4 осталось: персональная стартовая страница, виджеты `report` и `text`, переключатель периода страницы, Monaco для YAML виджета, проверка битых ссылок |
 | 30 | [30-universal-backup.md](30-universal-backup.md) | 🟡 Движок и UI готовы; нет флагов `--full`/`--binary` у `onebase backup` и автодетекта `format=universal` у `restore`; `manifest.json` пишется, но при импорте не сверяется; нет автотеста PG↔SQLite |
-| — | [dev-workflow-improvements.md](dev-workflow-improvements.md) | ⬜ Не начато (см. таблицу «не начато») |
+| — | [dev-workflow-improvements.md](dev-workflow-improvements.md) | ✅ Реализовано: `--open` у `dev`/`run`, browser sync через SSE, пересборка Go-кода с перезапуском (`dev --reload-binary`), `--sqlite` у `dev` |
 
 Закрыты целиком (проверено по коду): `06-chart-object`, `32-familybg-conversion`,
 `34-dsl-real-world`, `41-ai-dev-tools`, `48-slickgrid-tableparts`,
@@ -331,6 +329,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 `52-syntax-assistant(-impl)`, `55-impl-htmltemplate-embed*`, `57-stage*`,
 `59-stage1/stage2-impl` (с косметическими follow-up'ами внутри),
 `63-issues-48-49-fixes`, `71-visual-form-designer`, `72-form-events-audit`,
+`73-lucide-sprite` (весь Lucide спрайтом, курируемый набор из 44 иконок убран),
 `77-dsl-scope-isolation` (фаза 2 — сделать строгую видимость дефолтом — открыта),
 `78-multi-session-*`, `86-data-exchange-demo`, `sqlite-support`.
 

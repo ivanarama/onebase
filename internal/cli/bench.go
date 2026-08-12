@@ -61,14 +61,14 @@ func runBench(cmd *cobra.Command, _ []string) error {
 	)
 	switch {
 	case dsn != "":
-		db, err = storage.Connect(ctx, dsn)
+		db, err = openCLIStorage(ctx, "postgres", "", dsn)
 		dbKind = "postgres"
 	case sqlitePath != "":
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
+		db, err = openCLIStorage(ctx, "sqlite", sqlitePath, "")
 		dbKind = "sqlite"
 	default:
 		tmp := filepath.Join(os.TempDir(), fmt.Sprintf("onebase-bench-%d.db", time.Now().UnixNano()))
-		db, err = storage.ConnectSQLite(ctx, tmp)
+		db, err = openCLIStorage(ctx, "sqlite", tmp, "")
 		dbKind = "sqlite(temp)"
 		defer removeTemp(tmp)
 	}

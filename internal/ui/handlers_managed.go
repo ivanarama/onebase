@@ -57,7 +57,20 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	// шаблон отрисовал скрытые поля (#618). Только для новой записи: у
 	// существующей is_folder/parent_id восстанавливает restoreUnsubmittedFields.
 	isNew, _ := data["IsNew"].(bool)
-	if isFolder, parentID := hierarchyCreateHints(r, entity, isNew); isFolder || parentID != "" {
+	isFolder, parentID := hierarchyCreateHints(r, entity, isNew)
+	// Создание копированием (?copy=): признак группы и родитель приходят не
+	// query-параметром, а значениями, снятыми с оригинала (issue #762). Без
+	// этого копия группы записалась бы элементом в корне — тот же #618, только
+	// источник значений другой.
+	if isNew && entity != nil && entity.Hierarchical {
+		if vals, ok := data["Values"].(map[string]string); ok {
+			isFolder = isFolder || vals["is_folder"] == "true"
+			if parentID == "" {
+				parentID = strings.TrimSpace(vals["parent_id"])
+			}
+		}
+	}
+	if isFolder || parentID != "" {
 		if isFolder {
 			data["NewIsFolder"] = true
 		}

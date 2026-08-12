@@ -143,6 +143,7 @@ src/*.os                модули DSL (логика объектов, обр�
 | ` + "`onebase mcp --project <dir>`" + ` | MCP stdio server для внешних AI-клиентов. Read-only по умолчанию; mutating tools включаются точечно (` + "`--allow-refactor-write`" + `, ` + "`--allow-config-rollback`" + `, ` + "`--allow-fmt-write`" + `, ` + "`--allow-procrun`" + `) или общим ` + "`--allow-write`" + `. |
 | ` + "`onebase procrun --project <dir> --proc <Имя> --set К=З --file П=путь`" + ` | Запуск обработки офлайн, печать ` + "`Сообщить()`" + `. Отладка прикладной логики. |
 | ` + "`onebase run --project <dir> --sqlite <файл> --port N`" + ` | Поднять сервер (UI + REST). |
+| ` + "`onebase dev --project <dir> --sqlite <файл> --open`" + ` | То же для разработки: правки ` + "`.yaml`" + `/` + "`.os`" + ` подхватываются на лету, открытая страница обновляется сама, ` + "`--open`" + ` открывает браузер по готовности. |
 
 ## Проверка результата (доказательства)
 
@@ -158,7 +159,8 @@ src/*.os                модули DSL (логика объектов, обр�
 - **Отчёт, виджет:** ` + "`onebase report explain`" + ` / ` + "`onebase widget explain --json`" + `
   — запрос, SQL, sample rows.
 - **UI, формы, дашборды:** headless CLI отрисовку не покажет — либо подними
-  ` + "`onebase run`" + ` и проверь браузером, либо честно напиши «UI не проверен headless».
+  ` + "`onebase run`" + ` (или ` + "`onebase dev --open`" + `, где правки видны без
+  перезапуска) и проверь браузером, либо честно напиши «UI не проверен headless».
 - **Роли, RLS, видимость:** ` + "`ИмяПользователя()`" + ` пуст в ` + "`procrun`" + `, RLS по
   пользователю headless не доказать — нужен сессионный прогон под ролью через
   ` + "`onebase run`" + `.

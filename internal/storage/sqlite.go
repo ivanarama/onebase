@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,6 +95,11 @@ func ConnectSQLite(ctx context.Context, dbPath string) (*DB, error) {
 		filesDir = defaultFilesDirForSQLite(dbPath)
 	}
 
+	// Configure every physical connection, not only the first one. Normally the
+	// pool stays at one connection, but database/sql must be free to replace a
+	// connection after driver.ErrBadConn or an ambiguous commit without silently
+	// losing foreign-key enforcement and the operational PRAGMAs.
+	dsnPath = sqliteDSNWithOperationalPragmas(dsnPath)
 	conn, err := sql.Open("sqlite", dsnPath)
 	if err != nil {
 		return nil, fmt.Errorf("storage: sqlite: open %q: %w", dbPath, err)
@@ -128,10 +134,34 @@ func ConnectSQLite(ctx context.Context, dbPath string) (*DB, error) {
 	}
 
 	return &DB{
-		sqlDB:    conn,
+		sqlDB: conn,
+		databaseFile: func() string {
+			if inMemory {
+				return ""
+			}
+			return dbPath
+		}(),
 		filesDir: filesDir,
 		dialect:  SQLiteDialect{},
 	}, nil
+}
+
+func sqliteDSNWithOperationalPragmas(dsn string) string {
+	values := url.Values{}
+	for _, pragma := range []string{
+		"journal_mode(WAL)",
+		"synchronous(NORMAL)",
+		"foreign_keys(ON)",
+		"busy_timeout(5000)",
+		"cache_size(-64000)",
+	} {
+		values.Add("_pragma", pragma)
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + values.Encode()
 }
 
 // isInMemorySQLite распознаёт in-memory формы пути SQLite: канонический

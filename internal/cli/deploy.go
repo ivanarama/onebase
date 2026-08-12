@@ -56,7 +56,7 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	}
 
 	outln("→ Подключение к PostgreSQL...")
-	db, err := storage.Connect(ctx, dsn)
+	db, err := openCLIStorage(ctx, "postgres", "", dsn)
 	if err != nil {
 		return fmt.Errorf("подключение к БД: %w", err)
 	}
