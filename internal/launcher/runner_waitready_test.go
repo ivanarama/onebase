@@ -3,9 +3,13 @@ package launcher
 import (
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +37,30 @@ func TestRunnerRecordExitDoesNotClobberReplacement(t *testing.T) {
 	}
 	if !r.exits["base"] {
 		t.Fatal("завершение текущего процесса не зафиксировано")
+	}
+}
+
+func TestWaitReady_AdoptedTokenDoesNotTrustPublicHealth(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &Base{ID: "adopted-auth", Name: "adopted-auth", Port: port, ControlToken: "secret"}
+
+	if err := NewRunner().WaitReady(base, 300*time.Millisecond); err == nil {
+		t.Fatal("public health from a listener without HMAC identity was accepted")
 	}
 }
 

@@ -201,9 +201,33 @@ func TestPageList_HonorsEntityListForm(t *testing.T) {
 			t.Errorf("список не содержит выбранное значение %q", want)
 		}
 	}
+	cells := withoutDetailPayload(html)
 	for _, unwanted := range []string{"2099", "987654.321"} {
-		if strings.Contains(html, unwanted) {
+		if strings.Contains(cells, unwanted) {
 			t.Errorf("список показал значение невыбранной колонки %q", unwanted)
+		}
+	}
+}
+
+// withoutDetailPayload убирает из разметки data-атрибут боковой панели.
+// Проверки состава КОЛОНОК должны смотреть на колонки: с появлением панели
+// (план 118B) полный набор реквизитов уезжает в data-ob-detail строки — это не
+// колонка и к list_form отношения не имеет.
+func withoutDetailPayload(html string) string {
+	var b strings.Builder
+	rest := html
+	for {
+		i := strings.Index(rest, "data-ob-detail='")
+		if i < 0 {
+			b.WriteString(rest)
+			return b.String()
+		}
+		b.WriteString(rest[:i])
+		rest = rest[i+len("data-ob-detail='"):]
+		if j := strings.Index(rest, "'"); j >= 0 {
+			rest = rest[j+1:]
+		} else {
+			return b.String()
 		}
 	}
 }
@@ -235,8 +259,9 @@ func TestPageList_ListViewHonorsTileFields(t *testing.T) {
 			t.Errorf("список не содержит выбранную колонку/значение %q", want)
 		}
 	}
+	cells := withoutDetailPayload(html)
 	for _, unwanted := range []string{"Кофе", "secret"} {
-		if strings.Contains(html, unwanted) {
+		if strings.Contains(cells, unwanted) {
 			t.Errorf("список показал значение невыбранной колонки: %q", unwanted)
 		}
 	}

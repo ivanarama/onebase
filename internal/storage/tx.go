@@ -3,14 +3,217 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type txKey struct{}
+
+type durableSessionKey struct{}
+
+var ErrDurableSessionClosed = errors.New("durable session is closed")
+
+const durableSessionCleanupTimeout = 5 * time.Second
+
+// DurableSession pins one backend connection with durable commit semantics.
+// Passing its Context to DB operations and BeginTx keeps the whole
+// cross-resource protocol (pending marker, transaction, resolution, marker
+// deletion) on that exact connection.
+type DurableSession struct {
+	db             *DB
+	sqliteConn     *sql.Conn
+	pgConn         *pgxpool.Conn
+	sqlitePrevious int
+	pgPrevious     string
+	ctx            context.Context
+	done           atomic.Bool
+}
+
+func (db *DB) BeginDurableSession(ctx context.Context) (*DurableSession, error) {
+	session := &DurableSession{db: db, ctx: ctx}
+	switch {
+	case db.sqlDB != nil:
+		conn, err := db.sqlDB.Conn(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var previous int
+		if err := conn.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&previous); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("sqlite durable session: inspect synchronous mode: %w", err)
+		}
+		if _, err := conn.ExecContext(ctx, "PRAGMA synchronous=FULL"); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("sqlite durable session: enable synchronous=FULL: %w", err)
+		}
+		session.sqliteConn = conn
+		session.sqlitePrevious = previous
+	case db.pool != nil:
+		conn, err := db.pool.Acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var previous string
+		if err := conn.QueryRow(ctx, "SHOW synchronous_commit").Scan(&previous); err != nil {
+			conn.Release()
+			return nil, fmt.Errorf("postgres durable session: inspect synchronous_commit: %w", err)
+		}
+		if err := setPostgresSynchronousCommit(ctx, conn.Exec, "on", false); err != nil {
+			conn.Release()
+			return nil, fmt.Errorf("postgres durable session: enable synchronous_commit: %w", err)
+		}
+		session.pgConn = conn
+		session.pgPrevious = previous
+	default:
+		return nil, errors.New("durable session: no database connection")
+	}
+	session.ctx = context.WithValue(ctx, durableSessionKey{}, session)
+	return session, nil
+}
+
+func (session *DurableSession) Context() context.Context {
+	if session == nil {
+		return context.Background()
+	}
+	return session.ctx
+}
+
+func (session *DurableSession) Close() error {
+	if session == nil || !session.done.CompareAndSwap(false, true) {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), durableSessionCleanupTimeout)
+	defer cancel()
+	if session.sqliteConn != nil {
+		restoreErr := restoreSQLiteSynchronous(cleanupCtx, session.sqliteConn, session.sqlitePrevious)
+		if restoreErr != nil {
+			// A pooled SQLite connection whose synchronous mode could not be
+			// restored must not be reused with an unknown operational profile.
+			if rawErr := session.sqliteConn.Raw(func(any) error { return driver.ErrBadConn }); rawErr != nil &&
+				!errors.Is(rawErr, driver.ErrBadConn) {
+				restoreErr = errors.Join(restoreErr, rawErr)
+			}
+		}
+		closeErr := session.sqliteConn.Close()
+		return errors.Join(restoreErr, closeErr)
+	}
+	if session.pgConn != nil {
+		restoreErr := setPostgresSynchronousCommit(
+			cleanupCtx, session.pgConn.Exec, session.pgPrevious, false,
+		)
+		if restoreErr != nil {
+			restoreErr = errors.Join(restoreErr, session.pgConn.Conn().PgConn().Close(cleanupCtx))
+		}
+		session.pgConn.Release()
+		return restoreErr
+	}
+	return nil
+}
+
+// Discard closes the physical backend connection without restoring its prior
+// session settings. Use it after an ambiguous commit: executing any further
+// command on that connection, including a setting reset, is unsafe.
+func (session *DurableSession) Discard(ctx context.Context) error {
+	if session == nil || !session.done.CompareAndSwap(false, true) {
+		return nil
+	}
+	if session.sqliteConn != nil {
+		rawErr := session.sqliteConn.Raw(func(any) error { return driver.ErrBadConn })
+		if errors.Is(rawErr, driver.ErrBadConn) || errors.Is(rawErr, sql.ErrConnDone) {
+			rawErr = nil
+		}
+		closeErr := session.sqliteConn.Close()
+		if errors.Is(closeErr, sql.ErrConnDone) {
+			closeErr = nil
+		}
+		return errors.Join(rawErr, closeErr)
+	}
+	if session.pgConn != nil {
+		// PgConn.Close always closes the underlying net.Conn even if the clean
+		// Terminate exchange reports an error. Once released, pgxpool destroys
+		// the closed connection instead of returning it to the idle set.
+		_ = session.pgConn.Conn().PgConn().Close(ctx)
+		session.pgConn.Release()
+		return nil
+	}
+	return nil
+}
+
+func durableSessionFromContext(ctx context.Context, db *DB) *DurableSession {
+	session, _ := ctx.Value(durableSessionKey{}).(*DurableSession)
+	if session == nil || session.db != db {
+		return nil
+	}
+	return session
+}
+
+// DurableSessionFromContext exposes the session only to infrastructure which
+// must explicitly retire a connection after an ambiguous commit outcome.
+func DurableSessionFromContext(ctx context.Context, db *DB) *DurableSession {
+	return durableSessionFromContext(ctx, db)
+}
+
+// WithoutDurableSession returns a child context which deliberately cannot
+// reuse a pinned DurableSession. It is intended for commit-outcome resolution:
+// after an ambiguous Commit the original connection may be unusable, so the
+// barrier transaction must acquire an independent backend connection.
+func WithoutDurableSession(ctx context.Context) context.Context {
+	return context.WithValue(ctx, durableSessionKey{}, (*DurableSession)(nil))
+}
+
+func (session *DurableSession) ensureDurable(ctx context.Context) error {
+	if session == nil || session.done.Load() {
+		return ErrDurableSessionClosed
+	}
+	if session.sqliteConn != nil {
+		var mode int
+		if err := session.sqliteConn.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&mode); err != nil {
+			return err
+		}
+		if mode != 2 {
+			_, err := session.sqliteConn.ExecContext(ctx, "PRAGMA synchronous=FULL")
+			return err
+		}
+		return nil
+	}
+	if session.pgConn != nil {
+		return setPostgresSynchronousCommit(ctx, session.pgConn.Exec, "on", false)
+	}
+	return errors.New("durable session has no connection")
+}
+
+type postgresExecFunc func(context.Context, string, ...any) (pgconn.CommandTag, error)
+
+func setPostgresSynchronousCommit(ctx context.Context, exec postgresExecFunc, mode string, local bool) error {
+	if strings.TrimSpace(mode) == "" {
+		return errors.New("postgres durable session: empty synchronous_commit mode")
+	}
+	scope := "false"
+	if local {
+		scope = "true"
+	}
+	_, err := exec(ctx, "SELECT set_config('synchronous_commit', $1, "+scope+")", mode)
+	return err
+}
+
+func verifyPostgresSynchronousCommit(ctx context.Context, queryRow func(context.Context, string, ...any) pgx.Row) error {
+	var mode string
+	if err := queryRow(ctx, "SHOW synchronous_commit").Scan(&mode); err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(mode), "off") {
+		return errors.New("postgres durable session: synchronous_commit was downgraded to off")
+	}
+	return nil
+}
 
 type pgExecutionBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -120,11 +323,43 @@ func ContextWithTx(ctx context.Context, tx Tx) context.Context {
 func (db *DB) BeginTx(ctx context.Context) (Tx, context.Context, error) {
 	hooks := newTxHooks()
 	if db.sqlDB != nil {
+		if session := durableSessionFromContext(ctx, db); session != nil && session.sqliteConn != nil {
+			if err := session.ensureDurable(ctx); err != nil {
+				return nil, ctx, fmt.Errorf("sqlite durable transaction: verify synchronous=FULL: %w", err)
+			}
+			tx, err := session.sqliteConn.BeginTx(ctx, nil)
+			if err != nil {
+				return nil, ctx, err
+			}
+			storTx := &sqlTx{tx: tx}
+			txCtx := context.WithValue(context.WithValue(ctx, txKey{}, tx), txHooksKey{}, hooks)
+			return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+		}
 		tx, err := db.sqlDB.BeginTx(ctx, nil)
 		if err != nil {
 			return nil, ctx, err
 		}
 		storTx := &sqlTx{tx: tx}
+		txCtx := context.WithValue(context.WithValue(ctx, txKey{}, tx), txHooksKey{}, hooks)
+		return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+	}
+	if session := durableSessionFromContext(ctx, db); session != nil && session.pgConn != nil {
+		if err := session.ensureDurable(ctx); err != nil {
+			return nil, ctx, fmt.Errorf("postgres durable transaction: enable synchronous_commit: %w", err)
+		}
+		tx, err := session.pgConn.Begin(ctx)
+		if err != nil {
+			return nil, ctx, err
+		}
+		if err := setPostgresSynchronousCommit(ctx, tx.Exec, "on", true); err != nil {
+			return nil, ctx, errors.Join(err, tx.Rollback(ctx))
+		}
+		storTx := &pgxTx{
+			tx: tx,
+			beforeCommit: func(commitCtx context.Context) error {
+				return verifyPostgresSynchronousCommit(commitCtx, tx.QueryRow)
+			},
+		}
 		txCtx := context.WithValue(context.WithValue(ctx, txKey{}, tx), txHooksKey{}, hooks)
 		return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
 	}
@@ -135,6 +370,54 @@ func (db *DB) BeginTx(ctx context.Context) (Tx, context.Context, error) {
 	storTx := &pgxTx{tx: tx}
 	txCtx := context.WithValue(context.WithValue(ctx, txKey{}, tx), txHooksKey{}, hooks)
 	return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+}
+
+// BeginDurableTx starts a standalone durable transaction. When ctx already
+// belongs to a DurableSession it reuses that pinned connection; otherwise the
+// returned transaction owns a short-lived session through Commit/Rollback.
+func (db *DB) BeginDurableTx(ctx context.Context) (Tx, context.Context, error) {
+	if durableSessionFromContext(ctx, db) != nil {
+		return db.BeginTx(ctx)
+	}
+	session, err := db.BeginDurableSession(ctx)
+	if err != nil {
+		return nil, ctx, err
+	}
+	tx, txCtx, err := db.BeginTx(session.Context())
+	if err != nil {
+		return nil, ctx, errors.Join(err, session.Close())
+	}
+	return &ownedDurableSessionTx{Tx: tx, session: session}, txCtx, nil
+}
+
+type ownedDurableSessionTx struct {
+	Tx
+	session *DurableSession
+}
+
+func (tx *ownedDurableSessionTx) Commit(ctx context.Context) error {
+	commitErr := tx.Tx.Commit(ctx)
+	if commitErr != nil {
+		return errors.Join(commitErr, tx.session.Discard(ctx))
+	}
+	_ = tx.session.Close()
+	// Once Commit succeeds, a failure to restore/discard the session must not
+	// be exposed as a failed transaction to cross-resource callers.
+	return nil
+}
+
+func (tx *ownedDurableSessionTx) Rollback(ctx context.Context) error {
+	rollbackErr := tx.Tx.Rollback(ctx)
+	if rollbackErr != nil {
+		return errors.Join(rollbackErr, tx.session.Discard(ctx))
+	}
+	_ = tx.session.Close()
+	return nil
+}
+
+func restoreSQLiteSynchronous(ctx context.Context, conn *sql.Conn, mode int) error {
+	_, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA synchronous=%d", mode))
+	return err
 }
 
 // BeginTxForExecution starts a transaction in two phases. Pool acquisition uses
@@ -151,6 +434,18 @@ func (db *DB) BeginTx(ctx context.Context) (Tx, context.Context, error) {
 func (db *DB) BeginTxForExecution(acquireCtx, lifetimeCtx context.Context) (Tx, context.Context, error) {
 	hooks := newTxHooks()
 	if db.sqlDB != nil {
+		if session := durableSessionFromContext(lifetimeCtx, db); session != nil && session.sqliteConn != nil {
+			if err := session.ensureDurable(lifetimeCtx); err != nil {
+				return nil, acquireCtx, err
+			}
+			tx, err := session.sqliteConn.BeginTx(lifetimeCtx, nil)
+			if err != nil {
+				return nil, acquireCtx, err
+			}
+			storTx := &sqlTx{tx: tx}
+			txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
+			return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+		}
 		conn, err := db.sqlDB.Conn(acquireCtx)
 		if err != nil {
 			return nil, acquireCtx, err
@@ -161,6 +456,26 @@ func (db *DB) BeginTxForExecution(acquireCtx, lifetimeCtx context.Context) (Tx, 
 			return nil, acquireCtx, err
 		}
 		storTx := &sqlTx{tx: tx, conn: conn}
+		txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
+		return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
+	}
+	if session := durableSessionFromContext(lifetimeCtx, db); session != nil && session.pgConn != nil {
+		if err := session.ensureDurable(acquireCtx); err != nil {
+			return nil, acquireCtx, err
+		}
+		tx, err := session.pgConn.Begin(acquireCtx)
+		if err != nil {
+			return nil, acquireCtx, err
+		}
+		if err := setPostgresSynchronousCommit(acquireCtx, tx.Exec, "on", true); err != nil {
+			return nil, acquireCtx, errors.Join(err, tx.Rollback(acquireCtx))
+		}
+		storTx := &pgxTx{
+			tx: tx,
+			beforeCommit: func(commitCtx context.Context) error {
+				return verifyPostgresSynchronousCommit(commitCtx, tx.QueryRow)
+			},
+		}
 		txCtx := context.WithValue(context.WithValue(lifetimeCtx, txKey{}, tx), txHooksKey{}, hooks)
 		return &hookedTx{Tx: storTx, hooks: hooks}, txCtx, nil
 	}
@@ -199,6 +514,17 @@ func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag
 			n, _ := res.RowsAffected()
 			return CommandTag{RowsAffected: n}, nil
 		}
+		if session := durableSessionFromContext(ctx, db); session != nil && session.sqliteConn != nil {
+			if err := session.ensureDurable(ctx); err != nil {
+				return CommandTag{}, err
+			}
+			res, err := session.sqliteConn.ExecContext(ctx, sqlText, args...)
+			if err != nil {
+				return CommandTag{}, err
+			}
+			n, _ := res.RowsAffected()
+			return CommandTag{RowsAffected: n}, nil
+		}
 		res, err := db.sqlDB.ExecContext(ctx, sqlText, args...)
 		if err != nil {
 			return CommandTag{}, err
@@ -208,6 +534,12 @@ func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag
 	}
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return cmdTag(tx.Exec(ctx, sqlText, args...))
+	}
+	if session := durableSessionFromContext(ctx, db); session != nil && session.pgConn != nil {
+		if err := session.ensureDurable(ctx); err != nil {
+			return CommandTag{}, err
+		}
+		return cmdTag(session.pgConn.Exec(ctx, sqlText, args...))
 	}
 	return cmdTag(db.pool.Exec(ctx, sqlText, args...))
 }
@@ -223,6 +555,16 @@ func (db *DB) Query(ctx context.Context, sqlText string, args ...any) (Rows, err
 			}
 			return &sqlRows{r: rows}, nil
 		}
+		if session := durableSessionFromContext(ctx, db); session != nil && session.sqliteConn != nil {
+			if err := session.ensureDurable(ctx); err != nil {
+				return nil, err
+			}
+			rows, err := session.sqliteConn.QueryContext(ctx, sqlText, args...)
+			if err != nil {
+				return nil, err
+			}
+			return &sqlRows{r: rows}, nil
+		}
 		rows, err := db.sqlDB.QueryContext(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
@@ -231,6 +573,16 @@ func (db *DB) Query(ctx context.Context, sqlText string, args ...any) (Rows, err
 	}
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		rows, err := tx.Query(ctx, sqlText, args...)
+		if err != nil {
+			return nil, err
+		}
+		return &pgxRows{r: rows}, nil
+	}
+	if session := durableSessionFromContext(ctx, db); session != nil && session.pgConn != nil {
+		if err := session.ensureDurable(ctx); err != nil {
+			return nil, err
+		}
+		rows, err := session.pgConn.Query(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -251,10 +603,22 @@ func (db *DB) QueryRow(ctx context.Context, sqlText string, args ...any) Row {
 		if tx, ok := ctx.Value(txKey{}).(*sql.Tx); ok {
 			return sqlRow{r: tx.QueryRowContext(ctx, sqlText, args...)}
 		}
+		if session := durableSessionFromContext(ctx, db); session != nil && session.sqliteConn != nil {
+			if err := session.ensureDurable(ctx); err != nil {
+				return errorRow{err: err}
+			}
+			return sqlRow{r: session.sqliteConn.QueryRowContext(ctx, sqlText, args...)}
+		}
 		return sqlRow{r: db.sqlDB.QueryRowContext(ctx, sqlText, args...)}
 	}
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return pgxRow{r: tx.QueryRow(ctx, sqlText, args...)}
+	}
+	if session := durableSessionFromContext(ctx, db); session != nil && session.pgConn != nil {
+		if err := session.ensureDurable(ctx); err != nil {
+			return errorRow{err: err}
+		}
+		return pgxRow{r: session.pgConn.QueryRow(ctx, sqlText, args...)}
 	}
 	return pgxRow{r: db.pool.QueryRow(ctx, sqlText, args...)}
 }

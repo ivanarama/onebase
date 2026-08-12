@@ -58,20 +58,16 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			params.ParentStr = parentStr
 			breadcrumbs = s.buildHierarchyBreadcrumbs(r.Context(), entity, parentStr)
 			baseListURL := "/ui/" + strings.ToLower(string(entity.Kind)) + "/" + strings.ToLower(entity.Name)
-			csys := r.URL.Query().Get("subsystem")
-			if len(breadcrumbs) <= 1 {
-				if csys != "" {
-					upURL = baseListURL + "?subsystem=" + csys
-				} else {
-					upURL = baseListURL
-				}
-			} else {
-				pid := breadcrumbs[len(breadcrumbs)-2]["ID"]
-				if csys != "" {
-					upURL = baseListURL + "?parent=" + pid + "&subsystem=" + csys
-				} else {
-					upURL = baseListURL + "?parent=" + pid
-				}
+			upParent := ""
+			if len(breadcrumbs) > 1 {
+				upParent = breadcrumbs[len(breadcrumbs)-2]["ID"]
+			}
+			upQuery := cloneQuery(r.URL.Query())
+			upQuery.Del("page")
+			setQueryValue(upQuery, "parent", upParent)
+			upURL = baseListURL
+			if encoded := upQuery.Encode(); encoded != "" {
+				upURL += "?" + encoded
 			}
 		}
 	}

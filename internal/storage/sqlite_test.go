@@ -28,6 +28,176 @@ func TestIsInMemorySQLite(t *testing.T) {
 	}
 }
 
+func TestDisableFKForImportKeepsSQLiteSingleConnection(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "fk-import.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cleanup, err := db.DisableFKForImport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.sqlDB.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections after FK import cleanup = %d, want 1", got)
+	}
+}
+
+func TestBeginDurableTxPinsFullSynchronousAndRestoresMode(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "durable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+
+	var before int
+	if err := db.QueryRow(ctx, "PRAGMA synchronous").Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before != 1 { // SQLITE_SYNC_NORMAL
+		t.Fatalf("initial synchronous = %d, want NORMAL (1)", before)
+	}
+	tx, txCtx, err := db.BeginDurableTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during int
+	if err := db.QueryRow(txCtx, "PRAGMA synchronous").Scan(&during); err != nil {
+		_ = tx.Rollback(txCtx)
+		t.Fatal(err)
+	}
+	if during != 2 { // SQLITE_SYNC_FULL
+		_ = tx.Rollback(txCtx)
+		t.Fatalf("durable transaction synchronous = %d, want FULL (2)", during)
+	}
+	if _, err := db.Exec(txCtx, "PRAGMA synchronous=NORMAL"); err == nil {
+		_ = tx.Rollback(txCtx)
+		t.Fatal("SQLite allowed synchronous downgrade inside durable transaction")
+	}
+	if err := tx.Commit(txCtx); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := db.QueryRow(ctx, "PRAGMA synchronous").Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("restored synchronous = %d, want previous %d", after, before)
+	}
+}
+
+func TestBeginDurableTxRestoresModeAfterRollback(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "durable-rollback.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	tx, txCtx, err := db.BeginDurableTx(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(txCtx); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := db.QueryRow(ctx, "PRAGMA synchronous").Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != 1 {
+		t.Fatalf("synchronous after rollback = %d, want NORMAL (1)", after)
+	}
+}
+
+func TestSQLiteDurableSessionCoversAutocommitAndTransactionBoundaries(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "durable-session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	if _, err := db.Exec(ctx, "CREATE TABLE durability_events (name TEXT NOT NULL, mode INTEGER NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := db.BeginDurableSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionCtx := session.Context()
+	assertMode := func(queryCtx context.Context, boundary string, want int) {
+		t.Helper()
+		var mode int
+		if err := db.QueryRow(queryCtx, "PRAGMA synchronous").Scan(&mode); err != nil {
+			t.Fatal(err)
+		}
+		if mode != want {
+			t.Fatalf("synchronous at %s = %d, want %d", boundary, mode, want)
+		}
+	}
+	assertMode(sessionCtx, "pending intent", 2)
+	if _, err := db.Exec(sessionCtx, "INSERT INTO durability_events(name,mode) VALUES('pending',2)"); err != nil {
+		t.Fatal(err)
+	}
+	tx, txCtx, err := db.BeginTx(sessionCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMode(txCtx, "committed marker", 2)
+	if _, err := db.Exec(txCtx, "INSERT INTO durability_events(name,mode) VALUES('transaction',2)"); err != nil {
+		_ = tx.Rollback(txCtx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(txCtx); err != nil {
+		t.Fatal(err)
+	}
+	assertMode(sessionCtx, "final marker delete", 2)
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertMode(ctx, "after session", 1)
+
+	var count int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM durability_events").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("durability events count = %d err=%v", count, err)
+	}
+}
+
+func TestSQLiteDurableSessionRejectsForeignDatabaseContext(t *testing.T) {
+	ctx := context.Background()
+	first, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "first.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(first.Close)
+	second, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "second.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(second.Close)
+	session, err := first.BeginDurableSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close durable session: %v", err)
+		}
+	}()
+	var secondMode int
+	if err := second.QueryRow(session.Context(), "PRAGMA synchronous").Scan(&secondMode); err != nil {
+		t.Fatal(err)
+	}
+	if secondMode != 1 {
+		t.Fatalf("foreign DB inherited durable session: synchronous=%d", secondMode)
+	}
+}
+
 // In-memory база подключается без создания файла на диске и работает как
 // обычная (миграция + запись/чтение). Раннер тестов полагается на это для
 // `onebase test --sqlite :memory:`.

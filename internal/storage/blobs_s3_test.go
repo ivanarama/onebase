@@ -134,6 +134,19 @@ func TestBlobRoundtrip_S3(t *testing.T) {
 	}
 }
 
+func TestOpenBlobRejectsS3SizeMismatch(t *testing.T) {
+	ctx := context.Background()
+	db, store := newS3TestDB(t)
+	b, err := db.PutBlob(ctx, "application/octet-stream", bytes.NewReader([]byte("original")), 1024, BlobOwner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.objs["px/blobs/"+b.ID.String()] = []byte("x")
+	if _, _, err := db.OpenBlob(ctx, b.ID); err == nil {
+		t.Fatal("OpenBlob must reject an S3 object whose size disagrees with metadata")
+	}
+}
+
 // TestBlob_S3ModeSwitchKeepsDiskBlob: блоб, записанный на диск, остаётся читаемым
 // после переключения базы в режим s3 (маршрутизация по loc, не по текущему режиму).
 func TestBlob_S3ModeSwitchKeepsDiskBlob(t *testing.T) {
