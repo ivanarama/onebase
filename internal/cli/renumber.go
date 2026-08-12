@@ -130,7 +130,7 @@ func renumberTargets(proj *project.Project, only string) ([]*metadata.Entity, er
 		out = append(out, ent)
 	}
 	if only != "" && len(out) == 0 {
-		return nil, fmt.Errorf("объект %q не найден или у него не объявлен numerator:", only)
+		return nil, fmt.Errorf("объект %q не найден или у него не объявлен нумератор", only)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
