@@ -52,7 +52,15 @@ func FormatNumber(prefix string, length, number int) string {
 // добавляется к ключу — например, scope: Организация даст у каждой
 // организации свой счётчик ( Формат: "<period>|<scopeValue>",
 // либо просто "<period>" если scope не задан.
+// Deprecated: используйте PeriodKeyFor — он выбирает дату детерминированно, по
+// объявленному порядку реквизитов. Здесь дата берётся перебором map, поэтому у
+// документа с двумя датами ключ был случайным (Д13 плана 117). Оставлено ради
+// совместимости внешних вызовов и делегирует в новую функцию.
 func ComputePeriodKey(num *metadata.Numerator, fields map[string]any) string {
+	return PeriodKeyFor(nil, num, fields)
+}
+
+func computePeriodKeyLegacy(num *metadata.Numerator, fields map[string]any) string {
 	var periodPart string
 	if num.Period != "none" {
 		var date time.Time

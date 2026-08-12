@@ -657,11 +657,10 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 // FormatNumber), иначе откатывается на простой NextNum с дополнением нулями.
 // Клиенты, которым нужна особая нумерация, могут передавать Номер сами.
 func generateAutoNumber(ctx context.Context, store *storage.DB, entity *metadata.Entity, fields map[string]any) string {
+	// Та же единая точка, что у UI и DSL (план 117C).
 	if entity.Numerator != nil {
-		num := entity.Numerator
-		periodKey := storage.ComputePeriodKey(num, fields)
-		if n, err := store.NextNumber(ctx, entity.Name, periodKey); err == nil {
-			return storage.FormatNumber(num.Prefix, num.Length, n)
+		if v, err := store.GenerateNumber(ctx, entity, fields); err == nil && v != "" {
+			return v
 		}
 	}
 	if n, err := store.NextNum(ctx, entity.Name); err == nil {
