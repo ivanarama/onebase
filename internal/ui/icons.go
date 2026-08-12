@@ -17,8 +17,11 @@ import (
 
 // LucideSpriteURL — путь, по которому спрайт смонтирован в обоих серверах (ui и
 // launcher). Тот же URL подставляется в превью конфигуратора, поэтому браузер
-// качает спрайт один раз на оба контура.
-const LucideSpriteURL = "/vendor/lucide/sprite.svg"
+// качает спрайт один раз на оба контура. Параметр v зависит от содержимого:
+// после апгрейда Lucide новый спрайт не залипнет в кэше под прежним URL.
+func LucideSpriteURL() string {
+	return "/vendor/lucide/sprite.svg?v=" + webassets.LucideSpriteVersion()
+}
 
 // lucideAliases — синонимы: прежние имена Lucide (до переименований v1) и привычные
 // сокращения → каноничное имя в спрайте. Позволяет старым значениям icon в
@@ -89,7 +92,7 @@ func LucideIcon(name string) template.HTML {
 	return template.HTML(`<svg class="lucide ob-icon" xmlns="http://www.w3.org/2000/svg" ` + //nolint:gosec // G203: в разметку идёт только имя символа, найденное в спрайте; всё прочее заменяется фолбэком
 		`width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
 		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ` +
-		`aria-hidden="true" focusable="false"><use href="` + LucideSpriteURL + `#` + key + `"/></svg>`)
+		`aria-hidden="true" focusable="false"><use href="` + LucideSpriteURL() + `#` + key + `"/></svg>`)
 }
 
 // LucideNames возвращает отсортированный список имён всех иконок спрайта — для

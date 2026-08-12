@@ -9,9 +9,12 @@
 package webassets
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"sync"
 
@@ -62,7 +65,11 @@ var quillFS embed.FS
 // версии = подмена одного файла. Самохостинг вместо CDN: иконки рисуются без
 // интернета, как и остальные вендоренные ассеты.
 //
-//go:embed lucide/sprite.svg
+// Embed the complete vendor directory, including the ISC license. Release
+// archives ship the executable, so the required notice must travel with the
+// embedded copy rather than exist only in the source checkout.
+//
+//go:embed lucide
 var lucideFS embed.FS
 
 // MonacoHandler serves the embedded Monaco tree. Mount it under
@@ -123,9 +130,27 @@ func LucideHandler() http.Handler {
 	}
 	fileSrv := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		// http.StripPrefix may leave this path with or without a leading slash,
+		// depending on the mount prefix used by the caller.
+		if req.URL.Path == "sprite.svg" || req.URL.Path == "/sprite.svg" {
+			meta := lucideAssetMetadataValue()
+			w.Header().Set("ETag", meta.etag)
+			if req.URL.Query().Get("v") == meta.version {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				// The bare path is intentionally revalidated: future Lucide upgrades
+				// must not leave browsers pinned to the previous sprite for a year.
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+		}
 		fileSrv.ServeHTTP(w, req)
 	})
+}
+
+// LucideSpriteVersion returns the content-derived cache key used by pages that
+// reference the sprite. A changed vendor file therefore gets a different URL.
+func LucideSpriteVersion() string {
+	return lucideAssetMetadataValue().version
 }
 
 // LucideSymbolNames возвращает отсортированные идентификаторы всех <symbol>
@@ -145,7 +170,7 @@ func LucideSymbolNames() []string {
 		sort.Strings(names)
 		lucideNames = names
 	})
-	return lucideNames
+	return slices.Clone(lucideNames)
 }
 
 var (
@@ -154,8 +179,33 @@ var (
 	// Идентификатор символа Lucide — kebab-case из латиницы и цифр. Узкий класс
 	// символов не даёт ничему постороннему из спрайта попасть в имя, которое
 	// потом подставляется в href.
-	lucideSymbolIDRe = regexp.MustCompile(`<symbol id="([a-z0-9-]+)"`)
+	lucideSymbolIDRe   = regexp.MustCompile(`<symbol id="([a-z0-9-]+)"`)
+	lucideMetadataOnce sync.Once
+	lucideMetadata     lucideAssetMetadata
 )
+
+type lucideAssetMetadata struct {
+	version string
+	etag    string
+}
+
+func lucideAssetMetadataValue() lucideAssetMetadata {
+	lucideMetadataOnce.Do(func() {
+		data, err := lucideFS.ReadFile("lucide/sprite.svg")
+		if err != nil {
+			// The go:embed directive makes this unreachable in a valid build. Keep
+			// a non-immutable fallback instead of making package initialization fatal.
+			lucideMetadata = lucideAssetMetadata{version: "unavailable", etag: `"unavailable"`}
+			return
+		}
+		sum := sha256.Sum256(data)
+		lucideMetadata = lucideAssetMetadata{
+			version: hex.EncodeToString(sum[:12]),
+			etag:    `"` + hex.EncodeToString(sum[:]) + `"`,
+		}
+	})
+	return lucideMetadata
+}
 
 // QuillHandler serves the embedded Quill bundle. Mount it under /vendor/quill/
 // in the base UI server — richtext-fields on entity forms load quill.js and

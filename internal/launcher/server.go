@@ -233,8 +233,10 @@ func (s *Server) ListenAndServe() error {
 	// managed-формах. Самохостинг вместо CDN: UI работает офлайн.
 	r.Handle("/vendor/slickgrid/*", noStore(http.StripPrefix("/vendor/slickgrid/", webassets.SlickGridHandler())))
 	// Lucide (ISC) — тот же спрайт иконок, что и у базы: превью поля «Иконка» в
-	// конфигураторе рисует ту же графику, что потом появится в навигации.
-	r.Handle("/vendor/lucide/*", noStore(http.StripPrefix("/vendor/lucide/", webassets.LucideHandler())))
+	// конфигураторе рисует ту же графику, что потом появится в навигации. В URL
+	// есть хеш содержимого, поэтому здесь не нужен общий noStore для старых
+	// неверсионированных vendor-ассетов: спрайт можно безопасно кэшировать.
+	r.Handle("/vendor/lucide/*", launcherLucideHandler())
 
 	// Launcher pages (no auth)
 	r.Get(launcherCookieMigrationPath, s.migrateLegacyLauncherCookies)
@@ -430,6 +432,10 @@ func (s *Server) ListenAndServe() error {
 		IdleTimeout:       120 * time.Second,
 	}
 	return s.httpSrv.Serve(s.ln)
+}
+
+func launcherLucideHandler() http.Handler {
+	return http.StripPrefix("/vendor/lucide/", webassets.LucideHandler())
 }
 
 func (s *Server) requireLauncherHost(next http.Handler) http.Handler {

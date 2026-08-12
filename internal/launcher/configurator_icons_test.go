@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -29,12 +31,32 @@ func TestConfigurator_IconDatalistCoversWholeLucide(t *testing.T) {
 	}
 }
 
+func TestLauncherLucideRouteCachesContentVersionedSprite(t *testing.T) {
+	versionedPath := ui.LucideSpriteURL()
+	req := httptest.NewRequest(http.MethodGet, versionedPath, nil)
+	rec := httptest.NewRecorder()
+	launcherLucideHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s: status=%d", versionedPath, rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("versioned Lucide route Cache-Control=%q, want immutable", cc)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/vendor/lucide/sprite.svg", nil)
+	rec = httptest.NewRecorder()
+	launcherLucideHandler().ServeHTTP(rec, req)
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("unversioned Lucide route Cache-Control=%q, want no-cache", cc)
+	}
+}
+
 func TestConfigurator_IconPreviewUsesSprite(t *testing.T) {
 	html := renderCfgFoot(t)
 
 	// Путь спрайта приходит на клиент из того же места, что и рендер навигации.
-	if !strings.Contains(html, ui.LucideSpriteURL) {
-		t.Errorf("в оболочке нет пути спрайта %q", ui.LucideSpriteURL)
+	if !strings.Contains(html, ui.LucideSpriteURL()) {
+		t.Errorf("в оболочке нет пути спрайта %q", ui.LucideSpriteURL())
 	}
 	for _, frag := range []string{
 		"var ALIASES =",     // синонимы разрешаются на клиенте

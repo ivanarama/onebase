@@ -12,7 +12,7 @@ import (
 
 // Иконка теперь не инлайнится, а ссылается на символ общего спрайта (план 73),
 // поэтому проверяем ссылку, а не разметку пути.
-func useOf(name string) string { return `<use href="/vendor/lucide/sprite.svg#` + name + `"` }
+func useOf(name string) string { return `<use href="` + LucideSpriteURL() + `#` + name + `"` }
 
 func TestLucideIcon_Known(t *testing.T) {
 	got := string(LucideIcon("shopping-cart"))
