@@ -1050,7 +1050,11 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 
 	entries, _ := s.store.AuditSearch(r.Context(), filter, pageSize+1, (page-1)*pageSize)
 
-	s.enrichAuditEntriesGlobal(r.Context(), entries)
+	// Журнал регистрации показывает значения реквизитов, поэтому подчиняется той
+	// же политике полей, что список и форма (план 88). Под mask_admin это
+	// касается и администратора.
+	entries, full := s.redactAuditEntriesGlobal(r.Context(), entries)
+	s.enrichAuditEntriesGlobal(r.Context(), entries, full)
 	hasNext := len(entries) > pageSize
 	if hasNext {
 		entries = entries[:pageSize]
@@ -1099,17 +1103,18 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", 400)
 		return
 	}
-	entries, err := s.store.AuditByRecord(r.Context(), entity.Name, id)
-	if err != nil {
-		s.serverError(w, r, err)
+	entries, ok := s.loadAuthorizedRecordHistory(w, r, entity, id)
+	if !ok {
 		return
 	}
-	s.enrichAuditEntries(r.Context(), entity, entries)
 	s.render(w, r, "page-history", map[string]any{
 		"EntityName": entity.Name,
 		"ID":         id.String(),
 		"Entries":    entries,
-		"BackURL":    fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String()),
+		// История переходов между этапами (план 121) — отдельной таблицей: она
+		// пишется всегда, в том числе при выключенном журнале регистрации.
+		"StageHistory": s.loadStageHistory(r, entity, id),
+		"BackURL":      fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String()),
 	})
 }
 

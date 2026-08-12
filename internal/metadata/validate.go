@@ -67,6 +67,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateSearchFields(e); err != nil {
 			return err
 		}
+		if err := validateStages(e, enums); err != nil {
+			return err
+		}
 		if err := validateDetailPanel(e); err != nil {
 			return err
 		}
@@ -361,6 +364,133 @@ func validateDetailPanel(e *Entity) error {
 		}
 		if err := check(".tabs["+tab.Name+"].fields", tab.Fields); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateStages проверяет блок `stages:` (план 121). Опечатка в имени этапа
+// здесь стоит дороже обычной: гейт переходов отвергает всё, чего нет в
+// `transitions`, поэтому незамеченная опечатка означает не «правило не
+// сработало», а «объект больше нельзя двигать». Поэтому проверяется и то, что
+// формально не мешает загрузиться: недостижимые этапы и переходы из
+// необъявленного состояния.
+func validateStages(e *Entity, enums []*Enum) error {
+	s := e.Stages
+	if s == nil {
+		return nil
+	}
+	if s.Field == "" {
+		return fmt.Errorf("entity %s: stages без field — укажите реквизит-перечисление, ведущий этапы", e.Name)
+	}
+	f := findEntityFieldFold(e, s.Field)
+	if f == nil {
+		return fmt.Errorf("entity %s: stages.field ссылается на неизвестный реквизит %s", e.Name, s.Field)
+	}
+	if f.EnumName == "" {
+		return fmt.Errorf("entity %s: реквизит %s не перечисление — этапы ведутся только по enum-реквизиту", e.Name, f.Name)
+	}
+	s.Field = f.Name // канонизируем написание: дальше по нему ищут значение в map полей
+	if s.Enforce != StageEnforceWarn && s.Enforce != StageEnforceStrict {
+		return fmt.Errorf("entity %s: stages.enforce = %q — допустимы %s и %s", e.Name, s.Enforce, StageEnforceWarn, StageEnforceStrict)
+	}
+	if len(s.Order) == 0 {
+		return fmt.Errorf("entity %s: stages без order — порядок этапов задаёт начальный этап, отчёт и схему", e.Name)
+	}
+
+	// Значения этапов не дублируются в блоке — они обязаны быть значениями
+	// перечисления. Список enums пуст у вызовов, которые проверяют только
+	// структуру (как и у проверки типов реквизитов выше).
+	var enumValues []string
+	for _, en := range enums {
+		if strings.EqualFold(en.Name, f.EnumName) {
+			enumValues = en.Values
+			break
+		}
+	}
+	knownEnumValue := func(v string) bool {
+		if len(enums) == 0 {
+			return true
+		}
+		for _, ev := range enumValues {
+			if strings.EqualFold(ev, v) {
+				return true
+			}
+		}
+		return false
+	}
+
+	seen := make(map[string]bool, len(s.Order))
+	for _, stage := range s.Order {
+		key := strings.ToLower(stage)
+		if seen[key] {
+			return fmt.Errorf("entity %s: этап %s указан в order дважды", e.Name, stage)
+		}
+		seen[key] = true
+		if !knownEnumValue(stage) {
+			return fmt.Errorf("entity %s: этап %s не значение перечисления %s", e.Name, stage, f.EnumName)
+		}
+	}
+
+	fromSeen := make(map[string]bool, len(s.Transitions))
+	adjacent := make(map[string][]string, len(s.Transitions))
+	for _, tr := range s.Transitions {
+		if !s.Known(tr.From) {
+			return fmt.Errorf("entity %s: переход из %s — такого этапа нет в order", e.Name, tr.From)
+		}
+		key := strings.ToLower(tr.From)
+		if fromSeen[key] {
+			return fmt.Errorf("entity %s: переходы из этапа %s заданы дважды — объедините их в один список to", e.Name, tr.From)
+		}
+		fromSeen[key] = true
+		if len(tr.To) == 0 {
+			return fmt.Errorf("entity %s: переход из %s без to — уберите строку или перечислите этапы", e.Name, tr.From)
+		}
+		toSeen := make(map[string]bool, len(tr.To))
+		for _, to := range tr.To {
+			if !s.Known(to) {
+				return fmt.Errorf("entity %s: переход %s → %s — такого этапа нет в order", e.Name, tr.From, to)
+			}
+			tk := strings.ToLower(to)
+			if toSeen[tk] {
+				return fmt.Errorf("entity %s: переход %s → %s указан дважды", e.Name, tr.From, to)
+			}
+			toSeen[tk] = true
+			adjacent[key] = append(adjacent[key], tk)
+		}
+	}
+	// Достижимость — это путь ИЗ начального этапа, а не просто наличие любой
+	// входящей дуги. Иначе изолированный цикл C↔D ошибочно считался достижимым:
+	// каждый его узел имеет вход, но попасть в цикл из начала маршрута нельзя.
+	reachable := make(map[string]bool, len(s.Order))
+	initial := strings.ToLower(s.Initial())
+	reachable[initial] = true
+	queue := []string{initial}
+	for len(queue) > 0 {
+		from := queue[0]
+		queue = queue[1:]
+		for _, to := range adjacent[from] {
+			if reachable[to] {
+				continue
+			}
+			reachable[to] = true
+			queue = append(queue, to)
+		}
+	}
+	for _, stage := range s.Order {
+		if !reachable[strings.ToLower(stage)] {
+			return fmt.Errorf("entity %s: этап %s недостижим — в него не ведёт ни один переход, и он не начальный (%s)",
+				e.Name, stage, s.Initial())
+		}
+	}
+
+	for stage := range s.DeadlineDays {
+		if !s.Known(stage) {
+			return fmt.Errorf("entity %s: deadline_days задан для неизвестного этапа %s", e.Name, stage)
+		}
+		if s.DeadlineDays[stage] <= 0 {
+			return fmt.Errorf("entity %s: deadline_days[%s] = %d — срок задаётся положительным числом дней",
+				e.Name, stage, s.DeadlineDays[stage])
 		}
 	}
 	return nil

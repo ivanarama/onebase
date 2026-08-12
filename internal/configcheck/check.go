@@ -99,6 +99,11 @@ func annotateIssue(is Issue) Issue {
 		set("printform.legacy", "Запустите `onebase printforms migrate` или перепишите печатную форму в layout v2.")
 	case strings.Contains(lowMsg, "форма пустая"):
 		set("printform.empty", "Опишите legacy-поля `title/header/table/footer` или переведите файл в layout v2.")
+	// Привязка печатной формы к сущности. Должна стоять до ветки по суффиксу
+	// «.os», иначе форма без источника получила бы совет про синтаксис модуля,
+	// хотя синтаксис в порядке — не указан источник.
+	case strings.Contains(lowKind, "печатная форма") && strings.Contains(lowMsg, "источник"):
+		set("printform.source-invalid", "Укажите сущность-источник: `document: <Имя>` в макете или комментарий `// Справочник: <Имя>` первой строкой .os-формы. Имя должно совпадать с `name:` документа или справочника.")
 	case strings.Contains(lowMsg, "wizard") || strings.Contains(lowMsg, "steps"):
 		set("processor.unsupported-key", "Удалите неподдерживаемые `wizard/steps`; сейчас обработка принимает плоский список `params`.")
 	case strings.Contains(lowMsg, "выражение без эффекта"):

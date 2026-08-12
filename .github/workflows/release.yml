@@ -7,8 +7,11 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Токен по умолчанию — только чтение; право записи выдаётся точечно тем job,
+# которые публикуют релиз (REL-02). Раньше contents:write был глобальным и
+# доставался в том числе build-матрице, которой запись не нужна.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -109,11 +112,58 @@ jobs:
             ${{ env.ASSET }}.sha256
           retention-days: 7
 
+  # Гейт REL-02: публиковать можно только коммит, для которого основной CI
+  # (ci.yml) завершился успехом. Раньше release.yml запускался независимо от
+  # результата CI — красный или ещё не прогнанный коммит мог быть опубликован.
+  verify-ci:
+    name: Require green CI for this commit
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for CI success on this SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Ждём завершения всех прогонов workflow "CI" для ТОЧНОГО SHA и требуем,
+          # чтобы каждый завершился success. Тег, коммит которого никогда не был
+          # на main (CI по нему не запускался), корректно упрётся в таймаут —
+          # публикация непроверенного коммита недопустима.
+          deadline=$(( $(date +%s) + 1800 ))
+          while :; do
+            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" \
+              --jq '[.workflow_runs[] | {status: .status, conclusion: .conclusion}]')
+            total=$(echo "$runs" | jq 'length')
+            completed=$(echo "$runs" | jq '[.[] | select(.status=="completed")] | length')
+            if [ "$total" -gt 0 ] && [ "$completed" -eq "$total" ]; then
+              bad=$(echo "$runs" | jq '[.[] | select(.conclusion!="success")] | length')
+              if [ "$bad" -eq 0 ]; then
+                echo "CI зелёный для $SHA."
+                exit 0
+              fi
+              echo "::error::CI для $SHA завершился не успехом. Публикация отменена."
+              echo "$runs" | jq .
+              exit 1
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Не дождались успешного CI для $SHA за 30 минут. Публикация отменена."
+              echo "$runs" | jq .
+              exit 1
+            fi
+            echo "Жду CI для $SHA ($completed/$total завершено)..."
+            sleep 20
+          done
+
   dev-release:
     name: Dev Pre-Release
-    needs: build
+    needs: [build, verify-ci]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write   # публикация пре-релиза
     steps:
       # checkout нужен чтобы `git log` дал subject последнего коммита для
       # <!-- summary --> маркера. Сайт onabase.site берёт текст из этого
@@ -199,9 +249,11 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, verify-ci]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write   # публикация релиза
     steps:
       - uses: actions/checkout@v4
 

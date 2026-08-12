@@ -486,11 +486,28 @@ func (s *Service) unpostInTx(
 }
 
 // DeleteResult — результат Service.Delete. Как и у Save, отказ прикладного
-// хука — не технический сбой: DSLError != "" при err == nil.
+// хука — не технический сбой: DSLError != "" при err == nil. Тот же soft-канал
+// несёт и отказ предохранителя ссылочной целостности (см. refsExistError).
 type DeleteResult struct {
 	ID          uuid.UUID
-	DSLError    string   // хук отменил удаление — объект на месте
+	DSLError    string   // удаление отклонено (хук или ссылки) — объект на месте
 	DSLMessages []string // сообщения из builtin Сообщить
+}
+
+// refsExistError — отказ удаления из-за существующих ссылок на объект.
+// Внутренний тип: Service.Delete переводит его в DeleteResult.DSLError, чтобы
+// все транспорты (UI, пачки, REST, DSL) обработали его как soft-отказ, а не как
+// технический сбой.
+type refsExistError struct {
+	refs []storage.RefInfo
+}
+
+func (e *refsExistError) Error() string {
+	parts := make([]string, 0, len(e.refs))
+	for _, r := range e.refs {
+		parts = append(parts, fmt.Sprintf("%s.%s (%d)", r.EntityName, r.FieldName, r.Count))
+	}
+	return "невозможно удалить: на объект ссылаются " + strings.Join(parts, ", ")
 }
 
 // Delete физически удаляет объект, выполняя хуки модуля объекта
@@ -521,6 +538,14 @@ func (s *Service) Delete(ctx context.Context, entity *metadata.Entity, id uuid.U
 			result.DSLError = interpreter.FormatUserError(hookErr.err)
 			return result, nil
 		}
+		var refsErr *refsExistError
+		if errors.As(err, &refsErr) {
+			// Отказ по ссылочной целостности — не сбой, а «удаление отклонено,
+			// объект на месте»: тот же soft-канал, что и отмена хуком, поэтому
+			// REST отдаёт 409, DSL — ошибку Попытки, UI — сообщение.
+			result.DSLError = refsErr.Error()
+			return result, nil
+		}
 		return DeleteResult{}, err
 	}
 	return result, nil
@@ -542,6 +567,23 @@ func (s *Service) deleteInTx(
 	}
 	if err := s.runDeleteHook(txCtx, entity, id, "BeforeDelete", obj, messages, lockCollector); err != nil {
 		return err
+	}
+	// Ссылочная целостность (issue #774): fail-closed предохранитель, общий для
+	// ВСЕХ путей удаления. Раньше CheckRefs звал только UI перед вызовом
+	// entityservice, поэтому удаление того же объекта через REST v1/v2 или DSL
+	// шло мимо проверки и оставляло висячие ссылки — в том числе из табличных
+	// частей и измерений регистров, которые FK на уровне БД не покрывают.
+	// Проверка идёт ВНУТРИ транзакции удаления и ПОСЛЕ хука «ПередУдалением»:
+	// хук может осознанно снять часть ссылок до неё. s.Reg == nil бывает только
+	// в служебных контекстах (migrate/procrun), где перечислить сущности нечем.
+	if s.Reg != nil {
+		refs, err := s.Store.CheckRefs(txCtx, entity.Name, id, s.Reg.Entities())
+		if err != nil {
+			return err
+		}
+		if len(refs) > 0 {
+			return &refsExistError{refs: refs}
+		}
 	}
 	// Движения снимаются до удаления регистратора: иначе остались бы строки,
 	// ссылающиеся на несуществующий документ.

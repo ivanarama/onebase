@@ -2,8 +2,11 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
@@ -104,6 +107,27 @@ func (db *DB) SyncPredefined(ctx context.Context, e *metadata.Entity) error {
 	if len(e.Predefined) == 0 {
 		return nil
 	}
+	// Синхронизация предопределённых — третий writer сущности: она пишет поля
+	// прямым INSERT … ON CONFLICT мимо обеих обычных точек записи (план 121).
+	// Для сущности с этапами весь sync идёт одной транзакцией и под одной
+	// блокировкой на сущность: UUID раздаются ДО прохода по элементам, поэтому
+	// блокировка внутри элемента опоздала бы — два параллельных `migrate`
+	// раздали бы разные UUID одному и тому же conflict-target.
+	//
+	// Сущность без этапов идёт прежним путём: ни транзакции-обёртки, ни
+	// блокировки — синхронизация предопределённых работала так годами.
+	if !stagedEntity(e) {
+		return db.syncPredefinedInTx(ctx, e)
+	}
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		if err := db.AdvisoryXactLock(txCtx, []string{"stage-predefined:" + strings.ToLower(e.Name)}); err != nil {
+			return err
+		}
+		return db.syncPredefinedInTx(txCtx, e)
+	})
+}
+
+func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error {
 	d := db.dialect
 	boolTrue := "TRUE"
 	if d.Name() == "sqlite" {
@@ -150,6 +174,7 @@ func (db *DB) SyncPredefined(ctx context.Context, e *metadata.Entity) error {
 	}
 
 	// Шаг 3: вставка в порядке зависимостей.
+	stageF := e.StageField()
 	for _, item := range ordered {
 		cols := []string{"id", "_predefined_name", "_is_predefined"}
 		phs := []string{d.Placeholder(1), d.Placeholder(2), boolTrue}
@@ -157,10 +182,37 @@ func (db *DB) SyncPredefined(ctx context.Context, e *metadata.Entity) error {
 		updates := []string{"_is_predefined = " + boolTrue}
 		argIdx := 3
 
+		// Этапы (план 121): прежнее состояние читается ДО записи — по нему
+		// решается, нужно ли синтетическое событие истории.
+		var stagePlan *predefinedStagePlan
+		if stageF != nil {
+			p, err := db.planPredefinedStage(ctx, e, *stageF, item)
+			if err != nil {
+				return err
+			}
+			stagePlan = p
+			if stagePlan.WriteColumn {
+				col := metadata.ColumnName(*stageF)
+				cols = append(cols, col)
+				phs = append(phs, d.Placeholder(argIdx))
+				args = append(args, stagePlan.Value)
+				argIdx++
+				if stagePlan.UpdateOnConflict {
+					updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
+				}
+			}
+		}
+
 		for _, f := range e.Fields {
 			col := metadata.ColumnName(f)
 			val, ok := item.Fields[f.Name]
 			if !ok {
+				continue
+			}
+			// Поле-этап уже разложено выше по своим правилам: значение из
+			// конфигурации не имеет права молча переставить этап у живого
+			// объекта при каждом запуске миграции.
+			if stageF != nil && strings.EqualFold(f.Name, stageF.Name) {
 				continue
 			}
 			// Self-ref поле: значение — имя другого predefined ТОГО ЖЕ
@@ -220,8 +272,117 @@ func (db *DB) SyncPredefined(ctx context.Context, e *metadata.Entity) error {
 		if err := db.IndexObject(ctx, e, predefinedID, item.Fields); err != nil {
 			return err
 		}
+		if stagePlan != nil {
+			if err := db.logPredefinedStage(ctx, e, item, predefinedID, stagePlan); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// predefinedStagePlan — что синхронизация делает с полем-этапом одного
+// предопределённого элемента.
+type predefinedStagePlan struct {
+	// WriteColumn — включать колонку этапа в INSERT.
+	WriteColumn bool
+	// UpdateOnConflict — переписывать этап у уже существующей строки. Только
+	// для явно объявленного в конфигурации значения: иначе каждый запуск
+	// миграции откатывал бы живой объект на начальный этап.
+	UpdateOnConflict bool
+	Value            any
+	// From/To — фактический переход для истории; равные значения события не дают.
+	From string
+	To   string
+	// Existed — строка уже была; для новой пишется создание («» → этап).
+	Existed bool
+}
+
+// planPredefinedStage решает, что делать с этапом предопределённого элемента.
+//
+// Это доверенная семантика миграции, а не скрытый обход: значение приходит из
+// конфигурации, поэтому список объявленных переходов не проверяется — но
+// значение обязано быть объявленным этапом, иначе в базу приедет состояние, о
+// котором ни гейт, ни отчёт ничего не знают.
+func (db *DB) planPredefinedStage(ctx context.Context, e *metadata.Entity, f metadata.Field, item *metadata.PredefinedItem) (*predefinedStagePlan, error) {
+	s := e.Stages
+	declared, present := stageFieldValue(item.Fields, f.Name)
+	if present && declared != "" && !s.Known(declared) {
+		return nil, fmt.Errorf("предопределённый %s.%s: этап %q не объявлен в маршруте", e.Name, item.Name, declared)
+	}
+
+	prev, existed, err := db.predefinedStageValue(ctx, e, f, item.Name)
+	if err != nil {
+		return nil, err
+	}
+	plan := &predefinedStagePlan{From: prev, Existed: existed}
+	switch {
+	case present && declared != "":
+		plan.WriteColumn = true
+		plan.UpdateOnConflict = true
+		plan.Value = declared
+		plan.To = declared
+	case existed:
+		// Явного значения нет — живой объект не трогаем вовсе.
+		plan.To = prev
+	default:
+		// Новый элемент без явного этапа встаёт в начало маршрута.
+		plan.WriteColumn = true
+		plan.Value = s.Initial()
+		plan.To = s.Initial()
+	}
+	return plan, nil
+}
+
+// predefinedStageValue читает текущий этап предопределённого элемента.
+func (db *DB) predefinedStageValue(ctx context.Context, e *metadata.Entity, f metadata.Field, name string) (string, bool, error) {
+	d := db.dialect
+	boolTrue := boolTrueLit(d)
+	q := fmt.Sprintf(`SELECT %s FROM %s WHERE _predefined_name = %s AND _is_predefined = %s LIMIT 1`,
+		metadata.ColumnName(f), metadata.TableName(e.Name), d.Placeholder(1), boolTrue)
+	var v *string
+	if err := db.QueryRow(ctx, q, name).Scan(&v); err != nil {
+		if IsNotFound(errors.Unwrap(err)) || IsNotFound(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("sync predefined %s.%s: чтение текущего этапа: %w", e.Name, name, err)
+	}
+	if v == nil {
+		return "", true, nil
+	}
+	return strings.TrimSpace(*v), true, nil
+}
+
+// logPredefinedStage пишет синтетическое событие миграции.
+//
+// Актор не подставляется: переход сделала конфигурация, а не пользователь,
+// который в этот момент оказался в контексте. Происхождение хранится
+// каноническим JSON-массивом, а не строкой с разделителем: имя сущности или
+// элемента может содержать что угодно, и разбирать такую строку обратно
+// пришлось бы гаданием.
+func (db *DB) logPredefinedStage(ctx context.Context, e *metadata.Entity, item *metadata.PredefinedItem, id uuid.UUID, plan *predefinedStagePlan) error {
+	if plan == nil || strings.EqualFold(plan.From, plan.To) || plan.To == "" {
+		return nil
+	}
+	f := e.StageField()
+	if f == nil {
+		return nil
+	}
+	ref, err := json.Marshal([]string{StageSourceMigration, e.Name, item.Name})
+	if err != nil {
+		return fmt.Errorf("sync predefined %s.%s: происхождение перехода: %w", e.Name, item.Name, err)
+	}
+	return db.LogStageChange(ctx, &StageChange{
+		EntityName: e.Name,
+		RecordID:   id.String(),
+		Field:      f.Name,
+		FieldID:    stageFieldID(f),
+		FromStage:  plan.From,
+		ToStage:    plan.To,
+		At:         time.Now().UTC(),
+		Source:     StageSourceMigration,
+		SourceRef:  string(ref),
+	})
 }
 
 // topoSortPredefined сортирует predefined-элементы по self-reference

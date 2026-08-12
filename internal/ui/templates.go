@@ -717,6 +717,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"wcell":            widgetCell,
 		"echartsJSON":      echartsJSON,
+		"stageChartJSON":   stageChartJSON,
+		"stageSourceLabel": stageSourceLabel,
 		"splitCamel":       splitCamel,
 		"fmtCell":          fmtReportCell,
 		"widgetChartsJSON": widgetChartsJSON,
@@ -785,7 +787,7 @@ func normalizedFormHotkey(value string) string {
 }
 
 func templateSource() string {
-	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell
+	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell
 }
 
 const tplHead = `
@@ -1031,6 +1033,7 @@ const tplNav = `
         <summary>{{t $.Lang "Платформенные возможности"}}</summary>
         <div class="sys-group-body">
           <a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>
+          {{if .HasStages}}<a href="/ui/stages">{{t $.Lang "Этапы — где застряло"}}</a>{{end}}
         </div>
       </details>
       {{end}}
@@ -1044,6 +1047,7 @@ const tplNav = `
           <a href="/ui/admin/auth">{{t $.Lang "Аутентификация"}}</a>
           <a href="/ui/admin/api-tokens">{{t $.Lang "API-токены"}}</a>
           <a href="/ui/admin/audit">{{t $.Lang "Журнал изменений"}}</a>
+          {{if .HasStages}}<a href="/ui/stages">{{t $.Lang "Этапы — где застряло"}}</a>{{end}}
           <a href="/ui/admin/rls">{{t $.Lang "Диагностика RLS"}}</a>
         </div>
       </details>
@@ -1691,6 +1695,35 @@ const tplForm = `
     {{end}}
   {{end}}
 </div>
+
+{{/* Этапы (план 121): маршрут объекта с подсветкой текущего состояния. */}}
+{{if and (not .IsNew) .StageRoute}}
+<div class="card" style="max-width:1400px;margin-bottom:12px;padding:12px 16px">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+    <span style="font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">{{t $.Lang "Этап"}}</span>
+    {{if .StageRoute.OffRoute}}
+      <span style="font-size:13px;font-weight:600;color:#b45309">{{t $.Lang "вне маршрута"}}</span>
+    {{else if .StageRoute.Label}}
+      <span style="font-size:13px;font-weight:600;color:#1d4ed8">{{.StageRoute.Label}}</span>
+    {{else}}
+      <span style="font-size:13px;color:#94a3b8">{{t $.Lang "не задан"}}</span>
+    {{end}}
+    <a href="/ui/stages/{{lower .Entity.Name}}" style="font-size:12px;color:#64748b;margin-left:auto">{{t $.Lang "Где застряло"}} →</a>
+  </div>
+  <div id="ob-stage-route" style="height:90px"></div>
+</div>
+<script src="/vendor/echarts/echarts.min.js"></script>
+<script>
+(function(){
+  var el = document.getElementById('ob-stage-route');
+  var opt = {{stageChartJSON .StageRoute}};
+  if (!el || !opt || typeof echarts === 'undefined') { return; }
+  var chart = echarts.init(el);
+  chart.setOption(opt);
+  window.addEventListener('resize', function(){ chart.resize(); });
+})();
+</script>
+{{end}}
 
 {{/* Movement links (collapsed) */}}
 {{if and (not .IsNew) .DocMovements}}
@@ -2928,6 +2961,27 @@ const tplHistory = `
   <h2 style="margin-bottom:0">{{t $.Lang "История изменений"}} — {{.EntityName}}</h2>
   <a href="{{.BackURL}}" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
 </div>
+{{/* Этапы (план 121): переходы пишутся всегда, даже когда журнал регистрации
+     выключен, поэтому идут отдельной таблицей выше него. */}}
+{{if .StageHistory}}
+<div class="card" style="max-width:900px;margin-bottom:16px">
+<h3 style="margin:0 0 10px;font-size:14px">{{t $.Lang "Этапы"}}</h3>
+<table style="font-size:13px">
+<thead><tr>
+  <th>{{t $.Lang "Время"}}</th><th>{{t $.Lang "Пользователь"}}</th><th>{{t $.Lang "Из этапа"}}</th><th>{{t $.Lang "В этап"}}</th><th>{{t $.Lang "Источник"}}</th>
+</tr></thead>
+<tbody>
+{{range .StageHistory}}<tr>
+  <td style="white-space:nowrap;color:#94a3b8">{{.At.Format "02.01.2006 15:04:05"}}</td>
+  <td>{{.UserLogin}}</td>
+  <td style="color:#94a3b8">{{if .From}}{{.From}}{{else}}— {{t $.Lang "создание"}} —{{end}}</td>
+  <td style="color:#1d4ed8;font-weight:600">{{.To}}{{if .Violation}} <span title="{{t $.Lang "Переход не предусмотрен маршрутом и прошёл только потому, что маршрут объявлен в режиме warn"}}" style="color:#b45309;font-weight:600">⚠</span>{{end}}</td>
+  <td style="color:#94a3b8;font-size:12px">{{stageSourceLabel .Source}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
 <div class="card" style="max-width:900px">
 {{if .Entries}}
 <table style="font-size:13px">
@@ -2949,6 +3003,71 @@ const tplHistory = `
 <p class="empty">{{t $.Lang "История изменений пуста."}}</p>
 {{end}}
 </div>
+</main></div></body></html>
+{{end}}
+`
+
+// tplStages — отчёт «где застряло» (план 121): сколько объектов стоит на каждом
+// этапе, сколько из них просрочено и по скольким время на этапе неизвестно
+// (объекты, накопленные до объявления блока `stages`, истории не имеют — и
+// показать «неизвестно» честнее, чем считать их срок от нуля).
+const tplStages = `
+{{define "page-stages"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<div class="row-top">
+  <h2>{{t $.Lang "Этапы — где застряло"}}</h2>
+</div>
+{{if not .Reports}}
+<p class="empty">{{t $.Lang "Ни у одной сущности не объявлен блок stages."}}</p>
+{{end}}
+{{range $ri, $rep := .Reports}}
+<div class="card" style="margin-bottom:20px">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+    <h3 style="margin:0;font-size:15px">{{$rep.Entity.DisplayName $.Lang}}</h3>
+    <span style="color:#94a3b8;font-size:12px">{{t $.Lang "реквизит"}}: {{$rep.Field}}</span>
+    <a href="{{$rep.ListURL}}" style="font-size:12px;color:#64748b;margin-left:auto">{{t $.Lang "К списку"}} →</a>
+  </div>
+  <div id="ob-stage-report-{{$ri}}" style="height:110px;margin-bottom:8px"></div>
+  <table style="font-size:13px">
+  <thead><tr>
+    <th>{{t $.Lang "Этап"}}</th>
+    <th style="text-align:right">{{t $.Lang "Объектов"}}</th>
+    <th style="text-align:right">{{t $.Lang "Срок, дней"}}</th>
+    <th style="text-align:right">{{t $.Lang "Просрочено"}}</th>
+    <th style="text-align:right">{{t $.Lang "Время неизвестно"}}</th>
+    <th>{{t $.Lang "Ждёт с"}}</th>
+  </tr></thead>
+  <tbody>
+  {{range $rep.Rows}}<tr>
+    <td>{{.Label}}</td>
+    <td style="text-align:right">{{.Count}}</td>
+    <td style="text-align:right;color:#94a3b8">{{if .DeadlineDays}}{{.DeadlineDays}}{{else}}—{{end}}</td>
+    <td style="text-align:right">{{if .Overdue}}<span style="color:#dc2626;font-weight:600">{{.Overdue}}</span>{{else}}—{{end}}</td>
+    <td style="text-align:right;color:#94a3b8">{{if .Unknown}}{{.Unknown}}{{else}}—{{end}}</td>
+    <td style="color:#94a3b8">{{if .Since.IsZero}}—{{else}}{{.Since.Format "02.01.2006"}}{{end}}</td>
+  </tr>{{end}}
+  </tbody>
+  </table>
+  {{if $rep.OffRoute}}
+  <p style="margin-top:10px;font-size:13px;color:#b45309">
+    {{t $.Lang "Вне маршрута"}}: {{$rep.OffRoute}} —
+    {{t $.Lang "состояние этих объектов не объявлено в order. Включение enforce: strict отвергнет их первую же правку."}}
+  </p>
+  {{end}}
+</div>
+<script src="/vendor/echarts/echarts.min.js"></script>
+<script>
+(function(){
+  var el = document.getElementById('ob-stage-report-{{$ri}}');
+  var opt = {{stageChartJSON $rep.Route}};
+  if (!el || !opt || typeof echarts === 'undefined') { return; }
+  var chart = echarts.init(el);
+  chart.setOption(opt);
+  window.addEventListener('resize', function(){ chart.resize(); });
+})();
+</script>
+{{end}}
 </main></div></body></html>
 {{end}}
 `

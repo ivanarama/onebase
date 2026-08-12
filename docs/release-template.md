@@ -89,13 +89,13 @@
 ### Linux
 ```bash
 tar xzf onebase-linux-amd64.tar.gz
-./onebase serve
+./onebase start
 ```
 
 ### macOS
 ```bash
 tar xzf onebase-darwin-amd64.tar.gz
-./onebase serve
+./onebase start
 ```
 
 ## 🙏 Благодарности

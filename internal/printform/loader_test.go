@@ -89,3 +89,82 @@ func TestLoadDirSubfolderStandaloneLayout(t *testing.T) {
 		t.Fatalf("subfolder layout document: %+v", layoutForms)
 	}
 }
+
+// TestLoadDirBindingPrefixes: привязка .os-формы к сущности-источнику читается
+// не только из «// Документ:». Печатная форма справочника — такой же
+// гражданин, и «// Справочник: Клиент» обязан связывать форму со справочником:
+// раньше распознавался только документ, форма получала пустую привязку, молча
+// уезжала в реестр под пустым ключом и не появлялась ни на одной карточке
+// (discussion #757). Сравнение префикса регистронезависимо, как и весь DSL.
+func TestLoadDirBindingPrefixes(t *testing.T) {
+	cases := []struct {
+		comment string
+		want    string
+	}{
+		{"// Справочник: Клиент", "Клиент"},
+		{"// справочник: Клиент", "Клиент"},
+		{"// СПРАВОЧНИК: Клиент", "Клиент"},
+		{"// Документ: РеализацияТоваров", "РеализацияТоваров"},
+		{"// документ: РеализацияТоваров", "РеализацияТоваров"},
+		{"// Catalog: Клиент", "Клиент"},
+		{"// Document: Invoice", "Invoice"},
+		{"// Объект: Клиент", "Клиент"},
+		{"// Источник: Клиент", "Клиент"},
+		// Не привязка: посторонний комментарий не должен ничего связывать.
+		{"// Печатает карточку клиента", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.comment, func(t *testing.T) {
+			dir := t.TempDir()
+			src := tc.comment + "\nФункция Сформировать()\n    Возврат Новый ТабличныйДокумент\nКонецФункции\n"
+			if err := os.WriteFile(filepath.Join(dir, "карточка.os"), []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, dslForms, _, err := LoadDir(dir)
+			if err != nil {
+				t.Fatalf("LoadDir: %v", err)
+			}
+			if len(dslForms) != 1 {
+				t.Fatalf("ожидалась 1 DSL-форма, получено %d", len(dslForms))
+			}
+			if dslForms[0].Document != tc.want {
+				t.Errorf("привязка для %q: получено %q, ожидалось %q", tc.comment, dslForms[0].Document, tc.want)
+			}
+			if dslForms[0].Path == "" {
+				t.Error("Path не заполнен — диагностика check не сможет назвать файл")
+			}
+		})
+	}
+}
+
+// TestLoadDirSubfolderBindingWins: в подпапке-сущности имя папки остаётся
+// запасной привязкой, но явный комментарий в файле важнее.
+func TestLoadDirSubfolderBindingWins(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "Клиент")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "Функция Сформировать()\n    Возврат Новый ТабличныйДокумент\nКонецФункции\n"
+	if err := os.WriteFile(filepath.Join(sub, "изпапки.os"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "изкомментария.os"),
+		[]byte("// Справочник: КонтактноеЛицо\n"+body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, dslForms, _, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	got := map[string]string{}
+	for _, df := range dslForms {
+		got[df.Name] = df.Document
+	}
+	if got["изпапки"] != "Клиент" {
+		t.Errorf("форма без комментария должна привязаться к папке: %q", got["изпапки"])
+	}
+	if got["изкомментария"] != "КонтактноеЛицо" {
+		t.Errorf("комментарий должен перебивать имя папки: %q", got["изкомментария"])
+	}
+}
