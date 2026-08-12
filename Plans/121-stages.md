@@ -349,8 +349,9 @@ Wall-clock не участвует в выборе latest даже при оди
   устанавливает ровно history из архива. Таблица не
   имеет FK `user_id → _users`, как `_audit` (`storage/audit.go:75-91`):
   удалённые либо legacy actor UUID могут отсутствовать, а переносимый архив не
-  должен из-за этого ломаться. DemoReset импортирует users/roles из архива и
-  сохраняет только sessions/scheduled-runs. Полный restore старого архива без
+  должен из-за этого ломаться. DemoReset импортирует users/roles из архива,
+  очищает sessions (пользователь входит заново) и сохраняет только target
+  `_scheduled_runs`. Полный restore старого архива без
   `_stage_history` очищает прежнюю target-history и оставляет пустую. Restore-
   миграция может временно создать synthetic events, но ни одно из них не
   переживает commit: финальная history либо точно архивная, либо пустая для
@@ -436,7 +437,7 @@ Wall-clock не участвует в выборе latest даже при оди
 | Конфигуратор или schema/lint не знает новый YAML-блок | сырой `yaml.Node` в `saveEntity`, structural key guard и round-trip; JSON Schema и nested lint обновляются в том же изменении |
 | Обмен данными (план 86): пакет может не содержать промежуточные переходы источника | per-object scope и record-lock охватывают local state, conflict hook/decision и apply. Только incoming-wins вызывает узкий replication-writer и пишет synthetic event при фактической смене stage: `source=exchange`, `source_ref=plan/from_node/message_no`, actor `NULL`; `at` означает время появления на приёмнике. Hook остаётся обычным local writer без bypass. Unknown live stage отвергается; tombstone сохраняет/не создаёт stage и не пишет event, resurrection требует known stage. Повторный `message_no`/version пропускается. Точный перенос акторов/времени — отдельное расширение формата |
 | `SyncPredefined` обходит обычные Upsert и preallocate-ит весь список до item-loop | это явный третий writer: один scope на весь sync, отсортированные name-locks/entity-lock до всей preallocation, затем record-lock; known-value validation, atomic direct upsert + mandatory `source=migration` history; omitted field вставляет initial и не сбрасывает существующий stage |
-| Restore / DemoReset должны воспроизводить историю, но не повторно применять переходы | `_stage_history` входит в `systemTables`/manifest и атомарно публикуется вместе с объектами. DemoReset migration/predefined может временно писать events до clear, но commit содержит точно архивную history; users/roles импортируются, sessions/scheduled-runs сохраняются. Без FK на `_users`. Старый архив без таблицы очищает target-history и даёт пустую |
+| Restore / DemoReset должны воспроизводить историю, но не повторно применять переходы | `_stage_history` входит в `systemTables`/manifest и атомарно публикуется вместе с объектами. DemoReset migration/predefined может временно писать events до clear, но commit содержит точно архивную history; users/roles импортируются, sessions очищаются, target `_scheduled_runs` сохраняется. Без FK на `_users`. Старый архив без таблицы очищает target-history и даёт пустую |
 | Два конкурентных перехода читают один исходный этап | PG advisory lock берётся до read и действует также для отсутствующей строки; SQLite staged CAS/create-conflict работает между двумя DB handles. Один запрос видит результат другого либо получает нормализованный version/busy conflict. Тест запрещает историю `A→B`, `A→C`, если фактическая цепочка `B→C` не разрешена |
 | Несколько events имеют одинаковый `at` или commit идут не в порядке старта tx | latest определяется только монотонным `event_no`; `at` остаётся wall-clock атрибутом и не участвует в причинном порядке |
 | Проведение и пометка удаления (план 50) меняют объект, не трогая этап | гейт срабатывает только при **изменении** поля-этапа — эти пути его не касаются |
@@ -517,8 +518,8 @@ Wall-clock не участвует в выборе latest даже при оди
   escaping graph payload не позволяет закрыть `<script>`;
 - universal portable round-trip включает `_stage_history`, manifest allowlist её
   принимает, старый archive без файла очищает target-history и при full restore,
-  и при DemoReset; новый DemoReset импортирует users/roles, сохраняет sessions /
-  scheduled-runs и умеет стартовать на target без заранее созданной таблицы.
+  и при DemoReset; новый DemoReset импортирует users/roles, очищает sessions,
+  сохраняет target `_scheduled_runs` и умеет стартовать без заранее созданной таблицы.
   Fault/test hook после migrate и до clear может увидеть временный migration-
   event, но после успешного commit остаётся точно history архива и ни одного
   synthetic restore-event;
