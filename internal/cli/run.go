@@ -51,6 +51,9 @@ func init() {
 	// hot reload .os/.yaml без перезапуска. По умолчанию off,
 	// для прода обычно не нужен. Включается флагом --watch.
 	runCmd.Flags().Bool("watch", false, "reload project metadata, DSL and scheduled jobs when configuration changes")
+	// Открытие браузера — по явному флагу: `run` запускают и службой, и из
+	// скриптов, где открывать вкладку некому и незачем.
+	runCmd.Flags().Bool("open", false, "открыть базу в браузере, когда сервер будет готов")
 	// Демо-режим через флаги — работает независимо от источника конфигурации.
 	// Удобно для --config-source database, где app.yaml не лежит файлом и
 	// блок demo: некуда вписать. Флаги имеют приоритет над app.yaml.
@@ -592,6 +595,11 @@ func runServer(cmd *cobra.Command, _ []string) error {
 			runLog.Error("server failed", "err", err)
 		}
 	}()
+	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser {
+		openCtx, cancelOpen := context.WithCancel(ctx)
+		defer cancelOpen()
+		go openBrowserWhenReady(openCtx, port)
+	}
 	<-quit
 	if stopWatch != nil {
 		stopWatch()

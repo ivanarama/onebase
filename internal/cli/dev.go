@@ -38,21 +38,51 @@ var devCmd = &cobra.Command{
 }
 
 func init() {
-	devCmd.Flags().String("project", ".", "path to project directory")
-	devCmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
-	devCmd.Flags().Int("port", 8080, "HTTP server port")
-	devCmd.Flags().String("config-source", "file", "configuration source: file or database")
+	registerDevFlags(devCmd)
+}
+
+// registerDevFlags объявляет флаги команды. Отдельной функцией — чтобы тест
+// собирал аргументы дочернего процесса на тех же флагах, что и сама команда, а
+// не на своей копии, которая могла бы с ней разойтись.
+func registerDevFlags(cmd *cobra.Command) {
+	cmd.Flags().String("project", ".", "path to project directory")
+	cmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
+	cmd.Flags().String("sqlite", "", "путь к файлу базы SQLite (вместо --db)")
+	cmd.Flags().Int("port", 8080, "HTTP server port")
+	cmd.Flags().String("config-source", "file", "configuration source: file or database")
+	cmd.Flags().Bool("open", false, "открыть базу в браузере, когда сервер будет готов")
+	cmd.Flags().Bool("reload-binary", false, "пересобирать платформу и перезапускать сервер при изменении Go-кода (для разработки самой платформы)")
+	cmd.Flags().String("source", ".", "каталог дерева исходников платформы для --reload-binary (ищется go.mod вверх по дереву)")
 }
 
 func runDev(cmd *cobra.Command, _ []string) error {
+	// --reload-binary уводит в супервизор: сервер поднимает не этот процесс, а
+	// пересобранный им дочерний (см. dev_reload.go).
+	if reloadBinary, _ := cmd.Flags().GetBool("reload-binary"); reloadBinary {
+		return runDevSupervisor(cmd)
+	}
+
 	devLog := oblog.Component("cli.dev")
 	dir, _ := cmd.Flags().GetString("project")
 	dsn := dsnFromFlags(cmd)
+	sqlitePath, _ := cmd.Flags().GetString("sqlite")
 	port, _ := cmd.Flags().GetInt("port")
 	configSource, _ := cmd.Flags().GetString("config-source")
+	dbType := "postgres"
+	if sqlitePath != "" {
+		dbType = "sqlite"
+	}
 
 	ctx := context.Background()
-	db, err := storage.Connect(ctx, dsn)
+	var (
+		db  *storage.DB
+		err error
+	)
+	if dbType == "sqlite" {
+		db, err = storage.ConnectSQLite(ctx, sqlitePath)
+	} else {
+		db, err = storage.Connect(ctx, dsn)
+	}
 	if err != nil {
 		return err
 	}
@@ -223,6 +253,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			outln("[dev] loaded")
 		} else {
 			outln("[dev] metadata/DSL/scheduled reloaded; app.yaml runtime settings require restart")
+			// Страница в браузере перечитывает себя сама: правка формы или
+			// модуля видна без F5 (browser sync, только в dev-режиме).
+			srv.PublishEvent("*", ui.DevReloadEvent, nil)
 		}
 		return nil
 	}
@@ -241,15 +274,18 @@ func runDev(cmd *cobra.Command, _ []string) error {
 
 	uiCfg := ui.Config{
 		DSN:              dsn,
-		DatabaseType:     "postgres",
-		DatabaseLocation: runtimeDatabaseLocation("postgres", dsn, ""),
+		DatabaseType:     dbType,
+		DatabaseLocation: runtimeDatabaseLocation(dbType, dsn, sqlitePath),
 		ConfigSource:     configSource,
-		ConfigLocation:   runtimeConfigLocation(configSource, dir, "postgres", dsn, ""),
+		ConfigLocation:   runtimeConfigLocation(configSource, dir, dbType, dsn, sqlitePath),
 		PlatVersion:      version.String(),
 		PlatCommit:       version.Commit(),
 		PlatDate:         version.CommitDate(),
 		PlatAuthor:       version.Author,
 		PlatLicense:      version.License,
+		// Dev-режим: браузер получает метку запуска процесса и сам обновляет
+		// страницу после перезагрузки конфигурации или перезапуска сервера.
+		Dev: true,
 	}
 	if appCfg != nil {
 		uiCfg.AppName = appCfg.Name
@@ -348,6 +384,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}()
 
 	outf("onebase dev running on :%d\n", port)
+	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser {
+		openCtx, cancelOpen := context.WithCancel(ctx)
+		defer cancelOpen()
+		go openBrowserWhenReady(openCtx, port)
+	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
