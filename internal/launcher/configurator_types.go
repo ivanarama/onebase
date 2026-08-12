@@ -119,6 +119,11 @@ type saveEntity struct {
 	ListRefreshOn []string  `yaml:"list_refresh_on,omitempty"`
 	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
 	TileView      yaml.Node `yaml:"tile_view,omitempty"`
+	// Stages — маршрут этапов (план 121). Сырым узлом, как indexes и tile_view:
+	// конфигуратор его не редактирует, но потерять не вправе — вместе с блоком
+	// исчезли бы гейт переходов и отчёт «где застряло», причём молча, после
+	// обычной правки реквизита.
+	Stages yaml.Node `yaml:"stages,omitempty"`
 }
 
 type saveRegister struct {
