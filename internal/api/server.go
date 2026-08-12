@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -270,6 +271,15 @@ func (s *Server) InvalidateWidgetCache() {
 	}
 }
 
+// PublishDevReload sends the trusted system envelope used by browser sync.
+// DSL notifications cannot construct this envelope even if they reuse the
+// visible event name.
+func (s *Server) PublishDevReload() {
+	if s != nil && s.uiSrv != nil {
+		s.uiSrv.PublishDevReload()
+	}
+}
+
 // healthzHandler — readiness-проба: 200, только если БД отвечает, иначе 503.
 // Публична и без токена (в отличие от /metrics): её дёргают reverse-proxy,
 // systemd WatchdogSec и команда `onebase update` при проверке нового бинаря.
@@ -329,6 +339,18 @@ func (s *Server) H2CEnabled() bool { return s != nil && s.h2c }
 
 func (s *Server) ListenAndServe() error {
 	return s.srv.ListenAndServe()
+}
+
+// Listen reserves the configured address synchronously. CLI callers use it
+// before announcing readiness or opening a browser, so a foreign /health on
+// an occupied port can never be mistaken for this server.
+func (s *Server) Listen() (net.Listener, error) {
+	return net.Listen("tcp", s.srv.Addr)
+}
+
+// Serve serves an already-reserved listener.
+func (s *Server) Serve(listener net.Listener) error {
+	return s.srv.Serve(listener)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

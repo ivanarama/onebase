@@ -19,9 +19,10 @@ const rolePrefix = "роль:"
 // Event — одно уведомление: имя события и произвольные данные (сериализуются в
 // JSON на стороне SSE-эндпоинта).
 type Event struct {
-	ID   int64
-	Name string
-	Data any
+	ID     int64
+	Name   string
+	Data   any
+	System string
 }
 
 // subscriberBuffer holds the full replay window. A slower live subscriber is
