@@ -382,8 +382,10 @@ func GoTool() (string, error) {
 		if runtime.GOOS == "windows" {
 			p += ".exe"
 		}
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
+		// LookPath with an explicit path validates that it is executable and does
+		// not require an os.Stat on an environment-derived path (G703).
+		if resolved, err := exec.LookPath(p); err == nil {
+			return resolved, nil
 		}
 	}
 	return "", fmt.Errorf("компилятор go не найден: добавьте его в PATH или задайте GOROOT")

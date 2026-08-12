@@ -28,8 +28,16 @@ func watcherLog() *slog.Logger {
 //	          чем у самого проекта, а изменений, ради которых стоит перезагружаться,
 //	          в них не бывает.
 type watchOpts struct {
-	accept  func(path string, isDir bool) bool
+	accept  func(path string, isDir bool, op fsnotify.Op) bool
 	skipDir func(path string) bool
+	// watchDirs are additional directories watched non-recursively. They cover
+	// manifest inputs in skipped subtrees plus go.work/local-replace modules
+	// outside the primary source tree.
+	watchDirs []string
+	// debounce runs after an accepted event has settled. It can refresh dynamic
+	// filters and add newly discovered external input directories before deciding
+	// whether the public callback is necessary.
+	debounce func() (notify bool, watchDirs []string)
 }
 
 // WatchContext watches dir and all its subdirectories, calling onChange after
@@ -54,7 +62,7 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 		"roles": {}, "scheduled": {}, "services": {}, "src": {},
 		"subsystems": {}, "widgets": {},
 	}
-	return watchContext(ctx, dir, watchOpts{accept: func(path string, isDir bool) bool {
+	return watchContext(ctx, dir, watchOpts{accept: func(path string, isDir bool, _ fsnotify.Op) bool {
 		if isDir {
 			rel, err := filepath.Rel(dir, path)
 			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
@@ -71,33 +79,22 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 	}}, onChange)
 }
 
-// WatchGoContext наблюдает за исходниками платформы: onChange зовётся только на
-// правку *.go, go.mod или go.sum. Нужен режиму пересборки (`onebase dev
-// --reload-binary`), где на изменение Go-кода отвечают не перезагрузкой
-// метаданных, а `go build` и перезапуском процесса сервера.
+// WatchGoContext наблюдает за входами сборки платформы, полученными из `go list`:
+// Go/cgo/assembly sources, module/workspace files and assets matched by go:embed.
+// Он нужен режиму пересборки (`onebase dev --reload-binary`), где изменение
+// этих входов запускает `go build` и перезапуск процесса сервера.
 //
-// Каталоги, где Go-кода не бывает (.git с его тысячами объектов, node_modules,
-// служебные .idea/.vscode), в наблюдение не берутся: иначе один `git status`
-// стоил бы больше событий, чем весь рабочий день правок.
+// Каталоги, где входов сборки обычно не бывает (.git с его тысячами объектов,
+// node_modules, служебные .idea/.vscode), обходятся стороной; отдельные файлы из
+// них, если `go list` всё же назвал их входами, добавляются явно.
 func WatchGoContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
+	tracker := newGoBuildInputTracker(ctx, dir)
 	return watchContext(ctx, dir, watchOpts{
-		accept: func(path string, isDir bool) bool {
-			if isDir {
-				// Каталог целиком удалили или переименовали — Go-файлы внутри
-				// пропали вместе с ним, отдельных событий по ним не будет.
-				// Пересобрать в этом случае дешевле, чем пропустить правку.
-				return !skipGoDir(path)
-			}
-			return isGoSource(path)
-		},
-		skipDir: skipGoDir,
+		accept:    tracker.accept,
+		skipDir:   skipGoDir,
+		watchDirs: tracker.watchDirs(),
+		debounce:  tracker.refresh,
 	}, onChange)
-}
-
-// isGoSource — файл, изменение которого требует пересборки бинаря.
-func isGoSource(path string) bool {
-	base := strings.ToLower(filepath.Base(path))
-	return strings.HasSuffix(base, ".go") || base == "go.mod" || base == "go.sum"
 }
 
 // skipGoDir отсеивает каталоги, которые не содержат исходников платформы.
@@ -132,6 +129,17 @@ func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func
 	}
 
 	watchedDirs := make(map[string]struct{})
+	addDir := func(path string) error {
+		path = filepath.Clean(path)
+		if _, ok := watchedDirs[path]; ok {
+			return nil
+		}
+		if err := w.Add(path); err != nil {
+			return err
+		}
+		watchedDirs[path] = struct{}{}
+		return nil
+	}
 	// addTree рекурсивно добавляет root и все его подкаталоги в наблюдение.
 	addTree := func(root string) error {
 		return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
@@ -143,10 +151,9 @@ func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func
 				if opts.skipDir != nil && path != root && opts.skipDir(path) {
 					return fs.SkipDir
 				}
-				if err := w.Add(path); err != nil {
+				if err := addDir(path); err != nil {
 					return fmt.Errorf("watch %s: %w", path, err)
 				}
-				watchedDirs[filepath.Clean(path)] = struct{}{}
 			}
 			return nil
 		})
@@ -155,6 +162,17 @@ func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func
 		_ = w.Close()
 		return nil, fmt.Errorf("devserver: watch tree: %w", err)
 	}
+	addWatchDirs := func(dirs []string) {
+		for _, extra := range dirs {
+			if extra == "" {
+				continue
+			}
+			if err := addDir(extra); err != nil {
+				watcherLog().Warn("watch additional build-input directory failed", "path", extra, "err", err)
+			}
+		}
+	}
+	addWatchDirs(opts.watchDirs)
 
 	debounce := time.NewTimer(0)
 	<-debounce.C // drain initial tick
@@ -209,7 +227,7 @@ func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func
 				}
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) ||
 					event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					if accept != nil && !accept(event.Name, isDir) {
+					if accept != nil && !accept(event.Name, isDir, event.Op) {
 						continue
 					}
 					resetDebounce()
@@ -220,6 +238,15 @@ func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func
 				}
 				watcherLog().Warn("watcher error", "err", err)
 			case <-debounce.C:
+				notify := true
+				if opts.debounce != nil {
+					var dirs []string
+					notify, dirs = opts.debounce()
+					addWatchDirs(dirs)
+				}
+				if !notify {
+					continue
+				}
 				func() {
 					defer func() {
 						if recovered := recover(); recovered != nil {

@@ -91,6 +91,10 @@ func goModuleRoot(start string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("--source: %w", err)
 	}
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("--source: разрешить символические ссылки: %w", err)
+	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir, nil

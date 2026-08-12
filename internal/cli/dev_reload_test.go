@@ -130,6 +130,34 @@ func TestGoModuleRoot_FindsRootAbove(t *testing.T) {
 	}
 }
 
+func TestGoModuleRoot_ResolvesSymlink(t *testing.T) {
+	parent := t.TempDir()
+	realRoot := filepath.Join(parent, "real")
+	nested := filepath.Join(realRoot, "internal", "cli")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realRoot, "go.mod"), []byte("module x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, "linked")
+	if err := os.Symlink(realRoot, link); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+
+	got, err := goModuleRoot(filepath.Join(link, "internal", "cli"))
+	if err != nil {
+		t.Fatalf("goModuleRoot: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(realRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("module root = %q, want resolved path %q", got, want)
+	}
+}
+
 // Без go.mod пересобирать нечего — вместо непонятной ошибки сборки разработчик
 // должен получить объяснение, что запускать надо из дерева платформы.
 func TestGoModuleRoot_ExplainsMissingModule(t *testing.T) {
