@@ -352,6 +352,9 @@ type DetailPanel struct {
 	// FieldsSet отличает отсутствующий ключ fields от явного fields: [].
 	FieldsSet bool
 	Tabs      []DetailPanelTab
+	// TabsSet отличает отсутствующий ключ tabs (автокомпоновка) от tabs: [].
+	// Явная пустая раскладка не должна fail-open'ом показывать все поля.
+	TabsSet bool
 }
 
 // DetailPanelTab — закладка панели с явным составом.
@@ -359,7 +362,20 @@ type DetailPanelTab struct {
 	Name   string
 	Titles map[string]string
 	Fields []string
+	// Reserved for plan 118D. Set flags preserve even explicit empty/false YAML
+	// declarations so validation can reject unsupported promises instead of
+	// silently ignoring them.
+	TableParts     []string
+	TablePartsSet  bool
+	Attachments    bool
+	AttachmentsSet bool
 }
+
+const (
+	DetailPanelDefaultWidth = 320
+	DetailPanelMinWidth     = 220
+	DetailPanelMaxWidth     = 640
+)
 
 // DisplayName возвращает заголовок закладки с учётом языка.
 func (t DetailPanelTab) DisplayName(lang string) string {

@@ -57,6 +57,9 @@ func (s *Server) journalList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Field masking belongs at the handler boundary, before reference UUIDs are
+	// resolved and before rows (including the detail-panel payload) reach HTML.
+	s.maskJournalRecords(r.Context(), j, docs, rows)
 	// Resolve ref columns
 	s.resolveJournalRefs(r.Context(), j, colRefMap, rows)
 	var journalWarnings []string
@@ -261,6 +264,7 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.maskJournalRecords(r.Context(), j, docs, rows)
 	s.resolveJournalRefs(r.Context(), j, colRefMap, rows)
 
 	cols := make([]string, 0, len(visibleColumns)+2)

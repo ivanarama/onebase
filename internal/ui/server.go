@@ -119,21 +119,27 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), incidents: incident.NewStore(incident.DefaultLimit), widgetCache: widget.NewCache(60 * time.Second), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
 	s.entitySvc = s.newEntityService(cfg.Webhooks)
-	// Отладчик подключается к исполнению через DebugSource: каждый запуск DSL
-	// захватывает текущую сессию глобального контроллера в свой execCtx.
-	// Устанавливается однократно здесь, до начала обслуживания HTTP, — сам
-	// Interpreter после этого неизменяем (план 52: раньше debug_handlers
-	// мутировали interp.DebugHook на лету, что гонило с конкурентными запусками).
+	s.attachDebugger(interp)
+	if sched != nil {
+		sched.SetMessageSink(func(userID, text string) { s.messages.Push(userID, text) })
+	}
+	return s
+}
+
+// attachDebugger подключает отладчик к исполнению через DebugSource: каждый
+// запуск DSL захватывает текущую сессию глобального контроллера в свой execCtx.
+// Устанавливается однократно при сборке сервера, до начала обслуживания HTTP, —
+// сам Interpreter после этого неизменяем (план 52: раньше debug_handlers
+// мутировали interp.DebugHook на лету, что гонило с конкурентными запусками).
+// Общая для New и NewOfflineServer: точки останова должны вести себя одинаково
+// на любом сервере, а не только на том, который сам себе прописал источник.
+func (s *Server) attachDebugger(interp *interpreter.Interpreter) {
 	interp.DebugSource = func() interpreter.DebugHook {
 		if sess := s.globalDebug.Session(); sess != nil {
 			return sess
 		}
 		return nil
 	}
-	if sched != nil {
-		sched.SetMessageSink(func(userID, text string) { s.messages.Push(userID, text) })
-	}
-	return s
 }
 
 // Messages returns the per-user message store (used to inject Сообщить sink).

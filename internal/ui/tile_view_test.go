@@ -50,8 +50,9 @@ func TestPageList_TileViewUsesConfiguredFields(t *testing.T) {
 			t.Errorf("плитка не содержит %q", want)
 		}
 	}
+	visibleTile := withoutDetailPayload(html)
 	for _, unwanted := range []string{"Скрыто:", "secret"} {
-		if strings.Contains(html, unwanted) {
+		if strings.Contains(visibleTile, unwanted) {
 			t.Errorf("плитка содержит скрытое поле %q", unwanted)
 		}
 	}
@@ -294,8 +295,9 @@ func TestPageList_TreeViewKeepsToggleWhenNameHiddenByTileFields(t *testing.T) {
 			t.Errorf("дерево не содержит %q", want)
 		}
 	}
+	visibleTree := withoutDetailPayload(html)
 	for _, unwanted := range []string{"Кофе", "secret"} {
-		if strings.Contains(html, unwanted) {
+		if strings.Contains(visibleTree, unwanted) {
 			t.Errorf("дерево показало значение невыбранной колонки: %q", unwanted)
 		}
 	}

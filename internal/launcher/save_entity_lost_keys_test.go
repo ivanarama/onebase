@@ -29,6 +29,13 @@ tile_view:
   image: Фото
   title: Наименование
   fields: []
+detail_panel:
+  title: Наименование
+  width: 444
+  tabs:
+    - name: Медиа
+      titles: {en: Media}
+      fields: [Фото]
 fields:
   - name: Наименование
     type: string
@@ -64,8 +71,37 @@ fields:
 		"notify_changes: true",
 		"unique: true", // indexes
 		"image: Фото",  // tile_view
+		"detail_panel:",
+		"width: 444",
+		"en: Media",
+		"name: Медиа",
 	)
 	// tile_view.fields: [] значит «в плитке только картинка и заголовок» —
 	// отличие от отсутствия ключа обязано пережить round-trip.
 	assertFileContains(t, p, "fields: []")
+}
+
+func TestSaveFields_KeepsExplicitEmptyDetailPanelFields(t *testing.T) {
+	h, cfgDir := newFileBaseHandler(t)
+	h.runner = NewRunner()
+	p := writeCfgFile(t, cfgDir, "catalogs", "ПустаяПанель.yaml", `name: ПустаяПанель
+detail_panel:
+  title: Наименование
+  width: 320
+  fields: []
+fields:
+  - name: Наименование
+    type: string
+`)
+
+	form := url.Values{}
+	form.Set("entity", "ПустаяПанель")
+	form.Set("entity_kind", "Справочник")
+	form.Set("field.0.name", "Наименование")
+	form.Set("field.0.type", "string")
+	rec := postCfg(t, "test", "/bases/test/configurator/fields", form, h.configuratorSaveFields)
+	if ok, errText := cfgResponse(t, rec); !ok {
+		t.Fatalf("сохранение не удалось: %s", errText)
+	}
+	assertFileContains(t, p, "detail_panel:", "width: 320", "fields: []")
 }
