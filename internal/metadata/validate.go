@@ -273,6 +273,9 @@ func validateDetailPanel(e *Entity) error {
 	if dp == nil {
 		return nil
 	}
+	if dp.Width != 0 && (dp.Width < DetailPanelMinWidth || dp.Width > DetailPanelMaxWidth) {
+		return fmt.Errorf("entity %s: detail_panel.width должен быть от %d до %d px", e.Name, DetailPanelMinWidth, DetailPanelMaxWidth)
+	}
 	check := func(where string, names []string) error {
 		for _, name := range names {
 			if findEntityFieldFold(e, name) == nil {
@@ -287,8 +290,12 @@ func validateDetailPanel(e *Entity) error {
 	if err := check(".fields", dp.Fields); err != nil {
 		return err
 	}
-	if dp.FieldsSet && len(dp.Tabs) > 0 {
+	tabsConfigured := dp.TabsSet || len(dp.Tabs) > 0
+	if dp.FieldsSet && tabsConfigured {
 		return fmt.Errorf("entity %s: detail_panel — задайте либо fields, либо tabs, но не оба", e.Name)
+	}
+	if dp.TabsSet && len(dp.Tabs) == 0 {
+		return fmt.Errorf("entity %s: detail_panel.tabs не может быть пустым; для явно пустой панели используйте fields: []", e.Name)
 	}
 	seen := map[string]bool{}
 	for _, tab := range dp.Tabs {
@@ -300,6 +307,12 @@ func validateDetailPanel(e *Entity) error {
 			return fmt.Errorf("entity %s: detail_panel.tabs — закладка %s объявлена дважды", e.Name, tab.Name)
 		}
 		seen[key] = true
+		if tab.TablePartsSet || tab.AttachmentsSet {
+			return fmt.Errorf("entity %s: detail_panel.tabs[%s]: tableparts/attachments зарезервированы для 118D и пока не поддерживаются", e.Name, tab.Name)
+		}
+		if len(tab.Fields) == 0 {
+			return fmt.Errorf("entity %s: detail_panel.tabs[%s].fields не может быть пустым", e.Name, tab.Name)
+		}
 		if err := check(".tabs["+tab.Name+"].fields", tab.Fields); err != nil {
 			return err
 		}

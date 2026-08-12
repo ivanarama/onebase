@@ -873,6 +873,9 @@
   "Диагностика базы": "Datenbankdiagnose",
   "превышен размер данных формы: форматированный текст с картинками не должен превышать %d МБ в одном поле": "Formulardaten zu groß: Rich-Text mit Bildern darf %d MB pro Feld nicht überschreiten",
   "превышен размер данных формы (не более %d МБ)": "Formulardaten zu groß (max. %d MB)",
+  "Основное": "Allgemein",
+  "Изображения": "Bilder",
+  "Описание": "Beschreibung",
   "Условие": "Bedingung",
   "Останавливаться, только когда выражение истинно": "Nur anhalten, wenn der Ausdruck wahr ist"
 }
