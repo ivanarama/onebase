@@ -1609,7 +1609,15 @@ function obInitListDelegates() {
     if (!Number.isFinite(delay) || delay < 0) delay = 320;
     clearTimeout(input._obAutoSubmitTimer);
     input._obAutoSubmitTimer = setTimeout(function () {
-      input.form.submit();
+      var form = input.form;
+      if (!form) return;
+      // Named controls can shadow form.submit (for example name="submit").
+      // Call the native prototype method when available so query/form fields
+      // cannot disable the debounced search submission.
+      var proto = window.HTMLFormElement && window.HTMLFormElement.prototype;
+      var nativeSubmit = proto && typeof proto.submit === 'function' ? proto.submit : null;
+      if (nativeSubmit) nativeSubmit.call(form);
+      else if (typeof form.submit === 'function') form.submit();
     }, delay);
   });
 }
