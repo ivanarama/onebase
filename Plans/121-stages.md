@@ -373,12 +373,17 @@ Wall-clock не участвует в выборе latest даже при оди
   policies и к обычному audit: `hide` удаляет field-event целиком, `mask_*`
   преобразует **оба** `OldValue`/`NewValue` через `access.MaskValue`, `full`
   оставляет их, а неизвестное/удалённое поле и неизвестная стратегия закрываются
-  без выдачи raw value. Решение принимается до reference lookup; для разрешённых
-  ссылок label получает маски целевой сущности, затем к итоговым двум scalar
-  значениям применяется политика исходного поля непосредственно перед render /
-  JSON. Так enrichment или его ошибка не превращают UUID/старое значение в
-  обход маски. При `mask_admin` тот же redactor применяется к record history и
-  к `enrichAuditEntriesGlobal`, до передачи в админский шаблон.
+  без выдачи raw value. Решение исходного поля принимается **до** enrichment:
+  `hide`/unknown event отбрасывается, любая `mask_*` применяется прямо к raw
+  `OldValue`/`NewValue` и запрещает date/reference lookup; только `full` может
+  форматировать дату или разрешать ссылку. Для `full` reference loader отдельно
+  проверяет read право целевой сущности и после загрузки `rowAllowsSelected`
+  (object+RLS), затем строит `maskedRecordLabel`; при отказе оставляет уже
+  разрешённый source UUID, но никогда не раскрывает target label. Так enrichment
+  или его ошибка не превращают UUID/старое значение в обход маски и masked source
+  вообще не создаёт side-channel запросом к target. При `mask_admin` тот же
+  redactor применяется к record history и к `enrichAuditEntriesGlobal`, до
+  передачи в админский шаблон.
   Для stage-поля любая политика, кроме `full`, подавляет history, graph и report
   целиком: частично замаскированные enum labels всё равно раскрывали бы equality,
   counts и маршрут. Агрегат получает SQL predicate через
@@ -506,7 +511,9 @@ Wall-clock не участвует в выборе latest даже при оди
   report до SQL; обычная audit history удаляет `hide` field-event и одинаково
   маскирует `OldValue`/`NewValue` для `mask_tail`/`mask_city`/`mask_all`, включая
   reference/date, неизвестное поле и включённый `mask_admin`, не оставляя raw
-  fallback; guarded aggregate без `RowFilterEvaluated` падает fail-closed;
+  fallback; spy доказывает 0 target queries для masked source reference, а
+  `full` source reference при target RBAC/RLS denial не содержит secret label;
+  guarded aggregate без `RowFilterEvaluated` падает fail-closed;
   escaping graph payload не позволяет закрыть `<script>`;
 - universal portable round-trip включает `_stage_history`, manifest allowlist её
   принимает, старый archive без файла очищает target-history и при full restore,
