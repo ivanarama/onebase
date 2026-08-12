@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -19,13 +20,14 @@ import (
 // pgxpool.Pool or a SQLite *sql.DB, plus the matching Dialect. All Exec/Query
 // methods route to the right backend transparently.
 type DB struct {
-	pool       *pgxpool.Pool // non-nil for PG
-	sqlDB      *sql.DB       // non-nil for SQLite
-	filesDir   string
-	dialect    Dialect
-	blobStore  BlobObjectStore // non-nil when file_storage=s3 configured
-	blobPrefix string          // key prefix for blob objects in the bucket
-	blobStream bool            // s3 attachments: stream via Range instead of temp file
+	pool         *pgxpool.Pool // non-nil for PG
+	sqlDB        *sql.DB       // non-nil for SQLite
+	databaseFile string        // absolute SQLite database path; empty for PostgreSQL/in-memory
+	filesDir     string
+	dialect      Dialect
+	blobStore    BlobObjectStore // non-nil when file_storage=s3 configured
+	blobPrefix   string          // key prefix for blob objects in the bucket
+	blobStream   bool            // s3 attachments: stream via Range instead of temp file
 	// rlsGuard — strict-RLS чокпоинт (план 79F). nil = выключен (по умолчанию).
 	// Когда задан, List для сущности, у которой guard возвращает true (есть
 	// строковая политика), но без вычисленного строкового доступа
@@ -41,7 +43,10 @@ type DB struct {
 	// migrate, падала бы на INSERT в несуществующий _fts. См. ftsAvailable.
 	ftsState int32
 	// ftsCfg — имя конфигурации текстового поиска PostgreSQL (russian/simple).
-	ftsCfg atomic.Value
+	ftsCfg     atomic.Value
+	closeMu    sync.Mutex
+	closeHooks []func() error
+	closed     bool
 }
 
 // SetStrictRLSGuard включает strict-RLS чокпоинт (план 79F, defense-in-depth).
@@ -208,10 +213,26 @@ func defaultFilesDir(dsn string) string {
 
 func (db *DB) FilesDir() string { return db.filesDir }
 
+// SQLitePath returns the exact on-disk SQLite database opened by this DB.
+// An empty value means PostgreSQL or an in-memory SQLite database.
+func (db *DB) SQLitePath() string { return db.databaseFile }
+
 // SetFilesDir переопределяет каталог файлового хранилища (вложения, блобы).
 func (db *DB) SetFilesDir(dir string) { db.filesDir = dir }
 
 func (db *DB) Close() {
+	if db == nil {
+		return
+	}
+	db.closeMu.Lock()
+	if db.closed {
+		db.closeMu.Unlock()
+		return
+	}
+	db.closed = true
+	hooks := db.closeHooks
+	db.closeHooks = nil
+	db.closeMu.Unlock()
 	webhookURLScrubbed.Delete(db)
 	if db.pool != nil {
 		db.pool.Close()
@@ -219,6 +240,26 @@ func (db *DB) Close() {
 	if db.sqlDB != nil {
 		_ = db.sqlDB.Close()
 	}
+	for i := len(hooks) - 1; i >= 0; i-- {
+		_ = hooks[i]()
+	}
+}
+
+// AddCloseHook binds an external lifetime resource (for example a database
+// coordination lease) to this handle. Hooks run after all pool connections are
+// closed, in reverse registration order. A hook added after Close runs now.
+func (db *DB) AddCloseHook(hook func() error) {
+	if db == nil || hook == nil {
+		return
+	}
+	db.closeMu.Lock()
+	if db.closed {
+		db.closeMu.Unlock()
+		_ = hook()
+		return
+	}
+	db.closeHooks = append(db.closeHooks, hook)
+	db.closeMu.Unlock()
 }
 
 // DisableFKForImport disables foreign-key constraint enforcement for the
@@ -228,8 +269,10 @@ func (db *DB) Close() {
 // to every subsequent statement, then executes PRAGMA foreign_keys=OFF.
 // The cleanup restores PRAGMA foreign_keys=ON and the pool size.
 //
-// PostgreSQL: drops all FK constraints via ALTER TABLE (DDL), which reliably
-// affects every connection in the pool. Previously we used
+// PostgreSQL: drops all FK constraints via ALTER TABLE (DDL). Callers that
+// need crash-safe bulk import invoke this with a transaction-bearing context,
+// so the drop, data replacement, validation and restoration commit atomically.
+// Previously we used
 // SET session_replication_role='replica', but that is a session-level setting
 // that only applies to ONE connection — other pool connections still enforce
 // FK constraints (including ON DELETE CASCADE), causing silent data loss
@@ -237,27 +280,38 @@ func (db *DB) Close() {
 func (db *DB) DisableFKForImport(ctx context.Context) (cleanup func() error, err error) {
 	if db.sqlDB != nil {
 		db.sqlDB.SetMaxOpenConns(1)
-		if _, err := db.sqlDB.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
-			db.sqlDB.SetMaxOpenConns(0)
+		if _, err := db.Exec(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			// ConnectSQLite deliberately uses one connection so per-connection
+			// PRAGMAs remain authoritative after import as well.
+			db.sqlDB.SetMaxOpenConns(1)
 			return func() error { return nil }, err
 		}
+		cleanupCtx := context.WithoutCancel(ctx)
 		return func() error {
-			_, err := db.sqlDB.ExecContext(context.Background(), "PRAGMA foreign_keys=ON")
-			db.sqlDB.SetMaxOpenConns(0)
+			_, err := db.Exec(cleanupCtx, "PRAGMA foreign_keys=ON")
+			if errors.Is(err, ErrDurableSessionClosed) {
+				// Commit-outcome resolution deliberately discards the ambiguous
+				// connection. A replacement connection is initialized with the same
+				// operational PRAGMAs by the SQLite DSN.
+				_, err = db.Exec(WithoutDurableSession(cleanupCtx), "PRAGMA foreign_keys=ON")
+			}
+			db.sqlDB.SetMaxOpenConns(1)
 			return err
 		}, nil
 	}
-	// PostgreSQL: drop all FK constraints (DDL affects all pool connections).
+	// PostgreSQL: route all DDL through DB so a transaction carried by ctx is
+	// honored. A restore must not expose a crash window with constraints absent.
 	type fkInfo struct {
-		table string
-		name  string
-		def   string
+		table     string
+		name      string
+		def       string
+		validated bool
 	}
 	// Use pg_class.relname (always unquoted) instead of regclass::text
 	// which may return quoted identifiers like "возвратотпокупателя",
 	// causing double-quoting and silent ALTER TABLE failures.
-	rows, err := db.pool.Query(ctx,
-		`SELECT c.conname, t.relname, pg_get_constraintdef(c.oid)
+	rows, err := db.Query(ctx,
+		`SELECT c.conname, t.relname, pg_get_constraintdef(c.oid), c.convalidated
 		 FROM pg_constraint c
 		 JOIN pg_class t ON c.conrelid = t.oid
 		 WHERE c.contype='f' AND c.connamespace=current_schema()::regnamespace`)
@@ -267,11 +321,12 @@ func (db *DB) DisableFKForImport(ctx context.Context) (cleanup func() error, err
 	var fks []fkInfo
 	for rows.Next() {
 		var name, table, def string
-		if err := rows.Scan(&name, &table, &def); err != nil {
+		var validated bool
+		if err := rows.Scan(&name, &table, &def, &validated); err != nil {
 			rows.Close()
 			return func() error { return nil }, err
 		}
-		fks = append(fks, fkInfo{table: table, name: name, def: def})
+		fks = append(fks, fkInfo{table: table, name: name, def: def, validated: validated})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -280,12 +335,31 @@ func (db *DB) DisableFKForImport(ctx context.Context) (cleanup func() error, err
 
 	restore := func(items []fkInfo) error {
 		var errs []error
+		var restored []fkInfo
 		for _, fk := range items {
 			tq := `"` + strings.ReplaceAll(fk.table, `"`, `""`) + `"`
 			nq := `"` + strings.ReplaceAll(fk.name, `"`, `""`) + `"`
-			if _, err := db.pool.Exec(context.Background(),
-				"ALTER TABLE "+tq+" ADD CONSTRAINT "+nq+" "+fk.def+" NOT VALID"); err != nil {
+			definition := fk.def
+			if !strings.Contains(strings.ToUpper(definition), "NOT VALID") {
+				definition += " NOT VALID"
+			}
+			if _, err := db.Exec(ctx,
+				"ALTER TABLE "+tq+" ADD CONSTRAINT "+nq+" "+definition); err != nil {
 				errs = append(errs, fmt.Errorf("restore FK %s.%s: %w", fk.table, fk.name, err))
+				continue
+			}
+			restored = append(restored, fk)
+		}
+		// Preserve originally-unvalidated constraints as-is, but do not silently
+		// downgrade validated source constraints after bulk import.
+		for _, fk := range restored {
+			if !fk.validated {
+				continue
+			}
+			tq := `"` + strings.ReplaceAll(fk.table, `"`, `""`) + `"`
+			nq := `"` + strings.ReplaceAll(fk.name, `"`, `""`) + `"`
+			if _, err := db.Exec(ctx, "ALTER TABLE "+tq+" VALIDATE CONSTRAINT "+nq); err != nil {
+				errs = append(errs, fmt.Errorf("validate FK %s.%s: %w", fk.table, fk.name, err))
 			}
 		}
 		return errors.Join(errs...)
@@ -294,7 +368,7 @@ func (db *DB) DisableFKForImport(ctx context.Context) (cleanup func() error, err
 	for _, fk := range fks {
 		tq := `"` + strings.ReplaceAll(fk.table, `"`, `""`) + `"`
 		nq := `"` + strings.ReplaceAll(fk.name, `"`, `""`) + `"`
-		if _, err := db.pool.Exec(ctx, "ALTER TABLE "+tq+" DROP CONSTRAINT "+nq); err != nil {
+		if _, err := db.Exec(ctx, "ALTER TABLE "+tq+" DROP CONSTRAINT "+nq); err != nil {
 			return func() error { return nil }, errors.Join(
 				fmt.Errorf("drop FK %s.%s: %w", fk.table, fk.name, err), restore(dropped))
 		}

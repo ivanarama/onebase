@@ -3317,13 +3317,13 @@ document.addEventListener('click', function(e) {
 // Возвращает Promise с URL пользовательского режима. Сессия передаётся через
 // одноразовый bootstrap-код (план 53): токен не попадает в URL/логи/историю.
 function _enterpriseURL() {
-  var plain = 'http://localhost:' + _basePort + '/ui';
+  var plain = 'http://127.0.0.1:' + _basePort + '/ui';
   if (!_hasSession) return Promise.resolve(plain);
   return fetch('/bases/' + _dbgBase + '/one-time-code', {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       return (d && d.code)
-        ? 'http://localhost:' + _basePort + '/auth/bootstrap?code=' + encodeURIComponent(d.code) + '&return=%2Fui'
+        ? 'http://127.0.0.1:' + _basePort + '/auth/bootstrap?code=' + encodeURIComponent(d.code) + '&return=%2Fui'
         : plain;
     })
     .catch(function(){ return plain; });
@@ -3333,13 +3333,13 @@ function _enterpriseURL() {
 // Требует запущенной базы (как и кнопка «Запустить предприятие»).
 function previewReport(name){
   var rep = '/ui/report/' + encodeURIComponent(name);
-  var plain = 'http://localhost:' + _basePort + rep;
+  var plain = 'http://127.0.0.1:' + _basePort + rep;
   if (!_hasSession) { window.open(plain, '_blank'); return; }
   fetch('/bases/' + _dbgBase + '/one-time-code', {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       var url = (d && d.code)
-        ? 'http://localhost:' + _basePort + '/auth/bootstrap?code=' + encodeURIComponent(d.code) + '&return=' + encodeURIComponent(rep)
+        ? 'http://127.0.0.1:' + _basePort + '/auth/bootstrap?code=' + encodeURIComponent(d.code) + '&return=' + encodeURIComponent(rep)
         : plain;
       window.open(url, '_blank');
     })

@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/backup"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -27,12 +28,89 @@ func cfgUserFromContext(ctx context.Context) *auth.User {
 // on every configurator request. Key: base.ID (or DSN/path for legacy paths).
 var cfgAuthDBs sync.Map // map[string]*storage.DB
 
+// cfgAuthDBGates protects the lifetime of cached pools. Normal configurator
+// requests hold a read lease for their whole handler; restore/delete/edit take
+// the exclusive lease, evict the pool and keep new requests out until the
+// database files and registry entry are consistent again.
+var cfgAuthDBGates sync.Map // map[string]*sync.RWMutex
+
+// Ports are not a cookie boundary. The launcher and enterprise servers use
+// the same numeric loopback host, so the configurator session needs its own
+// cookie name. The proxy deliberately translates it to onebase_session only
+// on the already authenticated connection to the selected base.
+const configuratorSessionCookieName = "onebase_launcher_session"
+
+type cfgDBReadLeaseKey struct{}
+type cfgDBExclusiveLeaseKey struct{}
+type cfgAuthCredentialKey struct{}
+
+type cfgAuthCredential struct {
+	token             string
+	initialOpenAccess bool
+}
+
+func cfgAuthDBGate(baseID string) *sync.RWMutex {
+	gate, _ := cfgAuthDBGates.LoadOrStore(baseID, &sync.RWMutex{})
+	return gate.(*sync.RWMutex)
+}
+
+func cfgDBReadLeaseHeld(ctx context.Context, baseID string) bool {
+	heldID, _ := ctx.Value(cfgDBReadLeaseKey{}).(string)
+	return heldID == baseID
+}
+
+func (h *handler) cfgDBReadMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		gate := cfgAuthDBGate(id)
+		gate.RLock()
+		defer gate.RUnlock()
+		ctx := context.WithValue(r.Context(), cfgDBReadLeaseKey{}, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (h *handler) cfgDBExclusiveMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		release := acquireCfgDBExclusive(id)
+		defer release()
+		ctx := context.WithValue(r.Context(), cfgDBExclusiveLeaseKey{}, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func cfgDBExclusiveLeaseHeld(ctx context.Context, baseID string) bool {
+	heldID, _ := ctx.Value(cfgDBExclusiveLeaseKey{}).(string)
+	return heldID == baseID
+}
+
+func cfgAuthCredentialFromContext(ctx context.Context) (cfgAuthCredential, bool) {
+	credential, ok := ctx.Value(cfgAuthCredentialKey{}).(cfgAuthCredential)
+	return credential, ok
+}
+
+// acquireCfgDBExclusive waits for in-flight configurator requests, prevents
+// new ones, evicts the cached pool and returns a release function.
+func acquireCfgDBExclusive(baseID string) func() {
+	gate := cfgAuthDBGate(baseID)
+	gate.Lock()
+	if value, ok := cfgAuthDBs.LoadAndDelete(baseID); ok {
+		value.(*storage.DB).Close()
+	}
+	return gate.Unlock
+}
+
 // getAuthDB opens (or returns cached) storage.DB for the given base, routing
 // by DBType (postgres/sqlite). Cache key is the base ID, which is stable.
 func getAuthDB(ctx context.Context, b *Base) (*storage.DB, error) {
 	key := b.ID
 	if v, ok := cfgAuthDBs.Load(key); ok {
-		return v.(*storage.DB), nil
+		db := v.(*storage.DB)
+		if err := backup.CheckNoPendingRestore(ctx, db); err != nil {
+			return nil, err
+		}
+		return db, nil
 	}
 	db, err := OpenDB(ctx, b)
 	if err != nil {
@@ -40,15 +118,20 @@ func getAuthDB(ctx context.Context, b *Base) (*storage.DB, error) {
 	}
 	if actual, loaded := cfgAuthDBs.LoadOrStore(key, db); loaded {
 		db.Close()
-		return actual.(*storage.DB), nil
+		db = actual.(*storage.DB)
+		if err := backup.CheckNoPendingRestore(ctx, db); err != nil {
+			return nil, err
+		}
+		return db, nil
 	}
 	return db, nil
 }
 
 func CloseAuthPools() {
 	cfgAuthDBs.Range(func(key, value any) bool {
-		value.(*storage.DB).Close()
-		cfgAuthDBs.Delete(key)
+		id := key.(string)
+		release := acquireCfgDBExclusive(id)
+		release()
 		return true
 	})
 }
@@ -240,7 +323,7 @@ func (h *handler) configuratorLoginLimiter() *auth.LoginLimiter {
 // create-user AJAX response must establish a session before the next request.
 func setConfiguratorSessionCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "onebase_session",
+		Name:     configuratorSessionCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
@@ -250,7 +333,7 @@ func setConfiguratorSessionCookie(w http.ResponseWriter, token string) {
 
 func (h *handler) cfgLogout(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	cookie, err := r.Cookie("onebase_session")
+	cookie, err := r.Cookie(configuratorSessionCookieName)
 	if err == nil {
 		if b, berr := h.store.Get(id); berr == nil {
 			if db, dberr := getAuthDB(r.Context(), b); dberr == nil {
@@ -269,7 +352,7 @@ func (h *handler) cfgLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:    "onebase_session",
+		Name:    configuratorSessionCookieName,
 		Value:   "",
 		Path:    "/",
 		MaxAge:  -1,
@@ -281,6 +364,22 @@ func (h *handler) cfgLogout(w http.ResponseWriter, r *http.Request) {
 func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
+		// Restore routes intentionally do not have the outer read middleware:
+		// authenticate under a short read lease, release it, then let the handler
+		// upgrade to an exclusive lease without deadlocking itself.
+		var releaseRead func()
+		if !cfgDBReadLeaseHeld(r.Context(), id) {
+			gate := cfgAuthDBGate(id)
+			gate.RLock()
+			released := false
+			releaseRead = func() {
+				if !released {
+					released = true
+					gate.RUnlock()
+				}
+			}
+			defer releaseRead()
+		}
 		b, err := h.store.Get(id)
 		if err != nil {
 			http.NotFound(w, r)
@@ -305,17 +404,23 @@ func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !hasUsers {
-			next.ServeHTTP(w, r)
+			if releaseRead != nil {
+				releaseRead()
+			}
+			ctx := context.WithValue(r.Context(), cfgAuthCredentialKey{}, cfgAuthCredential{
+				initialOpenAccess: true,
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
-		cookie, err := r.Cookie("onebase_session")
+		cookie, err := r.Cookie(configuratorSessionCookieName)
 		if err != nil {
 			http.Redirect(w, r, "/bases/"+id+"/configurator/login", http.StatusFound)
 			return
 		}
 
-		user, err := repo.LookupSession(r.Context(), cookie.Value)
+		user, err := repo.LookupSessionKind(r.Context(), cookie.Value, auth.SessionKindConfigurator)
 		if err != nil {
 			http.Redirect(w, r, "/bases/"+id+"/configurator/login", http.StatusFound)
 			return
@@ -338,14 +443,100 @@ func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), cfgUserKey{}, user)
+		ctx = context.WithValue(ctx, cfgAuthCredentialKey{}, cfgAuthCredential{token: cookie.Value})
+		if releaseRead != nil {
+			releaseRead()
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// cfgAuthExclusiveRecheckMiddleware closes the authorization TOCTOU window on
+// destructive and consistent-snapshot routes. cfgAuthMiddleware must release
+// its short read lease before the exclusive lease can be acquired; users and
+// sessions can change in that gap. Re-open the current database under the
+// already-held exclusive lease and repeat the decision before any stop, read or
+// replacement operation begins.
+func (h *handler) cfgAuthExclusiveRecheckMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		if !cfgDBExclusiveLeaseHeld(r.Context(), id) {
+			http.Error(w, "configurator authorization requires an exclusive database lease", http.StatusInternalServerError)
+			return
+		}
+		credential, ok := cfgAuthCredentialFromContext(r.Context())
+		if !ok {
+			http.Error(w, "configurator authorization context unavailable", http.StatusInternalServerError)
+			return
+		}
+		b, err := h.store.Get(id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		user, openAccess, err := recheckCfgAdminExclusive(r.Context(), b, credential)
+		if err != nil {
+			http.Error(w, "authentication service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !openAccess && user == nil {
+			http.Redirect(w, r, "/bases/"+id+"/configurator/login", http.StatusFound)
+			return
+		}
+		ctx := r.Context()
+		if user != nil {
+			ctx = context.WithValue(ctx, cfgUserKey{}, user)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// recheckCfgAdminExclusive uses a fresh, uncached connection and closes it
+// before returning. The destructive handler that follows must be the next code
+// allowed to open/replace this database while the exclusive gate remains held.
+func recheckCfgAdminExclusive(ctx context.Context, b *Base, credential cfgAuthCredential) (*auth.User, bool, error) {
+	db, err := OpenDB(ctx, b)
+	if err != nil {
+		return nil, false, err
+	}
+	repo := auth.NewRepo(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		db.Close()
+		return nil, false, err
+	}
+	hasUsers, err := repo.HasUsers(ctx)
+	if err != nil {
+		db.Close()
+		return nil, false, err
+	}
+	if !hasUsers {
+		db.Close()
+		return nil, true, nil
+	}
+	// A request admitted under first-run open access must not inherit access if
+	// another request created the first user before this exclusive section.
+	if credential.initialOpenAccess || credential.token == "" {
+		db.Close()
+		return nil, false, nil
+	}
+	user, lookupErr := repo.LookupSessionKind(ctx, credential.token, auth.SessionKindConfigurator)
+	db.Close()
+	if lookupErr != nil || user == nil || !user.IsAdmin {
+		return nil, false, nil
+	}
+	return user, false, nil
 }
 
 // cfgAdminAuthorized повторяет проверку cfgAuthMiddleware, но возвращает ошибку
 // отдельно от отказа в доступе. Только успешно подтверждённое отсутствие
 // пользователей включает first-run режим; сбой БД должен закрывать доступ.
 func (h *handler) cfgAdminAuthorized(r *http.Request, b *Base) (bool, error) {
+	if !cfgDBReadLeaseHeld(r.Context(), b.ID) {
+		gate := cfgAuthDBGate(b.ID)
+		gate.RLock()
+		defer gate.RUnlock()
+	}
 	db, err := getAuthDB(r.Context(), b)
 	if err != nil {
 		return false, err
@@ -361,11 +552,11 @@ func (h *handler) cfgAdminAuthorized(r *http.Request, b *Base) (bool, error) {
 	if !hasUsers {
 		return true, nil
 	}
-	cookie, err := r.Cookie("onebase_session")
+	cookie, err := r.Cookie(configuratorSessionCookieName)
 	if err != nil {
 		return false, nil
 	}
-	user, err := repo.LookupSession(r.Context(), cookie.Value)
+	user, err := repo.LookupSessionKind(r.Context(), cookie.Value, auth.SessionKindConfigurator)
 	if err != nil || user == nil || !user.IsAdmin {
 		return false, nil
 	}

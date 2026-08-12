@@ -68,6 +68,89 @@ func TestShutdownDrainsRunningGoJob(t *testing.T) {
 	}
 }
 
+func TestRunReturnsQuiesceTimeout(t *testing.T) {
+	db, _ := openSchedulerTestDB(t)
+	sched := New(db, nil, nil)
+	sched.shutdownTimeout = 20 * time.Millisecond
+
+	_, done, err := sched.beginJob("StuckJob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- sched.Run(ctx) }()
+	cancel()
+
+	select {
+	case err := <-runDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run hid the scheduler quiesce timeout")
+	}
+
+	done()
+}
+
+func TestBeginQuiescePermanentlyRejectsNewJobs(t *testing.T) {
+	db, ctx := openSchedulerTestDB(t)
+	sched := New(db, nil, nil)
+	sched.BeginQuiesce()
+
+	if _, _, err := sched.beginJob("LateJob"); !errors.Is(err, ErrSchedulerStopping) {
+		t.Fatalf("beginJob after BeginQuiesce = %v, want ErrSchedulerStopping", err)
+	}
+	if err := sched.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sched.beginJob("LaterJob"); !errors.Is(err, ErrSchedulerStopping) {
+		t.Fatalf("beginJob after finishShutdown = %v, want persistent ErrSchedulerStopping", err)
+	}
+}
+
+func TestAcceptedGoRunNeverLeavesHistoryRunning(t *testing.T) {
+	db, ctx := openSchedulerTestDB(t)
+	sched := New(db, nil, nil)
+	var info RunInfo
+
+	jobCtx, done, err := sched.beginJob("DemoReset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sched.executeGoJob(jobCtx, "DemoReset", func(ctx context.Context) error {
+		var ok bool
+		info, ok = CurrentRun(ctx)
+		if !ok {
+			return errors.New("current run info missing")
+		}
+		return Accepted("offline reset request accepted")
+	})
+	done()
+
+	runs, err := db.ScheduledRuns(ctx, "DemoReset", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != runStatusAccepted || runs[0].FinishedAt == nil ||
+		runs[0].Output != "offline reset request accepted" || runs[0].ID != info.ID {
+		t.Fatalf("accepted run was not durably finalized: %+v; info=%+v", runs, info)
+	}
+
+	offlineErr := errors.New("archive validation failed")
+	if err := db.UpdateScheduledRun(ctx, info.ID, runStatusError, "", offlineErr.Error(), time.Since(info.StartedAt).Milliseconds()); err != nil {
+		t.Fatal(err)
+	}
+	runs, err = db.ScheduledRuns(ctx, "DemoReset", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != runStatusError || runs[0].Error != offlineErr.Error() || runs[0].FinishedAt == nil {
+		t.Fatalf("accepted run did not publish offline failure: %+v", runs)
+	}
+}
+
 func TestShutdownDeadlineMarksRunningGoJobInterrupted(t *testing.T) {
 	db, ctx := openSchedulerTestDB(t)
 	sched := New(db, nil, nil)

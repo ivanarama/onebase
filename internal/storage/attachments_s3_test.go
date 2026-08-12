@@ -100,6 +100,43 @@ func TestAttachmentRoundtrip_S3(t *testing.T) {
 	}
 }
 
+func TestAttachmentRejectsS3SizeMismatch(t *testing.T) {
+	ctx := context.Background()
+	db, store := newS3AttachDB(t)
+	att, err := db.UploadAttachment(ctx, "document", "order", uuid.New(), "file.txt", "text/plain", "ivan", bytes.NewReader([]byte("original")), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.objs["px/attachments/order/"+att.ID.String()] = []byte("x")
+	if _, _, err := db.OpenAttachment(ctx, att.ID); err == nil {
+		t.Fatal("OpenAttachment must reject an S3 object whose size disagrees with metadata")
+	}
+	if _, _, _, err := db.MaterializeAttachment(ctx, att.ID); err == nil {
+		t.Fatal("MaterializeAttachment must reject an S3 object whose size disagrees with metadata")
+	}
+}
+
+func TestAttachmentRejectsDiskSizeMismatch(t *testing.T) {
+	ctx := context.Background()
+	db, _ := newS3AttachDB(t)
+	if err := db.SaveFileStorageMode(ctx, FileStorageDisk); err != nil {
+		t.Fatal(err)
+	}
+	att, err := db.UploadAttachment(ctx, "document", "order", uuid.New(), "file.txt", "text/plain", "ivan", bytes.NewReader([]byte("original")), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(db.filesDir, "order", att.ID.String()), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.OpenAttachment(ctx, att.ID); err == nil {
+		t.Fatal("OpenAttachment must reject a disk file whose size disagrees with metadata")
+	}
+	if _, _, _, err := db.MaterializeAttachment(ctx, att.ID); err == nil {
+		t.Fatal("MaterializeAttachment must reject a disk file whose size disagrees with metadata")
+	}
+}
+
 func TestAttachment_S3Streaming(t *testing.T) {
 	ctx := context.Background()
 	db, _ := newS3AttachDB(t)

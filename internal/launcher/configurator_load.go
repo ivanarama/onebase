@@ -57,7 +57,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 	if len(lang) > 0 {
 		l = lang[0]
 	}
-	data := &configuratorData{Base: b, Tab: tab, PlatformVer: version.String(), PlatformDate: version.CommitDate(), UIServerURL: fmt.Sprintf("http://localhost:%d", b.Port), DSNMasked: maskDSN(b.DB), InlineJSYaml: InlineJSYaml}
+	data := &configuratorData{Base: b, Tab: tab, PlatformVer: version.String(), PlatformDate: version.CommitDate(), UIServerURL: fmt.Sprintf("http://127.0.0.1:%d", b.Port), DSNMasked: maskDSN(b.DB), InlineJSYaml: InlineJSYaml}
 
 	if startedAt, ok := h.runner.StartedAt(b.ID); ok {
 		data.IsRunning = true

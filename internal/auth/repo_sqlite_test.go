@@ -791,8 +791,8 @@ func TestMiddlewareRequiresSessionWhenUsersExist(t *testing.T) {
 		t.Fatalf("без cookie ожидался редирект 302, получено %d", rr1.Code)
 	}
 
-	// Валидная сессия — проход.
-	token, _ := repo.CreateSession(ctx, user.ID, auth.SessionMeta{})
+	// Валидная Enterprise-сессия — проход.
+	token, _ := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindEnterprise})
 	req := httptest.NewRequest(http.MethodGet, "/ui", nil)
 	req.AddCookie(&http.Cookie{Name: "onebase_session", Value: token})
 	rr2 := httptest.NewRecorder()
