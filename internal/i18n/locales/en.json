@@ -1189,6 +1189,8 @@
   "%s требует неотрицательное целое число записей, получено %q": "%s requires a non-negative integer row count, got %q",
   "%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается": "%s in nested queries and UNION branches is not supported yet",
   "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "FIRST/TOP in a query with UNION is not supported yet: the limit applies to an individual branch",
+  "Условие": "Condition",
+  "Останавливаться, только когда выражение истинно": "Stop only when the expression is true",
   "Закрытие окна информационных баз": "Closing the information bases window",
   "Работают информационные базы:": "Information bases are running:",
   "Продолжить их работу в фоновом режиме? Регламентные задания, обмены и подключённые пользователи не пострадают. Окно запуска закроется — откройте его снова, чтобы остановить базы.": "Keep them running in the background? Scheduled jobs, data exchanges and connected users will not be affected. The launcher window will close — open it again to stop the bases.",

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/debugger"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -63,15 +64,20 @@ func NewOfflineServer(proj *project.Project, db *storage.DB) (*Server, *runtime.
 	}
 
 	s := &Server{
-		store:    db,
-		reg:      reg,
-		interp:   interp,
-		lockMgr:  runtime.NewLockManager(),
-		messages: NewMessageStore(),
+		store:       db,
+		reg:         reg,
+		interp:      interp,
+		lockMgr:     runtime.NewLockManager(),
+		messages:    NewMessageStore(),
+		globalDebug: debugger.NewGlobalDebugController(),
 	}
 	// Запись справочников/документов из обработки (catWriter/docWriter →
 	// entityservice.Save) должна работать и в offline-режиме.
 	s.entitySvc = s.newEntityService(nil)
+	// Отладка тем же способом, что и на полном сервере. Пока сессия не включена,
+	// источник отдаёт nil и накладных расходов нет; debug-эндпоинты в offline
+	// не монтируются, так что для procrun ничего не меняется.
+	s.attachDebugger(interp)
 	return s, reg, nil
 }
 

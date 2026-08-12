@@ -29,6 +29,22 @@ func TestParser_EmptyModule(t *testing.T) {
 	}
 }
 
+func TestParser_StandaloneExpressionConsumesAllInput(t *testing.T) {
+	for _, src := range []string{"Сч = 4", "Сч = 4;", "(Сч + 1) > 4 // comment"} {
+		p := parser.New(lexer.New(src, "condition.os"))
+		if _, err := p.ParseStandaloneExpr(); err != nil {
+			t.Errorf("ParseStandaloneExpr(%q): %v", src, err)
+		}
+	}
+
+	for _, src := range []string{"Сч = 4; Лишнее", "Сч = 4 Лишнее", "Сч = 4;;"} {
+		p := parser.New(lexer.New(src, "condition.os"))
+		if _, err := p.ParseStandaloneExpr(); err == nil {
+			t.Errorf("ParseStandaloneExpr(%q) accepted a trailing token", src)
+		}
+	}
+}
+
 func TestParser_BOMOnlyModule(t *testing.T) {
 	// Файл из одного BOM (часто встречается в выгрузках 1С) должен парситься
 	// как пустой модуль, а не падать с "expected Procedure or Function".
