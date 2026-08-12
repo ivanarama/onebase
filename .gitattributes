@@ -18,6 +18,11 @@ internal/webassets/monaco/** -text !eol
 internal/webassets/quill/quill.js -text
 internal/webassets/quill/quill.snow.css -text
 
+# Вендоренный спрайт Lucide (ISC) — байт-в-байт: апгрейд = подмена одного файла
+# с чистым diff, а имена иконок парсятся прямо из этих байтов, поэтому CRLF-
+# конверсия на Windows меняла бы вкомпилированный ассет.
+internal/webassets/lucide/sprite.svg -text
+
 # Встроенные TTF-шрифты для PDF (PT Serif/PT Sans, OFL) — бинарные, без
 # нормализации EOL.
 internal/sheet/fonts/*.ttf binary
