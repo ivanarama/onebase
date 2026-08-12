@@ -168,6 +168,26 @@ func allSchemas() map[string]map[string]any {
 				"list_mode":             stringSchema("pages|feed"),
 				"fulltext":              arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
 				"search_fields":         arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
+				"detail_panel": map[string]any{
+					"type":        "object",
+					"description": "Состав боковой панели деталей списка. Без блока — автокомпоновка: все реквизиты шапки, картинки и размеченный текст на своих закладках",
+					"properties": map[string]any{
+						"title":  stringSchema("Реквизит-заголовок карточки; по умолчанию — представление записи"),
+						"width":  map[string]any{"type": "integer", "description": "Ширина по умолчанию, px"},
+						"fields": arrayOf(stringSchema("Реквизит панели (короткая форма без закладок)")),
+						"tabs": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"name":   stringSchema("Имя закладки"),
+									"titles": map[string]any{"type": "object", "description": "Локализованные заголовки закладки"},
+									"fields": arrayOf(stringSchema("Реквизит на закладке")),
+								},
+							},
+						},
+					},
+				},
 				"numerator": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
