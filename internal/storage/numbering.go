@@ -119,7 +119,14 @@ func (db *DB) GenerateNumber(ctx context.Context, entity *metadata.Entity, field
 	if err != nil {
 		return "", err
 	}
-	return FormatNumber(ExpandPrefix(num.Prefix, date), num.Length, n), nil
+	prefix := ExpandPrefix(num.Prefix, date)
+	// Префикс базы идёт ПЕРЕД префиксом объекта: сначала «откуда», потом «что».
+	// Подставляется только по явному base_prefix: true — иначе включение
+	// префикса на базе молча изменило бы формат всех номеров сразу.
+	if num.BasePrefix {
+		prefix = db.GetBasePrefix(ctx) + prefix
+	}
+	return FormatNumber(prefix, num.Length, n), nil
 }
 
 // AutoNumberField возвращает имя реквизита, который заполняет автонумерация:
@@ -182,4 +189,44 @@ func (db *DB) SetAutoNumberValue(ctx context.Context, entity *metadata.Entity, i
 	q := fmt.Sprintf("UPDATE %s SET %s = %s WHERE id = %s AND (%s IS NULL OR %s = '')",
 		metadata.TableName(entity.Name), col, d.Placeholder(1), d.Placeholder(2), col, col)
 	return db.exec(ctx, q, value, id)
+}
+
+// ─── Префикс базы (план 117D) ────────────────────────────────────────────────
+//
+// Префикс живёт в ДАННЫХ базы, а не в конфигурации, и это существо решения:
+// конфигурация одинакова во всех базах, поэтому «понять, из какой базы
+// загружен объект» через неё невозможно by design — обе выдали бы один и тот
+// же префикс. В 1С это работает так же: префиксацию даёт не платформа, а
+// константа информационной базы.
+//
+// Отсюда же следует, что при восстановлении базы из копии в ДРУГУЮ базу
+// префикс надо гасить: иначе клон выдавал бы коды оригинала, и обмен склеил бы
+// разные объекты.
+
+const basePrefixKey = "base.prefix"
+
+// GetBasePrefix возвращает префикс этой базы («» — не задан).
+func (db *DB) GetBasePrefix(ctx context.Context) string {
+	var v string
+	err := db.QueryRow(ctx,
+		`SELECT value FROM _settings WHERE key = `+db.dialect.Placeholder(1), basePrefixKey).Scan(&v)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(v)
+}
+
+// SaveBasePrefix сохраняет префикс этой базы. Пустая строка снимает его.
+func (db *DB) SaveBasePrefix(ctx context.Context, prefix string) error {
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		return err
+	}
+	q := fmt.Sprintf(
+		`INSERT INTO _settings (key, value) VALUES (%s, %s)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		db.dialect.Placeholder(1), db.dialect.Placeholder(2))
+	if _, err := db.Exec(ctx, q, basePrefixKey, strings.TrimSpace(prefix)); err != nil {
+		return fmt.Errorf("settings: save %s: %w", basePrefixKey, err)
+	}
+	return nil
 }
