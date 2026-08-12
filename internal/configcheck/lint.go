@@ -363,6 +363,12 @@ func entityYAMLSchema() *yamlLintSchema {
 	detailPanel := with(obj("title", "width", "fields"), map[string]*yamlLintSchema{
 		"tabs": seq(detailTab),
 	})
+	// Этапы (план 121): deadline_days — свободная карта «этап → дни», её ключи
+	// проверяет metadata.Validate по значениям перечисления.
+	stages := with(obj("field", "order", "enforce"), map[string]*yamlLintSchema{
+		"transitions":   seq(obj("from", "to")),
+		"deadline_days": freeMap(),
+	})
 	return with(obj(
 		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
 		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
@@ -377,6 +383,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		"tile_view":    obj("image", "title", "subtitle", "fields"),
 		"activity":     obj("field", "default_scope", "hide_from_choice"),
 		"detail_panel": detailPanel,
+		"stages":       stages,
 	})
 }
 
