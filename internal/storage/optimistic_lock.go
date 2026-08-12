@@ -37,12 +37,44 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 	if expectedVersion == nil {
 		return db.Upsert(ctx, entityName, id, fields, entity)
 	}
+	// Сущность с этапами (план 121) пишется сериализованным циклом, как и в
+	// crud.go:upsert. Без этапов путь остаётся прежним — без транзакции-обёртки
+	// и без блокировки.
+	if !stagedEntity(entity) {
+		return db.upsertVersionedInTx(ctx, entityName, id, fields, entity, expectedVersion)
+	}
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		return db.upsertVersionedInTx(txCtx, entityName, id, fields, entity, expectedVersion)
+	})
+}
 
+func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, expectedVersion *int64) error {
 	d := db.dialect
 	table := metadata.TableName(entityName)
+	staged := stagedEntity(entity)
+	if staged {
+		if err := db.lockStageRecord(ctx, entityName, id); err != nil {
+			return err
+		}
+	}
 	var oldRow map[string]any
-	if existing, err := db.GetByID(ctx, entityName, id, entity); err == nil {
+	if existing, err := db.getByID(ctx, entityName, id, entity, staged); err != nil {
+		// Как и в upsert: для сущности с этапами сбой чтения не вправе
+		// притвориться отсутствием объекта — по нему принимается решение о
+		// переходе.
+		if staged && !IsNotFound(errors.Unwrap(err)) && !IsNotFound(err) {
+			return fmt.Errorf("upsert versioned %s: чтение текущего этапа: %w", entityName, err)
+		}
+	} else {
 		oldRow = existing
+	}
+
+	// Устаревшая ревизия — это конфликт версий, и решается он ДО проверки
+	// перехода: пользователь редактировал не то состояние, которое сейчас в
+	// базе, и «недопустимый переход» сказало бы ему не про ту проблему. Ни
+	// история, ни предупреждение при этом не пишутся.
+	if staged && oldRow != nil && stageReadVersion(oldRow) != *expectedVersion {
+		return ErrVersionConflict
 	}
 
 	// Гейт переходов между этапами (план 121). Точек записи две, и это вторая:
@@ -109,6 +141,11 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 		table, strings.Join(sets, ", "), idPH, versionPH)
 	tag, err := db.Exec(ctx, sql, args...)
 	if err != nil {
+		if staged {
+			if conflict := stageConcurrencyErr(err); errors.Is(conflict, ErrStageConcurrentWrite) {
+				return conflict
+			}
+		}
 		return fmt.Errorf("upsert versioned %s: %w", entityName, classifyConstraintErr(err))
 	}
 	if tag.RowsAffected != 1 {
