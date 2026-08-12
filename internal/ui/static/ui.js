@@ -738,6 +738,9 @@ function listSetSel(tr, options) {
     }
   }
   listSyncActionsBtn();
+  // Панель следует за курсором: стрелки ↑↓ двигают выбор, карточка
+  // перерисовывается из payload'а строки, без обращения к серверу.
+  if (typeof obDetailRender === 'function') obDetailRender();
 }
 
 function obListRowsIn(root) {
@@ -1704,6 +1707,7 @@ obReady(function () {
   listSyncActionsBtn();
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
   obInitFeed();
+  initDetailPanel();
 });
 
 // Стили плавающих виджетов — ИИ-помощника (план 51, F3) и панели сообщений
@@ -3526,4 +3530,197 @@ window.onebaseDevice = {
   function init() { bindEvents(); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+})();
+
+/* ===== Боковая панель деталей активной записи (план 118B, issue #670) =====
+
+   Панель рисуется из payload'а, который сервер положил в data-ob-detail строки:
+   те же данные, что уже прошли права, строковые политики и маску ПДн. Второго
+   пути чтения нет, поэтому обойти гейты панелью нечем.
+
+   Живёт СНАРУЖИ контейнера [data-ob-live]: живой список подменяет его innerHTML
+   целиком, и панель внутри пересоздавалась бы, теряя вкладку и ширину.
+
+   Состояние (включена, ширина, активная вкладка) — в localStorage по объекту,
+   как ширина панелей конфигуратора. Серверная настройка потребовала бы нового
+   POST-маршрута и записи в БД на каждое перетаскивание ручки. */
+
+var OB_DETAIL_MIN = 220, OB_DETAIL_MAX = 640;
+
+function obDetailKey(suffix) {
+  var live = document.querySelector('[data-ob-live]');
+  var scope = live ? live.getAttribute('data-ob-live') : (location.pathname || 'list');
+  return 'obdetail:' + scope + ':' + suffix;
+}
+
+function obDetailStore(suffix, value) {
+  try { localStorage.setItem(obDetailKey(suffix), value); } catch (e) {}
+}
+
+function obDetailRead(suffix) {
+  try { return localStorage.getItem(obDetailKey(suffix)); } catch (e) { return null; }
+}
+
+function obDetailEl() { return document.getElementById('ob-detail'); }
+
+function obDetailEnabled() { return obDetailRead('on') === '1'; }
+
+// obDetailRender перерисовывает панель по выбранной строке. Вызывается из
+// listSetSel, поэтому стрелки ↑↓ двигают курсор — панель следует за ним.
+function obDetailRender() {
+  var panel = obDetailEl();
+  if (!panel) return;
+  if (!obDetailEnabled()) { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  var titleEl = panel.querySelector('[data-ob-detail-title]');
+  var tabsEl = panel.querySelector('[data-ob-detail-tabs]');
+  var fieldsEl = panel.querySelector('[data-ob-detail-fields]');
+  var emptyEl = panel.querySelector('[data-ob-detail-empty]');
+  var row = (typeof listSel === 'function') ? listSel() : null;
+  var raw = row ? row.getAttribute('data-ob-detail') : '';
+  var data = null;
+  if (raw) { try { data = JSON.parse(raw); } catch (e) { data = null; } }
+
+  if (!data || !data.tabs || !data.tabs.length) {
+    if (titleEl) titleEl.textContent = '';
+    if (tabsEl) tabsEl.innerHTML = '';
+    if (fieldsEl) fieldsEl.innerHTML = '';
+    if (emptyEl) emptyEl.hidden = false;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+  if (titleEl) titleEl.textContent = data.title || '';
+
+  var active = obDetailRead('tab') || data.tabs[0].title;
+  var found = false;
+  data.tabs.forEach(function (t) { if (t.title === active) found = true; });
+  if (!found) active = data.tabs[0].title;
+
+  if (tabsEl) {
+    tabsEl.innerHTML = '';
+    if (data.tabs.length > 1) {
+      data.tabs.forEach(function (tab) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ob-detail-tab' + (tab.title === active ? ' active' : '');
+        btn.textContent = tab.title;
+        btn.addEventListener('click', function () {
+          obDetailStore('tab', tab.title);
+          obDetailRender();
+        });
+        tabsEl.appendChild(btn);
+      });
+    }
+  }
+
+  if (fieldsEl) {
+    fieldsEl.innerHTML = '';
+    data.tabs.forEach(function (tab) {
+      if (tab.title !== active) return;
+      (tab.fields || []).forEach(function (f) {
+        var wrap = document.createElement('div');
+        wrap.className = 'ob-detail-field';
+        var label = document.createElement('span');
+        label.className = 'ob-detail-label';
+        label.textContent = f.label;
+        wrap.appendChild(label);
+        if (f.kind === 'image' && f.value) {
+          var img = document.createElement('img');
+          img.className = 'ob-detail-image';
+          img.src = '/ui/_image/' + encodeURIComponent(f.value);
+          img.alt = f.label;
+          wrap.appendChild(img);
+        } else {
+          var val = document.createElement('span');
+          val.className = 'ob-detail-value';
+          val.textContent = f.value || '—';
+          wrap.appendChild(val);
+        }
+        fieldsEl.appendChild(wrap);
+      });
+    });
+  }
+}
+
+function obDetailApplyWidth() {
+  var panel = obDetailEl();
+  if (!panel) return;
+  var w = parseInt(obDetailRead('w') || '320', 10);
+  if (isNaN(w)) w = 320;
+  w = Math.max(OB_DETAIL_MIN, Math.min(OB_DETAIL_MAX, w));
+  panel.style.width = w + 'px';
+}
+
+function obDetailToggle(on) {
+  obDetailStore('on', on ? '1' : '0');
+  var btn = document.querySelector('[data-ob-detail-toggle]');
+  if (btn) btn.classList.toggle('active', on);
+  obDetailApplyWidth();
+  obDetailRender();
+}
+
+function initDetailPanel() {
+  var panel = obDetailEl();
+  if (!panel) return;
+  var btn = document.querySelector('[data-ob-detail-toggle]');
+  if (btn) {
+    btn.classList.toggle('active', obDetailEnabled());
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      obDetailToggle(!obDetailEnabled());
+    });
+  }
+  var close = panel.querySelector('[data-ob-detail-close]');
+  if (close) close.addEventListener('click', function () { obDetailToggle(false); });
+
+  var grip = panel.querySelector('[data-ob-detail-grip]');
+  if (grip) {
+    var startX = 0, startW = 0, dragging = false;
+    grip.addEventListener('mousedown', function (e) {
+      dragging = true; startX = e.clientX; startW = panel.offsetWidth;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      var w = Math.max(OB_DETAIL_MIN, Math.min(OB_DETAIL_MAX, startW + (startX - e.clientX)));
+      panel.style.width = w + 'px';
+    });
+    document.addEventListener('mouseup', function () {
+      if (!dragging) return;
+      dragging = false;
+      obDetailStore('w', String(panel.offsetWidth));
+    });
+  }
+  obDetailApplyWidth();
+  obDetailRender();
+}
+
+/* Стили боковой панели деталей (план 118B). Живут рядом с остальным
+   JS-строимым UI: страницы со своим <head> без общего стиля приложения
+   получают панель в рабочем виде. */
+(function () {
+  var css = '' +
+    '.ob-list-wrap{display:flex;gap:12px;align-items:flex-start}' +
+    '.ob-list-wrap>.card{flex:1 1 auto;min-width:0}' +
+    '.ob-detail{position:relative;flex:0 0 auto;width:320px;background:#fff;border:1px solid #e2e8f0;' +
+    'border-radius:8px;padding:0;align-self:stretch;max-height:calc(100vh - 160px);overflow:auto}' +
+    '.ob-detail-grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize}' +
+    '.ob-detail-body{padding:12px 14px}' +
+    '.ob-detail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}' +
+    '.ob-detail-close{border:0;background:transparent;color:#94a3b8;cursor:pointer;font-size:14px}' +
+    '.ob-detail-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}' +
+    '.ob-detail-tab{border:1px solid #e2e8f0;background:#f8fafc;border-radius:6px;padding:3px 9px;' +
+    'font-size:12px;cursor:pointer;color:#475569}' +
+    '.ob-detail-tab.active{background:#e0e7ff;border-color:#c7d2fe;color:#3730a3}' +
+    '.ob-detail-field{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:13px}' +
+    '.ob-detail-label{flex:0 0 42%;color:#64748b}' +
+    '.ob-detail-value{flex:1 1 auto;word-break:break-word}' +
+    '.ob-detail-image{max-width:100%;border-radius:6px;margin-top:4px}' +
+    '.ob-detail-empty{color:#94a3b8;font-size:13px;margin:4px 0 0}' +
+    /* Узкий экран: третья колонка недопустима — панель уходит под список. */
+    '@media(max-width:820px){.ob-list-wrap{flex-direction:column}.ob-detail{width:auto!important;max-height:none}}';
+  var st = document.createElement('style');
+  st.textContent = css;
+  (document.head || document.documentElement).appendChild(st);
 })();
