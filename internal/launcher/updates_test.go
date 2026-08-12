@@ -236,7 +236,7 @@ func nonSelfUpdatableDir(t *testing.T) string {
 // Установка, не участвующая в самообновлении, обязана запускаться. До правки
 // ReserveTarget внутри recoverUpdateStatus возвращал оттуда ошибку «shared
 // installations cannot be self-updated safely», ResumeAfterUpdate считал её
-// фатальной — и лаунчер сборок 783–792 не стартовал ни из C:\onebase (куда
+// фатальной — и лаунчер сборок 783–793 не стартовал ни из C:\onebase (куда
 // распаковать велит README), ни с любого другого пути вне %USERPROFILE%.
 func TestResumeAfterUpdateStartsWhenInstallationCannotSelfUpdate(t *testing.T) {
 	isolatedUpdatesHome(t)
@@ -257,6 +257,32 @@ func TestResumeAfterUpdateStartsWhenInstallationCannotSelfUpdate(t *testing.T) {
 	// авария: гейт просто закрыт.
 	if ApplyStagedOnStart(store, NewRunner()) {
 		t.Fatal("ApplyStagedOnStart попытался заменить бинарь в установке без самообновления")
+	}
+}
+
+// Непригодность каталога к самообновлению не доказывает, что
+// транзакции нет. Если marker уже опубликован, замена бинарей могла
+// начаться. При временной ошибке ACL/диска лаунчер обязан остаться
+// fail-closed, а не запускать базы на возможно смешанном наборе бинарей.
+func TestResumeAfterUpdateFailsClosedForMarkerInNonSelfUpdatableInstallation(t *testing.T) {
+	isolatedUpdatesHome(t)
+	targetDir := nonSelfUpdatableDir(t)
+	marker := filepath.Join(targetDir, ".onebase-update.pending.json")
+	if err := os.WriteFile(marker, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldBinaryDir := updateBinaryDir
+	updateBinaryDir = func() (string, error) { return targetDir, nil }
+	t.Cleanup(func() { updateBinaryDir = oldBinaryDir })
+	store, err := NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ResumeAfterUpdate(store, NewRunner()); err == nil {
+		t.Fatal("лаунчер проигнорировал marker незавершённого обновления")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker незавершённого обновления был изменён: %v", err)
 	}
 }
 

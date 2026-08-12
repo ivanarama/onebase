@@ -240,6 +240,99 @@ func TestRecoverFailsClosedForPendingTransactionOwnedByAnotherProfile(t *testing
 	}
 }
 
+func TestRecoverUnsupportedTargetWithoutAuthorityIsNoop(t *testing.T) {
+	isolatedHome(t)
+	targetDir := unsupportedRecoveryTarget(t)
+	if CanSafelyUpdateBinaryDir(targetDir) {
+		t.Fatal("test target unexpectedly supports self-update coordination")
+	}
+	lease, err := AcquireOperationLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lease.Release() }()
+	recovered, err := lease.RecoverWithResult(targetDir)
+	if err != nil {
+		t.Fatalf("unsupported installation without recovery authority was rejected: %v", err)
+	}
+	if recovered {
+		t.Fatal("recovery reported a transaction for an installation without authority markers")
+	}
+	if lease.targetIntent != nil || lease.targetLock != nil || lease.targetDir != "" {
+		t.Fatal("unsupported installation was bound to the writer-lock protocol")
+	}
+	for _, name := range []string{targetOperationLockFileName, targetOperationIntentLockFileName, targetPendingFileName} {
+		if _, statErr := os.Lstat(filepath.Join(targetDir, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("unsupported recovery created %s: %v", name, statErr)
+		}
+	}
+}
+
+func TestRecoverUnsupportedTargetWithMarkerFailsClosed(t *testing.T) {
+	isolatedHome(t)
+	targetDir := unsupportedRecoveryTarget(t)
+	markerPath := targetPendingPath(targetDir)
+	marker := []byte("{}")
+	if err := os.WriteFile(markerPath, marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := AcquireOperationLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lease.Release() }()
+	if recovered, err := lease.RecoverWithResult(targetDir); err == nil || recovered {
+		t.Fatalf("unsupported installation marker was ignored: recovered=%v err=%v", recovered, err)
+	}
+	got, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("pending marker was removed: %v", err)
+	}
+	if !bytes.Equal(got, marker) {
+		t.Fatalf("pending marker was modified: got %q, want %q", got, marker)
+	}
+}
+
+func TestRecoverUnsupportedTargetWithProfileJournalFailsClosed(t *testing.T) {
+	isolatedHome(t)
+	targetDir := unsupportedRecoveryTarget(t)
+	stageDir := t.TempDir()
+	names := PackageBinaries()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(targetDir, name), []byte("old:"+name), 0o755); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, name), []byte("new:"+name), 0o755); err != nil { //nolint:gosec // test fixture
+			t.Fatal(err)
+		}
+	}
+	staged := StagedInfo{Tag: "new", Dir: stageDir, Files: names, Verified: true}
+	tx, _, err := prepareUpdateTransaction("apply", targetDir, stageDir, targetDir, names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Staged = &staged
+	if err := writeUpdateJournal(tx); err != nil {
+		t.Fatal(err)
+	}
+	updates, err := UpdatesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(updates, updateJournalFileName)
+	lease, err := AcquireOperationLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lease.Release() }()
+	if recovered, err := lease.RecoverWithResult(targetDir); err == nil || recovered || !strings.Contains(err.Error(), "no target ownership marker") {
+		t.Fatalf("profile journal without target authority was accepted: recovered=%v err=%v", recovered, err)
+	}
+	if _, err := os.Stat(journalPath); err != nil {
+		t.Fatalf("untrusted profile journal was modified: %v", err)
+	}
+}
+
 func TestTargetLockIsStableAndSerializesIndependentUserLeases(t *testing.T) {
 	isolatedHome(t)
 	targetDir, _ := transactionInstallation(t, "new")
