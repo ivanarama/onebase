@@ -87,7 +87,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 (Redis/NATS-hub + общий стор сессий) и **P3-2** полный RLS против реальных данных —
 браться при упоре в потолок вертикали, каждому нужен свой план.
 
-### Не начато вообще (5)
+### Не начато вообще (4)
 
 | № | Фича | Эстимейт | Проверка |
 |---|---|---|---|
@@ -95,7 +95,6 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | **60B** | Marketplace конфигураций | — | нет `internal/marketplace`, `onebase install`; часть A (версионирование) закрыта |
 | **73** | Lucide через SVG-спрайт | — | сам план отложен «до дефицита иконок» |
 | **46** | PWA в App Store / Google Play | — | нужен `/.well-known/assetlinks.json`; обёртки вне репозитория |
-| — | `dev-workflow-improvements` | ~3–4 дня | нет hot reload Go, `--open`, browser sync |
 
 ## Реализованные этапы
 
@@ -320,7 +319,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 75 | [75-telephony-cti.md](75-telephony-cti.md) | 🟡 Режим «монитор» закрыт целиком; опциональный WebRTC-софтфон (вендоринг SIP.js, `/vendor/sip/*`) не начат, нет регламента `СверкаДлительности` |
 | 31 | [31-home-page-widgets.md](31-home-page-widgets.md) | 🟡 Из фазы 4 осталось: персональная стартовая страница, виджеты `report` и `text`, переключатель периода страницы, Monaco для YAML виджета, проверка битых ссылок |
 | 30 | [30-universal-backup.md](30-universal-backup.md) | 🟡 Движок и UI готовы; нет флагов `--full`/`--binary` у `onebase backup` и автодетекта `format=universal` у `restore`; `manifest.json` пишется, но при импорте не сверяется; нет автотеста PG↔SQLite |
-| — | [dev-workflow-improvements.md](dev-workflow-improvements.md) | ⬜ Не начато (см. таблицу «не начато») |
+| — | [dev-workflow-improvements.md](dev-workflow-improvements.md) | ✅ Реализовано: `--open` у `dev`/`run`, browser sync через SSE, пересборка Go-кода с перезапуском (`dev --reload-binary`), `--sqlite` у `dev` |
 
 Закрыты целиком (проверено по коду): `06-chart-object`, `32-familybg-conversion`,
 `34-dsl-real-world`, `41-ai-dev-tools`, `48-slickgrid-tableparts`,

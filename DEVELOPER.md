@@ -1042,7 +1042,10 @@ bases:
 
 **`config_source: file`** — конфигурация в папке на диске:
 - Удобно для разработки, git-friendly
-- `onebase dev --project <путь>` — hot reload при изменении файлов
+- `onebase dev --project <путь>` — hot reload при изменении файлов; открытая
+  страница перечитывает себя сама, F5 нажимать не нужно
+- `--open` открывает базу в браузере, когда сервер готов отвечать; `--sqlite <файл>`
+  запускает dev-режим на SQLite вместо PostgreSQL
 - Путь к папке виден в лаунчере
 
 **`config_source: database`** — конфигурация в PostgreSQL (`_onebase_config`):
