@@ -46,8 +46,9 @@ func (l *fileLease) Downgrade(_ context.Context) error {
 	if l.file == nil || l.shared {
 		return nil
 	}
+	fd := int(l.file.Fd()) //nolint:gosec // G115: round-trip of an OS descriptor returned by os.File.Fd
 	for {
-		err := unix.Flock(int(l.file.Fd()), unix.LOCK_SH)
+		err := unix.Flock(fd, unix.LOCK_SH)
 		if errors.Is(err, unix.EINTR) {
 			continue
 		}

@@ -14,7 +14,7 @@ func TestSharedWritableTargetIsExplicitlyRejected(t *testing.T) {
 	if err := os.Mkdir(target, 0o775); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(target, 0o775); err != nil {
+	if err := os.Chmod(target, 0o775); err != nil { //nolint:gosec // G302: intentionally create a group-writable target to verify fail-closed policy
 		t.Fatal(err)
 	}
 	if _, err := targetCoordinationPermissions(target); err == nil || !strings.Contains(err.Error(), "shared") {
@@ -28,7 +28,7 @@ func TestPublicReadOnlySystemStyleTargetCannotSelfUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(target) })
-	if err := os.Chmod(target, 0o755); err != nil {
+	if err := os.Chmod(target, 0o755); err != nil { //nolint:gosec // G302: intentionally model a public system-style install target
 		t.Fatal(err)
 	}
 	if _, err := targetCoordinationPermissions(target); err == nil || !strings.Contains(err.Error(), "system installations") {
