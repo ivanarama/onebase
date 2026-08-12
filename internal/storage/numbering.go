@@ -1,0 +1,146 @@
+package storage
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/ivantit66/onebase/internal/metadata"
+)
+
+// Единая точка автонумерации (план 117C). До неё логика «взять период → взять
+// следующий номер → отформатировать» жила в пяти местах: UI, REST, DSL-объект
+// документа, ИИ-действия и builtin Нумераторы. Копии уже расходились — #359 и
+// Д13 плана 117 — и расходились молча: номер просто получался другим, а какой
+// путь его выдал, по данным не видно.
+//
+// Здесь же чинится Д13: дата периода выбиралась перебором map полей, то есть у
+// документа с ДВУМЯ датами счётчик был недетерминирован — в один прогон период
+// брался из «Даты», в другой из «ДатыОплаты». Теперь дата выбирается по
+// объявленному порядку реквизитов, с приоритетом стандартных имён.
+
+// numberDateFields — имена, которые считаются датой документа в первую очередь.
+var numberDateFields = []string{"Дата", "Period", "Период", "Date"}
+
+// NumberPeriodDate выбирает дату, по которой считается период нумерации.
+// Порядок детерминирован: сначала стандартные имена, затем первый реквизит
+// типа «дата» в порядке ОБЪЯВЛЕНИЯ, затем текущее время.
+func NumberPeriodDate(entity *metadata.Entity, fields map[string]any) time.Time {
+	pick := func(name string) (time.Time, bool) {
+		v, ok := fields[name]
+		if !ok {
+			for k, vv := range fields {
+				if strings.EqualFold(k, name) {
+					v, ok = vv, true
+					break
+				}
+			}
+		}
+		if !ok {
+			return time.Time{}, false
+		}
+		t, ok := v.(time.Time)
+		return t, ok && !t.IsZero()
+	}
+	for _, name := range numberDateFields {
+		if t, ok := pick(name); ok {
+			return t
+		}
+	}
+	if entity != nil {
+		for _, f := range entity.Fields {
+			if f.Type != metadata.FieldTypeDate {
+				continue
+			}
+			if t, ok := pick(f.Name); ok {
+				return t
+			}
+		}
+	}
+	return time.Now()
+}
+
+// PeriodKeyFor строит ключ счётчика по детерминированно выбранной дате.
+func PeriodKeyFor(entity *metadata.Entity, num *metadata.Numerator, fields map[string]any) string {
+	if num == nil {
+		return ""
+	}
+	var periodPart string
+	switch strings.ToLower(num.Period) {
+	case "", "none":
+	case "month":
+		periodPart = NumberPeriodDate(entity, fields).Format("2006-01")
+	case "day":
+		periodPart = NumberPeriodDate(entity, fields).Format("2006-01-02")
+	default: // year
+		periodPart = NumberPeriodDate(entity, fields).Format("2006")
+	}
+	if num.Scope == "" {
+		return periodPart
+	}
+	scopeVal := ""
+	if v, ok := fields[num.Scope]; ok && v != nil {
+		scopeVal = strings.TrimSpace(formatScopeValue(v))
+	}
+	if periodPart == "" {
+		return scopeVal
+	}
+	return periodPart + "|" + scopeVal
+}
+
+// ExpandPrefix подставляет маски даты в префикс: {YYYY}, {YY}, {MM}, {DD}.
+// DEVELOPER.md обещал их с плана 07, а кода не было — обещание, которое никогда
+// не работало, ничем не лучше тихого no-op.
+func ExpandPrefix(prefix string, date time.Time) string {
+	if !strings.ContainsRune(prefix, '{') {
+		return prefix
+	}
+	r := strings.NewReplacer(
+		"{YYYY}", date.Format("2006"),
+		"{YY}", date.Format("06"),
+		"{MM}", date.Format("01"),
+		"{DD}", date.Format("02"),
+	)
+	return r.Replace(prefix)
+}
+
+// GenerateNumber выдаёт следующий номер (документ) или код (справочник) по
+// блоку numerator сущности. Единственная точка: все пути записи зовут её.
+func (db *DB) GenerateNumber(ctx context.Context, entity *metadata.Entity, fields map[string]any) (string, error) {
+	if entity == nil || entity.Numerator == nil {
+		return "", nil
+	}
+	num := entity.Numerator
+	date := NumberPeriodDate(entity, fields)
+	n, err := db.NextNumber(ctx, entity.Name, PeriodKeyFor(entity, num, fields))
+	if err != nil {
+		return "", err
+	}
+	return FormatNumber(ExpandPrefix(num.Prefix, date), num.Length, n), nil
+}
+
+// AutoNumberField возвращает имя реквизита, который заполняет автонумерация:
+// «Номер» у документа, «Код» у справочника. Пусто — автонумерации нет.
+func AutoNumberField(entity *metadata.Entity) string {
+	if entity == nil || entity.Numerator == nil {
+		return ""
+	}
+	switch entity.Kind {
+	case metadata.KindDocument:
+		return "Номер"
+	case metadata.KindCatalog:
+		return metadata.StandardCodeField
+	}
+	return ""
+}
+
+func formatScopeValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case time.Time:
+		return t.Format(time.RFC3339)
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", v))
+}
