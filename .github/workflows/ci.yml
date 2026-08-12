@@ -74,6 +74,34 @@ jobs:
           done
           exit "$failed"
 
+      # Конфигурационные тесты shipped-примеров (QUAL-01, issue #790). Runner
+      # `onebase test` реализован, но CI гонял для конфигураций только lint.
+      # Важно: `onebase test` при НУЛЕ найденных тестов возвращает 0 — поэтому
+      # гейт отдельно проверяет ненулевой план TAP (1..N, N>0), иначе «нет
+      # тестов» молча считалось бы успехом.
+      - name: Run shipped example config tests (SQLite)
+        run: |
+          set -uo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          go build -o "$tmp/onebase" ./cmd/onebase
+          failed=0
+          for ex in minimal callcenter trade; do
+            echo "::group::onebase test $ex"
+            out="$("$tmp/onebase" test --project "examples/$ex" --sqlite "$tmp/$ex.db" --format tap 2>&1)"; code=$?
+            echo "$out"
+            plan="$(printf '%s\n' "$out" | sed -n 's/^1\.\.\([0-9][0-9]*\)$/\1/p' | head -1)"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::$ex: onebase test завершился с кодом $code (упавшие тесты)"
+              failed=1
+            elif [ -z "$plan" ] || [ "$plan" -eq 0 ]; then
+              echo "::error::$ex: не найдено ни одного теста — ноль тестов не считается успехом (QUAL-01)"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
       # Форматирование не проверялось ничем: gofmt в гейтах не было, а в
       # .golangci.yml формат-линтеры не включены. За неделю 30.07–06.08 в main
       # утекли три файла не по формату (из #570, #595, #600) — дрейф копится
