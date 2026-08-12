@@ -69,17 +69,20 @@ func TestBreakpointConditionBookkeeping(t *testing.T) {
 
 	truthy := func(string) (bool, error) { return true, nil }
 	require.NotNil(t, s.CheckBreakpoint("demo.proc.os", 7, truthy))
+	bp = s.FindBreakpoint("demo.proc.os", 7)
 	assert.Equal(t, 1, bp.HitCount)
 	assert.Empty(t, bp.CondError)
 
 	// Ошибка вычисления — останавливаемся и запоминаем причину.
 	broken := func(string) (bool, error) { return false, errors.New("деление на ноль") }
 	require.NotNil(t, s.CheckBreakpoint("demo.proc.os", 7, broken))
+	bp = s.FindBreakpoint("demo.proc.os", 7)
 	assert.Equal(t, 2, bp.HitCount)
 	assert.Equal(t, "деление на ноль", bp.CondError)
 
 	// Новое условие — прежние ошибка и счётчик пропусков не про него.
 	s.SetBreakpoint("demo.proc.os", 7, "Сч = 5")
+	bp = s.FindBreakpoint("demo.proc.os", 7)
 	assert.Empty(t, bp.CondError)
 	assert.Equal(t, 0, bp.SkipCount)
 
@@ -89,6 +92,36 @@ func TestBreakpointConditionBookkeeping(t *testing.T) {
 		t.Fatal("вычислитель не должен вызываться для безусловной точки")
 		return false, nil
 	}))
+}
+
+// Public breakpoint accessors return detached snapshots. HTTP handlers inspect
+// them after the session mutex is released, while an interpreter may update the
+// live counters concurrently; returning the stored pointer would race.
+func TestBreakpointAccessorsReturnSnapshots(t *testing.T) {
+	s := NewDebugController().StartSession("demo.proc.os")
+	created := s.SetBreakpoint("demo.proc.os", 7, "Сч = 1")
+	found := s.FindBreakpoint("demo.proc.os", 7)
+	all := s.GetBreakpoints()
+	forFile := s.GetBreakpointsForFile("demo.proc.os")
+
+	s.SetBreakpoint("demo.proc.os", 7, "Сч = 2")
+	require.NotNil(t, s.CheckBreakpoint("demo.proc.os", 7, func(string) (bool, error) {
+		return true, nil
+	}))
+
+	for name, bp := range map[string]*Breakpoint{
+		"created": created,
+		"found":   found,
+		"all":     all[0],
+		"forFile": forFile[0],
+	} {
+		assert.Equal(t, "Сч = 1", bp.Condition, "%s shares mutable session storage", name)
+		assert.Zero(t, bp.HitCount, "%s shares mutable session storage", name)
+	}
+	live := s.FindBreakpoint("demo.proc.os", 7)
+	require.NotNil(t, live)
+	assert.Equal(t, "Сч = 2", live.Condition)
+	assert.Equal(t, 1, live.HitCount)
 }
 
 // Вычислитель работает без мьютекса сессии. Если за это время человек сменил
@@ -133,13 +166,27 @@ func TestBreakpointConditionDiscardsResultAfterConcurrentEdit(t *testing.T) {
 }
 
 // resumeChan буферизован, чтобы «Продолжить» не терялось в окне между сигналом
-// паузы и входом потока интерпретатора в ожидание. Обратная сторона буфера —
-// протухший сигнал: «Продолжить», нажатое когда никто не стоит, не должно
-// снимать следующую остановку, иначе человек её просто не увидит.
+// паузы и входом потока интерпретатора в ожидание. Continue/Step кладут сигнал
+// только при атомарном переходе Paused -> Running, поэтому команда во время
+// исполнения не может снять следующую остановку.
 func TestPauseDropsStaleResume(t *testing.T) {
 	s := NewDebugController().StartSession("demo.proc.os")
 
-	s.Continue() // никто не остановлен — сигнал обязан протухнуть
+	s.Continue() // никто не остановлен — сигнал не должен попасть в канал
+	select {
+	case <-s.resumeChan:
+		t.Fatal("Continue поставил сигнал для работающей сессии")
+	default:
+	}
+	s.Step(StepInto)
+	select {
+	case <-s.resumeChan:
+		t.Fatal("Step поставил сигнал для работающей сессии")
+	default:
+	}
+	s.mu.Lock()
+	assert.Equal(t, StepNone, s.stepMode, "Step во время исполнения не должен вооружать следующий оператор")
+	s.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -154,7 +201,7 @@ func TestPauseDropsStaleResume(t *testing.T) {
 	}
 	select {
 	case <-done:
-		t.Fatal("протухшее «Продолжить» сняло остановку — человек её не увидел бы")
+		t.Fatal("команда во время исполнения сняла следующую остановку")
 	case <-time.After(200 * time.Millisecond):
 	}
 
@@ -193,9 +240,15 @@ func TestCallStackSteppingAndSnapshot(t *testing.T) {
 	assert.False(t, s.ShouldStep("demo.proc.os", 3))
 	assert.True(t, s.ShouldStep("demo.proc.os", 2))
 
+	s.mu.Lock()
+	s.State = StatePaused // HookOnPause после срабатывания предыдущего шага
+	s.mu.Unlock()
 	s.Step(StepInto)
 	assert.True(t, s.ShouldStep("demo.proc.os", 99))
 
+	s.mu.Lock()
+	s.State = StatePaused // следующая остановка перед командой StepOut
+	s.mu.Unlock()
 	s.Step(StepOut)
 	assert.True(t, s.ShouldStep("demo.proc.os", 1))
 

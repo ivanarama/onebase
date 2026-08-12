@@ -61,8 +61,9 @@ type ActiveSession struct {
 	// между сигналом «я остановился» и входом в select у потока интерпретатора
 	// есть окно. На небуферизованном канале «Продолжить», попавшее в это окно,
 	// уходило в default — сигнал терялся, и прогон висел остановленным навсегда
-	// (тем заметнее, чем быстрее клиент отвечает на паузу). Протухший сигнал
-	// снимается в начале Pause.
+	// (тем заметнее, чем быстрее клиент отвечает на паузу). Continue/Step кладут
+	// сигнал только при атомарном переходе Paused -> Running, поэтому протухший
+	// сигнал в буфере появиться не может.
 	resumeChan chan struct{} // signaled by HTTP handler to resume
 	doneChan   chan struct{} // closed when session ends
 	stopOnce   sync.Once     // ensures doneChan is closed only once
@@ -143,7 +144,7 @@ func (s *ActiveSession) SetBreakpoint(file string, line int, condition string) *
 		}
 		bp.Condition = condition
 		bp.Enabled = true
-		return bp
+		return breakpointSnapshot(bp)
 	}
 	bp := &Breakpoint{
 		ID:        fmt.Sprintf("bp-%d-%s", line, s.ID),
@@ -157,7 +158,7 @@ func (s *ActiveSession) SetBreakpoint(file string, line int, condition string) *
 	s.breakpoints[key][line] = bp
 	bp.MapLen = len(s.breakpoints)
 	bp.EntryLen = len(s.breakpoints[key])
-	return bp
+	return breakpointSnapshot(bp)
 }
 
 // RemoveBreakpoint deletes a breakpoint by normalized file key.
@@ -188,7 +189,7 @@ func (s *ActiveSession) ToggleBreakpoint(file string, line int) *Breakpoint {
 		if bp, ok := locMap[line]; ok {
 			bp.Enabled = !bp.Enabled
 			bp.revision++
-			return bp
+			return breakpointSnapshot(bp)
 		}
 	}
 	return nil
@@ -201,7 +202,20 @@ func (s *ActiveSession) ToggleBreakpoint(file string, line int) *Breakpoint {
 func (s *ActiveSession) FindBreakpoint(file string, line int) *Breakpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.lookupBreakpoint(normalizeFilePath(file), line)
+	return breakpointSnapshot(s.lookupBreakpoint(normalizeFilePath(file), line))
+}
+
+// breakpointSnapshot returns a detached value that callers may safely inspect
+// after s.mu is released. The breakpoint stored in the session is mutable:
+// condition checks update its counters while HTTP status/set requests can run
+// concurrently, so exposing that pointer would move the data race to callers.
+// Call only while s.mu is held.
+func breakpointSnapshot(bp *Breakpoint) *Breakpoint {
+	if bp == nil {
+		return nil
+	}
+	copy := *bp
+	return &copy
 }
 
 // lookupBreakpoint ищет точку по уже нормализованному ключу. Вызывается под s.mu.
@@ -253,8 +267,9 @@ func (s *ActiveSession) CheckBreakpoint(file string, line int, cond func(expr st
 	if expr == "" || cond == nil {
 		bp.CondError = ""
 		bp.HitCount++
+		result := breakpointSnapshot(bp)
 		s.mu.Unlock()
-		return bp
+		return result
 	}
 	s.mu.Unlock()
 
@@ -276,7 +291,7 @@ func (s *ActiveSession) CheckBreakpoint(file string, line int, cond func(expr st
 		bp.CondError = err.Error()
 		bp.HitCount++
 		s.appendDiag(fmt.Sprintf("cond %q line=%d error=%v (остановка)", expr, line, err))
-		return bp
+		return breakpointSnapshot(bp)
 	case !ok:
 		bp.CondError = ""
 		bp.SkipCount++
@@ -286,7 +301,7 @@ func (s *ActiveSession) CheckBreakpoint(file string, line int, cond func(expr st
 		bp.CondError = ""
 		bp.HitCount++
 		s.appendDiag(fmt.Sprintf("cond %q line=%d = Истина (остановка)", expr, line))
-		return bp
+		return breakpointSnapshot(bp)
 	}
 }
 
@@ -341,7 +356,7 @@ func (s *ActiveSession) GetBreakpoints() []*Breakpoint {
 	var result []*Breakpoint
 	for _, locMap := range s.breakpoints {
 		for _, bp := range locMap {
-			result = append(result, bp)
+			result = append(result, breakpointSnapshot(bp))
 		}
 	}
 	return result
@@ -355,7 +370,7 @@ func (s *ActiveSession) GetBreakpointsForFile(file string) []*Breakpoint {
 	locMap := s.breakpoints[normalizeFilePath(file)]
 	result := make([]*Breakpoint, 0, len(locMap))
 	for _, bp := range locMap {
-		result = append(result, bp)
+		result = append(result, breakpointSnapshot(bp))
 	}
 	return result
 }
@@ -407,14 +422,6 @@ func (s *ActiveSession) StackDepth() int {
 // It blocks until Continue/Step/Stop is called from an HTTP handler.
 // The evalFn callback is called for expression evaluation requests during pause.
 func (s *ActiveSession) Pause(loc Location, vars map[string]any, stack []StackFrame, evalFn func(string) (any, error), reason string) {
-	// Выбрасываем «Продолжить», пришедшее, когда никто не стоял: буфер
-	// resumeChan существует ради обратного случая (см. ниже), и без чистки
-	// протухший сигнал снял бы следующую остановку, не показав её человеку.
-	select {
-	case <-s.resumeChan:
-	default:
-	}
-
 	s.mu.Lock()
 	s.State = StatePaused
 	s.currentLoc = &loc
@@ -456,14 +463,16 @@ func (s *ActiveSession) PauseChan() <-chan struct{} {
 // Continue unblocks the interpreter goroutine (called from HTTP handler)
 func (s *ActiveSession) Continue() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.State != StatePaused {
+		return
+	}
 	s.State = StateRunning
 	s.stepMode = StepNone
 	s.stepFile = ""
-	ch := s.resumeChan
-	s.mu.Unlock()
 
 	select {
-	case ch <- struct{}{}:
+	case s.resumeChan <- struct{}{}:
 	default:
 	}
 }
@@ -471,6 +480,10 @@ func (s *ActiveSession) Continue() {
 // Step sets stepping mode and resumes
 func (s *ActiveSession) Step(mode StepMode) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.State != StatePaused {
+		return
+	}
 	s.State = StateRunning
 	s.stepMode = mode
 	s.stepDepth = s.lastDepth // use interpreter's actual depth from last pause
@@ -481,11 +494,8 @@ func (s *ActiveSession) Step(mode StepMode) {
 	} else {
 		s.stepFile = ""
 	}
-	ch := s.resumeChan
-	s.mu.Unlock()
-
 	select {
-	case ch <- struct{}{}:
+	case s.resumeChan <- struct{}{}:
 	default:
 	}
 }

@@ -3243,6 +3243,10 @@ var _dbgPollCount = 0;
 // остановка происходит, только когда выражение истинно.
 var _dbgBreakpoints = {};
 var _dbgSrvBP = {}; // { "файл:строка": точка с сервера } — счётчики и ошибка условия
+// Per-breakpoint server synchronization. Requests for different points may run
+// in parallel, but changes to one file:line are applied in user order. The
+// confirmed snapshot advances only after a successful server response.
+var _dbgBPSync = Object.create(null);
 var _lastVarsKey = '';
 var _lastStackHtml = '';
 var _lastDiagHtml = '';
@@ -4003,26 +4007,21 @@ function dbgBPCondition(file, line) {
   return (typeof v === 'string') ? v : '';
 }
 
-// Snapshot/restore keeps the optimistic UI honest when the server rejects a
-// breakpoint update (most often a syntactically invalid condition). In
-// particular, editing an existing point must restore its old condition rather
-// than deleting it locally while it remains active on the server.
+// Snapshot helpers keep optimistic UI state separate from the last state that
+// the server actually confirmed.
 function dbgCaptureLocalBP(file, line) {
   var points = _dbgBreakpoints[file];
   var had = !!(points && Object.prototype.hasOwnProperty.call(points, line));
   return {had: had, value: had ? points[line] : undefined};
 }
-function dbgRestoreLocalBP(file, line, rollback) {
-  if (!rollback) return;
-  // A slower failed request must not undo a newer edit that has already
-  // replaced its optimistic value.
-  if (rollback.applied) {
-    var current = dbgCaptureLocalBP(file, line);
-    if (current.had !== rollback.applied.had || current.value !== rollback.applied.value) return;
-  }
-  if (rollback.had) {
+function dbgCloneBPState(state) {
+  return state && state.had ? {had: true, value: state.value} : {had: false};
+}
+function dbgRestoreLocalBP(file, line, confirmed) {
+  confirmed = dbgCloneBPState(confirmed);
+  if (confirmed.had) {
     if (!_dbgBreakpoints[file]) _dbgBreakpoints[file] = {};
-    _dbgBreakpoints[file][line] = rollback.value;
+    _dbgBreakpoints[file][line] = confirmed.value;
   } else if (_dbgBreakpoints[file]) {
     delete _dbgBreakpoints[file][line];
     if (!Object.keys(_dbgBreakpoints[file]).length) delete _dbgBreakpoints[file];
@@ -4031,36 +4030,80 @@ function dbgRestoreLocalBP(file, line, rollback) {
   if (monacoEditors[file]) dbgRenderBreakpoints(file);
 }
 
-// dbgSendBP отправляет точку на сервер. action: 'set' | 'toggle' | 'remove'.
-// Сервер разбирает условие как выражение DSL и отвечает 400 на неразбираемое —
-// показываем это сразу, а не оставляем на первый проход строки.
-function dbgSendBP(file, line, action, condition, rollback) {
+function dbgBPSyncState(file, line, confirmedBefore) {
+  var key = JSON.stringify([file, String(line)]);
+  var state = _dbgBPSync[key];
+  if (!state) {
+    state = {
+      confirmed: dbgCloneBPState(confirmedBefore),
+      generation: 0,
+      tail: Promise.resolve()
+    };
+    _dbgBPSync[key] = state;
+  }
+  return state;
+}
+
+function dbgBPRequest(file, line, action, condition) {
+  return fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({file: file, line: line, action: action, condition: condition || ''})
+  }).then(function(r){
+    return r.json().then(function(d){
+      if (!r.ok) throw new Error((d && d.error) || ('HTTP ' + r.status));
+      if (!d || typeof d !== 'object') throw new Error('HTTP ' + r.status + ': пустой ответ');
+      if (d.error) throw new Error(d.error);
+      if (action === 'set' && !d.id) throw new Error('HTTP ' + r.status + ': точка не подтверждена');
+      if (action === 'remove' && d.status !== 'removed') throw new Error('HTTP ' + r.status + ': удаление не подтверждено');
+      return d;
+    }, function(){
+      throw new Error('HTTP ' + r.status + ': некорректный JSON');
+    });
+  });
+}
+
+// dbgSendBP serializes mutations of one breakpoint. All operations are
+// idempotent set/remove requests; a failed request rolls the latest optimistic
+// UI back to the most recent server-confirmed state. Older failures never
+// overwrite a newer edit, while still preserving their place in the queue.
+function dbgSendBP(file, line, action, condition, confirmedBefore) {
   var diagEl = document.getElementById('dbg-diag');
   if (!_dbgEnabled) {
     if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP saved locally (debug not enabled)</div>';
     return Promise.resolve();
   }
-  if (rollback) rollback.applied = dbgCaptureLocalBP(file, line);
-  if(diagEl) diagEl.innerHTML += '<div style="color:#60a5fa;font-size:10px">BP send: ' + esc(file) + ':' + line + (condition ? ' [' + esc(condition) + ']' : '') + '</div>';
-  return fetch('/bases/' + _dbgBase + '/debug/breakpoint', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({file: file, line: line, action: action, condition: condition || ''})
-  }).then(function(r){ return r.json().catch(function(){ return {error: 'HTTP ' + r.status}; }); })
-    .then(function(d){
-      if (d && d.error) {
-        if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP error: ' + esc(d.error) + '</div>';
-        // Сервер не применил изменение — возвращаем точное прежнее состояние.
-        dbgRestoreLocalBP(file, line, rollback);
-        alert('Точка останова: ' + d.error);
-      } else if (d && d.id) {
+  if (action !== 'set' && action !== 'remove') {
+    return Promise.resolve({error: 'unsupported breakpoint action: ' + action});
+  }
+
+  var state = dbgBPSyncState(file, line, confirmedBefore);
+  var desired = action === 'remove'
+    ? {had: false}
+    : {had: true, value: condition || true};
+  var generation = ++state.generation;
+  var execute = function(){
+    if(diagEl) diagEl.innerHTML += '<div style="color:#60a5fa;font-size:10px">BP send: ' + esc(file) + ':' + line + (condition ? ' [' + esc(condition) + ']' : '') + '</div>';
+    return dbgBPRequest(file, line, action, condition).then(function(d){
+      state.confirmed = dbgCloneBPState(desired);
+      if (d.id) {
         if(diagEl) diagEl.innerHTML += '<div style="color:#16a34a;font-size:10px">BP OK: ' + esc(d.file) + ':' + d.line + ' count=' + (d.bp_count||0) + '</div>';
-      } else if (d && d.status) {
+      } else {
         if(diagEl) diagEl.innerHTML += '<div style="color:#fbbf24;font-size:10px">BP: ' + esc(d.status) + '</div>';
       }
-    }).catch(function(e){
-      if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP fetch error: ' + esc(e.message) + '</div>';
+      return d;
+    }, function(e){
+      var message = e && e.message ? e.message : String(e);
+      if(diagEl) diagEl.innerHTML += '<div style="color:#ef4444;font-size:10px">BP error: ' + esc(message) + '</div>';
+      if (generation === state.generation) dbgRestoreLocalBP(file, line, state.confirmed);
+      alert('Точка останова: ' + message);
+      return {error: message};
     });
+  };
+  var queued = state.tail.then(execute, execute);
+  // Keep the queue usable even if execute is changed later to reject.
+  state.tail = queued.then(function(){}, function(){});
+  return queued;
 }
 
 function dbgToggleBreakpoint(editorId, line) {
@@ -4070,14 +4113,18 @@ function dbgToggleBreakpoint(editorId, line) {
   var rollback = dbgCaptureLocalBP(editorId, line);
   if (!_dbgBreakpoints[editorId]) _dbgBreakpoints[editorId] = {};
   var has = _dbgBreakpoints[editorId][line];
+  var action;
   if (has) {
     delete _dbgBreakpoints[editorId][line];
+    if (!Object.keys(_dbgBreakpoints[editorId]).length) delete _dbgBreakpoints[editorId];
+    action = 'remove';
   } else {
     _dbgBreakpoints[editorId][line] = true;
+    action = 'set';
   }
   try { dbgRenderBreakpoints(editorId); } catch(e) { console.error('renderBP', e); }
   try { dbgRenderBPList(); } catch(e) { console.error('renderBPList', e); }
-  dbgSendBP(editorId, line, 'toggle', '', rollback);
+  return dbgSendBP(editorId, line, action, '', rollback);
 }
 
 // dbgEditBPCondition — задать/изменить/снять условие точки останова.
