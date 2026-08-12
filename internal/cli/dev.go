@@ -25,6 +25,7 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/scheduler"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/version"
 	"github.com/spf13/cobra"
@@ -236,12 +237,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			appBundle = bundle
 		}
 		if initial && nextAppCfg.Backup != nil {
-			if err := backup.RegisterAutoBackup(nextAppCfg.Backup, backup.AutoTarget{
-				DBType:     dbType,
-				DSN:        dsn,
-				SQLitePath: sqlitePath,
-				ProjectDir: dir,
-			}, sched); err != nil {
+			target, targetErr := devAutoBackupTarget(db, dbType, dsn, dir)
+			if targetErr != nil {
+				return targetErr
+			}
+			if err := backup.RegisterAutoBackup(nextAppCfg.Backup, target, sched); err != nil {
 				devLog.Warn("auto backup job registration failed", "err", err)
 			}
 		}
@@ -415,4 +415,21 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 	<-schedDone
 	return errors.Join(listenErr, shutdownErr)
+}
+
+func devAutoBackupTarget(db *storage.DB, dbType, dsn, projectDir string) (backup.AutoTarget, error) {
+	target := backup.AutoTarget{DBType: dbType, DSN: dsn, ProjectDir: projectDir}
+	if dbType != "sqlite" {
+		return target, nil
+	}
+	if db == nil || !db.IsSQLite() {
+		return backup.AutoTarget{}, errors.New("automatic backup: SQLite database is not open")
+	}
+	// Use the exact canonical file that the lifetime lock and open handle refer
+	// to. Re-resolving the CLI spelling could follow a retargeted symlink.
+	target.SQLitePath = db.SQLitePath()
+	if target.SQLitePath == "" {
+		return backup.AutoTarget{}, errors.New("automatic backup requires file-backed SQLite; in-memory databases cannot be backed up")
+	}
+	return target, nil
 }
