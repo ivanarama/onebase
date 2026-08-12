@@ -7,6 +7,7 @@ package exchange_test
 // рвало бы обмен. Но история фиксирует, что переход внешний.
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -56,10 +57,9 @@ func TestStagesExchangeAppliesForeignStageAndMarksSource(t *testing.T) {
 	// целиком. Пишем его мимо гейта тем же признаком внешней записи, каким
 	// пользуется приёмка, — иначе не собрать исходное состояние.
 	id := uuid.New()
-	extCtx := storage.WithExternalStageWrite(ctxA, storage.StageSourceExchange)
-	if err := a.Upsert(extCtx, ent.Name, id, map[string]any{
+	if err := a.ApplyReplicatedEntity(ctxA, ent.Name, id, map[string]any{
 		"Наименование": "Заявка из центра", "Состояние": "Утверждена",
-	}, ent); err != nil {
+	}, ent, `["exchange","Обмен","seed",0]`); err != nil {
 		t.Fatal(err)
 	}
 	v, _ := a.EntityVersion(ctxA, ent.Name, id)
@@ -107,5 +107,14 @@ func TestStagesExchangeAppliesForeignStageAndMarksSource(t *testing.T) {
 	}
 	if hist[0].ToStage != "Утверждена" {
 		t.Fatalf("записан переход в %q", hist[0].ToStage)
+	}
+	// Происхождение — структурой, по которой видно, из какого плана, узла и
+	// сообщения приехал переход.
+	var ref []any
+	if err := json.Unmarshal([]byte(hist[0].SourceRef), &ref); err != nil {
+		t.Fatalf("происхождение %q не разбирается: %v", hist[0].SourceRef, err)
+	}
+	if len(ref) != 4 || ref[0] != "exchange" || ref[1] != "Обмен" || ref[2] != "center" {
+		t.Fatalf("происхождение %v", ref)
 	}
 }

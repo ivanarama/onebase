@@ -10,6 +10,7 @@ package storage_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,8 +188,14 @@ func TestStagesHistoryRecordsWhoAndWhen(t *testing.T) {
 			if h.Field != "Состояние" {
 				t.Fatalf("поле перехода %q, ожидалось «Состояние»", h.Field)
 			}
-			if h.Source != "" {
-				t.Fatalf("источник %q, ожидалась обычная запись", h.Source)
+			if h.Source != storage.StageSourceLocal {
+				t.Fatalf("источник %q, ожидалась обычная запись (%s)", h.Source, storage.StageSourceLocal)
+			}
+			if h.Violation {
+				t.Fatal("разрешённый переход помечен нарушением")
+			}
+			if h.EventNo <= 0 {
+				t.Fatal("номер события не проставлен")
 			}
 		}
 	})
@@ -371,9 +378,9 @@ func TestStagesExternalWriteBypassesGate(t *testing.T) {
 		e := stagesEntity(metadata.StageEnforceStrict)
 		migrateStages(t, ctx, db, e)
 
-		extCtx := storage.WithExternalStageWrite(ctx, storage.StageSourceExchange)
 		id := uuid.New()
-		if err := db.Upsert(extCtx, e.Name, id, stageFields("Заявка", "Утверждена"), e); err != nil {
+		ref := `["exchange","Обмен","center",7]`
+		if err := db.ApplyReplicatedEntity(ctx, e.Name, id, stageFields("Заявка", "Утверждена"), e, ref); err != nil {
 			t.Fatalf("внешняя запись обязана проходить гейт: %v", err)
 		}
 		hist, err := db.StageHistory(ctx, e.Name, id)
@@ -382,6 +389,12 @@ func TestStagesExternalWriteBypassesGate(t *testing.T) {
 		}
 		if len(hist) != 1 || hist[0].Source != storage.StageSourceExchange {
 			t.Fatalf("история внешней записи: %+v", hist)
+		}
+		if hist[0].SourceRef != ref {
+			t.Fatalf("происхождение %q, ожидалось %q", hist[0].SourceRef, ref)
+		}
+		if hist[0].UserLogin != "" {
+			t.Fatalf("реплицированный переход приписан пользователю %q", hist[0].UserLogin)
 		}
 	})
 }
@@ -465,6 +478,144 @@ func TestStageSummaryCountsStuckObjects(t *testing.T) {
 			if x.Stage == "Отклонена" && x.Count != 0 {
 				t.Fatalf("на «Отклонена» %d объектов, ожидался 0", x.Count)
 			}
+		}
+	})
+}
+
+// TestStagesPredefinedSyncIsTrustedMigration — синхронизация предопределённых
+// (третий writer сущности, пишет прямым INSERT мимо обеих обычных точек записи)
+// ведёт себя как доверенная миграция: значение из конфигурации может поставить
+// элемент на любой ОБЪЯВЛЕННЫЙ этап, но каждое такое перемещение попадает в
+// историю отдельным событием с источником migration и без подстановки актора.
+func TestStagesPredefinedSyncIsTrustedMigration(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := storage.WithAuditUser(context.Background(), uuid.NewString(), "ivanov")
+		e := stagesEntity(metadata.StageEnforceStrict)
+		e.Predefined = []*metadata.PredefinedItem{
+			{Name: "Образец", Fields: map[string]any{"Наименование": "Образец заявки"}},
+			{Name: "Эталон", Fields: map[string]any{"Наименование": "Эталон", "Состояние": "Утверждена"}},
+		}
+		migrateStages(t, ctx, db, e)
+		if err := db.SyncAllPredefined(ctx, []*metadata.Entity{e}); err != nil {
+			t.Fatalf("SyncAllPredefined: %v", err)
+		}
+
+		// Без явного значения элемент встаёт в начало маршрута.
+		sampleID, err := db.GetPredefinedID(ctx, e.Name, "Образец")
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := db.GetByID(ctx, e.Name, sampleID, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row["Состояние"] != "Черновик" {
+			t.Fatalf("новый предопределённый встал на %v, ожидался начальный этап", row["Состояние"])
+		}
+
+		// Явно объявленное значение ставится как есть — маршрут при этом не
+		// проходится, поэтому событие помечено источником migration.
+		refID, err := db.GetPredefinedID(ctx, e.Name, "Эталон")
+		if err != nil {
+			t.Fatal(err)
+		}
+		hist, err := db.StageHistory(ctx, e.Name, refID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hist) != 1 {
+			t.Fatalf("событий у предопределённого %d, ожидалось 1: %+v", len(hist), hist)
+		}
+		if hist[0].Source != storage.StageSourceMigration {
+			t.Fatalf("источник %q, ожидался %q", hist[0].Source, storage.StageSourceMigration)
+		}
+		if hist[0].ToStage != "Утверждена" || hist[0].FromStage != "" {
+			t.Fatalf("событие %q → %q", hist[0].FromStage, hist[0].ToStage)
+		}
+		if hist[0].UserLogin != "" {
+			t.Fatalf("синтетический переход приписан пользователю %q", hist[0].UserLogin)
+		}
+		if hist[0].SourceRef != `["migration","Заявка","Эталон"]` {
+			t.Fatalf("происхождение %q", hist[0].SourceRef)
+		}
+
+		// Повторная синхронизация ничего не меняет и не плодит событий.
+		if err := db.SyncAllPredefined(ctx, []*metadata.Entity{e}); err != nil {
+			t.Fatal(err)
+		}
+		again, err := db.StageHistory(ctx, e.Name, refID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(again) != 1 {
+			t.Fatalf("повторная синхронизация дописала историю: %+v", again)
+		}
+	})
+}
+
+// TestStagesPredefinedSyncKeepsLiveStage — миграция не откатывает живой объект.
+// Элемент, который увели по маршруту пользователи, при следующем `migrate` не
+// обязан возвращаться на начальный этап только потому, что в конфигурации этап
+// не объявлен.
+func TestStagesPredefinedSyncKeepsLiveStage(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		e := stagesEntity(metadata.StageEnforceStrict)
+		e.Predefined = []*metadata.PredefinedItem{
+			{Name: "Образец", Fields: map[string]any{"Наименование": "Образец заявки"}},
+		}
+		migrateStages(t, ctx, db, e)
+		if err := db.SyncAllPredefined(ctx, []*metadata.Entity{e}); err != nil {
+			t.Fatal(err)
+		}
+		id, err := db.GetPredefinedID(ctx, e.Name, "Образец")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v int64 = 1
+		if err := db.UpsertVersioned(ctx, e.Name, id, stageFields("Образец заявки", "НаСогласовании"), e, &v); err != nil {
+			t.Fatalf("перевод предопределённого по маршруту: %v", err)
+		}
+
+		if err := db.SyncAllPredefined(ctx, []*metadata.Entity{e}); err != nil {
+			t.Fatal(err)
+		}
+		row, err := db.GetByID(ctx, e.Name, id, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row["Состояние"] != "НаСогласовании" {
+			t.Fatalf("миграция откатила живой этап на %v", row["Состояние"])
+		}
+		hist, err := db.StageHistory(ctx, e.Name, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hist) != 2 {
+			t.Fatalf("событий %d, ожидалось 2 (создание + переход): %+v", len(hist), hist)
+		}
+	})
+}
+
+// TestStagesPredefinedRejectsUnknownStage — значение вне маршрута миграция не
+// принимает: элемент оказался бы в состоянии, о котором не знают ни гейт, ни
+// отчёт, и заметили бы это только у пользователя.
+func TestStagesPredefinedRejectsUnknownStage(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		e := stagesEntity(metadata.StageEnforceStrict)
+		e.Predefined = []*metadata.PredefinedItem{
+			{Name: "Кривой", Fields: map[string]any{"Наименование": "Кривой", "Состояние": "Аннулирована"}},
+		}
+		// Migrate сам зовёт синхронизацию предопределённых, поэтому отказ
+		// приходит пользователю прямо из `onebase migrate` — до того, как в
+		// базе появится элемент вне маршрута.
+		err := db.Migrate(ctx, []*metadata.Entity{e})
+		if err == nil {
+			t.Fatal("предопределённый с необъявленным этапом принят")
+		}
+		if !strings.Contains(err.Error(), "не объявлен в маршруте") {
+			t.Fatalf("ошибка не про этап: %v", err)
 		}
 	})
 }
