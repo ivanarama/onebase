@@ -217,11 +217,11 @@ func nonSelfUpdatableDir(t *testing.T) string {
 		if err != nil {
 			t.Skipf("не удалось создать каталог вне профиля пользователя: %v", err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(created) })
+		t.Cleanup(func() { _ = os.RemoveAll(created) }) //nolint:gosec // G703: created is the exact MkdirTemp result beneath the selected volume root
 		dir = created
 	} else {
 		dir = t.TempDir()
-		if err := os.Chmod(dir, 0o777); err != nil {
+		if err := os.Chmod(dir, 0o777); err != nil { //nolint:gosec // G302: intentionally model a shared installation rejected by self-update
 			t.Fatal(err)
 		}
 	}
