@@ -497,6 +497,51 @@ func TestDetailPanel_ManagedListPagesHavePriority(t *testing.T) {
 	}
 }
 
+func TestDetailPanel_ManagedPagesDoNotFallbackPerRow(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Fields: []string{"Поставщик"}, FieldsSet: true}
+	ent.Forms = []*metadata.FormModule{{
+		Name: "ФормаСписка", Kind: "list", LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{
+			Kind: metadata.FormElementPages, Name: "Закладки",
+			Children: []*metadata.FormElement{{
+				Kind: metadata.FormElementPage, Name: "Скрытое",
+				Children: []*metadata.FormElement{{Kind: metadata.FormElementField, DataPath: "Список.Артикул"}},
+			}},
+		}},
+	}}
+	// Артикул отсутствует exactly as after field_access.hide. The managed
+	// composition is still authoritative for this row; Поставщик must not be
+	// revealed by falling through to the lower-priority YAML source.
+	row := map[string]any{"Наименование": "Кресло", "Поставщик": "ООО"}
+	if got := detailPanelForEntity(ent, row, nil, "ru"); got != "" {
+		t.Fatalf("managed page with a hidden field fell through to YAML/auto: %s", got)
+	}
+}
+
+func TestDetailPanel_ManagedPagesFallbackOnlyWhenStructurallyEmpty(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Fields: []string{"Поставщик"}, FieldsSet: true}
+	ent.Forms = []*metadata.FormModule{{
+		Name: "ФормаСписка", Kind: "list", LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{
+			Kind: metadata.FormElementPages,
+			Children: []*metadata.FormElement{{
+				Kind: metadata.FormElementPage, Name: "ТЧ",
+				Children: []*metadata.FormElement{{Kind: metadata.FormElementField, DataPath: "Товары.Поставщик"}},
+			}},
+		}},
+	}}
+	row := map[string]any{"Наименование": "Кресло", "Поставщик": "ООО"}
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "ru")), &data); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := detailPanelValueByLabel(data, "Поставщик"); !ok || got != "ООО" {
+		t.Fatalf("structurally empty managed pages blocked YAML fallback: %+v", data)
+	}
+}
+
 // Короткая форма detail_panel.fields — состав без закладок, разложенный по типам.
 func TestDetailPanel_ExplicitFieldsShortForm(t *testing.T) {
 	ent := panelEntity()

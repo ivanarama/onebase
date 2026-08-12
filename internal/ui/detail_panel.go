@@ -69,7 +69,10 @@ func detailPanelForEntity(e *metadata.Entity, row map[string]any,
 			}
 		}
 	}
-	if tabs := managedDetailPanelTabs(e, row, enumLabels, lang); len(tabs) > 0 {
+	if tabs, configured := managedDetailPanelTabs(e, row, enumLabels, lang); configured {
+		if len(tabs) == 0 {
+			return ""
+		}
 		return marshalDetailPanel(detailPanelData{Title: title, Tabs: tabs})
 	}
 	if dp == nil {
@@ -103,12 +106,13 @@ func detailPanelForEntity(e *metadata.Entity, row map[string]any,
 // into the list detail panel. Only already-loaded entity fields are included;
 // commands, labels and table parts cannot introduce a second data path.
 func managedDetailPanelTabs(e *metadata.Entity, row map[string]any,
-	enumLabels map[string]map[string]string, lang string) []detailPanelTab {
+	enumLabels map[string]map[string]string, lang string) ([]detailPanelTab, bool) {
 	form := pickManagedForm(e, "list")
 	if form == nil {
-		return nil
+		return nil, false
 	}
 	var tabs []detailPanelTab
+	configured := false
 	pagesOrdinal := 0
 	var walkPages func([]*metadata.FormElement)
 	walkPages = func(elements []*metadata.FormElement) {
@@ -123,6 +127,9 @@ func managedDetailPanelTabs(e *metadata.Entity, row map[string]any,
 						continue
 					}
 					fields := managedDetailPageFields(e, page)
+					if len(fields) > 0 {
+						configured = true
+					}
 					rendered := detailPanelFieldsInOrder(fields, row, enumLabels, lang)
 					if len(rendered) == 0 {
 						continue
@@ -141,7 +148,7 @@ func managedDetailPanelTabs(e *metadata.Entity, row map[string]any,
 		}
 	}
 	walkPages(form.Elements)
-	return tabs
+	return tabs, configured
 }
 
 func managedDetailPageFields(e *metadata.Entity, page *metadata.FormElement) []metadata.Field {
