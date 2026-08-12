@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"fmt"
+
+	"github.com/google/uuid"
 	"strings"
 	"time"
 
@@ -151,4 +153,33 @@ func formatScopeValue(v any) string {
 		return t.Format(time.RFC3339)
 	}
 	return strings.TrimSpace(fmt.Sprintf("%v", v))
+}
+
+// SetAutoNumberValue проставляет значение автонумерации ОДНОЙ колонке.
+//
+// Узкая функция намеренно: дозаполнение кода не должно идти через Upsert,
+// который пишет запись целиком — не перечисленные в карте реквизиты он обнулил
+// бы, а ссылки в прочитанной строке приходят представлением, а не UUID. Здесь
+// меняется ровно один столбец, остальные данные не участвуют.
+//
+// Значение проставляется только если оно ещё пусто: условие в SQL, а не в Go,
+// поэтому параллельная запись не перетирается.
+func (db *DB) SetAutoNumberValue(ctx context.Context, entity *metadata.Entity, id uuid.UUID, field, value string) error {
+	if entity == nil || field == "" {
+		return nil
+	}
+	var col string
+	for _, f := range entity.Fields {
+		if strings.EqualFold(f.Name, field) {
+			col = metadata.ColumnName(f)
+			break
+		}
+	}
+	if col == "" {
+		return fmt.Errorf("%s: нет реквизита %s", entity.Name, field)
+	}
+	d := db.dialect
+	q := fmt.Sprintf("UPDATE %s SET %s = %s WHERE id = %s AND (%s IS NULL OR %s = '')",
+		metadata.TableName(entity.Name), col, d.Placeholder(1), d.Placeholder(2), col, col)
+	return db.exec(ctx, q, value, id)
 }
