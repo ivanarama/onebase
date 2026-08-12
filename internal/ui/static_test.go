@@ -51,7 +51,8 @@ func TestStaticUIJS(t *testing.T) {
 		"function obInitReportDelegates",
 		"function obInitJournalDelegates",
 		"function jlCollect",
-		"data-ob-journal-open-url",
+		"function listRowClick",
+		"function listRowDblClick",
 		"data-ob-rs-before-submit",
 		"data-ob-report-variant-submit",
 		"data-ob-attachments",
@@ -62,6 +63,11 @@ func TestStaticUIJS(t *testing.T) {
 		"document.createEvent('CustomEvent')",
 		"msg.name === 'уведомление'",
 		"msg.name === 'notify'",
+		// Browser sync dev-режима: страница сама перечитывается после
+		// перезагрузки конфигурации и после перезапуска пересобранного сервера.
+		"msg.system === 'dev-generation'",
+		"msg.system === 'dev-reload'",
+		"data-ob-dev",
 		"onebase:звонок.входящий",
 		// CSS плавающих виджетов инжектирует сам ui.js: их разметку строит он же,
 		// а страницы с собственным <head> (админские «Система» → …) без этого

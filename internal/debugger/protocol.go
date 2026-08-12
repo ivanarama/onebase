@@ -43,13 +43,25 @@ type Location struct {
 
 // Breakpoint represents a breakpoint in source code
 type Breakpoint struct {
-	ID        string    `json:"id"`
-	File      string    `json:"file"`
-	Line      int       `json:"line"`
-	Enabled   bool      `json:"enabled"`
-	Condition string    `json:"condition,omitempty"`
+	ID      string `json:"id"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Enabled bool   `json:"enabled"`
+	// Condition — выражение DSL: остановка происходит, только когда оно
+	// истинно (правила `Если`). Пустое — точка безусловная.
+	Condition string `json:"condition,omitempty"`
+	// CondError — текст последней ошибки вычисления условия. Непустой означает,
+	// что на условии остановились «на всякий случай»: сломанное условие видно
+	// человеку, а не превращает точку в молча неработающую.
+	CondError string    `json:"cond_error,omitempty"`
 	HitCount  int       `json:"hit_count"`
+	SkipCount int       `json:"skip_count"` // сколько раз условие оказалось ложным
 	CreatedAt time.Time `json:"created_at"`
+
+	// revision changes whenever the breakpoint's execution semantics change.
+	// It is intentionally not serialized: CheckBreakpoint uses it only to
+	// discard a condition result that raced with Set/Toggle/Remove.
+	revision uint64
 
 	// Diagnostic fields (not part of the breakpoint data)
 	MapLen   int `json:"map_len"`

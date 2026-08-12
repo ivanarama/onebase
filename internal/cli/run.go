@@ -53,6 +53,9 @@ func init() {
 	// hot reload .os/.yaml без перезапуска. По умолчанию off,
 	// для прода обычно не нужен. Включается флагом --watch.
 	runCmd.Flags().Bool("watch", false, "reload project metadata, DSL and scheduled jobs when configuration changes")
+	// Открытие браузера — по явному флагу: `run` запускают и службой, и из
+	// скриптов, где открывать вкладку некому и незачем.
+	runCmd.Flags().Bool("open", false, "открыть базу в браузере, когда сервер будет готов")
 	// Демо-режим через флаги — работает независимо от источника конфигурации.
 	// Удобно для --config-source database, где app.yaml не лежит файлом и
 	// блок demo: некуда вписать. Флаги имеют приоритет над app.yaml.
@@ -195,8 +198,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 	runLog := oblog.Component("cli.run")
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var browserOnce sync.Once
 	for {
-		err := runServerGeneration(ctx, cmd, args)
+		err := runServerGeneration(ctx, cmd, args, &browserOnce)
 		var request *scheduledDemoResetRequest
 		if !errors.As(err, &request) {
 			return err
@@ -230,7 +234,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string) (resultErr error) {
+func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, browserOnce *sync.Once) (resultErr error) {
 	runLog := oblog.Component("cli.run")
 	baseID, _ := cmd.Flags().GetString("id")
 
@@ -873,6 +877,12 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string) (r
 		}
 	}
 
+	listener, err := srv.Listen()
+	if err != nil {
+		return fmt.Errorf("listen on %s:%d: %w", host, port, err)
+	}
+	defer func() { _ = listener.Close() }()
+
 	schedCtx, schedCancel := context.WithCancel(ctx)
 	defer schedCancel()
 	schedDone := make(chan error, 1)
@@ -895,7 +905,7 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string) (r
 	}
 	serveErr := make(chan error, 1)
 	go func() {
-		listenErr := srv.ListenAndServe()
+		listenErr := srv.Serve(listener)
 		if errors.Is(listenErr, http.ErrServerClosed) {
 			listenErr = nil
 		} else if listenErr != nil {
@@ -903,6 +913,9 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string) (r
 		}
 		serveErr <- listenErr
 	}()
+	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser && browserOnce != nil {
+		browserOnce.Do(func() { openInBrowser(host, port) })
+	}
 	var listenErr error
 	var demoResetRequest *scheduledDemoResetRequest
 	serveResultReceived := false

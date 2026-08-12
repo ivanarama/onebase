@@ -106,7 +106,7 @@ onebase start
 | `onebase ibases list` | Список зарегистрированных баз |
 | `onebase ibases add --name ... --db ... --port ...` | Зарегистрировать базу |
 | `onebase ibases remove --id ...` | Удалить регистрацию |
-| `onebase dev --project ./my-app --db ...` | Dev-сервер с hot reload (файловый режим) |
+| `onebase dev --project ./my-app --db ... [--open]` | Dev-сервер: hot reload, страница обновляется сама, `--open` открывает браузер |
 | `onebase run --project ./my-app --db ...` | Production-сервер (файловый режим) |
 | `onebase migrate --project ./my-app --db ...` | Применить схему БД |
 | `onebase init [dir]` | Создать заготовку нового проекта |
@@ -178,8 +178,8 @@ go test -count=1 -tags=integration ./internal/configdb
 
 ```bash
 # Запуск любого примера
-onebase dev --project ./examples/trade --db "postgres://localhost/trade_dev?sslmode=disable"
-# → http://localhost:8080/ui
+onebase dev --project ./examples/trade --sqlite trade_dev.db --open
+# → браузер откроется сам на http://localhost:8080/ui, когда сервер будет готов
 ```
 
 ---

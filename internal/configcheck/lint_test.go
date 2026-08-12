@@ -152,6 +152,42 @@ fields:
 	}
 }
 
+func TestLintYAML_DetailPanelChecksNestedKeys(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "catalogs", "товар.yaml"), `name: Товар
+fields:
+  - name: Артикул
+    type: string
+detail_panel:
+  title: Артикул
+  widht: 360
+  tabs:
+    - name: Main
+      titles: {en: Main}
+      fields: [Артикул]
+      tableparts: []
+      attachments: false
+      filed: Артикул
+`)
+	var paths []string
+	for _, issue := range CheckLintYAML(dir) {
+		if issue.Code == "metadata.unvalidated-key" {
+			paths = append(paths, issue.Message)
+		}
+	}
+	joined := strings.Join(paths, "\n")
+	for _, want := range []string{"detail_panel.widht", "detail_panel.tabs[].filed"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("nested typo %q not reported; issues=%s", want, joined)
+		}
+	}
+	for _, known := range []string{"detail_panel.tabs[].tableparts", "detail_panel.tabs[].attachments"} {
+		if strings.Contains(joined, known) {
+			t.Fatalf("reserved known key %q reported as unknown; issues=%s", known, joined)
+		}
+	}
+}
+
 func TestLintProject_ListFormFieldWithoutIndex(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, filepath.Join(dir, "catalogs", "товар.yaml"), `name: Товар

@@ -89,10 +89,10 @@ type rawEntity struct {
 }
 
 type rawDetailPanel struct {
-	Title  string              `yaml:"title"`
-	Width  int                 `yaml:"width"`
-	Fields *[]string           `yaml:"fields"`
-	Tabs   []rawDetailPanelTab `yaml:"tabs"`
+	Title  string               `yaml:"title"`
+	Width  int                  `yaml:"width"`
+	Fields *[]string            `yaml:"fields"`
+	Tabs   *[]rawDetailPanelTab `yaml:"tabs"`
 }
 
 type rawDetailPanelTab struct {
@@ -101,8 +101,8 @@ type rawDetailPanelTab struct {
 	Fields []string          `yaml:"fields"`
 	// Зарезервировано под 118D (тяжёлые вкладки): читаем, чтобы `check` мог
 	// сказать «пока не поддерживается», а не молча проглотить ключ.
-	TableParts  []string `yaml:"tableparts"`
-	Attachments bool     `yaml:"attachments"`
+	TableParts  *[]string `yaml:"tableparts"`
+	Attachments *bool     `yaml:"attachments"`
 }
 
 type rawTileView struct {
@@ -179,12 +179,24 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 			dp.Fields = trimStringList(*raw.DetailPanel.Fields)
 			dp.FieldsSet = true
 		}
-		for _, rt := range raw.DetailPanel.Tabs {
-			dp.Tabs = append(dp.Tabs, DetailPanelTab{
-				Name:   strings.TrimSpace(rt.Name),
-				Titles: rt.Titles,
-				Fields: trimStringList(rt.Fields),
-			})
+		if raw.DetailPanel.Tabs != nil {
+			dp.TabsSet = true
+			for _, rt := range *raw.DetailPanel.Tabs {
+				tab := DetailPanelTab{
+					Name:   strings.TrimSpace(rt.Name),
+					Titles: rt.Titles,
+					Fields: trimStringList(rt.Fields),
+				}
+				if rt.TableParts != nil {
+					tab.TableParts = trimStringList(*rt.TableParts)
+					tab.TablePartsSet = true
+				}
+				if rt.Attachments != nil {
+					tab.Attachments = *rt.Attachments
+					tab.AttachmentsSet = true
+				}
+				dp.Tabs = append(dp.Tabs, tab)
+			}
 		}
 		e.DetailPanel = dp
 	}

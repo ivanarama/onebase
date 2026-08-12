@@ -22,7 +22,15 @@ func (s *Server) fieldDecisions(ctx context.Context, entity *metadata.Entity) ma
 	if entity == nil {
 		return nil
 	}
-	return access.FieldDecisions(auth.UserFromContext(ctx), string(entity.Kind), entity.Name, entity)
+	return s.fieldDecisionsFor(ctx, string(entity.Kind), entity.Name, entity)
+}
+
+// fieldDecisionsFor is the shared field-policy adapter for objects that are not
+// represented by a persisted metadata.Entity (information registers and
+// heterogeneous journal rows). The synthetic metadata still canonicalises
+// policy names to the exact row keys.
+func (s *Server) fieldDecisionsFor(ctx context.Context, kind, name string, meta *metadata.Entity) map[string]access.FieldDecision {
+	return access.FieldDecisions(auth.UserFromContext(ctx), kind, name, meta)
 }
 
 // maskRecord masks/hides sensitive fields of one record in place before it is
@@ -34,6 +42,177 @@ func (s *Server) maskRecord(ctx context.Context, entity *metadata.Entity, row ma
 // maskRecords masks a list of records in place.
 func (s *Server) maskRecords(ctx context.Context, entity *metadata.Entity, rows []map[string]any) {
 	access.MaskRecords(s.fieldDecisions(ctx, entity), rows)
+}
+
+// maskInfoRegRecords applies field_access.inforegs at the handler boundary,
+// before reference UUIDs are resolved into labels or rows are rendered. Period
+// has a second transport representation (period_key) used by delete forms; it
+// must inherit the same decision or the protected value would remain in HTML.
+func (s *Server) maskInfoRegRecords(ctx context.Context, ir *metadata.InfoRegister, rows []map[string]any) {
+	if ir == nil {
+		return
+	}
+	decisions := s.fieldDecisionsFor(ctx, "inforeg", ir.Name, storage.InfoRegisterPredicateEntity(ir))
+	access.MaskRecords(decisions, rows)
+	periodDecision, protected := fieldDecisionByName(decisions, "period")
+	if !protected || !periodDecision.Masked() {
+		return
+	}
+	for _, row := range rows {
+		key, ok := rowKeyByName(row, "period_key")
+		if !ok {
+			continue
+		}
+		if periodDecision.Hidden() {
+			delete(row, key)
+			continue
+		}
+		row[key] = access.MaskValue(periodDecision.Strategy, periodDecision.Keep, row[key])
+	}
+}
+
+// maskJournalRecords maps each journal output column back to the source fields
+// of the concrete document row, then applies that document's field policy to
+// the output alias. This mapping is essential for explicit map/fallback journal
+// columns: masking row[jcol.Field] directly would miss a protected source whose
+// name differs from the journal alias.
+func (s *Server) maskJournalRecords(
+	ctx context.Context,
+	j *metadata.Journal,
+	docs map[string]*metadata.Entity,
+	rows []map[string]any,
+) {
+	if j == nil || len(rows) == 0 {
+		return
+	}
+	byDocument := make(map[string]map[string]access.FieldDecision, len(docs))
+	for name, entity := range docs {
+		if entity == nil {
+			continue
+		}
+		sourceDecisions := s.fieldDecisionsFor(ctx, string(entity.Kind), entity.Name, entity)
+		outputDecisions := make(map[string]access.FieldDecision)
+		for _, column := range j.Columns {
+			decision, ok := journalColumnDecision(sourceDecisions, journalColumnSourceFields(column, entity))
+			if ok {
+				outputDecisions[column.Field] = decision
+			}
+		}
+		if len(outputDecisions) > 0 {
+			byDocument[name] = outputDecisions
+		}
+	}
+	for _, row := range rows {
+		docName := asString(row["_doc_kind"])
+		access.MaskRecord(byDocument[docName], row)
+	}
+}
+
+// journalColumnSourceFields mirrors storage.colExprForDoc resolution order.
+// Multiple fallback fields become COALESCE in SQL, so all are returned: without
+// result provenance, the output must use the most restrictive applicable
+// decision to avoid exposing whichever fallback happened to be non-NULL.
+func journalColumnSourceFields(column metadata.JournalColumn, entity *metadata.Entity) []string {
+	if entity == nil {
+		return nil
+	}
+	if mapped, ok := column.Map[entity.Name]; ok && mapped != "" {
+		if field, found := entityFieldByName(entity, mapped); found {
+			return []string{field.Name}
+		}
+		return nil
+	}
+	if field, found := entityFieldByName(entity, column.Field); found {
+		return []string{field.Name}
+	}
+	seen := make(map[string]bool)
+	var fields []string
+	for _, fallback := range column.Fallback {
+		field, found := entityFieldByName(entity, fallback)
+		if !found {
+			continue
+		}
+		key := strings.ToLower(field.Name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		fields = append(fields, field.Name)
+	}
+	return fields
+}
+
+func journalColumnDecision(
+	decisions map[string]access.FieldDecision,
+	sources []string,
+) (access.FieldDecision, bool) {
+	var selected access.FieldDecision
+	found := false
+	for _, source := range sources {
+		decision, ok := fieldDecisionByName(decisions, source)
+		if !ok || !decision.Masked() {
+			continue
+		}
+		decision.Strategy = journalMaskStrategy(decision.Strategy)
+		if !found {
+			selected = decision
+			found = true
+			continue
+		}
+		selected = combineJournalDecisions(selected, decision)
+	}
+	return selected, found
+}
+
+// combineJournalDecisions is deliberately not a total ordering. mask_city and
+// mask_tail protect different shapes and cannot safely be applied to one
+// another's values (mask_city may return a phone without commas unchanged).
+// Ambiguous COALESCE provenance therefore collapses distinct masks to mask_all.
+func combineJournalDecisions(current, candidate access.FieldDecision) access.FieldDecision {
+	if current.Hidden() || candidate.Hidden() {
+		return access.FieldDecision{Strategy: access.FieldHide}
+	}
+	if current.Strategy != candidate.Strategy {
+		return access.FieldDecision{Strategy: access.FieldMaskAll}
+	}
+	if current.Strategy == access.FieldMaskTail && candidate.Keep < current.Keep {
+		current.Keep = candidate.Keep
+	}
+	return current
+}
+
+func journalMaskStrategy(strategy string) string {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case access.FieldHide:
+		return access.FieldHide
+	case access.FieldMaskAll:
+		return access.FieldMaskAll
+	case access.FieldMaskCity:
+		return access.FieldMaskCity
+	case access.FieldMaskTail:
+		return access.FieldMaskTail
+	default:
+		// Unknown strategies fail closed as mask_all in access.MaskValue.
+		return access.FieldMaskAll
+	}
+}
+
+func fieldDecisionByName(decisions map[string]access.FieldDecision, name string) (access.FieldDecision, bool) {
+	for field, decision := range decisions {
+		if strings.EqualFold(field, name) {
+			return decision, true
+		}
+	}
+	return access.FieldDecision{}, false
+}
+
+func rowKeyByName(row map[string]any, name string) (string, bool) {
+	for key := range row {
+		if strings.EqualFold(key, name) {
+			return key, true
+		}
+	}
+	return "", false
 }
 
 // maskDSLValue applies the field policy to one attribute value read from a

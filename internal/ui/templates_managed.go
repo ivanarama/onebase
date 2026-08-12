@@ -547,6 +547,9 @@ const tplManagedForm = `
     </form>
   {{end}}
   {{if not .IsNew}}
+    {{/* См. комментарий в автогенерируемой карточке: копия — это форма
+         создания, а F9 здесь занята копированием строки ТЧ. */}}
+    {{if .CanWrite}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
@@ -625,6 +628,7 @@ const tplManagedForm = `
 <form id="main-form" method="POST" data-ob-grid-sync {{if .IsProcessor}}action="/ui/processor/{{lower .Processor.Name}}" enctype="multipart/form-data"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}
+{{if .CopySourceID}}<input type="hidden" name="_copy_source_id" value="{{.CopySourceID}}">{{end}}
 {{/* Иерархия: автоформа рисует is_folder/parent_id полями, управляемая — нет.
      При создании «📁 Группа» (?is_folder=true) и создании внутри группы (?parent_id)
      переносим признаки скрытыми полями, иначе Upsert пишет is_folder=false и элемент

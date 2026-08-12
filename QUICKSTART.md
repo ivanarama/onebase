@@ -115,10 +115,13 @@ onebase init --template finance   ./finance # домашние финансы
 ```bash
 onebase dev \
   --project ./склад \
-  --db "postgres://postgres:1234@localhost/склад_dev?sslmode=disable"
+  --db "postgres://postgres:1234@localhost/склад_dev?sslmode=disable" \
+  --open
 ```
 
-Открыть: **http://localhost:8080/ui**
+`--open` откроет **http://localhost:8080/ui** сам, когда сервер будет готов
+отвечать. Дальше правьте конфигурацию и сохраняйте файлы — открытая страница
+перечитает себя без F5. Вместо `--db` можно взять SQLite: `--sqlite склад_dev.db`.
 
 ---
 
@@ -561,7 +564,8 @@ onebase restore --db "postgres://localhost/sklad" \
 ```bash
 # Разработка
 onebase start                                    # лаунчер (GUI)
-onebase dev   --project . --db <dsn>             # режим разработки (hot reload)
+onebase dev   --project . --db <dsn> --open      # разработка: hot reload + браузер
+onebase dev   --project . --sqlite dev.db --reload-binary  # + пересборка платформы
 
 # Сервер
 onebase deploy --project . --db <dsn>            # задеплоить конфиг в PostgreSQL

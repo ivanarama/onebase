@@ -4,9 +4,7 @@ package launcher
 
 import (
 	"os"
-	"os/exec"
 	"os/signal"
-	"runtime"
 	"syscall"
 )
 
@@ -17,7 +15,7 @@ import (
 // диалог закрытия в этой сборке живёт в самой странице (кнопка ✕ на панели,
 // см. quitLauncher в templates.go).
 func OpenWindow(url, title string, done <-chan struct{}, cc CloseCoordinator) error {
-	openBrowser(url)
+	OpenBrowser(url)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -26,20 +24,4 @@ func OpenWindow(url, title string, done <-chan struct{}, cc CloseCoordinator) er
 	case <-done:
 	}
 	return nil
-}
-
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", url) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-	case "darwin":
-		cmd = exec.Command("open", url) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-	default:
-		cmd = exec.Command("xdg-open", url) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
-	}
-	noWindow(cmd)
-	// Браузер мог не найтись — открыть окно всё равно нечем, но пусть это
-	// будет видно: пользователь жалуется «нажал, ничего не произошло».
-	bestEffort("открыть URL во внешнем браузере", cmd.Start())
 }

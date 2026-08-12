@@ -33,11 +33,8 @@ func (s *Server) loadRuntimeObject(ctx context.Context, entity *metadata.Entity,
 	if err != nil {
 		return nil, err
 	}
-	fields := make(map[string]any, len(row))
-	for _, f := range entity.Fields {
-		if v, ok := row[f.Name]; ok && v != nil {
-			fields[strings.ToLower(f.Name)] = v
-		}
+	if row == nil {
+		return nil, fmt.Errorf("объект %s/%s не найден", entity.Name, id)
 	}
 	tpRows := make(map[string][]map[string]any, len(entity.TableParts))
 	for _, tp := range entity.TableParts {
@@ -47,6 +44,27 @@ func (s *Server) loadRuntimeObject(ctx context.Context, entity *metadata.Entity,
 		}
 		tpRows[tp.Name] = rows
 	}
+	return s.runtimeObjectFromSnapshot(ctx, entity, id, row, tpRows), nil
+}
+
+// runtimeObjectFromSnapshot строит объект формы из уже загруженного снимка.
+// Карты и строки ТЧ копируются перед enrich: read-hook может читать и менять
+// Объект, но не должен незаметно менять канонические данные, которые вызывающий
+// код затем использует для рендера или «Создать копированием».
+func (s *Server) runtimeObjectFromSnapshot(
+	ctx context.Context,
+	entity *metadata.Entity,
+	id uuid.UUID,
+	row map[string]any,
+	tablePartRows map[string][]map[string]any,
+) *runtime.Object {
+	fields := make(map[string]any, len(entity.Fields))
+	for _, f := range entity.Fields {
+		if v, ok := maskCIKeyValue(row, f.Name); ok && v != nil {
+			fields[strings.ToLower(f.Name)] = v
+		}
+	}
+	tpRows := cloneTablePartRowMap(tablePartRows)
 	obj := &runtime.Object{
 		ID:            id,
 		Type:          entity.Name,
@@ -58,7 +76,7 @@ func (s *Server) loadRuntimeObject(ctx context.Context, entity *metadata.Entity,
 	for _, tp := range entity.TableParts {
 		s.enrichTPRowsWithRefs(ctx, tp, tpRows[tp.Name])
 	}
-	return obj, nil
+	return obj
 }
 
 // runFormReadHook исполняет серверный обработчик ПриЧтенииНаСервере формы объекта
@@ -76,25 +94,10 @@ func (s *Server) runFormReadHook(ctx context.Context, entity *metadata.Entity, f
 	if form == nil || s.interp == nil {
 		return nil
 	}
-	procName := resolveHandlerProc(form, "", string(metadata.FormEventOnReadAtServer))
-	if procName == "" {
+	program, decl := formReadHook(form)
+	if program == nil || decl == nil {
 		return nil
 	}
-	program, ok := form.ProgramAST.(*ast.Program)
-	if !ok || program == nil {
-		return nil
-	}
-	var decl *ast.ProcedureDecl
-	for _, p := range program.Procedures {
-		if strings.EqualFold(p.Name.Literal, procName) {
-			decl = p
-			break
-		}
-	}
-	if decl == nil {
-		return nil
-	}
-	ctx = trustedDSLContext(ctx)
 
 	// Обработчик объявлен — RLS-хук ОБЯЗАН отработать. Если объект не загрузился,
 	// отказываем в доступе (fail-closed), а не отдаём форму без проверки.
@@ -102,6 +105,60 @@ func (s *Server) runFormReadHook(ctx context.Context, entity *metadata.Entity, f
 	if err != nil {
 		return fmt.Errorf("ПриЧтенииНаСервере: не удалось загрузить объект: %w", err)
 	}
+	return s.executeFormReadHook(ctx, entity, form, program, decl, obj)
+}
+
+// runFormReadHookOnObject исполняет тот же fail-closed read-hook на переданном
+// объекте. Это нужно путям, которые уже загрузили и авторизовали точный снимок:
+// повторный GetByID между RLS, hook и использованием данных создавал TOCTOU.
+func (s *Server) runFormReadHookOnObject(
+	ctx context.Context,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	obj *runtime.Object,
+) error {
+	if form == nil || s.interp == nil {
+		return nil
+	}
+	program, decl := formReadHook(form)
+	if program == nil || decl == nil {
+		return nil
+	}
+	if obj == nil {
+		return fmt.Errorf("ПриЧтенииНаСервере: объект не загружен")
+	}
+	return s.executeFormReadHook(ctx, entity, form, program, decl, obj)
+}
+
+func formReadHook(form *metadata.FormModule) (*ast.Program, *ast.ProcedureDecl) {
+	if form == nil {
+		return nil, nil
+	}
+	procName := resolveHandlerProc(form, "", string(metadata.FormEventOnReadAtServer))
+	if procName == "" {
+		return nil, nil
+	}
+	program, ok := form.ProgramAST.(*ast.Program)
+	if !ok || program == nil {
+		return nil, nil
+	}
+	for _, proc := range program.Procedures {
+		if strings.EqualFold(proc.Name.Literal, procName) {
+			return program, proc
+		}
+	}
+	return nil, nil
+}
+
+func (s *Server) executeFormReadHook(
+	ctx context.Context,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	program *ast.Program,
+	decl *ast.ProcedureDecl,
+	obj *runtime.Object,
+) error {
+	ctx = trustedDSLContext(ctx)
 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	var msgs []string

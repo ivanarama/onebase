@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/debugger"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -84,9 +85,10 @@ func (s *Server) debugGlobalStatus(w http.ResponseWriter, r *http.Request) {
 // debugGlobalBreakpoint handles POST /debug/global/breakpoint
 func (s *Server) debugGlobalBreakpoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		File   string `json:"file"`
-		Line   int    `json:"line"`
-		Action string `json:"action"` // "set", "remove", "toggle"
+		File      string `json:"file"`
+		Line      int    `json:"line"`
+		Action    string `json:"action"`    // "set", "remove", "toggle"
+		Condition string `json:"condition"` // выражение DSL; пусто — точка безусловная
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -99,33 +101,50 @@ func (s *Server) debugGlobalBreakpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch req.Action {
-	case "set":
-		bp := sess.SetBreakpoint(req.File, req.Line, "")
+	// Синтаксис условия проверяем здесь, а не при первом проходе строки:
+	// иначе про опечатку человек узнал бы посреди отладки, из журнала точки.
+	condition := strings.TrimSpace(req.Condition)
+	if condition != "" {
+		if err := validateBreakpointCondition(condition); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	respond := func(bp *debugger.Breakpoint) {
 		snap := sess.Snapshot()
 		writeJSON(w, 200, map[string]any{
 			"id": bp.ID, "file": bp.File, "line": bp.Line, "enabled": bp.Enabled,
-			"bp_count": snap.DiagBPCount, "bp_keys": snap.DiagBPKeys,
+			"condition": bp.Condition,
+			"bp_count":  snap.DiagBPCount, "bp_keys": snap.DiagBPKeys,
 		})
+	}
+
+	switch req.Action {
+	case "set":
+		respond(sess.SetBreakpoint(req.File, req.Line, condition))
 	case "remove":
 		sess.RemoveBreakpoint(req.File, req.Line)
 		writeJSON(w, 200, map[string]string{"status": "removed"})
 	case "toggle":
-		existing := sess.CheckBreakpoint(req.File, req.Line)
-		if existing != nil {
+		if sess.FindBreakpoint(req.File, req.Line) != nil {
 			sess.RemoveBreakpoint(req.File, req.Line)
 			writeJSON(w, 200, map[string]string{"status": "removed"})
-		} else {
-			bp := sess.SetBreakpoint(req.File, req.Line, "")
-			snap := sess.Snapshot()
-			writeJSON(w, 200, map[string]any{
-				"id": bp.ID, "file": bp.File, "line": bp.Line, "enabled": bp.Enabled,
-				"bp_count": snap.DiagBPCount, "bp_keys": snap.DiagBPKeys,
-			})
+			return
 		}
+		respond(sess.SetBreakpoint(req.File, req.Line, condition))
 	default:
 		writeJSON(w, 400, map[string]string{"error": "unknown action: " + req.Action})
 	}
+}
+
+// validateBreakpointCondition разбирает условие точки останова как выражение DSL.
+func validateBreakpointCondition(expr string) error {
+	p := parser.New(lexer.New(expr, "<условие точки останова>"))
+	if _, err := p.ParseStandaloneExpr(); err != nil {
+		return fmt.Errorf("условие точки останова: %w", err)
+	}
+	return nil
 }
 
 // debugGlobalContinue handles POST /debug/global/continue
@@ -234,7 +253,7 @@ func (s *Server) debugGlobalEvaluate(w http.ResponseWriter, r *http.Request) {
 func standaloneEval(s *Server, expr string) (any, error) {
 	l := lexer.New(expr, "<console>")
 	p := parser.New(l)
-	parsed, err := p.ParseExpr()
+	parsed, err := p.ParseStandaloneExpr()
 	if err != nil {
 		return nil, err
 	}

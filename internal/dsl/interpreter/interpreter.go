@@ -63,7 +63,11 @@ type loopContinue struct{}
 // When nil on the Interpreter, there is zero overhead.
 // Implemented by debugger.ActiveSession.
 type DebugHook interface {
-	HookCheckBreakpoint(file string, line int) bool
+	// HookCheckBreakpoint отвечает, надо ли останавливаться на строке. cond
+	// вычисляет условие точки останова в окружении текущего оператора и
+	// приводит результат к булеву по правилам `Если`; хук зовёт его только
+	// когда на строке есть включённая точка с непустым условием.
+	HookCheckBreakpoint(file string, line int, cond func(expr string) (bool, error)) bool
 	HookShouldStep(file string, stackDepth int) bool
 	HookOnPause(file string, line int, vars map[string]any, evalFn func(string) (any, error), reason string)
 	HookPushFrame(procedure string, line int)
@@ -265,7 +269,13 @@ func (i *Interpreter) beforeStmt(s ast.Stmt, e *env) {
 	}
 
 	hook := e.ec.debug
-	hitBP := hook.HookCheckBreakpoint(loc.File, loc.Line)
+	hitBP := hook.HookCheckBreakpoint(loc.File, loc.Line, func(expr string) (bool, error) {
+		v, err := i.evalDebugExpr(expr, e)
+		if err != nil {
+			return false, err
+		}
+		return truthy(v), nil
+	})
 	shouldStep := hook.HookShouldStep(loc.File, stackDepth(e))
 	if !hitBP && !shouldStep {
 		return
@@ -277,9 +287,53 @@ func (i *Interpreter) beforeStmt(s ast.Stmt, e *env) {
 	}
 	vars := e.GetAllVariables()
 	evalFn := func(expr string) (any, error) {
-		return i.evaluateExprString(expr, e)
+		return i.evalDebugExpr(expr, e)
 	}
 	hook.HookOnPause(loc.File, loc.Line, vars, evalFn, reason)
+}
+
+// evalDebugExpr вычисляет выражение, которое человек написал в отладчике
+// (условие точки останова, табло, консоль), в окружении остановленного
+// оператора. От evaluateExprString отличается двумя вещами:
+//
+//   - любая паника интерпретатора превращается в error. Выражение отладчика —
+//     не часть конфигурации, и опечатка в нём не должна ронять отлаживаемый
+//     прогон: раньше паника уходила вверх через beforeStmt и убивала проведение
+//     документа. Для условия это критично — оно вычисляется на каждом проходе
+//     строки, без участия человека;
+//   - позиция последнего оператора (ec.curFile/curLine) восстанавливается.
+//     Вычисление может вызвать процедуру из другого модуля и увести позицию за
+//     собой, после чего ошибка основного кода показала бы чужой файл и строку.
+func (i *Interpreter) evalDebugExpr(expr string, e *env) (res any, err error) {
+	savedFile, savedLine := e.ec.curFile, e.ec.curLine
+	savedDebug := e.ec.debug
+	// The guard belongs to this execution context, not to the shared debug
+	// session. A debugger expression may execute DSL itself; disabling the hook
+	// here prevents recursive breakpoints/steps in this run without making
+	// concurrent runs silently skip their own breakpoints.
+	e.ec.debug = nil
+	defer func() {
+		e.ec.curFile, e.ec.curLine = savedFile, savedLine
+		e.ec.debug = savedDebug
+		if r := recover(); r != nil {
+			res = nil
+			switch v := r.(type) {
+			case dslStop:
+				err = v.err
+			case userError:
+				// Позиция может быть пустой (RaiseUserError из метода объекта) —
+				// тогда показываем строку, на которой стоит отладчик.
+				file, line := v.File, v.Line
+				if file == "" {
+					file, line = savedFile, savedLine
+				}
+				err = &DSLError{File: file, Line: line, Msg: v.Msg, Err: v.Err}
+			default:
+				err = fmt.Errorf("%v", r)
+			}
+		}
+	}()
+	return i.evaluateExprString(expr, e)
 }
 
 func stackDepth(e *env) int {
@@ -297,7 +351,7 @@ func stackDepth(e *env) int {
 func (i *Interpreter) evaluateExprString(expr string, e *env) (any, error) {
 	l := lexer.New(expr, "<console>")
 	p := parser.New(l)
-	parsed, err := p.ParseExpr()
+	parsed, err := p.ParseStandaloneExpr()
 	if err != nil {
 		return nil, err
 	}
@@ -924,7 +978,7 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 	// начинается с line 1, но это не line 1 физического модуля. Лексическая
 	// identity для sibling-поиска хранится отдельно в e.sourceFile.
 	p := parser.New(lexer.New(src, "<Вычислить>"))
-	expr, err := p.ParseExpr()
+	expr, err := p.ParseStandaloneExpr()
 	if err != nil {
 		panic(userError{Msg: "Вычислить: " + err.Error()})
 	}

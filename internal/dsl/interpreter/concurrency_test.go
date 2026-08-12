@@ -4,12 +4,90 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/ivantit66/onebase/internal/debugger"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 )
+
+// A debugger expression disables hooks only in its own execCtx. The global
+// ActiveSession is shared by all runs, so a session-wide guard would make the
+// second run silently pass its breakpoint while the first condition blocks.
+func TestInterpreter_DebugExpressionGuardIsPerRun(t *testing.T) {
+	proc := parseProcFile(t, "parallel.proc.os", `Процедура Выполнить()
+  Значение = 1;
+КонецПроцедуры`)
+
+	sess := debugger.NewDebugController().StartSession("parallel.proc.os")
+	sess.SetBreakpoint("parallel.proc.os", 2, "Условие()")
+	interp := interpreter.New()
+	interp.DebugSource = func() interpreter.DebugHook { return sess }
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(releaseFirst) })
+	firstCond := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+		close(firstEntered)
+		<-releaseFirst
+		return true, nil
+	})
+	secondCond := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+		return true, nil
+	})
+
+	run := func(cond interpreter.BuiltinFunc) <-chan error {
+		done := make(chan error, 1)
+		go func() { done <- interp.Run(proc, nil, map[string]any{"Условие": cond}) }()
+		return done
+	}
+	firstDone := run(firstCond)
+	select {
+	case <-firstEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first condition did not start")
+	}
+
+	secondDone := run(secondCond)
+	select {
+	case <-sess.PauseChan():
+		// The second run saw its breakpoint while the first was still evaluating.
+	case err := <-secondDone:
+		t.Fatalf("second run skipped its breakpoint and finished: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("second run did not reach its breakpoint")
+	}
+	sess.Continue()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second run: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second run did not resume")
+	}
+
+	releaseOnce.Do(func() { close(releaseFirst) })
+	select {
+	case <-sess.PauseChan():
+	case err := <-firstDone:
+		t.Fatalf("first run skipped its breakpoint and finished: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("first run did not pause after its condition completed")
+	}
+	sess.Continue()
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first run: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first run did not resume")
+	}
+}
 
 // parseProcFile разбирает исходник DSL с заданным именем файла и возвращает
 // первую процедуру. Имя файла важно: гонка curFile/curLine проявляется, когда
@@ -119,7 +197,7 @@ EndProcedure`)
 // countingHook — потокобезопасный DebugHook, считающий вызовы.
 type countingHook struct{ calls atomic.Int64 }
 
-func (h *countingHook) HookCheckBreakpoint(file string, line int) bool {
+func (h *countingHook) HookCheckBreakpoint(file string, line int, cond func(string) (bool, error)) bool {
 	h.calls.Add(1)
 	return false
 }
