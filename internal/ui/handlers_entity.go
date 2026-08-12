@@ -287,6 +287,7 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	tablePartRows := map[string][]map[string]any{}
 	var fillError string
 	var fillMessages []string
+	var copySourceID string
 
 	// Ввод на основании: GET /ui/{kind}/{name}/new?based_on=<src>&based_on_id=<uuid>.
 	// Загружаем источник и запускаем ОбработкаЗаполнения у приёмника — её
@@ -300,6 +301,11 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	// копия появляется в базе, только когда пользователь нажмёт «Записать».
 	if copyID := r.URL.Query().Get("copy"); copyID != "" && fillError == "" {
 		fillError = s.applyCopyFromQuery(r, entity, copyID, values, tablePartRows)
+		if fillError == "" {
+			if parsed, err := uuid.Parse(copyID); err == nil {
+				copySourceID = parsed.String()
+			}
+		}
 	}
 	var folderOpts []map[string]any
 	if entity.Hierarchical {
@@ -329,6 +335,7 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		"TPRefMeta":     tpRefMeta(entity),
 		"TablePartRows": tablePartRows,
 		"FolderOptions": folderOpts,
+		"CopySourceID":  copySourceID,
 		"Error":         fillError,
 		"Messages":      fillMessages,
 		// IsPopup — форма открыта в iframe для inline-создания из другой
@@ -373,7 +380,12 @@ func (s *Server) applyFillFromQuery(r *http.Request, entity *metadata.Entity, sr
 		if v == nil {
 			continue
 		}
-		values[fieldKeyForForm(entity, k)] = formatFieldValueForInput(v)
+		key := fieldKeyForForm(entity, k)
+		if field, ok := entityFieldByName(entity, key); ok {
+			values[key] = formatFieldValueForInput(field, v)
+		} else {
+			values[key] = formatUntypedValueForInput(v)
+		}
 	}
 	for tpName, rows := range result.TablePartRows {
 		if rows != nil {
@@ -396,60 +408,40 @@ func (s *Server) applyFillFromQuery(r *http.Request, entity *metadata.Entity, sr
 // форма всё равно открывается, пользователь видит причину и может ввести
 // запись руками.
 func (s *Server) applyCopyFromQuery(r *http.Request, entity *metadata.Entity, srcIDStr string, values map[string]string, tablePartRows map[string][]map[string]any) string {
-	srcID, err := uuid.Parse(srcIDStr)
-	if err != nil {
-		return "Некорректный идентификатор копируемой записи: " + srcIDStr
-	}
-	// Право write на сущность проверено вызывающим (s.form); для источника
-	// нужно ещё read — и построчный доступ к нему, иначе копирование стало бы
-	// обходом RLS: скрытую строку нельзя прочитать, но можно было бы «скопировать».
-	if !s.can(r, string(entity.Kind), entity.Name, "read") {
-		return "Нет прав на чтение копируемой записи"
-	}
-	if !s.rowAllowsID(r.Context(), entity, "read", srcID) {
-		return "Нет прав на чтение копируемой записи"
-	}
-	row, err := s.store.GetByID(r.Context(), entity.Name, srcID, entity)
+	snapshot, err := s.loadAuthorizedCopySource(r, entity, srcIDStr)
 	if err != nil {
 		return err.Error()
 	}
-	if row == nil {
-		return "Копируемая запись не найдена"
-	}
-	// План 88: маска ПДн накладывается до подстановки значений в форму. Сами
-	// защищённые реквизиты в копию не переносятся вовсе (ниже) — записать
-	// строку-маску вместо значения хуже, чем оставить поле пустым.
-	s.maskRecord(r.Context(), entity, row)
+	// Защищённые реквизиты в копию не переносятся вовсе: записать строку-маску
+	// вместо исходного значения хуже, чем оставить поле пустым. Сам снимок не
+	// маскируем in-place — он повторно нужен как каноническое server state.
 	decisions := s.fieldDecisions(r.Context(), entity)
 	for _, f := range entity.Fields {
 		if skipFieldOnCopy(entity, f) {
 			continue
 		}
-		if dec, ok := decisions[f.Name]; ok && dec.Masked() {
+		if dec, ok := fieldDecisionByName(decisions, f.Name); ok && dec.Masked() {
 			continue
 		}
-		v, ok := row[f.Name]
+		v, ok := maskCIKeyValue(snapshot.row, f.Name)
 		if !ok || v == nil {
 			continue
 		}
-		values[f.Name] = formatFieldValueForInput(v)
+		values[f.Name] = formatFieldValueForInput(f, v)
 	}
 	if entity.Hierarchical {
 		// Копия остаётся в группе оригинала и того же вида: копия группы — группа.
-		if v := row["parent_id"]; v != nil {
+		if v := snapshot.row["parent_id"]; v != nil {
 			values["parent_id"] = refValueString(v)
 		}
-		if asBool(row["is_folder"]) {
+		if asBool(snapshot.row["is_folder"]) {
 			values["is_folder"] = "true"
 		}
 	}
 	for _, tp := range entity.TableParts {
-		rows, err := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, srcID, tp)
-		if err != nil {
-			return err.Error()
-		}
+		rows := snapshot.tablePartRows[tp.Name]
 		if len(rows) > 0 {
-			tablePartRows[tp.Name] = rows
+			tablePartRows[tp.Name] = cloneTablePartRows(rows)
 		}
 	}
 	return ""
@@ -463,10 +455,17 @@ func (s *Server) applyCopyFromQuery(r *http.Request, entity *metadata.Entity, sr
 // справочника (включая Код) копируются как есть: платформа их не генерирует,
 // и обнулять то, что она не умеет заполнить, значило бы ломать копию.
 func skipFieldOnCopy(entity *metadata.Entity, f metadata.Field) bool {
-	if entity.Kind != metadata.KindDocument {
-		return false
-	}
-	return f.Name == "Номер" || f.Type == metadata.FieldTypeDate
+	return isSystemDocumentNumber(entity, f) || isSystemDocumentDate(entity, f)
+}
+
+func isSystemDocumentNumber(entity *metadata.Entity, field metadata.Field) bool {
+	return entity != nil && entity.Kind == metadata.KindDocument &&
+		field.Type == metadata.FieldTypeString && strings.EqualFold(field.Name, "Номер")
+}
+
+func isSystemDocumentDate(entity *metadata.Entity, field metadata.Field) bool {
+	return entity != nil && entity.Kind == metadata.KindDocument &&
+		field.Type == metadata.FieldTypeDate && strings.EqualFold(field.Name, "Дата")
 }
 
 // fieldKeyForForm возвращает имя поля в том регистре, в котором его ждёт
@@ -482,10 +481,23 @@ func fieldKeyForForm(entity *metadata.Entity, lowerKey string) string {
 	return lowerKey
 }
 
-// formatFieldValueForInput приводит значение поля к строке для <input value=...>.
-// Для *interpreter.Ref (после enrichHeaderRefs) — UUID, для time — RFC3339-короткий,
-// иначе — fmt.Sprint.
-func formatFieldValueForInput(v any) string {
+// formatFieldValueForInput приводит значение к браузерному представлению с
+// учётом типа метаданных. SQLite возвращает bool как int64 и date как string,
+// поэтому fmt.Sprint без типа превращал true в "1" и ломал datetime-local.
+func formatFieldValueForInput(field metadata.Field, v any) string {
+	if field.Type == metadata.FieldTypeBool {
+		if asBool(v) {
+			return "true"
+		}
+		return "false"
+	}
+	if field.Type == metadata.FieldTypeDate {
+		return formatDateValueForInput(v)
+	}
+	return formatUntypedValueForInput(v)
+}
+
+func formatUntypedValueForInput(v any) string {
 	if v == nil {
 		return ""
 	}
@@ -498,6 +510,37 @@ func formatFieldValueForInput(v any) string {
 		}
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+func formatDateValueForInput(v any) string {
+	if v == nil {
+		return ""
+	}
+	if t, ok := v.(time.Time); ok {
+		return t.In(time.Local).Format("2006-01-02T15:04")
+	}
+	raw, ok := v.(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return formatUntypedValueForInput(v)
+	}
+	for _, layout := range []string{
+		time.RFC3339, time.RFC3339Nano,
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02T15:04:05", "2006-01-02 15:04:05",
+		"2006-01-02T15:04", "2006-01-02",
+	} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed.In(time.Local).Format("2006-01-02T15:04")
+		}
+	}
+	if len(raw) >= 10 {
+		if parsed, err := time.ParseInLocation("2006-01-02", raw[:10], time.Local); err == nil {
+			return parsed.Format("2006-01-02T15:04")
+		}
+	}
+	return raw
 }
 
 // parseSubmitForm — общая часть submit и submitEdit. Парсит форму, строит
@@ -583,21 +626,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		}
 		obj.TablePartRows = tpRows
 
-		// Auto-number: fill Номер if empty for new documents.
-		// ВАЖНО: значение читаем через obj.Get (регистронезависимо) — obj.Set выше
-		// нормализует ключи в нижний регистр ("номер"), поэтому прямое обращение
-		// obj.Fields["Номер"] всегда возвращало nil и автономер безусловно затирал
-		// введённый пользователем номер (issue #359).
-		if entity.Kind == metadata.KindDocument {
-			for _, f := range entity.Fields {
-				if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
-					if v := fmt.Sprintf("%v", obj.Get("Номер")); v == "<nil>" || strings.TrimSpace(v) == "" {
-						obj.Set("Номер", s.generateNumber(r.Context(), entity, obj.Fields))
-					}
-					break
-				}
-			}
-		}
+		s.ensureNewDocumentNumber(r.Context(), entity, obj)
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,
@@ -639,6 +668,7 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		"TPEnumOrder":   s.buildTPEnumOrder(entity),
 		"TPRefMeta":     tpRefMeta(entity),
 		"TablePartRows": tablePartRows,
+		"CopySourceID":  copySourceIDForRender(r),
 	}
 	if entity.Hierarchical {
 		data["FolderOptions"] = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
@@ -663,11 +693,23 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if form := pickManagedForm(entity, "object"); form != nil {
-		if err := s.restoreUneditableTableParts(r.Context(), entity, form, uuid.Nil, obj.TablePartRows, true); err != nil {
-			s.serverError(w, r, err)
-			return
+		if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" {
+			if failed := s.restoreManagedCopyState(
+				w, r, entity, form, fields, obj.Fields, obj.TablePartRows,
+			); failed {
+				return
+			}
+		} else {
+			if err := s.restoreUneditableTableParts(r.Context(), entity, form, uuid.Nil, obj.TablePartRows, true); err != nil {
+				s.serverError(w, r, err)
+				return
+			}
 		}
 	}
+	// restoreManagedCopyState deliberately clears a forged source number. The
+	// ordinary parse path may already have generated one, but repeating this
+	// idempotent check here is necessary when canonical restoration ran later.
+	s.ensureNewDocumentNumber(r.Context(), entity, obj)
 	if err := s.autoFillRowAccessFields(r.Context(), entity, "write", obj.Fields); err != nil {
 		s.renderForbidden(w, r)
 		return
@@ -734,6 +776,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			"TablePartRows": tablePartRows,
 			"FolderOptions": fOpts,
 			"IsPopup":       r.FormValue("_popup") == "1",
+			"CopySourceID":  copySourceIDForRender(r),
 		})
 		return
 	}
@@ -759,6 +802,24 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	// "post" / "Записать" — остаёмся на форме
 	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
+}
+
+// ensureNewDocumentNumber fills the canonical system Номер only when empty.
+// Object.Get is case-insensitive; Object.Set normalises the key to lowercase.
+func (s *Server) ensureNewDocumentNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
+	if entity == nil || obj == nil || entity.Kind != metadata.KindDocument {
+		return
+	}
+	for _, field := range entity.Fields {
+		if !isSystemDocumentNumber(entity, field) {
+			continue
+		}
+		value := fmt.Sprintf("%v", obj.Get(field.Name))
+		if value == "<nil>" || strings.TrimSpace(value) == "" {
+			obj.Set(field.Name, s.generateNumber(ctx, entity, obj.Fields))
+		}
+		return
+	}
 }
 
 // refCreateRedirect — точка входа для JS-кнопки «+ Создать» рядом с
