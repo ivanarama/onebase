@@ -351,12 +351,16 @@ func (db *DB) dropStaleUniqueCodeIndexes(ctx context.Context, e *metadata.Entity
 	table := metadata.TableName(e.Name)
 
 	// Разрезы, в которых индекс мог быть создан прежними версиями конфигурации:
-	// само значение и «текущий разрез + значение».
+	// само значение и «любой объявленный реквизит + значение». Ограничиться
+	// текущим scope нельзя: после смены scope прежний составной индекс остался бы
+	// в базе и продолжал отклонять записи уже по старым правилам.
 	candidates := [][]string{{col}}
-	if e.Numerator != nil && e.Numerator.Scope != "" {
-		if c := columnOfField(e, e.Numerator.Scope); c != "" {
-			candidates = append(candidates, []string{c, col})
+	for _, f := range e.Fields {
+		c := metadata.ColumnName(f)
+		if c == col {
+			continue
 		}
+		candidates = append(candidates, []string{c, col})
 	}
 	for _, cols := range candidates {
 		name := stableIndexName(table, cols, true)

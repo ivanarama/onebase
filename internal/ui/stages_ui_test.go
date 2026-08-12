@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -176,5 +177,46 @@ func TestStagesReportPageCountsObjects(t *testing.T) {
 	}
 	if !strings.Contains(body, `"type":"graph"`) {
 		t.Fatal("схема маршрута на странице отчёта не построена")
+	}
+}
+
+// Схема маршрута рисуется и в управляемой форме, а не только в автоформе:
+// иначе объявление stages «работает» ровно до того момента, когда у сущности
+// появляется своя форма.
+func TestStageRoutePartialRendersInBothForms(t *testing.T) {
+	s, e, _ := stagesUIServer(t)
+	r := httptest.NewRequest(http.MethodGet, "/ui/catalog/заявка/x", nil)
+	view := s.buildStageRoute(r, e, "НаСогласовании")
+	data := map[string]any{
+		"Entity":     e,
+		"IsNew":      false,
+		"StageRoute": view,
+		"Lang":       "",
+		"Cfg":        s.cfg,
+	}
+	for _, tplName := range []string{"stage-route"} {
+		var buf strings.Builder
+		if err := tmpl.ExecuteTemplate(&buf, tplName, data); err != nil {
+			t.Fatalf("%s: %v", tplName, err)
+		}
+		// Опция уезжает в data-атрибут, поэтому кавычки экранированы шаблонизатором.
+		out := html.UnescapeString(buf.String())
+		if !strings.Contains(out, `"type":"graph"`) {
+			t.Fatalf("%s: схема не построена: %s", tplName, out)
+		}
+		if !strings.Contains(out, "ob-stage-route") {
+			t.Fatalf("%s: нет контейнера графика", tplName)
+		}
+		// Инициализатор обязан быть идемпотентным: тот же блок может приехать
+		// повторно при замене части DOM.
+		if !strings.Contains(out, "obStageDrawn") {
+			t.Fatalf("%s: инициализатор не защищён от повторного запуска", tplName)
+		}
+	}
+	// Оба шаблона формы обязаны звать общий блок, иначе он снова разъедется.
+	for _, name := range []string{"page-form", "page-managed-form"} {
+		if !strings.Contains(templateSource(), `{{template "stage-route" .}}`) {
+			t.Fatalf("шаблон %s не подключает общий блок маршрута", name)
+		}
 	}
 }

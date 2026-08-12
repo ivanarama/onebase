@@ -293,6 +293,51 @@ func TestUniqueCode_DisablingDropsIndexMatrix(t *testing.T) {
 	})
 }
 
+// Смена scope должна снять прежний составной индекс. Иначе после перехода с
+// разреза «Организация» на «Склад» база продолжает одновременно применять оба
+// правила и отклоняет допустимый одинаковый код на разных складах.
+func TestUniqueCode_ChangingScopeDropsOldIndexMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		name := "Заказы" + uuid.NewString()[:8]
+		byOrganization := uniqueCatalog(name, true)
+		byOrganization.Fields = append(byOrganization.Fields,
+			metadata.Field{Name: "Организация", Type: metadata.FieldTypeString},
+			metadata.Field{Name: "Склад", Type: metadata.FieldTypeString},
+		)
+		byOrganization.Numerator.Scope = "Организация"
+		if err := db.Migrate(ctx, []*metadata.Entity{byOrganization}); err != nil {
+			t.Fatalf("миграция с разрезом по организации: %v", err)
+		}
+		if err := db.Upsert(ctx, name, uuid.New(), map[string]any{
+			metadata.StandardCodeField: "К-000001",
+			"Наименование":             "Первый",
+			"Организация":              "Альфа",
+			"Склад":                    "Север",
+		}, byOrganization); err != nil {
+			t.Fatalf("первая запись: %v", err)
+		}
+
+		byWarehouse := uniqueCatalog(name, true)
+		byWarehouse.Fields = append(byWarehouse.Fields,
+			metadata.Field{Name: "Организация", Type: metadata.FieldTypeString},
+			metadata.Field{Name: "Склад", Type: metadata.FieldTypeString},
+		)
+		byWarehouse.Numerator.Scope = "Склад"
+		if err := db.Migrate(ctx, []*metadata.Entity{byWarehouse}); err != nil {
+			t.Fatalf("смена разреза на склад: %v", err)
+		}
+		if err := db.Upsert(ctx, name, uuid.New(), map[string]any{
+			metadata.StandardCodeField: "К-000001",
+			"Наименование":             "Второй",
+			"Организация":              "Альфа",
+			"Склад":                    "Юг",
+		}, byWarehouse); err != nil {
+			t.Fatalf("старый индекс по организации не снят: %v", err)
+		}
+	})
+}
+
 // Объявленный вручную уникальный индекс снятием не задевается: он не наш.
 func TestUniqueCode_KeepsManualIndexMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
