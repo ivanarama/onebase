@@ -1109,7 +1109,10 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 		"EntityName": entity.Name,
 		"ID":         id.String(),
 		"Entries":    entries,
-		"BackURL":    fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String()),
+		// История переходов между этапами (план 121) — отдельной таблицей: она
+		// пишется всегда, в том числе при выключенном журнале регистрации.
+		"StageHistory": s.loadStageHistory(r, entity, id),
+		"BackURL":      fmt.Sprintf("/ui/%s/%s/%s", strings.ToLower(string(entity.Kind)), strings.ToLower(entity.Name), id.String()),
 	})
 }
 

@@ -1153,7 +1153,10 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"HasPrintProc":  s.reg.GetProcedure(entity.Name, "Печать") != nil || s.reg.GetProcedure(entity.Name, "Print") != nil,
 		"FolderOptions": folderOptsEdit,
 		"DocMovements":  docMovements,
-		"Error":         buildEditError(r),
+		// StageRoute — маршрут объекта с подсветкой текущего этапа (план 121).
+		// nil, если этапы не объявлены или поле-этап под маской ПДн.
+		"StageRoute": s.buildStageRoute(r, entity, stageCurrentValue(entity, vals)),
+		"Error":      buildEditError(r),
 		// Receivers — список сущностей, у которых в based_on указан текущий
 		// объект. Шаблон рисует выпадающую кнопку «Ввести на основании ▾» —
 		// аналог одноимённой команды в 1С:Предприятие.
