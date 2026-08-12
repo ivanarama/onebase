@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -192,6 +193,70 @@ func TestResumeAfterUpdateRequiresRestartAfterSettledTransaction(t *testing.T) {
 	}
 	if err := ResumeAfterUpdate(store, NewRunner()); !errors.Is(err, ErrBinaryRecoveryRestartRequired) {
 		t.Fatalf("ResumeAfterUpdate error = %v, want restart required", err)
+	}
+}
+
+// nonSelfUpdatableDir строит каталог, который НАСТОЯЩАЯ проверка selfupdate
+// отвергает как непригодный для самообновления, — то есть общую установку:
+// C:\onebase, Program Files, сетевую шару.
+//
+// t.TempDir() для этого не годится, и в этом суть пропущенного дефекта: на
+// Windows приватность определяется реальным профилем (FOLDERID_Profile), а не
+// переменной USERPROFILE, которую подменяет isolatedUpdatesHome. Временный
+// каталог лежит внутри профиля, поэтому все прежние тесты гоняли ровно тот
+// случай, который работал.
+func nonSelfUpdatableDir(t *testing.T) string {
+	t.Helper()
+	var dir string
+	if runtime.GOOS == "windows" {
+		root := os.Getenv("SystemDrive")
+		if root == "" {
+			root = "C:"
+		}
+		created, err := os.MkdirTemp(root+string(os.PathSeparator), "onebase-shared-")
+		if err != nil {
+			t.Skipf("не удалось создать каталог вне профиля пользователя: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(created) })
+		dir = created
+	} else {
+		dir = t.TempDir()
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Тест обязан упасть или пропуститься, но не «пройти» на каталоге, который
+	// на самом деле пригоден для самообновления: тогда он не проверял бы ничего.
+	if selfupdate.CanSafelyUpdateBinaryDir(dir) {
+		t.Skipf("каталог %s пригоден для самообновления — общая установка не воспроизведена", dir)
+	}
+	return dir
+}
+
+// Установка, не участвующая в самообновлении, обязана запускаться. До правки
+// ReserveTarget внутри recoverUpdateStatus возвращал оттуда ошибку «shared
+// installations cannot be self-updated safely», ResumeAfterUpdate считал её
+// фатальной — и лаунчер сборок 783–792 не стартовал ни из C:\onebase (куда
+// распаковать велит README), ни с любого другого пути вне %USERPROFILE%.
+func TestResumeAfterUpdateStartsWhenInstallationCannotSelfUpdate(t *testing.T) {
+	isolatedUpdatesHome(t)
+	targetDir := nonSelfUpdatableDir(t)
+	oldBinaryDir := updateBinaryDir
+	updateBinaryDir = func() (string, error) { return targetDir, nil }
+	t.Cleanup(func() { updateBinaryDir = oldBinaryDir })
+	// recoverUpdateStatus намеренно НЕ подменяется: проверяется тот же путь
+	// восстановления, каким идёт настоящий запуск у пользователя.
+	store, err := NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ResumeAfterUpdate(store, NewRunner()); err != nil {
+		t.Fatalf("лаунчер не стартовал на установке без самообновления: %v", err)
+	}
+	// Применять staged-обновление в такой установке тоже нечего, но это не
+	// авария: гейт просто закрыт.
+	if ApplyStagedOnStart(store, NewRunner()) {
+		t.Fatal("ApplyStagedOnStart попытался заменить бинарь в установке без самообновления")
 	}
 }
 

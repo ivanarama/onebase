@@ -46,6 +46,7 @@ var applyUpdate = (*selfupdate.OperationLease).ApplyWithRollbackState
 var recoverUpdate = (*selfupdate.OperationLease).Recover
 var recoverUpdateStatus = (*selfupdate.OperationLease).RecoverWithResult
 var updateBinaryDir = selfupdate.BinaryDir
+var selfUpdatableDir = selfupdate.CanSafelyUpdateBinaryDir
 var restartSelf = RestartSelf
 
 var ErrBinaryRecoveryRestartRequired = errors.New("launcher restart is required after binary recovery")
@@ -828,6 +829,23 @@ func ResumeAfterUpdate(store *Store, runner *Runner) (resultErr error) {
 		oblog.Component("launcher").Warn("cannot resolve the installation directory for update recovery", "err", err)
 		return err
 	}
+	// Установка вне приватного пользовательского каталога (C:\onebase, Program
+	// Files, сетевая шара) в протоколе самообновления не участвует вовсе: там
+	// нельзя ни взять блокировки координации, ни заменить бинарь. Значит и
+	// прерванному обновлению взяться неоткуда — восстанавливать нечего.
+	//
+	// Раньше эта невозможность приезжала из ReserveTarget обычной ошибкой и
+	// валила старт лаунчера целиком: сборки 783–792 не запускались ни из
+	// C:\onebase (куда распаковать велит README), ни с любого другого пути вне
+	// %USERPROFILE%. Проверка стоит до recoverUpdateStatus, потому что
+	// резервирование каталога там выполняется раньше, чем проверка «есть ли
+	// вообще что восстанавливать».
+	if !selfUpdatableDir(binDir) {
+		oblog.Component("launcher").Info(
+			"самообновление для этой установки недоступно — восстановление обновления пропущено",
+			"dir", binDir)
+		return resumePendingBases(store, runner)
+	}
 	recovered, err := recoverUpdateStatus(lease, binDir)
 	if err != nil {
 		oblog.Component("launcher").Error("cannot recover an interrupted binary update", "err", err)
@@ -839,6 +857,13 @@ func ResumeAfterUpdate(store *Store, runner *Runner) (resultErr error) {
 	if err := lease.ReleaseTargetReservation(); err != nil {
 		return fmt.Errorf("release binary recovery target before resuming bases: %w", err)
 	}
+	return resumePendingBases(store, runner)
+}
+
+// resumePendingBases поднимает базы, помеченные к перезапуску в состоянии
+// обновления. Общий хвост ResumeAfterUpdate для обеих веток: и когда
+// восстановление бинаря отработало, и когда его не могло быть в принципе.
+func resumePendingBases(store *Store, runner *Runner) error {
 	st, err := selfupdate.LoadState()
 	if err != nil || !st.RecoveryPending() {
 		return err
@@ -872,6 +897,12 @@ func ApplyStagedOnStart(store *Store, runner *Runner) bool {
 	}()
 	binDir, err := updateBinaryDir()
 	if err != nil {
+		return false
+	}
+	// Заменить бинарь в такой установке всё равно нельзя — применять нечего.
+	// Без этой проверки старт каждый раз писал в журнал ERROR о «неудавшемся
+	// восстановлении», хотя восстанавливать было нечего (см. ResumeAfterUpdate).
+	if !selfUpdatableDir(binDir) {
 		return false
 	}
 	if err := recoverUpdate(lease, binDir); err != nil {
