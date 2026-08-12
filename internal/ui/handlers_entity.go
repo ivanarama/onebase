@@ -294,12 +294,23 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	if srcType := r.URL.Query().Get("based_on"); srcType != "" {
 		fillError = s.applyFillFromQuery(r, entity, srcType, r.URL.Query().Get("based_on_id"), values, tablePartRows, &fillMessages)
 	}
+
+	// Создание копированием: GET /ui/{kind}/{name}/new?copy=<uuid> (issue #762).
+	// Форма открывается значениями существующей записи, но ничего не пишет:
+	// копия появляется в базе, только когда пользователь нажмёт «Записать».
+	if copyID := r.URL.Query().Get("copy"); copyID != "" && fillError == "" {
+		fillError = s.applyCopyFromQuery(r, entity, copyID, values, tablePartRows)
+	}
 	var folderOpts []map[string]any
 	if entity.Hierarchical {
-		values["parent_id"] = r.URL.Query().Get("parent")
+		// ?parent= («создать в этой группе») главнее источника копирования;
+		// без него копия остаётся в группе оригинала (значение уже в values).
+		if p := r.URL.Query().Get("parent"); p != "" || values["parent_id"] == "" {
+			values["parent_id"] = p
+		}
 		if r.URL.Query().Get("is_folder") == "true" {
 			values["is_folder"] = "true"
-		} else {
+		} else if values["is_folder"] != "true" {
 			values["is_folder"] = "false"
 		}
 		folderOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
@@ -373,6 +384,89 @@ func (s *Server) applyFillFromQuery(r *http.Request, entity *metadata.Entity, sr
 		*messages = append(*messages, result.DSLMessages...)
 	}
 	return result.DSLError
+}
+
+// applyCopyFromQuery заполняет форму создания значениями существующей записи —
+// «Создать копированием» (F9 в 1С). Ничего не записывает: копия живёт только в
+// форме, пока пользователь не нажмёт «Записать», поэтому хуки записи здесь не
+// при чём, а `ОбработкаЗаполнения` не вызывается (она про ввод на основании
+// ДРУГОГО объекта, у копии источник того же типа).
+//
+// Ошибки возвращаются строкой для шаблона "Error" — как в applyFillFromQuery:
+// форма всё равно открывается, пользователь видит причину и может ввести
+// запись руками.
+func (s *Server) applyCopyFromQuery(r *http.Request, entity *metadata.Entity, srcIDStr string, values map[string]string, tablePartRows map[string][]map[string]any) string {
+	srcID, err := uuid.Parse(srcIDStr)
+	if err != nil {
+		return "Некорректный идентификатор копируемой записи: " + srcIDStr
+	}
+	// Право write на сущность проверено вызывающим (s.form); для источника
+	// нужно ещё read — и построчный доступ к нему, иначе копирование стало бы
+	// обходом RLS: скрытую строку нельзя прочитать, но можно было бы «скопировать».
+	if !s.can(r, string(entity.Kind), entity.Name, "read") {
+		return "Нет прав на чтение копируемой записи"
+	}
+	if !s.rowAllowsID(r.Context(), entity, "read", srcID) {
+		return "Нет прав на чтение копируемой записи"
+	}
+	row, err := s.store.GetByID(r.Context(), entity.Name, srcID, entity)
+	if err != nil {
+		return err.Error()
+	}
+	if row == nil {
+		return "Копируемая запись не найдена"
+	}
+	// План 88: маска ПДн накладывается до подстановки значений в форму. Сами
+	// защищённые реквизиты в копию не переносятся вовсе (ниже) — записать
+	// строку-маску вместо значения хуже, чем оставить поле пустым.
+	s.maskRecord(r.Context(), entity, row)
+	decisions := s.fieldDecisions(r.Context(), entity)
+	for _, f := range entity.Fields {
+		if skipFieldOnCopy(entity, f) {
+			continue
+		}
+		if dec, ok := decisions[f.Name]; ok && dec.Masked() {
+			continue
+		}
+		v, ok := row[f.Name]
+		if !ok || v == nil {
+			continue
+		}
+		values[f.Name] = formatFieldValueForInput(v)
+	}
+	if entity.Hierarchical {
+		// Копия остаётся в группе оригинала и того же вида: копия группы — группа.
+		if v := row["parent_id"]; v != nil {
+			values["parent_id"] = refValueString(v)
+		}
+		if asBool(row["is_folder"]) {
+			values["is_folder"] = "true"
+		}
+	}
+	for _, tp := range entity.TableParts {
+		rows, err := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, srcID, tp)
+		if err != nil {
+			return err.Error()
+		}
+		if len(rows) > 0 {
+			tablePartRows[tp.Name] = rows
+		}
+	}
+	return ""
+}
+
+// skipFieldOnCopy — реквизиты, которые копия получает заново, а не от источника.
+//
+// Номер документа выдаёт запись (автонумерация), а дата нового документа —
+// текущая: форма подставила её до копирования, и копия вчерашней накладной
+// оформляется сегодняшним днём, как «Создать копированием» в 1С. Реквизиты
+// справочника (включая Код) копируются как есть: платформа их не генерирует,
+// и обнулять то, что она не умеет заполнить, значило бы ломать копию.
+func skipFieldOnCopy(entity *metadata.Entity, f metadata.Field) bool {
+	if entity.Kind != metadata.KindDocument {
+		return false
+	}
+	return f.Name == "Номер" || f.Type == metadata.FieldTypeDate
 }
 
 // fieldKeyForForm возвращает имя поля в том регистре, в котором его ждёт
@@ -765,6 +859,7 @@ type treeChildRow struct {
 	TreeCell         int      `json:"tree_cell"`
 	Cells            []string `json:"cells"`
 	OpenURL          string   `json:"open_url"`
+	CopyURL          string   `json:"copy_url"`
 	FolderURL        string   `json:"folder_url"`
 	MarkURL          string   `json:"mark_url"`
 	DeleteURL        string   `json:"delete_url"`
@@ -853,6 +948,9 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 	if subsystem != "" {
 		subQS = "subsystem=" + url.QueryEscape(subsystem)
 	}
+	// Копировать может только тот, кому разрешено создавать: пустой copy_url
+	// убирает пункт меню и F9 у подгруженных строк дерева.
+	canCopy := s.can(r, string(entity.Kind), entity.Name, "write")
 	out := make([]treeChildRow, 0, len(rows))
 	for _, row := range rows {
 		id := refValueString(row["id"])
@@ -861,6 +959,13 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 		if subQS != "" {
 			folderURL += "&" + subQS
 			openURL += "?" + subQS
+		}
+		copyURL := ""
+		if canCopy {
+			copyURL = base + "/new?copy=" + url.QueryEscape(id)
+			if subQS != "" {
+				copyURL += "&" + subQS
+			}
 		}
 		cells := make([]string, len(cols))
 		for i, col := range cols {
@@ -879,6 +984,7 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 			TreeCell:         treeCell,
 			Cells:            cells,
 			OpenURL:          openURL,
+			CopyURL:          copyURL,
 			FolderURL:        folderURL,
 			MarkURL:          base + "/" + url.PathEscape(id) + "/delete?mark=1",
 			DeleteURL:        base + "/" + url.PathEscape(id) + "/delete",
