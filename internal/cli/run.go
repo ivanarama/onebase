@@ -49,6 +49,8 @@ func init() {
 	runCmd.Flags().Int("port", 8080, "HTTP server port")
 	// Secure-by-default (план 53): наружу сервер выставляется только явно.
 	runCmd.Flags().String("host", "127.0.0.1", "интерфейс прослушивания (0.0.0.0 — все интерфейсы)")
+	runCmd.Flags().Bool("allow-insecure-bootstrap", false,
+		"разрешить старт на не-loopback адресе без пользователей (НЕБЕЗОПАСНО; только для осознанной первичной настройки)")
 	runCmd.Flags().String("config-source", "file", "configuration source: file or database")
 	// hot reload .os/.yaml без перезапуска. По умолчанию off,
 	// для прода обычно не нужен. Включается флагом --watch.
@@ -192,6 +194,21 @@ func performScheduledDemoReset(ctx context.Context, request *scheduledDemoResetR
 		warnScheduledDemoResetResult(request, nil)
 	}
 	return report, operationErr
+}
+
+// bootstrapRefusal возвращает причину отказа в старте, если сервер слушает
+// не-loopback адрес без единого пользователя (auth в этом состоянии выключен
+// целиком) и небезопасный bootstrap не разрешён явно (SEC-03, issue #778).
+// Пустая строка — старт разрешён.
+func bootstrapRefusal(host string, hasUsers, allowInsecure bool) string {
+	if hasUsers || allowInsecure || api.IsLoopbackHost(host) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"отказ в старте: сервер слушает %s без настроенных пользователей — база и "+
+			"консоль кода были бы доступны без аутентификации. Создайте пользователя, "+
+			"слушайте loopback (--host 127.0.0.1) или явно разрешите небезопасный "+
+			"первичный bootstrap флагом --allow-insecure-bootstrap.", host)
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
@@ -780,14 +797,21 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	}
 
 	host, _ := cmd.Flags().GetString("host")
-	// Footgun-страж (план 53, анализ §2.7): без пользователей auth выключен
-	// целиком (включая консоль кода); слушать в таком виде не-loopback адрес —
-	// почти наверняка ошибка оператора.
+	allowInsecureBootstrap, _ := cmd.Flags().GetBool("allow-insecure-bootstrap")
+	// Footgun-страж (план 53, анализ §2.7; ужесточён по SEC-03): без
+	// пользователей auth выключен целиком (включая консоль кода). Слушать в
+	// таком виде не-loopback адрес почти всегда ошибка оператора, поэтому по
+	// умолчанию ОТКАЗЫВАЕМ в старте. Осознанный первичный bootstrap на внешнем
+	// адресе разрешается явным флагом --allow-insecure-bootstrap.
 	if !api.IsLoopbackHost(host) {
-		if hasUsers, _ := authRepo.HasUsers(ctx); !hasUsers {
-			fmt.Fprintf(os.Stderr, "ПРЕДУПРЕЖДЕНИЕ: сервер слушает %s без настроенных пользователей —\n"+
-				"база и консоль кода доступны без аутентификации. Создайте пользователя\n"+
-				"или уберите --host (по умолчанию 127.0.0.1).\n", host)
+		hasUsers, _ := authRepo.HasUsers(ctx)
+		if refusal := bootstrapRefusal(host, hasUsers, allowInsecureBootstrap); refusal != "" {
+			return errors.New(refusal)
+		}
+		if !hasUsers { // разрешено флагом — но предупреждаем громко
+			fmt.Fprintf(os.Stderr, "ПРЕДУПРЕЖДЕНИЕ (--allow-insecure-bootstrap): сервер слушает %s\n"+
+				"без настроенных пользователей — база и консоль кода доступны без\n"+
+				"аутентификации. Создайте администратора немедленно.\n", host)
 		}
 	}
 
