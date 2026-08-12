@@ -542,6 +542,23 @@ func TestDetailPanel_ManagedPagesFallbackOnlyWhenStructurallyEmpty(t *testing.T)
 	}
 }
 
+func TestManagedDetailPanelTitleFallbackIsDeterministic(t *testing.T) {
+	element := &metadata.FormElement{
+		Name:     "StableName",
+		TitleMap: map[string]string{"en": "English", "fr": "Français"},
+	}
+	if got := managedElementTitle(element, "de"); got != "StableName" {
+		t.Fatalf("missing locale fell back to random map entry: %q", got)
+	}
+	element.Title = "Legacy"
+	if got := managedElementTitle(element, "de"); got != "Legacy" {
+		t.Fatalf("legacy title fallback = %q", got)
+	}
+	if got := managedElementTitle(element, "fr"); got != "Français" {
+		t.Fatalf("exact locale title = %q", got)
+	}
+}
+
 // Короткая форма detail_panel.fields — состав без закладок, разложенный по типам.
 func TestDetailPanel_ExplicitFieldsShortForm(t *testing.T) {
 	ent := panelEntity()

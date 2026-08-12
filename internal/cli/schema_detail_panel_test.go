@@ -32,8 +32,8 @@ func TestEntitySchemaDetailPanelIsClosedAndTyped(t *testing.T) {
 		t.Fatalf("detail_panel.tabs[] accepts misspelled keys: %#v", tab)
 	}
 	required, ok := tab["required"].([]string)
-	if !ok || len(required) != 1 || required[0] != "name" {
-		t.Fatalf("detail_panel.tabs[].name is not required: %#v", tab["required"])
+	if !ok || len(required) != 2 || required[0] != "name" || required[1] != "fields" {
+		t.Fatalf("detail_panel.tabs[].name/fields are not required: %#v", tab["required"])
 	}
 	tabProps := tab["properties"].(map[string]any)
 	titles := tabProps["titles"].(map[string]any)

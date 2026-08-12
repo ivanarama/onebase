@@ -145,7 +145,7 @@ func allSchemas() map[string]map[string]any {
 	detailPanelTab := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"name"},
+		"required":             []string{"name", "fields"},
 		"properties": map[string]any{
 			"name":   stringSchema("Имя закладки"),
 			"titles": stringMapSchema(),

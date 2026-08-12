@@ -203,11 +203,6 @@ func managedElementTitle(element *metadata.FormElement, lang string) string {
 	if title := element.TitleMap["ru"]; title != "" {
 		return title
 	}
-	for _, title := range element.TitleMap {
-		if title != "" {
-			return title
-		}
-	}
 	if element.Title != "" {
 		return element.Title
 	}
