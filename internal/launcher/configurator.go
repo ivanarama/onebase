@@ -25,7 +25,7 @@ func (h *handler) configuratorPage(w http.ResponseWriter, r *http.Request) {
 	if sel := strings.TrimSpace(r.URL.Query().Get("select")); sel != "" && data.SelectedTreeID == "" {
 		data.SelectedTreeID = sel
 	}
-	if cookie, cerr := r.Cookie("onebase_session"); cerr == nil {
+	if cookie, cerr := r.Cookie(configuratorSessionCookieName); cerr == nil {
 		data.SessionToken = cookie.Value
 	}
 	renderCfg(w, r, data)

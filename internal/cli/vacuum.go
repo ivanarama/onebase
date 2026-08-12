@@ -54,9 +54,9 @@ func runVacuum(cmd *cobra.Command, _ []string) error {
 		err error
 	)
 	if sqlitePath != "" {
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
+		db, err = openCLIStorage(ctx, "sqlite", sqlitePath, "")
 	} else {
-		db, err = storage.Connect(ctx, dsnFromFlags(cmd))
+		db, err = openCLIStorage(ctx, "postgres", "", dsnFromFlags(cmd))
 	}
 	if err != nil {
 		return err

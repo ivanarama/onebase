@@ -234,10 +234,10 @@ func (db *DB) AddColumnIfMissing(ctx context.Context, table, col, typ string) er
 		if exists {
 			return nil
 		}
-		_, err = db.Exec(ctx, "ALTER TABLE "+table+" ADD COLUMN "+col+" "+typ)
+		_, err = db.Exec(ctx, "ALTER TABLE "+quoteIdent(table)+" ADD COLUMN "+quoteIdent(col)+" "+typ)
 		return err
 	}
-	_, err := db.Exec(ctx, "ALTER TABLE "+table+" ADD COLUMN IF NOT EXISTS "+col+" "+typ)
+	_, err := db.Exec(ctx, "ALTER TABLE "+quoteIdent(table)+" ADD COLUMN IF NOT EXISTS "+quoteIdent(col)+" "+typ)
 	return err
 }
 

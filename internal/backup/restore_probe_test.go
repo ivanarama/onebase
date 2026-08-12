@@ -1,0 +1,114 @@
+package backup
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func openRawSQLiteForProbeTest(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func TestHasPendingRestoreSQLiteDoesNotCreateMissingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.db")
+	pending, err := HasPendingRestoreSQLite(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending {
+		t.Fatal("missing database unexpectedly has a restore marker")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("read-only probe created the database: %v", err)
+	}
+}
+
+func TestHasPendingRestoreSQLiteFindsMarkerWithoutChangingJournalMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "base # marker.db")
+	db := openRawSQLiteForProbeTest(t, path)
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO _settings(key,value) VALUES (?,?)`, restoreIntentKey, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	var before string
+	if err := db.QueryRowContext(t.Context(), `PRAGMA journal_mode`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := HasPendingRestoreSQLite(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pending {
+		t.Fatal("read-only probe missed the durable restore marker")
+	}
+
+	readOnly, err := sql.Open("sqlite", sqliteFileURI(path, "mode=ro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readOnly.Close() //nolint:errcheck // test cleanup
+	var after string
+	if err := readOnly.QueryRowContext(t.Context(), `PRAGMA journal_mode`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("restore probe changed journal mode from %q to %q", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), ".onebase_probe")); !os.IsNotExist(err) {
+		t.Fatalf("restore probe left a write-permission file: %v", err)
+	}
+}
+
+func TestHasPendingRestoreSQLiteSeesCommittedWALMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wal.db")
+	db := openRawSQLiteForProbeTest(t, path)
+	var mode string
+	if err := db.QueryRowContext(t.Context(), `PRAGMA journal_mode=WAL`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "wal" {
+		t.Skipf("WAL unavailable: %s", mode)
+	}
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(t.Context(), `INSERT INTO _settings(key,value) VALUES (?,?)`, restoreIntentKey, `{}`); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := HasPendingRestoreSQLite(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pending {
+		t.Fatal("read-only probe ignored a committed marker in the WAL")
+	}
+}
+
+func TestHasPendingRestoreSQLiteMalformedSettingsFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "malformed.db")
+	db := openRawSQLiteForProbeTest(t, path)
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE _settings (other TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := HasPendingRestoreSQLite(t.Context(), path); err == nil {
+		t.Fatalf("malformed settings probe = %v, nil; want fail-closed error", pending)
+	}
+}

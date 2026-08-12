@@ -593,7 +593,23 @@ func (r *Repo) TouchSession(ctx context.Context, token string, now time.Time) er
 	return err
 }
 
+// LookupSession resolves any live session regardless of its surface kind.
+// Prefer LookupSessionKind at every authorization boundary; this broad helper
+// remains for administration, revocation and compatibility callers that need
+// to inspect either kind deliberately.
 func (r *Repo) LookupSession(ctx context.Context, token string) (*User, error) {
+	return r.lookupSession(ctx, token, "", false)
+}
+
+// LookupSessionKind resolves a session only when it was issued for the
+// requested surface. Configurator sessions are administrator capabilities and
+// must not become ordinary Enterprise sessions merely because both surfaces
+// use the same database-backed session table.
+func (r *Repo) LookupSessionKind(ctx context.Context, token, kind string) (*User, error) {
+	return r.lookupSession(ctx, token, kind, true)
+}
+
+func (r *Repo) lookupSession(ctx context.Context, token, kind string, requireKind bool) (*User, error) {
 	d := r.db.Dialect()
 	u := &User{}
 	var aiData any
@@ -602,7 +618,12 @@ func (r *Repo) LookupSession(ctx context.Context, token string) (*User, error) {
 		FROM _sessions s JOIN _users u ON u.id = s.user_id
 		WHERE s.token_hash = %s AND s.expires_at > %s
 	`, d.Placeholder(1), d.Now())
-	err := r.db.QueryRow(ctx, q, sessionTokenHash(token)).Scan(&u.ID, &u.Login, &u.FullName, &u.IsAdmin, &u.DenyPasswdChange, &aiData, &u.Lang)
+	args := []any{sessionTokenHash(token)}
+	if requireKind {
+		q += " AND s.kind = " + d.Placeholder(2)
+		args = append(args, kind)
+	}
+	err := r.db.QueryRow(ctx, q, args...).Scan(&u.ID, &u.Login, &u.FullName, &u.IsAdmin, &u.DenyPasswdChange, &aiData, &u.Lang)
 	if err != nil {
 		return nil, err
 	}

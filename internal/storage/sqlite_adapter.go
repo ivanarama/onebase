@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 )
 
@@ -58,20 +59,33 @@ func (t *sqlTx) QueryRow(ctx context.Context, sql string, args ...any) Row {
 	return sqlRow{r: t.tx.QueryRowContext(ctx, sql, args...)}
 }
 
-func (t *sqlTx) closeConn() {
+func (t *sqlTx) closeConn() error {
+	var result error
 	if t.conn != nil {
-		t.done.Do(func() { _ = t.conn.Close() })
+		t.done.Do(func() {
+			result = t.conn.Close()
+		})
 	}
+	return result
 }
 
 func (t *sqlTx) Commit(_ context.Context) error {
-	err := t.tx.Commit()
-	t.closeConn()
-	return err
+	commitErr := t.tx.Commit()
+	cleanupErr := t.closeConn()
+	if commitErr != nil {
+		return errors.Join(commitErr, cleanupErr)
+	}
+	// Once Commit succeeds, a failure to restore this connection's performance
+	// PRAGMA is not a failed transaction. Treating it as one would fire rollback
+	// hooks and let cross-resource callers choose the wrong filesystem outcome.
+	return nil
 }
 
 func (t *sqlTx) Rollback(_ context.Context) error {
-	err := t.tx.Rollback()
-	t.closeConn()
-	return err
+	rollbackErr := t.tx.Rollback()
+	cleanupErr := t.closeConn()
+	if rollbackErr != nil {
+		return errors.Join(rollbackErr, cleanupErr)
+	}
+	return nil
 }

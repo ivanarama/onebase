@@ -192,12 +192,9 @@ const cfgTabBackup = `{{define "tab-backup"}}
   <details style="margin-top:20px"><summary style="font-size:13px;font-weight:600;color:#374151;cursor:pointer;margin-bottom:8px">{{t $.Lang "Полная выгрузка (база + конфигурация)"}}</summary>
   <p style="font-size:12px;color:#64748b;margin:0 0 12px">{{t $.Lang "Выгрузка базы данных и конфигурации в один файл (.obz). Позволяет полностью перенести базу на другой сервер."}}</p>
   <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
-    <form method="GET" action="/bases/{{.Base.ID}}/configurator/backup/full-export" style="display:flex;flex-direction:column;gap:6px">
-      <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:#374151">
-        <input type="checkbox" name="compatible" value="true" checked>
-        <span>{{t $.Lang "Совместимый формат (PostgreSQL ↔ SQLite)"}}</span>
-      </label>
-      <div style="font-size:11px;color:#64748b;margin-left:22px">{{t $.Lang "Без галки — быстрый бинарный дамп, только для той же СУБД"}}</div>
+    <form method="POST" action="/bases/{{.Base.ID}}/configurator/backup/full-export" style="display:flex;flex-direction:column;gap:6px">
+      <input type="hidden" name="compatible" value="true">
+      <div style="font-size:12px;color:#374151">{{t $.Lang "Совместимый формат (PostgreSQL ↔ SQLite)"}}</div>
       <button class="btn-save" type="submit" style="width:fit-content">{{t $.Lang "Выгрузить всё в .obz"}}</button>
     </form>
     <form method="POST" action="/bases/{{.Base.ID}}/configurator/backup/full-import" enctype="multipart/form-data" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap" onsubmit="if(!confirm('Восстановить из .obz файла? Все текущие данные будут заменены!'))return false;cfgBackupStart(this,'⏳ Восстановление из .obz...')">

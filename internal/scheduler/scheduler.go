@@ -32,6 +32,43 @@ var (
 	ErrSchedulerStopping = errors.New("scheduler is stopping")
 )
 
+// RunInfo identifies the durable history row of the currently executing
+// native Go job. It lets a job that hands work to an offline phase later refine
+// an already-finalized "accepted" result without ever leaving a row running.
+type RunInfo struct {
+	ID        uuid.UUID
+	StartedAt time.Time
+}
+
+type runInfoContextKey struct{}
+
+func CurrentRun(ctx context.Context) (RunInfo, bool) {
+	if ctx == nil {
+		return RunInfo{}, false
+	}
+	info, ok := ctx.Value(runInfoContextKey{}).(RunInfo)
+	return info, ok && info.ID != uuid.Nil && !info.StartedAt.IsZero()
+}
+
+// AcceptedResult means the native job successfully handed its work to a
+// lifecycle phase outside the scheduler. The row is durably finalized as
+// "accepted", not "success"; that phase may later replace it with its actual
+// success/error. If the later update fails, "accepted" remains truthful.
+type AcceptedResult struct {
+	Message string
+}
+
+func (r *AcceptedResult) Error() string {
+	if r == nil || r.Message == "" {
+		return "scheduled job accepted for deferred execution"
+	}
+	return r.Message
+}
+
+func Accepted(message string) error {
+	return &AcceptedResult{Message: message}
+}
+
 type Scheduler struct {
 	cron    *cronlib.Cron
 	jobs    []*metadata.ScheduledJob
@@ -50,11 +87,15 @@ type Scheduler struct {
 	mu         sync.Mutex
 	running    bool
 	stopping   bool
+	sealed     bool
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
 	wg         sync.WaitGroup
 	activeRuns map[uuid.UUID]*activeRun
 	activeJobs map[string]struct{}
+	// shutdownTimeout is configurable only inside package tests; production
+	// schedulers always use defaultShutdownTimeout via New.
+	shutdownTimeout time.Duration
 }
 
 const (
@@ -62,6 +103,7 @@ const (
 	interruptUpdateTimeout = 5 * time.Second
 
 	runStatusSuccess     = "success"
+	runStatusAccepted    = "accepted"
 	runStatusError       = "error"
 	runStatusTimeout     = "timeout"
 	runStatusInterrupted = "interrupted"
@@ -95,14 +137,15 @@ func (s *Scheduler) SetVarsBuilder(b VarsBuilder) {
 
 func New(db *storage.DB, reg *runtime.Registry, interp *interpreter.Interpreter) *Scheduler {
 	return &Scheduler{
-		cron:       cronlib.New(),
-		goJobs:     make(map[string]func(context.Context) error),
-		db:         db,
-		reg:        reg,
-		interp:     interp,
-		log:        oblog.Component("scheduler"),
-		activeRuns: make(map[uuid.UUID]*activeRun),
-		activeJobs: make(map[string]struct{}),
+		cron:            cronlib.New(),
+		goJobs:          make(map[string]func(context.Context) error),
+		db:              db,
+		reg:             reg,
+		interp:          interp,
+		log:             oblog.Component("scheduler"),
+		activeRuns:      make(map[uuid.UUID]*activeRun),
+		activeJobs:      make(map[string]struct{}),
+		shutdownTimeout: defaultShutdownTimeout,
 	}
 }
 
@@ -126,7 +169,7 @@ func (s *Scheduler) RegisterGoJob(name, title, schedule string, fn func(ctx cont
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping {
+	if s.stopping || s.sealed {
 		return ErrSchedulerStopping
 	}
 	if s.jobByKeyLocked(key) != nil {
@@ -165,7 +208,7 @@ func (s *Scheduler) Reload(jobs []*metadata.ScheduledJob) error {
 func (s *Scheduler) ValidateProjectJobs(jobs []*metadata.ScheduledJob) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping {
+	if s.stopping || s.sealed {
 		return ErrSchedulerStopping
 	}
 	combined, native := s.projectJobsWithNativeLocked(jobs)
@@ -181,7 +224,7 @@ func (s *Scheduler) ValidateProjectJobs(jobs []*metadata.ScheduledJob) error {
 // demo reset.
 func (s *Scheduler) ReloadProjectJobs(jobs []*metadata.ScheduledJob) error {
 	s.mu.Lock()
-	if s.stopping {
+	if s.stopping || s.sealed {
 		s.mu.Unlock()
 		return ErrSchedulerStopping
 	}
@@ -209,7 +252,7 @@ func (s *Scheduler) ReloadProjectJobs(jobs []*metadata.ScheduledJob) error {
 
 func (s *Scheduler) replaceJobs(jobs []*metadata.ScheduledJob) error {
 	s.mu.Lock()
-	if s.stopping {
+	if s.stopping || s.sealed {
 		s.mu.Unlock()
 		return ErrSchedulerStopping
 	}
@@ -366,26 +409,67 @@ func cloneScheduledValue(value any) any {
 	}
 }
 
-func (s *Scheduler) Start(ctx context.Context) {
+// Run starts cron, blocks until ctx is cancelled, and returns the result of
+// the bounded graceful shutdown. Callers that need to prove all jobs are
+// quiescent before an offline database operation must check this error.
+func (s *Scheduler) Run(ctx context.Context) error {
+	return s.run(ctx, nil)
+}
+
+// RunReady is Run with an explicit startup acknowledgement. The ready channel
+// is closed after cron and admission are live, so a server cannot race an
+// immediate shutdown against a scheduler goroutine that has not started yet.
+func (s *Scheduler) RunReady(ctx context.Context, ready chan<- struct{}) error {
+	return s.run(ctx, ready)
+}
+
+func (s *Scheduler) run(ctx context.Context, ready chan<- struct{}) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	s.mu.Lock()
-	if s.stopping {
+	if s.stopping || s.sealed {
 		s.mu.Unlock()
-		s.log.Warn("scheduler: start ignored while shutdown is in progress")
-		return
+		return ErrSchedulerStopping
 	}
 	s.ensureRootLocked()
 	s.running = true
 	cron := s.cron
 	cron.Start()
 	s.mu.Unlock()
+	if ready != nil {
+		close(ready)
+	}
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
+	shutdownTimeout := s.shutdownTimeout
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = defaultShutdownTimeout
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := s.Shutdown(shutdownCtx); err != nil {
+	return s.Shutdown(shutdownCtx)
+}
+
+func (s *Scheduler) Start(ctx context.Context) {
+	if err := s.Run(ctx); err != nil {
 		s.log.Warn("scheduler: shutdown timed out", "err", err)
 	}
+}
+
+// BeginQuiesce permanently closes job admission for this scheduler instance.
+// It is deliberately separate from Shutdown: a server generation can seal the
+// scheduler before draining existing jobs while its HTTP/UI dependencies are
+// still alive. The instance is discarded after shutdown, so the seal is never
+// reopened by finishShutdown.
+func (s *Scheduler) BeginQuiesce() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.sealed = true
+	s.mu.Unlock()
 }
 
 func (s *Scheduler) Stop() {
@@ -452,7 +536,7 @@ func (s *Scheduler) ensureRootLocked() {
 
 func (s *Scheduler) beginJob(jobName string) (context.Context, func(), error) {
 	s.mu.Lock()
-	if s.stopping {
+	if s.stopping || s.sealed {
 		s.mu.Unlock()
 		return nil, nil, ErrSchedulerStopping
 	}
@@ -690,17 +774,24 @@ func (s *Scheduler) executeGoJob(ctx context.Context, name string, fn func(ctx c
 	}
 	s.trackActiveRun(runID, name, startedAt)
 
-	var status, errText string
+	var status, output, errText string
 	var runErr error
+	var acceptedResult *AcceptedResult
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			runErr = fmt.Errorf("panic: %v", recovered)
+			acceptedResult = nil
 			s.log.Error("scheduler: Go job panic", "job", name, "panic", recovered, "stack", string(debug.Stack()))
 		}
-		status, errText = scheduledRunStatus(ctx, runErr)
+		if acceptedResult != nil && runErr == nil {
+			status = runStatusAccepted
+			output = acceptedResult.Message
+		} else {
+			status, errText = scheduledRunStatus(ctx, runErr)
+		}
 		durationMs := time.Since(startedAt).Milliseconds()
 		if s.finishActiveRun(runID) {
-			s.updateRun(ctx, runID, status, "", errText, durationMs)
+			s.updateRun(ctx, runID, status, output, errText, durationMs)
 		}
 		if runErr != nil {
 			s.log.Error("scheduler: Go job failed", "job", name, "status", status, "err", runErr, "duration_ms", durationMs)
@@ -708,7 +799,12 @@ func (s *Scheduler) executeGoJob(ctx context.Context, name string, fn func(ctx c
 		}
 		s.log.Info("scheduler: Go job done", "job", name, "status", status, "duration_ms", durationMs)
 	}()
-	runErr = fn(ctx)
+	jobCtx := context.WithValue(ctx, runInfoContextKey{}, RunInfo{ID: runID, StartedAt: startedAt})
+	runErr = fn(jobCtx)
+	if accepted, ok := runErr.(*AcceptedResult); ok && accepted != nil {
+		acceptedResult = accepted
+		runErr = nil
+	}
 }
 
 func scheduledRunStatus(ctx context.Context, runErr error) (status, errText string) {

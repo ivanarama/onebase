@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/processcontrol"
 )
 
 func TestChromiumArgs(t *testing.T) {
@@ -144,26 +145,35 @@ func newIsolatedFixture(t *testing.T, fb *fakeBrowser) (*handler, *Base) {
 	profilesRootOverride = t.TempDir()
 	t.Cleanup(func() { profilesRootOverride = "" })
 
+	const controlToken = "isolated-test-control-token"
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		switch r.URL.Path {
+		case "/health":
 			w.WriteHeader(http.StatusOK)
-			return
+		case "/debug/process/identity":
+			challenge := r.URL.Query().Get(processcontrol.ChallengeQuery)
+			identity := processcontrol.Identity{BaseID: "iso-test", PID: 1234, Instance: "isolated-test-instance"}
+			identity.Proof = processcontrol.IdentityProof(controlToken, identity.BaseID,
+				identity.PID, identity.Instance, challenge)
+			_ = json.NewEncoder(w).Encode(identity)
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 	}))
 	t.Cleanup(health.Close)
 	u, _ := url.Parse(health.URL)
 	port, _ := strconv.Atoi(u.Port())
 
 	b := &Base{ID: "iso-test", Name: "iso", ConfigSource: "file", Path: t.TempDir(),
-		DBType: "sqlite", DBPath: filepath.Join(t.TempDir(), "iso.db"), Port: port}
+		DBType: "sqlite", DBPath: filepath.Join(t.TempDir(), "iso.db"), Port: port,
+		ControlToken: controlToken}
 	st := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
 	if err := st.Add(b); err != nil {
 		t.Fatalf("store.Add: %v", err)
 	}
 
 	rn := NewRunner()
-	rn.procs[b.ID] = &managedProc{port: port} // база «запущена» — Start не зовётся
+	rn.procs[b.ID] = &managedProc{port: port, controlToken: controlToken} // база «запущена» — Start не зовётся
 
 	return &handler{store: st, runner: rn, isoBrowser: fb}, b
 }
@@ -222,7 +232,7 @@ func TestStartIsolated_OpensBrowserWithProfile(t *testing.T) {
 	if fb.calls != 1 {
 		t.Fatalf("браузер должен быть запущен ровно один раз, вызовов: %d", fb.calls)
 	}
-	wantURL := fmt.Sprintf("http://localhost:%d/ui", b.Port)
+	wantURL := fmt.Sprintf("http://127.0.0.1:%d/ui", b.Port)
 	if fb.url != wantURL {
 		t.Errorf("URL окна: %q, ожидался %q", fb.url, wantURL)
 	}
@@ -324,7 +334,7 @@ func TestStartNative_SharedProfile(t *testing.T) {
 	if fb.dir != "" {
 		t.Errorf("общий профиль = пустой каталог, получен %q", fb.dir)
 	}
-	wantURL := fmt.Sprintf("http://localhost:%d", b.Port)
+	wantURL := fmt.Sprintf("http://127.0.0.1:%d", b.Port)
 	if fb.url != wantURL {
 		t.Errorf("URL окна: %q, ожидался %q", fb.url, wantURL)
 	}

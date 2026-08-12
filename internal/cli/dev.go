@@ -25,7 +25,6 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/scheduler"
-	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/version"
 	"github.com/spf13/cobra"
@@ -52,7 +51,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	configSource, _ := cmd.Flags().GetString("config-source")
 
 	ctx := context.Background()
-	db, err := storage.Connect(ctx, dsn)
+	db, err := openCLIStorage(ctx, "postgres", "", dsn)
 	if err != nil {
 		return err
 	}
