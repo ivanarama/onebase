@@ -875,5 +875,7 @@
   "превышен размер данных формы (не более %d МБ)": "Formulardaten zu groß (max. %d MB)",
   "Основное": "Allgemein",
   "Изображения": "Bilder",
-  "Описание": "Beschreibung"
+  "Описание": "Beschreibung",
+  "Условие": "Bedingung",
+  "Останавливаться, только когда выражение истинно": "Nur anhalten, wenn der Ausdruck wahr ist"
 }

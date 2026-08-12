@@ -131,6 +131,7 @@ const cfgFoot = `{{define "cfg-foot"}}
     <div style="padding:6px 0;border-bottom:1px solid #eef;display:flex;gap:4px;flex-shrink:0">
       <input id="dbg-bp-file" type="text" placeholder="{{t $.Lang "Файл"}} (post-...)" style="flex:2;min-width:0;padding:3px 6px;border:1px solid #d0d7e3;border-radius:4px;font-size:11px">
       <input id="dbg-bp-line" type="number" placeholder="{{t $.Lang "Стр"}}" style="width:50px;padding:3px 6px;border:1px solid #d0d7e3;border-radius:4px;font-size:11px">
+      <input id="dbg-bp-cond" type="text" placeholder="{{t $.Lang "Условие"}}" title="{{t $.Lang "Останавливаться, только когда выражение истинно"}}" style="flex:2;min-width:0;padding:3px 6px;border:1px solid #d0d7e3;border-radius:4px;font-size:11px;font-family:'Cascadia Code','Fira Code',monospace">
       <button onclick="dbgManualBP()" style="background:#1a4a80;color:#fff;border:none;padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer">+</button>
     </div>
     <div id="dbg-bp-list"><div class="dbg-empty">{{t $.Lang "Нет точек останова"}}</div></div>
