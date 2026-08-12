@@ -183,6 +183,45 @@ func allSchemas() map[string]map[string]any {
 		},
 	}
 
+	stages := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"field", "order"},
+		"description":          "Этапы объекта: порядок состояний и допустимые переходы на существующем реквизите-перечислении. Гейт стоит в слое хранения, поэтому его не обойти ни формой, ни обработкой, ни REST",
+		"properties": map[string]any{
+			"field": stringSchema("Реквизит типа enum:…, ведущий этапы"),
+			"order": map[string]any{
+				"type":        "array",
+				"minItems":    1,
+				"items":       stringSchema("Значение перечисления"),
+				"description": "Порядок этапов; первый считается начальным — объект без заполненного этапа стоит на нём",
+			},
+			"transitions": map[string]any{
+				"type":        "array",
+				"description": "Допустимые переходы; всё, чего здесь нет, запрещено",
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"required":             []string{"from", "to"},
+					"properties": map[string]any{
+						"from": stringSchema("Этап, из которого разрешён переход"),
+						"to": map[string]any{
+							"type":     "array",
+							"minItems": 1,
+							"items":    stringSchema("Этап назначения"),
+						},
+					},
+				},
+			},
+			"deadline_days": map[string]any{
+				"type":                 "object",
+				"description":          "Этап → сколько дней объект вправе на нём стоять; просрочка попадает в отчёт «где застряло»",
+				"additionalProperties": map[string]any{"type": "integer", "minimum": 1},
+			},
+			"enforce": stringSchema("warn (умолчание: нарушение только в лог) | strict (недопустимый переход отвергается)"),
+		},
+	}
+
 	return map[string]map[string]any{
 		"entity": {
 			"$schema":              "https://json-schema.org/draft/2020-12/schema",
@@ -209,6 +248,7 @@ func allSchemas() map[string]map[string]any {
 				"fulltext":              arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
 				"search_fields":         arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
 				"detail_panel":          detailPanel,
+				"stages":                stages,
 				"numerator": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

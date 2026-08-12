@@ -588,6 +588,11 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 
 func (db *DB) ensureEntityIndexes(ctx context.Context, e *metadata.Entity) error {
 	table := metadata.TableName(e.Name)
+	// Индекс по полю-этапу (план 121): отчёт «где застряло» группирует объекты
+	// по нему, и без индекса по самой бизнес-таблице сводка сканирует её целиком.
+	if err := db.ensureStageIndex(ctx, e); err != nil {
+		return err
+	}
 	for _, idx := range e.Indexes {
 		cols, err := entityIndexColumns(e, idx)
 		if err != nil {
