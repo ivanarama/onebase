@@ -254,6 +254,9 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Mask before resolving references: a protected UUID must not turn into a
+	// readable label, and the detail-panel payload must receive only gated rows.
+	s.maskInfoRegRecords(r.Context(), ir, rows)
 	s.resolveInfoRegRows(r.Context(), rows, ir)
 	s.render(w, r, "page-inforeg-list", map[string]any{
 		"InfoReg":    ir,

@@ -636,11 +636,6 @@ function obInitJournalDelegates() {
       jlMove(move, parseInt(move.getAttribute('data-ob-jl-move') || '0', 10));
       return;
     }
-    var row = e.target.closest('[data-ob-journal-open-url]');
-    if (row) {
-      if (e.target.closest('a,button')) return;
-      window.location.href = row.getAttribute('data-ob-journal-open-url') || '#';
-    }
   });
   document.addEventListener('submit', function (e) {
     var form = e.target;
@@ -1421,6 +1416,7 @@ function makeTreeRow(row) {
   tr.dataset.activityHideUrl = row.activity_hide_url || '';
   tr.dataset.activityShowUrl = row.activity_show_url || '';
   tr.dataset.openUrl = row.open_url || '';
+  tr.dataset.obDetail = row.detail || '';
   tr.setAttribute('data-ob-list-row', '');
   tr.setAttribute('tabindex', '-1');
   tr.setAttribute('aria-selected', 'false');
@@ -3635,7 +3631,10 @@ function obDetailApplyWidth() {
 function obDetailToggle(on) {
   obDetailStore('on', on ? '1' : '0');
   var btn = document.querySelector('[data-ob-detail-toggle]');
-  if (btn) btn.classList.toggle('active', on);
+  if (btn) {
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
   obDetailApplyWidth();
   obDetailRender();
 }
@@ -3646,6 +3645,7 @@ function initDetailPanel() {
   var btn = document.querySelector('[data-ob-detail-toggle]');
   if (btn) {
     btn.classList.toggle('active', obDetailEnabled());
+    btn.setAttribute('aria-expanded', obDetailEnabled() ? 'true' : 'false');
     btn.addEventListener('click', function (e) {
       e.preventDefault();
       obDetailToggle(!obDetailEnabled());

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,12 +10,306 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/xuri/excelize/v2"
 )
+
+// The journal handler must derive the policy from the concrete document field,
+// even when the journal exposes that field under an unrelated output alias.
+// Supplying an already-masked row to detailPanelJSON would not exercise this
+// boundary and allowed the original regression to pass its tests.
+func TestUI_JournalList_MasksMappedSourceAtHandlerBoundary(t *testing.T) {
+	doc := &metadata.Entity{
+		Name: "SecretDocument",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "SecretValue", Title: "Secret value", Type: metadata.FieldTypeString},
+		},
+	}
+	j := &metadata.Journal{
+		Name:      "SecretJournal",
+		Documents: []string{doc.Name},
+		Columns: []metadata.JournalColumn{{
+			Field: "PublicColumn",
+			Label: "Public column",
+			Map:   map[string]string{doc.Name: "SecretValue"},
+		}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{doc})
+	s.reg.LoadJournals([]*metadata.Journal{j})
+	const secret = "JOURNAL-SECRET-754"
+	if err := s.store.Upsert(ctx, doc.Name, uuid.New(), map[string]any{"SecretValue": secret}, doc); err != nil {
+		t.Fatal(err)
+	}
+	user := &auth.User{ID: "journal-reader", Login: "journal-reader", Roles: []*auth.Role{{
+		Name: "Journal reader",
+		Permissions: auth.Permission{
+			Documents: map[string][]string{doc.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{Documents: map[string]auth.FieldPolicies{
+				doc.Name: {"SecretValue": {Read: "mask_all"}},
+			}},
+		},
+	}}}
+
+	r := reqWithChi(http.MethodGet, "/ui/journal/"+j.Name, nil, map[string]string{"name": j.Name})
+	r = r.WithContext(auth.ContextWithUser(r.Context(), user))
+	w := httptest.NewRecorder()
+	s.journalList(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("journalList: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	page := w.Body.String()
+	if strings.Contains(page, secret) {
+		t.Fatalf("mapped source leaked through journal HTML/detail payload: %s", page)
+	}
+	panel := firstDetailPanelData(t, page)
+	if got, ok := detailPanelValueByLabel(panel, "Public column"); !ok || got != "••••••" {
+		t.Fatalf("mapped journal value was not masked at handler boundary: got=%q ok=%v payload=%+v", got, ok, panel)
+	}
+
+	// The same storage query feeds the Excel endpoint, which is another output
+	// boundary and must not silently bypass the list's mask.
+	excelReq := reqWithChi(http.MethodGet, "/ui/journal/"+j.Name+"/excel", nil, map[string]string{"name": j.Name})
+	excelReq = excelReq.WithContext(auth.ContextWithUser(excelReq.Context(), user))
+	excelW := httptest.NewRecorder()
+	s.journalExcel(excelW, excelReq)
+	if excelW.Code != http.StatusOK {
+		t.Fatalf("journalExcel: expected 200, got %d: %s", excelW.Code, excelW.Body.String())
+	}
+	workbook, err := excelize.OpenReader(bytes.NewReader(excelW.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := workbook.Close(); err != nil {
+			t.Errorf("close journal Excel workbook: %v", err)
+		}
+	}()
+	sheets := workbook.GetSheetList()
+	if len(sheets) == 0 {
+		t.Fatal("journal Excel has no worksheets")
+	}
+	xlsRows, err := workbook.GetRows(sheets[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := fmt.Sprint(xlsRows)
+	if strings.Contains(flat, secret) || !strings.Contains(flat, "••••••") {
+		t.Fatalf("journal Excel did not preserve the field mask: %s", flat)
+	}
+}
+
+// A fallback journal expression is COALESCE(source...). SQL does not return
+// provenance for the selected value, so a protected candidate forces the
+// output alias to a fail-closed policy.
+func TestUI_MaskJournalRecords_FallbackFailsClosed(t *testing.T) {
+	doc := &metadata.Entity{
+		Name: "FallbackDocument",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "OpenValue", Type: metadata.FieldTypeString},
+			{Name: "SecretValue", Type: metadata.FieldTypeString},
+		},
+	}
+	j := &metadata.Journal{
+		Name:      "FallbackJournal",
+		Documents: []string{doc.Name},
+		Columns: []metadata.JournalColumn{{
+			Field: "Summary", Fallback: []string{"OpenValue", "SecretValue"},
+		}},
+	}
+	user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+		Documents: map[string][]string{doc.Name: {"read"}},
+		FieldAccess: auth.FieldAccess{Documents: map[string]auth.FieldPolicies{
+			doc.Name: {"SecretValue": {Read: "hide"}},
+		}},
+	}}}}
+	rows := []map[string]any{{"_doc_kind": doc.Name, "Summary": "OPEN-CANDIDATE"}}
+	s := &Server{}
+	s.maskJournalRecords(auth.ContextWithUser(context.Background(), user), j, map[string]*metadata.Entity{doc.Name: doc}, rows)
+	if _, ok := rows[0]["Summary"]; ok {
+		t.Fatalf("fallback alias with a hidden candidate was exposed: %#v", rows[0])
+	}
+}
+
+// Different masks are not composable. For example, mask_city applied to a
+// phone number (selected from a mask_tail fallback source) can return the phone
+// unchanged. Ambiguous strategies therefore collapse to mask_all.
+func TestUI_MaskJournalRecords_ConflictingFallbackMasksCollapseToMaskAll(t *testing.T) {
+	doc := &metadata.Entity{
+		Name: "MixedFallbackDocument",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Address", Type: metadata.FieldTypeString},
+			{Name: "Phone", Type: metadata.FieldTypeString},
+		},
+	}
+	j := &metadata.Journal{
+		Name:      "MixedFallbackJournal",
+		Documents: []string{doc.Name},
+		Columns: []metadata.JournalColumn{{
+			Field: "Contact", Fallback: []string{"Address", "Phone"},
+		}},
+	}
+	user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+		Documents: map[string][]string{doc.Name: {"read"}},
+		FieldAccess: auth.FieldAccess{Documents: map[string]auth.FieldPolicies{
+			doc.Name: {
+				"Address": {Read: "mask_city"},
+				"Phone":   {Read: "mask_tail", Keep: 4},
+			},
+		}},
+	}}}}
+	rows := []map[string]any{{"_doc_kind": doc.Name, "Contact": "+79161234567"}}
+	(&Server{}).maskJournalRecords(
+		auth.ContextWithUser(context.Background(), user), j,
+		map[string]*metadata.Entity{doc.Name: doc}, rows,
+	)
+	if got := fmt.Sprint(rows[0]["Contact"]); got != "••••••" {
+		t.Fatalf("conflicting fallback masks must collapse to mask_all, got %q", got)
+	}
+}
+
+// The information-register list is the full end-to-end contract: raw storage
+// rows are masked first, reference UUIDs are resolved to labels, and periodic
+// identity is present in the detail payload.
+func TestUI_InfoRegList_MasksAtHandlerBoundaryAndBuildsSafeDetailPayload(t *testing.T) {
+	goods := &metadata.Entity{
+		Name:   "Goods",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Name", Type: metadata.FieldTypeString}},
+	}
+	ir := &metadata.InfoRegister{
+		Name:     "SecretPrices",
+		Periodic: true,
+		Dimensions: []metadata.Field{{
+			Name: "Product", Title: "Product", Type: "reference:Goods", RefEntity: goods.Name,
+		}},
+		Resources: []metadata.Field{{
+			Name: "SecretValue", Title: "Secret value", Type: metadata.FieldTypeString,
+		}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{goods})
+	if err := s.store.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatal(err)
+	}
+	s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{goods}, InfoRegs: []*metadata.InfoRegister{ir}})
+	productID := uuid.New()
+	if err := s.store.Upsert(ctx, goods.Name, productID, map[string]any{"Name": "Chair reference label"}, goods); err != nil {
+		t.Fatal(err)
+	}
+	period := time.Date(2026, time.August, 12, 12, 0, 0, 0, time.Local)
+	const secret = "INFOREG-SECRET-754"
+	if err := s.store.InfoRegSet(ctx, ir,
+		map[string]any{"Product": productID.String()},
+		map[string]any{"SecretValue": secret}, &period); err != nil {
+		t.Fatal(err)
+	}
+	user := &auth.User{ID: "inforeg-reader", Login: "inforeg-reader", Roles: []*auth.Role{{
+		Name: "Info register reader",
+		Permissions: auth.Permission{
+			Catalogs: map[string][]string{goods.Name: {"read"}},
+			InfoRegs: map[string][]string{ir.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{InfoRegs: map[string]auth.FieldPolicies{
+				ir.Name: {"SecretValue": {Read: "mask_all"}},
+			}},
+		},
+	}}}
+
+	r := reqWithChi(http.MethodGet, "/ui/inforeg/"+ir.Name, nil, map[string]string{"name": ir.Name})
+	r = r.WithContext(auth.ContextWithUser(r.Context(), user))
+	w := httptest.NewRecorder()
+	s.infoRegList(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("infoRegList: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	page := w.Body.String()
+	if strings.Contains(page, secret) {
+		t.Fatalf("information-register secret leaked through HTML/detail payload: %s", page)
+	}
+	panel := firstDetailPanelData(t, page)
+	for label, want := range map[string]string{
+		"Период":       "12.08.2026",
+		"Product":      "Chair reference label",
+		"Secret value": "••••••",
+	} {
+		if got, ok := detailPanelValueByLabel(panel, label); !ok || got != want {
+			t.Errorf("%s = %q, %v; expected %q; payload=%+v", label, got, ok, want, panel)
+		}
+	}
+	panelJSON, err := json.Marshal(panel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(panelJSON), productID.String()) {
+		t.Fatalf("detail payload contains UUID instead of the resolved label: %s", panelJSON)
+	}
+
+	// A protected reference dimension proves the ordering, not merely that a
+	// mask is eventually applied. If resolveInfoRegRows ran first, its stale
+	// Product_label would win in the table even after Product itself was masked.
+	maskedRefUser := &auth.User{ID: "masked-ref-reader", Login: "masked-ref-reader", Roles: []*auth.Role{{
+		Name: "Masked reference reader",
+		Permissions: auth.Permission{
+			Catalogs: map[string][]string{goods.Name: {"read"}},
+			InfoRegs: map[string][]string{ir.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{InfoRegs: map[string]auth.FieldPolicies{
+				ir.Name: {
+					"Product":     {Read: "mask_all"},
+					"SecretValue": {Read: "mask_all"},
+				},
+			}},
+		},
+	}}}
+	maskedReq := reqWithChi(http.MethodGet, "/ui/inforeg/"+ir.Name, nil, map[string]string{"name": ir.Name})
+	maskedReq = maskedReq.WithContext(auth.ContextWithUser(maskedReq.Context(), maskedRefUser))
+	maskedW := httptest.NewRecorder()
+	s.infoRegList(maskedW, maskedReq)
+	if maskedW.Code != http.StatusOK {
+		t.Fatalf("infoRegList masked reference: expected 200, got %d: %s", maskedW.Code, maskedW.Body.String())
+	}
+	maskedPage := maskedW.Body.String()
+	rowStart := strings.Index(maskedPage, `<tr data-ob-list-row`)
+	if rowStart < 0 {
+		t.Fatalf("masked info-register page has no data row: %s", maskedPage)
+	}
+	rowEnd := strings.Index(maskedPage[rowStart:], `</tr>`)
+	if rowEnd < 0 {
+		t.Fatalf("masked info-register data row is not closed: %s", maskedPage[rowStart:])
+	}
+	rowHTML := maskedPage[rowStart : rowStart+rowEnd]
+	if strings.Contains(rowHTML, productID.String()) || strings.Contains(rowHTML, "Chair reference label") {
+		t.Fatalf("protected reference was resolved before masking and leaked in its row: %s", rowHTML)
+	}
+	maskedPanel := firstDetailPanelData(t, rowHTML)
+	if got, ok := detailPanelValueByLabel(maskedPanel, "Product"); !ok || got != "••••••" {
+		t.Fatalf("protected reference is not masked in detail payload: got=%q ok=%v payload=%+v", got, ok, maskedPanel)
+	}
+}
+
+func TestUI_MaskInfoRegRecords_PeriodAlsoProtectsMachineKey(t *testing.T) {
+	ir := &metadata.InfoRegister{Name: "ProtectedPeriod", Periodic: true}
+	user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+		InfoRegs: map[string][]string{ir.Name: {"read"}},
+		FieldAccess: auth.FieldAccess{InfoRegs: map[string]auth.FieldPolicies{
+			ir.Name: {"period": {Read: "hide"}},
+		}},
+	}}}}
+	rows := []map[string]any{{"period": "12.08.2026", "period_key": "2026-08-12T00:00:00Z"}}
+	(&Server{}).maskInfoRegRecords(auth.ContextWithUser(context.Background(), user), ir, rows)
+	if _, ok := rows[0]["period"]; ok {
+		t.Fatalf("hidden period remained in row: %#v", rows[0])
+	}
+	if _, ok := rows[0]["period_key"]; ok {
+		t.Fatalf("hidden period leaked through machine key: %#v", rows[0])
+	}
+}
 
 func uiClientEntity() *metadata.Entity {
 	return &metadata.Entity{

@@ -139,8 +139,12 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return out
 		},
-		"inforegFields": func(ir *metadata.InfoRegister) []metadata.Field {
-			return append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)
+		"infoRegDetailPanel": func(ir *metadata.InfoRegister, row map[string]any, lang string) string {
+			periodTitle := "Период"
+			if bundle != nil {
+				periodTitle = bundle.T(lang, periodTitle)
+			}
+			return infoRegisterDetailPanelJSON(ir, row, lang, periodTitle)
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
@@ -925,7 +929,7 @@ body{padding-bottom:32px}
 }
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
 .view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
-.view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font-size:15px;line-height:1;background:#fff;border-right:1px solid #e2e8f0}
+.view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
 .view-switch .view-btn:last-child{border-right:none}
 .view-switch .view-btn:hover{background:#f1f5f9}
 .view-switch .view-btn.active{background:#3b82f6;color:#fff}
@@ -1247,7 +1251,7 @@ const tplList = `
 
 {{define "detail-panel-toggle"}}
 <div class="view-switch">
-  <a class="view-btn" href="#" data-ob-detail-toggle title="{{t $.Lang "Детали записи"}}">▤</a>
+  <button class="view-btn" type="button" data-ob-detail-toggle aria-controls="ob-detail" aria-expanded="false" title="{{t $.Lang "Детали записи"}}">▤</button>
 </div>
 {{end}}
 
@@ -1385,7 +1389,8 @@ const tplList = `
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
+  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
   {{range $i, $col := $treeCols}}
     {{if treeColumn $treeCols $i}}
       <td>
@@ -1436,7 +1441,8 @@ const tplList = `
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
+  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}
@@ -2637,7 +2643,7 @@ const tplInfoReg = `
   {{if .CanDelete}}<th></th>{{end}}
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr data-ob-list-row tabindex="-1" aria-selected="false"
-  data-ob-detail='{{detailPanel (inforegFields $.InfoReg) $row nil $.Lang}}'>
+  data-ob-detail='{{infoRegDetailPanel $.InfoReg $row $.Lang}}'>
   {{if $.InfoReg.Periodic}}<td>{{index $row "period"}}</td>{{end}}
   {{range $.InfoReg.Dimensions}}<td>{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
   {{range $.InfoReg.Resources}}<td style="font-weight:600">{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
@@ -2858,8 +2864,7 @@ const tplJournal = `
 </tr></thead>
 <tbody>
 {{range .Rows}}{{$row := .}}
-<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-journal-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}"
-  data-ob-list-row tabindex="-1" aria-selected="false"
+<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-list-row tabindex="-1" aria-selected="false"
   data-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}"
   data-ob-detail='{{detailPanel (journalFields $.Journal) $row nil $.Lang}}'>
   <td style="{{journalCellStyle $row "_doc_kind"}}">{{index . "_doc_kind"}}</td>

@@ -4,12 +4,40 @@ package ui
 
 import (
 	"encoding/json"
+	"html"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
 )
+
+var detailPanelAttrRE = regexp.MustCompile(`data-ob-detail='([^']*)'`)
+
+func firstDetailPanelData(t *testing.T, page string) detailPanelData {
+	t.Helper()
+	match := detailPanelAttrRE.FindStringSubmatch(page)
+	if len(match) != 2 {
+		t.Fatalf("страница не содержит data-ob-detail: %s", page)
+	}
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(html.UnescapeString(match[1])), &data); err != nil {
+		t.Fatalf("payload панели не разобрался: %v; raw=%s", err, match[1])
+	}
+	return data
+}
+
+func detailPanelValueByLabel(data detailPanelData, label string) (string, bool) {
+	for _, tab := range data.Tabs {
+		for _, field := range tab.Fields {
+			if field.Label == label {
+				return field.Value, true
+			}
+		}
+	}
+	return "", false
+}
 
 func panelEntity() *metadata.Entity {
 	return &metadata.Entity{
@@ -117,6 +145,89 @@ func TestDetailPanel_RenderedOutsideLiveContainer(t *testing.T) {
 	}
 }
 
+// Переключатель панели общий для таблицы, плитки и дерева, поэтому каждый вид
+// обязан нести один и тот же payload. До исправления атрибут был только у
+// обычной таблицы: в двух остальных режимах панель всегда писала «Выберите
+// строку», хотя строка была выбрана.
+func TestDetailPanel_AllEntityListModesCarryPayload(t *testing.T) {
+	ent := panelEntity()
+	row := map[string]any{
+		"id": "1", "Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО «Мебель»",
+		"_depth": 0,
+	}
+	base := map[string]any{
+		"Entity": ent, "Rows": []map[string]any{row}, "TreeRows": []map[string]any{row},
+		"Params": storage.ListParams{}, "RefFilterOptions": map[string]any{},
+		"Lang": "ru", "Total": 1, "Page": 1, "TotalPages": 1,
+	}
+	for _, tc := range []struct {
+		name string
+		set  func(map[string]any)
+	}{
+		{name: "table", set: func(map[string]any) {}},
+		{name: "tiles", set: func(data map[string]any) { data["TilesView"] = true }},
+		{name: "tree", set: func(data map[string]any) { data["TreeView"] = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := make(map[string]any, len(base)+1)
+			for key, value := range base {
+				data[key] = value
+			}
+			tc.set(data)
+			page := renderPageList(t, data)
+			panel := firstDetailPanelData(t, page)
+			if got, ok := detailPanelValueByLabel(panel, "Поставщик"); !ok || got != "ООО «Мебель»" {
+				t.Fatalf("payload %s-вида не содержит детали строки: %+v", tc.name, panel)
+			}
+		})
+	}
+}
+
+func TestInfoRegisterDetailPanel_UsesReferenceLabelAndPeriod(t *testing.T) {
+	ir := &metadata.InfoRegister{
+		Name: "Цены", Periodic: true,
+		Dimensions: []metadata.Field{{Name: "Товар", Title: "Товар", RefEntity: "Товары"}},
+		Resources:  []metadata.Field{{Name: "Цена", Title: "Цена", Type: metadata.FieldTypeNumber}},
+	}
+	rawUUID := "11111111-1111-1111-1111-111111111111"
+	raw := infoRegisterDetailPanelJSON(ir, map[string]any{
+		"period": "12.08.2026", "Товар": rawUUID, "Товар_label": "Кресло", "Цена": 18700,
+	}, "ru")
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		t.Fatal(err)
+	}
+	for label, want := range map[string]string{"Период": "12.08.2026", "Товар": "Кресло", "Цена": "18 700"} {
+		if got, ok := detailPanelValueByLabel(data, label); !ok || got != want {
+			t.Errorf("%s = %q, %v; ожидалось %q; payload=%+v", label, got, ok, want, data)
+		}
+	}
+	if strings.Contains(raw, rawUUID) {
+		t.Fatalf("панель показала UUID вместо подписи ссылки: %s", raw)
+	}
+}
+
+func TestDetailPanel_HiddenFieldIsAbsentAndMaskedReferenceCannotUseStaleLabel(t *testing.T) {
+	fields := []metadata.Field{
+		{Name: "Скрыто", Title: "Скрыто", Type: metadata.FieldTypeString},
+		{Name: "Контрагент", Title: "Контрагент", RefEntity: "Контрагенты"},
+	}
+	raw := detailPanelJSON(fields, map[string]any{
+		// «Скрыто» отсутствует как после field_access.hide.
+		"Контрагент": "••••••", "Контрагент_label": "Секретная подпись",
+	}, "", nil, "ru")
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := detailPanelValueByLabel(data, "Скрыто"); ok {
+		t.Fatalf("hide-поле воскресло в payload: %+v", data)
+	}
+	if got, ok := detailPanelValueByLabel(data, "Контрагент"); !ok || got != "••••••" {
+		t.Fatalf("маскированная ссылка использовала stale label: got=%q ok=%v payload=%+v", got, ok, data)
+	}
+}
+
 // Payload собирается из уже отрисованной строки: значение, скрытое маской ПДн,
 // в строку не попадает и в панели не появляется. Проверяем именно это свойство,
 // а не «мы вызвали маску».
@@ -155,5 +266,29 @@ func TestDetailPanel_ClientRuntime(t *testing.T) {
 	}
 	if !strings.Contains(js[idx:idx+2000], "obDetailRender") {
 		t.Error("listSetSel не перерисовывает панель")
+	}
+	if !strings.Contains(js, "tr.dataset.obDetail = row.detail || ''") {
+		t.Error("лениво загруженная строка дерева не получает detail payload")
+	}
+}
+
+// Журнал теперь использует общий selection runtime. Старый journal-delegate
+// открывал документ на single click и делал панель практически недоступной:
+// generic click успевал выбрать строку, после чего браузер сразу уходил с неё.
+func TestDetailPanel_JournalSingleClickDoesNotNavigate(t *testing.T) {
+	js := string(uiJS)
+	if strings.Contains(js, "data-ob-journal-open-url") {
+		t.Fatal("в ui.js остался single-click навигатор журнала")
+	}
+	for _, want := range []string{
+		"if (row) listRowClick(e, row)",
+		"if (row) listRowDblClick(e, row)",
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("общий click/dblclick контракт списка не содержит %q", want)
+		}
+	}
+	if strings.Contains(tplJournal, "data-ob-journal-open-url") {
+		t.Fatal("строка журнала всё ещё подключена к single-click навигатору")
 	}
 }

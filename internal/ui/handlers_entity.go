@@ -764,6 +764,7 @@ type treeChildRow struct {
 	ActivityInactive bool     `json:"activity_inactive"`
 	TreeCell         int      `json:"tree_cell"`
 	Cells            []string `json:"cells"`
+	Detail           string   `json:"detail,omitempty"`
 	OpenURL          string   `json:"open_url"`
 	FolderURL        string   `json:"folder_url"`
 	MarkURL          string   `json:"mark_url"`
@@ -846,7 +847,8 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 			break
 		}
 	}
-	enumLabels := s.buildEnumLabels(entity, s.resolveLang(r))
+	lang := s.resolveLang(r)
+	enumLabels := s.buildEnumLabels(entity, lang)
 	base := "/ui/" + strings.ToLower(string(entity.Kind)) + "/" + strings.ToLower(entity.Name)
 	subsystem := strings.TrimSpace(r.URL.Query().Get("subsystem"))
 	subQS := ""
@@ -878,6 +880,7 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 			ActivityInactive: asBool(row["_activity_inactive"]),
 			TreeCell:         treeCell,
 			Cells:            cells,
+			Detail:           detailPanelJSON(entity.Fields, row, detailPanelTitle(entity.Fields, row), enumLabels, lang),
 			OpenURL:          openURL,
 			FolderURL:        folderURL,
 			MarkURL:          base + "/" + url.PathEscape(id) + "/delete?mark=1",

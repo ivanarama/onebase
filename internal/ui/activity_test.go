@@ -479,6 +479,16 @@ func TestTreeChildrenJSON_ReturnsDirectChildren(t *testing.T) {
 	if len(row.Cells) == 0 || row.Cells[0] != "Ребёнок" {
 		t.Fatalf("cells = %#v, want child label", row.Cells)
 	}
+	if row.Detail == "" {
+		t.Fatal("lazy tree child is missing the detail-panel payload")
+	}
+	var panel detailPanelData
+	if err := json.Unmarshal([]byte(row.Detail), &panel); err != nil {
+		t.Fatalf("decode detail payload: %v; raw=%s", err, row.Detail)
+	}
+	if got, ok := detailPanelValueByLabel(panel, "Наименование"); !ok || got != "Ребёнок" {
+		t.Fatalf("lazy tree detail payload has no child value: got=%q ok=%v payload=%+v", got, ok, panel)
+	}
 }
 
 func serveRefOptions(t *testing.T, s *Server, entity, query string, user *auth.User) *httptest.ResponseRecorder {

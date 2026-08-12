@@ -53,9 +53,23 @@ func detailPanelJSON(fields []metadata.Field, row map[string]any, title string,
 	enumLabels map[string]map[string]string, lang string) string {
 	var main, images, rich []detailPanelField
 	for _, f := range fields {
-		v, ok := row[f.Name]
+		v, ok := detailPanelRowValue(row, f.Name)
 		if !ok {
-			v = row[strings.ToLower(f.Name)]
+			// A field removed by field_access.hide must not be resurrected as
+			// an empty labelled entry in the client payload. Stored NULL values
+			// still have a key and remain visible as an empty value.
+			continue
+		}
+		// Information-register rows retain a reference UUID for round-trips
+		// and put its safe presentation in <field>_label. Use that label only
+		// while the source still is an unmasked UUID: a masked value must not
+		// accidentally pair with a stale/full label.
+		if f.RefEntity != "" {
+			if _, _, isUUID := uuidFromValue(v); isUUID {
+				if label, found := detailPanelRowValue(row, f.Name+"_label"); found && fmtReportCell(label) != "" {
+					v = label
+				}
+			}
 		}
 		label := f.DisplayName(lang)
 		switch {
@@ -104,11 +118,51 @@ func detailPanelTitle(fields []metadata.Field, row map[string]any) string {
 		if f.Type != metadata.FieldTypeString || f.RefEntity != "" {
 			continue
 		}
-		if s := fmtReportCell(row[f.Name]); s != "" {
-			return s
+		if value, ok := detailPanelRowValue(row, f.Name); ok {
+			if s := fmtReportCell(value); s != "" {
+				return s
+			}
 		}
 	}
 	return ""
+}
+
+func detailPanelRowValue(row map[string]any, name string) (any, bool) {
+	for key, value := range row {
+		if strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+// infoRegisterDetailFields includes the period as part of a periodic record's
+// identity, then the configured dimensions and resources. The list table has
+// always shown period; omitting it from the card made two otherwise identical
+// periodic records indistinguishable.
+func infoRegisterDetailFields(ir *metadata.InfoRegister, periodTitle string) []metadata.Field {
+	if ir == nil {
+		return nil
+	}
+	fields := make([]metadata.Field, 0, len(ir.Dimensions)+len(ir.Resources)+1)
+	if ir.Periodic {
+		if periodTitle == "" {
+			periodTitle = "Период"
+		}
+		fields = append(fields, metadata.Field{Name: "period", Title: periodTitle, Type: metadata.FieldTypeDate})
+	}
+	fields = append(fields, ir.Dimensions...)
+	fields = append(fields, ir.Resources...)
+	return fields
+}
+
+func infoRegisterDetailPanelJSON(ir *metadata.InfoRegister, row map[string]any, lang string, periodTitle ...string) string {
+	localizedPeriod := "Период"
+	if len(periodTitle) > 0 && periodTitle[0] != "" {
+		localizedPeriod = periodTitle[0]
+	}
+	fields := infoRegisterDetailFields(ir, localizedPeriod)
+	return detailPanelJSON(fields, row, detailPanelTitle(fields, row), nil, lang)
 }
 
 // enumLabelFor — подпись значения перечисления, та же, что в колонках списка.
