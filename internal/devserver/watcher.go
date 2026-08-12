@@ -19,6 +19,19 @@ func watcherLog() *slog.Logger {
 	return oblog.Component("devserver.watcher")
 }
 
+// watchOpts настраивает, что именно наблюдается.
+//
+//	accept  — пускать ли событие по этому пути к onChange (nil = пускать всё);
+//	skipDir — не брать каталог в наблюдение и не спускаться в него вовсе
+//	          (nil = брать всё дерево). Отличается от accept тем, что экономит
+//	          дескрипторы наблюдения: у .git и node_modules подкаталогов больше,
+//	          чем у самого проекта, а изменений, ради которых стоит перезагружаться,
+//	          в них не бывает.
+type watchOpts struct {
+	accept  func(path string, isDir bool) bool
+	skipDir func(path string) bool
+}
+
 // WatchContext watches dir and all its subdirectories, calling onChange after
 // a debounce period. fsnotify is not recursive, so every subdirectory is added
 // explicitly; directories created later are picked up on the fly.
@@ -26,7 +39,7 @@ func watcherLog() *slog.Logger {
 // done is closed after the watcher goroutine and any running callback have
 // stopped, so callers can safely release resources referenced by onChange.
 func WatchContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
-	return watchContext(ctx, dir, nil, onChange)
+	return watchContext(ctx, dir, watchOpts{}, onChange)
 }
 
 // WatchProjectContext watches only source/config files that can affect a
@@ -41,7 +54,7 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 		"roles": {}, "scheduled": {}, "services": {}, "src": {},
 		"subsystems": {}, "widgets": {},
 	}
-	return watchContext(ctx, dir, func(path string, isDir bool) bool {
+	return watchContext(ctx, dir, watchOpts{accept: func(path string, isDir bool) bool {
 		if isDir {
 			rel, err := filepath.Rel(dir, path)
 			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
@@ -55,7 +68,47 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 		return strings.HasSuffix(lower, ".yaml") ||
 			strings.HasSuffix(lower, ".yml") ||
 			strings.HasSuffix(lower, ".os")
+	}}, onChange)
+}
+
+// WatchGoContext наблюдает за исходниками платформы: onChange зовётся только на
+// правку *.go, go.mod или go.sum. Нужен режиму пересборки (`onebase dev
+// --reload-binary`), где на изменение Go-кода отвечают не перезагрузкой
+// метаданных, а `go build` и перезапуском процесса сервера.
+//
+// Каталоги, где Go-кода не бывает (.git с его тысячами объектов, node_modules,
+// служебные .idea/.vscode), в наблюдение не берутся: иначе один `git status`
+// стоил бы больше событий, чем весь рабочий день правок.
+func WatchGoContext(ctx context.Context, dir string, onChange func()) (<-chan struct{}, error) {
+	return watchContext(ctx, dir, watchOpts{
+		accept: func(path string, isDir bool) bool {
+			if isDir {
+				// Каталог целиком удалили или переименовали — Go-файлы внутри
+				// пропали вместе с ним, отдельных событий по ним не будет.
+				// Пересобрать в этом случае дешевле, чем пропустить правку.
+				return !skipGoDir(path)
+			}
+			return isGoSource(path)
+		},
+		skipDir: skipGoDir,
 	}, onChange)
+}
+
+// isGoSource — файл, изменение которого требует пересборки бинаря.
+func isGoSource(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	return strings.HasSuffix(base, ".go") || base == "go.mod" || base == "go.sum"
+}
+
+// skipGoDir отсеивает каталоги, которые не содержат исходников платформы.
+func skipGoDir(path string) bool {
+	base := filepath.Base(path)
+	if base == "node_modules" {
+		return true
+	}
+	// Скрытые каталоги: .git, .idea, .vscode, .github/workflows тоже (yaml CI
+	// на бинарь не влияет). Точка и «..» скрытыми не считаются.
+	return len(base) > 1 && strings.HasPrefix(base, ".") && base != ".."
 }
 
 // debounceWindow — сколько тишины ждать после правки, прежде чем звать onChange.
@@ -65,13 +118,14 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 // два вызова (флейк TestWatchContext_Debounces).
 var debounceWindow = 300 * time.Millisecond
 
-func watchContext(ctx context.Context, dir string, accept func(string, bool) bool, onChange func()) (<-chan struct{}, error) {
+func watchContext(ctx context.Context, dir string, opts watchOpts, onChange func()) (<-chan struct{}, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if onChange == nil {
 		return nil, fmt.Errorf("devserver: onChange callback is nil")
 	}
+	accept := opts.accept
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -85,6 +139,10 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 				return walkErr
 			}
 			if d.IsDir() {
+				// Сам root пропускать нельзя: его выбрал вызывающий, а не обход.
+				if opts.skipDir != nil && path != root && opts.skipDir(path) {
+					return fs.SkipDir
+				}
 				if err := w.Add(path); err != nil {
 					return fmt.Errorf("watch %s: %w", path, err)
 				}
@@ -131,8 +189,13 @@ func watchContext(ctx context.Context, dir string, accept func(string, bool) boo
 				if event.Has(fsnotify.Create) {
 					if fi, statErr := os.Stat(event.Name); statErr == nil && fi.IsDir() {
 						isDir = true
-						if err := addTree(event.Name); err != nil {
-							watcherLog().Warn("watch new directory failed", "path", event.Name, "err", err)
+						// Каталог из чёрного списка не берём и созданным
+						// на ходу: правило одно и то же, откуда бы каталог
+						// ни взялся (`git clone` подкаталога, распаковка).
+						if opts.skipDir == nil || !opts.skipDir(event.Name) {
+							if err := addTree(event.Name); err != nil {
+								watcherLog().Warn("watch new directory failed", "path", event.Name, "err", err)
+							}
 						}
 					}
 				}

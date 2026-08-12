@@ -286,3 +286,116 @@ func TestWatchProjectContextTracksMetadataDirectoryRename(t *testing.T) {
 	}
 	t.Fatal("renaming a watched metadata directory did not trigger reload")
 }
+
+// WatchGoContext реагирует на правку .go и молчит на всё остальное: конфигурацию
+// в dev-режиме перезагружает отдельный наблюдатель, пересобирать ради неё бинарь
+// незачем.
+func TestWatchGoContext_OnlyGoSources(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(dir, "документ.yaml"), []byte("name: Счёт"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "проведение.os"), []byte("// код"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := changes.Load(); got != 0 {
+		t.Fatalf("конфигурация вызвала пересборку %d раз", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main // правка"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if changes.Load() > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("правка .go не вызвала onChange")
+}
+
+// go.mod и go.sum — тоже вход сборки: смена зависимости меняет бинарь.
+func TestWatchGoContext_TracksGoMod(t *testing.T) {
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(modPath, []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(modPath, []byte("module x\n\ngo 1.25.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if changes.Load() > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("правка go.mod не вызвала onChange")
+}
+
+// Служебные каталоги в наблюдение не берутся вовсе: .git переписывается на
+// каждой команде git, и пересборка по этим событиям шла бы непрерывно.
+func TestWatchGoContext_SkipsServiceDirs(t *testing.T) {
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, ".git", "objects")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var changes atomic.Int32
+	done, err := WatchGoContext(ctx, dir, func() { changes.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	// Файл с расширением .go внутри пропущенного каталога — событий быть не должно
+	// (в node_modules и .git такие файлы попадают как чужие исходники и мусор).
+	if err := os.WriteFile(filepath.Join(gitDir, "hook.go"), []byte("package hooks"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.go"), []byte("package pkg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := changes.Load(); got != 0 {
+		t.Fatalf("служебный каталог вызвал пересборку %d раз", got)
+	}
+}
