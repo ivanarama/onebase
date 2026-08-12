@@ -225,6 +225,13 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 				return conflict
 			}
 		}
+		// Дубль кода/номера — ошибка пользователя, а не сбой: он ввёл занятое
+		// значение. Текст драйвера («UNIQUE constraint failed: контрагенты.код»)
+		// ему ничего не говорит, поэтому подменяем его на человеческий и не
+		// оборачиваем в «upsert <объект>» (план 117E).
+		if explained := ExplainUniqueViolation(err, entity, fields); errors.Is(explained, ErrCodeDuplicate) {
+			return explained
+		}
 		return fmt.Errorf("upsert %s: %w", entityName, classifyConstraintErr(err))
 	}
 	if staged && tag.RowsAffected != 1 {
