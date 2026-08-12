@@ -20,10 +20,11 @@ type loginBucket struct {
 }
 
 type LoginLimiter struct {
-	mu       sync.Mutex
-	maxFails int
-	window   time.Duration
-	attempts map[string]*loginBucket
+	mu        sync.Mutex
+	maxFails  int
+	window    time.Duration
+	attempts  map[string]*loginBucket
+	lastPurge time.Time
 }
 
 func NewLoginLimiter(maxFails int, window time.Duration) *LoginLimiter {
@@ -73,16 +74,31 @@ func (l *LoginLimiter) Reset(key string) {
 }
 
 // purgeLocked лениво вычищает неактуальные записи, чтобы map не рос бесконечно.
+//
+// Полный проход идёт под общим мьютексом и стоит O(n). Раньше он выполнялся на
+// КАЖДУЮ неудачную попытку, как только записей становилось ≥10000, — при флуде
+// уникальными логинами с одного IP это давало квадратичное поведение и
+// сериализовало все входы в процессе (issue #776). Теперь проход ограничен по
+// частоте: не чаще одного раза за окно. Этого достаточно, чтобы вычищать
+// протухшие записи, а пиковый размер map ограничен темпом флуда × длина окна.
 func (l *LoginLimiter) purgeLocked(now time.Time) {
 	if len(l.attempts) < 10000 {
 		return
 	}
+	if !l.lastPurge.IsZero() && now.Sub(l.lastPurge) < l.window {
+		return
+	}
+	l.lastPurge = now
 	for k, b := range l.attempts {
 		if now.After(b.blockedUntil) && now.Sub(b.windowStart) > l.window {
 			delete(l.attempts, k)
 		}
 	}
 }
+
+// maxLoginKeyLen ограничивает длину логина в ключе лимитера: без него
+// неаутентифицированный клиент раздувал бы записи гигантскими строками логина.
+const maxLoginKeyLen = 256
 
 // LoginKey строит ключ лимитера (IP, login). X-Forwarded-For намеренно не
 // используется: без доверенного прокси заголовок подделывается и позволил бы
@@ -92,5 +108,9 @@ func LoginKey(r *http.Request, login string) string {
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	return host + "|" + strings.ToLower(strings.TrimSpace(login))
+	login = strings.ToLower(strings.TrimSpace(login))
+	if len(login) > maxLoginKeyLen {
+		login = login[:maxLoginKeyLen]
+	}
+	return host + "|" + login
 }

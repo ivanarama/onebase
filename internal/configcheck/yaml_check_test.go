@@ -183,3 +183,81 @@ func mkFile(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// TestRunFull_DSLPrintFormBinding: проверка конфигурации обязана ловить
+// .os-печатную форму без привязки к сущности-источнику. Раньше DSL-формы не
+// валидировались вовсе: форма с нераспознанным комментарием попадала в реестр
+// под пустым ключом и не показывалась ни на одной карточке, а `onebase check`
+// печатал «ошибок не найдено» — пользователь оставался без единого следа
+// причины (discussion #757). Идём через RunFull — ровно ту функцию, которую
+// зовут и CLI, и «проверить всё» в конфигураторе.
+func TestRunFull_DSLPrintFormBinding(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "config", "app.yaml"), "name: Печать\n")
+	mkFile(t, filepath.Join(dir, "catalogs", "Клиент.yaml"), `name: Клиент
+fields:
+  - name: Наименование
+    type: string`)
+	const body = "Функция Сформировать()\n    Возврат Новый ТабличныйДокумент\nКонецФункции\n"
+	// Привязка к справочнику — корректна, ошибок быть не должно.
+	mkFile(t, filepath.Join(dir, "printforms", "КарточкаКлиента.os"), "// Справочник: Клиент\n"+body)
+	// Привязки нет вовсе — форма нигде не отрисуется.
+	mkFile(t, filepath.Join(dir, "printforms", "БезПривязки.os"), body)
+	// Привязка есть, но сущности с таким именем в конфигурации нет.
+	mkFile(t, filepath.Join(dir, "printforms", "КривойИсточник.os"), "// Справочник: НетТакого\n"+body)
+
+	res := RunFull(dir)
+
+	byFile := map[string]Issue{}
+	for _, i := range res.Issues {
+		if strings.HasPrefix(i.File, "printforms/") {
+			byFile[i.File] = i
+		}
+	}
+	if i, ok := byFile["printforms/КарточкаКлиента.os"]; ok {
+		t.Errorf("форма со справочником-источником не должна давать ошибок: %+v", i)
+	}
+	for _, f := range []string{"printforms/БезПривязки.os", "printforms/КривойИсточник.os"} {
+		i, ok := byFile[f]
+		if !ok {
+			t.Errorf("ожидалась ошибка привязки для %s. issues=%+v", f, res.Issues)
+			continue
+		}
+		if !strings.Contains(i.Message, "источник") {
+			t.Errorf("%s: сообщение не про источник: %q", f, i.Message)
+		}
+		if i.Code != "printform.source-invalid" {
+			t.Errorf("%s: ожидался code=printform.source-invalid, получено %q (подсказка про синтаксис .os тут не к месту)", f, i.Code)
+		}
+	}
+}
+
+// TestRunFull_DSLPrintFormBindingSubfolder: форма, разложенная по папке-
+// сущности, привязывается именем папки — ошибки быть не должно, а в диагностике
+// путь обязан включать папку.
+func TestRunFull_DSLPrintFormBindingSubfolder(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "config", "app.yaml"), "name: Печать\n")
+	mkFile(t, filepath.Join(dir, "catalogs", "Клиент.yaml"), `name: Клиент
+fields:
+  - name: Наименование
+    type: string`)
+	const body = "Функция Сформировать()\n    Возврат Новый ТабличныйДокумент\nКонецФункции\n"
+	mkFile(t, filepath.Join(dir, "printforms", "Клиент", "Карточка.os"), body)
+	mkFile(t, filepath.Join(dir, "printforms", "НетТакого", "Карточка.os"), body)
+
+	res := RunFull(dir)
+
+	var sawBad bool
+	for _, i := range res.Issues {
+		switch i.File {
+		case "printforms/Клиент/Карточка.os":
+			t.Errorf("форма в папке справочника не должна давать ошибок: %+v", i)
+		case "printforms/НетТакого/Карточка.os":
+			sawBad = true
+		}
+	}
+	if !sawBad {
+		t.Errorf("ожидалась ошибка для printforms/НетТакого/Карточка.os с путём вместе с папкой. issues=%+v", res.Issues)
+	}
+}

@@ -351,9 +351,14 @@ func validateObjectShape(ent *metadata.Entity, obj PackageObject) error {
 		wantFields["parent_id"] = struct{}{}
 		wantFields["is_folder"] = struct{}{}
 	}
-	if len(obj.Fields) != len(wantFields) {
-		return fmt.Errorf("exchange: объект %s/%s содержит неполную или несовместимую шапку", ent.Name, obj.ID)
-	}
+	// НЕДОСТАЮЩЕЕ поле — не ошибка: оно считается незаполненным (план 117D).
+	// Раньше требовалось точное совпадение набора, и появление нового реквизита
+	// (например «Кода» при включении нумератора) роняло приём ЦЕЛИКОМ — вместе
+	// с пакетами, которые уже лежали в очереди и были сняты до изменения.
+	// Обновлять все узлы одномоментно на живом обмене нереально.
+	//
+	// НЕИЗВЕСТНОЕ поле по-прежнему отклоняется: это защита от чужого пакета и
+	// от опечатки в имени, за которой стоит потерянное значение.
 	for name := range obj.Fields {
 		if _, ok := wantFields[name]; !ok {
 			return fmt.Errorf("exchange: объект %s/%s содержит неизвестное поле %q", ent.Name, obj.ID, name)
@@ -568,7 +573,7 @@ func ApplyPackage(ctx context.Context, store *storage.DB, resolver EntityResolve
 			case storage.ExchangeKindInfoReg:
 				objApplied, err = applyInfoReg(ctx, store, resolver, plan, thisNode, fromNode, obj, &res)
 			default:
-				objApplied, entityCurrent, err = applyEntity(ctx, store, resolver, plan, thisNode, fromNode, obj, &res, opts)
+				objApplied, entityCurrent, err = applyEntity(ctx, store, resolver, plan, thisNode, fromNode, pkg.MessageNo, obj, &res, opts)
 			}
 			if err != nil {
 				return err
@@ -635,13 +640,24 @@ func ApplyPackage(ctx context.Context, store *storage.DB, resolver EntityResolve
 	return res, nil
 }
 
+// replicationSourceRef — происхождение реплицированного перехода: канонический
+// JSON-массив, а не строка с разделителем (имя плана или узла может содержать
+// что угодно, включая сам разделитель).
+func replicationSourceRef(plan, fromNode string, messageNo int64) string {
+	ref, err := json.Marshal([]any{storage.StageSourceExchange, plan, fromNode, messageNo})
+	if err != nil {
+		return ""
+	}
+	return string(ref)
+}
+
 // applyObject записывает один объект пакета: шапку (через db.Upsert — тот же
 // путь коэрции значений, что и обычное сохранение), затем принудительно ставит
 // системные колонки (точная версия/пометка/непроведён), затем табличные части.
 // applyEntity применяет объект-сущность (справочник/документ) из пакета. Возвращает
 // true, если объект был записан (создан/обновлён/помечен на удаление) — только такие
 // изменения хаб ретранслирует спицам.
-func applyEntity(ctx context.Context, store *storage.DB, resolver EntityResolver, plan *metadata.ExchangePlan, thisNode, fromNode string, obj PackageObject, res *LoadResult, opts ApplyOptions) (applied bool, current bool, err error) {
+func applyEntity(ctx context.Context, store *storage.DB, resolver EntityResolver, plan *metadata.ExchangePlan, thisNode, fromNode string, messageNo int64, obj PackageObject, res *LoadResult, opts ApplyOptions) (applied bool, current bool, err error) {
 	ent := resolver.GetEntity(obj.Type)
 	if ent == nil {
 		res.Skipped++ // сущность неизвестна приёмнику
@@ -681,7 +697,7 @@ func applyEntity(ctx context.Context, store *storage.DB, resolver EntityResolver
 			return false, obj.Version == localVer, nil
 		}
 	}
-	if err := applyObject(ctx, store, ent, id, obj); err != nil {
+	if err := applyObject(ctx, store, ent, id, obj, replicationSourceRef(plan.Name, fromNode, messageNo)); err != nil {
 		return false, false, err
 	}
 	if hasLocal {
@@ -723,13 +739,17 @@ func needsRepost(ctx context.Context, store *storage.DB, resolver EntityResolver
 	return !toBool(row["posted"]), nil
 }
 
-func applyObject(ctx context.Context, store *storage.DB, ent *metadata.Entity, id uuid.UUID, obj PackageObject) error {
+func applyObject(ctx context.Context, store *storage.DB, ent *metadata.Entity, id uuid.UUID, obj PackageObject, sourceRef string) error {
 	_, exists, err := store.EntityVersionExists(ctx, ent.Name, id)
 	if err != nil {
 		return err
 	}
 	if !obj.Tombstone || !exists {
-		if err := store.Upsert(ctx, ent.Name, id, obj.Fields, ent); err != nil {
+		// Этапы (план 121): запись идёт узким writer-ом репликации, а не обычным
+		// Upsert. Он вызывается только после решения «побеждает входящий»,
+		// поэтому DSL-хук разрешения конфликта — обычный локальный writer и
+		// обхода маршрута не наследует.
+		if err := store.ApplyReplicatedEntity(ctx, ent.Name, id, obj.Fields, ent, sourceRef); err != nil {
 			return err
 		}
 	}

@@ -14,6 +14,7 @@ type DSLPrintForm struct {
 	Name       string          // form name (filename without extension)
 	Document   string          // entity name (extracted from first comment line or directory)
 	Source     string          // raw .os source code
+	Path       string          // path to the .os file (empty for forms built in memory)
 	Layout     *LayoutTemplate // associated макет template (optional)
 	LayoutPath string          // path to .layout.yaml file (empty if no layout)
 }
@@ -114,6 +115,7 @@ func LoadDir(dir string) ([]*PrintForm, []*DSLPrintForm, []*LayoutForm, error) {
 				Name:       strings.TrimSuffix(name, ".os"),
 				Document:   docName,
 				Source:     src,
+				Path:       filepath.Join(dir, name),
 				Layout:     lt2,
 				LayoutPath: ltPath2,
 			})
@@ -149,6 +151,7 @@ func loadSubdir(dir, folder string) ([]*DSLPrintForm, []*LayoutForm, error) {
 				Name:       strings.TrimSuffix(siName, ".os"),
 				Document:   docName,
 				Source:     src,
+				Path:       filepath.Join(dir, folder, siName),
 				Layout:     lt,
 				LayoutPath: ltPath,
 			})
@@ -186,8 +189,21 @@ func loadLayoutForm(path, folderDoc string) (*LayoutForm, error) {
 	}, nil
 }
 
+// bindingPrefixes — префиксы первой строки-комментария .os-формы, задающие
+// сущность-источник. Печатная форма привязывается не только к документу: тем же
+// движком печатается справочник (см. DEVELOPER.md, «документ/справочник-
+// источник»), поэтому «// Справочник: Клиент» обязан работать наравне с
+// «// Документ: …». Раньше распознавался только документ, а форма справочника с
+// естественным для пользователя комментарием молча получала пустую привязку и
+// не показывалась ни на одной карточке (discussion #757).
+var bindingPrefixes = []string{
+	"Документ:", "Справочник:", "Объект:", "Источник:",
+	"Document:", "Catalog:", "Object:", "Source:",
+}
+
 // extractDocument tries to extract the entity name from the first comment line
-// like "// Документ: Счёт" or "// Document: Invoice". Falls back to folderName.
+// like "// Документ: Счёт", "// Справочник: Клиент" or "// Document: Invoice".
+// Сравнение префикса регистронезависимо — как и весь DSL. Falls back to folderName.
 func extractDocument(src, folderName string) string {
 	for _, line := range strings.Split(src, "\n") {
 		line = strings.TrimSpace(line)
@@ -198,9 +214,9 @@ func extractDocument(src, folderName string) string {
 			break
 		}
 		comment := strings.TrimSpace(strings.TrimPrefix(line, "//"))
-		for _, prefix := range []string{"Документ:", "Document:", "документ:"} {
-			if strings.HasPrefix(comment, prefix) {
-				return strings.TrimSpace(strings.TrimPrefix(comment, prefix))
+		for _, prefix := range bindingPrefixes {
+			if rest, ok := cutPrefixFold(comment, prefix); ok {
+				return strings.TrimSpace(rest)
 			}
 		}
 	}

@@ -56,6 +56,19 @@ type rawIndex struct {
 	Unique bool     `yaml:"unique"`
 }
 
+type rawStageTransition struct {
+	From string   `yaml:"from"`
+	To   []string `yaml:"to"`
+}
+
+type rawStages struct {
+	Field        string               `yaml:"field"`
+	Order        []string             `yaml:"order"`
+	Transitions  []rawStageTransition `yaml:"transitions"`
+	DeadlineDays map[string]int       `yaml:"deadline_days"`
+	Enforce      string               `yaml:"enforce"`
+}
+
 type rawEntity struct {
 	Name               string            `yaml:"name"`
 	Title              string            `yaml:"title"`
@@ -86,6 +99,8 @@ type rawEntity struct {
 	// Search — тоже указатель: отсутствие ключа (умолчание: все строковые
 	// реквизиты) надо отличать от явного `search_fields: []` (поиск выключен).
 	Search *[]string `yaml:"search_fields"`
+	// Stages — этапы объекта (план 121).
+	Stages *rawStages `yaml:"stages"`
 }
 
 type rawDetailPanel struct {
@@ -207,6 +222,34 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	if raw.Search != nil {
 		e.Search = trimStringList(*raw.Search)
 		e.SearchSet = true
+	}
+	if raw.Stages != nil {
+		st := &Stages{
+			Field:   strings.TrimSpace(raw.Stages.Field),
+			Order:   trimStringList(raw.Stages.Order),
+			Enforce: strings.ToLower(strings.TrimSpace(raw.Stages.Enforce)),
+		}
+		if st.Enforce == "" {
+			st.Enforce = StageEnforceWarn
+		}
+		for _, tr := range raw.Stages.Transitions {
+			from := strings.TrimSpace(tr.From)
+			to := trimStringList(tr.To)
+			if from == "" && len(to) == 0 {
+				continue
+			}
+			st.Transitions = append(st.Transitions, StageTransition{From: from, To: to})
+		}
+		for stage, days := range raw.Stages.DeadlineDays {
+			if stage = strings.TrimSpace(stage); stage == "" {
+				continue
+			}
+			if st.DeadlineDays == nil {
+				st.DeadlineDays = make(map[string]int, len(raw.Stages.DeadlineDays))
+			}
+			st.DeadlineDays[stage] = days
+		}
+		e.Stages = st
 	}
 	if raw.Numerator != nil {
 		n := &Numerator{

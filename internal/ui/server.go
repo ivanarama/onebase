@@ -365,6 +365,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/inforeg/{name}/new", s.infoRegForm)
 	r.Post("/ui/inforeg/{name}/new", s.infoRegSubmit)
 	r.Post("/ui/inforeg/{name}/delete", s.infoRegDelete)
+	// Этапы (план 121): «где застряло» — сводка по объявленным маршрутам.
+	r.Get("/ui/stages", s.stagesReport)
+	r.Get("/ui/stages/{entity}", s.stagesReport)
 	r.Get("/ui/report/{name}", s.reportForm)
 	r.Post("/ui/report/{name}", s.reportRun)
 	r.Post("/ui/report/{name}/settings/save", s.reportSettingsSave)
