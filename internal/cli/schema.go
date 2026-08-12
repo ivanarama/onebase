@@ -192,10 +192,12 @@ func allSchemas() map[string]map[string]any {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"prefix": stringSchema("Префикс номера"),
-						"length": map[string]any{"type": "integer", "minimum": 1},
-						"period": stringSchema("year|month|none"),
-						"scope":  stringSchema("Поле области нумерации"),
+						"prefix":      stringSchema("Префикс номера/кода; поддерживает маски даты {YYYY}, {YY}, {MM}, {DD}"),
+						"length":      map[string]any{"type": "integer", "minimum": 1},
+						"period":      stringSchema("year|month|day|none (у справочника — none)"),
+						"scope":       stringSchema("Поле области нумерации"),
+						"base_prefix": map[string]any{"type": "boolean", "description": "Подставлять префикс этой базы (для обмена между базами)"},
+						"unique":      map[string]any{"type": "boolean", "description": "Требовать уникальность кода/номера"},
 					},
 				},
 				"predefined": arrayOf(map[string]any{

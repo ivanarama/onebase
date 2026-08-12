@@ -32,10 +32,12 @@ type rawTablePart struct {
 }
 
 type rawNumerator struct {
-	Prefix string `yaml:"prefix"`
-	Length int    `yaml:"length"`
-	Period string `yaml:"period"`
-	Scope  string `yaml:"scope"`
+	Prefix     string `yaml:"prefix"`
+	Length     int    `yaml:"length"`
+	Period     string `yaml:"period"`
+	Scope      string `yaml:"scope"`
+	BasePrefix bool   `yaml:"base_prefix"`
+	Unique     bool   `yaml:"unique"`
 }
 
 type rawPredefined struct {
@@ -196,17 +198,20 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	}
 	if raw.Numerator != nil {
 		n := &Numerator{
-			Prefix: raw.Numerator.Prefix,
-			Length: raw.Numerator.Length,
-			Period: raw.Numerator.Period,
-			Scope:  raw.Numerator.Scope,
+			Prefix:     raw.Numerator.Prefix,
+			Length:     raw.Numerator.Length,
+			Period:     raw.Numerator.Period,
+			Scope:      raw.Numerator.Scope,
+			BasePrefix: raw.Numerator.BasePrefix,
+			Unique:     raw.Numerator.Unique,
 		}
 		if n.Length <= 0 {
 			n.Length = 8
 		}
-		if n.Period == "" {
-			n.Period = "year"
-		}
+		// Умолчание периода зависит от вида: у документа номера принято
+		// начинать заново каждый год, у справочника код живёт с элементом всю
+		// жизнь — сброс там означал бы выдачу уже занятого кода.
+		n.Period = n.PeriodOrDefault(kind)
 		e.Numerator = n
 	}
 	for _, rf := range raw.Fields {
@@ -226,6 +231,27 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		}
 		if !hasNumber {
 			e.Fields = append([]Field{{Name: "Номер", Type: FieldTypeString}}, e.Fields...)
+		}
+	}
+	// «Код» справочника — ровно та же история (план 117B, issue #658). До этого
+	// блок numerator: у справочника ПАРСИЛСЯ И МОЛЧА НИЧЕГО НЕ ДЕЛАЛ: объявил —
+	// а кода нет и автонумерации нет. Синтезируем поле с устойчивым ID, чтобы
+	// переименование пользовательского «Кода» не выглядело для миграции как
+	// «удалить старое и завести новое пустое».
+	if kind == KindCatalog && e.Numerator != nil {
+		hasCode := false
+		for _, f := range e.Fields {
+			if strings.EqualFold(f.Name, StandardCodeField) {
+				hasCode = true
+				break
+			}
+		}
+		if !hasCode {
+			e.Fields = append([]Field{{
+				ID:   StandardCodeFieldID,
+				Name: StandardCodeField,
+				Type: FieldTypeString,
+			}}, e.Fields...)
 		}
 	}
 	for _, ri := range raw.Indexes {
