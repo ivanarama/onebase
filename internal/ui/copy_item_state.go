@@ -199,7 +199,7 @@ func (s *Server) restoreManagedCopyState(
 	objectFields map[string]any,
 	tablePartRows map[string][]map[string]any,
 ) bool {
-	sourceID := strings.TrimSpace(r.FormValue(copySourceFormField))
+	sourceID := strings.TrimSpace(r.FormValue(copySourceFormField)) //nolint:gosec // G120: submit ставит MaxBytesReader и parseSubmitForm уже выполнил ограниченный ParseForm
 	if sourceID == "" {
 		return false
 	}
@@ -306,7 +306,7 @@ func copySourceIDForRender(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if value := strings.TrimSpace(r.FormValue(copySourceFormField)); value != "" {
+	if value := strings.TrimSpace(r.FormValue(copySourceFormField)); value != "" { //nolint:gosec // G120: рендер читает уже ограниченную/разобранную форму либо GET без тела
 		return value
 	}
 	return strings.TrimSpace(r.URL.Query().Get("copy"))
