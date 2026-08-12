@@ -542,6 +542,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["IsAdmin"]; !ok {
 		data["IsAdmin"] = s.isAdmin(r)
 	}
+	// HasStages — в конфигурации есть хотя бы один объявленный маршрут этапов
+	// (план 121). Без него пункт меню «где застряло» вёл бы на пустую страницу.
+	if _, ok := data["HasStages"]; !ok {
+		data["HasStages"] = s.hasStages()
+	}
 	// Строка глобального поиска в шапке есть на каждой странице (план 82);
 	// на самой странице результатов она сохраняет введённый запрос.
 	if _, ok := data["SearchQuery"]; !ok {

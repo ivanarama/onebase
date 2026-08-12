@@ -224,6 +224,16 @@ func scanProjectImpact(root, object, field string) []impactMatch {
 				out = append(out, impactMatch{File: file, Kind: "based-on", Snippet: e.Name + " based_on " + object})
 			}
 		}
+		// Реквизит, ведущий этапы (план 121): его переименование или смена типа
+		// рушит объявленный маршрут — гейт переходов перестанет находить поле, а
+		// накопленная история окажется привязана к несуществующему реквизиту.
+		if e.Stages != nil && object != "" && field != "" && eq(e.Name, object) && eq(e.Stages.Field, field) {
+			out = append(out, impactMatch{
+				File:    file,
+				Kind:    "stages-field",
+				Snippet: e.Name + ": реквизит ведёт этапы (stages.field), маршрут — " + strings.Join(e.Stages.Order, " → "),
+			})
+		}
 	}
 	opts := querylang.CompileOpts{
 		Entities:    proj.Entities,

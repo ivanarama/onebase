@@ -66,6 +66,20 @@ type descForm struct {
 	Events     map[string]string `json:"events,omitempty"`
 }
 
+// descStages — блок `stages` сущности в выдаче describe.
+type descStages struct {
+	Field        string                `json:"field"`
+	Order        []string              `json:"order"`
+	Transitions  []descStageTransition `json:"transitions,omitempty"`
+	DeadlineDays map[string]int        `json:"deadlineDays,omitempty"`
+	Enforce      string                `json:"enforce"`
+}
+
+type descStageTransition struct {
+	From string   `json:"from"`
+	To   []string `json:"to"`
+}
+
 type descEntity struct {
 	Name         string          `json:"name"`
 	Title        string          `json:"title,omitempty"`
@@ -75,10 +89,14 @@ type descEntity struct {
 	Fields       []descField     `json:"fields"`
 	TableParts   []descTablePart `json:"tableParts,omitempty"`
 	BasedOn      []string        `json:"basedOn,omitempty"`
-	ListForm     []string        `json:"listForm,omitempty"`
-	ItemForm     []string        `json:"itemForm,omitempty"`
-	Forms        []descForm      `json:"forms,omitempty"`
-	Source       *descSource     `json:"source,omitempty"`
+	// Stages — объявленный маршрут этапов (план 121). Без него ИИ-помощник и
+	// внешние инструменты не видят ни порядка состояний, ни правил перехода —
+	// и предлагают менять этап присваиванием, которое гейт отвергнет.
+	Stages   *descStages `json:"stages,omitempty"`
+	ListForm []string    `json:"listForm,omitempty"`
+	ItemForm []string    `json:"itemForm,omitempty"`
+	Forms    []descForm  `json:"forms,omitempty"`
+	Source   *descSource `json:"source,omitempty"`
 }
 
 type descRegister struct {
@@ -355,6 +373,7 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 			ItemForm: e.ItemForm,
 			Forms:    toDescForms(e.Forms),
 			Source:   src.yaml(subdir, e.Name),
+			Stages:   toDescStages(e.Stages),
 		}
 		for _, tp := range e.TableParts {
 			de.TableParts = append(de.TableParts, descTablePart{Name: tp.Name, Fields: toDescFields(tp.Fields)})
@@ -694,4 +713,21 @@ func topLevelYAMLName(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(v.Name)
+}
+
+// toDescStages переносит объявленный маршрут этапов в выдачу describe.
+func toDescStages(s *metadata.Stages) *descStages {
+	if s == nil {
+		return nil
+	}
+	out := &descStages{
+		Field:        s.Field,
+		Order:        s.Order,
+		DeadlineDays: s.DeadlineDays,
+		Enforce:      s.Enforce,
+	}
+	for _, tr := range s.Transitions {
+		out.Transitions = append(out.Transitions, descStageTransition{From: tr.From, To: tr.To})
+	}
+	return out
 }
