@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -66,9 +67,15 @@ func (p *infoRegProxy) CallMethod(method string, args []any) any {
 				": регистр подчинён регистратору, пишите движениями в ОбработкаПроведения документа")
 		}
 		return newInfoRegRecord(p.s, p.ctxSrc, p.ir)
+	case "создатьнаборзаписей", "createrecordset":
+		if p.ir.Recorder {
+			interpreter.RaiseUserError("РегистрыСведений." + p.ir.Name +
+				": регистр подчинён регистратору, пишите движениями в ОбработкаПроведения документа")
+		}
+		return newInfoRegRecordSet(p.s, p.ctxSrc, p.ir)
 	}
 	interpreter.RaiseUserError("РегистрыСведений." + p.ir.Name + ": неизвестный метод «" + method +
-		"» (доступен СоздатьМенеджерЗаписи)")
+		"» (доступны СоздатьМенеджерЗаписи, СоздатьНаборЗаписей)")
 	return nil
 }
 
@@ -240,4 +247,205 @@ func infoRegField(ir *metadata.InfoRegister, name string) *metadata.Field {
 func isPeriodName(name string) bool {
 	low := strings.ToLower(name)
 	return low == "период" || low == "period"
+}
+
+// ─── Набор записей (план 119B) ────────────────────────────────────────────────
+//
+//	Набор = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+//	Набор.Отбор.Узел = Узел;      // отбор — только по измерениям
+//	Набор.Прочитать();            // текущее содержимое по отбору
+//	Набор.Очистить();
+//	Стр = Набор.Добавить();
+//	Стр.Узел = Узел;
+//	Стр.Событие = "Старт";
+//	Набор.Записать();             // замещает содержимое по отбору
+//
+// «Записать» — это «удалить по отбору и вставить накопленное», одной
+// транзакцией. Так же ведёт себя набор записей в 1С, и так же это спасает от
+// полузаписи: сбой на середине откатывает всё, а не оставляет регистр с
+// половиной старых и половиной новых строк.
+//
+// Отбор обязателен. Запись набора без отбора означала бы «снести регистр
+// целиком» — самая дорогая опечатка из возможных.
+
+type infoRegRecordSet struct {
+	s      *Server
+	ctxSrc docsCtxSource
+	ir     *metadata.InfoRegister
+	filter *infoRegFilter
+	rows   []map[string]any
+}
+
+func newInfoRegRecordSet(s *Server, ctxSrc docsCtxSource, ir *metadata.InfoRegister) *infoRegRecordSet {
+	return &infoRegRecordSet{s: s, ctxSrc: ctxSrc, ir: ir, filter: &infoRegFilter{ir: ir, values: map[string]any{}}}
+}
+
+func (rs *infoRegRecordSet) ctx() context.Context {
+	if rs.ctxSrc != nil {
+		return rs.ctxSrc.Ctx()
+	}
+	return context.Background()
+}
+
+func (rs *infoRegRecordSet) Get(name string) any {
+	if strings.EqualFold(name, "Отбор") || strings.EqualFold(name, "Filter") {
+		return rs.filter
+	}
+	return nil
+}
+
+func (rs *infoRegRecordSet) Set(string, any) {}
+
+func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
+	switch strings.ToLower(method) {
+	case "прочитать", "read":
+		f := rs.regFilter()
+		rows, err := rs.s.store.InfoRegList(rs.ctx(), rs.ir, f)
+		if err != nil {
+			interpreter.RaiseUserError("Прочитать(" + rs.ir.Name + "): " + err.Error())
+		}
+		rs.rows = rows
+		return float64(len(rows))
+	case "очистить", "clear":
+		rs.rows = nil
+		return nil
+	case "добавить", "add":
+		row := map[string]any{}
+		// Значения отбора проставляются сразу: строка набора вне своего отбора
+		// не имеет смысла, а забытое измерение дало бы запись с пустым ключом.
+		for name, v := range rs.filter.values {
+			row[name] = v
+		}
+		rs.rows = append(rs.rows, row)
+		return &interpreter.MapThis{M: row}
+	case "количество", "count":
+		return float64(len(rs.rows))
+	case "записать", "write":
+		rs.write()
+		return nil
+	}
+	interpreter.RaiseUserError("НаборЗаписей(" + rs.ir.Name + "): неизвестный метод «" + method +
+		"» (доступны Прочитать, Очистить, Добавить, Количество, Записать)")
+	return nil
+}
+
+// write замещает содержимое по отбору: удаление и вставка в одной транзакции.
+func (rs *infoRegRecordSet) write() {
+	f := rs.regFilter()
+	allow := rs.access("write")
+	ctx := rs.ctx()
+
+	// Проверяем и то, что удаляем, и то, что пишем: строковая политика
+	// применяется к обеим сторонам замещения, иначе набором можно было бы
+	// снести чужие строки, не имея к ним доступа.
+	if allow != nil {
+		existing, err := rs.s.store.InfoRegList(ctx, rs.ir, f)
+		if err != nil {
+			interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+		}
+		for _, row := range existing {
+			if err := allow(ctx, row); err != nil {
+				interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+			}
+		}
+		for _, row := range rs.rows {
+			if err := allow(ctx, row); err != nil {
+				interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+			}
+		}
+	}
+
+	err := rs.s.store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		if err := rs.s.store.InfoRegDeleteByFilter(txCtx, rs.ir, f); err != nil {
+			return err
+		}
+		for _, row := range rs.rows {
+			dims := make(map[string]any, len(rs.ir.Dimensions))
+			res := make(map[string]any, len(rs.ir.Resources))
+			for _, d := range rs.ir.Dimensions {
+				dims[d.Name] = rowValueFold(row, d.Name)
+			}
+			for _, r := range rs.ir.Resources {
+				res[r.Name] = rowValueFold(row, r.Name)
+			}
+			period, err := infoRegRowPeriod(rs.ir, row)
+			if err != nil {
+				return err
+			}
+			if err := rs.s.store.InfoRegSet(txCtx, rs.ir, dims, res, period); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+	}
+}
+
+// regFilter переводит Отбор в storage.RegFilter. Пустой отбор отклоняется.
+func (rs *infoRegRecordSet) regFilter() storage.RegFilter {
+	dims := map[string]string{}
+	for name, v := range rs.filter.values {
+		dims[name] = fmt.Sprintf("%v", v)
+	}
+	if len(dims) == 0 {
+		interpreter.RaiseUserError("НаборЗаписей(" + rs.ir.Name +
+			"): не задан Отбор — запись набора без отбора снесла бы регистр целиком")
+	}
+	return storage.RegFilter{Dims: dims}
+}
+
+func (rs *infoRegRecordSet) access(op string) infoRegAccess {
+	rec := &infoRegRecord{s: rs.s, ctxSrc: rs.ctxSrc, ir: rs.ir}
+	return rec.access(op)
+}
+
+// infoRegFilter — объект Отбор набора записей. Принимает только измерения:
+// отбирать по ресурсу нельзя, ключ записи составляют измерения.
+type infoRegFilter struct {
+	ir     *metadata.InfoRegister
+	values map[string]any
+}
+
+func (f *infoRegFilter) Get(name string) any { return f.values[name] }
+
+func (f *infoRegFilter) Set(name string, v any) {
+	for i := range f.ir.Dimensions {
+		if strings.EqualFold(f.ir.Dimensions[i].Name, name) {
+			f.values[f.ir.Dimensions[i].Name] = v
+			return
+		}
+	}
+	interpreter.RaiseUserError("Отбор(" + f.ir.Name + "): «" + name +
+		"» не измерение регистра — отбирать можно только по измерениям")
+}
+
+// rowValueFold достаёт значение из строки без учёта регистра имени.
+func rowValueFold(row map[string]any, name string) any {
+	if v, ok := row[name]; ok {
+		return v
+	}
+	low := strings.ToLower(name)
+	for k, v := range row {
+		if strings.ToLower(k) == low {
+			return v
+		}
+	}
+	return nil
+}
+
+// infoRegRowPeriod достаёт период строки набора для периодического регистра.
+func infoRegRowPeriod(ir *metadata.InfoRegister, row map[string]any) (*time.Time, error) {
+	if !ir.Periodic {
+		return nil, nil
+	}
+	v := rowValueFold(row, "Период")
+	if v == nil {
+		v = rowValueFold(row, "period")
+	}
+	if t, ok := v.(time.Time); ok {
+		return &t, nil
+	}
+	return nil, fmt.Errorf("регистр сведений %s периодический: у строки набора не задан Период", ir.Name)
 }
