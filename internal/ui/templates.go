@@ -25,6 +25,12 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 }
 
 func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
+	translate := func(lang, key string) string {
+		if bundle != nil {
+			return bundle.T(lang, key)
+		}
+		return key
+	}
 	return template.FuncMap{
 		"lower": strings.ToLower,
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
@@ -72,12 +78,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// lucideIcon рендерит иконку навигации по имени Lucide ссылкой на общий
 		// спрайт /vendor/lucide/sprite.svg (планы 72/73).
 		"lucideIcon": LucideIcon,
-		"t": func(lang, key string) string {
-			if bundle != nil {
-				return bundle.T(lang, key)
-			}
-			return key
-		},
+		"t":          translate,
 		// refID extracts UUID from a *Ref (implements GetRefUUID), otherwise returns fmt.Sprintf.
 		// Used in TP row templates so the "selected" comparison works after enrichTPRowsWithRefs.
 		"refID": func(v any) string {
@@ -125,12 +126,21 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// пришлось бы заново проводить через права, строковые политики и маску.
 		"detailPanel": func(fields []metadata.Field, row map[string]any,
 			enumLabels map[string]map[string]string, lang string) string {
-			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang)
+			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang,
+				func(key string) string { return translate(lang, key) })
 		},
 		// detailPanelEntity — payload с учётом блока detail_panel: сущности.
 		"detailPanelEntity": func(e *metadata.Entity, row map[string]any,
 			enumLabels map[string]map[string]string, lang string) string {
-			return detailPanelForEntity(e, row, enumLabels, lang)
+			return detailPanelForEntity(e, row, enumLabels, lang,
+				func(key string) string { return translate(lang, key) })
+		},
+		"detailPanelDefaultWidth": func(value any) int {
+			entity, ok := value.(*metadata.Entity)
+			if !ok || entity == nil || entity.DetailPanel == nil {
+				return 0
+			}
+			return entity.DetailPanel.Width
 		},
 		"entityFields": func(e *metadata.Entity) []metadata.Field { return e.Fields },
 		// journalFields — колонки журнала как поля панели. Журнал сводит разные
@@ -145,8 +155,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return out
 		},
-		"inforegFields": func(ir *metadata.InfoRegister) []metadata.Field {
-			return append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)
+		"infoRegDetailPanel": func(ir *metadata.InfoRegister, row map[string]any, lang string) string {
+			periodTitle := "Период"
+			if bundle != nil {
+				periodTitle = bundle.T(lang, periodTitle)
+			}
+			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
+				func(key string) string { return translate(lang, key) })
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
@@ -931,7 +946,7 @@ body{padding-bottom:32px}
 }
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
 .view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
-.view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font-size:15px;line-height:1;background:#fff;border-right:1px solid #e2e8f0}
+.view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
 .view-switch .view-btn:last-child{border-right:none}
 .view-switch .view-btn:hover{background:#f1f5f9}
 .view-switch .view-btn.active{background:#3b82f6;color:#fff}
@@ -1237,7 +1252,7 @@ const tplIndex = `
 
 const tplList = `
 {{define "detail-panel"}}
-<aside class="ob-detail" id="ob-detail" hidden aria-label="{{t $.Lang "Детали записи"}}">
+<aside class="ob-detail" id="ob-detail" hidden data-ob-default-width="{{detailPanelDefaultWidth .Entity}}" aria-label="{{t $.Lang "Детали записи"}}">
   <div class="ob-detail-grip" data-ob-detail-grip title="{{t $.Lang "Потяните, чтобы изменить ширину"}}"></div>
   <div class="ob-detail-body">
     <div class="ob-detail-head">
@@ -1253,7 +1268,7 @@ const tplList = `
 
 {{define "detail-panel-toggle"}}
 <div class="view-switch">
-  <a class="view-btn" href="#" data-ob-detail-toggle title="{{t $.Lang "Детали записи"}}">▤</a>
+  <button class="view-btn" type="button" data-ob-detail-toggle aria-controls="ob-detail" aria-expanded="false" title="{{t $.Lang "Детали записи"}}">▤</button>
 </div>
 {{end}}
 
@@ -1392,7 +1407,8 @@ const tplList = `
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
+  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
   {{range $i, $col := $treeCols}}
     {{if treeColumn $treeCols $i}}
       <td>
@@ -1444,7 +1460,8 @@ const tplList = `
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">
+  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}
@@ -2651,7 +2668,7 @@ const tplInfoReg = `
   {{if .CanDelete}}<th></th>{{end}}
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr data-ob-list-row tabindex="-1" aria-selected="false"
-  data-ob-detail='{{detailPanel (inforegFields $.InfoReg) $row nil $.Lang}}'>
+  data-ob-detail='{{infoRegDetailPanel $.InfoReg $row $.Lang}}'>
   {{if $.InfoReg.Periodic}}<td>{{index $row "period"}}</td>{{end}}
   {{range $.InfoReg.Dimensions}}<td>{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
   {{range $.InfoReg.Resources}}<td style="font-weight:600">{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
@@ -2872,8 +2889,7 @@ const tplJournal = `
 </tr></thead>
 <tbody>
 {{range .Rows}}{{$row := .}}
-<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-journal-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}"
-  data-ob-list-row tabindex="-1" aria-selected="false"
+<tr style="cursor:pointer;{{journalRowStyle .}}" data-ob-list-row tabindex="-1" aria-selected="false"
   data-open-url="/ui/document/{{lower (str (index . "_doc_kind"))}}/{{str (index . "id")}}"
   data-ob-detail='{{detailPanel (journalFields $.Journal) $row nil $.Lang}}'>
   <td style="{{journalCellStyle $row "_doc_kind"}}">{{index . "_doc_kind"}}</td>

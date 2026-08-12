@@ -858,6 +858,7 @@ type treeChildRow struct {
 	ActivityInactive bool     `json:"activity_inactive"`
 	TreeCell         int      `json:"tree_cell"`
 	Cells            []string `json:"cells"`
+	Detail           string   `json:"detail,omitempty"`
 	OpenURL          string   `json:"open_url"`
 	CopyURL          string   `json:"copy_url"`
 	FolderURL        string   `json:"folder_url"`
@@ -941,7 +942,8 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 			break
 		}
 	}
-	enumLabels := s.buildEnumLabels(entity, s.resolveLang(r))
+	lang := s.resolveLang(r)
+	enumLabels := s.buildEnumLabels(entity, lang)
 	base := "/ui/" + strings.ToLower(string(entity.Kind)) + "/" + strings.ToLower(entity.Name)
 	subsystem := strings.TrimSpace(r.URL.Query().Get("subsystem"))
 	subQS := ""
@@ -983,15 +985,17 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 			ActivityInactive: asBool(row["_activity_inactive"]),
 			TreeCell:         treeCell,
 			Cells:            cells,
-			OpenURL:          openURL,
-			CopyURL:          copyURL,
-			FolderURL:        folderURL,
-			MarkURL:          base + "/" + url.PathEscape(id) + "/delete?mark=1",
-			DeleteURL:        base + "/" + url.PathEscape(id) + "/delete",
-			UnpostURL:        base + "/" + url.PathEscape(id) + "/unpost",
-			UnmarkURL:        base + "/" + url.PathEscape(id) + "/delete?mark=0",
-			ActivityHideURL:  base + "/" + url.PathEscape(id) + "/activity?active=0",
-			ActivityShowURL:  base + "/" + url.PathEscape(id) + "/activity?active=1",
+			Detail: detailPanelForEntity(entity, row, enumLabels, lang,
+				func(key string) string { return s.tr(lang, key) }),
+			OpenURL:         openURL,
+			CopyURL:         copyURL,
+			FolderURL:       folderURL,
+			MarkURL:         base + "/" + url.PathEscape(id) + "/delete?mark=1",
+			DeleteURL:       base + "/" + url.PathEscape(id) + "/delete",
+			UnpostURL:       base + "/" + url.PathEscape(id) + "/unpost",
+			UnmarkURL:       base + "/" + url.PathEscape(id) + "/delete?mark=0",
+			ActivityHideURL: base + "/" + url.PathEscape(id) + "/activity?active=0",
+			ActivityShowURL: base + "/" + url.PathEscape(id) + "/activity?active=1",
 		})
 	}
 	return out

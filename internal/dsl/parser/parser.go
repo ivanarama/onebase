@@ -488,9 +488,27 @@ func (p *Parser) parseExprOrAssign() (ast.Stmt, error) {
 	return &ast.ExprStmt{X: left}, nil
 }
 
-// ParseExpr parses a standalone expression. Exported for the debugger console.
+// ParseExpr parses an expression at the current position. It does not require
+// EOF because callers may use it before a delimiter in a larger construct.
 func (p *Parser) ParseExpr() (ast.Expr, error) {
 	return p.parseExpr()
+}
+
+// ParseStandaloneExpr parses exactly one expression. A single trailing
+// semicolon is accepted for convenience, but any other token after the
+// expression is an error. ParseExpr intentionally remains non-strict because
+// the parser also uses expressions before delimiters inside larger constructs.
+func (p *Parser) ParseStandaloneExpr() (ast.Expr, error) {
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	p.consumeSemi()
+	if p.cur.Type != token.EOF {
+		return nil, fmt.Errorf("%s:%d:%d: unexpected trailing token %q after expression",
+			p.cur.File, p.cur.Line, p.cur.Col, p.cur.Literal)
+	}
+	return expr, nil
 }
 
 // parseExpr parses a full expression (conditions, right-hand of assignments).

@@ -628,5 +628,8 @@
   "Настройки агента оборудования": "Paramètres de l'agent d'équipement",
   "Свёртка базы": "Consolidation de la base",
   "Диагностика базы": "Diagnostic de la base",
-  "Скопировать": "Copier"
+  "Скопировать": "Copier",
+  "Основное": "Général",
+  "Изображения": "Images",
+  "Описание": "Description"
 }

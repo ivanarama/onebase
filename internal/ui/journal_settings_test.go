@@ -95,10 +95,13 @@ func TestJournalSettingsPanelRender(t *testing.T) {
 		t.Fatalf("execute page-journal: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{`data-block="journal-settings"`, `name="__journal_settings"`, `id="jl-columns"`, `data-field="Номер"`, `data-ob-jl-before-submit`, `data-ob-jl-move="-1"`, `data-ob-journal-open-url="/ui/document/%d0%b4%d0%be%d0%ba/1"`, "изменено"} {
+	for _, want := range []string{`data-block="journal-settings"`, `name="__journal_settings"`, `id="jl-columns"`, `data-field="Номер"`, `data-ob-jl-before-submit`, `data-ob-jl-move="-1"`, `data-open-url="/ui/document/%d0%b4%d0%be%d0%ba/1"`, "изменено"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("journal settings panel missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "data-ob-journal-open-url") {
+		t.Fatalf("journal row still opts into single-click navigation:\n%s", out)
 	}
 	for _, old := range []string{
 		`onsubmit="return jlBeforeSubmit(event)"`,
