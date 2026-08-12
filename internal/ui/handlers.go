@@ -511,6 +511,12 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["Cfg"]; !ok {
 		data["Cfg"] = s.cfg
 	}
+	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
+	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам
+	// и не теряя при этом чужие параметры вроде q.
+	if _, ok := data["Query"]; !ok && r != nil {
+		data["Query"] = r.URL.Query()
+	}
 	if _, ok := data["Lang"]; !ok {
 		data["Lang"] = s.resolveLang(r)
 	}

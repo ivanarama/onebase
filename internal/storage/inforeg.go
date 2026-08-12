@@ -459,3 +459,23 @@ func (db *DB) infoRegScan(ctx context.Context, ir *metadata.InfoRegister, sql st
 	}
 	return result, nil
 }
+
+// InfoRegDeleteByFilter удаляет строки регистра сведений по ОТБОРУ (подмножеству
+// измерений и, для периодического регистра, диапазону периода). Нужен набору
+// записей: «записать набор» — это заместить содержимое по отбору, то есть
+// удалить старое и вставить накопленное одной транзакцией.
+//
+// Пустой отбор отклоняется намеренно. `Набор.Записать()` без отбора означал бы
+// «снести регистр целиком и положить пару строк» — самая дорогая опечатка из
+// возможных, и заметили бы её не сразу.
+func (db *DB) InfoRegDeleteByFilter(ctx context.Context, ir *metadata.InfoRegister, f RegFilter) error {
+	if f.IsEmpty() {
+		return fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
+	}
+	where, args := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if where == "" {
+		return fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
+	}
+	sql := fmt.Sprintf("DELETE FROM %s WHERE %s", metadata.InfoRegTableName(ir.Name), where)
+	return db.exec(ctx, sql, args...)
+}

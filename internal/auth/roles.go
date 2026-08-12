@@ -110,6 +110,26 @@ func PermissionHas(p Permission, kind, entity, op string) bool {
 	return false
 }
 
+// PermissionKindFromKey возвращает канонический вид объекта прав ("catalog",
+// "document", "register", "inforeg", "report", "processor") по ключу секции в
+// YAML/JSON, понимая синонимы и русские написания. Пустая строка — ключ не
+// является секцией прав.
+//
+// Нужен редакторам ролей вне пакета: чтобы переписать секцию в существующем
+// файле, её надо сначала опознать под тем именем, которым её назвал автор.
+func PermissionKindFromKey(key string) string { return permissionKindFromKey(key) }
+
+// IsPermissionWrapperKey сообщает, что ключ открывает вложенный контейнер
+// прав (permissions/policies/права и поддерживаемые синонимы). Редакторы YAML
+// должны обходить такие контейнеры тем же способом, что и runtime parser.
+func IsPermissionWrapperKey(key string) bool { return permissionWrapperKey(key) }
+
+// SplitPermissionOps разбирает запись операций роли: список «read, write» в
+// одной строке раскладывается на отдельные операции, регистр приводится к
+// нижнему. Экспортирован по той же причине, что и PermissionKindFromKey —
+// внешний редактор обязан читать права ровно так же, как рантайм.
+func SplitPermissionOps(raw string) []string { return splitPermissionOps(raw) }
+
 func permissionOpMatches(allowed, op string) bool {
 	for _, item := range splitPermissionOps(allowed) {
 		if strings.EqualFold(item, op) {
@@ -464,9 +484,21 @@ func LoadRoleFile(path string) (*Role, error) {
 	if err != nil {
 		return nil, err
 	}
+	role, err := ParseRole(data)
+	if err != nil {
+		return nil, fmt.Errorf("auth: parse role %s: %w", filepath.Base(path), err)
+	}
+	return role, nil
+}
+
+// ParseRole разбирает YAML роли из памяти — для редакторов, которые держат
+// содержимое файла в руках (конфигуратор пишет роль и тут же синхронизирует её
+// в таблицу _roles: разбирать надо ровно то, что записано, иначе живая роль
+// разойдётся с файлом).
+func ParseRole(data []byte) (*Role, error) {
 	var role Role
 	if err := yaml.Unmarshal(data, &role); err != nil {
-		return nil, fmt.Errorf("auth: parse role %s: %w", filepath.Base(path), err)
+		return nil, err
 	}
 	return &role, nil
 }
