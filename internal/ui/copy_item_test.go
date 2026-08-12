@@ -207,6 +207,35 @@ func TestApplyCopyFromQuery_OnReadAtServerDeniesWithoutLeak(t *testing.T) {
 	}
 }
 
+func TestManagedCopySubmitRechecksOnReadAtServer(t *testing.T) {
+	s, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьДоступ()
+	ВызватьИсключение("Доступ отозван после открытия формы");
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventOnReadAtServer: "ПроверитьДоступ",
+	}, []*metadata.FormElement{{
+		Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование",
+	}})
+	sourceID := insertContragent(t, s, ent, "SOURCE-MUST-NOT-BE-COPIED")
+	request := reqWithChi(http.MethodPost, "/ui/catalog/"+ent.Name+"/new", url.Values{
+		copySourceFormField: {sourceID.String()},
+		"Наименование":      {"FORGED-CLONE"},
+	}, map[string]string{"entity": ent.Name})
+	recorder := httptest.NewRecorder()
+	s.submit(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("POST must recheck ПриЧтенииНаСервере: got %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	rows, err := s.store.List(context.Background(), ent.Name, ent, storage.ListParams{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("denied POST created a clone: %#v", rows)
+	}
+}
+
 func TestManagedCopyPreservesCanonicalReadonlyAndUnplacedState(t *testing.T) {
 	doc := &metadata.Entity{
 		Name: "ЗаказКопия", Kind: metadata.KindDocument,
