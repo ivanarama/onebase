@@ -1250,5 +1250,8 @@
   "Неподдерживаемый формат полной резервной копии": "Unsupported full-backup format",
   "старый бинарный .obz не содержит внешние файлы и не может быть безопасно восстановлен как полный снимок; извлеките database.db/database.sql.gz и восстановите его как обычный бэкап": "A legacy binary .obz omits external files and cannot safely be restored as a complete snapshot; extract database.db/database.sql.gz and restore it as a regular backup.",
   "Восстановление отменено: информационная база была удалена или изменена; повторите запрос": "Restore was canceled because the information base was removed or changed; try again.",
-  "Восстановление отменено: параметры информационной базы изменились; повторите запрос": "Restore was canceled because the information-base settings changed; try again."
+  "Восстановление отменено: параметры информационной базы изменились; повторите запрос": "Restore was canceled because the information-base settings changed; try again.",
+  "Основное": "General",
+  "Изображения": "Images",
+  "Описание": "Description"
 }

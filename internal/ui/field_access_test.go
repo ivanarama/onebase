@@ -337,6 +337,47 @@ func uiMaskUser(ops []string, fields auth.FieldPolicies) *auth.User {
 	}
 }
 
+// Public HTTP acceptance for the explicit composition boundary. Calling the
+// payload helper with a pre-masked map is insufficient: the list handler must
+// apply field_access before the template serializes data-ob-detail.
+func TestUI_EntityList_ExplicitDetailPanelCannotBypassFieldAccess(t *testing.T) {
+	cat := uiClientEntity()
+	cat.DetailPanel = &metadata.DetailPanel{Tabs: []metadata.DetailPanelTab{{
+		Name: "Контакты", Fields: []string{"Телефон", "Адрес"},
+	}}}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{cat})
+	const phone = "+79161234455"
+	const address = "Москва, Тверская 1"
+	if err := s.store.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+		"Наименование": "Иванов", "Телефон": phone, "Адрес": address,
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+	user := uiMaskUser([]string{"read"}, auth.FieldPolicies{
+		"Телефон": {Read: "hide"},
+		"Адрес":   {Read: "mask_all"},
+	})
+	req := reqWithChi(http.MethodGet, "/ui/catalog/"+cat.Name, nil,
+		map[string]string{"kind": "catalog", "entity": cat.Name})
+	req = req.WithContext(auth.ContextWithUser(req.Context(), user))
+	rec := httptest.NewRecorder()
+	s.list(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	page := rec.Body.String()
+	if strings.Contains(page, phone) || strings.Contains(page, address) {
+		t.Fatalf("raw protected value reached list/detail HTML: %s", page)
+	}
+	panel := firstDetailPanelData(t, page)
+	if _, ok := detailPanelValueByLabel(panel, "Телефон"); ok {
+		t.Fatalf("explicitly listed hidden field was resurrected: %+v", panel)
+	}
+	if got, ok := detailPanelValueByLabel(panel, "Адрес"); !ok || got != "••••••" {
+		t.Fatalf("explicitly listed masked field = %q, %v; panel=%+v", got, ok, panel)
+	}
+}
+
 // План 88E: защищённое поле в простой колонке выборки маскируется в результате
 // (в т.ч. под алиасом КАК и в проекции «*»), а поле, участвующее в отборе,
 // группировке или агрегате, по-прежнему закрывает запрос целиком — маска на

@@ -25,6 +25,12 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 }
 
 func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
+	translate := func(lang, key string) string {
+		if bundle != nil {
+			return bundle.T(lang, key)
+		}
+		return key
+	}
 	return template.FuncMap{
 		"lower": strings.ToLower,
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
@@ -71,12 +77,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"add":           func(a, b int) int { return a + b },
 		// lucideIcon рендерит инлайн-SVG иконки навигации по имени Lucide (план 72).
 		"lucideIcon": LucideIcon,
-		"t": func(lang, key string) string {
-			if bundle != nil {
-				return bundle.T(lang, key)
-			}
-			return key
-		},
+		"t":          translate,
 		// refID extracts UUID from a *Ref (implements GetRefUUID), otherwise returns fmt.Sprintf.
 		// Used in TP row templates so the "selected" comparison works after enrichTPRowsWithRefs.
 		"refID": func(v any) string {
@@ -124,12 +125,21 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// пришлось бы заново проводить через права, строковые политики и маску.
 		"detailPanel": func(fields []metadata.Field, row map[string]any,
 			enumLabels map[string]map[string]string, lang string) string {
-			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang)
+			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang,
+				func(key string) string { return translate(lang, key) })
 		},
 		// detailPanelEntity — payload с учётом блока detail_panel: сущности.
 		"detailPanelEntity": func(e *metadata.Entity, row map[string]any,
 			enumLabels map[string]map[string]string, lang string) string {
-			return detailPanelForEntity(e, row, enumLabels, lang)
+			return detailPanelForEntity(e, row, enumLabels, lang,
+				func(key string) string { return translate(lang, key) })
+		},
+		"detailPanelDefaultWidth": func(value any) int {
+			entity, ok := value.(*metadata.Entity)
+			if !ok || entity == nil || entity.DetailPanel == nil {
+				return 0
+			}
+			return entity.DetailPanel.Width
 		},
 		"entityFields": func(e *metadata.Entity) []metadata.Field { return e.Fields },
 		// journalFields — колонки журнала как поля панели. Журнал сводит разные
@@ -149,7 +159,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			if bundle != nil {
 				periodTitle = bundle.T(lang, periodTitle)
 			}
-			return infoRegisterDetailPanelJSON(ir, row, lang, periodTitle)
+			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
+				func(key string) string { return translate(lang, key) })
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
@@ -1240,7 +1251,7 @@ const tplIndex = `
 
 const tplList = `
 {{define "detail-panel"}}
-<aside class="ob-detail" id="ob-detail" hidden aria-label="{{t $.Lang "Детали записи"}}">
+<aside class="ob-detail" id="ob-detail" hidden data-ob-default-width="{{detailPanelDefaultWidth .Entity}}" aria-label="{{t $.Lang "Детали записи"}}">
   <div class="ob-detail-grip" data-ob-detail-grip title="{{t $.Lang "Потяните, чтобы изменить ширину"}}"></div>
   <div class="ob-detail-body">
     <div class="ob-detail-head">
@@ -1395,7 +1406,7 @@ const tplList = `
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
+  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
   {{range $i, $col := $treeCols}}
     {{if treeColumn $treeCols $i}}
       <td>
@@ -1447,7 +1458,7 @@ const tplList = `
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
+  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}

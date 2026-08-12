@@ -491,6 +491,55 @@ func TestTreeChildrenJSON_ReturnsDirectChildren(t *testing.T) {
 	}
 }
 
+func TestTreeChildrenJSON_HonorsExplicitDetailPanel(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ent := &metadata.Entity{
+		Name: "Groups", Kind: metadata.KindCatalog, Hierarchical: true,
+		Fields: []metadata.Field{
+			{Name: "Name", Type: metadata.FieldTypeString},
+			{Name: "Secret", Type: metadata.FieldTypeString},
+		},
+		DetailPanel: &metadata.DetailPanel{Fields: []string{"Name"}, FieldsSet: true},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	parentID := uuid.New()
+	childID := uuid.New()
+	if err := db.Upsert(ctx, ent.Name, parentID, map[string]any{"Name": "Parent", "is_folder": true}, ent); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, ent.Name, childID, map[string]any{"Name": "Child", "Secret": "must-not-appear", "parent_id": parentID}, ent); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	s := &Server{reg: reg, store: db}
+	rec := serveTreeChildren(t, s, ent.Name, "parent="+url.QueryEscape(parentID.String())+"&depth=0", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got treeChildrenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Rows) != 1 {
+		t.Fatalf("decode rows: err=%v rows=%#v", err, got.Rows)
+	}
+	var panel detailPanelData
+	if err := json.Unmarshal([]byte(got.Rows[0].Detail), &panel); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := detailPanelValueByLabel(panel, "Name"); !ok {
+		t.Fatalf("explicit field missing: %+v", panel)
+	}
+	if _, ok := detailPanelValueByLabel(panel, "Secret"); ok {
+		t.Fatalf("lazy tree ignored explicit composition: %+v", panel)
+	}
+}
+
 func serveRefOptions(t *testing.T, s *Server, entity, query string, user *auth.User) *httptest.ResponseRecorder {
 	t.Helper()
 	target := "/ui/_ref-options/" + entity

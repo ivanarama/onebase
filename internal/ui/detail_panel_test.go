@@ -104,6 +104,24 @@ func TestDetailPanel_AutoLayout(t *testing.T) {
 	}
 }
 
+func TestDetailPanel_AutoTabTitlesUseResolvedLanguage(t *testing.T) {
+	ent := panelEntity()
+	row := map[string]any{"Артикул": "10041", "Фото": "img-1", "Описание": "text"}
+	translations := map[string]string{"Основное": "General", "Изображения": "Images", "Описание": "Description"}
+	raw := detailPanelJSON(ent.Fields, row, "", nil, "en", func(key string) string { return translations[key] })
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, tab := range data.Tabs {
+		titles = append(titles, tab.Title)
+	}
+	if got := strings.Join(titles, ","); got != "General,Images,Description" {
+		t.Fatalf("auto tab titles were not translated: %s", got)
+	}
+}
+
 // Пустой объект без реквизитов не даёт payload — нечего показывать.
 func TestDetailPanel_EmptyWithoutFields(t *testing.T) {
 	if got := detailPanelJSON(nil, map[string]any{}, "", nil, "ru"); got != "" {
@@ -145,6 +163,26 @@ func TestDetailPanel_RenderedOutsideLiveContainer(t *testing.T) {
 	}
 }
 
+func TestDetailPanel_ConfiguredDefaultWidthReachesClient(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Width: 444}
+	page := renderPageList(t, map[string]any{
+		"Entity": ent,
+		"Rows":   []map[string]any{{"id": "1", "Наименование": "Кресло"}},
+		"Params": storage.ListParams{}, "RefFilterOptions": map[string]any{},
+		"Lang": "ru", "Total": 1, "Page": 1, "TotalPages": 1,
+	})
+	if !strings.Contains(page, `data-ob-default-width="444"`) {
+		t.Fatalf("configured detail_panel.width did not reach HTML: %s", page)
+	}
+	js := string(uiJS)
+	for _, want := range []string{"data-ob-default-width", "saved === null ? configured : saved"} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("client does not apply configured default width: missing %q", want)
+		}
+	}
+}
+
 // Переключатель панели общий для таблицы, плитки и дерева, поэтому каждый вид
 // обязан нести один и тот же payload. До исправления атрибут был только у
 // обычной таблицы: в двух остальных режимах панель всегда писала «Выберите
@@ -178,6 +216,46 @@ func TestDetailPanel_AllEntityListModesCarryPayload(t *testing.T) {
 			panel := firstDetailPanelData(t, page)
 			if got, ok := detailPanelValueByLabel(panel, "Поставщик"); !ok || got != "ООО «Мебель»" {
 				t.Fatalf("payload %s-вида не содержит детали строки: %+v", tc.name, panel)
+			}
+		})
+	}
+}
+
+// Explicit detail_panel composition is an entity contract, not a peculiarity
+// of the ordinary table template. Tree, tile and lazily loaded tree rows must
+// use it too, otherwise switching view silently restores auto-layout.
+func TestDetailPanel_AllEntityListModesHonorExplicitComposition(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Fields: []string{"Артикул"}, FieldsSet: true}
+	row := map[string]any{
+		"id": "1", "Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО «Мебель»",
+		"_depth": 0,
+	}
+	base := map[string]any{
+		"Entity": ent, "Rows": []map[string]any{row}, "TreeRows": []map[string]any{row},
+		"Params": storage.ListParams{}, "RefFilterOptions": map[string]any{},
+		"Lang": "ru", "Total": 1, "Page": 1, "TotalPages": 1,
+	}
+	for _, tc := range []struct {
+		name string
+		set  func(map[string]any)
+	}{
+		{name: "table", set: func(map[string]any) {}},
+		{name: "tiles", set: func(data map[string]any) { data["TilesView"] = true }},
+		{name: "tree", set: func(data map[string]any) { data["TreeView"] = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := make(map[string]any, len(base)+1)
+			for key, value := range base {
+				data[key] = value
+			}
+			tc.set(data)
+			panel := firstDetailPanelData(t, renderPageList(t, data))
+			if got, ok := detailPanelValueByLabel(panel, "Артикул"); !ok || got != "10041" {
+				t.Fatalf("explicit field missing in %s payload: %+v", tc.name, panel)
+			}
+			if _, ok := detailPanelValueByLabel(panel, "Поставщик"); ok {
+				t.Fatalf("auto field leaked into explicit %s payload: %+v", tc.name, panel)
 			}
 		})
 	}
@@ -328,6 +406,97 @@ func TestDetailPanel_ExplicitTabs(t *testing.T) {
 	}
 }
 
+func TestDetailPanel_ExplicitTabPreservesMixedFieldOrderAndStableKeys(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Tabs: []metadata.DetailPanelTab{
+		{Name: "Первая", Titles: map[string]string{"en": "Same"}, Fields: []string{"Фото", "Артикул", "Описание"}},
+		{Name: "Вторая", Titles: map[string]string{"en": "Same"}, Fields: []string{"Поставщик"}},
+	}}
+	row := map[string]any{
+		"Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО",
+		"Фото": "img-1", "Описание": "<p>text</p>",
+	}
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "en")), &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Tabs) != 2 || data.Tabs[0].Title != "Same" || data.Tabs[1].Title != "Same" {
+		t.Fatalf("localized tabs = %+v", data.Tabs)
+	}
+	if data.Tabs[0].Key == data.Tabs[1].Key || data.Tabs[0].Key == "" || data.Tabs[1].Key == "" {
+		t.Fatalf("translated titles are not backed by distinct stable keys: %+v", data.Tabs)
+	}
+	var labels []string
+	for _, field := range data.Tabs[0].Fields {
+		labels = append(labels, field.Label)
+	}
+	if got := strings.Join(labels, ","); got != "Фото,Артикул,Описание" {
+		t.Fatalf("mixed field order changed: %s", got)
+	}
+	js := string(uiJS)
+	for _, want := range []string{"function tabKey(tab)", "obDetailStore('tab', tabKey(tab))", "if (tabKey(tab) !== active)"} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("client tab identity still depends on translated title: missing %q", want)
+		}
+	}
+}
+
+func TestDetailPanel_ConfiguredTitleUsesTypedFormatter(t *testing.T) {
+	ent := panelEntity()
+	ent.Fields = append(ent.Fields, metadata.Field{Name: "Статус", Type: metadata.FieldTypeString, EnumName: "Статусы"})
+	ent.DetailPanel = &metadata.DetailPanel{Title: "Статус", Fields: []string{"Артикул"}, FieldsSet: true}
+	raw := detailPanelForEntity(ent, map[string]any{"Наименование": "Кресло", "Артикул": "10041", "Статус": "active"},
+		map[string]map[string]string{"Статус": {"active": "Активен"}}, "ru")
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Title != "Активен" {
+		t.Fatalf("enum title bypassed typed formatting: %q", data.Title)
+	}
+}
+
+func TestDetailPanel_ManagedListPagesHavePriority(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Fields: []string{"Поставщик"}, FieldsSet: true}
+	ent.Forms = []*metadata.FormModule{{
+		Name: "ФормаСписка", Kind: "list", LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{
+			Kind: metadata.FormElementPages, Name: "Закладки",
+			Children: []*metadata.FormElement{
+				{Kind: metadata.FormElementPage, Name: "Карточка", TitleMap: map[string]string{"en": "Card"}, Children: []*metadata.FormElement{
+					{Kind: metadata.FormElementField, DataPath: "Список.Артикул"},
+					{Kind: metadata.FormElementPicture, DataPath: "Список.Фото"},
+					{Kind: metadata.FormElementField, DataPath: "Товары.Поставщик"},
+				}},
+				{Kind: metadata.FormElementPage, Name: "Дополнительно", TitleMap: map[string]string{"en": "Extra"}, Children: []*metadata.FormElement{
+					{Kind: metadata.FormElementField, DataPath: "Список.Описание"},
+				}},
+			},
+		}},
+	}}
+	row := map[string]any{
+		"Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО",
+		"Фото": "img-1", "Описание": "<p>text</p>",
+	}
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "en")), &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Tabs) != 2 || data.Tabs[0].Title != "Card" || data.Tabs[1].Title != "Extra" {
+		t.Fatalf("managed pages were not projected in order: %+v", data.Tabs)
+	}
+	if got, ok := detailPanelValueByLabel(data, "Артикул"); !ok || got != "10041" {
+		t.Fatalf("managed field missing: %+v", data)
+	}
+	if _, ok := detailPanelValueByLabel(data, "Поставщик"); ok {
+		t.Fatalf("lower-priority detail_panel composition won over managed pages: %+v", data)
+	}
+	if data.Tabs[0].Fields[0].Label != "Артикул" || data.Tabs[0].Fields[1].Label != "Фото" {
+		t.Fatalf("managed field order changed: %+v", data.Tabs[0].Fields)
+	}
+}
+
 // Короткая форма detail_panel.fields — состав без закладок, разложенный по типам.
 func TestDetailPanel_ExplicitFieldsShortForm(t *testing.T) {
 	ent := panelEntity()
@@ -361,5 +530,14 @@ func TestDetailPanel_NoBlockKeepsAutoLayout(t *testing.T) {
 	auto := detailPanelJSON(ent.Fields, row, detailPanelTitle(ent.Fields, row), nil, "ru")
 	if got := detailPanelForEntity(ent, row, nil, "ru"); got != auto {
 		t.Errorf("без блока состав изменился:\n%s\n%s", got, auto)
+	}
+}
+
+func TestDetailPanel_ExplicitEmptyTabsFailsClosedAtRuntime(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{TabsSet: true}
+	row := map[string]any{"Наименование": "Кресло", "Артикул": "10041"}
+	if got := detailPanelForEntity(ent, row, nil, "ru"); got != "" {
+		t.Fatalf("explicit tabs: [] fell back to all fields: %s", got)
 	}
 }

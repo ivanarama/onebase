@@ -142,6 +142,46 @@ func allSchemas() map[string]map[string]any {
 			"options": arrayOf(stringSchema("Значение")),
 		},
 	}
+	detailPanelTab := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"name"},
+		"properties": map[string]any{
+			"name":   stringSchema("Имя закладки"),
+			"titles": stringMapSchema(),
+			"fields": map[string]any{
+				"type":     "array",
+				"minItems": 1,
+				"items":    stringSchema("Реквизит на закладке"),
+			},
+			"tableparts":  arrayOf(stringSchema("Табличная часть (зарезервировано для 118D)")),
+			"attachments": map[string]any{"type": "boolean", "description": "Вложения (зарезервировано для 118D)"},
+		},
+	}
+	detailPanel := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"description":          "Состав боковой панели деталей списка. Без блока — автокомпоновка: все реквизиты шапки, картинки и размеченный текст на своих закладках",
+		"allOf": []any{
+			map[string]any{"not": map[string]any{"required": []string{"fields", "tabs"}}},
+		},
+		"properties": map[string]any{
+			"title": stringSchema("Реквизит-заголовок карточки; по умолчанию — представление записи"),
+			"width": map[string]any{
+				"description": "Ширина по умолчанию, px; 0 или отсутствие — 320",
+				"anyOf": []any{
+					map[string]any{"const": 0},
+					map[string]any{"type": "integer", "minimum": 220, "maximum": 640},
+				},
+			},
+			"fields": arrayOf(stringSchema("Реквизит панели (короткая форма без явных закладок)")),
+			"tabs": map[string]any{
+				"type":     "array",
+				"minItems": 1,
+				"items":    detailPanelTab,
+			},
+		},
+	}
 
 	return map[string]map[string]any{
 		"entity": {
@@ -168,26 +208,7 @@ func allSchemas() map[string]map[string]any {
 				"list_mode":             stringSchema("pages|feed"),
 				"fulltext":              arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
 				"search_fields":         arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
-				"detail_panel": map[string]any{
-					"type":        "object",
-					"description": "Состав боковой панели деталей списка. Без блока — автокомпоновка: все реквизиты шапки, картинки и размеченный текст на своих закладках",
-					"properties": map[string]any{
-						"title":  stringSchema("Реквизит-заголовок карточки; по умолчанию — представление записи"),
-						"width":  map[string]any{"type": "integer", "description": "Ширина по умолчанию, px"},
-						"fields": arrayOf(stringSchema("Реквизит панели (короткая форма без закладок)")),
-						"tabs": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"name":   stringSchema("Имя закладки"),
-									"titles": map[string]any{"type": "object", "description": "Локализованные заголовки закладки"},
-									"fields": arrayOf(stringSchema("Реквизит на закладке")),
-								},
-							},
-						},
-					},
-				},
+				"detail_panel":          detailPanel,
 				"numerator": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

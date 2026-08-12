@@ -3568,10 +3568,11 @@ function obDetailRender() {
   if (emptyEl) emptyEl.hidden = true;
   if (titleEl) titleEl.textContent = data.title || '';
 
-  var active = obDetailRead('tab') || data.tabs[0].title;
+  function tabKey(tab) { return tab.key || tab.title; }
+  var active = obDetailRead('tab') || tabKey(data.tabs[0]);
   var found = false;
-  data.tabs.forEach(function (t) { if (t.title === active) found = true; });
-  if (!found) active = data.tabs[0].title;
+  data.tabs.forEach(function (t) { if (tabKey(t) === active) found = true; });
+  if (!found) active = tabKey(data.tabs[0]);
 
   if (tabsEl) {
     tabsEl.innerHTML = '';
@@ -3579,10 +3580,10 @@ function obDetailRender() {
       data.tabs.forEach(function (tab) {
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'ob-detail-tab' + (tab.title === active ? ' active' : '');
+        btn.className = 'ob-detail-tab' + (tabKey(tab) === active ? ' active' : '');
         btn.textContent = tab.title;
         btn.addEventListener('click', function () {
-          obDetailStore('tab', tab.title);
+          obDetailStore('tab', tabKey(tab));
           obDetailRender();
         });
         tabsEl.appendChild(btn);
@@ -3593,7 +3594,7 @@ function obDetailRender() {
   if (fieldsEl) {
     fieldsEl.innerHTML = '';
     data.tabs.forEach(function (tab) {
-      if (tab.title !== active) return;
+      if (tabKey(tab) !== active) return;
       (tab.fields || []).forEach(function (f) {
         var wrap = document.createElement('div');
         wrap.className = 'ob-detail-field';
@@ -3622,8 +3623,10 @@ function obDetailRender() {
 function obDetailApplyWidth() {
   var panel = obDetailEl();
   if (!panel) return;
-  var w = parseInt(obDetailRead('w') || '320', 10);
-  if (isNaN(w)) w = 320;
+  var saved = obDetailRead('w');
+  var configured = panel.getAttribute('data-ob-default-width') || '320';
+  var w = parseInt(saved === null ? configured : saved, 10);
+  if (isNaN(w) || w === 0) w = 320;
   w = Math.max(OB_DETAIL_MIN, Math.min(OB_DETAIL_MAX, w));
   panel.style.width = w + 'px';
 }
