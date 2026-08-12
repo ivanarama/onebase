@@ -121,16 +121,24 @@ func (db *DB) GenerateNumber(ctx context.Context, entity *metadata.Entity, field
 }
 
 // AutoNumberField возвращает имя реквизита, который заполняет автонумерация:
-// «Номер» у документа, «Код» у справочника. Пусто — автонумерации нет.
+// «Номер» у документа, «Код» у справочника.
+//
+// Разница между видами намеренная. У документа номер выдаётся ВСЕГДА — есть
+// блок numerator: или нет: без него работает legacy-счётчик, и так было с
+// первых версий. У справочника — только при объявленном numerator:, потому что
+// кодов у справочников не было вовсе, и раздача их всем подряд молча изменила
+// бы данные всех существующих конфигураций.
 func AutoNumberField(entity *metadata.Entity) string {
-	if entity == nil || entity.Numerator == nil {
+	if entity == nil {
 		return ""
 	}
 	switch entity.Kind {
 	case metadata.KindDocument:
 		return "Номер"
 	case metadata.KindCatalog:
-		return metadata.StandardCodeField
+		if entity.Numerator != nil {
+			return metadata.StandardCodeField
+		}
 	}
 	return ""
 }

@@ -804,14 +804,22 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
 }
 
-// ensureNewDocumentNumber fills the canonical system Номер only when empty.
-// Object.Get is case-insensitive; Object.Set normalises the key to lowercase.
+// ensureNewDocumentNumber заполняет стандартный «Номер» документа или «Код»
+// справочника, если он пуст (план 117C). До 117B код справочника не заполнялся
+// вовсе: блок numerator: у него парсился и молча ничего не делал (issue #658).
+//
+// Пустое значение — единственное условие: заполненное вручную не трогаем, иначе
+// платформа переписывала бы то, что ввёл пользователь.
 func (s *Server) ensureNewDocumentNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
-	if entity == nil || obj == nil || entity.Kind != metadata.KindDocument {
+	if entity == nil || obj == nil {
+		return
+	}
+	target := storage.AutoNumberField(entity)
+	if target == "" {
 		return
 	}
 	for _, field := range entity.Fields {
-		if !isSystemDocumentNumber(entity, field) {
+		if !strings.EqualFold(field.Name, target) || field.Type != metadata.FieldTypeString {
 			continue
 		}
 		value := fmt.Sprintf("%v", obj.Get(field.Name))
@@ -2340,11 +2348,11 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 // generateNumber returns the next document number.
 // Uses the entity's Numerator config if present; falls back to legacy NextNum.
 func (s *Server) generateNumber(ctx context.Context, entity *metadata.Entity, fields map[string]any) string {
+	// Единая точка (план 117C): период, счётчик, маски даты и формат — в
+	// storage.GenerateNumber. Копии этой логики уже расходились молча (#359).
 	if entity.Numerator != nil {
-		num := entity.Numerator
-		periodKey := storage.ComputePeriodKey(num, fields)
-		if n, err := s.store.NextNumber(ctx, entity.Name, periodKey); err == nil {
-			return storage.FormatNumber(num.Prefix, num.Length, n)
+		if v, err := s.store.GenerateNumber(ctx, entity, fields); err == nil && v != "" {
+			return v
 		}
 	}
 	// legacy fallback: plain sequential number
