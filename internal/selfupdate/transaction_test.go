@@ -785,7 +785,11 @@ func TestRollbackRejectsPartialSnapshotBeforeMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(prev, staged.Files[1])); err != nil {
+	if len(staged.Files) == 0 {
+		t.Fatal("platform package has no binaries")
+	}
+	missing := staged.Files[len(staged.Files)-1]
+	if err := os.Remove(filepath.Join(prev, missing)); err != nil {
 		t.Fatal(err)
 	}
 
