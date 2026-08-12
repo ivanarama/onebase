@@ -275,7 +275,7 @@ func validateNumerator(e *Entity) error {
 	switch e.Kind {
 	case KindCatalog, KindDocument:
 	default:
-		return fmt.Errorf("entity %s: numerator: применим только к справочникам и документам", e.Name)
+		return fmt.Errorf("entity %s: нумератор применим только к справочникам и документам", e.Name)
 	}
 	switch strings.ToLower(n.Period) {
 	case "none", "year", "month", "day", "":
@@ -298,10 +298,10 @@ func validateNumerator(e *Entity) error {
 	}
 	if f := findEntityFieldFold(e, std); f != nil {
 		if f.Type != FieldTypeString {
-			return fmt.Errorf("entity %s: при numerator: реквизит %s обязан быть строкой (сейчас %s)", e.Name, std, f.Type)
+			return fmt.Errorf("entity %s: при объявленном нумераторе реквизит %s обязан быть строкой (сейчас %s)", e.Name, std, f.Type)
 		}
 		if f.RefEntity != "" || f.EnumName != "" {
-			return fmt.Errorf("entity %s: реквизит %s не может быть ссылкой или перечислением при numerator:", e.Name, std)
+			return fmt.Errorf("entity %s: при объявленном нумераторе реквизит %s не может быть ссылкой или перечислением", e.Name, std)
 		}
 	}
 	return nil
