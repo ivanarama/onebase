@@ -292,3 +292,74 @@ func TestDetailPanel_JournalSingleClickDoesNotNavigate(t *testing.T) {
 		t.Fatal("строка журнала всё ещё подключена к single-click навигатору")
 	}
 }
+
+// Блок detail_panel задаёт состав и порядок закладок явно (план 118C).
+func TestDetailPanel_ExplicitTabs(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{
+		Title: "Артикул",
+		Tabs: []metadata.DetailPanelTab{
+			{Name: "Цены", Fields: []string{"Поставщик"}},
+			{Name: "Медиа", Fields: []string{"Фото", "Описание"}},
+		},
+	}
+	row := map[string]any{
+		"Наименование": "Кресло", "Артикул": "10041",
+		"Поставщик": "ООО «Мебель»", "Фото": "img-1", "Описание": "<p>текст</p>",
+	}
+	var data detailPanelData
+	raw := detailPanelForEntity(ent, row, nil, "ru")
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		t.Fatalf("payload: %v\n%s", err, raw)
+	}
+	if data.Title != "10041" {
+		t.Errorf("заголовок из detail_panel.title = %q, ожидался артикул", data.Title)
+	}
+	if len(data.Tabs) != 2 || data.Tabs[0].Title != "Цены" || data.Tabs[1].Title != "Медиа" {
+		t.Fatalf("закладки = %+v", data.Tabs)
+	}
+	// Внутри явной закладки типы не разносим: автор решил, что вместе.
+	if len(data.Tabs[1].Fields) != 2 {
+		t.Errorf("явная закладка разъехалась по типам: %+v", data.Tabs[1].Fields)
+	}
+	// Наименования нет ни в одной закладке — автор его не перечислил.
+	if strings.Contains(raw, "Кресло") {
+		t.Errorf("в панель попал реквизит вне объявленного состава: %s", raw)
+	}
+}
+
+// Короткая форма detail_panel.fields — состав без закладок, разложенный по типам.
+func TestDetailPanel_ExplicitFieldsShortForm(t *testing.T) {
+	ent := panelEntity()
+	ent.DetailPanel = &metadata.DetailPanel{Fields: []string{"Артикул", "Фото"}, FieldsSet: true}
+	row := map[string]any{"Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО", "Фото": "img-1"}
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "ru")), &data); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	titles := []string{}
+	for _, tab := range data.Tabs {
+		titles = append(titles, tab.Title)
+	}
+	if strings.Join(titles, ",") != "Основное,Изображения" {
+		t.Errorf("закладки = %v", titles)
+	}
+	for _, tab := range data.Tabs {
+		for _, f := range tab.Fields {
+			if f.Label == "Поставщик" {
+				t.Error("реквизит вне состава попал в панель")
+			}
+		}
+	}
+}
+
+// Без блока — прежняя автокомпоновка: 118C не меняет поведение существующих
+// конфигураций.
+func TestDetailPanel_NoBlockKeepsAutoLayout(t *testing.T) {
+	ent := panelEntity()
+	row := map[string]any{"Наименование": "Кресло", "Артикул": "10041", "Фото": "img-1"}
+	auto := detailPanelJSON(ent.Fields, row, detailPanelTitle(ent.Fields, row), nil, "ru")
+	if got := detailPanelForEntity(ent, row, nil, "ru"); got != auto {
+		t.Errorf("без блока состав изменился:\n%s\n%s", got, auto)
+	}
+}
