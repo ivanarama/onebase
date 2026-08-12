@@ -44,6 +44,85 @@ type detailPanelData struct {
 	Tabs  []detailPanelTab `json:"tabs"`
 }
 
+// detailPanelForEntity собирает payload с учётом блока `detail_panel:`.
+// Приоритет источников зеркалит resolveListColumns: явный блок → автокомпоновка.
+//
+// Явный состав НЕ расширяет права: значения берутся из той же строки, что уже
+// прошла маску ПДн, поэтому перечисленный, но скрытый реквизит остаётся
+// скрытым — маскированным его и покажет.
+func detailPanelForEntity(e *metadata.Entity, row map[string]any,
+	enumLabels map[string]map[string]string, lang string) string {
+	if e == nil {
+		return ""
+	}
+	dp := e.DetailPanel
+	if dp == nil {
+		return detailPanelJSON(e.Fields, row, detailPanelTitle(e.Fields, row), enumLabels, lang)
+	}
+	title := detailPanelTitle(e.Fields, row)
+	if dp.Title != "" {
+		if f := findFieldFold(e.Fields, dp.Title); f != nil {
+			if v := fmtReportCell(rowValueFold(row, f.Name)); v != "" {
+				title = v
+			}
+		}
+	}
+	// Короткая форма: перечислен состав, закладки собираются по типам — как в
+	// автокомпоновке, но из выбранных реквизитов.
+	if dp.FieldsSet {
+		return detailPanelJSON(fieldsByNames(e.Fields, dp.Fields), row, title, enumLabels, lang)
+	}
+	if len(dp.Tabs) == 0 {
+		return detailPanelJSON(e.Fields, row, title, enumLabels, lang)
+	}
+	data := detailPanelData{Title: title}
+	for _, tab := range dp.Tabs {
+		fields := fieldsByNames(e.Fields, tab.Fields)
+		if len(fields) == 0 {
+			continue
+		}
+		raw := detailPanelJSON(fields, row, "", enumLabels, lang)
+		var part detailPanelData
+		if raw == "" || json.Unmarshal([]byte(raw), &part) != nil {
+			continue
+		}
+		// Внутри явной закладки типы не разносим: автор уже решил, что вместе.
+		var flat []detailPanelField
+		for _, t := range part.Tabs {
+			flat = append(flat, t.Fields...)
+		}
+		data.Tabs = append(data.Tabs, detailPanelTab{Title: tab.DisplayName(lang), Fields: flat})
+	}
+	if len(data.Tabs) == 0 {
+		return ""
+	}
+	out, err := json.Marshal(data)
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+// fieldsByNames отбирает реквизиты в порядке, заданном автором.
+func fieldsByNames(all []metadata.Field, names []string) []metadata.Field {
+	out := make([]metadata.Field, 0, len(names))
+	for _, name := range names {
+		if f := findFieldFold(all, name); f != nil {
+			out = append(out, *f)
+		}
+	}
+	return out
+}
+
+func findFieldFold(all []metadata.Field, name string) *metadata.Field {
+	for i := range all {
+		if strings.EqualFold(all[i].Name, name) {
+			return &all[i]
+		}
+	}
+	return nil
+}
+
 // detailPanelJSONFor — общая сборка: раскладывает реквизиты по закладкам
 // «Основное» / «Изображения» / «Описание». Автокомпоновка сознательно
 // показывает ВСЕ реквизиты шапки, а не только вынесенные в колонки: ради этого

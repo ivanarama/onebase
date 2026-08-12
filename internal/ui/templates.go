@@ -127,6 +127,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			enumLabels map[string]map[string]string, lang string) string {
 			return detailPanelJSON(fields, row, detailPanelTitle(fields, row), enumLabels, lang)
 		},
+		// detailPanelEntity — payload с учётом блока detail_panel: сущности.
+		"detailPanelEntity": func(e *metadata.Entity, row map[string]any,
+			enumLabels map[string]map[string]string, lang string) string {
+			return detailPanelForEntity(e, row, enumLabels, lang)
+		},
 		"entityFields": func(e *metadata.Entity) []metadata.Field { return e.Fields },
 		// journalFields — колонки журнала как поля панели. Журнал сводит разные
 		// виды документов, поэтому состав задан им самим, а не сущностью.
@@ -1494,7 +1499,7 @@ const tplList = `
   data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanel (entityFields $.Entity) $row $.EnumLabels $.Lang}}'>
+  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
