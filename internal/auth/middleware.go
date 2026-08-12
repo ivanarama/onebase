@@ -51,7 +51,7 @@ func (r *Repo) serveWithSession(next http.Handler, w http.ResponseWriter, req *h
 		return
 	}
 
-	user, err := r.LookupSession(ctx, token)
+	user, err := r.LookupSessionKind(ctx, token, SessionKindEnterprise)
 	if err != nil {
 		redirectToLogin(w, req)
 		return

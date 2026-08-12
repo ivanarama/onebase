@@ -9,6 +9,8 @@ import (
 	_ "embed"
 	"net/http"
 	"net/url"
+
+	"github.com/ivantit66/onebase/internal/auth"
 )
 
 //go:embed rapidoc/rapidoc-min.js
@@ -50,7 +52,7 @@ func (s *Server) requireServiceAdmin(w http.ResponseWriter, r *http.Request) boo
 		s.denyDocs(w, r)
 		return false
 	}
-	u, err := s.authRepo.LookupSession(ctx, token)
+	u, err := s.authRepo.LookupSessionKind(ctx, token, auth.SessionKindEnterprise)
 	if err != nil {
 		s.denyDocs(w, r)
 		return false

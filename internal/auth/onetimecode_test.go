@@ -61,11 +61,11 @@ func TestOneTimeCodes_Unknown(t *testing.T) {
 func newSessionFixture(t *testing.T) (*auth.Handlers, string) {
 	t.Helper()
 	repo, ctx := newTestRepo(t)
-	user, err := repo.Create(ctx, "ivan", "secret123", "Иван", false)
+	user, err := repo.Create(ctx, "ivan", "secret123", "Иван", true)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{})
+	token, err := repo.CreateSession(ctx, user.ID, auth.SessionMeta{Kind: auth.SessionKindConfigurator})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -101,8 +101,14 @@ func TestBootstrap_ExchangesCodeForCookie(t *testing.T) {
 		t.Fatalf("redirect на %q, ожидался /ui", loc)
 	}
 	c := sessionCookie(resp)
-	if c == nil || c.Value != token {
-		t.Fatalf("cookie onebase_session не установлена или с неверным токеном: %+v", c)
+	if c == nil || c.Value == "" || c.Value == token {
+		t.Fatalf("bootstrap did not issue a distinct Enterprise cookie: %+v", c)
+	}
+	if _, err := h.Repo.LookupSessionKind(req.Context(), c.Value, auth.SessionKindEnterprise); err != nil {
+		t.Fatalf("bootstrap cookie is not an Enterprise session: %v", err)
+	}
+	if _, err := h.Repo.LookupSessionKind(req.Context(), token, auth.SessionKindConfigurator); err != nil {
+		t.Fatalf("bootstrap invalidated the configurator session: %v", err)
 	}
 
 	// повторное использование того же кода — отказ (redirect на /login, без cookie)

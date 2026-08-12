@@ -29,6 +29,10 @@ body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#E
 .tbtn.danger:hover{background:linear-gradient(to bottom,#FFE8E8,#FFBFBF);border-color:#FF9090}
 .tbtn svg{width:16px;height:16px}
 .tbtn-sep{width:1px;background:#ACA899;height:24px;margin:0 4px}
+.close-policy-setting{display:inline-flex;align-items:center;gap:5px;margin:0 4px;font-size:11px;color:#555;white-space:nowrap}
+.close-policy-setting select{max-width:150px;padding:3px 5px;border:1px solid #ACA899;border-radius:2px;background:#fff;color:#333;font-size:11px}
+.close-policy-status{max-width:180px;font-size:11px;color:#166534;white-space:normal}
+.close-policy-status.error{color:#b91c1c}
 /* отметка о доступной версии платформы: заметная, но не кричащая — на канале
    build сборки выходят по нескольку раз в день */
 .upd-badge{background:linear-gradient(to bottom,#EAF7EC,#C9E9CF);border-color:#7FBF8C;color:#166534;font-weight:600}
@@ -80,6 +84,20 @@ body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#E
 .btn-cancel{background:#f5f4ee;color:#333;border:1px solid #ACA899;padding:6px 16px;border-radius:2px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
 .btn-cancel:hover{background:#e8e6dc}
 .err{background:#fff0f0;border:1px solid #ffb3b3;color:#c00;padding:8px 10px;border-radius:2px;margin-bottom:12px;font-size:13px}
+.btn-danger{background:#b91c1c;color:#fff;border:1px solid #b91c1c;padding:6px 16px;border-radius:2px;cursor:pointer;font-size:13px}
+.btn-danger:hover{background:#991b1b}
+
+/* modal (диалог закрытия окна) */
+.modal-back{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:100;overflow-y:auto;padding:20px}
+.modal{background:#fff;border:1px solid #ACA899;border-radius:2px;box-shadow:0 6px 24px rgba(0,0,0,.25);width:520px;max-width:100%;max-height:calc(100vh - 40px);overflow-y:auto;padding:18px 20px;outline:none}
+.modal h3{font-size:14px;font-weight:600;margin-bottom:12px}
+.modal p{font-size:12px;color:#444;margin-bottom:10px;line-height:1.45}
+.modal ul{margin:0 0 10px 20px;font-size:12px;color:#333;max-height:180px;overflow-y:auto;padding-right:8px}
+.modal label{font-size:12px;color:#555;display:flex;align-items:center;gap:6px}
+.modal label input{width:auto}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.modal-error{background:#fff0f0;border:1px solid #ffb3b3;color:#8b0000;padding:10px;border-radius:2px}
+.modal-error p{color:#8b0000;margin:0}
 
 /* result pages */
 .result-page{max-width:640px;margin:20px auto;background:#fff;border:1px solid #ACA899;padding:20px;border-radius:2px}
@@ -94,7 +112,7 @@ pre{background:#1e1e1e;color:#d4d4d4;padding:14px;border-radius:2px;font-size:12
 const tplIndex = `
 {{define "page-index"}}
 {{template "lhead" .}}
-<div class="toolbar">
+<div class="toolbar" id="launcher-toolbar">
   {{if .Selected}}
   <a class="tbtn" href="/bases/{{.Selected.ID}}/start" onclick="return startBase(this,'{{.Selected.ID}}')">
     <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> {{t $.Lang "Предприятие"}}
@@ -126,7 +144,16 @@ const tplIndex = `
   <a class="tbtn" href="/report-problem{{if .Selected}}?base={{.Selected.ID}}{{end}}" title="{{t $.Lang "Собрать отчёт об ошибке одним файлом"}}">
     <svg viewBox="0 0 24 24"><path d="M20 8h-2.81a5.99 5.99 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a6.02 6.02 0 0 0-2.83 0L8.41 3 7 4.41l1.62 1.63A5.99 5.99 0 0 0 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81a6 6 0 0 0 10.38 0H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg> {{t $.Lang "Сообщить об ошибке"}}
   </a>
-  <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return doPost(this)" title="{{t $.Lang "Остановить все базы"}}">
+  <label class="close-policy-setting" title="{{t $.Lang "Что делать с работающими базами при закрытии"}}">
+    <span>{{t $.Lang "При закрытии:"}}</span>
+    <select id="close-policy-setting" aria-label="{{t $.Lang "Поведение при закрытии"}}" onchange="return setClosePolicyFromToolbar(this)">
+      <option value="ask">{{t $.Lang "Спрашивать"}}</option>
+      <option value="background">{{t $.Lang "Оставлять в фоне"}}</option>
+      <option value="stop">{{t $.Lang "Останавливать все"}}</option>
+    </select>
+  </label>
+  <span id="close-policy-setting-status" class="close-policy-status" role="status" aria-live="polite"></span>
+  <a class="tbtn danger" href="/killall{{if .Selected}}?sel={{.Selected.ID}}{{end}}" onclick="return confirmKillAll(this)" title="{{t $.Lang "Остановить все базы"}}">
     <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> {{t $.Lang "Стоп всё"}}
   </a>
   {{/* with, а не if: у части рендер-тестов данных об обновлении нет вовсе */}}
@@ -155,7 +182,7 @@ const tplIndex = `
   {{end}}
 </div>
 
-<div class="content">
+<div class="content" id="launcher-content">
 <div class="list-panel">
 {{if .Bases}}
 {{range .Bases}}
@@ -213,8 +240,38 @@ const tplIndex = `
 {{end}}
 </div>
 
+<div id="close-modal" class="modal-back" style="display:none" role="dialog" aria-modal="true"
+     aria-labelledby="close-modal-title" aria-describedby="close-modal-description" aria-hidden="true">
+  <div class="modal" id="close-modal-card" tabindex="-1">
+    <h3 id="close-modal-title">{{t $.Lang "Закрытие окна информационных баз"}}</h3>
+    <div id="close-modal-ask">
+      <p>{{t $.Lang "Работают информационные базы:"}}</p>
+      <ul id="close-modal-list" aria-label="{{t $.Lang "Работающие информационные базы"}}"></ul>
+      <p id="close-modal-description">{{t $.Lang "Продолжить их работу в фоновом режиме? Регламентные задания, обмены и подключённые пользователи не пострадают. Окно запуска закроется — откройте его снова, чтобы остановить базы."}}</p>
+      <label><input type="checkbox" id="close-modal-remember"> {{t $.Lang "Больше не спрашивать"}}</label>
+      <div class="modal-btns">
+        <button type="button" id="close-modal-background" class="btn-ok" onclick="return closeChoice('background')">{{t $.Lang "Продолжить в фоне"}}</button>
+        <button type="button" id="close-modal-stop" class="btn-danger" onclick="return closeChoice('stop')">{{t $.Lang "Остановить все"}}</button>
+        <button type="button" id="close-modal-cancel" class="btn-cancel" onclick="return closeChoice('cancel')">{{t $.Lang "Отмена"}}</button>
+      </div>
+    </div>
+    <div id="close-modal-busy" style="display:none" role="status" aria-live="polite">
+      <p id="close-modal-progress"></p>
+    </div>
+    <div id="close-modal-error" class="modal-error" style="display:none" role="alert" aria-live="assertive">
+      <p id="close-modal-error-text"></p>
+      <div class="modal-btns">
+        <button type="button" id="close-modal-retry" class="btn-ok" onclick="return retryCloseAction()">{{t $.Lang "Повторить"}}</button>
+        <button type="button" id="close-modal-continue" class="btn-ok" style="display:none" onclick="return continueCloseWithoutRemembering()">{{t $.Lang "Продолжить без запоминания"}}</button>
+        <button type="button" id="close-modal-error-cancel" class="btn-cancel" onclick="return closeChoice('cancel')">{{t $.Lang "Отмена"}}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 var _sel = '{{if .Selected}}{{.Selected.ID}}{{end}}';
+var _runningCount = {{.RunningCount}};
 // GUI-сборка под Windows умеет нативные WebView2-окна — «Предприятие»
 // открывается в таком окне (без адресной строки), а не через window.open,
 // который в WebView2 убегает во внешний браузер. В остальных сборках — браузер.
@@ -232,11 +289,509 @@ function doPost(el) {
   form.submit();
   return false;
 }
-function quitLauncher() {
-  fetch('/quit', {method:'POST'}).catch(function(){});
-  setTimeout(function(){ window.close(); }, 200);
+var _onebaseCloseDialogBegin = true;
+// Закрытие лаунчера — single-flight state machine. После выбора действие
+// считается зафиксированным: prompt сразу скрывается, поэтому Esc, двойной клик
+// или вторая кнопка не могут обогнать сохранение настройки/остановку баз.
+var _closePolicy = '{{with .ClosePolicy}}{{.}}{{else}}ask{{end}}';
+if (_closePolicy !== 'background' && _closePolicy !== 'stop') _closePolicy = 'ask';
+var _closeSettingsSaving = false;
+var _closeListLimit = 10;
+var _closeFlow = {
+  state: 'idle', errorStage: '', running: [], choice: '', remember: false,
+  policyBefore: _closePolicy, policyWriteAttempted: false,
+  policySavedByFlow: false, continueAfterRollback: false, lastFocus: null
+};
+var _closeMessages = {
+  checking: '{{t $.Lang "Проверяем работающие базы…"}}',
+  saving: '{{t $.Lang "Сохраняем выбор…"}}',
+  stopping: '{{t $.Lang "Останавливаем базы…"}}',
+  quitting: '{{t $.Lang "Закрываем окно…"}}',
+  stopped: '{{t $.Lang "Базы остановлены. Закрываем окно…"}}',
+  restoring: '{{t $.Lang "Возвращаем прежнюю настройку…"}}',
+  infoError: '{{t $.Lang "Не удалось проверить работающие базы:"}}',
+  policyError: '{{t $.Lang "Не удалось сохранить выбор:"}}',
+  stopError: '{{t $.Lang "Не удалось остановить все базы:"}}',
+  quitError: '{{t $.Lang "Не удалось завершить лаунчер:"}}',
+  rollbackError: '{{t $.Lang "Не удалось вернуть прежнюю настройку:"}}',
+  invalidResponse: '{{t $.Lang "Сервер вернул некорректный ответ"}}',
+  continueNoRemember: '{{t $.Lang "Продолжить без запоминания"}}',
+  leaveBackground: '{{t $.Lang "Закрыть, оставив базы работать"}}',
+  settingSaving: '{{t $.Lang "Сохраняем настройку…"}}',
+  settingSaved: '{{t $.Lang "Настройка сохранена"}}',
+  settingError: '{{t $.Lang "Не удалось сохранить настройку:"}}',
+  settingWait: '{{t $.Lang "Дождитесь сохранения настройки"}}'
+};
+
+function closeRequestJSON(url, options) {
+  return fetch(url, options).then(function(response) {
+    return response.text().then(function(raw) {
+      var data = {};
+      if (raw) {
+        try { data = JSON.parse(raw); }
+        catch (e) {
+          if (response.ok) throw new Error(_closeMessages.invalidResponse);
+        }
+      }
+      if (!response.ok) {
+        var message = data && data.error ? data.error : (raw || ('HTTP ' + response.status));
+        throw new Error(message);
+      }
+      return data || {};
+    });
+  });
+}
+
+function closePolicyValue(value) {
+  return value === 'background' || value === 'stop' ? value : 'ask';
+}
+
+function saveClosePolicyValue(value) {
+  return closeRequestJSON('/close-policy', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'policy=' + encodeURIComponent(closePolicyValue(value))
+  });
+}
+
+function syncClosePolicyControl() {
+  var select = document.getElementById('close-policy-setting');
+  if (!select) return;
+  select.value = _closePolicy;
+  select.disabled = _closeSettingsSaving;
+}
+
+function setClosePolicyStatus(message, isError) {
+  var status = document.getElementById('close-policy-setting-status');
+  if (!status) return;
+  status.textContent = message || '';
+  status.className = 'close-policy-status' + (isError ? ' error' : '');
+  status.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+}
+
+function setClosePolicyFromToolbar(select) {
+  if (!select || _closeSettingsSaving || _closeFlow.state !== 'idle') {
+    if (select) select.value = _closePolicy;
+    return false;
+  }
+  var wanted = closePolicyValue(select.value);
+  var previous = _closePolicy;
+  if (wanted === previous) return false;
+  if (wanted === 'stop' && !confirm('{{t $.Lang "Всегда останавливать все базы при закрытии лаунчера?"}}\n\n' +
+      '{{t $.Lang "Открытые окна Предприятия и подключённые пользователи будут терять связь."}}')) {
+    select.value = previous;
+    return false;
+  }
+  _closeSettingsSaving = true;
+  syncClosePolicyControl();
+  setClosePolicyStatus(_closeMessages.settingSaving, false);
+  saveClosePolicyValue(wanted).then(function() {
+    _closePolicy = wanted;
+    setClosePolicyStatus(_closeMessages.settingSaved, false);
+    _closeSettingsSaving = false;
+    syncClosePolicyControl();
+  }).catch(function(err) {
+    _closePolicy = previous;
+    setClosePolicyStatus(_closeMessages.settingError + ' ' + closeErrorText(err), true);
+    _closeSettingsSaving = false;
+    syncClosePolicyControl();
+  });
   return false;
 }
+
+function closeErrorText(err) {
+  return err && err.message ? err.message : String(err || _closeMessages.invalidResponse);
+}
+
+function setLauncherInert(on) {
+  var ids = ['launcher-toolbar', 'launcher-content'];
+  for (var i = 0; i < ids.length; i++) {
+    var el = document.getElementById(ids[i]);
+    if (!el) continue;
+    el.inert = !!on;
+    if (on) {
+      el.setAttribute('inert', '');
+      el.setAttribute('aria-hidden', 'true');
+    } else {
+      el.removeAttribute('inert');
+      el.removeAttribute('aria-hidden');
+    }
+  }
+}
+
+function openCloseModal() {
+  var modal = document.getElementById('close-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden', 'false');
+  setLauncherInert(true);
+}
+
+function setCloseActionButtonsDisabled(disabled) {
+  var ids = ['close-modal-background', 'close-modal-stop', 'close-modal-cancel'];
+  for (var i = 0; i < ids.length; i++) {
+    var button = document.getElementById(ids[i]);
+    if (button) button.disabled = !!disabled;
+  }
+}
+
+function closeElementVisible(el) {
+  var modal = document.getElementById('close-modal');
+  for (var current = el; current; current = current.parentElement) {
+    if (current.hidden || (current.style && current.style.display === 'none')) return false;
+    if (current === modal) break;
+  }
+  return true;
+}
+
+function closeFocusableElements() {
+  var modal = document.getElementById('close-modal');
+  if (!modal || !modal.querySelectorAll) return [];
+  var all = modal.querySelectorAll('button,input,select,a[href],[tabindex]:not([tabindex="-1"])');
+  var out = [];
+  for (var i = 0; i < all.length; i++) {
+    if (!all[i].disabled && closeElementVisible(all[i])) out.push(all[i]);
+  }
+  return out;
+}
+
+function focusCloseElement(preferred) {
+  if (preferred && !preferred.disabled && closeElementVisible(preferred)) {
+    preferred.focus();
+    return;
+  }
+  var focusable = closeFocusableElements();
+  var card = document.getElementById('close-modal-card');
+  if (focusable.length) focusable[0].focus();
+  else if (card) card.focus();
+}
+
+function showCloseBusy(message) {
+  document.getElementById('close-modal-ask').style.display = 'none';
+  document.getElementById('close-modal-error').style.display = 'none';
+  document.getElementById('close-modal-busy').style.display = 'block';
+  document.getElementById('close-modal-progress').textContent = '⏳ ' + message;
+  document.getElementById('close-modal').setAttribute('aria-busy', 'true');
+  setCloseActionButtonsDisabled(true);
+  openCloseModal();
+  focusCloseElement(document.getElementById('close-modal-card'));
+}
+
+function showCloseModal(running) {
+  var list = document.getElementById('close-modal-list');
+  list.innerHTML = '';
+  var hasBlocker = false;
+	for (var blockerIndex = 0; blockerIndex < running.length; blockerIndex++) {
+	  if (running[blockerIndex].controllable === false) hasBlocker = true;
+	}
+  for (var i = 0; i < running.length && i < _closeListLimit; i++) {
+    var li = document.createElement('li');
+    li.textContent = String(running[i].name || '') + ' ({{t $.Lang "порт"}} ' + running[i].port + ')';
+	  if (running[i].controllable === false) {
+	    li.textContent += ' — {{t $.Lang "порт занят; автоматическая остановка недоступна"}}';
+	  }
+    list.appendChild(li);
+  }
+  if (running.length > _closeListLimit) {
+    var more = document.createElement('li');
+    more.textContent = '{{t $.Lang "и ещё баз:"}} ' + (running.length - _closeListLimit);
+    list.appendChild(more);
+  }
+  _closeFlow.state = 'prompt';
+  document.getElementById('close-modal-remember').checked = false;
+  document.getElementById('close-modal-ask').style.display = 'block';
+  document.getElementById('close-modal-busy').style.display = 'none';
+  document.getElementById('close-modal-error').style.display = 'none';
+  document.getElementById('close-modal').setAttribute('aria-busy', 'false');
+  setCloseActionButtonsDisabled(false);
+	var stopButton = document.getElementById('close-modal-stop');
+	stopButton.disabled = hasBlocker;
+	stopButton.title = hasBlocker ? '{{t $.Lang "Сначала остановите неподтверждённый процесс вручную"}}' : '';
+  openCloseModal();
+  // Фокус на безопасном варианте: Enter не должен случайно останавливать базы.
+  focusCloseElement(document.getElementById('close-modal-background'));
+}
+
+function closeErrorPrefix(stage) {
+  if (stage === 'info') return _closeMessages.infoError;
+  if (stage === 'policy') return _closeMessages.policyError;
+  if (stage === 'stop') return _closeMessages.stopError;
+  if (stage === 'quit') return _closeMessages.quitError;
+  return _closeMessages.rollbackError;
+}
+
+function showCloseError(stage, err) {
+  _closeFlow.state = 'error';
+  _closeFlow.errorStage = stage;
+  document.getElementById('close-modal-ask').style.display = 'none';
+  document.getElementById('close-modal-busy').style.display = 'none';
+  document.getElementById('close-modal-error').style.display = 'block';
+  document.getElementById('close-modal').setAttribute('aria-busy', 'false');
+  document.getElementById('close-modal-error-text').textContent = closeErrorPrefix(stage) + ' ' + closeErrorText(err);
+  var proceed = document.getElementById('close-modal-continue');
+  if (stage === 'policy' || stage === 'info') {
+    proceed.style.display = 'inline-block';
+    proceed.textContent = stage === 'policy' ? _closeMessages.continueNoRemember : _closeMessages.leaveBackground;
+  } else {
+    proceed.style.display = 'none';
+  }
+  openCloseModal();
+  focusCloseElement(document.getElementById('close-modal-retry'));
+}
+
+function resetCloseFlow() {
+  var modal = document.getElementById('close-modal');
+  modal.style.display = 'none';
+  modal.setAttribute('aria-hidden', 'true');
+  modal.setAttribute('aria-busy', 'false');
+  setLauncherInert(false);
+  setCloseActionButtonsDisabled(false);
+  document.getElementById('close-modal-ask').style.display = 'block';
+  document.getElementById('close-modal-busy').style.display = 'none';
+  document.getElementById('close-modal-error').style.display = 'none';
+  var lastFocus = _closeFlow.lastFocus;
+  _closeFlow.state = 'idle';
+  _closeFlow.errorStage = '';
+  _closeFlow.running = [];
+  _closeFlow.choice = '';
+  _closeFlow.remember = false;
+  _closeFlow.policyWriteAttempted = false;
+  _closeFlow.policySavedByFlow = false;
+  _closeFlow.continueAfterRollback = false;
+  _closeFlow.lastFocus = null;
+  if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+}
+
+function loadCloseInfo() {
+	closeRequestJSON('/close-info', {cache: 'no-store'}).then(function(data) {
+    if (!data || !Array.isArray(data.running)) throw new Error(_closeMessages.invalidResponse);
+    _closeFlow.running = data.running;
+    _closePolicy = closePolicyValue(data.policy);
+    _closeFlow.policyBefore = _closePolicy;
+    syncClosePolicyControl();
+	if (_closePolicy === 'background') {
+      _closeFlow.choice = 'background';
+      executeQuit();
+      return;
+    }
+	if (_closePolicy === 'stop') {
+      _closeFlow.choice = 'stop';
+      executeStop();
+      return;
+    }
+	if (data.running.length === 0) {
+	  _closeFlow.choice = 'background';
+	  executeQuit();
+	  return;
+	}
+	showCloseModal(data.running);
+  }).catch(function(err) {
+    showCloseError('info', err);
+  });
+}
+
+function quitLauncher() {
+  if (_closeSettingsSaving) {
+    setClosePolicyStatus(_closeMessages.settingWait, true);
+    return false;
+  }
+  if (_closeFlow.state !== 'idle') return false;
+  _closeFlow.lastFocus = document.activeElement;
+  _closeFlow.policyBefore = _closePolicy;
+  _closeFlow.state = 'loading';
+  showCloseBusy(_closeMessages.checking);
+  loadCloseInfo();
+  return false;
+}
+
+function beginClosePolicySave() {
+  _closeFlow.state = 'saving';
+  _closeFlow.policyWriteAttempted = true;
+  showCloseBusy(_closeMessages.saving);
+  saveClosePolicyValue(_closeFlow.choice).then(function() {
+    _closePolicy = _closeFlow.choice;
+    _closeFlow.policySavedByFlow = true;
+    syncClosePolicyControl();
+    executeCommittedCloseChoice();
+  }).catch(function(err) {
+    showCloseError('policy', err);
+  });
+}
+
+function executeCommittedCloseChoice() {
+  if (_closeFlow.choice === 'stop') executeStop();
+  else executeQuit();
+}
+
+function closeChoice(kind) {
+  if (kind === 'cancel') {
+    if (_closeFlow.state === 'prompt') resetCloseFlow();
+    else if (_closeFlow.state === 'error') cancelCloseAfterError();
+    return false;
+  }
+  if (_closeFlow.state !== 'prompt' || (kind !== 'background' && kind !== 'stop')) return false;
+  _closeFlow.choice = kind;
+  _closeFlow.remember = !!document.getElementById('close-modal-remember').checked;
+  // Commit UI before starting I/O: subsequent Escape/click sees saving/stopping.
+  setCloseActionButtonsDisabled(true);
+  document.getElementById('close-modal-ask').style.display = 'none';
+  if (_closeFlow.remember) beginClosePolicySave();
+  else executeCommittedCloseChoice();
+  return false;
+}
+
+function executeStop() {
+  _closeFlow.state = 'stopping';
+  showCloseBusy(_closeMessages.stopping);
+  closeRequestJSON('/close-stop', {method: 'POST'}).then(function(data) {
+    if (data && data.ok === false) throw new Error(data.error || _closeMessages.stopError);
+    if (data && Array.isArray(data.remaining) && data.remaining.length) {
+      throw new Error(data.remaining.map(function(base) { return base.name || base.port || String(base); }).join(', '));
+    }
+    _closeFlow.state = 'done';
+    showCloseBusy(_closeMessages.stopped);
+    finishClientClose();
+  }).catch(function(err) {
+    // /close-stop сам завершает launcher только после подтверждённой остановки.
+    // При любой ошибке /quit здесь принципиально не вызывается.
+    showCloseError('stop', err);
+  });
+}
+
+function executeQuit() {
+  _closeFlow.state = 'quitting';
+  showCloseBusy(_closeMessages.quitting);
+  closeRequestJSON('/quit', {method: 'POST'}).then(function() {
+    _closeFlow.state = 'done';
+    finishClientClose();
+  }).catch(function(err) {
+    showCloseError('quit', err);
+  });
+}
+
+function finishClientClose() {
+  setTimeout(function() {
+    try { window.close(); } catch (e) {}
+  }, 200);
+}
+
+function restoreClosePolicy(continueAfter) {
+  _closeFlow.state = 'rollback';
+  _closeFlow.continueAfterRollback = !!continueAfter;
+  showCloseBusy(_closeMessages.restoring);
+  saveClosePolicyValue(_closeFlow.policyBefore).then(function() {
+    _closePolicy = _closeFlow.policyBefore;
+    _closeFlow.policyWriteAttempted = false;
+    _closeFlow.policySavedByFlow = false;
+    syncClosePolicyControl();
+    if (_closeFlow.continueAfterRollback) {
+      _closeFlow.remember = false;
+      _closeFlow.continueAfterRollback = false;
+      executeCommittedCloseChoice();
+    } else {
+      resetCloseFlow();
+    }
+  }).catch(function(err) {
+    showCloseError(continueAfter ? 'rollback-continue' : 'rollback', err);
+  });
+}
+
+function cancelCloseAfterError() {
+	if (_closeFlow.errorStage === 'rollback' || _closeFlow.errorStage === 'rollback-continue') {
+	  // The rollback result is uncertain, but repeatedly calling the same
+	  // failing endpoint would trap the entire launcher behind an inert modal.
+	  // Keep the locally last-known policy and return control to the user.
+	  resetCloseFlow();
+	  return;
+	}
+  if (_closeFlow.policyWriteAttempted && _closeFlow.policyBefore !== _closeFlow.choice) {
+    restoreClosePolicy(false);
+    return;
+  }
+  resetCloseFlow();
+}
+
+function continueCloseWithoutRemembering() {
+  if (_closeFlow.state !== 'error') return false;
+  if (_closeFlow.errorStage === 'info') {
+    _closeFlow.choice = 'background';
+    _closeFlow.remember = false;
+    executeQuit();
+    return false;
+  }
+  if (_closeFlow.errorStage !== 'policy') return false;
+  if (_closeFlow.policyWriteAttempted) restoreClosePolicy(true);
+  else {
+    _closeFlow.remember = false;
+    executeCommittedCloseChoice();
+  }
+  return false;
+}
+
+function retryCloseAction() {
+  if (_closeFlow.state !== 'error') return false;
+  var stage = _closeFlow.errorStage;
+  if (stage === 'info') {
+    _closeFlow.state = 'loading';
+    showCloseBusy(_closeMessages.checking);
+    loadCloseInfo();
+  } else if (stage === 'policy') {
+    beginClosePolicySave();
+  } else if (stage === 'stop') {
+    executeStop();
+  } else if (stage === 'quit') {
+    executeQuit();
+  } else {
+    restoreClosePolicy(stage === 'rollback-continue');
+  }
+  return false;
+}
+
+// Esc отменяет только ещё не выбранный prompt или уже завершившуюся ошибкой
+// операцию. Во время saving/stopping/quitting действие уже committed.
+document.addEventListener('keydown', function(ev) {
+  var modal = document.getElementById('close-modal');
+  if (!modal || modal.style.display !== 'flex') return;
+  if (ev.key === 'Escape') {
+    if (_closeFlow.state === 'prompt' || _closeFlow.state === 'error') {
+      if (ev.preventDefault) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+      closeChoice('cancel');
+    }
+    return;
+  }
+  if (ev.key !== 'Tab') return;
+  var focusable = closeFocusableElements();
+  var card = document.getElementById('close-modal-card');
+  if (!focusable.length) {
+    if (ev.preventDefault) ev.preventDefault();
+    if (card) card.focus();
+    return;
+  }
+  var first = focusable[0];
+  var last = focusable[focusable.length - 1];
+  var active = document.activeElement;
+  if (ev.shiftKey && (active === first || active === card || !modal.contains(active))) {
+    if (ev.preventDefault) ev.preventDefault();
+    last.focus();
+  } else if (!ev.shiftKey && (active === last || !modal.contains(active))) {
+    if (ev.preventDefault) ev.preventDefault();
+    first.focus();
+  }
+});
+
+function confirmKillAll(el) {
+  // Подтверждаем всегда: счётчик на отрисованной странице мог устареть, пока
+  // другая вкладка запускала базу.
+  if (!confirm('{{t $.Lang "Остановить все работающие базы?"}}\n\n' +
+      '{{t $.Lang "Открытые окна Предприятия и подключённые пользователи потеряют связь."}}')) {
+    return false;
+  }
+  return doPost(el);
+}
+
+syncClosePolicyControl();
+var _onebaseCloseDialogEnd = true;
 function toggleIsoMenu(ev) {
   if (ev) { if (ev.preventDefault) ev.preventDefault(); if (ev.stopPropagation) ev.stopPropagation(); }
   var m = document.getElementById('iso-menu');

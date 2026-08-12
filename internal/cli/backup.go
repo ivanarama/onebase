@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/ivantit66/onebase/internal/backup"
+	"github.com/ivantit66/onebase/internal/dblock"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -44,6 +45,21 @@ func requireOneDBTarget(db, sqlite string) error {
 func runBackup(cmd *cobra.Command, args []string) error {
 	if err := requireOneDBTarget(backupDB, backupSQLite); err != nil {
 		return err
+	}
+	// Do not snapshot a database whose cross-resource restore still owns a
+	// durable recovery intent: such a backup could pair one database generation
+	// with another filesystem generation and make the inconsistency permanent.
+	dbType := "postgres"
+	if backupSQLite != "" {
+		dbType = "sqlite"
+	}
+	guardDB, err := openCLIStorage(cmd.Context(), dbType, backupSQLite, backupDB)
+	if err != nil {
+		return err
+	}
+	defer guardDB.Close()
+	if dbType == "sqlite" {
+		backupSQLite = guardDB.SQLitePath()
 	}
 	outDir, err := filepath.Abs(backupOut)
 	if err != nil {
@@ -106,12 +122,44 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	outf("Восстановление из %s ...\n", restoreFile)
+	var (
+		lease        dblock.Lease
+		err          error
+		sqliteTarget = restoreSQLite
+	)
 	if restoreSQLite != "" {
 		if !restoreForce {
 			return fmt.Errorf("SQLite restore требует остановленного сервиса; повторите с --force после его остановки")
 		}
+		lease, sqliteTarget, err = dblock.AcquireSQLiteTarget(restoreSQLite)
+	} else {
+		lease, err = dblock.AcquirePostgres(cmd.Context(), restoreDB)
+	}
+	if err != nil {
+		return fmt.Errorf("database lifetime lock: %w", err)
+	}
+	defer lease.Close() //nolint:errcheck // restore error is primary; process exit also releases the lock
+	// A raw engine restore cannot resolve external directory swaps because this
+	// command has no trusted destination allowlist. Refuse to erase the sole
+	// recovery marker; the launcher/full-import path must resolve it first.
+	var guardDB *storage.DB
+	if restoreSQLite != "" {
+		guardDB, err = storage.ConnectSQLite(cmd.Context(), sqliteTarget)
+	} else {
+		guardDB, err = storage.Connect(cmd.Context(), restoreDB)
+	}
+	if err != nil {
+		return err
+	}
+	guardErr := backup.CheckNoPendingRestore(cmd.Context(), guardDB)
+	guardDB.Close()
+	if guardErr != nil {
+		return fmt.Errorf("raw restore refused while universal recovery is pending: %w", guardErr)
+	}
+
+	if restoreSQLite != "" {
 		// Файл БД перезаписывается целиком — сервис базы должен быть остановлен.
-		if err := backup.RestoreSQLite(cmd.Context(), restoreSQLite, restoreFile); err != nil {
+		if err := backup.RestoreSQLite(cmd.Context(), sqliteTarget, restoreFile); err != nil {
 			return err
 		}
 	} else {
@@ -148,6 +196,13 @@ func init() {
 
 func runDemoReset(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
+	lease, err := dblock.AcquirePostgres(ctx, demoResetDB)
+	if err != nil {
+		return fmt.Errorf("database lifetime lock: %w", err)
+	}
+	defer lease.Close() //nolint:errcheck // process exit also releases the advisory lock
+	// DemoReset is recovery-capable and already owns the exclusive DB lease;
+	// use a raw handle so its internal protocol can resolve a pending marker.
 	db, err := storage.Connect(ctx, demoResetDB)
 	if err != nil {
 		return err
