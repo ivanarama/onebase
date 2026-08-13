@@ -12,6 +12,41 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 )
 
+// CheckHTTPServiceAuthWarnings — advisory-предупреждения (issue #786): у сервиса
+// с ИЗМЕНЯЮЩИМИ методами (POST/PUT/DELETE/PATCH) не задан auth (пустое поле
+// молча нормализуется к «none») и нет rate_limit. Это не ошибка — публичный
+// сервис бывает осознанным, — но такой endpoint стоит либо защитить, либо
+// пометить публичным ЯВНО (auth: none). Явный auth: none предупреждения не
+// вызывает.
+func CheckHTTPServiceAuthWarnings(proj *project.Project) []Issue {
+	var warnings []Issue
+	for _, svc := range proj.HTTPServices {
+		if svc.AuthExplicit || svc.RateLimit > 0 {
+			continue
+		}
+		mutating := false
+		for _, t := range svc.Templates {
+			for m := range t.Methods {
+				if m == "POST" || m == "PUT" || m == "DELETE" || m == "PATCH" {
+					mutating = true
+				}
+			}
+		}
+		if !mutating {
+			continue
+		}
+		warnings = append(warnings, Issue{
+			File:   "services",
+			Object: svc.Name,
+			Kind:   "HTTP-сервис",
+			Message: "изменяющий endpoint без явного auth и без rate_limit: пустой auth молча " +
+				"трактуется как публичный (none). Укажите auth (token/hmac/basic/session) или, " +
+				"если сервис действительно публичный, задайте auth: none явно и/или rate_limit.",
+		})
+	}
+	return warnings
+}
+
 // CheckHTTPServices проверяет services/*.yaml против загруженных модулей.
 func CheckHTTPServices(proj *project.Project) []Issue {
 	var issues []Issue

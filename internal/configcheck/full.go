@@ -61,6 +61,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		warnings = append(warnings, CheckSecretHygiene(appCfg, proj)...)
 		warnings = append(warnings, CheckStages(proj)...)
 		issues = append(issues, CheckHTTPServices(proj)...)
+		warnings = append(warnings, CheckHTTPServiceAuthWarnings(proj)...)
 		issues = append(issues, CheckExchangePlans(proj)...)
 		issues = append(issues, CheckIntakes(proj)...)
 		issues = append(issues, CheckPages(proj)...)
