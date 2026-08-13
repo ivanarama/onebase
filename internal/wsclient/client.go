@@ -12,9 +12,9 @@ package wsclient
 import (
 	"context"
 	crand "crypto/rand"
-	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"runtime/debug"
 	"sync"
@@ -340,12 +340,11 @@ func jitter(d time.Duration) time.Duration {
 	if d <= 1 {
 		return d
 	}
-	var b [8]byte
-	if _, err := crand.Read(b[:]); err != nil {
+	n, err := crand.Int(crand.Reader, big.NewInt(int64(d/2)+1))
+	if err != nil {
 		return d
 	}
-	n := binary.LittleEndian.Uint64(b[:]) % uint64(d/2+1)
-	return d/2 + time.Duration(n)
+	return d/2 + time.Duration(n.Int64())
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {

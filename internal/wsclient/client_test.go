@@ -279,8 +279,7 @@ func TestClient_HandlerPanicSurvives(t *testing.T) {
 		OnMessage: func(_ context.Context, raw []byte) error {
 			gotCh <- string(raw)
 			if string(raw) == "взрыв" {
-				var m map[string]string
-				m["x"] = "паника nil-map" // настоящая Go-паника, не ошибка
+				panic("паника обработчика в тесте") // настоящая Go-паника, не ошибка
 			}
 			return nil
 		},
