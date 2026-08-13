@@ -945,6 +945,10 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if srv.H2CEnabled() {
 		outln("  HTTP/2 без TLS (h2c) включён для апстрима (ONEBASE_H2C) — см. docs/reverse-proxy.md")
 	}
+	// WS-шлюзы приёмки (план 120A): исходящие соединения живут вместе с
+	// сервером — стартуют после планировщика, гасятся graceful shutdown'ом
+	// (srv.Shutdown ждёт их через backgroundWG).
+	srv.ResyncWSIntakes()
 	serveErr := make(chan error, 1)
 	go func() {
 		listenErr := srv.Serve(listener)

@@ -112,6 +112,8 @@ type Server struct {
 	backgroundCancel       context.CancelFunc
 	backgroundWG           sync.WaitGroup
 	closing                bool
+	wsMu                   sync.Mutex                // защищает wsIntakes
+	wsIntakes              map[string]*wsIntakeEntry // живые WS-соединения приёмки (план 120A)
 }
 
 func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo, cfg Config, sched *scheduler.Scheduler) *Server {

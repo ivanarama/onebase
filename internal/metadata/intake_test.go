@@ -120,3 +120,29 @@ dlq:
 		t.Fatalf("отсутствующий каталог должен дать (nil,nil), получено (%v,%v)", none, err)
 	}
 }
+
+func TestIntakeValidateWS(t *testing.T) {
+	good := &Intake{Name: "Hub", Transport: "ws", URL: "wss://hub.example.com/stream", Handler: "Hub",
+		Auth: "token", Secret: "${env:WS_TOKEN}"}
+	good.Normalize()
+	if err := good.Validate(); err != nil {
+		t.Fatalf("валидный ws-шлюз не прошёл: %v", err)
+	}
+	if good.Reconnect.Initial != 1 || good.Reconnect.Max != 60 {
+		t.Fatalf("дефолты reconnect не применены: %+v", good.Reconnect)
+	}
+
+	bad := []*Intake{
+		{Name: "A", Transport: "ws", Handler: "H"},                                                        // нет url
+		{Name: "A", Transport: "ws", URL: "https://hub", Handler: "H"},                                    // не ws-схема
+		{Name: "A", Transport: "ws", URL: "wss://hub", Handler: "H", Endpoint: "/hs/x"},                   // endpoint не применим
+		{Name: "A", Transport: "ws", URL: "wss://hub", Handler: "H", Auth: "hmac", Secret: "s"},           // hmac не применим
+		{Name: "A", Transport: "ws", URL: "wss://hub", Handler: "H", Reconnect: IntakeReconnect{Max: -5}}, // max < initial (после дефолта initial=1)
+	}
+	for i, in := range bad {
+		in.Normalize()
+		if err := in.Validate(); err == nil {
+			t.Errorf("ws-случай %d: ожидалась ошибка валидации", i)
+		}
+	}
+}
