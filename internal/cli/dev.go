@@ -390,6 +390,10 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		serveErr <- listenErr
 	}()
 
+	// WS-шлюзы приёмки (план 120A): hot-reload делает resync через
+	// reloadProjectRuntime, стартовый вызов — здесь.
+	srv.ResyncWSIntakes()
+
 	outf("onebase dev running on :%d\n", port)
 	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser {
 		openInBrowser("127.0.0.1", port)
