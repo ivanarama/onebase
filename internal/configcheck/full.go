@@ -59,6 +59,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		warnings = append(warnings, CheckFormFieldFormat(proj)...)
 		warnings = append(warnings, CheckFormPlacement(dir, proj)...)
 		warnings = append(warnings, CheckSecretHygiene(appCfg, proj)...)
+		warnings = append(warnings, CheckStages(proj)...)
 		issues = append(issues, CheckHTTPServices(proj)...)
 		issues = append(issues, CheckExchangePlans(proj)...)
 		issues = append(issues, CheckIntakes(proj)...)

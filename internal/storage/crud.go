@@ -75,14 +75,59 @@ const (
 )
 
 func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
+	// Сущность с объявленными этапами (план 121) пишется сериализованным циклом
+	// «прочитать → проверить переход → записать → записать историю». Решение о
+	// допустимости принимается по прочитанному значению, поэтому между чтением и
+	// записью объект не должен меняться: иначе два запроса читают один и тот же
+	// «Черновик» и оба выполняют разные переходы из него.
+	//
+	// Сущность БЕЗ этапов идёт прежним путём — без транзакции-обёртки, без
+	// блокировки и с прежними ошибками. Это условие важно держать узким: цена
+	// сериализации не должна доставаться тем, кто про этапы ничего не объявлял.
+	if !stagedEntity(entity) {
+		return db.upsertInTx(ctx, entityName, id, fields, entity, bumpVersion, auditMode)
+	}
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		return db.upsertInTx(txCtx, entityName, id, fields, entity, bumpVersion, auditMode)
+	})
+}
+
+func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
 	d := db.dialect
+	staged := stagedEntity(entity)
+	if staged {
+		// Блокировка записи ДО чтения. На PostgreSQL — advisory lock: обычный
+		// FOR UPDATE не блокирует отсутствующую строку, а создание объекта —
+		// такой же переход («» → начальный этап).
+		if err := db.lockStageRecord(ctx, entityName, id); err != nil {
+			return err
+		}
+	}
 	// Read old value for audit diff (best-effort, ignore errors)
 	var oldRow map[string]any
 	isNew := false
-	if existing, err := db.GetByID(ctx, entityName, id, entity); err != nil {
+	if existing, err := db.getByID(ctx, entityName, id, entity, staged); err != nil {
+		// Для аудита чтение старого значения best-effort: не прочитали — считаем
+		// объект новым, худшее последствие — неточная строка в журнале. Для гейта
+		// этапов (план 121) так нельзя: сбой чтения означал бы «объекта нет», то
+		// есть создание, а создание на начальном этапе разрешено всегда — ошибка
+		// БД открывала бы проход мимо маршрута. Поэтому у сущности с этапами
+		// «новый объект» — только настоящее отсутствие строки.
+		if staged && !IsNotFound(errors.Unwrap(err)) && !IsNotFound(err) {
+			return fmt.Errorf("upsert %s: чтение текущего этапа: %w", entityName, err)
+		}
 		isNew = true
 	} else {
 		oldRow = existing
+	}
+
+	// Гейт переходов между этапами (план 121) — до построения запроса, на уже
+	// прочитанном старом значении. Вторая точка записи — UpsertVersioned
+	// (optimistic_lock.go), там стоит такая же пара вызовов: разъехаться им
+	// нельзя, иначе правка объекта из формы пройдёт мимо проверки.
+	stageTr, err := db.checkStageTransition(ctx, entityName, entity, oldRow, fields)
+	if err != nil {
+		return err
 	}
 
 	table := metadata.TableName(entityName)
@@ -142,8 +187,6 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 		argIdx++
 		updates = append(updates, "is_folder = EXCLUDED.is_folder")
 	}
-	_ = argIdx
-
 	// Оптимистическая блокировка: на каждом UPDATE инкрементируем _version.
 	// На INSERT — DEFAULT 1 из DDL. См. UpsertVersioned для проверки ожидаемой
 	// ревизии перед записью.
@@ -152,14 +195,36 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	}
 
 	var sql string
-	if len(updates) == 0 {
+	switch {
+	case len(updates) == 0:
 		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO NOTHING",
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
-	} else {
+	case staged && isNew:
+		// Создание объекта с этапами: строку вставляет ровно этот запрос. Если
+		// её успел создать кто-то другой, DO NOTHING оставит ноль изменённых
+		// строк — и запись отвергается, а не превращается молча в правку,
+		// проверку перехода для которой никто не делал.
+		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
+	case staged:
+		// Правка объекта с этапами: сравнение с прочитанной ревизией (CAS).
+		// На SQLite это единственная защита — advisory-локов там нет, а два
+		// подключения к одному файлу читают каждый свой снимок.
+		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO UPDATE SET %s WHERE %s._version = %s",
+			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "),
+			table, d.Placeholder(argIdx))
+		args = append(args, stageReadVersion(oldRow))
+	default:
 		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO UPDATE SET %s",
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "))
 	}
-	if err := db.exec(ctx, sql, args...); err != nil {
+	tag, err := db.Exec(ctx, sql, args...)
+	if err != nil {
+		if staged {
+			if conflict := stageConcurrencyErr(err); errors.Is(conflict, ErrStageConcurrentWrite) {
+				return conflict
+			}
+		}
 		// Дубль кода/номера — ошибка пользователя, а не сбой: он ввёл занятое
 		// значение. Текст драйвера («UNIQUE constraint failed: контрагенты.код»)
 		// ему ничего не говорит, поэтому подменяем его на человеческий и не
@@ -169,6 +234,12 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 		}
 		return fmt.Errorf("upsert %s: %w", entityName, classifyConstraintErr(err))
 	}
+	if staged && tag.RowsAffected != 1 {
+		// Ноль изменённых строк на пути с этапами означает ровно одно: между
+		// чтением и записью объект тронул кто-то ещё, и проверенный переход
+		// относится к состоянию, которого уже нет.
+		return ErrStageConcurrentWrite
+	}
 
 	// Полнотекстовый индекс (план 82) — в той же транзакции, что и запись:
 	// откат записи откатывает и индекс, поэтому разъехаться они не могут.
@@ -176,6 +247,22 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	// (entityservice.Save, ui/dsl_documents, обмен, приёмка) — общий у них
 	// только этот upsert.
 	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+		return err
+	}
+
+	// История переходов (план 121) — в той же транзакции, что и запись, и
+	// безусловно: журнал регистрации ниже выключается настройкой, а отчёт «где
+	// застряло» обязан работать всегда.
+	//
+	// Режим аудита здесь СОЗНАТЕЛЬНО не учитывается. Провизорная вставка нового
+	// объекта (upsertAuditSkip) — это и есть момент, когда «» → начальный этап;
+	// её запись в истории откатится вместе с транзакцией, если хук упадёт.
+	// А upsertAuditCreate («финальная запись созданного») зовут не только из
+	// entityservice: DSL-проведение дописывает им реквизиты после
+	// ОбработкаПроведения (ui/dsl_documents.go). Считать эту запись созданием
+	// значило бы при каждом проведении отвергать документ в strict-режиме и
+	// сочинять в истории переход «из ниоткуда».
+	if err := db.logStageTransition(ctx, entityName, id, stageTr); err != nil {
 		return err
 	}
 
@@ -198,9 +285,37 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	return nil
 }
 
+// stageReadVersion — ревизия, прочитанная перед проверкой перехода. Она уезжает
+// в CAS-условие записи; отсутствие значения (старая строка без _version) даёт 0,
+// и такая запись честно не пройдёт — лучше отказ, чем незамеченная гонка.
+func stageReadVersion(oldRow map[string]any) int64 {
+	if oldRow == nil {
+		return 0
+	}
+	switch v := oldRow["_version"].(type) {
+	case int64:
+		return v
+	case int32:
+		return int64(v)
+	case int:
+		return int64(v)
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
 // GetByID retrieves a single object by ID, returning fields as map[string]any.
 // For documents, also returns "posted" bool.
 func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, entity *metadata.Entity) (map[string]any, error) {
+	return db.getByID(ctx, entityName, id, entity, false)
+}
+
+// getByID — GetByID с опциональным FOR UPDATE: на PostgreSQL строка с этапами
+// читается под блокировкой, чтобы между проверкой перехода и записью её никто
+// не изменил. На SQLite блокировки строк нет, роль защиты играет CAS по
+// _version при записи.
+func (db *DB) getByID(ctx context.Context, entityName string, id uuid.UUID, entity *metadata.Entity, forUpdate bool) (map[string]any, error) {
 	d := db.dialect
 	table := metadata.TableName(entityName)
 	cols := []string{"id"}
@@ -215,6 +330,9 @@ func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, enti
 		cols = append(cols, "is_folder", "parent_id")
 	}
 	sql := fmt.Sprintf("SELECT %s FROM %s WHERE id = %s", strings.Join(cols, ", "), table, d.Placeholder(1))
+	if forUpdate && db.IsPostgres() && HasTx(ctx) {
+		sql += " FOR UPDATE"
+	}
 	row := db.QueryRow(ctx, sql, idArg(d, id))
 
 	dest := make([]any, len(cols))

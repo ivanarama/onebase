@@ -11,9 +11,18 @@ on:
   # статус-чеки при этом блокируют мерж — восстановиться было нечем.
   workflow_dispatch:
 
+# Отменять устаревшие прогоны того же ref (QUAL-04): новый push в ту же ветку/PR
+# снимает предыдущий незавершённый прогон, чтобы зависшие/лишние runs не
+# потребляли раннеры бесконечно. По ref, а не глобально, — параллельные ветки
+# не мешают друг другу.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -60,6 +69,34 @@ jobs:
               failed=1
             else
               echo "$project: lint clean"
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+      # Конфигурационные тесты shipped-примеров (QUAL-01, issue #790). Runner
+      # `onebase test` реализован, но CI гонял для конфигураций только lint.
+      # Важно: `onebase test` при НУЛЕ найденных тестов возвращает 0 — поэтому
+      # гейт отдельно проверяет ненулевой план TAP (1..N, N>0), иначе «нет
+      # тестов» молча считалось бы успехом.
+      - name: Run shipped example config tests (SQLite)
+        run: |
+          set -uo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          go build -o "$tmp/onebase" ./cmd/onebase
+          failed=0
+          for ex in minimal callcenter trade; do
+            echo "::group::onebase test $ex"
+            out="$("$tmp/onebase" test --project "examples/$ex" --sqlite "$tmp/$ex.db" --format tap 2>&1)"; code=$?
+            echo "$out"
+            plan="$(printf '%s\n' "$out" | sed -n 's/^1\.\.\([0-9][0-9]*\)$/\1/p' | head -1)"
+            if [ "$code" -ne 0 ]; then
+              echo "::error::$ex: onebase test завершился с кодом $code (упавшие тесты)"
+              failed=1
+            elif [ -z "$plan" ] || [ "$plan" -eq 0 ]; then
+              echo "::error::$ex: не найдено ни одного теста — ноль тестов не считается успехом (QUAL-01)"
+              failed=1
             fi
             echo "::endgroup::"
           done
@@ -151,6 +188,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -165,6 +203,7 @@ jobs:
 
   postgres-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -187,6 +226,15 @@ jobs:
         with:
           go-version-file: '.go-version'
           cache: true
+      - name: Install PostgreSQL client (pg_dump/psql для DR-01 round-trip)
+        # Сервис — postgres:16, поэтому и клиент 16: pg_dump старее сервера
+        # отказывается снимать дамп. Пакет есть в базовых репозиториях
+        # ubuntu-latest; версию печатаем для диагностики.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          pg_dump --version
+          psql --version
       - name: PostgreSQL integration tests
         run: |
           set -euo pipefail
@@ -216,6 +264,12 @@ jobs:
           # Без этой строки postgres-подтесты матричных тестов пакета
           # пропускались: TEST_DATABASE_URL задан только в этом джобе.
           go test -race -count=1 -timeout 15m -tags integration ./internal/dsl/interpreter
+          # DR-01 (issue #784): сквозной backup→restore PostgreSQL. Проверяет,
+          # что pg_dump снимает дамп, а psql-restore возвращает те же данные
+          # (round-trip на выделенной базе, чтобы разрушительный restore не
+          # затронул общую onebase_test). Требует pg_dump/psql — см. шаг выше.
+          go test -race -count=1 -timeout 10m -tags integration ./internal/backup \
+            -run TestPostgresBackupRestoreRoundTrip
           # Owner-aware image demo has a PostgreSQL-only inter-server race
           # regression. Select the exact matrix subtest so this job does not
           # expand into the full internal/ui suite.
@@ -233,6 +287,7 @@ jobs:
     # Держите go-version актуальным и пиньте патч-версию: floating 1.26.x может
     # взять устаревший toolcache на GitHub runner и завалить govulncheck.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -251,6 +306,7 @@ jobs:
     # сервисов не нужно. Только для pull_request (нужна база для сравнения).
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:

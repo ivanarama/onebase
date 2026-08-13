@@ -17,10 +17,18 @@ import (
 
 // enrichAuditEntries resolves reference UUIDs and formats dates in audit
 // OldValue/NewValue so that the history page shows human-readable values.
-func (s *Server) enrichAuditEntries(ctx context.Context, entity *metadata.Entity, entries []*storage.AuditEntry) {
+//
+// full — реквизиты, значения которых пользователь вправе видеть целиком
+// (см. redactAuditEntries). Маскированное значение обогащать нельзя: разбор
+// маски как даты бессмыслен, а разыменование маскированного UUID вернуло бы
+// представление объекта, которое маска и скрывает.
+func (s *Server) enrichAuditEntries(ctx context.Context, entity *metadata.Entity, entries []*storage.AuditEntry, full map[string]bool) {
 	refFields := map[string]string{}
 	dateFields := map[string]bool{}
 	for _, f := range entity.Fields {
+		if full != nil && !full[f.Name] {
+			continue
+		}
 		if f.RefEntity != "" {
 			refFields[f.Name] = f.RefEntity
 		}
@@ -84,7 +92,7 @@ func (s *Server) enrichAuditEntries(ctx context.Context, entity *metadata.Entity
 // enrichAuditEntriesGlobal resolves UUIDs in audit entries that span multiple entities
 // (used by the global audit journal). For each entry it looks up the entity by name
 // and resolves reference field UUIDs to display names.
-func (s *Server) enrichAuditEntriesGlobal(ctx context.Context, entries []*storage.AuditEntry) {
+func (s *Server) enrichAuditEntriesGlobal(ctx context.Context, entries []*storage.AuditEntry, full map[string]bool) {
 	type entInfo struct {
 		refFields  map[string]string
 		dateFields map[string]bool
@@ -94,6 +102,10 @@ func (s *Server) enrichAuditEntriesGlobal(ctx context.Context, entries []*storag
 
 	for _, e := range entries {
 		if e.Field == "" || e.EntityName == "" {
+			continue
+		}
+		// Маскированное значение не обогащается (см. enrichAuditEntries).
+		if full != nil && !full[e.EntityName+"|"+e.Field] {
 			continue
 		}
 		info, ok := entityCache[e.EntityName]

@@ -89,6 +89,11 @@ var systemTables = []string{
 	"_attachments",
 	"_audit",
 	"_ai_audit",
+	// История переходов между этапами (план 121). Она не выводится из данных:
+	// объект помнит только текущий этап, а «кто когда его двигал» и «сколько он
+	// тут висит» живут исключительно здесь. Без выгрузки восстановленная база
+	// показывала бы по всем объектам «неизвестно».
+	"_stage_history",
 	"_intake_log",
 	"_intake_dlq",
 	"_rollup",
@@ -2348,6 +2353,11 @@ func migrateSchema(ctx context.Context, db *storage.DB, configDest, cfgFileDir s
 	}
 	if err := db.EnsureAuditSchema(ctx); err != nil {
 		return fmt.Errorf("ensure audit schema: %w", err)
+	}
+	// _stage_history тоже приезжает в system/: без явного создания импорт
+	// истории переходов падал бы на «no such table» ровно так же, как _accounts.
+	if err := db.EnsureStageHistorySchema(ctx); err != nil {
+		return fmt.Errorf("ensure stage history schema: %w", err)
 	}
 	if err := db.EnsureScheduledRunsTable(ctx); err != nil {
 		return fmt.Errorf("ensure scheduled runs: %w", err)

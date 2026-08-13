@@ -1,96 +1,15 @@
 package ui
 
 import (
-	"errors"
-	"fmt"
-	"sync"
-
-	"github.com/shopspring/decimal"
-
-	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
-	"github.com/ivantit66/onebase/internal/dsl/lexer"
-	"github.com/ivantit66/onebase/internal/dsl/parser"
-	"github.com/ivantit66/onebase/internal/report/compose"
+	"github.com/ivantit66/onebase/internal/report/expreval"
 )
 
-// interpEvaluator вычисляет DSL-условия `when` на интерпретаторе.
-// Каждое выражение компилируется в процедуру один раз (кэш) и исполняется
-// на строку через RunWithResult с полями строки как переменными.
-//
-// Не-bool результат when трактуется как false (правило не срабатывает);
-// синтаксис when проверяется на этапе onebase check (план 59, Task 11).
-type interpEvaluator struct {
-	interp *interpreter.Interpreter
-	mu     sync.Mutex
-	cache  map[string]*ast.ProcedureDecl
-}
-
-// Контракт: interpEvaluator реализует compose.Evaluator (используется в Task 10).
-var _ compose.Evaluator = (*interpEvaluator)(nil)
-
-func newInterpEvaluator(interp *interpreter.Interpreter) *interpEvaluator {
-	return &interpEvaluator{interp: interp, cache: map[string]*ast.ProcedureDecl{}}
-}
-
-func (e *interpEvaluator) compile(expr string) (*ast.ProcedureDecl, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if p, ok := e.cache[expr]; ok {
-		return p, nil
-	}
-	src := "Функция __cond()\nВозврат (" + expr + ");\nКонецФункции\n"
-	prog, err := parser.New(lexer.New(src, "cond.os")).ParseProgram()
-	if err != nil {
-		return nil, err
-	}
-	var proc *ast.ProcedureDecl
-	for _, d := range prog.Procedures {
-		proc = d
-		break
-	}
-	if proc == nil {
-		return nil, fmt.Errorf("пустое выражение условия")
-	}
-	e.cache[expr] = proc
-	return proc, nil
-}
-
-func (e *interpEvaluator) EvalBool(expr string, row compose.Row) (bool, error) {
-	proc, err := e.compile(expr)
-	if err != nil {
-		return false, err
-	}
-	var result any
-	if err := e.interp.RunWithResult(proc, &interpreter.MapThis{M: row}, &result, map[string]any(row)); err != nil {
-		// Деление на ноль — неопределённое значение: условие просто не срабатывает
-		// (без ошибки), как пустая ячейка в 1С. Прочие ошибки пробрасываем.
-		if errors.Is(err, interpreter.ErrDivisionByZero) {
-			return false, nil
-		}
-		return false, err
-	}
-	b, _ := result.(bool)
-	return b, nil
-}
-
-// EvalNum исполняет DSL-выражение и приводит результат к decimal.
-// Используется для вычисляемых показателей компоновки (Task B2).
-func (e *interpEvaluator) EvalNum(expr string, row compose.Row) (decimal.Decimal, bool, error) {
-	proc, err := e.compile(expr)
-	if err != nil {
-		return decimal.Zero, false, err
-	}
-	var result any
-	if err := e.interp.RunWithResult(proc, &interpreter.MapThis{M: row}, &result, map[string]any(row)); err != nil {
-		// Деление на ноль — неопределённое значение (пустая ячейка, как в 1С), а не
-		// runtime-ошибка: возвращаем ok=false без ошибки, чтобы компоновка не
-		// поднимала предупреждение. Прочие ошибки пробрасываем для показа.
-		if errors.Is(err, interpreter.ErrDivisionByZero) {
-			return decimal.Zero, false, nil
-		}
-		return decimal.Zero, false, err
-	}
-	d, ok := compose.ExportToDecimal(result)
-	return d, ok, nil
+// newInterpEvaluator строит evaluator условий/показателей компоновки. Раньше
+// UI-путь исполнял выражения БЕЗ песочницы (обычный RunWithResult), поэтому
+// формула с бесконечным циклом вешала хендлер навсегда. Теперь используется
+// общий expreval.Evaluator с обязательным SandboxProfile — та же реализация,
+// что и в REST-пути (issue #788).
+func newInterpEvaluator(interp *interpreter.Interpreter) *expreval.Evaluator {
+	return expreval.New(interp, expreval.DefaultProfile())
 }
