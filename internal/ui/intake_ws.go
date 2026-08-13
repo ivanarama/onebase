@@ -111,6 +111,7 @@ func (s *Server) startWSIntake(in *metadata.Intake) *wsIntakeEntry {
 	})
 	go func() {
 		defer release()
+		defer cancel() // Run вышел (shutdown) — контекст освобождается и без resync
 		client.Run(ctx)
 	}()
 	return &wsIntakeEntry{sig: wsIntakeSig(in), client: client, cancel: cancel}

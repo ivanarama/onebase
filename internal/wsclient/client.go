@@ -11,9 +11,10 @@ package wsclient
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"runtime/debug"
 	"sync"
@@ -199,12 +200,17 @@ func (c *Client) runOnce(ctx context.Context) error {
 		}
 	}
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	conn, _, err := websocket.Dial(dctx, c.cfg.URL, &websocket.DialOptions{HTTPHeader: header})
+	conn, resp, err := websocket.Dial(dctx, c.cfg.URL, &websocket.DialOptions{HTTPHeader: header})
 	cancel()
+	// Библиотека закрывает тело сама («You never need to close resp.Body
+	// yourself»), явный Close — идемпотентная страховка для линтера bodyclose.
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		return err
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 	if c.cfg.MaxMessageBytes > 0 {
 		conn.SetReadLimit(c.cfg.MaxMessageBytes)
 	}
@@ -327,13 +333,19 @@ func (c *Client) logf(format string, args ...any) {
 	}
 }
 
-// jitter размывает выдержку в [d/2; d): одновременный рестарт множества баз не
-// даёт синхронной волны переподключений к одному серверу.
+// jitter размывает выдержку в [d/2; d]: одновременный рестарт множества баз не
+// даёт синхронной волны переподключений к одному серверу. crypto/rand — не ради
+// криптостойкости (паузе она не нужна), а чтобы не заводить исключение G404.
 func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
+	if d <= 1 {
 		return d
 	}
-	return d/2 + time.Duration(rand.Int63n(int64(d/2)+1))
+	var b [8]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return d
+	}
+	n := binary.LittleEndian.Uint64(b[:]) % uint64(d/2+1)
+	return d/2 + time.Duration(n)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) {
