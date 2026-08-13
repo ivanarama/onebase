@@ -101,3 +101,44 @@ func TestSaveFormAcceptsNormalEntityName(t *testing.T) {
 		t.Errorf("штатное сохранение не сработало:\n%s", got)
 	}
 }
+
+func TestSaveFormDoesNotPersistUnsupportedTablePartFields(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, "catalogs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cfgDir, "catalogs", "orders.yaml")
+	config := "name: Orders\nfields:\n  - {name: Name, type: string}\ntable_parts:\n  - name: Lines\n    fields:\n      - {name: Quantity, type: number}\n"
+	if err := os.WriteFile(target, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newTestStore(t)
+	if err := store.Add(&Base{ID: "b", Name: "b", ConfigSource: "file", Path: cfgDir}); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"entity":        {"Orders"},
+		"ef.0.name":     {"Name"},
+		"ef.0.vis":      {"1"},
+		"ef.tp0.0.name": {"tp.Lines.Quantity"},
+		"ef.tp0.0.vis":  {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/bases/b/configurator/form/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = requestWithBaseID(req, "b")
+	rec := httptest.NewRecorder()
+	(&handler{store: store, runner: NewRunner()}).configuratorSaveForm(rec, req)
+
+	got, err := os.ReadFile(target) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if !strings.Contains(text, "item_form:\n    - Name") {
+		t.Fatalf("header item_form was not saved:\n%s", text)
+	}
+	if strings.Contains(text, "tp.Lines.Quantity") {
+		t.Fatalf("unsupported table-part field was persisted:\n%s", text)
+	}
+}

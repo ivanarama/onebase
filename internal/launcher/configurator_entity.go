@@ -15,6 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"gopkg.in/yaml.v3"
 )
 
@@ -362,36 +363,11 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 	for i := 0; ; i++ {
 		name := r.FormValue(fmt.Sprintf("ef.%d.name", i))
 		if name == "" {
-			// Try table part fields
-			name = r.FormValue(fmt.Sprintf("ef.tp0.%d.name", i))
-		}
-		if name == "" {
 			break
 		}
 		vis := r.FormValue(fmt.Sprintf("ef.%d.vis", i))
-		if vis == "" {
-			vis = r.FormValue(fmt.Sprintf("ef.tp0.%d.vis", i))
-		}
 		if vis == "1" {
 			itemForm = append(itemForm, name)
-		}
-	}
-	// Also check table part fields with any index
-	for tpJ := 0; ; tpJ++ {
-		foundAny := false
-		for fi := 0; ; fi++ {
-			name := r.FormValue(fmt.Sprintf("ef.tp%d.%d.name", tpJ, fi))
-			if name == "" {
-				break
-			}
-			foundAny = true
-			vis := r.FormValue(fmt.Sprintf("ef.tp%d.%d.vis", tpJ, fi))
-			if vis == "1" {
-				itemForm = append(itemForm, name)
-			}
-		}
-		if !foundAny {
-			break
 		}
 	}
 	if len(itemForm) > 0 {
@@ -756,9 +732,9 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 			// Уникальность вместе со сбросом счётчика без маски даты — ловушка
 			// с отложенным сроком: значение повторится в следующем периоде, и
 			// конфигурация сломается не сейчас, а первого января.
-			if target.Unique && period != "none" && !strings.ContainsRune(target.Prefix, '{') {
+			if target.Unique && period != "none" && !metadata.NumeratorPrefixDistinguishesPeriod(target.Prefix, period) {
 				data := h.loadCfgData(r.Context(), b, "tree")
-				data.Error = tr(lang, "Уникальность вместе со сбросом счётчика требует маску даты в префиксе, например {YYYY}-")
+				data.Error = tr(lang, "Уникальность вместе со сбросом счётчика требует маску даты, различающую периоды, например {YYYY}{MM}{DD}-")
 				renderCfg(w, r, data)
 				return
 			}

@@ -1752,19 +1752,6 @@ const cfgTabTree = `{{define "tab-tree"}}
   </label>
 </div>
 {{end}}
-{{range $j, $tp := $e.TableParts}}
-<div style="font-size:11px;font-weight:600;color:#7c3aed;margin:8px 0 2px;padding-left:2px">📋 {{$tp.Name}} ({{t $.Lang "табличная часть"}})</div>
-{{range $i, $f := $tp.Fields}}
-<div class="form-field-row" style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 16px;font-size:12px">
-  <input type="hidden" name="ef.tp{{$j}}.{{$i}}.name" value="tp.{{$tp.Name}}.{{$f.Name}}">
-  <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1">
-    <input type="checkbox" name="ef.tp{{$j}}.{{$i}}.vis" value="1" checked>
-    <span style="color:#1a4a80">{{$f.Name}}</span>
-    <span class="ft {{fieldTypeClass $f.Type}}" style="font-size:11px">{{fieldTypeLabel $f.Type $f.RefEntity}}</span>
-  </label>
-</div>
-{{end}}
-{{end}}
 </div>
 </div>
 
