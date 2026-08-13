@@ -146,16 +146,37 @@ func (h *Handlers) redirectURI(r *http.Request, providerID string) string {
 		if r.TLS != nil {
 			scheme = "https"
 		}
+		usedForwarded := false
 		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
 			scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
+			usedForwarded = true
 		}
 		host := r.Host
 		if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
 			host = strings.TrimSpace(strings.Split(fwd, ",")[0])
+			usedForwarded = true
+		}
+		if usedForwarded {
+			warnForwardedWithoutPublicURL()
 		}
 		base = scheme + "://" + host
 	}
 	return base + "/auth/oidc/" + url.PathEscape(providerID) + "/callback"
+}
+
+var forwardedWarnOnce sync.Once
+
+// warnForwardedWithoutPublicURL один раз за процесс предупреждает, что
+// redirect_uri OIDC строится из X-Forwarded-* при незаданном ONEBASE_PUBLIC_URL.
+// За НЕдоверенным прокси эти заголовки подделываются, и callback мог бы
+// указывать на чужой хост. Это не жёсткая ошибка (провайдер всё равно сверяет
+// redirect_uri с зарегистрированным списком, а state-кука привязывает callback
+// к браузеру), но за обратным прокси следует задать ONEBASE_PUBLIC_URL (SEC-05).
+func warnForwardedWithoutPublicURL() {
+	forwardedWarnOnce.Do(func() {
+		authLog().Warn("OIDC redirect_uri построен из X-Forwarded-* без ONEBASE_PUBLIC_URL",
+			"подсказка", "за обратным прокси задайте ONEBASE_PUBLIC_URL=https://ваш-домен (SEC-05)")
+	})
 }
 
 // OIDCStart начинает вход через внешнего провайдера.
