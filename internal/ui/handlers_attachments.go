@@ -149,7 +149,14 @@ func (s *Server) uploaderPreviewAllowed(r *http.Request, att *storage.Attachment
 	if u == nil || att == nil || att.UploadedBy == "" || u.Login != att.UploadedBy {
 		return false
 	}
-	return time.Since(att.UploadedAt) <= attachmentPreviewWindow
+	// Пользователь мог потерять write после загрузки; одна строка uploaded_by не
+	// должна сохранять ему доступ. Отрицательный возраст (время из будущего из-за
+	// рассинхронизации часов/повреждённых данных) также не считается «свежим».
+	if !s.rowAllowsOwnerID(r, att.OwnerKind, att.OwnerName, "write", att.OwnerID) {
+		return false
+	}
+	age := time.Since(att.UploadedAt)
+	return age >= 0 && age <= attachmentPreviewWindow
 }
 
 // attachmentDelete removes a file attachment.

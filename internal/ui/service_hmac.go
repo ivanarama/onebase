@@ -5,7 +5,8 @@ package ui
 // Старая схема подписывала только тело (X-Webhook-Signature =
 // hex(HMAC-SHA256(тело, secret))): подпись не связывала запрос с методом,
 // путём и временем, поэтому перехваченный запрос можно было воспроизвести. Новая
-// (versioned) схема — opt-in — подписывает timestamp+method+path+хэш тела,
+// (versioned) схема — opt-in — подписывает timestamp+method+request-target
+// (путь и query)+хэш тела,
 // требует свежую метку времени и отклоняет повтор той же подписи. Старая схема
 // принимается для совместимости, но без freshness/replay — клиентам стоит
 // перейти на v1.
@@ -27,37 +28,56 @@ import (
 // хранится в кэше повторов.
 const hmacFreshnessWindow = 5 * time.Minute
 
+// Ограничение не даёт валидно подписанному высокочастотному клиенту удерживать
+// неограниченное число записей в памяти. При заполнении кэш отказывает новым
+// уникальным запросам до освобождения места (fail-closed), а не вытесняет старые
+// подписи и не открывает их для replay внутри окна.
+const maxServiceReplayEntries = 100_000
+
 // serviceReplay — общий кэш повторов подписей generic HTTP-сервисов.
 var serviceReplay = newReplayCache(hmacFreshnessWindow)
 
 type replayCache struct {
-	mu        sync.Mutex
-	ttl       time.Duration
-	seen      map[string]time.Time
-	lastPurge time.Time
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxEntries int
+	seen       map[string]time.Time
+	lastPurge  time.Time
 }
 
 func newReplayCache(ttl time.Duration) *replayCache {
-	return &replayCache{ttl: ttl, seen: map[string]time.Time{}}
+	return newReplayCacheWithLimit(ttl, maxServiceReplayEntries)
+}
+
+func newReplayCacheWithLimit(ttl time.Duration, maxEntries int) *replayCache {
+	return &replayCache{ttl: ttl, maxEntries: maxEntries, seen: map[string]time.Time{}}
 }
 
 // seenBefore возвращает true, если ключ уже встречался в пределах TTL (повтор);
 // иначе запоминает ключ и возвращает false.
-func (c *replayCache) seenBefore(key string, now time.Time) bool {
+func (c *replayCache) seenBefore(key string, now time.Time) (replay, saturated bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.purgeLocked(now)
+	c.purgeLocked(now, false)
 	if t, ok := c.seen[key]; ok && now.Sub(t) <= c.ttl {
-		return true
+		return true, false
+	}
+	if c.maxEntries > 0 && len(c.seen) >= c.maxEntries {
+		// Троттлинг обычной чистки не должен давать ложное переполнение, если
+		// конкретные записи уже протухли.
+		c.purgeLocked(now, true)
+		if len(c.seen) >= c.maxEntries {
+			return false, true
+		}
 	}
 	c.seen[key] = now
-	return false
+	return false, false
 }
 
 // purgeLocked чистит протухшие записи не чаще раза за TTL — чтобы не сканировать
 // map под мьютексом на каждый запрос.
-func (c *replayCache) purgeLocked(now time.Time) {
-	if !c.lastPurge.IsZero() && now.Sub(c.lastPurge) < c.ttl {
+func (c *replayCache) purgeLocked(now time.Time, force bool) {
+	if !force && !c.lastPurge.IsZero() && now.Sub(c.lastPurge) < c.ttl {
 		return
 	}
 	c.lastPurge = now
@@ -88,11 +108,17 @@ func verifyServiceHMAC(secret, svcName string, r *http.Request, body []byte, cac
 		}
 		got := strings.TrimPrefix(lowSig, "v1=")
 		bodyHash := sha256.Sum256(body)
-		canonical := "v1:" + tsRaw + ":" + strings.ToUpper(r.Method) + ":" + r.URL.Path + ":" + hex.EncodeToString(bodyHash[:])
+		// RequestURI связывает подпись не только с путём, но и с точной строкой
+		// query. Иначе `?account=A` можно было заменить на `?account=B`, не зная
+		// секрета, если обработчик читает параметры из Запрос.
+		requestTarget := r.URL.RequestURI()
+		canonical := "v1:" + tsRaw + ":" + strings.ToUpper(r.Method) + ":" + requestTarget + ":" + hex.EncodeToString(bodyHash[:])
 		if !hmacEqualHex(secret, []byte(canonical), got) {
 			return false, "неверная подпись"
 		}
-		if cache.seenBefore(svcName+"|"+got, now) {
+		if replay, saturated := cache.seenBefore(svcName+"|"+got, now); saturated {
+			return false, "кэш защиты от повторов переполнен"
+		} else if replay {
 			return false, "повтор запроса (replay)"
 		}
 		return true, ""

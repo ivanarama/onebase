@@ -81,3 +81,28 @@ func TestVerifyServiceHMAC_TamperedPath(t *testing.T) {
 		t.Fatal("подпись для другого пути должна отклоняться")
 	}
 }
+
+func TestVerifyServiceHMAC_TamperedQuery(t *testing.T) {
+	secret, body := "s3cr3t", []byte(`{}`)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	r := httptest.NewRequest("POST", "/hs/svc/x?account=B", nil)
+	r.Header.Set("X-Webhook-Timestamp", ts)
+	r.Header.Set("X-Webhook-Signature", signV1(secret, ts, "POST", "/hs/svc/x?account=A", body))
+	if ok, _ := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute)); ok {
+		t.Fatal("подпись для другой query-строки должна отклоняться")
+	}
+}
+
+func TestReplayCache_FailsClosedAtLimit(t *testing.T) {
+	cache := newReplayCacheWithLimit(time.Minute, 1)
+	now := time.Now()
+	if replay, saturated := cache.seenBefore("first", now); replay || saturated {
+		t.Fatalf("первая подпись отклонена: replay=%v saturated=%v", replay, saturated)
+	}
+	if replay, saturated := cache.seenBefore("second", now); replay || !saturated {
+		t.Fatalf("переполненный кэш не отказал fail-closed: replay=%v saturated=%v", replay, saturated)
+	}
+	if len(cache.seen) != 1 {
+		t.Fatalf("размер кэша = %d, ожидался жёсткий предел 1", len(cache.seen))
+	}
+}

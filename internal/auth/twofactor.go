@@ -147,7 +147,10 @@ func (r *Repo) CountPlaintextTOTP(ctx context.Context) (int, error) {
 func (r *Repo) MigratePlaintextTOTP(ctx context.Context) (int, error) {
 	key, err := secrets.Default().Key()
 	if err != nil {
-		return 0, nil
+		if errors.Is(err, secrets.ErrNoMasterKey) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("auth: загрузка мастер-ключа для миграции TOTP: %w", err)
 	}
 	rows, err := r.db.Query(ctx, `SELECT id, totp_secret FROM _users WHERE totp_enabled AND totp_secret <> ''`)
 	if err != nil {
@@ -177,11 +180,18 @@ func (r *Repo) MigratePlaintextTOTP(ctx context.Context) (int, error) {
 		if encErr != nil {
 			return migrated, fmt.Errorf("auth: шифрование секрета TOTP при миграции: %w", encErr)
 		}
-		q := fmt.Sprintf(`UPDATE _users SET totp_secret = %s WHERE id = %s`, d.Placeholder(1), d.Placeholder(2))
-		if _, err := r.db.Exec(ctx, q, enc, p.id); err != nil {
+		// Сравниваем прежний plaintext в WHERE: если другой процесс/операция уже
+		// сменила seed после чтения списка, миграция не должна вернуть старое
+		// значение поверх нового.
+		q := fmt.Sprintf(`UPDATE _users SET totp_secret = %s WHERE id = %s AND totp_secret = %s`,
+			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+		tag, err := r.db.Exec(ctx, q, enc, p.id, p.secret)
+		if err != nil {
 			return migrated, err
 		}
-		migrated++
+		if tag.RowsAffected == 1 {
+			migrated++
+		}
 	}
 	return migrated, nil
 }

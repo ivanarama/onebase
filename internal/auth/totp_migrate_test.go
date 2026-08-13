@@ -4,6 +4,7 @@ package auth_test
 // существующим мастер-ключом.
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -53,5 +54,15 @@ func TestMigratePlaintextTOTP(t *testing.T) {
 	}
 	if err := repo.VerifySecondFactor(ctx, userID, code, now); err != nil {
 		t.Fatalf("2FA после миграции не работает: %v", err)
+	}
+}
+
+func TestMigratePlaintextTOTP_ReportsBrokenMasterKeyFile(t *testing.T) {
+	t.Setenv("ONEBASE_MASTER_KEY", "")
+	t.Setenv("ONEBASE_MASTER_KEY_FILE", filepath.Join(t.TempDir(), "missing-key"))
+
+	repo, ctx := newTestRepo(t)
+	if _, err := repo.MigratePlaintextTOTP(ctx); err == nil {
+		t.Fatal("ошибка чтения явно заданного файла мастер-ключа была проглочена")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -110,6 +111,19 @@ func TestAttachmentDownload_UploaderPreview(t *testing.T) {
 	// Другой пользователь (bob) с тем же write — доступа нет.
 	if rec := driveAttachment(t, s.attachmentDownload, "GET", id, writeOnly("bob")); rec.Code != http.StatusForbidden {
 		t.Fatalf("чужой write-пользователь скачал вложение: код %d", rec.Code)
+	}
+	// Совпадение login недостаточно после отзыва write.
+	if rec := driveAttachment(t, s.attachmentDownload, "GET", id, &auth.User{Login: "alice"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("загрузчик без актуального write скачал вложение: код %d", rec.Code)
+	}
+
+	// Время загрузки из будущего не растягивает окно предпросмотра.
+	future := att
+	future.UploadedAt = time.Now().Add(time.Minute)
+	req := httptest.NewRequest(http.MethodGet, "/ui/attachments/"+id, nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), writeOnly("alice")))
+	if s.uploaderPreviewAllowed(req, &future) {
+		t.Fatal("вложение с временем из будущего признано свежим")
 	}
 }
 
