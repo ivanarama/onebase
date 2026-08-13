@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -56,8 +57,10 @@ func driveAttachment(t *testing.T, h http.HandlerFunc, method, aid string, user 
 	return rec
 }
 
-// TestAttachmentDownload_AuthByOwner: скачивание вложения проверяет право
-// чтения (или записи) на сущность-владельца — защита от IDOR.
+// TestAttachmentDownload_AuthByOwner: скачивание вложения требует право ЧТЕНИЯ
+// сущности-владельца — защита от IDOR. Право «запись» само по себе скачивание
+// НЕ даёт (SEC-02, #777): единственное исключение — предпросмотр загрузчиком
+// только что загруженного файла, проверяется отдельно.
 func TestAttachmentDownload_AuthByOwner(t *testing.T) {
 	s, db, ctx := attachTestServer(t)
 	att := seedAttachment(t, db, ctx, "Контрагенты")
@@ -69,7 +72,7 @@ func TestAttachmentDownload_AuthByOwner(t *testing.T) {
 		want int
 	}{
 		{"владелец, есть read", catalogUser("Контрагенты", "read"), http.StatusOK},
-		{"владелец, есть только write", catalogUser("Контрагенты", "write"), http.StatusOK},
+		{"владелец, есть только write — скачивание запрещено", catalogUser("Контрагенты", "write"), http.StatusForbidden},
 		{"нет прав на владельца", catalogUser("Другое", "read"), http.StatusForbidden},
 		{"без пользователей (открытый деплой)", nil, http.StatusOK},
 	}
@@ -80,6 +83,47 @@ func TestAttachmentDownload_AuthByOwner(t *testing.T) {
 				t.Fatalf("код %d, ожидался %d", rec.Code, c.want)
 			}
 		})
+	}
+}
+
+// TestAttachmentDownload_UploaderPreview: загрузчик может скачать ТОЛЬКО ЧТО
+// загруженный им файл даже без права read на владельца (узкий предпросмотр,
+// SEC-02, #777), но это не распространяется на других пользователей с write.
+func TestAttachmentDownload_UploaderPreview(t *testing.T) {
+	s, db, ctx := attachTestServer(t)
+	att, err := db.UploadAttachment(ctx, "catalog", "Контрагенты", uuid.New(),
+		"f.txt", "text/plain", "alice", bytes.NewReader([]byte("вложение")), 1<<20)
+	if err != nil {
+		t.Fatalf("UploadAttachment: %v", err)
+	}
+	id := att.ID.String()
+
+	writeOnly := func(login string) *auth.User {
+		return &auth.User{Login: login, Roles: []*auth.Role{{
+			Permissions: auth.Permission{Catalogs: map[string][]string{"Контрагенты": {"write"}}},
+		}}}
+	}
+
+	// Загрузчик (alice) без права read на владельца — предпросмотр разрешён.
+	if rec := driveAttachment(t, s.attachmentDownload, "GET", id, writeOnly("alice")); rec.Code != http.StatusOK {
+		t.Fatalf("загрузчик не смог скачать свой свежий файл: код %d", rec.Code)
+	}
+	// Другой пользователь (bob) с тем же write — доступа нет.
+	if rec := driveAttachment(t, s.attachmentDownload, "GET", id, writeOnly("bob")); rec.Code != http.StatusForbidden {
+		t.Fatalf("чужой write-пользователь скачал вложение: код %d", rec.Code)
+	}
+	// Совпадение login недостаточно после отзыва write.
+	if rec := driveAttachment(t, s.attachmentDownload, "GET", id, &auth.User{Login: "alice"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("загрузчик без актуального write скачал вложение: код %d", rec.Code)
+	}
+
+	// Время загрузки из будущего не растягивает окно предпросмотра.
+	future := att
+	future.UploadedAt = time.Now().Add(time.Minute)
+	req := httptest.NewRequest(http.MethodGet, "/ui/attachments/"+id, nil)
+	req = req.WithContext(auth.ContextWithUser(req.Context(), writeOnly("alice")))
+	if s.uploaderPreviewAllowed(req, &future) {
+		t.Fatal("вложение с временем из будущего признано свежим")
 	}
 }
 

@@ -94,11 +94,16 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	}
 
 	// Public auth routes (no authentication required)
+	publicURL := strings.TrimSpace(os.Getenv("ONEBASE_PUBLIC_URL"))
 	authH := &auth.Handlers{
-		Repo:          authRepo,
-		Auditor:       store,
-		Codes:         auth.NewOneTimeCodes(30 * time.Second),
-		SecureCookies: envBool("ONEBASE_SECURE_COOKIES"),
+		Repo:    authRepo,
+		Auditor: store,
+		Codes:   auth.NewOneTimeCodes(30 * time.Second),
+		// Secure-куки: явный ONEBASE_SECURE_COOKIES ИЛИ https в публичном адресе
+		// (SEC-05). За HTTPS-терминатором r.TLS у запроса пустой, и без этого
+		// вывода куки уходили бы без флага Secure, хотя соединение до
+		// пользователя зашифровано.
+		SecureCookies: envBool("ONEBASE_SECURE_COOKIES") || strings.HasPrefix(strings.ToLower(publicURL), "https://"),
 		// 5 неудач с одного IP по одному логину → блок на минуту (план 53).
 		// Общий с basic-auth HTTP-сервисов (см. uiCfg.LoginLimit).
 		LoginLimit: loginLimit,
@@ -107,7 +112,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		AppName: uiCfg.AppName,
 		// Внешний адрес для redirect_uri провайдера SSO: за обратным прокси
 		// Host запроса не совпадает с публичным адресом.
-		BaseURL: strings.TrimSpace(os.Getenv("ONEBASE_PUBLIC_URL")),
+		BaseURL: publicURL,
 	}
 	r.Get("/login", authH.LoginPage)
 	r.Post("/login", authH.LoginSubmit)

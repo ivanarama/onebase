@@ -1403,6 +1403,11 @@ obManagedReady(obManagedInitDelegates);
       if (typeof window.openRefPicker !== 'function') return;
       var selEl = document.createElement('select');
       selEl.setAttribute('data-ref-entity', refEntity);
+      // «+ Создать» в форме подбора включается тем же признаком колонки, что и
+      // в автоформе (allow_inline_create у поля ТЧ). Без переноса на временный
+      // select подбор из ячейки не давал создать элемент НИКОГДА, даже когда
+      // конфигурация это разрешила.
+      if (args.column && args.column.allowCreate) selEl.setAttribute('data-ref-allow-create', '1');
       var opts = candidates('');
       for (var k = 0; k < opts.length; k++) {
         var o = document.createElement('option');
@@ -1605,6 +1610,9 @@ obManagedReady(obManagedInitDelegates);
         // него в ячейке были видны только предзагруженные опции, а модалка
         // подбора уходила в локальный фильтр вместо /ui/_ref-options.
         col.refEntity = c.ref;
+        // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
+        // его в data-sg-cols только когда создание разрешено).
+        col.allowCreate = !!c.allowCreate;
         col.editor = (function(refField, refOptsList) {
           return ObRefEditor.bind(null, refField, refOptsList);
         })(c.id, refOpts[c.id] || []);
