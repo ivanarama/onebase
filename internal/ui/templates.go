@@ -1696,34 +1696,7 @@ const tplForm = `
   {{end}}
 </div>
 
-{{/* Этапы (план 121): маршрут объекта с подсветкой текущего состояния. */}}
-{{if and (not .IsNew) .StageRoute}}
-<div class="card" style="max-width:1400px;margin-bottom:12px;padding:12px 16px">
-  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-    <span style="font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">{{t $.Lang "Этап"}}</span>
-    {{if .StageRoute.OffRoute}}
-      <span style="font-size:13px;font-weight:600;color:#b45309">{{t $.Lang "вне маршрута"}}</span>
-    {{else if .StageRoute.Label}}
-      <span style="font-size:13px;font-weight:600;color:#1d4ed8">{{.StageRoute.Label}}</span>
-    {{else}}
-      <span style="font-size:13px;color:#94a3b8">{{t $.Lang "не задан"}}</span>
-    {{end}}
-    <a href="/ui/stages/{{lower .Entity.Name}}" style="font-size:12px;color:#64748b;margin-left:auto">{{t $.Lang "Где застряло"}} →</a>
-  </div>
-  <div id="ob-stage-route" style="height:90px"></div>
-</div>
-<script src="/vendor/echarts/echarts.min.js"></script>
-<script>
-(function(){
-  var el = document.getElementById('ob-stage-route');
-  var opt = {{stageChartJSON .StageRoute}};
-  if (!el || !opt || typeof echarts === 'undefined') { return; }
-  var chart = echarts.init(el);
-  chart.setOption(opt);
-  window.addEventListener('resize', function(){ chart.resize(); });
-})();
-</script>
-{{end}}
+{{template "stage-route" .}}
 
 {{/* Movement links (collapsed) */}}
 {{if and (not .IsNew) .DocMovements}}
@@ -3012,6 +2985,50 @@ const tplHistory = `
 // (объекты, накопленные до объявления блока `stages`, истории не имеют — и
 // показать «неизвестно» честнее, чем считать их срок от нуля).
 const tplStages = `
+{{/* Общий блок «маршрут объекта»: подключается и автоформой, и управляемой
+     формой. Инициализатор идемпотентен — блок может появиться после замены
+     части DOM, и второй график поверх первого рисовать нельзя. */}}
+{{define "stage-route"}}
+{{if and (not .IsNew) .StageRoute}}
+<div class="card" style="max-width:1400px;margin-bottom:12px;padding:12px 16px">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+    <span style="font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">{{t $.Lang "Этап"}}</span>
+    {{if .StageRoute.OffRoute}}
+      <span style="font-size:13px;font-weight:600;color:#b45309">{{t $.Lang "вне маршрута"}}</span>
+    {{else if .StageRoute.Label}}
+      <span style="font-size:13px;font-weight:600;color:#1d4ed8">{{.StageRoute.Label}}</span>
+    {{else}}
+      <span style="font-size:13px;color:#94a3b8">{{t $.Lang "не задан"}}</span>
+    {{end}}
+    <a href="/ui/stages/{{lower .Entity.Name}}" style="font-size:12px;color:#64748b;margin-left:auto">{{t $.Lang "Где застряло"}} →</a>
+  </div>
+  <div class="ob-stage-route" data-ob-stage-option="{{stageChartJSON .StageRoute}}" style="height:90px"></div>
+</div>
+<script src="/vendor/echarts/echarts.min.js"></script>
+<script>
+(function(){
+  function draw(){
+    if (typeof echarts === 'undefined') { return; }
+    var nodes = document.querySelectorAll('.ob-stage-route');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el.dataset.obStageDrawn === '1') { continue; }
+      var opt;
+      try { opt = JSON.parse(el.dataset.obStageOption || 'null'); } catch (e) { opt = null; }
+      if (!opt) { continue; }
+      el.dataset.obStageDrawn = '1';
+      var chart = echarts.init(el);
+      chart.setOption(opt);
+      window.addEventListener('resize', function(){ chart.resize(); });
+    }
+  }
+  draw();
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', draw); }
+})();
+</script>
+{{end}}
+{{end}}
+
 {{define "page-stages"}}
 {{template "head" .}}{{template "nav" .}}
 <main>

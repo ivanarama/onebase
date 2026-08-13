@@ -515,6 +515,8 @@ const tplManagedForm = `
 {{if .Messages}}{{range .Messages}}<div class="msg-info">{{.}}</div>{{end}}{{end}}
 {{if .FormWarnings}}{{range .FormWarnings}}<div class="msg-info">{{.}}</div>{{end}}{{end}}
 
+{{if not .IsProcessor}}{{template "stage-route" .}}{{end}}
+
 {{if not .IsPopup}}
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
   {{if .IsProcessor}}

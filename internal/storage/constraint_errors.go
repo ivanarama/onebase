@@ -28,6 +28,36 @@ const sqliteConstraintForeignKey = 787
 // pgForeignKeyViolation — SQLSTATE PostgreSQL для foreign_key_violation.
 const pgForeignKeyViolation = "23503"
 
+// sqliteConstraintUnique — расширенный result-код SQLite для нарушения
+// уникальности (SQLITE_CONSTRAINT | (8<<8)), и его «первичный» вариант для
+// PRIMARY KEY (SQLITE_CONSTRAINT | (6<<8)).
+const (
+	sqliteConstraintUnique     = 2067
+	sqliteConstraintPrimaryKey = 1555
+)
+
+// pgUniqueViolation — SQLSTATE PostgreSQL для unique_violation.
+const pgUniqueViolation = "23505"
+
+// IsUniqueViolation распознаёт нарушение уникальности по КОДУ драйвера, а не по
+// тексту: тексты у диалектов разные и меняются между версиями (план 117E).
+func IsUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqErr *sqlite.Error
+	if errors.As(err, &sqErr) {
+		if c := sqErr.Code(); c == sqliteConstraintUnique || c == sqliteConstraintPrimaryKey {
+			return true
+		}
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+		return true
+	}
+	return false
+}
+
 // classifyConstraintErr оборачивает ошибку драйвера в типизированную
 // ErrForeignKeyViolation, если это нарушение внешнего ключа. Остальные ошибки
 // (включая другие нарушения ограничений) возвращаются без изменений — их текст

@@ -588,16 +588,34 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 
 func (db *DB) ensureEntityIndexes(ctx context.Context, e *metadata.Entity) error {
 	table := metadata.TableName(e.Name)
-	for _, idx := range e.Indexes {
+	// Индекс по полю-этапу (план 121): отчёт «где застряло» группирует объекты
+	// по нему, и без индекса по самой бизнес-таблице сводка сканирует её целиком.
+	if err := db.ensureStageIndex(ctx, e); err != nil {
+		return err
+	}
+	indexes := e.Indexes
+	// numerator.unique выражается через тот же механизм indexes: отдельной
+	// реализации уникальности заводить незачем (план 117E). Проверка до DDL:
+	// пустые значения уникальный индекс не ловит (NULL не конфликтуют), и без
+	// неё «включили уникальность» проходило бы молча.
+	if spec, need := UniqueCodeIndexSpec(e); need {
+		if err := db.CheckCodeUniquePrecondition(ctx, e); err != nil {
+			return err
+		}
+		indexes = append(append([]metadata.IndexSpec{}, indexes...), spec)
+	}
+	keep := make(map[string]bool, len(indexes))
+	for _, idx := range indexes {
 		cols, err := entityIndexColumns(e, idx)
 		if err != nil {
 			return err
 		}
+		keep[stableIndexName(table, cols, idx.Unique)] = true
 		if _, err := db.Exec(ctx, CreateEntityIndexSQL(table, cols, idx.Unique)); err != nil {
 			return err
 		}
 	}
-	return nil
+	return db.dropStaleUniqueCodeIndexes(ctx, e, keep)
 }
 
 func entityIndexColumns(e *metadata.Entity, idx metadata.IndexSpec) ([]string, error) {

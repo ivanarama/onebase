@@ -323,3 +323,70 @@ func TestStagesWarnViolationIsRecorded(t *testing.T) {
 		}
 	})
 }
+
+// TestReadSnapshotIsolatesConcurrentWrite — выгрузка резервной копии читает
+// много таблиц подряд, и без общего снимка объект успевал попасть в архив до
+// перехода на следующий этап, а его история — уже после: восстановленная база
+// показывала состояние, которого никогда не было.
+//
+// Проверяется сам механизм: запись, сделанная другим подключением во время
+// снимка, внутри него не видна.
+func TestReadSnapshotIsolatesConcurrentWrite(t *testing.T) {
+	stagePair(t, func(t *testing.T, a, b *storage.DB) {
+		ctx := context.Background()
+		e := stagesEntity(metadata.StageEnforceStrict)
+		if err := a.Migrate(ctx, []*metadata.Entity{e}); err != nil {
+			t.Fatal(err)
+		}
+		id := uuid.New()
+		if err := a.Upsert(ctx, e.Name, id, stageFields("Заявка", "Черновик"), e); err != nil {
+			t.Fatal(err)
+		}
+
+		err := a.WithReadSnapshot(ctx, func(snapCtx context.Context) error {
+			// Первое чтение фиксирует снимок.
+			before, err := a.GetByID(snapCtx, e.Name, id, e)
+			if err != nil {
+				return err
+			}
+			if before["Состояние"] != "Черновик" {
+				t.Fatalf("до записи в снимке %v", before["Состояние"])
+			}
+
+			// Другое подключение двигает объект по маршруту и коммитит.
+			var v int64 = 1
+			if err := b.UpsertVersioned(ctx, e.Name, id, stageFields("Заявка", "НаСогласовании"), e, &v); err != nil {
+				t.Fatalf("параллельная запись: %v", err)
+			}
+
+			// Снимок обязан остаться прежним — и по объекту, и по истории.
+			after, err := a.GetByID(snapCtx, e.Name, id, e)
+			if err != nil {
+				return err
+			}
+			if after["Состояние"] != "Черновик" {
+				t.Fatalf("снимок увидел чужую запись: %v", after["Состояние"])
+			}
+			hist, err := a.StageHistory(snapCtx, e.Name, id)
+			if err != nil {
+				return err
+			}
+			if len(hist) != 1 {
+				t.Fatalf("в снимке %d событий истории, ожидалось 1: %+v", len(hist), hist)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("WithReadSnapshot: %v", err)
+		}
+
+		// После снимка видно уже новое состояние.
+		row, err := a.GetByID(ctx, e.Name, id, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row["Состояние"] != "НаСогласовании" {
+			t.Fatalf("после снимка этап %v", row["Состояние"])
+		}
+	})
+}
