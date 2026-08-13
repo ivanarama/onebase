@@ -147,6 +147,17 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		} else {
 			ev.Kind = "Документ"
 		}
+		if e.Numerator != nil {
+			ev.Numerator = &cfgNumerator{
+				Present:    true,
+				Prefix:     e.Numerator.Prefix,
+				Length:     e.Numerator.Length,
+				Period:     e.Numerator.PeriodOrDefault(e.Kind),
+				Scope:      e.Numerator.Scope,
+				BasePrefix: e.Numerator.BasePrefix,
+				Unique:     e.Numerator.Unique,
+			}
+		}
 		if e.Activity != nil {
 			ev.Activity = &cfgActivity{
 				Field:          e.Activity.Field,

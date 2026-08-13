@@ -157,7 +157,7 @@ func (h *handler) findEntityConfigFile(ctx context.Context, b *Base, entityName 
 	return "", nil, false
 }
 
-func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity) {
+func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, numerator **saveNumerator) {
 	// Устойчивые id (план 81) переносим из прежнего состояния файла и выдаём
 	// новым реквизитам — иначе редактор стирал бы их при каждом сохранении.
 	ent.Fields = ensureFieldIDs(ent.Fields, fields)
@@ -214,9 +214,12 @@ func applyFieldEdits(ent *saveEntity, fields []saveField, tpFields map[string][]
 	if activity != nil {
 		ent.Activity = *activity
 	}
+	if numerator != nil {
+		ent.Numerator = *numerator
+	}
 }
 
-func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, objTitles *map[string]string) error {
+func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, numerator **saveNumerator, objTitles *map[string]string) error {
 	filePath, err := findEntityFilePath(dir, entityName)
 	if err != nil {
 		return err
@@ -229,7 +232,7 @@ func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields
 	if err := yaml.Unmarshal(raw, &ent); err != nil {
 		return err
 	}
-	applyFieldEdits(&ent, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity)
+	applyFieldEdits(&ent, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator)
 	if objTitles != nil {
 		ent.Titles = *objTitles
 	}
@@ -240,7 +243,7 @@ func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields
 	return os.WriteFile(filePath, out, fsmode.File)
 }
 
-func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, objTitles *map[string]string) error {
+func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, numerator **saveNumerator, objTitles *map[string]string) error {
 	db, err := OpenDB(ctx, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -277,7 +280,7 @@ func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName 
 		return fmt.Errorf("entity %q not found in DB config", entityName)
 	}
 
-	applyFieldEdits(&ent, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity)
+	applyFieldEdits(&ent, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator)
 	if objTitles != nil {
 		ent.Titles = *objTitles
 	}
@@ -717,6 +720,52 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 		activity = &target
 	}
 
+	// Нумерация (план 117, Д5). До этого блок `numerator:` конфигуратор только
+	// сохранял при round-trip: задать префикс или включить уникальность можно
+	// было лишь правкой YAML руками.
+	var numerator **saveNumerator
+	if r.FormValue("numerator_present") == "1" {
+		var target *saveNumerator
+		if r.FormValue("numerator_enabled") == "1" {
+			length, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("numerator_length")))
+			if length <= 0 {
+				length = 8 // то же умолчание, что у загрузчика метаданных
+			}
+			period := strings.ToLower(strings.TrimSpace(r.FormValue("numerator_period")))
+			switch period {
+			case "none", "year", "month", "day":
+			default:
+				period = "none"
+			}
+			// Сброс счётчика у справочника означал бы выдачу уже занятого кода,
+			// и загрузчик такую конфигурацию отвергает — не даём собрать её тут.
+			if entityKind == "Справочник" && period != "none" {
+				data := h.loadCfgData(r.Context(), b, "tree")
+				data.Error = tr(lang, "У справочника счётчик кода не сбрасывается: сброс выдал бы уже занятый код")
+				renderCfg(w, r, data)
+				return
+			}
+			target = &saveNumerator{
+				Prefix:     strings.TrimSpace(r.FormValue("numerator_prefix")),
+				Length:     length,
+				Period:     period,
+				Scope:      strings.TrimSpace(r.FormValue("numerator_scope")),
+				BasePrefix: r.FormValue("numerator_base_prefix") == "1",
+				Unique:     r.FormValue("numerator_unique") == "1",
+			}
+			// Уникальность вместе со сбросом счётчика без маски даты — ловушка
+			// с отложенным сроком: значение повторится в следующем периоде, и
+			// конфигурация сломается не сейчас, а первого января.
+			if target.Unique && period != "none" && !strings.ContainsRune(target.Prefix, '{') {
+				data := h.loadCfgData(r.Context(), b, "tree")
+				data.Error = tr(lang, "Уникальность вместе со сбросом счётчика требует маску даты в префиксе, например {YYYY}-")
+				renderCfg(w, r, data)
+				return
+			}
+		}
+		numerator = &target
+	}
+
 	tpFields := make(map[string][]saveField)
 	for _, tpName := range tpNames {
 		var f []saveField
@@ -814,9 +863,9 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 
 	var saveErr error
 	if b.ConfigSource == "database" {
-		saveErr = h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, objTitles)
+		saveErr = h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator, objTitles)
 	} else {
-		saveErr = saveEntityFieldsToFile(b.Path, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, objTitles)
+		saveErr = saveEntityFieldsToFile(b.Path, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator, objTitles)
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")

@@ -882,5 +882,22 @@
   "%s: значение %s «%s» уже занято другой записью": "%s: Wert %s «%s» ist bereits von einem anderen Datensatz belegt",
   "%s: значение %s уже занято другой записью": "%s: Wert %s ist bereits von einem anderen Datensatz belegt",
   "%s: уникальность %s включена, но в базе уже есть %d повторяющихся значений; исправьте их до включения": "%s: Eindeutigkeit von %s ist aktiviert, aber die Datenbank enthält bereits %d doppelte Werte; beheben Sie diese vor der Aktivierung",
-  "%s: уникальность %s включена, но у %d записей значение пусто; пустые значения уникальный индекс не ловит — дозаполните их командой onebase renumber": "%s: Eindeutigkeit von %s ist aktiviert, aber %d Datensätze haben einen leeren Wert; ein eindeutiger Index erfasst leere Werte nicht — füllen Sie sie mit onebase renumber"
+  "%s: уникальность %s включена, но у %d записей значение пусто; пустые значения уникальный индекс не ловит — дозаполните их командой onebase renumber": "%s: Eindeutigkeit von %s ist aktiviert, aber %d Datensätze haben einen leeren Wert; ein eindeutiger Index erfasst leere Werte nicht — füllen Sie sie mit onebase renumber",
+  "Нумерация": "Nummerierung",
+  "Выдавать код автоматически": "Code automatisch vergeben",
+  "Выдавать номер автоматически": "Nummer automatisch vergeben",
+  "Префикс": "Präfix",
+  "Разрядность": "Stellen",
+  "Сброс счётчика": "Zähler-Reset",
+  "Разрез счётчика": "Zählerbereich",
+  "Требовать уникальности": "Eindeutigkeit verlangen",
+  "Подставлять префикс базы": "Datenbank-Präfix einsetzen",
+  "не сбрасывать": "nie",
+  "каждый год": "jährlich",
+  "каждый месяц": "monatlich",
+  "каждый день": "täglich",
+  "— общий счётчик —": "— gemeinsamer Zähler —",
+  "У справочника счётчик кода не сбрасывается: сброс выдал бы уже занятый код": "Der Codezähler eines Katalogs wird nie zurückgesetzt: ein Reset würde einen bereits vergebenen Code ausgeben",
+  "Уникальность вместе со сбросом счётчика требует маску даты в префиксе, например {YYYY}-": "Eindeutigkeit zusammen mit einem Zähler-Reset erfordert eine Datumsmaske im Präfix, zum Beispiel {YYYY}-",
+  "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "Das Präfix unterstützt Datumsmasken: {YYYY}, {YY}, {MM}, {DD}. Eindeutigkeit zusammen mit einem Zähler-Reset erfordert eine Maske — sonst wiederholt sich der Wert in der nächsten Periode. Vorhandene Datensätze bleiben ohne Wert; onebase renumber füllt sie auf."
 }

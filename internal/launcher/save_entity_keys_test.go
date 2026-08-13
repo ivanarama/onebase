@@ -118,3 +118,29 @@ func TestSaveEntityExempt_IsAlive(t *testing.T) {
 		t.Fatalf("протухшие записи в saveEntityExempt (%d):\n  %s", len(stale), strings.Join(stale, "\n  "))
 	}
 }
+
+// Полнота ВЛОЖЕННЫХ ключей нумератора. Сторож верхнего уровня
+// (TestSaveEntity_CoversAllRawKeys) видит только ключ `numerator` целиком и
+// молчит, если внутри него потеряна половина полей: именно так конфигуратор
+// какое-то время стирал base_prefix и unique, добавленные планом 117.
+func TestSaveNumerator_CoversAllRawKeys(t *testing.T) {
+	raw := yamlTagsOfStruct(t, "../metadata/yaml.go", "rawNumerator")
+	save := yamlTagsOfStruct(t, "configurator_types.go", "saveNumerator")
+
+	have := make(map[string]bool, len(save))
+	for _, k := range save {
+		have[k] = true
+	}
+	var missing []string
+	for _, k := range raw {
+		if !have[k] {
+			missing = append(missing, k)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("saveNumerator не знает ключи rawNumerator (%d): %s\n\n"+
+			"При сохранении объекта из конфигуратора они молча пропадут из блока numerator:.",
+			len(missing), strings.Join(missing, ", "))
+	}
+}

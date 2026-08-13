@@ -112,9 +112,16 @@ func (f *fakeEntityLookup) GetEntity(name string) *metadata.Entity {
 
 func newCatalogsTestEnv() (*CatalogsRoot, *fakeCatalogsDB, *fakeEntityLookup) {
 	entity := &metadata.Entity{
-		Name:   "ТипЦен",
-		Kind:   metadata.KindCatalog,
-		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		Name: "ТипЦен",
+		Kind: metadata.KindCatalog,
+		// «Код» объявлен намеренно: тесты ищут по нему, а поиск по
+		// необъявленному реквизиту теперь отказ, а не «Неопределено» (план 117,
+		// Д3). Прежнее окружение позволяло искать по полю, которого у сущности
+		// нет, — и тесты проходили ровно из-за того дефекта, который мы чиним.
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: metadata.StandardCodeField, Type: metadata.FieldTypeString},
+		},
 		Predefined: []*metadata.PredefinedItem{
 			{Name: "Закупочная"},
 		},

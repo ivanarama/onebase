@@ -233,6 +233,26 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return s
 		},
+		// itemFormVisible/itemFormHidden делят реквизиты по блоку `item_form:`
+		// (план 117, Д12). До этого ключ парсился, хранился, отдавался в
+		// describe, круглился конфигуратором и проходил линт, но НИ ОДИН
+		// рендерер его не читал: пользователь снимал в конфигураторе галочку
+		// видимости реквизита, сохранял — и на форме ничего не менялось.
+		//
+		// Скрытые реквизиты продолжают ездить в форме как hidden-поля. Без
+		// этого «скрыть» означало бы «стереть»: сборка значений формы
+		// (formToFields) кладёт nil для каждого реквизита, которого нет в
+		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
+		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
+		// доступа к реквизиту делается политикой поля.
+		"itemFormVisible": func(entity *metadata.Entity) []metadata.Field {
+			vis, _ := splitItemFormFields(entity)
+			return vis
+		},
+		"itemFormHidden": func(entity *metadata.Entity) []metadata.Field {
+			_, hidden := splitItemFormFields(entity)
+			return hidden
+		},
 		// fieldByName ищет metadata.Field в entity.Fields по имени;
 		// нужен managed-шаблону чтобы определить тип ввода (ref/enum/date/bool).
 		"fieldByName": func(entity *metadata.Entity, name string) *metadata.Field {
@@ -1773,7 +1793,8 @@ const tplForm = `
   </select>
 </div>
 {{end}}
-{{range .Entity.Fields}}{{$fn := .Name}}{{$flabel := .DisplayName $.Lang}}
+{{range itemFormHidden .Entity}}<input type="hidden" name="{{.Name}}" value="{{index $.Values .Name}}">
+{{end}}{{range itemFormVisible .Entity}}{{$fn := .Name}}{{$flabel := .DisplayName $.Lang}}
 <div class="form-group">
   <label>{{$flabel}}</label>
   {{if isRef (str .Type)}}
