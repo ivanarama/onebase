@@ -962,16 +962,41 @@ func (t *tpProxy) IterateRows() []map[string]any {
 	return t.obj.TablePartRows[t.tpName]
 }
 
+// KnownMethods реализует interpreter.MethodLister: опечатка в имени метода
+// обязана быть слышной. Список общий с обработчиками и событиями формы — у
+// одной табличной части не должно быть трёх разных наборов методов в
+// зависимости от того, откуда до неё добрались (issue #842).
+func (t *tpProxy) KnownMethods() (string, []string) {
+	return "ТабличнаяЧасть", runtime.TablePartMethods()
+}
+
 func (t *tpProxy) CallMethod(method string, args []any) any {
+	rows := t.obj.TablePartRows[t.tpName]
 	switch strings.ToLower(method) {
 	case "добавить", "add":
 		row := map[string]any{}
-		t.obj.TablePartRows[t.tpName] = append(t.obj.TablePartRows[t.tpName], row)
+		t.obj.TablePartRows[t.tpName] = append(rows, row)
 		return &interpreter.MapThis{M: row}
 	case "очистить", "clear":
 		t.obj.TablePartRows[t.tpName] = nil
 	case "количество", "count":
-		return float64(len(t.obj.TablePartRows[t.tpName]))
+		return float64(len(rows))
+	case "получить", "get":
+		if len(args) > 0 {
+			if idx := runtime.RowIndexArg(args[0]); idx >= 0 && idx < len(rows) {
+				return &interpreter.MapThis{M: rows[idx]}
+			}
+		}
+	case "удалить", "delete":
+		if len(args) > 0 {
+			if idx := runtime.RowIndexArg(args[0]); idx >= 0 && idx < len(rows) {
+				t.obj.TablePartRows[t.tpName] = append(rows[:idx], rows[idx+1:]...)
+			}
+		}
+	case "итог", "total":
+		if len(args) > 0 {
+			return runtime.SumRowsColumn(rows, fmt.Sprintf("%v", args[0]))
+		}
 	}
 	return nil
 }

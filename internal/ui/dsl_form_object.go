@@ -262,27 +262,47 @@ type formTpProxy struct {
 func (t *formTpProxy) Get(_ string) any    { return nil }
 func (t *formTpProxy) Set(_ string, _ any) {}
 
+// KnownMethods реализует interpreter.MethodLister — список тот же, что у
+// табличной части в обработчиках и на пути записи (issue #842).
+func (t *formTpProxy) KnownMethods() (string, []string) {
+	return "ТабличнаяЧасть", runtime.TablePartMethods()
+}
+
 func (t *formTpProxy) CallMethod(method string, args []any) any {
 	if t == nil || t.obj == nil {
 		return nil
 	}
+	rows := t.IterateRows()
 	switch strings.ToLower(method) {
 	case "добавить", "add":
 		if t.obj.TablePartRows == nil {
 			t.obj.TablePartRows = map[string][]map[string]any{}
 		}
 		row := map[string]any{}
-		t.obj.TablePartRows[t.tpName] = append(t.obj.TablePartRows[t.tpName], row)
+		t.obj.TablePartRows[t.tpName] = append(rows, row)
 		return newRefAwareMapThis(row, t.tp, t.refResolver)
 	case "очистить", "clear":
 		if t.obj.TablePartRows != nil {
 			t.obj.TablePartRows[t.tpName] = nil
 		}
 	case "количество", "count":
-		if t.obj.TablePartRows == nil {
-			return float64(0)
+		return float64(len(rows))
+	case "получить", "get":
+		if len(args) > 0 {
+			if idx := runtime.RowIndexArg(args[0]); idx >= 0 && idx < len(rows) {
+				return newRefAwareMapThis(rows[idx], t.tp, t.refResolver)
+			}
 		}
-		return float64(len(t.obj.TablePartRows[t.tpName]))
+	case "удалить", "delete":
+		if len(args) > 0 {
+			if idx := runtime.RowIndexArg(args[0]); idx >= 0 && idx < len(rows) {
+				t.obj.TablePartRows[t.tpName] = append(rows[:idx], rows[idx+1:]...)
+			}
+		}
+	case "итог", "total":
+		if len(args) > 0 {
+			return runtime.SumRowsColumn(rows, fmt.Sprintf("%v", args[0]))
+		}
 	}
 	return nil
 }

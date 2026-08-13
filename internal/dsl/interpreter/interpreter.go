@@ -871,6 +871,12 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		method := strings.ToLower(callee.Field.Literal)
 		switch o := recv.(type) {
 		case MethodCallable:
+			if ml, ok := o.(MethodLister); ok {
+				typeName, known := ml.KnownMethods()
+				if !hasMethodFold(known, method) {
+					unknownMethod(typeName, callee.Field.Literal, known)
+				}
+			}
 			return o.CallMethod(method, args)
 		case string:
 			// Для ссылочных методов даём более предметную подсказку, чем общая
