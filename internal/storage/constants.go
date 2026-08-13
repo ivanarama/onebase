@@ -62,24 +62,36 @@ func (db *DB) SetConstant(ctx context.Context, name string, value any) error {
 	return err
 }
 
+// ListConstants читает значения констант. Вызывающие используют её
+// «best-effort» (ошибку игнорируют и работают с пустой картой), поэтому чтение
+// изолировано savepoint'ом: на PostgreSQL сбойный SELECT внутри транзакции
+// губит её целиком, и отсутствие таблицы констант роняло бы проведение
+// документа (issue #826). Строки вычитываются внутри области — освобождать
+// savepoint при открытом курсоре нельзя.
 func (db *DB) ListConstants(ctx context.Context) (map[string]any, error) {
-	rows, err := db.Query(ctx, `SELECT name, value FROM _constants`)
+	result := make(map[string]any)
+	err := db.bestEffort(ctx, func(ctx context.Context) error {
+		rows, err := db.Query(ctx, `SELECT name, value FROM _constants`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var raw []byte
+			if err := rows.Scan(&name, &raw); err != nil {
+				continue
+			}
+			var val any
+			if err := json.Unmarshal(raw, &val); err != nil {
+				continue
+			}
+			result[name] = val
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make(map[string]any)
-	for rows.Next() {
-		var name string
-		var raw []byte
-		if err := rows.Scan(&name, &raw); err != nil {
-			continue
-		}
-		var val any
-		if err := json.Unmarshal(raw, &val); err != nil {
-			continue
-		}
-		result[name] = val
-	}
-	return result, rows.Err()
+	return result, nil
 }
