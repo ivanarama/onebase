@@ -26,6 +26,23 @@ func (f *fakeNumStore) NextNumber(_ context.Context, entity, periodKey string) (
 	return f.seq[entity+"|"+periodKey], nil
 }
 
+// GenerateNumber в заглушке считает НАМЕРЕННО примитивно: эти тесты про разбор
+// аргументов объекта Нумераторы (область, дата, приоритет), а не про формат
+// номера. Формат — включая префикс базы, который заглушка не знает вовсе, —
+// проверяется на настоящем хранилище: см. TestDSLNumerator_UsesBasePrefix в
+// internal/ui.
+func (f *fakeNumStore) GenerateNumber(ctx context.Context, entity *metadata.Entity, fields map[string]any) (string, error) {
+	if entity == nil || entity.Numerator == nil {
+		return "", nil
+	}
+	num := entity.Numerator
+	n, err := f.NextNumber(ctx, entity.Name, storage.PeriodKeyFor(entity, num, fields))
+	if err != nil {
+		return "", err
+	}
+	return storage.FormatNumber(storage.ExpandPrefix(num.Prefix, storage.NumberPeriodDate(entity, fields)), num.Length, n), nil
+}
+
 func (f *fakeNumStore) NextNum(_ context.Context, entity string) (int64, error) {
 	if f.legacy == nil {
 		f.legacy = map[string]int64{}

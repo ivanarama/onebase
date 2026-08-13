@@ -269,6 +269,12 @@ func (db *DB) WithTxIfNeeded(ctx context.Context, fn func(context.Context) error
 	return db.WithTx(ctx, fn)
 }
 
+// nextSavepointName выдаёт уникальное имя savepoint'а с общим счётчиком:
+// вложенные области и необязательные операции не должны получить одно имя.
+func nextSavepointName(prefix string) string {
+	return fmt.Sprintf("%s_%d", prefix, txScopeSequence.Add(1))
+}
+
 // WithTxScope makes fn atomic even when ctx already carries a transaction.
 // A top-level call owns a regular transaction; a nested/borrowed call owns a
 // savepoint, so returning an error cannot leave provisional rows or hook side
@@ -278,7 +284,7 @@ func (db *DB) WithTxScope(ctx context.Context, fn func(context.Context) error) (
 		return db.WithTx(ctx, fn)
 	}
 
-	savepoint := fmt.Sprintf("onebase_scope_%d", txScopeSequence.Add(1))
+	savepoint := nextSavepointName("onebase_scope")
 	if _, err := db.Exec(ctx, "SAVEPOINT "+savepoint); err != nil {
 		return fmt.Errorf("create savepoint %s: %w", savepoint, err)
 	}

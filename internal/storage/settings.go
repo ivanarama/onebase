@@ -120,23 +120,34 @@ func (db *DB) EnsureReportPresetSchema(ctx context.Context) error {
 
 // GetAuditSettings читает настройки журнала из _settings. Отсутствующие ключи
 // (или отсутствующая таблица) дают значения по умолчанию.
+// GetAuditSettings читает настройки журналирования. Сбой чтения не ошибка —
+// берутся умолчания; но на PostgreSQL сбойный SELECT внутри транзакции губит её
+// целиком, поэтому чтение идёт в отдельном savepoint (issue #826). Про запись —
+// см. execAudit.
+//
+// Строки вычитываются ЦЕЛИКОМ внутри области: освобождать savepoint при
+// открытом курсоре нельзя — pgx отвечает «conn busy», и вместо починки вышел бы
+// новый способ уронить запись.
 func (db *DB) GetAuditSettings(ctx context.Context) AuditSettings {
 	s := DefaultAuditSettings()
-	rows, err := db.Query(ctx, `SELECT key, value FROM _settings WHERE key LIKE 'audit.%'`)
-	if err != nil {
-		return s
-	}
-	defer rows.Close()
 	keys := auditSettingKeys(&s)
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			continue
+	_ = db.bestEffort(ctx, func(ctx context.Context) error {
+		rows, err := db.Query(ctx, `SELECT key, value FROM _settings WHERE key LIKE 'audit.%'`)
+		if err != nil {
+			return err
 		}
-		if ptr, ok := keys[k]; ok {
-			*ptr = v == "1" || strings.EqualFold(v, "true")
+		defer rows.Close()
+		for rows.Next() {
+			var k, v string
+			if err := rows.Scan(&k, &v); err != nil {
+				continue
+			}
+			if ptr, ok := keys[k]; ok {
+				*ptr = v == "1" || strings.EqualFold(v, "true")
+			}
 		}
-	}
+		return rows.Err()
+	})
 	return s
 }
 

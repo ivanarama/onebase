@@ -363,6 +363,10 @@ func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *run
 	// и Строка(ref) работали в ПриЗаписи так же, как при проведении.
 	if entity := s.reg.GetEntity(obj.Type); entity != nil {
 		s.enrichHeaderRefs(ctx, entity, obj)
+		// Пустая ТЧ обязана быть видна как пустая, а не как «Неопределено»
+		// (issue #842): иначе Товары.Количество() падает именно тогда, когда
+		// проверка «строк нет» и должна сработать.
+		obj.EnsureTableParts(entity)
 		for _, tp := range entity.TableParts {
 			for name, rows := range obj.TablePartRows {
 				if strings.EqualFold(name, tp.Name) {
@@ -426,6 +430,7 @@ func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runt
 	// из обработки. См. П.37.
 	if entity := s.reg.GetEntity(obj.Type); entity != nil {
 		s.enrichHeaderRefs(ctx, entity, obj)
+		obj.EnsureTableParts(entity)
 	}
 	var msgs []string
 	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)

@@ -451,9 +451,15 @@ func parseTimeStr(s string) time.Time {
 
 // execAudit follows the transaction in ctx, so rolled-back business changes do
 // not leave committed audit records.
+// execAudit пишет строку журнала. Запись необязательная: вызывающие
+// отбрасывают её ошибку. Чтобы это было правдой и на PostgreSQL, операция идёт
+// в отдельном savepoint — иначе её сбой отравлял бы транзакцию записи объекта
+// (issue #826).
 func (db *DB) execAudit(ctx context.Context, sql string, args ...any) error {
-	_, err := db.Exec(ctx, sql, args...)
-	return err
+	return db.bestEffort(ctx, func(ctx context.Context) error {
+		_, err := db.Exec(ctx, sql, args...)
+		return err
+	})
 }
 
 // ActiveUserInfo represents a user seen recently in the audit log.
