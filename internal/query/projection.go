@@ -202,7 +202,7 @@ func parseProjectionItem(item []tok) (ProjectionColumn, []string) {
 		}
 		if kw, isKW := sqlKW(item[i].val); isKW && kw == "AS" {
 			if item[i+1].kind == tIdent {
-				alias = strings.ToLower(item[i+1].val)
+				alias = lowerFast(item[i+1].val)
 			}
 			item = item[:i]
 			break
@@ -221,7 +221,7 @@ func parseProjectionItem(item []tok) (ProjectionColumn, []string) {
 	if field, ok := simpleFieldRef(item); ok {
 		output := alias
 		if output == "" {
-			output = strings.ToLower(field)
+			output = lowerFast(field)
 		}
 		return ProjectionColumn{Output: output, Fields: []string{field}}, nil
 	}
@@ -393,7 +393,7 @@ func newFieldSet() *fieldSet { return &fieldSet{seen: map[string]bool{}} }
 func (s *fieldSet) addAll(names []string) {
 	for _, name := range names {
 		name = strings.TrimSpace(name)
-		key := strings.ToLower(name)
+		key := lowerFast(name)
 		if name == "" || s.seen[key] {
 			continue
 		}
