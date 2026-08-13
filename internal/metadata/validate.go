@@ -433,8 +433,7 @@ func validateStages(e *Entity, enums []*Enum) error {
 	}
 
 	fromSeen := make(map[string]bool, len(s.Transitions))
-	reachable := make(map[string]bool, len(s.Order))
-	reachable[strings.ToLower(s.Initial())] = true
+	adjacent := make(map[string][]string, len(s.Transitions))
 	for _, tr := range s.Transitions {
 		if !s.Known(tr.From) {
 			return fmt.Errorf("entity %s: переход из %s — такого этапа нет в order", e.Name, tr.From)
@@ -457,7 +456,25 @@ func validateStages(e *Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: переход %s → %s указан дважды", e.Name, tr.From, to)
 			}
 			toSeen[tk] = true
-			reachable[tk] = true
+			adjacent[key] = append(adjacent[key], tk)
+		}
+	}
+	// Достижимость — это путь ИЗ начального этапа, а не просто наличие любой
+	// входящей дуги. Иначе изолированный цикл C↔D ошибочно считался достижимым:
+	// каждый его узел имеет вход, но попасть в цикл из начала маршрута нельзя.
+	reachable := make(map[string]bool, len(s.Order))
+	initial := strings.ToLower(s.Initial())
+	reachable[initial] = true
+	queue := []string{initial}
+	for len(queue) > 0 {
+		from := queue[0]
+		queue = queue[1:]
+		for _, to := range adjacent[from] {
+			if reachable[to] {
+				continue
+			}
+			reachable[to] = true
+			queue = append(queue, to)
 		}
 	}
 	for _, stage := range s.Order {
