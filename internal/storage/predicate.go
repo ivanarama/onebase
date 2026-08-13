@@ -155,7 +155,17 @@ func predicateGroupSQL(d Dialect, entity *metadata.Entity, items []Predicate, jo
 	if len(parts) == 0 {
 		return "", args, nextArg, nil
 	}
-	return strings.Join(parts, join), args, nextArg, nil
+	joined := strings.Join(parts, join)
+	if len(parts) > 1 {
+		// Группа целиком — ОДИН операнд для вызывающего. Без внешних скобок
+		// потребители, склеивающие WHERE через " AND " (List, GetMovements,
+		// GetBalances, InfoRegList), получали `фильтр AND (a) OR (b)`: OR-ветка
+		// политики вырывалась из-под остальных условий, и пользователь видел
+		// чужие строки (issue #858; в internal/query это же чинил #652 — но
+		// оборачивал результат снаружи, не тронув параллельные билдеры).
+		joined = "(" + joined + ")"
+	}
+	return joined, args, nextArg, nil
 }
 
 func qualifyPredicateColumn(qualifier, col string) string {

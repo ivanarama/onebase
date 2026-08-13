@@ -113,7 +113,15 @@ func TestCompile_RowFiltersAnyWrappedInAutoJoinON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if !strings.Contains(res.SQL, "AND ((ref_категория.owner = ?) OR (ref_категория.owner = ?))") {
+	// Пунктуация нарочно не сверяется дословно: после #858 Any-группа
+	// оборачивается ещё и в корне PredicateSQL, так что скобок может быть
+	// больше одной пары. Проверяем суть: OR-группа входит в ON одним операндом
+	// (сразу после AND открывается скобка группы), а «голая» форма
+	// `AND (a) OR (b)`, у которой OR вырывается из-под JOIN, отсутствует.
+	if !strings.Contains(res.SQL, "AND ((") {
 		t.Fatalf("предикат any: в ON авто-JOIN не обёрнут в скобки:\n%s", res.SQL)
+	}
+	if strings.Contains(res.SQL, "AND (ref_категория.owner = ?) OR") {
+		t.Fatalf("предикат any: OR-ветка вырвалась из-под ON:\n%s", res.SQL)
 	}
 }
