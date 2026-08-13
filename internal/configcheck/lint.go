@@ -12,6 +12,7 @@ import (
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/token"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
@@ -623,13 +624,36 @@ type lintProgram struct {
 // are unreachable from known runtime entry points.
 func CheckLintDSL(dir string, proj *project.Project) []Issue {
 	programs := collectLintPrograms(dir, proj)
+	globals := knownGlobalNames(proj)
 	var issues []Issue
 	for _, lp := range programs {
 		issues = append(issues, lintUnusedVars(lp)...)
 		issues = append(issues, lintCrossScopeReads(lp)...)
+		issues = append(issues, lintUnknownGlobalMembers(lp, globals)...)
 	}
 	issues = append(issues, lintDeadProcedures(programs)...)
 	return issues
+}
+
+// knownGlobalNames — имена, у которых обращение к полю заведомо осмысленно:
+// общие модули (Модуль.Процедура), модули менеджеров, сервисов и страниц, а
+// также builtin-имена платформы. Дополняет commonDSLGlobals, который перечисляет
+// инжектируемые объекты-значения.
+func knownGlobalNames(proj *project.Project) map[string]bool {
+	out := map[string]bool{}
+	if proj != nil {
+		for _, namespace := range []map[string]*ast.Program{
+			proj.Modules, proj.ManagerPrograms, proj.ServicePrograms, proj.PagePrograms, proj.Programs,
+		} {
+			for name := range namespace {
+				out[strings.ToLower(name)] = true
+			}
+		}
+	}
+	for name := range interpreter.KnownBuiltinNames() {
+		out[name] = true
+	}
+	return out
 }
 
 // CheckStrictLexicalScope reports DSL dependencies that are incompatible with
@@ -668,6 +692,11 @@ var commonDSLGlobals = map[string]bool{
 	// Контекст форм/страниц/заданий/сервисов.
 	"объект": true, "форма": true, "элементы": true, "элементыформы": true,
 	"отказ": true, "параметры": true, "параметрысеанса": true, "запрос_": true,
+	// Тест-контекст (план 108): инжектируется только при `onebase test`, но в
+	// исходнике тест-обработки выглядит как обычный глобал.
+	"утверждать": true, "assert": true,
+	"мок": true, "mock": true,
+	"часы": true, "clock": true,
 }
 
 // lintCrossScopeReads помечает чтение идентификатора, который процедура не
@@ -731,6 +760,84 @@ func lintCrossScopeReads(lp lintProgram) []Issue {
 	return issues
 }
 
+// lintUnknownGlobalMembers помечает обращение к полю идентификатора, которого
+// нет нигде: ни локальная переменная, ни переменная модуля, ни процедура, ни
+// инжектируемый глобал, ни модуль, ни builtin.
+//
+// Это отдельный класс молчаливой порчи данных, который не ловит ни одна из
+// имеющихся проверок. `dsl.unknown-function` смотрит только на callee вызова, а
+// «Символы.ПС» — это чтение поля неизвестного идентификатора: интерпретатор
+// отдаёт nil, конкатенация превращает его в строку «<nil>», и она уезжает в
+// данные. Ни ошибки, ни предупреждения — узнаёшь по испорченному результату.
+// Ровно так в переносимой конфигурации оказалось 56 мест с «<nil>» вместо
+// перевода строки.
+//
+// Голое чтение неизвестного имени не помечается: набор контекстных переменных
+// зависит от вида исполнения (формы, задания, сервисы), и ложных срабатываний
+// было бы больше пользы. Обращение к ПОЛЮ — сигнал куда более определённый:
+// автор рассчитывал на объект, а объекта нет.
+func lintUnknownGlobalMembers(lp lintProgram, globals map[string]bool) []Issue {
+	if lp.prog == nil {
+		return nil
+	}
+	moduleVars := map[string]bool{}
+	for _, decl := range lp.prog.ModuleVars {
+		for _, tok := range decl.Names {
+			moduleVars[strings.ToLower(tok.Literal)] = true
+		}
+	}
+	procNames := map[string]bool{}
+	for _, pr := range lp.prog.Procedures {
+		procNames[strings.ToLower(pr.Name.Literal)] = true
+	}
+	// Имя, объявленное хоть в одной процедуре модуля, не считается неизвестным:
+	// такое чтение — это утечка области видимости, о ней сообщает
+	// lintCrossScopeReads. Две проверки на одну строку только запутают.
+	owned := map[string]bool{}
+	for _, pr := range lp.prog.Procedures {
+		ls := map[string]bool{}
+		for _, p := range pr.Params {
+			ls[strings.ToLower(p.Literal)] = true
+		}
+		collectDeclaredAndAssigned(pr.Body, ls)
+		for name := range ls {
+			owned[name] = true
+		}
+	}
+
+	var issues []Issue
+	for _, pr := range lp.prog.Procedures {
+		bases := map[string]token.Token{}
+		for _, def := range pr.Defaults {
+			collectMemberBaseTokensExpr(def, bases)
+		}
+		collectMemberBaseTokensStmts(pr.Body, bases)
+		names := make([]string, 0, len(bases))
+		for name := range bases {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if owned[name] || moduleVars[name] || procNames[name] || commonDSLGlobals[name] || globals[name] {
+				continue
+			}
+			tok := bases[name]
+			issues = append(issues, Issue{
+				File:   sourceLabelForToken(lp.label, tok),
+				Object: lp.object,
+				Kind:   lp.kind,
+				Code:   "dsl.unknown-global-member",
+				Line:   tok.Line,
+				Column: tok.Col,
+				Message: fmt.Sprintf("обращение к полю %q: такого имени нет ни среди переменных, ни среди модулей и глобальных объектов — выражение молча вычислится в Неопределено",
+					tok.Literal),
+				SuggestedFix: "Проверьте написание имени; если это объект платформы — убедитесь, что он доступен в этом виде модуля, иначе получите «<nil>» в строке вместо значения.",
+			})
+		}
+	}
+	return issues
+}
+
 func crossScopeReadIssue(lp lintProgram, tok token.Token) Issue {
 	return Issue{
 		File:         sourceLabelForToken(lp.label, tok),
@@ -781,6 +888,88 @@ func collectDeclaredAndAssigned(stmts []ast.Stmt, out map[string]bool) {
 // collectReadIdentTokensStmts/Expr — как collectDSLReadsStmts, но сохраняет токен
 // первого чтения каждого имени (для точной локации предупреждения). Цель
 // присваивания Ident не считается чтением; callee прямого вызова — тоже.
+// collectMemberBaseTokens* собирают идентификаторы, стоящие ОСНОВАНИЕМ обращения
+// к полю: в «Символы.ПС» это «Символы». Присваивание вида «Х.Поле = …» тоже
+// считается: чтобы записать поле, объект всё равно нужно получить.
+func collectMemberBaseTokensExpr(expr ast.Expr, out map[string]token.Token) {
+	if expr == nil {
+		return
+	}
+	if member, ok := expr.(*ast.MemberExpr); ok {
+		if ident, isIdent := member.Object.(*ast.Ident); isIdent {
+			if k := strings.ToLower(ident.Tok.Literal); k != "" {
+				if _, seen := out[k]; !seen {
+					out[k] = ident.Tok
+				}
+			}
+		}
+	}
+	switch v := expr.(type) {
+	case *ast.CallExpr:
+		collectMemberBaseTokensExpr(v.Callee, out)
+		for _, arg := range v.Args {
+			collectMemberBaseTokensExpr(arg, out)
+		}
+	case *ast.MemberExpr:
+		collectMemberBaseTokensExpr(v.Object, out)
+	case *ast.BinaryExpr:
+		collectMemberBaseTokensExpr(v.Left, out)
+		collectMemberBaseTokensExpr(v.Right, out)
+	case *ast.UnaryExpr:
+		collectMemberBaseTokensExpr(v.Operand, out)
+	case *ast.NewExpr:
+		for _, arg := range v.Args {
+			collectMemberBaseTokensExpr(arg, out)
+		}
+	case *ast.ArrayLit:
+		for _, elem := range v.Elements {
+			collectMemberBaseTokensExpr(elem, out)
+		}
+	case *ast.IndexExpr:
+		collectMemberBaseTokensExpr(v.Object, out)
+		collectMemberBaseTokensExpr(v.Index, out)
+	case *ast.TernaryExpr:
+		collectMemberBaseTokensExpr(v.Cond, out)
+		collectMemberBaseTokensExpr(v.True, out)
+		collectMemberBaseTokensExpr(v.False, out)
+	}
+}
+
+func collectMemberBaseTokensStmts(stmts []ast.Stmt, out map[string]token.Token) {
+	for _, stmt := range stmts {
+		switch v := stmt.(type) {
+		case *ast.ExprStmt:
+			collectMemberBaseTokensExpr(v.X, out)
+		case *ast.AssignStmt:
+			collectMemberBaseTokensExpr(v.Target, out)
+			collectMemberBaseTokensExpr(v.Value, out)
+		case *ast.ReturnStmt:
+			collectMemberBaseTokensExpr(v.Value, out)
+		case *ast.IfStmt:
+			collectMemberBaseTokensExpr(v.Cond, out)
+			collectMemberBaseTokensStmts(v.Then, out)
+			for _, ei := range v.ElseIfs {
+				collectMemberBaseTokensExpr(ei.Cond, out)
+				collectMemberBaseTokensStmts(ei.Body, out)
+			}
+			collectMemberBaseTokensStmts(v.Else, out)
+		case *ast.ForEachStmt:
+			collectMemberBaseTokensExpr(v.Collection, out)
+			collectMemberBaseTokensStmts(v.Body, out)
+		case *ast.NumericForStmt:
+			collectMemberBaseTokensExpr(v.Start, out)
+			collectMemberBaseTokensExpr(v.End, out)
+			collectMemberBaseTokensStmts(v.Body, out)
+		case *ast.WhileStmt:
+			collectMemberBaseTokensExpr(v.Cond, out)
+			collectMemberBaseTokensStmts(v.Body, out)
+		case *ast.TryStmt:
+			collectMemberBaseTokensStmts(v.Try, out)
+			collectMemberBaseTokensStmts(v.Except, out)
+		}
+	}
+}
+
 func collectReadIdentTokensStmts(stmts []ast.Stmt, out map[string]token.Token) {
 	for _, stmt := range stmts {
 		switch v := stmt.(type) {
