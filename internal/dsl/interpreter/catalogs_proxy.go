@@ -308,9 +308,9 @@ func (p *CatalogProxy) Set(_ string, _ any) {}
 func (p *CatalogProxy) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "найтипонаименованию", "findbyname":
-		return p.findByField("Наименование", args)
+		return p.findByField("НайтиПоНаименованию", "Наименование", args)
 	case "найтипокоду", "findbycode":
-		return p.findByField("Код", args)
+		return p.findByField("НайтиПоКоду", metadata.StandardCodeField, args)
 	case "найтипоидентификатору", "findbyid":
 		// Ссылка по строковому UUID — для строк результата запроса
 		// (ВЫБРАТЬ Поле.Ссылка КАК Ид), когда наименование/код не уникальны
@@ -332,7 +332,7 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 		if !ok {
 			RaiseUserError("НайтиПоРеквизиту(" + p.entity.Name + "): имя реквизита должно быть строкой")
 		}
-		return p.findByField(field, args[1:])
+		return p.findByField("НайтиПоРеквизиту", field, args[1:])
 	case "проверитьсовпадениепореквизиту", "matchbyattribute":
 		if len(args) < 2 {
 			RaiseUserError("ПроверитьСовпадениеПоРеквизиту(" + p.entity.Name + "): нужны имя реквизита и значение")
@@ -448,23 +448,31 @@ func (p *CatalogProxy) denyProtectedFieldSearch(call, field string) {
 	}
 }
 
-func (p *CatalogProxy) findByField(field string, args []any) any {
+// findByField — общая реализация НайтиПоКоду/НайтиПоНаименованию/
+// НайтиПоРеквизиту. caller — имя метода, как его написал автор модуля: в
+// сообщении должно стоять именно оно, иначе искать причину придётся в чужом
+// вызове.
+//
+// «Неопределено» здесь означает РОВНО ОДНО: подходящей записи нет. Всё
+// остальное — нет такого реквизита, отказ БД, невнятный аргумент — раньше тоже
+// возвращалось как «Неопределено» (план 117, Д3), и модуль молча уходил в ветку
+// «не нашли»: справочник без «Кода» вёл себя ровно как справочник, где кода
+// такого нет. Разница между «нет записи» и «искать негде» видна только автору
+// конфигурации, и сказать ему об этом должна платформа.
+func (p *CatalogProxy) findByField(caller, field string, args []any) any {
+	where := caller + "(" + p.entity.Name + "." + field + ")"
 	if len(args) == 0 {
-		return nil
+		RaiseUserError(where + ": не указано значение для поиска")
 	}
-	p.denyProtectedFieldSearch("Найти", field)
-	value, ok := args[0].(string)
-	if !ok {
-		if r, ok := args[0].(*Ref); ok {
-			value = r.Name
-		} else {
-			return nil
-		}
+	p.denyProtectedFieldSearch(caller, field)
+	if !p.hasField(field) {
+		RaiseUserError(p.missingFieldMessage(caller, field))
 	}
+	value := MatchValueString(args[0])
 	if p.rowAccessRestricted("read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {
-			RaiseUserError("Найти(" + p.entity.Name + "." + field + "): " + err.Error())
+			RaiseUserError(where + ": " + err.Error())
 		}
 		if len(ids) == 0 {
 			return nil
@@ -472,20 +480,48 @@ func (p *CatalogProxy) findByField(field string, args []any) any {
 		return &Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Manager: p}
 	}
 	idStr, display, found, err := p.db.FindCatalogByField(p.ctx(), p.entity, field, value)
-	if err != nil || !found {
+	if err != nil {
+		RaiseUserError(where + ": " + err.Error())
+	}
+	if !found {
 		return nil
 	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		RaiseUserError("Найти(" + p.entity.Name + "." + field + "): неверный идентификатор найденной записи")
+		RaiseUserError(where + ": неверный идентификатор найденной записи")
 	}
 	if err := p.checkRowAccess("read", id, nil); err != nil {
 		if errors.Is(err, ErrRowAccessDenied) {
 			return nil
 		}
-		RaiseUserError("Найти(" + p.entity.Name + "." + field + "): " + err.Error())
+		RaiseUserError(where + ": " + err.Error())
 	}
 	return &Ref{UUID: idStr, Name: display, Type: p.entity.Name, Manager: p}
+}
+
+// hasField — есть ли у справочника такой реквизит (без учёта регистра).
+func (p *CatalogProxy) hasField(field string) bool {
+	if p.entity == nil {
+		return false
+	}
+	for _, f := range p.entity.Fields {
+		if strings.EqualFold(f.Name, field) {
+			return true
+		}
+	}
+	return false
+}
+
+// missingFieldMessage объясняет отсутствие реквизита по-разному для стандартного
+// «Кода» и для произвольного: у первого причина всегда одна и чинится строкой в
+// YAML, у второго это опечатка либо не тот справочник.
+func (p *CatalogProxy) missingFieldMessage(caller, field string) string {
+	head := caller + "(" + p.entity.Name + "): "
+	if strings.EqualFold(field, metadata.StandardCodeField) {
+		return head + "у справочника нет реквизита «" + metadata.StandardCodeField +
+			"» — объявите блок numerator: (тогда код будет выдаваться автоматически) или ищите по другому реквизиту"
+	}
+	return head + "у справочника нет реквизита «" + field + "»"
 }
 
 // matchByField — safe-match по реквизиту: возвращает Структуру со Статусом,

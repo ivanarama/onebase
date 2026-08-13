@@ -1538,6 +1538,48 @@ const cfgTabTree = `{{define "tab-tree"}}
 </details>
 {{end}}
 
+<details {{if $e.Numerator}}open{{end}} style="margin-bottom:10px">
+  <summary class="section-hd" style="cursor:pointer">{{t $.Lang "Нумерация"}}</summary>
+  <input type="hidden" name="numerator_present" value="1">
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:6px 0">
+    <input type="checkbox" name="numerator_enabled" value="1" {{if $e.Numerator}}checked{{end}}>
+    <span>{{if eq $e.Kind "Справочник"}}{{t $.Lang "Выдавать код автоматически"}}{{else}}{{t $.Lang "Выдавать номер автоматически"}}{{end}}</span>
+  </label>
+  <div style="display:grid;grid-template-columns:minmax(140px,180px) minmax(180px,280px);gap:8px 12px;align-items:center;font-size:12px;margin-left:24px">
+    <label style="color:#475569">{{t $.Lang "Префикс"}}</label>
+    <input type="text" name="numerator_prefix" value="{{if $e.Numerator}}{{$e.Numerator.Prefix}}{{end}}" placeholder="К-" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+    <label style="color:#475569">{{t $.Lang "Разрядность"}}</label>
+    <input type="number" min="1" max="18" name="numerator_length" value="{{if $e.Numerator}}{{$e.Numerator.Length}}{{end}}" placeholder="6" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+    <label style="color:#475569">{{t $.Lang "Сброс счётчика"}}</label>
+    <select name="numerator_period" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+      <option value="none"  {{if and $e.Numerator (eq $e.Numerator.Period "none")}}selected{{end}}>{{t $.Lang "не сбрасывать"}}</option>
+      <option value="year"  {{if and $e.Numerator (eq $e.Numerator.Period "year")}}selected{{end}}>{{t $.Lang "каждый год"}}</option>
+      <option value="month" {{if and $e.Numerator (eq $e.Numerator.Period "month")}}selected{{end}}>{{t $.Lang "каждый месяц"}}</option>
+      <option value="day"   {{if and $e.Numerator (eq $e.Numerator.Period "day")}}selected{{end}}>{{t $.Lang "каждый день"}}</option>
+    </select>
+    <label style="color:#475569">{{t $.Lang "Разрез счётчика"}}</label>
+    <select name="numerator_scope" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+      <option value="">{{t $.Lang "— общий счётчик —"}}</option>
+      {{range $f := $e.Fields}}
+      <option value="{{$f.Name}}" {{if and $e.Numerator (eq $e.Numerator.Scope $f.Name)}}selected{{end}}>{{$f.Name}}</option>
+      {{end}}
+    </select>
+    <span></span>
+    <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+      <input type="checkbox" name="numerator_unique" value="1" {{if and $e.Numerator $e.Numerator.Unique}}checked{{end}}>
+      <span>{{t $.Lang "Требовать уникальности"}}</span>
+    </label>
+    <span></span>
+    <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+      <input type="checkbox" name="numerator_base_prefix" value="1" {{if and $e.Numerator $e.Numerator.BasePrefix}}checked{{end}}>
+      <span>{{t $.Lang "Подставлять префикс базы"}}</span>
+    </label>
+  </div>
+  <div style="color:#94a3b8;font-size:11px;margin-left:24px;margin-top:6px">
+    {{t $.Lang "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber."}}
+  </div>
+</details>
+
 {{if $e.Fields}}
 <details open><summary class="section-hd" style="cursor:pointer">{{t $.Lang "Реквизиты"}} ({{len $e.Fields}})</summary>
 <table class="fields-tbl" id="ft-{{$e.Name}}">

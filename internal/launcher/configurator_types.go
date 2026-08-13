@@ -49,6 +49,13 @@ type saveNumerator struct {
 	Length int    `yaml:"length,omitempty"`
 	Period string `yaml:"period,omitempty"`
 	Scope  string `yaml:"scope,omitempty"`
+	// base_prefix и unique появились в плане 117 (этапы D и E). Пока их здесь
+	// не было, правка реквизитов справочника через конфигуратор МОЛЧА снимала
+	// уникальность кода и подстановку префикса базы — ровно та потеря, ради
+	// которой заведена структура. Полноту вложенных ключей сторожит
+	// TestSaveNumerator_CoversAllRawKeys.
+	BasePrefix bool `yaml:"base_prefix,omitempty"`
+	Unique     bool `yaml:"unique,omitempty"`
 }
 
 // savePredefined — предопределённые элементы справочника. inline map нужен,
@@ -303,6 +310,19 @@ type cfgTablePart struct {
 	Fields []cfgField
 }
 
+// cfgNumerator — блок `numerator:` в редакторе объекта (план 117, Д5). До этого
+// конфигуратор блок только СОХРАНЯЛ при round-trip, а задать или изменить его
+// можно было лишь правкой YAML вручную.
+type cfgNumerator struct {
+	Present    bool
+	Prefix     string
+	Length     int
+	Period     string
+	Scope      string
+	BasePrefix bool
+	Unique     bool
+}
+
 type cfgActivity struct {
 	Field          string
 	DefaultScope   string
@@ -331,6 +351,7 @@ type cfgEntity struct {
 	Predefined     []cfgPredefined
 	Titles         map[string]string // переводы синонима объекта
 	Activity       *cfgActivity
+	Numerator      *cfgNumerator
 }
 
 type cfgRegister struct {

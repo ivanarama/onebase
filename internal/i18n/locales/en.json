@@ -1284,5 +1284,22 @@
   "%s: значение %s «%s» уже занято другой записью": "%s: value %s «%s» is already taken by another record",
   "%s: значение %s уже занято другой записью": "%s: value %s is already taken by another record",
   "%s: уникальность %s включена, но в базе уже есть %d повторяющихся значений; исправьте их до включения": "%s: uniqueness of %s is enabled, but the database already contains %d duplicate values; fix them before enabling it",
-  "%s: уникальность %s включена, но у %d записей значение пусто; пустые значения уникальный индекс не ловит — дозаполните их командой onebase renumber": "%s: uniqueness of %s is enabled, but %d records have an empty value; a unique index does not catch empty values — fill them in with onebase renumber"
+  "%s: уникальность %s включена, но у %d записей значение пусто; пустые значения уникальный индекс не ловит — дозаполните их командой onebase renumber": "%s: uniqueness of %s is enabled, but %d records have an empty value; a unique index does not catch empty values — fill them in with onebase renumber",
+  "Нумерация": "Numbering",
+  "Выдавать код автоматически": "Assign the code automatically",
+  "Выдавать номер автоматически": "Assign the number automatically",
+  "Префикс": "Prefix",
+  "Разрядность": "Digits",
+  "Сброс счётчика": "Counter reset",
+  "Разрез счётчика": "Counter scope",
+  "Требовать уникальности": "Require uniqueness",
+  "Подставлять префикс базы": "Insert the database prefix",
+  "не сбрасывать": "never",
+  "каждый год": "every year",
+  "каждый месяц": "every month",
+  "каждый день": "every day",
+  "— общий счётчик —": "— shared counter —",
+  "У справочника счётчик кода не сбрасывается: сброс выдал бы уже занятый код": "A catalog code counter is never reset: a reset would hand out a code that is already taken",
+  "Уникальность вместе со сбросом счётчика требует маску даты в префиксе, например {YYYY}-": "Uniqueness together with a counter reset requires a date mask in the prefix, for example {YYYY}-",
+  "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "The prefix supports date masks: {YYYY}, {YY}, {MM}, {DD}. Uniqueness combined with a counter reset requires a mask — otherwise the value repeats in the next period. Existing records keep an empty value; onebase renumber fills them in."
 }

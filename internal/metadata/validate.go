@@ -76,6 +76,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateNumerator(e); err != nil {
 			return err
 		}
+		if err := validateFormFields(e); err != nil {
+			return err
+		}
 		for _, tp := range e.TableParts {
 			for _, f := range tp.Fields {
 				if IsRichText(f.Type) {
@@ -314,6 +317,46 @@ func validateNumerator(e *Entity) error {
 		}
 		if f.RefEntity != "" || f.EnumName != "" {
 			return fmt.Errorf("entity %s: при объявленном нумераторе реквизит %s не может быть ссылкой или перечислением", e.Name, std)
+		}
+	}
+	return nil
+}
+
+// validateFormFields проверяет `item_form:` и `list_form:`: перечисленные
+// реквизиты должны существовать. Опечатка иначе означала бы «реквизит остался
+// на форме» — состав задан, а поведение прежнее, и автор ищет причину в коде
+// платформы. Тот же довод, что у detail_panel ниже.
+//
+// Проверка появилась вместе с оживлением `item_form:` (план 117, Д12): пока
+// ключ не читал никто, опечатка в нём не значила ничего, и ловить её было
+// незачем.
+func validateFormFields(e *Entity) error {
+	check := func(key string, names []string) error {
+		for _, name := range names {
+			if findEntityFieldFold(e, name) != nil {
+				continue
+			}
+			// Табличная часть в списке допустима: конфигуратор кладёт в
+			// item_form и её реквизиты (ef.tpN.*), а форма показывает ТЧ
+			// целиком отдельным блоком.
+			if findEntityTablePartFold(e, name) != nil {
+				continue
+			}
+			return fmt.Errorf("entity %s: %s ссылается на неизвестный реквизит %s", e.Name, key, name)
+		}
+		return nil
+	}
+	if err := check("item_form", e.ItemForm); err != nil {
+		return err
+	}
+	return check("list_form", e.ListForm)
+}
+
+// findEntityTablePartFold ищет табличную часть по имени без учёта регистра.
+func findEntityTablePartFold(e *Entity, name string) *TablePart {
+	for i := range e.TableParts {
+		if strings.EqualFold(e.TableParts[i].Name, name) {
+			return &e.TableParts[i]
 		}
 	}
 	return nil
