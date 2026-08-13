@@ -36,8 +36,12 @@ func (f *fakeCatalogsDB) GetByID(_ context.Context, entityName string, id uuid.U
 	return out, nil
 }
 
-func (f *fakeCatalogsDB) Delete(_ context.Context, _ string, id uuid.UUID) error {
-	f.deleted = append(f.deleted, id.String())
+// fakeDeleter — тестовый CatalogDeleter: в проде здесь entityservice.Delete
+// (хуки, CheckRefs, обмен), в юните достаточно зафиксировать факт удаления.
+type fakeDeleter struct{ db *fakeCatalogsDB }
+
+func (d fakeDeleter) DeleteCatalogRef(_ context.Context, _ *metadata.Entity, id uuid.UUID) error {
+	d.db.deleted = append(d.db.deleted, id.String())
 	return nil
 }
 
@@ -130,7 +134,9 @@ func newCatalogsTestEnv() (*CatalogsRoot, *fakeCatalogsDB, *fakeEntityLookup) {
 		},
 	}
 	lookup := &fakeEntityLookup{m: map[string]*metadata.Entity{"ТипЦен": entity}}
-	return NewCatalogsRoot(NewStaticCtx(context.Background()), db, lookup), db, lookup
+	root := NewCatalogsRoot(NewStaticCtx(context.Background()), db, lookup).
+		WithDeleter(fakeDeleter{db: db})
+	return root, db, lookup
 }
 
 // Справочники.X.Создать().Записать() должно персистить.
@@ -305,6 +311,27 @@ func TestCatalogProxy_DeleteByRef(t *testing.T) {
 	cp.CallMethod("удалить", []any{ref})
 	if len(db.deleted) != 1 || db.deleted[0] != "11111111-1111-1111-1111-111111111111" {
 		t.Errorf("ожидалось удаление, deleted=%v", db.deleted)
+	}
+}
+
+// Без подключённого делетера удаление отказывает fail-closed, а не падает в
+// обходной db.Delete: путь мимо entityservice обходил бы хуки удаления и
+// проверку ссылок (issue #854).
+func TestCatalogProxy_DeleteWithoutDeleterFailsClosed(t *testing.T) {
+	root, db, _ := newCatalogsTestEnv()
+	root.deleter = nil
+	cp := root.Get("ТипЦен").(*CatalogProxy)
+	ref := cp.Get("Закупочная").(*Ref)
+	var raised any
+	func() {
+		defer func() { raised = recover() }()
+		cp.CallMethod("удалить", []any{ref})
+	}()
+	if raised == nil {
+		t.Error("ожидался отказ: делетер не подключён")
+	}
+	if len(db.deleted) != 0 {
+		t.Errorf("запись удалена в обход хост-пути: %v", db.deleted)
 	}
 }
 

@@ -70,8 +70,6 @@ type CatalogsDB interface {
 	// WriteCatalogRecord upserts a record. idStr пустой →
 	// генерируется новый UUID. Возвращает UUID записанной записи.
 	WriteCatalogRecord(ctx context.Context, entity *metadata.Entity, idStr string, fields map[string]any) (string, error)
-	// Delete удаляет запись справочника/документа по идентификатору.
-	Delete(ctx context.Context, entityName string, id uuid.UUID) error
 	// GetByID загружает запись по UUID. Возвращает поля шапки (включая
 	// id, _version, deletion_mark и т.д.). Используется Ссылка.ПолучитьОбъект()
 	// для редактирования существующих записей справочников.
@@ -133,6 +131,17 @@ func NewStaticCtx(ctx context.Context) CtxSource { return staticCtx{ctx: ctx} }
 // строит host-слой (ui), где доступны store и реестр планов.
 type ExchangeRegistrar func(ctx context.Context, entity *metadata.Entity, id uuid.UUID, deletion bool) error
 
+// CatalogDeleter — хост-путь физического удаления справочника. Подключается
+// ui-слоем и ведёт в entityservice.Delete: хуки ПередУдалением/ПослеУдаления,
+// проверка ссылок (CheckRefs), снятие строк ТЧ и регистрация в планах обмена —
+// те же гарантии, что у удаления из UI и REST. Прямого db.Delete у DSL-пути
+// нет намеренно (у CatalogsDB и метода-то такого нет): «свой» способ удаления
+// обходил бы запреты, написанные в конфигурации, — ровно тот класс дефекта,
+// который ловит delete_chokepoint_test.
+type CatalogDeleter interface {
+	DeleteCatalogRef(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error
+}
+
 type optionalTxRunner interface {
 	WithTxIfNeeded(ctx context.Context, fn func(context.Context) error) error
 }
@@ -164,6 +173,14 @@ type CatalogsRoot struct {
 	fieldSearch FieldSearchChecker
 	registrar   ExchangeRegistrar
 	objFactory  CatalogObjectFactory
+	deleter     CatalogDeleter
+}
+
+// WithDeleter подключает хост-путь удаления (entityservice). Возвращает себя
+// для цепочки. Без делетера Удалить()/Ссылка.Удалить() отказывает fail-closed.
+func (r *CatalogsRoot) WithDeleter(d CatalogDeleter) *CatalogsRoot {
+	r.deleter = d
+	return r
 }
 
 // NewCatalogsRoot creates the root object for injection as DSL extraVar.
@@ -214,7 +231,8 @@ func (r *CatalogsRoot) Get(entityName string) any {
 		return nil
 	}
 	return &CatalogProxy{entity: entity, db: r.db, ctxSrc: r.ctxSrc, caller: r.caller,
-		access: r.access, fieldSearch: r.fieldSearch, registrar: r.registrar, objFactory: r.objFactory}
+		access: r.access, fieldSearch: r.fieldSearch, registrar: r.registrar, objFactory: r.objFactory,
+		deleter: r.deleter}
 }
 
 func (r *CatalogsRoot) Set(_ string, _ any) {}
@@ -233,6 +251,7 @@ type CatalogProxy struct {
 	fieldSearch FieldSearchChecker
 	registrar   ExchangeRegistrar
 	objFactory  CatalogObjectFactory
+	deleter     CatalogDeleter
 }
 
 // NewCatalogProxy создаёт менеджера справочника для привязки к ссылкам,
@@ -254,6 +273,13 @@ func (p *CatalogProxy) WithRowAccessChecker(c RowAccessChecker) *CatalogProxy {
 // standalone-прокси. Для цепочки.
 func (p *CatalogProxy) WithFieldSearchChecker(c FieldSearchChecker) *CatalogProxy {
 	p.fieldSearch = c
+	return p
+}
+
+// WithDeleter подключает хост-путь удаления (entityservice) к standalone-прокси.
+// Для цепочки.
+func (p *CatalogProxy) WithDeleter(d CatalogDeleter) *CatalogProxy {
+	p.deleter = d
 	return p
 }
 
@@ -352,6 +378,7 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 			ctxSrc:    p.ctxSrc,
 			access:    p.access,
 			registrar: p.registrar,
+			deleter:   p.deleter,
 			fields:    map[string]any{},
 		}
 	case "удалить", "delete":
@@ -381,6 +408,11 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 }
 
 // DeleteRef реализует RefManager — удаление записи справочника по UUID.
+// Физическое удаление делает хост-делетер (entityservice.Delete): там хуки
+// «ПередУдалением»/«ПослеУдаления», проверка ссылок, строки ТЧ и регистрация
+// в планах обмена — тот же путь, что у UI, REST и Документы.X.Удалить().
+// Раньше здесь стоял прямой db.Delete, и DSL-удаление справочника обходило
+// и хуки (#750 обещал «на всех путях»), и CheckRefs (#774/#801).
 func (p *CatalogProxy) DeleteRef(uuidStr string) error {
 	id, err := uuid.Parse(uuidStr)
 	if err != nil {
@@ -389,14 +421,12 @@ func (p *CatalogProxy) DeleteRef(uuidStr string) error {
 	if err := p.checkRowAccess("delete", id, nil); err != nil {
 		return err
 	}
-	return withOptionalCatalogTx(p.db, p.ctx(), func(ctx context.Context) error {
-		if p.registrar != nil {
-			if err := p.registrar(ctx, p.entity, id, true); err != nil {
-				return fmt.Errorf("регистрация удаления в обмене: %w", err)
-			}
-		}
-		return p.db.Delete(ctx, p.entity.Name, id)
-	})
+	if p.deleter == nil {
+		// Fail-closed: окружение без подключённого делетера означало бы
+		// удаление мимо хуков и проверки ссылок — отказываем, а не обходим.
+		return i18nerr.Errorf("удаление %s недоступно в этом окружении", p.entity.Name)
+	}
+	return p.deleter.DeleteCatalogRef(p.ctx(), p.entity, id)
 }
 
 // LoadObject реализует RefManager — загружает существующую запись справочника
@@ -430,6 +460,7 @@ func (p *CatalogProxy) LoadObject(uuidStr string) (any, error) {
 		ctxSrc:    p.ctxSrc,
 		access:    p.access,
 		registrar: p.registrar,
+		deleter:   p.deleter,
 		idStr:     uuidStr,
 		fields:    fields,
 	}, nil
@@ -573,6 +604,7 @@ type CatalogRecordWriter struct {
 	ctxSrc    CtxSource
 	access    RowAccessChecker
 	registrar ExchangeRegistrar
+	deleter   CatalogDeleter // проносится в Manager возвращаемой ссылки
 	idStr     string
 	fields    map[string]any
 }
@@ -645,7 +677,8 @@ func (w *CatalogRecordWriter) CallMethod(method string, args []any) any {
 		}
 		return &Ref{
 			UUID: id, Name: name, Type: w.entity.Name,
-			Manager: &CatalogProxy{entity: w.entity, db: w.db, ctxSrc: w.ctxSrc, access: w.access, registrar: w.registrar},
+			Manager: &CatalogProxy{entity: w.entity, db: w.db, ctxSrc: w.ctxSrc, access: w.access,
+				registrar: w.registrar, deleter: w.deleter},
 		}
 	case "установитьзначение", "setvalue":
 		if len(args) >= 2 {

@@ -88,7 +88,8 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		WithRowAccessChecker(rowAccess).
 		WithFieldSearchChecker(s.dslFieldSearchChecker()).
 		WithExchangeRegistrar(s.exchangeRegistrar()).
-		WithObjectFactory(s.catObjectFactory(txState))
+		WithObjectFactory(s.catObjectFactory(txState)).
+		WithDeleter(dslCatalogDeleter{s: s})
 	// Документы.X.Создать()/.Записать()/.Провести() из обработки.
 	documents := newDocsRoot(s, txState)
 	// РегистрыНакопления.X.Остатки()/.Движения()/.ВыбратьПоРегистратору(Док).
