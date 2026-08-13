@@ -71,7 +71,7 @@ func installEnvironmentConstants(e *env) {
 		"Таб": "\t", "Tab": "\t",
 		"ВТаб": "\v", "VTab": "\v",
 		"ПФ": "\f", "FF": "\f",
-		"НПП": " ", "NBSp": " ",
+		"НПП": "\u00a0", "NBSp": "\u00a0",
 	}}
 
 	e.setLocal("СпособКодированияСтроки", stringEncodingMethod)
