@@ -164,6 +164,19 @@ var maxLookupKeyBytes = func() int {
 // запрос компилируется на каждое Выполнить() — поэтому и без аллокаций.
 func upperLookup(m map[string]string, ident string) (string, bool) {
 	if len(ident) > maxLookupKeyBytes {
+		// В быстром ASCII/кириллическом пути регистр не меняет длину, поэтому
+		// слишком длинное имя действительно не может стать ключевым словом.
+		// Но общий Unicode может сжиматься: например, трёхбайтовая `ᲄ`
+		// (U+1C84) в верхнем регистре становится двухбайтовой `Т`. Такой ввод
+		// обязан сохранить прежнюю семантику strings.ToUpper и пройти fallback.
+		for i := 0; i < len(ident); {
+			_, _, n, ok := caseStep(ident, i, true)
+			if !ok {
+				value, found := m[strings.ToUpper(ident)]
+				return value, found
+			}
+			i += n
+		}
 		return "", false
 	}
 	var buf [maxInlineKeyBytes]byte

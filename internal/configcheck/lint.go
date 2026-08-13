@@ -612,12 +612,13 @@ func formModuleYAMLSchema() *yamlLintSchema {
 }
 
 type lintProgram struct {
-	label   string
-	object  string
-	kind    string
-	prog    *ast.Program
-	roots   map[string]bool
-	rootAll bool
+	label       string
+	object      string
+	kind        string
+	prog        *ast.Program
+	roots       map[string]bool
+	rootAll     bool
+	testContext bool
 }
 
 // CheckLintDSL reports declared but unread DSL variables and procedures that
@@ -636,18 +637,18 @@ func CheckLintDSL(dir string, proj *project.Project) []Issue {
 }
 
 // knownGlobalNames — имена, у которых обращение к полю заведомо осмысленно:
-// общие модули (Модуль.Процедура), модули менеджеров, сервисов и страниц, а
-// также builtin-имена платформы. Дополняет commonDSLGlobals, который перечисляет
+// общие модули (Модуль.Процедура) и builtin-имена платформы. Дополняет
+// commonDSLGlobals, который перечисляет
 // инжектируемые объекты-значения.
 func knownGlobalNames(proj *project.Project) map[string]bool {
 	out := map[string]bool{}
 	if proj != nil {
-		for _, namespace := range []map[string]*ast.Program{
-			proj.Modules, proj.ManagerPrograms, proj.ServicePrograms, proj.PagePrograms, proj.Programs,
-		} {
-			for name := range namespace {
-				out[strings.ToLower(name)] = true
-			}
+		// Только общие модули доступны через обычный синтаксис
+		// Модуль.Процедура(). Объектные, manager-, service- и page-программы
+		// живут в отдельных runtime namespace и не являются глобальными
+		// объектами DSL.
+		for name := range proj.Modules {
+			out[strings.ToLower(name)] = true
 		}
 	}
 	for name := range interpreter.KnownBuiltinNames() {
@@ -693,8 +694,12 @@ var commonDSLGlobals = map[string]bool{
 	// Контекст форм/страниц/заданий/сервисов.
 	"объект": true, "форма": true, "элементы": true, "элементыформы": true,
 	"отказ": true, "параметры": true, "параметрысеанса": true, "запрос_": true,
-	// Тест-контекст (план 108): инжектируется только при `onebase test`, но в
-	// исходнике тест-обработки выглядит как обычный глобал.
+}
+
+// testDSLGlobals инжектируются только в обработки с kind: test. Держать их в
+// commonDSLGlobals нельзя: иначе опечатка/неподдерживаемый Мок.Email в обычном
+// прикладном модуле будет ошибочно считаться допустимым глобалом.
+var testDSLGlobals = map[string]bool{
 	"утверждать": true, "assert": true,
 	"мок": true, "mock": true,
 	"часы": true, "clock": true,
@@ -819,7 +824,8 @@ func lintUnknownGlobalMembers(lp lintProgram, globals map[string]bool) []Issue {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			if owned[name] || moduleVars[name] || procNames[name] || commonDSLGlobals[name] || globals[name] {
+			if owned[name] || moduleVars[name] || procNames[name] || commonDSLGlobals[name] || globals[name] ||
+				lp.testContext && testDSLGlobals[name] {
 				continue
 			}
 			tok := bases[name]
@@ -1088,8 +1094,11 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 		entities[strings.ToLower(e.Name)] = e
 	}
 	processors := map[string]bool{}
+	testProcessors := map[string]bool{}
 	for _, p := range proj.Processors {
-		processors[strings.ToLower(p.Name)] = true
+		low := strings.ToLower(p.Name)
+		processors[low] = true
+		testProcessors[low] = p.IsTest()
 	}
 	reportChartProcs := map[string]string{}
 	for _, r := range proj.Reports {
@@ -1101,6 +1110,7 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 		switch {
 		case processors[low]:
 			add(name, "DSL обработка", prog, rootNames("Выполнить"), false)
+			out[len(out)-1].testContext = testProcessors[low]
 		case reportChartProcs[low] != "":
 			add(name, "DSL отчёт", prog, rootNames(reportChartProcs[low]), false)
 		case entities[low] != nil:

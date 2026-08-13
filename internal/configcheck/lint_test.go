@@ -685,6 +685,50 @@ params: []
 	}
 }
 
+func TestLintUnknownGlobalMemberTestGlobalsAreTestOnly(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "processors", "обычная.yaml"), `name: Обычная
+params: []
+`)
+	mkFile(t, filepath.Join(dir, "src", "обычная.proc.os"), `Процедура Выполнить() Экспорт
+  Мок.Email.Количество();
+КонецПроцедуры
+`)
+
+	res := RunFullWithOptions(dir, Options{Lint: true})
+	for _, warning := range res.Warnings {
+		if warning.Code == "dsl.unknown-global-member" && strings.Contains(warning.Message, "Мок") {
+			return
+		}
+	}
+	t.Fatalf("обычная обработка не должна получать test-only глобал Мок: %+v", res.Warnings)
+}
+
+func TestLintUnknownGlobalMemberObjectProgramIsNotGlobalNamespace(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "documents", "заказ.yaml"), `name: Заказ
+fields: []
+`)
+	mkFile(t, filepath.Join(dir, "processors", "проверка.yaml"), `name: Проверка
+params: []
+`)
+	mkFile(t, filepath.Join(dir, "src", "заказ.object.os"), `Процедура ПриЗаписи() Экспорт
+КонецПроцедуры
+`)
+	mkFile(t, filepath.Join(dir, "src", "проверка.proc.os"), `Процедура Выполнить() Экспорт
+  Заказ.НесуществующаяПроцедура();
+КонецПроцедуры
+`)
+
+	res := RunFullWithOptions(dir, Options{Lint: true})
+	for _, warning := range res.Warnings {
+		if warning.Code == "dsl.unknown-global-member" && strings.Contains(warning.Message, "Заказ") {
+			return
+		}
+	}
+	t.Fatalf("объектный модуль не должен считаться глобальным namespace: %+v", res.Warnings)
+}
+
 func TestStrictLexicalScopePromotesCrossScopeRead(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, filepath.Join(dir, "config", "app.yaml"), `name: Test

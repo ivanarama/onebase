@@ -139,8 +139,13 @@ func TestManagedFormGridEnumAttr(t *testing.T) {
 	if !strings.Contains(html, "data-sg-enum=") {
 		t.Error("HTML не содержит data-sg-enum — карта переводов enum не прокинута в грид")
 	}
-	if !strings.Contains(html, `"enum":true`) {
-		t.Error(`HTML не содержит "enum":true в data-sg-cols — enum-поле не помечено`)
+	cols := parseManagedTPColumns(t, html)
+	enumFound := false
+	for _, col := range cols {
+		enumFound = enumFound || col.ID == "Приоритет" && col.Enum
+	}
+	if !enumFound {
+		t.Error("enum-поле не помечено в data-sg-cols")
 	}
 	if !strings.Contains(html, "Высокий") {
 		t.Error("HTML не содержит значений enum-карты в data-sg-enum")

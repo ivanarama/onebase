@@ -100,6 +100,10 @@ func TestUpperLookup_СовпадаетСПрямымПоиском(t *testing.T
 		"выбрать", "ВЫБРАТЬ", "ВыБрАтЬ", "сумма", "COUNT", "count",
 		"Номенклатура", "", "не_ключевое_слово",
 		strings.Repeat("я", 200), "Straße", "СГРУППИРОВАТЬ",
+		// U+1C84 занимает три байта, но ToUpper превращает его в двухбайтовую
+		// `Т`. Исходная строка длиннее самого длинного ключа в байтах, а после
+		// смены регистра является корректным ключевым словом.
+		"СГРУППИРОВАᲄЬ",
 	} {
 		for name, m := range map[string]map[string]string{"kwMap": kwMap, "aggFuncs": aggFuncs} {
 			wantValue, wantOK := m[strings.ToUpper(ident)]

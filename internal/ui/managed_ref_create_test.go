@@ -2,7 +2,6 @@ package ui
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -41,17 +40,18 @@ func TestManagedGridColumnsCarryInlineCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteTemplate: %v", err)
 	}
-	html := buf.String()
-
-	cols := html[strings.Index(html, "data-sg-cols="):]
-	cols = cols[:strings.Index(cols[len("data-sg-cols='"):], "'")+len("data-sg-cols='")]
-	if !strings.Contains(cols, `"id":"КлиентСоСозданием","name":"КлиентСоСозданием","type":"reference:Клиент","ref":"Клиент","allowCreate":true`) {
-		t.Errorf("колонка с allow_inline_create не отдала allowCreate клиенту:\n%s", cols)
+	cols := parseManagedTPColumns(t, buf.String())
+	byID := make(map[string]managedTPColumnJSON, len(cols))
+	for _, col := range cols {
+		byID[col.ID] = col
 	}
-	if strings.Contains(cols, `"id":"КлиентБезСоздания","name":"КлиентБезСоздания","type":"reference:Клиент","ref":"Клиент","allowCreate":true`) {
-		t.Errorf("создание включилось у колонки без allow_inline_create (в ТЧ дефолт — выключено):\n%s", cols)
+	if !byID["КлиентСоСозданием"].AllowCreate {
+		t.Errorf("колонка с allow_inline_create не отдала allowCreate клиенту: %+v", cols)
 	}
-	if strings.Contains(cols, `"id":"Количество"`) && strings.Contains(cols, `"allowCreate":true,"enum"`) {
-		t.Errorf("allowCreate протёк в неcсылочную колонку:\n%s", cols)
+	if byID["КлиентБезСоздания"].AllowCreate {
+		t.Errorf("создание включилось у колонки без allow_inline_create (в ТЧ дефолт — выключено): %+v", cols)
+	}
+	if byID["Количество"].AllowCreate {
+		t.Errorf("allowCreate протёк в нессылочную колонку: %+v", cols)
 	}
 }

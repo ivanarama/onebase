@@ -278,7 +278,7 @@ const tplManagedForm = `
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
        {{/* id — имя реквизита (по нему идёт привязка данных и разбор tp.*),
             name — только подпись колонки: синоним реквизита, как в автоформе. */}}
-       data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.DisplayName (str $ctx.Lang)}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}},"allowCreate":true{{end}}{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
+       data-sg-cols='{{managedTPColumnsJSON $tpMeta.Fields (str $ctx.Lang)}}'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{jsJSON $tpRows}}'

@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"encoding/json"
+	"html"
 	"strings"
 	"testing"
 
@@ -56,16 +58,21 @@ func TestManagedTablePartColumnsUseFieldTitles(t *testing.T) {
 	}
 	render := func(lang string) string { return renderForm(form, lang) }
 
-	html := render("ru")
+	htmlOut := render("ru")
+	cols := parseManagedTPColumns(t, htmlOut)
+	byID := make(map[string]managedTPColumnJSON, len(cols))
+	for _, col := range cols {
+		byID[col.ID] = col
+	}
 	// SlickGrid: подпись — синоним, идентификатор — имя реквизита.
-	if !strings.Contains(html, `{"id":"КодКлиента","name":"Код клиента"`) {
+	if byID["КодКлиента"].Name != "Код клиента" {
 		t.Errorf("колонка SlickGrid подписана именем реквизита вместо синонима")
 	}
-	if !strings.Contains(html, `{"id":"Количество","name":"Кол-во"`) {
+	if byID["Количество"].Name != "Кол-во" {
 		t.Errorf("локализованный синоним (titles.ru) не попал в подпись колонки")
 	}
 	// Без синонима остаётся имя реквизита.
-	if !strings.Contains(html, `{"id":"Комментарий","name":"Комментарий"`) {
+	if byID["Комментарий"].Name != "Комментарий" {
 		t.Errorf("реквизит без синонима должен подписываться собственным именем")
 	}
 	// Простая таблица (no_grid) подписывается так же.
@@ -79,7 +86,59 @@ func TestManagedTablePartColumnsUseFieldTitles(t *testing.T) {
 	}
 
 	// Язык интерфейса выбирает перевод синонима.
-	if en := render("en"); !strings.Contains(en, `{"id":"Количество","name":"Qty"`) {
+	if en := parseManagedTPColumns(t, render("en")); len(en) != 3 || en[1].Name != "Qty" {
 		t.Errorf("английский синоним не подставился при Lang=en")
+	}
+}
+
+func parseManagedTPColumns(t *testing.T, rendered string) []managedTPColumnJSON {
+	t.Helper()
+	const prefix = `data-sg-cols='`
+	start := strings.Index(rendered, prefix)
+	if start < 0 {
+		t.Fatal("data-sg-cols не найден")
+	}
+	start += len(prefix)
+	end := strings.Index(rendered[start:], `'`)
+	if end < 0 {
+		t.Fatal("data-sg-cols не закрыт")
+	}
+	raw := html.UnescapeString(rendered[start : start+end])
+	var cols []managedTPColumnJSON
+	if err := json.Unmarshal([]byte(raw), &cols); err != nil {
+		t.Fatalf("data-sg-cols содержит невалидный JSON %q: %v", raw, err)
+	}
+	return cols
+}
+
+func TestManagedTablePartColumnTitlesProduceValidJSON(t *testing.T) {
+	fields := []metadata.Field{{
+		Name: "Комментарий", Type: metadata.FieldTypeString,
+		Title: `Размер "XL" & client's <выбор>`,
+	}}
+	var buf bytes.Buffer
+	err := tmpl.ExecuteTemplate(&buf, "page-managed-form", map[string]any{
+		"Entity": &metadata.Entity{
+			Name: "Заказ", Kind: metadata.KindDocument,
+			TableParts: []metadata.TablePart{{Name: "Строки", Fields: fields}},
+		},
+		"Form": &metadata.FormModule{
+			Name: "ФормаОбъекта", Kind: "object", EntityName: "Заказ",
+			LayoutKind: metadata.FormLayoutManaged,
+			Elements: []*metadata.FormElement{{
+				Kind: metadata.FormElementTablePart, Name: "Строки", DataPath: "Объект.Строки",
+			}},
+		},
+		"IsNew": true, "CanWrite": true, "Lang": "ru",
+		"Values": map[string]string{}, "RefOptions": map[string]any{},
+		"EnumOptions": map[string]any{}, "TablePartRows": map[string][]map[string]any{},
+		"TPRefOptions": map[string]any{}, "TPEnumLabels": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	cols := parseManagedTPColumns(t, buf.String())
+	if len(cols) != 1 || cols[0].Name != fields[0].Title {
+		t.Fatalf("синоним испорчен при JSON/HTML-кодировании: %+v", cols)
 	}
 }
