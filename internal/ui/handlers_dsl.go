@@ -269,6 +269,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	infoRegs := newInfoRegsRoot(s, txState)
 	vars["РегистрыСведений"] = infoRegs
 	vars["InfoRegisters"] = infoRegs
+	wsGlobal := newWSRoot(s, txState)
+	vars["ВебСокет"] = wsGlobal
+	vars["WebSocket"] = wsGlobal
 	vars["БлокировкаДанных"] = lockFactory
 	vars["DataLock"] = lockFactory
 	vars["ТекущийПользователь"] = currentUserFn

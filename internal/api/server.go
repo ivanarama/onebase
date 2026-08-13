@@ -276,6 +276,14 @@ func (s *Server) InvalidateWidgetCache() {
 	}
 }
 
+// ResyncWSIntakes приводит WS-соединения приёмки к текущему реестру (план
+// 120A): вызывается при старте сервера и после горячей перезагрузки проекта.
+func (s *Server) ResyncWSIntakes() {
+	if s != nil && s.uiSrv != nil {
+		s.uiSrv.ResyncWSIntakes()
+	}
+}
+
 // PublishDevReload sends the trusted system envelope used by browser sync.
 // DSL notifications cannot construct this envelope even if they reuse the
 // visible event name.

@@ -62,6 +62,9 @@ func reloadProjectRuntime(reg *runtime.Registry, sched *scheduler.Scheduler, srv
 	reg.ReplaceProjectFrom(next)
 	if srv != nil {
 		srv.InvalidateWidgetCache()
+		// WS-шлюзы приёмки: изменённые соединения пересоздаются, нетронутые
+		// живут дальше (правка обработчика переподключения не требует).
+		srv.ResyncWSIntakes()
 	}
 	return nil
 }

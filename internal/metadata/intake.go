@@ -22,12 +22,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Транспорты приёмки. http — эталонный (HTTP-сервис, план 61). amqp — за швом
-// MessageSource (нативный consumer из G4/путь Б), подключается позже, не трогая
-// ядро.
+// Транспорты приёмки. http — эталонный (HTTP-сервис, план 61). ws — исходящее
+// WebSocket-соединение (план 120): база сама подключается к внешнему серверу и
+// принимает события тем же конвертом. amqp — за швом MessageSource (нативный
+// consumer из G4/путь Б), подключается позже, не трогая ядро.
 const (
 	IntakeTransportHTTP = "http"
 	IntakeTransportAMQP = "amqp"
+	IntakeTransportWS   = "ws"
 )
 
 // Режимы проверки подлинности отправителя (http-транспорт).
@@ -49,7 +51,7 @@ type Intake struct {
 	Name          string            `yaml:"name"`
 	Title         string            `yaml:"title"`
 	Titles        map[string]string `yaml:"titles"`
-	Transport     string            `yaml:"transport"`      // http (эталон) | amqp (за швом)
+	Transport     string            `yaml:"transport"`      // http (эталон) | amqp (за швом) | ws (план 120)
 	Endpoint      string            `yaml:"endpoint"`       // для http-транспорта: /hs/<корень>/<путь>
 	SchemaVersion string            `yaml:"schema_version"` // ожидаемая версия конверта
 	Idempotency   IntakeIdempotency `yaml:"idempotency"`
@@ -57,6 +59,18 @@ type Intake struct {
 	Auth          string            `yaml:"auth"`    // none (по умолч.) | token | hmac — проверка подлинности отправителя
 	Secret        string            `yaml:"secret"`  // общий секрет для token/hmac; поддерживает ${env:VAR}
 	DLQ           IntakeDLQ         `yaml:"dlq"`
+
+	// Поля ws-транспорта (план 120). Для http/amqp не используются.
+	URL       string          `yaml:"url"`       // адрес внешнего сервера: ws:// или wss://
+	Subscribe map[string]any  `yaml:"subscribe"` // необязательное JSON-сообщение сразу после подключения
+	Reconnect IntakeReconnect `yaml:"reconnect"`
+}
+
+// IntakeReconnect — параметры переподключения ws-транспорта: экспоненциальная
+// выдержка от initial до max секунд (с джиттером; см. wsclient).
+type IntakeReconnect struct {
+	Initial int `yaml:"initial"` // секунды, дефолт 1
+	Max     int `yaml:"max"`     // секунды, дефолт 60
 }
 
 // IntakeIdempotency — правило идемпотентности: какое поле конверта является
@@ -114,6 +128,15 @@ func (in *Intake) Normalize() {
 	for i := range in.DLQ.On {
 		in.DLQ.On[i] = strings.ToLower(strings.TrimSpace(in.DLQ.On[i]))
 	}
+	in.URL = strings.TrimSpace(in.URL)
+	if in.Transport == IntakeTransportWS {
+		if in.Reconnect.Initial == 0 {
+			in.Reconnect.Initial = 1
+		}
+		if in.Reconnect.Max == 0 {
+			in.Reconnect.Max = 60
+		}
+	}
 }
 
 // Validate проверяет объявление шлюза. Вызывается загрузчиком и configcheck.
@@ -128,8 +151,27 @@ func (in *Intake) Validate() error {
 		}
 	case IntakeTransportAMQP:
 		// endpoint необязателен: адрес очереди — деплой-настройка за швом MessageSource.
+	case IntakeTransportWS:
+		if in.URL == "" {
+			return fmt.Errorf("intake %q: transport ws требует url (ws:// или wss://)", in.Name)
+		}
+		if !strings.HasPrefix(in.URL, "ws://") && !strings.HasPrefix(in.URL, "wss://") {
+			return fmt.Errorf("intake %q: url должен начинаться с ws:// или wss://, получено %q", in.Name, in.URL)
+		}
+		if in.Endpoint != "" {
+			return fmt.Errorf("intake %q: endpoint не применим к transport ws (соединение исходящее, адрес — в url)", in.Name)
+		}
+		if in.Auth == IntakeAuthHMAC {
+			return fmt.Errorf("intake %q: auth hmac подписывает тело HTTP-запроса и не применим к ws; используйте token", in.Name)
+		}
+		if in.Reconnect.Initial < 1 {
+			return fmt.Errorf("intake %q: reconnect.initial должен быть не меньше 1 секунды", in.Name)
+		}
+		if in.Reconnect.Max < in.Reconnect.Initial {
+			return fmt.Errorf("intake %q: reconnect.max (%d) меньше reconnect.initial (%d)", in.Name, in.Reconnect.Max, in.Reconnect.Initial)
+		}
 	default:
-		return fmt.Errorf("intake %q: неизвестный transport %q (http|amqp)", in.Name, in.Transport)
+		return fmt.Errorf("intake %q: неизвестный transport %q (http|amqp|ws)", in.Name, in.Transport)
 	}
 	if in.Handler == "" {
 		return fmt.Errorf("intake %q: не задан handler (процедура Обработать)", in.Name)

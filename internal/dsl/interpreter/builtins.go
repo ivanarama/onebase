@@ -525,6 +525,8 @@ func KnownBuiltinNames() map[string]struct{} {
 		"документы", "documents",
 		"регистрынакопления", "accumulationregisters",
 		"регистрысведений", "inforegisters",
+		// исходящие WS-соединения приёмки (план 120B, internal/ui/dsl_websocket.go)
+		"вебсокет", "websocket",
 		"предопределённыезначения", "predefinedvalues",
 		"нумераторы", "numerators",
 		"значениереквизитаобъекта", "objectattributevalue",
