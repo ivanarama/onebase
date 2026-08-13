@@ -16,6 +16,22 @@ type MethodCallable interface {
 	CallMethod(method string, args []any) any
 }
 
+// MethodLister — необязательное дополнение к MethodCallable: объект называет
+// свой тип и список методов, которые понимает.
+//
+// Нужен потому, что CallMethod не умеет сказать «такого метода нет»: он
+// возвращает одно значение, и «не нашёл» неотличимо от «нашёл и вернул
+// Неопределено». Из-за этого опечатка в имени метода у ~45 реализаций
+// оставалась бесшумной — ровно тот дефект, что закрывали в #718 для Массива,
+// Структуры и Соответствия правкой их собственных switch'ей.
+//
+// Реализовавшие интерфейс получают тот же честный отказ со списком доступных
+// методов, что и встроенные коллекции, и остаются свободны от зависимости на
+// этот пакет: список — это данные, а не вызов RaiseUserError.
+type MethodLister interface {
+	KnownMethods() (typeName string, methods []string)
+}
+
 // MapThis wraps map[string]any as a This (used for tablepart rows and register movement records).
 type MapThis struct{ M map[string]any }
 

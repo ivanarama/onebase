@@ -27,12 +27,43 @@ func NewObject(entityType string, kind metadata.Kind) *Object {
 	}
 }
 
+// EnsureTableParts заводит ключи для всех объявленных табличных частей.
+//
+// Без этого у ПУСТОЙ табличной части ключа в TablePartRows нет вовсе, и
+// `this.Товары` в обработчике — «Неопределено». То есть типовая проверка
+// «если строк нет — исключение» ломалась ровно в том случае, ради которого
+// написана (issue #842). entityservice ключи заводит сам, читая ТЧ из БД; на
+// пути `Документы.X.Создать()` их заводит вызывающий перед запуском хука.
+func (o *Object) EnsureTableParts(e *metadata.Entity) {
+	if o == nil || e == nil {
+		return
+	}
+	if o.TablePartRows == nil {
+		o.TablePartRows = make(map[string][]map[string]any, len(e.TableParts))
+	}
+	for _, tp := range e.TableParts {
+		found := false
+		for k := range o.TablePartRows {
+			if strings.EqualFold(k, tp.Name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			o.TablePartRows[tp.Name] = nil
+		}
+	}
+}
+
 func (o *Object) Get(name string) any {
 	name = strings.ToLower(name)
 	if o.TablePartRows != nil {
-		for k, v := range o.TablePartRows {
+		for k := range o.TablePartRows {
 			if strings.ToLower(k) == name {
-				return v
+				// Не сырой срез: у него нет методов, и `this.Товары.Количество()`
+				// падал, хотя `Для Каждого … Из this.Товары` работал (issue
+				// #842). Обёртка адресует те же строки, не копируя их.
+				return &TablePart{obj: o, name: k}
 			}
 		}
 	}

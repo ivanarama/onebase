@@ -74,6 +74,35 @@ jobs:
           done
           exit "$failed"
 
+      # Заполнение демо-баз (issue #842). Пример — первое, что запускает новый
+      # пользователь, и заполнение у него ломалось молча: `lint` разбирает
+      # конфигурацию, `onebase test` гоняет объявленные тесты, а обработку
+      # ЗаполнитьТестовуюБазу не запускал никто. Поломка (у табличной части в
+      # обработчике проведения не было методов) прожила до тех пор, пока
+      # тихий отказ не сделали слышным.
+      - name: Seed shipped example databases (SQLite)
+        run: |
+          set -uo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          go build -o "$tmp/onebase" ./cmd/onebase
+          failed=0
+          for ex in trade crm finance tasks; do
+            echo "::group::seed $ex"
+            if ! "$tmp/onebase" migrate --project "examples/$ex" --sqlite "$tmp/seed-$ex.db"; then
+              echo "::error::$ex: миграция не прошла"
+              failed=1
+              echo "::endgroup::"
+              continue
+            fi
+            if ! "$tmp/onebase" procrun --project "examples/$ex" --sqlite "$tmp/seed-$ex.db" --proc ЗаполнитьТестовуюБазу; then
+              echo "::error::$ex: заполнение демо-базы упало"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
       # Конфигурационные тесты shipped-примеров (QUAL-01, issue #790). Runner
       # `onebase test` реализован, но CI гонял для конфигураций только lint.
       # Важно: `onebase test` при НУЛЕ найденных тестов возвращает 0 — поэтому
