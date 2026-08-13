@@ -8,10 +8,7 @@ package ui
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -317,18 +314,14 @@ func (s *Server) resolveServiceAuth(svc *httpservice.Service, w http.ResponseWri
 		return r.Context(), true
 
 	case "hmac":
-		// Подпись тела — формат платёжек/Telegram: X-Webhook-Signature =
-		// hex(HMAC-SHA256(тело, secret)); допускается префикс "sha256=".
+		// Подпись запроса. Новая (versioned) схема с freshness/replay и старая
+		// схема «подпись только тела» — в verifyServiceHMAC (#785).
 		secret, ok := resolveAuthSecret(svc.Secret, "сервиса", svc.Name, w)
 		if !ok {
 			return nil, false
 		}
-		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(body)
-		want := hex.EncodeToString(mac.Sum(nil))
-		got := strings.TrimPrefix(strings.ToLower(r.Header.Get("X-Webhook-Signature")), "sha256=")
-		if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-			writeServiceError(w, http.StatusUnauthorized, "неверная подпись")
+		if ok, reason := verifyServiceHMAC(secret, svc.Name, r, body, serviceReplay); !ok {
+			writeServiceError(w, http.StatusUnauthorized, reason)
 			return nil, false
 		}
 		return r.Context(), true

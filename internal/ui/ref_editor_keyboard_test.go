@@ -71,7 +71,12 @@ func TestManagedFormGridRefEntityAttr(t *testing.T) {
 	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
 		t.Fatalf("ExecuteTemplate: %v", err)
 	}
-	if html := buf.String(); !strings.Contains(html, `"ref":"Номенклатура"`) {
+	cols := parseManagedTPColumns(t, buf.String())
+	refFound := false
+	for _, col := range cols {
+		refFound = refFound || col.ID == "Номенклатура" && col.Ref == "Номенклатура"
+	}
+	if !refFound {
 		t.Error(`data-sg-cols не содержит "ref":"Номенклатура" — редактору ячейки негде искать позиции`)
 	}
 }

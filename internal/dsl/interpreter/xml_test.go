@@ -223,18 +223,78 @@ func TestReadXML_RejectsUnrepresentableContent(t *testing.T) {
 	}{
 		{"mixed content", `<a>до<b/>после</a>`, "смешанное содержимое"},
 		{"non XML whitespace mixed content", "<a>\u00a0<b/></a>", "смешанное содержимое"},
-		{"default namespace", `<a xmlns="urn:test"/>`, "пространства имён"},
-		{"prefixed namespace", `<p:a xmlns:p="urn:test"/>`, "пространства имён"},
 		{"comment", `<a><!-- важный комментарий --></a>`, "комментарии"},
 		{"directive", `<!DOCTYPE a><a/>`, "директивы"},
 		{"processing instruction", `<?target value?><a/>`, "инструкции обработки"},
-		{"xml declaration", `<?xml version="1.0"?><a/>`, "инструкции обработки"},
+		{"processing instruction named like declaration", `<?xmlfoo bar?><a/>`, "инструкции обработки"},
+		{"declaration not at start", `<a/><?xml version="1.0"?>`, "инструкции обработки"},
+		{"empty prefix", `<:a/>`, "префикс"},
+		{"empty local name", `<a:/>`, "локальное имя"},
+		{"two colons", `<a:b:c/>`, "более одного символа"},
+		{"non UTF-8 encoding", `<?xml version="1.0" encoding="windows-1251"?><a/>`, "кодировка XML"},
+		{"unsupported version", `<?xml version="2.0"?><a/>`, "версия XML"},
+		{"declaration without version", `<?xml encoding="UTF-8"?><a/>`, "version"},
+		{"unterminated declaration", `<?xml version="1.0"`, "незавершённое объявление"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			requireXMLUserError(t, tc.want, func() {
 				_, _ = builtinReadXML([]any{tc.doc}, "", 0)
 			})
+		})
+	}
+}
+
+// Форма сообщения обмена 1С: объявление, префиксы пространств имён и xsi:type,
+// в котором передаётся имя типа объекта. Всё это должно доезжать до дерева
+// нетронутым и переживать обратную запись.
+func TestXML_NamespacesAreLexical(t *testing.T) {
+	doc := `<?xml version="1.0" encoding="UTF-8"?>` +
+		`<v8msg:Body xmlns:v8msg="http://v8.1c.ru/messages" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
+		`<Объект xsi:type="СправочникОбъект.Номенклатура"><Ссылка>abc</Ссылка></Объект>` +
+		`</v8msg:Body>`
+	v, err := builtinReadXML([]any{doc}, "", 0)
+	if err != nil {
+		t.Fatalf("ПрочитатьXML: %v", err)
+	}
+	root := v.(*Struct)
+	if got := root.Get(xmlFieldName); got != "v8msg:Body" {
+		t.Errorf("имя корня = %v, ожидалось v8msg:Body", got)
+	}
+	attrs := root.Get(xmlFieldAttrs).(*Map)
+	if got := attrs.Get("xmlns:v8msg"); got != "http://v8.1c.ru/messages" {
+		t.Errorf("объявление xmlns потеряно: %v", got)
+	}
+	object := root.Get(xmlFieldChildren).(*Array).Index(0).(*Struct)
+	if got := object.Get(xmlFieldAttrs).(*Map).Get("xsi:type"); got != "СправочникОбъект.Номенклатура" {
+		t.Errorf("xsi:type = %v, ожидалось СправочникОбъект.Номенклатура", got)
+	}
+
+	out, err := builtinWriteXML([]any{root}, "", 0)
+	if err != nil {
+		t.Fatalf("ЗаписатьXML: %v", err)
+	}
+	// Объявление не является частью дерева и не восстанавливается.
+	if got, want := out, strings.TrimPrefix(doc, `<?xml version="1.0" encoding="UTF-8"?>`); got != want {
+		t.Fatalf("получено %q, ожидалось %q", got, want)
+	}
+}
+
+func TestReadXML_AcceptsDeclarationVariants(t *testing.T) {
+	for _, declaration := range []string{
+		`<?xml version="1.0"?>`,
+		`<?xml version='1.0' encoding='utf-8'?>`,
+		`<?xml   version = "1.0"   encoding = "UTF-8"   standalone = "no" ?>`,
+		string(rune(0xFEFF)) + `<?xml version="1.0" encoding="UTF-8"?>`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			v, err := builtinReadXML([]any{declaration + "\n<a>текст</a>"}, "", 0)
+			if err != nil {
+				t.Fatalf("ПрочитатьXML: %v", err)
+			}
+			if got := v.(*Struct).Get(xmlFieldText); got != "текст" {
+				t.Fatalf("Текст = %v, ожидалось «текст»", got)
+			}
 		})
 	}
 }
@@ -259,7 +319,7 @@ func TestReadXML_PreservesTextOnlyWhitespace(t *testing.T) {
 }
 
 func TestWriteXML_RejectsInvalidNames(t *testing.T) {
-	for _, name := range []string{"", "1root", "ns:root", `a></a><evil`} {
+	for _, name := range []string{"", "1root", ":root", "root:", "a:b:c", `a></a><evil`} {
 		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
 			requireXMLUserError(t, "недопустимое имя", func() {
 				_, _ = builtinWriteXML([]any{"value", name}, "", 0)
@@ -312,8 +372,8 @@ func TestWriteXML_MalformedTreeNeverFallsBack(t *testing.T) {
 		{"duplicate attributes", "повторяющийся атрибут", func(s *Struct) {
 			s.Set(xmlFieldAttrs, &Map{keys: []any{"Код", "Код"}, vals: []any{"1", "2"}})
 		}},
-		{"namespace attribute", "пространства имён", func(s *Struct) {
-			s.Set(xmlFieldAttrs, &Map{keys: []any{"xmlns"}, vals: []any{"urn:test"}})
+		{"malformed qualified attribute", "недопустимое имя атрибута", func(s *Struct) {
+			s.Set(xmlFieldAttrs, &Map{keys: []any{"xmlns:"}, vals: []any{"urn:test"}})
 		}},
 	}
 

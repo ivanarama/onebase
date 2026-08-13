@@ -116,6 +116,86 @@ func (r *Repo) TwoFactorInfoFor(ctx context.Context, userID string) (TwoFactorIn
 	return info, nil
 }
 
+// CountPlaintextTOTP возвращает число включённых 2FA, чей секрет лежит в базе
+// ОТКРЫТЫМ ТЕКСТОМ (не зашифрован мастер-ключом). Используется как
+// health/admin-сигнал: пока значение > 0, конфиденциальность seed'ов ниже
+// ожидаемой (issue #779).
+func (r *Repo) CountPlaintextTOTP(ctx context.Context) (int, error) {
+	rows, err := r.db.Query(ctx, `SELECT totp_secret FROM _users WHERE totp_enabled AND totp_secret <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return 0, err
+		}
+		if !secrets.IsRef(s) {
+			n++
+		}
+	}
+	return n, rows.Err()
+}
+
+// MigratePlaintextTOTP перешифровывает открытые (plaintext) секреты TOTP
+// текущим мастер-ключом. Если ключ не задан — миграция невозможна, возвращает
+// (0, nil): это не ошибка, а сигнал «нечего мигрировать без ключа». Ключ здесь
+// уже СУЩЕСТВУЮЩИЙ (задан оператором) — метод не создаёт новых ключей и не
+// добавляет скрытых зависимостей (issue #779).
+func (r *Repo) MigratePlaintextTOTP(ctx context.Context) (int, error) {
+	key, err := secrets.Default().Key()
+	if err != nil {
+		if errors.Is(err, secrets.ErrNoMasterKey) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("auth: загрузка мастер-ключа для миграции TOTP: %w", err)
+	}
+	rows, err := r.db.Query(ctx, `SELECT id, totp_secret FROM _users WHERE totp_enabled AND totp_secret <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	type pending struct{ id, secret string }
+	var todo []pending
+	for rows.Next() {
+		var id, s string
+		if err := rows.Scan(&id, &s); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if !secrets.IsRef(s) {
+			todo = append(todo, pending{id, s})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	d := r.db.Dialect()
+	migrated := 0
+	for _, p := range todo {
+		enc, encErr := key.Encrypt(p.secret)
+		if encErr != nil {
+			return migrated, fmt.Errorf("auth: шифрование секрета TOTP при миграции: %w", encErr)
+		}
+		// Сравниваем прежний plaintext в WHERE: если другой процесс/операция уже
+		// сменила seed после чтения списка, миграция не должна вернуть старое
+		// значение поверх нового.
+		q := fmt.Sprintf(`UPDATE _users SET totp_secret = %s WHERE id = %s AND totp_secret = %s`,
+			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+		tag, err := r.db.Exec(ctx, q, enc, p.id, p.secret)
+		if err != nil {
+			return migrated, err
+		}
+		if tag.RowsAffected == 1 {
+			migrated++
+		}
+	}
+	return migrated, nil
+}
+
 func (r *Repo) countBackupCodes(ctx context.Context, userID string) (int, error) {
 	d := r.db.Dialect()
 	var n int

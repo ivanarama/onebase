@@ -44,6 +44,12 @@ type Service struct {
 	// X-Webhook-Signature = hex(HMAC-SHA256(тело, secret)) — формат платёжек
 	// и Telegram). token/hmac поглощены из плана 58.
 	Auth string `yaml:"auth"`
+	// AuthExplicit — был ли auth ЯВНО задан в YAML (до нормализации пустого к
+	// «none»). Захватывается один раз в Normalize, не читается из YAML. Нужен
+	// валидатору, чтобы отличить осознанный `auth: none` от ОТСУТСТВУЮЩЕГО auth
+	// у анонимного изменяющего сервиса (issue #786).
+	AuthExplicit bool `yaml:"-"`
+	authCaptured bool // страж однократного захвата AuthExplicit
 	// Secret — секрет для auth token/hmac. Задавайте через ${env:VAR} —
 	// значение живёт в окружении, не в YAML/git/.obz.
 	Secret string `yaml:"secret"`
@@ -96,6 +102,12 @@ func (s *Service) Normalize() {
 		s.SecretRaw = s.Secret
 	}
 	s.RootURL = strings.Trim(strings.TrimSpace(s.RootURL), "/")
+	// Захватываем «был ли auth задан явно» до дефолтинга пустого к none —
+	// один раз, чтобы повторный Normalize (уже с auth=none) не затёр факт.
+	if !s.authCaptured {
+		s.authCaptured = true
+		s.AuthExplicit = strings.TrimSpace(s.Auth) != ""
+	}
 	if s.Auth == "" {
 		s.Auth = "none"
 	}

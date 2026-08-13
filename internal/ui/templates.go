@@ -20,6 +20,15 @@ import (
 
 var tmpl = template.Must(newTemplate(nil))
 
+type managedTPColumnJSON struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Ref         string `json:"ref,omitempty"`
+	AllowCreate bool   `json:"allowCreate,omitempty"`
+	Enum        bool   `json:"enum,omitempty"`
+}
+
 func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 	return template.New("root").Funcs(templateFuncs(bundle)).Parse(templateSource())
 }
@@ -734,6 +743,24 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return template.JS("null")
 			}
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
+		},
+		"managedTPColumnsJSON": func(fields []metadata.Field, lang string) template.JS {
+			cols := make([]managedTPColumnJSON, 0, len(fields))
+			for _, field := range fields {
+				cols = append(cols, managedTPColumnJSON{
+					ID:          field.Name,
+					Name:        field.DisplayName(lang),
+					Type:        string(field.Type),
+					Ref:         field.RefEntity,
+					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true),
+					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
+				})
+			}
+			b, err := json.Marshal(cols)
+			if err != nil {
+				return template.JS("[]")
+			}
+			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"wcell":            widgetCell,
 		"echartsJSON":      echartsJSON,

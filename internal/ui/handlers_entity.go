@@ -449,18 +449,26 @@ func (s *Server) applyCopyFromQuery(r *http.Request, entity *metadata.Entity, sr
 
 // skipFieldOnCopy — реквизиты, которые копия получает заново, а не от источника.
 //
-// Номер документа выдаёт запись (автонумерация), а дата нового документа —
-// текущая: форма подставила её до копирования, и копия вчерашней накладной
-// оформляется сегодняшним днём, как «Создать копированием» в 1С. Реквизиты
-// справочника (включая Код) копируются как есть: платформа их не генерирует,
-// и обнулять то, что она не умеет заполнить, значило бы ломать копию.
+// Автонумеруемый реквизит выдаёт запись, а дата нового документа — текущая:
+// форма подставила её до копирования, и копия вчерашней накладной оформляется
+// сегодняшним днём, как «Создать копированием» в 1С. Реквизит справочника без
+// нумератора (в том числе рукописный Код) копируется как есть: платформа его не
+// генерирует, и обнулять то, что она не умеет заполнить, значило бы ломать копию.
 func skipFieldOnCopy(entity *metadata.Entity, f metadata.Field) bool {
-	return isSystemDocumentNumber(entity, f) || isSystemDocumentDate(entity, f)
+	return isAutoNumberedField(entity, f) || isSystemDocumentDate(entity, f)
 }
 
-func isSystemDocumentNumber(entity *metadata.Entity, field metadata.Field) bool {
-	return entity != nil && entity.Kind == metadata.KindDocument &&
-		field.Type == metadata.FieldTypeString && strings.EqualFold(field.Name, "Номер")
+// isAutoNumberedField — реквизит, который платформа заполняет сама при записи:
+// «Номер» документа и «Код» справочника с нумератором (план 117). Спрашиваем
+// storage.AutoNumberField, а не имя реквизита: копия обязана получить своё
+// значение. С `numerator.unique: true` перенос чужого кода вообще не даст
+// записать копию, а без него — молча заведёт второй объект с тем же кодом.
+func isAutoNumberedField(entity *metadata.Entity, field metadata.Field) bool {
+	target := storage.AutoNumberField(entity)
+	if target == "" {
+		return false
+	}
+	return field.Type == metadata.FieldTypeString && strings.EqualFold(field.Name, target)
 }
 
 func isSystemDocumentDate(entity *metadata.Entity, field metadata.Field) bool {

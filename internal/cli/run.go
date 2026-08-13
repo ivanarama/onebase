@@ -418,6 +418,21 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("auth schema: %w", err)
 	}
+	// Шифрование TOTP-seed'ов (SEC-04, #779): при заданном мастер-ключе тихо
+	// перешифровываем открытые seed'ы существующим ключом (миграция не создаёт
+	// новых ключей и не добавляет скрытых зависимостей). Если после этого
+	// открытые seed'ы остаются — ключа нет; это постоянный admin-сигнал, что
+	// конфиденциальность второго фактора ниже ожидаемой.
+	if migrated, err := authRepo.MigratePlaintextTOTP(ctx); err != nil {
+		runLog.Warn("миграция открытых TOTP-seed'ов не выполнена", "err", err)
+	} else if migrated > 0 {
+		runLog.Info("TOTP-seed'ы перешифрованы мастер-ключом", "мигрировано", migrated)
+	}
+	if plaintext, err := authRepo.CountPlaintextTOTP(ctx); err == nil && plaintext > 0 {
+		runLog.Warn("открытые (незашифрованные) TOTP-seed'ы в базе — задайте мастер-ключ",
+			"количество", plaintext,
+			"выход", "ONEBASE_MASTER_KEY или ONEBASE_MASTER_KEY_FILE, затем перезапуск (план 83)")
+	}
 	// Сценарий обновления (#620): база, где второй фактор требовался, а привязка
 	// шла на входе (до #577), после обновления получает SelfEnroll2FA=false — и
 	// все, кто не успел привязать фактор, теряют вход, снять политику нечем.

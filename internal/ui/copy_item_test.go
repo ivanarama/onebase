@@ -78,7 +78,8 @@ func TestApplyCopyFromQuery_CopiesHeaderAndTableParts(t *testing.T) {
 	if values["Наименование"] != "ООО Ромашка" || values["Телефон"] != "+7 900 111-22-33" {
 		t.Errorf("шапка не скопирована: %#v", values)
 	}
-	// Код справочника платформа не генерирует — копия несёт его как есть.
+	// Код справочника без нумератора платформа не генерирует — копия несёт его
+	// как есть (со включённым нумератором см. TestApplyCopyFromQuery_CatalogCode…).
 	if values["Код"] != "К-001" {
 		t.Errorf("Код = %q, ожидался перенос из источника", values["Код"])
 	}
@@ -93,6 +94,34 @@ func TestApplyCopyFromQuery_CopiesHeaderAndTableParts(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Errorf("записей после копирования = %d, ожидалась 1 (копия живёт только в форме)", len(rows))
+	}
+}
+
+// Справочник с нумератором сам выдаёт «Код» (план 117), поэтому копия обязана
+// получить свой: с numerator.unique перенос чужого кода не дал бы записать
+// копию вовсе, а без него завёл бы второй элемент с тем же кодом.
+func TestApplyCopyFromQuery_CatalogCodeIsReissuedWhenNumbered(t *testing.T) {
+	ent := copyTestCatalog()
+	ent.Numerator = &metadata.Numerator{Prefix: "К-", Length: 5, Unique: true}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	srcID := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, srcID, map[string]any{
+		"Наименование": "ООО Ромашка", "Код": "К-00001",
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	values := map[string]string{}
+	r := httptest.NewRequest("GET", "/ui/catalog/клиент/new?copy="+srcID.String(), nil)
+	if errText := s.applyCopyFromQuery(r.WithContext(ctx), ent, srcID.String(), values, map[string][]map[string]any{}); errText != "" {
+		t.Fatalf("applyCopyFromQuery: %s", errText)
+	}
+	if values["Код"] != "" {
+		t.Errorf("Код = %q, копия справочника с нумератором должна получить свой код при записи", values["Код"])
+	}
+	if values["Наименование"] != "ООО Ромашка" {
+		t.Errorf("остальные реквизиты должны копироваться: %#v", values)
 	}
 }
 

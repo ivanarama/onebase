@@ -820,6 +820,32 @@ func buildQBSchema(d *configuratorData) template.JS {
 		}
 	}
 
+	// Регистры бухгалтерии (issue #789): конструктор запросов в конфигураторе
+	// раньше их пропускал, хотя UI-конструктор (internal/ui/query_builder.go) их
+	// показывает — расхождение двух копий схемы. Формат совпадает с UI-копией:
+	// Остатки(&НаДату) и Обороты(&Начало, &Конец) с полями Счёт/Наименование и
+	// показателями по ресурсам.
+	for _, ar := range d.AccountRegisters {
+		bal := cfgQBSource{ID: "vt_acct_bal:" + ar.Name, Label: "РегистрБухгалтерии." + ar.Name + ".Остатки(&НаДату)", Group: "Регистры бухгалтерии", VTParam: "&НаДату"}
+		bal.Fields = append(bal.Fields, cfgQBField{Name: "Счёт", Label: "Счёт", Type: "string"})
+		bal.Fields = append(bal.Fields, cfgQBField{Name: "Наименование", Label: "Наименование", Type: "string"})
+		for _, f := range ar.Resources {
+			bal.Fields = append(bal.Fields, cfgQBField{Name: f.Name + "Остаток", Label: f.Name + "Остаток", Type: "res"})
+			bal.Fields = append(bal.Fields, cfgQBField{Name: f.Name + "Дт", Label: f.Name + "Дт", Type: "res"})
+			bal.Fields = append(bal.Fields, cfgQBField{Name: f.Name + "Кт", Label: f.Name + "Кт", Type: "res"})
+		}
+		sources = append(sources, bal)
+
+		trn := cfgQBSource{ID: "vt_acct_trn:" + ar.Name, Label: "РегистрБухгалтерии." + ar.Name + ".Обороты(&Начало, &Конец)", Group: "Регистры бухгалтерии", VTParam: "&Начало, &Конец"}
+		trn.Fields = append(trn.Fields, cfgQBField{Name: "Счёт", Label: "Счёт", Type: "string"})
+		trn.Fields = append(trn.Fields, cfgQBField{Name: "Наименование", Label: "Наименование", Type: "string"})
+		for _, f := range ar.Resources {
+			trn.Fields = append(trn.Fields, cfgQBField{Name: f.Name + "Дт", Label: f.Name + "Дт", Type: "res"})
+			trn.Fields = append(trn.Fields, cfgQBField{Name: f.Name + "Кт", Label: f.Name + "Кт", Type: "res"})
+		}
+		sources = append(sources, trn)
+	}
+
 	if sources == nil {
 		sources = []cfgQBSource{}
 	}
