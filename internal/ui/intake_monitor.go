@@ -37,6 +37,22 @@ type intakeView struct {
 	Quarantined int
 	OpenDLQ     int
 	DLQ         []intakeDLQView
+	WS          *wsStatusView // только transport: ws (план 120C)
+}
+
+// wsStatusView — состояние исходящего WS-соединения шлюза для монитора.
+type wsStatusView struct {
+	URL           string
+	Connected     bool
+	Blocked       string // непустая — причина блокировки предохранителем
+	Since         string
+	LastMessage   string
+	LastError     string
+	Reconnects    int64
+	Received      int64
+	HandlerErrors int64
+	Sent          int64
+	SendErrors    int64
 }
 
 var intakeMonitorTmpl = template.Must(template.New("intake-monitor").Parse(tplIntakeMonitor))
@@ -54,6 +70,27 @@ func (s *Server) intakeMonitor(w http.ResponseWriter, r *http.Request) {
 		v := intakeView{
 			Name: in.Name, Endpoint: in.Endpoint, Transport: in.Transport, Auth: in.Auth,
 			Processed: stats.Processed, Quarantined: stats.Quarantined, OpenDLQ: stats.OpenDLQ,
+		}
+		if in.Transport == metadata.IntakeTransportWS {
+			ws := &wsStatusView{URL: in.URL}
+			if client := s.wsIntakeClient(in.Name); client != nil {
+				st := client.Status()
+				ws.Connected = st.Connected
+				ws.Blocked = st.BlockedReason
+				if !st.ConnectedSince.IsZero() {
+					ws.Since = st.ConnectedSince.Format("2006-01-02 15:04")
+				}
+				if !st.LastMessageAt.IsZero() {
+					ws.LastMessage = st.LastMessageAt.Format("2006-01-02 15:04:05")
+				}
+				ws.LastError = st.LastError
+				ws.Reconnects = st.Reconnects
+				ws.Received = st.Received
+				ws.HandlerErrors = st.HandlerErrors
+				ws.Sent = st.Sent
+				ws.SendErrors = st.SendErrors
+			}
+			v.WS = ws
 		}
 		for _, e := range dlq {
 			v.DLQ = append(v.DLQ, intakeDLQView{
@@ -154,11 +191,22 @@ const tplIntakeMonitor = `{{define "intake-monitor"}}` + adminHead + `
 <div class="card" style="margin-bottom:20px;max-width:960px">
   <div class="row-top">
     <h3 style="font-size:18px;color:#1e293b">{{.Name}}</h3>
-    <span style="color:#64748b;font-size:13px"><code>{{.Transport}}</code> {{.Endpoint}} · auth: {{.Auth}}</span>
+    <span style="color:#64748b;font-size:13px"><code>{{.Transport}}</code> {{if .WS}}{{.WS.URL}}{{else}}{{.Endpoint}}{{end}} · auth: {{.Auth}}</span>
   </div>
   <p style="font-size:13px;color:#475569;margin:6px 0 14px">
     Обработано: <b>{{.Processed}}</b> · В карантине: <b style="color:{{if .OpenDLQ}}#b45309{{else}}#15803d{{end}}">{{.OpenDLQ}}</b>
   </p>
+  {{with .WS}}
+  <p style="font-size:13px;color:#475569;margin:-8px 0 14px">
+    Соединение:
+    {{if .Connected}}<b style="color:#15803d">подключено</b>{{if .Since}} с {{.Since}}{{end}}
+    {{else if .Blocked}}<b style="color:#b45309">заблокировано</b> <span style="color:#64748b">({{.Blocked}})</span>
+    {{else}}<b style="color:#b91c1c">разорвано</b>{{if .LastError}} <span style="color:#64748b" title="{{.LastError}}">— {{.LastError}}</span>{{end}}{{end}}
+    · Последнее сообщение: {{if .LastMessage}}{{.LastMessage}}{{else}}—{{end}}
+    · Реконнектов: {{.Reconnects}} · Принято: {{.Received}}{{if .HandlerErrors}} · <span style="color:#b45309">Не принято: {{.HandlerErrors}}</span>{{end}}
+    · Отправлено: {{.Sent}}{{if .SendErrors}} · <span style="color:#b45309">Ошибок отправки: {{.SendErrors}}</span>{{end}}
+  </p>
+  {{end}}
   {{if .DLQ}}
   <table>
   <thead><tr>
