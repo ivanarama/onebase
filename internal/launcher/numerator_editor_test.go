@@ -198,6 +198,18 @@ func TestConfiguratorSaveFields_NumeratorUniqueNeedsMask(t *testing.T) {
 	if !strings.Contains(string(out), "unique: true") {
 		t.Errorf("с маской настройка не записана:\n%s", out)
 	}
+
+	// Для месячного сброса одного года недостаточно: номер повторился бы уже
+	// в следующем месяце. Нужны и год, и месяц.
+	form.Set("numerator_period", "month")
+	form.Set("numerator_prefix", "Р-{YYYY}-")
+	if rec := saveFieldsForm(t, h, "test", form); !strings.Contains(rec.Body.String(), "маску даты") {
+		t.Fatalf("неполная месячная маска принята: %s", rec.Body.String())
+	}
+	form.Set("numerator_prefix", "Р-{YYYY}{MM}-")
+	if rec := saveFieldsForm(t, h, "test", form); rec.Code != http.StatusOK {
+		t.Fatalf("полная месячная маска отклонена: %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
 // Правка реквизитов НЕ должна стирать нумератор: форма объекта всегда присылает

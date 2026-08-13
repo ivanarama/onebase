@@ -290,7 +290,8 @@ func validateNumerator(e *Entity) error {
 	}
 	// Сброс счётчика у справочника означал бы выдачу уже занятого кода: код
 	// живёт с элементом всю жизнь, а не начинается заново каждый год.
-	if e.Kind == KindCatalog && strings.EqualFold(n.Period, "year") || e.Kind == KindCatalog && strings.EqualFold(n.Period, "month") {
+	period := strings.ToLower(n.PeriodOrDefault(e.Kind))
+	if e.Kind == KindCatalog && period != "none" {
 		return fmt.Errorf("entity %s: numerator.period = %q у справочника — сброс счётчика выдал бы уже занятый код; используйте none", e.Name, n.Period)
 	}
 	if n.Scope != "" && findEntityFieldFold(e, n.Scope) == nil {
@@ -301,9 +302,9 @@ func validateNumerator(e *Entity) error {
 	// 2027-м. Такая конфигурация сломалась бы не при обновлении, а первого
 	// января — на данных, которые по замыслу верны. Различает периоды маска
 	// даты в префиксе, поэтому требуем её, а не запрещаем сочетание.
-	if n.Unique && !strings.EqualFold(n.PeriodOrDefault(e.Kind), "none") && !strings.ContainsRune(n.Prefix, '{') {
-		return fmt.Errorf("entity %s: numerator.unique вместе с period = %q требует маску даты в prefix (например \"%s{YYYY}-\"), иначе счётчик выдаст занятое значение в следующем периоде",
-			e.Name, n.PeriodOrDefault(e.Kind), n.Prefix)
+	if n.Unique && period != "none" && !NumeratorPrefixDistinguishesPeriod(n.Prefix, period) {
+		return fmt.Errorf("entity %s: numerator.unique вместе с period = %q требует маску даты в prefix, различающую периоды (например \"{YYYY}{MM}{DD}-\"), иначе счётчик выдаст занятое значение в следующем периоде",
+			e.Name, period)
 	}
 	// Стандартное поле обязано остаться строкой: НайтиПоКоду, представление и
 	// обмен работают с текстом, а префикс числовым не бывает.
@@ -322,6 +323,26 @@ func validateNumerator(e *Entity) error {
 	return nil
 }
 
+// NumeratorPrefixDistinguishesPeriod reports whether the supported date masks
+// make values from different counter periods distinct. A monthly counter needs
+// both year and month: {MM} alone repeats next year. A daily counter likewise
+// needs the complete calendar date.
+func NumeratorPrefixDistinguishesPeriod(prefix, period string) bool {
+	hasYear := strings.Contains(prefix, "{YYYY}") || strings.Contains(prefix, "{YY}")
+	switch strings.ToLower(period) {
+	case "", "none":
+		return true
+	case "year":
+		return hasYear
+	case "month":
+		return hasYear && strings.Contains(prefix, "{MM}")
+	case "day":
+		return hasYear && strings.Contains(prefix, "{MM}") && strings.Contains(prefix, "{DD}")
+	default:
+		return false
+	}
+}
+
 // validateFormFields проверяет `item_form:` и `list_form:`: перечисленные
 // реквизиты должны существовать. Опечатка иначе означала бы «реквизит остался
 // на форме» — состав задан, а поведение прежнее, и автор ищет причину в коде
@@ -331,35 +352,44 @@ func validateNumerator(e *Entity) error {
 // ключ не читал никто, опечатка в нём не значила ничего, и ловить её было
 // незачем.
 func validateFormFields(e *Entity) error {
-	check := func(key string, names []string) error {
+	check := func(key string, names []string, allowLegacyTablePartField bool) error {
 		for _, name := range names {
 			if findEntityFieldFold(e, name) != nil {
 				continue
 			}
-			// Табличная часть в списке допустима: конфигуратор кладёт в
-			// item_form и её реквизиты (ef.tpN.*), а форма показывает ТЧ
-			// целиком отдельным блоком.
-			if findEntityTablePartFold(e, name) != nil {
+			// Старые версии конфигуратора записывали реквизиты табличных частей
+			// как tp.<ТЧ>.<Реквизит>, хотя автоформа всегда показывает ТЧ
+			// целиком. Принимаем эти legacy-значения в item_form, чтобы обновление
+			// не ломало существующие проекты; новый конфигуратор их не создаёт.
+			if allowLegacyTablePartField && findEntityTablePartFieldFold(e, name) {
 				continue
 			}
 			return fmt.Errorf("entity %s: %s ссылается на неизвестный реквизит %s", e.Name, key, name)
 		}
 		return nil
 	}
-	if err := check("item_form", e.ItemForm); err != nil {
+	if err := check("item_form", e.ItemForm, true); err != nil {
 		return err
 	}
-	return check("list_form", e.ListForm)
+	return check("list_form", e.ListForm, false)
 }
 
-// findEntityTablePartFold ищет табличную часть по имени без учёта регистра.
-func findEntityTablePartFold(e *Entity, name string) *TablePart {
-	for i := range e.TableParts {
-		if strings.EqualFold(e.TableParts[i].Name, name) {
-			return &e.TableParts[i]
+func findEntityTablePartFieldFold(e *Entity, name string) bool {
+	parts := strings.SplitN(name, ".", 3)
+	if len(parts) != 3 || !strings.EqualFold(parts[0], "tp") {
+		return false
+	}
+	for _, tp := range e.TableParts {
+		if !strings.EqualFold(tp.Name, parts[1]) {
+			continue
+		}
+		for _, field := range tp.Fields {
+			if strings.EqualFold(field.Name, parts[2]) {
+				return true
+			}
 		}
 	}
-	return nil
+	return false
 }
 
 // validateDetailPanel проверяет блок `detail_panel:`: перечисленные реквизиты
