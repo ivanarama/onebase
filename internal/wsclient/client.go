@@ -12,8 +12,10 @@ package wsclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -43,8 +45,8 @@ type Config struct {
 	// Header строит заголовки рукопожатия перед каждым подключением: секрет
 	// разыменовывается на dial, а не на старте — появившаяся env-переменная
 	// подхватывается очередной попыткой без рестарта. nil — без заголовков.
-	Header    func() (http.Header, error)
-	Subscribe []byte // сообщение сразу после подключения; nil — не слать
+	Header           func() (http.Header, error)
+	Subscribe        []byte // сообщение сразу после подключения; nil — не слать
 	ReconnectInitial time.Duration
 	ReconnectMax     time.Duration
 	MaxMessageBytes  int64 // лимит входящего сообщения
@@ -106,6 +108,18 @@ func (c *Client) Status() Status {
 // ErrNotConnected немедленно (без буфера — контракт #738). Разрыв, замеченный
 // на отправке, соединение не закрывает: его увидит и обслужит цикл чтения.
 func (c *Client) Send(ctx context.Context, data []byte) error {
+	// Порядок принципиален. В coder/websocket отмена ctx во время записи
+	// ЗАКРЫВАЕТ соединение целиком (setupWriteTimeout → c.close()): кадр мог
+	// уйти частично, и это единственный честный выход. Поэтому:
+	//   1) таймаут отсчитывается ПОСЛЕ захвата права записи — иначе очередь
+	//      за wmu сжигала бы чужой бюджет, и истёкший в очереди ctx убивал бы
+	//      живое соединение;
+	//   2) запись идёт на контексте, отвязанном от отмены вызвавшего
+	//      (WithoutCancel): общий канал не должен умирать из-за того, что один
+	//      из отправителей бросил ждать. Отмена вызвавшего проверяется явно до
+	//      начала записи.
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	c.mu.Lock()
 	conn := c.conn
 	blocked := c.status.BlockedReason
@@ -117,12 +131,13 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 		}
 		return ErrNotConnected
 	}
-	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	if err := ctx.Err(); err != nil {
+		c.noteSendError(err)
+		return err
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 	defer cancel()
-	c.wmu.Lock()
-	err := conn.Write(wctx, websocket.MessageText, data)
-	c.wmu.Unlock()
-	if err != nil {
+	if err := conn.Write(wctx, websocket.MessageText, data); err != nil {
 		c.noteSendError(err)
 		return err
 	}
@@ -146,6 +161,10 @@ func (c *Client) Run(ctx context.Context) {
 			sleepCtx(ctx, c.cfg.ReconnectInitial)
 			continue
 		}
+		// Предохранитель открыт — «заблокировано» снимается до попытки dial,
+		// иначе при недоступном сервере монитор бесконечно показывал бы
+		// причину-предохранитель вместо настоящей ошибки подключения.
+		c.clearBlocked()
 		if attempt > 0 {
 			c.mu.Lock()
 			c.status.Reconnects++
@@ -216,7 +235,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 			c.logf("вебсокет %s: соединение закрыто предохранителем, сообщение отброшено", c.cfg.Name)
 			return errors.New(reason)
 		}
-		if herr := c.cfg.OnMessage(ctx, data); herr != nil {
+		if herr := c.callOnMessage(ctx, data); herr != nil {
 			c.mu.Lock()
 			c.status.HandlerErrors++
 			c.status.LastError = herr.Error()
@@ -224,6 +243,21 @@ func (c *Client) runOnce(ctx context.Context) error {
 			c.logf("вебсокет %s: сообщение не принято: %v", c.cfg.Name, herr)
 		}
 	}
+}
+
+// callOnMessage прикрывает обработчик recover-ом: OnMessage исполняет
+// произвольный прикладной код, а горутина соединения — вершина стека. Без
+// recover Go-паника обработчика (не DSL-исключение — их гасит интерпретатор)
+// валила бы весь процесс базы; у http-транспорта ту же роль играет
+// per-request recover HTTP-сервера. Crash-loop при повторной доставке того же
+// конверта после рестарта — отдельная причина не давать панике выйти наружу.
+func (c *Client) callOnMessage(ctx context.Context, raw []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("паника обработчика: %v\n%s", r, debug.Stack())
+		}
+	}()
+	return c.cfg.OnMessage(ctx, raw)
 }
 
 func (c *Client) gateReason() string {
@@ -247,6 +281,14 @@ func (c *Client) setDisconnected() {
 	c.conn = nil
 	c.status.Connected = false
 	c.status.ConnectedSince = time.Time{}
+	c.mu.Unlock()
+}
+
+// clearBlocked снимает «заблокировано предохранителем», не трогая остальное
+// состояние: дальше причиной простоя может стать обычная ошибка подключения.
+func (c *Client) clearBlocked() {
+	c.mu.Lock()
+	c.status.BlockedReason = ""
 	c.mu.Unlock()
 }
 

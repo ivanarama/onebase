@@ -43,15 +43,17 @@ func (s *Server) ResyncWSIntakes() {
 	if s == nil || s.store == nil {
 		return
 	}
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	// Снимок реестра — под wsMu: конкурентные resync (стартовый вызов run.go и
+	// горутина --watch) иначе могли бы применить снимки в обратном порядке и
+	// откатить соединения на устаревшую конфигурацию.
 	desired := map[string]*metadata.Intake{}
 	for _, in := range s.reg.Intakes() {
 		if in.Transport == metadata.IntakeTransportWS {
 			desired[strings.ToLower(in.Name)] = in
 		}
 	}
-
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
 	if s.wsIntakes == nil {
 		s.wsIntakes = map[string]*wsIntakeEntry{}
 	}

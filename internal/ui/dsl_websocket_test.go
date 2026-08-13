@@ -14,6 +14,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // runWSDSL исполняет тело процедуры на собранном сервере s.
@@ -107,5 +108,23 @@ func TestWebSocketDSL_SendRequiresString(t *testing.T) {
 	_, err := runWSDSL(t, s, `ВебСокет.WSLead.Отправить(123);`)
 	if err == nil || !strings.Contains(err.Error(), "строк") {
 		t.Fatalf("ожидали ошибку про строку, получили: %v", err)
+	}
+}
+
+// Шлюз существует, но transport: http — понятная ошибка вместо «метод у
+// Неопределено».
+func TestWebSocketDSL_HTTPIntakeHint(t *testing.T) {
+	srv := wsIntakeTestServer(t, func(ctx context.Context, n int64, c *websocket.Conn) { <-ctx.Done() })
+	s := newWSIntakeServer(t, wsTestURL(srv), true)
+	httpIn := &metadata.Intake{
+		Name: "SiteLead", Transport: "http", Endpoint: "/hs/site/lead", Handler: "WSLead", Auth: "none",
+		Idempotency: metadata.IntakeIdempotency{Key: "event_id"},
+	}
+	httpIn.Normalize()
+	s.reg.LoadIntakes([]*metadata.Intake{wsTestIntake(t, wsTestURL(srv)), httpIn})
+
+	_, err := runWSDSL(t, s, `ВебСокет.SiteLead.Отправить("x");`)
+	if err == nil || !strings.Contains(err.Error(), "transport") {
+		t.Fatalf("ожидали подсказку про transport, получили: %v", err)
 	}
 }

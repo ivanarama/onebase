@@ -29,8 +29,14 @@ func newWSRoot(s *Server, ctxSrc docsCtxSource) *wsRoot {
 
 func (r *wsRoot) Get(name string) any {
 	in := r.s.reg.GetIntake(name)
-	if in == nil || in.Transport != metadata.IntakeTransportWS {
+	if in == nil {
 		return nil
+	}
+	if in.Transport != metadata.IntakeTransportWS {
+		// Шлюз существует, но не ws: без подсказки пользователь получил бы
+		// невнятное «метод у Неопределено».
+		interpreter.RaiseUserError("ВебСокет." + in.Name + ": у шлюза transport: " + in.Transport +
+			", объект ВебСокет доступен только для transport: ws")
 	}
 	return &wsProxy{s: r.s, ctxSrc: r.ctxSrc, in: in}
 }

@@ -261,3 +261,105 @@ func TestClient_SubscribeSentOnEveryConnect(t *testing.T) {
 		}
 	}
 }
+
+// Паника обработчика не должна валить процесс и рвать соединение: recover в
+// callOnMessage превращает её в ошибку обработчика (по http-пути ту же роль
+// играет per-request recover HTTP-сервера).
+func TestClient_HandlerPanicSurvives(t *testing.T) {
+	srv := wsServer(t, func(ctx context.Context, c *websocket.Conn) {
+		_ = c.Write(ctx, websocket.MessageText, []byte(`взрыв`))
+		_ = c.Write(ctx, websocket.MessageText, []byte(`штатное`))
+		<-ctx.Done()
+	})
+
+	gotCh := make(chan string, 8)
+	c := New(Config{
+		Name: "тест",
+		URL:  wsURL(srv),
+		OnMessage: func(_ context.Context, raw []byte) error {
+			gotCh <- string(raw)
+			if string(raw) == "взрыв" {
+				var m map[string]string
+				m["x"] = "паника nil-map" // настоящая Go-паника, не ошибка
+			}
+			return nil
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+
+	var got []string
+	waitFor(t, "оба сообщения несмотря на панику обработчика", func() bool {
+		for {
+			select {
+			case m := <-gotCh:
+				got = append(got, m)
+			default:
+				return len(got) >= 2
+			}
+		}
+	})
+	st := c.Status()
+	if !st.Connected || st.HandlerErrors != 1 || !strings.Contains(st.LastError, "паника обработчика") {
+		t.Fatalf("ожидали живое соединение и зафиксированную панику: %+v", st)
+	}
+}
+
+// «Заблокировано предохранителем» снимается, как только предохранитель открыт,
+// даже если сервер недоступен: дальше причина простоя — ошибка подключения, и
+// монитор должен показывать её, а не устаревшую блокировку.
+func TestClient_BlockedReasonClearsWhenGateOpens(t *testing.T) {
+	var open atomic.Bool
+	c := New(Config{
+		Name:             "тест",
+		URL:              "ws://127.0.0.1:1", // порт закрыт: dial всегда падает
+		ReconnectInitial: 10 * time.Millisecond,
+		ReconnectMax:     20 * time.Millisecond,
+		Gate: func() string {
+			if open.Load() {
+				return ""
+			}
+			return "сеть отключена предохранителем"
+		},
+		OnMessage: func(context.Context, []byte) error { return nil },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+
+	waitFor(t, "статус «заблокировано»", func() bool { return c.Status().BlockedReason != "" })
+	open.Store(true)
+	waitFor(t, "блокировка снята, причина — ошибка подключения", func() bool {
+		st := c.Status()
+		return st.BlockedReason == "" && st.LastError != ""
+	})
+}
+
+// Отмена контекста вызвавшего не убивает общее соединение: в coder/websocket
+// отмена ctx во время записи закрывает соединение целиком, поэтому Send
+// проверяет отмену до записи и пишет на отвязанном контексте.
+func TestClient_SendCancelledCallerKeepsConnection(t *testing.T) {
+	srv := wsServer(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			if _, _, err := c.Read(ctx); err != nil {
+				return
+			}
+		}
+	})
+	c := New(Config{Name: "тест", URL: wsURL(srv), OnMessage: func(context.Context, []byte) error { return nil }})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+	waitFor(t, "подключение", func() bool { return c.Status().Connected })
+
+	cctx, ccancel := context.WithCancel(context.Background())
+	ccancel() // вызвавший уже бросил ждать
+	if err := c.Send(cctx, []byte("x")); err == nil {
+		t.Fatal("Send с отменённым контекстом должен вернуть ошибку")
+	}
+	if err := c.Send(context.Background(), []byte("y")); err != nil {
+		t.Fatalf("соединение не должно пострадать от отменённого вызвавшего: %v", err)
+	}
+	waitFor(t, "соединение живо", func() bool { return c.Status().Connected })
+}
