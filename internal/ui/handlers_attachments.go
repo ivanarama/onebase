@@ -6,6 +6,7 @@ package ui
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -118,10 +119,13 @@ func (s *Server) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer closeRead("загруженный файл", f)
 
-	// Авторизация (защита от IDOR): отдаём вложение только тем, у кого есть право
-	// чтения родителя (или записи — чтобы предпросмотр у загрузчика работал сразу).
+	// Авторизация (защита от IDOR): по умолчанию требуется право ЧТЕНИЯ родителя
+	// — как в REST v2 и DSL. Право «запись» БОЛЬШЕ не даёт скачивание (SEC-02,
+	// #777): раньше «read OR write» позволяло роли «только запись» получить
+	// содержимое любого вложения по UUID. Узкое исключение — предпросмотр
+	// пользователем ТОЛЬКО ЧТО ЗАГРУЖЕННОГО им файла (см. uploaderPreviewAllowed).
 	if !s.rowAllowsOwnerID(r, att.OwnerKind, att.OwnerName, "read", att.OwnerID) &&
-		!s.rowAllowsOwnerID(r, att.OwnerKind, att.OwnerName, "write", att.OwnerID) {
+		!s.uploaderPreviewAllowed(r, att) {
 		http.Error(w, s.tr(s.resolveLang(r), "Нет доступа"), http.StatusForbidden)
 		return
 	}
@@ -129,6 +133,23 @@ func (s *Server) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", att.MimeType)
 	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
 	http.ServeContent(w, r, att.Filename, att.UploadedAt, f)
+}
+
+// attachmentPreviewWindow — окно, в течение которого загрузивший файл может
+// скачать его сразу после загрузки, даже если его read-фильтр (RLS) ещё не
+// покрывает только что созданную строку-владельца.
+const attachmentPreviewWindow = 10 * time.Minute
+
+// uploaderPreviewAllowed разрешает скачивание вложения его загрузчику в течение
+// короткого окна после загрузки. Привязка к ЛИЧНОСТИ загрузчика и свежести
+// файла, а не к праву «запись», — поэтому роль «только запись» не получает
+// доступ к чужим или старым вложениям (SEC-02, #777).
+func (s *Server) uploaderPreviewAllowed(r *http.Request, att *storage.Attachment) bool {
+	u := auth.UserFromContext(r.Context())
+	if u == nil || att == nil || att.UploadedBy == "" || u.Login != att.UploadedBy {
+		return false
+	}
+	return time.Since(att.UploadedAt) <= attachmentPreviewWindow
 }
 
 // attachmentDelete removes a file attachment.
