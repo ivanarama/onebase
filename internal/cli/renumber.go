@@ -136,53 +136,61 @@ func renumberTargets(proj *project.Project, only string) ([]*metadata.Entity, er
 	return out, nil
 }
 
-// renumberEntity дозаполняет пустые значения одного объекта.
+// renumberEntity дозаполняет пустые значения одного объекта. База читается
+// страницами до исчерпания: один вызов List с Limit=MaxListPageSize видел
+// только первую тысячу записей, и на большом справочнике команда молча
+// «дозаполняла» первую страницу, рапортуя успех (issue #867).
 func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, write bool) (renumberEntityReport, error) {
 	field := storage.AutoNumberField(ent)
 	rep := renumberEntityReport{Object: ent.Name, Field: field}
 
-	rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{Limit: storage.MaxListPageSize})
-	if err != nil {
-		return rep, err
-	}
-	// Порядок выдачи детерминирован: сортируем по идентификатору записи, а не
-	// полагаемся на порядок выборки. Иначе повторный запуск на другой машине
-	// раздал бы те же коды другим элементам.
-	sort.Slice(rows, func(i, j int) bool {
-		return fmt.Sprintf("%v", rows[i]["id"]) < fmt.Sprintf("%v", rows[j]["id"])
-	})
-
-	for _, row := range rows {
-		if !isBlankValue(rowFieldValue(row, field)) {
-			continue // заполненное не трогаем: дозаполнение, а не перенумерация
+	for offset := 0; ; offset += storage.MaxListPageSize {
+		// Sort: "id" — принудительно. Порядок нужен детерминированный (иначе
+		// повторный запуск на другой машине раздал бы те же коды другим
+		// элементам) и УСТОЙЧИВЫЙ к самой записи: у иерархических справочников
+		// List по умолчанию сортирует по is_folder и первому строковому полю,
+		// а это обычно и есть заполняемый «Код» — страницы поплыли бы прямо
+		// под Offset-пейджингом. ORDER BY id от SetAutoNumberValue не меняется.
+		rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
+			Sort: "id", Limit: storage.MaxListPageSize, Offset: offset,
+		})
+		if err != nil {
+			return rep, err
 		}
-		rep.Empty++
-		if !write {
-			if len(rep.Samples) < 3 {
-				rep.Samples = append(rep.Samples, fmt.Sprintf("%v", row["id"]))
+		for _, row := range rows {
+			if !isBlankValue(rowFieldValue(row, field)) {
+				continue // заполненное не трогаем: дозаполнение, а не перенумерация
 			}
-			continue
+			rep.Empty++
+			if !write {
+				if len(rep.Samples) < 3 {
+					rep.Samples = append(rep.Samples, fmt.Sprintf("%v", row["id"]))
+				}
+				continue
+			}
+			value, err := db.GenerateNumber(ctx, ent, row)
+			if err != nil {
+				return rep, err
+			}
+			if value == "" {
+				continue
+			}
+			id, err := uuid.Parse(fmt.Sprintf("%v", row["id"]))
+			if err != nil {
+				return rep, fmt.Errorf("неразбираемый идентификатор %v: %w", row["id"], err)
+			}
+			if err := db.SetAutoNumberValue(ctx, ent, id, field, value); err != nil {
+				return rep, err
+			}
+			rep.Filled++
+			if len(rep.Samples) < 3 {
+				rep.Samples = append(rep.Samples, value)
+			}
 		}
-		value, err := db.GenerateNumber(ctx, ent, row)
-		if err != nil {
-			return rep, err
-		}
-		if value == "" {
-			continue
-		}
-		id, err := uuid.Parse(fmt.Sprintf("%v", row["id"]))
-		if err != nil {
-			return rep, fmt.Errorf("неразбираемый идентификатор %v: %w", row["id"], err)
-		}
-		if err := db.SetAutoNumberValue(ctx, ent, id, field, value); err != nil {
-			return rep, err
-		}
-		rep.Filled++
-		if len(rep.Samples) < 3 {
-			rep.Samples = append(rep.Samples, value)
+		if len(rows) < storage.MaxListPageSize {
+			return rep, nil
 		}
 	}
-	return rep, nil
 }
 
 // isBlankValue — пусто ли значение колонки. Отдельная функция потому, что
