@@ -77,8 +77,9 @@ type CloseCoordinator interface {
 	// CloseState возвращает один согласованный snapshot для решения о закрытии.
 	CloseState() ([]RunningBase, string, error)
 	// StopAllBases останавливает все базы и подтверждает результат. Может занять
-	// секунды — вызывать не из потока окна.
-	StopAllBases() error
+	// секунды — вызывать не из потока окна. Первым значением возвращает базы,
+	// которые остались работать: их порт занят неподтверждённым процессом.
+	StopAllBases() ([]RunningBase, error)
 }
 
 // windowLang запоминает язык последней отрисованной страницы лаунчера:
@@ -125,7 +126,7 @@ func closeDialogText(lang string, running []RunningBase) string {
 	for _, rb := range running {
 		if !rb.Controllable {
 			b.WriteString("\n")
-			b.WriteString(tr(lang, "Один или несколько портов заняты неподтверждённым процессом. Остановить все автоматически не получится."))
+			b.WriteString(tr(lang, "Один или несколько портов заняты неподтверждённым процессом: такие базы лаунчер не останавливает, они продолжат работать при любом ответе."))
 			b.WriteString("\n")
 			break
 		}
@@ -138,6 +139,38 @@ func closeDialogText(lang string, running []RunningBase) string {
 	b.WriteString(tr(lang, "Нет — остановить все базы: открытые окна Предприятия и подключённые пользователи потеряют связь."))
 	b.WriteString("\n\n")
 	b.WriteString(tr(lang, "Отмена — не закрывать окно."))
+	return b.String()
+}
+
+// stoppableBases — сколько из перечисленных баз лаунчер действительно умеет
+// остановить. Вопрос «оставить работать в фоне?» имеет смысл только про них:
+// чужой процесс на зарегистрированном порту продолжит работать при любом
+// ответе, и спрашивать из-за него — значит показывать диалог, у которого нет
+// работающего варианта «Нет».
+func stoppableBases(running []RunningBase) int {
+	n := 0
+	for _, rb := range running {
+		if rb.Controllable {
+			n++
+		}
+	}
+	return n
+}
+
+// skippedBasesText — предупреждение о базах, которых остановка не коснулась.
+// Формулировка одинаково верна и когда база работает без подтверждённой
+// идентичности, и когда её порт занят посторонней программой: лаунчер знает
+// только, что владельца порта он не опознал.
+func skippedBasesText(lang string, skipped []RunningBase) string {
+	var b strings.Builder
+	b.WriteString(tr(lang, "Порт занят процессом, принадлежность которого лаунчер не подтвердил, — эти базы он не трогал (при необходимости остановите процесс вручную):"))
+	for i, rb := range skipped {
+		if i == maxDialogBases {
+			fmt.Fprintf(&b, "\n  %s %d", tr(lang, "и ещё баз:"), len(skipped)-maxDialogBases)
+			break
+		}
+		fmt.Fprintf(&b, "\n  • %s (%s %d)", strings.Join(strings.Fields(rb.Name), " "), tr(lang, "порт"), rb.Port)
+	}
 	return b.String()
 }
 
@@ -181,13 +214,19 @@ func (h *handler) onClosePolicy() string {
 // stopAllBases останавливает только доказуемо принадлежащие onebase процессы:
 // tracked — по os.Process, усыновлённые — через token-protected control API.
 // Номер зарегистрированного порта сам по себе больше не даёт права на kill.
-func (h *handler) stopAllBases(holdStarts bool) error {
+//
+// Первым значением возвращаются базы, чей порт занят неподтверждённым
+// процессом. Это не ошибка операции: остановить их лаунчер не вправе, но и
+// запрещать из-за них закрытие окна нельзя — иначе выйти из лаунчера
+// невозможно, пока порт занят.
+func (h *handler) stopAllBases(holdStarts bool) ([]RunningBase, error) {
 	bases, _, err := h.store.Snapshot()
 	if err != nil {
-		return fmt.Errorf("прочитать реестр баз перед остановкой: %w", err)
+		return nil, fmt.Errorf("прочитать реестр баз перед остановкой: %w", err)
 	}
-	if err := h.runner.StopAll(bases, holdStarts); err != nil {
-		return err
+	skipped, err := h.runner.StopAll(bases, holdStarts)
+	if err != nil {
+		return skipped, err
 	}
 	h.clearStatus()
 	running, _, err := h.closeState()
@@ -195,19 +234,27 @@ func (h *handler) stopAllBases(holdStarts bool) error {
 		if holdStarts {
 			h.runner.AllowStarts()
 		}
-		return fmt.Errorf("проверить результат остановки: %w", err)
+		return skipped, fmt.Errorf("проверить результат остановки: %w", err)
 	}
-	if len(running) != 0 {
+	// Свежая проверка вернее preflight: пересобираем список пропущенных по ней.
+	// Невыполненной операция считается только тогда, когда база, которой мы
+	// управляем, всё ещё жива — за чужой процесс на порту лаунчер не отвечает.
+	skipped = nil
+	var stillRunning []string
+	for _, base := range running {
+		if base.Controllable {
+			stillRunning = append(stillRunning, base.Name)
+			continue
+		}
+		skipped = append(skipped, base)
+	}
+	if len(stillRunning) != 0 {
 		if holdStarts {
 			h.runner.AllowStarts()
 		}
-		names := make([]string, 0, len(running))
-		for _, base := range running {
-			names = append(names, base.Name)
-		}
-		return fmt.Errorf("не остановлены базы: %s", strings.Join(names, ", "))
+		return skipped, fmt.Errorf("не остановлены базы: %s", strings.Join(stillRunning, ", "))
 	}
-	return nil
+	return skipped, nil
 }
 
 // closeInfo отдаёт клиенту состояние для диалога закрытия. Список берётся на
@@ -229,12 +276,17 @@ func (h *handler) closeInfo(w http.ResponseWriter, r *http.Request) {
 // closeStop — JSON-вариант «Стоп всё» для close state-machine. Успех означает,
 // что повторная свежая проверка не нашла работающих баз. Только после этого
 // сервер просит окно завершиться; клиенту не нужно гоняться отдельным /quit.
-func (h *handler) closeStop(w http.ResponseWriter, _ *http.Request) {
-	if err := h.stopAllBases(true); err != nil {
+func (h *handler) closeStop(w http.ResponseWriter, r *http.Request) {
+	skipped, err := h.stopAllBases(true)
+	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	resp := map[string]any{"ok": true}
+	if len(skipped) != 0 {
+		resp["warning"] = skippedBasesText(resolveLang(r), skipped)
+	}
+	writeJSON(w, http.StatusOK, resp)
 	if h.quitFn != nil {
 		quit := h.quitFn
 		go func() {
@@ -270,4 +322,4 @@ func (h *handler) setClosePolicy(w http.ResponseWriter, r *http.Request) {
 func (s *Server) CloseState() ([]RunningBase, string, error) { return s.h.closeState() }
 
 // StopAllBases реализует CloseCoordinator.
-func (s *Server) StopAllBases() error { return s.h.stopAllBases(true) }
+func (s *Server) StopAllBases() ([]RunningBase, error) { return s.h.stopAllBases(true) }

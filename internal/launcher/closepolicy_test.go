@@ -192,7 +192,10 @@ func TestCloseState_IgnoresStalePageStatusCache(t *testing.T) {
 	}
 }
 
-func TestCloseStop_FailureKeepsLauncherOpen(t *testing.T) {
+// Процесс, принадлежность которого не подтверждена, лаунчер не убивает — но и
+// закрыться из-за него не отказывается: иначе окно нельзя закрыть, пока порт
+// занят. Пользователь узнаёт об оставшейся базе из предупреждения.
+func TestCloseStop_WarnsAboutUnidentifiedProcessAndCloses(t *testing.T) {
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			w.Header().Set("X-OneBase-Version", "legacy")
@@ -212,13 +215,21 @@ func TestCloseStop_FailureKeepsLauncherOpen(t *testing.T) {
 	h := &handler{store: st, runner: NewRunner(), quitFn: func() { quit <- struct{}{} }}
 	rec := httptest.NewRecorder()
 	h.closeStop(rec, httptest.NewRequest(http.MethodPost, "/close-stop", nil))
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("неподтверждённая остановка: %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код ответа %d: %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("разбор ответа: %v (%s)", err, rec.Body.String())
+	}
+	warning, _ := got["warning"].(string)
+	if !strings.Contains(warning, "Старая") {
+		t.Fatalf("клиент не узнал, что база осталась работать: %q", warning)
 	}
 	select {
 	case <-quit:
-		t.Fatal("launcher завершился после ошибки остановки")
-	case <-time.After(150 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		t.Fatal("окно не закрылось: пока порт занят чужим процессом, выйти было бы нельзя")
 	}
 	if portFree(port) {
 		t.Fatal("legacy-процесс был убит по номеру порта")
