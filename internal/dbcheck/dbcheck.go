@@ -111,6 +111,7 @@ func All() []Check {
 		integrityCheck{},
 		schemaCheck{},
 		refsCheck{},
+		codesCheck{},
 		orphanMovementsCheck{},
 		totalsCheck{},
 		accountTotalsCheck{},

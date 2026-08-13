@@ -73,6 +73,9 @@ func runProcrun(cmd *cobra.Command, _ []string) error {
 	if err := db.EnsureAuditSchema(ctx); err != nil {
 		return fmt.Errorf("audit schema: %w", err)
 	}
+	if err := db.EnsureStageHistorySchema(ctx); err != nil {
+		return fmt.Errorf("stage history schema: %w", err)
+	}
 
 	strParams := parseKeyVals(cmd, "set")
 	fileParams := parseKeyVals(cmd, "file")

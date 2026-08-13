@@ -231,6 +231,34 @@ func HasTx(ctx context.Context) bool {
 	return ctx.Value(txKey{}) != nil
 }
 
+// WithReadSnapshot выполняет fn на согласованном снимке данных: все чтения
+// внутри видят базу в одном состоянии.
+//
+// Нужно там, где подряд читают несколько таблиц и результат обязан быть
+// согласован между ними, — прежде всего выгрузке резервной копии. Без общего
+// снимка архив собирается последовательными autocommit-запросами: объект
+// успевает попасть в файл до перехода на следующий этап, а его история — уже
+// после, и восстановленная база показывает состояние, которого никогда не было.
+//
+// На PostgreSQL это REPEATABLE READ READ ONLY (инструкция обязана быть первой в
+// транзакции). На SQLite отдельного уровня нет: одна читающая транзакция сама
+// удерживает согласованное чтение до конца.
+//
+// Внутри чужой транзакции снимок уже зафиксирован — fn выполняется как есть.
+func (db *DB) WithReadSnapshot(ctx context.Context, fn func(context.Context) error) error {
+	if HasTx(ctx) {
+		return fn(ctx)
+	}
+	return db.WithTx(ctx, func(txCtx context.Context) error {
+		if db.IsPostgres() {
+			if _, err := db.Exec(txCtx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"); err != nil {
+				return fmt.Errorf("read snapshot: %w", err)
+			}
+		}
+		return fn(txCtx)
+	})
+}
+
 // WithTxIfNeeded joins an existing storage transaction or starts a new one.
 // It is the safe entry point for write paths callable both from HTTP and from
 // DSL code that may already run inside an explicit transaction.

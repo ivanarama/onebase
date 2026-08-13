@@ -146,13 +146,52 @@ func (l *OperationLease) RecoverWithResult(targetDir string) (bool, error) {
 	if !l.valid() {
 		return false, errors.New("selfupdate: operation lease is not held")
 	}
-	if err := l.ReserveTarget(targetDir); err != nil {
+	canonical, err := CanonicalTargetDir(targetDir)
+	if err != nil {
 		return false, err
 	}
-	_, pendingErr := os.Lstat(targetPendingPath(l.targetDir))
-	hadPending := pendingErr == nil
-	if pendingErr != nil && !os.IsNotExist(pendingErr) {
-		return false, pendingErr
+	if err := validatePlainDirectory(canonical); err != nil {
+		return false, err
+	}
+
+	// Inspect durable recovery evidence before requiring the installation to
+	// participate in the writer-lock protocol. A shared/system installation is
+	// intentionally not self-updatable, but it must remain launchable when no
+	// update transaction ever started there.
+	//
+	// Both proofs are required. A target marker means binary mutation may have
+	// begun; a profile journal without that marker is damaged authority and must
+	// remain fail-closed. Only their proven absence permits an unsupported
+	// installation to skip recovery.
+	hadPending, err := targetPendingExists(canonical)
+	if err != nil {
+		return false, err
+	}
+	if !hadPending {
+		if err := validateNoTargetAuthority(canonical); err != nil {
+			return false, err
+		}
+		if err := ValidateBinaryUpdateTarget(canonical); err != nil {
+			// Recheck after the capability probe. The per-profile operation lease
+			// excludes our own writers; never treat unreadable evidence as absence.
+			if pending, recheckErr := targetPendingExists(canonical); recheckErr != nil {
+				return false, recheckErr
+			} else if pending {
+				return false, fmt.Errorf("selfupdate: pending binary update cannot be recovered: %w", err)
+			}
+			return false, nil
+		}
+	}
+
+	if err := l.ReserveTarget(canonical); err != nil {
+		return false, err
+	}
+	// Repeat the marker check under installation-scoped writer intent. A
+	// transaction from another profile may have appeared during the read-only
+	// preflight; never act on it without the target reservation held.
+	hadPending, err = targetPendingExists(l.targetDir)
+	if err != nil {
+		return false, err
 	}
 	// With no target authority marker, recovery only cleans private orphan
 	// state. Do not wait for long-lived consumers merely to prove that absence.
@@ -165,11 +204,21 @@ func (l *OperationLease) RecoverWithResult(targetDir string) (bool, error) {
 	return hadPending, recoverUpdateTransactionLocked(l.targetDir)
 }
 
+func targetPendingExists(targetDir string) (bool, error) {
+	_, err := os.Lstat(targetPendingPath(targetDir))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
 func recoverUpdateTransactionLockedWithResult(expectedTarget string) (bool, error) {
-	_, pendingErr := os.Lstat(targetPendingPath(expectedTarget))
-	hadPending := pendingErr == nil
-	if pendingErr != nil && !os.IsNotExist(pendingErr) {
-		return false, pendingErr
+	hadPending, err := targetPendingExists(expectedTarget)
+	if err != nil {
+		return false, err
 	}
 	return hadPending, recoverUpdateTransactionLocked(expectedTarget)
 }
@@ -938,10 +987,8 @@ func recoverUpdateTransactionLocked(expectedTarget string) error {
 	if os.IsNotExist(pendingErr) {
 		// No target-scoped authority exists. A per-profile journal here is
 		// untrusted/stale and must not authorize writes to a shared install.
-		if _, _, journalErr := readUpdateJournal(expectedTarget); journalErr == nil {
-			return errors.New("selfupdate: profile transaction has no target ownership marker")
-		} else if !errors.Is(journalErr, errNoUpdateTransaction) {
-			return journalErr
+		if err := validateNoTargetAuthority(expectedTarget); err != nil {
+			return err
 		}
 		return cleanupOrphanTransactionState(expectedTarget)
 	}
@@ -988,6 +1035,19 @@ func recoverUpdateTransactionLocked(expectedTarget string) error {
 		}
 	}
 	return rollbackPreparedTransaction(tx)
+}
+
+// validateNoTargetAuthority proves that this profile has no active journal
+// for expectedTarget. A private journal alone must never authorize target
+// writes: the installation-scoped marker is published first and is the durable
+// proof that the transaction owns this exact installation.
+func validateNoTargetAuthority(expectedTarget string) error {
+	if _, _, err := readUpdateJournal(expectedTarget); err == nil {
+		return errors.New("selfupdate: profile transaction has no target ownership marker")
+	} else if !errors.Is(err, errNoUpdateTransaction) {
+		return err
+	}
+	return nil
 }
 
 func recoverPreJournalTransaction(pending targetPendingTransaction) error {

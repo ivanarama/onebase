@@ -294,6 +294,10 @@ type Entity struct {
 	// SearchSet отличает отсутствующий ключ search_fields от явного пустого
 	// списка (поиск по строке для объекта выключен).
 	SearchSet bool
+	// Stages — этапы объекта (план 121): порядок состояний и допустимые
+	// переходы на существующем поле-перечислении. Nil — сущность про этапы
+	// ничего не знает и ведёт себя ровно как раньше.
+	Stages *Stages
 }
 
 // SearchFields возвращает реквизиты, по которым идёт поиск подстроки в списке и
@@ -427,6 +431,139 @@ type TileView struct {
 	Fields   []string
 	// FieldsSet отличает отсутствующий ключ fields от явного fields: [].
 	FieldsSet bool
+}
+
+// Режимы гейта переходов между этапами (план 121).
+const (
+	// StageEnforceWarn — нарушение переходов пишется в лог и в `onebase check`,
+	// но запись проходит. Умолчание: включение блока `stages` в работающей
+	// конфигурации не должно ломать уже накопленные данные и обработки.
+	StageEnforceWarn = "warn"
+	// StageEnforceStrict — недопустимый переход отвергается на записи.
+	StageEnforceStrict = "strict"
+)
+
+// Stages описывает этапы объекта (план 121): упорядоченные состояния на
+// существующем поле-перечислении и допустимые переходы между ними. Нового вида
+// объекта метаданных не заводится — значения берутся из перечисления, на
+// которое ссылается Field, а блок задаёт только порядок и правила.
+type Stages struct {
+	// Field — имя поля-перечисления, ведущего этапы.
+	Field string
+	// Order — порядок этапов для отчёта и схемы. Первый этап считается
+	// начальным: именно с него по умолчанию начинается маршрут объекта.
+	Order []string
+	// Transitions — допустимые переходы. Всё, чего в списке нет, запрещено.
+	Transitions []StageTransition
+	// DeadlineDays — сколько дней объект вправе висеть на этапе; этапы без
+	// записи не имеют срока. Просрочка попадает в отчёт «где застряло».
+	DeadlineDays map[string]int
+	// Enforce — StageEnforceWarn (умолчание) или StageEnforceStrict.
+	Enforce string
+}
+
+// StageTransition — разрешённые переходы из одного этапа.
+type StageTransition struct {
+	From string
+	To   []string
+}
+
+// Strict сообщает, отвергается ли недопустимый переход на записи.
+func (s *Stages) Strict() bool { return s != nil && s.Enforce == StageEnforceStrict }
+
+// Initial возвращает начальный этап — первый в Order. Пусто, если порядок не
+// задан.
+func (s *Stages) Initial() string {
+	if s == nil || len(s.Order) == 0 {
+		return ""
+	}
+	return s.Order[0]
+}
+
+// Canonical приводит значение этапа к написанию из Order. Сравнение
+// регистронезависимо (DSL регистронезависим, значение может прийти из формы,
+// пакета обмена или запроса). Пустая строка — значение не объявлено.
+func (s *Stages) Canonical(stage string) string {
+	if s == nil {
+		return ""
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return ""
+	}
+	for _, st := range s.Order {
+		if strings.EqualFold(st, stage) {
+			return st
+		}
+	}
+	return ""
+}
+
+// Known сообщает, объявлен ли этап в Order.
+func (s *Stages) Known(stage string) bool { return s.Canonical(stage) != "" }
+
+// Allowed проверяет переход from → to.
+//
+// Пустой from — объект ещё не на маршруте (только создаётся либо реквизит не
+// заполняли) — считается стоящим на НАЧАЛЬНОМ этапе. Иначе пришлось бы выбирать
+// между двумя одинаково неверными крайностями: разрешить из пустого что угодно
+// (тогда объект заводится сразу «Утверждённым» — ровно тот перескок, ради
+// запрета которого всё и делается) или разрешить только начальный этап (тогда
+// законное «пусто → НаСогласовании», с которого начинается согласование в
+// прикладных конфигурациях, оказалось бы нарушением).
+//
+// Переход в то же значение — не переход.
+func (s *Stages) Allowed(from, to string) bool {
+	if s == nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(from), strings.TrimSpace(to)) {
+		return true
+	}
+	if strings.TrimSpace(from) == "" {
+		from = s.Initial()
+		if strings.EqualFold(from, strings.TrimSpace(to)) {
+			return true
+		}
+	}
+	for _, tr := range s.Transitions {
+		if !strings.EqualFold(tr.From, from) {
+			continue
+		}
+		for _, t := range tr.To {
+			if strings.EqualFold(t, to) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Deadline возвращает срок этапа в днях; 0 — срока нет.
+func (s *Stages) Deadline(stage string) int {
+	if s == nil || len(s.DeadlineDays) == 0 {
+		return 0
+	}
+	for st, d := range s.DeadlineDays {
+		if strings.EqualFold(st, stage) {
+			return d
+		}
+	}
+	return 0
+}
+
+// StageField возвращает описание поля-этапа сущности (nil, если этапы не
+// объявлены или поле не найдено).
+func (e *Entity) StageField() *Field {
+	if e == nil || e.Stages == nil {
+		return nil
+	}
+	for i := range e.Fields {
+		if strings.EqualFold(e.Fields[i].Name, e.Stages.Field) {
+			return &e.Fields[i]
+		}
+	}
+	return nil
 }
 
 // Виды регистра накопления (план 74). Балансовый (остатки) — по умолчанию;

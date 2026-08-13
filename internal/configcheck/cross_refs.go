@@ -2,6 +2,7 @@ package configcheck
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -206,6 +207,24 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 	// Печатные формы v2 (макеты .layout.yaml) — валидация binding.
 	for _, lf := range proj.LayoutForms {
 		issues = append(issues, checkLayoutForm(lf, docs, cats, entityByName)...)
+	}
+
+	// Печатные формы на DSL (.os) — привязка к сущности-источнику. Проверка
+	// симметрична макетам: без неё форма с нераспознанной привязкой попадала в
+	// реестр под пустым ключом и не показывалась ни на одной карточке, а check
+	// печатал «ошибок не найдено» (discussion #757).
+	for _, df := range proj.DSLPrintForms {
+		if df == nil || strings.EqualFold(df.Document, "general") {
+			continue
+		}
+		switch {
+		case df.Document == "":
+			add(dslFormLabel(df), df.Name, "Печатная форма",
+				"не указана сущность-источник: добавьте первой строкой комментарий `// Справочник: <Имя>` (или `// Документ: <Имя>`), либо положите файл в printforms/<Имя>/")
+		case !docs.has(df.Document) && !cats.has(df.Document):
+			add(dslFormLabel(df), df.Name, "Печатная форма",
+				fmt.Sprintf("источник %q не найден среди документов и справочников", df.Document))
+		}
 	}
 
 	// Регистры бухгалтерии → типы субконто ссылаются на существующие сущности.
@@ -476,6 +495,19 @@ func formDataPathField(path string) string {
 		return path[i+1:]
 	}
 	return path
+}
+
+// dslFormLabel — путь .os-формы в терминах проекта: «printforms/Форма.os» или
+// «printforms/Сущность/Форма.os» для формы, разложенной по папке-сущности.
+func dslFormLabel(df *printform.DSLPrintForm) string {
+	if df.Path == "" {
+		return "printforms/" + df.Name + ".os"
+	}
+	parent := filepath.Base(filepath.Dir(df.Path))
+	if strings.EqualFold(parent, "printforms") {
+		return "printforms/" + filepath.Base(df.Path)
+	}
+	return "printforms/" + parent + "/" + filepath.Base(df.Path)
 }
 
 // checkLayoutForm валидирует binding декларативной печатной формы v2 (макет

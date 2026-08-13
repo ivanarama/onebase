@@ -839,6 +839,13 @@ func ResumeAfterUpdate(store *Store, runner *Runner) (resultErr error) {
 	if err := lease.ReleaseTargetReservation(); err != nil {
 		return fmt.Errorf("release binary recovery target before resuming bases: %w", err)
 	}
+	return resumePendingBases(store, runner)
+}
+
+// resumePendingBases поднимает базы, помеченные к перезапуску в состоянии
+// обновления. Общий хвост ResumeAfterUpdate для обеих веток: и когда
+// восстановление бинаря отработало, и когда его не могло быть в принципе.
+func resumePendingBases(store *Store, runner *Runner) error {
 	st, err := selfupdate.LoadState()
 	if err != nil || !st.RecoveryPending() {
 		return err

@@ -123,6 +123,9 @@ type saveEntity struct {
 	// не редактирует (прецедент tile_view), но обязан сохранить: иначе правка
 	// реквизитов из UI молча вытирала бы блок.
 	DetailPanel yaml.Node `yaml:"detail_panel,omitempty"`
+	// Stages — маршрут этапов (план 121). По той же причине и тем же способом:
+	// вместе с блоком молча исчезли бы гейт переходов и отчёт «где застряло».
+	Stages yaml.Node `yaml:"stages,omitempty"`
 }
 
 type saveRegister struct {

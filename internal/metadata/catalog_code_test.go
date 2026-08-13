@@ -155,6 +155,7 @@ func TestValidateNumerator(t *testing.T) {
 		{"чужой scope", func(e *Entity) { e.Numerator.Scope = "Нет" }, "неизвестный реквизит"},
 		{"Код числом", func(e *Entity) { e.Fields[0].Type = FieldTypeNumber }, "обязан быть строкой"},
 		{"Код ссылкой", func(e *Entity) { e.Fields[0].RefEntity = "Организации" }, "не может быть ссылкой"},
+		{"уникальность без сброса", func(e *Entity) { e.Numerator.Unique = true }, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -184,5 +185,30 @@ fields:
 `)
 	if err := Validate([]*Entity{e}, nil); err != nil {
 		t.Fatalf("справочник с numerator: не проходит валидацию: %v", err)
+	}
+}
+
+// Уникальность вместе со сбросом счётчика и префиксом без маски даты — ловушка
+// с отложенным сроком: «Р-0001» 2026 года и «Р-0001» 2027-го совпадут, и
+// конфигурация сломается не при обновлении, а первого января. Отклоняем сразу,
+// подсказывая маску, а не запрещая сочетание.
+func TestValidateNumerator_UniqueWithPeriodNeedsMask(t *testing.T) {
+	doc := func(prefix string, unique bool) []*Entity {
+		return []*Entity{{
+			Name: "Реализация", Kind: KindDocument,
+			Fields:    []Field{{Name: "Номер", Type: FieldTypeString}, {Name: "Дата", Type: FieldTypeDate}},
+			Numerator: &Numerator{Prefix: prefix, Length: 4, Period: "year", Unique: unique},
+		}}
+	}
+	err := Validate(doc("Р-", true), nil)
+	if err == nil || !strings.Contains(err.Error(), "маску даты") {
+		t.Fatalf("ожидался отказ про маску даты, получено: %v", err)
+	}
+	if err := Validate(doc("Р-{YYYY}-", true), nil); err != nil {
+		t.Fatalf("префикс с маской отклонён: %v", err)
+	}
+	// Без unique сочетание законно: повтор номера в новом году никого не ломает.
+	if err := Validate(doc("Р-", false), nil); err != nil {
+		t.Fatalf("period: year без unique отклонён: %v", err)
 	}
 }

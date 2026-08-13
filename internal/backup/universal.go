@@ -89,6 +89,11 @@ var systemTables = []string{
 	"_attachments",
 	"_audit",
 	"_ai_audit",
+	// История переходов между этапами (план 121). Она не выводится из данных:
+	// объект помнит только текущий этап, а «кто когда его двигал» и «сколько он
+	// тут висит» живут исключительно здесь. Без выгрузки восстановленная база
+	// показывала бы по всем объектам «неизвестно».
+	"_stage_history",
 	"_intake_log",
 	"_intake_dlq",
 	"_rollup",
@@ -154,10 +159,6 @@ func ExportUniversal(
 	if err := rejectSQLiteInsideRestoreTree(db, attachmentsDir, "attachment"); err != nil {
 		return err
 	}
-	externalObjects, err := validateUniversalExportExternalObjects(ctx, db, attachmentsDir)
-	if err != nil {
-		return err
-	}
 	zw := zip.NewWriter(w)
 	// Close дописывает центральный каталог zip — без него архив нечитаем.
 	// На успешном пути эта ошибка основная, на пути ошибки — вторичная, но
@@ -168,82 +169,105 @@ func ExportUniversal(
 		}
 	}()
 
-	// --- 1. DATA tables -------------------------------------------------------
-	appTables, err := listAppTables(ctx, db)
-	if err != nil {
-		return fmt.Errorf("export: list tables: %w", err)
-	}
+	// Все чтения БД — на одном снимке (план 121): архив собирается из многих
+	// таблиц, и без общего снимка объект мог попасть в него до перехода на
+	// следующий этап, а его история — уже после. Восстановленная база показывала
+	// бы состояние, которого никогда не было.
 	manifest := make(map[string]int)
-	for _, tbl := range appTables {
-		entryName := "data/" + tbl + ".jsonl"
-		if !canonicalManifestTableKey(entryName) {
-			return fmt.Errorf("export: non-portable application table name %q", tbl)
-		}
-		fw, err := zw.Create(entryName)
-		if err != nil {
-			return err
-		}
-		n, err := dumpTableJSONL(ctx, db, tbl, fw)
-		if err != nil {
-			return fmt.Errorf("export table %s: %w", tbl, err)
-		}
-		manifest[entryName] = n
-	}
-
-	// --- 2. SYSTEM tables -----------------------------------------------------
-	for _, tbl := range systemTables {
-		exists, err := tableExistsChecked(ctx, db, tbl)
-		if err != nil {
-			return fmt.Errorf("export: inspect system table %s: %w", tbl, err)
-		}
-		if !exists {
-			continue
-		}
-		entryName := "system/" + tbl + ".jsonl"
-		fw, err := zw.Create(entryName)
-		if err != nil {
-			return err
-		}
-		n, err := dumpTableJSONL(ctx, db, tbl, fw)
-		if err != nil {
-			return fmt.Errorf("export table %s: %w", tbl, err)
-		}
-		manifest[entryName] = n
-	}
-	// Exchange queues/watermarks are non-secret and required for lossless DR.
-	// Clone restore ignores this directory and resets its local node identity.
 	hasExchangeState := false
-	for _, tbl := range exchangeTables {
-		exists, err := tableExistsChecked(ctx, db, tbl)
-		if err != nil {
-			return fmt.Errorf("export: inspect exchange table %s: %w", tbl, err)
-		}
-		if !exists {
-			continue
-		}
-		entryName := "exchange/" + tbl + ".jsonl"
-		fw, err := zw.Create(entryName)
+	var externalObjects externalObjectSet
+	if err := db.WithReadSnapshot(ctx, func(ctx context.Context) error {
+		// Предпроверка внешних объектов — внутри снимка и первой: она собирает
+		// список разрешённых файлов вложений из тех же таблиц, что уезжают в
+		// архив. Прочитанная снаружи, она относилась бы к другому состоянию
+		// базы, и появившаяся между двумя чтениями строка роняла бы выгрузку
+		// («attachment file changed after external-object preflight») или
+		// оставляла метаданные без байтов.
+		var err error
+		externalObjects, err = validateUniversalExportExternalObjects(ctx, db, attachmentsDir)
 		if err != nil {
 			return err
 		}
-		n, err := dumpTableJSONL(ctx, db, tbl, fw)
+
+		// --- 1. DATA tables -------------------------------------------------------
+		appTables, err := listAppTables(ctx, db)
 		if err != nil {
-			return fmt.Errorf("export table %s: %w", tbl, err)
+			return fmt.Errorf("export: list tables: %w", err)
 		}
-		manifest[entryName] = n
-		hasExchangeState = true
-	}
+		for _, tbl := range appTables {
+			entryName := "data/" + tbl + ".jsonl"
+			if !canonicalManifestTableKey(entryName) {
+				return fmt.Errorf("export: non-portable application table name %q", tbl)
+			}
+			fw, err := zw.Create(entryName)
+			if err != nil {
+				return err
+			}
+			n, err := dumpTableJSONL(ctx, db, tbl, fw)
+			if err != nil {
+				return fmt.Errorf("export table %s: %w", tbl, err)
+			}
+			manifest[entryName] = n
+		}
 
-	// --- 3. SAFE SETTINGS -----------------------------------------------------
-	if n, err := exportSafeSettings(ctx, db, zw); err != nil {
-		return fmt.Errorf("export settings: %w", err)
-	} else if n > 0 {
-		manifest["settings/safe.jsonl"] = n
-	}
+		// --- 2. SYSTEM tables -----------------------------------------------------
+		for _, tbl := range systemTables {
+			exists, err := tableExistsChecked(ctx, db, tbl)
+			if err != nil {
+				return fmt.Errorf("export: inspect system table %s: %w", tbl, err)
+			}
+			if !exists {
+				continue
+			}
+			entryName := "system/" + tbl + ".jsonl"
+			fw, err := zw.Create(entryName)
+			if err != nil {
+				return err
+			}
+			n, err := dumpTableJSONL(ctx, db, tbl, fw)
+			if err != nil {
+				return fmt.Errorf("export table %s: %w", tbl, err)
+			}
+			manifest[entryName] = n
+		}
+		// Exchange queues/watermarks are non-secret and required for lossless DR.
+		// Clone restore ignores this directory and resets its local node identity.
+		for _, tbl := range exchangeTables {
+			exists, err := tableExistsChecked(ctx, db, tbl)
+			if err != nil {
+				return fmt.Errorf("export: inspect exchange table %s: %w", tbl, err)
+			}
+			if !exists {
+				continue
+			}
+			entryName := "exchange/" + tbl + ".jsonl"
+			fw, err := zw.Create(entryName)
+			if err != nil {
+				return err
+			}
+			n, err := dumpTableJSONL(ctx, db, tbl, fw)
+			if err != nil {
+				return fmt.Errorf("export table %s: %w", tbl, err)
+			}
+			manifest[entryName] = n
+			hasExchangeState = true
+		}
 
-	// --- 4. CONFIG ------------------------------------------------------------
-	if err := exportConfig(ctx, db, configSource, configDir, zw); err != nil {
-		return fmt.Errorf("export config: %w", err)
+		// --- 3. SAFE SETTINGS -----------------------------------------------------
+		if n, err := exportSafeSettings(ctx, db, zw); err != nil {
+			return fmt.Errorf("export settings: %w", err)
+		} else if n > 0 {
+			manifest["settings/safe.jsonl"] = n
+		}
+
+		// --- 4. CONFIG ------------------------------------------------------------
+		if err := exportConfig(ctx, db, configSource, configDir, zw); err != nil {
+			return fmt.Errorf("export config: %w", err)
+		}
+
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	// --- 5. ATTACHMENTS (binary files) ----------------------------------------
@@ -2348,6 +2372,11 @@ func migrateSchema(ctx context.Context, db *storage.DB, configDest, cfgFileDir s
 	}
 	if err := db.EnsureAuditSchema(ctx); err != nil {
 		return fmt.Errorf("ensure audit schema: %w", err)
+	}
+	// _stage_history тоже приезжает в system/: без явного создания импорт
+	// истории переходов падал бы на «no such table» ровно так же, как _accounts.
+	if err := db.EnsureStageHistorySchema(ctx); err != nil {
+		return fmt.Errorf("ensure stage history schema: %w", err)
 	}
 	if err := db.EnsureScheduledRunsTable(ctx); err != nil {
 		return fmt.Errorf("ensure scheduled runs: %w", err)
