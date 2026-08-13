@@ -26,11 +26,18 @@ import (
 //	Элементы  — Массив вложенных элементов (таких же Структур)
 //
 // Такое представление сохраняет структуру документа, но намеренно не моделирует
-// пространства имён, смешанное содержимое, комментарии и инструкции обработки.
-// Эти конструкции отклоняются, чтобы чтение никогда не теряло данные молча.
+// смешанное содержимое, комментарии и инструкции обработки. Эти конструкции
+// отклоняются, чтобы чтение никогда не теряло данные молча.
 // Имена тегов живут в ЗНАЧЕНИИ поля Имя, а не в имени поля Структуры, — поэтому
 // их регистр сохраняется: DSL регистронезависим и Struct.Set приводит имена полей
 // к нижнему регистру.
+//
+// Пространства имён сохраняются ЛЕКСИЧЕСКИ: в поле Имя лежит квалифицированное
+// имя как оно записано в документе («v8msg:Body»), а объявления xmlns остаются
+// обычными атрибутами. Префиксы не разрешаются в URI, поэтому два документа,
+// эквивалентных по namespace-модели, но записанных разными префиксами, дают
+// разные деревья. Взамен чтение и запись ничего не теряют и не переименовывают,
+// а обмен 1С, где тип объекта передаётся атрибутом xsi:type, читается как есть.
 
 const (
 	xmlFieldName     = "Имя"
@@ -105,6 +112,10 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	decoderInput := strings.TrimPrefix(text, "\uFEFF")
 	if len(decoderInput) > maxXMLDocumentBytes {
 		return nil, fmt.Errorf("размер XML превышает предел %d байт", maxXMLDocumentBytes)
+	}
+	decoderInput, err := stripXMLDeclaration(decoderInput)
+	if err != nil {
+		return nil, err
 	}
 	preparedInput, lexicalTokens, err := prepareXMLDecoderInput(decoderInput)
 	if err != nil {
@@ -182,9 +193,6 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 				attrName, err := decodedXMLName(a.Name, "атрибута")
 				if err != nil {
 					return nil, err
-				}
-				if attrName == "xmlns" {
-					return nil, fmt.Errorf("пространства имён XML не поддерживаются (атрибут xmlns)")
 				}
 				if _, exists := seenAttrs[attrName]; exists {
 					return nil, fmt.Errorf("повторяющийся атрибут «%s» элемента «%s»", attrName, name)
@@ -267,6 +275,99 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 		return nil, fmt.Errorf("несогласованная лексическая структура XML")
 	}
 	return root, nil
+}
+
+// stripXMLDeclaration убирает объявление XML в начале документа. Оно описывает
+// сам документ, а не дерево, и в модели не представлено: ЗаписатьXML его не
+// восстанавливает. Остальные инструкции обработки по-прежнему отклоняются, в том
+// числе «<?xmlfoo?>» — по грамматике это обычная PI, а не объявление.
+//
+// Объявление вырезается из строки до prepareXMLDecoderInput, поэтому смещения
+// декодера и исходного текста остаются согласованными.
+func stripXMLDeclaration(text string) (string, error) {
+	const opening = "<?xml"
+	if !strings.HasPrefix(text, opening) {
+		return text, nil
+	}
+	if len(text) > len(opening) && !isXMLWhitespaceByte(text[len(opening)]) {
+		return text, nil
+	}
+	end := strings.Index(text, "?>")
+	if end < 0 {
+		return "", fmt.Errorf("незавершённое объявление XML")
+	}
+	if err := validateXMLDeclaration(text[len(opening):end]); err != nil {
+		return "", err
+	}
+	return text[end+len("?>"):], nil
+}
+
+// validateXMLDeclaration разбирает псевдоатрибуты version, encoding и standalone.
+// Порядок фиксирован грамматикой (XML 1.0, раздел 2.8), повторы недопустимы.
+// Кодировка проверяется отдельно: на вход ПрочитатьXML приходит уже готовая
+// строка Go в UTF-8, поэтому объявленная windows-1251 означала бы, что документ
+// прочитан не так, как записан, — молча принять это нельзя.
+func validateXMLDeclaration(declaration string) error {
+	pseudoAttributes := [...]string{"version", "encoding", "standalone"}
+	next := 0
+	rest := declaration
+	for {
+		trimmed := strings.TrimLeft(rest, " \t\r\n")
+		if trimmed == "" {
+			break
+		}
+		if len(trimmed) == len(rest) {
+			return fmt.Errorf("объявление XML: перед псевдоатрибутом ожидался пробел")
+		}
+		equals := strings.IndexByte(trimmed, '=')
+		if equals < 0 {
+			return fmt.Errorf("объявление XML: ожидался символ '='")
+		}
+		name := strings.TrimRight(trimmed[:equals], " \t\r\n")
+		value := strings.TrimLeft(trimmed[equals+1:], " \t\r\n")
+		if value == "" || value[0] != '"' && value[0] != '\'' {
+			return fmt.Errorf("объявление XML: значение «%s» должно быть заключено в кавычки", name)
+		}
+		closing := strings.IndexByte(value[1:], value[0])
+		if closing < 0 {
+			return fmt.Errorf("объявление XML: незавершённое значение «%s»", name)
+		}
+		index := -1
+		for i := next; i < len(pseudoAttributes); i++ {
+			if pseudoAttributes[i] == name {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return fmt.Errorf("объявление XML: неизвестный, повторный или переставленный псевдоатрибут «%s»", name)
+		}
+		if index > 0 && next == 0 {
+			return fmt.Errorf("объявление XML: отсутствует обязательный псевдоатрибут version")
+		}
+		next = index + 1
+
+		content := value[1 : 1+closing]
+		switch name {
+		case "version":
+			if content != "1.0" {
+				return fmt.Errorf("версия XML «%s» не поддерживается, ожидается 1.0", content)
+			}
+		case "encoding":
+			if !strings.EqualFold(content, "utf-8") {
+				return fmt.Errorf("кодировка XML «%s» не поддерживается, ожидается UTF-8", content)
+			}
+		case "standalone":
+			if content != "yes" && content != "no" {
+				return fmt.Errorf("объявление XML: standalone должно быть yes или no")
+			}
+		}
+		rest = value[1+closing+1:]
+	}
+	if next == 0 {
+		return fmt.Errorf("объявление XML: отсутствует обязательный псевдоатрибут version")
+	}
+	return nil
 }
 
 // prepareXMLDecoderInput обходит ограничение encoding/xml: стандартный decoder
@@ -463,9 +564,13 @@ func replaceXMLNameWithPlaceholder(prepared []byte, start, end int) {
 	}
 }
 
+// decodedXMLName ожидает имя без Space: prepareXMLDecoderInput заменяет все
+// имена ASCII-заглушками, поэтому encoding/xml не видит ни двоеточий, ни
+// объявлений xmlns и не выполняет разрешение префиксов. Проверка Space оставлена
+// как страховка на случай изменения этой подготовки.
 func decodedXMLName(name xml.Name, kind string) (string, error) {
 	if name.Space != "" {
-		return "", fmt.Errorf("пространства имён XML не поддерживаются (%s «%s»)", kind, name.Local)
+		return "", fmt.Errorf("неожиданное разрешение пространства имён XML (%s «%s»)", kind, name.Local)
 	}
 	if err := validateXMLName(name.Local); err != nil {
 		return "", fmt.Errorf("недопустимое имя %s «%s»: %w", kind, name.Local, err)
@@ -876,16 +981,33 @@ func xmlStructField(s *Struct, name string) (any, bool) {
 }
 
 func validateXMLAttributeName(name string) error {
-	if name == "xmlns" {
-		return fmt.Errorf("пространства имён XML не поддерживаются (атрибут xmlns)")
-	}
 	if err := validateXMLName(name); err != nil {
 		return fmt.Errorf("недопустимое имя атрибута «%s»: %w", name, err)
 	}
 	return nil
 }
 
+// validateXMLName проверяет имя элемента или атрибута как QName (Namespaces in
+// XML 1.0, раздел 3): либо NCName, либо «префикс:локальное имя». Одно двоеточие
+// разрешено, потому что префикс — часть имени в лексической модели дерева.
 func validateXMLName(name string) error {
+	prefix, local, qualified := strings.Cut(name, ":")
+	if !qualified {
+		return validateXMLNCName(name)
+	}
+	if strings.Contains(local, ":") {
+		return fmt.Errorf("имя содержит более одного символа ':'")
+	}
+	if err := validateXMLNCName(prefix); err != nil {
+		return fmt.Errorf("префикс «%s»: %w", prefix, err)
+	}
+	if err := validateXMLNCName(local); err != nil {
+		return fmt.Errorf("локальное имя «%s»: %w", local, err)
+	}
+	return nil
+}
+
+func validateXMLNCName(name string) error {
 	if name == "" {
 		return fmt.Errorf("имя пусто")
 	}
@@ -894,9 +1016,6 @@ func validateXMLName(name string) error {
 	}
 	first := true
 	for _, r := range name {
-		if r == ':' {
-			return fmt.Errorf("пространства имён и символ ':' не поддерживаются")
-		}
 		if first {
 			first = false
 			if !isXMLNameStartRune(r) {
@@ -912,8 +1031,8 @@ func validateXMLName(name string) error {
 }
 
 // isXMLNameStartRune и isXMLNameRune реализуют productions XML 1.0 Fifth
-// Edition. Двоеточие из NameStartChar намеренно исключено: пространства имён
-// этой моделью дерева не представлены и поэтому всегда отклоняются.
+// Edition для NCName. Двоеточие из NameStartChar исключено намеренно: его
+// разбирает validateXMLName, чтобы префикс и локальное имя проверялись отдельно.
 func isXMLNameStartRune(r rune) bool {
 	switch {
 	case r == '_':
