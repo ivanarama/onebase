@@ -12,7 +12,7 @@ func rewriteStrftime(tokens []tok, dialect string) []tok {
 	var out []tok
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind == tIdent && strings.ToLower(t.val) == "strftime" &&
+		if t.kind == tIdent && lowerFast(t.val) == "strftime" &&
 			i+1 < len(tokens) && tokens[i+1].kind == tLParen {
 			depth, end := 0, -1
 			for j := i + 1; j < len(tokens); j++ {

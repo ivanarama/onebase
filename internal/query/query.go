@@ -203,7 +203,7 @@ func firstModifierIndex(tokens []tok, selectIndex int) int {
 	if i >= len(tokens) || tokens[i].kind != tIdent {
 		return -1
 	}
-	word := strings.ToUpper(tokens[i].val)
+	word := upperFast(tokens[i].val)
 	if word != "ПЕРВЫЕ" && word != "TOP" {
 		return -1
 	}
@@ -387,7 +387,7 @@ func isAccountRegType(upper string) bool {
 }
 
 func sourceToTable(typeUpper, entityName string) string {
-	return sourcePrefix[typeUpper] + strings.ToLower(entityName)
+	return sourcePrefix[typeUpper] + lowerFast(entityName)
 }
 
 // --- virtual table kind maps ---
@@ -473,7 +473,7 @@ func detectPeriodicity(tokens []tok) (string, bool) {
 	if tokens[0].kind != tIdent {
 		return "", false
 	}
-	level, ok := periodicityLevels[strings.ToUpper(tokens[0].val)]
+	level, ok := periodicityLevels[upperFast(tokens[0].val)]
 	return level, ok
 }
 
@@ -571,13 +571,11 @@ var aggFuncs = map[string]string{
 }
 
 func sqlKW(ident string) (string, bool) {
-	kw, ok := kwMap[strings.ToUpper(ident)]
-	return kw, ok
+	return upperLookup(kwMap, ident)
 }
 
 func sqlAgg(ident string) (string, bool) {
-	kw, ok := aggFuncs[strings.ToUpper(ident)]
-	return kw, ok
+	return upperLookup(aggFuncs, ident)
 }
 
 // --- translator ---
@@ -983,7 +981,7 @@ func (tr *translator) dropSourceQualifier() bool {
 	if tr.pos < 3 || tr.tokens[tr.pos-3].kind != tIdent {
 		return false
 	}
-	qualifier := strings.ToLower(tr.tokens[tr.pos-3].val)
+	qualifier := lowerFast(tr.tokens[tr.pos-3].val)
 	scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1)
 	if !ok {
 		return false
@@ -1145,13 +1143,13 @@ func (tr *translator) translateFilterTokens(tokens []tok) string {
 		case tParam:
 			parts = append(parts, tr.addParam(t.val))
 		case tIdent:
-			upper := strings.ToUpper(t.val)
+			upper := upperFast(t.val)
 			if kw, ok := kwMap[upper]; ok {
 				parts = append(parts, kw)
 			} else if agg, ok := aggFuncs[upper]; ok && i+1 < len(tokens) && tokens[i+1].kind == tLParen {
 				parts = append(parts, agg)
 			} else {
-				lower := strings.ToLower(t.val)
+				lower := lowerFast(t.val)
 				if col, ok := tr.colMap[lower]; ok {
 					parts = append(parts, col)
 				} else {
@@ -1176,9 +1174,9 @@ func (tr *translator) translateFilterTokens(tokens []tok) string {
 }
 
 func (tr *translator) findRegister(name string) *metadata.Register {
-	nl := strings.ToLower(name)
+	nl := lowerFast(name)
 	for _, r := range tr.opts.Registers {
-		if strings.ToLower(r.Name) == nl {
+		if lowerFast(r.Name) == nl {
 			return r
 		}
 	}
@@ -1186,9 +1184,9 @@ func (tr *translator) findRegister(name string) *metadata.Register {
 }
 
 func (tr *translator) findInfoRegister(name string) *metadata.InfoRegister {
-	nl := strings.ToLower(name)
+	nl := lowerFast(name)
 	for _, r := range tr.opts.InfoRegs {
-		if strings.ToLower(r.Name) == nl {
+		if lowerFast(r.Name) == nl {
 			return r
 		}
 	}
@@ -1210,7 +1208,7 @@ func dimSelCols(dims []metadata.Field) []string {
 	result := make([]string, len(dims))
 	for i, d := range dims {
 		col := metadata.ColumnName(d)
-		name := strings.ToLower(d.Name)
+		name := lowerFast(d.Name)
 		if col != name {
 			result[i] = col + " AS " + name
 		} else {
@@ -1253,9 +1251,9 @@ func (tr *translator) buildInfoVT(vtKind, regName string, args [][]tok) (subq, a
 }
 
 func (tr *translator) findAccountRegister(name string) *metadata.AccountRegister {
-	nl := strings.ToLower(name)
+	nl := lowerFast(name)
 	for _, r := range tr.opts.AccountRegs {
-		if strings.ToLower(r.Name) == nl {
+		if lowerFast(r.Name) == nl {
 			return r
 		}
 	}
@@ -1284,8 +1282,8 @@ func (tr *translator) translateAccountFilter(ar *metadata.AccountRegister, token
 	set("счет", "a.code")
 	for i := range ar.Subconto {
 		col := metadata.SubcontoColumn(i + 1)
-		set(strings.ToLower(col), "r."+col)
-		set(strings.ToLower(ar.Subconto[i].Name), "r."+col)
+		set(lowerFast(col), "r."+col)
+		set(lowerFast(ar.Subconto[i].Name), "r."+col)
 	}
 	res := tr.translateFilterTokens(tokens)
 	for k, v := range saved {
@@ -1354,7 +1352,7 @@ func (tr *translator) buildAccountVT(vtKind, regName string, args [][]tok) (subq
 
 func (tr *translator) genAccountBalances(ar *metadata.AccountRegister, args [][]tok) (string, string, error) {
 	table := metadata.AccountRegTableName(ar.Name)
-	alias := "остатки_" + strings.ToLower(ar.Name)
+	alias := "остатки_" + lowerFast(ar.Name)
 
 	// План 80: быстрый путь через предрасчитанные помесячные итоги вместо SUM по
 	// всей истории проводок. Включается, когда заведомо эквивалентен on-the-fly:
@@ -1375,7 +1373,7 @@ func (tr *translator) genAccountBalances(ar *metadata.AccountRegister, args [][]
 
 	var resCols []string
 	for _, r := range ar.Resources {
-		col := strings.ToLower(r.Name)
+		col := lowerFast(r.Name)
 		resCols = append(resCols,
 			"COALESCE(SUM(CASE WHEN r.счётдт = a.code THEN r."+col+" ELSE 0 END),0) AS "+col+"_дт",
 			"COALESCE(SUM(CASE WHEN r.счёткт = a.code THEN r."+col+" ELSE 0 END),0) AS "+col+"_кт",
@@ -1687,7 +1685,7 @@ func (tr *translator) accountTurnoversOuter(ar *metadata.AccountRegister, subCol
 
 func (tr *translator) genAccountTurnovers(ar *metadata.AccountRegister, args [][]tok) (string, string, error) {
 	table := metadata.AccountRegTableName(ar.Name)
-	alias := "обороты_" + strings.ToLower(ar.Name)
+	alias := "обороты_" + lowerFast(ar.Name)
 
 	// План 80: быстрый путь оборотов через помесячные итоги. Применим без отбора по
 	// счёту (args[2]) и без строковой политики. Полный период или обе границы-даты —
@@ -1702,7 +1700,7 @@ func (tr *translator) genAccountTurnovers(ar *metadata.AccountRegister, args [][
 
 	var resCols []string
 	for _, r := range ar.Resources {
-		col := strings.ToLower(r.Name)
+		col := lowerFast(r.Name)
 		resCols = append(resCols,
 			"COALESCE(SUM(CASE WHEN r.счётдт = a.code THEN r."+col+" ELSE 0 END),0) AS "+col+"_дт",
 			"COALESCE(SUM(CASE WHEN r.счёткт = a.code THEN r."+col+" ELSE 0 END),0) AS "+col+"_кт",
@@ -1765,7 +1763,7 @@ func (tr *translator) genAccountTurnovers(ar *metadata.AccountRegister, args [][
 
 func (tr *translator) genBalances(reg *metadata.Register, args [][]tok) (string, string, error) {
 	tableName := metadata.RegisterTableName(reg.Name)
-	alias := "остатки_" + strings.ToLower(reg.Name)
+	alias := "остатки_" + lowerFast(reg.Name)
 
 	// План 80: быстрый путь через предрасчитанные помесячные итоги вместо SUM по
 	// всей истории. Включается только когда заведомо эквивалентен on-the-fly:
@@ -1791,7 +1789,7 @@ func (tr *translator) genBalances(reg *metadata.Register, args [][]tok) (string,
 	var cols []string
 	cols = append(cols, selDims...)
 	for _, r := range reg.Resources {
-		col := strings.ToLower(r.Name)
+		col := lowerFast(r.Name)
 		cols = append(cols,
 			"SUM(CASE WHEN вид_движения = 'Приход' THEN "+col+" ELSE -"+col+" END) AS "+col+"остаток")
 	}
@@ -1865,7 +1863,7 @@ func monthStartOf(t time.Time) time.Time {
 func (tr *translator) genBalancesFromTotals(reg *metadata.Register) string {
 	cols := append([]string{}, dimSelCols(reg.Dimensions)...)
 	for _, r := range reg.Resources {
-		col := strings.ToLower(r.Name)
+		col := lowerFast(r.Name)
 		cols = append(cols, "SUM("+col+") AS "+col+"остаток")
 	}
 	sql := "SELECT " + strings.Join(cols, ", ") + " FROM " + metadata.RegisterTotalsTableName(reg.Name)
@@ -1933,7 +1931,7 @@ func (tr *translator) buildTotalsMomentSQL(reg *metadata.Register, mkPH, msPH, c
 	priorCols := append([]string{}, dims...)
 	tailCols := append([]string{}, dims...)
 	for i, r := range reg.Resources {
-		rescol := strings.ToLower(r.Name)
+		rescol := lowerFast(r.Name)
 		ri := fmt.Sprintf("r%d", i)
 		priorCols = append(priorCols, rescol+" AS "+ri)
 		tailCols = append(tailCols, "CASE WHEN вид_движения = 'Приход' THEN "+rescol+" ELSE -"+rescol+" END AS "+ri)
@@ -1946,7 +1944,7 @@ func (tr *translator) buildTotalsMomentSQL(reg *metadata.Register, mkPH, msPH, c
 
 	outerCols := append([]string{}, dimSelCols(reg.Dimensions)...)
 	for i, r := range reg.Resources {
-		rescol := strings.ToLower(r.Name)
+		rescol := lowerFast(r.Name)
 		outerCols = append(outerCols, "SUM(r"+fmt.Sprint(i)+") AS "+rescol+"остаток")
 	}
 	sql := "SELECT " + strings.Join(outerCols, ", ") + " FROM (" + inner + ") AS итоги_мт"
@@ -1986,7 +1984,7 @@ func (tr *translator) genBalancesAndTurnoversFromTotals(reg *metadata.Register, 
 	ntailCols := append([]string{}, dims...)
 	turnCols := append([]string{}, dims...)
 	for i, res := range reg.Resources {
-		c := strings.ToLower(res.Name)
+		c := lowerFast(res.Name)
 		n, p, r := fmt.Sprintf("n%d", i), fmt.Sprintf("p%d", i), fmt.Sprintf("r%d", i)
 		priorCols = append(priorCols, c+" AS "+n, "0 AS "+p, "0 AS "+r)
 		ntailCols = append(ntailCols,
@@ -2005,7 +2003,7 @@ func (tr *translator) genBalancesAndTurnoversFromTotals(reg *metadata.Register, 
 
 	outer := append([]string{}, dimSelCols(reg.Dimensions)...)
 	for i, res := range reg.Resources {
-		c := strings.ToLower(res.Name)
+		c := lowerFast(res.Name)
 		n, p, r := fmt.Sprintf("n%d", i), fmt.Sprintf("p%d", i), fmt.Sprintf("r%d", i)
 		outer = append(outer,
 			"SUM("+n+") AS "+c+"начальный",
@@ -2013,7 +2011,7 @@ func (tr *translator) genBalancesAndTurnoversFromTotals(reg *metadata.Register, 
 			"SUM("+r+") AS "+c+"расход",
 			"SUM("+n+") + SUM("+p+") - SUM("+r+") AS "+c+"конечный")
 	}
-	sql := "SELECT " + strings.Join(outer, ", ") + " FROM (" + inner + ") AS оио_" + strings.ToLower(reg.Name)
+	sql := "SELECT " + strings.Join(outer, ", ") + " FROM (" + inner + ") AS оио_" + lowerFast(reg.Name)
 	if len(dims) > 0 {
 		sql += " GROUP BY " + strings.Join(dims, ", ")
 	}
@@ -2022,7 +2020,7 @@ func (tr *translator) genBalancesAndTurnoversFromTotals(reg *metadata.Register, 
 
 func (tr *translator) genTurnovers(reg *metadata.Register, args [][]tok) (string, string, error) {
 	tableName := metadata.RegisterTableName(reg.Name)
-	alias := "обороты_" + strings.ToLower(reg.Name)
+	alias := "обороты_" + lowerFast(reg.Name)
 	d := dialectOrDefault(tr.opts.Dialect)
 	dims := dimCols(reg.Dimensions)
 	selDims := dimSelCols(reg.Dimensions)
@@ -2047,7 +2045,7 @@ func (tr *translator) genTurnovers(reg *metadata.Register, args [][]tok) (string
 	}
 	cols = append(cols, selDims...)
 	for _, r := range reg.Resources {
-		col := strings.ToLower(r.Name)
+		col := lowerFast(r.Name)
 		cols = append(cols,
 			"SUM(CASE WHEN вид_движения = 'Приход' THEN "+col+" ELSE 0 END) AS "+col+"приход",
 			"SUM(CASE WHEN вид_движения = 'Расход' THEN "+col+" ELSE 0 END) AS "+col+"расход",
@@ -2141,7 +2139,7 @@ func (tr *translator) filterPresent(tokens []tok) bool {
 
 func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]tok) (string, string, error) {
 	tableName := metadata.RegisterTableName(reg.Name)
-	alias := "остаткиоборотов_" + strings.ToLower(reg.Name)
+	alias := "остаткиоборотов_" + lowerFast(reg.Name)
 	dims := dimCols(reg.Dimensions)
 	selDims := dimSelCols(reg.Dimensions)
 
@@ -2192,7 +2190,7 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 	var cols []string
 	cols = append(cols, selDims...)
 	for _, r := range reg.Resources {
-		col := strings.ToLower(r.Name)
+		col := lowerFast(r.Name)
 		if hasStart {
 			cols = append(cols,
 				"SUM(CASE WHEN вид_движения = 'Приход' AND period < "+start()+
@@ -2266,13 +2264,13 @@ func attributeAggCols(attrs []metadata.Field) []string {
 func (tr *translator) genInfoSlice(ir *metadata.InfoRegister, args [][]tok, direction string, aliasPrefix string) (string, string, error) {
 	d := dialectOrDefault(tr.opts.Dialect)
 	tableName := metadata.InfoRegTableName(ir.Name)
-	alias := aliasPrefix + strings.ToLower(ir.Name)
+	alias := aliasPrefix + lowerFast(ir.Name)
 	dims := dimCols(ir.Dimensions)
 	selDims := dimSelCols(ir.Dimensions)
 
 	var resCols []string
 	for _, r := range ir.Resources {
-		resCols = append(resCols, strings.ToLower(r.Name))
+		resCols = append(resCols, lowerFast(r.Name))
 	}
 
 	periodOp := "<="
@@ -2357,7 +2355,7 @@ func preScanAllRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 		if t.kind != tIdent {
 			continue
 		}
-		upper := strings.ToUpper(t.val)
+		upper := upperFast(t.val)
 		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
@@ -2415,7 +2413,7 @@ func filterUsedRefDims(dims []refDimInfo, tokens []tok) []refDimInfo {
 	used := make(map[string]bool, len(tokens))
 	for _, t := range tokens {
 		if t.kind == tIdent {
-			used[strings.ToLower(t.val)] = true
+			used[lowerFast(t.val)] = true
 		}
 	}
 	var out []refDimInfo
@@ -2435,12 +2433,12 @@ func buildVTRefDimInfos(dims []metadata.Field, entities []*metadata.Entity) []re
 	var result []refDimInfo
 	for _, d := range dims {
 		if d.RefEntity != "" {
-			fn := strings.ToLower(d.Name)
+			fn := lowerFast(d.Name)
 			rd := refDimInfo{
 				fieldName:  fn,
 				idCol:      fn, // VT aliased from _id
 				joinAlias:  "ref_" + fn,
-				joinTable:  strings.ToLower(d.RefEntity),
+				joinTable:  lowerFast(d.RefEntity),
 				isVT:       true,
 				refEntity:  d.RefEntity,
 				refSrcType: "СПРАВОЧНИК",
@@ -2466,10 +2464,10 @@ func buildRefDimInfosWithEntities(dims []metadata.Field, entities []*metadata.En
 	for _, d := range dims {
 		if d.RefEntity != "" {
 			rd := refDimInfo{
-				fieldName:  strings.ToLower(d.Name),
-				idCol:      strings.ToLower(d.Name) + "_id",
-				joinAlias:  "ref_" + strings.ToLower(d.Name),
-				joinTable:  strings.ToLower(d.RefEntity),
+				fieldName:  lowerFast(d.Name),
+				idCol:      lowerFast(d.Name) + "_id",
+				joinAlias:  "ref_" + lowerFast(d.Name),
+				joinTable:  lowerFast(d.RefEntity),
 				refEntity:  d.RefEntity,
 				refSrcType: "СПРАВОЧНИК",
 			}
@@ -2503,11 +2501,11 @@ func (tr *translator) findRefDim(name string) *refDimInfo {
 func (tr *translator) emitVTSubquery(subq, defaultAlias string) error {
 	alias := defaultAlias
 	if p := tr.peek(0); p.kind == tIdent {
-		pUpper := strings.ToUpper(p.val)
+		pUpper := upperFast(p.val)
 		if pUpper == "КАК" || pUpper == "AS" {
 			tr.advance()
 			if a := tr.peek(0); a.kind == tIdent {
-				alias = strings.ToLower(tr.advance().val)
+				alias = lowerFast(tr.advance().val)
 			}
 		}
 	}
@@ -2543,7 +2541,7 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 	m := map[string]string{}
 	addFields := func(fields []metadata.Field) {
 		for _, f := range fields {
-			name := strings.ToLower(f.Name)
+			name := lowerFast(f.Name)
 			col := metadata.ColumnName(f)
 			if col != name {
 				m[name] = col
@@ -2558,7 +2556,7 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 		if t.kind != tIdent {
 			continue
 		}
-		upper := strings.ToUpper(t.val)
+		upper := upperFast(t.val)
 		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
@@ -2619,7 +2617,7 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 	m := map[string]metadata.FieldType{}
 	add := func(fields []metadata.Field) {
 		for _, f := range fields {
-			m[strings.ToLower(f.Name)] = f.Type
+			m[lowerFast(f.Name)] = f.Type
 		}
 	}
 	for i := 0; i+2 < len(tokens); i++ {
@@ -2627,7 +2625,7 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 		if t.kind != tIdent {
 			continue
 		}
-		upper := strings.ToUpper(t.val)
+		upper := upperFast(t.val)
 		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
@@ -2729,7 +2727,7 @@ func (tr *translator) dateFieldAt(idx int) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
-	return tr.colTypes[strings.ToLower(tr.tokens[idx].val)] == metadata.FieldTypeDate
+	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
@@ -2760,7 +2758,7 @@ func (tr *translator) keywordAt(idx int, names ...string) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
-	got := strings.ToUpper(tr.tokens[idx].val)
+	got := upperFast(tr.tokens[idx].val)
 	for _, name := range names {
 		if got == name {
 			return true
@@ -2848,7 +2846,7 @@ func preScanMainTable(tokens []tok) string {
 		if t.kind != tIdent {
 			continue
 		}
-		upper := strings.ToUpper(t.val)
+		upper := upperFast(t.val)
 		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
@@ -2857,9 +2855,9 @@ func preScanMainTable(tokens []tok) string {
 		}
 		table := sourceToTable(upper, tokens[i+2].val)
 		if j := i + 3; j+1 < len(tokens) && tokens[j].kind == tIdent {
-			if u := strings.ToUpper(tokens[j].val); u == "КАК" || u == "AS" {
+			if u := upperFast(tokens[j].val); u == "КАК" || u == "AS" {
 				if tokens[j+1].kind == tIdent {
-					return strings.ToLower(tokens[j+1].val)
+					return lowerFast(tokens[j+1].val)
 				}
 			}
 		}
@@ -2939,9 +2937,9 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			ctx.tokenScope[i] = scopeID
 			ctx.tokenSection[i] = sections[scopeID]
 			if sections[scopeID] == sectionSelect && t.kind == tIdent && depth == frame.depth {
-				if up := strings.ToUpper(t.val); (up == "КАК" || up == "AS") &&
+				if up := upperFast(t.val); (up == "КАК" || up == "AS") &&
 					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
-					alias := strings.ToLower(tokens[i+1].val)
+					alias := lowerFast(tokens[i+1].val)
 					if isReferenceName(alias) {
 						ctx.scopes[scopeID].refAliases[alias] = struct{}{}
 					}
@@ -2969,9 +2967,9 @@ func preScanSourceContext(tokens []tok) sourceContext {
 							if nesting == 0 {
 								aliasPos := j + 1
 								if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
-									aliasUpper := strings.ToUpper(tokens[aliasPos].val)
+									aliasUpper := upperFast(tokens[aliasPos].val)
 									if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-										alias := strings.ToLower(tokens[aliasPos+1].val)
+										alias := lowerFast(tokens[aliasPos+1].val)
 										if isMain {
 											scope.mainTable = alias
 										}
@@ -3013,7 +3011,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			}
 			continue
 		}
-		typeUpper := strings.ToUpper(tokens[i].val)
+		typeUpper := upperFast(tokens[i].val)
 		if len(active) == 0 || !isSourceType(typeUpper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
@@ -3037,16 +3035,16 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			}
 		}
 
-		entityName := strings.ToLower(tokens[i+2].val)
+		entityName := lowerFast(tokens[i+2].val)
 		scope.qualifiers[entityName] = class
 		scope.qualifiers[sourceToTable(typeUpper, tokens[i+2].val)] = class
 
 		// У обычного источника КАК/AS следует сразу за именем сущности.
 		aliasPos := i + 3
 		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
-			aliasUpper := strings.ToUpper(tokens[aliasPos].val)
+			aliasUpper := upperFast(tokens[aliasPos].val)
 			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-				alias := strings.ToLower(tokens[aliasPos+1].val)
+				alias := lowerFast(tokens[aliasPos+1].val)
 				scope.qualifiers[alias] = class
 				if isMain {
 					scope.mainTable = alias
@@ -3070,9 +3068,9 @@ func preScanSourceContext(tokens []tok) sourceContext {
 				if depth == 0 {
 					aliasPos = j + 1
 					if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
-						aliasUpper := strings.ToUpper(tokens[aliasPos].val)
+						aliasUpper := upperFast(tokens[aliasPos].val)
 						if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-							alias := strings.ToLower(tokens[aliasPos+1].val)
+							alias := lowerFast(tokens[aliasPos+1].val)
 							scope.qualifiers[alias] = class
 							if isMain {
 								scope.mainTable = alias
@@ -3121,7 +3119,7 @@ func linkDerivedSourceScopes(tokens []tok, ctx *sourceContext) {
 				if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
 					aliasKW, aliasOK := sqlKW(tokens[aliasPos].val)
 					if aliasOK && aliasKW == "AS" && tokens[aliasPos+1].kind == tIdent {
-						alias := strings.ToLower(tokens[aliasPos+1].val)
+						alias := lowerFast(tokens[aliasPos+1].val)
 						ctx.scopes[parentID].derivedAliases[alias] = childID
 					}
 				}
@@ -3221,7 +3219,7 @@ func (ctx sourceContext) projectionIsSystemColumn(
 	if end-start == 3 && tokens[start].kind == tIdent && tokens[start+1].kind == tDot &&
 		tokens[start+2].kind == tStar {
 		scope := ctx.scopes[scopeID]
-		qualifier := strings.ToLower(tokens[start].val)
+		qualifier := lowerFast(tokens[start].val)
 		if class, known := scope.qualifiers[qualifier]; known {
 			return class == sourceClassRegister
 		}
@@ -3279,7 +3277,7 @@ func (ctx sourceContext) systemColumnIdentifierAt(tokens []tok, tokenPos int, se
 	}
 	scope := ctx.scopes[scopeID]
 	if tokenPos >= 2 && tokens[tokenPos-1].kind == tDot {
-		qualifier := strings.ToLower(tokens[tokenPos-2].val)
+		qualifier := lowerFast(tokens[tokenPos-2].val)
 		if class, known := scope.qualifiers[qualifier]; known {
 			return class == sourceClassRegister
 		}
@@ -3308,7 +3306,7 @@ func rewriteGroupingReferenceAliases(tokens []tok) []tok {
 			continue
 		}
 		kw, ok := sqlKW(tokens[i].val)
-		if !ok || kw != "AS" || !isReferenceName(strings.ToLower(tokens[i+1].val)) {
+		if !ok || kw != "AS" || !isReferenceName(lowerFast(tokens[i+1].val)) {
 			continue
 		}
 		scopeID, ok := ctx.scopeIDAt(i)
@@ -3328,7 +3326,7 @@ func rewriteGroupingReferenceAliases(tokens []tok) []tok {
 	out := make([]tok, 0, len(tokens))
 	for i, t := range tokens {
 		section := ctx.sectionAt(i)
-		if t.kind == tIdent && isReferenceName(strings.ToLower(t.val)) &&
+		if t.kind == tIdent && isReferenceName(lowerFast(t.val)) &&
 			(section == sectionGroupBy || section == sectionHaving) &&
 			(i == 0 || tokens[i-1].kind != tDot) {
 			if scopeID, ok := ctx.scopeIDAt(i); ok {
@@ -3386,11 +3384,11 @@ func copyGroupingAliasExpression(tokens []tok, ctx sourceContext, start, end int
 	expr := make([]tok, 0, end-start)
 	for i := start; i < end; i++ {
 		t := tokens[i]
-		if t.kind == tIdent && isReferenceName(strings.ToLower(t.val)) &&
+		if t.kind == tIdent && isReferenceName(lowerFast(t.val)) &&
 			(i == start || tokens[i-1].kind != tDot) {
 			prevAlias := i > start && tokens[i-1].kind == tIdent &&
 				(strings.EqualFold(tokens[i-1].val, "КАК") || strings.EqualFold(tokens[i-1].val, "AS"))
-			if !prevAlias && !ctx.isReferenceAliasAt(i, strings.ToLower(t.val)) {
+			if !prevAlias && !ctx.isReferenceAliasAt(i, lowerFast(t.val)) {
 				if scope, ok := ctx.scopeAt(i); ok && scope.mainTable != "" {
 					expr = append(expr,
 						tok{kind: tIdent, val: scope.mainTable},
@@ -3417,7 +3415,7 @@ func (tr *translator) systemColumnAlias(name string, prevDot bool) (string, bool
 		return "", false
 	}
 	if prevDot && tr.pos >= 3 {
-		qualifier := strings.ToLower(tr.tokens[tr.pos-3].val)
+		qualifier := lowerFast(tr.tokens[tr.pos-3].val)
 		if class, known := scope.qualifiers[qualifier]; known {
 			return col, class == sourceClassRegister
 		}
@@ -3461,7 +3459,7 @@ func projectionFieldNames(tokens []tok) []string {
 	var out []string
 	add := func(name string) {
 		name = strings.TrimSpace(name)
-		key := strings.ToLower(name)
+		key := lowerFast(name)
 		if name == "" || seen[key] {
 			return
 		}
@@ -3510,7 +3508,7 @@ func projectionFieldNames(tokens []tok) []string {
 				continue
 			}
 			if i > 0 && tokens[i-1].kind == tIdent {
-				prev := strings.ToUpper(tokens[i-1].val)
+				prev := upperFast(tokens[i-1].val)
 				if prev == "КАК" || prev == "AS" {
 					continue // output alias, not a source field
 				}
@@ -3590,7 +3588,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		if t.kind == tEOF {
 			break
 		}
-		upper := strings.ToUpper(t.val)
+		upper := upperFast(t.val)
 
 		// Source type: TypeName.EntityName[.VirtualTable(args)] → table or subquery
 		if t.kind == tIdent && isSourceType(upper) &&
@@ -3599,7 +3597,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			// Check for virtual table: TypeName.EntityName.VTName(...)
 			if tr.peek(3).kind == tDot && tr.peek(4).kind == tIdent &&
 				tr.peek(5).kind == tLParen {
-				vt4Upper := strings.ToUpper(tr.peek(4).val)
+				vt4Upper := upperFast(tr.peek(4).val)
 
 				if vtKind, ok := accumVTKinds[vt4Upper]; ok && isAccumRegType(upper) {
 					tr.advance() // TypeName
@@ -3664,7 +3662,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			// Выдаём понятную ошибку компиляции вместо тихой поломки виджета.
 			if tr.peek(3).kind == tDot && tr.peek(4).kind == tIdent && tr.peek(5).kind != tLParen {
 				vtName := tr.peek(4).val
-				vtU := strings.ToUpper(vtName)
+				vtU := upperFast(vtName)
 				_, isAccumVT := accumVTKinds[vtU]
 				_, isInfoVT := infoVTKinds[vtU]
 				if isAccumVT || isInfoVT {
@@ -3693,11 +3691,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			// restricted sources are scoped as subqueries and need the final alias
 			// up front.
 			if p := tr.peek(0); p.kind == tIdent {
-				pUpper := strings.ToUpper(p.val)
+				pUpper := upperFast(p.val)
 				if pUpper == "КАК" || pUpper == "AS" {
 					tr.advance()
 					if a := tr.peek(0); a.kind == tIdent {
-						aliasName := strings.ToLower(tr.advance().val)
+						aliasName := lowerFast(tr.advance().val)
 						sourceAlias = aliasName
 						hasAlias = true
 						// Собственные колонки квалифицируем алиасом, а не именем
@@ -3771,7 +3769,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				tr.section = sectionGroupBy
 				tr.emit("GROUP BY")
 			}
-			if tr.peek(0).kind == tIdent && strings.ToUpper(tr.peek(0).val) == "ПО" {
+			if tr.peek(0).kind == tIdent && upperFast(tr.peek(0).val) == "ПО" {
 				tr.advance()
 			}
 			continue
@@ -3837,11 +3835,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			tr.advance()
 			prevDot := tr.prevWasDot
 			tr.prevWasDot = false
-			lower := strings.ToLower(t.val)
+			lower := lowerFast(t.val)
 			nextIsDot := tr.peek(0).kind == tDot
 			prevAlias := false
 			if tr.pos >= 2 {
-				if pv := strings.ToUpper(tr.tokens[tr.pos-2].val); pv == "КАК" || pv == "AS" {
+				if pv := upperFast(tr.tokens[tr.pos-2].val); pv == "КАК" || pv == "AS" {
 					prevAlias = !prevDot
 				}
 			}
@@ -3961,10 +3959,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						switch tr.section {
 						case sectionSelect:
 							tr.emit(rd.displayCol())
-							if p := strings.ToUpper(tr.peek(0).val); p != "КАК" && p != "AS" {
+							if p := upperFast(tr.peek(0).val); p != "КАК" && p != "AS" {
 								tr.emit("AS")
 								tr.emit(rd.fieldName)
-								tr.aliases[strings.ToLower(rd.fieldName)] = struct{}{}
+								tr.aliases[lowerFast(rd.fieldName)] = struct{}{}
 							}
 						case sectionGroupBy, sectionOrderBy:
 							tr.emit(rd.displayCol())
@@ -4041,7 +4039,7 @@ func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType)
 		if c.Star || c.Output == "" || len(c.Fields) != 1 {
 			continue
 		}
-		if colTypes[strings.ToLower(c.Fields[0])] == metadata.FieldTypeBool {
+		if colTypes[lowerFast(c.Fields[0])] == metadata.FieldTypeBool {
 			cols = append(cols, c.Output)
 		}
 	}
@@ -4180,7 +4178,7 @@ func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		if t.kind == tIdent && i+1 < len(tokens) && tokens[i+1].kind == tLParen {
-			key := strings.ToLower(t.val)
+			key := lowerFast(t.val)
 			if rw, ok := rewrites[key]; ok {
 				// поиск парной закрывающей )
 				depth := 0
@@ -4280,7 +4278,7 @@ func (tr *translator) firstArgMoment(args []tok) momentTimeValue {
 // (period / вид_движения / recorder / line_number) to the actual DB column name.
 // Используется и в SELECT/WHERE верхнего уровня, и после точки (alias.Период).
 func systemColAlias(name string) (string, bool) {
-	switch strings.ToLower(name) {
+	switch lowerFast(name) {
 	case "период":
 		return "period", true
 	case "виддвижения":
