@@ -276,7 +276,9 @@ const tplManagedForm = `
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПриАктивизацииСтроки")}}data-sg-rowactivate="1"{{end}}
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПриИзмененииСтроки")}}data-sg-rowchange="1"{{end}}
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
-       data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.Name}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}},"allowCreate":true{{end}}{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
+       {{/* id — имя реквизита (по нему идёт привязка данных и разбор tp.*),
+            name — только подпись колонки: синоним реквизита, как в автоформе. */}}
+       data-sg-cols='[{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{"id":"{{$f.Name}}","name":"{{$f.DisplayName (str $ctx.Lang)}}","type":"{{$f.Type}}"{{if $f.RefEntity}},"ref":"{{$f.RefEntity}}"{{if $f.InlineCreateEnabled true}},"allowCreate":true{{end}}{{end}}{{if isEnum (str $f.Type)}},"enum":true{{end}}}{{end}}]'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{jsJSON $tpRows}}'
@@ -296,7 +298,7 @@ const tplManagedForm = `
     <thead>
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
-        {{range $tpMeta.Fields}}<th>{{.Name}}</th>{{end}}
+        {{range $tpMeta.Fields}}<th>{{.DisplayName (str $ctx.Lang)}}</th>{{end}}
         <th style="width:40px"></th>
       </tr>
     </thead>
