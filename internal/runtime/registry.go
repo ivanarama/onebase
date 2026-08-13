@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -42,6 +43,7 @@ type Registry struct {
 	managerProcs    map[string]map[string]*ast.ProcedureDecl // lowercase entity → procs модуля менеджера
 	moduleProcs     map[string]*ast.ProcedureDecl            // flat: proc name → decl
 	moduleByName    map[string]map[string]*ast.ProcedureDecl // lowercase module → procs in it
+	moduleByFile    map[string]map[string]*ast.ProcedureDecl // файл модуля → procs in it (для GetSiblingProc)
 	processors      map[string]*processor.Processor
 	httpServices    map[string]*httpservice.Service   // lowercase name → HTTP-сервис
 	pages           map[string]*page.Page             // lowercase name → страница (план 66)
@@ -81,6 +83,7 @@ func NewRegistry() *Registry {
 		managerProcs:    make(map[string]map[string]*ast.ProcedureDecl),
 		moduleProcs:     make(map[string]*ast.ProcedureDecl),
 		moduleByName:    make(map[string]map[string]*ast.ProcedureDecl),
+		moduleByFile:    make(map[string]map[string]*ast.ProcedureDecl),
 		processors:      make(map[string]*processor.Processor),
 		httpServices:    make(map[string]*httpservice.Service),
 		pages:           make(map[string]*page.Page),
@@ -124,6 +127,7 @@ func (r *Registry) ReplaceProjectFrom(src *Registry) {
 	r.managerProcs = src.managerProcs
 	r.moduleProcs = src.moduleProcs
 	r.moduleByName = src.moduleByName
+	r.moduleByFile = src.moduleByFile
 	r.processors = src.processors
 	r.httpServices = src.httpServices
 	r.pages = src.pages
@@ -843,21 +847,46 @@ var eventAliases = map[string]string{
 	"afterdelete":  "послеудаления",
 }
 
+// LoadModules раскладывает процедуры общих модулей по трём картам: плоской (для
+// неквалифицированного вызова из чужого файла), по имени модуля (для
+// Модуль.Процедура) и по файлу (для «своё раньше чужого», см. GetSiblingProc).
+//
+// Плоская карта заполняется в порядке сортировки имён модулей, и первый занявший
+// имя его удерживает. Раньше это был обход map — то есть при совпадении имён в
+// двух модулях победитель выбирался случайно и МЕНЯЛСЯ ОТ ЗАПУСКА К ЗАПУСКУ:
+// конфигурация вела себя по-разному на одном и том же коде. Порядок по имени
+// модуля так же произволен, но воспроизводим.
 func (r *Registry) LoadModules(modules map[string]*ast.Program) {
 	flat := make(map[string]*ast.ProcedureDecl)
 	byModule := make(map[string]map[string]*ast.ProcedureDecl)
-	for moduleName, prog := range modules {
+	byFile := make(map[string]map[string]*ast.ProcedureDecl)
+	moduleNames := make([]string, 0, len(modules))
+	for moduleName := range modules {
+		moduleNames = append(moduleNames, moduleName)
+	}
+	sort.Strings(moduleNames)
+	for _, moduleName := range moduleNames {
+		prog := modules[moduleName]
 		modKey := strings.ToLower(moduleName)
 		byModule[modKey] = make(map[string]*ast.ProcedureDecl, len(prog.Procedures))
 		for _, p := range prog.Procedures {
 			procKey := strings.ToLower(p.Name.Literal)
-			flat[procKey] = p
+			if _, taken := flat[procKey]; !taken {
+				flat[procKey] = p
+			}
 			byModule[modKey][procKey] = p
+			if file := p.Name.File; file != "" {
+				if byFile[file] == nil {
+					byFile[file] = make(map[string]*ast.ProcedureDecl, len(prog.Procedures))
+				}
+				byFile[file][procKey] = p
+			}
 		}
 	}
 	r.mu.Lock()
 	r.moduleProcs = flat
 	r.moduleByName = byModule
+	r.moduleByFile = byFile
 	r.mu.Unlock()
 }
 
@@ -899,6 +928,13 @@ func (r *Registry) GetModuleProc(name string) *ast.ProcedureDecl {
 // currentFile comes from interpreter.curFile (the file:line of the
 // last executed statement), so the resolver naturally scopes to the
 // currently running source.
+//
+// Общие модули учитываются наравне с обработками. Без этого правило «своё раньше
+// чужого» (#717) на них не распространялось: процедуры модулей лежат отдельно от
+// r.procs, поиск сюда не доходил, и неквалифицированный вызов внутри модуля
+// разрешался только плоской картой — то есть мог молча уйти в одноимённую
+// процедуру ЧУЖОГО модуля. Файл модуля один, поэтому «тот же файл» здесь значит
+// «тот же модуль».
 func (r *Registry) GetSiblingProc(currentFile, name string) *ast.ProcedureDecl {
 	if currentFile == "" {
 		return nil
@@ -912,6 +948,9 @@ func (r *Registry) GetSiblingProc(currentFile, name string) *ast.ProcedureDecl {
 				return decl
 			}
 		}
+	}
+	if decl, ok := r.moduleByFile[currentFile][low]; ok {
+		return decl
 	}
 	return nil
 }
