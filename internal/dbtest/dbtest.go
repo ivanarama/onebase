@@ -42,6 +42,7 @@ func ForEachDialect(t *testing.T, body func(t *testing.T, db *storage.DB)) {
 			t.Fatalf("ConnectSQLite: %v", err)
 		}
 		t.Cleanup(db.Close)
+		ensureServiceSchema(t, db)
 		body(t, db)
 	})
 
@@ -66,6 +67,21 @@ func ForEachDialect(t *testing.T, body func(t *testing.T, db *storage.DB)) {
 			}
 			db.Close()
 		})
+		ensureServiceSchema(t, db)
 		body(t, db)
 	})
+}
+
+// ensureServiceSchema заводит служебные таблицы платформы до тела теста.
+//
+// Без этого тест зависел от ПОРЯДКА прогона: эфемерная схема PostgreSQL пуста,
+// но search_path подхватывает public, куда служебные таблицы клал предыдущий
+// пакет в общей сервисной базе. Пакет, запущенный отдельно (обычная отладка) и
+// первым в CI, падал лавиной «current transaction is aborted», в которой
+// причина — отсутствующая таблица — не называлась ни разу (issue #827).
+func ensureServiceSchema(t *testing.T, db *storage.DB) {
+	t.Helper()
+	if err := db.EnsureServiceSchema(context.Background()); err != nil {
+		t.Fatalf("служебные таблицы: %v", err)
+	}
 }
