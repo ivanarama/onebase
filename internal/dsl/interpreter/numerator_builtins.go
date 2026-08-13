@@ -22,12 +22,18 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
-	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // NumeratorStore — то, что объекту Нумераторы нужно от хранилища. Реализуется
 // *storage.DB. Обе операции атомарны и безопасны при конкурентных вызовах.
 type NumeratorStore interface {
+	// GenerateNumber — ЕДИНАЯ точка выдачи номера (план 117C): период, маски
+	// даты и префикс базы считаются там, а не пересобираются по месту. Пока
+	// этот объект собирал номер сам, он терял префикс базы (117D): номер,
+	// выданный из модуля, отличался от выданного через UI, и в разных базах
+	// такие номера совпадали — ровно то, ради предотвращения чего префикс и
+	// заведён.
+	GenerateNumber(ctx context.Context, entity *metadata.Entity, fields map[string]any) (string, error)
 	NextNumber(ctx context.Context, entityName, periodKey string) (int, error)
 	NextNum(ctx context.Context, entityName string) (int64, error)
 }
@@ -132,13 +138,12 @@ func (r *NumeratorsRoot) nextNumber(args []any) any {
 			}
 		}
 		// Тот же расчёт, что у UI и REST (план 117C): период выбирается
-		// детерминированно, префикс раскрывает маски даты.
-		periodKey := storage.PeriodKeyFor(entity, num, fields)
-		n, err := r.store.NextNumber(r.ctx.Ctx(), entity.Name, periodKey)
+		// детерминированно, префикс раскрывает маски даты и префикс базы.
+		value, err := r.store.GenerateNumber(r.ctx.Ctx(), entity, fields)
 		if err != nil {
 			panic(userError{Msg: "СледующийНомер: " + err.Error()})
 		}
-		return storage.FormatNumber(storage.ExpandPrefix(num.Prefix, storage.NumberPeriodDate(entity, fields)), num.Length, n)
+		return value
 	}
 	n, err := r.store.NextNum(r.ctx.Ctx(), entity.Name)
 	if err != nil {
