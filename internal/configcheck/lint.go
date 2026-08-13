@@ -659,6 +659,7 @@ var commonDSLGlobals = map[string]bool{
 	"перечисления": true, "enums": true,
 	"константы": true, "constants": true,
 	"движения": true, "movements": true,
+	"символы": true, "chars": true,
 	"запрос": true, "query": true,
 	"предопределённыезначения": true, "предопределенныезначения": true, "predefinedvalues": true,
 	"регистрынакопления": true, "регистрысведений": true, "регистрыбухгалтерии": true,
