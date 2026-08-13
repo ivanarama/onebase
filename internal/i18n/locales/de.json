@@ -898,6 +898,6 @@
   "каждый день": "täglich",
   "— общий счётчик —": "— gemeinsamer Zähler —",
   "У справочника счётчик кода не сбрасывается: сброс выдал бы уже занятый код": "Der Codezähler eines Katalogs wird nie zurückgesetzt: ein Reset würde einen bereits vergebenen Code ausgeben",
-  "Уникальность вместе со сбросом счётчика требует маску даты в префиксе, например {YYYY}-": "Eindeutigkeit zusammen mit einem Zähler-Reset erfordert eine Datumsmaske im Präfix, zum Beispiel {YYYY}-",
+  "Уникальность вместе со сбросом счётчика требует маску даты, различающую периоды, например {YYYY}{MM}{DD}-": "Eindeutigkeit zusammen mit einem Zähler-Reset erfordert eine Datumsmaske, die Perioden unterscheidet, zum Beispiel {YYYY}{MM}{DD}-",
   "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "Das Präfix unterstützt Datumsmasken: {YYYY}, {YY}, {MM}, {DD}. Eindeutigkeit zusammen mit einem Zähler-Reset erfordert eine Maske — sonst wiederholt sich der Wert in der nächsten Periode. Vorhandene Datensätze bleiben ohne Wert; onebase renumber füllt sie auf."
 }
