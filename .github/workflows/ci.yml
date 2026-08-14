@@ -179,6 +179,31 @@ jobs:
           done
           echo "JS syntax: чисто ($n файлов)"
 
+      # Отбор по `git ls-files '*.js'` физически не видит inline-<script> внутри
+      # Go-шаблонов — а они там есть, и #758 добавил ещё один. Для компилятора
+      # Go это текст, поэтому ошибка в шаблонном JS проходит все гейты зелёной
+      # и всплывает у пользователя пустой страницей (#879, класс #684).
+      - name: Inline JS syntax check (Go templates)
+        run: |
+          set -eu
+          tmp="${RUNNER_TEMP:-/tmp}/inline-js"
+          rm -rf "$tmp"
+          files="$(git ls-files '*.go' | grep -v '_test\.go$' | xargs grep -l '<script' || true)"
+          [ -n "$files" ] || { echo "::error::не найдено ни одного шаблона с <script> — сломан отбор"; exit 1; }
+          # jsextract сам падает, если не извлёк ни одного блока: пустая выдача
+          # означала бы не «чисто», а сломанный экстрактор.
+          go run ./tools/jsextract -out "$tmp" $files
+          n=0
+          for f in "$tmp"/*.js; do
+            node --check "$f" || {
+              echo "::error::синтаксическая ошибка в inline-скрипте; источник — в первой строке $f"
+              head -1 "$f"
+              exit 1
+            }
+            n=$((n+1))
+          done
+          echo "Inline JS syntax: чисто ($n блоков)"
+
 
       # -race на Linux работает без CGo-плясок (на Windows нужен gcc) и ловит
       # гонки разделяемого интерпретатора и других синглтонов (план 52/56).
