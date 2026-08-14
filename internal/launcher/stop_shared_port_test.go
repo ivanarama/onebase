@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // foreignListener — посторонний процесс на порту: onebase-идентичность не
@@ -43,13 +45,17 @@ func sharedPortFixture(t *testing.T) (*handler, int) {
 	t.Helper()
 	port := foreignListener(t)
 	st := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
-	for _, b := range []*Base{
+	legacy := []*Base{
 		{ID: "tasks", Name: "Задачи", ConfigSource: "file", Path: t.TempDir(), Port: port, ControlToken: "tok-tasks"},
 		{ID: "mini", Name: "MiniConf", ConfigSource: "file", Path: t.TempDir(), Port: port, ControlToken: "tok-mini"},
-	} {
-		if err := st.Add(b); err != nil {
-			t.Fatalf("store.Add: %v", err)
-		}
+	}
+	// Duplicate ports can exist in files written by older launchers. Keep this
+	// compatibility fixture at the raw-document layer: new Add/Update mutations
+	// now reject introducing the same invalid state.
+	if err := st.mutateDocument(func(doc *yaml.Node) (bool, error) {
+		return true, setStoreBases(doc, legacy)
+	}); err != nil {
+		t.Fatalf("write legacy shared-port registry: %v", err)
 	}
 	return &handler{store: st, runner: NewRunner()}, port
 }

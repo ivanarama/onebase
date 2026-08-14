@@ -206,14 +206,31 @@ jobs:
       #
       # Код под -tags webview сюда не входит: webview_go требует CGo, и при
       # CGO_ENABLED=0 все его файлы исключаются («build constraints exclude
-      # all Go files»), то есть кросс-проверка не проверяла бы ничего.
-      # Для него нужен windows-раннер с CGo — пока покрыт только release.yml.
+      # all Go files»). Его отдельно компилирует launcher-webview-build ниже.
       - name: Build (windows, check compile)
         env:
           CGO_ENABLED: 0
           GOOS: windows
           GOARCH: amd64
         run: go build ./...
+
+  # Native close handling lives behind both Windows and CGo build constraints.
+  # A release-only compile check discovers launcher-window regressions too late;
+  # compile the actual GUI target on every PR that runs this workflow.
+  launcher-webview-build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+      - name: Build launcher GUI (Windows WebView2)
+        shell: pwsh
+        env:
+          CGO_ENABLED: 1
+        run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
 
   lint:
     runs-on: ubuntu-latest

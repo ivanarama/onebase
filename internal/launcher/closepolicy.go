@@ -63,6 +63,16 @@ func planForClose(policy string, running int) closePlan {
 	}
 }
 
+// planForRuntimeClose keeps the native-window decision and its notification
+// contract together. With ask policy and only unverified listeners there is no
+// meaningful stop/background question, but silently closing would hide the
+// very processes this flow was added to report.
+func planForRuntimeClose(policy string, running []RunningBase) (closePlan, bool) {
+	plan := planForClose(policy, stoppableBases(running))
+	warn := normalizeOnClose(policy) == OnCloseAsk && plan == planKeepRunning && len(running) != 0
+	return plan, warn
+}
+
 // RunningBase — работающая база для диалога закрытия.
 type RunningBase struct {
 	Name         string `json:"name"`
@@ -275,7 +285,8 @@ func (h *handler) closeInfo(w http.ResponseWriter, r *http.Request) {
 
 // closeStop — JSON-вариант «Стоп всё» для close state-machine. Успех означает,
 // что повторная свежая проверка не нашла работающих баз. Только после этого
-// сервер просит окно завершиться; клиенту не нужно гоняться отдельным /quit.
+// сервер просит окно завершиться. Если остались неподтверждённые процессы,
+// клиент сначала показывает warning и подтверждает его отдельным /quit.
 func (h *handler) closeStop(w http.ResponseWriter, r *http.Request) {
 	skipped, err := h.stopAllBases(true)
 	if err != nil {
@@ -287,14 +298,20 @@ func (h *handler) closeStop(w http.ResponseWriter, r *http.Request) {
 		resp["warning"] = skippedBasesText(resolveLang(r), skipped)
 	}
 	writeJSON(w, http.StatusOK, resp)
-	if h.quitFn != nil {
-		quit := h.quitFn
-		go func() {
-			// Дать JSON-ответу уйти до Server.Close: иначе fetch увидит network
-			// error ровно после успешной, подтверждённой остановки.
-			time.Sleep(100 * time.Millisecond)
-			quit()
-		}()
+	if h.quitFn == nil {
+		return
+	}
+	delay := launcherQuitDelay
+	if len(skipped) != 0 {
+		// The browser acknowledges this warning with POST /quit after alert/modal
+		// returns. Keep a bounded fallback for a disconnected client while the
+		// lifecycle gate remains intentionally closed.
+		delay = launcherWarningQuitFallback
+	}
+	if h.scheduleQuit != nil {
+		h.scheduleQuit(delay, h.quitFn)
+	} else {
+		time.AfterFunc(delay, h.quitFn)
 	}
 }
 

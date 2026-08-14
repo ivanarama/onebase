@@ -363,17 +363,19 @@ test('uncontrollable occupied port is labelled but stop stays available', async 
   assert.match(h.elements.list.children[1].textContent, /8080/);
 });
 
-// Если останавливать нечего — вопрос бессмыслен: чужой процесс продолжит
-// работать при любом ответе, поэтому окно просто закрывается.
-test('nothing the launcher can stop closes the window without a prompt', async () => {
+// Если останавливать нечего — вопрос stop/background бессмыслен, но занятый
+// неподтверждённый порт всё равно должен быть показан до закрытия.
+test('unverified-only ask path warns without showing the choice prompt', async () => {
   const h = createHarness();
   h.enqueue(200, {running: [{name: 'Foreign', port: 8080, controllable: false}], policy: 'ask'});
+  h.enqueue(200, {ok: true, warning: 'Foreign (порт 8080)'});
   h.enqueue(200, {ok: true});
 
   h.context.quitLauncher();
   await drain();
   assert.equal(h.context._closeFlow.state, 'done');
-  assert.deepEqual(urls(h), ['/close-info', '/quit']);
+  assert.deepEqual(urls(h), ['/close-info', '/close-stop', '/quit']);
+  assert.match(h.state.alerts.join('\n'), /8080/);
 });
 
 // Оставшиеся базы показываются пользователю до закрытия окна: другого места
@@ -382,11 +384,18 @@ test('close-stop warning about skipped bases is shown before the window closes',
   const h = createHarness();
   h.enqueue(200, {running: [{name: 'Main', port: 8079, controllable: true}], policy: 'stop'});
   h.enqueue(200, {ok: true, warning: 'Foreign (порт 8080)'});
+  h.enqueue(200, {ok: true});
+  const recordAlert = h.context.alert;
+  h.context.alert = function(message) {
+    assert.deepEqual(urls(h), ['/close-info', '/close-stop'], '/quit raced ahead of warning acknowledgement');
+    recordAlert(message);
+  };
 
   h.context.quitLauncher();
   await drain();
   assert.equal(h.context._closeFlow.state, 'done');
   assert.match(h.state.alerts.join('\n'), /8080/);
+  assert.deepEqual(urls(h), ['/close-info', '/close-stop', '/quit']);
 });
 
 test('Stop all confirmation never trusts stale rendered running count', () => {

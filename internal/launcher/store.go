@@ -62,6 +62,21 @@ var storeProcessMu sync.RWMutex
 
 var ErrBaseNotFound = errors.New("launcher: base not found")
 
+// BasePortConflictError is returned from the same transaction that would write
+// a registration. Handler-level List checks provide friendly early feedback,
+// but only this error closes the check/write race across goroutines and across
+// launcher processes.
+type BasePortConflictError struct {
+	Port          int
+	OwnerID       string
+	OwnerName     string
+	SuggestedPort int
+}
+
+func (e *BasePortConflictError) Error() string {
+	return fmt.Sprintf("launcher store: port %d is already registered to base %q", e.Port, e.OwnerID)
+}
+
 func NewStore() (*Store, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -688,9 +703,6 @@ func (s *Store) Add(b *Base) error {
 	if b.Created.IsZero() {
 		b.Created = time.Now()
 	}
-	if b.Port == 0 {
-		b.Port = 8080
-	}
 	if b.ConfigSource == "" {
 		b.ConfigSource = "database"
 	}
@@ -699,6 +711,7 @@ func (s *Store) Add(b *Base) error {
 		if err != nil {
 			return false, err
 		}
+		registered := make([]*Base, 0, len(bases.Content))
 		for _, candidate := range bases.Content {
 			existing, err := decodeBaseNode(candidate)
 			if err != nil {
@@ -706,6 +719,18 @@ func (s *Store) Add(b *Base) error {
 			}
 			if existing.ID == b.ID {
 				return false, fmt.Errorf("launcher store: base %q is already registered", b.ID)
+			}
+			registered = append(registered, existing)
+		}
+		// An omitted port is an allocation request, not an implicit request for a
+		// duplicate 8080. Choose it while holding the same cross-process lock.
+		if b.Port == 0 {
+			b.Port = freeRegistryPort(registered)
+		}
+		if owner := portOwner(registered, b.ID, b.Port); owner != nil {
+			return false, &BasePortConflictError{
+				Port: b.Port, OwnerID: owner.ID, OwnerName: owner.Name,
+				SuggestedPort: freeRegistryPort(registered),
 			}
 		}
 		var value yaml.Node
@@ -725,12 +750,15 @@ func (s *Store) Update(b *Base) error {
 		}
 		var target *yaml.Node
 		var existing *Base
+		registered := make([]*Base, 0)
 		if bases != nil {
+			registered = make([]*Base, 0, len(bases.Content))
 			for _, candidate := range bases.Content {
 				decoded, err := decodeBaseNode(candidate)
 				if err != nil {
 					return false, err
 				}
+				registered = append(registered, decoded)
 				if decoded.ID != b.ID {
 					continue
 				}
@@ -742,6 +770,16 @@ func (s *Store) Update(b *Base) error {
 		}
 		if target == nil {
 			return false, fmt.Errorf("base %q not found", b.ID)
+		}
+		// Preserve the ability to repair or rename a legacy registry that already
+		// contains duplicates, but reject every newly introduced collision.
+		if b.Port != existing.Port {
+			if owner := portOwner(registered, b.ID, b.Port); owner != nil {
+				return false, &BasePortConflictError{
+					Port: b.Port, OwnerID: owner.ID, OwnerName: owner.Name,
+					SuggestedPort: freeRegistryPort(registered),
+				}
+			}
 		}
 		updated := b
 		if updated.ControlToken == "" && existing.ControlToken != "" {

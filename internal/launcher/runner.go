@@ -629,6 +629,19 @@ func (r *Runner) StopAll(bases []*Base, holdStarts bool) ([]RunningBase, error) 
 // нельзя было закрыть. Теперь останавливается всё, чем лаунчер доказуемо
 // владеет, а неуправляемая занятость возвращается вызывающему для показа.
 func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) ([]RunningBase, error) {
+	return r.stopAllHeldWithPolicy(bases, holdStarts, false)
+}
+
+// stopAllHeldStrict is the fail-closed variant used while replacing the
+// launcher binary. Unlike an ordinary user-requested "Stop all", an update
+// must not continue when a registered port becomes occupied by an unverified
+// process between two preflights. The rejection happens before the first stop,
+// so the caller never has to recover a partially stopped set for this case.
+func (r *Runner) stopAllHeldStrict(bases []*Base, holdStarts bool) ([]RunningBase, error) {
+	return r.stopAllHeldWithPolicy(bases, holdStarts, true)
+}
+
+func (r *Runner) stopAllHeldWithPolicy(bases []*Base, holdStarts, rejectSkipped bool) ([]RunningBase, error) {
 	type procInfo struct {
 		id   string
 		name string
@@ -684,6 +697,14 @@ func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) ([]RunningBase, err
 		if statuses[i].Occupied && !statuses[i].Controllable {
 			skipped = append(skipped, RunningBase{Name: base.Name, Port: base.Port})
 		}
+	}
+	if rejectSkipped && len(skipped) != 0 {
+		// Error paths always release the lifecycle lease; stopAllForUpdate relies
+		// on that contract before it attempts recovery.
+		r.AllowStarts()
+		first := skipped[0]
+		return skipped, fmt.Errorf("база %q или её порт %d заняты процессом без подтверждённого безопасного управления",
+			first.Name, first.Port)
 	}
 
 	for i := range all {

@@ -40,6 +40,20 @@ func TestPlanForClose(t *testing.T) {
 	}
 }
 
+func TestPlanForRuntimeCloseWarnsWhenAskHasOnlyUnverifiedListeners(t *testing.T) {
+	running := []RunningBase{{Name: "Foreign", Port: 8080, Controllable: false}}
+	plan, warn := planForRuntimeClose(OnCloseAsk, running)
+	if plan != planKeepRunning || !warn {
+		t.Fatalf("ask + unverified-only decision = plan %d, warn %v", plan, warn)
+	}
+	if _, warn := planForRuntimeClose(OnCloseBackground, running); warn {
+		t.Fatal("remembered background policy unexpectedly warns on every close")
+	}
+	if _, warn := planForRuntimeClose(OnCloseAsk, nil); warn {
+		t.Fatal("empty runtime snapshot produced an unverified-process warning")
+	}
+}
+
 // Кнопки системного MessageBox подписывает Windows, поэтому смысл каждой
 // обязан быть в тексте — иначе «Нет» читается как «не закрывать».
 func TestCloseDialogText_ExplainsButtons(t *testing.T) {
@@ -195,7 +209,7 @@ func TestCloseState_IgnoresStalePageStatusCache(t *testing.T) {
 // Процесс, принадлежность которого не подтверждена, лаунчер не убивает — но и
 // закрыться из-за него не отказывается: иначе окно нельзя закрыть, пока порт
 // занят. Пользователь узнаёт об оставшейся базе из предупреждения.
-func TestCloseStop_WarnsAboutUnidentifiedProcessAndCloses(t *testing.T) {
+func TestCloseStop_WaitsForUnidentifiedProcessWarningAcknowledgement(t *testing.T) {
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			w.Header().Set("X-OneBase-Version", "legacy")
@@ -211,8 +225,20 @@ func TestCloseStop_WarnsAboutUnidentifiedProcessAndCloses(t *testing.T) {
 	if err := st.Add(&Base{ID: "legacy", Name: "Старая", Port: port}); err != nil {
 		t.Fatal(err)
 	}
-	quit := make(chan struct{}, 1)
-	h := &handler{store: st, runner: NewRunner(), quitFn: func() { quit <- struct{}{} }}
+	srv := &Server{quit: make(chan struct{})}
+	var fallback func()
+	srv.scheduleQuit = func(delay time.Duration, fn func()) {
+		switch delay {
+		case launcherWarningQuitFallback:
+			fallback = fn
+		case launcherQuitDelay:
+			fn()
+		default:
+			t.Fatalf("unexpected quit delay: %s", delay)
+		}
+	}
+	h := &handler{store: st, runner: NewRunner(), quitFn: srv.requestQuit, scheduleQuit: srv.after}
+	srv.h = h
 	rec := httptest.NewRecorder()
 	h.closeStop(rec, httptest.NewRequest(http.MethodPost, "/close-stop", nil))
 	if rec.Code != http.StatusOK {
@@ -227,9 +253,22 @@ func TestCloseStop_WarnsAboutUnidentifiedProcessAndCloses(t *testing.T) {
 		t.Fatalf("клиент не узнал, что база осталась работать: %q", warning)
 	}
 	select {
-	case <-quit:
-	case <-time.After(2 * time.Second):
-		t.Fatal("окно не закрылось: пока порт занят чужим процессом, выйти было бы нельзя")
+	case <-srv.Done():
+		t.Fatal("launcher closed before the skipped-base warning was acknowledged")
+	default:
+	}
+	if fallback == nil {
+		t.Fatal("disconnected-client fallback was not scheduled")
+	}
+	ack := httptest.NewRecorder()
+	srv.handleQuit(ack, httptest.NewRequest(http.MethodPost, "/quit", nil))
+	if ack.Code != http.StatusOK {
+		t.Fatalf("warning acknowledgement code %d: %s", ack.Code, ack.Body.String())
+	}
+	select {
+	case <-srv.Done():
+	default:
+		t.Fatal("launcher did not close after warning acknowledgement")
 	}
 	if portFree(port) {
 		t.Fatal("legacy-процесс был убит по номеру порта")

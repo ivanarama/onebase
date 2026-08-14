@@ -280,8 +280,13 @@ func (s *windowSession) handleWindowClose() bool {
 		return true
 	}
 
-	switch planForClose(policy, stoppableBases(running)) {
+	plan, warnUnverified := planForRuntimeClose(policy, running)
+	switch plan {
 	case planKeepRunning:
+		if warnUnverified {
+			lang := currentLang()
+			showNativeWarning(s.hwnd, skippedBasesText(lang, running), tr(lang, "Закрытие окна информационных баз"))
+		}
 		s.allowClose()
 		return false
 	case planStopAll:

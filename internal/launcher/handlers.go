@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -89,7 +90,8 @@ type handler struct {
 	isoBrowser isolatedBrowser
 	// quitFn просит лаунчер закрыться — нужен обновлению платформы, которое
 	// заменяет бинарь и перезапускает процесс из нового файла (план 92).
-	quitFn func()
+	quitFn       func()
+	scheduleQuit func(time.Duration, func())
 
 	// incidents — последние ошибки самого лаунчера (план 116). Может быть nil:
 	// часть тестов собирает handler литералом.
@@ -409,6 +411,13 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.Add(b); err != nil {
+		if message, ok := storedPortConflictError(lang, err); ok {
+			render(w, r, "page-form", map[string]any{
+				"Title": tr(lang, "onebase — Добавить базу"),
+				"IsNew": true, "Base": b, "Error": message,
+			})
+			return
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -511,6 +520,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	b.LastOpened = current.LastOpened
 	err = h.store.Update(b)
 	if err != nil {
+		if message, ok := storedPortConflictError(lang, err); ok {
+			render(w, r, "page-form", map[string]any{
+				"Title": tr(lang, "onebase — Изменить базу"),
+				"IsNew": false, "Base": b, "Error": message,
+			})
+			return
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -1177,8 +1193,20 @@ func portOwner(bases []*Base, excludeID string, port int) *Base {
 
 // portConflictError — текст отказа с подсказкой свободного порта.
 func portConflictError(lang string, owner *Base, bases []*Base) string {
+	return formatPortConflictError(lang, owner.Port, owner.Name, freeRegistryPort(bases))
+}
+
+func storedPortConflictError(lang string, err error) (string, bool) {
+	var conflict *BasePortConflictError
+	if !errors.As(err, &conflict) {
+		return "", false
+	}
+	return formatPortConflictError(lang, conflict.Port, conflict.OwnerName, conflict.SuggestedPort), true
+}
+
+func formatPortConflictError(lang string, port int, ownerName string, suggestedPort int) string {
 	return fmt.Sprintf(tr(lang, "Порт %d уже закреплён за базой «%s»: две базы не могут работать на одном порту. Свободный порт: %d"),
-		owner.Port, owner.Name, freeRegistryPort(bases))
+		port, ownerName, suggestedPort)
 }
 
 // freeRegistryPort — первый номер порта, не занятый другой базой реестра.

@@ -265,13 +265,17 @@ func TestStopAll_DoesNotKillUnidentifiedListener(t *testing.T) {
 func TestStopAll_StopsControllableBasesDespiteUnidentifiedPort(t *testing.T) {
 	const token = "adopted-token"
 	processExited := make(chan struct{})
-	close(processExited)
 	useExitWaiter(t, processExited)
 
 	var adoptedServer *httptest.Server
 	var stopOnce sync.Once
 	adoptedServer = httptest.NewServer(authenticatedControlHandler(t, token, "adopted", func() {
-		stopOnce.Do(func() { go adoptedServer.Close() })
+		stopOnce.Do(func() {
+			go func() {
+				adoptedServer.Close()
+				close(processExited)
+			}()
+		})
 	}))
 	t.Cleanup(adoptedServer.Close)
 	adopted := controlTestBase(t, adoptedServer, token)

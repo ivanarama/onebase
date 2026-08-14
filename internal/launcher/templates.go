@@ -605,8 +605,15 @@ function loadCloseInfo() {
 	  if (data.running[i] && data.running[i].controllable !== false) stoppable++;
 	}
 	if (stoppable === 0) {
-	  _closeFlow.choice = 'background';
-	  executeQuit();
+	  if (data.running.length) {
+	    // Re-check through the verified stop path so an unverified listener is
+	    // reported instead of making ask-policy close silently.
+	    _closeFlow.choice = 'stop';
+	    executeStop();
+	  } else {
+	    _closeFlow.choice = 'background';
+	    executeQuit();
+	  }
 	  return;
 	}
 	showCloseModal(data.running);
@@ -668,21 +675,29 @@ function closeChoice(kind) {
 function executeStop() {
   _closeFlow.state = 'stopping';
   showCloseBusy(_closeMessages.stopping);
+  var failureStage = 'stop';
   closeRequestJSON('/close-stop', {method: 'POST'}).then(function(data) {
     if (data && data.ok === false) throw new Error(data.error || _closeMessages.stopError);
     if (data && Array.isArray(data.remaining) && data.remaining.length) {
       throw new Error(data.remaining.map(function(base) { return base.name || base.port || String(base); }).join(', '));
     }
+    // Базы, которые лаунчер не вправе останавливать, продолжают работать.
+    // Сказать об этом надо до /quit: native WebView уничтожается по Done.
+    if (data && data.warning) {
+      alert(data.warning);
+      failureStage = 'quit';
+      _closeFlow.state = 'quitting';
+      showCloseBusy(_closeMessages.quitting);
+      return closeRequestJSON('/quit', {method: 'POST'});
+    }
+    return null;
+  }).then(function() {
     _closeFlow.state = 'done';
     showCloseBusy(_closeMessages.stopped);
-    // Базы, которые лаунчер не вправе останавливать, продолжают работать.
-    // Сказать об этом надо до закрытия окна — потом сообщать уже некуда.
-    if (data && data.warning) alert(data.warning);
     finishClientClose();
   }).catch(function(err) {
-    // /close-stop сам завершает launcher только после подтверждённой остановки.
-    // При любой ошибке /quit здесь принципиально не вызывается.
-    showCloseError('stop', err);
+	// /quit is sent only after a successful verified stop and warning ack.
+	showCloseError(failureStage, err);
   });
 }
 
