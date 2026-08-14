@@ -20,6 +20,9 @@ permissions:
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+  # По умолчанию GitHub держит только один pending-run и третий пуш отменяет
+  # второй. max сохраняет до 100 ожидающих релизов вместо их тихой замены.
+  queue: max
 
 jobs:
   build:
