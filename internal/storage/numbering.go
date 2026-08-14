@@ -239,7 +239,23 @@ func (db *DB) GetBasePrefix(ctx context.Context) string {
 // защита работала на одном входе из двух (#871). Возвращает прежнее значение —
 // вызывающему есть что сказать пользователю.
 func (db *DB) ResetBasePrefixAfterRestore(ctx context.Context) (string, error) {
-	prev := db.GetBasePrefix(ctx)
+	exists, err := db.tableExists(ctx, "_settings")
+	if err != nil {
+		return "", fmt.Errorf("сброс префикса базы: проверка настроек: %w", err)
+	}
+	if !exists {
+		return "", nil
+	}
+	var prev string
+	err = db.QueryRow(ctx,
+		`SELECT value FROM _settings WHERE key = `+db.dialect.Placeholder(1), basePrefixKey).Scan(&prev)
+	if err != nil {
+		if IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("сброс префикса базы: чтение прежнего значения: %w", err)
+	}
+	prev = strings.TrimSpace(prev)
 	if prev == "" {
 		return "", nil
 	}
