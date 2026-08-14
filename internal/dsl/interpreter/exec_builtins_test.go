@@ -154,13 +154,20 @@ func TestExecuteCommand_ExecutionContextCancelsDescendantTree(t *testing.T) {
 		t.Fatalf("descendant-held output pipe outlived cancellation: %v", elapsed)
 	}
 
-	time.Sleep(350 * time.Millisecond)
-	second, readErr := os.ReadFile(heartbeat)
-	if readErr != nil {
-		t.Fatalf("read descendant heartbeat after cancellation: %v", readErr)
-	}
-	if strings.TrimSpace(string(second)) != point.heartbeat {
-		t.Fatalf("descendant survived command cancellation: heartbeat advanced from %q to %q", point.heartbeat, strings.TrimSpace(string(second)))
+	// Poll instead of taking one delayed snapshot: killing the child while
+	// os.WriteFile is between truncate and write can legitimately leave an
+	// empty file. A surviving child will publish another non-empty sequence on
+	// its next 40 ms tick, which this window must observe.
+	stableUntil := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(stableUntil) {
+		second, readErr := os.ReadFile(heartbeat)
+		if readErr != nil {
+			t.Fatalf("read descendant heartbeat after cancellation: %v", readErr)
+		}
+		if value := strings.TrimSpace(string(second)); value != "" && value != point.heartbeat {
+			t.Fatalf("descendant survived command cancellation: heartbeat advanced from %q to %q", point.heartbeat, value)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -185,7 +192,7 @@ func TestExecProcessTreeHelper(t *testing.T) {
 	mode, heartbeat := os.Args[separator+1], os.Args[separator+2]
 	switch mode {
 	case "parent":
-		child := exec.Command(os.Args[0], "-test.run=^TestExecProcessTreeHelper$", "--", "onebase-exec-tree-helper", "child", heartbeat)
+		child := exec.Command(os.Args[0], "-test.run=^TestExecProcessTreeHelper$", "--", "onebase-exec-tree-helper", "child", heartbeat) //nolint:gosec // G204: fixed test binary and arguments; heartbeat is a t.TempDir path
 		child.Stdout = os.Stdout
 		child.Stderr = os.Stderr
 		if err := child.Start(); err != nil {
@@ -196,7 +203,7 @@ func TestExecProcessTreeHelper(t *testing.T) {
 	case "child":
 		deadline := time.Now().Add(12 * time.Second)
 		for sequence := 1; time.Now().Before(deadline); sequence++ {
-			if err := os.WriteFile(heartbeat, []byte(strconv.Itoa(sequence)), 0o600); err != nil {
+			if err := os.WriteFile(heartbeat, []byte(strconv.Itoa(sequence)), 0o600); err != nil { //nolint:gosec // G703: subprocess test helper writes only the t.TempDir path supplied by its parent
 				t.Fatalf("write process-tree heartbeat: %v", err)
 			}
 			time.Sleep(40 * time.Millisecond)

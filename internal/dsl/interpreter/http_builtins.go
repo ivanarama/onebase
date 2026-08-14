@@ -171,11 +171,11 @@ func NewHTTPFunctions(guard NetGuard, ctxSources ...CtxSource) map[string]any {
 		ctx := contextFromSource(ctxSource)
 		checkExecutionContext(ctx)
 		client := &http.Client{Timeout: 30 * time.Second}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G704: URL is the explicit DSL network capability, gated by NetGuard/sandbox policy
 		if err != nil {
 			panic(userError{Msg: "HTTPПолучить: " + err.Error()})
 		}
-		resp, err := client.Do(req)
+		resp, err := client.Do(req) //nolint:gosec // G704: request is the explicit DSL network capability, gated by NetGuard/sandbox policy
 		if err != nil {
 			checkExecutionContext(ctx)
 			panic(userError{Msg: "HTTPПолучить: " + err.Error()})
@@ -193,12 +193,12 @@ func NewHTTPFunctions(guard NetGuard, ctxSources ...CtxSource) map[string]any {
 		ctx := contextFromSource(ctxSource)
 		checkExecutionContext(ctx)
 		client := &http.Client{Timeout: 30 * time.Second}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body)) //nolint:gosec // G704: URL is the explicit DSL network capability, gated by NetGuard/sandbox policy
 		if err != nil {
 			panic(userError{Msg: "HTTPОтправить: " + err.Error()})
 		}
 		req.Header.Set("Content-Type", contentType)
-		resp, err := client.Do(req)
+		resp, err := client.Do(req) //nolint:gosec // G704: request is the explicit DSL network capability, gated by NetGuard/sandbox policy
 		if err != nil {
 			checkExecutionContext(ctx)
 			panic(userError{Msg: "HTTPОтправить: " + err.Error()})
