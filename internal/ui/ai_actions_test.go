@@ -177,6 +177,63 @@ func TestAIActions_ReferenceLabelsHonorFieldMasking(t *testing.T) {
 	}
 }
 
+// Явно заданный «Номер» не затирается автонумерацией (Д13, issue #866):
+// локальная копия проверки пустоты читала obj.Fields["Номер"] напрямую, тогда
+// как Object.Set хранит ключи в нижнем регистре, — условие «пусто» было
+// истинным всегда, и ИИ-действие молча переписывало номер пользователя.
+func TestAIActionRun_KeepsExplicitNumber(t *testing.T) {
+	ents := aiActionsEntities()
+	s, ctx := newSubmitTestServer(t, ents)
+	contraID := uuid.New()
+	if err := s.store.Upsert(ctx, "Контрагенты", contraID, map[string]any{"Наименование": "Ромашка"}, ents[0]); err != nil {
+		t.Fatal(err)
+	}
+	action, res, _ := stageCreateOrder(t, s, map[string]any{
+		"сущность": "Заказ",
+		"поля": map[string]any{
+			"Номер":      "ЗК-777",
+			"Дата":       "2026-07-17T10:30",
+			"Контрагент": "Ромашка",
+		},
+	})
+	if res.IsError {
+		t.Fatalf("staging: %s", res.Content)
+	}
+
+	body, _ := json.Marshal(action)
+	rr := httptest.NewRecorder()
+	s.aiActionRun(rr, httptest.NewRequest("POST", "/ui/ai/action", strings.NewReader(string(body))))
+
+	var out struct {
+		OK    bool   `json:"ok"`
+		ID    string `json:"id"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("разбор ответа: %v (%s)", err, rr.Body.String())
+	}
+	if !out.OK {
+		t.Fatalf("ожидался ok, получено: %s", out.Error)
+	}
+	id, err := uuid.Parse(out.ID)
+	if err != nil {
+		t.Fatalf("нет корректного id в ответе: %q", out.ID)
+	}
+	row, err := s.store.GetByID(ctx, "Заказ", id, ents[1])
+	if err != nil {
+		t.Fatalf("документ не найден: %v", err)
+	}
+	num := ""
+	for k, v := range row {
+		if strings.EqualFold(k, "Номер") && v != nil {
+			num = fmt.Sprint(v)
+		}
+	}
+	if num != "ЗК-777" {
+		t.Fatalf("явный номер затёрт: got %q, want %q", num, "ЗК-777")
+	}
+}
+
 func TestAIActionRun_CreatesDraft(t *testing.T) {
 	ents := aiActionsEntities()
 	s, ctx := newSubmitTestServer(t, ents)
