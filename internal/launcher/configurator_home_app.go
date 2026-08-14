@@ -112,84 +112,98 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 		title = subName
 	}
 
-	type yamlContents struct {
-		Catalogs   []string `yaml:"catalogs,omitempty"`
-		Documents  []string `yaml:"documents,omitempty"`
-		Registers  []string `yaml:"registers,omitempty"`
-		InfoRegs   []string `yaml:"inforegs,omitempty"`
-		Reports    []string `yaml:"reports,omitempty"`
-		Processors []string `yaml:"processors,omitempty"`
-		Journals   []string `yaml:"journals,omitempty"`
-		Pages      []string `yaml:"pages,omitempty"`
-	}
-	type yamlSubsystem struct {
-		Name     string             `yaml:"name"`
-		Title    string             `yaml:"title"`
-		Titles   map[string]string  `yaml:"titles,omitempty"`
-		Icon     string             `yaml:"icon,omitempty"`
-		Order    int                `yaml:"order"`
-		Roles    []string           `yaml:"roles,omitempty"`
-		Contents yamlContents       `yaml:"contents"`
-		HomePage *metadata.HomePage `yaml:"home_page,omitempty"`
-	}
-
 	relPath := "subsystems/" + nameToFilename(subName) + ".yaml"
 
-	ys := yamlSubsystem{
-		Name:  subName,
-		Title: title,
-		Icon:  icon,
-		Order: order,
-	}
-	ys.Contents.Catalogs = r.Form["catalogs"]
-	ys.Contents.Documents = r.Form["documents"]
-	ys.Contents.Registers = r.Form["registers"]
-	ys.Contents.InfoRegs = r.Form["inforegs"]
-	ys.Contents.Reports = r.Form["reports"]
-	ys.Contents.Processors = r.Form["processors"]
-	ys.Contents.Journals = r.Form["journals"]
-
-	// Сохраняем переводы (titles) и метаданные рабочего стола из уже
-	// существующего файла, чтобы перезапись не теряла данные, которых нет в форме.
-	if raw, ok := h.readConfigFileRaw(r.Context(), b, relPath); ok {
-		var existing yamlSubsystem
-		if yaml.Unmarshal(raw, &existing) == nil {
-			// Страницы и роли пока не редактируются этой формой — переносим их
-			// из текущей конфигурации, чтобы сохранение состава их не затирало.
-			ys.Roles = existing.Roles
-			ys.Contents.Pages = existing.Contents.Pages
-			if formHasMapField(r, "titles") {
-				ys.Titles = parseMapForm(r, "titles")
-			} else {
-				ys.Titles = existing.Titles
+	// Точечная правка YAML вместо пересборки файла из struct.
+	//
+	// Прежде файл собирался полным yaml.Marshal локальной struct, и всё, чего в
+	// ней нет — незнакомые ключи (нынешние и будущие) и любые комментарии, —
+	// молча исчезало при первом же сохранении из конфигуратора. Ровно этот
+	// антипаттерн уже дважды чинили: в config/app.yaml (#663) и в матрице ролей
+	// (#744). Часть данных struct пыталась спасать вручную, перечитывая файл и
+	// перенося roles/pages/titles/home_page обратно, — то есть список
+	// «что не потерять» приходилось вести руками, и он неизбежно отставал (#878).
+	raw, _ := h.readConfigFileRaw(r.Context(), b, relPath)
+	out, err := updateYAMLMapping(raw, relPath, func(doc *yaml.Node) error {
+		if err := setAppYAMLFields(doc, []appYAMLField{
+			{key: "name", val: subName},
+			{key: "title", val: title},
+			{key: "icon", val: strOrNil(icon)},
+			{key: "order", val: order},
+		}); err != nil {
+			return err
+		}
+		// Переводы правим только когда форма их прислала: иначе они остаются
+		// в файле как были.
+		if formHasMapField(r, "titles") {
+			titles := parseMapForm(r, "titles")
+			var val any
+			if len(titles) > 0 {
+				val = titles
 			}
-			ys.HomePage = existing.HomePage
+			if err := setYAMLMapField(doc, "titles", val); err != nil {
+				return err
+			}
 		}
-	} else if formHasMapField(r, "titles") {
-		ys.Titles = parseMapForm(r, "titles")
-	}
 
-	// Раскладка виджетов рабочего стола из формы: режим «Авто» — отмеченные
-	// галочками виджеты одним рядом; «По рядам» — ряды из drag-конструктора.
-	// Перезаписывает rows/layout, сохраняя title/titles рабочего стола.
-	rows, layout := rowsFromForm(r)
-	if len(rows) > 0 {
-		if ys.HomePage == nil {
-			ys.HomePage = &metadata.HomePage{}
+		contents, err := yamlSubMap(doc, "contents")
+		if err != nil {
+			return err
 		}
-		ys.HomePage.Rows = rows
-		ys.HomePage.Layout = layout
-		ys.HomePage.Widgets = nil // rows и flat widgets взаимоисключающи
-	} else if ys.HomePage != nil {
-		ys.HomePage.Rows = nil
-		// Если от рабочего стола ничего не осталось — убираем секцию целиком.
-		if ys.HomePage.Title == "" && len(ys.HomePage.Titles) == 0 &&
-			ys.HomePage.Layout == "" && len(ys.HomePage.Widgets) == 0 {
-			ys.HomePage = nil
+		// pages форма не редактирует — ключ не трогаем вовсе, он останется
+		// в файле сам по себе, без переноса руками.
+		for _, sec := range []struct {
+			key   string
+			field string
+		}{
+			{"catalogs", "catalogs"},
+			{"documents", "documents"},
+			{"registers", "registers"},
+			{"inforegs", "inforegs"},
+			{"reports", "reports"},
+			{"processors", "processors"},
+			{"journals", "journals"},
+		} {
+			var val any
+			if list := r.Form[sec.field]; len(list) > 0 {
+				val = list
+			}
+			if err := setYAMLMapField(contents, sec.key, val); err != nil {
+				return err
+			}
 		}
-	}
 
-	out, err := yaml.Marshal(&ys)
+		// Раскладка виджетов рабочего стола: режим «Авто» — отмеченные
+		// галочками виджеты одним рядом; «По рядам» — ряды из drag-конструктора.
+		// Правятся только rows/layout/widgets; title и titles рабочего стола
+		// остаются как в файле.
+		rows, layout := rowsFromForm(r)
+		if len(rows) > 0 {
+			home, err := yamlSubMap(doc, "home_page")
+			if err != nil {
+				return err
+			}
+			if err := setYAMLMapField(home, "rows", rows); err != nil {
+				return err
+			}
+			if err := setYAMLMapField(home, "layout", strOrNil(layout)); err != nil {
+				return err
+			}
+			// rows и плоский список виджетов взаимоисключающи.
+			return setYAMLMapField(home, "widgets", nil)
+		}
+		if home, err := yamlSubMap(doc, "home_page"); err == nil {
+			if err := setYAMLMapField(home, "rows", nil); err != nil {
+				return err
+			}
+			// Пустой рабочий стол убираем целиком, чтобы не оставлять
+			// «home_page: {}».
+			if len(home.Content) == 0 {
+				return setYAMLMapField(doc, "home_page", nil)
+			}
+		}
+		return nil
+	})
 	if err == nil {
 		err = saveConfigFile(r, h, b, relPath, out)
 	}

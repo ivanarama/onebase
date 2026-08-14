@@ -91,7 +91,14 @@ func readAppYAML(ctx context.Context, b *Base, v any) error {
 // как было. Пустой или отсутствующий файл — начинаем с чистого отображения;
 // битый YAML и не-отображение в корне возвращают ошибку: молча затереть чужой
 // файл хуже, чем отказать в сохранении (починить можно на вкладке «Файлы»).
-func updateAppYAML(raw []byte, edit func(doc *yaml.Node) error) ([]byte, error) {
+// updateYAMLMapping точечно правит YAML-документ, сохраняя всё, чего правка не
+// касается: неизвестные ключи, комментарии, порядок и форматирование.
+//
+// docName участвует только в тексте ошибки — функция общая для нескольких
+// файлов конфигурации (config/app.yaml, subsystems/*.yaml), и сообщение
+// «ожидалось YAML-отображение в config/app.yaml» при сохранении подсистемы
+// отправляло бы искать проблему не в том файле.
+func updateYAMLMapping(raw []byte, docName string, edit func(doc *yaml.Node) error) ([]byte, error) {
 	root := yaml.Node{Kind: yaml.DocumentNode,
 		Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	if len(bytes.TrimSpace(raw)) > 0 {
@@ -101,7 +108,7 @@ func updateAppYAML(raw []byte, edit func(doc *yaml.Node) error) ([]byte, error) 
 		}
 		if parsed.Kind != yaml.DocumentNode || len(parsed.Content) == 0 ||
 			parsed.Content[0].Kind != yaml.MappingNode {
-			return nil, fmt.Errorf("updateAppYAML: ожидалось YAML-отображение в корне config/app.yaml")
+			return nil, fmt.Errorf("%s: ожидалось YAML-отображение в корне", docName)
 		}
 		root = parsed
 	}
@@ -110,8 +117,8 @@ func updateAppYAML(raw []byte, edit func(doc *yaml.Node) error) ([]byte, error) 
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
-	// app.yaml пишут руками и держат в git — отступ по умолчанию (4) переколбасил
-	// бы все вложенные блоки при первом же сохранении.
+	// Конфигурацию пишут руками и держат в git — отступ по умолчанию (4)
+	// переколбасил бы все вложенные блоки при первом же сохранении.
 	enc.SetIndent(2)
 	if err := enc.Encode(&root); err != nil {
 		_ = enc.Close()
@@ -123,13 +130,18 @@ func updateAppYAML(raw []byte, edit func(doc *yaml.Node) error) ([]byte, error) 
 	return buf.Bytes(), nil
 }
 
+// updateAppYAML — прежнее имя для config/app.yaml.
+func updateAppYAML(raw []byte, edit func(doc *yaml.Node) error) ([]byte, error) {
+	return updateYAMLMapping(raw, "config/app.yaml", edit)
+}
+
 // yamlSubMap возвращает вложенное отображение по ключу, создавая пустое, если
 // ключа ещё нет. Ошибка — если ключ занят не отображением.
 func yamlSubMap(m *yaml.Node, key string) (*yaml.Node, error) {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value == key {
 			if m.Content[i+1].Kind != yaml.MappingNode {
-				return nil, fmt.Errorf("yamlSubMap: ключ %q в config/app.yaml — не отображение", key)
+				return nil, fmt.Errorf("yamlSubMap: ключ %q — не отображение", key)
 			}
 			return m.Content[i+1], nil
 		}
