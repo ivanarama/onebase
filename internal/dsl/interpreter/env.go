@@ -79,7 +79,8 @@ type execCtx struct {
 	// объекты/коллекции/модульное состояние, а This-значения выдаются через
 	// read-only membrane. Чистые вложенные DSL-функции разрешены.
 	// Непустая строка одновременно служит объяснением пользователю.
-	readOnlyReason string
+	readOnlyReason    string
+	readOnlyViolation string // sticky: fmt may recover a panic from String/Format
 }
 
 // loopLimit — действующий потолок итераций цикла для запуска.

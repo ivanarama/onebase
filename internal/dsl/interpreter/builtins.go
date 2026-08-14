@@ -326,7 +326,9 @@ func builtinToString(args []any, file string, line int) (any, error) {
 	if len(args) == 0 {
 		return "", nil
 	}
-	args[0] = unwrapReadOnly(args[0])
+	if wrapped, ok := args[0].(readOnlyStringValue); ok {
+		return wrapped.stringValue(), nil
+	}
 	if s, ok := args[0].(string); ok {
 		return s, nil
 	}

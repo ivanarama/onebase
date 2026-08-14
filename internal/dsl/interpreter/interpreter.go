@@ -543,6 +543,12 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 }
 
 func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
+	result := i.evalExprUnchecked(expr, e)
+	e.ec.checkReadOnlyViolation()
+	return result
+}
+
+func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 	switch v := expr.(type) {
 	case *ast.StringLit:
 		return v.Value

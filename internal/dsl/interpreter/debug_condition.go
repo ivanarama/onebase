@@ -60,6 +60,7 @@ func withConditionLimits(e *env) func() {
 	savedIters := ec.maxLoopIters
 	savedVars := ec.sandboxVars
 	savedReadOnly := ec.readOnlyReason
+	savedViolation := ec.readOnlyViolation
 
 	// Дедлайн условия не должен ПРОДЛЕВАТЬ уже действующий: у отлаживаемого
 	// запуска может быть свой предел, и условие не повод его отодвинуть.
@@ -74,6 +75,7 @@ func withConditionLimits(e *env) func() {
 		ec.maxLoopIters = savedIters
 	}
 	ec.readOnlyReason = "условие точки останова вычисляется на каждом проходе строки и не должно менять данные"
+	ec.readOnlyViolation = ""
 
 	merged := make(map[string]any, len(savedVars)+32)
 	for k, v := range savedVars {
@@ -89,5 +91,6 @@ func withConditionLimits(e *env) func() {
 		ec.maxLoopIters = savedIters
 		ec.sandboxVars = savedVars
 		ec.readOnlyReason = savedReadOnly
+		ec.readOnlyViolation = savedViolation
 	}
 }
