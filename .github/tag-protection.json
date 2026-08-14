@@ -1,0 +1,24 @@
+{
+  "_comment": "Ruleset защиты тегов релиза (#874). Применить: gh api -X POST repos/ivanarama/onebase/rulesets --input .github/tag-protection.json. Без него запушить тег v* может любой, у кого есть write: гейт verify-ci сработает уже ПОСЛЕ создания тега, и тег останется висеть на непроверенном коммите.",
+  "name": "release-tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/v*", "refs/tags/build-*"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    { "type": "creation" },
+    { "type": "deletion" },
+    { "type": "non_fast_forward" }
+  ],
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
+  ]
+}

@@ -137,8 +137,35 @@ jobs:
     # оставался страховкой на случай зависания самого раннера.
     timeout-minutes: 40
     permissions:
+      # contents:read нужен появившемуся checkout: объявленные на джобе
+      # permissions ЗАМЕЩАЮТ умолчание workflow, а не дополняют его.
+      contents: read
       actions: read
     steps:
+      # Полная история нужна для проверки происхождения коммита: без неё
+      # merge-base не с чем сравнивать.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Гейт #782 проверял только «есть ли зелёный прогон CI для этого SHA» —
+      # не глядя ни на событие, ни на ветку. ci.yml триггерится и на
+      # pull_request без ограничений на происхождение ветки, поэтому
+      # опубликовать можно было НЕПРОМЕРЖЕННУЮ ветку или форк: достаточно,
+      # чтобы для её SHA когда-либо был зелёный PR-прогон (#874).
+      - name: Require the commit to be on main
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::коммит $SHA не входит в main — публикация непромерженного кода отменена"
+            echo "Если релиз делается из ветки, сначала влейте её в main."
+            exit 1
+          fi
+          echo "коммит $SHA достижим из main"
+
       - name: Wait for CI success on this SHA
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,24 +174,30 @@ jobs:
         run: |
           set -euo pipefail
           # Ждём завершения всех прогонов workflow "CI" для ТОЧНОГО SHA и требуем,
-          # чтобы каждый завершился success. Тег, коммит которого никогда не был
-          # на main (CI по нему не запускался), корректно упрётся в таймаут —
-          # публикация непроверенного коммита недопустима.
+          # чтобы каждый завершился success. Плюс отдельно требуем прогон от
+          # события push в main: зелёный PR-прогон проверял ВЕТКУ, а не то, что
+          # лежит в main, и принимать его за проверку main нельзя (#874).
           deadline=$(( $(date +%s) + 1800 ))
           while :; do
             runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" \
-              --jq '[.workflow_runs[] | {status: .status, conclusion: .conclusion}]')
+              --jq '[.workflow_runs[] | {status: .status, conclusion: .conclusion, event: .event, branch: .head_branch}]')
             total=$(echo "$runs" | jq 'length')
             completed=$(echo "$runs" | jq '[.[] | select(.status=="completed")] | length')
             if [ "$total" -gt 0 ] && [ "$completed" -eq "$total" ]; then
               bad=$(echo "$runs" | jq '[.[] | select(.conclusion!="success")] | length')
-              if [ "$bad" -eq 0 ]; then
-                echo "CI зелёный для $SHA."
-                exit 0
+              if [ "$bad" -ne 0 ]; then
+                echo "::error::CI для $SHA завершился не успехом. Публикация отменена."
+                echo "$runs" | jq .
+                exit 1
               fi
-              echo "::error::CI для $SHA завершился не успехом. Публикация отменена."
-              echo "$runs" | jq .
-              exit 1
+              onMain=$(echo "$runs" | jq '[.[] | select(.event=="push" and .branch=="main")] | length')
+              if [ "$onMain" -eq 0 ]; then
+                echo "::error::для $SHA нет прогона CI от push в main — есть только проверки веток или PR. Публикация отменена."
+                echo "$runs" | jq .
+                exit 1
+              fi
+              echo "CI зелёный для $SHA, включая прогон от push в main."
+              exit 0
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "::error::Не дождались успешного CI для $SHA за 30 минут. Публикация отменена."
