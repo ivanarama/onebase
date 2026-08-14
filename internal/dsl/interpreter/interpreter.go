@@ -270,6 +270,12 @@ func (i *Interpreter) beforeStmt(s ast.Stmt, e *env) {
 
 	hook := e.ec.debug
 	hitBP := hook.HookCheckBreakpoint(loc.File, loc.Line, func(expr string) (bool, error) {
+		// Условие — единственное отладочное выражение, которое исполняется без
+		// участия человека и на каждом проходе строки, поэтому вычисляется в
+		// read-only песочнице (#883). Табло и консоль остаются полноценными:
+		// их человек набирает сам и видит результат.
+		restore := withConditionLimits(e)
+		defer restore()
 		v, err := i.evalDebugExpr(expr, e)
 		if err != nil {
 			return false, err
