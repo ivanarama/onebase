@@ -274,10 +274,11 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 	// колонки приезжали в файл пустыми (#886). Отдельная «Дата» на экране не
 	// показывается вовсе — дата документа объявляется обычной колонкой журнала
 	// и уже попадает в выгрузку через visibleColumns.
+	lang := s.resolveLang(r)
 	cols := make([]string, 0, len(visibleColumns)+1)
-	cols = append(cols, "Документ")
+	cols = append(cols, s.tr(lang, "Документ"))
 	for _, jcol := range visibleColumns {
-		cols = append(cols, jcol.Label)
+		cols = append(cols, jcol.DisplayLabel(lang))
 	}
 
 	xlsRows := make([][]any, len(rows))

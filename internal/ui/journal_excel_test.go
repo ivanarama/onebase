@@ -35,7 +35,9 @@ func TestJournalExcel_ЛевыеКолонкиНеПустые(t *testing.T) {
 		Documents: []string{doc.Name},
 		Columns: []metadata.JournalColumn{
 			{Field: "Дата", Label: "Дата"},
-			{Field: "Номер", Label: "Номер"},
+			// Пустой label должен использовать имя поля, как и таблица на экране,
+			// а не создавать ещё одну пустую шапку в Excel.
+			{Field: "Номер"},
 			{Field: "Сумма", Label: "Сумма"},
 		},
 	}
