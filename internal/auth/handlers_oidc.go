@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,20 +55,30 @@ const (
 	// oidcSweepInterval — как часто вычищать протухшие. Чаще незачем: TTL
 	// измеряется минутами, а обход карты стоит тем дороже, чем она больше.
 	oidcSweepInterval = 30 * time.Second
+	// oidcEvictBatch — сколько старейших вытесняется за один проход, когда
+	// упёрлись в потолок. Вытеснять по одному нельзя: под устойчивым флудом
+	// карта постоянно на потолке, и проход выполнялся бы на КАЖДОЙ вставке —
+	// защита от роста памяти превращалась в усилитель нагрузки на CPU (#863).
+	// Освобождая 10% разом, платим за проход раз в oidcEvictBatch вставок.
+	oidcEvictBatch = maxOIDCStates / 10
 )
 
 var (
-	oidcStatesMu    sync.Mutex
-	oidcStates      = map[string]*oidcState{}
-	oidcLastSweep   time.Time
-	oidcStatesDrops int // вытеснено под давлением — видно в журнале
+	oidcStatesMu        sync.Mutex
+	oidcStates          = map[string]*oidcState{}
+	oidcLastSweep       time.Time
+	oidcStatesDrops     int // вытеснено под давлением — видно в журнале
+	oidcStatesEvictions int // сколько раз вытесняли пачку (для тестов)
 )
 
 func putOIDCState(state string, s *oidcState) {
 	oidcStatesMu.Lock()
 	defer oidcStatesMu.Unlock()
 	now := time.Now()
-	if now.Sub(oidcLastSweep) >= oidcSweepInterval || len(oidcStates) >= maxOIDCStates {
+	// Полный обход — только по интервалу. Раньше он выполнялся ещё и «по
+	// потолку» (условие через ИЛИ), а на потолке карта под флудом находится
+	// постоянно — то есть обход шёл на каждой вставке.
+	if now.Sub(oidcLastSweep) >= oidcSweepInterval {
 		for k, v := range oidcStates {
 			if now.After(v.expires) {
 				delete(oidcStates, k)
@@ -75,22 +86,42 @@ func putOIDCState(state string, s *oidcState) {
 		}
 		oidcLastSweep = now
 	}
-	// Чистка могла ничего не освободить: все записи свежие. Тогда вытесняем
-	// самые старые, иначе потолок не соблюдается.
-	for len(oidcStates) >= maxOIDCStates {
-		oldestKey, oldest := "", time.Time{}
-		for k, v := range oidcStates {
-			if oldest.IsZero() || v.expires.Before(oldest) {
-				oldestKey, oldest = k, v.expires
-			}
-		}
-		if oldestKey == "" {
-			break
-		}
-		delete(oidcStates, oldestKey)
-		oidcStatesDrops++
+	// Чистка могла ничего не освободить (все записи свежие) или не случиться
+	// вовсе (интервал не вышел). Тогда вытесняем старейших — пачкой, чтобы
+	// следующие oidcEvictBatch вставок прошли без единого обхода.
+	if len(oidcStates) >= maxOIDCStates {
+		evictOldestOIDCStates(len(oidcStates) - maxOIDCStates + 1 + oidcEvictBatch)
 	}
 	oidcStates[state] = s
+}
+
+// evictOldestOIDCStates удаляет n записей с самым близким истечением.
+// Вызывается под oidcStatesMu.
+//
+// Один проход + частичная сортировка вместо n проходов «найти минимум»:
+// прежний вариант искал старейшего заново для каждой вытесняемой записи, и на
+// потолке это давало два полных обхода карты на каждый запрос логина.
+func evictOldestOIDCStates(n int) {
+	if n <= 0 {
+		return
+	}
+	type entry struct {
+		key     string
+		expires time.Time
+	}
+	entries := make([]entry, 0, len(oidcStates))
+	for k, v := range oidcStates {
+		entries = append(entries, entry{key: k, expires: v.expires})
+	}
+	if n > len(entries) {
+		n = len(entries)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].expires.Before(entries[j].expires) })
+	for _, e := range entries[:n] {
+		delete(oidcStates, e.key)
+		oidcStatesDrops++
+	}
+	oidcStatesEvictions++
 }
 
 // oidcStateCount — размер карты начатых входов (для тестов и диагностики).
