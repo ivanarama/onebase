@@ -633,8 +633,6 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 			obj.Set(k, v)
 		}
 		obj.TablePartRows = tpRows
-
-		s.ensureNewDocumentNumber(r.Context(), entity, obj)
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,
@@ -714,10 +712,6 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// restoreManagedCopyState deliberately clears a forged source number. The
-	// ordinary parse path may already have generated one, but repeating this
-	// idempotent check here is necessary when canonical restoration ran later.
-	s.ensureNewDocumentNumber(r.Context(), entity, obj)
 	if err := s.autoFillRowAccessFields(r.Context(), entity, "write", obj.Fields); err != nil {
 		s.renderForbidden(w, r)
 		return
@@ -810,32 +804,6 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	// "post" / "Записать" — остаёмся на форме
 	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
-}
-
-// ensureNewDocumentNumber заполняет стандартный «Номер» документа или «Код»
-// справочника, если он пуст (план 117C). До 117B код справочника не заполнялся
-// вовсе: блок numerator: у него парсился и молча ничего не делал (issue #658).
-//
-// Пустое значение — единственное условие: заполненное вручную не трогаем, иначе
-// платформа переписывала бы то, что ввёл пользователь.
-func (s *Server) ensureNewDocumentNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
-	if entity == nil || obj == nil {
-		return
-	}
-	target := storage.AutoNumberField(entity)
-	if target == "" {
-		return
-	}
-	for _, field := range entity.Fields {
-		if !strings.EqualFold(field.Name, target) || field.Type != metadata.FieldTypeString {
-			continue
-		}
-		value := fmt.Sprintf("%v", obj.Get(field.Name))
-		if value == "<nil>" || strings.TrimSpace(value) == "" {
-			obj.Set(field.Name, s.generateNumber(ctx, entity, obj.Fields))
-		}
-		return
-	}
 }
 
 // refCreateRedirect — точка входа для JS-кнопки «+ Создать» рядом с
@@ -2369,21 +2337,4 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 		}
 	}
 	return params
-}
-
-// generateNumber returns the next document number.
-// Uses the entity's Numerator config if present; falls back to legacy NextNum.
-func (s *Server) generateNumber(ctx context.Context, entity *metadata.Entity, fields map[string]any) string {
-	// Единая точка (план 117C): период, счётчик, маски даты и формат — в
-	// storage.GenerateNumber. Копии этой логики уже расходились молча (#359).
-	if entity.Numerator != nil {
-		if v, err := s.store.GenerateNumber(ctx, entity, fields); err == nil && v != "" {
-			return v
-		}
-	}
-	// legacy fallback: plain sequential number
-	if n, err := s.store.NextNum(ctx, entity.Name); err == nil {
-		return fmt.Sprintf("%06d", n)
-	}
-	return ""
 }

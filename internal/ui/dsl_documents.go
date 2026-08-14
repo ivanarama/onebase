@@ -710,30 +710,10 @@ func (w *docWriter) fill(src any) error {
 	return nil
 }
 
-// autoNumber заполняет реквизит Номер очередным номером нумератора, если
-// у документа есть строковый реквизит Номер и он ещё не задан. Повторяет
-// поведение веб-хендлера: документ, записанный из обработки, нумеруется
-// так же, как созданный через форму. Явно заданный Док.Номер сохраняется.
-func (w *docWriter) autoNumber(ctx context.Context) {
-	if w.entity.Kind != metadata.KindDocument {
-		return
-	}
-	for _, f := range w.entity.Fields {
-		if !strings.EqualFold(f.Name, "Номер") || f.Type != metadata.FieldTypeString {
-			continue
-		}
-		if cur := w.obj.Get("Номер"); cur == nil || strings.TrimSpace(fmt.Sprint(cur)) == "" {
-			w.obj.Set("Номер", w.s.generateNumber(ctx, w.entity, w.obj.Fields))
-		}
-		return
-	}
-}
-
 // write проставляет номер документа, вызывает ПриЗаписи (OnWrite), затем
-// сохраняет шапку + табличные части. Автонумерация и вызов ПриЗаписи
-// повторяют поведение веб-хендлера при обычной записи: без них номер и
-// расчётные реквизиты (СуммаНДС, итоги) остались бы незаполненными при
-// записи документа из обработки.
+// сохраняет шапку + табличные части. Автонумерация делегируется той же
+// реализации entityservice, которой пользуются форма, ИИ и REST; вызов здесь
+// остаётся нужен, потому что docWriter сохраняет документ напрямую.
 // Использует живой ctx, поэтому при открытой DSL-транзакции запись
 // участвует в ней; иначе автокоммит.
 func (w *docWriter) write() error {
@@ -785,12 +765,14 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 		// реальное значение, которого не видел до неё.
 		w.forgetAssigned(restored)
 	}
-	w.autoNumber(ctx)
+	if err := w.s.entityService().EnsureAutoNumber(ctx, w.entity, w.obj); err != nil {
+		return err
+	}
 	// Псевдо-реквизит «Ссылка» самого документа — до запуска OnWrite, как это уже
 	// делается на пути проведения (ensureSelfRef перед OnPost) и в entityservice.Save.
 	// Без него this.Ссылка в ПриЗаписи был бы пуст на DSL-пути записи, из-за чего
 	// запись ссылки на себя (Дв.X = this.Ссылка) или чтение пре-образа по своей
-	// ссылке в хуке не работали. autoNumber уже проставил Номер → displayName корректен.
+	// ссылке в хуке не работали. EnsureAutoNumber уже проставил Номер → displayName корректен.
 	w.ensureSelfRef()
 	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)

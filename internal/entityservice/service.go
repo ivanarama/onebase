@@ -176,35 +176,92 @@ func webhookRecord(fields map[string]any) map[string]any {
 	return rec
 }
 
-// autoNumber заполняет реквизит автонумерации нового объекта, если он пуст.
+// EnsureAutoNumber заполняет реквизит автонумерации объекта, если он пуст.
 //
 // Какой именно реквизит — решает storage.AutoNumberField: «Номер» у документа
 // всегда, «Код» у справочника только при объявленном numerator:. Заполненное
 // вручную значение не трогаем: платформа не должна переписывать введённое
-// пользователем.
-func (s *Service) autoNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
+// пользователем. Object.Set обновляет уже существующий ключ независимо от
+// регистра: например, пустой Pascal-case «Код» не останется рядом с новым
+// lowercase «код», из-за которого storage сохранил бы пустое значение.
+//
+// Вызывающий обязан передать контекст той же транзакции, в которой будет
+// записан объект. Тогда ошибка хука или БД откатывает и строку, и счётчик.
+func (s *Service) EnsureAutoNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) error {
+	if s == nil || s.Store == nil || entity == nil || obj == nil {
+		return nil
+	}
 	target := storage.AutoNumberField(entity)
 	if target == "" {
-		return
+		return nil
 	}
 	for _, f := range entity.Fields {
 		if !strings.EqualFold(f.Name, target) || f.Type != metadata.FieldTypeString {
 			continue
 		}
-		cur := obj.Get(f.Name)
-		if cur != nil && strings.TrimSpace(fmt.Sprintf("%v", cur)) != "" {
-			return
+		if obj.Fields == nil {
+			obj.Fields = make(map[string]any)
 		}
-		value, err := s.Store.GenerateNumber(ctx, entity, obj.Fields)
-		if err != nil || value == "" {
-			// Молчание здесь осознанное: пустой номер — не повод отменить
-			// запись. Незаполненный «Код» при numerator.unique упрётся в
-			// уникальный индекс и скажет об этом сам.
-			return
+		if value, ok := nonEmptyAutoNumberValue(obj.Fields, f.Name); ok {
+			obj.Set(f.Name, value)
+			return nil
+		}
+
+		var (
+			value string
+			err   error
+		)
+		if entity.Numerator != nil {
+			value, err = s.Store.GenerateNumber(ctx, entity, obj.Fields)
+		} else {
+			// Документы без блока numerator: исторически используют общий
+			// последовательный шестизначный номер. Для справочника сюда
+			// попасть нельзя: AutoNumberField вернул бы пустую строку.
+			var n int64
+			n, err = s.Store.NextNum(ctx, entity.Name)
+			if err == nil {
+				value = fmt.Sprintf("%06d", n)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("автонумерация %s.%s: %w", entity.Name, f.Name, err)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("автонумерация %s.%s вернула пустое значение", entity.Name, f.Name)
 		}
 		obj.Set(f.Name, value)
-		return
+		return nil
 	}
+	return nil
+}
+
+// nonEmptyAutoNumberValue выбирает заданное вручную значение детерминированно:
+// точное имя из метаданных важнее lowercase-варианта, затем прочих написаний.
+func nonEmptyAutoNumberValue(fields map[string]any, canonical string) (any, bool) {
+	if value, ok := fields[canonical]; ok && autoNumberValueIsNonEmpty(value) {
+		return value, true
+	}
+	lower := strings.ToLower(canonical)
+	if value, ok := fields[lower]; ok && autoNumberValueIsNonEmpty(value) {
+		return value, true
+	}
+	var (
+		chosenKey string
+		chosen    any
+	)
+	for key, value := range fields {
+		if !strings.EqualFold(key, canonical) || !autoNumberValueIsNonEmpty(value) {
+			continue
+		}
+		if chosenKey == "" || key < chosenKey {
+			chosenKey, chosen = key, value
+		}
+	}
+	return chosen, chosenKey != ""
+}
+
+func autoNumberValueIsNonEmpty(value any) bool {
+	return value != nil && strings.TrimSpace(fmt.Sprint(value)) != ""
 }
 
 // SaveRequest — входной DTO для Service.Save.
@@ -267,21 +324,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
-	// Автонумерация — ЗДЕСЬ, до хука: «Номер» документа и «Код» справочника
-	// должны быть видны в ПриЗаписи/ОбработкаПроведения, как это давно делает
-	// веб-форма.
-	//
-	// Единая точка вместо четырёх копий (#869, план 117C). Прежде нумеровали:
-	// форма и ИИ-действия (через AutoNumberField — то есть и справочники),
-	// REST v1 и v2 (жёстко по имени «Номер» — то есть только документы),
-	// DSL-запись документа (тоже только «Номер»). Справочник, созданный через
-	// REST или из модуля, оставался без кода вовсе — при том что
-	// docs/features.md обещает «новые элементы получают код автоматически»
-	// без оговорок, а 117E сделал такой код ещё и обязательно уникальным.
-	if req.IsNew {
-		s.autoNumber(ctx, req.Entity, obj)
-	}
-
 	// Pre-hook enrichment: даём caller'у заменить UUID-строки на *Ref и т.п.
 	if s.PrepareHook != nil {
 		s.PrepareHook(ctx, req.Entity, obj)
@@ -335,6 +377,14 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// полноценная шапка: FK-ссылки из создаваемых хуком объектов уже валидны, но
 	// при любой последующей ошибке откатываются вместе с родителем.
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
+		// Единая реализация для формы, ИИ, REST v1/v2 и DSL-объектов. Номер
+		// выдаётся внутри транзакции записи и до provisional/hook: хук его
+		// видит, а его исключение или последующий сбой БД откатывает счётчик.
+		if req.IsNew {
+			if err := s.EnsureAutoNumber(txCtx, req.Entity, obj); err != nil {
+				return err
+			}
+		}
 		if req.Entity.Posting && !req.IsNew && !isPosting {
 			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
 			if err != nil {

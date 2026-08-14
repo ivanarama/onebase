@@ -76,7 +76,23 @@ func (o *Object) Get(name string) any {
 }
 
 func (o *Object) Set(name string, v any) {
-	o.Fields[strings.ToLower(name)] = v
+	if o.Fields == nil {
+		o.Fields = make(map[string]any)
+	}
+	found := false
+	for key := range o.Fields {
+		if strings.EqualFold(key, name) {
+			// Preserve the key spelling supplied by the caller/metadata. Storage,
+			// audit and JSON serializers may use that canonical spelling. If an
+			// older map already contains duplicate case variants, keep their values
+			// consistent instead of leaving one stale and order-dependent.
+			o.Fields[key] = v
+			found = true
+		}
+	}
+	if !found {
+		o.Fields[strings.ToLower(name)] = v
+	}
 }
 
 // GetRefUUID — реализует тот же интерфейс, что и *interpreter.Ref.
