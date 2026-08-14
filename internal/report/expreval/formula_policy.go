@@ -2,10 +2,10 @@ package expreval
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
-	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/report/compose"
 )
 
@@ -118,8 +118,12 @@ func validateFormulaExpr(expr ast.Expr) error {
 // rows are data, never executable capabilities.
 func validateRowBindings(row compose.Row) error {
 	for name, value := range row {
-		switch value.(type) {
-		case interpreter.BuiltinFunc, interpreter.FallbackBuiltinFunc, func([]any) any:
+		// Reject every named and unnamed function type, not only the callable
+		// types known today. In particular, ReadOnlyBuiltinFunc is safe only for
+		// the debugger's read-only membrane; a report row is data and must never
+		// be able to replace an allowed formula builtin with executable code.
+		valueType := reflect.TypeOf(value)
+		if valueType != nil && valueType.Kind() == reflect.Func {
 			return fmt.Errorf("поле строки %q содержит исполняемую функцию; формулы отчёта принимают только данные", name)
 		}
 	}

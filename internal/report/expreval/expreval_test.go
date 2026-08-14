@@ -287,3 +287,20 @@ func TestEvaluator_СтрокаНеМожетПодменитьЧистыйBuilt
 		t.Fatal("колбэк из строки был выполнен")
 	}
 }
+
+func TestEvaluator_СтрокаНеМожетПодменитьЧистыйBuiltinReadOnlyКолбэком(t *testing.T) {
+	var touched atomic.Bool
+	row := compose.Row{
+		"Формат": interpreter.ReadOnlyBuiltinFunc(func([]any, string, int) (any, error) {
+			touched.Store(true)
+			return "выполнено", nil
+		}),
+	}
+	ev := New(interpreter.New(), DefaultProfile())
+	if _, err := ev.EvalBool(`Формат(1, "ЧЦ=1") <> ""`, row); err == nil {
+		t.Fatal("read-only callback из строки принят формулой")
+	}
+	if touched.Load() {
+		t.Fatal("read-only callback из строки был выполнен")
+	}
+}
