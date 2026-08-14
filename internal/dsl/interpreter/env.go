@@ -62,14 +62,16 @@ func (m *MapThis) Set(name string, v any) {
 // кадрами, поэтому конкурентные запуски на одном *Interpreter не гонят по
 // curFile/curLine и видят только свой debug hook (план 52).
 type execCtx struct {
-	context      context.Context
-	curFile      string // last executed statement location (for error reporting)
-	curLine      int
-	evalDepth    int       // текущая глубина вложенных Вычислить/Eval
-	debug        DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
-	deadline     time.Time // wall-clock запуска; zero = без лимита
-	maxLoopIters int       // потолок итераций цикла; 0 = maxWhileIter
-	moduleEnvs   map[string]*env
+	context             context.Context
+	curFile             string // last executed statement location (for error reporting)
+	curLine             int
+	evalDepth           int       // текущая глубина вложенных Вычислить/Eval
+	debug               DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
+	deadline            time.Time // wall-clock запуска; zero = без лимита
+	maxLoopIters        int       // потолок итераций цикла; 0 = maxWhileIter
+	maxDecimalExpansion int32     // decimal exponent/coefficient bound; 0 = trusted behavior
+	maxStringExpansion  int       // string input/output/expansion byte bound; 0 = trusted behavior
+	moduleEnvs          map[string]*env
 	// sandboxVars — неизменяемый overlay запретов одного sandbox-запуска.
 	// Он отделён от пользовательских vars, поэтому присваивание, Перем,
 	// module vars и временная публикация builtins не могут переоткрыть известное

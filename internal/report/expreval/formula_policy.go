@@ -2,12 +2,36 @@ package expreval
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
+	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/report/compose"
 )
+
+const (
+	maxFormulaASTNodes      = 256
+	maxFormulaStringLiteral = 64 << 10
+	maxFormulaStringValue   = 1 << 20
+	maxFormulaSourceBytes   = interpreter.MaxUntrustedExpressionBytes
+	maxFormulaSourceTokens  = interpreter.MaxUntrustedExpressionTokens
+	maxFormulaSyntaxDepth   = interpreter.MaxUntrustedExpressionSyntaxDepth
+)
+
+// validateFormulaSource applies iterative limits before ParseProgram enters
+// recursive expression parsing. The AST budget below is necessarily too late
+// for an expression made from thousands of parentheses or unary operators.
+func validateFormulaSource(expr string) error {
+	if err := interpreter.ValidateUntrustedExpressionSource(expr); err != nil {
+		return fmt.Errorf("formula %w", err)
+	}
+	return nil
+}
 
 // pureFormulaFunctions is deliberately explicit. Report formulas arrive with
 // external report definitions and execute for every row, so a newly added DSL
@@ -53,36 +77,59 @@ func nameSet(groups ...string) map[string]struct{} {
 // already excluded by ParseProgram's Return wrapper, but this whitelist also
 // fails closed when the expression AST gains a new node kind later.
 func validateFormulaExpr(expr ast.Expr) error {
+	nodes := 0
+	return validateFormulaExprN(expr, &nodes)
+}
+
+func validateFormulaExprN(expr ast.Expr, nodes *int) error {
+	(*nodes)++
+	if *nodes > maxFormulaASTNodes {
+		return fmt.Errorf("формула отчёта превышает предел сложности %d узлов", maxFormulaASTNodes)
+	}
 	switch v := expr.(type) {
-	case *ast.Ident, *ast.StringLit, *ast.NumberLit, *ast.BoolLit:
+	case *ast.Ident, *ast.BoolLit:
+		return nil
+	case *ast.StringLit:
+		if len(v.Value) > maxFormulaStringLiteral {
+			return fmt.Errorf("строковый литерал формулы отчёта превышает предел %d байт", maxFormulaStringLiteral)
+		}
+		return nil
+	case *ast.NumberLit:
+		d, err := decimal.NewFromString(v.Value)
+		if err != nil {
+			return fmt.Errorf("некорректное число %q в формуле отчёта: %w", v.Value, err)
+		}
+		if !interpreter.DecimalWithinSafeBounds(d) {
+			return fmt.Errorf("число %q в формуле отчёта вне безопасного диапазона", v.Value)
+		}
 		return nil
 	case *ast.BinaryExpr:
-		if err := validateFormulaExpr(v.Left); err != nil {
+		if err := validateFormulaExprN(v.Left, nodes); err != nil {
 			return err
 		}
-		return validateFormulaExpr(v.Right)
+		return validateFormulaExprN(v.Right, nodes)
 	case *ast.UnaryExpr:
-		return validateFormulaExpr(v.Operand)
+		return validateFormulaExprN(v.Operand, nodes)
 	case *ast.TernaryExpr:
-		if err := validateFormulaExpr(v.Cond); err != nil {
+		if err := validateFormulaExprN(v.Cond, nodes); err != nil {
 			return err
 		}
-		if err := validateFormulaExpr(v.True); err != nil {
+		if err := validateFormulaExprN(v.True, nodes); err != nil {
 			return err
 		}
-		return validateFormulaExpr(v.False)
+		return validateFormulaExprN(v.False, nodes)
 	case *ast.MemberExpr:
 		// A field read is part of the formula contract; a method call has a
 		// CallExpr above it and is rejected in that branch.
-		return validateFormulaExpr(v.Object)
+		return validateFormulaExprN(v.Object, nodes)
 	case *ast.IndexExpr:
-		if err := validateFormulaExpr(v.Object); err != nil {
+		if err := validateFormulaExprN(v.Object, nodes); err != nil {
 			return err
 		}
-		return validateFormulaExpr(v.Index)
+		return validateFormulaExprN(v.Index, nodes)
 	case *ast.ArrayLit:
 		for _, element := range v.Elements {
-			if err := validateFormulaExpr(element); err != nil {
+			if err := validateFormulaExprN(element, nodes); err != nil {
 				return err
 			}
 		}
@@ -99,7 +146,7 @@ func validateFormulaExpr(expr ast.Expr) error {
 			return fmt.Errorf("функция %q не входит в список чистых функций формулы отчёта", callee.Tok.Literal)
 		}
 		for _, arg := range v.Args {
-			if err := validateFormulaExpr(arg); err != nil {
+			if err := validateFormulaExprN(arg, nodes); err != nil {
 				return err
 			}
 		}
@@ -125,6 +172,34 @@ func validateRowBindings(row compose.Row) error {
 		valueType := reflect.TypeOf(value)
 		if valueType != nil && valueType.Kind() == reflect.Func {
 			return fmt.Errorf("поле строки %q содержит исполняемую функцию; формулы отчёта принимают только данные", name)
+		}
+		switch v := value.(type) {
+		case nil, bool, time.Time,
+			int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64:
+			// Passive scalar data produced by report and form paths.
+		case string:
+			if len(v) > maxFormulaStringValue {
+				return fmt.Errorf("string field %q exceeds the %d byte limit", name, maxFormulaStringValue)
+			}
+		case []byte:
+			if len(v) > maxFormulaStringValue {
+				return fmt.Errorf("byte field %q exceeds the %d byte limit", name, maxFormulaStringValue)
+			}
+		case decimal.Decimal:
+			if !interpreter.DecimalWithinSafeBounds(v) {
+				return fmt.Errorf("числовое поле строки %q вне безопасного диапазона", name)
+			}
+		case float32:
+			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+				return fmt.Errorf("numeric field %q must be finite", name)
+			}
+		default:
+			return fmt.Errorf("row field %q has unsupported type %T; report formulas accept passive scalar data only", name, value)
+		case float64:
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				return fmt.Errorf("числовое поле строки %q должно быть конечным", name)
+			}
 		}
 	}
 	return nil

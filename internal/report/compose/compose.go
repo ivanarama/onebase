@@ -28,6 +28,11 @@ type Evaluator interface {
 
 const DefaultMaxRows = 50000
 
+const (
+	maxDependencyExprBytes  = 128 << 10
+	maxDependencyExprTokens = 1024
+)
+
 type Result struct {
 	Columns  []string       `json:"columns"`
 	Groups   []*Group       `json:"groups"`
@@ -322,6 +327,9 @@ func toStr(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
+	if d, ok := v.(decimal.Decimal); ok && !reportDecimalWithinSafeBounds(d) {
+		return fmt.Sprintf("<decimal outside safe bounds: exponent=%d bits=%d>", d.Exponent(), d.Coefficient().BitLen())
+	}
 	return fmt.Sprintf("%v", v)
 }
 
@@ -339,11 +347,36 @@ func normalizeGroupKey(v any) any {
 	case []byte:
 		return string(x)
 	case decimal.Decimal:
+		if !reportDecimalWithinSafeBounds(x) {
+			return fmt.Sprintf("<decimal outside safe bounds: exponent=%d bits=%d>", x.Exponent(), x.Coefficient().BitLen())
+		}
 		return x.String()
 	case int:
 		return decimal.NewFromInt(int64(x)).String()
+	case int8:
+		return decimal.NewFromInt(int64(x)).String()
+	case int16:
+		return decimal.NewFromInt(int64(x)).String()
+	case int32:
+		return decimal.NewFromInt(int64(x)).String()
 	case int64:
 		return decimal.NewFromInt(x).String()
+	case uint:
+		return decimal.NewFromUint64(uint64(x)).String()
+	case uint8:
+		return decimal.NewFromUint64(uint64(x)).String()
+	case uint16:
+		return decimal.NewFromUint64(uint64(x)).String()
+	case uint32:
+		return decimal.NewFromUint64(uint64(x)).String()
+	case uint64:
+		return decimal.NewFromUint64(x).String()
+	case float32:
+		f := float64(x)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return strconv.FormatFloat(f, 'g', -1, 32)
+		}
+		return decimal.NewFromFloat32(x).String()
 	case float64:
 		// NaN/±Inf нельзя превратить в decimal — decimal.NewFromFloat паникует
 		// (issue #9). Такие значения приходят из REAL/float8 колонок; ключуем их
@@ -485,8 +518,14 @@ func orderExprMeasures(measures []report.Measure) (order []int, cyclic []int) {
 // (self уже в нижнем регистре) — самоссылка не создаёт зависимости.
 func exprIdentDeps(expr string, exprFields map[string]bool, self string) map[string]bool {
 	deps := map[string]bool{}
+	// Keep dependency discovery bounded before expreval gets its chance to
+	// reject the formula. These values intentionally mirror expreval's source
+	// gate; an over-limit expression will later surface as the formula error.
+	if len(expr) > maxDependencyExprBytes {
+		return deps
+	}
 	lx := lexer.New(expr, "")
-	for {
+	for count := 0; count < maxDependencyExprTokens; count++ {
 		t := lx.NextToken()
 		if t.Type == token.EOF {
 			break
@@ -555,11 +594,33 @@ func ExportToDecimal(v any) (decimal.Decimal, bool) { return toDecimal(v) }
 func toDecimal(v any) (decimal.Decimal, bool) {
 	switch x := v.(type) {
 	case decimal.Decimal:
-		return x, true
+		return safeReportDecimal(x)
 	case int:
+		return decimal.NewFromInt(int64(x)), true
+	case int8:
+		return decimal.NewFromInt(int64(x)), true
+	case int16:
+		return decimal.NewFromInt(int64(x)), true
+	case int32:
 		return decimal.NewFromInt(int64(x)), true
 	case int64:
 		return decimal.NewFromInt(x), true
+	case uint:
+		return decimal.NewFromUint64(uint64(x)), true
+	case uint8:
+		return decimal.NewFromUint64(uint64(x)), true
+	case uint16:
+		return decimal.NewFromUint64(uint64(x)), true
+	case uint32:
+		return decimal.NewFromUint64(uint64(x)), true
+	case uint64:
+		return decimal.NewFromUint64(x), true
+	case float32:
+		f := float64(x)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return decimal.Zero, false
+		}
+		return safeReportDecimal(decimal.NewFromFloat32(x))
 	case float64:
 		// NaN/±Inf вне области decimal — decimal.NewFromFloat паникует (issue #9).
 		// Трактуем как «не число»: значение выпадает из сумм/средних/сортировки,
@@ -567,22 +628,51 @@ func toDecimal(v any) (decimal.Decimal, bool) {
 		if math.IsNaN(x) || math.IsInf(x, 0) {
 			return decimal.Zero, false
 		}
-		return decimal.NewFromFloat(x), true
+		return safeReportDecimal(decimal.NewFromFloat(x))
 	case string:
+		if len(x) > maxReportDecimalTextBytes {
+			return decimal.Zero, false
+		}
 		d, err := decimal.NewFromString(x)
 		if err != nil {
 			return decimal.Zero, false
 		}
-		return d, true
+		return safeReportDecimal(d)
 	case []byte:
 		// SQLite-драйвер может вернуть числовую колонку как []byte (как и для
 		// ключей группировки в normalizeGroupKey) — иначе значение молча
 		// выпало бы из сумм/средних/сортировки.
+		if len(x) > maxReportDecimalTextBytes {
+			return decimal.Zero, false
+		}
 		d, err := decimal.NewFromString(string(x))
 		if err != nil {
 			return decimal.Zero, false
 		}
-		return d, true
+		return safeReportDecimal(d)
 	}
 	return decimal.Zero, false
+}
+
+// Report data may arrive as short exponent notation (for example from a text
+// SQL expression). shopspring/decimal parses it cheaply, but Add/Cmp/String
+// can then expand 10^Exponent in one uninterruptible allocation. Keep the
+// report pipeline on the same deliberately generous boundary as the DSL.
+const (
+	maxReportDecimalExponent        int32 = 4096
+	maxReportDecimalCoefficientBits       = 16384
+	maxReportDecimalTextBytes             = 8192
+)
+
+func reportDecimalWithinSafeBounds(d decimal.Decimal) bool {
+	exponent := d.Exponent()
+	return exponent >= -maxReportDecimalExponent && exponent <= maxReportDecimalExponent &&
+		d.Coefficient().BitLen() <= maxReportDecimalCoefficientBits
+}
+
+func safeReportDecimal(d decimal.Decimal) (decimal.Decimal, bool) {
+	if !reportDecimalWithinSafeBounds(d) {
+		return decimal.Zero, false
+	}
+	return d, true
 }

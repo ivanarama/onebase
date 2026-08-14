@@ -34,6 +34,10 @@ type Evaluator struct {
 	profile interpreter.SandboxProfile
 	mu      sync.Mutex
 	cache   map[string]*ast.ProcedureDecl
+	// Invalid external formulas are immutable too. Caching their diagnostics
+	// prevents a forbidden 128 KiB expression from being lexed/parsed once per
+	// report row outside the sandbox deadline.
+	compileErrors map[string]error
 }
 
 // Контракт: Evaluator реализует compose.Evaluator.
@@ -60,6 +64,10 @@ func DefaultProfile() interpreter.SandboxProfile {
 		DenyExec:     true,
 		MaxWallClock: 10 * time.Second,
 		MaxLoopIters: 1_000_000,
+		// A wall-clock deadline is checked between DSL operations; it cannot
+		// preempt one decimal rescale/format call that is allocating memory.
+		MaxDecimalExpansion: 4096,
+		MaxStringExpansion:  maxFormulaStringValue,
 	}
 }
 
@@ -70,21 +78,37 @@ func New(_ *interpreter.Interpreter, profile interpreter.SandboxProfile) *Evalua
 	// before builtins and could otherwise replace even an allowed name such as
 	// Формат with a side-effecting module function. The argument stays in the
 	// API for source compatibility with existing callers.
-	return &Evaluator{interp: interpreter.New(), profile: profile, cache: map[string]*ast.ProcedureDecl{}}
+	return &Evaluator{
+		interp:        interpreter.New(),
+		profile:       profile,
+		cache:         map[string]*ast.ProcedureDecl{},
+		compileErrors: map[string]error{},
+	}
 }
 
-func (e *Evaluator) compile(expr string) (*ast.ProcedureDecl, error) {
+func (e *Evaluator) compile(expr string) (proc *ast.ProcedureDecl, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if p, ok := e.cache[expr]; ok {
 		return p, nil
+	}
+	if cached, ok := e.compileErrors[expr]; ok {
+		return nil, cached
+	}
+	defer func() {
+		if err != nil {
+			e.compileErrors[expr] = err
+		}
+	}()
+	if err = validateFormulaSource(expr); err != nil {
+		return nil, err
 	}
 	src := "Функция __cond()\nВозврат (" + expr + ");\nКонецФункции\n"
 	prog, err := parser.New(lexer.New(src, "cond.os")).ParseProgram()
 	if err != nil {
 		return nil, err
 	}
-	var proc *ast.ProcedureDecl
+	proc = nil
 	for _, d := range prog.Procedures {
 		proc = d
 		break
@@ -107,11 +131,11 @@ func (e *Evaluator) compile(expr string) (*ast.ProcedureDecl, error) {
 }
 
 func (e *Evaluator) EvalBool(expr string, row compose.Row) (bool, error) {
-	if err := validateRowBindings(row); err != nil {
-		return false, err
-	}
 	proc, err := e.compile(expr)
 	if err != nil {
+		return false, err
+	}
+	if err := validateRowBindings(row); err != nil {
 		return false, err
 	}
 	result, err := e.interp.CallSandboxed(proc, &interpreter.MapThis{M: row}, nil, e.profile, map[string]any(row))
@@ -128,11 +152,11 @@ func (e *Evaluator) EvalBool(expr string, row compose.Row) (bool, error) {
 }
 
 func (e *Evaluator) EvalNum(expr string, row compose.Row) (decimal.Decimal, bool, error) {
-	if err := validateRowBindings(row); err != nil {
-		return decimal.Zero, false, err
-	}
 	proc, err := e.compile(expr)
 	if err != nil {
+		return decimal.Zero, false, err
+	}
+	if err := validateRowBindings(row); err != nil {
 		return decimal.Zero, false, err
 	}
 	result, err := e.interp.CallSandboxed(proc, &interpreter.MapThis{M: row}, nil, e.profile, map[string]any(row))
@@ -146,5 +170,11 @@ func (e *Evaluator) EvalNum(expr string, row compose.Row) (decimal.Decimal, bool
 		return decimal.Zero, false, err
 	}
 	d, ok := compose.ExportToDecimal(result)
+	if ok {
+		if !interpreter.DecimalWithinSafeBounds(d) ||
+			(e.profile.MaxDecimalExpansion > 0 && (d.Exponent() < -e.profile.MaxDecimalExpansion || d.Exponent() > e.profile.MaxDecimalExpansion)) {
+			return decimal.Zero, false, fmt.Errorf("результат формулы вне безопасного числового диапазона")
+		}
+	}
 	return d, ok, nil
 }

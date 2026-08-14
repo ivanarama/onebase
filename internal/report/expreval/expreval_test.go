@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -302,5 +304,59 @@ func TestEvaluator_СтрокаНеМожетПодменитьЧистыйBuilt
 	}
 	if touched.Load() {
 		t.Fatal("read-only callback из строки был выполнен")
+	}
+}
+
+func TestEvaluator_ЧистыеBuiltinsНеОбходятResourceLimitsОгромнойТочностью(t *testing.T) {
+	ev := New(interpreter.New(), DefaultProfile())
+	for _, tc := range []struct {
+		expr string
+		row  compose.Row
+	}{
+		{expr: `Окр(1, 10001) = 1`},
+		{expr: `Формат(1, "ЧДЦ=10001") <> ""`},
+		{expr: `Число("1e10001") > 0`},
+		{expr: `1e10001 > 0`},
+		{expr: `Окр(1, Точность) = 1`, row: compose.Row{"Точность": float64(10001)}},
+		{expr: `Формат(1, Настройка) <> ""`, row: compose.Row{"Настройка": "ЧДЦ=10001"}},
+		{expr: `Число(Текст) > 0`, row: compose.Row{"Текст": "1e10001"}},
+		{expr: `Сумма > 0`, row: compose.Row{"Сумма": decimal.New(1, 10001)}},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			if _, err := ev.EvalBool(tc.expr, tc.row); err == nil {
+				t.Fatalf("формула с неограниченной точностью принята: %s", tc.expr)
+			}
+		})
+	}
+}
+
+func TestEvaluator_ЧистыеBuiltinsБезАргументовНеПаникуют(t *testing.T) {
+	ev := New(interpreter.New(), DefaultProfile())
+	for _, expr := range []string{`Формат() = ""`, `СтрСоединить() = ""`} {
+		got, err := ev.EvalBool(expr, compose.Row{})
+		if err != nil || !got {
+			t.Errorf("%s: got=%v err=%v", expr, got, err)
+		}
+	}
+}
+
+func TestEvaluator_ГраницаDecimalExpansionОстаётсяРабочей(t *testing.T) {
+	ev := New(interpreter.New(), DefaultProfile())
+	for _, expr := range []string{
+		`Окр(1, 4096) = 1`,
+		`Формат(1, "ЧДЦ=4096") <> ""`,
+		`Число("1e4096") > 0`,
+	} {
+		got, err := ev.EvalBool(expr, compose.Row{})
+		if err != nil || !got {
+			t.Errorf("граничная формула %s: got=%v err=%v", expr, got, err)
+		}
+	}
+}
+
+func TestEvaluator_ОграничиваетСложностьAST(t *testing.T) {
+	expr := strings.Repeat("1 + ", maxFormulaASTNodes) + "1 > 0"
+	if _, err := New(interpreter.New(), DefaultProfile()).EvalBool(expr, compose.Row{}); err == nil {
+		t.Fatal("формула сверх AST-бюджета принята")
 	}
 }
