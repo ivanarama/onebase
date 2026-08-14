@@ -232,6 +232,122 @@ jobs:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
 
+  # Ни один гейт не запускал СОБРАННЫЙ бинарь — поэтому регрессия «сборки
+  # 783–792 не запускаются вне %USERPROFILE%» прошла зелёный CI и уехала к
+  # клиенту (P0 #798, план 122A). Компиляция и юнит-тесты этот класс не ловят
+  # по построению: падает не код, а запуск в конкретном каталоге.
+  #
+  # Ключевое здесь — вторая ячейка матрицы location. Прогон только из
+  # приватного каталога воспроизводит ровно тот случай, который и так работал;
+  # дефект виден лишь из ОБЩЕГО каталога вне дерева пользователя.
+  smoke:
+    name: Smoke ${{ matrix.os }} / ${{ matrix.location }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        location: [private, shared]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - name: Build binary
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/onebase${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/onebase
+
+      # Приватный каталог — контроль (так работало всегда), общий — собственно
+      # проверка. Каталоги создаются заранее и вне репозитория: запуск из
+      # рабочей копии не воспроизводит ни одного из двух случаев.
+      - name: Place binary
+        shell: bash
+        run: |
+          set -eu
+          if [ "${{ matrix.location }}" = "private" ]; then
+            dir="$HOME/.onebase/bin"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            dir="/c/ob-smoke"
+          else
+            dir="/opt/onebase"
+          fi
+          mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir"
+          if [ ! -w "$dir" ]; then sudo chown "$(id -u):$(id -g)" "$dir"; fi
+          ext=""
+          [ "$RUNNER_OS" = "Windows" ] && ext=".exe"
+          cp "$RUNNER_TEMP/onebase$ext" "$dir/onebase$ext"
+          echo "SMOKE_BIN=$dir/onebase$ext" >> "$GITHUB_ENV"
+
+      - name: Version of the placed binary
+        shell: bash
+        run: |
+          "$SMOKE_BIN" --version
+
+      # Сам smoke: поднять лаунчер, дождаться ответа 200 и завершить его через
+      # /quit — так одинаково работает на обеих ОС (сигналы на Windows из bash
+      # доставляются ненадёжно). Проверяется и код возврата: «поднялся и
+      # свалился при выходе» — тоже отказ.
+      - name: Start, serve, quit
+        shell: bash
+        run: |
+          set -eu
+          log="$RUNNER_TEMP/smoke.log"
+          cd "$(dirname "$SMOKE_BIN")"
+          ONEBASE_NO_GUI=1 "$SMOKE_BIN" start > "$log" 2>&1 &
+          pid=$!
+
+          url=""
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "::error::процесс завершился, не открыв порт:"; cat "$log"; exit 1
+            fi
+            url="$(grep -o 'http://127.0.0.1:[0-9]*' "$log" | head -1 || true)"
+            [ -n "$url" ] && break
+            sleep 1
+          done
+          [ -n "$url" ] || { echo "::error::лаунчер не сообщил адрес за 60 с:"; cat "$log"; exit 1; }
+          echo "адрес лаунчера: $url"
+
+          code=""
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)"
+            [ "$code" = "200" ] && break
+            sleep 1
+          done
+          [ "$code" = "200" ] || { echo "::error::GET / вернул $code:"; cat "$log"; exit 1; }
+
+          curl -s -o /dev/null -X POST "$url/quit" || true
+          for _ in $(seq 1 30); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "::error::лаунчер не завершился по /quit"; cat "$log"; kill -9 "$pid" || true; exit 1
+          fi
+          wait "$pid"; rc=$?
+          [ "$rc" = "0" ] || { echo "::error::код возврата $rc:"; cat "$log"; exit 1; }
+          echo "smoke ok: запуск из $(dirname "$SMOKE_BIN"), ответ 200, выход 0"
+
+  # 15 windows-only исходников (5 из них — тесты) не исполняло вообще ничто:
+  # все джобы шли на ubuntu, а windows-раннер только собирал GUI. Поломка
+  # вскрывалась на релизе (план 122B).
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+      # -race на Windows намеренно не включаем: дорого, а базовый прогон и так
+      # впервые исполняет windows-only файлы.
+      - name: Unit tests (Windows)
+        run: go test ./...
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15

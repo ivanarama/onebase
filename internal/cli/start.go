@@ -12,6 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// launcherURLPrefix — стабильный префикс строки с адресом лаунчера. По нему
+// smoke-гейт CI находит адрес в выводе процесса (план 122A).
+const launcherURLPrefix = "Лаунчер доступен по адресу: "
+
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Open the information bases launcher",
@@ -94,6 +98,15 @@ func runStart(_ *cobra.Command, _ []string) error {
 			startLog.Error("launcher server failed", "err", err)
 		}
 	}()
+
+	// Адрес печатается всегда, а не только когда окно не открылось.
+	//
+	// Порт лаунчера динамический (127.0.0.1:0), и до этой строки узнать его
+	// было неоткуда: если браузер не нашёлся или открылся не туда, человек
+	// видел «нажал — ничего не произошло» и не мог зайти руками. Заодно это
+	// единственный способ для smoke-гейта (план 122A) понять, куда стучаться:
+	// префикс строки — часть контракта, его разбирает CI.
+	outf("%s%s\n", launcherURLPrefix, srv.EntryURL())
 
 	// OpenWindow blocks until the window/browser is closed or /quit is called.
 	// For the webview build it MUST run on the main goroutine (Win32 requirement).
