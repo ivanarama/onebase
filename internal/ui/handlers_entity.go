@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -1537,6 +1538,14 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	for _, f := range entity.Fields {
 		obj.Fields[f.Name] = row[f.Name]
 	}
+	// Keep the list-posting copy of OnPost aligned with entityservice.Save and
+	// the DSL writer: application hooks routinely persist a reference back to
+	// the document through ЭтотОбъект.Ссылка. Reassert both reserved aliases
+	// after copying metadata fields; legacy configurations may contain a field
+	// with the same spelling, and it must not replace the platform pseudo-field.
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	obj.Set("Ссылка", selfRef)
+	obj.Set("reference", selfRef)
 	tpRows := make(map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
 		rows, _ := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
