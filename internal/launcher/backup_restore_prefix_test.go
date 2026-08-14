@@ -119,8 +119,8 @@ func TestBackupFullImportUniversal_СбрасываетПрефиксБазы(t 
 		}
 		var data bytes.Buffer
 		if _, err := data.ReadFrom(r); err != nil {
-			r.Close()
-			t.Fatalf("read %s: %v", f.Name, err)
+			closeErr := r.Close()
+			t.Fatalf("read %s: %v (close: %v)", f.Name, err, closeErr)
 		}
 		if err := r.Close(); err != nil {
 			t.Fatalf("close %s: %v", f.Name, err)
