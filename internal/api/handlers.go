@@ -248,18 +248,10 @@ func (h *handler) createObject(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 
-		// Auto-number для документов: если поле Номер пустое, генерируем.
-		// Раньше API создавал документ с пустым номером — UI это делал, API нет.
-		if kind == metadata.KindDocument {
-			for _, f := range entity.Fields {
-				if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
-					if v, _ := body.Fields["Номер"].(string); strings.TrimSpace(v) == "" {
-						body.Fields["Номер"] = generateAutoNumber(r.Context(), h.store, entity, body.Fields)
-					}
-					break
-				}
-			}
-		}
+		// Автонумерация здесь больше не делается: её выполняет
+		// entityservice.Save для ЛЮБОГО нового объекта (#869). Прежняя копия
+		// искала поле по имени «Номер» и потому не нумеровала справочники
+		// вовсе — элемент, созданный через REST, оставался без кода.
 		if err := h.autoFillRowAccessFields(r.Context(), entity, "write", body.Fields); err != nil {
 			writeError(w, http.StatusForbidden, "forbidden", "", 0)
 			return
@@ -650,23 +642,6 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error(), "", 0)
-}
-
-// generateAutoNumber генерирует номер документа для API так же, как UI: при
-// наличии Numerator-конфига использует его (ComputePeriodKey + NextNumber +
-// FormatNumber), иначе откатывается на простой NextNum с дополнением нулями.
-// Клиенты, которым нужна особая нумерация, могут передавать Номер сами.
-func generateAutoNumber(ctx context.Context, store *storage.DB, entity *metadata.Entity, fields map[string]any) string {
-	// Та же единая точка, что у UI и DSL (план 117C).
-	if entity.Numerator != nil {
-		if v, err := store.GenerateNumber(ctx, entity, fields); err == nil && v != "" {
-			return v
-		}
-	}
-	if n, err := store.NextNum(ctx, entity.Name); err == nil {
-		return formatLegacy(n)
-	}
-	return ""
 }
 
 func formatLegacy(n int64) string {

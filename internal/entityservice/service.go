@@ -176,6 +176,37 @@ func webhookRecord(fields map[string]any) map[string]any {
 	return rec
 }
 
+// autoNumber заполняет реквизит автонумерации нового объекта, если он пуст.
+//
+// Какой именно реквизит — решает storage.AutoNumberField: «Номер» у документа
+// всегда, «Код» у справочника только при объявленном numerator:. Заполненное
+// вручную значение не трогаем: платформа не должна переписывать введённое
+// пользователем.
+func (s *Service) autoNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
+	target := storage.AutoNumberField(entity)
+	if target == "" {
+		return
+	}
+	for _, f := range entity.Fields {
+		if !strings.EqualFold(f.Name, target) || f.Type != metadata.FieldTypeString {
+			continue
+		}
+		cur := obj.Get(f.Name)
+		if cur != nil && strings.TrimSpace(fmt.Sprintf("%v", cur)) != "" {
+			return
+		}
+		value, err := s.Store.GenerateNumber(ctx, entity, obj.Fields)
+		if err != nil || value == "" {
+			// Молчание здесь осознанное: пустой номер — не повод отменить
+			// запись. Незаполненный «Код» при numerator.unique упрётся в
+			// уникальный индекс и скажет об этом сам.
+			return
+		}
+		obj.Set(f.Name, value)
+		return
+	}
+}
+
 // SaveRequest — входной DTO для Service.Save.
 type SaveRequest struct {
 	Entity *metadata.Entity
@@ -235,6 +266,21 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	selfRef := &interpreter.Ref{UUID: req.ID.String(), Type: req.Entity.Name}
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
+
+	// Автонумерация — ЗДЕСЬ, до хука: «Номер» документа и «Код» справочника
+	// должны быть видны в ПриЗаписи/ОбработкаПроведения, как это давно делает
+	// веб-форма.
+	//
+	// Единая точка вместо четырёх копий (#869, план 117C). Прежде нумеровали:
+	// форма и ИИ-действия (через AutoNumberField — то есть и справочники),
+	// REST v1 и v2 (жёстко по имени «Номер» — то есть только документы),
+	// DSL-запись документа (тоже только «Номер»). Справочник, созданный через
+	// REST или из модуля, оставался без кода вовсе — при том что
+	// docs/features.md обещает «новые элементы получают код автоматически»
+	// без оговорок, а 117E сделал такой код ещё и обязательно уникальным.
+	if req.IsNew {
+		s.autoNumber(ctx, req.Entity, obj)
+	}
 
 	// Pre-hook enrichment: даём caller'у заменить UUID-строки на *Ref и т.п.
 	if s.PrepareHook != nil {
