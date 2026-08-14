@@ -294,7 +294,7 @@ func (db *DB) deleteUnknownTypeIn(
 		table := reg.table
 		for t := range wanted {
 			ct, err := db.Exec(ctx, fmt.Sprintf(
-				"DELETE FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t)
+				"DELETE FROM %s WHERE %s = %s", table, reg.recorderTypeCol, d.Placeholder(1)), t)
 			if err != nil {
 				// Сухой прогон (CountMovementsOfRecorderType) ошибку уже
 				// возвращает, а боевой — глотал: «Удалено движений: 0» и код 0

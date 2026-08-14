@@ -186,39 +186,12 @@ func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
 // без пересчёта остатки остались бы прежними, и удаление ничего бы не изменило
 // для пользователя (дефект Д1 из аудита — ровно про это).
 func (c orphanMovementsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
-	deleted, err := env.DB.DeleteOrphanMovements(ctx, env.Registers, env.Entities)
-	if err == nil {
-		var accDeleted int64
-		accDeleted, err = env.DB.DeleteOrphanAccountEntries(ctx, env.AccountRegisters, env.Entities)
-		deleted += accDeleted
-	}
+	deleted, err := env.DB.DeleteOrphanMovementsAndRecalcTotals(
+		ctx, env.Registers, env.AccountRegisters, env.Entities,
+	)
 	if err != nil {
-		// Частично удалённое всё равно требует пересчёта итогов, поэтому число
-		// возвращаем, но ошибку не глотаем: «починено 0» на сбое читается как
-		// «чинить было нечего» (#615).
-		return int(deleted), err
-	}
-	if deleted == 0 {
-		return 0, nil
-	}
-	for _, reg := range env.Registers {
-		if !reg.TotalsUsable() {
-			continue
-		}
-		if err := env.DB.RecalcRegisterTotals(ctx, reg); err != nil {
-			return int(deleted), fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
-		}
-	}
-	// Без пересчёта итогов бухрегистра удаление проводок не изменило бы для
-	// пользователя ничего: обороты остались бы прежними — тот же дефект Д1,
-	// что и у накопления.
-	for _, reg := range env.AccountRegisters {
-		if !reg.TotalsUsable() {
-			continue
-		}
-		if err := env.DB.RecalcAccountRegisterTotals(ctx, reg); err != nil {
-			return int(deleted), fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
-		}
+		// The storage operation is atomic, so a failed fix repaired zero rows.
+		return 0, err
 	}
 	return int(deleted), nil
 }

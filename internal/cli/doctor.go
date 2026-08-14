@@ -129,49 +129,25 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				strings.Join(inConfig, ", "))
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-			n, err := db.CountMovementsOfRecorderType(ctx, proj.Registers, forget)
+			n, err := db.CountMovementsAndAccountEntriesOfRecorderType(
+				ctx, proj.Registers, proj.AccountRegisters, forget,
+			)
 			if err != nil {
 				// Молчаливый «0» здесь опаснее отказа: администратор прочитал бы
 				// его как «удалять нечего» и снял бы --dry-run (#622).
 				return fmt.Errorf("сухой прогон --forget-document: %w", err)
 			}
-			// Проводки бухрегистра считаются здесь же: показать половину
-			// объёма — это тот же обманчивый ноль, только частичный (#881).
-			acc, err := db.CountAccountEntriesOfRecorderType(ctx, proj.AccountRegisters, forget)
-			if err != nil {
-				return fmt.Errorf("сухой прогон --forget-document (бухрегистры): %w", err)
-			}
-			n += acc
 			outf("Сухой прогон: к удалению движений документов %s: %d (ничего не изменено)\n",
 				strings.Join(forget, ", "), n)
 			outln("")
 		} else {
-			n, err := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
+			n, err := db.DeleteUnknownRecorderTypeMovementsAndRecalcTotals(
+				ctx, proj.Registers, proj.AccountRegisters, forget,
+			)
 			if err != nil {
 				return fmt.Errorf("--forget-document: %w", err)
 			}
-			acc, err := db.DeleteAccountEntriesOfUnknownRecorderType(ctx, proj.AccountRegisters, forget)
-			if err != nil {
-				return fmt.Errorf("--forget-document (бухрегистры): %w", err)
-			}
-			n += acc
 			outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
-			for _, reg := range proj.Registers {
-				if !reg.TotalsUsable() {
-					continue
-				}
-				if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
-					return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
-				}
-			}
-			for _, reg := range proj.AccountRegisters {
-				if !reg.TotalsUsable() {
-					continue
-				}
-				if err := db.RecalcAccountRegisterTotals(ctx, reg); err != nil {
-					return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
-				}
-			}
 			outln("Итоги регистров пересчитаны.")
 			outln("")
 		}

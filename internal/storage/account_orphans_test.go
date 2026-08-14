@@ -99,5 +99,76 @@ func TestOrphanAccountEntries_Matrix(t *testing.T) {
 		if left != 2 {
 			t.Errorf("осталось %d проводок, ожидалось 2 (живая и вне конфигурации)", left)
 		}
+
+		// Общего количества недостаточно: ошибочный DELETE мог снести живую
+		// проводку и случайно оставить другую строку. Проверяем тот самый UUID
+		// регистратора, документ которого существует.
+		var liveLeft int
+		liveQuery := "SELECT COUNT(*) FROM " + metadata.AccountRegTableName(ar.Name) +
+			" WHERE CAST(регистратор AS TEXT) = " + db.Dialect().Placeholder(1)
+		if err := db.QueryRow(ctx, liveQuery, liveID.String()).Scan(&liveLeft); err != nil {
+			t.Fatal(err)
+		}
+		if liveLeft != 1 {
+			t.Errorf("проводок живого документа %d, ожидалась 1", liveLeft)
+		}
+	})
+}
+
+// Явное удаление движений документа, которого больше нет в конфигурации,
+// обязано использовать физическое имя колонки бухрегистра
+// `регистратор_тип`, а не имя `recorder_type` регистра накопления. Проверяем
+// также точность фильтра: проводки соседнего типа должны остаться.
+func TestDeleteAccountEntriesOfUnknownRecorderType_Matrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ar := &metadata.AccountRegister{
+			Name:      "БухУдалениеТипа",
+			Accounts:  "Основной",
+			Resources: []metadata.Field{{Name: "Сумма", Type: "number"}},
+		}
+		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
+			t.Fatal(err)
+		}
+
+		period := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+		rows := []map[string]any{{"счётдт": "41", "счёткт": "60", "сумма": float64(100)}}
+		const targetType = "УдалённыйДокумент"
+		const neighborType = "СоседнийДокумент"
+		for i := 0; i < 2; i++ {
+			if err := db.WriteAccountMovements(ctx, ar.Name, targetType, uuid.New(), rows, ar, &period); err != nil {
+				t.Fatalf("WriteAccountMovements(%s): %v", targetType, err)
+			}
+		}
+		if err := db.WriteAccountMovements(ctx, ar.Name, neighborType, uuid.New(), rows, ar, &period); err != nil {
+			t.Fatalf("WriteAccountMovements(%s): %v", neighborType, err)
+		}
+
+		deleted, err := db.DeleteAccountEntriesOfUnknownRecorderType(
+			ctx, []*metadata.AccountRegister{ar}, []string{targetType},
+		)
+		if err != nil {
+			t.Fatalf("DeleteAccountEntriesOfUnknownRecorderType: %v", err)
+		}
+		if deleted != 2 {
+			t.Fatalf("удалено %d проводок типа %s, ожидалось 2", deleted, targetType)
+		}
+
+		countByType := func(recorderType string) int {
+			t.Helper()
+			query := "SELECT COUNT(*) FROM " + metadata.AccountRegTableName(ar.Name) +
+				" WHERE регистратор_тип = " + db.Dialect().Placeholder(1)
+			var n int
+			if err := db.QueryRow(ctx, query, recorderType).Scan(&n); err != nil {
+				t.Fatalf("подсчёт проводок типа %s: %v", recorderType, err)
+			}
+			return n
+		}
+		if got := countByType(targetType); got != 0 {
+			t.Errorf("после удаления осталось %d проводок типа %s", got, targetType)
+		}
+		if got := countByType(neighborType); got != 1 {
+			t.Errorf("проводок соседнего типа %d, ожидалась 1", got)
+		}
 	})
 }
