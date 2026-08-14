@@ -45,9 +45,11 @@ func applyReportComposition(raw []byte, f url.Values) ([]byte, error) {
 }
 
 // setYAMLMapField устанавливает значение ключа в mapping-узле YAML, сохраняя
-// порядок и форматирование прочих ключей. val==nil удаляет ключ. Позволяет
-// точечно править одно поле документа без round-trip через типизированную
-// структуру (которая молча теряет неперечисленные в ней поля).
+// порядок и форматирование прочих ключей. val==nil убирает эффективное значение:
+// удаляет обычный ключ, а при наличии значения из YAML merge оставляет явный
+// null, чтобы старое значение не проявилось снова. Позволяет точечно править одно
+// поле документа без round-trip через типизированную структуру (которая молча
+// теряет неперечисленные в ней поля).
 func setYAMLMapField(m *yaml.Node, key string, val any) error {
 	mapping, err := resolveYAMLAlias(m)
 	if err != nil {
@@ -57,13 +59,32 @@ func setYAMLMapField(m *yaml.Node, key string, val any) error {
 	if err != nil {
 		return err
 	}
+	inherited, err := yamlMapHasMergedField(mapping, key)
+	if err != nil {
+		return err
+	}
 	if existing != nil {
 		if val == nil {
-			// Удаление определения anchor при живых aliases создало бы битый YAML.
-			// Alias-значение удалить безопасно: само определение находится в другом
+			if inherited {
+				// Deleting the direct value would reveal the value from << again.
+				// Keep an explicit null override instead. If the direct value is an
+				// alias, replace the alias edge itself rather than mutating its target.
+				var vn yaml.Node
+				if err := vn.Encode(nil); err != nil {
+					return err
+				}
+				if existing.Kind != yaml.AliasNode && yamlNodeDescendantsDefineAnchor(existing) {
+					return fmt.Errorf("setYAMLMapField: нельзя очистить ключ %q с вложенным YAML-anchor", key)
+				}
+				replaceYAMLNode(existing, &vn)
+				return nil
+			}
+			// Удаление любого anchor в паре (включая anchor на ключе или во
+			// вложенном значении) может оставить внешний alias без определения.
+			// Alias-значение удалить безопасно: его определение находится в другом
 			// узле и остаётся на месте.
-			if existing.Kind != yaml.AliasNode && existing.Anchor != "" {
-				return fmt.Errorf("setYAMLMapField: нельзя удалить ключ %q с YAML-anchor %q", key, existing.Anchor)
+			if yamlNodeDefinesAnchor(mapping.Content[index]) || yamlNodeDefinesAnchor(existing) {
+				return fmt.Errorf("setYAMLMapField: нельзя удалить ключ %q с YAML-anchor", key)
 			}
 			mapping.Content = append(mapping.Content[:index], mapping.Content[index+2:]...)
 			return nil
@@ -76,10 +97,25 @@ func setYAMLMapField(m *yaml.Node, key string, val any) error {
 		if err != nil {
 			return err
 		}
+		if yamlNodeDescendantsDefineAnchor(target) {
+			return fmt.Errorf("setYAMLMapField: нельзя заменить ключ %q с вложенным YAML-anchor", key)
+		}
 		replaceYAMLNode(target, &vn)
 		return nil
 	}
 	if val == nil {
+		if !inherited {
+			return nil
+		}
+		// There is no direct key, but << supplies one. An explicit null is the
+		// only non-destructive way to shadow it without rewriting the merge graph.
+		var vn yaml.Node
+		if err := vn.Encode(nil); err != nil {
+			return err
+		}
+		mapping.Content = append(mapping.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+			&vn)
 		return nil
 	}
 	var vn yaml.Node

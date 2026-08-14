@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -195,6 +196,15 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 		homeValue, _, err := yamlMapField(doc, "home_page")
 		if err != nil {
 			return err
+		}
+		if homeValue == nil {
+			inherited, err := yamlMapHasMergedField(doc, "home_page")
+			if err != nil {
+				return err
+			}
+			if inherited {
+				return fmt.Errorf("home_page унаследован через YAML merge; точечная правка небезопасна")
+			}
 		}
 		if homeValue != nil {
 			home, err := yamlSubMap(doc, "home_page")

@@ -139,7 +139,17 @@ func updateYAMLMapping(raw []byte, docName string, edit func(doc *yaml.Node) err
 	if err := enc.Close(); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	// yaml.Encoder trusts Alias.Value and can emit an alias whose anchor was
+	// removed by edit (for example when deleting a mapping value that contained
+	// a nested anchor). Reparse the result before it can replace the user's
+	// configuration. A failed edit must be fail-closed and leave the source
+	// untouched.
+	out := buf.Bytes()
+	var verified yaml.Node
+	if err := yaml.Unmarshal(out, &verified); err != nil {
+		return nil, fmt.Errorf("%s: результат YAML-правки некорректен: %w", docName, err)
+	}
+	return out, nil
 }
 
 // validateYAMLTree отклоняет неоднозначные mapping-узлы до правки. yaml.Node
@@ -217,6 +227,17 @@ func yamlSubMap(m *yaml.Node, key string) (*yaml.Node, error) {
 		}
 		return resolved, nil
 	}
+	inherited, err := yamlMapHasMergedField(mapping, key)
+	if err != nil {
+		return nil, err
+	}
+	if inherited {
+		// Creating an empty direct mapping would shadow the inherited mapping and
+		// silently drop every field the form does not edit (pages, titles, future
+		// extension keys). Materialising an arbitrary anchored graph safely is not
+		// possible here, so reject the edit and preserve the source verbatim.
+		return nil, fmt.Errorf("yamlSubMap: ключ %q унаследован через YAML merge; точечная правка небезопасна", key)
+	}
 	sub := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	mapping.Content = append(mapping.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, sub)
 	return sub, nil
@@ -246,6 +267,116 @@ func yamlMapField(m *yaml.Node, key string) (*yaml.Node, int, error) {
 		return nil, -1, nil
 	}
 	return resolved.Content[index+1], index, nil
+}
+
+// yamlMapHasMergedField reports whether key would be inherited through a YAML
+// merge key (<<). Removing a direct key without accounting for this would
+// merely expose the old inherited value again, so a form would report success
+// while the value selected by the user remained unchanged.
+func yamlMapHasMergedField(m *yaml.Node, key string) (bool, error) {
+	resolved, err := resolveYAMLAlias(m)
+	if err != nil {
+		return false, err
+	}
+	if resolved.Kind != yaml.MappingNode || len(resolved.Content)%2 != 0 {
+		return false, fmt.Errorf("ожидалось YAML-отображение")
+	}
+	active := make(map[*yaml.Node]struct{})
+	for i := 0; i < len(resolved.Content); i += 2 {
+		if isYAMLMergeKey(resolved.Content[i]) {
+			return yamlMergeSourceHasField(resolved.Content[i+1], key, active)
+		}
+	}
+	return false, nil
+}
+
+func yamlMergeSourceHasField(source *yaml.Node, key string, active map[*yaml.Node]struct{}) (bool, error) {
+	resolved, err := resolveYAMLAlias(source)
+	if err != nil {
+		return false, err
+	}
+	switch resolved.Kind {
+	case yaml.MappingNode:
+		return yamlMappingDefinesField(resolved, key, active)
+	case yaml.SequenceNode:
+		for _, item := range resolved.Content {
+			itemResolved, err := resolveYAMLAlias(item)
+			if err != nil {
+				return false, err
+			}
+			if itemResolved.Kind != yaml.MappingNode {
+				return false, fmt.Errorf("YAML merge ожидает отображение или последовательность отображений")
+			}
+			found, err := yamlMappingDefinesField(itemResolved, key, active)
+			if err != nil || found {
+				return found, err
+			}
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("YAML merge ожидает отображение или последовательность отображений")
+	}
+}
+
+func yamlMappingDefinesField(m *yaml.Node, key string, active map[*yaml.Node]struct{}) (bool, error) {
+	if _, ok := active[m]; ok {
+		return false, fmt.Errorf("циклический YAML merge")
+	}
+	active[m] = struct{}{}
+	defer delete(active, m)
+
+	if m.Kind != yaml.MappingNode || len(m.Content)%2 != 0 {
+		return false, fmt.Errorf("YAML merge ожидает отображение")
+	}
+	for i := 0; i < len(m.Content); i += 2 {
+		k := m.Content[i]
+		if !isYAMLMergeKey(k) && k.Kind == yaml.ScalarNode && k.Value == key {
+			return true, nil
+		}
+	}
+	for i := 0; i < len(m.Content); i += 2 {
+		if isYAMLMergeKey(m.Content[i]) {
+			found, err := yamlMergeSourceHasField(m.Content[i+1], key, active)
+			if err != nil || found {
+				return found, err
+			}
+		}
+	}
+	return false, nil
+}
+
+func isYAMLMergeKey(n *yaml.Node) bool {
+	return n != nil && n.Kind == yaml.ScalarNode && n.Value == "<<" && n.ShortTag() == "!!merge"
+}
+
+// yamlNodeDefinesAnchor checks anchor definitions in the represented tree.
+// Alias.Alias is deliberately not traversed: an alias only references a
+// definition elsewhere and removing that alias does not remove the definition.
+func yamlNodeDefinesAnchor(n *yaml.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind != yaml.AliasNode && n.Anchor != "" {
+		return true
+	}
+	for _, child := range n.Content {
+		if yamlNodeDefinesAnchor(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func yamlNodeDescendantsDefineAnchor(n *yaml.Node) bool {
+	if n == nil {
+		return false
+	}
+	for _, child := range n.Content {
+		if yamlNodeDefinesAnchor(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveYAMLAlias(n *yaml.Node) (*yaml.Node, error) {
