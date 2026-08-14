@@ -129,7 +129,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				strings.Join(inConfig, ", "))
 		}
 		if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-			n, err := db.CountMovementsOfRecorderType(ctx, proj.Registers, forget)
+			n, err := db.CountMovementsAndAccountEntriesOfRecorderType(
+				ctx, proj.Registers, proj.AccountRegisters, forget,
+			)
 			if err != nil {
 				// Молчаливый «0» здесь опаснее отказа: администратор прочитал бы
 				// его как «удалять нечего» и снял бы --dry-run (#622).
@@ -139,19 +141,13 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				strings.Join(forget, ", "), n)
 			outln("")
 		} else {
-			n, err := db.DeleteMovementsOfUnknownRecorderType(ctx, proj.Registers, forget)
+			n, err := db.DeleteUnknownRecorderTypeMovementsAndRecalcTotals(
+				ctx, proj.Registers, proj.AccountRegisters, forget,
+			)
 			if err != nil {
 				return fmt.Errorf("--forget-document: %w", err)
 			}
 			outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
-			for _, reg := range proj.Registers {
-				if !reg.TotalsUsable() {
-					continue
-				}
-				if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
-					return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
-				}
-			}
 			outln("Итоги регистров пересчитаны.")
 			outln("")
 		}

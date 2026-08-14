@@ -79,17 +79,41 @@ type RefInfo struct {
 	Count      int
 }
 
+// RefSources — метаданные, в которых CheckRefs ищет ссылки на удаляемый объект.
+//
+// Интерфейс, а не набор срезов: до #855 сигнатура принимала только
+// `[]*metadata.Entity`, и «полное покрытие», которое заявляли и комментарий в
+// коде, и PR #801, физически не могло включать регистры — их просто некуда
+// было передать. Через интерфейс вызывающий отдаёт весь реестр целиком, и
+// «забыть» источник ссылок больше нельзя: под него нет параметра.
+// *runtime.Registry реализует его как есть.
+type RefSources interface {
+	Entities() []*metadata.Entity
+	Registers() []*metadata.Register
+	InfoRegisters() []*metadata.InfoRegister
+	AccountRegisters() []*metadata.AccountRegister
+}
+
 // CheckRefs returns all entities/fields that reference the given object.
 //
 // Это предохранитель перед удалением, поэтому он обязан быть fail-closed.
 // Раньше ошибки Scan игнорировались: count оставался нулём, функция отвечала
 // «ссылок нет», и объект удалялся, ломая ссылочную целостность. Теперь сбой
 // любого подсчёта возвращается вызывающему коду, а тот отказывается удалять.
-func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, allEntities []*metadata.Entity) ([]RefInfo, error) {
+//
+// Проверяются реквизиты сущностей, их табличные части И ссылочные поля всех
+// трёх видов регистров (#855): измерения регистра накопления, измерения и
+// ресурсы регистра сведений, субконто и ресурсы бухрегистра. Внешних ключей на
+// уровне БД там нет, поэтому удалённый товар оставлял бы регистр с движениями
+// по несуществующей ссылке — остатки и обороты «висели» бы на пустом месте.
+func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, src RefSources) ([]RefInfo, error) {
 	d := db.dialect
 	idA := idArg(d, id)
 	var refs []RefInfo
-	for _, e := range allEntities {
+	if src == nil {
+		return nil, nil
+	}
+	for _, e := range src.Entities() {
 		for _, f := range e.Fields {
 			if f.RefEntity != entityName {
 				continue
@@ -126,6 +150,60 @@ func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, al
 						Count:      count,
 					})
 				}
+			}
+		}
+	}
+
+	// Регистры. Ссылка из измерения ничем не отличается от ссылки из реквизита:
+	// объект, на который она указывает, удалять нельзя.
+	type regRef struct {
+		label  string // как показать источник пользователю
+		table  string // где искать
+		fields []metadata.Field
+		column func(i int, f metadata.Field) string
+	}
+	byName := func(_ int, f metadata.Field) string { return metadata.ColumnName(f) }
+
+	var sources []regRef
+	for _, r := range src.Registers() {
+		table := metadata.RegisterTableName(r.Name)
+		sources = append(sources,
+			regRef{"РегистрНакопления." + r.Name, table, r.Dimensions, byName},
+			regRef{"РегистрНакопления." + r.Name, table, r.Resources, byName},
+			regRef{"РегистрНакопления." + r.Name, table, r.Attributes, byName},
+		)
+	}
+	for _, ir := range src.InfoRegisters() {
+		table := metadata.InfoRegTableName(ir.Name)
+		sources = append(sources,
+			regRef{"РегистрСведений." + ir.Name, table, ir.Dimensions, byName},
+			regRef{"РегистрСведений." + ir.Name, table, ir.Resources, byName},
+		)
+	}
+	for _, ar := range src.AccountRegisters() {
+		table := metadata.AccountRegTableName(ar.Name)
+		sources = append(sources,
+			regRef{"РегистрБухгалтерии." + ar.Name, table, ar.Resources, byName},
+			// Субконто хранятся в колонках с номером, а не с именем поля:
+			// имя колонки стабильно при переименовании субконто.
+			regRef{"РегистрБухгалтерии." + ar.Name, table, ar.Subconto,
+				func(i int, _ metadata.Field) string { return metadata.SubcontoColumn(i + 1) }},
+		)
+	}
+
+	for _, s := range sources {
+		for i, f := range s.fields {
+			if f.RefEntity != entityName {
+				continue
+			}
+			var count int
+			if err := db.QueryRow(ctx,
+				fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", s.table, s.column(i, f), d.Placeholder(1)),
+				idA).Scan(&count); err != nil {
+				return nil, fmt.Errorf("проверка ссылок %s.%s: %w", s.label, f.Name, err)
+			}
+			if count > 0 {
+				refs = append(refs, RefInfo{EntityName: s.label, FieldName: f.Name, Count: count})
 			}
 		}
 	}
