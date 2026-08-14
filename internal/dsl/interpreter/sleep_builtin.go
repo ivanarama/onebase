@@ -109,8 +109,21 @@ func waitForSleep(d time.Duration, ec *execCtx) {
 	}
 	sleepTimer := time.NewTimer(d)
 	defer sleepTimer.Stop()
-	if ec == nil || ec.deadline.IsZero() {
+	if ec == nil {
 		<-sleepTimer.C
+		return
+	}
+	var contextDone <-chan struct{}
+	if ec.context != nil {
+		contextDone = ec.context.Done()
+	}
+	if ec.deadline.IsZero() {
+		select {
+		case <-sleepTimer.C:
+			ec.checkDeadline()
+		case <-contextDone:
+			ec.checkDeadline()
+		}
 		return
 	}
 	remaining := time.Until(ec.deadline)
@@ -126,6 +139,8 @@ func waitForSleep(d time.Duration, ec *execCtx) {
 		ec.checkDeadline()
 	case <-deadlineTimer.C:
 		panic(dslStop{err: errSandboxTimeout})
+	case <-contextDone:
+		ec.checkDeadline()
 	}
 }
 
