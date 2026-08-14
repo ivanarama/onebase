@@ -34,6 +34,10 @@ const (
 	legacySharedSessionCookieName = "onebase_session"
 	launcherCookieMigrationTTL    = 400 * 24 * time.Hour
 	launcherQuitDelay             = 100 * time.Millisecond
+	// A skipped-base warning must remain visible until the user acknowledges
+	// it. This fallback only prevents a disconnected client from leaving the
+	// launcher forever quiesced after a verified stop.
+	launcherWarningQuitFallback = 5 * time.Minute
 )
 
 // noStore гасит кэширование embed-статики (configurator.js, Monaco, ECharts,
@@ -83,16 +87,20 @@ func (s *Server) requestQuit() {
 	s.quitOnce.Do(func() { close(s.quit) })
 }
 
+func (s *Server) after(delay time.Duration, fn func()) {
+	if s.scheduleQuit != nil {
+		s.scheduleQuit(delay, fn)
+		return
+	}
+	time.AfterFunc(delay, fn)
+}
+
 func (s *Server) handleQuit(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	// Let the browser finish receiving the fetch response before OpenWindow
 	// observes Done and closes the HTTP server. Closing synchronously here races
 	// the response write and makes the UI report a failed quit intermittently.
-	if s.scheduleQuit != nil {
-		s.scheduleQuit(launcherQuitDelay, s.requestQuit)
-	} else {
-		time.AfterFunc(launcherQuitDelay, s.requestQuit)
-	}
+	s.after(launcherQuitDelay, s.requestQuit)
 }
 
 // NewServer creates a launcher server bound to a random available port.
@@ -111,6 +119,7 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 	}
 	srv := &Server{h: h, ln: ln, quit: make(chan struct{})}
 	h.quitFn = srv.requestQuit
+	h.scheduleQuit = srv.after
 	return srv, nil
 }
 

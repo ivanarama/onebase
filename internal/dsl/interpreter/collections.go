@@ -60,7 +60,7 @@ func (r *Ref) CallMethod(method string, args []any) any {
 				"используйте Документы.Тип.Удалить(Ссылка) или Справочники.Тип.Удалить(Ссылка)")
 		}
 		if err := r.Manager.DeleteRef(r.UUID); err != nil {
-			RaiseUserError("Удалить(" + r.Name + "): " + err.Error())
+			RaiseUserErrorWrap("Удалить("+r.Name+"): "+err.Error(), err)
 		}
 		return nil
 	case "получитьобъект", "getobject":

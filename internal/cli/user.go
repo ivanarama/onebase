@@ -244,11 +244,17 @@ func runUser2FAReset(cmd *cobra.Command, args []string) error {
 	if err := env.repo.DisableTOTP(ctx, u.ID); err != nil {
 		return err
 	}
-	// Сессии на всякий случай гасим: у восстановления доступа не должно оставаться
-	// хвостов, а второй фактор мог сбрасывать не сам владелец.
-	_ = env.repo.KickUserSessions(ctx, u.ID)
+	// Сессии гасим обязательно: второй фактор мог сбрасывать не сам владелец,
+	// и «отозвать не удалось» нельзя проглатывать в «Второй фактор снят» —
+	// тот же дефект «сбой выдан за успех», что #648 чинил в user passwd
+	// (issue #862). Фактор уже снят, поэтому сообщаем оба факта и завершаемся
+	// ненулевым кодом.
+	kickErr := env.repo.KickUserSessions(ctx, u.ID)
 	env.db.LogAction(ctx, "user_2fa_reset", "user", login, u.ID, "", "cli", "")
 	outf("Второй фактор снят у %s\n", login)
+	if kickErr != nil {
+		return fmt.Errorf("второй фактор снят, но действующие сессии %s отозвать не удалось — прежний вход мог сохраниться: %w", login, kickErr)
+	}
 	return nil
 }
 

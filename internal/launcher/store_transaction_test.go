@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,14 +138,114 @@ func TestStoreConcurrentCrossInstanceAddsLoseNothing(t *testing.T) {
 		t.Fatalf("lost update: записано %d баз из %d", len(bases), count)
 	}
 	seen := make(map[string]bool, count)
+	seenPorts := make(map[int]string, count)
 	for _, base := range bases {
 		seen[base.ID] = true
+		if previous := seenPorts[base.Port]; previous != "" {
+			t.Fatalf("atomic default-port allocation duplicated port %d for %s and %s", base.Port, previous, base.ID)
+		}
+		seenPorts[base.Port] = base.ID
 	}
 	for i := 0; i < count; i++ {
 		id := fmt.Sprintf("b-%02d", i)
 		if !seen[id] {
 			t.Errorf("потеряна база %s", id)
 		}
+	}
+}
+
+func TestStoreConcurrentCrossInstanceAddsRejectSameExplicitPort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ibases.yaml")
+	stores := []*Store{{path: path}, {path: path}}
+	start := make(chan struct{})
+	errs := make(chan error, len(stores))
+	for i, st := range stores {
+		go func(i int, st *Store) {
+			<-start
+			errs <- st.Add(&Base{ID: fmt.Sprintf("b-%d", i), Name: "База", Port: 18080})
+		}(i, st)
+	}
+	close(start)
+
+	var successes, conflicts int
+	for range stores {
+		err := <-errs
+		if err == nil {
+			successes++
+			continue
+		}
+		var conflict *BasePortConflictError
+		if !errors.As(err, &conflict) || conflict.Port != 18080 {
+			t.Fatalf("Add returned unexpected error: %v", err)
+		}
+		conflicts++
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("same-port Add results: successes=%d conflicts=%d", successes, conflicts)
+	}
+	bases, err := stores[0].List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bases) != 1 || bases[0].Port != 18080 {
+		t.Fatalf("same-port transaction persisted unexpected bases: %+v", bases)
+	}
+}
+
+func TestStoreConcurrentCrossInstanceUpdatesRejectSameTargetPort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ibases.yaml")
+	first, second := &Store{path: path}, &Store{path: path}
+	for _, base := range []*Base{
+		{ID: "a", Name: "A", Port: 18081},
+		{ID: "b", Name: "B", Port: 18082},
+	} {
+		if err := first.Add(base); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := first.Get("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := second.Get("b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Port, b.Port = 18083, 18083
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() { <-start; errs <- first.Update(a) }()
+	go func() { <-start; errs <- second.Update(b) }()
+	close(start)
+
+	var successes, conflicts int
+	for range 2 {
+		err := <-errs
+		if err == nil {
+			successes++
+			continue
+		}
+		var conflict *BasePortConflictError
+		if !errors.As(err, &conflict) || conflict.Port != 18083 {
+			t.Fatalf("Update returned unexpected error: %v", err)
+		}
+		conflicts++
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("same-target Update results: successes=%d conflicts=%d", successes, conflicts)
+	}
+	bases, err := first.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := 0
+	for _, base := range bases {
+		if base.Port == 18083 {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("target port owners=%d, bases=%+v", owners, bases)
 	}
 }
 

@@ -796,6 +796,75 @@ func TestStopAllForUpdatePersistsAndStopsAdoptedBase(t *testing.T) {
 	}
 }
 
+func TestStopAllForUpdateRejectsIdentityLostBetweenPreflights(t *testing.T) {
+	isolatedUpdatesHome(t)
+	const token = "update-control-secret"
+	var identityCalls atomic.Int32
+	var stopCalled atomic.Bool
+	control := authenticatedControlHandler(t, token, "base-control", func() {
+		stopCalled.Store(true)
+	})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/debug/process/identity" && identityCalls.Add(1) == 2 {
+			http.Error(w, "identity temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		control.ServeHTTP(w, r)
+	}))
+	t.Cleanup(ts.Close)
+
+	adopted := controlTestBase(t, ts, token)
+	tracked := &Base{
+		ID: "tracked", Name: "Tracked", Port: waitReadyFreePort(t),
+		ControlToken: "tracked-generation",
+	}
+	store, err := NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range []*Base{tracked, adopted} {
+		if err := store.Add(base); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := NewRunner()
+	runner.procs[tracked.ID] = &managedProc{
+		port: tracked.Port, controlToken: tracked.ControlToken, done: make(chan struct{}),
+	}
+	h := &handler{store: store, runner: runner}
+	var releasedTarget atomic.Bool
+	st := selfupdate.State{}
+	err = h.stopAllForUpdate(&st, nil, func() error {
+		releasedTarget.Store(true)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("update continued after the second preflight lost process identity")
+	}
+	if !releasedTarget.Load() {
+		t.Fatal("update target reservation was not released before recovery")
+	}
+	if stopCalled.Load() {
+		t.Fatal("strict preflight sent a stop request after identity became unverified")
+	}
+	if !runner.IsRunning(tracked.ID) {
+		t.Fatal("strict preflight partially stopped a tracked base before rejecting the update")
+	}
+	if portFree(adopted.Port) {
+		t.Fatal("adopted process was stopped after its identity became unverified")
+	}
+	if got := identityCalls.Load(); got < 3 {
+		t.Fatalf("identity probes = %d, want outer + strict + recovery probes", got)
+	}
+	if st.RecoveryPending() {
+		t.Fatalf("already-running bases were left in recovery state: %+v", st)
+	}
+	if err := runner.holdStarts(); err != nil {
+		t.Fatalf("strict preflight leaked lifecycle gate: %v", err)
+	}
+	runner.AllowStarts()
+}
+
 func TestStopAllForUpdateDoesNotStopWhenRecoveryStateCannotBeSaved(t *testing.T) {
 	badHome := filepath.Join(t.TempDir(), "home-is-a-file")
 	if err := os.WriteFile(badHome, []byte("x"), 0o600); err != nil {

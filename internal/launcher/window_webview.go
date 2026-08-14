@@ -56,6 +56,7 @@ const (
 	mbYesNoCancel   = 0x00000003
 	mbIconError     = 0x00000010
 	mbIconQuestion  = 0x00000020
+	mbIconWarning   = 0x00000030
 	mbSetForeground = 0x00010000
 	idYes           = 6
 	idNo            = 7
@@ -94,6 +95,7 @@ type windowSession struct {
 	hookInstalled bool // UI-thread only
 
 	stopErr      error
+	stopSkipped  []RunningBase
 	stopTimedOut bool
 	timeoutAck   chan struct{}
 
@@ -278,8 +280,13 @@ func (s *windowSession) handleWindowClose() bool {
 		return true
 	}
 
-	switch planForClose(policy, len(running)) {
+	plan, warnUnverified := planForRuntimeClose(policy, running)
+	switch plan {
 	case planKeepRunning:
+		if warnUnverified {
+			lang := currentLang()
+			showNativeWarning(s.hwnd, skippedBasesText(lang, running), tr(lang, "Закрытие окна информационных баз"))
+		}
 		s.allowClose()
 		return false
 	case planStopAll:
@@ -346,6 +353,7 @@ func (s *windowSession) startStop() {
 	}
 	s.phase = windowStopping
 	s.stopErr = nil
+	s.stopSkipped = nil
 	s.stopTimedOut = false
 	s.timeoutAck = make(chan struct{}, 1)
 	cc := s.cc
@@ -353,10 +361,11 @@ func (s *windowSession) startStop() {
 	s.mu.Unlock()
 
 	procShowWindow.Call(s.hwnd, swHide)
-	result := make(chan error, 1)
+	result := make(chan stopOutcome, 1)
 	go func() {
 		defer s.workers.Done()
-		result <- cc.StopAllBases()
+		skipped, err := cc.StopAllBases()
+		result <- stopOutcome{skipped: skipped, err: err}
 	}()
 	go func() {
 		defer s.workers.Done()
@@ -364,13 +373,20 @@ func (s *windowSession) startStop() {
 	}()
 }
 
-func (s *windowSession) monitorStop(result <-chan error) {
+// stopOutcome — результат StopAllBases: базы, оставшиеся работать на чужом
+// порту, отделены от настоящей ошибки остановки.
+type stopOutcome struct {
+	skipped []RunningBase
+	err     error
+}
+
+func (s *windowSession) monitorStop(result <-chan stopOutcome) {
 	timer := time.NewTimer(closeStopTimeout)
 	defer timer.Stop()
 
 	select {
-	case err := <-result:
-		s.recordStopResult(err)
+	case out := <-result:
+		s.recordStopResult(out)
 		if postErr := s.postWindowMessage(wmCloseStopFinished); postErr != nil {
 			respondLog().Warn("не удалось обработать результат остановки баз", "err", postErr)
 		}
@@ -398,17 +414,17 @@ func (s *windowSession) monitorStop(result <-chan error) {
 		case <-ack:
 		case <-s.runEndedCh:
 		}
-		err := <-result
-		s.recordStopResult(err)
+		s.recordStopResult(<-result)
 		if postErr := s.postWindowMessage(wmCloseStopFinished); postErr != nil {
 			respondLog().Warn("не удалось обработать результат остановки баз после таймаута", "err", postErr)
 		}
 	}
 }
 
-func (s *windowSession) recordStopResult(err error) {
+func (s *windowSession) recordStopResult(out stopOutcome) {
 	s.mu.Lock()
-	s.stopErr = err
+	s.stopErr = out.err
+	s.stopSkipped = out.skipped
 	s.mu.Unlock()
 }
 
@@ -451,10 +467,17 @@ func (s *windowSession) handleStopFinished() {
 		s.mu.Unlock()
 		return
 	}
-	err, timedOut := s.stopErr, s.stopTimedOut
+	err, timedOut, skipped := s.stopErr, s.stopTimedOut, s.stopSkipped
 	if err == nil {
 		s.phase = windowTerminating
 		s.mu.Unlock()
+		// Базы, которые лаунчер не вправе останавливать, продолжают работать —
+		// сказать об этом надо до закрытия окна: другого места узнать уже нет.
+		if len(skipped) != 0 {
+			bringWindowToFront(s.hwnd)
+			lang := currentLang()
+			showNativeWarning(s.hwnd, skippedBasesText(lang, skipped), tr(lang, "Закрытие окна информационных баз"))
+		}
 		// We are in the owning UI thread. Posting WM_QUIT here terminates the
 		// exact queue consumed by webview.Run.
 		procPostQuitMessage.Call(0)
@@ -478,6 +501,7 @@ func (s *windowSession) handleStopFinished() {
 	if !s.runEnded && s.phase == windowStopping {
 		s.phase = windowIdle
 		s.stopErr = nil
+		s.stopSkipped = nil
 		s.stopTimedOut = false
 		s.timeoutAck = nil
 	}
@@ -550,6 +574,7 @@ func (s *windowSession) reset() {
 	s.mu.Lock()
 	s.cc = nil
 	s.stopErr = nil
+	s.stopSkipped = nil
 	s.timeoutAck = nil
 	s.doneCancel = nil
 	s.doneExited = nil
@@ -594,6 +619,12 @@ func isEnglishLang(lang string) bool {
 func showNativeError(hwnd uintptr, text, caption string) {
 	if _, err := nativeMessageBox(hwnd, text, caption, mbIconError|mbSetForeground); err != nil {
 		respondLog().Warn("не удалось показать ошибку закрытия лаунчера", "err", err)
+	}
+}
+
+func showNativeWarning(hwnd uintptr, text, caption string) {
+	if _, err := nativeMessageBox(hwnd, text, caption, mbIconWarning|mbSetForeground); err != nil {
+		respondLog().Warn("не удалось показать предупреждение при закрытии лаунчера", "err", err)
 	}
 }
 

@@ -171,3 +171,106 @@ func TestGenerateNumber_NoNumeratorIsEmpty(t *testing.T) {
 		t.Errorf("без numerator: получено %q, err=%v", v, err)
 	}
 }
+
+func TestSetAutoNumberValueCompareAndSetMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ent := &metadata.Entity{
+			Name: "AutoNumberCAS", Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: metadata.StandardCodeField, Type: metadata.FieldTypeString},
+				{Name: "Наименование", Type: metadata.FieldTypeString},
+			},
+		}
+		if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+			t.Fatalf("Migrate: %v", err)
+		}
+
+		empty := ""
+		spaces := " \t "
+		cases := []struct {
+			name     string
+			initial  any
+			expected *string
+		}{
+			{name: "null", initial: nil, expected: nil},
+			{name: "empty", initial: "", expected: &empty},
+			{name: "whitespace", initial: spaces, expected: &spaces},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				id := uuid.New()
+				if err := db.Upsert(ctx, ent.Name, id, map[string]any{
+					metadata.StandardCodeField: tc.initial,
+					"Наименование":             tc.name,
+				}, ent); err != nil {
+					t.Fatalf("Upsert: %v", err)
+				}
+				updated, err := db.SetAutoNumberValue(ctx, ent, id, metadata.StandardCodeField, tc.expected, "К-000001")
+				if err != nil {
+					t.Fatalf("SetAutoNumberValue: %v", err)
+				}
+				if !updated {
+					t.Fatal("точное пустое значение не обновлено")
+				}
+				row, err := db.GetByID(ctx, ent.Name, id, ent)
+				if err != nil {
+					t.Fatalf("GetByID: %v", err)
+				}
+				if got := row[metadata.StandardCodeField]; got != "К-000001" {
+					t.Fatalf("код = %v, ожидался К-000001", got)
+				}
+				updated, err = db.SetAutoNumberValue(ctx, ent, id, metadata.StandardCodeField, tc.expected, "К-000002")
+				if err != nil {
+					t.Fatalf("повторный SetAutoNumberValue: %v", err)
+				}
+				if updated {
+					t.Fatal("устаревший expected повторно обновил строку")
+				}
+			})
+		}
+
+		raceID := uuid.New()
+		if err := db.Upsert(ctx, ent.Name, raceID, map[string]any{
+			metadata.StandardCodeField: "", "Наименование": "race",
+		}, ent); err != nil {
+			t.Fatalf("Upsert(race): %v", err)
+		}
+		if err := db.Upsert(ctx, ent.Name, raceID, map[string]any{
+			metadata.StandardCodeField: "РУЧНОЙ", "Наименование": "race",
+		}, ent); err != nil {
+			t.Fatalf("ручное заполнение: %v", err)
+		}
+		updated, err := db.SetAutoNumberValue(ctx, ent, raceID, metadata.StandardCodeField, &empty, "К-000003")
+		if err != nil {
+			t.Fatalf("SetAutoNumberValue(race): %v", err)
+		}
+		if updated {
+			t.Fatal("CAS перезаписал конкурентно заполненный код")
+		}
+		row, err := db.GetByID(ctx, ent.Name, raceID, ent)
+		if err != nil {
+			t.Fatalf("GetByID(race): %v", err)
+		}
+		if got := row[metadata.StandardCodeField]; got != "РУЧНОЙ" {
+			t.Fatalf("конкурентный код изменён: %v", got)
+		}
+
+		deletedID := uuid.New()
+		if err := db.Upsert(ctx, ent.Name, deletedID, map[string]any{
+			metadata.StandardCodeField: "", "Наименование": "deleted",
+		}, ent); err != nil {
+			t.Fatalf("Upsert(deleted): %v", err)
+		}
+		if err := db.Delete(ctx, ent.Name, deletedID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		updated, err = db.SetAutoNumberValue(ctx, ent, deletedID, metadata.StandardCodeField, &empty, "К-000004")
+		if err != nil {
+			t.Fatalf("SetAutoNumberValue(deleted): %v", err)
+		}
+		if updated {
+			t.Fatal("удалённая строка отмечена как обновлённая")
+		}
+	})
+}

@@ -125,8 +125,9 @@ func (s *Scheduler) SetMessageSink(f func(userID, text string)) {
 }
 
 // VarsBuilder строит DSL-окружение и возвращает его transaction state.
+// messages — общий для задания collector сообщений из вложенных DSL-хуков.
 // Scheduler владеет state до конца одного запуска и гарантирует cleanup.
-type VarsBuilder func(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState)
+type VarsBuilder func(ctx context.Context, mc *runtime.MovementsCollector, messages *[]string) (map[string]any, *interpreter.TxState)
 
 // SetVarsBuilder подключает внешний сборщик DSL-окружения (см. поле varsBuilder).
 func (s *Scheduler) SetVarsBuilder(b VarsBuilder) {
@@ -879,7 +880,7 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	var dslVars map[string]any
 	var txState *interpreter.TxState
 	if varsBuilder != nil {
-		dslVars, txState = varsBuilder(ctx, mc)
+		dslVars, txState = varsBuilder(ctx, mc, &messages)
 	} else {
 		dslVars = s.buildDSLVars(ctx, mc)
 	}

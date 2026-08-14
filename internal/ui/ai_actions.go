@@ -516,17 +516,11 @@ func (s *Server) aiActionRun(w http.ResponseWriter, r *http.Request) {
 		obj.Set(k, s.aiTypedValue(entity.Fields, k, v))
 	}
 	obj.TablePartRows = action.TPRows
-	// Автонумерация — как при создании из формы.
-	if entity.Kind == metadata.KindDocument {
-		for _, f := range entity.Fields {
-			if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
-				if v := fmt.Sprintf("%v", obj.Fields["Номер"]); v == "" || v == "<nil>" {
-					obj.Set("Номер", s.generateNumber(ctx, entity, obj.Fields))
-				}
-				break
-			}
-		}
-	}
+	// Автонумерация — та же общая точка, что при создании из формы (117C).
+	// Локальная копия здесь читала obj.Fields["Номер"] напрямую, а Object.Set
+	// хранит ключи в нижнем регистре — проверка пустоты всегда была истинной,
+	// и явно заданный пользователем номер молча затирался (Д13, issue #866).
+	s.ensureNewDocumentNumber(ctx, entity, obj)
 	// Строковый доступ (план 79): автозаполнение обязательных полей политики и
 	// проверка, что пользователь вправе записать такую строку.
 	if err := s.autoFillRowAccessFields(ctx, entity, "write", obj.Fields); err != nil {

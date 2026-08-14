@@ -136,53 +136,105 @@ func renumberTargets(proj *project.Project, only string) ([]*metadata.Entity, er
 	return out, nil
 }
 
-// renumberEntity дозаполняет пустые значения одного объекта.
+// renumberEntity дозаполняет пустые значения одного объекта. База читается
+// страницами до исчерпания: один вызов List с Limit=MaxListPageSize видел
+// только первую тысячу записей, и на большом справочнике команда молча
+// «дозаполняла» первую страницу, рапортуя успех (issue #867).
 func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, write bool) (renumberEntityReport, error) {
 	field := storage.AutoNumberField(ent)
 	rep := renumberEntityReport{Object: ent.Name, Field: field}
 
-	rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{Limit: storage.MaxListPageSize})
+	lastRows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
+		Sort: "id", Dir: "desc", Limit: 1,
+	})
 	if err != nil {
 		return rep, err
 	}
-	// Порядок выдачи детерминирован: сортируем по идентификатору записи, а не
-	// полагаемся на порядок выборки. Иначе повторный запуск на другой машине
-	// раздал бы те же коды другим элементам.
-	sort.Slice(rows, func(i, j int) bool {
-		return fmt.Sprintf("%v", rows[i]["id"]) < fmt.Sprintf("%v", rows[j]["id"])
-	})
-
-	for _, row := range rows {
-		if !isBlankValue(rowFieldValue(row, field)) {
-			continue // заполненное не трогаем: дозаполнение, а не перенумерация
-		}
-		rep.Empty++
-		if !write {
-			if len(rep.Samples) < 3 {
-				rep.Samples = append(rep.Samples, fmt.Sprintf("%v", row["id"]))
-			}
-			continue
-		}
-		value, err := db.GenerateNumber(ctx, ent, row)
-		if err != nil {
-			return rep, err
-		}
-		if value == "" {
-			continue
-		}
-		id, err := uuid.Parse(fmt.Sprintf("%v", row["id"]))
-		if err != nil {
-			return rep, fmt.Errorf("неразбираемый идентификатор %v: %w", row["id"], err)
-		}
-		if err := db.SetAutoNumberValue(ctx, ent, id, field, value); err != nil {
-			return rep, err
-		}
-		rep.Filled++
-		if len(rep.Samples) < 3 {
-			rep.Samples = append(rep.Samples, value)
-		}
+	if len(lastRows) == 0 {
+		return rep, nil
 	}
-	return rep, nil
+	through, err := renumberRowID(lastRows[0])
+	if err != nil {
+		return rep, err
+	}
+
+	var after *uuid.UUID
+	for {
+		// Курсор по неизменяемому PK не сдвигается при удалении уже пройденных
+		// строк. ThroughID фиксирует верхнюю границу ключей на начало команды:
+		// новые UUID выше неё в текущий прогон не попадают.
+		rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
+			Sort: "id", Limit: storage.MaxListPageSize,
+			AfterID: after, ThroughID: &through,
+		})
+		if err != nil {
+			return rep, err
+		}
+		if len(rows) == 0 {
+			return rep, nil
+		}
+		ids := make([]uuid.UUID, len(rows))
+		for i, row := range rows {
+			ids[i], err = renumberRowID(row)
+			if err != nil {
+				return rep, err
+			}
+		}
+		for i, row := range rows {
+			raw := rowFieldValue(row, field)
+			if !isBlankValue(raw) {
+				continue // заполненное не трогаем: дозаполнение, а не перенумерация
+			}
+			rep.Empty++
+			if !write {
+				if len(rep.Samples) < 3 {
+					rep.Samples = append(rep.Samples, fmt.Sprintf("%v", row["id"]))
+				}
+				continue
+			}
+			value, err := db.GenerateNumber(ctx, ent, row)
+			if err != nil {
+				return rep, err
+			}
+			if value == "" {
+				continue
+			}
+			var expected *string
+			if raw != nil {
+				observed := fmt.Sprintf("%v", raw)
+				expected = &observed
+			}
+			updated, err := db.SetAutoNumberValue(ctx, ent, ids[i], field, expected, value)
+			if err != nil {
+				return rep, err
+			}
+			if !updated {
+				continue
+			}
+			rep.Filled++
+			if len(rep.Samples) < 3 {
+				rep.Samples = append(rep.Samples, value)
+			}
+		}
+		lastID := ids[len(ids)-1]
+		if len(rows) < storage.MaxListPageSize || lastID == through {
+			return rep, nil
+		}
+		cursor := lastID
+		after = &cursor
+	}
+}
+
+func renumberRowID(row map[string]any) (uuid.UUID, error) {
+	raw := fmt.Sprintf("%v", row["id"])
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("неразбираемый идентификатор %v: %w", row["id"], err)
+	}
+	if raw != id.String() {
+		return uuid.Nil, fmt.Errorf("идентификатор %q не в каноническом формате UUID", raw)
+	}
+	return id, nil
 }
 
 // isBlankValue — пусто ли значение колонки. Отдельная функция потому, что

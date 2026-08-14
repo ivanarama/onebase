@@ -308,6 +308,72 @@ func containsRune(s string, r rune) bool {
 	return false
 }
 
+// Ошибка отзыва сессий при 2fa reset не проглатывается (issue #862): сброс
+// делают в том числе потому, что фактор мог скомпрометировать не владелец, и
+// «Второй фактор снят» при живых сессиях — ложное подтверждение. Тот же класс
+// «сбой выдан за успех» #648 чинил в user passwd, но соседняя команда осталась.
+func TestUserCLI_2FAReset_KickFailureIsReported(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "users.db")
+
+	cmd := userTestCmd(t, dir, dbPath)
+	mustSet(t, cmd.Flags(), "admin", "true")
+	mustSet(t, cmd.Flags(), "generate", "true")
+	if err := runUserAdd(cmd, []string{"admin"}); err != nil {
+		t.Fatalf("создание админа: %v", err)
+	}
+
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := auth.NewRepo(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	u, err := findUserByLogin(ctx, repo, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnableTOTP(ctx, u.ID, "JBSWY3DPEHPK3PXP", 0); err != nil {
+		t.Fatal(err)
+	}
+	// Живая сессия обязательна: BEFORE DELETE-триггер стреляет по строкам, и на
+	// пустой таблице отзыв «успешен» независимо от фикса.
+	if _, err := repo.CreateSession(ctx, u.ID, auth.SessionMeta{}); err != nil {
+		t.Fatalf("сессия: %v", err)
+	}
+	// Ломаем именно отзыв: триггер переживает EnsureSchema при повторном
+	// открытии базы командой (в отличие от DROP TABLE, которую схема бы
+	// пересоздала) и валит только DELETE из _sessions.
+	if _, err := db.Exec(ctx, `CREATE TRIGGER _sessions_no_delete BEFORE DELETE ON _sessions
+		BEGIN SELECT RAISE(ABORT, 'сессии заблокированы тестом'); END`); err != nil {
+		t.Fatalf("триггер: %v", err)
+	}
+	db.Close()
+
+	cmd = userTestCmd(t, dir, dbPath)
+	err = runUser2FAReset(cmd, []string{"admin"})
+	if err == nil {
+		t.Fatal("ошибка отзыва сессий проглочена — команда отчиталась успехом")
+	}
+	if !strings.Contains(err.Error(), "отозвать не удалось") {
+		t.Errorf("ошибка не говорит про отзыв сессий: %v", err)
+	}
+
+	// Первый факт тоже сообщён честно: фактор действительно снят.
+	db, err = storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo = auth.NewRepo(db)
+	if on, err := repo.TOTPEnabled(ctx, u.ID); err != nil || on {
+		t.Fatalf("второй фактор не снят: on=%v err=%v", on, err)
+	}
+}
+
 // #620: офлайн-снятие второго фактора — восстановление доступа без входа и без
 // другого администратора (утрата устройства-аутентификатора; запертая база).
 func TestUserCLI_2FAReset(t *testing.T) {

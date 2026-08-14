@@ -131,7 +131,8 @@ function createHarness() {
     confirmResult: true,
     confirmCalls: 0,
     postCalls: 0,
-    closeCalls: 0
+    closeCalls: 0,
+    alerts: []
   };
   const context = {
     document,
@@ -143,6 +144,7 @@ function createHarness() {
       return next && typeof next.then === 'function' ? next : Promise.resolve(next);
     },
     confirm() { state.confirmCalls++; return state.confirmResult; },
+    alert(message) { state.alerts.push(String(message)); },
     doPost() { state.postCalls++; return false; },
     setTimeout(fn) { fn(); return 1; },
     clearTimeout() {},
@@ -341,15 +343,59 @@ test('failed policy rollback can be dismissed without an infinite retry loop', a
   assert.deepEqual(urls(h), before);
 });
 
-test('uncontrollable occupied port is labelled and disables stop', async () => {
+// Порт, занятый неподтверждённым процессом, помечается, но остановку остальных
+// баз больше не запрещает: раньше кнопка «Остановить все» выключалась, и одна
+// такая база лишала пользователя остановки насовсем.
+test('uncontrollable occupied port is labelled but stop stays available', async () => {
   const h = createHarness();
-  h.enqueue(200, {running: [{name: 'Foreign', port: 8080, controllable: false}], policy: 'ask'});
+  h.enqueue(200, {
+    running: [
+      {name: 'Main', port: 8079, controllable: true},
+      {name: 'Foreign', port: 8080, controllable: false},
+    ],
+    policy: 'ask',
+  });
 
   h.context.quitLauncher();
   await drain();
   assert.equal(h.context._closeFlow.state, 'prompt');
-  assert.equal(h.elements.stop.disabled, true);
-  assert.match(h.elements.list.children[0].textContent, /8080/);
+  assert.equal(h.elements.stop.disabled, false);
+  assert.match(h.elements.list.children[1].textContent, /8080/);
+});
+
+// Если останавливать нечего — вопрос stop/background бессмыслен, но занятый
+// неподтверждённый порт всё равно должен быть показан до закрытия.
+test('unverified-only ask path warns without showing the choice prompt', async () => {
+  const h = createHarness();
+  h.enqueue(200, {running: [{name: 'Foreign', port: 8080, controllable: false}], policy: 'ask'});
+  h.enqueue(200, {ok: true, warning: 'Foreign (порт 8080)'});
+  h.enqueue(200, {ok: true});
+
+  h.context.quitLauncher();
+  await drain();
+  assert.equal(h.context._closeFlow.state, 'done');
+  assert.deepEqual(urls(h), ['/close-info', '/close-stop', '/quit']);
+  assert.match(h.state.alerts.join('\n'), /8080/);
+});
+
+// Оставшиеся базы показываются пользователю до закрытия окна: другого места
+// узнать о них уже не будет.
+test('close-stop warning about skipped bases is shown before the window closes', async () => {
+  const h = createHarness();
+  h.enqueue(200, {running: [{name: 'Main', port: 8079, controllable: true}], policy: 'stop'});
+  h.enqueue(200, {ok: true, warning: 'Foreign (порт 8080)'});
+  h.enqueue(200, {ok: true});
+  const recordAlert = h.context.alert;
+  h.context.alert = function(message) {
+    assert.deepEqual(urls(h), ['/close-info', '/close-stop'], '/quit raced ahead of warning acknowledgement');
+    recordAlert(message);
+  };
+
+  h.context.quitLauncher();
+  await drain();
+  assert.equal(h.context._closeFlow.state, 'done');
+  assert.match(h.state.alerts.join('\n'), /8080/);
+  assert.deepEqual(urls(h), ['/close-info', '/close-stop', '/quit']);
 });
 
 test('Stop all confirmation never trusts stale rendered running count', () => {

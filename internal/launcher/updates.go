@@ -547,9 +547,12 @@ func (h *handler) stopAllForUpdate(st *selfupdate.State, guard func(*selfupdate.
 	}
 	*st = updated
 
-	// stopAllHeld releases the lease on error and retains it on success.
+	// stopAllHeldStrict repeats the unverified-port preflight immediately before
+	// the first stop. The earlier snapshot is needed to persist the recovery
+	// list, but cannot prove that identity did not change in the meantime.
+	// Strict mode releases the lease on every error and retains it on success.
 	leaseOwned = false
-	if err := h.runner.stopAllHeld(bases, true); err != nil {
+	if _, err := h.runner.stopAllHeldStrict(bases, true); err != nil {
 		if len(beforeResume) > 0 && beforeResume[0] != nil {
 			if releaseErr := beforeResume[0](); releaseErr != nil {
 				return errors.Join(err, fmt.Errorf("release update target before resuming bases: %w", releaseErr))

@@ -32,6 +32,8 @@ type ListParams struct {
 	ActivityScope      string                // "", "active", "inactive", "all"; applied only for opt-in catalogs
 	Limit              int                   // 0 = no limit
 	Offset             int                   // for pagination
+	AfterID            *uuid.UUID            // exclusive keyset cursor; requires id ASC and Offset=0
+	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
 	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
 	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
 }
@@ -514,6 +516,18 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	if db.rlsGuard != nil && !params.RowFilterEvaluated && db.rlsGuard(strings.ToLower(entityName)) {
 		return nil, fmt.Errorf("strict RLS: список %q запрошен без вычисления строкового доступа (fail-closed, план 79F)", entityName)
 	}
+	keyset := params.AfterID != nil || params.ThroughID != nil
+	if keyset {
+		if params.Offset != 0 {
+			return nil, fmt.Errorf("list %s: keyset pagination cannot be combined with offset", entityName)
+		}
+		if params.Sort != "" && !strings.EqualFold(params.Sort, "id") {
+			return nil, fmt.Errorf("list %s: keyset pagination requires sort by id", entityName)
+		}
+		if params.Dir != "" && !strings.EqualFold(params.Dir, "asc") {
+			return nil, fmt.Errorf("list %s: keyset pagination requires ascending order", entityName)
+		}
+	}
 	d := db.dialect
 	table := metadata.TableName(entityName)
 	cols := []string{"id"}
@@ -627,6 +641,16 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		args = append(args, condArgs...)
 		argIdx = next
 	}
+	if params.AfterID != nil {
+		whereParts = append(whereParts, fmt.Sprintf("id > %s", d.Placeholder(argIdx)))
+		args = append(args, idArg(d, *params.AfterID))
+		argIdx++
+	}
+	if params.ThroughID != nil {
+		whereParts = append(whereParts, fmt.Sprintf("id <= %s", d.Placeholder(argIdx)))
+		args = append(args, idArg(d, *params.ThroughID))
+		argIdx++
+	}
 	_ = argIdx
 
 	baseQuery := fmt.Sprintf("SELECT %s FROM %s", strings.Join(cols, ", "), table)
@@ -637,7 +661,9 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	query := baseQuery + whereClause
 
 	// sorting
-	if entity.Hierarchical && params.Sort == "" {
+	if keyset {
+		query += " ORDER BY id ASC"
+	} else if entity.Hierarchical && params.Sort == "" {
 		firstStrCol := "id"
 		for _, f := range entity.Fields {
 			if f.Type == metadata.FieldTypeString {
@@ -710,7 +736,8 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	return result, rows.Err()
 }
 
-// CountList returns the total number of rows matching the given params (ignoring Limit/Offset).
+// CountList returns the total number of rows matching the given params
+// (ignoring pagination: Limit, Offset, AfterID and ThroughID).
 func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) (int, error) {
 	d := db.dialect
 	table := metadata.TableName(entityName)

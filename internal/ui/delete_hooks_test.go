@@ -56,6 +56,7 @@ func deleteHookServer(t *testing.T, moduleSrc string) (*Server, *metadata.Entity
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	return s, ent, db
 }
 
@@ -210,6 +211,208 @@ func TestDeleteHook_BlocksEveryPath(t *testing.T) {
 	}
 	if !exists(t, db, doc, id) {
 		t.Error("документ удалён вопреки отказу хука")
+	}
+}
+
+// Тот же запрет действует на DSL-пути справочника: Справочники.X.Удалить(Ссылка)
+// идёт через CatalogProxy → dslCatalogDeleter → entityservice.Delete, а не через
+// прямой db.Delete (issue #854 — раньше хук здесь молчал и объект удалялся).
+// Прокси строится той же проводкой, что boevой buildDSLVarsTx (handlers_dsl.go).
+func TestDeleteHook_BlocksDSLCatalogPath(t *testing.T) {
+	s, ent, db := deleteHookServer(t, blockingHook)
+	id := seedContragent(t, db, ent, "Нельзя")
+
+	cp := dslCatalogRootForTest(s).Get(ent.Name).(*interpreter.CatalogProxy)
+	var raised any
+	func() {
+		defer func() { raised = recover() }()
+		cp.CallMethod("удалить", []any{&interpreter.Ref{UUID: id.String(), Type: ent.Name, Manager: cp}})
+	}()
+	if raised == nil {
+		t.Error("DSL-путь удалил справочник вопреки запрету хука")
+	}
+	if !exists(t, db, ent, id) {
+		t.Error("объект удалён вопреки отказу хука ПередУдалением")
+	}
+}
+
+// Успешное DSL-удаление проходит и вызывает ПослеУдаления (полный путь через
+// entityservice, не только отказ).
+func TestDeleteHook_DSLCatalogDeletes(t *testing.T) {
+	s, ent, db := deleteHookServer(t, blockingHook)
+	id := seedContragent(t, db, ent, "Можно")
+
+	cp := dslCatalogRootForTest(s).Get(ent.Name).(*interpreter.CatalogProxy)
+	cp.CallMethod("удалить", []any{&interpreter.Ref{UUID: id.String(), Type: ent.Name, Manager: cp}})
+	if exists(t, db, ent, id) {
+		t.Error("объект остался в базе")
+	}
+}
+
+// CheckRefs на DSL-пути: справочник, на который ссылается строка ТЧ документа,
+// не удаляется (FK шапки такие ссылки не покрывает — раньше DSL тихо оставлял
+// осиротевшую ссылку, класс DATA-01/#774).
+func TestDSLCatalogDelete_BlockedByTablePartRef(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "refs.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	cat := &metadata.Entity{
+		Name:   "Товар",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	doc := &metadata.Entity{
+		Name:   "Продажа",
+		Kind:   metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Комментарий", Type: metadata.FieldTypeString}},
+		TableParts: []metadata.TablePart{{
+			Name:   "Товары",
+			Fields: []metadata.Field{{Name: "Товар", Type: metadata.FieldType("reference:Товар"), RefEntity: "Товар"}},
+		}},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{cat, doc}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{cat, doc}})
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+
+	goodsID := uuid.New()
+	if err := db.Upsert(ctx, cat.Name, goodsID, map[string]any{"Наименование": "Гвозди"}, cat); err != nil {
+		t.Fatalf("вставка товара: %v", err)
+	}
+	docID := uuid.New()
+	if err := db.Upsert(ctx, doc.Name, docID, map[string]any{"Комментарий": "продажа"}, doc); err != nil {
+		t.Fatalf("вставка документа: %v", err)
+	}
+	if err := db.UpsertTablePartRows(ctx, doc.Name, doc.TableParts[0].Name, docID,
+		[]map[string]any{{"Товар": goodsID.String()}}, doc.TableParts[0]); err != nil {
+		t.Fatalf("вставка строки ТЧ: %v", err)
+	}
+
+	cp := dslCatalogRootForTest(s).Get(cat.Name).(*interpreter.CatalogProxy)
+	var raised any
+	func() {
+		defer func() { raised = recover() }()
+		cp.CallMethod("удалить", []any{&interpreter.Ref{UUID: goodsID.String(), Type: cat.Name, Manager: cp}})
+	}()
+	if raised == nil {
+		t.Error("DSL удалил справочник, на который ссылается ТЧ документа")
+	}
+	if !exists(t, db, cat, goodsID) {
+		t.Error("товар удалён — осиротевшая ссылка в ТЧ")
+	}
+}
+
+// Делетер проносится и в ссылку, которую возвращает Записать(): цепочка
+// Создать() → Записать() → Ссылка.Удалить() тоже идёт через entityservice.
+func TestDSLCatalogDelete_WriterRefCarriesDeleter(t *testing.T) {
+	s, ent, db := deleteHookServer(t, blockingHook)
+
+	root := dslCatalogRootForTest(s)
+	cp := root.Get(ent.Name).(*interpreter.CatalogProxy)
+	w := cp.CallMethod("создать", nil)
+	writer, ok := w.(interface {
+		Set(string, any)
+		CallMethod(string, []any) any
+	})
+	if !ok {
+		t.Fatalf("Создать() вернул %T без Set/CallMethod", w)
+	}
+	writer.Set("Наименование", "Нельзя")
+	ref, ok := writer.CallMethod("записать", nil).(*interpreter.Ref)
+	if !ok {
+		t.Fatal("Записать() не вернул ссылку")
+	}
+	var raised any
+	func() {
+		defer func() { raised = recover() }()
+		ref.CallMethod("удалить", nil)
+	}()
+	if raised == nil {
+		t.Error("Ссылка.Удалить() после Записать() обошла хук ПередУдалением")
+	}
+	id, err := uuid.Parse(ref.UUID)
+	if err != nil {
+		t.Fatalf("uuid записанной ссылки: %v", err)
+	}
+	if !exists(t, db, ent, id) {
+		t.Error("объект удалён вопреки отказу хука")
+	}
+}
+
+// dslCatalogRootForTest строит Справочники так же, как buildDSLVarsTx —
+// включая WithDeleter: тест проверяет именно проводку боевого пути.
+func dslCatalogRootForTest(s *Server) *interpreter.CatalogsRoot {
+	txState := interpreter.NewTxState(context.Background())
+	return interpreter.NewCatalogsRoot(txState, s.store, s.reg).
+		WithRowAccessChecker(s.dslRowAccessChecker()).
+		WithExchangeRegistrar(s.exchangeRegistrar()).
+		WithObjectFactory(s.catObjectFactory(txState)).
+		WithDeleter(dslCatalogDeleter{s: s})
+}
+
+func TestDSLCatalogDelete_CollectsHookMessages(t *testing.T) {
+	tests := []struct {
+		name      string
+		module    string
+		wantMsg   string
+		wantError bool
+	}{
+		{
+			name: "after delete success",
+			module: `Процедура ПослеУдаления()
+	Сообщить("из ПослеУдаления");
+КонецПроцедуры`,
+			wantMsg: "из ПослеУдаления",
+		},
+		{
+			name: "before delete refusal",
+			module: `Процедура ПередУдалением()
+	Сообщить("до отказа");
+	ВызватьИсключение("удаление запрещено");
+КонецПроцедуры`,
+			wantMsg:   "до отказа",
+			wantError: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ent, db := deleteHookServer(t, tc.module)
+			id := seedContragent(t, db, ent, "Ромашка")
+			var messages []string
+			ctx := withDSLMessageCollector(context.Background(), &messages)
+			txState := interpreter.NewTxState(ctx)
+			root := interpreter.NewCatalogsRoot(txState, s.store, s.reg).
+				WithRowAccessChecker(s.dslRowAccessChecker()).
+				WithExchangeRegistrar(s.exchangeRegistrar()).
+				WithObjectFactory(s.catObjectFactory(txState)).
+				WithDeleter(dslCatalogDeleter{s: s})
+			cp := root.Get(ent.Name).(*interpreter.CatalogProxy)
+			ref := &interpreter.Ref{UUID: id.String(), Name: "Ромашка", Type: ent.Name, Manager: cp}
+			var raised any
+			func() {
+				defer func() { raised = recover() }()
+				ref.CallMethod("удалить", nil)
+			}()
+			if tc.wantError != (raised != nil) {
+				t.Fatalf("panic = %#v, wantError=%v", raised, tc.wantError)
+			}
+			if len(messages) != 1 || messages[0] != tc.wantMsg {
+				t.Fatalf("сообщения хука = %v, ожидалось [%s]", messages, tc.wantMsg)
+			}
+			if tc.wantError && !exists(t, db, ent, id) {
+				t.Fatal("объект удалён вопреки отказу хука")
+			}
+			if !tc.wantError && exists(t, db, ent, id) {
+				t.Fatal("объект остался после успешного удаления")
+			}
+		})
 	}
 }
 
