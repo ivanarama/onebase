@@ -417,6 +417,47 @@ func TestSave_PreflightВидитНомерИОткатНеРасходуетЕ�
 	})
 }
 
+func TestSave_PreflightReplacementRollbackReconnectsOriginalFieldsMapMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		cat := numberedCatalog()
+		svc := newNumberingService(t, db, []*metadata.Entity{cat})
+		fields := map[string]any{"Код": "", "КОД": nil, "Наименование": "original"}
+		before := equalFoldFieldState(fields, metadata.StandardCodeField)
+		replacement := map[string]any{"код": "replacement", "replacement-only": true}
+		reject := errors.New("reject replaced fields")
+		var captured *runtime.Object
+
+		_, err := svc.Save(ctx, SaveRequest{
+			Entity: cat, ID: uuid.New(), IsNew: true, Fields: fields,
+			Preflight: func(_ context.Context, obj *runtime.Object) error {
+				captured = obj
+				obj.Fields = replacement
+				return reject
+			},
+		})
+		if !errors.Is(err, reject) {
+			t.Fatalf("Save error = %v, expected replacement rejection", err)
+		}
+		if after := equalFoldFieldState(fields, metadata.StandardCodeField); !reflect.DeepEqual(after, before) {
+			t.Fatalf("original map spelling/value state changed: before=%#v after=%#v", before, after)
+		}
+		if got := equalFoldFieldState(replacement, metadata.StandardCodeField); len(got) != 0 {
+			t.Fatalf("rollback left numbered-field state in replacement map: %#v", got)
+		}
+		if captured == nil {
+			t.Fatal("preflight did not capture save object")
+		}
+		captured.Fields["identity-probe"] = true
+		if fields["identity-probe"] != true {
+			t.Fatalf("rollback did not reconnect obj.Fields to caller map: obj=%#v caller=%#v", captured.Fields, fields)
+		}
+		if _, leaked := replacement["identity-probe"]; leaked {
+			t.Fatalf("obj.Fields still points at replacement map: %#v", replacement)
+		}
+	})
+}
+
 func TestSave_OuterTxRollbackВосстанавливаетТуЖеMapMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()

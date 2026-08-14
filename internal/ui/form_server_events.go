@@ -207,12 +207,23 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 	if decl == nil {
 		return nil
 	}
-	ctx = trustedDSLContext(ctx)
+	// #915 executes BeforeWrite/OnWrite inside entityservice.Save's storage
+	// transaction. Apply the same entity.save wall-clock budget as the entity
+	// hook itself (#914), otherwise a form handler can keep that transaction and
+	// SQLite's only connection open after OnWrite/OnPost are already bounded.
+	configuredTimeout := s.operationTimeout(opEntitySave)
+	executionCtx := ctx
+	cancel := func() {}
+	if wall := interpreter.ClampWallClock(ctx, configuredTimeout); wall > 0 {
+		executionCtx, cancel = context.WithTimeout(ctx, wall)
+	}
+	defer cancel()
+	executionCtx = trustedDSLContext(executionCtx)
 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
-	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
+	vars, txState := s.buildDSLVarsWithMessagesTx(executionCtx, mc, msgs)
 	defer rollbackDSLExecution(txState)
-	thisObj := s.newFormObjectThisLive(ctx, txState, obj, entity, form, false)
+	thisObj := s.newFormObjectThisLive(executionCtx, txState, obj, entity, form, false)
 	thisObj.writeBlocked = true
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
@@ -223,7 +234,13 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 	}
 	vars["__form_procs__"] = formProcs
 
-	runErr := s.interp.Run(decl, thisObj, vars)
+	var runErr error
+	if wall := interpreter.ClampWallClock(executionCtx, configuredTimeout); wall > 0 {
+		runErr = s.interp.RunSandboxed(decl, thisObj,
+			interpreter.SandboxProfile{Context: executionCtx, MaxWallClock: wall}, nil, vars)
+	} else {
+		runErr = s.interp.Run(decl, thisObj, vars)
+	}
 	return finishDSLExecution(txState, runErr)
 }
 
