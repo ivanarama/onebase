@@ -147,6 +147,13 @@ func (r *infoRegRecord) CallMethod(method string, args []any) any {
 		r.selected = true
 		return nil
 	case "прочитать", "read":
+		// Единственный метод менеджера, который не проверял период: у
+		// Записать()/Удалить() проверка была, а Прочитать() без Периода на
+		// периодическом регистре молча читал произвольную строку — то есть
+		// отдавал не ошибку, а чужие данные (#857).
+		if err := infoRegCheckPeriod(r.ir, r.period); err != nil {
+			interpreter.RaiseUserError("Прочитать(" + r.ir.Name + "): " + err.Error())
+		}
 		dims, _ := r.split()
 		row, err := r.s.store.InfoRegGetExact(r.ctx(), r.ir, dims, r.period)
 		if err != nil {
@@ -304,8 +311,8 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("Прочитать(" + rs.ir.Name + "): " + err.Error())
 		}
-		rs.rows = rows
-		return float64(len(rows))
+		rs.rows = infoRegDSLRows(rs.ir, rows)
+		return float64(len(rs.rows))
 	case "очистить", "clear":
 		rs.rows = nil
 		return nil
@@ -435,7 +442,45 @@ func rowValueFold(row map[string]any, name string) any {
 	return nil
 }
 
+// infoRegDSLRows переводит строки хранилища в строки набора для DSL.
+//
+// InfoRegList отдаёт период ДВУМЯ ключами и оба — для интерфейса: `period` —
+// человекочитаемое «02.01.2006» для ячейки списка, `period_key` — машинный
+// ключ для round-trip через HTML-форму удаления. Набор записей клал их в
+// строку как есть, поэтому цикл «Прочитать() → Добавить() → Записать()» на
+// периодическом регистре падал всегда, когда в регистре была хоть одна
+// строка: обратно приезжала строка «02.01.2006», а запись ждёт дату (#857).
+//
+// Коду на DSL нужен один ключ и типизированное значение: Период — Дата.
+func infoRegDSLRows(ir *metadata.InfoRegister, rows []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		r := make(map[string]any, len(row))
+		for k, v := range row {
+			if k == "period" || k == "period_key" {
+				continue
+			}
+			r[k] = v
+		}
+		if ir.Periodic {
+			key, _ := row["period_key"].(string)
+			t, ok := storage.ParseRegPeriod(key)
+			if !ok {
+				// Молча отдать строку без периода нельзя: она доедет до
+				// Записать() и снесёт не тот срез.
+				interpreter.RaiseUserError("Прочитать(" + ir.Name +
+					"): не удалось разобрать период строки «" + key + "»")
+			}
+			r["Период"] = t
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // infoRegRowPeriod достаёт период строки набора для периодического регистра.
+// Принимает и дату, и строковое представление: строку мог положить как сам
+// прикладной код, так и прежнее поведение Прочитать().
 func infoRegRowPeriod(ir *metadata.InfoRegister, row map[string]any) (*time.Time, error) {
 	if !ir.Periodic {
 		return nil, nil
@@ -444,8 +489,22 @@ func infoRegRowPeriod(ir *metadata.InfoRegister, row map[string]any) (*time.Time
 	if v == nil {
 		v = rowValueFold(row, "period")
 	}
-	if t, ok := v.(time.Time); ok {
-		return &t, nil
+	switch p := v.(type) {
+	case time.Time:
+		return &p, nil
+	case *time.Time:
+		if p != nil {
+			return p, nil
+		}
+	case string:
+		if t, ok := storage.ParseRegPeriod(p); ok {
+			return &t, nil
+		}
+		// «02.01.2006» — представление, которое отдавал прежний Прочитать().
+		if t, err := time.ParseInLocation("02.01.2006", strings.TrimSpace(p), time.Local); err == nil {
+			return &t, nil
+		}
+		return nil, fmt.Errorf("регистр сведений %s: период строки набора «%s» не распознан", ir.Name, p)
 	}
 	return nil, fmt.Errorf("регистр сведений %s периодический: у строки набора не задан Период", ir.Name)
 }
