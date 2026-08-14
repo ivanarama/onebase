@@ -168,7 +168,13 @@ func TestLoginSubmit_ДлинныйНоДопустимыйПарольПрох�
 	rec := httptest.NewRecorder()
 	h.LoginSubmit(rec, req)
 
-	if rec.Code == http.StatusBadRequest {
-		t.Fatalf("допустимый пароль отвергнут: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusFound {
+		t.Fatalf("допустимый пароль не выполнил вход: %d %s", rec.Code, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "/ui" {
+		t.Errorf("редирект после входа = %q, ожидался /ui", location)
+	}
+	if cookie := rec.Header().Get("Set-Cookie"); !strings.Contains(cookie, "onebase_session=") {
+		t.Errorf("успешный вход не выдал сессионную cookie: %q", cookie)
 	}
 }
