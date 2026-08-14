@@ -168,8 +168,6 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 		if kind == metadata.KindDocument && isPostAction(body.Action) && !requireRESTPerm(w, r, kind, entityName, "post") {
 			return
 		}
-		if kind == metadata.KindDocument {
-		}
 		if err := h.autoFillRowAccessFields(r.Context(), entity, "write", body.Fields); err != nil {
 			writeError(w, http.StatusForbidden, "forbidden", "", 0)
 			return

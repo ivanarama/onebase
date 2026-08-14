@@ -644,14 +644,6 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error(), "", 0)
 }
 
-func formatLegacy(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	for len(s) < 6 {
-		s = "0" + s
-	}
-	return s
-}
-
 func parseRestFilters(r *http.Request) map[string]storage.FilterValue {
 	filters := make(map[string]storage.FilterValue)
 	for k, vals := range r.URL.Query() {
