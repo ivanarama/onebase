@@ -1,12 +1,18 @@
 package ui
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/metrics"
 )
 
 // Обработчик события управляемой формы обязан отрубаться по дедлайну и
@@ -45,6 +51,153 @@ func TestСобытиеФормы_ОтрубаетсяПоДедлайну(t *te
 	}
 	if !strings.Contains(resp.Error, "врем") {
 		t.Errorf("ошибка не объясняет причину: %q", resp.Error)
+	}
+}
+
+func TestFormEventDeadline_CancelsBlockingHTTPAndRecordsTimeout(t *testing.T) {
+	requestCanceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			close(requestCanceled)
+		case <-time.After(4 * time.Second):
+			_, _ = fmt.Fprint(w, "too late")
+		}
+	}))
+	defer srv.Close()
+
+	s, ent := setupManagedEventsServer(t, fmt.Sprintf(`
+Procedure Slow()
+  HTTPGet("%s");
+EndProcedure
+`, srv.URL), map[metadata.FormEventType]string{}, []*metadata.FormElement{{
+		Kind:     metadata.FormElementButton,
+		Name:     "SlowButton",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Slow"},
+	}})
+	if err := s.store.SaveNetworkEnabled(context.Background(), true); err != nil {
+		t.Fatalf("enable network: %v", err)
+	}
+	s.cfg.Limits.RequestTimeoutSec = 1
+	s.cfg.Metrics = metrics.New()
+
+	body := url.Values{"_element": {"SlowButton"}, "_event": {string(metadata.FormEventOnClick)}, "_kind": {"object"}}
+	started := time.Now()
+	rec := executeFormEventRaw(t, s, ent, body)
+	if elapsed := time.Since(started); elapsed > 2500*time.Millisecond {
+		t.Fatalf("blocking HTTP outlived form event deadline: %v", elapsed)
+	}
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !strings.Contains(strings.ToLower(resp.Error), "врем") {
+		t.Fatalf("expected form event deadline error, got %q", resp.Error)
+	}
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("form event deadline did not cancel HTTP request context")
+	}
+
+	var out strings.Builder
+	if err := s.cfg.Metrics.WritePrometheus(&out); err != nil {
+		t.Fatalf("write metrics: %v", err)
+	}
+	if !strings.Contains(out.String(), `onebase_operation_total{kind="form.event",status="timeout"} 1`) {
+		t.Fatalf("form event timeout recorded with wrong status:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), `onebase_operation_total{kind="form.event",status="ok"}`) {
+		t.Fatalf("failed form event was recorded as ok:\n%s", out.String())
+	}
+}
+
+func TestFormEventErrorRecordsErrorStatus(t *testing.T) {
+	s, ent := setupManagedEventsServer(t, `
+Procedure Fail()
+  Raise "boom";
+EndProcedure
+`, map[metadata.FormEventType]string{}, []*metadata.FormElement{{
+		Kind:     metadata.FormElementButton,
+		Name:     "FailButton",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Fail"},
+	}})
+	s.cfg.Metrics = metrics.New()
+	body := url.Values{"_element": {"FailButton"}, "_event": {string(metadata.FormEventOnClick)}, "_kind": {"object"}}
+	resp := decodeFormEventResponse(t, executeFormEventRaw(t, s, ent, body).Body.Bytes())
+	if !strings.Contains(resp.Error, "boom") {
+		t.Fatalf("expected handler error, got %q", resp.Error)
+	}
+	var out strings.Builder
+	if err := s.cfg.Metrics.WritePrometheus(&out); err != nil {
+		t.Fatalf("write metrics: %v", err)
+	}
+	if !strings.Contains(out.String(), `onebase_operation_total{kind="form.event",status="error"} 1`) {
+		t.Fatalf("form event error recorded with wrong status:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), `onebase_operation_total{kind="form.event",status="ok"}`) {
+		t.Fatalf("failed form event was recorded as ok:\n%s", out.String())
+	}
+}
+
+func TestFormEventDeadline_CancelsBlockedPreflightDB(t *testing.T) {
+	s, ent := setupManagedEventsServer(t, `
+Procedure Fast()
+EndProcedure
+`, map[metadata.FormEventType]string{}, []*metadata.FormElement{{
+		Kind:     metadata.FormElementButton,
+		Name:     "FastButton",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Fast"},
+	}})
+	id := uuid.New()
+	if err := s.store.Upsert(context.Background(), ent.Name, id, map[string]any{"Наименование": "held"}, ent); err != nil {
+		t.Fatalf("seed entity: %v", err)
+	}
+	tx, _, err := s.store.BeginTx(context.Background())
+	if err != nil {
+		t.Fatalf("hold SQLite connection: %v", err)
+	}
+	rolledBack := false
+	defer func() {
+		if !rolledBack {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	s.cfg.Limits.RequestTimeoutSec = 1
+	s.cfg.Metrics = metrics.New()
+	body := url.Values{
+		"_id":      {id.String()},
+		"_element": {"FastButton"},
+		"_event":   {string(metadata.FormEventOnClick)},
+		"_kind":    {"object"},
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- executeFormEventRaw(t, s, ent, body) }()
+
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-done:
+	case <-time.After(2500 * time.Millisecond):
+		_ = tx.Rollback(context.Background())
+		rolledBack = true
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		t.Fatal("preflight DB query ignored form event deadline")
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatalf("release held SQLite connection: %v", err)
+	}
+	rolledBack = true
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.Error == "" {
+		t.Fatal("blocked preflight DB query unexpectedly succeeded")
+	}
+	var out strings.Builder
+	if err := s.cfg.Metrics.WritePrometheus(&out); err != nil {
+		t.Fatalf("write metrics: %v", err)
+	}
+	if !strings.Contains(out.String(), `onebase_operation_total{kind="form.event",status="timeout"} 1`) {
+		t.Fatalf("blocked preflight DB timeout recorded with wrong status:\n%s", out.String())
 	}
 }
 

@@ -2,6 +2,9 @@ package entityservice
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,9 +102,9 @@ func TestХукПроведения_ОтрубаетсяПоДедлайну(t *
 	// Главное: транзакция не осталась открытой. На SQLite соединение
 	// единственное, поэтому висящая транзакция сделала бы недоступной всю базу —
 	// следующий же запрос это покажет.
+	var n int
 	done := make(chan error, 1)
 	go func() {
-		var n int
 		done <- db.QueryRow(context.Background(), "SELECT COUNT(*) FROM долгий").Scan(&n)
 	}()
 	select {
@@ -109,8 +112,68 @@ func TestХукПроведения_ОтрубаетсяПоДедлайну(t *
 		if err != nil {
 			t.Fatalf("база недоступна после отрубленного хука: %v", err)
 		}
+		if n != 0 {
+			t.Fatalf("provisional row was committed after hook timeout: count=%d", n)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("запрос к базе завис — транзакция хука осталась открытой")
+	}
+}
+
+func TestHookDeadline_CancelsBlockingHTTPAndRollsBackProvisionalRow(t *testing.T) {
+	ctx, db, svc, doc := newSleepingDoc(t, 500*time.Millisecond)
+	requestCanceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			close(requestCanceled)
+		case <-time.After(4 * time.Second):
+			_, _ = fmt.Fprint(w, "too late")
+		}
+	}))
+	defer srv.Close()
+
+	svc.Reg.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{doc},
+		Programs: map[string]*ast.Program{doc.Name: mustParseProc(t, fmt.Sprintf(`Procedure OnPost()
+  HTTPGet("%s");
+EndProcedure`, srv.URL))},
+	})
+	svc.BuildVars = func(hookCtx context.Context, _ *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+		return interpreter.NewHTTPFunctions(nil, interpreter.NewStaticCtx(hookCtx)), nil
+	}
+
+	id := uuid.New()
+	started := time.Now()
+	res, err := svc.Save(ctx, SaveRequest{
+		Entity: doc,
+		ID:     id,
+		IsNew:  true,
+		Action: "post",
+		Fields: map[string]any{"Номер": "http-timeout"},
+	})
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("blocking HTTP outlived hook deadline: %v", elapsed)
+	}
+	msg := res.DSLError
+	if err != nil {
+		msg += " " + err.Error()
+	}
+	if !strings.Contains(strings.ToLower(msg), "врем") {
+		t.Fatalf("expected hook deadline error, got %q", msg)
+	}
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("hook deadline did not cancel HTTP request context")
+	}
+
+	var count int
+	if err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM долгий").Scan(&count); err != nil {
+		t.Fatalf("count rows after timeout: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("provisional row survived hook timeout rollback: count=%d", count)
 	}
 }
 

@@ -109,6 +109,8 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	opStatus := "ok"
 	defer func() { finish(opStatus, 0, false) }()
+	dslCtx, cancelDSL := context.WithCancel(opCtx)
+	defer cancelDSL()
 
 	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	if err := parseBoundedForm(r, 32<<20); err != nil {
@@ -155,8 +157,9 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			respondJSON(enc, formEventResponse{Error: "некорректный идентификатор записи"})
 			return
 		}
-		_, exists, err := s.store.EntityVersionExists(r.Context(), entity.Name, id)
+		_, exists, err := s.store.EntityVersionExists(dslCtx, entity.Name, id)
 		if err != nil {
+			opStatus = operationStatus(opCtx, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 			return
@@ -166,7 +169,10 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 			respondJSON(enc, formEventResponse{Error: "запись не найдена"})
 			return
 		}
-		if !s.rowAllowsID(r.Context(), entity, "read", id) {
+		if !s.rowAllowsID(dslCtx, entity, "read", id) {
+			if err := dslCtx.Err(); err != nil {
+				opStatus = operationStatus(opCtx, err)
+			}
 			w.WriteHeader(http.StatusForbidden)
 			respondJSON(enc, formEventResponse{Error: "доступ запрещён"})
 			return
@@ -258,13 +264,14 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// и гоняла бы лишний запрос в БД на каждое событие.
 	existingFormID := strings.TrimSpace(r.FormValue("_id"))
 	if existingFormID != "" {
-		_ = s.restoreUnsubmittedFields(r.Context(), r, entity, form, obj.ID, obj.Fields)
+		_ = s.restoreUnsubmittedFields(dslCtx, r, entity, form, obj.ID, obj.Fields)
 	}
 	persistedID := uuid.Nil
 	if existingFormID != "" {
 		persistedID = obj.ID
 	}
-	if err := s.restoreUneditableTableParts(r.Context(), entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
+	if err := s.restoreUneditableTableParts(dslCtx, entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
+		opStatus = operationStatus(opCtx, err)
 		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
 	}
@@ -278,7 +285,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 
 	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
 	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
-	s.mergeFormAttrValues(r.Context(), r, form, entity, obj)
+	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
 	vtRows, err := parseValueTableRowsForManagedForm(r, form, entity, canWrite)
@@ -296,10 +303,10 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	// Подмешать ссылки → *runtime.Ref, как при сохранении (нужно для
 	// Объект.Покупатель.Наименование и проч.).
-	s.enrichHeaderRefs(r.Context(), entity, obj)
+	s.enrichHeaderRefs(dslCtx, entity, obj)
 	for _, tp := range entity.TableParts {
 		if rows, ok := obj.TablePartRows[tp.Name]; ok {
-			s.enrichTPRowsWithRefs(r.Context(), tp, rows)
+			s.enrichTPRowsWithRefs(dslCtx, tp, rows)
 		}
 	}
 
@@ -312,9 +319,9 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// txState — «живой» контекст: обработчик может позвать модуль, который
 	// откроет транзакцию, и ссылки объекта обязаны выполнять ПолучитьОбъект()
 	// внутри неё, а не ждать второго соединения (пул SQLite — одно).
-	vars, txState := s.buildDSLVarsWithMessagesTx(r.Context(), mc, &msgs)
+	vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 	defer rollbackDSLExecution(txState)
-	thisObj := s.newFormObjectThisLive(r.Context(), txState, obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
+	thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, entity, form, strings.TrimSpace(r.FormValue("_id")) == "")
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 
@@ -376,7 +383,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	var tpBefore, tpDBBefore map[string][]map[string]any
 	if existingRecord && len(entity.TableParts) > 0 && obj.ID != uuid.Nil {
 		tpBefore = tablePartRowsSnapshot(obj.TablePartRows)
-		tpDBBefore = s.tablePartRowsFromDB(r.Context(), entity, obj.ID)
+		tpDBBefore = s.tablePartRowsFromDB(dslCtx, entity, obj.ID)
 	}
 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
@@ -384,7 +391,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	var runErr error
 	if timeout := interpreter.ClampWallClock(opCtx, s.operationTimeout(opFormEvent)); timeout > 0 {
 		runErr = s.interp.RunSandboxed(decl, thisObj,
-			interpreter.SandboxProfile{MaxWallClock: timeout}, nil, vars)
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
 	} else {
 		runErr = s.interp.Run(decl, thisObj, vars)
 	}
@@ -408,6 +415,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		s.refreshTablePartsWrittenByHandler(liveCtx, entity, obj, tpBefore, tpDBBefore)
 	}
 	if runErr != nil {
+		opStatus = operationStatus(opCtx, runErr)
 		resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(false)
 		resp.Error = interpreter.FormatUserError(runErr)
 		resp.PickerData = picker
@@ -999,7 +1007,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		var runErr error
 		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
 			runErr = s.interp.RunSandboxed(decl, thisObj,
-				interpreter.SandboxProfile{MaxWallClock: timeout}, nil, vars)
+				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
 		} else {
 			runErr = s.interp.Run(decl, thisObj, vars)
 		}
@@ -1050,7 +1058,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		var err error
 		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
 			_, err = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
-				interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
+				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, dslVars)
 		} else {
 			_, err = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 		}

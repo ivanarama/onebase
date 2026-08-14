@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ type dslHTTPConnection struct {
 	https   bool
 	timeout time.Duration
 	guard   NetGuard
+	ctx     CtxSource
 }
 
 func (c *dslHTTPConnection) CallMethod(name string, args []any) any {
@@ -55,7 +57,9 @@ func (c *dslHTTPConnection) do(req *dslHTTPRequest, method string) *dslHTTPRespo
 	if req.body != "" {
 		bodyReader = strings.NewReader(req.body)
 	}
-	httpReq, err := http.NewRequest(method, url, bodyReader)
+	ctx := contextFromSource(c.ctx)
+	checkExecutionContext(ctx)
+	httpReq, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		panic(userError{Msg: "HTTPСоединение: ошибка запроса: " + err.Error()})
 	}
@@ -64,10 +68,11 @@ func (c *dslHTTPConnection) do(req *dslHTTPRequest, method string) *dslHTTPRespo
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		checkExecutionContext(ctx)
 		panic(userError{Msg: "HTTPСоединение: " + err.Error()})
 	}
 	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
-	bodyBytes := readDSLHTTPResponse(resp.Body, "HTTPСоединение")
+	bodyBytes := readDSLHTTPResponseContext(ctx, resp.Body, "HTTPСоединение")
 	return &dslHTTPResponse{
 		statusCode: resp.StatusCode,
 		headers:    resp.Header,
@@ -151,10 +156,11 @@ func checkNet(guard NetGuard) {
 // NewHTTPFunctions returns factories and shorthands to inject into DSL extraVars.
 // guard (может быть nil) проверяется в момент сетевого вызова — предохранитель
 // сети читается свежим, переключение в конфигураторе действует без перезапуска.
-func NewHTTPFunctions(guard NetGuard) map[string]any {
+func NewHTTPFunctions(guard NetGuard, ctxSources ...CtxSource) map[string]any {
+	ctxSource := firstCtxSource(ctxSources)
 	m := map[string]any{
-		"__factory_HTTPСоединение": newHTTPConnFactory(guard),
-		"__factory_HTTPConnection": newHTTPConnFactory(guard),
+		"__factory_HTTPСоединение": newHTTPConnFactory(guard, ctxSource),
+		"__factory_HTTPConnection": newHTTPConnFactory(guard, ctxSource),
 		"__factory_HTTPЗапрос":     newHTTPReqFactory(),
 		"__factory_HTTPRequest":    newHTTPReqFactory(),
 	}
@@ -162,13 +168,20 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 	httpGet := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		checkNet(guard)
 		url := strArg(args, 0)
+		ctx := contextFromSource(ctxSource)
+		checkExecutionContext(ctx)
 		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			panic(userError{Msg: "HTTPПолучить: " + err.Error()})
 		}
+		resp, err := client.Do(req)
+		if err != nil {
+			checkExecutionContext(ctx)
+			panic(userError{Msg: "HTTPПолучить: " + err.Error()})
+		}
 		defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
-		b := readDSLHTTPResponse(resp.Body, "HTTPПолучить")
+		b := readDSLHTTPResponseContext(ctx, resp.Body, "HTTPПолучить")
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})
 
@@ -177,13 +190,21 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 		url := strArg(args, 0)
 		body := strArg(args, 1)
 		contentType := "application/json"
+		ctx := contextFromSource(ctxSource)
+		checkExecutionContext(ctx)
 		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Post(url, contentType, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
 		if err != nil {
 			panic(userError{Msg: "HTTPОтправить: " + err.Error()})
 		}
+		req.Header.Set("Content-Type", contentType)
+		resp, err := client.Do(req)
+		if err != nil {
+			checkExecutionContext(ctx)
+			panic(userError{Msg: "HTTPОтправить: " + err.Error()})
+		}
 		defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
-		b := readDSLHTTPResponse(resp.Body, "HTTPОтправить")
+		b := readDSLHTTPResponseContext(ctx, resp.Body, "HTTPОтправить")
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})
 
@@ -195,22 +216,29 @@ func NewHTTPFunctions(guard NetGuard) map[string]any {
 }
 
 func readDSLHTTPResponse(body io.Reader, caller string) []byte {
+	return readDSLHTTPResponseContext(context.Background(), body, caller)
+}
+
+func readDSLHTTPResponseContext(ctx context.Context, body io.Reader, caller string) []byte {
 	data, err := io.ReadAll(io.LimitReader(body, maxDSLHTTPResponseBytes+1))
 	if err != nil {
+		checkExecutionContext(ctx)
 		panic(userError{Msg: caller + ": ошибка чтения ответа: " + err.Error()})
 	}
+	checkExecutionContext(ctx)
 	if int64(len(data)) > maxDSLHTTPResponseBytes {
 		panic(userError{Msg: fmt.Sprintf("%s: ответ превышает лимит %d MiB", caller, maxDSLHTTPResponseBytes>>20)})
 	}
 	return data
 }
 
-func newHTTPConnFactory(guard NetGuard) func([]any) any {
+func newHTTPConnFactory(guard NetGuard, ctxSource CtxSource) func([]any) any {
 	return func(args []any) any {
 		conn := &dslHTTPConnection{
 			host:    strArg(args, 0),
 			timeout: 30 * time.Second,
 			guard:   guard,
+			ctx:     ctxSource,
 		}
 		if len(args) >= 2 {
 			conn.port = int(floatArg(args, 1))

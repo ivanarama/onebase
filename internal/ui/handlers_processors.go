@@ -225,7 +225,7 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	var callErr error
 	if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
 		_, callErr = s.interp.CallSandboxed(procDecl, paramsThis, procArgs,
-			interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, dslVars)
 	} else {
 		_, callErr = s.interp.Call(procDecl, paramsThis, procArgs, dslVars)
 	}

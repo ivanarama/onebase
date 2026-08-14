@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"testing"
@@ -8,8 +9,8 @@ import (
 )
 
 // execRunner достаёт builtin ВыполнитьКоманду с заданным guard'ом.
-func execRunner(guard ExecGuard) BuiltinFunc {
-	return NewExecFunctions(guard, nil)["ВыполнитьКоманду"].(BuiltinFunc)
+func execRunner(guard ExecGuard, ctxSources ...CtxSource) BuiltinFunc {
+	return NewExecFunctions(guard, nil, ctxSources...)["ВыполнитьКоманду"].(BuiltinFunc)
 }
 
 // echoCmd возвращает кросс-платформенную команду echo для аргумента arg.
@@ -79,6 +80,29 @@ func TestExecuteCommand_Timeout(t *testing.T) {
 	}
 	if fin, _ := res.(*MapThis).Get("Завершилась").(bool); fin {
 		t.Errorf("ожидалось Завершилась=false (убито по таймауту)")
+	}
+}
+
+func TestExecuteCommand_ExecutionContextCancelsProcess(t *testing.T) {
+	var cmd string
+	var args *Array
+	if runtime.GOOS == "windows" {
+		cmd, args = "ping", NewArray([]any{"-n", "6", "127.0.0.1"})
+	} else {
+		cmd, args = "sleep", NewArray([]any{"6"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := execRunner(nil, NewStaticCtx(ctx))([]any{cmd, args, 10.0}, "", 0)
+	if err == nil {
+		t.Fatal("expected execution context deadline error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "врем") {
+		t.Fatalf("unexpected deadline error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("execution context did not stop process, elapsed %v", elapsed)
 	}
 }
 

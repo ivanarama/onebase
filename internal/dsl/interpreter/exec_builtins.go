@@ -42,7 +42,8 @@ const (
 // NewExecFunctions возвращает builtin ВыполнитьКоманду с привязанными guard'ом и
 // (необязательным) аудитом. guard=deny используется песочницей для запрета
 // (см. SandboxProfile.Vars).
-func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
+func NewExecFunctions(guard ExecGuard, audit ExecAudit, ctxSources ...CtxSource) map[string]any {
+	ctxSource := firstCtxSource(ctxSources)
 	run := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		checkExec(guard)
 		if len(args) == 0 || args[0] == nil {
@@ -82,7 +83,9 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 			workdir = strings.TrimSpace(fmt.Sprintf("%v", args[3]))
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		baseCtx := contextFromSource(ctxSource)
+		checkExecutionContext(baseCtx)
+		ctx, cancel := context.WithTimeout(baseCtx, timeout)
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, name, cmdArgs...) //nolint:gosec // G204: builtin ВыполнитьКоманду закрыт ExecGuard (настройка GetExecEnabled, по умолчанию выключена), в песочнице guard=deny; аргументы идут слайсом, без шелла
@@ -95,11 +98,12 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 		cmd.Stderr = stderr
 
 		runErr := cmd.Run()
-		timedOut := ctx.Err() == context.DeadlineExceeded
+		executionErr := executionContextError(baseCtx)
+		timedOut := ctx.Err() == context.DeadlineExceeded && executionErr == nil
 
 		code := 0
 		switch {
-		case timedOut:
+		case executionErr != nil || timedOut:
 			code = -1
 		case runErr != nil:
 			if ee, ok := runErr.(*exec.ExitError); ok {
@@ -113,6 +117,9 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 
 		if audit != nil {
 			audit(name, cmdArgs, code)
+		}
+		if executionErr != nil {
+			return nil, executionErr
 		}
 
 		res := &MapThis{M: map[string]any{

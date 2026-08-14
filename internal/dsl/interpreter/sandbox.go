@@ -19,11 +19,12 @@ var (
 // регрессии). RunSandboxed применяет запреты профиля безусловно (см. Vars),
 // поэтому, чтобы запретить возможность, явно выставь соответствующий флаг.
 type SandboxProfile struct {
-	DenyNet      bool          // запретить сеть: HTTP-клиент, email, ИИ-запросы
-	DenyFile     bool          // запретить файловые builtins (и чтение в РаспознатьДокумент)
-	DenyExec     bool          // запретить команды ОС (ВыполнитьКоманду, план 67) недоверенному коду; secure-by-default обычного режима даёт флаг базы exec.enabled
-	MaxWallClock time.Duration // 0 = без лимита времени
-	MaxLoopIters int           // 0 = дефолт (maxWhileIter)
+	Context      context.Context // optional cancellation source for the whole DSL run
+	DenyNet      bool            // запретить сеть: HTTP-клиент, email, ИИ-запросы
+	DenyFile     bool            // запретить файловые builtins (и чтение в РаспознатьДокумент)
+	DenyExec     bool            // запретить команды ОС (ВыполнитьКоманду, план 67) недоверенному коду; secure-by-default обычного режима даёт флаг базы exec.enabled
+	MaxWallClock time.Duration   // 0 = без лимита времени
+	MaxLoopIters int             // 0 = дефолт (maxWhileIter)
 }
 
 // RestrictedProfile — строгий профиль для недоверенного кода (ИИ/marketplace):
@@ -115,9 +116,29 @@ func llmDenyFn(msg string) BuiltinFunc {
 // здесь намеренно не создаётся: большинство CallSandboxed не вызывает паузу,
 // а обычные операторы проверяют дешёвый time.Time через checkDeadline.
 func applySandboxLimits(e *env, p SandboxProfile) {
+	e.ec.context = p.Context
 	e.ec.maxLoopIters = p.MaxLoopIters
 	if p.MaxWallClock > 0 {
 		e.ec.deadline = time.Now().Add(p.MaxWallClock)
+	}
+}
+
+func executionContextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return errSandboxTimeout
+		}
+		return err
+	}
+	return nil
+}
+
+func checkExecutionContext(ctx context.Context) {
+	if err := executionContextError(ctx); err != nil {
+		panic(dslStop{err: err})
 	}
 }
 
@@ -176,6 +197,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 	// Раньше Vars() передавался вызывающим вручную — забытый или неверно
 	// упорядоченный вызов молча открывал песочницу.
 	applySandboxVars(e, p)
+	e.ec.checkDeadline()
 	if i.StrictLexicalScope {
 		if result != nil {
 			*result = i.callEntryProc(proc, e, nil)
@@ -215,6 +237,7 @@ func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []a
 		}
 	}
 	applySandboxVars(e, p)
+	e.ec.checkDeadline()
 	result = i.callUserProc(proc, e, args)
 	return
 }

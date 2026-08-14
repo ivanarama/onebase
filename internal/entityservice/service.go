@@ -126,9 +126,19 @@ type Service struct {
 // нельзя.
 func (s *Service) runHook(ctx context.Context, proc *ast.ProcedureDecl, this interpreter.This, vars map[string]any) error {
 	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
-		return s.Interp.RunSandboxed(proc, this, interpreter.SandboxProfile{MaxWallClock: wall}, nil, vars)
+		return s.Interp.RunSandboxed(proc, this, interpreter.SandboxProfile{Context: ctx, MaxWallClock: wall}, nil, vars)
 	}
 	return s.Interp.Run(proc, this, vars)
+}
+
+func (s *Service) hookExecutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
+		return context.WithTimeout(ctx, wall)
+	}
+	return context.WithCancel(ctx)
 }
 
 // ChangePublisher принимает уведомление об успешном изменении строки сущности
@@ -332,7 +342,8 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 					return err
 				}
 			}
-			txHookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+			txHookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+			defer cancelHook()
 			var vars map[string]any
 			var txState *interpreter.TxState
 			if s.BuildVars != nil {
@@ -485,7 +496,8 @@ func (s *Service) unpostInTx(
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
-	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+	defer cancelHook()
 	if s.PrepareHook != nil {
 		s.PrepareHook(hookCtx, entity, obj)
 	}
@@ -660,7 +672,8 @@ func (s *Service) runDeleteHook(
 	if obj == nil {
 		return nil // объекта уже нет — звать хук не о чем
 	}
-	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+	defer cancelHook()
 	if s.PrepareHook != nil {
 		s.PrepareHook(hookCtx, entity, obj)
 	}
@@ -867,12 +880,14 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 		// Нет хука — отдаём пустой объект, пользователь заполнит руками.
 		return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows}, nil
 	}
+	hookCtx, cancelHook := s.hookExecutionContext(ctx)
+	defer cancelHook()
 
 	var msgs []string
 	var vars map[string]any
 	var txState *interpreter.TxState
 	if s.BuildVars != nil {
-		vars, txState = s.BuildVars(ctx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
+		vars, txState = s.BuildVars(hookCtx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
 	} else {
 		vars = make(map[string]any)
 	}
@@ -888,9 +903,9 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	// фабрику; иначе — голый *Object (для документов без ТЧ всё равно работает).
 	var thisVal interpreter.This = recvObj
 	if s.MakeThis != nil {
-		thisVal = s.MakeThis(ctx, txState, recvObj, req.Receiver)
+		thisVal = s.MakeThis(hookCtx, txState, recvObj, req.Receiver)
 	}
-	runErr := s.runHook(ctx, proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)
 		if dslErr, ok := runErr.(*interpreter.DSLError); ok {
@@ -1028,7 +1043,8 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	proc := s.Reg.GetProcedure(ent.Name, "OnPost")
 	return s.Store.WithTx(ctx, func(txCtx context.Context) error {
 		if proc != nil {
-			hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+			hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+			defer cancelHook()
 			var msgs []string
 			var vars map[string]any
 			var txState *interpreter.TxState

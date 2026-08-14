@@ -278,7 +278,7 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 	var result any
 	var err error
 	if timeout := s.operationTimeout(opHTTPServiceRun); timeout > 0 {
-		result, err = s.interp.CallSandboxed(procDecl, reqObj, []any{reqObj}, interpreter.SandboxProfile{MaxWallClock: timeout}, dslVars)
+		result, err = s.interp.CallSandboxed(procDecl, reqObj, []any{reqObj}, interpreter.SandboxProfile{Context: ctx, MaxWallClock: timeout}, dslVars)
 	} else {
 		result, err = s.interp.Call(procDecl, reqObj, []any{reqObj}, dslVars)
 	}
