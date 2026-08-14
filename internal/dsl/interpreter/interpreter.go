@@ -512,6 +512,7 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 	case *ast.Ident:
 		e.set(t.Tok.Literal, val)
 	case *ast.MemberExpr:
+		refuseReadOnly(e.ec, "изменение свойства «"+t.Field.Literal+"»")
 		obj := i.evalExpr(t.Object, e)
 		field := strings.ToLower(t.Field.Literal)
 		switch o := obj.(type) {
@@ -524,6 +525,7 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 				"» — используйте Вставить(\"" + t.Field.Literal + "\", Значение)")
 		}
 	case *ast.IndexExpr:
+		refuseReadOnly(e.ec, "изменение элемента коллекции")
 		obj := i.evalExpr(t.Object, e)
 		idx := i.evalExpr(t.Index, e)
 		switch o := obj.(type) {
@@ -555,9 +557,9 @@ func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
 		field := strings.ToLower(v.Field.Literal)
 		switch o := obj.(type) {
 		case This:
-			return o.Get(field)
+			return protectReadOnly(e.ec, o.Get(field))
 		case *Ref:
-			return o.Get(field)
+			return protectReadOnly(e.ec, o.Get(field))
 		case *Map:
 			// Соответствие не поддерживает чтение по точке (как в 1С) — частая
 			// ошибка с результатом ПрочитатьJSON. Раньше тихо возвращали
@@ -571,9 +573,9 @@ func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
 		idx := i.evalExpr(v.Index, e)
 		switch o := obj.(type) {
 		case *Array:
-			return o.Index(int(toFloatOr0(idx)))
+			return protectReadOnly(e.ec, o.Index(int(toFloatOr0(idx))))
 		case *Map:
-			return o.CallMethod("получить", []any{idx})
+			return protectReadOnly(e.ec, o.CallMethod("получить", []any{idx}))
 		}
 		return nil
 	case *ast.ArrayLit:
@@ -615,6 +617,7 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {
 		if fn, ok := factory.(func([]any) any); ok {
+			refuseReadOnly(e.ec, "создание объекта «"+n.TypeName.Literal+"» через внешнюю фабрику")
 			return fn(args)
 		}
 	}
@@ -797,7 +800,15 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			return i.evalEvalBuiltin(args, e)
 		}
 		if val, ok := e.get(fnName); ok {
+			if bf, ok2 := val.(ReadOnlyBuiltinFunc); ok2 {
+				result, err := bf(args, callee.Tok.File, callee.Tok.Line)
+				if err != nil {
+					panic(dslStop{err: err})
+				}
+				return result
+			}
 			if bf, ok2 := val.(BuiltinFunc); ok2 {
+				refuseReadOnly(e.ec, "вызов внешней функции «"+fnName+"»")
 				result, err := bf(args, callee.Tok.File, callee.Tok.Line)
 				if err != nil {
 					panic(dslStop{err: err})
@@ -805,6 +816,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				return result
 			}
 			if bf, ok2 := val.(FallbackBuiltinFunc); ok2 {
+				refuseReadOnly(e.ec, "вызов внешней функции «"+fnName+"»")
 				fallback = bf
 			}
 		}
@@ -853,6 +865,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			// Factory-вызов без Новый: ЧтениеТекста(Путь), Запрос(Текст), …
 			if factory, ok2 := e.get("__factory_" + fnName); ok2 {
 				if fn2, ok3 := factory.(func([]any) any); ok3 {
+					refuseReadOnly(e.ec, "вызов внешней фабрики «"+fnName+"»")
 					return fn2(args)
 				}
 			}
@@ -875,6 +888,10 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	case *ast.MemberExpr:
 		recv := i.evalExpr(callee.Object, e)
 		method := strings.ToLower(callee.Field.Literal)
+		// Fail closed: receiver может быть writer'ом из локальной переменной,
+		// а по одному имени невозможно надёжно отделить чтение от Записать/Write
+		// и будущих алиасов. Поля объектов остаются доступны через MemberExpr.
+		refuseReadOnly(e.ec, "вызов метода «"+callee.Field.Literal+"»")
 		switch o := recv.(type) {
 		case MethodCallable:
 			if ml, ok := o.(MethodLister); ok {

@@ -74,6 +74,12 @@ type execCtx struct {
 	// capability-имя. Карта создаётся один раз в applySandboxVars и далее только
 	// читается всеми кадрами, разделяющими execCtx.
 	sandboxVars map[string]any
+	// readOnlyReason включает fail-closed режим вычисления, в котором нельзя
+	// вызывать переданные снаружи функции/фабрики и объектные методы, менять
+	// объекты/коллекции/модульное состояние, а This-значения выдаются через
+	// read-only membrane. Чистые вложенные DSL-функции разрешены.
+	// Непустая строка одновременно служит объяснением пользователю.
+	readOnlyReason string
 }
 
 // loopLimit — действующий потолок итераций цикла для запуска.
@@ -143,20 +149,20 @@ func (e *env) rootEnv() *env {
 func (e *env) get(name string) (any, bool) {
 	low := strings.ToLower(name)
 	if low == "this" || low == "этотобъект" {
-		return e.this, true
+		return protectReadOnly(e.ec, e.this), true
 	}
 	if e.ec != nil && e.ec.sandboxVars != nil {
 		if v, ok := e.ec.sandboxVars[low]; ok {
-			return v, true
+			return protectReadOnly(e.ec, v), true
 		}
 	}
 	name = low
 	if v, ok := e.vars[name]; ok {
-		return v, true
+		return protectReadOnly(e.ec, v), true
 	}
 	if e.module != nil {
 		if v, ok := e.module.vars[name]; ok {
-			return v, true
+			return protectReadOnly(e.ec, v), true
 		}
 	}
 	if e.parent != nil {
@@ -169,6 +175,7 @@ func (e *env) set(name string, v any) {
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
 		if _, local := e.vars[name]; !local {
+			refuseReadOnly(e.ec, "изменение модульной переменной «"+name+"»")
 			e.module.vars[name] = v
 			return
 		}
@@ -189,6 +196,7 @@ func (e *env) declare(name string, v any) {
 func (e *env) declareModule(name string, v any) {
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
+		refuseReadOnly(e.ec, "изменение модульной переменной «"+name+"»")
 		e.module.vars[name] = v
 		return
 	}
