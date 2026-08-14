@@ -240,7 +240,7 @@ jobs:
   # Ключевое здесь — вторая ячейка матрицы location. Прогон только из
   # приватного каталога воспроизводит ровно тот случай, который и так работал;
   # дефект виден лишь из ОБЩЕГО каталога вне дерева пользователя.
-  smoke:
+  smoke_matrix:
     name: Smoke ${{ matrix.os }} / ${{ matrix.location }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -293,33 +293,72 @@ jobs:
       - name: Start, serve, quit
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           log="$RUNNER_TEMP/smoke.log"
+          pid=""
+          origin=""
+
+          # На любой ранней ошибке (адрес не напечатан, GET не поднялся,
+          # /quit отказал) процесс не должен остаться жить до конца job.
+          cleanup() {
+            status=$?
+            set +e
+            trap - EXIT INT TERM
+            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+              if [ -n "$origin" ]; then
+                curl -s -o /dev/null -X POST "$origin/quit"
+              fi
+              for _ in $(seq 1 5); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null
+                sleep 1
+              fi
+              if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null
+              fi
+              wait "$pid" 2>/dev/null
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
           cd "$(dirname "$SMOKE_BIN")"
           ONEBASE_NO_GUI=1 "$SMOKE_BIN" start > "$log" 2>&1 &
           pid=$!
 
           url=""
+          prefix="Лаунчер доступен по адресу: "
           for _ in $(seq 1 60); do
             if ! kill -0 "$pid" 2>/dev/null; then
               echo "::error::процесс завершился, не открыв порт:"; cat "$log"; exit 1
             fi
-            url="$(grep -o 'http://127.0.0.1:[0-9]*' "$log" | head -1 || true)"
+            line="$(grep -m1 "^${prefix}" "$log" || true)"
+            url="${line#"$prefix"}"
             [ -n "$url" ] && break
             sleep 1
           done
           [ -n "$url" ] || { echo "::error::лаунчер не сообщил адрес за 60 с:"; cat "$log"; exit 1; }
+          if [[ ! "$url" =~ ^http://127\.0\.0\.1:[0-9]+/launcher-cookie-migration$ ]]; then
+            echo "::error::строка адреса нарушила контракт: $url"; cat "$log"; exit 1
+          fi
+          origin="${url%/launcher-cookie-migration}"
           echo "адрес лаунчера: $url"
 
           code=""
           for _ in $(seq 1 30); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)"
+            code="$(curl -sS -L -o /dev/null -w '%{http_code}' "$url" 2>>"$log" || true)"
             [ "$code" = "200" ] && break
             sleep 1
           done
-          [ "$code" = "200" ] || { echo "::error::GET / вернул $code:"; cat "$log"; exit 1; }
+          [ "$code" = "200" ] || { echo "::error::GET стартового URL вернул $code:"; cat "$log"; exit 1; }
 
-          curl -s -o /dev/null -X POST "$url/quit" || true
+          quit_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$origin/quit" 2>>"$log" || true)"
+          [ "$quit_code" = "200" ] || { echo "::error::POST /quit вернул $quit_code:"; cat "$log"; exit 1; }
           for _ in $(seq 1 30); do
             kill -0 "$pid" 2>/dev/null || break
             sleep 1
@@ -327,9 +366,31 @@ jobs:
           if kill -0 "$pid" 2>/dev/null; then
             echo "::error::лаунчер не завершился по /quit"; cat "$log"; kill -9 "$pid" || true; exit 1
           fi
-          wait "$pid"; rc=$?
+          rc=0
+          wait "$pid" || rc=$?
+          pid=""
           [ "$rc" = "0" ] || { echo "::error::код возврата $rc:"; cat "$log"; exit 1; }
           echo "smoke ok: запуск из $(dirname "$SMOKE_BIN"), ответ 200, выход 0"
+
+  # Матрица создаёт четыре динамических check-name. Этот агрегатор даёт защите
+  # main один стабильный обязательный контекст `smoke` и краснеет, если упала
+  # либо была отменена хотя бы одна ячейка.
+  smoke:
+    name: smoke
+    needs: [smoke_matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require all smoke cells
+        env:
+          MATRIX_RESULT: ${{ needs.smoke_matrix.result }}
+        run: |
+          if [ "$MATRIX_RESULT" != "success" ]; then
+            echo "::error::smoke matrix завершилась со статусом $MATRIX_RESULT"
+            exit 1
+          fi
+          echo "все smoke-ячейки зелёные"
 
   lint:
     runs-on: ubuntu-latest
