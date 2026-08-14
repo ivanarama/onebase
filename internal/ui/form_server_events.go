@@ -213,6 +213,7 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, msgs)
 	defer rollbackDSLExecution(txState)
 	thisObj := s.newFormObjectThisLive(ctx, txState, obj, entity, form, false)
+	thisObj.writeBlocked = true
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
 

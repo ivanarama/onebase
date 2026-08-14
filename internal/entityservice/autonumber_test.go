@@ -2,7 +2,9 @@ package entityservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,6 +17,16 @@ import (
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
+
+func equalFoldFieldState(fields map[string]any, name string) map[string]any {
+	state := make(map[string]any)
+	for key, value := range fields {
+		if strings.EqualFold(key, name) {
+			state[key] = value
+		}
+	}
+	return state
+}
 
 // Автонумерация — свойство записи объекта, а не конкретного входа (#869).
 // Форма, ИИ и REST v1/v2 сохраняют через Service.Save; прямой docWriter
@@ -50,6 +62,29 @@ func newNumberingService(t *testing.T, db *storage.DB, ents []*metadata.Entity) 
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: ents})
 	return &Service{Store: db, Reg: registry, Interp: interpreter.New()}
+}
+
+func TestEnsureAutoNumber_ВнеТранзакцииFailClosedMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		cat := numberedCatalog()
+		svc := newNumberingService(t, db, []*metadata.Entity{cat})
+		fields := map[string]any{"Код": "", "КОД": nil}
+		before := equalFoldFieldState(fields, metadata.StandardCodeField)
+
+		err := svc.EnsureAutoNumber(context.Background(), cat, &runtime.Object{Fields: fields})
+		if !errors.Is(err, ErrAutoNumberRequiresTx) {
+			t.Fatalf("EnsureAutoNumber error = %v, ожидался ErrAutoNumberRequiresTx", err)
+		}
+		if after := equalFoldFieldState(fields, metadata.StandardCodeField); !reflect.DeepEqual(after, before) {
+			t.Fatalf("вызов вне tx изменил map: до=%#v после=%#v", before, after)
+		}
+
+		withoutNumerator := numberedCatalog()
+		withoutNumerator.Numerator = nil
+		if err := svc.EnsureAutoNumber(context.Background(), withoutNumerator, &runtime.Object{}); !errors.Is(err, ErrAutoNumberRequiresTx) {
+			t.Fatalf("даже no-op EnsureAutoNumber обязан fail-closed вне tx, error=%v", err)
+		}
+	})
 }
 
 func TestSave_НумеруетСправочникMatrix(t *testing.T) {
@@ -246,9 +281,15 @@ func TestSave_ИсключениеХукаОткатываетСчётчикMatr
 		})
 
 		failedID := uuid.New()
+		fields := map[string]any{
+			metadata.StandardCodeField: "",
+			"КОД":                      nil,
+			"Наименование":             "повторить ту же map",
+		}
+		before := equalFoldFieldState(fields, metadata.StandardCodeField)
 		result, err := svc.Save(ctx, SaveRequest{
 			Entity: cat, ID: failedID, IsNew: true,
-			Fields: map[string]any{metadata.StandardCodeField: "", "Наименование": "не записывать"},
+			Fields: fields,
 		})
 		if err != nil {
 			t.Fatalf("исключение хука стало инфраструктурной ошибкой: %v", err)
@@ -259,27 +300,40 @@ func TestSave_ИсключениеХукаОткатываетСчётчикMatr
 		if _, err := db.GetByID(ctx, cat.Name, failedID, cat); err == nil {
 			t.Fatal("provisional-строка пережила исключение хука")
 		}
+		if after := equalFoldFieldState(fields, metadata.StandardCodeField); !reflect.DeepEqual(after, before) {
+			t.Fatalf("rollback не восстановил точные EqualFold-ключи: до=%#v после=%#v", before, after)
+		}
 
-		// Убираем хук, не меняя БД и счётчик, затем записываем новый объект.
+		// Убираем хук и повторяем Save с тем же ID и той же caller-owned map.
 		svc.Reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{cat}})
-		successID := uuid.New()
 		if _, err := svc.Save(ctx, SaveRequest{
-			Entity: cat, ID: successID, IsNew: true,
-			Fields: map[string]any{metadata.StandardCodeField: "", "Наименование": "записать"},
+			Entity: cat, ID: failedID, IsNew: true, Fields: fields,
 		}); err != nil {
 			t.Fatalf("Save после исключения: %v", err)
 		}
-		row, err := db.GetByID(ctx, cat.Name, successID, cat)
+		row, err := db.GetByID(ctx, cat.Name, failedID, cat)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got := fmt.Sprint(row[metadata.StandardCodeField]); got != "К-000001" {
-			t.Fatalf("счётчик не откатился: первый успешный код = %q", got)
+			t.Fatalf("retry той же map сохранил неверный код = %q", got)
 		}
-		if version, err := db.EntityVersion(ctx, cat.Name, successID); err != nil {
+		if version, err := db.EntityVersion(ctx, cat.Name, failedID); err != nil {
 			t.Fatalf("EntityVersion: %v", err)
 		} else if version != 1 {
 			t.Fatalf("версия новой записи после provisional = %d, ожидалась 1", version)
+		}
+
+		nextFields := map[string]any{metadata.StandardCodeField: "", "Наименование": "следующий"}
+		nextID := uuid.New()
+		if _, err := svc.Save(ctx, SaveRequest{Entity: cat, ID: nextID, IsNew: true, Fields: nextFields}); err != nil {
+			t.Fatalf("Save следующего объекта: %v", err)
+		}
+		if got := fmt.Sprint(nextFields[metadata.StandardCodeField]); got != "К-000002" {
+			t.Fatalf("следующий код = %q, ожидался К-000002", got)
+		}
+		if _, duplicate := nextFields["код"]; duplicate {
+			t.Fatalf("у следующего объекта появился lowercase-дубликат: %#v", nextFields)
 		}
 	})
 }
@@ -295,20 +349,23 @@ func TestSave_ОшибкаStorageПослеНомераОткатываетСч�
 			t.Fatalf("DROP entity table: %v", err)
 		}
 
+		id := uuid.New()
+		fields := map[string]any{metadata.StandardCodeField: "", "КОД": nil, "Наименование": "retry"}
+		before := equalFoldFieldState(fields, metadata.StandardCodeField)
 		if _, err := svc.Save(ctx, SaveRequest{
-			Entity: cat, ID: uuid.New(), IsNew: true,
-			Fields: map[string]any{metadata.StandardCodeField: "", "Наименование": "сбой"},
+			Entity: cat, ID: id, IsNew: true, Fields: fields,
 		}); err == nil {
 			t.Fatal("ожидалась ошибка записи в отсутствующую таблицу")
+		}
+		if after := equalFoldFieldState(fields, metadata.StandardCodeField); !reflect.DeepEqual(after, before) {
+			t.Fatalf("storage rollback не восстановил map: до=%#v после=%#v", before, after)
 		}
 
 		if err := db.Migrate(ctx, []*metadata.Entity{cat}); err != nil {
 			t.Fatalf("восстановление таблицы: %v", err)
 		}
-		id := uuid.New()
 		if _, err := svc.Save(ctx, SaveRequest{
-			Entity: cat, ID: id, IsNew: true,
-			Fields: map[string]any{metadata.StandardCodeField: "", "Наименование": "успех"},
+			Entity: cat, ID: id, IsNew: true, Fields: fields,
 		}); err != nil {
 			t.Fatalf("Save после восстановления: %v", err)
 		}
@@ -318,6 +375,86 @@ func TestSave_ОшибкаStorageПослеНомераОткатываетСч�
 		}
 		if got := fmt.Sprint(row[metadata.StandardCodeField]); got != "К-000001" {
 			t.Fatalf("storage-сбой не откатил счётчик: первый успешный код = %q", got)
+		}
+	})
+}
+
+func TestSave_PreflightВидитНомерИОткатНеРасходуетЕгоMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		cat := numberedCatalog()
+		svc := newNumberingService(t, db, []*metadata.Entity{cat})
+		fields := map[string]any{"Код": "", "КОД": nil, "Наименование": "отказ preflight"}
+		before := equalFoldFieldState(fields, metadata.StandardCodeField)
+		preflightReject := errors.New("preflight reject")
+
+		_, err := svc.Save(ctx, SaveRequest{
+			Entity: cat, ID: uuid.New(), IsNew: true, Fields: fields,
+			Preflight: func(txCtx context.Context, obj *runtime.Object) error {
+				if !storage.HasTx(txCtx) {
+					t.Fatal("Preflight вызван вне storage tx")
+				}
+				if got := fmt.Sprint(obj.Get(metadata.StandardCodeField)); got != "К-000001" {
+					t.Fatalf("Preflight видит код %q, ожидался К-000001", got)
+				}
+				return preflightReject
+			},
+		})
+		if !errors.Is(err, preflightReject) {
+			t.Fatalf("Save error = %v, ожидался preflightReject", err)
+		}
+		if after := equalFoldFieldState(fields, metadata.StandardCodeField); !reflect.DeepEqual(after, before) {
+			t.Fatalf("preflight rollback не восстановил map: до=%#v после=%#v", before, after)
+		}
+
+		id := uuid.New()
+		if _, err := svc.Save(ctx, SaveRequest{Entity: cat, ID: id, IsNew: true, Fields: fields}); err != nil {
+			t.Fatalf("retry той же map: %v", err)
+		}
+		if got := fmt.Sprint(fields[metadata.StandardCodeField]); got != "К-000001" {
+			t.Fatalf("отказ preflight израсходовал номер: retry получил %q", got)
+		}
+	})
+}
+
+func TestSave_OuterTxRollbackВосстанавливаетТуЖеMapMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		cat := numberedCatalog()
+		svc := newNumberingService(t, db, []*metadata.Entity{cat})
+		fields := map[string]any{"Код": "", "КОД": nil, "Наименование": "outer rollback"}
+		before := equalFoldFieldState(fields, metadata.StandardCodeField)
+		outerReject := errors.New("outer reject")
+		id := uuid.New()
+
+		err := db.WithTx(ctx, func(txCtx context.Context) error {
+			result, err := svc.Save(txCtx, SaveRequest{Entity: cat, ID: id, IsNew: true, Fields: fields})
+			if err != nil {
+				return err
+			}
+			if result.DSLError != "" {
+				return fmt.Errorf("unexpected DSLError: %s", result.DSLError)
+			}
+			if got := fmt.Sprint(fields[metadata.StandardCodeField]); got != "К-000001" {
+				return fmt.Errorf("inside outer tx code = %q", got)
+			}
+			return outerReject
+		})
+		if !errors.Is(err, outerReject) {
+			t.Fatalf("outer tx error = %v", err)
+		}
+		if after := equalFoldFieldState(fields, metadata.StandardCodeField); !reflect.DeepEqual(after, before) {
+			t.Fatalf("outer rollback не восстановил map: до=%#v после=%#v", before, after)
+		}
+		if _, err := db.GetByID(ctx, cat.Name, id, cat); err == nil {
+			t.Fatal("строка пережила outer rollback")
+		}
+
+		if _, err := svc.Save(ctx, SaveRequest{Entity: cat, ID: id, IsNew: true, Fields: fields}); err != nil {
+			t.Fatalf("retry после outer rollback: %v", err)
+		}
+		if got := fmt.Sprint(fields[metadata.StandardCodeField]); got != "К-000001" {
+			t.Fatalf("outer rollback израсходовал номер: retry получил %q", got)
 		}
 	})
 }

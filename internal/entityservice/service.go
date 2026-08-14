@@ -188,12 +188,18 @@ func webhookRecord(fields map[string]any) map[string]any {
 // Вызывающий обязан передать контекст той же транзакции, в которой будет
 // записан объект. Тогда ошибка хука или БД откатывает и строку, и счётчик.
 func (s *Service) EnsureAutoNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) error {
-	if s == nil || s.Store == nil || entity == nil || obj == nil {
-		return nil
+	if entity == nil || obj == nil {
+		return errors.New("автонумерация: не задана сущность или объект")
+	}
+	if !storage.HasTx(ctx) {
+		return fmt.Errorf("автонумерация %s: %w", entity.Name, ErrAutoNumberRequiresTx)
 	}
 	target := storage.AutoNumberField(entity)
 	if target == "" {
 		return nil
+	}
+	if s == nil || s.Store == nil {
+		return errors.New("автонумерация: не задано хранилище")
 	}
 	for _, f := range entity.Fields {
 		if !strings.EqualFold(f.Name, target) || f.Type != metadata.FieldTypeString {
@@ -201,6 +207,9 @@ func (s *Service) EnsureAutoNumber(ctx context.Context, entity *metadata.Entity,
 		}
 		if obj.Fields == nil {
 			obj.Fields = make(map[string]any)
+		}
+		if err := deferAutoNumberRestore(ctx, obj, f.Name); err != nil {
+			return fmt.Errorf("автонумерация %s.%s: %w", entity.Name, f.Name, err)
 		}
 		if value, ok := nonEmptyAutoNumberValue(obj.Fields, f.Name); ok {
 			obj.Set(f.Name, value)
@@ -231,6 +240,49 @@ func (s *Service) EnsureAutoNumber(ctx context.Context, entity *metadata.Entity,
 		}
 		obj.Set(f.Name, value)
 		return nil
+	}
+	return nil
+}
+
+// ErrAutoNumberRequiresTx means that numbering was attempted without a
+// storage-managed transaction. Generating outside one would burn a number on
+// any later rejection and cannot provide rollback compensation for obj.Fields.
+var ErrAutoNumberRequiresTx = errors.New("автонумерация требует управляемую транзакцию storage")
+
+// deferAutoNumberRestore preserves the exact pre-generation shape of every
+// spelling of the numbered field. Database rollback already restores the
+// counter; this compensation keeps the caller-owned map in lockstep with it,
+// including retries of the same SaveRequest or DSL writer.
+func deferAutoNumberRestore(ctx context.Context, obj *runtime.Object, fieldName string) error {
+	originalFields := obj.Fields
+	originalValues := make(map[string]any)
+	for key, value := range originalFields {
+		if strings.EqualFold(key, fieldName) {
+			originalValues[key] = value
+		}
+	}
+	restore := func() {
+		// A callback is allowed to replace obj.Fields. Clean the numbered field
+		// from that map as well, then reconnect the original caller-owned map.
+		if obj.Fields != nil {
+			for key := range obj.Fields {
+				if strings.EqualFold(key, fieldName) {
+					delete(obj.Fields, key)
+				}
+			}
+		}
+		for key := range originalFields {
+			if strings.EqualFold(key, fieldName) {
+				delete(originalFields, key)
+			}
+		}
+		for key, value := range originalValues {
+			originalFields[key] = value
+		}
+		obj.Fields = originalFields
+	}
+	if !storage.DeferUntilTxRollback(ctx, restore) {
+		return ErrAutoNumberRequiresTx
 	}
 	return nil
 }
@@ -273,6 +325,12 @@ type SaveRequest struct {
 	Fields        map[string]any
 	TablePartRows map[string][]map[string]any
 
+	// Preflight runs in the save transaction after auto-numbering and before
+	// caller-independent enrichment, provisional persistence and entity hooks.
+	// It is intended for row access and form-level BeforeWrite/OnWrite checks
+	// that must see the assigned number without consuming it on rejection.
+	Preflight func(ctx context.Context, obj *runtime.Object) error
+
 	// Action: "" (просто Записать) | "post" | "post_and_close".
 	// Для документов с Posting=true и Action=post* запускается OnPost вместо
 	// OnWrite и в конце сохранения выставляется posted=true.
@@ -292,8 +350,8 @@ type SaveResult struct {
 	Movements   *runtime.MovementsCollector // для отладки/инспекции (заполняется хуком OnPost)
 }
 
-// Save выполняет полный цикл сохранения: prepare → run hook → tx (upsert +
-// table parts + movements + posting).
+// Save выполняет полный цикл сохранения в одной транзакции: auto-number →
+// request preflight → prepare → hook → upsert + table parts + movements + posting.
 //
 // Возвращает (result, nil) при успехе. Если DSL-хук вернул ошибку — это НЕ
 // технический сбой: возвращается result.DSLError != "" и err == nil, caller
@@ -302,7 +360,6 @@ type SaveResult struct {
 // версий — caller должен проверить errors.Is).
 func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
-	SetPeriodFromFields(mc, req.Entity, req.Fields)
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
 
@@ -324,18 +381,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
-	// Pre-hook enrichment: даём caller'у заменить UUID-строки на *Ref и т.п.
-	if s.PrepareHook != nil {
-		s.PrepareHook(ctx, req.Entity, obj)
-	}
-	if s.EnrichTPRows != nil {
-		for _, tp := range req.Entity.TableParts {
-			if rows, ok := obj.TablePartRows[tp.Name]; ok {
-				s.EnrichTPRows(ctx, tp, rows)
-			}
-		}
-	}
-
 	// Выбор хука: OnPost при проведении документа, иначе OnWrite.
 	isPosting := req.Entity.Posting && (req.Action == "post" || req.Action == "post_and_close")
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
@@ -347,14 +392,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		}
 		if marked {
 			return SaveResult{ID: req.ID, DSLError: storage.ErrPostingDeletionMarked.Error()}, nil
-		}
-	}
-	// Дата запрета проведения (свёртка базы, план 74): документ свёрнутого
-	// периода нельзя провести/перепровести — иначе движения вернутся и дадут
-	// двойной счёт с опорными остатками. Проверяем по дате, которую проводим.
-	if isPosting && mc.Period != nil {
-		if lock, ok := s.Store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {
-			return SaveResult{ID: req.ID, DSLError: storage.PostingFrozenError(lock).Error()}, nil
 		}
 	}
 	hookName := "OnWrite"
@@ -383,6 +420,41 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		if req.IsNew {
 			if err := s.EnsureAutoNumber(txCtx, req.Entity, obj); err != nil {
 				return err
+			}
+		}
+		if req.Preflight != nil {
+			if err := req.Preflight(txCtx, obj); err != nil {
+				return err
+			}
+		}
+		// Form hooks dereference rich values before returning to persistence,
+		// including pseudo fields. Restore the authoritative self reference for
+		// the entity hook and storage, and follow a replaced Fields map locally.
+		if obj.Fields == nil {
+			obj.Fields = map[string]any{}
+		}
+		obj.Fields["ссылка"] = selfRef
+		obj.Fields["reference"] = selfRef
+		req.Fields = obj.Fields
+		req.TablePartRows = obj.TablePartRows
+		// Enrichment must follow caller preflight: row predicates retain their
+		// raw-input semantics, while the entity hook still receives rich refs.
+		if s.PrepareHook != nil {
+			s.PrepareHook(txCtx, req.Entity, obj)
+		}
+		if s.EnrichTPRows != nil {
+			for _, tp := range req.Entity.TableParts {
+				if rows, ok := obj.TablePartRows[tp.Name]; ok {
+					s.EnrichTPRows(txCtx, tp, rows)
+				}
+			}
+		}
+		SetPeriodFromFields(mc, req.Entity, obj.Fields)
+		// Form preflight may change the document date. Check the posting lock
+		// against that final value, inside the same rollback scope.
+		if isPosting && mc.Period != nil {
+			if lock, ok := s.Store.GetPostingLockDate(txCtx); ok && storage.PostingFrozen(lock, *mc.Period) {
+				return &hookRunError{err: storage.PostingFrozenError(lock)}
 			}
 		}
 		if req.Entity.Posting && !req.IsNew && !isPosting {
@@ -497,9 +569,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	return SaveResult{ID: req.ID, DSLMessages: msgs, Movements: mc}, nil
 }
 
-// hookRunError distinguishes a DSL business error from a technical storage
-// error. Returning it from WithTx rolls the transaction back; Unpost then
-// exposes the message through SaveResult, consistently with Save.
+// hookRunError distinguishes a user-facing save rejection (DSL hook or a
+// platform business guard such as posting lock) from a technical storage
+// error. Returning it from WithTx rolls the transaction back; callers expose
+// the message through SaveResult.
 type hookRunError struct{ err error }
 
 func (e *hookRunError) Error() string { return e.err.Error() }

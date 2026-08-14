@@ -168,25 +168,6 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 		if kind == metadata.KindDocument && isPostAction(body.Action) && !requireRESTPerm(w, r, kind, entityName, "post") {
 			return
 		}
-		if err := h.autoFillRowAccessFields(r.Context(), entity, "write", body.Fields); err != nil {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-		if kind == metadata.KindDocument && isPostAction(body.Action) {
-			if err := h.autoFillRowAccessFields(r.Context(), entity, "post", body.Fields); err != nil {
-				writeError(w, http.StatusForbidden, "forbidden", "", 0)
-				return
-			}
-		}
-		if !h.rowAllowed(r.Context(), entity, "write", body.Fields) {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-		if kind == metadata.KindDocument && isPostAction(body.Action) && !h.rowAllowed(r.Context(), entity, "post", body.Fields) {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-
 		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 			Entity:        entity,
 			ID:            uuid.New(),
@@ -194,7 +175,12 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 			Fields:        body.Fields,
 			TablePartRows: body.TablePartRows,
 			Action:        body.Action,
+			Preflight:     h.createRowAccessPreflight(entity, body.Action),
 		})
+		if errors.Is(err, errCreateRowAccessDenied) {
+			writeError(w, http.StatusForbidden, "forbidden", "", 0)
+			return
+		}
 		writeSaveResultV2(w, result, err, result.ID, false)
 	}
 }

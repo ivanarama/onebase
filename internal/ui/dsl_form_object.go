@@ -49,6 +49,9 @@ type formObjectThis struct {
 	ctxSrc docsCtxSource
 	isNew  bool
 	saved  bool
+	// writeBlocked prevents a form write lifecycle handler from recursively
+	// saving the same object and then letting the outer Save persist it again.
+	writeBlocked bool
 }
 
 // liveCtx — контекст с открытой DSL-транзакцией, если она есть.
@@ -93,6 +96,9 @@ func (f *formObjectThis) CallMethod(method string, args []any) any {
 	}
 	switch strings.ToLower(method) {
 	case "записать", "write":
+		if f.writeBlocked {
+			interpreter.RaiseUserError("Записать недоступно внутри обработчика записи формы")
+		}
 		if err := f.write(); err != nil {
 			interpreter.RaiseUserError("Записать(" + f.entity.Name + "): " + err.Error())
 		}
@@ -113,17 +119,12 @@ func (f *formObjectThis) write() error {
 	}
 	ctx := f.liveCtx()
 	isNew := f.isNew && !f.saved
-	if isNew {
-		if err := f.srv.autoFillRowAccessFields(ctx, f.entity, "write", f.obj.Fields); err != nil {
-			return err
-		}
-	}
 	accessID := uuid.Nil
 	if !isNew {
 		accessID = f.obj.ID
-	}
-	if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", accessID, f.obj.Fields); err != nil {
-		return err
+		if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", accessID, f.obj.Fields); err != nil {
+			return err
+		}
 	}
 	result, err := f.srv.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:        f.entity,
@@ -131,6 +132,15 @@ func (f *formObjectThis) write() error {
 		IsNew:         isNew,
 		Fields:        f.obj.Fields,
 		TablePartRows: f.obj.TablePartRows,
+		Preflight: func(txCtx context.Context, obj *runtime.Object) error {
+			if !isNew {
+				return nil
+			}
+			if err := f.srv.autoFillRowAccessFields(txCtx, f.entity, "write", obj.Fields); err != nil {
+				return err
+			}
+			return f.srv.checkDSLRowAccess(txCtx, f.entity, "write", uuid.Nil, obj.Fields)
+		},
 	})
 	if err != nil {
 		return err

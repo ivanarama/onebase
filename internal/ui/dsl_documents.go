@@ -570,17 +570,6 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 		}
 		return w.ref()
 	case "провести", "post":
-		if w.accessID() == uuid.Nil {
-			if err := w.s.autoFillRowAccessFields(w.ctx(), w.entity, "write", w.obj.Fields); err != nil {
-				interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
-			}
-			if err := w.s.autoFillRowAccessFields(w.ctx(), w.entity, "post", w.obj.Fields); err != nil {
-				interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
-			}
-		}
-		if err := w.s.checkDSLRowAccess(w.ctx(), w.entity, "post", w.accessID(), w.obj.Fields); err != nil {
-			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
-		}
 		if err := w.conduct(); err != nil {
 			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
 		}
@@ -738,19 +727,39 @@ func (w *docWriter) withLockScope(fn func(ctx context.Context) error) error {
 }
 
 func (w *docWriter) writeInContext(ctx context.Context) error {
+	return w.writeInContextForAction(ctx, false)
+}
+
+func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) error {
 	// Pre-образ живого списка (план 87): для существующего документа читаем строку
 	// ДО записи, чтобы прежний владелец убрал её из списка при смене прав.
 	var changeBefore map[string]any
 	if w.entity.NotifyChanges && w.loaded {
 		changeBefore, _ = w.s.store.GetByID(ctx, w.entity.Name, w.obj.ID, w.entity)
 	}
+	// Number first so row-level write policy and the form/entity hook observe
+	// the same value that will be persisted. writeInContext always owns a
+	// transaction/savepoint, so rejection restores both counter and obj map.
+	if err := w.s.entityService().EnsureAutoNumber(ctx, w.entity, w.obj); err != nil {
+		return err
+	}
 	if w.accessID() == uuid.Nil {
 		if err := w.s.autoFillRowAccessFields(ctx, w.entity, "write", w.obj.Fields); err != nil {
 			return err
 		}
+		if posting {
+			if err := w.s.autoFillRowAccessFields(ctx, w.entity, "post", w.obj.Fields); err != nil {
+				return err
+			}
+		}
 	}
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 		return err
+	}
+	if posting {
+		if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.accessID(), w.obj.Fields); err != nil {
+			return err
+		}
 	}
 	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
 	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
@@ -764,9 +773,6 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 		// стала бы каналом раскрытия — после Записать() модуль прочитал бы
 		// реальное значение, которого не видел до неё.
 		w.forgetAssigned(restored)
-	}
-	if err := w.s.entityService().EnsureAutoNumber(ctx, w.entity, w.obj); err != nil {
-		return err
 	}
 	// Псевдо-реквизит «Ссылка» самого документа — до запуска OnWrite, как это уже
 	// делается на пути проведения (ensureSelfRef перед OnPost) и в entityservice.Save.
@@ -835,10 +841,10 @@ func (w *docWriter) accessID() uuid.UUID {
 // OnWrite, OnPost and all nested DSL writes share the same transaction/scope.
 func (w *docWriter) conduct() error {
 	return w.withLockScope(func(ctx context.Context) error {
-		if err := w.writeInContext(ctx); err != nil {
+		if err := w.writeInContextForAction(ctx, true); err != nil {
 			return err
 		}
-		return w.postInContext(ctx)
+		return w.postInContextAfterAccess(ctx)
 	})
 }
 
@@ -852,6 +858,10 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.obj.ID, w.obj.Fields); err != nil {
 		return err
 	}
+	return w.postInContextAfterAccess(ctx)
+}
+
+func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
 	if marked, err := w.s.store.IsMarkedForDeletion(ctx, w.entity.Name, w.obj.ID); err != nil {
 		return err

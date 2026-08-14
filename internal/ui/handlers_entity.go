@@ -712,30 +712,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := s.autoFillRowAccessFields(r.Context(), entity, "write", obj.Fields); err != nil {
-		s.renderForbidden(w, r)
-		return
-	}
-	if entity.Posting && (action == "post" || action == "post_and_close") {
-		if err := s.autoFillRowAccessFields(r.Context(), entity, "post", obj.Fields); err != nil {
-			s.renderForbidden(w, r)
-			return
-		}
-	}
-	if !s.rowAllowed(w, r, entity, "write", obj.Fields) {
-		return
-	}
-	if entity.Posting && (action == "post" || action == "post_and_close") && !s.rowAllowed(w, r, entity, "post", obj.Fields) {
-		return
-	}
-
-	// Серверные события записи формы (ПередЗаписью/ПриЗаписи) — до Save. Бросок
-	// ВызватьИсключение в обработчике отменяет запись и перерисовывает форму.
 	var hookMsgs []string
-	if hookErr := s.runPreSaveFormHooks(r.Context(), entity, obj, &hookMsgs); hookErr != nil {
-		s.renderObjectFormError(w, r, entity, true, hookErr.Error(), hookMsgs, obj.TablePartRows)
-		return
-	}
+	var formHookErr error
+	posting := entity.Posting && (action == "post" || action == "post_and_close")
 
 	result, err := s.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 		Entity:        entity,
@@ -744,8 +723,36 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		Fields:        obj.Fields,
 		TablePartRows: obj.TablePartRows,
 		Action:        action,
+		Preflight: func(txCtx context.Context, saveObj *runtime.Object) error {
+			if err := s.autoFillRowAccessFields(txCtx, entity, "write", saveObj.Fields); err != nil {
+				return errSubmitRowAccessDenied
+			}
+			if posting {
+				if err := s.autoFillRowAccessFields(txCtx, entity, "post", saveObj.Fields); err != nil {
+					return errSubmitRowAccessDenied
+				}
+			}
+			if !s.rowAllowedContext(txCtx, entity, "write", saveObj.Fields) ||
+				(posting && !s.rowAllowedContext(txCtx, entity, "post", saveObj.Fields)) {
+				return errSubmitRowAccessDenied
+			}
+			// Form events see the assigned number, while their rejection remains
+			// in the same rollback scope as the counter and eventual write.
+			if formHookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, &hookMsgs); formHookErr != nil {
+				return errSubmitFormHook
+			}
+			return nil
+		},
 	})
 	if err != nil {
+		if errors.Is(err, errSubmitRowAccessDenied) {
+			s.renderForbidden(w, r)
+			return
+		}
+		if errors.Is(err, errSubmitFormHook) {
+			s.renderObjectFormError(w, r, entity, true, formHookErr.Error(), hookMsgs, obj.TablePartRows)
+			return
+		}
 		s.serverError(w, r, err)
 		return
 	}
