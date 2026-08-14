@@ -107,7 +107,8 @@ func (s *Server) refManagerForSrc(entity *metadata.Entity, ctxSrc interpreter.Ct
 			WithRowAccessChecker(s.dslRowAccessChecker()).
 			WithFieldSearchChecker(s.dslFieldSearchChecker()).
 			WithExchangeRegistrar(s.exchangeRegistrar()).
-			WithObjectFactory(s.catObjectFactory(ctxSrc))
+			WithObjectFactory(s.catObjectFactory(ctxSrc)).
+			WithDeleter(dslCatalogDeleter{s: s})
 	case metadata.KindDocument:
 		return &docProxy{
 			s:        s,

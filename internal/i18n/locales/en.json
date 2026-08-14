@@ -1279,6 +1279,7 @@
   "создание": "created",
   "состояние этих объектов не объявлено в order. Включение enforce: strict отвергнет их первую же правку.": "the state of these objects is not declared in order. Turning on enforce: strict will reject their very next edit.",
   "у объекта %s нельзя очистить этап «%s» — этап меняется только переходом": "the stage “%s” of %s cannot be cleared — a stage changes only through a transition",
+  "удаление %s недоступно в этом окружении": "deleting %s is not available in this environment",
   "Переход не предусмотрен маршрутом и прошёл только потому, что маршрут объявлен в режиме warn": "The transition is not part of the route and went through only because the route is declared in warn mode",
   "этап «%s» не объявлен в маршруте объекта %s": "stage “%s” is not declared in the route of %s",
   "%s: значение %s «%s» уже занято другой записью": "%s: value %s «%s» is already taken by another record",

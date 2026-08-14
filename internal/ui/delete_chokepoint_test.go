@@ -31,9 +31,13 @@ var deleteChokepointExempt = map[string]string{
 	"markRef": "пометка на удаление, а не физическое удаление",
 }
 
-// deleteCallScanner ищет вызовы вида store.Delete(...) / s.store.Delete(...).
+// deleteCallScanner ищет вызовы вида store.Delete(...) / s.store.Delete(...),
+// а также db.Delete(...) / p.db.Delete(...) — под именем db хранилище живёт в
+// DSL-прокси (internal/dsl/interpreter), где раньше прятался обходной путь
+// удаления справочников (issue #854).
 func callsStoreDelete(fd *ast.FuncDecl) bool {
 	found := false
+	storeNames := map[string]bool{"store": true, "db": true}
 	ast.Inspect(fd, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -43,12 +47,12 @@ func callsStoreDelete(fd *ast.FuncDecl) bool {
 		if !ok || sel.Sel.Name != "Delete" {
 			return true
 		}
-		// Отсекаем Delete у чего угодно, кроме store: карты, кэши, репозитории
+		// Отсекаем Delete у чего угодно, кроме store/db: карты, кэши, репозитории
 		// пользователей и т.п. живут своей жизнью.
-		if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "store" {
+		if inner, ok := sel.X.(*ast.SelectorExpr); ok && storeNames[inner.Sel.Name] {
 			found = true
 		}
-		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "store" {
+		if id, ok := sel.X.(*ast.Ident); ok && storeNames[id.Name] {
 			found = true
 		}
 		return true
@@ -60,7 +64,7 @@ func TestDeleteChokepoint_NoDirectStoreDelete(t *testing.T) {
 	var offenders []string
 	// ParseFile по явному списку, как в соседних стражах: ParseDir объявлен
 	// устаревшим и валит линтер.
-	for _, dir := range []string{".", filepath.Join("..", "api")} {
+	for _, dir := range []string{".", filepath.Join("..", "api"), filepath.Join("..", "dsl", "interpreter")} {
 		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		if err != nil {
 			t.Fatalf("список файлов %s: %v", dir, err)

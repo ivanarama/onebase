@@ -798,6 +798,7 @@
   "неверный идентификатор ссылки: %q": "ungültiger Referenzbezeichner: %q",
   "неизвестное субконто %q (объявлены: %s)": "unbekanntes Subkonto %q (deklariert: %s)",
   "нельзя переместить группу в её подчинённую группу": "eine Gruppe kann nicht in ihre eigene Untergruppe verschoben werden",
+  "удаление %s недоступно в этом окружении": "das Löschen von %s ist in dieser Umgebung nicht verfügbar",
   "нельзя пометить предопределённый элемент %s на удаление": "das vordefinierte Element %s kann nicht zum Löschen markiert werden",
   "нельзя удалить группу: в ней есть элементы (%d шт.)": "die Gruppe kann nicht gelöscht werden: sie enthält Elemente (%d)",
   "нельзя удалить предопределённый элемент %s": "das vordefinierte Element %s kann nicht gelöscht werden",
