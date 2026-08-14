@@ -457,7 +457,10 @@ func infoRegDSLRows(ir *metadata.InfoRegister, rows []map[string]any) []map[stri
 	for _, row := range rows {
 		r := make(map[string]any, len(row))
 		for k, v := range row {
-			if k == "period" || k == "period_key" {
+			// period/period_key — транспортные поля только у периодического
+			// регистра. В непериодическом это допустимые имена пользовательских
+			// измерений/ресурсов, и удалять их при чтении нельзя.
+			if ir.Periodic && (k == "period" || k == "period_key") {
 				continue
 			}
 			r[k] = v

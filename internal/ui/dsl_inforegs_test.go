@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -374,7 +375,7 @@ func TestInfoRegSet_ЦиклЧтениеЗаписьНаПериодическо
   Н = РегистрыСведений.СостояниеУзлов.СоздатьНаборЗаписей();
   Н.Отбор.Узел = "N1";
   С = Н.Добавить();
-  С.Период = Дата(2026, 8, 11, 12, 0, 0);
+  С.Период = Дата(2026, 8, 11, 12, 0, 0) + 0.5;
   С.Состояние = "Готов";
   Н.Записать();`); err != nil {
 			t.Fatalf("первичная запись: %v", err)
@@ -385,7 +386,7 @@ func TestInfoRegSet_ЦиклЧтениеЗаписьНаПериодическо
   Н.Отбор.Узел = "N1";
   Н.Прочитать();
   С = Н.Добавить();
-  С.Период = Дата(2026, 8, 12, 12, 0, 0);
+  С.Период = Дата(2026, 8, 12, 12, 0, 0) + 0.75;
   С.Состояние = "Ошибка";
   Н.Записать();
   Н2 = РегистрыСведений.СостояниеУзлов.СоздатьНаборЗаписей();
@@ -406,16 +407,77 @@ func TestInfoRegSet_ЦиклЧтениеЗаписьНаПериодическо
 		if err != nil {
 			t.Fatalf("InfoRegList: %v", err)
 		}
-		got := map[string]bool{}
+		got := make([]time.Time, 0, len(rows))
 		for _, row := range rows {
-			got[strings.TrimSpace(asString(row["period"]))] = true
+			key, _ := row["period_key"].(string)
+			p, ok := storage.ParseRegPeriod(key)
+			if !ok {
+				t.Fatalf("period_key %q не разбирается; row=%v", key, row)
+			}
+			got = append(got, p)
 		}
-		for _, want := range []string{"11.08.2026", "12.08.2026"} {
-			if !got[want] {
-				t.Errorf("периода %s нет среди %v — период прочитанной строки не пережил запись", want, got)
+		want := []time.Time{
+			time.Date(2026, 8, 11, 12, 0, 0, int(500*time.Millisecond), time.Local),
+			time.Date(2026, 8, 12, 12, 0, 0, int(750*time.Millisecond), time.Local),
+		}
+		// SQLite канонически хранит секунды, PostgreSQL — микросекунды. Важно,
+		// чтобы read→write не терял точность, которую хранит конкретный dialect.
+		if db.Dialect().Name() == "sqlite" {
+			for i := range want {
+				want[i] = want[i].Truncate(time.Second)
+			}
+		}
+		for _, expected := range want {
+			found := false
+			for _, actual := range got {
+				if actual.Equal(expected) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("точного периода %s нет среди %v — read→write изменил ключ записи", expected.Format(time.RFC3339Nano), got)
 			}
 		}
 	})
+}
+
+// В непериодическом регистре period_key не является транспортным полем: это
+// допустимое имя пользовательского измерения или ресурса. Прочитать→Записать
+// обязано сохранить его значение.
+func TestInfoRegSet_НепериодическийPeriodKeyНеТеряется(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "period-key-field.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+
+	ir := &metadata.InfoRegister{
+		Name:       "TransportFields",
+		Dimensions: []metadata.Field{{Name: "Node", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "period_key", Type: metadata.FieldTypeString}},
+	}
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if _, err := runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.TransportFields.СоздатьНаборЗаписей();
+  Н.Отбор.Node = "N1";
+  С = Н.Добавить(); С.period_key = "business-value";
+  Н.Записать();
+  Н.Прочитать();
+  Н.Записать();`); err != nil {
+		t.Fatalf("цикл Прочитать→Записать: %v", err)
+	}
+
+	rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{Dims: map[string]string{"Node": "N1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || asString(rowValueFold(rows[0], "period_key")) != "business-value" {
+		t.Fatalf("пользовательский period_key потерян: %v", rows)
+	}
 }
 
 // Менеджер записи: Прочитать() без Периода на периодическом регистре обязан
