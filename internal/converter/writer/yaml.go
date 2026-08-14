@@ -26,6 +26,7 @@ type yamlCatalog struct {
 	Name         string          `yaml:"name"`
 	Title        string          `yaml:"title,omitempty"`
 	Hierarchical bool            `yaml:"hierarchical,omitempty"`
+	Numerator    *yamlNumerator  `yaml:"numerator,omitempty"`
 	Fields       []yamlField     `yaml:"fields"`
 	TableParts   []yamlTablePart `yaml:"tableparts,omitempty"`
 }
@@ -33,6 +34,9 @@ type yamlCatalog struct {
 type yamlNumerator struct {
 	Length int    `yaml:"length,omitempty"`
 	Period string `yaml:"period,omitempty"`
+	// Unique — контроль уникальности (план 117E). В 1С это CheckUnique у кода
+	// справочника; терять его нельзя: он часть смысла кода, а не украшение.
+	Unique bool `yaml:"unique,omitempty"`
 }
 type yamlDocument struct {
 	Name       string          `yaml:"name"`
@@ -61,19 +65,22 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 			Name:         cat.Name,
 			Title:        synonymTitle(cat.Name, cat.Synonym),
 			Hierarchical: cat.Hierarchical,
+			Numerator:    catalogNumeratorFrom(cat.Code),
 			Fields:       withStandardCatalogFields(convertFields(cat.Attributes, notes)),
 		}
-		// Автонумерацию кода справочника платформа пока не выполняет: блок
-		// numerator: у справочника разбирается и ничего не делает (план 117, Д2).
-		// Писать его сюда значило бы отдать конфигурацию, которая выглядит
-		// рабочей и молчит, — поэтому честнее сказать вслух.
-		if cat.Code.Auto {
+		// Числовой код переносится строковым — как и числовой номер документа.
+		// Об этом сказать надо: сортировка «10» < «9» удивляет тех, кто в 1С
+		// пользовался числовым кодом.
+		if cat.Code.Auto && strings.EqualFold(cat.Code.Type, "Number") {
 			notes.TypeWarnings = append(notes.TypeWarnings,
-				"справочник "+cat.Name+": автонумерация кода не перенесена — платформа пока нумерует только документы (план 117)")
+				"справочник "+cat.Name+": числовой код перенесён строковым — платформа нумерует строками")
 		}
-		if cat.Code.CheckUnique {
+		// Контроль уникальности НЕавтоматического кода платформа не выражает:
+		// numerator.unique действует на автонумерацию, а тут её нет.
+		if cat.Code.CheckUnique && !cat.Code.Auto {
 			notes.TypeWarnings = append(notes.TypeWarnings,
-				"справочник "+cat.Name+": контроль уникальности кода не перенесён — задайте indexes: [{fields: [Код], unique: true}] вручную")
+				"справочник "+cat.Name+": контроль уникальности кода без автонумерации не перенесён — "+
+					"задайте indexes: [{fields: [Код], unique: true}] вручную")
 		}
 		for _, ts := range cat.TabularSections {
 			obj.TableParts = append(obj.TableParts, yamlTablePart{
@@ -114,6 +121,24 @@ func withStandardDocumentFields(fields []yamlField) []yamlField {
 		std = append(std, yamlField{Name: "Дата", Type: "date"})
 	}
 	return append(std, fields...)
+}
+
+// catalogNumeratorFrom переносит автонумерацию КОДА справочника (#872).
+//
+// До плана 117B блок numerator: у справочника разбирался и молча ничего не
+// делал, поэтому конвертер его не писал и предупреждал, что автонумерация не
+// перенесена. Начиная с 117B/117C код выдаётся той же единой точкой, что номер
+// документа, а 117E добавил контроль уникальности — предупреждение стало
+// ложным, а обход (проставлять код руками из модуля) лишним.
+//
+// Периодичности у кода справочника в 1С нет: код живёт с элементом всю жизнь,
+// поэтому period не пишется — умолчание платформы для справочника как раз
+// «без сброса» (Numerator.PeriodOrDefault).
+func catalogNumeratorFrom(n parser1c.Numbering) *yamlNumerator {
+	if !n.Auto {
+		return nil
+	}
+	return &yamlNumerator{Length: n.Length, Unique: n.CheckUnique}
 }
 
 // numeratorFrom переносит автонумерацию документа. Период 1С «Year»/«Month»/
