@@ -8,6 +8,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,54 @@ func TestRenumber_Idempotent(t *testing.T) {
 
 // Объект без numerator: в цели не попадает — раздача кодов всем справочникам
 // молча изменила бы данные существующих конфигураций.
+// База больше одной страницы: раньше renumberEntity делал единственный List с
+// Limit=MaxListPageSize и молча оставлял хвост пустым, рапортуя успех (#867).
+// Справочник иерархический — заодно ловим второй капкан: List без Sort сортирует
+// иерархические по is_folder и первому строковому полю, то есть по заполняемому
+// «Коду», и страницы Offset-пейджинга плыли бы прямо под записью.
+func TestRenumber_FillsBeyondFirstPage(t *testing.T) {
+	ent := renumberCatalog()
+	ent.Hierarchical = true
+	total := storage.MaxListPageSize + 100
+	seed := make([]map[string]any, 0, total)
+	for i := 0; i < total; i++ {
+		seed = append(seed, map[string]any{"Наименование": fmt.Sprintf("Элемент %04d", i)})
+	}
+	db := renumberDB(t, ent, seed)
+
+	rep, err := renumberEntity(context.Background(), db, ent, true)
+	if err != nil {
+		t.Fatalf("renumberEntity: %v", err)
+	}
+	if rep.Empty != total || rep.Filled != total {
+		t.Errorf("отчёт = %+v, ожидалось empty=filled=%d", rep, total)
+	}
+
+	rows, err := db.List(context.Background(), ent.Name, ent, storage.ListParams{Sort: "id", Limit: 0})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != total {
+		t.Fatalf("прочитано %d строк, ожидалось %d", len(rows), total)
+	}
+	uniq := map[string]bool{}
+	blank := 0
+	for _, r := range rows {
+		code := strings.TrimSpace(asAnyString(rowFieldValue(r, metadata.StandardCodeField)))
+		if code == "" {
+			blank++
+			continue
+		}
+		uniq[code] = true
+	}
+	if blank != 0 {
+		t.Errorf("остались записи без кода: %d", blank)
+	}
+	if len(uniq) != total {
+		t.Errorf("кодов %d уникальных, ожидалось %d — есть дубли", len(uniq), total)
+	}
+}
+
 func TestRenumberTargets_SkipsWithoutNumerator(t *testing.T) {
 	withNum := renumberCatalog()
 	plain := &metadata.Entity{
