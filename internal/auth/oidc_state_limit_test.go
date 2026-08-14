@@ -16,7 +16,6 @@ func resetOIDCStates() {
 	oidcStates = map[string]*oidcState{}
 	oidcLastSweep = time.Time{}
 	oidcStatesDrops = 0
-	oidcStatesEvictions = 0
 	oidcStatesScans = 0
 	oidcStatesMu.Unlock()
 }
@@ -60,7 +59,6 @@ func TestPutOIDCState_НаПотолкеНеСканируетНаКаждойВ
 	}
 
 	oidcStatesMu.Lock()
-	oidcStatesEvictions = 0
 	oidcStatesScans = 0
 	oidcStatesMu.Unlock()
 

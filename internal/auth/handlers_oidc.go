@@ -64,12 +64,11 @@ const (
 )
 
 var (
-	oidcStatesMu        sync.Mutex
-	oidcStates          = map[string]*oidcState{}
-	oidcLastSweep       time.Time
-	oidcStatesDrops     int // вытеснено под давлением — видно в журнале
-	oidcStatesEvictions int // сколько раз вытесняли пачку (для тестов)
-	oidcStatesScans     int // сколько полных обходов карты выполнено (для тестов)
+	oidcStatesMu    sync.Mutex
+	oidcStates      = map[string]*oidcState{}
+	oidcLastSweep   time.Time
+	oidcStatesDrops int // вытеснено под давлением — видно в журнале
+	oidcStatesScans int // сколько полных обходов карты выполнено (для тестов)
 )
 
 func putOIDCState(state string, s *oidcState) {
@@ -124,7 +123,6 @@ func evictOldestOIDCStates(n int) {
 		delete(oidcStates, e.key)
 		oidcStatesDrops++
 	}
-	oidcStatesEvictions++
 }
 
 // oidcStateCount — размер карты начатых входов (для тестов и диагностики).
