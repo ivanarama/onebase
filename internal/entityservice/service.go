@@ -568,6 +568,16 @@ func (s *Service) deleteInTx(
 	if err := s.runDeleteHook(txCtx, entity, id, "BeforeDelete", obj, messages, lockCollector); err != nil {
 		return err
 	}
+	// Собственные движения удаляем до проверки внешних ссылок. Они принадлежат
+	// удаляемому документу и могут сами содержать ссылку на него в измерении;
+	// считать такую строку внешней ссылкой означало бы сделать документ
+	// неудаляемым. При настоящей внешней ссылке весь transaction откатится и
+	// движения восстановятся вместе с объектом.
+	if entity.Posting {
+		if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+			return err
+		}
+	}
 	// Ссылочная целостность (issue #774): fail-closed предохранитель, общий для
 	// ВСЕХ путей удаления. Раньше CheckRefs звал только UI перед вызовом
 	// entityservice, поэтому удаление того же объекта через REST v1/v2 или DSL
@@ -587,13 +597,6 @@ func (s *Service) deleteInTx(
 		}
 		if len(refs) > 0 {
 			return &refsExistError{refs: refs}
-		}
-	}
-	// Движения снимаются до удаления регистратора: иначе остались бы строки,
-	// ссылающиеся на несуществующий документ.
-	if entity.Posting {
-		if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
-			return err
 		}
 	}
 	// Строки ТЧ — до объекта: иначе они остаются сиротами, ссылающимися на

@@ -125,3 +125,126 @@ func TestDelete_BlockedByRegisterDimension(t *testing.T) {
 		})
 	})
 }
+
+// A posting document owns its movements. A dimension in one of those movements
+// may legitimately point back to the recorder, so the movement must not be
+// treated as an external reference that makes the document undeletable.
+// Conversely, clearing the owned movement must be rolled back when a real
+// external reference blocks deletion.
+func TestDelete_SelfReferencingMovementIsOwnedByDocument(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		doc := &metadata.Entity{
+			Name:    "SelfReferencingDocument",
+			Kind:    metadata.KindDocument,
+			Posting: true,
+			Fields:  []metadata.Field{{Name: "Number", Type: metadata.FieldTypeString}},
+		}
+		referrer := &metadata.Entity{
+			Name: "ExternalReference",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{
+				Name:      "Document",
+				Type:      metadata.FieldType("reference:" + doc.Name),
+				RefEntity: doc.Name,
+			}},
+		}
+		reg := &metadata.Register{
+			Name: "SelfLinks",
+			Dimensions: []metadata.Field{{
+				Name:      "Document",
+				Type:      metadata.FieldType("reference:" + doc.Name),
+				RefEntity: doc.Name,
+			}},
+			Resources: []metadata.Field{{Name: "Amount", Type: metadata.FieldTypeNumber}},
+		}
+
+		if err := db.Migrate(ctx, []*metadata.Entity{doc, referrer}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateRegisters(ctx, []*metadata.Register{reg}); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{
+			Entities:  []*metadata.Entity{doc, referrer},
+			Registers: []*metadata.Register{reg},
+		})
+		svc := &Service{Store: db, Reg: registry, Interp: interpreter.New()}
+		period := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+		writeDocumentWithMovement := func(t *testing.T, number string) uuid.UUID {
+			t.Helper()
+			id := uuid.New()
+			if err := db.Upsert(ctx, doc.Name, id, map[string]any{"Number": number}, doc); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.WriteMovements(ctx, reg.Name, doc.Name, id, []map[string]any{{
+				"Document": id.String(),
+				"Amount":   1,
+			}}, reg, &period); err != nil {
+				t.Fatal(err)
+			}
+			return id
+		}
+
+		t.Run("owned self-reference does not block deletion", func(t *testing.T) {
+			id := writeDocumentWithMovement(t, "1")
+			result, err := svc.Delete(ctx, doc, id)
+			if err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			if result.DSLError != "" {
+				t.Fatalf("owned movement blocked deletion: %s", result.DSLError)
+			}
+			if _, err := db.GetByID(ctx, doc.Name, id, doc); err == nil {
+				t.Fatal("document still exists after successful deletion")
+			}
+			movements, err := db.GetDocumentMovements(ctx, id, []*metadata.Register{reg})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(movements[reg.Name]) != 0 {
+				t.Fatalf("owned movements were not deleted: %v", movements[reg.Name])
+			}
+		})
+
+		t.Run("external reference rolls movement deletion back", func(t *testing.T) {
+			id := writeDocumentWithMovement(t, "2")
+			externalID := uuid.New()
+			if err := db.Upsert(ctx, referrer.Name, externalID, map[string]any{
+				"Document": id.String(),
+			}, referrer); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := svc.Delete(ctx, doc, id)
+			if err != nil {
+				t.Fatalf("Delete returned a technical error: %v", err)
+			}
+			if result.DSLError == "" {
+				t.Fatal("external reference did not block deletion")
+			}
+			if _, err := db.GetByID(ctx, doc.Name, id, doc); err != nil {
+				t.Fatalf("blocked document was deleted: %v", err)
+			}
+			movements, err := db.GetDocumentMovements(ctx, id, []*metadata.Register{reg})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(movements[reg.Name]) != 1 {
+				t.Fatalf("transaction did not restore owned movement: %v", movements[reg.Name])
+			}
+
+			if err := db.Delete(ctx, referrer.Name, externalID); err != nil {
+				t.Fatal(err)
+			}
+			result, err = svc.Delete(ctx, doc, id)
+			if err != nil {
+				t.Fatalf("Delete after removing external reference: %v", err)
+			}
+			if result.DSLError != "" {
+				t.Fatalf("Delete after removing external reference: %s", result.DSLError)
+			}
+		})
+	})
+}

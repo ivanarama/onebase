@@ -1788,25 +1788,6 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Admin: check references before permanent delete.
-	// Сбой проверки — отказ: удалять, не зная о ссылках, нельзя.
-	refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg)
-	if refErr != nil {
-		http.Error(w, s.errText(r, refErr), 500)
-		return
-	}
-	if len(refs) > 0 {
-		var msg strings.Builder
-		lang := s.resolveLang(r)
-		msg.WriteString(s.tr(lang, "Невозможно удалить: объект используется в:") + "\n")
-		recordsWord := s.tr(lang, "записей")
-		for _, ref := range refs {
-			fmt.Fprintf(&msg, "  • %s.%s (%d %s)\n", ref.EntityName, ref.FieldName, ref.Count, recordsWord)
-		}
-		http.Error(w, msg.String(), http.StatusConflict)
-		return
-	}
-
 	// Pre-образ живого списка (план 87): читаем строку ДО удаления, чтобы её
 	// увидевшие пользователи убрали её из списка.
 	var delBefore map[string]any
@@ -1866,13 +1847,6 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 				idStr, _ := row["id"].(string)
 				id, err := uuid.Parse(idStr)
 				if err != nil {
-					continue
-				}
-				// Сбой проверки трактуем как «ссылки есть»: пропускаем запись,
-				// а не удаляем вслепую.
-				refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg)
-				if refErr != nil || len(refs) > 0 {
-					skipped++
 					continue
 				}
 				// Через entityservice: хуки удаления, движения, ТЧ и планы
@@ -1949,12 +1923,6 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 		idStr, _ := row["id"].(string)
 		id, err := uuid.Parse(idStr)
 		if err != nil {
-			continue
-		}
-		// Сбой проверки трактуем как «ссылки есть»: пропускаем запись.
-		refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg)
-		if refErr != nil || len(refs) > 0 {
-			skipped++
 			continue
 		}
 		// Через entityservice — как и остальные пути. Заодно этот путь
