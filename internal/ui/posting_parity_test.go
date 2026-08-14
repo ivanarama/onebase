@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,11 +40,13 @@ import (
 
 // postingEffects — снимок последствий проведения.
 type postingEffects struct {
-	Posted     bool
-	Version    int64
-	CalcField  string   // реквизит, который проставил ОбработкаПроведения
-	Movements  []string // «номенклатура=количество», отсортировано
-	ChangeSeen string   // action, доехавший до живого списка
+	Posted        bool
+	Version       int64
+	CalcField     string   // реквизит, который проставил ОбработкаПроведения
+	Movements     []string // «номенклатура=количество», отсортировано
+	TotalsDelta   float64  // изменение предрасчитанных итогов этой операцией
+	AuditActions  []string // действия журнала регистрации по документу
+	ChangeActions []string // действия, доехавшие до живого списка до «проведён»
 }
 
 func newParityServer(t *testing.T) (context.Context, *storage.DB, *Server, *metadata.Entity, *realtime.Hub) {
@@ -74,11 +78,20 @@ func newParityServer(t *testing.T) (context.Context, *storage.DB, *Server, *meta
 		Name:       "ОстаткиТоваров",
 		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
 		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+		Totals:     metadata.RegisterTotals{Enabled: true},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateRegisters(ctx, []*metadata.Register{reg}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureAuditSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveAuditSettings(ctx, storage.AuditSettings{
+		Enabled: true, Create: true, Update: true, Post: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -137,7 +150,9 @@ func createDoc(t *testing.T, ctx context.Context, s *Server, doc *metadata.Entit
 		Entity: doc,
 		ID:     id,
 		IsNew:  true,
-		Fields: map[string]any{"Номер": num},
+		// Непустое исходное значение ловит конфликт canonical/lowercase ключей:
+		// хук обязан именно заменить его, а не добавить рядом второй ключ.
+		Fields: map[string]any{"Номер": num, "Итог": "до проведения"},
 		TablePartRows: map[string][]map[string]any{
 			"Товары": {{"Номенклатура": "Тумбочка", "Количество": float64(100)}},
 		},
@@ -147,7 +162,17 @@ func createDoc(t *testing.T, ctx context.Context, s *Server, doc *metadata.Entit
 	return id
 }
 
-func snapshot(t *testing.T, ctx context.Context, db *storage.DB, doc *metadata.Entity, id uuid.UUID, events <-chan realtime.Event) postingEffects {
+func registerTotal(t *testing.T, ctx context.Context, db *storage.DB) float64 {
+	t.Helper()
+	var total float64
+	if err := db.QueryRow(ctx,
+		"SELECT COALESCE(SUM(CAST(количество AS NUMERIC)), 0) FROM "+metadata.RegisterTotalsTableName("ОстаткиТоваров")).Scan(&total); err != nil {
+		t.Fatalf("чтение предрасчитанных итогов: %v", err)
+	}
+	return total
+}
+
+func snapshot(t *testing.T, ctx context.Context, db *storage.DB, doc *metadata.Entity, id uuid.UUID, totalsBefore float64, events <-chan realtime.Event) postingEffects {
 	t.Helper()
 	row, err := db.GetByID(ctx, doc.Name, id, doc)
 	if err != nil {
@@ -178,16 +203,49 @@ func snapshot(t *testing.T, ctx context.Context, db *storage.DB, doc *metadata.E
 		}
 		eff.Movements = append(eff.Movements, fmt.Sprintf("%s=%g", name, qty))
 	}
-	sort.Strings(eff.Movements)
-	// Публикация асинхронна относительно возврата управления, поэтому ждём
-	// событие с небольшим таймаутом, а не читаем неблокирующе.
-	select {
-	case ev := <-events:
-		eff.ChangeSeen = ev.Name
-	case <-time.After(2 * time.Second):
-		eff.ChangeSeen = "(события не было)"
+	if err := rows.Err(); err != nil {
+		t.Fatalf("обход движений: %v", err)
 	}
-	return eff
+	sort.Strings(eff.Movements)
+	eff.TotalsDelta = registerTotal(t, ctx, db) - totalsBefore
+	auditEntries, err := db.AuditByRecord(ctx, doc.Name, id)
+	if err != nil {
+		t.Fatalf("чтение журнала регистрации: %v", err)
+	}
+	for _, entry := range auditEntries {
+		action := entry.Action
+		if entry.Field != "" {
+			action += ":" + entry.Field
+		}
+		eff.AuditActions = append(eff.AuditActions, action)
+	}
+	sort.Strings(eff.AuditActions)
+	// Публикация асинхронна относительно возврата управления. Проверяем не
+	// только имя канала, но и payload действия: раньше тест сохранял ev.Name и
+	// потому был зелёным даже без уведомления «проведён». DSL-путь законно
+	// может сначала прислать «записан», поэтому читаем до точного post-события.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	wantedName := "данные." + strings.ToLower(doc.Name)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Name != wantedName {
+				continue
+			}
+			data, ok := ev.Data.(map[string]any)
+			if !ok {
+				continue
+			}
+			action := fmt.Sprint(data["действие"])
+			eff.ChangeActions = append(eff.ChangeActions, action)
+			if action == "проведён" {
+				return eff
+			}
+		case <-timer.C:
+			return eff
+		}
+	}
 }
 
 func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
@@ -208,6 +266,7 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 	// 1. entityservice.Save(Action=post) — путь формы и REST.
 	svcID := createDoc(t, ctx, s, doc, "СЕРВИС")
 	drain()
+	svcTotalsBefore := registerTotal(t, ctx, db)
 	if _, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity: doc,
 		ID:     svcID,
@@ -219,22 +278,24 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("entityservice.Save(post): %v", err)
 	}
-	viaService := snapshot(t, ctx, db, doc, svcID, events)
+	viaService := snapshot(t, ctx, db, doc, svcID, svcTotalsBefore, events)
 
 	// 2. DSL: Документы.X.ПолучитьОбъект().Провести().
 	dslID := createDoc(t, ctx, s, doc, "DSL")
 	drain()
+	dslTotalsBefore := registerTotal(t, ctx, db)
 	dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy)
 	loaded, err := dp.LoadObject(dslID.String())
 	if err != nil {
 		t.Fatalf("ПолучитьОбъект: %v", err)
 	}
 	loaded.(*docWriter).CallMethod("провести", nil)
-	viaDSL := snapshot(t, ctx, db, doc, dslID, events)
+	viaDSL := snapshot(t, ctx, db, doc, dslID, dslTotalsBefore, events)
 
 	// 3. UI-список: POST /ui/document/{name}/{id}/post.
 	listID := createDoc(t, ctx, s, doc, "СПИСОК")
 	drain()
+	listTotalsBefore := registerTotal(t, ctx, db)
 	req := reqWithChi(http.MethodPost, "/ui/document/"+doc.Name+"/"+listID.String()+"/post", nil,
 		map[string]string{"entity": doc.Name, "id": listID.String()})
 	rec := httptest.NewRecorder()
@@ -242,11 +303,18 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("postDocument: код %d, тело %s", rec.Code, rec.Body.String())
 	}
-	viaList := snapshot(t, ctx, db, doc, listID, events)
+	wantLocation := "/ui/document/" + doc.Name + "/" + listID.String()
+	gotLocation := rec.Header().Get("Location")
+	parsedLocation, parseErr := url.Parse(gotLocation)
+	if parseErr != nil || parsedLocation.Path != wantLocation {
+		t.Fatalf("postDocument: Location=%q (parse err=%v), want path %q", gotLocation, parseErr, wantLocation)
+	}
+	viaList := snapshot(t, ctx, db, doc, listID, listTotalsBefore, events)
 
-	// Сравнение. Версия не сравнивается между путями: подготовка документов
-	// одинакова, но у entityservice-пути проведение идёт вторым Save, поэтому
-	// смысл имеет только «инкремент ровно один», что проверяется отдельно.
+	// Подготовка у всех трёх документов одинакова (версия 1), а проведение —
+	// следующая логическая запись. Поэтому каждый путь обязан дать версию 2.
+	// Прежний тест читал Version, но нигде её не проверял и пропустил версию 1
+	// у списочного пути (#880).
 	paths := []struct {
 		name string
 		eff  postingEffects
@@ -267,17 +335,34 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 		if fmt.Sprint(p.eff.Movements) != fmt.Sprint(base.eff.Movements) {
 			t.Errorf("движения: %s=%v, %s=%v", base.name, base.eff.Movements, p.name, p.eff.Movements)
 		}
-		if p.eff.ChangeSeen != base.eff.ChangeSeen {
-			t.Errorf("уведомление живому списку: %s=%q, %s=%q", base.name, base.eff.ChangeSeen, p.name, p.eff.ChangeSeen)
+		if p.eff.Version != base.eff.Version {
+			t.Errorf("версия строки: %s=%d, %s=%d", base.name, base.eff.Version, p.name, p.eff.Version)
+		}
+		if p.eff.TotalsDelta != base.eff.TotalsDelta {
+			t.Errorf("предрасчитанные итоги: %s=%g, %s=%g", base.name, base.eff.TotalsDelta, p.name, p.eff.TotalsDelta)
+		}
+		if fmt.Sprint(p.eff.AuditActions) != fmt.Sprint(base.eff.AuditActions) {
+			t.Errorf("журнал регистрации: %s=%v, %s=%v", base.name, base.eff.AuditActions, p.name, p.eff.AuditActions)
+		}
+	}
+	for _, p := range paths {
+		seenPosted := false
+		for _, action := range p.eff.ChangeActions {
+			if action == "проведён" {
+				seenPosted = true
+				break
+			}
+		}
+		if !seenPosted {
+			t.Errorf("%s: живому списку не отправлено действие «проведён»: %v", p.name, p.eff.ChangeActions)
 		}
 	}
 
 	// Ни один путь не должен молча не сделать ничего: снимок обязан быть
 	// содержательным, иначе «все три одинаковы» означало бы «все три пусты».
-	if !base.eff.Posted || base.eff.CalcField != "итого:100" || len(base.eff.Movements) != 1 {
+	if !base.eff.Posted || base.eff.Version != 2 || base.eff.CalcField != "итого:100" ||
+		len(base.eff.Movements) != 1 || base.eff.TotalsDelta != 100 ||
+		fmt.Sprint(base.eff.AuditActions) != "[create post update:Итог]" {
 		t.Fatalf("эталонный путь не выполнил проведение: %+v", base.eff)
-	}
-	if base.eff.ChangeSeen == "(события не было)" {
-		t.Errorf("живому списку не сообщено о проведении")
 	}
 }
