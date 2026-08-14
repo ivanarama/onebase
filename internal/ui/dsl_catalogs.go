@@ -48,8 +48,8 @@ func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Serv
 // scheduler вызывает его вместо собственного базового набора, чтобы задания
 // имели Справочники/Документы/вложения/транзакции — как обработки из UI/procrun.
 // Вместе с картой возвращается TxState: scheduler закрывает его после запуска.
-func (s *Server) BuildJobDSLVars(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState) {
-	return s.buildDSLVarsTx(ctx, mc)
+func (s *Server) BuildJobDSLVars(ctx context.Context, mc *runtime.MovementsCollector, messages *[]string) (map[string]any, *interpreter.TxState) {
+	return s.buildDSLVarsWithMessagesTx(ctx, mc, messages)
 }
 
 // catFactory реализует interpreter.CatalogObjectFactory: объекты справочников,

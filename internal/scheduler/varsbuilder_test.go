@@ -42,7 +42,10 @@ func TestRunProcessor_UsesVarsBuilder(t *testing.T) {
 	marker := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
 		return "из-внешнего-окружения", nil
 	})
-	sched.SetVarsBuilder(func(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState) {
+	collectorPassed := false
+	sched.SetVarsBuilder(func(ctx context.Context, mc *runtime.MovementsCollector, messages *[]string) (map[string]any, *interpreter.TxState) {
+		collectorPassed = messages != nil
+		*messages = append(*messages, "из-хука-builder")
 		return map[string]any{"МаркерВнешнегоОкружения": marker}, nil
 	})
 
@@ -50,7 +53,8 @@ func TestRunProcessor_UsesVarsBuilder(t *testing.T) {
 		Name: "Тест", Processor: "ТестЗадание",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "из-внешнего-окружения", out)
+	assert.True(t, collectorPassed)
+	assert.Equal(t, "из-хука-builder\nиз-внешнего-окружения", out)
 }
 
 func TestRunProcessorCleansOwnedDSLTransaction(t *testing.T) {
@@ -69,7 +73,7 @@ func TestRunProcessorCleansOwnedDSLTransaction(t *testing.T) {
 	interp.LookupProc = reg.GetModuleProc
 
 	sched := New(db, reg, interp)
-	sched.SetVarsBuilder(func(ctx context.Context, _ *runtime.MovementsCollector) (map[string]any, *interpreter.TxState) {
+	sched.SetVarsBuilder(func(ctx context.Context, _ *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
 		state := interpreter.NewTxState(ctx)
 		return interpreter.NewTxFunctions(state, db), state
 	})

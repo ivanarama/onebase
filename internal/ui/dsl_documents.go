@@ -79,6 +79,12 @@ func dslMessageCollectorFromContext(ctx context.Context) *[]string {
 	return messages
 }
 
+func appendDSLMessages(ctx context.Context, messages []string) {
+	if dst := dslMessageCollectorFromContext(ctx); dst != nil && len(messages) > 0 {
+		*dst = append(*dst, messages...)
+	}
+}
+
 // refManagerFor строит менеджера для ссылки на сущность по её метаданным:
 // CatalogProxy для справочников, docProxy для документов. Используется в
 // enrichHeaderRefs/enrichTPRowsWithRefs и dsl_object_attr, чтобы ссылки,
@@ -410,6 +416,11 @@ func (p *docProxy) DeleteRef(uuidStr string) error {
 	res, err := p.s.entityService().Delete(ctx, p.entity, id)
 	if err != nil {
 		return err
+	}
+	if p.messages != nil {
+		*p.messages = append(*p.messages, res.DSLMessages...)
+	} else {
+		appendDSLMessages(ctx, res.DSLMessages)
 	}
 	if res.DSLError != "" {
 		// Хук отменил удаление. Для вызывающего DSL-кода это обычная

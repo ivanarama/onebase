@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -329,13 +330,29 @@ func TestCatalogProxy_DeleteWithoutDeleterFailsClosed(t *testing.T) {
 	root.deleter = nil
 	cp := root.Get("ТипЦен").(*CatalogProxy)
 	ref := cp.Get("Закупочная").(*Ref)
-	var raised any
-	func() {
-		defer func() { raised = recover() }()
-		cp.CallMethod("удалить", []any{ref})
-	}()
-	if raised == nil {
-		t.Error("ожидался отказ: делетер не подключён")
+	calls := []struct {
+		name string
+		call func()
+	}{
+		{name: "manager", call: func() { cp.CallMethod("удалить", []any{ref}) }},
+		{name: "reference", call: func() { ref.CallMethod("удалить", nil) }},
+	}
+	for _, tc := range calls {
+		t.Run(tc.name, func(t *testing.T) {
+			var raised any
+			func() {
+				defer func() { raised = recover() }()
+				tc.call()
+			}()
+			ue, ok := raised.(userError)
+			if !ok {
+				t.Fatalf("panic = %#v, ожидалась userError", raised)
+			}
+			var localized *i18nerr.Error
+			if ue.Err == nil || !errors.As(ue.Err, &localized) {
+				t.Fatalf("цепочка локализуемой ошибки потеряна: %#v", ue)
+			}
+		})
 	}
 	if len(db.deleted) != 0 {
 		t.Errorf("запись удалена в обход хост-пути: %v", db.deleted)

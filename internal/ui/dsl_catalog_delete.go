@@ -29,6 +29,7 @@ func (d dslCatalogDeleter) DeleteCatalogRef(ctx context.Context, entity *metadat
 	if err != nil {
 		return err
 	}
+	appendDSLMessages(ctx, res.DSLMessages)
 	if res.DSLError != "" {
 		// Хук отменил удаление или объект используется. Для вызывающего
 		// DSL-кода это прикладная ошибка (ловится Попыткой), объект на месте.

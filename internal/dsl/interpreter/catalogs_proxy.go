@@ -390,7 +390,7 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 			RaiseUserError(fmt.Sprintf("Удалить(%s): ожидается ссылка, получено %T", p.entity.Name, args[0]))
 		}
 		if err := p.DeleteRef(ref.UUID); err != nil {
-			RaiseUserError("Удалить(" + p.entity.Name + "): " + err.Error())
+			RaiseUserErrorWrap("Удалить("+p.entity.Name+"): "+err.Error(), err)
 		}
 		return nil
 	}

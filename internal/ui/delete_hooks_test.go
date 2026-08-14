@@ -56,6 +56,7 @@ func deleteHookServer(t *testing.T, moduleSrc string) (*Server, *metadata.Entity
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	return s, ent, db
 }
 
@@ -352,7 +353,67 @@ func dslCatalogRootForTest(s *Server) *interpreter.CatalogsRoot {
 	return interpreter.NewCatalogsRoot(txState, s.store, s.reg).
 		WithRowAccessChecker(s.dslRowAccessChecker()).
 		WithExchangeRegistrar(s.exchangeRegistrar()).
+		WithObjectFactory(s.catObjectFactory(txState)).
 		WithDeleter(dslCatalogDeleter{s: s})
+}
+
+func TestDSLCatalogDelete_CollectsHookMessages(t *testing.T) {
+	tests := []struct {
+		name      string
+		module    string
+		wantMsg   string
+		wantError bool
+	}{
+		{
+			name: "after delete success",
+			module: `Процедура ПослеУдаления()
+	Сообщить("из ПослеУдаления");
+КонецПроцедуры`,
+			wantMsg: "из ПослеУдаления",
+		},
+		{
+			name: "before delete refusal",
+			module: `Процедура ПередУдалением()
+	Сообщить("до отказа");
+	ВызватьИсключение("удаление запрещено");
+КонецПроцедуры`,
+			wantMsg:   "до отказа",
+			wantError: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ent, db := deleteHookServer(t, tc.module)
+			id := seedContragent(t, db, ent, "Ромашка")
+			var messages []string
+			ctx := withDSLMessageCollector(context.Background(), &messages)
+			txState := interpreter.NewTxState(ctx)
+			root := interpreter.NewCatalogsRoot(txState, s.store, s.reg).
+				WithRowAccessChecker(s.dslRowAccessChecker()).
+				WithExchangeRegistrar(s.exchangeRegistrar()).
+				WithObjectFactory(s.catObjectFactory(txState)).
+				WithDeleter(dslCatalogDeleter{s: s})
+			cp := root.Get(ent.Name).(*interpreter.CatalogProxy)
+			ref := &interpreter.Ref{UUID: id.String(), Name: "Ромашка", Type: ent.Name, Manager: cp}
+			var raised any
+			func() {
+				defer func() { raised = recover() }()
+				ref.CallMethod("удалить", nil)
+			}()
+			if tc.wantError != (raised != nil) {
+				t.Fatalf("panic = %#v, wantError=%v", raised, tc.wantError)
+			}
+			if len(messages) != 1 || messages[0] != tc.wantMsg {
+				t.Fatalf("сообщения хука = %v, ожидалось [%s]", messages, tc.wantMsg)
+			}
+			if tc.wantError && !exists(t, db, ent, id) {
+				t.Fatal("объект удалён вопреки отказу хука")
+			}
+			if !tc.wantError && exists(t, db, ent, id) {
+				t.Fatal("объект остался после успешного удаления")
+			}
+		})
+	}
 }
 
 // Без объявленного хука удаление работает как раньше — цена за защиту не
