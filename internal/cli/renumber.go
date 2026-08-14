@@ -144,21 +144,45 @@ func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, w
 	field := storage.AutoNumberField(ent)
 	rep := renumberEntityReport{Object: ent.Name, Field: field}
 
-	for offset := 0; ; offset += storage.MaxListPageSize {
-		// Sort: "id" — принудительно. Порядок нужен детерминированный (иначе
-		// повторный запуск на другой машине раздал бы те же коды другим
-		// элементам) и УСТОЙЧИВЫЙ к самой записи: у иерархических справочников
-		// List по умолчанию сортирует по is_folder и первому строковому полю,
-		// а это обычно и есть заполняемый «Код» — страницы поплыли бы прямо
-		// под Offset-пейджингом. ORDER BY id от SetAutoNumberValue не меняется.
+	lastRows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
+		Sort: "id", Dir: "desc", Limit: 1,
+	})
+	if err != nil {
+		return rep, err
+	}
+	if len(lastRows) == 0 {
+		return rep, nil
+	}
+	through, err := renumberRowID(lastRows[0])
+	if err != nil {
+		return rep, err
+	}
+
+	var after *uuid.UUID
+	for {
+		// Курсор по неизменяемому PK не сдвигается при удалении уже пройденных
+		// строк. ThroughID фиксирует верхнюю границу ключей на начало команды:
+		// новые UUID выше неё в текущий прогон не попадают.
 		rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
-			Sort: "id", Limit: storage.MaxListPageSize, Offset: offset,
+			Sort: "id", Limit: storage.MaxListPageSize,
+			AfterID: after, ThroughID: &through,
 		})
 		if err != nil {
 			return rep, err
 		}
-		for _, row := range rows {
-			if !isBlankValue(rowFieldValue(row, field)) {
+		if len(rows) == 0 {
+			return rep, nil
+		}
+		ids := make([]uuid.UUID, len(rows))
+		for i, row := range rows {
+			ids[i], err = renumberRowID(row)
+			if err != nil {
+				return rep, err
+			}
+		}
+		for i, row := range rows {
+			raw := rowFieldValue(row, field)
+			if !isBlankValue(raw) {
 				continue // заполненное не трогаем: дозаполнение, а не перенумерация
 			}
 			rep.Empty++
@@ -175,22 +199,42 @@ func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, w
 			if value == "" {
 				continue
 			}
-			id, err := uuid.Parse(fmt.Sprintf("%v", row["id"]))
-			if err != nil {
-				return rep, fmt.Errorf("неразбираемый идентификатор %v: %w", row["id"], err)
+			var expected *string
+			if raw != nil {
+				observed := fmt.Sprintf("%v", raw)
+				expected = &observed
 			}
-			if err := db.SetAutoNumberValue(ctx, ent, id, field, value); err != nil {
+			updated, err := db.SetAutoNumberValue(ctx, ent, ids[i], field, expected, value)
+			if err != nil {
 				return rep, err
+			}
+			if !updated {
+				continue
 			}
 			rep.Filled++
 			if len(rep.Samples) < 3 {
 				rep.Samples = append(rep.Samples, value)
 			}
 		}
-		if len(rows) < storage.MaxListPageSize {
+		lastID := ids[len(ids)-1]
+		if len(rows) < storage.MaxListPageSize || lastID == through {
 			return rep, nil
 		}
+		cursor := lastID
+		after = &cursor
 	}
+}
+
+func renumberRowID(row map[string]any) (uuid.UUID, error) {
+	raw := fmt.Sprintf("%v", row["id"])
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("неразбираемый идентификатор %v: %w", row["id"], err)
+	}
+	if raw != id.String() {
+		return uuid.Nil, fmt.Errorf("идентификатор %q не в каноническом формате UUID", raw)
+	}
+	return id, nil
 }
 
 // isBlankValue — пусто ли значение колонки. Отдельная функция потому, что

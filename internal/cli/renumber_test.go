@@ -130,6 +130,71 @@ func TestRenumber_FillsOnlyEmpty(t *testing.T) {
 	}
 }
 
+func TestRenumber_FillsWhitespaceCode(t *testing.T) {
+	ent := renumberCatalog()
+	db := renumberDB(t, ent, []map[string]any{{
+		"Наименование": "Пробелы", metadata.StandardCodeField: " \t ",
+	}})
+
+	rep, err := renumberEntity(context.Background(), db, ent, true)
+	if err != nil {
+		t.Fatalf("renumberEntity: %v", err)
+	}
+	if rep.Empty != 1 || rep.Filled != 1 {
+		t.Fatalf("отчёт = %+v, ожидалось empty=filled=1", rep)
+	}
+	if code := codesOf(t, db, ent)["Пробелы"]; !strings.HasPrefix(code, "К-") {
+		t.Fatalf("whitespace-код не заполнен: %q", code)
+	}
+}
+
+// Обе строки уже прочитаны в одну страницу. Обновление первой имитирует
+// параллельное ручное заполнение второй: её stale-CAS обязан вернуть false,
+// а отчёт — не посчитать не выполненный UPDATE.
+func TestRenumber_DoesNotCountLostCompareAndSet(t *testing.T) {
+	ent := renumberCatalog()
+	db := renumberDB(t, ent, nil)
+	ctx := context.Background()
+	ids := []uuid.UUID{
+		uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+	}
+	for i, id := range ids {
+		if err := db.Upsert(ctx, ent.Name, id, map[string]any{
+			"Наименование": fmt.Sprintf("CAS %d", i),
+		}, ent); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+
+	table := metadata.TableName(ent.Name)
+	codeCol := metadata.ColumnName(ent.Fields[0])
+	trigger := fmt.Sprintf(`CREATE TRIGGER renumber_manual_fill
+AFTER UPDATE OF %s ON %s
+WHEN OLD.id = '%s'
+BEGIN
+  UPDATE %s SET %s = 'РУЧНОЙ' WHERE id = '%s';
+END`, codeCol, table, ids[0], table, codeCol, ids[1])
+	if _, err := db.Exec(ctx, trigger); err != nil {
+		t.Fatalf("CREATE TRIGGER: %v", err)
+	}
+
+	rep, err := renumberEntity(ctx, db, ent, true)
+	if err != nil {
+		t.Fatalf("renumberEntity: %v", err)
+	}
+	if rep.Empty != 2 || rep.Filled != 1 {
+		t.Fatalf("отчёт = %+v, ожидалось empty=2 filled=1", rep)
+	}
+	rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{Sort: "id"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got := rowFieldValue(rows[1], metadata.StandardCodeField); got != "РУЧНОЙ" {
+		t.Fatalf("параллельный код перезаписан: %v", got)
+	}
+}
+
 // Повторный запуск ничего не делает: заполнять больше нечего.
 func TestRenumber_Idempotent(t *testing.T) {
 	ent := renumberCatalog()
@@ -199,6 +264,58 @@ func TestRenumber_FillsBeyondFirstPage(t *testing.T) {
 	}
 	if len(uniq) != total {
 		t.Errorf("кодов %d уникальных, ожидалось %d — есть дубли", len(uniq), total)
+	}
+}
+
+// После чтения первой страницы удаляем минимальный уже обработанный id.
+// OFFSET на следующем запросе сдвигался и пропускал первый элемент хвоста;
+// keyset продолжает строго после последнего id прочитанной страницы.
+func TestRenumber_KeysetDoesNotSkipAfterDeleteBehindCursor(t *testing.T) {
+	ent := renumberCatalog()
+	db := renumberDB(t, ent, nil)
+	ctx := context.Background()
+	total := storage.MaxListPageSize + 2
+	ids := make([]uuid.UUID, total)
+	for i := range ids {
+		ids[i] = uuid.MustParse(fmt.Sprintf("00000000-0000-0000-0000-%012x", i+1))
+		if err := db.Upsert(ctx, ent.Name, ids[i], map[string]any{
+			"Наименование": fmt.Sprintf("Элемент %04d", i),
+		}, ent); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+
+	table := metadata.TableName(ent.Name)
+	codeCol := metadata.ColumnName(ent.Fields[0])
+	trigger := fmt.Sprintf(`CREATE TRIGGER renumber_delete_first
+AFTER UPDATE OF %s ON %s
+WHEN OLD.id = '%s'
+BEGIN
+  DELETE FROM %s WHERE id = OLD.id;
+END`, codeCol, table, ids[0], table)
+	if _, err := db.Exec(ctx, trigger); err != nil {
+		t.Fatalf("CREATE TRIGGER: %v", err)
+	}
+
+	rep, err := renumberEntity(ctx, db, ent, true)
+	if err != nil {
+		t.Fatalf("renumberEntity: %v", err)
+	}
+	if rep.Empty != total || rep.Filled != total {
+		t.Fatalf("отчёт = %+v, ожидалось empty=filled=%d", rep, total)
+	}
+
+	rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{Sort: "id"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != total-1 {
+		t.Fatalf("после trigger-delete строк %d, ожидалось %d", len(rows), total-1)
+	}
+	for _, row := range rows {
+		if isBlankValue(rowFieldValue(row, metadata.StandardCodeField)) {
+			t.Fatalf("keyset пропустил строку id=%v", row["id"])
+		}
 	}
 }
 

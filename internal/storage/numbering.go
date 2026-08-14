@@ -169,11 +169,13 @@ func formatScopeValue(v any) string {
 // бы, а ссылки в прочитанной строке приходят представлением, а не UUID. Здесь
 // меняется ровно один столбец, остальные данные не участвуют.
 //
-// Значение проставляется только если оно ещё пусто: условие в SQL, а не в Go,
-// поэтому параллельная запись не перетирается.
-func (db *DB) SetAutoNumberValue(ctx context.Context, entity *metadata.Entity, id uuid.UUID, field, value string) error {
+// expected — точное пустое значение, которое прочитал вызывающий код; nil
+// означает SQL NULL. Сравнение делается в том же UPDATE, поэтому параллельная
+// запись не перетирается. Возвращаемое значение сообщает, была ли строка
+// действительно изменена.
+func (db *DB) SetAutoNumberValue(ctx context.Context, entity *metadata.Entity, id uuid.UUID, field string, expected *string, value string) (bool, error) {
 	if entity == nil || field == "" {
-		return nil
+		return false, nil
 	}
 	var col string
 	for _, f := range entity.Fields {
@@ -183,12 +185,22 @@ func (db *DB) SetAutoNumberValue(ctx context.Context, entity *metadata.Entity, i
 		}
 	}
 	if col == "" {
-		return fmt.Errorf("%s: нет реквизита %s", entity.Name, field)
+		return false, fmt.Errorf("%s: нет реквизита %s", entity.Name, field)
 	}
 	d := db.dialect
-	q := fmt.Sprintf("UPDATE %s SET %s = %s WHERE id = %s AND (%s IS NULL OR %s = '')",
-		metadata.TableName(entity.Name), col, d.Placeholder(1), d.Placeholder(2), col, col)
-	return db.exec(ctx, q, value, id)
+	condition := col + " IS NULL"
+	args := []any{value, idArg(d, id)}
+	if expected != nil {
+		condition = fmt.Sprintf("%s = %s", col, d.Placeholder(3))
+		args = append(args, *expected)
+	}
+	q := fmt.Sprintf("UPDATE %s SET %s = %s WHERE id = %s AND %s",
+		metadata.TableName(entity.Name), col, d.Placeholder(1), d.Placeholder(2), condition)
+	tag, err := db.Exec(ctx, q, args...)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected == 1, nil
 }
 
 // ─── Префикс базы (план 117D) ────────────────────────────────────────────────
