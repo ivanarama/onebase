@@ -21,6 +21,11 @@ const (
 	opReportExport   = "report.export"
 	opProcessorRun   = "processor.run"
 	opHTTPServiceRun = "http_service.run"
+	// opEntitySave — запись/проведение объекта вместе с прикладными хуками, и
+	// opFormEvent — обработчик события управляемой формы. Оба входа исполняют
+	// DSL по HTTP-запросу и до #865 шли без предела времени вовсе.
+	opEntitySave = "entity.save"
+	opFormEvent  = "form.event"
 )
 
 // RuntimeLimits contains optional guardrails for heavy runtime operations.
@@ -179,6 +184,10 @@ func (s *Server) operationTimeout(kind string) time.Duration {
 		sec = firstPositive(l.ProcessorTimeoutSec, l.RequestTimeoutSec)
 	case opHTTPServiceRun:
 		sec = firstPositive(l.HTTPServiceTimeoutSec, l.RequestTimeoutSec)
+	case opEntitySave, opFormEvent:
+		// Отдельной настройки нет намеренно: и запись объекта, и событие формы
+		// живут ровно столько, сколько живёт запрос.
+		sec = l.RequestTimeoutSec
 	default:
 		sec = l.RequestTimeoutSec
 	}
@@ -199,6 +208,12 @@ func (s *Server) operationConcurrency(kind string) int {
 		return l.ProcessorConcurrency
 	case opHTTPServiceRun:
 		return l.HTTPServiceConcurrency
+	case opFormEvent:
+		// Событие формы — тот же прикладной DSL, что и обработка, и приходит
+		// оно так же по клику пользователя. Предел общий с обработками:
+		// заводить для него отдельную настройку значило бы просить
+		// администратора угадать второе число для той же нагрузки.
+		return l.ProcessorConcurrency
 	default:
 		return 0
 	}

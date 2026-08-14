@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -216,4 +217,34 @@ func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []a
 	applySandboxVars(e, p)
 	result = i.callUserProc(proc, e, args)
 	return
+}
+
+// ClampWallClock согласует настроенный лимит времени с дедлайном контекста.
+//
+// Общая точка для всех серверных входов DSL: сам по себе MaxWallClock не знает
+// про дедлайн HTTP-запроса, а контекст не знает про настройку. Без согласования
+// профиль в 30 секунд пережил бы 10-секундный запрос и продолжил бы держать
+// открытую транзакцию уже после того, как клиент ушёл.
+//
+// Возвращает 0 («без лимита»), если лимит не настроен: это осознанное значение
+// по умолчанию, а не забытая настройка. Если дедлайн уже истёк, отдаёт
+// минимальную положительную величину, чтобы запуск отрубился сразу, а не
+// оказался бессрочным.
+func ClampWallClock(ctx context.Context, configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return 0
+	}
+	if ctx == nil {
+		return configured
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return time.Nanosecond
+		}
+		if remaining < configured {
+			return remaining
+		}
+	}
+	return configured
 }

@@ -97,8 +97,22 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Предел конкурентности и дедлайн — как у обработок (#735). Событие формы
+	// исполняет такой же прикладной DSL, но шло мимо: без лимита параллельных
+	// запусков и без предела времени вовсе (#865). Один обработчик с
+	// Приостановить(300) занимал бы соединение и слот пять минут.
+	opCtx, finish, ok := s.beginOperation(r, opFormEvent, entity.Name)
+	if !ok {
+		w.WriteHeader(http.StatusTooManyRequests)
+		respondJSON(enc, formEventResponse{Error: "слишком много одновременно выполняемых обработчиков формы, повторите позже"})
+		return
+	}
+	opStatus := "ok"
+	defer func() { finish(opStatus, 0, false) }()
+
 	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	if err := parseBoundedForm(r, 32<<20); err != nil {
+		opStatus = "error"
 		w.WriteHeader(uploadErrorStatus(err))
 		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
 		return
@@ -367,7 +381,13 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
-	runErr := s.interp.Run(decl, thisObj, vars)
+	var runErr error
+	if timeout := interpreter.ClampWallClock(opCtx, s.operationTimeout(opFormEvent)); timeout > 0 {
+		runErr = s.interp.RunSandboxed(decl, thisObj,
+			interpreter.SandboxProfile{MaxWallClock: timeout}, nil, vars)
+	} else {
+		runErr = s.interp.Run(decl, thisObj, vars)
+	}
 	// Незавершённая DSL-транзакция отменяется ДО перечитывания БД и сериализации:
 	// иначе pgx удерживает соединение после запроса, а SQLite ждёт занятое
 	// единственное соединение. Успешный выход с открытой транзакцией считается

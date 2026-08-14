@@ -16,9 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -94,11 +96,39 @@ type Service struct {
 	// document.save/document.post или catalog.save в зависимости от вида и Action.
 	Hooks *webhook.Dispatcher
 
+	// HookTimeout — предел времени ОДНОГО запуска прикладного хука
+	// (ОбработкаПроведения, ПриЗаписи, ОбработкаЗаполнения…). 0 = без предела.
+	//
+	// Хуки Save исполнялись обычным Interp.Run — без дедлайна и внутри открытой
+	// транзакции. `Приостановить(300)` в модуле проведения держал HTTP-запрос и
+	// БД-транзакцию пять минут; на SQLite это единственное соединение, то есть
+	// вся база (#865). Deadline-aware защита паузы (#736) существовала только
+	// для sandboxed-путей, а два самых горячих входа шли мимо неё.
+	HookTimeout time.Duration
+
 	// ChangePublisher — опциональный потребитель события «строка изменилась»
 	// (план 87, ступень A, живой список). nil = автопубликация выключена
 	// (тесты/procrun/migrate). Реализация в ui рассылает служебное событие
 	// живым спискам с адресацией строго по RLS.
 	ChangePublisher ChangePublisher
+}
+
+// runHook исполняет прикладной хук с дедлайном.
+//
+// Единственная точка запуска хуков Save: пять прежних вызовов Interp.Run
+// разошлись бы по одному, а «забыли дедлайн в одном из пяти» — ровно тот отказ,
+// который и завёл #865. Предел согласуется с дедлайном контекста
+// (interpreter.ClampWallClock): профиль в 30 секунд не должен переживать
+// 10-секундный запрос, продолжая держать транзакцию после ухода клиента.
+//
+// При HookTimeout = 0 поведение прежнее — обычный Run без лимита: нулевое
+// значение означает «предел не настроен», и менять на нём поведение молча
+// нельзя.
+func (s *Service) runHook(ctx context.Context, proc *ast.ProcedureDecl, this interpreter.This, vars map[string]any) error {
+	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
+		return s.Interp.RunSandboxed(proc, this, interpreter.SandboxProfile{MaxWallClock: wall}, nil, vars)
+	}
+	return s.Interp.Run(proc, this, vars)
 }
 
 // ChangePublisher принимает уведомление об успешном изменении строки сущности
@@ -313,7 +343,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			if s.MakeThis != nil {
 				thisVal = s.MakeThis(txHookCtx, txState, obj, req.Entity)
 			}
-			runErr := s.Interp.Run(proc, thisVal, vars)
+			runErr := s.runHook(txHookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return &hookRunError{err: runErr}
 			}
@@ -478,7 +508,7 @@ func (s *Service) unpostInTx(
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		return &hookRunError{err: runErr}
 	}
@@ -653,7 +683,7 @@ func (s *Service) runDeleteHook(
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		return &hookRunError{err: runErr}
 	}
@@ -860,7 +890,7 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(ctx, txState, recvObj, req.Receiver)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(ctx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)
 		if dslErr, ok := runErr.(*interpreter.DSLError); ok {
@@ -1010,7 +1040,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 			if s.MakeThis != nil {
 				thisVal = s.MakeThis(hookCtx, txState, obj, ent)
 			}
-			runErr := s.Interp.Run(proc, thisVal, vars)
+			runErr := s.runHook(hookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return fmt.Errorf("перепроведение %s: ОбработкаПроведения: %w", ent.Name, runErr)
 			}

@@ -366,19 +366,7 @@ func processorFormBodyLimit(r *http.Request, maxFileSize int64, controls process
 // operation deadline created by beginOperation. Starting a fresh full sandbox
 // timeout after parsing would let the request run for almost twice the limit.
 func processorSandboxTimeout(ctx context.Context, configured time.Duration) time.Duration {
-	if configured <= 0 {
-		return 0
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return time.Nanosecond
-		}
-		if remaining < configured {
-			return remaining
-		}
-	}
-	return configured
+	return interpreter.ClampWallClock(ctx, configured)
 }
 
 const (
