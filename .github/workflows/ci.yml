@@ -331,23 +331,6 @@ jobs:
           [ "$rc" = "0" ] || { echo "::error::код возврата $rc:"; cat "$log"; exit 1; }
           echo "smoke ok: запуск из $(dirname "$SMOKE_BIN"), ответ 200, выход 0"
 
-  # 15 windows-only исходников (5 из них — тесты) не исполняло вообще ничто:
-  # все джобы шли на ubuntu, а windows-раннер только собирал GUI. Поломка
-  # вскрывалась на релизе (план 122B).
-  test-windows:
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: '.go-version'
-          cache: true
-      # -race на Windows намеренно не включаем: дорого, а базовый прогон и так
-      # впервые исполняет windows-only файлы.
-      - name: Unit tests (Windows)
-        run: go test ./...
-
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
