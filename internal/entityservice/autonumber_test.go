@@ -250,6 +250,14 @@ func TestSave_ОшибкаGenerateNumberОтменяетЗаписьMatrix(t *te
 		if _, err := db.Exec(ctx, "DROP TABLE _numerators"); err != nil {
 			t.Fatalf("DROP _numerators: %v", err)
 		}
+		// PostgreSQL test schemas keep public later in search_path. Merely
+		// dropping the schema-local table can therefore expose an unrelated
+		// public._numerators and turn the intended failure into a successful
+		// write. A malformed local shadow makes GenerateNumber fail on both
+		// dialects without escaping the ephemeral test schema.
+		if _, err := db.Exec(ctx, "CREATE TABLE _numerators (broken INTEGER)"); err != nil {
+			t.Fatalf("CREATE broken _numerators: %v", err)
+		}
 
 		id := uuid.New()
 		if _, err := svc.Save(ctx, SaveRequest{
