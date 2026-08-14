@@ -185,18 +185,30 @@ jobs:
       # и всплывает у пользователя пустой страницей (#879, класс #684).
       - name: Inline JS syntax check (Go templates)
         run: |
-          set -eu
+          set -euo pipefail
           tmp="${RUNNER_TEMP:-/tmp}/inline-js"
           rm -rf "$tmp"
           # Сам экстрактор исключён: в его регулярках лежит литерал <script…>,
           # и гейт нашёл бы «сломанный скрипт» в собственном исходнике.
-          files="$(git ls-files '*.go' | grep -vE '_test\.go$|^tools/jsextract/' | xargs grep -l '<script' || true)"
-          [ -n "$files" ] || { echo "::error::не найдено ни одного шаблона с <script> — сломан отбор"; exit 1; }
+          set +e
+          git grep -l -z '<script' -- '*.go' > "$tmp.go-files"
+          grep_status=$?
+          set -e
+          [ "$grep_status" -eq 0 ] || { echo "::error::не удалось отобрать Go-шаблоны с <script> (git grep: $grep_status)"; exit 1; }
+          files=()
+          while IFS= read -r -d '' file; do
+            [[ "$file" == *_test.go || "$file" == tools/jsextract/* ]] && continue
+            files+=("$file")
+          done < "$tmp.go-files"
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::не найдено ни одного шаблона с <script> — сломан отбор"; exit 1; }
           # jsextract сам падает, если не извлёк ни одного блока: пустая выдача
           # означала бы не «чисто», а сломанный экстрактор.
-          go run ./tools/jsextract -out "$tmp" $files
+          go run ./tools/jsextract -out "$tmp" "${files[@]}"
+          shopt -s nullglob
+          scripts=("$tmp"/*.js "$tmp"/*.mjs)
+          [ "${#scripts[@]}" -gt 0 ] || { echo "::error::экстрактор не создал файлов для проверки"; exit 1; }
           n=0
-          for f in "$tmp"/*.js; do
+          for f in "${scripts[@]}"; do
             node --check "$f" || {
               echo "::error::синтаксическая ошибка в inline-скрипте; источник — в первой строке $f"
               head -1 "$f"
