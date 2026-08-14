@@ -1,9 +1,14 @@
 package launcher
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -73,5 +78,67 @@ func TestBackupRestore_БезПрефиксаНичегоНеМеняет(t *tes
 	}
 	if got := basePrefixOf(t, dbPath); got != "" {
 		t.Errorf("префикс появился из ниоткуда: %q", got)
+	}
+}
+
+// Полный экспорт использует universal-ветку backupFullImport, которая
+// возвращается раньше старого binary-кода. Поэтому обычный restore-тест выше
+// не защищает этот второй публичный вход от повторения #871.
+func TestBackupFullImportUniversal_СбрасываетПрефиксБазы(t *testing.T) {
+	ctx := context.Background()
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := storage.ConnectSQLite(ctx, sourcePath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite source: %v", err)
+	}
+	if err := source.SaveBasePrefix(ctx, "ИСТ-"); err != nil {
+		source.Close()
+		t.Fatalf("SaveBasePrefix source: %v", err)
+	}
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "app.yaml"), []byte("name: Prefix restore test\n"), 0o600); err != nil {
+		source.Close()
+		t.Fatalf("write config: %v", err)
+	}
+	var archive bytes.Buffer
+	if err := backup.ExportUniversal(ctx, source, "file", configDir, "", "source", &archive); err != nil {
+		source.Close()
+		t.Fatalf("ExportUniversal: %v", err)
+	}
+	source.Close()
+
+	zr, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		t.Fatalf("open universal archive: %v", err)
+	}
+	entries := make([]fullImportTestEntry, 0, len(zr.File))
+	for _, f := range zr.File {
+		r, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		var data bytes.Buffer
+		if _, err := data.ReadFrom(r); err != nil {
+			r.Close()
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		if err := r.Close(); err != nil {
+			t.Fatalf("close %s: %v", f.Name, err)
+		}
+		entries = append(entries, fullImportTestEntry{name: f.Name, data: data.Bytes()})
+	}
+
+	h, b, targetPath := adoptedBase(t, "prefix-reset-universal", false)
+	// Universal-архив намеренно не переносит instance-local base.prefix, но
+	// импорт до исправления сохранял префикс целевой базы. Контракт 117D после
+	// любого restore требует погасить и его: восстановленная копия начинает
+	// новую идентичность, а не продолжает нумерацию прежнего инстанса.
+	setBasePrefix(t, targetPath, "ЦЕЛЬ-")
+	resp := postFullImport(t, h, b, entries)
+	if errText, ok := resp["error"].(string); ok && errText != "" {
+		t.Fatalf("полное восстановление не удалось: %s", errText)
+	}
+	if got := basePrefixOf(t, targetPath); got != "" {
+		t.Fatalf("после universal-восстановления префикс остался %q — полный импорт обошёл защиту", got)
 	}
 }

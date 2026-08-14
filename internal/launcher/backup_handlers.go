@@ -1240,6 +1240,13 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			file, archiveSize,
 			backup.ImportOptions{ExchangeMode: exchangeRestoreMode},
 		)
+		var prevPrefix string
+		if importErr == nil {
+			// Universal archives intentionally do not transport the instance-local
+			// base prefix. That still must not leave the target instance's old
+			// identity active after it has been replaced by a restored copy.
+			prevPrefix, importErr = db.ResetBasePrefixAfterRestore(restoreCtx)
+		}
 
 		db.Close()
 		release()
@@ -1251,6 +1258,10 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			data.FieldsSavedEntity = "panel-backup"
 			msg := fmt.Sprintf(tr(lang, "Полное восстановление выполнено: %d таблиц, %d файлов вложений"),
 				len(report.Tables), report.Files)
+			if prevPrefix != "" {
+				msg += ". " + tr(lang, "Префикс базы снят") + " (" + prevPrefix + "): " +
+					tr(lang, "копия в другой базе выдавала бы коды оригинала")
+			}
 			if len(report.TOTPReset) > 0 {
 				// Секрет 2FA этих учёток зашифрован чужим мастер-ключом и текущим не
 				// читается — второй фактор погашен, чтобы вход не заперло. Называем
