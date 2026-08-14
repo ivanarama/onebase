@@ -195,7 +195,9 @@ func (db *DB) InfoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 			switch v := dest[0].(type) {
 			case time.Time:
 				row["period"] = v.Format("02.01.2006")
-				row["period_key"] = v.Format(time.RFC3339)
+				// RFC3339 отбрасывает доли секунды, хотя PostgreSQL TIMESTAMPTZ
+				// хранит их. Такой ключ менял PK при round-trip через UI/DSL.
+				row["period_key"] = v.Format(time.RFC3339Nano)
 			case string:
 				row["period_key"] = v
 				if t, ok := ParseRegPeriod(v); ok {
