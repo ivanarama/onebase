@@ -419,6 +419,10 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 				}
 			}
 		case interface{ IterateThis() []This }:
+			// IterateThis/IterateRows are arbitrary Go callbacks, even though the
+			// DSL surface makes them look like passive collections. Treat them as
+			// object capabilities in read-only debugger conditions.
+			refuseReadOnly(e.ec, "итерация внешней коллекции")
 			for _, item := range items.IterateThis() {
 				e.setLocal(v.Var.Literal, item)
 				if !i.execLoopBody(v.Body, e) {
@@ -432,6 +436,7 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 			// `Объект.Товары` возвращает прокси для модификации ТЧ через
 			// .Добавить()/.Очистить().
 			if it, ok := coll.(interface{ IterateRows() []map[string]any }); ok {
+				refuseReadOnly(e.ec, "итерация внешней коллекции")
 				for _, row := range it.IterateRows() {
 					e.setLocal(v.Var.Literal, &MapThis{M: row})
 					if !i.execLoopBody(v.Body, e) {
@@ -805,7 +810,11 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				if err != nil {
 					panic(dslStop{err: err})
 				}
-				return result
+				// The callback itself opted into read-only use, but its return value
+				// may still be an object capability. Keep that value behind the same
+				// membrane; otherwise a condition could feed a returned writer to a
+				// mutating builtin such as ЗаполнитьЗначенияСвойств.
+				return protectReadOnly(e.ec, result)
 			}
 			if bf, ok2 := val.(BuiltinFunc); ok2 {
 				refuseReadOnly(e.ec, "вызов внешней функции «"+fnName+"»")

@@ -74,6 +74,13 @@ type effectObject struct {
 	touched *atomic.Bool
 }
 
+type effectRowsIterator struct{ touched *atomic.Bool }
+
+func (it *effectRowsIterator) IterateRows() []map[string]any {
+	it.touched.Store(true)
+	return []map[string]any{{"Значение": float64(1)}}
+}
+
 func (o *effectObject) Get(name string) any {
 	for k, v := range o.fields {
 		if strings.EqualFold(k, name) {
@@ -246,6 +253,40 @@ func TestУсловиеТочкиОстанова_НеВызываетОбычн
 		}),
 	}
 	assertConditionRejectsEffect(t, interpreter.New(), "ПобочныйЭффект()", vars, &touched, "ПобочныйЭффект")
+}
+
+func TestУсловиеТочкиОстанова_ReadOnlyФункцияНеВозвращаетWritableCapability(t *testing.T) {
+	var touched atomic.Bool
+	writer := &effectObject{touched: &touched}
+	vars := map[string]any{
+		"ПолучитьЗапись": interpreter.ReadOnlyBuiltinFunc(func([]any, string, int) (any, error) {
+			return writer, nil
+		}),
+		"Источник": interpreter.NewStructFromMap(map[string]any{"Наименование": "после"}),
+	}
+	assertConditionRejectsEffect(t, interpreter.New(),
+		"ЗаполнитьЗначенияСвойств(ПолучитьЗапись(), Источник) = Неопределено",
+		vars, &touched, "Наименование")
+}
+
+func TestУсловиеТочкиОстанова_НеВызываетВнешнийIterator(t *testing.T) {
+	var touched atomic.Bool
+	helper := parseProcFile(t, "iterator.os", `Функция ЕстьСтроки(Источник)
+  Для Каждого Строка Из Источник Цикл
+    Возврат Истина;
+  КонецЦикла;
+  Возврат Ложь;
+КонецФункции`)
+	interp := interpreter.New()
+	interp.LookupProc = func(name string) *ast.ProcedureDecl {
+		if strings.EqualFold(name, "ЕстьСтроки") {
+			return helper
+		}
+		return nil
+	}
+	assertConditionRejectsEffect(t, interp, "ЕстьСтроки(Источник)",
+		map[string]any{"Источник": &effectRowsIterator{touched: &touched}},
+		&touched, "итерац")
 }
 
 func TestУсловиеТочкиОстанова_ReadOnlyРежимВосстанавливаетсяДоОсновногоКода(t *testing.T) {
