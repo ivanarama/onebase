@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/converter"
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 const catalogXML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -321,4 +323,65 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("чтение %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// Автонумерация кода справочника доезжает из выгрузки 1С до рабочей
+// конфигурации (#872).
+//
+// Конвертер отбрасывал её и предупреждал, что «платформа пока нумерует только
+// документы» — после планов 117B/117C/117E это перестало быть правдой, но
+// предупреждение пережило причину: пользователь, импортировавший конфигурацию,
+// получал справочник без кодов и совет проставлять их руками из модуля.
+//
+// Проверка сквозная и заканчивается НЕ текстом YAML, а загруженными
+// метаданными: важно не то, что блок написан, а то, что платформа после этого
+// действительно нумерует «Код».
+func TestConvertCatalogAutonumbering(t *testing.T) {
+	const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject>
+  <Catalog>
+    <Properties>
+      <Name>Контрагенты</Name>
+      <CodeLength>9</CodeLength>
+      <CodeType>String</CodeType>
+      <Autonumbering>true</Autonumbering>
+      <CheckUnique>true</CheckUnique>
+    </Properties>
+    <ChildObjects/>
+  </Catalog>
+</MetaDataObject>`
+
+	src := t.TempDir()
+	out := filepath.Join(t.TempDir(), "result")
+	writeV83(t, filepath.Join(src, "Catalogs"), "Контрагенты", xml)
+
+	report, err := converter.Convert(converter.Options{SourceDir: src, OutDir: out})
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	for _, w := range report.TypeWarnings {
+		if strings.Contains(w, "автонумерация кода не перенесена") {
+			t.Errorf("предупреждение пережило причину: %s", w)
+		}
+	}
+
+	path := filepath.Join(out, "catalogs", "контрагенты.yaml")
+	entity, err := metadata.LoadFile(path, metadata.KindCatalog)
+	if err != nil {
+		t.Fatalf("LoadFile(%s): %v", path, err)
+	}
+	if entity.Numerator == nil {
+		t.Fatal("автонумерация кода потеряна при конвертации: numerator: нет")
+	}
+	if entity.Numerator.Length != 9 {
+		t.Errorf("длина кода = %d, в выгрузке 9", entity.Numerator.Length)
+	}
+	if !entity.Numerator.Unique {
+		t.Error("CheckUnique выгрузки не перенесён в numerator.unique")
+	}
+	// Главное: платформа согласна нумеровать этот справочник.
+	if got := storage.AutoNumberField(entity); got != metadata.StandardCodeField {
+		t.Errorf("AutoNumberField = %q, ожидался «%s» — блок написан, но нумерации нет",
+			got, metadata.StandardCodeField)
+	}
 }

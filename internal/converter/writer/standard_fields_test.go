@@ -84,10 +84,14 @@ func TestWriteDocuments_НеДублируетСуществующие(t *testin
 	}
 }
 
-// Иерархия справочника переносится, а то, что платформа пока не умеет
-// (автонумерация кода, контроль уникальности), попадает в отчёт, а не пропадает
-// молча.
-func TestWriteCatalogs_ИерархияИОтчётПоКоду(t *testing.T) {
+// Автонумерация кода справочника переносится блоком numerator: (#872).
+//
+// Раньше конвертер её отбрасывал и печатал предупреждение «платформа пока
+// нумерует только документы». После планов 117B/117C/117E это перестало быть
+// правдой: код справочника выдаётся той же единой точкой, что номер документа,
+// и умеет контроль уникальности. Предупреждение пережило причину и посылало
+// пользователя проставлять код руками из модуля.
+func TestWriteCatalogs_АвтонумерацияКодаПереносится(t *testing.T) {
 	out := t.TempDir()
 	notes := &ConversionReport{}
 	cats := []*parser1c.CatalogMeta{{
@@ -102,14 +106,40 @@ func TestWriteCatalogs_ИерархияИОтчётПоКоду(t *testing.T) {
 	if !strings.Contains(got, "hierarchical: true") {
 		t.Errorf("иерархия не перенесена:\n%s", got)
 	}
+	for _, must := range []string{"numerator:", "length: 9", "unique: true"} {
+		if !strings.Contains(got, must) {
+			t.Errorf("в YAML нет %q — автонумерация кода потеряна:\n%s", must, got)
+		}
+	}
+	// Периодичности у кода справочника в 1С нет: код живёт с элементом всю
+	// жизнь. Писать period значило бы придумать сброс счётчика, которого не было.
+	if strings.Contains(got, "period:") {
+		t.Errorf("у кода справочника не должно быть period:\n%s", got)
+	}
+	if joined := strings.Join(notes.TypeWarnings, "\n"); joined != "" {
+		t.Errorf("перенос полный, а в отчёте всё ещё предупреждения: %v", notes.TypeWarnings)
+	}
+}
+
+// Справочник БЕЗ автонумерации блока numerator: не получает: иначе конвертер
+// раздал бы коды там, где в 1С их выдавал человек.
+func TestWriteCatalogs_БезАвтонумерацииБлокаНет(t *testing.T) {
+	out := t.TempDir()
+	notes := &ConversionReport{}
+	cats := []*parser1c.CatalogMeta{{
+		Name: "Склады",
+		Code: parser1c.Numbering{Auto: false, Length: 5, CheckUnique: true},
+	}}
+	if err := WriteCatalogs(cats, out, notes); err != nil {
+		t.Fatalf("WriteCatalogs: %v", err)
+	}
+	got := readOut(t, filepath.Join(out, "catalogs", fileName("Склады")+".yaml"))
 	if strings.Contains(got, "numerator:") {
-		t.Errorf("блок numerator: у справочника пока no-op, писать его нельзя:\n%s", got)
+		t.Errorf("блок numerator: без автонумерации в 1С:\n%s", got)
 	}
-	joined := strings.Join(notes.TypeWarnings, "\n")
-	if !strings.Contains(joined, "автонумерация кода не перенесена") {
-		t.Errorf("в отчёте нет предупреждения об автонумерации кода: %v", notes.TypeWarnings)
-	}
-	if !strings.Contains(joined, "контроль уникальности кода не перенесён") {
-		t.Errorf("в отчёте нет предупреждения о контроле уникальности: %v", notes.TypeWarnings)
+	// Уникальность кода без автонумерации выразить нечем: numerator.unique
+	// действует на автонумерацию. Это по-прежнему остаток — и он в отчёте.
+	if !strings.Contains(strings.Join(notes.TypeWarnings, "\n"), "контроль уникальности кода без автонумерации") {
+		t.Errorf("остаток не попал в отчёт: %v", notes.TypeWarnings)
 	}
 }
