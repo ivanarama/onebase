@@ -23,6 +23,17 @@ const maxLoginFormBytes = int64(64 << 10)
 // отсекает патологически длинные значения до хеширования (issue #776).
 const maxCredentialLen = 1024
 
+// credentialsTooLong — общая отсечка длины для ОБОИХ входов.
+//
+// Раньше проверка стояла только в LoginJSON: у формы входа предел был лишь на
+// тело (64 КиБ), то есть пара «логин 60 КиБ / пароль 60 КиБ» доезжала до ключа
+// rate-limiter'а и до Authenticate — тот же вектор на соседнем публичном
+// маршруте (#864). Предел один на оба входа намеренно: разъехавшись, они снова
+// закроют разное.
+func credentialsTooLong(login, password string) bool {
+	return len(login) > maxCredentialLen || len(password) > maxCredentialLen
+}
+
 var loginTmpl = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>Вход — onebase</title>
@@ -209,6 +220,13 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 	login := r.FormValue("login")
 	password := r.FormValue("password")
 
+	// Отсечка до лимитера и до Authenticate: длинное значение не должно ни
+	// становиться ключом rate-limiter'а, ни доезжать до сравнения хэшей.
+	if credentialsTooLong(login, password) {
+		renderErr(w, r, http.StatusBadRequest, "некорректные данные формы")
+		return
+	}
+
 	if h.limitExceeded(w, r, login) {
 		return
 	}
@@ -285,7 +303,7 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
-	if len(req.Login) > maxCredentialLen || len(req.Password) > maxCredentialLen {
+	if credentialsTooLong(req.Login, req.Password) {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
