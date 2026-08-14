@@ -173,38 +173,33 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Ждём завершения всех прогонов workflow "CI" для ТОЧНОГО SHA и требуем,
-          # чтобы каждый завершился success. Плюс отдельно требуем прогон от
-          # события push в main: зелёный PR-прогон проверял ВЕТКУ, а не то, что
-          # лежит в main, и принимать его за проверку main нельзя (#874).
+          # Ищем прогон workflow "CI" для ТОЧНОГО SHA, запущенный именно событием
+          # push в main. PR/workflow_dispatch-прогоны здесь не доказательство:
+          # они проверяют другой ref. Не требуем успеха от ВСЕХ запусков этого
+          # SHA: старый cancelled run (или отменённая первая попытка перед rerun)
+          # не должен навсегда отравлять уже успешную проверку push@main.
           deadline=$(( $(date +%s) + 1800 ))
           while :; do
-            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" \
-              --jq '[.workflow_runs[] | {status: .status, conclusion: .conclusion, event: .event, branch: .head_branch}]')
+            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main&event=push&per_page=100" \
+              --jq '[.workflow_runs[] | {status: .status, conclusion: .conclusion, event: .event, branch: .head_branch, attempt: .run_attempt}]')
             total=$(echo "$runs" | jq 'length')
-            completed=$(echo "$runs" | jq '[.[] | select(.status=="completed")] | length')
-            if [ "$total" -gt 0 ] && [ "$completed" -eq "$total" ]; then
-              bad=$(echo "$runs" | jq '[.[] | select(.conclusion!="success")] | length')
-              if [ "$bad" -ne 0 ]; then
-                echo "::error::CI для $SHA завершился не успехом. Публикация отменена."
-                echo "$runs" | jq .
-                exit 1
-              fi
-              onMain=$(echo "$runs" | jq '[.[] | select(.event=="push" and .branch=="main")] | length')
-              if [ "$onMain" -eq 0 ]; then
-                echo "::error::для $SHA нет прогона CI от push в main — есть только проверки веток или PR. Публикация отменена."
-                echo "$runs" | jq .
-                exit 1
-              fi
-              echo "CI зелёный для $SHA, включая прогон от push в main."
+            successful=$(echo "$runs" | jq '[.[] | select(.status=="completed" and .conclusion=="success" and .event=="push" and .branch=="main")] | length')
+            active=$(echo "$runs" | jq '[.[] | select(.status!="completed")] | length')
+            if [ "$successful" -gt 0 ]; then
+              echo "CI зелёный для $SHA: найден успешный прогон push@main."
               exit 0
+            fi
+            if [ "$total" -gt 0 ] && [ "$active" -eq 0 ]; then
+              echo "::error::все прогоны CI push@main для $SHA завершились без успеха. Публикация отменена."
+              echo "$runs" | jq .
+              exit 1
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "::error::Не дождались успешного CI для $SHA за 30 минут. Публикация отменена."
               echo "$runs" | jq .
               exit 1
             fi
-            echo "Жду CI для $SHA ($completed/$total завершено)..."
+            echo "Жду успешный CI push@main для $SHA ($active активных, $total найдено)..."
             sleep 20
           done
 
