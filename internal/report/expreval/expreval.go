@@ -50,10 +50,9 @@ var _ compose.Evaluator = (*Evaluator)(nil)
 // внешние отчёты загружаются через админку и живут в БД, то есть формула может
 // приехать файлом со стороны, как внешняя обработка.
 //
-// Запрещаются возможности, а не составляется белый список функций: арифметика,
-// строки, даты и формат — это и есть то, ради чего формулы существуют, и
-// перечислять их поимённо значило бы ломать формулы при каждом новом builtin'е.
-// Отказ ловится Попыткой и виден в предупреждениях компоновки.
+// Поверх runtime-профиля действует fail-closed whitelist AST и чистых функций
+// (formula_policy.go). Runtime-профиль остаётся второй линией защиты и лимитом
+// ресурсов, но сам по себе не отличает ЗаполнитьЗначенияСвойств от СтрДлина.
 func DefaultProfile() interpreter.SandboxProfile {
 	return interpreter.SandboxProfile{
 		DenyNet:      true,
@@ -66,8 +65,12 @@ func DefaultProfile() interpreter.SandboxProfile {
 
 // New строит evaluator. profile обязателен и передаётся явно: мимо песочницы
 // выражение выполнить нельзя.
-func New(interp *interpreter.Interpreter, profile interpreter.SandboxProfile) *Evaluator {
-	return &Evaluator{interp: interp, profile: profile, cache: map[string]*ast.ProcedureDecl{}}
+func New(_ *interpreter.Interpreter, profile interpreter.SandboxProfile) *Evaluator {
+	// A clean interpreter is intentional. Configured LookupProc hooks resolve
+	// before builtins and could otherwise replace even an allowed name such as
+	// Формат with a side-effecting module function. The argument stays in the
+	// API for source compatibility with existing callers.
+	return &Evaluator{interp: interpreter.New(), profile: profile, cache: map[string]*ast.ProcedureDecl{}}
 }
 
 func (e *Evaluator) compile(expr string) (*ast.ProcedureDecl, error) {
@@ -89,11 +92,24 @@ func (e *Evaluator) compile(expr string) (*ast.ProcedureDecl, error) {
 	if proc == nil {
 		return nil, fmt.Errorf("пустое выражение условия")
 	}
+	if len(proc.Body) != 1 {
+		return nil, fmt.Errorf("формула отчёта должна состоять из одного выражения")
+	}
+	ret, ok := proc.Body[0].(*ast.ReturnStmt)
+	if !ok || ret.Value == nil {
+		return nil, fmt.Errorf("формула отчёта должна состоять из одного выражения")
+	}
+	if err := validateFormulaExpr(ret.Value); err != nil {
+		return nil, err
+	}
 	e.cache[expr] = proc
 	return proc, nil
 }
 
 func (e *Evaluator) EvalBool(expr string, row compose.Row) (bool, error) {
+	if err := validateRowBindings(row); err != nil {
+		return false, err
+	}
 	proc, err := e.compile(expr)
 	if err != nil {
 		return false, err
@@ -112,6 +128,9 @@ func (e *Evaluator) EvalBool(expr string, row compose.Row) (bool, error) {
 }
 
 func (e *Evaluator) EvalNum(expr string, row compose.Row) (decimal.Decimal, bool, error) {
+	if err := validateRowBindings(row); err != nil {
+		return decimal.Zero, false, err
+	}
 	proc, err := e.compile(expr)
 	if err != nil {
 		return decimal.Zero, false, err
