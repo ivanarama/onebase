@@ -228,6 +228,27 @@ func (db *DB) GetBasePrefix(ctx context.Context) string {
 	return strings.TrimSpace(v)
 }
 
+// ResetBasePrefixAfterRestore гасит префикс после восстановления копии.
+//
+// Копия, восстановленная в ДРУГУЮ базу, сохраняет префикс оригинала и начинает
+// выдавать его коды — обмен склеит разные объекты. Ровно то, ради чего префикс
+// и заводился (117D), только наоборот.
+//
+// Живёт здесь, а не в CLI: восстанавливают не только командой. Пока функция
+// была приватной в internal/cli, восстановление через лаунчер шло мимо неё, и
+// защита работала на одном входе из двух (#871). Возвращает прежнее значение —
+// вызывающему есть что сказать пользователю.
+func (db *DB) ResetBasePrefixAfterRestore(ctx context.Context) (string, error) {
+	prev := db.GetBasePrefix(ctx)
+	if prev == "" {
+		return "", nil
+	}
+	if err := db.SaveBasePrefix(ctx, ""); err != nil {
+		return "", fmt.Errorf("сброс префикса базы: %w", err)
+	}
+	return prev, nil
+}
+
 // SaveBasePrefix сохраняет префикс этой базы. Пустая строка снимает его.
 func (db *DB) SaveBasePrefix(ctx context.Context, prefix string) error {
 	if err := db.EnsureSettingsSchema(ctx); err != nil {
