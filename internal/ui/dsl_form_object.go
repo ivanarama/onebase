@@ -119,10 +119,8 @@ func (f *formObjectThis) write() error {
 	}
 	ctx := f.liveCtx()
 	isNew := f.isNew && !f.saved
-	accessID := uuid.Nil
 	if !isNew {
-		accessID = f.obj.ID
-		if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", accessID, f.obj.Fields); err != nil {
+		if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", f.obj.ID, f.obj.Fields); err != nil {
 			return err
 		}
 	}
