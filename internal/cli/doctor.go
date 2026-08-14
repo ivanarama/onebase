@@ -135,6 +135,13 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				// его как «удалять нечего» и снял бы --dry-run (#622).
 				return fmt.Errorf("сухой прогон --forget-document: %w", err)
 			}
+			// Проводки бухрегистра считаются здесь же: показать половину
+			// объёма — это тот же обманчивый ноль, только частичный (#881).
+			acc, err := db.CountAccountEntriesOfRecorderType(ctx, proj.AccountRegisters, forget)
+			if err != nil {
+				return fmt.Errorf("сухой прогон --forget-document (бухрегистры): %w", err)
+			}
+			n += acc
 			outf("Сухой прогон: к удалению движений документов %s: %d (ничего не изменено)\n",
 				strings.Join(forget, ", "), n)
 			outln("")
@@ -143,12 +150,25 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			if err != nil {
 				return fmt.Errorf("--forget-document: %w", err)
 			}
+			acc, err := db.DeleteAccountEntriesOfUnknownRecorderType(ctx, proj.AccountRegisters, forget)
+			if err != nil {
+				return fmt.Errorf("--forget-document (бухрегистры): %w", err)
+			}
+			n += acc
 			outf("Удалено движений документов %s: %d\n", strings.Join(forget, ", "), n)
 			for _, reg := range proj.Registers {
 				if !reg.TotalsUsable() {
 					continue
 				}
 				if err := db.RecalcRegisterTotals(ctx, reg); err != nil {
+					return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
+				}
+			}
+			for _, reg := range proj.AccountRegisters {
+				if !reg.TotalsUsable() {
+					continue
+				}
+				if err := db.RecalcAccountRegisterTotals(ctx, reg); err != nil {
 					return fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
 				}
 			}

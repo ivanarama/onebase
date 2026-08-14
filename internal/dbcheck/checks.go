@@ -132,6 +132,14 @@ func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
 	if err != nil {
 		return failed(c, err)
 	}
+	// Проводки бухрегистра — такие же движения с таким же регистратором.
+	// Doctor их не проверял вовсе: половина машинерии (итоги бухрегистра, #640)
+	// уже была, а осиротевшие проводки не находила ни одна проверка (#881).
+	accStats, err := env.DB.OrphanAccountEntries(ctx, env.AccountRegisters, env.Entities)
+	if err != nil {
+		return failed(c, err)
+	}
+	stats = append(stats, accStats...)
 	res := Result{Check: c.Name(), Title: c.Title(), Severity: SeverityOK}
 	orphans, unknown := 0, 0
 	for _, s := range stats {
@@ -179,6 +187,11 @@ func (c orphanMovementsCheck) Run(ctx context.Context, env *Env) Result {
 // для пользователя (дефект Д1 из аудита — ровно про это).
 func (c orphanMovementsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
 	deleted, err := env.DB.DeleteOrphanMovements(ctx, env.Registers, env.Entities)
+	if err == nil {
+		var accDeleted int64
+		accDeleted, err = env.DB.DeleteOrphanAccountEntries(ctx, env.AccountRegisters, env.Entities)
+		deleted += accDeleted
+	}
 	if err != nil {
 		// Частично удалённое всё равно требует пересчёта итогов, поэтому число
 		// возвращаем, но ошибку не глотаем: «починено 0» на сбое читается как
@@ -193,6 +206,17 @@ func (c orphanMovementsCheck) Fix(ctx context.Context, env *Env, _ Result) (int,
 			continue
 		}
 		if err := env.DB.RecalcRegisterTotals(ctx, reg); err != nil {
+			return int(deleted), fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
+		}
+	}
+	// Без пересчёта итогов бухрегистра удаление проводок не изменило бы для
+	// пользователя ничего: обороты остались бы прежними — тот же дефект Д1,
+	// что и у накопления.
+	for _, reg := range env.AccountRegisters {
+		if !reg.TotalsUsable() {
+			continue
+		}
+		if err := env.DB.RecalcAccountRegisterTotals(ctx, reg); err != nil {
 			return int(deleted), fmt.Errorf("пересчёт итогов %s: %w", reg.Name, err)
 		}
 	}
