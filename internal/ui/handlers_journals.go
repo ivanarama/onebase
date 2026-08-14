@@ -267,19 +267,26 @@ func (s *Server) journalExcel(w http.ResponseWriter, r *http.Request) {
 	s.maskJournalRecords(r.Context(), j, docs, rows)
 	s.resolveJournalRefs(r.Context(), j, colRefMap, rows)
 
-	cols := make([]string, 0, len(visibleColumns)+2)
-	cols = append(cols, "Дата", "Вид")
+	// Выгрузка повторяет таблицу на экране: слева вид документа, дальше видимые
+	// колонки журнала. Прежде колонок было две — «Дата» и «Вид», и обе брались
+	// из ключей `date`/`doc_type`, которых в строках журнала нет: JournalQuery
+	// отдаёт `_doc_kind`, `id` и поля колонок журнала в нижнем регистре. Обе
+	// колонки приезжали в файл пустыми (#886). Отдельная «Дата» на экране не
+	// показывается вовсе — дата документа объявляется обычной колонкой журнала
+	// и уже попадает в выгрузку через visibleColumns.
+	lang := s.resolveLang(r)
+	cols := make([]string, 0, len(visibleColumns)+1)
+	cols = append(cols, s.tr(lang, "Документ"))
 	for _, jcol := range visibleColumns {
-		cols = append(cols, jcol.Label)
+		cols = append(cols, jcol.DisplayLabel(lang))
 	}
 
 	xlsRows := make([][]any, len(rows))
 	for i, row := range rows {
 		cells := make([]any, len(cols))
-		cells[0] = row["date"]
-		cells[1] = row["doc_type"]
+		cells[0] = row["_doc_kind"]
 		for ji, jcol := range visibleColumns {
-			cells[2+ji] = row[jcol.Field]
+			cells[1+ji] = row[jcol.Field]
 		}
 		xlsRows[i] = cells
 	}

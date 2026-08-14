@@ -16,9 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -94,11 +96,49 @@ type Service struct {
 	// document.save/document.post или catalog.save в зависимости от вида и Action.
 	Hooks *webhook.Dispatcher
 
+	// HookTimeout — предел времени ОДНОГО запуска прикладного хука
+	// (ОбработкаПроведения, ПриЗаписи, ОбработкаЗаполнения…). 0 = без предела.
+	//
+	// Хуки Save исполнялись обычным Interp.Run — без дедлайна и внутри открытой
+	// транзакции. `Приостановить(300)` в модуле проведения держал HTTP-запрос и
+	// БД-транзакцию пять минут; на SQLite это единственное соединение, то есть
+	// вся база (#865). Deadline-aware защита паузы (#736) существовала только
+	// для sandboxed-путей, а два самых горячих входа шли мимо неё.
+	HookTimeout time.Duration
+
 	// ChangePublisher — опциональный потребитель события «строка изменилась»
 	// (план 87, ступень A, живой список). nil = автопубликация выключена
 	// (тесты/procrun/migrate). Реализация в ui рассылает служебное событие
 	// живым спискам с адресацией строго по RLS.
 	ChangePublisher ChangePublisher
+}
+
+// runHook исполняет прикладной хук с дедлайном.
+//
+// Единственная точка запуска хуков Save: пять прежних вызовов Interp.Run
+// разошлись бы по одному, а «забыли дедлайн в одном из пяти» — ровно тот отказ,
+// который и завёл #865. Предел согласуется с дедлайном контекста
+// (interpreter.ClampWallClock): профиль в 30 секунд не должен переживать
+// 10-секундный запрос, продолжая держать транзакцию после ухода клиента.
+//
+// При HookTimeout = 0 поведение прежнее — обычный Run без лимита: нулевое
+// значение означает «предел не настроен», и менять на нём поведение молча
+// нельзя.
+func (s *Service) runHook(ctx context.Context, proc *ast.ProcedureDecl, this interpreter.This, vars map[string]any) error {
+	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
+		return s.Interp.RunSandboxed(proc, this, interpreter.SandboxProfile{Context: ctx, MaxWallClock: wall}, nil, vars)
+	}
+	return s.Interp.Run(proc, this, vars)
+}
+
+func (s *Service) hookExecutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
+		return context.WithTimeout(ctx, wall)
+	}
+	return context.WithCancel(ctx)
 }
 
 // ChangePublisher принимает уведомление об успешном изменении строки сущности
@@ -470,7 +510,8 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 					return err
 				}
 			}
-			txHookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+			txHookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+			defer cancelHook()
 			var vars map[string]any
 			var txState *interpreter.TxState
 			if s.BuildVars != nil {
@@ -481,7 +522,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			if s.MakeThis != nil {
 				thisVal = s.MakeThis(txHookCtx, txState, obj, req.Entity)
 			}
-			runErr := s.Interp.Run(proc, thisVal, vars)
+			runErr := s.runHook(txHookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return &hookRunError{err: runErr}
 			}
@@ -624,7 +665,8 @@ func (s *Service) unpostInTx(
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
-	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+	defer cancelHook()
 	if s.PrepareHook != nil {
 		s.PrepareHook(hookCtx, entity, obj)
 	}
@@ -647,7 +689,7 @@ func (s *Service) unpostInTx(
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		return &hookRunError{err: runErr}
 	}
@@ -737,28 +779,35 @@ func (s *Service) deleteInTx(
 	if err := s.runDeleteHook(txCtx, entity, id, "BeforeDelete", obj, messages, lockCollector); err != nil {
 		return err
 	}
+	// Собственные движения удаляем до проверки внешних ссылок. Они принадлежат
+	// удаляемому документу и могут сами содержать ссылку на него в измерении;
+	// считать такую строку внешней ссылкой означало бы сделать документ
+	// неудаляемым. При настоящей внешней ссылке весь transaction откатится и
+	// движения восстановятся вместе с объектом.
+	if entity.Posting {
+		if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+			return err
+		}
+	}
 	// Ссылочная целостность (issue #774): fail-closed предохранитель, общий для
 	// ВСЕХ путей удаления. Раньше CheckRefs звал только UI перед вызовом
 	// entityservice, поэтому удаление того же объекта через REST v1/v2 или DSL
 	// шло мимо проверки и оставляло висячие ссылки — в том числе из табличных
 	// частей и измерений регистров, которые FK на уровне БД не покрывают.
+	// Измерения регистров сам CheckRefs начал проверять только с #855: до этого
+	// «полное покрытие» заявляли и здешний комментарий, и PR #801, а в
+	// сигнатуре не было даже параметра, куда передать регистры. Поэтому сюда
+	// уходит весь реестр целиком, а не выборка сущностей.
 	// Проверка идёт ВНУТРИ транзакции удаления и ПОСЛЕ хука «ПередУдалением»:
 	// хук может осознанно снять часть ссылок до неё. s.Reg == nil бывает только
 	// в служебных контекстах (migrate/procrun), где перечислить сущности нечем.
 	if s.Reg != nil {
-		refs, err := s.Store.CheckRefs(txCtx, entity.Name, id, s.Reg.Entities())
+		refs, err := s.Store.CheckRefs(txCtx, entity.Name, id, s.Reg)
 		if err != nil {
 			return err
 		}
 		if len(refs) > 0 {
 			return &refsExistError{refs: refs}
-		}
-	}
-	// Движения снимаются до удаления регистратора: иначе остались бы строки,
-	// ссылающиеся на несуществующий документ.
-	if entity.Posting {
-		if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
-			return err
 		}
 	}
 	// Строки ТЧ — до объекта: иначе они остаются сиротами, ссылающимися на
@@ -799,7 +848,8 @@ func (s *Service) runDeleteHook(
 	if obj == nil {
 		return nil // объекта уже нет — звать хук не о чем
 	}
-	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+	defer cancelHook()
 	if s.PrepareHook != nil {
 		s.PrepareHook(hookCtx, entity, obj)
 	}
@@ -822,7 +872,7 @@ func (s *Service) runDeleteHook(
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		return &hookRunError{err: runErr}
 	}
@@ -1006,12 +1056,14 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 		// Нет хука — отдаём пустой объект, пользователь заполнит руками.
 		return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows}, nil
 	}
+	hookCtx, cancelHook := s.hookExecutionContext(ctx)
+	defer cancelHook()
 
 	var msgs []string
 	var vars map[string]any
 	var txState *interpreter.TxState
 	if s.BuildVars != nil {
-		vars, txState = s.BuildVars(ctx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
+		vars, txState = s.BuildVars(hookCtx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
 	} else {
 		vars = make(map[string]any)
 	}
@@ -1027,9 +1079,9 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	// фабрику; иначе — голый *Object (для документов без ТЧ всё равно работает).
 	var thisVal interpreter.This = recvObj
 	if s.MakeThis != nil {
-		thisVal = s.MakeThis(ctx, txState, recvObj, req.Receiver)
+		thisVal = s.MakeThis(hookCtx, txState, recvObj, req.Receiver)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)
 		if dslErr, ok := runErr.(*interpreter.DSLError); ok {
@@ -1167,7 +1219,8 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	proc := s.Reg.GetProcedure(ent.Name, "OnPost")
 	return s.Store.WithTx(ctx, func(txCtx context.Context) error {
 		if proc != nil {
-			hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+			hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+			defer cancelHook()
 			var msgs []string
 			var vars map[string]any
 			var txState *interpreter.TxState
@@ -1179,7 +1232,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 			if s.MakeThis != nil {
 				thisVal = s.MakeThis(hookCtx, txState, obj, ent)
 			}
-			runErr := s.Interp.Run(proc, thisVal, vars)
+			runErr := s.runHook(hookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return fmt.Errorf("перепроведение %s: ОбработкаПроведения: %w", ent.Name, runErr)
 			}

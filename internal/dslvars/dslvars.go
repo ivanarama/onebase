@@ -61,6 +61,10 @@ type Common struct {
 // Caller добавляет свои специфичные ключи сверху (например, "Сообщить",
 // "Документы", транзакционные builtins) напрямую в возвращённую карту.
 func (c Common) Build() map[string]any {
+	ctxSource := c.CtxSource
+	if ctxSource == nil {
+		ctxSource = interpreter.NewStaticCtx(c.Ctx)
+	}
 	enumsMap := make(map[string]any)
 	for _, e := range c.Reg.Enums() {
 		inner := make(map[string]any, len(e.Values))
@@ -94,7 +98,7 @@ func (c Common) Build() map[string]any {
 		"ПредопределённыеЗначения": predefined,
 		"PredefinedValues":         predefined,
 	}
-	for k, v := range interpreter.NewHTTPFunctions(c.NetGuard) {
+	for k, v := range interpreter.NewHTTPFunctions(c.NetGuard, ctxSource) {
 		vars[k] = v
 	}
 	for k, v := range interpreter.NewEmailFunctions(c.Mailer, c.NetGuard, c.EmailFileResolver) {
@@ -153,7 +157,7 @@ func (c Common) Build() map[string]any {
 			})
 		}
 	}
-	for k, v := range interpreter.NewExecFunctions(execGuard, execAudit) {
+	for k, v := range interpreter.NewExecFunctions(execGuard, execAudit, ctxSource) {
 		vars[k] = v
 	}
 
@@ -214,10 +218,6 @@ func (c Common) Build() map[string]any {
 	// создания записи. Нужен объектам, создаваемым из обработок/заданий, которые
 	// идут мимо автонумерации хендлеров.
 	if c.Store != nil && c.Reg != nil {
-		ctxSource := c.CtxSource
-		if ctxSource == nil {
-			ctxSource = interpreter.NewStaticCtx(c.Ctx)
-		}
 		numerators := interpreter.NewNumeratorsRoot(ctxSource, c.Store, c.Reg)
 		vars["Нумераторы"] = numerators
 		vars["Numerators"] = numerators
