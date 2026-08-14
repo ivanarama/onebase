@@ -107,8 +107,16 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		respondJSON(enc, formEventResponse{Error: "слишком много одновременно выполняемых обработчиков формы, повторите позже"})
 		return
 	}
-	opStatus := "ok"
-	defer func() { finish(opStatus, 0, false) }()
+	// Fail closed for metrics: every return after beginOperation is an error
+	// unless the branch explicitly produced a successful form-event response.
+	// This keeps validation/configuration failures from being reported as ok.
+	opStatus := "error"
+	defer func() {
+		if opStatus == "error" && opCtx.Err() != nil {
+			opStatus = operationStatus(opCtx, opCtx.Err())
+		}
+		finish(opStatus, 0, false)
+	}()
 	dslCtx, cancelDSL := context.WithCancel(opCtx)
 	defer cancelDSL()
 
@@ -200,6 +208,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		}
+		opStatus = "ok"
 		respondJSON(enc, formEventResponse{OK: true})
 		return
 	}
@@ -233,6 +242,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if decl == nil {
+		opStatus = "ok"
 		respondJSON(enc, formEventResponse{OK: true, Messages: []string{
 			"⚠ Процедура «" + procName + "» не найдена в .form.os",
 		}})
@@ -427,6 +437,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	opStatus = "ok"
 	resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(true)
 	resp.PickerData = picker
 	resp.ChoiceList = choiceItems

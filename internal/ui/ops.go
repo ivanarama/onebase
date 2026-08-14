@@ -99,7 +99,7 @@ func (s *Server) beginOperation(r *http.Request, kind, name string) (context.Con
 		s.ops = newOperationLimiter()
 	}
 	limit := s.operationConcurrency(kind)
-	release, ok := s.ops.tryAcquire(kind, limit)
+	release, ok := s.ops.tryAcquire(operationConcurrencyKey(kind), limit)
 	if !ok {
 		if s.cfg.Metrics != nil {
 			s.cfg.Metrics.OperationLimited(kind, "concurrency")
@@ -142,7 +142,7 @@ func (s *Server) beginQueuedOperation(r *http.Request, kind, name string) (conte
 	}
 
 	limit := s.operationConcurrency(kind)
-	release, ok := s.ops.acquire(ctx, kind, limit)
+	release, ok := s.ops.acquire(ctx, operationConcurrencyKey(kind), limit)
 	if !ok {
 		cancelTimeout()
 		cancelLifecycle()
@@ -217,6 +217,17 @@ func (s *Server) operationConcurrency(kind string) int {
 	default:
 		return 0
 	}
+}
+
+// operationConcurrencyKey separates the observable operation kind from the
+// capacity budget it consumes. Managed entity-form events and processors are
+// the same user-triggered application DSL workload and therefore share one
+// processor_concurrency pool, while keeping distinct metrics/log kinds.
+func operationConcurrencyKey(kind string) string {
+	if kind == opFormEvent {
+		return opProcessorRun
+	}
+	return kind
 }
 
 func (s *Server) isSlowOperation(d time.Duration) bool {

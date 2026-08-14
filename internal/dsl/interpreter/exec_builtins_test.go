@@ -2,7 +2,11 @@ package interpreter
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +107,102 @@ func TestExecuteCommand_ExecutionContextCancelsProcess(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 4*time.Second {
 		t.Fatalf("execution context did not stop process, elapsed %v", elapsed)
+	}
+}
+
+func TestExecuteCommand_ExecutionContextCancelsDescendantTree(t *testing.T) {
+	heartbeat := t.TempDir() + string(os.PathSeparator) + "descendant-heartbeat"
+	args := NewArray([]any{
+		"-test.run=^TestExecProcessTreeHelper$",
+		"--",
+		"onebase-exec-tree-helper",
+		"parent",
+		heartbeat,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type cancellationPoint struct {
+		heartbeat string
+		at        time.Time
+	}
+	canceled := make(chan cancellationPoint, 1)
+	go func() {
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			data, err := os.ReadFile(heartbeat)
+			if value := strings.TrimSpace(string(data)); err == nil && value != "" {
+				point := cancellationPoint{heartbeat: value, at: time.Now()}
+				cancel()
+				canceled <- point
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		cancel()
+		canceled <- cancellationPoint{}
+	}()
+
+	_, err := execRunner(nil, NewStaticCtx(ctx))([]any{os.Args[0], args, 20.0}, "", 0)
+	point := <-canceled
+	if point.heartbeat == "" {
+		t.Fatal("descendant did not start within 8 seconds")
+	}
+	if err == nil {
+		t.Fatal("expected execution context cancellation error")
+	}
+	if elapsed := time.Since(point.at); elapsed > 3*time.Second {
+		t.Fatalf("descendant-held output pipe outlived cancellation: %v", elapsed)
+	}
+
+	time.Sleep(350 * time.Millisecond)
+	second, readErr := os.ReadFile(heartbeat)
+	if readErr != nil {
+		t.Fatalf("read descendant heartbeat after cancellation: %v", readErr)
+	}
+	if strings.TrimSpace(string(second)) != point.heartbeat {
+		t.Fatalf("descendant survived command cancellation: heartbeat advanced from %q to %q", point.heartbeat, strings.TrimSpace(string(second)))
+	}
+}
+
+// TestExecProcessTreeHelper runs in subprocesses created by the regression
+// above. The parent intentionally does not wait for its child, while the child
+// retains stdout/stderr and updates a heartbeat. Killing only the direct parent
+// therefore leaves both a live descendant and os/exec copy goroutines blocked.
+func TestExecProcessTreeHelper(t *testing.T) {
+	separator := -1
+	for i, arg := range os.Args {
+		if arg == "onebase-exec-tree-helper" {
+			separator = i
+			break
+		}
+	}
+	if separator < 0 {
+		return
+	}
+	if len(os.Args) < separator+3 {
+		t.Fatal("process-tree helper requires mode and heartbeat path")
+	}
+	mode, heartbeat := os.Args[separator+1], os.Args[separator+2]
+	switch mode {
+	case "parent":
+		child := exec.Command(os.Args[0], "-test.run=^TestExecProcessTreeHelper$", "--", "onebase-exec-tree-helper", "child", heartbeat)
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			t.Fatalf("start process-tree child: %v", err)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "descendant pid=%d\n", child.Process.Pid)
+		time.Sleep(12 * time.Second)
+	case "child":
+		deadline := time.Now().Add(12 * time.Second)
+		for sequence := 1; time.Now().Before(deadline); sequence++ {
+			if err := os.WriteFile(heartbeat, []byte(strconv.Itoa(sequence)), 0o600); err != nil {
+				t.Fatalf("write process-tree heartbeat: %v", err)
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+	default:
+		t.Fatalf("unknown process-tree helper mode %q", mode)
 	}
 }
 
