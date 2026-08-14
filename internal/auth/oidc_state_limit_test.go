@@ -17,6 +17,7 @@ func resetOIDCStates() {
 	oidcLastSweep = time.Time{}
 	oidcStatesDrops = 0
 	oidcStatesEvictions = 0
+	oidcStatesScans = 0
 	oidcStatesMu.Unlock()
 }
 
@@ -60,6 +61,7 @@ func TestPutOIDCState_НаПотолкеНеСканируетНаКаждойВ
 
 	oidcStatesMu.Lock()
 	oidcStatesEvictions = 0
+	oidcStatesScans = 0
 	oidcStatesMu.Unlock()
 
 	const extra = 3 * oidcEvictBatch
@@ -68,12 +70,15 @@ func TestPutOIDCState_НаПотолкеНеСканируетНаКаждойВ
 	}
 
 	oidcStatesMu.Lock()
-	passes := oidcStatesEvictions
+	passes := oidcStatesScans
 	oidcStatesMu.Unlock()
 
 	// Пачка освобождает oidcEvictBatch мест, поэтому на 3 пачки вставок нужно
 	// около 3 проходов. Прежний код делал ровно extra проходов — по одному на
 	// вставку; порог с запасом отделяет одно от другого.
+	if passes == 0 {
+		t.Fatal("ни одного прохода вытеснения — тест не отличает новую реализацию от старой без счётчика")
+	}
 	if maxPasses := extra/oidcEvictBatch + 2; passes > maxPasses {
 		t.Errorf("%d проходов вытеснения на %d вставок (ожидалось не больше %d) — "+
 			"карта сканируется на каждой вставке, как до #863", passes, extra, maxPasses)
@@ -83,24 +88,33 @@ func TestPutOIDCState_НаПотолкеНеСканируетНаКаждойВ
 	}
 }
 
-// Вытеснение забирает старейших: запись, которой жить дольше всех, обязана
-// пережить пачку. Иначе «вытесняем старейших» вырождается в «вытесняем кого
-// попало», и под флудом теряются свежие входы живых пользователей.
-func TestPutOIDCState_ВытесняетсяСтарейшее(t *testing.T) {
+// Вытеснение удаляет именно n старейших, а не произвольные n элементов map.
+// Проверка одного долгожителя была вероятностной: при случайном удалении 10%
+// он всё равно выживал примерно в девяти запусках из десяти.
+func TestEvictOldestOIDCStates_УдаляютсяИменноСтарейшие(t *testing.T) {
 	resetOIDCStates()
 	t.Cleanup(resetOIDCStates)
 
-	for i := 0; i < maxOIDCStates-1; i++ {
-		putOIDCState(randomStateKey(i), &oidcState{expires: time.Now().Add(time.Minute)})
+	now := time.Now()
+	oidcStatesMu.Lock()
+	oidcStates = map[string]*oidcState{
+		"старейший": {expires: now.Add(time.Minute)},
+		"старый":    {expires: now.Add(2 * time.Minute)},
+		"свежий":    {expires: now.Add(3 * time.Minute)},
+		"новейший":  {expires: now.Add(4 * time.Minute)},
 	}
-	putOIDCState("долгожитель", &oidcState{expires: time.Now().Add(24 * time.Hour)})
+	evictOldestOIDCStates(2)
+	_, oldestExists := oidcStates["старейший"]
+	_, oldExists := oidcStates["старый"]
+	_, freshExists := oidcStates["свежий"]
+	_, newestExists := oidcStates["новейший"]
+	oidcStatesMu.Unlock()
 
-	for i := 0; i < oidcEvictBatch; i++ {
-		putOIDCState(randomStateKey(maxOIDCStates+i), &oidcState{expires: time.Now().Add(time.Minute)})
+	if oldestExists || oldExists {
+		t.Errorf("старейшие записи пережили вытеснение: старейший=%v старый=%v", oldestExists, oldExists)
 	}
-
-	if _, ok := takeOIDCState("долгожитель"); !ok {
-		t.Error("вытеснена запись с самым дальним истечением — вытеснение идёт не по возрасту")
+	if !freshExists || !newestExists {
+		t.Errorf("вытеснены свежие записи: свежий=%v новейший=%v", freshExists, newestExists)
 	}
 }
 

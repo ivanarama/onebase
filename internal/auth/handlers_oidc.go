@@ -69,6 +69,7 @@ var (
 	oidcLastSweep       time.Time
 	oidcStatesDrops     int // вытеснено под давлением — видно в журнале
 	oidcStatesEvictions int // сколько раз вытесняли пачку (для тестов)
+	oidcStatesScans     int // сколько полных обходов карты выполнено (для тестов)
 )
 
 func putOIDCState(state string, s *oidcState) {
@@ -79,6 +80,7 @@ func putOIDCState(state string, s *oidcState) {
 	// потолку» (условие через ИЛИ), а на потолке карта под флудом находится
 	// постоянно — то есть обход шёл на каждой вставке.
 	if now.Sub(oidcLastSweep) >= oidcSweepInterval {
+		oidcStatesScans++
 		for k, v := range oidcStates {
 			if now.After(v.expires) {
 				delete(oidcStates, k)
@@ -98,7 +100,7 @@ func putOIDCState(state string, s *oidcState) {
 // evictOldestOIDCStates удаляет n записей с самым близким истечением.
 // Вызывается под oidcStatesMu.
 //
-// Один проход + частичная сортировка вместо n проходов «найти минимум»:
+// Один проход + одна сортировка вместо n проходов «найти минимум»:
 // прежний вариант искал старейшего заново для каждой вытесняемой записи, и на
 // потолке это давало два полных обхода карты на каждый запрос логина.
 func evictOldestOIDCStates(n int) {
@@ -110,6 +112,7 @@ func evictOldestOIDCStates(n int) {
 		expires time.Time
 	}
 	entries := make([]entry, 0, len(oidcStates))
+	oidcStatesScans++
 	for k, v := range oidcStates {
 		entries = append(entries, entry{key: k, expires: v.expires})
 	}
