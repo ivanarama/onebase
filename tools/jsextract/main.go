@@ -72,7 +72,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "использование: jsextract -out <каталог> <файл.go> [...]")
 		os.Exit(2)
 	}
-	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+	if err := os.MkdirAll(*outDir, 0o750); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

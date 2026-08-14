@@ -188,7 +188,9 @@ jobs:
           set -eu
           tmp="${RUNNER_TEMP:-/tmp}/inline-js"
           rm -rf "$tmp"
-          files="$(git ls-files '*.go' | grep -v '_test\.go$' | xargs grep -l '<script' || true)"
+          # Сам экстрактор исключён: в его регулярках лежит литерал <script…>,
+          # и гейт нашёл бы «сломанный скрипт» в собственном исходнике.
+          files="$(git ls-files '*.go' | grep -vE '_test\.go$|^tools/jsextract/' | xargs grep -l '<script' || true)"
           [ -n "$files" ] || { echo "::error::не найдено ни одного шаблона с <script> — сломан отбор"; exit 1; }
           # jsextract сам падает, если не извлёк ни одного блока: пустая выдача
           # означала бы не «чисто», а сломанный экстрактор.
