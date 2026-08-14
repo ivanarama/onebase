@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 )
 
 // ValueTable — in-memory таблица значений (ТаблицаЗначений), аналог типа 1С.
@@ -291,32 +290,11 @@ func (c *vtColumns) CallMethod(name string, args []any) any {
 	return nil
 }
 
-// compareAny сравнивает значения для сортировки/поиска: числа по величине,
-// даты по времени, остальное — как строки. Возвращает -1/0/1.
+// compareAny сравнивает значения для сортировки/поиска: числа точно как
+// decimal, даты по времени, остальное — как строки. Возвращает -1/0/1.
 func compareAny(a, b any) int {
-	if af, aok := toFloat(a); aok {
-		if bf, bok := toFloat(b); bok {
-			switch {
-			case af < bf:
-				return -1
-			case af > bf:
-				return 1
-			default:
-				return 0
-			}
-		}
-	}
-	if at, aok := a.(time.Time); aok {
-		if bt, bok := b.(time.Time); bok {
-			switch {
-			case at.Before(bt):
-				return -1
-			case at.After(bt):
-				return 1
-			default:
-				return 0
-			}
-		}
-	}
-	return strings.Compare(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+	// Используем тот же comparator, что у операторов <, >, <= и >=. Старый
+	// путь через float64 склеивал разные Decimal за границей 2^53, и стабильная
+	// сортировка оставляла их в исходном (в том числе неверном) порядке.
+	return compare(a, b)
 }

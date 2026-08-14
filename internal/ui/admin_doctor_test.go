@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -135,5 +136,59 @@ func TestAdminDoctorFixesSelectedCheck(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "Исправлено:") {
 		t.Error("страница не сообщила об исправлении")
+	}
+}
+
+func TestAdminDoctorFindsAndFixesOrphanAccountEntry(t *testing.T) {
+	s := newDoctorTestServer(t)
+	ctx := context.Background()
+	reg := &metadata.AccountRegister{
+		Name:      "БухУчёт",
+		Accounts:  "Основной",
+		Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}},
+	}
+	if err := s.store.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{reg}); err != nil {
+		t.Fatal(err)
+	}
+	s.reg.LoadAccountRegisters([]*metadata.AccountRegister{reg}, nil)
+
+	period := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	rows := []map[string]any{{"счётдт": "41", "счёткт": "60", "сумма": float64(100)}}
+	if err := s.store.WriteAccountMovements(ctx, reg.Name, "Реализация", uuid.New(), rows, reg, &period); err != nil {
+		t.Fatal(err)
+	}
+
+	countRows := func() int {
+		var n int
+		if err := s.store.QueryRow(ctx, "SELECT COUNT(*) FROM "+metadata.AccountRegTableName(reg.Name)).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	getW := httptest.NewRecorder()
+	s.adminCleanup(getW, httptest.NewRequest(http.MethodGet, "/ui/admin/cleanup", nil))
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GET: код ответа %d", getW.Code)
+	}
+	for _, want := range []string{reg.Name, "регистратор (Реализация) не существует"} {
+		if !strings.Contains(getW.Body.String(), want) {
+			t.Fatalf("GET не показал сиротскую проводку (%q): %s", want, getW.Body.String())
+		}
+	}
+	if got := countRows(); got != 1 {
+		t.Fatalf("GET изменил проводки бухрегистра: осталось %d", got)
+	}
+
+	form := url.Values{"fix": {"orphan-movements"}}
+	req := httptest.NewRequest(http.MethodPost, "/ui/admin/cleanup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postW := httptest.NewRecorder()
+	s.adminCleanup(postW, req)
+	if postW.Code != http.StatusOK {
+		t.Fatalf("POST: код ответа %d", postW.Code)
+	}
+	if got := countRows(); got != 0 {
+		t.Fatalf("POST не удалил сиротскую проводку бухрегистра: осталось %d", got)
 	}
 }
