@@ -609,17 +609,26 @@ func (r *Runner) stopBaseHeld(base *Base) error {
 // усыновлённые базы из snapshot. Пока операция идёт, Start отклоняется. При
 // holdStarts=true запрет остаётся после успеха: close/update должен исключить
 // запуск новой базы между проверенной остановкой и завершением launcher.
-func (r *Runner) StopAll(bases []*Base, holdStarts bool) error {
+// Первым значением возвращаются базы, порт которых занят неподтверждённым
+// процессом: их лаунчер намеренно не трогал.
+func (r *Runner) StopAll(bases []*Base, holdStarts bool) ([]RunningBase, error) {
 	if err := r.holdStarts(); err != nil {
-		return err
+		return nil, err
 	}
 	return r.stopAllHeld(bases, holdStarts)
 }
 
 // stopAllHeld требует lifecycle lease и делает полный preflight до первого
-// stop. Неуправляемая/неизвестная занятость порта поэтому не оставляет уже
-// остановленные базы при отказе операции.
-func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) error {
+// stop: кого останавливаем, решаем по согласованному снимку статусов.
+//
+// Убивать чужой PID только за то, что он занял сохранённый порт, по-прежнему
+// нельзя — но и отказом всей операции такая занятость больше не становится.
+// Иначе достаточно одной базы, чей порт занят посторонним процессом (или
+// соседкой по тому же номеру порта), чтобы «Стоп всё» и ответ «Нет» в диалоге
+// закрытия отказывали навсегда: свои базы не останавливались, а окно лаунчера
+// нельзя было закрыть. Теперь останавливается всё, чем лаунчер доказуемо
+// владеет, а неуправляемая занятость возвращается вызывающему для показа.
+func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) ([]RunningBase, error) {
 	type procInfo struct {
 		id   string
 		name string
@@ -667,18 +676,14 @@ func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) error {
 		}()
 	}
 	wg.Wait()
+	var skipped []RunningBase
 	for i, base := range bases {
 		if base == nil || managedProcMatchesBase(trackedProcs[base.ID], base) {
 			continue
 		}
 		if statuses[i].Occupied && !statuses[i].Controllable {
-			recordErr(fmt.Errorf("база %q или её порт %d заняты процессом без подтверждённого безопасного управления",
-				base.Name, base.Port))
+			skipped = append(skipped, RunningBase{Name: base.Name, Port: base.Port})
 		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		r.AllowStarts()
-		return err
 	}
 
 	for i := range all {
@@ -707,7 +712,7 @@ func (r *Runner) stopAllHeld(bases []*Base, holdStarts bool) error {
 	if err != nil || !holdStarts {
 		r.AllowStarts()
 	}
-	return err
+	return skipped, err
 }
 
 // AllowStarts снимает gate после обычного «Стоп всё» или неудачного update.

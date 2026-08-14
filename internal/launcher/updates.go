@@ -547,9 +547,12 @@ func (h *handler) stopAllForUpdate(st *selfupdate.State, guard func(*selfupdate.
 	}
 	*st = updated
 
-	// stopAllHeld releases the lease on error and retains it on success.
+	// stopAllHeld releases the lease on error and retains it on success. Его
+	// список пропущенных здесь всегда пуст: обновление платформы заменяет
+	// бинарь и потому отвергает неподтверждённую занятость порта своим
+	// preflight выше — в отличие от «Стоп всё», которое просто закрывает окно.
 	leaseOwned = false
-	if err := h.runner.stopAllHeld(bases, true); err != nil {
+	if _, err := h.runner.stopAllHeld(bases, true); err != nil {
 		if len(beforeResume) > 0 && beforeResume[0] != nil {
 			if releaseErr := beforeResume[0](); releaseErr != nil {
 				return errors.Join(err, fmt.Errorf("release update target before resuming bases: %w", releaseErr))

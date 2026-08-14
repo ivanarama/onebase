@@ -110,6 +110,10 @@ type handler struct {
 	// generation changed, the old in-memory launcher must reject all further
 	// requests while handing off (or after a failed restart).
 	updateQuiescing atomic.Bool
+	// flashes — одноразовые сообщения списка баз (flash.go): результат операции,
+	// выполненной навигацией, показывается баннером после редиректа.
+	flashMu sync.Mutex
+	flashes map[string]flashMessage
 }
 
 // baseStatus — закэшированный результат дорогих проверок одной базы.
@@ -252,6 +256,7 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		selected = vms[0]
 	}
 
+	flash, _ := h.takeFlash(r.URL.Query().Get("flash"))
 	render(w, r, "page-index", map[string]any{
 		"Title":        tr(resolveLang(r), "onebase — Информационные базы"),
 		"Bases":        vms,
@@ -259,6 +264,8 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		"NativeOK":     NativeIsolatedSupported(),
 		"RunningCount": runningCount,
 		"ClosePolicy":  h.onClosePolicy(),
+		"FlashKind":    flash.kind,
+		"FlashText":    flash.text,
 		// Состояние обновлений читается из файла, без обращения к сети:
 		// проверку делает фоновая горутина (план 92).
 		"Update": h.updatesState(),
@@ -272,10 +279,14 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) newForm(w http.ResponseWriter, r *http.Request) {
+	port := defaultBasePort
+	if bases, err := h.store.List(); err == nil {
+		port = freeRegistryPort(bases)
+	}
 	render(w, r, "page-form", map[string]any{
 		"Title": tr(resolveLang(r), "onebase — Добавить базу"),
 		"IsNew": true,
-		"Base":  &Base{ConfigSource: "file", DBType: "sqlite", Port: 8080},
+		"Base":  &Base{ConfigSource: "file", DBType: "sqlite", Port: port},
 		"Error": "",
 	})
 }
@@ -324,6 +335,15 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 			"IsNew": true, "Base": b, "Error": tr(lang, "Укажите строку подключения к PostgreSQL"),
 		})
 		return
+	}
+	if bases, err := h.store.List(); err == nil {
+		if owner := portOwner(bases, "", b.Port); owner != nil {
+			render(w, r, "page-form", map[string]any{
+				"Title": tr(lang, "onebase — Добавить базу"),
+				"IsNew": true, "Base": b, "Error": portConflictError(lang, owner, bases),
+			})
+			return
+		}
 	}
 	// Creating a database-backed registration may open or initialize the same
 	// database that a restore is replacing. Share the global lifecycle gate so
@@ -452,6 +472,15 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 			"IsNew": false, "Base": b, "Error": tr(lang, "Укажите строку подключения к PostgreSQL"),
 		})
 		return
+	}
+	if bases, err := h.store.List(); err == nil {
+		if owner := portOwner(bases, b.ID, b.Port); owner != nil {
+			render(w, r, "page-form", map[string]any{
+				"Title": tr(lang, "onebase — Изменить базу"),
+				"IsNew": false, "Base": b, "Error": portConflictError(lang, owner, bases),
+			})
+			return
+		}
 	}
 	releaseDB := acquireCfgDBExclusive(b.ID)
 	defer releaseDB()
@@ -693,7 +722,9 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.runner.StopBase(b); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		// Кнопку жмут навигацией: текст ошибки страницей превратил бы окно
+		// лаунчера в тупик — в нативном окне нет ни адресной строки, ни «Назад».
+		h.redirectWithFlash(w, r, "/?sel="+id, flashError, err.Error())
 		return
 	}
 	h.invalidateStatus(id) // индикатор «остановлена» — сразу, не через TTL
@@ -702,15 +733,19 @@ func (h *handler) stop(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) killAll(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("sel")
-
-	if err := h.stopAllBases(false); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-
 	redirect := "/"
 	if sel != "" {
 		redirect = "/?sel=" + sel
+	}
+
+	skipped, err := h.stopAllBases(false)
+	if err != nil {
+		h.redirectWithFlash(w, r, redirect, flashError, err.Error())
+		return
+	}
+	if len(skipped) != 0 {
+		h.redirectWithFlash(w, r, redirect, flashWarning, skippedBasesText(resolveLang(r), skipped))
+		return
 	}
 	http.Redirect(w, r, redirect, http.StatusFound)
 }
@@ -1114,7 +1149,52 @@ func (h *handler) browseFile(w http.ResponseWriter, r *http.Request) {
 func parsePort(s string) int {
 	n, _ := strconv.Atoi(s)
 	if n <= 0 {
-		return 8080
+		return defaultBasePort
 	}
 	return n
+}
+
+const defaultBasePort = 8080
+
+// portOwner — база реестра (кроме excludeID), за которой уже закреплён порт.
+//
+// Одновременно работать на одном порту две базы всё равно не могут, а лаунчер
+// узнаёт свой процесс по порту: соседка по номеру выглядит «работающей»
+// (порт занят), остановить её нельзя (identity на порту принадлежит другой
+// базе), и до этой проверки такая пара блокировала «Стоп всё» вместе с
+// закрытием окна. Дешевле не дать создать конфликт, чем объяснять его потом.
+func portOwner(bases []*Base, excludeID string, port int) *Base {
+	for _, b := range bases {
+		if b == nil || b.ID == excludeID {
+			continue
+		}
+		if b.Port == port {
+			return b
+		}
+	}
+	return nil
+}
+
+// portConflictError — текст отказа с подсказкой свободного порта.
+func portConflictError(lang string, owner *Base, bases []*Base) string {
+	return fmt.Sprintf(tr(lang, "Порт %d уже закреплён за базой «%s»: две базы не могут работать на одном порту. Свободный порт: %d"),
+		owner.Port, owner.Name, freeRegistryPort(bases))
+}
+
+// freeRegistryPort — первый номер порта, не занятый другой базой реестра.
+// Форма новой базы предлагает его сразу, чтобы порт по умолчанию не оказался
+// третьим подряд 8080.
+func freeRegistryPort(bases []*Base) int {
+	used := make(map[int]bool, len(bases))
+	for _, b := range bases {
+		if b != nil {
+			used[b.Port] = true
+		}
+	}
+	for port := defaultBasePort; port < defaultBasePort+1000; port++ {
+		if !used[port] {
+			return port
+		}
+	}
+	return defaultBasePort
 }

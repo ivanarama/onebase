@@ -247,21 +247,36 @@ func TestStopAll_DoesNotKillUnidentifiedListener(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 	base := controlTestBase(t, ts, "wrong")
-	if err := NewRunner().StopAll([]*Base{base}, false); err == nil {
-		t.Fatal("unidentified listener must fail closed")
+	skipped, err := NewRunner().StopAll([]*Base{base}, false)
+	if err != nil {
+		t.Fatalf("чужой процесс на порту не должен превращать «Стоп всё» в отказ: %v", err)
+	}
+	if len(skipped) != 1 || skipped[0].Port != base.Port {
+		t.Fatalf("база с неподтверждённым процессом на порту должна вернуться пропущенной: %+v", skipped)
 	}
 	if portFree(base.Port) {
 		t.Fatal("StopAll killed another process by port")
 	}
 }
 
-func TestStopAll_PreflightDoesNotPartiallyStopTrackedBases(t *testing.T) {
-	trackedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
+// Одна база, чей порт занят неподтверждённым процессом (в том числе соседка по
+// номеру порта), не должна отменять остановку остальных: иначе «Стоп всё» и
+// ответ «Нет» в диалоге закрытия отказывают навсегда, и окно не закрыть.
+func TestStopAll_StopsControllableBasesDespiteUnidentifiedPort(t *testing.T) {
+	const token = "adopted-token"
+	processExited := make(chan struct{})
+	close(processExited)
+	useExitWaiter(t, processExited)
+
+	var adoptedServer *httptest.Server
+	var stopOnce sync.Once
+	adoptedServer = httptest.NewServer(authenticatedControlHandler(t, token, "adopted", func() {
+		stopOnce.Do(func() { go adoptedServer.Close() })
 	}))
-	t.Cleanup(trackedServer.Close)
-	tracked := controlTestBase(t, trackedServer, "tracked-token")
-	tracked.ID = "tracked"
+	t.Cleanup(adoptedServer.Close)
+	adopted := controlTestBase(t, adoptedServer, token)
+	adopted.ID = "adopted"
+	adopted.Name = "Задачи"
 
 	unknownServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -269,14 +284,20 @@ func TestStopAll_PreflightDoesNotPartiallyStopTrackedBases(t *testing.T) {
 	t.Cleanup(unknownServer.Close)
 	unknown := controlTestBase(t, unknownServer, "unknown-token")
 	unknown.ID = "unknown"
+	unknown.Name = "MiniConf"
 
-	runner := NewRunner()
-	runner.procs[tracked.ID] = &managedProc{port: tracked.Port}
-	if err := runner.StopAll([]*Base{tracked, unknown}, false); err == nil {
-		t.Fatal("unknown occupied port must abort StopAll")
+	skipped, err := NewRunner().StopAll([]*Base{adopted, unknown}, false)
+	if err != nil {
+		t.Fatalf("StopAll: %v", err)
 	}
-	if !runner.IsRunning(tracked.ID) || portFree(tracked.Port) {
-		t.Fatal("preflight failure partially stopped or forgot a tracked base")
+	if len(skipped) != 1 || skipped[0].Name != "MiniConf" {
+		t.Fatalf("пропущенной должна быть только неподтверждённая база: %+v", skipped)
+	}
+	if !waitPortFree(adopted.Port, 2*time.Second) {
+		t.Fatal("управляемая база не остановлена из-за чужого процесса на другом порту")
+	}
+	if portFree(unknown.Port) {
+		t.Fatal("StopAll killed another process by port")
 	}
 }
 

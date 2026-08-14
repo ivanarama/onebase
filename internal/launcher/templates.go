@@ -20,7 +20,8 @@ const tplLauncherHead = `
 <title>{{.Title}}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#ECE9D8;min-height:100vh}
+/* колонка: тулбар — необязательный баннер результата операции — содержимое */
+body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#ECE9D8;min-height:100vh;display:flex;flex-direction:column}
 
 /* toolbar */
 .toolbar{background:linear-gradient(to bottom,#F5F4EE,#DDD9C7);border-bottom:1px solid #ACA899;padding:4px 6px;display:flex;align-items:center;gap:2px;flex-wrap:wrap}
@@ -43,7 +44,15 @@ body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#E
 .upd-notes{margin-top:8px;padding:8px 10px;background:#F7F7F4;border:1px solid #E0DDD2;border-radius:2px;font-size:11px;line-height:1.45;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:'Segoe UI',Tahoma,Arial,sans-serif}
 
 /* main layout */
-.content{display:flex;height:calc(100vh - 37px)}
+.content{display:flex;flex:1;min-height:0}
+
+/* баннер результата операции, выполненной навигацией (см. flash.go) */
+.flash{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid #ACA899;font-size:12px;line-height:1.45;max-height:30vh;overflow-y:auto}
+.flash-error{background:#fff0f0;border-bottom-color:#ffb3b3;color:#8b0000}
+.flash-warning{background:#FFF9E6;border-bottom-color:#E8D9A0;color:#6b5a1e}
+.flash-text{flex:1;white-space:pre-wrap;word-break:break-word}
+.flash-close{flex-shrink:0;color:inherit;text-decoration:none;opacity:.6;font-size:13px;padding:0 2px}
+.flash-close:hover{opacity:1}
 .list-panel{flex:1;padding:8px;overflow-y:auto}
 .info-panel{width:240px;background:#F5F4EE;border-left:1px solid #ACA899;padding:10px;font-size:12px;color:#555}
 
@@ -181,6 +190,13 @@ const tplIndex = `
   </a>
   {{end}}
 </div>
+
+{{if .FlashText}}
+<div class="flash {{if eq .FlashKind "error"}}flash-error{{else}}flash-warning{{end}}" role="status">
+  <span class="flash-text">{{.FlashText}}</span>
+  <a href="#" class="flash-close" onclick="return dismissFlash()" title="{{t $.Lang "Скрыть"}}">✕</a>
+</div>
+{{end}}
 
 <div class="content" id="launcher-content">
 <div class="list-panel">
@@ -504,9 +520,12 @@ function showCloseModal(running) {
   document.getElementById('close-modal-error').style.display = 'none';
   document.getElementById('close-modal').setAttribute('aria-busy', 'false');
   setCloseActionButtonsDisabled(false);
+	// Неподтверждённый процесс на порту лаунчер не останавливает, но и запрещать
+	// из-за него остановку остальных баз нельзя: раньше кнопка была выключена, и
+	// одна такая база лишала пользователя «Стоп всё» насовсем.
 	var stopButton = document.getElementById('close-modal-stop');
-	stopButton.disabled = hasBlocker;
-	stopButton.title = hasBlocker ? '{{t $.Lang "Сначала остановите неподтверждённый процесс вручную"}}' : '';
+	stopButton.disabled = false;
+	stopButton.title = hasBlocker ? '{{t $.Lang "Базы, чей порт занят неподтверждённым процессом, останутся работать"}}' : '';
   openCloseModal();
   // Фокус на безопасном варианте: Enter не должен случайно останавливать базы.
   focusCloseElement(document.getElementById('close-modal-background'));
@@ -579,7 +598,13 @@ function loadCloseInfo() {
       executeStop();
       return;
     }
-	if (data.running.length === 0) {
+	// Спрашиваем только про базы, которые лаунчер умеет остановить: у остальных
+	// ответ ничего не меняет — они останутся работать при любом выборе.
+	var stoppable = 0;
+	for (var i = 0; i < data.running.length; i++) {
+	  if (data.running[i] && data.running[i].controllable !== false) stoppable++;
+	}
+	if (stoppable === 0) {
 	  _closeFlow.choice = 'background';
 	  executeQuit();
 	  return;
@@ -650,6 +675,9 @@ function executeStop() {
     }
     _closeFlow.state = 'done';
     showCloseBusy(_closeMessages.stopped);
+    // Базы, которые лаунчер не вправе останавливать, продолжают работать.
+    // Сказать об этом надо до закрытия окна — потом сообщать уже некуда.
+    if (data && data.warning) alert(data.warning);
     finishClientClose();
   }).catch(function(err) {
     // /close-stop сам завершает launcher только после подтверждённой остановки.
@@ -792,6 +820,11 @@ function confirmKillAll(el) {
 
 syncClosePolicyControl();
 var _onebaseCloseDialogEnd = true;
+function dismissFlash() {
+  var el = document.querySelector('.flash');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+  return false;
+}
 function toggleIsoMenu(ev) {
   if (ev) { if (ev.preventDefault) ev.preventDefault(); if (ev.stopPropagation) ev.stopPropagation(); }
   var m = document.getElementById('iso-menu');
