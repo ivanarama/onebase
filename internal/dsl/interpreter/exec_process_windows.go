@@ -66,8 +66,12 @@ func runExecCommand(cmd *exec.Cmd) error {
 		_ = windows.CloseHandle(process)
 	}
 	if err != nil {
-		_ = cmd.Process.Kill()
+		// Wait receives the watchCtx result, and watchCtx may be trying to run
+		// cmd.Cancel after a concurrent context cancellation. Do not keep jobMu
+		// across Wait here: Cancel needs the same mutex and assignment has
+		// already failed, so there is no protected process tree to serialize.
 		jobMu.Unlock()
+		_ = cmd.Process.Kill()
 		waitErr := cmd.Wait()
 		if waitErr != nil {
 			return errors.Join(fmt.Errorf("protect command process tree: %w", err), waitErr)
