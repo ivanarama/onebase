@@ -48,36 +48,40 @@ func TestСобытиеФормы_ОтрубаетсяПоДедлайну(t *te
 	}
 }
 
-// Предел конкурентности: когда все слоты заняты, событие получает 429, а не
-// встаёт в очередь на соединение к БД.
+// Предел конкурентности: когда слот занят, событие получает 429, а не встаёт
+// в очередь на соединение к БД.
+//
+// Слот занимается напрямую через лимитер, а не вторым живым запросом: гнать
+// два прикладных DSL параллельно ради проверки гейта — значит проверять заодно
+// потокобезопасность фикстуры, и под -race тест падал именно на ней, а не на
+// предмете проверки.
 func TestСобытиеФормы_ПределКонкурентности(t *testing.T) {
 	s, ent := setupManagedEventsServer(t, `
-Процедура Долго()
-	Приостановить(5);
+Процедура Быстро()
+	Сообщить("ok");
 КонецПроцедуры
 `, map[metadata.FormEventType]string{}, []*metadata.FormElement{{
 		Kind:     metadata.FormElementButton,
 		Name:     "Кнопка",
-		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Долго"},
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Быстро"},
 	}})
-	s.cfg.Limits.RequestTimeoutSec = 30
 	s.cfg.Limits.ProcessorConcurrency = 1
 
 	body := url.Values{"_element": {"Кнопка"}, "_event": {string(metadata.FormEventOnClick)}, "_kind": {"object"}}
-	started := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		close(started)
-		executeFormEventRaw(t, s, ent, body)
-		close(done)
-	}()
-	<-started
-	// Даём первому запросу занять слот.
-	time.Sleep(300 * time.Millisecond)
 
-	rec := executeFormEventRaw(t, s, ent, body)
-	if rec.Code != 429 {
-		t.Errorf("второе событие при занятом слоте: код %d, ожидался 429", rec.Code)
+	// Пока слот свободен — событие проходит.
+	if rec := executeFormEventRaw(t, s, ent, body); rec.Code != 200 {
+		t.Fatalf("при свободном слоте код %d, ожидался 200", rec.Code)
 	}
-	<-done
+
+	s.ops = newOperationLimiter()
+	release, ok := s.ops.tryAcquire(opFormEvent, 1)
+	if !ok {
+		t.Fatal("не удалось занять слот в подготовке теста")
+	}
+	defer release()
+
+	if rec := executeFormEventRaw(t, s, ent, body); rec.Code != 429 {
+		t.Errorf("при занятом слоте код %d, ожидался 429 — предела конкурентности нет", rec.Code)
+	}
 }
