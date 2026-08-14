@@ -49,19 +49,35 @@ func applyReportComposition(raw []byte, f url.Values) ([]byte, error) {
 // точечно править одно поле документа без round-trip через типизированную
 // структуру (которая молча теряет неперечисленные в ней поля).
 func setYAMLMapField(m *yaml.Node, key string, val any) error {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			if val == nil {
-				m.Content = append(m.Content[:i], m.Content[i+2:]...)
-				return nil
+	mapping, err := resolveYAMLAlias(m)
+	if err != nil {
+		return err
+	}
+	existing, index, err := yamlMapField(mapping, key)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		if val == nil {
+			// Удаление определения anchor при живых aliases создало бы битый YAML.
+			// Alias-значение удалить безопасно: само определение находится в другом
+			// узле и остаётся на месте.
+			if existing.Kind != yaml.AliasNode && existing.Anchor != "" {
+				return fmt.Errorf("setYAMLMapField: нельзя удалить ключ %q с YAML-anchor %q", key, existing.Anchor)
 			}
-			var vn yaml.Node
-			if err := vn.Encode(val); err != nil {
-				return err
-			}
-			m.Content[i+1] = &vn
+			mapping.Content = append(mapping.Content[:index], mapping.Content[index+2:]...)
 			return nil
 		}
+		var vn yaml.Node
+		if err := vn.Encode(val); err != nil {
+			return err
+		}
+		target, err := resolveYAMLAlias(existing)
+		if err != nil {
+			return err
+		}
+		replaceYAMLNode(target, &vn)
+		return nil
 	}
 	if val == nil {
 		return nil
@@ -70,7 +86,7 @@ func setYAMLMapField(m *yaml.Node, key string, val any) error {
 	if err := vn.Encode(val); err != nil {
 		return err
 	}
-	m.Content = append(m.Content,
+	mapping.Content = append(mapping.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
 		&vn)
 	return nil

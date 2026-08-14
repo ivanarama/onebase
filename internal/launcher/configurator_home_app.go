@@ -192,7 +192,15 @@ func (h *handler) configuratorSaveSubsystem(w http.ResponseWriter, r *http.Reque
 			// rows и плоский список виджетов взаимоисключающи.
 			return setYAMLMapField(home, "widgets", nil)
 		}
-		if home, err := yamlSubMap(doc, "home_page"); err == nil {
+		homeValue, _, err := yamlMapField(doc, "home_page")
+		if err != nil {
+			return err
+		}
+		if homeValue != nil {
+			home, err := yamlSubMap(doc, "home_page")
+			if err != nil {
+				return err
+			}
 			if err := setYAMLMapField(home, "rows", nil); err != nil {
 				return err
 			}

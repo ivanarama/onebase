@@ -4,11 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/configdb"
+	"gopkg.in/yaml.v3"
 )
 
 // Сохранение подсистемы из конфигуратора обязано быть точечной правкой, а не
@@ -114,5 +116,142 @@ home_page:
 	// И собственно правка применилась.
 	if !strings.Contains(saved, "ГТП_атс") {
 		t.Errorf("новый состав не сохранён:\n%s", saved)
+	}
+}
+
+func TestSaveSubsystem_FileModePreservesUntouchedDataAndHomePageSemantics(t *testing.T) {
+	h, cfgDir := newFileBaseHandler(t)
+	h.runner = NewRunner()
+	if err := os.MkdirAll(filepath.Join(cfgDir, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config", "app.yaml"), []byte("name: Тест\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := writeCfgFileRv(t, cfgDir, "subsystems", "продажи.yaml", `# комментарий подсистемы
+name: Продажи
+title: Старый
+titles:
+  en: Sales
+icon: cart
+order: 1
+roles: [Менеджер]
+experimental_flag: true
+contents:
+  catalogs: [Старый]
+  pages: [Сводка]
+home_page:
+  title: Рабочий стол
+  titles:
+    en: Dashboard
+  layout: grid
+  widgets:
+    - name: СтарыйВиджет
+  experimental_home: keep
+`)
+
+	form := url.Values{
+		"subsystem_name": {"Продажи"},
+		"title":          {"Новый заголовок"},
+		"order":          {"7"},
+		"catalogs":       {"Новый"},
+		"home_layout":    {"rows"},
+		"home_rows":      {`[["Первый","Второй"]]`},
+	}
+	rec := postCfgRv(t, "test", "/bases/test/configurator/subsystem", form, h.configuratorSaveSubsystem)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := string(raw)
+	for _, fragment := range []string{
+		"# комментарий подсистемы",
+		"en: Sales",
+		"roles: [Менеджер]",
+		"experimental_flag: true",
+		"pages: [Сводка]",
+		"title: Рабочий стол",
+		"en: Dashboard",
+		"experimental_home: keep",
+	} {
+		if !strings.Contains(saved, fragment) {
+			t.Errorf("после file-mode сохранения потеряно %q:\n%s", fragment, saved)
+		}
+	}
+	var got struct {
+		Title    string `yaml:"title"`
+		Icon     string `yaml:"icon"`
+		Order    int    `yaml:"order"`
+		Contents struct {
+			Catalogs []string `yaml:"catalogs"`
+			Pages    []string `yaml:"pages"`
+		} `yaml:"contents"`
+		HomePage struct {
+			Title  string `yaml:"title"`
+			Layout string `yaml:"layout"`
+			Rows   []struct {
+				Widgets []string `yaml:"widgets"`
+			} `yaml:"rows"`
+			Widgets []map[string]any `yaml:"widgets"`
+		} `yaml:"home_page"`
+	}
+	if err := yaml.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("сохранённый YAML не разбирается: %v\n%s", err, saved)
+	}
+	if got.Title != "Новый заголовок" || got.Icon != "" || got.Order != 7 {
+		t.Errorf("поля формы сохранены неверно: title=%q icon=%q order=%d", got.Title, got.Icon, got.Order)
+	}
+	if len(got.Contents.Catalogs) != 1 || got.Contents.Catalogs[0] != "Новый" ||
+		len(got.Contents.Pages) != 1 || got.Contents.Pages[0] != "Сводка" {
+		t.Errorf("contents = %+v", got.Contents)
+	}
+	if got.HomePage.Title != "Рабочий стол" || got.HomePage.Layout != "rows" ||
+		len(got.HomePage.Rows) != 1 || len(got.HomePage.Rows[0].Widgets) != 2 || len(got.HomePage.Widgets) != 0 {
+		t.Errorf("home_page semantics нарушена: %+v", got.HomePage)
+	}
+}
+
+func TestSaveSubsystem_MalformedExistingYAMLIsNotOverwritten(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "duplicate keys",
+			raw:  "name: Продажи\nname: Дубль\ncontents: {}\n",
+		},
+		{
+			name: "home page is scalar",
+			raw:  "name: Продажи\ncontents: {}\nhome_page: сломано\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, cfgDir := newFileBaseHandler(t)
+			h.runner = NewRunner()
+			path := writeCfgFileRv(t, cfgDir, "subsystems", "продажи.yaml", tt.raw)
+			form := url.Values{
+				"subsystem_name": {"Продажи"},
+				"title":          {"Новый заголовок"},
+				"order":          {"2"},
+			}
+			rec := postCfgRv(t, "test", "/bases/test/configurator/subsystem", form, h.configuratorSaveSubsystem)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"ok":false`) {
+				t.Fatalf("обработчик не сообщил ошибку: %s", rec.Body.String())
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.raw {
+				t.Fatalf("ошибочный YAML был перезаписан:\n--- want\n%s--- got\n%s", tt.raw, got)
+			}
+		})
 	}
 }
