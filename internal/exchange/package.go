@@ -381,9 +381,14 @@ func validateObjectShape(ent *metadata.Entity, obj PackageObject) error {
 			want[f.Name] = struct{}{}
 		}
 		for rowNo, row := range rows {
-			if len(row) != len(want) {
-				return fmt.Errorf("exchange: %s/%s.%s[%d] имеет несовместимый набор полей", ent.Name, obj.ID, tp.Name, rowNo)
-			}
+			// Строки ТЧ живут по тем же правилам, что шапка (план 117D):
+			// недостающее поле — не ошибка, неизвестное — ошибка.
+			//
+			// Прежняя проверка «набор совпадает точно» ломала как раз
+			// рекомендованный порядок обновления узлов: получателя обновляют
+			// первым, у него появляется новое поле ТЧ, а отправитель его ещё не
+			// шлёт — и пакет отклонялся целиком, хотя недостающее поле означает
+			// ровно «незаполнено» (#885).
 			for field := range row {
 				if _, ok := want[field]; !ok {
 					return fmt.Errorf("exchange: %s/%s.%s[%d] содержит неизвестное поле %q", ent.Name, obj.ID, tp.Name, rowNo, field)
