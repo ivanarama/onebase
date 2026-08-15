@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/installtest"
 )
 
 func TestAcquireSQLiteExclusiveAndReusable(t *testing.T) {
@@ -110,7 +112,11 @@ func TestAcquireSQLiteTargetRejectsFilesystemRoot(t *testing.T) {
 }
 
 func TestCanonicalSQLitePathResolvesExistingSymlinkParent(t *testing.T) {
-	realDir := t.TempDir()
+	// Ожидание сравнивается с УЖЕ канонизированным путём: на windows-раннере
+	// TEMP приходит коротким именем 8.3 (C:\Users\RUNNER~1\…), а канонизация
+	// разворачивает его в длинное. Сырой t.TempDir() выглядел бы как дефект
+	// продукта, хотя прав как раз продукт (#924).
+	realDir := installtest.CanonicalTempDir(t)
 	aliasRoot := t.TempDir()
 	aliasDir := filepath.Join(aliasRoot, "alias")
 	if err := os.Symlink(realDir, aliasDir); err != nil {
@@ -127,7 +133,7 @@ func TestCanonicalSQLitePathResolvesExistingSymlinkParent(t *testing.T) {
 }
 
 func TestAcquireSQLiteTargetPinsResolvedSymlinkTarget(t *testing.T) {
-	realDir := t.TempDir()
+	realDir := installtest.CanonicalTempDir(t)
 	otherDir := t.TempDir()
 	aliasRoot := t.TempDir()
 	aliasDir := filepath.Join(aliasRoot, "alias")

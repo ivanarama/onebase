@@ -13,17 +13,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/installtest"
 	"github.com/ivantit66/onebase/internal/selfupdate"
 	"github.com/ivantit66/onebase/internal/version"
 )
 
 // isolatedUpdatesHome уводит ~/.onebase во временный каталог: тесты не должны
 // трогать ни реестр баз, ни состояние обновлений пользователя.
+// isolatedUpdatesHome уводит состояние обновлений в приватный домашний каталог.
+//
+// Приватный, а не просто временный: каталог платформы вычисляется от HOME, и
+// selfupdate законно отказывается обновлять установку из общего /tmp. С обычным
+// t.TempDir() половина тестов обновления получала 403 «нет прав на запись в
+// каталог платформы» вместо проверяемого исхода — и падала всегда, и локально,
+// и на windows-раннере (#924).
 func isolatedUpdatesHome(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := installtest.PrivateHome(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+}
+
+// isolatedUpdatableInstall — изоляция состояния ПЛЮС подмена каталога платформы
+// на приватный.
+//
+// Каталог платформы вычисляется от os.Executable(), а не от HOME, поэтому под
+// `go test` им оказывается временный каталог тест-бинаря — общий и потому
+// непригодный для самообновления. Хендлер честно отвечал 403 «нет прав на
+// запись в каталог платформы» вместо проверяемого исхода, и пять тестов
+// обновления падали всегда: и локально, и на первом прогоне windows-раннера
+// (#924). Дефект был в фикстуре, а выглядел как дефект продукта.
+func isolatedUpdatableInstall(t *testing.T) string {
+	t.Helper()
+	isolatedUpdatesHome(t)
+	dir := installtest.PrivateInstallDir(t)
+	old := updateBinaryDir
+	updateBinaryDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { updateBinaryDir = old })
+	return dir
 }
 
 // По умолчанию платформа не подменяется молча: на канале build сборки выходят
@@ -105,7 +132,7 @@ func TestApplyStagedOnStartWaitsForGenerationBoundRecovery(t *testing.T) {
 }
 
 func TestApplyStagedOnStartApplyFailureClearsPrev(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	stageDir := t.TempDir()
 	binaryName := selfupdate.BinaryName()
@@ -288,7 +315,10 @@ func TestResumeAfterUpdateFailsClosedForMarkerInNonSelfUpdatableInstallation(t *
 
 func TestApplyStagedOnStartKeepsGateClosedForRecoveryPendingError(t *testing.T) {
 	isolatedUpdatesHome(t)
-	targetDir := t.TempDir()
+	// Каталог платформы обязан быть приватным: обычный t.TempDir() лежит в общем
+	// /tmp, selfupdate такую установку законно не обновляет, и тест проверял бы
+	// не тот исход (#924).
+	targetDir := installtest.PrivateInstallDir(t)
 	stageDir := t.TempDir()
 	files := selfupdate.PackageBinaries()
 	for _, name := range files {
@@ -652,7 +682,7 @@ func TestUpdatesChannel_RejectsUnknown(t *testing.T) {
 // Применять нечего — хендлер обязан сказать это, а не остановить базы «на всякий
 // случай».
 func TestUpdatesApply_WithoutStagedIsConflict(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	h := &handler{}
 	w := httptest.NewRecorder()
 	h.updatesApply(w, httptest.NewRequest("POST", "/updates/apply", nil))
@@ -662,7 +692,7 @@ func TestUpdatesApply_WithoutStagedIsConflict(t *testing.T) {
 }
 
 func TestUpdatesApplyFailureClearsPrev(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	staged := selfupdate.StagedInfo{Tag: "build-apply-failure", Dir: t.TempDir(), Verified: true}
 	if err := selfupdate.SaveState(selfupdate.State{
@@ -711,7 +741,7 @@ func TestUpdatesApplyFailureClearsPrev(t *testing.T) {
 }
 
 func TestUpdatesApplyKeepsLifecycleGateClosedWhileRecoveryIsPending(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	staged := selfupdate.StagedInfo{Tag: "build-recovery-pending", Dir: t.TempDir(), Verified: true}
 	if err := selfupdate.SaveState(selfupdate.State{Staged: &staged}); err != nil {
