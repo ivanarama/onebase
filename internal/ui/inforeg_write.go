@@ -99,22 +99,11 @@ func (s *Server) infoRegWriteRecordSet(ctx context.Context, ir *metadata.InfoReg
 		// the just-written exact primary key through the same predicate before
 		// publishing an exchange event. A mismatch returns an error from the
 		// surrounding transaction scope, which rolls the provisional upsert back.
-		filter := storage.RegFilter{
-			DimValues: make(map[string]any, len(dims)),
-			RowFilter: writeFilter,
-		}
-		for name, value := range dims {
-			filter.DimValues[name] = value
-		}
-		if period != nil {
-			filter.From = period
-			filter.To = period
-		}
-		rows, err := s.store.InfoRegList(ctx, ir, filter)
+		matches, err := s.store.InfoRegExactMatchesRowFilter(ctx, ir, dims, period, writeFilter)
 		if err != nil {
 			return err
 		}
-		if len(rows) != 1 {
+		if !matches {
 			return errRowPolicyDenied
 		}
 	}

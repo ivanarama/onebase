@@ -34,6 +34,49 @@ func (db *DB) InfoRegGetExact(ctx context.Context, ir *metadata.InfoRegister, di
 	return rec, err
 }
 
+// InfoRegExactMatchesRowFilter reports whether the row identified by the full
+// primary key satisfies rowFilter. Unlike RegFilter, every dimension value is
+// significant here, including an empty string. This is the fail-closed SQL
+// authority used after a provisional record-set upsert: an allowed sibling in
+// the same slice must never stand in for the row which was actually written.
+func (db *DB) InfoRegExactMatchesRowFilter(ctx context.Context, ir *metadata.InfoRegister,
+	dimKey map[string]any, period *time.Time, rowFilter *Predicate) (bool, error) {
+	if rowFilter == nil {
+		return false, errors.New("info register exact row filter is required")
+	}
+	d := db.dialect
+	table := metadata.InfoRegTableName(ir.Name)
+	where, args := dimWhere(d, ir, dimKey, 1)
+	if ir.Periodic {
+		if period == nil {
+			return false, fmt.Errorf("info register %s is periodic: period is required", ir.Name)
+		}
+		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
+		args = append(args, *period)
+	} else if period != nil {
+		return false, fmt.Errorf("info register %s is non-periodic: period is not allowed", ir.Name)
+	}
+	condition, filterArgs, _, err := PredicateSQLQualified(
+		d, InfoRegisterPredicateEntity(ir), rowFilter, len(args)+1, table,
+	)
+	if err != nil {
+		return false, fmt.Errorf("info register %s exact row filter: %w", ir.Name, err)
+	}
+	if condition == "" {
+		return false, fmt.Errorf("info register %s exact row filter is empty", ir.Name)
+	}
+	args = append(args, filterArgs...)
+	query := fmt.Sprintf("SELECT 1 FROM %s WHERE (%s) AND (%s) LIMIT 1", table, where, condition)
+	var one int
+	if err := db.QueryRow(ctx, query, args...).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("info register %s exact row filter query: %w", ir.Name, err)
+	}
+	return true, nil
+}
+
 // InfoRegApplyExchange применяет запись регистра сведений из пакета обмена
 // (план 86). Значения измерений/ресурсов приходят канонизированными (ссылки —
 // строкой-UUID, даты — RFC3339), поэтому приводим их к аргументам БД тем же

@@ -1423,6 +1423,60 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				}
 			})
 		}
+
+		t.Run("sql_postcheck_uses_exact_empty_dimension_key", func(t *testing.T) {
+			ir := &metadata.InfoRegister{
+				Name: "TypedDateSQLPostcheckEmptyKey",
+				Dimensions: []metadata.Field{
+					{Name: "Slice", Type: metadata.FieldTypeString},
+					{Name: "Key", Type: metadata.FieldTypeString},
+				},
+				Resources: []metadata.Field{
+					{Name: "EventAt", Type: metadata.FieldTypeDate},
+					{Name: "Value", Type: metadata.FieldTypeString},
+				},
+			}
+			if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+				t.Fatal(err)
+			}
+			registry := runtime.NewRegistry()
+			registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+			s := &Server{store: db, reg: registry}
+			user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+				InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
+				RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+					ir.Name: {"write": {
+						Field: "EventAt", Op: "ne", Value: auth.RowValue{Literal: instant},
+					}},
+				}},
+			}}}}
+
+			rs := newInfoRegRecordSet(s,
+				interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
+			rs.filter.Set("Slice", "S")
+			allowed := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+			allowed.Set("Key", "A")
+			allowed.Set("EventAt", instant.Add(time.Hour))
+			allowed.Set("Value", "allowed sibling")
+			denied := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+			denied.Set("Key", "")
+			// The in-memory comparator deliberately leaves strings untyped, while
+			// SQLite compares this canonical form as the same stored timestamp.
+			// The exact SQL postcheck for Key="" must not be satisfied by Key="A".
+			denied.Set("EventAt", instant.Format("2006-01-02 15:04:05-07:00"))
+			denied.Set("Value", "must roll back")
+
+			if caught := captureInfoRegRecordSetPanic(rs.write); caught == nil {
+				t.Fatal("record-set SQL postcheck substituted an allowed sibling for the denied empty-key row")
+			}
+			rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("denied multi-row write was not rolled back atomically: %#v", rows)
+			}
+		})
 	})
 }
 
