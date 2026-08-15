@@ -1589,6 +1589,21 @@ obManagedReady(obManagedInitDelegates);
     for (var i = 0; i < colsMeta.length; i++) {
       var c = colsMeta[i];
       var col = {id: c.id, name: c.name, field: c.id, width: 120, resizable: true, sortable: true};
+      if (c.virtual) {
+        // Виртуальная колонка (#845): значение приехало с сервера по ссылке из
+        // строки и в базе не хранится. Без редактора и в сером — иначе правка
+        // выглядела бы сохраняемой, а сохранять нечего.
+        col.virtual = true;
+        col.focusable = false;
+        col.cssClass = "ob-virtual";
+        if (c.width) col.width = c.width;
+        col.formatter = function(row, cell, value) {
+          if (value == null || value === "") return "";
+          return "<span style='color:#64748b'>" + String(value) + "</span>";
+        };
+        columns.push(col);
+        continue;
+      }
       if (c.type === "number") {
         col.cssClass = "ob-num";
         col.editor = ObNumberEditor;
@@ -1729,6 +1744,10 @@ obManagedReady(obManagedInitDelegates);
         var row = {};
         var cols = g.columnsMeta || [];
         for (var i = 0; i < cols.length; i++) {
+          // Виртуальная колонка не отправляется вовсе. Сервер её и так не примет
+          // (неизвестные ключи tp_json отбрасываются), но значение чужого
+          // объекта незачем возить обратно на запись (#845).
+          if (cols[i].virtual) continue;
           row[cols[i].id] = refId(item[cols[i].id]);
         }
         return row;

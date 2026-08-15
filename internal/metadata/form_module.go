@@ -206,6 +206,69 @@ type FormElement struct {
 	// представлением: "radio" (по умолчанию) или "select".
 	Options []FormOption `yaml:"options,omitempty"`
 	View    string       `yaml:"view,omitempty"`
+
+	// VirtualColumns — колонки табличной части, которые показываются, но не
+	// хранятся: реквизит по ссылке из строки (Клиент.Код). До них состав колонок
+	// ТЧ был жёстко равен её собственным реквизитам, и «показать рядом код
+	// клиента» закрывалось лишним реквизитом в схеме плюс ручным кодом в каждой
+	// форме (#845).
+	//
+	// Ключ намеренно не `columns`: тот занят таблицей значений
+	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
+	// такая колонка выглядела бы редактируемой, а редактировать нечего.
+	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+}
+
+// FormVirtualColumn — объявление виртуальной колонки табличной части.
+//
+// DataPath — путь ОТ СТРОКИ ТЧ ровно из двух сегментов:
+// «<ссылочный реквизит строки>.<реквизит целевого объекта>». Больше двух
+// сегментов не поддерживается сознательно: каждый следующий сегмент — ещё один
+// батч чтений на открытие формы, а язык запросов такие пути уже умеет.
+type FormVirtualColumn struct {
+	Name     string            `yaml:"name"`
+	DataPath string            `yaml:"data_path"`
+	TitleMap map[string]string `yaml:"title,omitempty"`
+	Width    int               `yaml:"width,omitempty"`
+}
+
+// ColumnTitle — подпись колонки для языка с откатом на ru и на имя колонки.
+func (c FormVirtualColumn) ColumnTitle(lang string) string {
+	if c.TitleMap != nil {
+		if t, ok := c.TitleMap[lang]; ok && t != "" {
+			return t
+		}
+		if t, ok := c.TitleMap["ru"]; ok && t != "" {
+			return t
+		}
+	}
+	return c.Name
+}
+
+// RefFieldName и TargetFieldName разбирают DataPath. ok=false — путь не из двух
+// непустых сегментов; такую форму отклоняет onebase check, а рантайм колонку
+// молча пропускает.
+func (c FormVirtualColumn) RefFieldName() (string, bool) {
+	ref, _, ok := splitVirtualColumnPath(c.DataPath)
+	return ref, ok
+}
+
+func (c FormVirtualColumn) TargetFieldName() (string, bool) {
+	_, target, ok := splitVirtualColumnPath(c.DataPath)
+	return target, ok
+}
+
+func splitVirtualColumnPath(path string) (ref, target string, ok bool) {
+	parts := strings.Split(path, ".")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	ref = strings.TrimSpace(parts[0])
+	target = strings.TrimSpace(parts[1])
+	if ref == "" || target == "" {
+		return "", "", false
+	}
+	return ref, target, true
 }
 
 // FormChoice — один пункт списка значений элемента ПолеСписка. Value хранится
