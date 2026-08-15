@@ -1,13 +1,72 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
+
+type detailPanelSnapshot struct {
+	row        map[string]any
+	rowAllowed bool
+	hookObject *runtime.Object
+}
+
+// loadDetailPanelSnapshot связывает декларативную RLS-проверку, объект
+// ПриЧтенииНаСервере и будущий ответ с одним снимком записи. Повторный GetByID
+// между этими этапами позволил бы конкурентному обновлению подменить данные,
+// по которым read-hook принимает решение (TOCTOU).
+func (s *Server) loadDetailPanelSnapshot(
+	ctx context.Context,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	id uuid.UUID,
+) (*detailPanelSnapshot, error) {
+	snapshot := &detailPanelSnapshot{}
+	err := s.store.WithReadSnapshot(ctx, func(snapshotCtx context.Context) error {
+		row, err := s.store.GetByID(snapshotCtx, entity.Name, id, entity)
+		if err != nil {
+			return err
+		}
+		snapshot.row = row
+		if row == nil {
+			return nil
+		}
+		snapshot.rowAllowed = s.rowAllowsSelected(snapshotCtx, entity, row)
+		if !snapshot.rowAllowed || form == nil {
+			return nil
+		}
+
+		tablePartRows := make(map[string][]map[string]any, len(entity.TableParts))
+		for _, tablePart := range entity.TableParts {
+			rows, err := s.store.GetTablePartRows(snapshotCtx, entity.Name, tablePart.Name, id, tablePart)
+			if err != nil {
+				return fmt.Errorf("табличная часть %s: %w", tablePart.Name, err)
+			}
+			tablePartRows[tablePart.Name] = rows
+		}
+		snapshot.hookObject = s.runtimeObjectFromSnapshot(snapshotCtx, entity, id, row, tablePartRows)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.rowAllowed && snapshot.row != nil {
+		// Отдельная копия оставляет hookObject с каноническими значениями, а из
+		// этого helper наружу выпускает только уже замаскированный снимок.
+		snapshot.row = cloneRecord(snapshot.row)
+		s.maskRecord(ctx, entity, snapshot.row)
+	}
+	return snapshot, nil
+}
 
 // detailPanelRecord отдаёт payload боковой панели для ОДНОЙ записи.
 //
@@ -38,25 +97,37 @@ func (s *Server) detailPanelRecord(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	row, err := s.store.GetByID(r.Context(), entity.Name, id, entity)
+	objForm := pickObjectFormWithReadHook(entity)
+	snapshot, err := s.loadDetailPanelSnapshot(r.Context(), entity, objForm, id)
 	if err != nil {
-		http.Error(w, s.errText(r, err), http.StatusNotFound)
+		if storage.IsNotFound(err) {
+			http.Error(w, s.errText(r, err), http.StatusNotFound)
+		} else {
+			s.serverError(w, r, fmt.Errorf("панель деталей: загрузка записи: %w", err))
+		}
 		return
 	}
-	if !s.rowAllowed(w, r, entity, "read", row) {
+	if snapshot.row == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !snapshot.rowAllowed {
+		s.renderForbidden(w, r)
 		return
 	}
 	// Карточка объекта и панель деталей — два равноправных read-path. Поэтому
-	// серверный read-hook формы обязан закрывать оба пути до формирования ответа.
-	if objForm := pickObjectFormWithReadHook(entity); objForm != nil {
-		if denied := s.runFormReadHook(r.Context(), entity, objForm, id); denied != nil {
+	// серверный read-hook формы обязан закрывать оба пути до формирования ответа
+	// и видеть тот же снимок, который уже прошёл RLS и попадёт в payload.
+	if objForm != nil {
+		if denied := s.runFormReadHookOnObject(r.Context(), entity, objForm, snapshot.hookObject); denied != nil {
 			s.renderForbidden(w, r)
 			return
 		}
 	}
 	// Порядок тот же, что в списке (handlers_entity.go): маска ПДн ДО
 	// разрешения ссылок, иначе защищённое значение уже стало бы подписью.
-	s.maskRecord(r.Context(), entity, row)
+	// loadDetailPanelSnapshot уже вернул отдельную замаскированную копию.
+	row := snapshot.row
 	s.resolveRefs(r.Context(), entity, []map[string]any{row})
 
 	lang := s.resolveLang(r)

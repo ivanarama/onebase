@@ -3,6 +3,7 @@ package ui
 // Боковая панель деталей активной записи (план 118B, issue #670).
 
 import (
+	"context"
 	"encoding/json"
 	"html"
 	"net/http"
@@ -681,5 +682,79 @@ func TestDetailPanel_HandlerHonorsFormReadHook(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "СЕКРЕТ-ДЕТАЛЬНОЙ-ПАНЕЛИ") {
 		t.Fatalf("detail panel leaked a row rejected by ПриЧтенииНаСервере: %s", w.Body.String())
+	}
+}
+
+func TestDetailPanel_HandlerReportsSnapshotLoadFailureAsServerError(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьДоступ()
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventType("ПриЧтенииНаСервере"): "ПроверитьДоступ",
+	}, []*metadata.FormElement{
+		{Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование"},
+	})
+	id := insertContragent(t, srv, ent, "НЕ-ДОЛЖНО-УТЕЧЬ")
+	// Табличная часть объявлена после миграции: чтение её отсутствующей таблицы
+	// детерминированно имитирует storage failure при сборке snapshot для hook.
+	ent.TableParts = []metadata.TablePart{{
+		Name:   "Строки",
+		Fields: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}},
+	}}
+	target := "/ui/catalog/" + ent.Name + "/" + id.String() + "/detail-panel"
+	r := reqWithChi(http.MethodGet, target, nil, map[string]string{
+		"kind": "catalog", "entity": ent.Name, "id": id.String(),
+	})
+	w := httptest.NewRecorder()
+	srv.detailPanelRecord(w, r)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("snapshot storage failure hidden as status %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "НЕ-ДОЛЖНО-УТЕЧЬ") {
+		t.Fatalf("storage error response leaked record data: %s", w.Body.String())
+	}
+}
+
+// RLS, ПриЧтенииНаСервере и payload обязаны использовать один снимок. Иначе
+// конкурентное обновление между первым GetByID и внутренней загрузкой read-hook
+// могло разрешить hook на новой строке, а в ответ вернуть старую секретную.
+func TestDetailPanel_SnapshotBindsReadHookToReturnedRow(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьДоступ()
+	Если Объект.Наименование = "СЕКРЕТНЫЙ-СНИМОК" Тогда
+		ВызватьИсключение("Нет доступа");
+	КонецЕсли;
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventType("ПриЧтенииНаСервере"): "ПроверитьДоступ",
+	}, []*metadata.FormElement{
+		{Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование"},
+	})
+	id := insertContragent(t, srv, ent, "СЕКРЕТНЫЙ-СНИМОК")
+	form := pickObjectFormWithReadHook(ent)
+	if form == nil {
+		t.Fatal("read-hook form not found")
+	}
+
+	snapshot, err := srv.loadDetailPanelSnapshot(context.Background(), ent, form, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.rowAllowed || snapshot.hookObject == nil {
+		t.Fatalf("incomplete authorized snapshot: %+v", snapshot)
+	}
+
+	// Имитируем конкурентное изменение ровно после получения снимка. Hook всё
+	// равно должен увидеть секретное значение из snapshot, а не перечитать уже
+	// разрешённую текущую строку из БД.
+	if err := srv.store.Upsert(context.Background(), ent.Name, id,
+		map[string]any{"Наименование": "ОТКРЫТЫЙ-СНИМОК"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.runFormReadHookOnObject(context.Background(), ent, form, snapshot.hookObject); err == nil {
+		t.Fatal("read-hook перечитал новую строку вместо авторизации исходного снимка")
+	}
+	if got := snapshot.row["Наименование"]; got != "СЕКРЕТНЫЙ-СНИМОК" {
+		t.Fatalf("returned snapshot changed after concurrent update: %v", got)
 	}
 }
