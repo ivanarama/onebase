@@ -259,8 +259,8 @@ jobs:
         run: go build ./...
 
   # Native close handling lives behind both Windows and CGo build constraints.
-  # A release-only compile check discovers launcher-window regressions too late;
-  # compile the actual GUI target on every PR that runs this workflow.
+  # A release-only check discovers launcher-window regressions too late; compile
+  # the actual GUI target and run its tagged unit tests on every PR.
   launcher-webview-build:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -275,6 +275,12 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
+
+      - name: Test launcher GUI state (Windows WebView2)
+        shell: pwsh
+        env:
+          CGO_ENABLED: 1
+        run: go test -tags webview ./internal/launcher
 
   # Ни один гейт не запускал СОБРАННЫЙ бинарь — поэтому регрессия «сборки
   # 783–792 не запускаются вне %USERPROFILE%» прошла зелёный CI и уехала к
@@ -416,9 +422,10 @@ jobs:
           [ "$rc" = "0" ] || { echo "::error::код возврата $rc:"; cat "$log"; exit 1; }
           echo "smoke ok: запуск из $(dirname "$SMOKE_BIN"), ответ 200, выход 0"
 
-  # Матрица создаёт четыре динамических check-name. Этот агрегатор даёт защите
-  # main один стабильный обязательный контекст `smoke` и краснеет, если упала
-  # либо была отменена хотя бы одна ячейка.
+  # Матрица создаёт четыре динамических check-name. Этот агрегатор даёт
+  # репозиторному конфигу branch protection один стабильный контекст `smoke` и
+  # краснеет, если упала либо была отменена хотя бы одна ячейка. В live-защите
+  # main он станет обязательным после применения конфига владельцем.
   smoke:
     name: smoke
     needs: [smoke_matrix]
@@ -436,9 +443,9 @@ jobs:
           fi
           echo "все smoke-ячейки зелёные"
 
-  # 15 windows-only исходников (5 из них — тесты) не исполняло вообще ничто:
-  # все джобы шли на ubuntu, а windows-раннер только собирал GUI. Поломка
-  # вскрывалась на релизе (план 122B).
+  # До #931 Windows-only код не исполнял ни один тестовый джоб: все тесты шли
+  # на ubuntu, а Windows-цель только компилировалась. Обычные Windows-тесты
+  # запускаются здесь; два файла под windows && webview — в GUI-джобе выше.
   #
   # Первый прогон этого джоба (PR #921) вскрыл шесть тестов, зависящих от
   # среды, — не от логики: короткие имена 8.3 во временном каталоге и каталог
@@ -454,8 +461,8 @@ jobs:
           go-version-file: '.go-version'
           cache: true
 
-      # -race на Windows намеренно не включаем: дорого, а базовый прогон и так
-      # впервые исполняет windows-only файлы.
+      # -race на Windows намеренно не включаем: дорого, а базовый прогон
+      # исполняет обычные (без тега webview) windows-only тесты.
       - name: Unit tests (Windows)
         run: go test ./...
 
