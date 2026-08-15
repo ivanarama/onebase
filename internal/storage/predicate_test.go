@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -153,6 +154,84 @@ func TestPredicateSQLRejectsScalarInNotIn(t *testing.T) {
 	_, _, _, err := PredicateSQL(SQLiteDialect{}, cat, &Predicate{Field: "Owner", Op: "not_in", Value: "u"}, 1)
 	if err == nil {
 		t.Fatal("scalar not_in must fail closed")
+	}
+}
+
+func TestMatchPredicateMatchesSQLNullSemantics(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "rls-null.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	entity := &metadata.Entity{
+		Name: "NullablePolicy",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Name", Type: metadata.FieldTypeString},
+			{Name: "Owner", Type: metadata.FieldTypeString},
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		name  string
+		owner any
+	}{{"nil", nil}, {"mine", "mine"}, {"other", "other"}} {
+		if err := db.Upsert(ctx, entity.Name, uuid.New(), map[string]any{
+			"Name": row.name, "Owner": row.owner,
+		}, entity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allRows, err := db.List(ctx, entity.Name, entity, ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		p    *Predicate
+		want []string
+	}{
+		{"eq", &Predicate{Field: "Owner", Op: "eq", Value: "other"}, []string{"other"}},
+		{"ne", &Predicate{Field: "Owner", Op: "ne", Value: "other"}, []string{"mine"}},
+		{"in containing NULL", &Predicate{Field: "Owner", Op: "in", Values: []any{nil, "mine"}}, []string{"mine"}},
+		{"not_in", &Predicate{Field: "Owner", Op: "not_in", Values: []any{"other"}}, []string{"mine"}},
+		{"not_in containing NULL", &Predicate{Field: "Owner", Op: "not_in", Values: []any{"other", nil}}, nil},
+		{"NOT preserves UNKNOWN", &Predicate{Not: &Predicate{Field: "Owner", Op: "eq", Value: "other"}}, []string{"mine"}},
+		{"OR can override UNKNOWN with TRUE", &Predicate{Any: []Predicate{
+			{Field: "Owner", Op: "ne", Value: "other"},
+			{Field: "Owner", Op: "eq", Value: nil},
+		}}, []string{"mine", "nil"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sqlRows, err := db.List(ctx, entity.Name, entity, ListParams{RowFilter: tc.p})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sqlNames, memoryNames []string
+			for _, row := range sqlRows {
+				sqlNames = append(sqlNames, row["Name"].(string))
+			}
+			for _, row := range allRows {
+				if MatchPredicate(row, tc.p) {
+					memoryNames = append(memoryNames, row["Name"].(string))
+				}
+			}
+			slices.Sort(sqlNames)
+			slices.Sort(memoryNames)
+			want := slices.Clone(tc.want)
+			slices.Sort(want)
+			if !slices.Equal(sqlNames, want) {
+				t.Fatalf("SQL rows = %v, want %v", sqlNames, want)
+			}
+			if !slices.Equal(memoryNames, sqlNames) {
+				t.Fatalf("in-memory rows = %v, SQL rows = %v", memoryNames, sqlNames)
+			}
+		})
 	}
 }
 

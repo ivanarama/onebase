@@ -352,69 +352,142 @@ func MergeRowFields(row, fields map[string]any) map[string]any {
 	return out
 }
 
+type predicateTruth uint8
+
+const (
+	predicateFalse predicateTruth = iota
+	predicateTrue
+	predicateUnknown
+)
+
 func matchPredicate(row map[string]any, p Predicate, resolver PredicateRefResolver) bool {
+	return matchPredicateTruth(row, p, resolver) == predicateTrue
+}
+
+// matchPredicateTruth mirrors SQL three-valued boolean logic. A nullable value
+// compared with an ordinary value is UNKNOWN, not false; in a WHERE clause only
+// TRUE admits the row. Keeping UNKNOWN through NOT/AND/OR is essential: plain
+// Go negation would turn `NOT (NULL = x)` into true and make direct RLS checks
+// less restrictive than the SQL filter used by list/query paths.
+func matchPredicateTruth(row map[string]any, p Predicate, resolver PredicateRefResolver) predicateTruth {
 	if len(p.All) > 0 {
+		result := predicateTrue
 		for _, item := range p.All {
-			if !matchPredicate(row, item, resolver) {
-				return false
+			switch matchPredicateTruth(row, item, resolver) {
+			case predicateFalse:
+				return predicateFalse
+			case predicateUnknown:
+				result = predicateUnknown
 			}
 		}
-		return true
+		return result
 	}
 	if len(p.Any) > 0 {
+		result := predicateFalse
 		for _, item := range p.Any {
-			if matchPredicate(row, item, resolver) {
-				return true
+			switch matchPredicateTruth(row, item, resolver) {
+			case predicateTrue:
+				return predicateTrue
+			case predicateUnknown:
+				result = predicateUnknown
 			}
 		}
-		return false
+		return result
 	}
 	if p.Not != nil {
-		return !matchPredicate(row, *p.Not, resolver)
+		return negatePredicateTruth(matchPredicateTruth(row, *p.Not, resolver))
 	}
 	if p.RefPredicate != nil {
 		if resolver == nil || p.RefEntity == nil {
-			return false
+			return predicateFalse
 		}
 		actual, ok := rowValue(row, p.Field)
-		if !ok {
-			return false
+		if !ok || actual == nil {
+			return predicateFalse
 		}
 		id, ok := parseAnyUUID(actual)
 		if !ok {
-			return false
+			return predicateFalse
 		}
 		refRow, ok := resolver(p.RefEntity, id)
-		return ok && matchPredicate(refRow, *p.RefPredicate, resolver)
+		if !ok || matchPredicateTruth(refRow, *p.RefPredicate, resolver) != predicateTrue {
+			// SQL represents reference predicates as EXISTS. UNKNOWN inside the
+			// subquery does not select a row, so EXISTS itself is simply FALSE.
+			return predicateFalse
+		}
+		return predicateTrue
 	}
 	actual, ok := rowValue(row, p.Field)
 	op := strings.ToLower(strings.TrimSpace(p.Op))
 	switch op {
 	case "eq", "":
-		return valuesEqual(actual, p.Value)
+		if p.Value == nil {
+			return predicateTruthFromBool(!ok || actual == nil)
+		}
+		if !ok || actual == nil {
+			return predicateUnknown
+		}
+		return predicateTruthFromBool(valuesEqual(actual, p.Value))
 	case "ne":
-		return !valuesEqual(actual, p.Value)
+		if p.Value == nil {
+			return predicateTruthFromBool(ok && actual != nil)
+		}
+		if !ok || actual == nil {
+			return predicateUnknown
+		}
+		return predicateTruthFromBool(!valuesEqual(actual, p.Value))
 	case "in":
-		for _, v := range predicateValues(p) {
-			if valuesEqual(actual, v) {
-				return true
-			}
-		}
-		return false
+		return predicateInTruth(actual, ok, predicateValues(p))
 	case "not_in":
-		for _, v := range predicateValues(p) {
-			if valuesEqual(actual, v) {
-				return false
-			}
-		}
-		return true
+		return negatePredicateTruth(predicateInTruth(actual, ok, predicateValues(p)))
 	case "empty":
-		return !ok || actual == nil || fmt.Sprintf("%v", actual) == ""
+		return predicateTruthFromBool(!ok || actual == nil || fmt.Sprintf("%v", actual) == "")
 	case "not_empty":
-		return ok && actual != nil && fmt.Sprintf("%v", actual) != ""
+		return predicateTruthFromBool(ok && actual != nil && fmt.Sprintf("%v", actual) != "")
 	default:
-		return false
+		return predicateFalse
 	}
+}
+
+func predicateTruthFromBool(value bool) predicateTruth {
+	if value {
+		return predicateTrue
+	}
+	return predicateFalse
+}
+
+func negatePredicateTruth(value predicateTruth) predicateTruth {
+	switch value {
+	case predicateTrue:
+		return predicateFalse
+	case predicateFalse:
+		return predicateTrue
+	default:
+		return predicateUnknown
+	}
+}
+
+func predicateInTruth(actual any, exists bool, values []any) predicateTruth {
+	if len(values) == 0 {
+		return predicateFalse
+	}
+	if !exists || actual == nil {
+		return predicateUnknown
+	}
+	unknown := false
+	for _, value := range values {
+		if value == nil {
+			unknown = true
+			continue
+		}
+		if valuesEqual(actual, value) {
+			return predicateTrue
+		}
+	}
+	if unknown {
+		return predicateUnknown
+	}
+	return predicateFalse
 }
 
 func rowValue(row map[string]any, field string) (any, bool) {

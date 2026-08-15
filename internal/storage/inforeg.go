@@ -134,18 +134,9 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 		strings.Join(updates, ", "),
 	)
 	if existingFilter != nil {
-		var condition string
-		var filterArgs []any
-		var err error
-		if db.IsPostgres() {
-			condition, filterArgs, _, err = PredicateSQLQualified(
-				d, InfoRegisterPredicateEntity(ir), existingFilter, len(args)+1, table,
-			)
-		} else {
-			condition, filterArgs, _, err = PredicateSQL(
-				d, InfoRegisterPredicateEntity(ir), existingFilter, len(args)+1,
-			)
-		}
+		condition, filterArgs, _, err := PredicateSQLQualified(
+			d, InfoRegisterPredicateEntity(ir), existingFilter, len(args)+1, table,
+		)
 		if err != nil {
 			return false, fmt.Errorf("info register %s conditional upsert filter: %w", ir.Name, err)
 		}
@@ -205,7 +196,9 @@ func (db *DB) InfoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 	if where != "" {
 		whereParts = append(whereParts, where)
 	}
-	if cond, condArgs, _, err := PredicateSQL(db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1); err != nil {
+	if cond, condArgs, _, err := PredicateSQLQualified(
+		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
+	); err != nil {
 		return nil, fmt.Errorf("info reg list %s row filter: %w", ir.Name, err)
 	} else if cond != "" {
 		whereParts = append(whereParts, cond)
@@ -620,8 +613,9 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
 	whereParts := []string{where}
-	if condition, filterArgs, _, err := PredicateSQL(
-		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1,
+	table := metadata.InfoRegTableName(ir.Name)
+	if condition, filterArgs, _, err := PredicateSQLQualified(
+		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
 	); err != nil {
 		return nil, fmt.Errorf("info reg delete by filter %s row filter: %w", ir.Name, err)
 	} else if condition != "" {
@@ -645,7 +639,7 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 	cols = append(cols, "recorder", "recorder_type")
 
 	query := fmt.Sprintf("DELETE FROM %s WHERE %s RETURNING %s",
-		metadata.InfoRegTableName(ir.Name), strings.Join(whereParts, " AND "), strings.Join(cols, ", "))
+		table, strings.Join(whereParts, " AND "), strings.Join(cols, ", "))
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("info reg delete by filter %s returning: %w", ir.Name, err)

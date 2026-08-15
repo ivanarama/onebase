@@ -1198,6 +1198,87 @@ func TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix(t *testing.T) {
 	})
 }
 
+func TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		cases := []struct {
+			name   string
+			reg    string
+			policy auth.RowPolicy
+		}{
+			{
+				name: "ne",
+				reg:  "NullPolicyNe",
+				policy: auth.RowPolicy{
+					Field: "Owner", Op: "ne", Value: auth.RowValue{Literal: "other"},
+				},
+			},
+			{
+				name: "not_in",
+				reg:  "NullPolicyNotIn",
+				policy: auth.RowPolicy{
+					Field: "Owner", Op: "not_in", Value: auth.RowValue{List: []any{"other"}},
+				},
+			},
+			{
+				name: "not_eq",
+				reg:  "NullPolicyNotEq",
+				policy: auth.RowPolicy{Not: &auth.RowPolicy{
+					Field: "Owner", Op: "eq", Value: auth.RowValue{Literal: "other"},
+				}},
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				ir := &metadata.InfoRegister{
+					Name: tc.reg,
+					Dimensions: []metadata.Field{
+						{Name: "Slice", Type: metadata.FieldTypeString},
+						{Name: "Key", Type: metadata.FieldTypeString},
+					},
+					Resources: []metadata.Field{
+						{Name: "Owner", Type: metadata.FieldTypeString},
+						{Name: "Value", Type: metadata.FieldTypeString},
+					},
+				}
+				if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+					t.Fatal(err)
+				}
+				registry := runtime.NewRegistry()
+				registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+				s := &Server{store: db, reg: registry}
+				user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+					InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
+					RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+						ir.Name: {"write": tc.policy},
+					}},
+				}}}}
+
+				rs := newInfoRegRecordSet(s,
+					interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
+				rs.filter.Set("Slice", "S")
+				row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+				row.Set("Key", "K")
+				row.Set("Value", "must-not-be-written")
+				// Owner is deliberately absent. SQL comparisons with NULL are
+				// UNKNOWN, including through NOT, and therefore must not admit
+				// the proposed row during the in-memory preflight.
+				if caught := captureInfoRegRecordSetPanic(rs.write); caught == nil {
+					t.Fatal("record-set write admitted a NULL row rejected by the equivalent SQL policy")
+				}
+
+				rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(rows) != 0 {
+					t.Fatalf("denied record-set write persisted rows: %#v", rows)
+				}
+			})
+		}
+	})
+}
+
 func TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
