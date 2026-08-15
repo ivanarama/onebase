@@ -44,7 +44,7 @@ func PrivateInstallDir(t *testing.T) string {
 		if err != nil {
 			t.Fatalf("создание приватного каталога установки: %v", err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:gosec // G703: dir — точный результат MkdirTemp внутри профиля, а не путь от пользователя
 		return dir
 	}
 
@@ -57,14 +57,17 @@ func PrivateInstallDir(t *testing.T) string {
 	// t.TempDir() под umask 002 отдаёт 0775 — групповая запись, которую
 	// selfupdate отвергает отдельной проверкой. Чиним явно, а не надеемся на
 	// umask машины разработчика.
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // G302: 0700 и есть приватная граница, ради которой каталог создаётся
 		t.Fatalf("права приватного корня: %v", err)
 	}
+	// 0755 намеренно: настоящая установка читаема и исполняема для всех, и
+	// именно такую selfupdate обязан признавать своей. Права строже сделали бы
+	// фикстуру непохожей на то, что она моделирует; приватность даёт предок.
 	dir := filepath.Join(root, "bin")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: см. комментарий выше — моделируем реальную установку
 		t.Fatalf("создание каталога установки: %v", err)
 	}
-	if err := os.Chmod(dir, 0o755); err != nil {
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // G302: то же
 		t.Fatalf("права каталога установки: %v", err)
 	}
 	return dir
@@ -105,14 +108,14 @@ func PrivateHome(t *testing.T) string {
 		if err != nil {
 			t.Fatalf("создание приватного дома: %v", err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:gosec // G703: dir — точный результат MkdirTemp внутри профиля
 		return dir
 	}
 	dir := filepath.Join(t.TempDir(), "home")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("создание приватного дома: %v", err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: 0700 — смысл приватного дома
 		t.Fatalf("права приватного дома: %v", err)
 	}
 	return dir
