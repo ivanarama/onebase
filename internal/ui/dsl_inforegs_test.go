@@ -511,3 +511,96 @@ func TestInfoRegDSL_ПрочитатьБезПериодаОтклоняется
 		t.Errorf("Прочитать без периода: %v — ожидался отказ «период обязателен»", err)
 	}
 }
+
+// Прочитанные строки набора можно перебрать и поправить (#905).
+//
+// Раньше у набора были только Прочитать/Очистить/Добавить/Количество/Записать:
+// прочитанные строки для прикладного кода были непрозрачны. Типичный цикл
+// «прочитал срез, поправил один ресурс, записал» приходилось подменять на
+// «прочитал запросом, собрал набор заново» — то есть набор годился только на
+// полное замещение.
+func TestInfoRegSet_ПереборИПравкаСтрок(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "rs-iterate.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	ir := logInfoReg()
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if _, err := runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  С1 = Н.Добавить(); С1.Событие = "Старт"; С1.Комментарий = "было";
+  С2 = Н.Добавить(); С2.Событие = "Стоп"; С2.Комментарий = "было";
+  Н.Записать();`); err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+
+	// Прочитать → перебрать → поправить ресурс → записать.
+	msgs, err := runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  Н.Прочитать();
+  Для Каждого Стр Из Н Цикл
+      Сообщить(Стр.Событие);
+      Стр.Комментарий = "стало";
+  КонецЦикла;
+  Н.Записать();`)
+	if err != nil {
+		t.Fatalf("перебор: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("перебор дал %d строк, ожидалось 2: %v", len(msgs), msgs)
+	}
+
+	rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("строк в регистре %d, ожидалось 2", len(rows))
+	}
+	for _, row := range rows {
+		if got, _ := row["Комментарий"].(string); got != "стало" {
+			t.Errorf("правка строки в цикле не доехала до записи: Комментарий = %q", got)
+		}
+	}
+}
+
+// Получить(Индекс) — то же, но точечно; выход за границы — внятный отказ, а не
+// паника и не Неопределено.
+func TestInfoRegSet_ПолучитьПоИндексу(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "rs-get.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	ir := logInfoReg()
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+
+	msgs, err := runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  С = Н.Добавить(); С.Событие = "Старт";
+  Сообщить(Н.Получить(0).Событие);`)
+	if err != nil {
+		t.Fatalf("Получить(0): %v", err)
+	}
+	if len(msgs) != 1 || msgs[0] != "Старт" {
+		t.Fatalf("Получить(0) вернул %v, ожидалось [Старт]", msgs)
+	}
+
+	_, err = runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  Н.Получить(5);`)
+	if err == nil || !strings.Contains(err.Error(), "вне набора") {
+		t.Fatalf("выход за границы: %v", err)
+	}
+}
