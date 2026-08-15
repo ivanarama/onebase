@@ -436,7 +436,7 @@ func (db *DB) writeMovementsInTx(ctx context.Context, regName, recorderType stri
 			cols = append(cols, metadata.ColumnName(f))
 			phs = append(phs, d.Placeholder(idx))
 			v := ciGet(row, f.Name)
-			v = normalizeRegArg(d, v, f.RefEntity != "")
+			v = normalizeRegField(d, f, v)
 			args = append(args, v)
 			idx++
 		}

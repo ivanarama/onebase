@@ -211,7 +211,7 @@ func (db *DB) writeAccountMovementsInTx(ctx context.Context, regName, docType st
 		for _, r := range ar.Resources {
 			col := metadata.ColumnName(r)
 			extraCols = append(extraCols, col)
-			extraArgs = append(extraArgs, ciGet(row, r.Name))
+			extraArgs = append(extraArgs, normalizeRegField(d, r, ciGet(row, r.Name)))
 		}
 		for i, s := range ar.Subconto {
 			col := metadata.SubcontoColumn(i + 1)

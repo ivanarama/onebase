@@ -155,7 +155,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		col := metadata.ColumnName(f)
 		ph := d.Placeholder(argIdx)
 		argIdx++
-		val, err := applyNumberSpec(f, fieldValueDialect(d, f, fields))
+		val, err := canonicalNumberArg(f, fieldValueDialect(d, f, fields))
 		if err != nil {
 			return err
 		}
@@ -907,7 +907,7 @@ func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string
 		placeholders := []string{d.Placeholder(1), d.Placeholder(2), d.Placeholder(3)}
 		args := []any{idArg(d, uuid.New()), idArg(d, parentID), i + 1}
 		for j, f := range tp.Fields {
-			val, err := applyNumberSpec(f, fieldValueDialect(d, f, row))
+			val, err := canonicalNumberArg(f, fieldValueDialect(d, f, row))
 			if err != nil {
 				return err
 			}
@@ -1090,34 +1090,6 @@ func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
 		}
 	}
 	return v
-}
-
-// applyNumberSpec приводит значение числового поля к заданной разрядности
-// (number(Length,Scale)): округляет до Scale знаков и проверяет переполнение
-// по числу целых разрядов (Length-Scale). Нужна для единого поведения PG и
-// SQLite: PG NUMERIC(p,s) округляет/контролирует сам, SQLite (TEXT) — нет.
-// Поля без заданной разрядности возвращаются без изменений.
-func applyNumberSpec(f metadata.Field, v any) (any, error) {
-	if f.Type != metadata.FieldTypeNumber || (f.Scale == 0 && f.Length == 0) || v == nil {
-		return v, nil
-	}
-	dec, ok := normalizeNumber(v).(decimal.Decimal)
-	if !ok {
-		return v, nil
-	}
-	if f.Scale > 0 {
-		dec = dec.Round(int32(f.Scale)) //nolint:gosec // G115: значение приходит из проверенной модели и заведомо укладывается в целевой тип
-	}
-	if f.Length > 0 {
-		intDigits := len(dec.Abs().Truncate(0).String())
-		if dec.Abs().Truncate(0).IsZero() {
-			intDigits = 0
-		}
-		if intDigits > f.Length-f.Scale {
-			return nil, i18nerr.Errorf("поле %q: число превышает разрядность (%d,%d)", f.Name, f.Length, f.Scale)
-		}
-	}
-	return dec, nil
 }
 
 // idArg encodes a UUID for the active backend: PG → uuid.UUID, SQLite → string.

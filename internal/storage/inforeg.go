@@ -80,19 +80,19 @@ func (db *DB) InfoRegExactMatchesRowFilter(ctx context.Context, ir *metadata.Inf
 // InfoRegApplyExchange применяет запись регистра сведений из пакета обмена
 // (план 86). Значения измерений/ресурсов приходят канонизированными (ссылки —
 // строкой-UUID, даты — RFC3339), поэтому приводим их к аргументам БД тем же
-// normalizeRegArg, что и запись движений. deletion=true удаляет запись по ключу.
+// normalizeRegField, что и запись движений. deletion=true удаляет запись по ключу.
 func (db *DB) InfoRegApplyExchange(ctx context.Context, ir *metadata.InfoRegister, dims, resources map[string]any, period *time.Time, deletion bool) error {
 	d := db.dialect
 	cdims := make(map[string]any, len(ir.Dimensions))
 	for _, f := range ir.Dimensions {
-		cdims[f.Name] = normalizeRegArg(d, dims[f.Name], f.RefEntity != "")
+		cdims[f.Name] = normalizeRegField(d, f, dims[f.Name])
 	}
 	if deletion {
 		return db.InfoRegDelete(ctx, ir, cdims, period)
 	}
 	cres := make(map[string]any, len(ir.Resources))
 	for _, f := range ir.Resources {
-		cres[f.Name] = normalizeRegArg(d, resources[f.Name], f.RefEntity != "")
+		cres[f.Name] = normalizeRegField(d, f, resources[f.Name])
 	}
 	return db.InfoRegSet(ctx, ir, cdims, cres, period)
 }
@@ -146,14 +146,14 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 		col := metadata.ColumnName(f)
 		cols = append(cols, col)
 		phs = append(phs, d.Placeholder(idx))
-		args = append(args, normalizeRegArg(d, dimKey[f.Name], f.RefEntity != ""))
+		args = append(args, normalizeRegField(d, f, dimKey[f.Name]))
 		idx++
 	}
 	for _, f := range ir.Resources {
 		col := metadata.ColumnName(f)
 		cols = append(cols, col)
 		phs = append(phs, d.Placeholder(idx))
-		args = append(args, normalizeRegArg(d, resources[f.Name], f.RefEntity != ""))
+		args = append(args, normalizeRegField(d, f, resources[f.Name]))
 		idx++
 	}
 	cols = append(cols, "updated_at")
@@ -464,7 +464,7 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(idx))
 			v := ciGet(row, f.Name)
-			v = normalizeRegArg(d, v, f.RefEntity != "")
+			v = normalizeRegField(d, f, v)
 			args = append(args, v)
 			idx++
 		}
@@ -473,7 +473,7 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(idx))
 			v := ciGet(row, f.Name)
-			v = normalizeRegArg(d, v, f.RefEntity != "")
+			v = normalizeRegField(d, f, v)
 			args = append(args, v)
 			idx++
 		}
@@ -547,7 +547,7 @@ func dimWhere(d Dialect, ir *metadata.InfoRegister, dimKey map[string]any, start
 	for _, f := range ir.Dimensions {
 		col := metadata.ColumnName(f)
 		conds = append(conds, fmt.Sprintf("%s = %s", col, d.Placeholder(idx)))
-		args = append(args, normalizeRegArg(d, dimKey[f.Name], f.RefEntity != ""))
+		args = append(args, normalizeRegField(d, f, dimKey[f.Name]))
 		idx++
 	}
 	if len(conds) == 0 {
