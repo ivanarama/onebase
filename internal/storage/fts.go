@@ -461,12 +461,27 @@ func (db *DB) readFTSBatch(ctx context.Context, q string, e *metadata.Entity, fi
 func BuildFTSDoc(e *metadata.Entity, id uuid.UUID, fields map[string]any) FTSDoc {
 	doc := FTSDoc{Kind: string(e.Kind), Name: e.Name, ID: id}
 	var parts []string
+	explicit := len(e.Presentation) > 0
+	explicitLabels := make(map[string]bool, len(e.Presentation))
+	if explicit {
+		for _, field := range metadata.LabelFields(e) {
+			explicitLabels[strings.ToLower(field.Name)] = true
+		}
+	}
 	for _, f := range ftsFieldsTitleFirst(e) {
 		v := ftsNormalize(fieldTextValue(f, fields))
 		if v == "" {
 			continue
 		}
 		if doc.Title == "" {
+			if explicit && !explicitLabels[strings.ToLower(f.Name)] {
+				// Все явно выбранные кандидаты пусты (либо исключены из
+				// fulltext). Остальные индексируемые поля остаются в Body, но не
+				// становятся подписью вопреки presentation.
+				doc.Title = ftsNormalize(id.String())
+				parts = append(parts, v)
+				continue
+			}
 			doc.Title = v
 			continue
 		}

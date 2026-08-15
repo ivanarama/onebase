@@ -69,6 +69,24 @@ func TestRowLabel_ЗапаснойКандидатИзСписка(t *testing.T)
 	}
 }
 
+func TestRowLabel_ПустойExplicitСписокНеПроваливаетсяВДокументныйFallback(t *testing.T) {
+	e := &Entity{
+		Name: "Заказ", Kind: KindDocument,
+		Presentation: []string{"Артикул", "Наименование"},
+		Fields: []Field{
+			{Name: "Номер", Type: FieldTypeString},
+			{Name: "Артикул", Type: FieldTypeString},
+			{Name: "Наименование", Type: FieldTypeString},
+		},
+	}
+	row := map[string]any{
+		"id": "record-id", "Номер": "ЗК-777", "Артикул": "", "Наименование": "\u00a0",
+	}
+	if got := RowLabel(row, e); got != "record-id" {
+		t.Fatalf("RowLabel=%q, явный пустой presentation не должен проваливаться в Номер", got)
+	}
+}
+
 // Опечатка ловится проверкой конфигурации, а не в рантайме: представление
 // меняется сразу везде, и «вдруг стало другим» — худший способ узнать.
 func TestValidate_ПредставлениеПроверяется(t *testing.T) {
