@@ -322,6 +322,12 @@ func ExportUniversal(
 }
 
 // listAppTables returns all non-system table names in the database, sorted.
+// Интроспекция каталога фильтруется по current_schema(), а не по литералу
+// 'public' — правило пакета storage (см. комментарий к ConnectWithSchema,
+// #665). Универсальный бэкап его нарушал в семи местах, поэтому база, живущая в
+// другой схеме (search_path), выгружалась и восстанавливалась МИМО своих
+// таблиц: список таблиц приходил пустым или чужим, а типы колонок брались не
+// оттуда, где лежат данные (#877).
 func listAppTables(ctx context.Context, db *storage.DB) ([]string, error) {
 	var q string
 	if db.IsSQLite() {
@@ -331,7 +337,7 @@ func listAppTables(ctx context.Context, db *storage.DB) ([]string, error) {
 			   AND name NOT LIKE 'sqlite\_%' ESCAPE '\'
 			 ORDER BY name`
 	} else {
-		q = `SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT LIKE '\_%' ESCAPE '\' ORDER BY tablename`
+		q = `SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename NOT LIKE '\_%' ESCAPE '\' ORDER BY tablename`
 	}
 	rows, err := db.Query(ctx, q)
 	if err != nil {
@@ -496,7 +502,7 @@ func detectByteCols(ctx context.Context, db schemaMetadataDB, tableName string) 
 		}
 	} else {
 		rows, err := db.Query(ctx,
-			`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND data_type='bytea'`,
+			`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1 AND data_type='bytea'`,
 			tableName)
 		if err != nil {
 			return nil, fmt.Errorf("query binary columns for %s: %w", tableName, err)
@@ -524,7 +530,7 @@ func detectJSONCols(ctx context.Context, db schemaMetadataDB, tableName string) 
 	}
 	rows, err := db.Query(ctx,
 		`SELECT column_name FROM information_schema.columns
-		 WHERE table_schema='public' AND table_name=$1 AND data_type IN ('json','jsonb')`,
+		 WHERE table_schema=current_schema() AND table_name=$1 AND data_type IN ('json','jsonb')`,
 		tableName)
 	if err != nil {
 		return nil, fmt.Errorf("query JSON columns for %s: %w", tableName, err)
@@ -551,7 +557,7 @@ func detectBoolCols(ctx context.Context, db schemaMetadataDB, tableName string) 
 	}
 	rows, err := db.Query(ctx,
 		`SELECT column_name FROM information_schema.columns
-		 WHERE table_schema='public' AND table_name=$1 AND data_type='boolean'`,
+		 WHERE table_schema=current_schema() AND table_name=$1 AND data_type='boolean'`,
 		tableName)
 	if err != nil {
 		return nil, fmt.Errorf("query boolean columns for %s: %w", tableName, err)
@@ -600,7 +606,7 @@ func detectByteaCols(ctx context.Context, db schemaMetadataDB, tableName string)
 	}
 	rows, err := db.Query(ctx,
 		`SELECT column_name FROM information_schema.columns
-		 WHERE table_schema='public' AND table_name=$1 AND data_type='bytea'`,
+		 WHERE table_schema=current_schema() AND table_name=$1 AND data_type='bytea'`,
 		tableName)
 	if err != nil {
 		return nil, fmt.Errorf("query bytea columns for %s: %w", tableName, err)
@@ -2771,7 +2777,7 @@ func getTableCols(ctx context.Context, db *storage.DB, tableName string) (map[st
 		}
 	} else {
 		rows, err := db.Query(ctx,
-			`SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,
+			`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=$1`,
 			tableName)
 		if err != nil {
 			return cols, err
@@ -2800,7 +2806,7 @@ func tableExistsChecked(ctx context.Context, db tableExistenceDB, tableName stri
 		return exists, err
 	} else {
 		err := db.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename=$1)`, tableName,
+			`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=$1)`, tableName,
 		).Scan(&exists)
 		return exists, err
 	}

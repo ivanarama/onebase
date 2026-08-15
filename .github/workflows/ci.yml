@@ -354,7 +354,7 @@ jobs:
           # (round-trip на выделенной базе, чтобы разрушительный restore не
           # затронул общую onebase_test). Требует pg_dump/psql — см. шаг выше.
           go test -race -count=1 -timeout 10m -tags integration ./internal/backup \
-            -run TestPostgresBackupRestoreRoundTrip
+            -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema)$'
           # Owner-aware image demo has a PostgreSQL-only inter-server race
           # regression. Select the exact matrix subtest so this job does not
           # expand into the full internal/ui suite.
