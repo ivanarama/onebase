@@ -271,6 +271,28 @@ jobs:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
 
+  # 15 windows-only исходников (5 из них — тесты) не исполняло вообще ничто:
+  # все джобы шли на ubuntu, а windows-раннер только собирал GUI. Поломка
+  # вскрывалась на релизе (план 122B).
+  #
+  # Первый прогон этого джоба (PR #921) вскрыл шесть тестов, зависящих от
+  # среды, — не от логики: короткие имена 8.3 во временном каталоге и каталог
+  # установки в общем /tmp, который selfupdate законно отказывается обновлять.
+  # Джоб включён обратно после их починки (#924).
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+      # -race на Windows намеренно не включаем: дорого, а базовый прогон и так
+      # впервые исполняет windows-only файлы.
+      - name: Unit tests (Windows)
+        run: go test ./...
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -349,6 +371,11 @@ jobs:
           # Без этой строки postgres-подтесты матричных тестов пакета
           # пропускались: TEST_DATABASE_URL задан только в этом джобе.
           go test -race -count=1 -timeout 15m -tags integration ./internal/dsl/interpreter
+          # Table-part shape compatibility is dialect-matrix tested in
+          # internal/exchange. The regular unit job has no TEST_DATABASE_URL,
+          # so explicitly gate the PostgreSQL half here.
+          go test -race -count=1 -timeout 5m ./internal/exchange \
+            -run '^TestApplyPackage_НедостающееПолеТЧПринимается$/^postgres$'
           # DR-01 (issue #784): сквозной backup→restore PostgreSQL. Проверяет,
           # что pg_dump снимает дамп, а psql-restore возвращает те же данные
           # (round-trip на выделенной базе, чтобы разрушительный restore не
