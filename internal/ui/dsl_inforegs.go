@@ -9,6 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -347,7 +348,7 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 		}
 		// Индекс приходит из DSL числом; decimal и строка проходят тем же
 		// путём, что у остальных методов коллекций.
-		idx := int(toFloatOr(args[0]))
+		idx := runtime.RowIndexArg(args[0])
 		if idx < 0 || idx >= len(rs.rows) {
 			interpreter.RaiseUserError(fmt.Sprintf(
 				"Получить(%s): индекс %d вне набора (строк %d)", rs.ir.Name, idx, len(rs.rows)))
@@ -358,7 +359,7 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 		return nil
 	}
 	interpreter.RaiseUserError("НаборЗаписей(" + rs.ir.Name + "): неизвестный метод «" + method +
-		"» (доступны Прочитать, Очистить, Добавить, Количество, Записать)")
+		"» (доступны Прочитать, Очистить, Добавить, Количество, Получить, Записать)")
 	return nil
 }
 
