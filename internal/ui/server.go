@@ -454,6 +454,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/rls", s.adminRLSDiagnostics)
 	r.Get("/ui/admin/webhooks", s.adminWebhooks)
 	r.Get("/ui/{kind}/{entity}/{id}/history", s.recordHistory)
+	// Панель деталей грузится отдельным запросом (#860): payload больше не
+	// уезжает в разметку каждой строки списка.
+	r.Get("/ui/{kind}/{entity}/{id}/detail-panel", s.detailPanelRecord)
 
 	// Admin: orphan movements cleanup
 	r.Get("/ui/admin/cleanup", s.adminCleanup)

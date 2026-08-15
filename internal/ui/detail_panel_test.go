@@ -5,9 +5,15 @@ package ui
 import (
 	"encoding/json"
 	"html"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/ivantit66/onebase/internal/auth"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -144,8 +150,13 @@ func TestDetailPanel_RenderedOutsideLiveContainer(t *testing.T) {
 	if !strings.Contains(html, `id="ob-detail"`) {
 		t.Fatal("панель не отрисована")
 	}
-	if !strings.Contains(html, "data-ob-detail='") {
-		t.Error("в строке списка нет payload панели")
+	// Payload в разметке строк больше нет (#860): строка несёт только адрес,
+	// по которому панель грузится при открытии.
+	if strings.Contains(html, "data-ob-detail='") {
+		t.Error("payload панели снова уехал в разметку строки")
+	}
+	if !strings.Contains(html, "data-ob-detail-url=") {
+		t.Error("в строке списка нет адреса ленивой загрузки панели")
 	}
 	if !strings.Contains(html, "data-ob-detail-toggle") {
 		t.Error("нет кнопки включения панели")
@@ -187,7 +198,7 @@ func TestDetailPanel_ConfiguredDefaultWidthReachesClient(t *testing.T) {
 // обязан нести один и тот же payload. До исправления атрибут был только у
 // обычной таблицы: в двух остальных режимах панель всегда писала «Выберите
 // строку», хотя строка была выбрана.
-func TestDetailPanel_AllEntityListModesCarryPayload(t *testing.T) {
+func TestDetailPanel_AllEntityListModesCarryLazyURL(t *testing.T) {
 	ent := panelEntity()
 	row := map[string]any{
 		"id": "1", "Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО «Мебель»",
@@ -213,52 +224,61 @@ func TestDetailPanel_AllEntityListModesCarryPayload(t *testing.T) {
 			}
 			tc.set(data)
 			page := renderPageList(t, data)
-			panel := firstDetailPanelData(t, page)
-			if got, ok := detailPanelValueByLabel(panel, "Поставщик"); !ok || got != "ООО «Мебель»" {
-				t.Fatalf("payload %s-вида не содержит детали строки: %+v", tc.name, panel)
+			if !strings.Contains(page, "data-ob-detail-url=") {
+				t.Fatalf("в %s-виде у строки нет адреса панели", tc.name)
 			}
+
 		})
 	}
 }
 
-// Explicit detail_panel composition is an entity contract, not a peculiarity
-// of the ordinary table template. Tree, tile and lazily loaded tree rows must
-// use it too, otherwise switching view silently restores auto-layout.
-func TestDetailPanel_AllEntityListModesHonorExplicitComposition(t *testing.T) {
-	ent := panelEntity()
-	ent.DetailPanel = &metadata.DetailPanel{Fields: []string{"Артикул"}, FieldsSet: true}
-	row := map[string]any{
-		"id": "1", "Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО «Мебель»",
-		"_depth": 0,
+// Явный состав detail_panel — контракт сущности, и панель обязана его
+// соблюдать. После перевода панели на ленивую загрузку (#860) проверять это
+// нужно там, где payload теперь и собирается: в хендлере.
+func TestDetailPanel_HandlerHonorsExplicitComposition(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Товар",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Поставщик", Type: metadata.FieldTypeString},
+		},
+		DetailPanel: &metadata.DetailPanel{Fields: []string{"Артикул"}, FieldsSet: true},
 	}
-	base := map[string]any{
-		"Entity": ent, "Rows": []map[string]any{row}, "TreeRows": []map[string]any{row},
-		"Params": storage.ListParams{}, "RefFilterOptions": map[string]any{},
-		"Lang": "ru", "Total": 1, "Page": 1, "TotalPages": 1,
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"Наименование": "Кресло", "Артикул": "10041", "Поставщик": "ООО «Мебель»",
+	}, ent); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		name string
-		set  func(map[string]any)
-	}{
-		{name: "table", set: func(map[string]any) {}},
-		{name: "tiles", set: func(data map[string]any) { data["TilesView"] = true }},
-		{name: "tree", set: func(data map[string]any) { data["TreeView"] = true }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			data := make(map[string]any, len(base)+1)
-			for key, value := range base {
-				data[key] = value
-			}
-			tc.set(data)
-			panel := firstDetailPanelData(t, renderPageList(t, data))
-			if got, ok := detailPanelValueByLabel(panel, "Артикул"); !ok || got != "10041" {
-				t.Fatalf("explicit field missing in %s payload: %+v", tc.name, panel)
-			}
-			if _, ok := detailPanelValueByLabel(panel, "Поставщик"); ok {
-				t.Fatalf("auto field leaked into explicit %s payload: %+v", tc.name, panel)
-			}
-		})
+
+	panel := fetchDetailPanel(t, s, ent, id)
+	if got, ok := detailPanelValueByLabel(panel, "Артикул"); !ok || got != "10041" {
+		t.Fatalf("явно перечисленного поля нет в payload: %+v", panel)
 	}
+	if _, ok := detailPanelValueByLabel(panel, "Поставщик"); ok {
+		t.Fatalf("поле автокомпоновки просочилось в явный состав: %+v", panel)
+	}
+}
+
+// fetchDetailPanel зовёт публичный хендлер панели и разбирает ответ.
+func fetchDetailPanel(t *testing.T, s *Server, ent *metadata.Entity, id uuid.UUID) detailPanelData {
+	t.Helper()
+	r := reqWithChi(http.MethodGet,
+		"/ui/catalog/"+ent.Name+"/"+id.String()+"/detail-panel", nil,
+		map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+	w := httptest.NewRecorder()
+	s.detailPanelRecord(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("detailPanelRecord: код %d, тело %s", w.Code, w.Body.String())
+	}
+	var data detailPanelData
+	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
+		t.Fatalf("ответ панели не разобрался: %v; raw=%s", err, w.Body.String())
+	}
+	return data
 }
 
 func TestInfoRegisterDetailPanel_UsesReferenceLabelAndPeriod(t *testing.T) {
@@ -601,5 +621,37 @@ func TestDetailPanel_ExplicitEmptyTabsFailsClosedAtRuntime(t *testing.T) {
 	row := map[string]any{"Наименование": "Кресло", "Артикул": "10041"}
 	if got := detailPanelForEntity(ent, row, nil, "ru"); got != "" {
 		t.Fatalf("explicit tabs: [] fell back to all fields: %s", got)
+	}
+}
+
+// Ленивый хендлер — отдельный публичный вход, и права он обязан проверять сам,
+// а не «наследовать» из списка, который его породил (#860).
+func TestDetailPanel_HandlerПроверяетПраваСам(t *testing.T) {
+	ent := &metadata.Entity{
+		Name:   "Товар",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": "Кресло"}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	// Роль без права чтения этого справочника.
+	user := &auth.User{ID: "no-read", Login: "no-read", Roles: []*auth.Role{{
+		Name:        "Без доступа",
+		Permissions: auth.Permission{Catalogs: map[string][]string{"Другой": {"read"}}},
+	}}}
+	r := reqWithChi(http.MethodGet, "/ui/catalog/"+ent.Name+"/"+id.String()+"/detail-panel", nil,
+		map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+	r = r.WithContext(auth.ContextWithUser(r.Context(), user))
+	w := httptest.NewRecorder()
+	s.detailPanelRecord(w, r)
+	if w.Code == http.StatusOK {
+		t.Fatalf("панель отдана без права чтения: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "Кресло") {
+		t.Fatalf("данные записи утекли в отказе: %s", w.Body.String())
 	}
 }

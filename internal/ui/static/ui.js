@@ -3581,6 +3581,39 @@ function obDetailEnabled() { return obDetailRead('on') === '1'; }
 
 // obDetailRender перерисовывает панель по выбранной строке. Вызывается из
 // listSetSel, поэтому стрелки ↑↓ двигают курсор — панель следует за ним.
+// obDetailCache хранит последний загруженный payload панели: одна строка за раз,
+// как и сама панель. Больше не нужно — переключение строк перезапрашивает.
+var obDetailCache = { url: '', body: '' };
+
+// obDetailFetch подгружает payload панели для строки и перерисовывает её.
+// Ошибку показываем в самой панели: молча пустая панель неотличима от «у записи
+// нет данных», и человек будет считать, что так и надо.
+function obDetailFetch(row, url) {
+  var panel = obDetailEl();
+  if (!panel) return;
+  var fieldsEl = panel.querySelector('[data-ob-detail-fields]');
+  var emptyEl = panel.querySelector('[data-ob-detail-empty]');
+  if (emptyEl) emptyEl.hidden = true;
+  if (fieldsEl) fieldsEl.textContent = '…';
+  fetch(url, { credentials: 'same-origin', headers: { 'X-Onebase-Ajax': '1' } })
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.text();
+    })
+    .then(function (body) {
+      obDetailCache = { url: url, body: body };
+      // Строка могла смениться, пока ответ шёл: перерисовываем только если
+      // выбрана та же.
+      var current = (typeof listSel === 'function') ? listSel() : null;
+      if (current && current.getAttribute('data-ob-detail-url') !== url) return;
+      obDetailRender();
+    })
+    .catch(function (err) {
+      obDetailCache = { url: '', body: '' };
+      if (fieldsEl) fieldsEl.textContent = 'Не удалось загрузить детали: ' + err.message;
+    });
+}
+
 function obDetailRender() {
   var panel = obDetailEl();
   if (!panel) return;
@@ -3592,7 +3625,21 @@ function obDetailRender() {
   var fieldsEl = panel.querySelector('[data-ob-detail-fields]');
   var emptyEl = panel.querySelector('[data-ob-detail-empty]');
   var row = (typeof listSel === 'function') ? listSel() : null;
+  // Payload берётся либо из разметки (журналы и регистры сведений: там в панели
+  // ровно те поля, что уже показаны в таблице), либо отдельным запросом
+  // (списки сущностей: полная карточка не должна лежать в DOM каждой строки —
+  // #860). Ответ кэшируется на строку: переключение закладок не должно
+  // дёргать сервер.
   var raw = row ? row.getAttribute('data-ob-detail') : '';
+  var lazyURL = row ? row.getAttribute('data-ob-detail-url') : '';
+  if (!raw && lazyURL) {
+    if (obDetailCache.url === lazyURL) {
+      raw = obDetailCache.body;
+    } else {
+      obDetailFetch(row, lazyURL);
+      return;
+    }
+  }
   var data = null;
   if (raw) { try { data = JSON.parse(raw); } catch (e) { data = null; } }
 
