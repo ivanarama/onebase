@@ -30,16 +30,16 @@ func TestInterpreter_DebugExpressionGuardIsPerRun(t *testing.T) {
 	releaseFirst := make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(releaseFirst) })
-	firstCond := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+	firstCond := interpreter.ReadOnlyBuiltinFunc(func([]any, string, int) (any, error) {
 		close(firstEntered)
 		<-releaseFirst
 		return true, nil
 	})
-	secondCond := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+	secondCond := interpreter.ReadOnlyBuiltinFunc(func([]any, string, int) (any, error) {
 		return true, nil
 	})
 
-	run := func(cond interpreter.BuiltinFunc) <-chan error {
+	run := func(cond interpreter.ReadOnlyBuiltinFunc) <-chan error {
 		done := make(chan error, 1)
 		go func() { done <- interp.Run(proc, nil, map[string]any{"Условие": cond}) }()
 		return done

@@ -56,10 +56,23 @@ func isEmptyRefUUID(s string) bool {
 
 // formatValue implements Формат(value, formatString) with minimal format support.
 func fmtBuiltin(args []any) (string, error) {
+	return fmtBuiltinBounded(args, 0)
+}
+
+func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
 	if len(args) < 2 {
 		return fmt.Sprintf("%v", args[0]), nil
 	}
 	val := args[0]
+	if maxDecimalPlaces > 0 && isNumeric(val) {
+		d, _ := toDecimal(val)
+		if !decimalWithinExpansionBounds(d, maxDecimalPlaces) {
+			return "", fmt.Errorf("формат: число вне безопасного диапазона")
+		}
+	}
 	fmtStr := strings.ToLower(strArg(args, 1))
 
 	// Date formatting
@@ -78,11 +91,17 @@ func fmtBuiltin(args []any) (string, error) {
 		decimals := 2
 		if d := extractFormatParam(fmtStr, "чдц="); d != "" {
 			if n, err := strconv.Atoi(d); err == nil {
+				if maxDecimalPlaces > 0 && (n < -int(maxDecimalPlaces) || n > int(maxDecimalPlaces)) {
+					return "", fmt.Errorf("формат: точность вне безопасного диапазона")
+				}
 				decimals = n
 			}
 		}
 		sep := " "
 		if s := extractFormatParam(fmtStr, "чрг="); s != "" {
+			if maxDecimalPlaces > 0 && len(s) > 64 {
+				return "", fmt.Errorf("формат: разделитель разрядов слишком длинный")
+			}
 			sep = s
 		}
 		return formatNumber(f, decimals, sep), nil

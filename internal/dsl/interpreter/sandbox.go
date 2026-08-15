@@ -9,6 +9,11 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 )
 
+const (
+	defaultSandboxDecimalExpansion int32 = 4096
+	defaultSandboxStringExpansion        = 1 << 20
+)
+
 var (
 	errSandboxTimeout = errors.New("превышено максимальное время выполнения (песочница)")
 	errSandboxIters   = errors.New("превышен лимит итераций цикла (песочница)")
@@ -25,17 +30,29 @@ type SandboxProfile struct {
 	DenyExec     bool            // запретить команды ОС (ВыполнитьКоманду, план 67) недоверенному коду; secure-by-default обычного режима даёт флаг базы exec.enabled
 	MaxWallClock time.Duration   // 0 = без лимита времени
 	MaxLoopIters int             // 0 = дефолт (maxWhileIter)
+	// MaxDecimalExpansion bounds decimal exponents, coefficients and explicit
+	// precision accepted by builtins during this sandbox run. Wall-clock checks
+	// cannot interrupt one shopspring/decimal rescale or strconv formatting call,
+	// so untrusted expressions need a memory bound at those sinks as well.
+	// 0 keeps the ordinary trusted-DSL behavior unchanged.
+	MaxDecimalExpansion int32
+	// MaxStringExpansion bounds total string/byte input and output and
+	// preflights multiplicative replace/join/template expansion. 0 keeps the
+	// ordinary trusted-DSL behavior unchanged.
+	MaxStringExpansion int
 }
 
 // RestrictedProfile — строгий профиль для недоверенного кода (ИИ/marketplace):
 // запрещены сеть и файлы, заданы лимиты времени и итераций.
 func RestrictedProfile() SandboxProfile {
 	return SandboxProfile{
-		DenyNet:      true,
-		DenyFile:     true,
-		DenyExec:     true,
-		MaxWallClock: 10 * time.Second,
-		MaxLoopIters: 1_000_000,
+		DenyNet:             true,
+		DenyFile:            true,
+		DenyExec:            true,
+		MaxWallClock:        10 * time.Second,
+		MaxLoopIters:        1_000_000,
+		MaxDecimalExpansion: defaultSandboxDecimalExpansion,
+		MaxStringExpansion:  defaultSandboxStringExpansion,
 	}
 }
 
@@ -118,6 +135,8 @@ func llmDenyFn(msg string) BuiltinFunc {
 func applySandboxLimits(e *env, p SandboxProfile) {
 	e.ec.context = p.Context
 	e.ec.maxLoopIters = p.MaxLoopIters
+	e.ec.maxDecimalExpansion = p.MaxDecimalExpansion
+	e.ec.maxStringExpansion = p.MaxStringExpansion
 	if p.MaxWallClock > 0 {
 		e.ec.deadline = time.Now().Add(p.MaxWallClock)
 	}

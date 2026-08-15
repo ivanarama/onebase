@@ -271,6 +271,12 @@ func (i *Interpreter) beforeStmt(s ast.Stmt, e *env) {
 
 	hook := e.ec.debug
 	hitBP := hook.HookCheckBreakpoint(loc.File, loc.Line, func(expr string) (bool, error) {
+		// Условие — единственное отладочное выражение, которое исполняется без
+		// участия человека и на каждом проходе строки, поэтому вычисляется в
+		// read-only песочнице (#883). Табло и консоль остаются полноценными:
+		// их человек набирает сам и видит результат.
+		restore := withConditionLimits(e)
+		defer restore()
 		v, err := i.evalDebugExpr(expr, e)
 		if err != nil {
 			return false, err
@@ -350,6 +356,11 @@ func stackDepth(e *env) int {
 }
 
 func (i *Interpreter) evaluateExprString(expr string, e *env) (any, error) {
+	if e != nil && e.ec != nil && (e.ec.maxDecimalExpansion > 0 || e.ec.maxStringExpansion > 0 || e.ec.readOnlyReason != "") {
+		if err := ValidateUntrustedExpressionSource(expr); err != nil {
+			return nil, err
+		}
+	}
 	l := lexer.New(expr, "<console>")
 	p := parser.New(l)
 	parsed, err := p.ParseStandaloneExpr()
@@ -414,6 +425,10 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 				}
 			}
 		case interface{ IterateThis() []This }:
+			// IterateThis/IterateRows are arbitrary Go callbacks, even though the
+			// DSL surface makes them look like passive collections. Treat them as
+			// object capabilities in read-only debugger conditions.
+			refuseReadOnly(e.ec, "итерация внешней коллекции")
 			for _, item := range items.IterateThis() {
 				e.setLocal(v.Var.Literal, item)
 				if !i.execLoopBody(v.Body, e) {
@@ -427,6 +442,7 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 			// `Объект.Товары` возвращает прокси для модификации ТЧ через
 			// .Добавить()/.Очистить().
 			if it, ok := coll.(interface{ IterateRows() []map[string]any }); ok {
+				refuseReadOnly(e.ec, "итерация внешней коллекции")
 				for _, row := range it.IterateRows() {
 					e.setLocal(v.Var.Literal, &MapThis{M: row})
 					if !i.execLoopBody(v.Body, e) {
@@ -439,7 +455,7 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 		val := i.evalExpr(v.Value, e)
 		if v.Op != token.ASSIGN && v.Op != 0 {
 			old := i.evalExpr(v.Target, e)
-			val = applyCompoundOp(v.Op, old, val)
+			val = applyCompoundOp(v.Op, old, val, e.ec)
 		}
 		i.assign(v.Target, val, e)
 	case *ast.ExprStmt:
@@ -508,6 +524,7 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 	case *ast.Ident:
 		e.set(t.Tok.Literal, val)
 	case *ast.MemberExpr:
+		refuseReadOnly(e.ec, "изменение свойства «"+t.Field.Literal+"»")
 		obj := i.evalExpr(t.Object, e)
 		field := strings.ToLower(t.Field.Literal)
 		switch o := obj.(type) {
@@ -520,6 +537,7 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 				"» — используйте Вставить(\"" + t.Field.Literal + "\", Значение)")
 		}
 	case *ast.IndexExpr:
+		refuseReadOnly(e.ec, "изменение элемента коллекции")
 		obj := i.evalExpr(t.Object, e)
 		idx := i.evalExpr(t.Index, e)
 		switch o := obj.(type) {
@@ -532,6 +550,12 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 }
 
 func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
+	result := i.evalExprUnchecked(expr, e)
+	e.ec.checkReadOnlyViolation()
+	return result
+}
+
+func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 	switch v := expr.(type) {
 	case *ast.StringLit:
 		return v.Value
@@ -551,9 +575,9 @@ func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
 		field := strings.ToLower(v.Field.Literal)
 		switch o := obj.(type) {
 		case This:
-			return o.Get(field)
+			return protectReadOnly(e.ec, o.Get(field))
 		case *Ref:
-			return o.Get(field)
+			return protectReadOnly(e.ec, o.Get(field))
 		case *Map:
 			// Соответствие не поддерживает чтение по точке (как в 1С) — частая
 			// ошибка с результатом ПрочитатьJSON. Раньше тихо возвращали
@@ -567,9 +591,9 @@ func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
 		idx := i.evalExpr(v.Index, e)
 		switch o := obj.(type) {
 		case *Array:
-			return o.Index(int(toFloatOr0(idx)))
+			return protectReadOnly(e.ec, o.Index(int(toFloatOr0(idx))))
 		case *Map:
-			return o.CallMethod("получить", []any{idx})
+			return protectReadOnly(e.ec, o.CallMethod("получить", []any{idx}))
 		}
 		return nil
 	case *ast.ArrayLit:
@@ -611,6 +635,7 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {
 		if fn, ok := factory.(func([]any) any); ok {
+			refuseReadOnly(e.ec, "создание объекта «"+n.TypeName.Literal+"» через внешнюю фабрику")
 			return fn(args)
 		}
 	}
@@ -619,10 +644,14 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 
 func (i *Interpreter) evalUnary(u *ast.UnaryExpr, e *env) any {
 	val := i.evalExpr(u.Operand, e)
+	if e.ec != nil {
+		requireSafeSandboxValueLimits(u.Op.Literal, []any{val}, e.ec.maxDecimalExpansion, e.ec.maxStringExpansion, u.Op.Line)
+	}
 	switch u.Op.Type {
 	case token.NOT:
 		return !truthy(val)
 	case token.MINUS:
+		requireSafeSandboxDecimalOperand(e.ec, u.Op.Literal, val, u.Op.Line)
 		f, _ := toFloat(val)
 		return -f
 	}
@@ -647,22 +676,28 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 	}
 	l := i.evalExpr(b.Left, e)
 	r := i.evalExpr(b.Right, e)
+	if e.ec != nil {
+		// Apply input bounds before toDecimal or fmt can turn a short exponent
+		// or an oversized injected string into a large allocation.
+		requireSafeSandboxValueLimits(b.Op.Literal, []any{l, r}, e.ec.maxDecimalExpansion, e.ec.maxStringExpansion, b.Op.Line)
+	}
 	switch b.Op.Type {
 	case token.ASSIGN: // equality in conditions
-		return equal(l, r)
+		return equalSandboxed(l, r, e.ec, b.Op.Line)
 	case token.NEQ:
-		return !equal(l, r)
+		return !equalSandboxed(l, r, e.ec, b.Op.Line)
 	case token.LT:
-		return compare(l, r) < 0
+		return compareSandboxed(l, r, e.ec, b.Op.Line) < 0
 	case token.GT:
-		return compare(l, r) > 0
+		return compareSandboxed(l, r, e.ec, b.Op.Line) > 0
 	case token.LTE:
-		return compare(l, r) <= 0
+		return compareSandboxed(l, r, e.ec, b.Op.Line) <= 0
 	case token.GTE:
-		return compare(l, r) >= 0
+		return compareSandboxed(l, r, e.ec, b.Op.Line) >= 0
 	case token.PLUS:
 		// Дата + Число → сдвиг на N секунд (семантика 1С/OneScript).
 		if lt, ok := l.(time.Time); ok {
+			requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, sec)
 			}
@@ -671,6 +706,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			}
 		}
 		if rt, ok := r.(time.Time); ok {
+			requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, l, b.Op.Line)
 			if sec, ok2 := toFloat(l); ok2 {
 				return dateAddSeconds(rt, sec)
 			}
@@ -688,28 +724,33 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		_, lStr := l.(string)
 		_, rStr := r.(string)
 		if !lStr || !rStr {
+			requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, l, b.Op.Line)
+			requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 			ld, lok := toDecimal(l)
 			rd, rok := toDecimal(r)
 			if lok && rok {
-				return ld.Add(rd)
+				requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, ld, b.Op.Line)
+				requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, rd, b.Op.Line)
+				return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Add(rd), b.Op.Line)
 			}
 			// nil-toleration: пустое число + N → N, иначе `Объект.Сумма + 100`
 			// при пустом поле дало бы concat «<nil>100», который потом ломает
 			// запись в numeric (SQLSTATE 22P02).
 			if l == nil && rok {
-				return rd
+				return safeSandboxDecimalResult(e.ec, b.Op.Literal, rd, b.Op.Line)
 			}
 			if r == nil && lok {
-				return ld
+				return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld, b.Op.Line)
 			}
 		}
-		return fmt.Sprintf("%v", l) + fmt.Sprintf("%v", r)
+		return sandboxConcatValues(e.ec, b.Op.Literal, l, r, b.Op.Line)
 	case token.MINUS:
 		// Дата - Дата → разница в секундах; Дата - Число → сдвиг назад.
 		if lt, ok := l.(time.Time); ok {
 			if rt, ok2 := r.(time.Time); ok2 {
 				return lt.Sub(rt).Seconds()
 			}
+			requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 			if sec, ok2 := toFloat(r); ok2 {
 				return dateAddSeconds(lt, -sec)
 			}
@@ -717,30 +758,50 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 				RaiseUserError("число для сдвига даты вне безопасного диапазона")
 			}
 		}
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, l, b.Op.Line)
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)
+		if lok {
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, ld, b.Op.Line)
+		}
+		if rok {
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, rd, b.Op.Line)
+		}
 		if lok && rok {
-			return ld.Sub(rd)
+			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Sub(rd), b.Op.Line)
 		}
 		if l == nil && rok {
-			return rd.Neg()
+			return safeSandboxDecimalResult(e.ec, b.Op.Literal, rd.Neg(), b.Op.Line)
 		}
 		if r == nil && lok {
-			return ld
+			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld, b.Op.Line)
 		}
 	case token.STAR:
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, l, b.Op.Line)
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)
 		if lok && rok {
-			return ld.Mul(rd)
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, ld, b.Op.Line)
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, rd, b.Op.Line)
+			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Mul(rd), b.Op.Line)
 		}
 		// nil * число / число * nil → 0 (а не string concat).
 		if (l == nil && rok) || (r == nil && lok) {
 			return decimal.Zero
 		}
 	case token.PERCENT:
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, l, b.Op.Line)
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)
+		if lok {
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, ld, b.Op.Line)
+		}
+		if rok {
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, rd, b.Op.Line)
+		}
 		// Остаток десятичный, без усечения операндов: 7.5 % 2 = 1.5.
 		// Условие деления на ноль такое же, как у SLASH: ошибка возникает,
 		// только когда операция вообще применима — иначе «abc % 0» падал бы
@@ -750,14 +811,22 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		}
 		if lok && rok {
 			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
-			return ld.Mod(rd)
+			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Mod(rd), b.Op.Line)
 		}
 		if l == nil && rok {
 			return decimal.Zero
 		}
 	case token.SLASH:
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, l, b.Op.Line)
+		requireSafeSandboxDecimalOperand(e.ec, b.Op.Literal, r, b.Op.Line)
 		ld, lok := toDecimal(l)
 		rd, rok := toDecimal(r)
+		if lok {
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, ld, b.Op.Line)
+		}
+		if rok {
+			requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, rd, b.Op.Line)
+		}
 		// Деление на ноль — исключение (как в 1С), а не молчаливый nil. Err несёт
 		// сентинел ErrDivisionByZero, чтобы компоновка отчётов отличила его от
 		// настоящей runtime-ошибки (там это «неопределённое значение» → пустая ячейка).
@@ -766,7 +835,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		}
 		if lok && rok {
 			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
-			return ld.Div(rd)
+			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Div(rd), b.Op.Line)
 		}
 		if l == nil && rok {
 			return decimal.Zero
@@ -790,10 +859,30 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		// текущем окружении (видит локальные переменные). Обрабатывается до
 		// обычного поиска builtin, т.к. требует доступа к env.
 		if lowName == "вычислить" || lowName == "eval" {
-			return i.evalEvalBuiltin(args, e)
+			hasResourceLimits := e.ec != nil && (e.ec.maxDecimalExpansion > 0 || e.ec.maxStringExpansion > 0)
+			if hasResourceLimits {
+				requireSafeSandboxBuiltinInputs(lowName, args, e.ec.maxDecimalExpansion, e.ec.maxStringExpansion, callee.Tok.Line)
+			}
+			result := i.evalEvalBuiltin(args, e)
+			if hasResourceLimits {
+				requireSafeSandboxValueLimits(lowName, []any{result}, e.ec.maxDecimalExpansion, e.ec.maxStringExpansion, callee.Tok.Line)
+			}
+			return result
 		}
 		if val, ok := e.get(fnName); ok {
+			if bf, ok2 := val.(ReadOnlyBuiltinFunc); ok2 {
+				result, err := bf(args, callee.Tok.File, callee.Tok.Line)
+				if err != nil {
+					panic(dslStop{err: err})
+				}
+				// The callback itself opted into read-only use, but its return value
+				// may still be an object capability. Keep that value behind the same
+				// membrane; otherwise a condition could feed a returned writer to a
+				// mutating builtin such as ЗаполнитьЗначенияСвойств.
+				return protectReadOnly(e.ec, result)
+			}
 			if bf, ok2 := val.(BuiltinFunc); ok2 {
+				refuseReadOnly(e.ec, "вызов внешней функции «"+fnName+"»")
 				result, err := bf(args, callee.Tok.File, callee.Tok.Line)
 				if err != nil {
 					panic(dslStop{err: err})
@@ -801,13 +890,14 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 				return result
 			}
 			if bf, ok2 := val.(FallbackBuiltinFunc); ok2 {
+				refuseReadOnly(e.ec, "вызов внешней функции «"+fnName+"»")
 				fallback = bf
 			}
 		}
 		// Процедуры формы (.form.os) принадлежат текущему модулю и потому
 		// разрешаются раньше любых глобальных экспортов. Они передаются через
 		// vars["__form_procs__"] как map[lowercase]*ProcedureDecl.
-		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
+		if fpAny, ok2 := e.rawFormProcs(); ok2 {
 			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
 				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 && sourceFile != "" && proc.Name.File == sourceFile {
 					return i.callUserProc(proc, e, args)
@@ -849,19 +939,27 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 			// Factory-вызов без Новый: ЧтениеТекста(Путь), Запрос(Текст), …
 			if factory, ok2 := e.get("__factory_" + fnName); ok2 {
 				if fn2, ok3 := factory.(func([]any) any); ok3 {
+					refuseReadOnly(e.ec, "вызов внешней фабрики «"+fnName+"»")
 					return fn2(args)
 				}
 			}
 			panic(dslStop{err: fmt.Errorf("%s:%d: unknown function %q", callee.Tok.File, callee.Tok.Line, fnName)})
 		}
+		hasResourceLimits := e.ec != nil && (e.ec.maxDecimalExpansion > 0 || e.ec.maxStringExpansion > 0)
 		// Только штатный builtin паузы получает deadline-aware dispatch. Это
 		// закрывает провал к прямому ожиданию после одноимённой non-callable
 		// переменной, но не ломает обычный порядок разрешения: пользовательская
 		// процедура либо доверенная инъекция Sleep/Wait по-прежнему может
 		// затенить builtin и сама контролируется общим дедлайном между операторами.
 		if e.ec != nil && (!e.ec.deadline.IsZero() || (e.ec.context != nil && e.ec.context.Done() != nil)) && isSleepBuiltinName(lowName) {
+			if hasResourceLimits {
+				requireSafeSandboxBuiltinInputs(lowName, args, e.ec.maxDecimalExpansion, e.ec.maxStringExpansion, callee.Tok.Line)
+			}
 			waitForSleep(sleepDuration(args), e.ec)
 			return nil
+		}
+		if hasResourceLimits {
+			fn = boundedSandboxBuiltin(lowName, fn, e.ec.maxDecimalExpansion, e.ec.maxStringExpansion)
 		}
 		result, err := fn(args, callee.Tok.File, callee.Tok.Line)
 		if err != nil {
@@ -871,6 +969,10 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 	case *ast.MemberExpr:
 		recv := i.evalExpr(callee.Object, e)
 		method := strings.ToLower(callee.Field.Literal)
+		// Fail closed: receiver может быть writer'ом из локальной переменной,
+		// а по одному имени невозможно надёжно отделить чтение от Записать/Write
+		// и будущих алиасов. Поля объектов остаются доступны через MemberExpr.
+		refuseReadOnly(e.ec, "вызов метода «"+callee.Field.Literal+"»")
 		switch o := recv.(type) {
 		case MethodCallable:
 			if ml, ok := o.(MethodLister); ok {
@@ -971,6 +1073,11 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 	src, ok := args[0].(string)
 	if !ok {
 		panic(userError{Msg: "Вычислить: ожидается строка-выражение"})
+	}
+	if e != nil && e.ec != nil && (e.ec.maxDecimalExpansion > 0 || e.ec.maxStringExpansion > 0 || e.ec.readOnlyReason != "") {
+		if err := ValidateUntrustedExpressionSource(src); err != nil {
+			panic(userError{Msg: "Вычислить: " + err.Error()})
+		}
 	}
 	limit := i.MaxEvalDepth
 	if limit <= 0 {
@@ -1135,13 +1242,24 @@ func truthy(v any) bool {
 }
 
 func equal(a, b any) bool {
+	return equalSandboxed(a, b, nil, 0)
+}
+
+func equalSandboxed(a, b any, ec *execCtx, line int) bool {
 	// Числа сравниваем по значению (decimal.Equal), а не строково: иначе
 	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Строки/ссылки/
 	// даты — по-прежнему через refKey.
 	if isNumeric(a) && isNumeric(b) {
-		ad, _ := toDecimal(a)
-		bd, _ := toDecimal(b)
-		return ad.Equal(bd)
+		ad, aok := toDecimal(a)
+		bd, bok := toDecimal(b)
+		if aok && bok {
+			requireSafeSandboxDecimalOperation(ec, "=", ad, line)
+			requireSafeSandboxDecimalOperation(ec, "=", bd, line)
+			return ad.Equal(bd)
+		}
+	}
+	if ec != nil && ec.maxStringExpansion > 0 {
+		requireSafeSandboxFormattingValueLimits("=", []any{a, b}, ec.maxDecimalExpansion, ec.maxStringExpansion, line)
 	}
 	return refKey(a) == refKey(b)
 }
@@ -1156,6 +1274,10 @@ func dateAddSeconds(t time.Time, sec float64) time.Time {
 }
 
 func compare(a, b any) int {
+	return compareSandboxed(a, b, nil, 0)
+}
+
+func compareSandboxed(a, b any, ec *execCtx, line int) int {
 	// Даты сравниваем хронологически, а не как строки.
 	if at, ok := a.(time.Time); ok {
 		if bt, ok2 := b.(time.Time); ok2 {
@@ -1169,10 +1291,17 @@ func compare(a, b any) int {
 			}
 		}
 	}
+	requireSafeSandboxDecimalOperand(ec, "comparison", a, line)
+	requireSafeSandboxDecimalOperand(ec, "comparison", b, line)
 	ad, aok := toDecimal(a)
 	bd, bok := toDecimal(b)
 	if aok && bok {
+		requireSafeSandboxDecimalOperation(ec, "comparison", ad, line)
+		requireSafeSandboxDecimalOperation(ec, "comparison", bd, line)
 		return ad.Cmp(bd)
+	}
+	if ec != nil && ec.maxStringExpansion > 0 {
+		requireSafeSandboxFormattingValueLimits("comparison", []any{a, b}, ec.maxDecimalExpansion, ec.maxStringExpansion, line)
 	}
 	as := fmt.Sprintf("%v", a)
 	bs := fmt.Sprintf("%v", b)
@@ -1254,13 +1383,38 @@ func toFloat(v any) (float64, bool) {
 			return 0, false
 		}
 		return t, true
+	case float32:
+		f := float64(t)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return 0, false
+		}
+		return f, true
 	case decimal.Decimal:
 		return decimalToFiniteFloat64(t)
+	case *decimal.Decimal:
+		if t == nil {
+			return 0, false
+		}
+		return decimalToFiniteFloat64(*t)
 	case int:
+		return float64(t), true
+	case int8:
+		return float64(t), true
+	case int16:
 		return float64(t), true
 	case int32:
 		return float64(t), true
 	case int64:
+		return float64(t), true
+	case uint:
+		return float64(t), true
+	case uint8:
+		return float64(t), true
+	case uint16:
+		return float64(t), true
+	case uint32:
+		return float64(t), true
+	case uint64:
 		return float64(t), true
 	case string:
 		if f, err := strconv.ParseFloat(t, 64); err == nil {
@@ -1274,27 +1428,34 @@ func toFloat(v any) (float64, bool) {
 }
 
 // applyCompoundOp computes the result of a compound assignment operator.
-func applyCompoundOp(op token.Type, old, val any) any {
+func applyCompoundOp(op token.Type, old, val any, ec *execCtx) any {
+	if ec != nil {
+		requireSafeSandboxValueLimits("compound assignment", []any{old, val}, ec.maxDecimalExpansion, ec.maxStringExpansion, 0)
+	}
+	requireSafeSandboxDecimalOperand(ec, "compound assignment", old, 0)
+	requireSafeSandboxDecimalOperand(ec, "compound assignment", val, 0)
 	ld, lok := toDecimal(old)
 	rd, rok := toDecimal(val)
 	if lok && rok {
+		requireSafeSandboxDecimalOperation(ec, "compound assignment", ld, 0)
+		requireSafeSandboxDecimalOperation(ec, "compound assignment", rd, 0)
 		switch op {
 		case token.PLUS_ASSIGN:
-			return ld.Add(rd)
+			return safeSandboxDecimalResult(ec, "compound assignment", ld.Add(rd), 0)
 		case token.MINUS_ASSIGN:
-			return ld.Sub(rd)
+			return safeSandboxDecimalResult(ec, "compound assignment", ld.Sub(rd), 0)
 		case token.STAR_ASSIGN:
-			return ld.Mul(rd)
+			return safeSandboxDecimalResult(ec, "compound assignment", ld.Mul(rd), 0)
 		case token.SLASH_ASSIGN:
 			if !rd.IsZero() {
 				requireSafeDecimalQuotient(ld, rd, 0)
-				return ld.Div(rd)
+				return safeSandboxDecimalResult(ec, "compound assignment", ld.Div(rd), 0)
 			}
 			return decimal.Zero
 		}
 	}
 	if op == token.PLUS_ASSIGN {
-		return fmt.Sprintf("%v", old) + fmt.Sprintf("%v", val)
+		return sandboxConcatValues(ec, "compound assignment", old, val, 0)
 	}
 	return val
 }
