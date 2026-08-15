@@ -436,7 +436,11 @@ func (db *DB) writeMovementsInTx(ctx context.Context, regName, recorderType stri
 			cols = append(cols, metadata.ColumnName(f))
 			phs = append(phs, d.Placeholder(idx))
 			v := ciGet(row, f.Name)
-			v = normalizeRegField(d, f, v)
+			var err error
+			v, err = normalizeRegField(d, f, v)
+			if err != nil {
+				return fmt.Errorf("write movement %s row %d field %s: %w", regName, i+1, f.Name, err)
+			}
 			args = append(args, v)
 			idx++
 		}
@@ -464,7 +468,10 @@ func (db *DB) GetMovements(ctx context.Context, regName string, reg *metadata.Re
 	for _, f := range allFields {
 		cols = append(cols, metadata.ColumnName(f))
 	}
-	where, args := dimWhereClause(db.dialect, reg.Dimensions, f, 1, true, true)
+	where, args, err := dimWhereClause(db.dialect, reg.Dimensions, f, 1, true, true)
+	if err != nil {
+		return nil, fmt.Errorf("get movements %s: %w", regName, err)
+	}
 	whereParts := make([]string, 0, 2)
 	if where != "" {
 		whereParts = append(whereParts, where)
@@ -587,7 +594,10 @@ func (db *DB) GetBalances(ctx context.Context, regName string, reg *metadata.Reg
 		resNames = append(resNames, f.Name)
 	}
 
-	where, args := dimWhereClause(db.dialect, reg.Dimensions, f, 1, false /*from игнорируем*/, true)
+	where, args, err := dimWhereClause(db.dialect, reg.Dimensions, f, 1, false /*from игнорируем*/, true)
+	if err != nil {
+		return nil, fmt.Errorf("get balances %s: %w", regName, err)
+	}
 	whereParts := make([]string, 0, 2)
 	if where != "" {
 		whereParts = append(whereParts, where)

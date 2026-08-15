@@ -211,13 +211,21 @@ func (db *DB) writeAccountMovementsInTx(ctx context.Context, regName, docType st
 		for _, r := range ar.Resources {
 			col := metadata.ColumnName(r)
 			extraCols = append(extraCols, col)
-			extraArgs = append(extraArgs, normalizeRegField(d, r, ciGet(row, r.Name)))
+			value, err := normalizeRegField(d, r, ciGet(row, r.Name))
+			if err != nil {
+				return fmt.Errorf("account movement %s resource %s: %w", regName, r.Name, err)
+			}
+			extraArgs = append(extraArgs, value)
 		}
 		for i, s := range ar.Subconto {
 			col := metadata.SubcontoColumn(i + 1)
 			val := subcontoArg(row, i+1, s.Name)
 			extraCols = append(extraCols, col)
-			extraArgs = append(extraArgs, normalizeRegArg(d, val, metadata.IsReference(s.Type)))
+			value, err := normalizeRegField(d, s, val)
+			if err != nil {
+				return fmt.Errorf("account movement %s subconto %s: %w", regName, s.Name, err)
+			}
+			extraArgs = append(extraArgs, value)
 		}
 
 		// id — собственный PK движения. Без него колонка оставалась NULL, из-за

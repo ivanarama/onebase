@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -45,6 +46,73 @@ func TestNumberSpec_RoundOnWriteSQLite(t *testing.T) {
 	got := row["Цена"].(decimal.Decimal)
 	if got.String() != "11" {
 		t.Errorf("округление до scale=2: 10.999 → %q, ожидалось 11", got.String())
+	}
+}
+
+func TestCanonicalNumberArg_UsesDeclaredScale(t *testing.T) {
+	tests := []struct {
+		name  string
+		field metadata.Field
+		value any
+		want  string
+	}{
+		{"plain trims zeros", metadata.Field{Name: "N", Type: metadata.FieldTypeNumber}, "100.00", "100"},
+		{"fixed pads zeros", metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 10, Scale: 2}, 100, "100.00"},
+		{"fixed rounds", metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 10, Scale: 2}, "1.005", "1.01"},
+		{"explicit scale zero", metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 6, Scale: 0}, "10.6", "11"},
+		{"decimal comma", metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 6, Scale: 2}, "1,5", "1.50"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := canonicalNumberArg(test.field, test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("canonicalNumberArg=%T(%v), want %q", got, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalNumberArg_HugeExponentIsBounded(t *testing.T) {
+	done := make(chan error, 1)
+	go func() {
+		_, err := canonicalNumberArg(
+			metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 10, Scale: 2},
+			"1e2147483647",
+		)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "разрядность") {
+			t.Fatalf("huge positive exponent err=%v, want bounded precision error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("huge exponent canonicalization did not finish in bounded time")
+	}
+
+	got, err := canonicalNumberArg(
+		metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 10, Scale: 2},
+		"1e-2147483647",
+	)
+	if err != nil || got != "0.00" {
+		t.Fatalf("huge negative exponent=%T(%v), err=%v, want 0.00", got, got, err)
+	}
+	for _, value := range []string{"1e2147483647", "1e-2147483647"} {
+		if _, err := canonicalNumberArg(metadata.Field{Name: "N", Type: metadata.FieldTypeNumber}, value); err == nil {
+			t.Fatalf("plain number %q: expected PostgreSQL-compatible size error", value)
+		}
+	}
+}
+
+func TestCanonicalNumberArg_RejectsInvalidNumberAndSpec(t *testing.T) {
+	if _, err := canonicalNumberArg(metadata.Field{Name: "N", Type: metadata.FieldTypeNumber}, "not-a-number"); err == nil {
+		t.Fatal("invalid number was silently passed to the driver")
+	}
+	if _, err := canonicalNumberArg(metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 2, Scale: 3}, "1"); err == nil {
+		t.Fatal("invalid number precision was silently accepted")
 	}
 }
 

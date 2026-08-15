@@ -36,6 +36,7 @@ func TestNumberCanonicalWriteMatrix(t *testing.T) {
 			Fields: []metadata.Field{
 				{Name: "Количество", Type: metadata.FieldTypeNumber},
 				{Name: "Сумма", Type: metadata.FieldTypeNumber, Length: 15, Scale: 2},
+				{Name: "Упаковки", Type: metadata.FieldTypeNumber, Length: 6, Scale: 0},
 			},
 			TableParts: []metadata.TablePart{{
 				Name: "Товары",
@@ -54,12 +55,14 @@ func TestNumberCanonicalWriteMatrix(t *testing.T) {
 		if err := db.Upsert(ctx, entity.Name, asNumber, map[string]any{
 			"Количество": float64(100),
 			"Сумма":      float64(100),
+			"Упаковки":   10.6,
 		}, entity); err != nil {
 			t.Fatalf("Upsert числом: %v", err)
 		}
 		if err := db.Upsert(ctx, entity.Name, asText, map[string]any{
 			"Количество": "100",
 			"Сумма":      "100",
+			"Упаковки":   "10.60",
 		}, entity); err != nil {
 			t.Fatalf("Upsert строкой: %v", err)
 		}
@@ -70,10 +73,19 @@ func TestNumberCanonicalWriteMatrix(t *testing.T) {
 			t.Fatalf("шапка: число записано как %q, строка как %q — представление зависит от пути записи",
 				numberText, textText)
 		}
+		if numberText != "100" {
+			t.Fatalf("голый number записан как %q, want canonical 100", numberText)
+		}
 		sumNumber := rawText(t, db, metadata.TableName(entity.Name), "сумма", asNumber)
 		sumText := rawText(t, db, metadata.TableName(entity.Name), "сумма", asText)
 		if sumNumber != sumText {
 			t.Fatalf("шапка number(15,2): число %q, строка %q", sumNumber, sumText)
+		}
+		if sumNumber != "100.00" {
+			t.Fatalf("number(15,2) записан как %q, want fixed scale 100.00", sumNumber)
+		}
+		if got := rawText(t, db, metadata.TableName(entity.Name), "упаковки", asNumber); got != "11" {
+			t.Fatalf("number(6,0) записан как %q, want rounded integer 11", got)
 		}
 
 		// Табличная часть — тот же путь, но своя функция записи.
@@ -91,6 +103,9 @@ func TestNumberCanonicalWriteMatrix(t *testing.T) {
 		tpText := rawTextWhere(t, db, tpTable, "количество", "parent_id", asText)
 		if tpNumber != tpText {
 			t.Fatalf("ТЧ: число записано как %q, строка как %q", tpNumber, tpText)
+		}
+		if tpNumber != "100" {
+			t.Fatalf("ТЧ: canonical number=%q, want 100", tpNumber)
 		}
 
 		// Движения регистра — путь мимо Upsert, и именно на нём #912 нашёлся.
@@ -119,6 +134,9 @@ func TestNumberCanonicalWriteMatrix(t *testing.T) {
 		if regNumber != regText {
 			t.Fatalf("движения: число записано как %q, строка как %q", regNumber, regText)
 		}
+		if regNumber != "100" {
+			t.Fatalf("движения: canonical number=%q, want 100", regNumber)
+		}
 	})
 }
 
@@ -146,6 +164,8 @@ func TestNumberCanonicalFractionMatrix(t *testing.T) {
 		if got, want := rawText(t, db, metadata.TableName(entity.Name), "цена", b),
 			rawText(t, db, metadata.TableName(entity.Name), "цена", a); got != want {
 			t.Fatalf("дробное: строка записана как %q, число как %q", got, want)
+		} else if got != "100.50" {
+			t.Fatalf("number(15,2) записан как %q, want fixed scale 100.50", got)
 		}
 	})
 }

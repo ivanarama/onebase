@@ -304,7 +304,10 @@ func TestDimWhereClause_InvalidRefUUIDYieldsEmpty(t *testing.T) {
 		{Name: "Номенклатура", Type: metadata.FieldType("reference:Товары"), RefEntity: "Товары"},
 	}
 	f := RegFilter{Dims: map[string]string{"Номенклатура": "не-uuid"}}
-	where, args := dimWhereClause(db.Dialect(), dims, f, 1, true, true)
+	where, args, err := dimWhereClause(db.Dialect(), dims, f, 1, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if where == "" {
 		t.Fatal("ожидалось сужающее условие для невалидного UUID, получено пусто (вернёт все строки)")
