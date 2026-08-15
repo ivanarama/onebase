@@ -67,8 +67,8 @@ func TestUI_InfoRegDelete_ПодМаскойНаИзмеренииОтказыв
 	rec := httptest.NewRecorder()
 	s.infoRegDelete(rec, req)
 
-	if rec.Code >= 200 && rec.Code < 400 {
-		t.Fatalf("удаление под маской завершилось «успехом» (код %d) — запись цела, а пользователь считает иначе", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("удаление под маской: код %d, ожидался 403; body=%s", rec.Code, rec.Body.String())
 	}
 
 	// И запись действительно на месте: отказ обязан быть отказом, а не
@@ -79,5 +79,26 @@ func TestUI_InfoRegDelete_ПодМаскойНаИзмеренииОтказыв
 	}
 	if len(rows) != 1 {
 		t.Fatalf("строк осталось %d, ожидалась 1", len(rows))
+	}
+}
+
+func TestUI_InfoRegDelete_НесуществующаяЗаписьНеСчитаетсяУдалённой(t *testing.T) {
+	ir := &metadata.InfoRegister{
+		Name:       "Настройки",
+		Dimensions: []metadata.Field{{Name: "Ключ", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Значение", Type: metadata.FieldTypeString}},
+	}
+	s, ctx := newSubmitTestServer(t, nil)
+	if err := s.store.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatal(err)
+	}
+	s.reg.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+
+	req := reqWithChi(http.MethodPost, "/ui/inforeg/"+ir.Name+"/delete",
+		url.Values{"Ключ": {"missing"}}, map[string]string{"name": ir.Name})
+	rec := httptest.NewRecorder()
+	s.infoRegDelete(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing row: status=%d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
 }

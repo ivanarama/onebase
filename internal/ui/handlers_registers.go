@@ -403,14 +403,17 @@ func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dims := parseInfoRegFields(r, ir.Dimensions)
-	row, _ := s.infoRegExistingPolicyRow(r.Context(), ir, dims, periodPtr)
-	// Удалять нечего — не успех. Прежде «не нашли ни строки» было неотличимо от
-	// «удалили»: ответ один и тот же.
-	if row == nil {
-		http.Error(w, s.tr(s.resolveLang(r), "Запись не найдена: возможно, она уже удалена"), http.StatusNotFound)
+	row, found := s.infoRegExistingPolicyRow(r.Context(), ir, dims, periodPtr)
+	// Сначала проверяем row policy на запрошенном ключе. Так несуществующий ключ
+	// вне разрешённой области не превращается в oracle существования чужих строк.
+	if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "delete", storage.InfoRegisterPredicateEntity(ir), row) {
 		return
 	}
-	if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "delete", storage.InfoRegisterPredicateEntity(ir), row) {
+	// Удалять нечего — не успех. Прежде «не нашли ни строки» было неотличимо от
+	// «удалили»: ответ один и тот же. infoRegExistingPolicyRow всегда возвращает
+	// policy-row, поэтому проверять нужно found, а не row == nil.
+	if !found {
+		http.Error(w, s.tr(s.resolveLang(r), "Запись не найдена: возможно, она уже удалена"), http.StatusNotFound)
 		return
 	}
 	plans := s.reg.ExchangePlans()
