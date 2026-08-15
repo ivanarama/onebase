@@ -1,6 +1,7 @@
 package interpreter_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -13,6 +14,37 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSandboxChecksDeadlineAfterBlockingLastStatement(t *testing.T) {
+	src := `Procedure Test()
+  Block();
+EndProcedure`
+	block := interpreter.BuiltinFunc(func([]any, string, int) (any, error) {
+		time.Sleep(120 * time.Millisecond)
+		return nil, nil
+	})
+	var result any
+	err := interpreter.New().RunSandboxed(parseProc(t, src), nil,
+		interpreter.SandboxProfile{MaxWallClock: 30 * time.Millisecond}, &result,
+		map[string]any{"Block": block})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "время")
+}
+
+func TestSleepSandbox_ExecutionContextCancelsWithoutWallClock(t *testing.T) {
+	src := `Procedure Test()
+  Sleep(10);
+EndProcedure`
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var result any
+	started := time.Now()
+	err := interpreter.New().RunSandboxed(parseProc(t, src), nil,
+		interpreter.SandboxProfile{Context: ctx}, &result)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "время")
+	assert.Less(t, time.Since(started), time.Second)
+}
 
 // Две допустимые по отдельности паузы расходуют один MaxWallClock. Вторая
 // прерывается общим дедлайном и не может превратить 600 мс песочницы в секунду.
