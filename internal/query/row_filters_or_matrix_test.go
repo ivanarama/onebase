@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/google/uuid"
@@ -151,6 +152,112 @@ func TestRowFilterAnyWithUserOrMatrix(t *testing.T) {
 		}
 		// «общий» политика пропускает, «чужой» — нет, несмотря на ИЛИ.
 		assertNames(t, runNames(t, db, res), "ТоварМатрица-общий")
+	})
+}
+
+// #625 затрагивал не только виртуальные таблицы, но и ON автоматически
+// добавленного JOIN по ссылочному полю. Правая OR-ветвь политики не должна
+// присоединять разрешённую, но никак не связанную запись справочника.
+func TestRowFilterAnyInAutoJoinMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		category := &metadata.Entity{
+			Name: "КатегорияСсылкиМатрица",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: "Наименование", Type: metadata.FieldTypeString},
+				{Name: "Owner", Type: metadata.FieldTypeString},
+			},
+		}
+		product := &metadata.Entity{
+			Name: "ТоварСсылкиМатрица",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: "Наименование", Type: metadata.FieldTypeString},
+				{Name: "Категория", Type: metadata.FieldTypeString, RefEntity: category.Name},
+			},
+		}
+		entities := []*metadata.Entity{category, product}
+		if err := db.Migrate(ctx, entities); err != nil {
+			t.Fatalf("Migrate: %v", err)
+		}
+
+		allowedA := uuid.New()
+		allowedB := uuid.New()
+		foreign := uuid.New()
+		for _, row := range []struct {
+			id    uuid.UUID
+			name  string
+			owner string
+		}{
+			{allowedA, "разрешённая-A", "A"},
+			{allowedB, "разрешённая-B", "B"},
+			{foreign, "чужая", "чужой"},
+		} {
+			if err := db.Upsert(ctx, category.Name, row.id,
+				map[string]any{"Наименование": row.name, "Owner": row.owner}, category); err != nil {
+				t.Fatalf("Upsert category %s: %v", row.name, err)
+			}
+		}
+		for _, row := range []struct {
+			name       string
+			categoryID uuid.UUID
+		}{
+			{"товар-свой", allowedA},
+			{"товар-чужой", foreign},
+		} {
+			if err := db.Upsert(ctx, product.Name, uuid.New(),
+				map[string]any{"Наименование": row.name, "Категория": row.categoryID}, product); err != nil {
+				t.Fatalf("Upsert product %s: %v", row.name, err)
+			}
+		}
+
+		res, err := query.Compile(
+			`ВЫБРАТЬ Т.Наименование, Т.Категория.Наименование
+			 ИЗ Справочник.ТоварСсылкиМатрица КАК Т
+			 УПОРЯДОЧИТЬ ПО Т.Наименование`,
+			query.CompileOpts{
+				Entities: entities,
+				Dialect:  db.Dialect(),
+				RowFilters: map[query.SourceRef]*storage.Predicate{
+					{Kind: "catalog", Name: category.Name}: {Any: []storage.Predicate{
+						{Field: "Owner", Op: "eq", Value: "A"},
+						{Field: "Owner", Op: "eq", Value: "B"},
+					}},
+				},
+			})
+		if err != nil {
+			t.Fatalf("компиляция: %v", err)
+		}
+		rows, err := db.Query(ctx, res.SQL, res.Args...)
+		if err != nil {
+			t.Fatalf("выполнение: %v\n%s", err, res.SQL)
+		}
+		defer rows.Close()
+		got := make(map[string]sql.NullString)
+		for rows.Next() {
+			var name string
+			var categoryName sql.NullString
+			if err := rows.Scan(&name, &categoryName); err != nil {
+				t.Fatalf("чтение: %v", err)
+			}
+			if _, duplicate := got[name]; duplicate {
+				t.Fatalf("товар %q размножен JOIN-ом; политика вырвалась из-под ON\nSQL: %s", name, res.SQL)
+			}
+			got[name] = categoryName
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("товары = %v, ожидались две исходные строки\nSQL: %s", got, res.SQL)
+		}
+		if own := got["товар-свой"]; !own.Valid || own.String != "разрешённая-A" {
+			t.Fatalf("представление разрешённой ссылки = %+v", own)
+		}
+		if foreignName := got["товар-чужой"]; foreignName.Valid {
+			t.Fatalf("чужая ссылка раскрыта как %q; политика не удержалась в ON", foreignName.String)
+		}
 	})
 }
 
