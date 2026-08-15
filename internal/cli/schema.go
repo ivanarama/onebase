@@ -254,8 +254,17 @@ func allSchemas() map[string]map[string]any {
 				"presentation": map[string]any{
 					"description": "Реквизит(ы) представления объекта; по умолчанию — правило по именам, «Код» последним",
 					"oneOf": []any{
-						stringSchema("Имя строкового реквизита"),
-						arrayOf(stringSchema("Имя строкового реквизита; первый непустой становится подписью")),
+						map[string]any{
+							"type": "string", "minLength": 1,
+							"description": "Имя строкового реквизита",
+						},
+						map[string]any{
+							"type": "array", "minItems": 1, "uniqueItems": true,
+							"items": map[string]any{
+								"type": "string", "minLength": 1,
+								"description": "Имя строкового реквизита; первый непустой становится подписью",
+							},
+						},
 					},
 				},
 				"detail_panel": detailPanel,

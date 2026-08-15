@@ -451,20 +451,23 @@ type stringOrList []string
 
 func (v *stringOrList) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
-		if s := strings.TrimSpace(node.Value); s != "" {
-			*v = stringOrList{s}
-		}
+		// Не отбрасываем пустое явно заданное значение: отсутствие ключа и
+		// `presentation: ""` различаются. Второе должен отклонить Validate, а
+		// не молча превратить в старое правило по именам.
+		*v = stringOrList{strings.TrimSpace(node.Value)}
 		return nil
 	}
 	var list []string
 	if err := node.Decode(&list); err != nil {
 		return err
 	}
+	if len(list) == 0 {
+		*v = stringOrList{""}
+		return nil
+	}
 	out := make(stringOrList, 0, len(list))
 	for _, item := range list {
-		if s := strings.TrimSpace(item); s != "" {
-			out = append(out, s)
-		}
+		out = append(out, strings.TrimSpace(item))
 	}
 	*v = out
 	return nil

@@ -32,10 +32,16 @@ func LabelFields(e *Entity) []Field {
 	// задаются списком, и порядок в нём — его.
 	if len(e.Presentation) > 0 {
 		var out []Field
+		seen := make(map[string]bool, len(e.Presentation))
 		for _, name := range e.Presentation {
 			for _, f := range e.Fields {
 				if strings.EqualFold(f.Name, name) && f.Type == FieldTypeString {
+					key := strings.ToLower(f.Name)
+					if seen[key] {
+						break
+					}
 					out = append(out, f)
+					seen[key] = true
 					break
 				}
 			}

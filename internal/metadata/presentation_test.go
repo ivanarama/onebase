@@ -85,6 +85,46 @@ func TestValidate_ПредставлениеПроверяется(t *testing.T)
 	if err := Validate([]*Entity{presentationEntity("Артикул")}, nil); err != nil {
 		t.Fatalf("корректное представление отклонено: %v", err)
 	}
+
+	err = Validate([]*Entity{presentationEntity("Артикул", "артикул")}, nil)
+	if err == nil || !strings.Contains(err.Error(), "повтор") {
+		t.Fatalf("дубль presentation принят: %v", err)
+	}
+	if got := LabelFields(presentationEntity("Артикул", "артикул")); len(got) != 1 {
+		t.Fatalf("runtime не убрал дубль presentation: %+v", got)
+	}
+
+	err = Validate([]*Entity{presentationEntity("")}, nil)
+	if err == nil || !strings.Contains(err.Error(), "пустое имя") {
+		t.Fatalf("пустой presentation принят: %v", err)
+	}
+}
+
+func TestLoadFile_ExplicitEmptyPresentationFailsValidation(t *testing.T) {
+	for name, value := range map[string]string{
+		"пустая строка":         "''",
+		"пустой список":         "[]",
+		"пустой элемент списка": "[Артикул, '']",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "номенклатура.yaml")
+			body := "name: Номенклатура\npresentation: " + value + `
+fields:
+  - name: Артикул
+    type: string
+`
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e, err := LoadFile(path, KindCatalog)
+			if err != nil {
+				t.Fatalf("LoadFile: %v", err)
+			}
+			if err := Validate([]*Entity{e}, nil); err == nil || !strings.Contains(err.Error(), "пустое имя") {
+				t.Fatalf("явно пустой presentation прошёл Validate: %v", err)
+			}
+		})
+	}
 }
 
 // Ключ читается и как строка, и как список: «одно поле» — частый случай, и

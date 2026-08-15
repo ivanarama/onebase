@@ -53,7 +53,16 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		// подбор, поиск, REST, DSL. Опечатка в имени реквизита обязана падать
 		// здесь: в рантайме она выглядела бы как «представление вдруг стало
 		// другим», и искать причину пришлось бы по всему интерфейсу (#846).
+		seenPresentation := make(map[string]bool, len(e.Presentation))
 		for _, name := range e.Presentation {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("entity %s: presentation содержит пустое имя реквизита", e.Name)
+			}
+			key := strings.ToLower(name)
+			if seenPresentation[key] {
+				return fmt.Errorf("entity %s: presentation содержит повтор реквизита %s", e.Name, name)
+			}
+			seenPresentation[key] = true
 			f := findEntityFieldFold(e, name)
 			if f == nil {
 				return fmt.Errorf("entity %s: presentation ссылается на несуществующий реквизит %s", e.Name, name)
