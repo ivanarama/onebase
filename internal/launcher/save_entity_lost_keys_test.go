@@ -22,6 +22,9 @@ list_mode: tiles
 list_refresh_on:
   - ПоступлениеТоваров
 notify_changes: true
+presentation:
+  - Артикул
+  - Наименование
 indexes:
   - fields: [Артикул]
     unique: true
@@ -69,6 +72,9 @@ fields:
 		"list_mode: tiles",
 		"ПоступлениеТоваров", // list_refresh_on
 		"notify_changes: true",
+		"presentation:",
+		"- Артикул",
+		"- Наименование",
 		"unique: true", // indexes
 		"image: Фото",  // tile_view
 		"detail_panel:",

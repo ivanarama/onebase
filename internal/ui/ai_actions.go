@@ -128,8 +128,11 @@ func aiRefLookupField(entity *metadata.Entity) string {
 // presentation. Без ключа поведение остаётся прежним: поиск и подпись идут по
 // одному основному реквизиту.
 func aiRefLookupFields(entity *metadata.Entity) []metadata.Field {
+	if entity == nil {
+		return nil
+	}
 	fields := metadata.LabelFields(entity)
-	if len(fields) == 0 || entity == nil {
+	if len(fields) == 0 {
 		return nil
 	}
 	if len(entity.Presentation) > 0 {
@@ -238,22 +241,36 @@ func (s *Server) aiNormalizeValue(ctx context.Context, f metadata.Field, raw any
 		if s.rowAccessRestricted(ctx, refEntity, "read") {
 			return nil, "", fmt.Errorf("поле %s: для %s действует строковый доступ — передай UUID, найденный через выполнить_запрос", f.Name, refEntity.Name)
 		}
-		lookup := aiRefLookupField(refEntity)
-		if lookup == "" {
+		lookupFields := aiRefLookupFields(refEntity)
+		if len(lookupFields) == 0 {
 			return nil, "", fmt.Errorf("поле %s: у %s нет строкового реквизита для поиска по имени — передай UUID", f.Name, refEntity.Name)
 		}
+		lookupNames := make([]string, 0, len(lookupFields))
+		for _, lookup := range lookupFields {
+			lookupNames = append(lookupNames, lookup.Name)
+		}
 		for protected := range s.fieldDecisions(ctx, refEntity) {
-			if strings.EqualFold(protected, lookup) {
-				return nil, "", fmt.Errorf("поле %s: поиск %s по защищённому полю %s запрещён — передай UUID", f.Name, refEntity.Name, lookup)
+			for _, lookup := range lookupFields {
+				if strings.EqualFold(protected, lookup.Name) {
+					return nil, "", fmt.Errorf("поле %s: поиск %s по защищённому полю %s запрещён — передай UUID", f.Name, refEntity.Name, lookup.Name)
+				}
 			}
 		}
-		id, display, count, err := s.store.MatchCatalogByField(ctx, refEntity, lookup, str)
+		lookupLabel := strings.Join(lookupNames, ", ")
+		var id, display string
+		var count int
+		var err error
+		if len(refEntity.Presentation) > 0 {
+			id, display, count, err = s.store.MatchCatalogByPresentation(ctx, refEntity, str)
+		} else {
+			id, display, count, err = s.store.MatchCatalogByField(ctx, refEntity, lookupFields[0].Name, str)
+		}
 		if err != nil {
 			return nil, "", fmt.Errorf("поле %s: поиск %q в %s: %w", f.Name, str, refEntity.Name, err)
 		}
 		switch count {
 		case 0:
-			return nil, "", fmt.Errorf("поле %s: %q не найдено в %s (поиск по %s) — уточни значение или найди UUID через выполнить_запрос", f.Name, str, refEntity.Name, lookup)
+			return nil, "", fmt.Errorf("поле %s: %q не найдено в %s (поиск по %s) — уточни значение или найди UUID через выполнить_запрос", f.Name, str, refEntity.Name, lookupLabel)
 		case 1:
 			return id, display, nil
 		default:

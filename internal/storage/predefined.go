@@ -578,7 +578,36 @@ func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, 
 	if field == nil {
 		return "", "", 0, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
 	}
-	col := metadata.ColumnName(*field)
+	return db.matchCatalogByExpression(ctx, entity, metadata.ColumnName(*field), fieldName, value)
+}
+
+// MatchCatalogByPresentation ищет по фактическому явно заданному
+// presentation: у каждой строки берётся первый непустой реквизит из списка.
+// Это важно для safe-match: последовательные запросы по отдельным колонкам не
+// могут корректно определить неоднозначность между основным и запасным полем.
+func (db *DB) MatchCatalogByPresentation(ctx context.Context, entity *metadata.Entity, value string) (string, string, int, error) {
+	if entity == nil || len(entity.Presentation) == 0 {
+		return "", "", 0, fmt.Errorf("entity has no explicit presentation")
+	}
+	fields := metadata.LabelFields(entity)
+	if len(fields) == 0 {
+		return "", "", 0, fmt.Errorf("entity %s has no string presentation fields", entity.Name)
+	}
+
+	parts := make([]string, 0, len(fields)+1)
+	for _, field := range fields {
+		col := metadata.ColumnName(field)
+		parts = append(parts, fmt.Sprintf("WHEN TRIM(COALESCE(%s, '')) <> '' THEN %s", col, col))
+	}
+	expression := "CASE " + strings.Join(parts, " ") + " ELSE '' END"
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.Name)
+	}
+	return db.matchCatalogByExpression(ctx, entity, expression, strings.Join(names, ", "), value)
+}
+
+func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, expression, fieldLabel, value string) (string, string, int, error) {
 	table := metadata.TableName(entity.Name)
 	d := db.dialect
 	// Один запрос: LIMIT 1 берёт id/представление первой записи, а вложенный
@@ -588,11 +617,11 @@ func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, 
 	// и SQLite (?, ?).
 	rows, err := db.Query(ctx,
 		fmt.Sprintf(`SELECT id, %s, (SELECT COUNT(*) FROM %s WHERE %s = %s) FROM %s WHERE %s = %s LIMIT 1`,
-			col, table, col, d.Placeholder(1), table, col, d.Placeholder(2)),
+			expression, table, expression, d.Placeholder(1), table, expression, d.Placeholder(2)),
 		value, value,
 	)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("match %s.%s: %w", entity.Name, fieldName, err)
+		return "", "", 0, fmt.Errorf("match %s.%s: %w", entity.Name, fieldLabel, err)
 	}
 	if !rows.Next() {
 		rows.Close()
@@ -602,11 +631,11 @@ func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, 
 	cnt := 0
 	if err := rows.Scan(&idStr, &display, &cnt); err != nil {
 		rows.Close()
-		return "", "", 0, fmt.Errorf("match %s.%s scan: %w", entity.Name, fieldName, err)
+		return "", "", 0, fmt.Errorf("match %s.%s scan: %w", entity.Name, fieldLabel, err)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return "", "", 0, fmt.Errorf("match %s.%s rows: %w", entity.Name, fieldName, err)
+		return "", "", 0, fmt.Errorf("match %s.%s rows: %w", entity.Name, fieldLabel, err)
 	}
 	rows.Close()
 	if cnt == 1 {

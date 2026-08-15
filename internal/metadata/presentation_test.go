@@ -95,7 +95,7 @@ func TestLoadFile_PresentationСтрокаИСписок(t *testing.T) {
 		want []string
 	}{
 		"строка":    {"presentation: '  Артикул  '\n", []string{"Артикул"}},
-		"список":    {"presentation: [Артикул, Наименование]\n", []string{"Артикул", "Наименование"}},
+		"список":    {"presentation: ['  Артикул  ', ' Наименование ']\n", []string{"Артикул", "Наименование"}},
 		"нет ключа": {"", nil},
 	}
 	for name, tc := range cases {
@@ -117,6 +117,9 @@ func TestLoadFile_PresentationСтрокаИСписок(t *testing.T) {
 			}
 			if !reflect.DeepEqual(e.Presentation, tc.want) {
 				t.Fatalf("Presentation = %#v, ожидалось %#v", e.Presentation, tc.want)
+			}
+			if err := Validate([]*Entity{e}, nil); err != nil {
+				t.Fatalf("Validate: %v", err)
 			}
 		})
 	}
