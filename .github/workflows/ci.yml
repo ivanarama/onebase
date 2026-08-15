@@ -280,7 +280,7 @@ jobs:
         shell: pwsh
         env:
           CGO_ENABLED: 1
-        run: go test -tags webview ./internal/launcher
+        run: go test -count=1 -tags webview ./internal/launcher
 
   # Ни один гейт не запускал СОБРАННЫЙ бинарь — поэтому регрессия «сборки
   # 783–792 не запускаются вне %USERPROFILE%» прошла зелёный CI и уехала к

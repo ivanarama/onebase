@@ -16,6 +16,17 @@ import (
 // smoke-гейт CI находит адрес в выводе процесса (план 122A).
 const launcherURLPrefix = "Лаунчер доступен по адресу: "
 
+var openLauncherFrontend = launcher.OpenWindow
+var waitLauncherFrontend = launcher.WaitForClose
+
+func runLauncherFrontend(url, title string, done <-chan struct{}, cc launcher.CloseCoordinator) error {
+	if guiDisabled() {
+		waitLauncherFrontend(done)
+		return nil
+	}
+	return openLauncherFrontend(url, title, done, cc)
+}
+
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Open the information bases launcher",
@@ -108,11 +119,12 @@ func runStart(_ *cobra.Command, _ []string) error {
 	// префикс строки — часть контракта, его разбирает CI.
 	outf("%s%s\n", launcherURLPrefix, srv.EntryURL())
 
-	// OpenWindow blocks until the window/browser is closed or /quit is called.
-	// For the webview build it MUST run on the main goroutine (Win32 requirement).
-	// srv здесь ещё и CloseCoordinator: окно спрашивает у него, что делать с
-	// работающими базами при закрытии крестиком (см. closepolicy.go).
-	_ = launcher.OpenWindow(srv.EntryURL(), "onebase — Информационные базы", srv.Done(), srv)
+	// В обычном режиме frontend блокируется до закрытия окна/браузера или /quit.
+	// С --no-gui тот же контракт выполняет WaitForClose без открытия GUI. Для
+	// webview-сборки OpenWindow ОБЯЗАН остаться на main goroutine (требование
+	// Win32). srv здесь ещё и CloseCoordinator: окно спрашивает у него, что
+	// делать с работающими базами при закрытии крестиком (см. closepolicy.go).
+	_ = runLauncherFrontend(srv.EntryURL(), "onebase — Информационные базы", srv.Done(), srv)
 
 	// Window closed — shut down server and force exit after a short grace period
 	// for lingering goroutines/threads.
