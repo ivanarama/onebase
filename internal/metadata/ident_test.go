@@ -1,6 +1,9 @@
 package metadata
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidIdent(t *testing.T) {
 	cases := []struct {
@@ -141,5 +144,32 @@ func TestValidateIdentifiers_ReservedColumns(t *testing.T) {
 	e := &Entity{Name: "Заметка", Kind: KindCatalog, Fields: []Field{{Name: "Строка", Type: FieldTypeString}}}
 	if err := ValidateIdentifiers([]*Entity{e}, nil, nil, nil, nil, nil); err != nil {
 		t.Errorf("«Строка» как реквизит сущности должна быть допустима: %v", err)
+	}
+}
+
+func TestValidateIdentifiers_PeriodicInfoRegisterReservesDSLPeriod(t *testing.T) {
+	for _, name := range []string{"Период", "period", "ПЕРИОД", "Period"} {
+		t.Run(name, func(t *testing.T) {
+			ir := &InfoRegister{
+				Name:       "История",
+				Periodic:   true,
+				Dimensions: []Field{{Name: name, Type: FieldTypeString}},
+			}
+			err := ValidateIdentifiers(nil, nil, []*InfoRegister{ir}, nil, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), "системного периода") {
+				t.Fatalf("periodic field %q must be rejected by the explicit DSL-period contract: %v", name, err)
+			}
+		})
+	}
+
+	// A non-periodic register has no synthetic period in storage. The Cyrillic
+	// metadata field remains an ordinary, addressable dimension and is kept for
+	// backward compatibility.
+	ir := &InfoRegister{
+		Name:       "Настройки",
+		Dimensions: []Field{{Name: "Период", Type: FieldTypeString}},
+	}
+	if err := ValidateIdentifiers(nil, nil, []*InfoRegister{ir}, nil, nil, nil); err != nil {
+		t.Fatalf("non-periodic real field Период must remain valid: %v", err)
 	}
 }

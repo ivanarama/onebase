@@ -103,7 +103,7 @@ func (r *infoRegRecord) ctx() context.Context {
 }
 
 func (r *infoRegRecord) Get(name string) any {
-	if isPeriodName(name) {
+	if isInfoRegSystemPeriod(r.ir, name) {
 		if r.period == nil {
 			return time.Time{}
 		}
@@ -116,7 +116,7 @@ func (r *infoRegRecord) Get(name string) any {
 }
 
 func (r *infoRegRecord) Set(name string, v any) {
-	if isPeriodName(name) {
+	if isInfoRegSystemPeriod(r.ir, name) {
 		if t, ok := v.(time.Time); ok {
 			r.period = &t
 			return
@@ -257,6 +257,14 @@ func isPeriodName(name string) bool {
 	return low == "период" || low == "period"
 }
 
+// isInfoRegSystemPeriod distinguishes the synthetic key component from a real
+// metadata field on a non-periodic register. Periodic metadata is validated to
+// reserve both spellings, while the historical non-periodic field Период stays
+// addressable through the record manager and record set.
+func isInfoRegSystemPeriod(ir *metadata.InfoRegister, name string) bool {
+	return isPeriodName(name) && (ir.Periodic || infoRegField(ir, name) == nil)
+}
+
 // ─── Набор записей (план 119B) ────────────────────────────────────────────────
 //
 //	Набор = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
@@ -307,7 +315,12 @@ func (rs *infoRegRecordSet) Set(string, any) {}
 func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "прочитать", "read":
+		_, rowFilter, err := rs.access("read")
+		if err != nil {
+			interpreter.RaiseUserError("Прочитать(" + rs.ir.Name + "): " + err.Error())
+		}
 		f := rs.regFilter()
+		f.RowFilter = rowFilter
 		rows, err := rs.s.store.InfoRegList(rs.ctx(), rs.ir, f)
 		if err != nil {
 			interpreter.RaiseUserError("Прочитать(" + rs.ir.Name + "): " + err.Error())
@@ -346,10 +359,21 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 // (#856). Удаляемые строки регистрируются так же — иначе на узлах остались бы
 // записи, которых здесь уже нет.
 func (rs *infoRegRecordSet) write() {
-	f := rs.regFilter()
-	allowWrite := rs.access("write")
-	allowDelete := rs.access("delete")
 	ctx := rs.ctx()
+	// Object permissions are checked before inspecting the target slice or the
+	// number of buffered rows. Thus an empty/missing slice cannot be used as an
+	// existence oracle by a role lacking write or delete.
+	allowWrite, writeFilter, err := rs.access("write")
+	if err != nil {
+		interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+	}
+	allowDelete, deleteFilter, err := rs.access("delete")
+	if err != nil {
+		interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+	}
+	f := rs.regFilter()
+	existingFilter := allInfoRegPredicates(writeFilter, deleteFilter)
+	f.RowFilter = existingFilter
 	type preparedRow struct {
 		dims      map[string]any
 		resources map[string]any
@@ -407,7 +431,13 @@ func (rs *infoRegRecordSet) write() {
 	// WithTxScope даёт операции собственную границу атомарности. Если DSL уже
 	// открыл транзакцию, это savepoint: ловимое Попытка/Исключение не сможет
 	// затем зафиксировать DELETE и только часть новых строк.
-	err := rs.s.store.WithTxScope(ctx, func(txCtx context.Context) error {
+	err = rs.s.store.WithTxScope(ctx, func(txCtx context.Context) error {
+		// PostgreSQL needs an explicit table write lock: a row/predicate lock
+		// cannot protect a key which does not exist yet. SQLite's following
+		// DELETE is the first write statement and serializes writers itself.
+		if err := rs.s.store.LockInfoRegisterForPolicyWrite(txCtx, rs.ir); err != nil {
+			return err
+		}
 		// DELETE ... RETURNING — единый источник истины для delete-RLS и
 		// tombstone'ов. SELECT до транзакции оставлял окно, в котором конкурентная
 		// строка удалялась без проверки и без регистрации в обмене.
@@ -441,9 +471,12 @@ func (rs *infoRegRecordSet) write() {
 			}
 		}
 		for _, row := range prepared {
-			// Общая точка: политика строки, валидация периода и регистрация в
-			// планах обмена — всё то, что копия делать забывала.
-			if err := rs.s.infoRegWrite(txCtx, rs.ir, row.dims, row.resources, row.period, allowWrite); err != nil {
+			// The proposed row must satisfy write-RLS. The storage upsert also
+			// predicates its conflict UPDATE on the existing row. A hidden row
+			// which survived the filtered DELETE is therefore a silent no-op,
+			// not an overwrite and not an existence signal.
+			if err := rs.s.infoRegWriteRecordSet(txCtx, rs.ir, row.dims, row.resources,
+				row.period, allowWrite, existingFilter); err != nil {
 				return err
 			}
 		}
@@ -473,9 +506,46 @@ func (rs *infoRegRecordSet) regFilter() storage.RegFilter {
 	return storage.RegFilter{DimValues: dims}
 }
 
-func (rs *infoRegRecordSet) access(op string) infoRegAccess {
-	rec := &infoRegRecord{s: rs.s, ctxSrc: rs.ctxSrc, ir: rs.ir}
-	return rec.access(op)
+func (rs *infoRegRecordSet) access(op string) (infoRegAccess, *storage.Predicate, error) {
+	if isTrustedDSLContext(rs.ctx()) {
+		return nil, nil, nil
+	}
+	dec, err := rs.s.rowDecisionFor(rs.ctx(), "inforeg", rs.ir.Name, op,
+		storage.InfoRegisterPredicateEntity(rs.ir))
+	if err != nil {
+		return nil, nil, err
+	}
+	if !dec.Allowed {
+		return nil, nil, interpreter.ErrRowAccessDenied
+	}
+	if dec.Unrestricted || dec.Predicate == nil {
+		return nil, nil, nil
+	}
+	predicate := dec.Predicate
+	allow := func(ctx context.Context, row map[string]any) error {
+		if !rs.s.matchRowPredicate(ctx, row, predicate) {
+			return interpreter.ErrRowAccessDenied
+		}
+		return nil
+	}
+	return allow, predicate, nil
+}
+
+func allInfoRegPredicates(predicates ...*storage.Predicate) *storage.Predicate {
+	items := make([]storage.Predicate, 0, len(predicates))
+	for _, predicate := range predicates {
+		if predicate != nil {
+			items = append(items, *predicate)
+		}
+	}
+	switch len(items) {
+	case 0:
+		return nil
+	case 1:
+		return &items[0]
+	default:
+		return &storage.Predicate{All: items}
+	}
 }
 
 // infoRegFilter — объект Отбор набора записей. Принимает только измерения:

@@ -57,6 +57,30 @@ func (db *DB) InfoRegApplyExchange(ctx context.Context, ir *metadata.InfoRegiste
 // InfoRegSet upserts a record in an info register.
 // For periodic registers, period must be non-nil.
 func (db *DB) InfoRegSet(ctx context.Context, ir *metadata.InfoRegister, dimKey map[string]any, resources map[string]any, period *time.Time) error {
+	_, err := db.infoRegSet(ctx, ir, dimKey, resources, period, nil)
+	return err
+}
+
+// InfoRegSetIfExistingAllowed inserts a new information-register row or
+// updates an existing row only when that existing row matches existingFilter.
+// A filtered conflict is an intentional no-op and returns (false, nil).
+//
+// Record-set replacement uses this after its filtered DELETE. Without the
+// conflict predicate, a row hidden by write/delete RLS could survive DELETE
+// and then be overwritten by ON CONFLICT, disclosing its existence and
+// bypassing the policy. The caller must separately validate the proposed row.
+func (db *DB) InfoRegSetIfExistingAllowed(ctx context.Context, ir *metadata.InfoRegister,
+	dimKey map[string]any, resources map[string]any, period *time.Time,
+	existingFilter *Predicate) (bool, error) {
+	if existingFilter == nil {
+		return false, errors.New("info register conditional upsert: existing-row filter is required")
+	}
+	return db.infoRegSet(ctx, ir, dimKey, resources, period, existingFilter)
+}
+
+func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
+	dimKey map[string]any, resources map[string]any, period *time.Time,
+	existingFilter *Predicate) (bool, error) {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
 
@@ -67,7 +91,7 @@ func (db *DB) InfoRegSet(ctx context.Context, ir *metadata.InfoRegister, dimKey 
 
 	if ir.Periodic {
 		if period == nil {
-			return fmt.Errorf("info register %s is periodic: period is required", ir.Name)
+			return false, fmt.Errorf("info register %s is periodic: period is required", ir.Name)
 		}
 		cols = append(cols, "period")
 		phs = append(phs, d.Placeholder(idx))
@@ -101,7 +125,7 @@ func (db *DB) InfoRegSet(ctx context.Context, ir *metadata.InfoRegister, dimKey 
 	}
 	updates = append(updates, "updated_at = EXCLUDED.updated_at")
 
-	sql := fmt.Sprintf(
+	sqlText := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
 		table,
 		strings.Join(cols, ", "),
@@ -109,7 +133,33 @@ func (db *DB) InfoRegSet(ctx context.Context, ir *metadata.InfoRegister, dimKey 
 		strings.Join(pkCols(ir), ", "),
 		strings.Join(updates, ", "),
 	)
-	return db.exec(ctx, sql, args...)
+	if existingFilter != nil {
+		var condition string
+		var filterArgs []any
+		var err error
+		if db.IsPostgres() {
+			condition, filterArgs, _, err = PredicateSQLQualified(
+				d, InfoRegisterPredicateEntity(ir), existingFilter, len(args)+1, table,
+			)
+		} else {
+			condition, filterArgs, _, err = PredicateSQL(
+				d, InfoRegisterPredicateEntity(ir), existingFilter, len(args)+1,
+			)
+		}
+		if err != nil {
+			return false, fmt.Errorf("info register %s conditional upsert filter: %w", ir.Name, err)
+		}
+		if condition == "" {
+			return false, fmt.Errorf("info register %s conditional upsert: empty existing-row filter", ir.Name)
+		}
+		sqlText += " WHERE " + condition
+		args = append(args, filterArgs...)
+	}
+	tag, err := db.Exec(ctx, sqlText, args...)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected > 0, nil
 }
 
 // InfoRegGet returns the record matching the given dimension key (non-periodic).
@@ -173,13 +223,17 @@ func (db *DB) InfoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
 	}
 	defer rows.Close()
-	return scanInfoRegRows(rows, ir, selCols)
+	raw, err := scanInfoRegRows(rows, ir, selCols)
+	if err != nil {
+		return nil, err
+	}
+	return infoRegListRows(ir, raw), nil
 }
 
-// scanInfoRegRows decodes the common projection used by InfoRegList and by
-// DELETE ... RETURNING. Keeping the decoder shared is important for record-set
-// replacement: row policies and exchange tombstones must see exactly the same
-// normalized values as an ordinary register read on both SQL dialects.
+// scanInfoRegRows decodes the common storage projection used by InfoRegList and
+// by DELETE ... RETURNING. It deliberately keeps the system period as a typed
+// time.Time. In particular, delete-RLS must compare the database value rather
+// than the localized display string produced for the HTML list.
 func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]map[string]any, error) {
 	var result []map[string]any
 	for rows.Next() {
@@ -194,27 +248,12 @@ func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]
 		row := make(map[string]any, len(selCols))
 		i := 0
 		if ir.Periodic {
-			// period — человекочитаемое представление для ячейки списка;
-			// period_key — машинный ключ для round-trip через HTML-форму
-			// удаления (см. ParseRegPeriod и ui.infoRegDelete). На PostgreSQL
-			// период приходит как time.Time → RFC3339 несёт инстант; на SQLite
-			// как TEXT-строка UTC → её и отдаём ключом.
-			switch v := dest[0].(type) {
-			case time.Time:
-				row["period"] = v.Format("02.01.2006")
-				// RFC3339 отбрасывает доли секунды, хотя PostgreSQL TIMESTAMPTZ
-				// хранит их. Такой ключ менял PK при round-trip через UI/DSL.
-				row["period_key"] = v.Format(time.RFC3339Nano)
-			case string:
-				row["period_key"] = v
-				if t, ok := ParseRegPeriod(v); ok {
-					row["period"] = t.In(time.Local).Format("02.01.2006")
-				} else {
-					row["period"] = v
-				}
-			default:
-				row["period"] = dest[0]
+			period := normalizeDate(dest[0])
+			typed, ok := period.(time.Time)
+			if !ok {
+				return nil, fmt.Errorf("info register %s: invalid stored period %T(%v)", ir.Name, dest[0], dest[0])
 			}
+			row["period"] = typed
 			i = 1
 		}
 		for _, f := range ir.Dimensions {
@@ -225,9 +264,45 @@ func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]
 			row[f.Name] = normalizeFieldValue(f, dest[i])
 			i++
 		}
+		// DELETE ... RETURNING additionally projects every system field that
+		// may occur in an information-register row policy. InfoRegList does not
+		// expose these transport columns, so they are optional here.
+		if i < len(selCols) && strings.EqualFold(selCols[i], "recorder") {
+			row["recorder"] = normalizeValue(dest[i])
+			i++
+		}
+		if i < len(selCols) && strings.EqualFold(selCols[i], "recorder_type") {
+			row["recorder_type"] = normalizeValue(dest[i])
+			i++
+		}
+		if i != len(selCols) {
+			return nil, fmt.Errorf("info register %s: unsupported row projection %v", ir.Name, selCols[i:])
+		}
 		result = append(result, row)
 	}
 	return result, rows.Err()
+}
+
+// infoRegListRows is the presentation boundary for the list/UI contract.
+// Storage scanners keep period typed for policy evaluation; only an ordinary
+// list gets the localized cell value and the lossless machine key used by HTTP
+// delete and by the DSL record-set adapter.
+func infoRegListRows(ir *metadata.InfoRegister, raw []map[string]any) []map[string]any {
+	if !ir.Periodic {
+		return raw
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, source := range raw {
+		row := make(map[string]any, len(source)+1)
+		for name, value := range source {
+			row[name] = value
+		}
+		period := source["period"].(time.Time)
+		row["period"] = period.In(time.Local).Format("02.01.2006")
+		row["period_key"] = period.Format(time.RFC3339Nano)
+		out = append(out, row)
+	}
+	return out
 }
 
 // regPeriodLayouts — форматы, которыми период записи регистра сведений
@@ -489,6 +564,43 @@ func (db *DB) InfoRegDeleteByFilter(ctx context.Context, ir *metadata.InfoRegist
 	return db.exec(ctx, sql, args...)
 }
 
+// LockInfoRegisterForPolicyWrite serializes a policy pre-read plus its write
+// with every ordinary INSERT/UPDATE/DELETE on the same information-register
+// table. Row locks cannot protect an absent key, so without this boundary a
+// concurrent INSERT can land after the pre-read/DELETE and be overwritten by
+// ON CONFLICT without ever passing the caller's row policy.
+//
+// PostgreSQL uses a SHARE ROW EXCLUSIVE table lock, conflicting with writers'
+// ordinary ROW EXCLUSIVE locks. SQLite starts its write transaction with an
+// empty DELETE; the real policy read/write then runs while other writers are
+// excluded. Both mechanisms are transaction-scoped, so a non-transactional
+// context is rejected.
+func (db *DB) LockInfoRegisterForPolicyWrite(ctx context.Context, ir *metadata.InfoRegister) error {
+	if !HasTx(ctx) {
+		return errors.New("info register policy write lock requires active storage transaction")
+	}
+	table := metadata.InfoRegTableName(ir.Name)
+	if !db.IsPostgres() {
+		if _, err := db.Exec(ctx, "DELETE FROM "+table+" WHERE 1=0"); err != nil {
+			return fmt.Errorf("info register %s policy write lock: %w", ir.Name, err)
+		}
+		return nil
+	}
+	if _, err := db.Exec(ctx, "SET LOCAL lock_timeout = '"+advisoryLockTimeout+"'"); err != nil {
+		return fmt.Errorf("info register %s policy write lock timeout: %w", ir.Name, err)
+	}
+	if _, err := db.Exec(ctx, "LOCK TABLE "+table+" IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+		if isLockTimeoutErr(err) {
+			return fmt.Errorf("info register %s policy write lock not acquired in %s: %w", ir.Name, advisoryLockTimeout, err)
+		}
+		return fmt.Errorf("info register %s policy write lock: %w", ir.Name, err)
+	}
+	if _, err := db.Exec(ctx, "SET LOCAL lock_timeout = '0'"); err != nil {
+		return fmt.Errorf("info register %s policy write lock timeout reset: %w", ir.Name, err)
+	}
+	return nil
+}
+
 // InfoRegDeleteByFilterReturning atomically deletes the selected slice and
 // returns the rows that the DELETE statement actually removed. A preceding
 // SELECT is not equivalent: under PostgreSQL READ COMMITTED (and between
@@ -507,6 +619,15 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 	if where == "" {
 		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
+	whereParts := []string{where}
+	if condition, filterArgs, _, err := PredicateSQL(
+		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1,
+	); err != nil {
+		return nil, fmt.Errorf("info reg delete by filter %s row filter: %w", ir.Name, err)
+	} else if condition != "" {
+		whereParts = append(whereParts, condition)
+		args = append(args, filterArgs...)
+	}
 
 	var cols []string
 	if ir.Periodic {
@@ -518,9 +639,13 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 	for _, field := range ir.Resources {
 		cols = append(cols, metadata.ColumnName(field))
 	}
+	// These are physical columns on every information register and valid RLS
+	// fields. Returning them is necessary for the defense-in-depth in-memory
+	// policy check performed by the DSL record-set path.
+	cols = append(cols, "recorder", "recorder_type")
 
 	query := fmt.Sprintf("DELETE FROM %s WHERE %s RETURNING %s",
-		metadata.InfoRegTableName(ir.Name), where, strings.Join(cols, ", "))
+		metadata.InfoRegTableName(ir.Name), strings.Join(whereParts, " AND "), strings.Join(cols, ", "))
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("info reg delete by filter %s returning: %w", ir.Name, err)

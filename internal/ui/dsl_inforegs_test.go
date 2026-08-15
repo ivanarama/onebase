@@ -7,6 +7,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -767,6 +768,11 @@ func TestInfoRegRowPeriod_ОдноимённоеПолеНепериодичес
 			if period != nil {
 				t.Fatalf("период непериодического регистра = %v, ожидался nil", period)
 			}
+			record := newInfoRegRecord(nil, nil, ir)
+			record.Set(name, "обычное измерение")
+			if got := record.Get(name); got != "обычное измерение" {
+				t.Fatalf("менеджер записи принял реальное поле %q за системный период: %T(%v)", name, got, got)
+			}
 		})
 	}
 }
@@ -978,4 +984,366 @@ func TestInfoRegSet_ExchangeKeyСсылкиИспользуетUUID(t *testing.T
 		strings.Contains(changes[0].ObjectID, ref.Name) {
 		t.Fatalf("exchange key построен не по UUID ссылки: %#v", changes)
 	}
+}
+
+func captureInfoRegRecordSetPanic(fn func()) (caught any) {
+	defer func() { caught = recover() }()
+	fn()
+	return nil
+}
+
+func TestInfoRegRecordSet_ReadAppliesObjectAndRowAccessMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name: "ReadPolicy",
+			Dimensions: []metadata.Field{
+				{Name: "Slice", Type: metadata.FieldTypeString},
+				{Name: "Key", Type: metadata.FieldTypeString},
+			},
+			Resources: []metadata.Field{
+				{Name: "Owner", Type: metadata.FieldTypeString},
+				{Name: "Value", Type: metadata.FieldTypeString},
+			},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range []struct{ key, owner string }{{"allowed", "mine"}, {"hidden", "other"}} {
+			if err := db.InfoRegSet(ctx, ir,
+				map[string]any{"Slice": "S", "Key": row.key},
+				map[string]any{"Owner": row.owner, "Value": row.key}, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		s := &Server{store: db, reg: registry}
+		role := &auth.Role{Permissions: auth.Permission{
+			InfoRegs: map[string][]string{ir.Name: {"read"}},
+			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+				ir.Name: {"read": {Field: "Owner", Op: "eq", Value: auth.RowValue{Literal: "mine"}}},
+			}},
+		}}
+		userCtx := auth.ContextWithUser(ctx, &auth.User{Roles: []*auth.Role{role}})
+		rs := newInfoRegRecordSet(s, interpreter.NewTxState(userCtx), ir)
+		rs.filter.Set("Slice", "S")
+		if got := rs.CallMethod("Прочитать", nil); got != float64(1) {
+			t.Fatalf("RLS read count = %v, rows=%#v", got, rs.rows)
+		}
+		if len(rs.rows) != 1 || asString(rs.rows[0]["Owner"]) != "mine" {
+			t.Fatalf("record-set read did not apply SQL row filter: %#v", rs.rows)
+		}
+
+		deniedUser := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+			InfoRegs: map[string][]string{},
+		}}}}
+		denied := newInfoRegRecordSet(s,
+			interpreter.NewTxState(auth.ContextWithUser(ctx, deniedUser)), ir)
+		denied.filter.Set("Slice", "S")
+		if caught := captureInfoRegRecordSetPanic(func() { denied.CallMethod("Прочитать", nil) }); caught == nil {
+			t.Fatal("record-set read bypassed object read permission")
+		}
+
+		trusted := newInfoRegRecordSet(s, interpreter.NewTxState(
+			trustedDSLContext(auth.ContextWithUser(ctx, deniedUser))), ir)
+		trusted.filter.Set("Slice", "S")
+		if got := trusted.CallMethod("Прочитать", nil); got != float64(2) {
+			t.Fatalf("trusted DSL context must preserve unrestricted internal semantics: %v, rows=%#v", got, trusted.rows)
+		}
+	})
+}
+
+func TestInfoRegRecordSet_WritePreflightsObjectPermissionsMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name:       "ObjectPreflight",
+			Dimensions: []metadata.Field{{Name: "Key", Type: metadata.FieldTypeString}},
+			Resources:  []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InfoRegSet(ctx, ir, map[string]any{"Key": "exists"}, map[string]any{"Value": "keep"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		s := &Server{store: db, reg: registry}
+
+		for _, tc := range []struct {
+			name string
+			ops  []string
+		}{{"missing delete", []string{"write"}}, {"missing write", []string{"delete"}}} {
+			t.Run(tc.name, func(t *testing.T) {
+				user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+					InfoRegs: map[string][]string{ir.Name: tc.ops},
+				}}}}
+				var outcomes []string
+				for _, target := range []struct {
+					key    string
+					addRow bool
+				}{{"exists", false}, {"absent", true}} {
+					rs := newInfoRegRecordSet(s, interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
+					rs.filter.Set("Key", target.key)
+					if target.addRow {
+						row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+						row.Set("Value", "new")
+					}
+					caught := captureInfoRegRecordSetPanic(rs.write)
+					if caught == nil {
+						t.Fatalf("%s succeeded for key %q", tc.name, target.key)
+					}
+					outcomes = append(outcomes, fmt.Sprint(caught))
+				}
+				if outcomes[0] != outcomes[1] {
+					t.Fatalf("object denial reveals existing vs absent/row count: %q != %q", outcomes[0], outcomes[1])
+				}
+			})
+		}
+		rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || asString(rows[0]["Key"]) != "exists" || asString(rows[0]["Value"]) != "keep" {
+			t.Fatalf("object preflight mutated data: %#v", rows)
+		}
+	})
+}
+
+func TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name: "RowPolicyNoOracle",
+			Dimensions: []metadata.Field{
+				{Name: "Slice", Type: metadata.FieldTypeString},
+				{Name: "Key", Type: metadata.FieldTypeString},
+			},
+			Resources: []metadata.Field{
+				{Name: "Owner", Type: metadata.FieldTypeString},
+				{Name: "Value", Type: metadata.FieldTypeString},
+			},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InfoRegSet(ctx, ir,
+			map[string]any{"Slice": "exists", "Key": "K"},
+			map[string]any{"Owner": "other", "Value": "hidden"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.EnsureExchangeSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+		plan := &metadata.ExchangePlan{
+			Name:    "NoOracleExchange",
+			Content: []string{"РегистрСведений." + ir.Name},
+			Nodes:   []metadata.ExchangeNode{{Code: "center"}, {Code: "branch"}},
+		}
+		plan.Normalize()
+		if err := db.SaveExchangeThisNode(ctx, plan.Name, "branch"); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		registry.LoadExchangePlans([]*metadata.ExchangePlan{plan})
+		s := &Server{store: db, reg: registry}
+		policy := auth.RowPolicy{Field: "Owner", Op: "eq", Value: auth.RowValue{Literal: "mine"}}
+		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+			InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
+			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+				ir.Name: {"write": policy, "delete": policy},
+			}},
+		}}}}
+		userCtx := auth.ContextWithUser(ctx, user)
+
+		for _, slice := range []string{"exists", "absent"} {
+			rs := newInfoRegRecordSet(s, interpreter.NewTxState(userCtx), ir)
+			rs.filter.Set("Slice", slice)
+			if caught := captureInfoRegRecordSetPanic(rs.write); caught != nil {
+				t.Fatalf("hidden and absent slices must both be successful no-ops (%s): %v", slice, caught)
+			}
+		}
+
+		// Even an allowed proposed row with the exact hidden PK must not turn
+		// ON CONFLICT into an overwrite or an existence signal.
+		rs := newInfoRegRecordSet(s, interpreter.NewTxState(userCtx), ir)
+		rs.filter.Set("Slice", "exists")
+		row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		row.Set("Key", "K")
+		row.Set("Owner", "mine")
+		row.Set("Value", "overwrite")
+		if caught := captureInfoRegRecordSetPanic(rs.write); caught != nil {
+			t.Fatalf("hidden same-key conflict disclosed itself: %v", caught)
+		}
+
+		rows, err := db.InfoRegList(ctx, ir,
+			storage.RegFilter{DimValues: map[string]any{"Slice": "exists", "Key": "K"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || asString(rows[0]["Owner"]) != "other" || asString(rows[0]["Value"]) != "hidden" {
+			t.Fatalf("hidden row was deleted or overwritten: %#v", rows)
+		}
+		changes, err := db.PendingExchangeChanges(ctx, plan.Name, "center")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(changes) != 0 {
+			t.Fatalf("no-op leaked existence through exchange outbox: %#v", changes)
+		}
+	})
+}
+
+func TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name:       "PeriodPolicy",
+			Periodic:   true,
+			Dimensions: []metadata.Field{{Name: "Key", Type: metadata.FieldTypeString}},
+			Resources:  []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		period := time.Date(2026, 8, 15, 11, 22, 33, 123456000, time.UTC)
+		if err := db.InfoRegSet(ctx, ir, map[string]any{"Key": "A"}, map[string]any{"Value": "keep"}, &period); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		s := &Server{store: db, reg: registry}
+		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+			InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
+			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+				ir.Name: {"delete": {Field: "period", Op: "ne", Value: auth.RowValue{Literal: period}}},
+			}},
+		}}}}
+		rs := newInfoRegRecordSet(s,
+			interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
+		rs.filter.Set("Key", "A")
+		if caught := captureInfoRegRecordSetPanic(rs.write); caught != nil {
+			t.Fatalf("period-policy hidden row should be a no-op: %v", caught)
+		}
+		rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{DimValues: map[string]any{"Key": "A"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || asString(rows[0]["Value"]) != "keep" {
+			t.Fatalf("display-string period bypassed delete RLS: %#v", rows)
+		}
+	})
+}
+
+func TestInfoRegRecordSet_PostgresConcurrentInsertCheckedByRLS(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		if !db.IsPostgres() {
+			t.Skip("PostgreSQL table-lock coordination")
+		}
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name: "ConcurrentReplacePolicy",
+			Dimensions: []metadata.Field{
+				{Name: "Slice", Type: metadata.FieldTypeString},
+				{Name: "Key", Type: metadata.FieldTypeString},
+			},
+			Resources: []metadata.Field{
+				{Name: "Owner", Type: metadata.FieldTypeString},
+				{Name: "Value", Type: metadata.FieldTypeString},
+			},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		s := &Server{store: db, reg: registry}
+		policy := auth.RowPolicy{Field: "Owner", Op: "eq", Value: auth.RowValue{Literal: "mine"}}
+		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+			InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
+			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+				ir.Name: {"write": policy, "delete": policy},
+			}},
+		}}}}
+		rs := newInfoRegRecordSet(s,
+			interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
+		rs.filter.Set("Slice", "S")
+		row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		row.Set("Key", "K")
+		row.Set("Owner", "mine")
+		row.Set("Value", "replacement")
+
+		// A concurrent writer inserts the previously absent PK and keeps its
+		// RowExclusive table lock until we explicitly commit it.
+		concurrentTx, concurrentCtx, err := db.BeginTx(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = concurrentTx.Rollback(concurrentCtx)
+			}
+		}()
+		if err := db.InfoRegSet(concurrentCtx, ir,
+			map[string]any{"Slice": "S", "Key": "K"},
+			map[string]any{"Owner": "other", "Value": "concurrent"}, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		result := make(chan any, 1)
+		go func() { result <- captureInfoRegRecordSetPanic(rs.write) }()
+		lockSQL := "LOCK TABLE " + metadata.InfoRegTableName(ir.Name) + " IN SHARE ROW EXCLUSIVE MODE"
+		deadline := time.Now().Add(10 * time.Second)
+		lockObserved := false
+		for time.Now().Before(deadline) {
+			var waiting bool
+			if err := db.QueryRow(ctx, `SELECT EXISTS (
+  SELECT 1 FROM pg_stat_activity
+  WHERE query LIKE $1 AND wait_event_type = 'Lock'
+)`, lockSQL+"%").Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+			if waiting {
+				lockObserved = true
+				break
+			}
+			select {
+			case got := <-result:
+				t.Fatalf("replacement finished before concurrent transaction resolved: %v", got)
+			default:
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !lockObserved {
+			_ = concurrentTx.Rollback(concurrentCtx)
+			committed = true
+			t.Fatal("record-set replacement did not wait on the PostgreSQL table write lock")
+		}
+		if err := concurrentTx.Commit(concurrentCtx); err != nil {
+			t.Fatal(err)
+		}
+		committed = true
+
+		select {
+		case caught := <-result:
+			if caught != nil {
+				t.Fatalf("hidden concurrent conflict disclosed itself: %v", caught)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("record-set replacement did not finish after concurrent commit")
+		}
+		rows, err := db.InfoRegList(ctx, ir,
+			storage.RegFilter{DimValues: map[string]any{"Slice": "S", "Key": "K"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || asString(rows[0]["Owner"]) != "other" || asString(rows[0]["Value"]) != "concurrent" {
+			t.Fatalf("record-set overwrote concurrent hidden row: %#v", rows)
+		}
+	})
 }

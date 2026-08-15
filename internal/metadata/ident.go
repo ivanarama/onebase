@@ -151,6 +151,18 @@ func ValidateIdentifiers(
 			return err
 		}
 		role := fmt.Sprintf("поле регистра сведений %q", ir.Name)
+		if ir.Periodic {
+			// The periodic record-manager/record-set API exposes Период/period
+			// as its synthetic primary-key component. A metadata field with the
+			// same DSL name cannot be addressed unambiguously even though the
+			// Cyrillic SQL column is physically distinct. Reject that shape until
+			// the metadata and DSL contracts can represent both explicitly.
+			for _, f := range append(append([]Field(nil), ir.Dimensions...), ir.Resources...) {
+				if strings.EqualFold(f.Name, "Период") || strings.EqualFold(f.Name, "period") {
+					return fmt.Errorf("%s %q: имя зарезервировано для системного периода периодического регистра", role, f.Name)
+				}
+			}
+		}
 		if err := checkFields(role, ir.Dimensions); err != nil {
 			return err
 		}

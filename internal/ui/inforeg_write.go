@@ -8,6 +8,7 @@ import (
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // Общая точка записи регистра сведений (план 119). Ею пользуются форма в
@@ -45,16 +46,54 @@ func (s *Server) infoRegWrite(ctx context.Context, ir *metadata.InfoRegister,
 	if err := infoRegCheckPeriod(ir, period); err != nil {
 		return err
 	}
-	if err := s.infoRegCheckRows(ctx, ir, dims, resources, period, allow); err != nil {
-		return err
-	}
 	plans := s.reg.ExchangePlans()
 	return s.store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		if allow != nil {
+			// The existing-row check and ON CONFLICT must share a write
+			// serialization boundary. Otherwise a previously absent hidden row
+			// can be inserted between them and overwritten without policy review.
+			if err := s.store.LockInfoRegisterForPolicyWrite(txCtx, ir); err != nil {
+				return err
+			}
+		}
+		if err := s.infoRegCheckRows(txCtx, ir, dims, resources, period, allow); err != nil {
+			return err
+		}
 		if err := s.store.InfoRegSet(txCtx, ir, dims, resources, period); err != nil {
 			return err
 		}
 		return exchange.RegisterInfoRegOnSave(txCtx, s.store, plans, ir, dims, false)
 	})
+}
+
+// infoRegWriteRecordSet is the no-existence-oracle variant used while a
+// record-set replacement holds the register write lock. The proposed row is
+// checked in memory, while a conflicting existing row is checked atomically by
+// the upsert WHERE clause. A hidden conflict is a successful no-op and is not
+// published to exchange plans.
+func (s *Server) infoRegWriteRecordSet(ctx context.Context, ir *metadata.InfoRegister,
+	dims, resources map[string]any, period *time.Time, allow infoRegAccess,
+	existingFilter *storage.Predicate) error {
+	if err := infoRegCheckPeriod(ir, period); err != nil {
+		return err
+	}
+	if allow != nil {
+		if err := allow(ctx, infoRegPolicyRow(ir, dims, resources, period)); err != nil {
+			return err
+		}
+	}
+
+	changed := true
+	var err error
+	if existingFilter == nil {
+		err = s.store.InfoRegSet(ctx, ir, dims, resources, period)
+	} else {
+		changed, err = s.store.InfoRegSetIfExistingAllowed(ctx, ir, dims, resources, period, existingFilter)
+	}
+	if err != nil || !changed {
+		return err
+	}
+	return exchange.RegisterInfoRegOnSave(ctx, s.store, s.reg.ExchangePlans(), ir, dims, false)
 }
 
 // infoRegRemove удаляет строку по ключу измерений (и периоду у периодического).
@@ -63,11 +102,16 @@ func (s *Server) infoRegRemove(ctx context.Context, ir *metadata.InfoRegister,
 	if err := infoRegCheckPeriod(ir, period); err != nil {
 		return err
 	}
-	if err := s.infoRegCheckRows(ctx, ir, dims, nil, period, allow); err != nil {
-		return err
-	}
 	plans := s.reg.ExchangePlans()
 	return s.store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		if allow != nil {
+			if err := s.store.LockInfoRegisterForPolicyWrite(txCtx, ir); err != nil {
+				return err
+			}
+		}
+		if err := s.infoRegCheckRows(txCtx, ir, dims, nil, period, allow); err != nil {
+			return err
+		}
 		if err := s.store.InfoRegDelete(txCtx, ir, dims, period); err != nil {
 			return err
 		}
