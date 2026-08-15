@@ -810,6 +810,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
 		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+			virtual = filterVirtualTPColumns(fields, virtual)
 			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
 			for _, field := range fields {
 				cols = append(cols, managedTPColumnJSON{
@@ -825,7 +826,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			// менять нельзя, по нему пользователи ориентируются и его же ожидает
 			// перенос данных из буфера.
 			for _, vc := range virtual {
-				if vc.Name == "" {
+				if strings.TrimSpace(vc.Name) == "" || metadata.IsReservedFormVirtualColumnName(vc.Name) {
 					continue
 				}
 				cols = append(cols, managedTPColumnJSON{
@@ -841,6 +842,19 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return template.JS("[]")
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
+		},
+		"managedTPVirtualColumns": filterVirtualTPColumns,
+		"managedTPVirtualNamesJSON": func(virtual []metadata.FormVirtualColumn) string {
+			filtered := filterVirtualTPColumns(nil, virtual)
+			names := make([]string, 0, len(filtered))
+			for _, vc := range filtered {
+				names = append(names, vc.Name)
+			}
+			b, err := json.Marshal(names)
+			if err != nil {
+				return "[]"
+			}
+			return string(b)
 		},
 		"wcell":            widgetCell,
 		"echartsJSON":      echartsJSON,

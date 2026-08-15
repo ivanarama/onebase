@@ -240,6 +240,11 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 					}
 				}
 			}
+			var normalizeErr error
+			val, normalizeErr = canonicalNumberArg(f, val)
+			if normalizeErr != nil {
+				return fmt.Errorf("sync predefined %s.%s: %w", e.Name, item.Name, normalizeErr)
+			}
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(argIdx))
 			args = append(args, val)

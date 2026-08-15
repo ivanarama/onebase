@@ -125,66 +125,74 @@ func (db *DB) ensureRegisterIndexes(ctx context.Context, reg *metadata.Register)
 // расширять (добавление periodic, новое измерение / ресурс) без ручной
 // миграции БД.
 //
-// Что НЕ покрыто: изменение PRIMARY KEY (нельзя через ALTER в SQLite,
-// нужен пересоздаваемый ALTER TABLE RENAME + INSERT SELECT). Поэтому если
-// добавляется periodic-флаг к существующей непустой таблице — данные
-// останутся, но PK не обновится; могут быть дубли по (dim) ключу.
+// Все изменения одного регистра, включая реструктуризацию колонок и PRIMARY
+// KEY, выполняются атомарно. SQLite пересоздаёт таблицу, PostgreSQL меняет
+// constraint; разрушительное сужение ключа требует AllowDestructive.
 func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoRegister) error {
-	d := db.dialect
 	for _, ir := range regs {
-		if _, err := db.Exec(ctx, CreateInfoRegisterSQL(d, ir)); err != nil {
+		if err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+			return db.migrateInfoRegister(txCtx, ir)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister) error {
+	d := db.dialect
+	if _, err := db.Exec(ctx, CreateInfoRegisterSQL(d, ir)); err != nil {
+		return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
+	}
+	table := metadata.InfoRegTableName(ir.Name)
+	// period колонка для periodic-регистров — может отсутствовать,
+	// если в YAML только что добавили `periodic: true`. ALLOW NULL,
+	// потому что existing rows иначе не вставить.
+	if ir.Periodic {
+		if err := db.AddColumnIfMissing(ctx, table, "period", d.TypeTimestamp()); err != nil {
+			return fmt.Errorf("migrate info register %s.period: %w", ir.Name, err)
+		}
+	}
+	// Реструктуризация измерений и ресурсов (план 81). Измерения входят в
+	// первичный ключ: переименование безопасно, а вот удаление измерения
+	// СУБД отклонит — и это правильнее, чем разрушить ключ регистра.
+	if err := db.restructureTable(ctx, table, append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)); err != nil {
+		// Удаление измерения из ключа обычным DROP COLUMN на SQLite невозможно
+		// (колонка входит в PRIMARY KEY). Это не сбой: удаление измерения меняет
+		// ключ, и его доводит пересоздание таблицы в fixInfoRegPK ниже — с той же
+		// защитой плана 81 (без --allow-destructive колонка и данные сохранены).
+		if !errors.Is(err, ErrColumnInUniqueIndex) {
 			return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
 		}
-		table := metadata.InfoRegTableName(ir.Name)
-		// period колонка для periodic-регистров — может отсутствовать,
-		// если в YAML только что добавили `periodic: true`. ALLOW NULL,
-		// потому что existing rows иначе не вставить.
-		if ir.Periodic {
-			if err := db.AddColumnIfMissing(ctx, table, "period", d.TypeTimestamp()); err != nil {
-				return fmt.Errorf("migrate info register %s.period: %w", ir.Name, err)
-			}
+	}
+	// Измерения и ресурсы — добавляем если их нет.
+	for _, f := range ir.Dimensions {
+		if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
+			return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
 		}
-		// Реструктуризация измерений и ресурсов (план 81). Измерения входят в
-		// первичный ключ: переименование безопасно, а вот удаление измерения
-		// СУБД отклонит — и это правильнее, чем разрушить ключ регистра.
-		if err := db.restructureTable(ctx, table, append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)); err != nil {
-			// Удаление измерения из ключа обычным DROP COLUMN на SQLite невозможно
-			// (колонка входит в PRIMARY KEY). Это не сбой: удаление измерения меняет
-			// ключ, и его доводит пересоздание таблицы в fixInfoRegPK ниже — с той же
-			// защитой плана 81 (без --allow-destructive колонка и данные сохранены).
-			if !errors.Is(err, ErrColumnInUniqueIndex) {
-				return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
-			}
+	}
+	if err := db.AddColumnIfMissing(ctx, table, "updated_at", d.TypeTimestamp()); err != nil {
+		return fmt.Errorf("migrate info register %s.updated_at: %w", ir.Name, err)
+	}
+	// recorder/recorder_type для записи из документа.
+	if err := db.AddColumnIfMissing(ctx, table, "recorder", d.TypeUUID()); err != nil {
+		return fmt.Errorf("migrate info register %s.recorder: %w", ir.Name, err)
+	}
+	if err := db.AddColumnIfMissing(ctx, table, "recorder_type", d.TypeText()); err != nil {
+		return fmt.Errorf("migrate info register %s.recorder_type: %w", ir.Name, err)
+	}
+	for _, f := range ir.Resources {
+		if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
+			return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
 		}
-		// Измерения и ресурсы — добавляем если их нет.
-		for _, f := range ir.Dimensions {
-			if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
-				return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
-			}
-		}
-		if err := db.AddColumnIfMissing(ctx, table, "updated_at", d.TypeTimestamp()); err != nil {
-			return fmt.Errorf("migrate info register %s.updated_at: %w", ir.Name, err)
-		}
-		// recorder/recorder_type для записи из документа.
-		if err := db.AddColumnIfMissing(ctx, table, "recorder", d.TypeUUID()); err != nil {
-			return fmt.Errorf("migrate info register %s.recorder: %w", ir.Name, err)
-		}
-		if err := db.AddColumnIfMissing(ctx, table, "recorder_type", d.TypeText()); err != nil {
-			return fmt.Errorf("migrate info register %s.recorder_type: %w", ir.Name, err)
-		}
-		for _, f := range ir.Resources {
-			if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
-				return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
-			}
-		}
-		// фактический PK таблицы может не
-		// совпадать с pkCols(ir) — наследие старого CREATE до того как
-		// регистр стал periodic / добавили измерения. SQLite не позволяет
-		// ALTER PK, поэтому при mismatch пересоздаём таблицу через
-		// CREATE + INSERT SELECT + DROP + RENAME.
-		if err := db.fixInfoRegPK(ctx, ir); err != nil {
-			return fmt.Errorf("migrate info register %s PK: %w", ir.Name, err)
-		}
+	}
+	// фактический PK таблицы может не
+	// совпадать с pkCols(ir) — наследие старого CREATE до того как
+	// регистр стал periodic / добавили измерения. SQLite не позволяет
+	// ALTER PK, поэтому при mismatch пересоздаём таблицу через
+	// CREATE + INSERT SELECT + DROP + RENAME.
+	if err := db.fixInfoRegPK(ctx, ir); err != nil {
+		return fmt.Errorf("migrate info register %s PK: %w", ir.Name, err)
 	}
 	return nil
 }
@@ -369,12 +377,23 @@ func (db *DB) fixInfoRegPKPostgres(ctx context.Context, ir *metadata.InfoRegiste
 		return nil
 	}
 
-	return db.WithTx(ctx, func(txCtx context.Context) error {
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
 		actual, constraint, err := db.pgPrimaryKey(txCtx, table)
 		if err != nil {
 			return err
 		}
 		if stringSlicesEqual(actual, expected) {
+			return nil
+		}
+		// Removing a column from the primary key is part of removing an info
+		// register dimension (or periodicity). restructureTable deliberately
+		// keeps the physical column when destructive changes are not allowed;
+		// keep the old key as well. Otherwise PostgreSQL would silently narrow
+		// the key while the column and its data stayed behind, so two rows that
+		// differ only by the retained dimension could no longer be stored.
+		if !db.schemaOpts.AllowDestructive && primaryKeyDropsColumns(actual, expected) {
+			storageLog().Warn("смена ключа регистра сведений отложена: требует --allow-destructive; колонка и данные сохранены",
+				"регистр", ir.Name)
 			return nil
 		}
 		if len(expected) > 0 {
@@ -399,6 +418,19 @@ func (db *DB) fixInfoRegPKPostgres(ctx context.Context, ir *metadata.InfoRegiste
 			pgQuoteIdent(table+"_pkey")+" PRIMARY KEY ("+pgIdentList(expected)+")")
 		return err
 	})
+}
+
+func primaryKeyDropsColumns(actual, expected []string) bool {
+	wanted := make(map[string]struct{}, len(expected))
+	for _, col := range expected {
+		wanted[col] = struct{}{}
+	}
+	for _, col := range actual {
+		if _, ok := wanted[col]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (db *DB) pgPrimaryKey(ctx context.Context, table string) ([]string, string, error) {

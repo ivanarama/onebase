@@ -33,6 +33,7 @@ func (s *Server) applyVirtualTPColumns(
 	if entity == nil || form == nil || len(tpRows) == 0 {
 		return
 	}
+	seen := make(map[string]bool)
 	form.Walk(func(el *metadata.FormElement) bool {
 		if len(el.VirtualColumns) == 0 {
 			return true
@@ -46,10 +47,52 @@ func (s *Server) applyVirtualTPColumns(
 			return true
 		}
 		for _, vc := range el.VirtualColumns {
-			s.fillVirtualColumn(ctx, *tp, vc, rows)
+			if !usableVirtualTPColumnName(tp.Fields, vc.Name) {
+				continue
+			}
+			name := strings.TrimSpace(vc.Name)
+			key := strings.ToLower(strings.TrimSpace(tp.Name)) + "\x00" + strings.ToLower(name)
+			if seen[key] {
+				continue
+			}
+			if s.fillVirtualColumn(ctx, *tp, vc, rows) {
+				seen[key] = true
+			}
 		}
 		return true
 	})
+}
+
+// usableVirtualTPColumnName protects the shared row-map contract even when a
+// project is started without running `onebase check` first. In particular, a
+// virtual column must never overwrite a stored table-part value: the browser
+// would otherwise serialize the projected value back into that stored field.
+func usableVirtualTPColumnName(fields []metadata.Field, name string) bool {
+	trimmed := strings.TrimSpace(name)
+	if name != trimmed || !metadata.ValidIdent(name) || metadata.IsReservedFormVirtualColumnName(name) {
+		return false
+	}
+	for _, field := range fields {
+		if strings.EqualFold(field.Name, name) {
+			return false
+		}
+	}
+	return true
+}
+
+func filterVirtualTPColumns(fields []metadata.Field, virtual []metadata.FormVirtualColumn) []metadata.FormVirtualColumn {
+	filtered := make([]metadata.FormVirtualColumn, 0, len(virtual))
+	seen := make(map[string]bool, len(virtual))
+	for _, vc := range virtual {
+		name := strings.TrimSpace(vc.Name)
+		key := strings.ToLower(name)
+		if !usableVirtualTPColumnName(fields, vc.Name) || seen[key] {
+			continue
+		}
+		seen[key] = true
+		filtered = append(filtered, vc)
+	}
+	return filtered
 }
 
 func (s *Server) fillVirtualColumn(
@@ -57,10 +100,17 @@ func (s *Server) fillVirtualColumn(
 	tp metadata.TablePart,
 	vc metadata.FormVirtualColumn,
 	rows []map[string]any,
-) {
+) bool {
+	// The virtual key may already be present after a form event. Clear it before
+	// every validation/read exit so a broken reference or denied batch cannot
+	// leave a stale or handler-supplied value visible as a trusted projection.
+	for _, row := range rows {
+		row[vc.Name] = ""
+	}
+
 	refName, ok := vc.RefFieldName()
 	if !ok {
-		return
+		return false
 	}
 	targetName, _ := vc.TargetFieldName()
 
@@ -73,11 +123,11 @@ func (s *Server) fillVirtualColumn(
 		}
 	}
 	if !found {
-		return
+		return false
 	}
 	target := s.reg.GetEntity(refField.RefEntity)
 	if target == nil {
-		return
+		return false
 	}
 	var targetField metadata.Field
 	found = false
@@ -88,7 +138,7 @@ func (s *Server) fillVirtualColumn(
 		}
 	}
 	if !found {
-		return
+		return false
 	}
 
 	idsByString := map[string]uuid.UUID{}
@@ -100,7 +150,7 @@ func (s *Server) fillVirtualColumn(
 		}
 	}
 	if len(idsByString) == 0 {
-		return
+		return true
 	}
 	ids := make([]uuid.UUID, 0, len(idsByString))
 	for _, id := range idsByString {
@@ -118,7 +168,7 @@ func (s *Server) fillVirtualColumn(
 			// Отказ в доступе или ошибка чтения оставляют колонку пустой. Пустая
 			// колонка честнее частичной: иначе пользователь не отличил бы «нет
 			// значения» от «часть батча не прочиталась».
-			return
+			return true
 		}
 		for idStr, refRow := range refRows {
 			s.maskRecord(ctx, target, refRow)
@@ -132,7 +182,6 @@ func (s *Server) fillVirtualColumn(
 		// Пустая или битая ссылка даёт пустую ячейку без маркера: строка ТЧ с
 		// незаполненной ссылкой — рабочее состояние ввода, и «—» в такой ячейке
 		// читался бы как значение.
-		row[vc.Name] = ""
 		_, v, ok := lookupMapCI(row, refField.Name)
 		if !ok || v == nil {
 			continue
@@ -145,11 +194,15 @@ func (s *Server) fillVirtualColumn(
 			row[vc.Name] = val
 		}
 	}
+	return true
 }
 
 // formElementTablePart — табличная часть сущности, к которой привязан элемент
 // формы (ключ table_part или data_path «Объект.<ТЧ>»).
 func formElementTablePart(entity *metadata.Entity, el *metadata.FormElement) *metadata.TablePart {
+	if entity == nil || el == nil || el.Kind != metadata.FormElementTablePart {
+		return nil
+	}
 	name := el.TablePart
 	if name == "" {
 		if parts := strings.Split(el.DataPath, "."); len(parts) == 2 && strings.EqualFold(parts[0], "Объект") {
