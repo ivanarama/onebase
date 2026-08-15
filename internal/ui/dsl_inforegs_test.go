@@ -511,3 +511,114 @@ func TestInfoRegDSL_ПрочитатьБезПериодаОтклоняется
 		t.Errorf("Прочитать без периода: %v — ожидался отказ «период обязателен»", err)
 	}
 }
+
+// Набор записей обязан идти тем же контрактом, что менеджер записи (#856).
+//
+// 119B звал storage.InfoRegSet напрямую, поэтому изменения набора не
+// регистрировались в планах обмена: узлы о них не узнавали, репликация молча
+// расходилась. Плюс строка набора была сырым MapThis без валидации — опечатка в
+// имени измерения тихо писала мусор, тогда как менеджер записи для той же
+// ошибки честно поднимает исключение.
+func TestInfoRegSet_РегистрируетИзменениеВПланахОбмена(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "rs-exchange.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	ir := logInfoReg()
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if err := db.EnsureExchangeSchema(ctx); err != nil {
+		t.Fatalf("схема обмена: %v", err)
+	}
+
+	plan := &metadata.ExchangePlan{
+		Name:    "Обмен",
+		Content: []string{"РегистрСведений." + ir.Name},
+		Nodes:   []metadata.ExchangeNode{{Code: "center"}, {Code: "fil01"}},
+	}
+	plan.Normalize()
+	if err := db.SaveExchangeThisNode(ctx, "Обмен", "fil01"); err != nil {
+		t.Fatalf("узел: %v", err)
+	}
+
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+	registry.LoadExchangePlans([]*metadata.ExchangePlan{plan})
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	s := &Server{store: db, reg: registry, interp: interp,
+		lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+
+	prog := mustParse(t, `Процедура Тест()
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  С = Н.Добавить(); С.Событие = "Старт";
+  Н.Записать();
+КонецПроцедуры`)
+	var msgs []string
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, nil, &msgs)
+	defer interpreter.RollbackTxExecution(txState)
+	if err := s.interp.Run(prog.Procedures[0], nil, vars); err != nil {
+		t.Fatalf("запись набора: %v", err)
+	}
+
+	var changes int
+	if err := db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM _exchange_changes WHERE plan = ? AND object_type LIKE ?`,
+		"Обмен", "%"+ir.Name+"%").Scan(&changes); err != nil {
+		t.Fatalf("чтение регистрации: %v", err)
+	}
+	if changes == 0 {
+		t.Fatal("запись набора не зарегистрирована в плане обмена — узлы о ней не узнают")
+	}
+}
+
+// Опечатка в имени поля строки набора — ошибка, а не молча записанный мусор.
+func TestInfoRegSet_ОпечаткаВИмениПоляОтклоняется(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "rs-typo.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	ir := logInfoReg()
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	_, err = runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  С = Н.Добавить(); С.Собитие = "Старт";
+  Н.Записать();`)
+	// Имя приходит уже в нижнем регистре: MapThis.Set нормализует ключи, и
+	// исходное написание к моменту проверки не сохраняется.
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "собитие") {
+		t.Fatalf("опечатка в имени поля принята: %v", err)
+	}
+}
+
+// Строка, противоречащая отбору, «сбегает» из него и затирает чужой срез:
+// удаление-то идёт по отбору. Отклоняем.
+func TestInfoRegSet_СтрокаВнеОтбораОтклоняется(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "rs-escape.db"))
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	t.Cleanup(db.Close)
+	ir := logInfoReg()
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	_, err = runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  С = Н.Добавить(); С.Узел = "N2"; С.Событие = "Старт";
+  Н.Записать();`)
+	if err == nil || !strings.Contains(err.Error(), "не совпадает с отбором") {
+		t.Fatalf("строка вне отбора принята: %v", err)
+	}
+}

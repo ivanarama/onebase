@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -337,19 +338,54 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 }
 
 // write замещает содержимое по отбору: удаление и вставка в одной транзакции.
+//
+// Каждая строка пишется через общую точку infoRegWrite — тот же контракт, что у
+// менеджера записи (119A) и у формы: проверка политик, валидация и РЕГИСТРАЦИЯ
+// изменения в планах обмена. Прежде набор звал storage.InfoRegSet напрямую,
+// поэтому узлы обмена об изменениях не узнавали и репликация молча расходилась
+// (#856). Удаляемые строки регистрируются так же — иначе на узлах остались бы
+// записи, которых здесь уже нет.
 func (rs *infoRegRecordSet) write() {
 	f := rs.regFilter()
 	allow := rs.access("write")
 	ctx := rs.ctx()
 
+	// Валидация ДО транзакции: незачем открывать её, чтобы тут же откатить.
+	// Опечатка в имени поля прежде молча писала мусор — менеджер записи для той
+	// же ошибки честно поднимает исключение.
+	for i, row := range rs.rows {
+		for name := range row {
+			if strings.EqualFold(name, "Период") || strings.EqualFold(name, "period") {
+				continue
+			}
+			if infoRegField(rs.ir, name) == nil {
+				interpreter.RaiseUserError(fmt.Sprintf(
+					"Записать(%s): строка %d — нет измерения или ресурса «%s»", rs.ir.Name, i+1, name))
+			}
+		}
+		// Строка не должна противоречить своему отбору: иначе она «сбегает» из
+		// него и затирает чужой срез — при том что удаление шло по отбору.
+		for name, want := range rs.filter.values {
+			got := rowValueFold(row, name)
+			if got == nil {
+				continue
+			}
+			if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
+				interpreter.RaiseUserError(fmt.Sprintf(
+					"Записать(%s): строка %d — измерение «%s» = %v не совпадает с отбором (%v)",
+					rs.ir.Name, i+1, name, got, want))
+			}
+		}
+	}
+
 	// Проверяем и то, что удаляем, и то, что пишем: строковая политика
 	// применяется к обеим сторонам замещения, иначе набором можно было бы
 	// снести чужие строки, не имея к ним доступа.
+	existing, err := rs.s.store.InfoRegList(ctx, rs.ir, f)
+	if err != nil {
+		interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
+	}
 	if allow != nil {
-		existing, err := rs.s.store.InfoRegList(ctx, rs.ir, f)
-		if err != nil {
-			interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
-		}
 		for _, row := range existing {
 			if err := allow(ctx, row); err != nil {
 				interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
@@ -362,9 +398,21 @@ func (rs *infoRegRecordSet) write() {
 		}
 	}
 
-	err := rs.s.store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+	err = rs.s.store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
 		if err := rs.s.store.InfoRegDeleteByFilter(txCtx, rs.ir, f); err != nil {
 			return err
+		}
+		// Удалённые строки регистрируются в планах обмена: узлы обязаны узнать
+		// об исчезновении так же, как о появлении.
+		plans := rs.s.reg.ExchangePlans()
+		for _, row := range infoRegDSLRows(rs.ir, existing) {
+			dims := make(map[string]any, len(rs.ir.Dimensions))
+			for _, d := range rs.ir.Dimensions {
+				dims[d.Name] = rowValueFold(row, d.Name)
+			}
+			if err := exchange.RegisterInfoRegOnSave(txCtx, rs.s.store, plans, rs.ir, dims, true); err != nil {
+				return err
+			}
 		}
 		for _, row := range rs.rows {
 			dims := make(map[string]any, len(rs.ir.Dimensions))
@@ -379,7 +427,9 @@ func (rs *infoRegRecordSet) write() {
 			if err != nil {
 				return err
 			}
-			if err := rs.s.store.InfoRegSet(txCtx, rs.ir, dims, res, period); err != nil {
+			// Общая точка: политика строки, валидация периода и регистрация в
+			// планах обмена — всё то, что копия делать забывала.
+			if err := rs.s.infoRegWrite(txCtx, rs.ir, dims, res, period, allow); err != nil {
 				return err
 			}
 		}
