@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,8 +11,11 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
+
+var errCreateRowAccessDenied = errors.New("create row access denied")
 
 func (h *handler) rowDecision(ctx context.Context, entity *metadata.Entity, op string) (access.Decision, error) {
 	if entity == nil {
@@ -126,4 +130,25 @@ func (h *handler) autoFillRowAccessFields(ctx context.Context, entity *metadata.
 	}
 	access.AutoFillPredicateFields(dec.Predicate, fields, entity)
 	return nil
+}
+
+func (h *handler) createRowAccessPreflight(entity *metadata.Entity, action string) func(context.Context, *runtime.Object) error {
+	return func(ctx context.Context, obj *runtime.Object) error {
+		if err := h.autoFillRowAccessFields(ctx, entity, "write", obj.Fields); err != nil {
+			return fmt.Errorf("%w: %v", errCreateRowAccessDenied, err)
+		}
+		posting := entity.Kind == metadata.KindDocument && isPostAction(action)
+		if posting {
+			if err := h.autoFillRowAccessFields(ctx, entity, "post", obj.Fields); err != nil {
+				return fmt.Errorf("%w: %v", errCreateRowAccessDenied, err)
+			}
+		}
+		if !h.rowAllowed(ctx, entity, "write", obj.Fields) {
+			return errCreateRowAccessDenied
+		}
+		if posting && !h.rowAllowed(ctx, entity, "post", obj.Fields) {
+			return errCreateRowAccessDenied
+		}
+		return nil
+	}
 }

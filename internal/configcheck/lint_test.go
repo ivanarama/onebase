@@ -824,3 +824,46 @@ params: []
 		}
 	}
 }
+
+// Устойчивый `id` реквизита линт обязан знать (#873, дефект Д11 из #668).
+//
+// Линт объявлял его неизвестным ключом («загрузчик его игнорирует») и советовал
+// удалить. Совет прямо противоречил механизму защиты данных: именно по `id`
+// миграция отличает переименование от «удалили одно поле, добавили другое», а
+// PlanTableChanges строит по нему сторож от тихой потери колонки. Пользователь,
+// послушавшийся линта, снимал страховку.
+func TestLintYAML_FieldIDKeyKnown(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "catalogs", "контрагенты.yaml"), `name: Контрагенты
+fields:
+  - {id: f_name, name: Наименование, type: string}
+tableparts:
+  - name: Контакты
+    fields:
+      - {id: tp_phone, name: Телефон, type: string}
+`)
+	for _, is := range CheckLintYAML(dir) {
+		if is.Code == "metadata.unvalidated-key" {
+			t.Fatalf("id реквизита должен быть известен линту, получено: %+v", is)
+		}
+	}
+}
+
+// Обратная сторона: опечатка в имени ключа по-прежнему ловится. Ради этого
+// проверка и заведена, и «разрешить всё» вместо неё было бы хуже дефекта.
+func TestLintYAML_ОпечаткаВКлючеПоляЛовится(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "catalogs", "контрагенты.yaml"), `name: Контрагенты
+fields:
+  - {ид: f_name, name: Наименование, type: string}
+`)
+	found := false
+	for _, is := range CheckLintYAML(dir) {
+		if is.Code == "metadata.unvalidated-key" && strings.Contains(is.Message, "ид") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("опечатка «ид» вместо «id» не замечена — проверка перестала ловить то, ради чего заведена")
+	}
+}

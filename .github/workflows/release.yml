@@ -13,10 +13,24 @@ on:
 permissions:
   contents: read
 
+# Сериализация, но БЕЗ cancel-in-progress: в отличие от CI, прерывать релиз
+# нельзя — отменённый прогон может оставить тег с половиной артефактов или
+# опубликованный релиз без файлов. Очередь на ref: два пуша в main ждут друг
+# друга, тег со своей очередью им не мешает.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  # По умолчанию GitHub держит только один pending-run и третий пуш отменяет
+  # второй. max сохраняет до 100 ожидающих релизов вместо их тихой замены.
+  queue: max
+
 jobs:
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
+    # Без явного лимита зависший раннер держит релиз и минуты организации до
+    # 6-часового дефолта GitHub. Сборка одной цели укладывается в единицы минут.
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -118,6 +132,10 @@ jobs:
   verify-ci:
     name: Require green CI for this commit
     runs-on: ubuntu-latest
+    # Свой дедлайн ожидания CI — 30 минут (см. шаг ниже); лимит job'а стоит
+    # чуть выше, чтобы срабатывал внутренний с внятным сообщением, а этот
+    # оставался страховкой на случай зависания самого раннера.
+    timeout-minutes: 40
     permissions:
       actions: read
     steps:
@@ -161,6 +179,7 @@ jobs:
     name: Dev Pre-Release
     needs: [build, verify-ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: write   # публикация пре-релиза
@@ -251,6 +270,7 @@ jobs:
     name: Create GitHub Release
     needs: [build, verify-ci]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write   # публикация релиза

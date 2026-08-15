@@ -221,8 +221,10 @@ func (db *DB) AuditSearch(ctx context.Context, filter AuditFilter, limit, offset
 func AuditDiff(old, new map[string]any, entity *metadata.Entity) []FieldChange {
 	var changes []FieldChange
 	for _, f := range entity.Fields {
-		ov := auditVal(old[f.Name])
-		nv := auditVal(new[f.Name])
+		ovRaw, _ := canonicalFieldValue(old, f.Name)
+		nvRaw, _ := canonicalFieldValue(new, f.Name)
+		ov := auditVal(ovRaw)
+		nv := auditVal(nvRaw)
 		if fmt.Sprintf("%v", ov) != fmt.Sprintf("%v", nv) {
 			changes = append(changes, FieldChange{Field: f.Name, Old: ov, New: nv})
 		}

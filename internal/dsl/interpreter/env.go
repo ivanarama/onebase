@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -61,6 +62,7 @@ func (m *MapThis) Set(name string, v any) {
 // кадрами, поэтому конкурентные запуски на одном *Interpreter не гонят по
 // curFile/curLine и видят только свой debug hook (план 52).
 type execCtx struct {
+	context      context.Context
 	curFile      string // last executed statement location (for error reporting)
 	curLine      int
 	evalDepth    int       // текущая глубина вложенных Вычислить/Eval
@@ -87,6 +89,9 @@ func (ec *execCtx) loopLimit() int {
 // checkDeadline жёстко останавливает запуск (dslStop, мимо Попытки), если
 // исчерпан wall-clock. Дёшево, когда дедлайн не задан.
 func (ec *execCtx) checkDeadline() {
+	if err := executionContextError(ec.context); err != nil {
+		panic(dslStop{err: err})
+	}
 	if !ec.deadline.IsZero() && time.Now().After(ec.deadline) {
 		panic(dslStop{err: errSandboxTimeout})
 	}

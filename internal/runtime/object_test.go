@@ -26,6 +26,31 @@ func TestObject_GetRefUUID_Nil(t *testing.T) {
 	}
 }
 
+func TestObjectSetPreservesCanonicalKeyAndUpdatesCaseDuplicates(t *testing.T) {
+	obj := &Object{Fields: map[string]any{
+		"Итог": "old canonical",
+		"итог": "old duplicate",
+	}}
+
+	obj.Set("ИТОГ", "new")
+
+	if got := obj.Fields["Итог"]; got != "new" {
+		t.Fatalf("canonical value = %v, want new", got)
+	}
+	if got := obj.Fields["итог"]; got != "new" {
+		t.Fatalf("case duplicate value = %v, want new", got)
+	}
+	obj.Set("НовоеПоле", 42)
+	if got := obj.Fields["новоеполе"]; got != 42 {
+		t.Fatalf("new normalized field = %v, want 42", got)
+	}
+	upper := &Object{Fields: map[string]any{"ИТОГ": "old"}}
+	upper.Set("Итог", "new")
+	if got := upper.Fields["ИТОГ"]; got != "new" {
+		t.Fatalf("uppercase-only field = %v, want new", got)
+	}
+}
+
 // String() — display-имя по конвенции Наименование/Name/Номер/Number.
 func TestObject_String_Naimenovanie(t *testing.T) {
 	o := &Object{

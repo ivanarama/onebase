@@ -248,37 +248,10 @@ func (h *handler) createObject(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 
-		// Auto-number для документов: если поле Номер пустое, генерируем.
-		// Раньше API создавал документ с пустым номером — UI это делал, API нет.
-		if kind == metadata.KindDocument {
-			for _, f := range entity.Fields {
-				if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
-					if v, _ := body.Fields["Номер"].(string); strings.TrimSpace(v) == "" {
-						body.Fields["Номер"] = generateAutoNumber(r.Context(), h.store, entity, body.Fields)
-					}
-					break
-				}
-			}
-		}
-		if err := h.autoFillRowAccessFields(r.Context(), entity, "write", body.Fields); err != nil {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-		if kind == metadata.KindDocument && isPostAction(body.Action) {
-			if err := h.autoFillRowAccessFields(r.Context(), entity, "post", body.Fields); err != nil {
-				writeError(w, http.StatusForbidden, "forbidden", "", 0)
-				return
-			}
-		}
-		if !h.rowAllowed(r.Context(), entity, "write", body.Fields) {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-		if kind == metadata.KindDocument && isPostAction(body.Action) && !h.rowAllowed(r.Context(), entity, "post", body.Fields) {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-
+		// Автонумерация здесь больше не делается: её выполняет
+		// entityservice.Save для ЛЮБОГО нового объекта (#869). Прежняя копия
+		// искала поле по имени «Номер» и потому не нумеровала справочники
+		// вовсе — элемент, созданный через REST, оставался без кода.
 		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 			Entity:        entity,
 			ID:            uuid.New(),
@@ -286,8 +259,13 @@ func (h *handler) createObject(kind metadata.Kind) http.HandlerFunc {
 			Fields:        body.Fields,
 			TablePartRows: body.TablePartRows,
 			Action:        body.Action,
+			Preflight:     h.createRowAccessPreflight(entity, body.Action),
 		})
 		if err != nil {
+			if errors.Is(err, errCreateRowAccessDenied) {
+				writeError(w, http.StatusForbidden, "forbidden", "", 0)
+				return
+			}
 			writeSaveError(w, err)
 			return
 		}
@@ -650,31 +628,6 @@ func writeDecodeError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error(), "", 0)
-}
-
-// generateAutoNumber генерирует номер документа для API так же, как UI: при
-// наличии Numerator-конфига использует его (ComputePeriodKey + NextNumber +
-// FormatNumber), иначе откатывается на простой NextNum с дополнением нулями.
-// Клиенты, которым нужна особая нумерация, могут передавать Номер сами.
-func generateAutoNumber(ctx context.Context, store *storage.DB, entity *metadata.Entity, fields map[string]any) string {
-	// Та же единая точка, что у UI и DSL (план 117C).
-	if entity.Numerator != nil {
-		if v, err := store.GenerateNumber(ctx, entity, fields); err == nil && v != "" {
-			return v
-		}
-	}
-	if n, err := store.NextNum(ctx, entity.Name); err == nil {
-		return formatLegacy(n)
-	}
-	return ""
-}
-
-func formatLegacy(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	for len(s) < 6 {
-		s = "0" + s
-	}
-	return s
 }
 
 func parseRestFilters(r *http.Request) map[string]storage.FilterValue {

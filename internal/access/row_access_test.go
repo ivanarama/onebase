@@ -253,6 +253,15 @@ func TestAutoFillPredicateFields_SimpleOwner(t *testing.T) {
 	if fields["Ответственный"] != "other" {
 		t.Fatalf("explicit owner must not be overwritten: %#v", fields)
 	}
+
+	// HTML forms may carry both metadata-case and Object.Set lowercase keys.
+	// Autofill must update every spelling so later form canonicalization cannot
+	// resurrect an empty duplicate and silently erase the policy owner.
+	duplicateFields := map[string]any{"Ответственный": nil, "ответственный": ""}
+	access.AutoFillPredicateFields(dec.Predicate, duplicateFields, meta)
+	if duplicateFields["Ответственный"] != "ivan" || duplicateFields["ответственный"] != "ivan" {
+		t.Fatalf("EqualFold duplicates were not synchronized: %#v", duplicateFields)
+	}
 }
 
 func TestValidatePolicyRejectsUnknownOperator(t *testing.T) {
