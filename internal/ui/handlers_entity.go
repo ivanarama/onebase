@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -1493,6 +1494,11 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	if !s.rowAllowed(w, r, entity, "post", row) {
 		return
 	}
+	expectedVersion, err := strconv.ParseInt(fmt.Sprint(row["_version"]), 10, 64)
+	if err != nil || expectedVersion < 1 {
+		s.serverError(w, r, fmt.Errorf("post document %s: invalid _version %v", id, row["_version"]))
+		return
+	}
 
 	if asBool(row["deletion_mark"]) {
 		// Помеченный на удаление документ проводить нельзя.
@@ -1507,6 +1513,14 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	for _, f := range entity.Fields {
 		obj.Fields[f.Name] = row[f.Name]
 	}
+	// Keep the list-posting copy of OnPost aligned with entityservice.Save and
+	// the DSL writer: application hooks routinely persist a reference back to
+	// the document through ЭтотОбъект.Ссылка. Reassert both reserved aliases
+	// after copying metadata fields; legacy configurations may contain a field
+	// with the same spelling, and it must not replace the platform pseudo-field.
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	obj.Set("Ссылка", selfRef)
+	obj.Set("reference", selfRef)
 	tpRows := make(map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
 		rows, _ := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
@@ -1540,10 +1554,11 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 			hookErrMsg = errMsg
 			return errPostingHookFailed
 		}
-		// OnPost мог изменить расчётные реквизиты шапки — персистим их без
-		// второго инкремента _version, как это делают проведение через форму,
-		// REST и DSL. Раньше проведение из списка эти изменения теряло (#775).
-		if err := s.store.UpsertPreserveVersion(ctx, entity.Name, id, obj.Fields, entity); err != nil {
+		// OnPost мог изменить расчётные реквизиты шапки — персистим их и
+		// фиксируем одну логическую версию операции. У списочного пути до этого
+		// места ещё не было записи, поэтому PreserveVersion оставлял версию
+		// прежней, в отличие от формы, REST и DSL (#880).
+		if err := s.store.UpsertVersioned(ctx, entity.Name, id, obj.Fields, entity, &expectedVersion); err != nil {
 			return err
 		}
 		if err := s.saveMovements(ctx, entity.Name, id, mc); err != nil {
@@ -1557,6 +1572,10 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		if hookErrMsg != "" {
 			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape(hookErrMsg), http.StatusSeeOther)
+			return
+		}
+		if errors.Is(err, storage.ErrVersionConflict) {
+			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape("Объект был изменён другим пользователем, обновите страницу"), http.StatusSeeOther)
 			return
 		}
 		s.serverError(w, r, err)

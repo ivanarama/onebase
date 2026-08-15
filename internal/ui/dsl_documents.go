@@ -886,7 +886,7 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	// после хука, как это делает entityservice.Save при проведении. writeInContext
 	// уже создал ровно одну логическую версию этой операции, поэтому сохраняем
 	// hook-поля без второго инкремента _version.
-	if err := w.s.store.UpsertPreserveVersion(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+	if err := w.s.store.UpsertAfterVersionBump(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
 		return err
 	}
 	if err := w.s.saveMovements(ctx, w.entity.Name, w.obj.ID, mc); err != nil {
