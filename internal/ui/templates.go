@@ -810,6 +810,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
 		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+			virtual = filterVirtualTPColumns(fields, virtual)
 			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
 			for _, field := range fields {
 				cols = append(cols, managedTPColumnJSON{
@@ -842,22 +843,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
-		"managedTPVirtualColumns": func(virtual []metadata.FormVirtualColumn) []metadata.FormVirtualColumn {
-			filtered := make([]metadata.FormVirtualColumn, 0, len(virtual))
-			for _, vc := range virtual {
-				if strings.TrimSpace(vc.Name) == "" || metadata.IsReservedFormVirtualColumnName(vc.Name) {
-					continue
-				}
-				filtered = append(filtered, vc)
-			}
-			return filtered
-		},
+		"managedTPVirtualColumns": filterVirtualTPColumns,
 		"managedTPVirtualNamesJSON": func(virtual []metadata.FormVirtualColumn) string {
-			names := make([]string, 0, len(virtual))
-			for _, vc := range virtual {
-				if strings.TrimSpace(vc.Name) == "" || metadata.IsReservedFormVirtualColumnName(vc.Name) {
-					continue
-				}
+			filtered := filterVirtualTPColumns(nil, virtual)
+			names := make([]string, 0, len(filtered))
+			for _, vc := range filtered {
 				names = append(names, vc.Name)
 			}
 			b, err := json.Marshal(names)

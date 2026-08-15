@@ -54,6 +54,8 @@ func TestCheckFormVirtualColumns(t *testing.T) {
 		{"реквизит не ссылочный", metadata.FormVirtualColumn{Name: "Код", DataPath: "Комментарий.Код"}, "не ссылочный"},
 		{"нет реквизита у цели", metadata.FormVirtualColumn{Name: "ИНН", DataPath: "Клиент.ИНН"}, "нет реквизита \"ИНН\""},
 		{"имя совпадает с реквизитом ТЧ", metadata.FormVirtualColumn{Name: "Комментарий", DataPath: "Клиент.Код"}, "совпадает с реквизитом"},
+		{"имя с пробелом", metadata.FormVirtualColumn{Name: "Код клиента", DataPath: "Клиент.Код"}, "идентификатором"},
+		{"имя с внешними пробелами", metadata.FormVirtualColumn{Name: " КодКлиента ", DataPath: "Клиент.Код"}, "идентификатором"},
 		{"без имени", metadata.FormVirtualColumn{DataPath: "Клиент.Код"}, "без name"},
 	}
 	for _, c := range cases {
@@ -102,7 +104,10 @@ func TestCheckFormVirtualColumns_НеТабличнаяЧасть(t *testing.T) 
 }
 
 func TestCheckFormVirtualColumns_СлужебныеИмена(t *testing.T) {
-	for _, name := range []string{" id ", "_OrD", "_obROWclass", "_OBCELlClasses"} {
+	for _, name := range []string{
+		" id ", "_OrD", "_obROWclass", "_OBCELlClasses",
+		"_FORM_ROW_CLASS", "_form_cell_classes", "__Proto__",
+	} {
 		t.Run(name, func(t *testing.T) {
 			issues := CheckFormVirtualColumns(virtualColumnProject(
 				metadata.FormVirtualColumn{Name: name, DataPath: "Клиент.Код"},

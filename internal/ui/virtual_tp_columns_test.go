@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -275,16 +276,64 @@ func TestFormElementTablePartRequiresTablePartKind(t *testing.T) {
 func TestApplyVirtualTPColumns_SkipsReservedNames(t *testing.T) {
 	s, order, orderID := virtualColumnFixture(t)
 	loaded := parseManagedTPRows(t, virtualColumnFormHTML(t, s, order, orderID))
+	for _, name := range []string{
+		"_OrD", "_obRowClass", "_obCellClasses",
+		"_form_row_class", "_form_cell_classes", "__Proto__",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows := map[string][]map[string]any{
+				"Строки": {{"Клиент": loaded[0]["Клиент"]}},
+			}
+			form := &metadata.FormModule{Elements: []*metadata.FormElement{{
+				Kind: metadata.FormElementTablePart, DataPath: "Объект.Строки",
+				VirtualColumns: []metadata.FormVirtualColumn{{Name: name, DataPath: "Клиент.Код"}},
+			}}}
+			s.applyVirtualTPColumns(context.Background(), order, form, rows)
+			if _, exists := rows["Строки"][0][name]; exists {
+				t.Fatalf("runtime материализовал служебную колонку: %#v", rows["Строки"][0])
+			}
+		})
+	}
+}
+
+func TestVirtualTPColumn_StoredFieldCollisionFailsClosed(t *testing.T) {
+	s, order, orderID := virtualColumnFixture(t)
+	order.Forms[0].Elements[0].VirtualColumns = []metadata.FormVirtualColumn{
+		{Name: "Сумма", DataPath: "Клиент.Код"},
+		{Name: " Невалидная ", DataPath: "Клиент.Код"},
+		{Name: "_form_row_class", DataPath: "Клиент.Код"},
+		{Name: "КодКлиента", DataPath: "Клиент.Код"},
+		{Name: "кодклиента", DataPath: "Клиент.Наименование"},
+	}
+
+	htmlOut := virtualColumnFormHTML(t, s, order, orderID)
+	cols := parseManagedTPColumns(t, htmlOut)
+	ids := make([]string, 0, len(cols))
+	for _, col := range cols {
+		ids = append(ids, col.ID)
+	}
+	if strings.Join(ids, ",") != "Клиент,Сумма,КодКлиента" {
+		t.Fatalf("коллизионная виртуальная колонка попала в схему: %v", ids)
+	}
+	rows := parseManagedTPRows(t, htmlOut)
+	if got := rows[0]["Сумма"]; fmt.Sprint(got) != "100" {
+		t.Fatalf("проекция перезаписала хранимый реквизит ТЧ: %v", got)
+	}
+}
+
+func TestApplyVirtualTPColumns_ClearsStaleProjectionOnEarlyExit(t *testing.T) {
+	s, order, _ := virtualColumnFixture(t)
 	rows := map[string][]map[string]any{
-		"Строки": {{"Клиент": loaded[0]["Клиент"]}},
+		"Строки": {{"Клиент": nil, "КодКлиента": "STALE"}},
 	}
 	form := &metadata.FormModule{Elements: []*metadata.FormElement{{
 		Kind: metadata.FormElementTablePart, DataPath: "Объект.Строки",
-		VirtualColumns: []metadata.FormVirtualColumn{{Name: "_OrD", DataPath: "Клиент.Код"}},
+		VirtualColumns: []metadata.FormVirtualColumn{{Name: "КодКлиента", DataPath: "Клиент.Код"}},
 	}}}
+
 	s.applyVirtualTPColumns(context.Background(), order, form, rows)
-	if _, exists := rows["Строки"][0]["_OrD"]; exists {
-		t.Fatalf("runtime материализовал служебную колонку: %#v", rows["Строки"][0])
+	if got := rows["Строки"][0]["КодКлиента"]; got != "" {
+		t.Fatalf("ранний выход сохранил устаревшую проекцию: %v", got)
 	}
 }
 

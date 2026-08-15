@@ -111,7 +111,12 @@ func checkVirtualColumn(
 	}
 	if metadata.IsReservedFormVirtualColumnName(name) {
 		add(fmt.Sprintf("виртуальная колонка %q использует служебное имя", name),
-			"выберите имя, отличное от id, _ord, _obRowClass и _obCellClasses")
+			"выберите имя, которое не занято служебными данными строки формы")
+		return
+	}
+	if vc.Name != name || !metadata.ValidIdent(name) {
+		add(fmt.Sprintf("виртуальная колонка %q не является идентификатором", vc.Name),
+			"используйте буквы, цифры и _ без пробелов; первый символ — буква или _")
 		return
 	}
 	// Имя колонки не должно совпадать с реквизитом ТЧ: одноимённая виртуальная

@@ -237,7 +237,8 @@ type FormVirtualColumn struct {
 // must not be allowed to overwrite identity, stable-order or styling metadata.
 func IsReservedFormVirtualColumnName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "id", "_ord", "_obrowclass", "_obcellclasses":
+	case "id", "_ord", "_obrowclass", "_obcellclasses",
+		"_form_row_class", "_form_cell_classes", "__proto__":
 		return true
 	default:
 		return false

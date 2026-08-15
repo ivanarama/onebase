@@ -59,7 +59,9 @@ function obManagedWritableTableBody(id, metadataAttr, elementName) {
 function obManagedIsReservedVirtualColumnName(name) {
   var normalized = String(name == null ? '' : name).trim().toLowerCase();
   return normalized === 'id' || normalized === '_ord' ||
-    normalized === '_obrowclass' || normalized === '_obcellclasses';
+    normalized === '_obrowclass' || normalized === '_obcellclasses' ||
+    normalized === '_form_row_class' || normalized === '_form_cell_classes' ||
+    normalized === '__proto__';
 }
 
 function obManagedEscapeHTML(value) {
@@ -996,10 +998,19 @@ function obManagedParseFieldMeta(raw) {
   }).filter(function (f) { return f.name !== ''; });
 }
 
+function obManagedAdjacentTableBody(btn, tpName, metadataAttr) {
+  var table = btn && btn.previousElementSibling;
+  if (!table || !table.getAttribute || !table.querySelector ||
+      table.getAttribute('data-ob-dom-table') !== tpName) return null;
+  var tbody = table.querySelector('tbody[' + metadataAttr + ']');
+  return tbody && !obManagedTableReadOnly(tbody) ? tbody : null;
+}
+
 function obManagedAddTpRow(btn) {
   var tpName = btn.getAttribute('data-ob-add-tp') || '';
   var elementName = btn.getAttribute('data-ob-element') || '';
-  var tbody = obManagedWritableTableBody('tp-body-' + tpName, 'data-tp-fields', elementName);
+  var tbody = obManagedAdjacentTableBody(btn, tpName, 'data-tp-fields') ||
+    obManagedWritableTableBody('tp-body-' + tpName, 'data-tp-fields', elementName);
   if (!tpName || !tbody || typeof addTpRow !== 'function') return;
   var meta = obManagedParseFieldMeta(tbody.getAttribute('data-tp-fields') || '');
   var fields = meta.map(function (f) { return f.name; });

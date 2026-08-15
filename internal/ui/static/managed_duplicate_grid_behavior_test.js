@@ -117,14 +117,17 @@ test('virtual SlickGrid formatter escapes HTML', () => {
   );
 });
 
-test('reserved virtual column cannot overwrite stable row order', () => {
+test('reserved virtual columns cannot enter the SlickGrid row contract', () => {
   const state = run('writable-first', {
     'data-sg-cols': JSON.stringify([
       {id: 'Value', name: 'Value', type: 'string'},
-      {id: '_ord', name: 'Order', type: 'string', virtual: true}
+      {id: '_ord', name: 'Order', type: 'string', virtual: true},
+      {id: '_form_row_class', name: 'Row class', type: 'string', virtual: true},
+      {id: '_form_cell_classes', name: 'Cell classes', type: 'string', virtual: true},
+      {id: '__Proto__', name: 'Prototype', type: 'string', virtual: true}
     ]),
     'data-sg-rows': JSON.stringify([
-      {Value: 'first', _ord: 100},
+      {Value: 'first', _ord: 100, _form_row_class: 'wrong'},
       {Value: 'second', _ord: -1}
     ])
   });

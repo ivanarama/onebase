@@ -47,10 +47,10 @@ func (s *Server) applyVirtualTPColumns(
 			return true
 		}
 		for _, vc := range el.VirtualColumns {
-			name := strings.TrimSpace(vc.Name)
-			if name == "" || metadata.IsReservedFormVirtualColumnName(name) {
+			if !usableVirtualTPColumnName(tp.Fields, vc.Name) {
 				continue
 			}
+			name := strings.TrimSpace(vc.Name)
 			key := strings.ToLower(strings.TrimSpace(tp.Name)) + "\x00" + strings.ToLower(name)
 			if seen[key] {
 				continue
@@ -63,12 +63,51 @@ func (s *Server) applyVirtualTPColumns(
 	})
 }
 
+// usableVirtualTPColumnName protects the shared row-map contract even when a
+// project is started without running `onebase check` first. In particular, a
+// virtual column must never overwrite a stored table-part value: the browser
+// would otherwise serialize the projected value back into that stored field.
+func usableVirtualTPColumnName(fields []metadata.Field, name string) bool {
+	trimmed := strings.TrimSpace(name)
+	if name != trimmed || !metadata.ValidIdent(name) || metadata.IsReservedFormVirtualColumnName(name) {
+		return false
+	}
+	for _, field := range fields {
+		if strings.EqualFold(field.Name, name) {
+			return false
+		}
+	}
+	return true
+}
+
+func filterVirtualTPColumns(fields []metadata.Field, virtual []metadata.FormVirtualColumn) []metadata.FormVirtualColumn {
+	filtered := make([]metadata.FormVirtualColumn, 0, len(virtual))
+	seen := make(map[string]bool, len(virtual))
+	for _, vc := range virtual {
+		name := strings.TrimSpace(vc.Name)
+		key := strings.ToLower(name)
+		if !usableVirtualTPColumnName(fields, vc.Name) || seen[key] {
+			continue
+		}
+		seen[key] = true
+		filtered = append(filtered, vc)
+	}
+	return filtered
+}
+
 func (s *Server) fillVirtualColumn(
 	ctx context.Context,
 	tp metadata.TablePart,
 	vc metadata.FormVirtualColumn,
 	rows []map[string]any,
 ) bool {
+	// The virtual key may already be present after a form event. Clear it before
+	// every validation/read exit so a broken reference or denied batch cannot
+	// leave a stale or handler-supplied value visible as a trusted projection.
+	for _, row := range rows {
+		row[vc.Name] = ""
+	}
+
 	refName, ok := vc.RefFieldName()
 	if !ok {
 		return false
@@ -143,7 +182,6 @@ func (s *Server) fillVirtualColumn(
 		// Пустая или битая ссылка даёт пустую ячейку без маркера: строка ТЧ с
 		// незаполненной ссылкой — рабочее состояние ввода, и «—» в такой ячейке
 		// читался бы как значение.
-		row[vc.Name] = ""
 		_, v, ok := lookupMapCI(row, refField.Name)
 		if !ok || v == nil {
 			continue

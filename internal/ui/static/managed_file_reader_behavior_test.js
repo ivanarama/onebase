@@ -631,6 +631,41 @@ test('NoGrid add uses the clicked duplicate view schema', () => {
   assert.deepEqual(call.virtuals, ['Второй']);
 });
 
+test('NoGrid add uses its adjacent table when element names are ambiguous', () => {
+  resetDOM();
+  const first = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string', 'data-tp-virtual-cols': '["Первый"]'
+  });
+  const second = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string', 'data-tp-virtual-cols': '["Второй"]'
+  });
+  first.closest = second.closest = () => ({getAttribute() { return ''; }});
+  const adjacentTable = {
+    getAttribute(name) { return name === 'data-ob-dom-table' ? 'Строки' : null; },
+    querySelector(selector) { return selector === 'tbody[data-tp-fields]' ? second : null; }
+  };
+  let call = null;
+  const realAddTpRow = global.addTpRow;
+  global.addTpRow = function(_name, _fields, _nums, _index, target, virtuals) {
+    call = {target, virtuals};
+  };
+  try {
+    obManagedAddTpRow({
+      previousElementSibling: adjacentTable,
+      getAttribute(name) {
+        if (name === 'data-ob-add-tp') return 'Строки';
+        if (name === 'data-ob-element') return '';
+        return null;
+      }
+    });
+  } finally {
+    global.addTpRow = realAddTpRow;
+  }
+  assert.equal(call.target, second);
+  assert.deepEqual(call.virtuals, ['Второй']);
+  assert.equal(first.children.length, 0);
+});
+
 for (const order of ['readonly-first', 'writable-first']) {
   test(`ValueTable add targets writable duplicate (${order})`, () => {
     resetDOM();
