@@ -16,6 +16,9 @@ var (
 	ErrPendingBinaryTransaction  = errors.New("selfupdate: installation has a pending binary transaction")
 	ErrConsumerGenerationChanged = errors.New("selfupdate: installed binary generation changed while this process was starting")
 	consumerBinaryVersion        = BinaryVersion
+	// currentBinaryPath — шов для тестов: они подменяют «текущий бинарь»
+	// заглушкой, не пересобирая себя.
+	currentBinaryPath = BinaryPath
 )
 
 var processConsumerState struct {
@@ -93,7 +96,15 @@ func acquireConsumerLease(targetDir, expectedVersion string) (*ConsumerLease, er
 		return nil, errors.Join(err, lock.Unlock(), intent.Unlock())
 	}
 	if expectedVersion != "" {
-		got, versionErr := consumerBinaryVersion(filepath.Join(canonical, BinaryName()))
+		// Сверяем поколение ТЕКУЩЕГО исполняемого файла, а не файла с жёстко
+		// зашитым именем в каталоге: бинарь, названный иначе (сборка
+		// ob-2026-08-13.exe, `go build -o my-onebase`), проверял бы
+		// несуществующий onebase.exe и не выполнял НИ ОДНОЙ команды (#831).
+		self, pathErr := currentBinaryPath()
+		if pathErr != nil {
+			return nil, errors.Join(pathErr, lock.Unlock(), intent.Unlock())
+		}
+		got, versionErr := consumerBinaryVersion(self)
 		if versionErr != nil {
 			return nil, errors.Join(fmt.Errorf("selfupdate: verify installed binary generation: %w", versionErr), lock.Unlock(), intent.Unlock())
 		}
@@ -217,7 +228,11 @@ func resumeProcessConsumer(consumer *ConsumerLease) error {
 		return err
 	}
 	if consumer.expectedVersion != "" {
-		got, versionErr := consumerBinaryVersion(filepath.Join(consumer.targetDir, BinaryName()))
+		self, pathErr := currentBinaryPath()
+		if pathErr != nil {
+			return pathErr
+		}
+		got, versionErr := consumerBinaryVersion(self)
 		if versionErr != nil {
 			return errors.Join(versionErr, lock.Unlock())
 		}
