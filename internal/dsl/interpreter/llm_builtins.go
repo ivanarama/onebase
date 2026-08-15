@@ -93,7 +93,7 @@ func NewLLMFunctions(ai AIAssistant) map[string]any {
 	распознатьДокумент := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		path := strArg(args, 0)
 		prompt := strArg(args, 1)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G703: explicit trusted DSL file capability; DenyFile sandbox overlays RecognizeDocument
 		if err != nil {
 			panic(userError{Msg: "РаспознатьДокумент: не удалось прочитать файл: " + err.Error()})
 		}

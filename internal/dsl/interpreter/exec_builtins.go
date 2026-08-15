@@ -3,6 +3,7 @@ package interpreter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -34,15 +35,17 @@ func checkExec(guard ExecGuard) {
 }
 
 const (
-	execDefaultTimeout = 30 * time.Second
-	execMaxTimeout     = 10 * time.Minute
-	execOutputCap      = 1 << 20 // 1 МиБ на поток
+	execDefaultTimeout    = 30 * time.Second
+	execMaxTimeout        = 10 * time.Minute
+	execProcessDrainGrace = 250 * time.Millisecond
+	execOutputCap         = 1 << 20 // 1 МиБ на поток
 )
 
 // NewExecFunctions возвращает builtin ВыполнитьКоманду с привязанными guard'ом и
 // (необязательным) аудитом. guard=deny используется песочницей для запрета
 // (см. SandboxProfile.Vars).
-func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
+func NewExecFunctions(guard ExecGuard, audit ExecAudit, ctxSources ...CtxSource) map[string]any {
+	ctxSource := firstCtxSource(ctxSources)
 	run := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		checkExec(guard)
 		if len(args) == 0 || args[0] == nil {
@@ -82,7 +85,9 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 			workdir = strings.TrimSpace(fmt.Sprintf("%v", args[3]))
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		baseCtx := contextFromSource(ctxSource)
+		checkExecutionContext(baseCtx)
+		ctx, cancel := context.WithTimeout(baseCtx, timeout)
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, name, cmdArgs...) //nolint:gosec // G204: builtin ВыполнитьКоманду закрыт ExecGuard (настройка GetExecEnabled, по умолчанию выключена), в песочнице guard=deny; аргументы идут слайсом, без шелла
@@ -93,13 +98,19 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 		stderr := &capWriter{max: execOutputCap}
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
+		// Stdout/Stderr are non-files, so os/exec services them with copy
+		// goroutines. A descendant that inherits either pipe can otherwise keep
+		// Wait blocked after the direct child has exited or been killed.
+		cmd.WaitDelay = execProcessDrainGrace
 
-		runErr := cmd.Run()
-		timedOut := ctx.Err() == context.DeadlineExceeded
+		runErr := runExecCommand(cmd)
+		executionErr := executionContextError(baseCtx)
+		timedOut := ctx.Err() == context.DeadlineExceeded && executionErr == nil
+		unfinished := timedOut || errors.Is(runErr, exec.ErrWaitDelay)
 
 		code := 0
 		switch {
-		case timedOut:
+		case executionErr != nil || unfinished:
 			code = -1
 		case runErr != nil:
 			if ee, ok := runErr.(*exec.ExitError); ok {
@@ -114,16 +125,19 @@ func NewExecFunctions(guard ExecGuard, audit ExecAudit) map[string]any {
 		if audit != nil {
 			audit(name, cmdArgs, code)
 		}
+		if executionErr != nil {
+			return nil, executionErr
+		}
 
 		res := &MapThis{M: map[string]any{
 			"КодВозврата":      float64(code),
 			"СтандартныйВывод": stdout.String(),
 			"ОшибочныйВывод":   stderr.String(),
-			"Завершилась":      !timedOut,
+			"Завершилась":      !unfinished,
 			"ReturnCode":       float64(code),
 			"StandardOutput":   stdout.String(),
 			"ErrorOutput":      stderr.String(),
-			"Finished":         !timedOut,
+			"Finished":         !unfinished,
 		}}
 		return res, nil
 	})

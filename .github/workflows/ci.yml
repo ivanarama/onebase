@@ -179,6 +179,45 @@ jobs:
           done
           echo "JS syntax: чисто ($n файлов)"
 
+      # Отбор по `git ls-files '*.js'` физически не видит inline-<script> внутри
+      # Go-шаблонов — а они там есть, и #758 добавил ещё один. Для компилятора
+      # Go это текст, поэтому ошибка в шаблонном JS проходит все гейты зелёной
+      # и всплывает у пользователя пустой страницей (#879, класс #684).
+      - name: Inline JS syntax check (Go templates)
+        run: |
+          set -euo pipefail
+          tmp="${RUNNER_TEMP:-/tmp}/inline-js"
+          rm -rf "$tmp"
+          # Сам экстрактор исключён: в его регулярках лежит литерал <script…>,
+          # и гейт нашёл бы «сломанный скрипт» в собственном исходнике.
+          set +e
+          git grep -l -z '<script' -- '*.go' > "$tmp.go-files"
+          grep_status=$?
+          set -e
+          [ "$grep_status" -eq 0 ] || { echo "::error::не удалось отобрать Go-шаблоны с <script> (git grep: $grep_status)"; exit 1; }
+          files=()
+          while IFS= read -r -d '' file; do
+            [[ "$file" == *_test.go || "$file" == tools/jsextract/* ]] && continue
+            files+=("$file")
+          done < "$tmp.go-files"
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::не найдено ни одного шаблона с <script> — сломан отбор"; exit 1; }
+          # jsextract сам падает, если не извлёк ни одного блока: пустая выдача
+          # означала бы не «чисто», а сломанный экстрактор.
+          go run ./tools/jsextract -out "$tmp" "${files[@]}"
+          shopt -s nullglob
+          scripts=("$tmp"/*.js "$tmp"/*.mjs)
+          [ "${#scripts[@]}" -gt 0 ] || { echo "::error::экстрактор не создал файлов для проверки"; exit 1; }
+          n=0
+          for f in "${scripts[@]}"; do
+            node --check "$f" || {
+              echo "::error::синтаксическая ошибка в inline-скрипте; источник — в первой строке $f"
+              head -1 "$f"
+              exit 1
+            }
+            n=$((n+1))
+          done
+          echo "Inline JS syntax: чисто ($n блоков)"
+
 
       # -race на Linux работает без CGo-плясок (на Windows нужен gcc) и ловит
       # гонки разделяемого интерпретатора и других синглтонов (план 52/56).

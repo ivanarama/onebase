@@ -339,7 +339,7 @@ func AutoFillPredicateFields(p *storage.Predicate, fields map[string]any, meta *
 		if !ok || value == nil || fieldPresentNonEmpty(fields, field.Name) {
 			continue
 		}
-		fields[field.Name] = value
+		setFieldEqualFold(fields, field.Name, value)
 		filled = append(filled, field.Name)
 	}
 	return filled
@@ -384,12 +384,31 @@ func fieldPresentNonEmpty(fields map[string]any, name string) bool {
 			continue
 		}
 		if v == nil {
-			return false
+			continue
 		}
 		if s, ok := v.(string); ok {
-			return strings.TrimSpace(s) != ""
+			if strings.TrimSpace(s) != "" {
+				return true
+			}
+			continue
 		}
 		return true
 	}
 	return false
+}
+
+// setFieldEqualFold keeps form-originated PascalCase keys and Object.Set-style
+// lowercase keys coherent. This matters when a form hook canonicalizes fields
+// after row-policy autofill: no stale empty duplicate may win afterwards.
+func setFieldEqualFold(fields map[string]any, name string, value any) {
+	updated := false
+	for key := range fields {
+		if strings.EqualFold(key, name) {
+			fields[key] = value
+			updated = true
+		}
+	}
+	if !updated {
+		fields[name] = value
+	}
 }
