@@ -282,6 +282,26 @@ func restoreForBase(ctx context.Context, b *Base, fp string) error {
 	return backup.Restore(ctx, b.DB, fp)
 }
 
+// resetBasePrefixAfterRestore гасит префикс базы после восстановления копии.
+//
+// Копия, восстановленная в ДРУГУЮ базу, сохраняла префикс оригинала и выдавала
+// бы его коды — обмен склеил бы разные объекты. В CLI сброс был с самого
+// начала (117D), а восстановление через лаунчер шло мимо: защита работала на
+// одном входе из двух (#871).
+//
+// Вызывается ПОД тем же эксклюзивным лизом, что и само восстановление, поэтому
+// база открывается openDBUnchecked — как и импорт конфигурации рядом.
+// Возвращает прежний префикс, чтобы сказать об этом человеку: молча снятый
+// префикс — это тихое изменение поведения нумерации.
+func resetBasePrefixAfterRestore(ctx context.Context, b *Base) (string, error) {
+	db, err := openDBUnchecked(ctx, b)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	return db.ResetBasePrefixAfterRestore(ctx)
+}
+
 // checkRawRestoreAllowed runs under the caller's exclusive database lease.
 // Raw engine dumps cannot resolve a universal restore's external directory
 // journal, so they must never overwrite the database that contains its marker.
@@ -837,8 +857,12 @@ func (h *handler) backupRestore(w http.ResponseWriter, r *http.Request) {
 	defer release()
 
 	restoreErr := checkRawRestoreAllowed(restoreCtx, b)
+	var prevPrefix string
 	if restoreErr == nil {
 		restoreErr = restoreForBase(restoreCtx, b, fp)
+	}
+	if restoreErr == nil {
+		prevPrefix, restoreErr = resetBasePrefixAfterRestore(restoreCtx, b)
 	}
 	release()
 	data := h.loadCfgData(r.Context(), b, "backup")
@@ -848,6 +872,10 @@ func (h *handler) backupRestore(w http.ResponseWriter, r *http.Request) {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = "panel-backup"
 		msg := tr(lang, "База данных восстановлена из") + ": " + file
+		if prevPrefix != "" {
+			msg += ". " + tr(lang, "Префикс базы снят") + " (" + prevPrefix + "): " +
+				tr(lang, "копия в другой базе выдавала бы коды оригинала")
+		}
 		if wasRunning {
 			msg += ". " + tr(lang, "База остановлена — запустите её заново для применения изменений.")
 		}
@@ -1212,6 +1240,13 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			file, archiveSize,
 			backup.ImportOptions{ExchangeMode: exchangeRestoreMode},
 		)
+		var prevPrefix string
+		if importErr == nil {
+			// Universal archives intentionally do not transport the instance-local
+			// base prefix. That still must not leave the target instance's old
+			// identity active after it has been replaced by a restored copy.
+			prevPrefix, importErr = db.ResetBasePrefixAfterRestore(restoreCtx)
+		}
 
 		db.Close()
 		release()
@@ -1223,6 +1258,10 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 			data.FieldsSavedEntity = "panel-backup"
 			msg := fmt.Sprintf(tr(lang, "Полное восстановление выполнено: %d таблиц, %d файлов вложений"),
 				len(report.Tables), report.Files)
+			if prevPrefix != "" {
+				msg += ". " + tr(lang, "Префикс базы снят") + " (" + prevPrefix + "): " +
+					tr(lang, "копия в другой базе выдавала бы коды оригинала")
+			}
 			if len(report.TOTPReset) > 0 {
 				// Секрет 2FA этих учёток зашифрован чужим мастер-ключом и текущим не
 				// читается — второй фактор погашен, чтобы вход не заперло. Называем
@@ -1301,6 +1340,10 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 	} else {
 		restoreErr = fmt.Errorf("database dump not found in archive (expected database.sql.gz or database.db)")
 	}
+	var prevPrefix string
+	if restoreErr == nil {
+		prevPrefix, restoreErr = resetBasePrefixAfterRestore(restoreCtx, b)
+	}
 
 	// Import configuration
 	var configErr error
@@ -1346,6 +1389,10 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = "panel-backup"
 		msg := tr(lang, "Полное восстановление выполнено: база данных + конфигурация")
+		if prevPrefix != "" {
+			msg += ". " + tr(lang, "Префикс базы снят") + " (" + prevPrefix + "): " +
+				tr(lang, "копия в другой базе выдавала бы коды оригинала")
+		}
 		if wasRunning {
 			msg += ". " + tr(lang, "База остановлена — запустите её заново для применения изменений.")
 		}

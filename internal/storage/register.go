@@ -18,6 +18,13 @@ type refUUIDGetter interface{ GetRefUUID() string }
 // Accepts string (UUID or empty), or any type implementing GetRefUUID().
 func resolveRefArg(d Dialect, v any) any {
 	switch val := v.(type) {
+	case uuid.UUID:
+		return idArg(d, val)
+	case *uuid.UUID:
+		if val != nil {
+			return idArg(d, *val)
+		}
+		return nil
 	case string:
 		if val != "" {
 			if id, err := uuid.Parse(val); err == nil {
@@ -87,14 +94,33 @@ type OrphanStat struct {
 // что не смотрели. Отсутствие таблицы — законный случай (регистр ещё не
 // мигрирован), его отличаем явной проверкой HasTable и пропускаем (#622).
 func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) ([]OrphanStat, error) {
+	return db.orphanIn(ctx, db.accumSources(ctx, registers), entities)
+}
+
+// OrphanAccountEntries — то же для проводок регистра бухгалтерии (#881).
+// Doctor их не видел вовсе: проверка обходила только регистры накопления, и
+// проводки удалённого документа оставались в акк_* навсегда — вместе с
+// перекошенными на их сумму оборотами.
+func (db *DB) OrphanAccountEntries(ctx context.Context, regs []*metadata.AccountRegister, entities []*metadata.Entity) ([]OrphanStat, error) {
+	return db.orphanIn(ctx, db.accountSources(ctx, regs), entities)
+}
+
+// orphanIn — общее ядро подсчёта сирот для любого вида движений.
+//
+// Регистр накопления и регистр бухгалтерии отличаются только именами таблицы и
+// колонок регистратора (recorder/recorder_type против регистратор/
+// регистратор_тип). Отдельная копия этой логики для бухрегистра разошлась бы с
+// оригиналом ровно в той тонкости, ради которой она написана: «тип неизвестен
+// конфигурации» — это НЕ «документ удалён» (#615, план 114).
+func (db *DB) orphanIn(ctx context.Context, sources []movementSource, entities []*metadata.Entity) ([]OrphanStat, error) {
 	d := db.dialect
 	entityTable := make(map[string]string, len(entities))
 	for _, e := range entities {
 		entityTable[strings.ToLower(e.Name)] = metadata.TableName(e.Name)
 	}
 	var stats []OrphanStat
-	for _, reg := range registers {
-		table := metadata.RegisterTableName(reg.Name)
+	for _, reg := range sources {
+		table := reg.table
 		if !db.HasTable(ctx, table) {
 			continue // регистр ещё не мигрирован — проверять нечего
 		}
@@ -102,10 +128,9 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 		// Вложенный QueryRow ниже нельзя выполнять при открытом rows: на
 		// единственном SQLite-соединении (SetMaxOpenConns(1)) он зависнет,
 		// ожидая соединение, которое держит незакрытый внешний курсор.
-		rows, err := db.Query(ctx, fmt.Sprintf(
-			"SELECT recorder_type, COUNT(*) FROM %s GROUP BY recorder_type", table))
+		rows, err := db.Query(ctx, fmt.Sprintf("SELECT %s, COUNT(*) FROM %s GROUP BY %s", reg.recorderTypeCol, table, reg.recorderTypeCol))
 		if err != nil {
-			return nil, fmt.Errorf("%s: чтение движений: %w", reg.Name, err)
+			return nil, fmt.Errorf("%s: чтение движений: %w", reg.name, err)
 		}
 		type recTotal struct {
 			recType string
@@ -144,17 +169,17 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 				count = rt.total
 			default:
 				if err := db.QueryRow(ctx, fmt.Sprintf(
-					"SELECT COUNT(*) FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
-					table, d.Placeholder(1), tbl), rt.recType).Scan(&count); err != nil {
+					"SELECT COUNT(*) FROM %s WHERE %s = %s AND %s NOT IN (SELECT id FROM %s)",
+					table, reg.recorderTypeCol, d.Placeholder(1), reg.recorderCol, tbl), rt.recType).Scan(&count); err != nil {
 					// Недосчитанное молча — это «всё чисто» на сломанной базе.
 					// Диагностика обязана отличать «сирот нет» от «не смогли
 					// проверить» (#615, тот же урок, что #622).
-					return nil, fmt.Errorf("%s: подсчёт сирот %s: %w", reg.Name, rt.recType, err)
+					return nil, fmt.Errorf("%s: подсчёт сирот %s: %w", reg.name, rt.recType, err)
 				}
 			}
 			if count > 0 {
 				stats = append(stats, OrphanStat{
-					RegisterName: reg.Name, RecorderType: rt.recType,
+					RegisterName: reg.name, RecorderType: rt.recType,
 					Count: count, UnknownType: !exists,
 				})
 			}
@@ -176,20 +201,26 @@ func (db *DB) OrphanMovements(ctx context.Context, registers []*metadata.Registe
 // Для тех, кто действительно хочет удалить движения выбывшего документа, есть
 // DeleteMovementsOfUnknownRecorderType — отдельный, явный вызов.
 func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.Register, entities []*metadata.Entity) (int64, error) {
+	return db.deleteOrphansIn(ctx, db.accumSources(ctx, registers), entities)
+}
+
+// DeleteOrphanAccountEntries — то же для проводок регистра бухгалтерии (#881).
+func (db *DB) DeleteOrphanAccountEntries(ctx context.Context, regs []*metadata.AccountRegister, entities []*metadata.Entity) (int64, error) {
+	return db.deleteOrphansIn(ctx, db.accountSources(ctx, regs), entities)
+}
+
+func (db *DB) deleteOrphansIn(ctx context.Context, sources []movementSource, entities []*metadata.Entity) (int64, error) {
 	entityTable := make(map[string]string, len(entities))
 	for _, e := range entities {
 		entityTable[strings.ToLower(e.Name)] = metadata.TableName(e.Name)
 	}
 	var total int64
-	for _, reg := range registers {
-		table := metadata.RegisterTableName(reg.Name)
-		if !db.HasTable(ctx, table) {
-			continue // регистр ещё не мигрирован — удалять нечего
-		}
+	for _, reg := range sources {
+		table := reg.table
 		rows, err := db.Query(ctx, fmt.Sprintf(
-			"SELECT DISTINCT recorder_type FROM %s", table))
+			"SELECT DISTINCT %s FROM %s", reg.recorderTypeCol, table))
 		if err != nil {
-			return total, fmt.Errorf("%s: чтение типов регистратора: %w", reg.Name, err)
+			return total, fmt.Errorf("%s: чтение типов регистратора: %w", reg.name, err)
 		}
 		var types []string
 		for rows.Next() {
@@ -200,13 +231,13 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 			// прекращаем: недочитанный тип означает недоудалённые движения.
 			if err := rows.Scan(&t); err != nil {
 				rows.Close()
-				return total, fmt.Errorf("%s: чтение типа регистратора: %w", reg.Name, err)
+				return total, fmt.Errorf("%s: чтение типа регистратора: %w", reg.name, err)
 			}
 			types = append(types, t)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return total, fmt.Errorf("%s: чтение типов регистратора: %w", reg.Name, err)
+			return total, fmt.Errorf("%s: чтение типов регистратора: %w", reg.name, err)
 		}
 
 		d := db.dialect
@@ -221,13 +252,13 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 				continue
 			}
 			sql := fmt.Sprintf(
-				"DELETE FROM %s WHERE recorder_type = %s AND recorder NOT IN (SELECT id FROM %s)",
-				table, d.Placeholder(1), tbl)
+				"DELETE FROM %s WHERE %s = %s AND %s NOT IN (SELECT id FROM %s)",
+				table, reg.recorderTypeCol, d.Placeholder(1), reg.recorderCol, tbl)
 			ct, err := db.Exec(ctx, sql, recType)
 			if err != nil {
 				// Отказ DELETE, поданный как «удалено 0», неотличим от честного
 				// «удалять было нечего» — и это на необратимой операции (#615).
-				return total, fmt.Errorf("%s: удаление сирот %s: %w", reg.Name, recType, err)
+				return total, fmt.Errorf("%s: удаление сирот %s: %w", reg.name, recType, err)
 			}
 			total += ct.RowsAffected
 		}
@@ -246,26 +277,37 @@ func (db *DB) DeleteOrphanMovements(ctx context.Context, registers []*metadata.R
 func (db *DB) DeleteMovementsOfUnknownRecorderType(
 	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
 ) (int64, error) {
+	return db.deleteUnknownTypeIn(ctx, db.accumSources(ctx, registers), recorderTypes)
+}
+
+// DeleteAccountEntriesOfUnknownRecorderType — то же для проводок бухрегистра:
+// без него --forget-document стирал историю документа лишь наполовину (#881).
+func (db *DB) DeleteAccountEntriesOfUnknownRecorderType(
+	ctx context.Context, regs []*metadata.AccountRegister, recorderTypes []string,
+) (int64, error) {
+	return db.deleteUnknownTypeIn(ctx, db.accountSources(ctx, regs), recorderTypes)
+}
+
+func (db *DB) deleteUnknownTypeIn(
+	ctx context.Context, sources []movementSource, recorderTypes []string,
+) (int64, error) {
 	wanted := wantedRecorderTypes(recorderTypes)
 	if len(wanted) == 0 {
 		return 0, nil
 	}
 	d := db.dialect
 	var total int64
-	for _, reg := range registers {
-		table := metadata.RegisterTableName(reg.Name)
-		if !db.HasTable(ctx, table) {
-			continue // регистр ещё не мигрирован — удалять нечего
-		}
+	for _, reg := range sources {
+		table := reg.table
 		for t := range wanted {
 			ct, err := db.Exec(ctx, fmt.Sprintf(
-				"DELETE FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t)
+				"DELETE FROM %s WHERE %s = %s", table, reg.recorderTypeCol, d.Placeholder(1)), t)
 			if err != nil {
 				// Сухой прогон (CountMovementsOfRecorderType) ошибку уже
 				// возвращает, а боевой — глотал: «Удалено движений: 0» и код 0
 				// при живых движениях. Необратимая операция обязана падать, а
 				// не рапортовать об успехе (#615, остаток #622).
-				return total, fmt.Errorf("%s: удаление движений %s: %w", reg.Name, t, err)
+				return total, fmt.Errorf("%s: удаление движений %s: %w", reg.name, t, err)
 			}
 			total += ct.RowsAffected
 		}
@@ -286,24 +328,34 @@ func (db *DB) DeleteMovementsOfUnknownRecorderType(
 func (db *DB) CountMovementsOfRecorderType(
 	ctx context.Context, registers []*metadata.Register, recorderTypes []string,
 ) (int64, error) {
+	return db.countOfTypeIn(ctx, db.accumSources(ctx, registers), recorderTypes)
+}
+
+// CountAccountEntriesOfRecorderType — сухой прогон по проводкам бухрегистра.
+func (db *DB) CountAccountEntriesOfRecorderType(
+	ctx context.Context, regs []*metadata.AccountRegister, recorderTypes []string,
+) (int64, error) {
+	return db.countOfTypeIn(ctx, db.accountSources(ctx, regs), recorderTypes)
+}
+
+func (db *DB) countOfTypeIn(
+	ctx context.Context, sources []movementSource, recorderTypes []string,
+) (int64, error) {
 	wanted := wantedRecorderTypes(recorderTypes)
 	if len(wanted) == 0 {
 		return 0, nil
 	}
 	d := db.dialect
 	var total int64
-	for _, reg := range registers {
-		table := metadata.RegisterTableName(reg.Name)
-		if !db.HasTable(ctx, table) {
-			continue // регистр ещё не мигрирован — считать нечего
-		}
+	for _, reg := range sources {
+		table := reg.table
 		for t := range wanted {
 			var n int64
 			if err := db.QueryRow(ctx, fmt.Sprintf(
-				"SELECT COUNT(*) FROM %s WHERE recorder_type = %s", table, d.Placeholder(1)), t).Scan(&n); err != nil {
+				"SELECT COUNT(*) FROM %s WHERE %s = %s", table, reg.recorderTypeCol, d.Placeholder(1)), t).Scan(&n); err != nil {
 				// Частичную сумму не отдаём: она выглядит как настоящий объём,
 				// а им не является.
-				return 0, fmt.Errorf("%s: подсчёт движений %s: %w", reg.Name, t, err)
+				return 0, fmt.Errorf("%s: подсчёт движений %s: %w", reg.name, t, err)
 			}
 			total += n
 		}

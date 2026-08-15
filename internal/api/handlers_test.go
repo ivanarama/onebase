@@ -367,6 +367,65 @@ func TestAPI_RowAccessAutoFillsOwnerOnCreate(t *testing.T) {
 	}
 }
 
+func TestAPI_CreateRLSSeesAutoNumberAndRejectDoesNotBurnCounter(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "НумеруемыйТовар", Kind: metadata.KindCatalog,
+		Numerator: &metadata.Numerator{Prefix: "К-", Length: 6},
+		Fields: []metadata.Field{
+			{Name: metadata.StandardCodeField, Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{cat}, nil)
+	userWithCodePolicy := func(literal string) *auth.User {
+		return apiUser("u", auth.Permission{
+			Catalogs: map[string][]string{cat.Name: {"write", "read"}},
+			RowAccess: auth.RowAccess{Catalogs: map[string]auth.RowPolicies{
+				cat.Name: {"write": {Field: metadata.StandardCodeField, Op: "eq", Value: auth.RowValue{Literal: literal}}},
+			}},
+		})
+	}
+	create := func(user *auth.User, name string) *httptest.ResponseRecorder {
+		req := withUser(reqWithEntity(http.MethodPost, "/catalogs/"+cat.Name,
+			[]byte(`{"Наименование":"`+name+`"}`), map[string]string{"entity": cat.Name}, nil), user)
+		rec := httptest.NewRecorder()
+		h.createObject(metadata.KindCatalog)(rec, req)
+		return rec
+	}
+
+	rejected := create(userWithCodePolicy("НЕ-ПРОЙДЁТ"), "отклонён")
+	if rejected.Code != http.StatusForbidden {
+		t.Fatalf("RLS должен был увидеть выданный код и отклонить: status=%d body=%s", rejected.Code, rejected.Body.String())
+	}
+	rows, err := h.store.List(ctx, cat.Name, cat, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("отклонённая строка сохранилась: %#v", rows)
+	}
+
+	accepted := create(userWithCodePolicy("К-000001"), "принят")
+	if accepted.Code != http.StatusCreated {
+		t.Fatalf("следующий create должен получить откатившийся К-000001: status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(accepted.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	id, err := uuid.Parse(response["id"].(string))
+	if err != nil {
+		t.Fatalf("response id: %v", err)
+	}
+	row, err := h.store.GetByID(ctx, cat.Name, id, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row[metadata.StandardCodeField]; got != "К-000001" {
+		t.Fatalf("код после RLS rollback = %#v, ожидался К-000001; row=%#v", got, row)
+	}
+}
+
 func TestAPI_RowAccessReferencePredicate(t *testing.T) {
 	client := &metadata.Entity{
 		Name: "Клиент",

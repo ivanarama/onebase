@@ -95,6 +95,7 @@ func TestInfoRegList_PeriodKeyRoundTripsToDelete(t *testing.T) {
 func TestParseRegPeriod(t *testing.T) {
 	cases := []string{
 		"2026-05-01T00:00:00+03:00",
+		"2026-05-01T00:00:00.123456+03:00",
 		"2026-05-01T00:00:00Z",
 		"2026-05-01 00:00:00+03:00",
 		"2026-05-01 00:00:00",

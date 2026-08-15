@@ -337,9 +337,13 @@ func uiMaskUser(ops []string, fields auth.FieldPolicies) *auth.User {
 	}
 }
 
-// Public HTTP acceptance for the explicit composition boundary. Calling the
-// payload helper with a pre-masked map is insufficient: the list handler must
-// apply field_access before the template serializes data-ob-detail.
+// Публичная HTTP-приёмка границы явного состава панели. Вызвать хелпер payload
+// с уже замаскированной картой недостаточно: проверять надо путь целиком.
+//
+// После #860 панель грузится отдельным запросом, поэтому проверяются оба конца:
+// в разметке списка защищённых значений нет вовсе, а хендлер панели применяет
+// field_access к явно перечисленным полям — «перечислил в detail_panel» не
+// должно воскрешать скрытое.
 func TestUI_EntityList_ExplicitDetailPanelCannotBypassFieldAccess(t *testing.T) {
 	cat := uiClientEntity()
 	cat.DetailPanel = &metadata.DetailPanel{Tabs: []metadata.DetailPanelTab{{
@@ -348,7 +352,8 @@ func TestUI_EntityList_ExplicitDetailPanelCannotBypassFieldAccess(t *testing.T) 
 	s, ctx := newSubmitTestServer(t, []*metadata.Entity{cat})
 	const phone = "+79161234455"
 	const address = "Москва, Тверская 1"
-	if err := s.store.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, cat.Name, id, map[string]any{
 		"Наименование": "Иванов", "Телефон": phone, "Адрес": address,
 	}, cat); err != nil {
 		t.Fatal(err)
@@ -357,6 +362,7 @@ func TestUI_EntityList_ExplicitDetailPanelCannotBypassFieldAccess(t *testing.T) 
 		"Телефон": {Read: "hide"},
 		"Адрес":   {Read: "mask_all"},
 	})
+
 	req := reqWithChi(http.MethodGet, "/ui/catalog/"+cat.Name, nil,
 		map[string]string{"kind": "catalog", "entity": cat.Name})
 	req = req.WithContext(auth.ContextWithUser(req.Context(), user))
@@ -365,16 +371,31 @@ func TestUI_EntityList_ExplicitDetailPanelCannotBypassFieldAccess(t *testing.T) 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	page := rec.Body.String()
-	if strings.Contains(page, phone) || strings.Contains(page, address) {
-		t.Fatalf("raw protected value reached list/detail HTML: %s", page)
+	if page := rec.Body.String(); strings.Contains(page, phone) || strings.Contains(page, address) {
+		t.Fatalf("защищённое значение попало в разметку списка: %s", page)
 	}
-	panel := firstDetailPanelData(t, page)
+
+	panelReq := reqWithChi(http.MethodGet, "/ui/catalog/"+cat.Name+"/"+id.String()+"/detail-panel", nil,
+		map[string]string{"kind": "catalog", "entity": cat.Name, "id": id.String()})
+	panelReq = panelReq.WithContext(auth.ContextWithUser(panelReq.Context(), user))
+	panelRec := httptest.NewRecorder()
+	s.detailPanelRecord(panelRec, panelReq)
+	if panelRec.Code != http.StatusOK {
+		t.Fatalf("detailPanelRecord: status=%d body=%s", panelRec.Code, panelRec.Body.String())
+	}
+	body := panelRec.Body.String()
+	if strings.Contains(body, phone) || strings.Contains(body, address) {
+		t.Fatalf("защищённое значение отдано хендлером панели: %s", body)
+	}
+	var panel detailPanelData
+	if err := json.Unmarshal(panelRec.Body.Bytes(), &panel); err != nil {
+		t.Fatalf("ответ панели не разобрался: %v; raw=%s", err, body)
+	}
 	if _, ok := detailPanelValueByLabel(panel, "Телефон"); ok {
-		t.Fatalf("explicitly listed hidden field was resurrected: %+v", panel)
+		t.Fatalf("явно перечисленное скрытое поле воскресло: %+v", panel)
 	}
 	if got, ok := detailPanelValueByLabel(panel, "Адрес"); !ok || got != "••••••" {
-		t.Fatalf("explicitly listed masked field = %q, %v; panel=%+v", got, ok, panel)
+		t.Fatalf("явно перечисленное маскируемое поле = %q, %v; panel=%+v", got, ok, panel)
 	}
 }
 

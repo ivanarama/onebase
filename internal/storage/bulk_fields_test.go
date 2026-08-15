@@ -56,3 +56,50 @@ func TestGetFieldsByIDs(t *testing.T) {
 		t.Fatalf("id = %v, want %s", row["id"], id1.String())
 	}
 }
+
+func TestGetFieldsByIDsFilteredAppliesPredicateInBatch(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "bulk-filtered.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	entity := &metadata.Entity{
+		Name: "Номенклатура",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Область", Type: metadata.FieldTypeString},
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
+		t.Fatal(err)
+	}
+	visibleID, hiddenID := uuid.New(), uuid.New()
+	if err := db.Upsert(ctx, entity.Name, visibleID, map[string]any{"Наименование": "Visible", "Область": "allowed"}, entity); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, entity.Name, hiddenID, map[string]any{"Наименование": "Hidden", "Область": "denied"}, entity); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := db.GetFieldsByIDsFiltered(ctx, entity, []uuid.UUID{visibleID, hiddenID}, entity.Fields[:1], &Predicate{
+		Field: "Область", Op: "eq", Value: "allowed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[visibleID.String()]["Наименование"] != "Visible" {
+		t.Fatalf("filtered rows = %#v, want only visible row", rows)
+	}
+	if _, ok := rows[hiddenID.String()]; ok {
+		t.Fatalf("row filter returned hidden id: %#v", rows)
+	}
+
+	if _, err := db.GetFieldsByIDsFiltered(ctx, entity, []uuid.UUID{visibleID}, entity.Fields[:1], &Predicate{
+		Field: "НетТакогоПоля", Op: "eq", Value: "x",
+	}); err == nil {
+		t.Fatal("unknown predicate field must fail closed")
+	}
+}

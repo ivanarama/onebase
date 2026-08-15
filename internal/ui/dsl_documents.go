@@ -570,17 +570,6 @@ func (w *docWriter) CallMethod(method string, args []any) any {
 		}
 		return w.ref()
 	case "провести", "post":
-		if w.accessID() == uuid.Nil {
-			if err := w.s.autoFillRowAccessFields(w.ctx(), w.entity, "write", w.obj.Fields); err != nil {
-				interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
-			}
-			if err := w.s.autoFillRowAccessFields(w.ctx(), w.entity, "post", w.obj.Fields); err != nil {
-				interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
-			}
-		}
-		if err := w.s.checkDSLRowAccess(w.ctx(), w.entity, "post", w.accessID(), w.obj.Fields); err != nil {
-			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
-		}
 		if err := w.conduct(); err != nil {
 			interpreter.RaiseUserError("Провести(" + w.entity.Name + "): " + err.Error())
 		}
@@ -710,30 +699,10 @@ func (w *docWriter) fill(src any) error {
 	return nil
 }
 
-// autoNumber заполняет реквизит Номер очередным номером нумератора, если
-// у документа есть строковый реквизит Номер и он ещё не задан. Повторяет
-// поведение веб-хендлера: документ, записанный из обработки, нумеруется
-// так же, как созданный через форму. Явно заданный Док.Номер сохраняется.
-func (w *docWriter) autoNumber(ctx context.Context) {
-	if w.entity.Kind != metadata.KindDocument {
-		return
-	}
-	for _, f := range w.entity.Fields {
-		if !strings.EqualFold(f.Name, "Номер") || f.Type != metadata.FieldTypeString {
-			continue
-		}
-		if cur := w.obj.Get("Номер"); cur == nil || strings.TrimSpace(fmt.Sprint(cur)) == "" {
-			w.obj.Set("Номер", w.s.generateNumber(ctx, w.entity, w.obj.Fields))
-		}
-		return
-	}
-}
-
 // write проставляет номер документа, вызывает ПриЗаписи (OnWrite), затем
-// сохраняет шапку + табличные части. Автонумерация и вызов ПриЗаписи
-// повторяют поведение веб-хендлера при обычной записи: без них номер и
-// расчётные реквизиты (СуммаНДС, итоги) остались бы незаполненными при
-// записи документа из обработки.
+// сохраняет шапку + табличные части. Автонумерация делегируется той же
+// реализации entityservice, которой пользуются форма, ИИ и REST; вызов здесь
+// остаётся нужен, потому что docWriter сохраняет документ напрямую.
 // Использует живой ctx, поэтому при открытой DSL-транзакции запись
 // участвует в ней; иначе автокоммит.
 func (w *docWriter) write() error {
@@ -758,19 +727,39 @@ func (w *docWriter) withLockScope(fn func(ctx context.Context) error) error {
 }
 
 func (w *docWriter) writeInContext(ctx context.Context) error {
+	return w.writeInContextForAction(ctx, false)
+}
+
+func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) error {
 	// Pre-образ живого списка (план 87): для существующего документа читаем строку
 	// ДО записи, чтобы прежний владелец убрал её из списка при смене прав.
 	var changeBefore map[string]any
 	if w.entity.NotifyChanges && w.loaded {
 		changeBefore, _ = w.s.store.GetByID(ctx, w.entity.Name, w.obj.ID, w.entity)
 	}
+	// Number first so row-level write policy and the form/entity hook observe
+	// the same value that will be persisted. writeInContext always owns a
+	// transaction/savepoint, so rejection restores both counter and obj map.
+	if err := w.s.entityService().EnsureAutoNumber(ctx, w.entity, w.obj); err != nil {
+		return err
+	}
 	if w.accessID() == uuid.Nil {
 		if err := w.s.autoFillRowAccessFields(ctx, w.entity, "write", w.obj.Fields); err != nil {
 			return err
 		}
+		if posting {
+			if err := w.s.autoFillRowAccessFields(ctx, w.entity, "post", w.obj.Fields); err != nil {
+				return err
+			}
+		}
 	}
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 		return err
+	}
+	if posting {
+		if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.accessID(), w.obj.Fields); err != nil {
+			return err
+		}
 	}
 	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
 	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
@@ -785,12 +774,11 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 		// реальное значение, которого не видел до неё.
 		w.forgetAssigned(restored)
 	}
-	w.autoNumber(ctx)
 	// Псевдо-реквизит «Ссылка» самого документа — до запуска OnWrite, как это уже
 	// делается на пути проведения (ensureSelfRef перед OnPost) и в entityservice.Save.
 	// Без него this.Ссылка в ПриЗаписи был бы пуст на DSL-пути записи, из-за чего
 	// запись ссылки на себя (Дв.X = this.Ссылка) или чтение пре-образа по своей
-	// ссылке в хуке не работали. autoNumber уже проставил Номер → displayName корректен.
+	// ссылке в хуке не работали. EnsureAutoNumber уже проставил Номер → displayName корректен.
 	w.ensureSelfRef()
 	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)
@@ -853,10 +841,10 @@ func (w *docWriter) accessID() uuid.UUID {
 // OnWrite, OnPost and all nested DSL writes share the same transaction/scope.
 func (w *docWriter) conduct() error {
 	return w.withLockScope(func(ctx context.Context) error {
-		if err := w.writeInContext(ctx); err != nil {
+		if err := w.writeInContextForAction(ctx, true); err != nil {
 			return err
 		}
-		return w.postInContext(ctx)
+		return w.postInContextAfterAccess(ctx)
 	})
 }
 
@@ -870,6 +858,10 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.obj.ID, w.obj.Fields); err != nil {
 		return err
 	}
+	return w.postInContextAfterAccess(ctx)
+}
+
+func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
 	if marked, err := w.s.store.IsMarkedForDeletion(ctx, w.entity.Name, w.obj.ID); err != nil {
 		return err
@@ -894,7 +886,7 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 	// после хука, как это делает entityservice.Save при проведении. writeInContext
 	// уже создал ровно одну логическую версию этой операции, поэтому сохраняем
 	// hook-поля без второго инкремента _version.
-	if err := w.s.store.UpsertPreserveVersion(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+	if err := w.s.store.UpsertAfterVersionBump(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
 		return err
 	}
 	if err := w.s.saveMovements(ctx, w.entity.Name, w.obj.ID, mc); err != nil {

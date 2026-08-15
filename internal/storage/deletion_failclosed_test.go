@@ -40,7 +40,7 @@ func TestCheckRefs_FailsClosedOnQueryError(t *testing.T) {
 	}
 
 	refs, err := db.CheckRefs(ctx, "Контрагент", uuid.New(),
-		[]*metadata.Entity{target, referrer})
+		refsIn{entities: []*metadata.Entity{target, referrer}})
 	if err == nil {
 		t.Fatalf("проверка ссылок скрыла сбой запроса и вернула %v — "+
 			"вызывающий код принял бы это за «ссылок нет» и удалил объект", refs)
@@ -81,7 +81,7 @@ func TestCheckRefs_FindsRealReferences(t *testing.T) {
 	}
 
 	// Пока ссылок нет — пусто и без ошибки.
-	refs, err := db.CheckRefs(ctx, "Контрагент", clientID, all)
+	refs, err := db.CheckRefs(ctx, "Контрагент", clientID, refsIn{entities: all})
 	if err != nil {
 		t.Fatalf("неожиданная ошибка на исправной схеме: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestCheckRefs_FindsRealReferences(t *testing.T) {
 		map[string]any{"Клиент": clientID.String()}, referrer); err != nil {
 		t.Fatal(err)
 	}
-	refs, err = db.CheckRefs(ctx, "Контрагент", clientID, all)
+	refs, err = db.CheckRefs(ctx, "Контрагент", clientID, refsIn{entities: all})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,3 +102,17 @@ func TestCheckRefs_FindsRealReferences(t *testing.T) {
 		t.Fatalf("ожидалась одна ссылка из Заказ, получено %+v", refs)
 	}
 }
+
+// refsIn — источники ссылок для CheckRefs в тестах. Реализует storage.RefSources
+// целиком: параметра «только сущности» у CheckRefs нет намеренно (#855).
+type refsIn struct {
+	entities []*metadata.Entity
+	regs     []*metadata.Register
+	inforegs []*metadata.InfoRegister
+	accregs  []*metadata.AccountRegister
+}
+
+func (s refsIn) Entities() []*metadata.Entity                  { return s.entities }
+func (s refsIn) Registers() []*metadata.Register               { return s.regs }
+func (s refsIn) InfoRegisters() []*metadata.InfoRegister       { return s.inforegs }
+func (s refsIn) AccountRegisters() []*metadata.AccountRegister { return s.accregs }

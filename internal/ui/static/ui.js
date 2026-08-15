@@ -733,8 +733,8 @@ function listSetSel(tr, options) {
     }
   }
   listSyncActionsBtn();
-  // Панель следует за курсором: стрелки ↑↓ двигают выбор, карточка
-  // перерисовывается из payload'а строки, без обращения к серверу.
+  // Панель следует за курсором: стрелки ↑↓ двигают выбор. Для списков сущностей
+  // карточка при открытой панели лениво перечитывается отдельным защищённым GET.
   if (typeof obDetailRender === 'function') obDetailRender();
 }
 
@@ -790,6 +790,9 @@ function obReplaceLiveListContents(cur, fresh) {
   var selMine = !!(selected && cur.contains(selected));
   var restoreFocus = !!(selMine && document.activeElement && cur.contains(document.activeElement));
   var selKey = selMine ? listSelKey() : '';
+  // Даже если выбранной строки сейчас нет, кэш мог остаться от прежнего выбора.
+  // После live refresh такой ответ уже не описывает новую версию списка.
+  if (typeof obDetailInvalidate === 'function') obDetailInvalidate();
   cur.innerHTML = fresh.innerHTML;
   if (selMine) listRestoreSel(selKey, cur, { focus: restoreFocus });
   else obEnsureListRovingTabindex(cur);
@@ -1426,7 +1429,7 @@ function makeTreeRow(row) {
   tr.dataset.activityShowUrl = row.activity_show_url || '';
   tr.dataset.openUrl = row.open_url || '';
   tr.dataset.copyUrl = row.copy_url || '';
-  tr.dataset.obDetail = row.detail || '';
+  tr.dataset.obDetailUrl = row.detail_url || '';
   tr.setAttribute('data-ob-list-row', '');
   tr.setAttribute('tabindex', '-1');
   tr.setAttribute('aria-selected', 'false');
@@ -3548,9 +3551,9 @@ window.onebaseDevice = {
 
 /* ===== Боковая панель деталей активной записи (план 118B, issue #670) =====
 
-   Панель рисуется из payload'а, который сервер положил в data-ob-detail строки:
-   те же данные, что уже прошли права, строковые политики и маску ПДн. Второго
-   пути чтения нет, поэтому обойти гейты панелью нечем.
+   Журналы и регистры используют уже проверенный inline payload. Списки сущностей
+   запрашивают выбранную запись лениво: endpoint заново проверяет объектные права,
+   строковые политики, серверный read-hook формы и маску ПДн.
 
    Живёт СНАРУЖИ контейнера [data-ob-live]: живой список подменяет его innerHTML
    целиком, и панель внутри пересоздавалась бы, теряя вкладку и ширину.
@@ -3581,6 +3584,66 @@ function obDetailEnabled() { return obDetailRead('on') === '1'; }
 
 // obDetailRender перерисовывает панель по выбранной строке. Вызывается из
 // listSetSel, поэтому стрелки ↑↓ двигают курсор — панель следует за ним.
+// obDetailCache хранит последний загруженный payload панели: одна строка за раз,
+// как и сама панель. Больше не нужно — переключение строк перезапрашивает.
+// BEGIN onebase-detail-fetch
+var obDetailCache = { url: '', body: '' };
+var obDetailRequestSeq = 0;
+var obDetailPending = { url: '', controller: null };
+
+function obDetailInvalidate() {
+  obDetailRequestSeq++;
+  if (obDetailPending.controller) obDetailPending.controller.abort();
+  obDetailPending = { url: '', controller: null };
+  obDetailCache = { url: '', body: '' };
+}
+
+// obDetailFetch подгружает payload панели для строки и перерисовывает её.
+// Ошибку показываем в самой панели: молча пустая панель неотличима от «у записи
+// нет данных», и человек будет считать, что так и надо.
+function obDetailFetch(row, url) {
+  var panel = obDetailEl();
+  if (!panel) return;
+  // Повторный render той же строки не должен порождать второй параллельный GET.
+  if (obDetailPending.url === url) return;
+  obDetailRequestSeq++;
+  if (obDetailPending.controller) obDetailPending.controller.abort();
+  var seq = obDetailRequestSeq;
+  var controller = (typeof AbortController === 'function') ? new AbortController() : null;
+  obDetailPending = { url: url, controller: controller };
+  var fieldsEl = panel.querySelector('[data-ob-detail-fields]');
+  var emptyEl = panel.querySelector('[data-ob-detail-empty]');
+  if (emptyEl) emptyEl.hidden = true;
+  if (fieldsEl) fieldsEl.textContent = '…';
+  var options = { credentials: 'same-origin', headers: { 'X-Onebase-Ajax': '1' } };
+  if (controller) options.signal = controller.signal;
+  fetch(url, options)
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.text();
+    })
+    .then(function (body) {
+      if (seq !== obDetailRequestSeq) return;
+      obDetailPending = { url: '', controller: null };
+      // Строка могла смениться, пока ответ шёл. Старый ответ не должен даже
+      // попадать в общий кэш, иначе следующий render покажет чужую версию.
+      var current = (typeof listSel === 'function') ? listSel() : null;
+      if (!current || current.getAttribute('data-ob-detail-url') !== url) return;
+      obDetailCache = { url: url, body: body };
+      obDetailRender();
+    })
+    .catch(function (err) {
+      if (seq !== obDetailRequestSeq) return;
+      obDetailPending = { url: '', controller: null };
+      if (err && err.name === 'AbortError') return;
+      var current = (typeof listSel === 'function') ? listSel() : null;
+      if (!current || current.getAttribute('data-ob-detail-url') !== url) return;
+      obDetailCache = { url: '', body: '' };
+      if (fieldsEl) fieldsEl.textContent = 'Не удалось загрузить детали: ' + err.message;
+    });
+}
+// END onebase-detail-fetch
+
 function obDetailRender() {
   var panel = obDetailEl();
   if (!panel) return;
@@ -3592,7 +3655,21 @@ function obDetailRender() {
   var fieldsEl = panel.querySelector('[data-ob-detail-fields]');
   var emptyEl = panel.querySelector('[data-ob-detail-empty]');
   var row = (typeof listSel === 'function') ? listSel() : null;
+  // Payload берётся либо из разметки (журналы и регистры сведений: там в панели
+  // ровно те поля, что уже показаны в таблице), либо отдельным запросом
+  // (списки сущностей: полная карточка не должна лежать в DOM каждой строки —
+  // #860). Ответ кэшируется на строку: переключение закладок не должно
+  // дёргать сервер.
   var raw = row ? row.getAttribute('data-ob-detail') : '';
+  var lazyURL = row ? row.getAttribute('data-ob-detail-url') : '';
+  if (!raw && lazyURL) {
+    if (obDetailCache.url === lazyURL) {
+      raw = obDetailCache.body;
+    } else {
+      obDetailFetch(row, lazyURL);
+      return;
+    }
+  }
   var data = null;
   if (raw) { try { data = JSON.parse(raw); } catch (e) { data = null; } }
 
@@ -3671,6 +3748,7 @@ function obDetailApplyWidth() {
 
 function obDetailToggle(on) {
   obDetailStore('on', on ? '1' : '0');
+  if (!on) obDetailInvalidate();
   var btn = document.querySelector('[data-ob-detail-toggle]');
   if (btn) {
     btn.classList.toggle('active', on);

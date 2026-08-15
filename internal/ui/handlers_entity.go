@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -633,8 +634,6 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 			obj.Set(k, v)
 		}
 		obj.TablePartRows = tpRows
-
-		s.ensureNewDocumentNumber(r.Context(), entity, obj)
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,
@@ -714,34 +713,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// restoreManagedCopyState deliberately clears a forged source number. The
-	// ordinary parse path may already have generated one, but repeating this
-	// idempotent check here is necessary when canonical restoration ran later.
-	s.ensureNewDocumentNumber(r.Context(), entity, obj)
-	if err := s.autoFillRowAccessFields(r.Context(), entity, "write", obj.Fields); err != nil {
-		s.renderForbidden(w, r)
-		return
-	}
-	if entity.Posting && (action == "post" || action == "post_and_close") {
-		if err := s.autoFillRowAccessFields(r.Context(), entity, "post", obj.Fields); err != nil {
-			s.renderForbidden(w, r)
-			return
-		}
-	}
-	if !s.rowAllowed(w, r, entity, "write", obj.Fields) {
-		return
-	}
-	if entity.Posting && (action == "post" || action == "post_and_close") && !s.rowAllowed(w, r, entity, "post", obj.Fields) {
-		return
-	}
-
-	// Серверные события записи формы (ПередЗаписью/ПриЗаписи) — до Save. Бросок
-	// ВызватьИсключение в обработчике отменяет запись и перерисовывает форму.
 	var hookMsgs []string
-	if hookErr := s.runPreSaveFormHooks(r.Context(), entity, obj, &hookMsgs); hookErr != nil {
-		s.renderObjectFormError(w, r, entity, true, hookErr.Error(), hookMsgs, obj.TablePartRows)
-		return
-	}
+	var formHookErr error
+	posting := entity.Posting && (action == "post" || action == "post_and_close")
 
 	result, err := s.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 		Entity:        entity,
@@ -750,8 +724,36 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		Fields:        obj.Fields,
 		TablePartRows: obj.TablePartRows,
 		Action:        action,
+		Preflight: func(txCtx context.Context, saveObj *runtime.Object) error {
+			if err := s.autoFillRowAccessFields(txCtx, entity, "write", saveObj.Fields); err != nil {
+				return errSubmitRowAccessDenied
+			}
+			if posting {
+				if err := s.autoFillRowAccessFields(txCtx, entity, "post", saveObj.Fields); err != nil {
+					return errSubmitRowAccessDenied
+				}
+			}
+			if !s.rowAllowedContext(txCtx, entity, "write", saveObj.Fields) ||
+				(posting && !s.rowAllowedContext(txCtx, entity, "post", saveObj.Fields)) {
+				return errSubmitRowAccessDenied
+			}
+			// Form events see the assigned number, while their rejection remains
+			// in the same rollback scope as the counter and eventual write.
+			if formHookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, &hookMsgs); formHookErr != nil {
+				return errSubmitFormHook
+			}
+			return nil
+		},
 	})
 	if err != nil {
+		if errors.Is(err, errSubmitRowAccessDenied) {
+			s.renderForbidden(w, r)
+			return
+		}
+		if errors.Is(err, errSubmitFormHook) {
+			s.renderObjectFormError(w, r, entity, true, formHookErr.Error(), hookMsgs, obj.TablePartRows)
+			return
+		}
 		s.serverError(w, r, err)
 		return
 	}
@@ -810,32 +812,6 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	// "post" / "Записать" — остаёмся на форме
 	http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
-}
-
-// ensureNewDocumentNumber заполняет стандартный «Номер» документа или «Код»
-// справочника, если он пуст (план 117C). До 117B код справочника не заполнялся
-// вовсе: блок numerator: у него парсился и молча ничего не делал (issue #658).
-//
-// Пустое значение — единственное условие: заполненное вручную не трогаем, иначе
-// платформа переписывала бы то, что ввёл пользователь.
-func (s *Server) ensureNewDocumentNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
-	if entity == nil || obj == nil {
-		return
-	}
-	target := storage.AutoNumberField(entity)
-	if target == "" {
-		return
-	}
-	for _, field := range entity.Fields {
-		if !strings.EqualFold(field.Name, target) || field.Type != metadata.FieldTypeString {
-			continue
-		}
-		value := fmt.Sprintf("%v", obj.Get(field.Name))
-		if value == "<nil>" || strings.TrimSpace(value) == "" {
-			obj.Set(field.Name, s.generateNumber(ctx, entity, obj.Fields))
-		}
-		return
-	}
 }
 
 // refCreateRedirect — точка входа для JS-кнопки «+ Создать» рядом с
@@ -935,7 +911,7 @@ type treeChildRow struct {
 	ActivityInactive bool     `json:"activity_inactive"`
 	TreeCell         int      `json:"tree_cell"`
 	Cells            []string `json:"cells"`
-	Detail           string   `json:"detail,omitempty"`
+	DetailURL        string   `json:"detail_url"`
 	OpenURL          string   `json:"open_url"`
 	CopyURL          string   `json:"copy_url"`
 	FolderURL        string   `json:"folder_url"`
@@ -1062,17 +1038,16 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 			ActivityInactive: asBool(row["_activity_inactive"]),
 			TreeCell:         treeCell,
 			Cells:            cells,
-			Detail: detailPanelForEntity(entity, row, enumLabels, lang,
-				func(key string) string { return s.tr(lang, key) }),
-			OpenURL:         openURL,
-			CopyURL:         copyURL,
-			FolderURL:       folderURL,
-			MarkURL:         base + "/" + url.PathEscape(id) + "/delete?mark=1",
-			DeleteURL:       base + "/" + url.PathEscape(id) + "/delete",
-			UnpostURL:       base + "/" + url.PathEscape(id) + "/unpost",
-			UnmarkURL:       base + "/" + url.PathEscape(id) + "/delete?mark=0",
-			ActivityHideURL: base + "/" + url.PathEscape(id) + "/activity?active=0",
-			ActivityShowURL: base + "/" + url.PathEscape(id) + "/activity?active=1",
+			DetailURL:        base + "/" + url.PathEscape(id) + "/detail-panel",
+			OpenURL:          openURL,
+			CopyURL:          copyURL,
+			FolderURL:        folderURL,
+			MarkURL:          base + "/" + url.PathEscape(id) + "/delete?mark=1",
+			DeleteURL:        base + "/" + url.PathEscape(id) + "/delete",
+			UnpostURL:        base + "/" + url.PathEscape(id) + "/unpost",
+			UnmarkURL:        base + "/" + url.PathEscape(id) + "/delete?mark=0",
+			ActivityHideURL:  base + "/" + url.PathEscape(id) + "/activity?active=0",
+			ActivityShowURL:  base + "/" + url.PathEscape(id) + "/activity?active=1",
 		})
 	}
 	return out
@@ -1310,13 +1285,11 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 
 	// Load document movements for posted documents
 	var docMovements map[string][]map[string]any
+	var docMovementColumns map[string]registerMovementColumns
 	if entity.Kind == metadata.KindDocument && vals["posted"] == "true" {
-		docMovements, _ = s.store.GetDocumentMovements(r.Context(), id, s.reg.Registers())
-		for regName, regRows := range docMovements {
-			if reg := s.reg.GetRegister(regName); reg != nil {
-				s.resolveRegisterRows(r.Context(), regRows, reg)
-			}
-		}
+		movementRead := s.loadDocumentMovementsForRead(r.Context(), entity.Name, id)
+		docMovements = movementRead.Rows
+		docMovementColumns = movementRead.Columns
 	}
 
 	s.renderEntityForm(w, r, "object", map[string]any{
@@ -1336,10 +1309,11 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"DSLPrintForms": s.reg.GetDSLPrintForms(entity.Name),
 		// AllPrintForms — единый список форм всех видов (план 64, этап 3);
 		// кнопка «Печать ▾» рисуется одним циклом по нему.
-		"AllPrintForms": s.reg.GetAllPrintForms(entity.Name),
-		"HasPrintProc":  s.reg.GetProcedure(entity.Name, "Печать") != nil || s.reg.GetProcedure(entity.Name, "Print") != nil,
-		"FolderOptions": folderOptsEdit,
-		"DocMovements":  docMovements,
+		"AllPrintForms":      s.reg.GetAllPrintForms(entity.Name),
+		"HasPrintProc":       s.reg.GetProcedure(entity.Name, "Печать") != nil || s.reg.GetProcedure(entity.Name, "Print") != nil,
+		"FolderOptions":      folderOptsEdit,
+		"DocMovements":       docMovements,
+		"DocMovementColumns": docMovementColumns,
 		// StageRoute — маршрут объекта с подсветкой текущего этапа (план 121).
 		// nil, если этапы не объявлены или поле-этап под маской ПДн.
 		"StageRoute": s.buildStageRoute(r, entity, stageCurrentValue(entity, vals)),
@@ -1518,6 +1492,11 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	if !s.rowAllowed(w, r, entity, "post", row) {
 		return
 	}
+	expectedVersion, err := strconv.ParseInt(fmt.Sprint(row["_version"]), 10, 64)
+	if err != nil || expectedVersion < 1 {
+		s.serverError(w, r, fmt.Errorf("post document %s: invalid _version %v", id, row["_version"]))
+		return
+	}
 
 	if asBool(row["deletion_mark"]) {
 		// Помеченный на удаление документ проводить нельзя.
@@ -1532,6 +1511,14 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	for _, f := range entity.Fields {
 		obj.Fields[f.Name] = row[f.Name]
 	}
+	// Keep the list-posting copy of OnPost aligned with entityservice.Save and
+	// the DSL writer: application hooks routinely persist a reference back to
+	// the document through ЭтотОбъект.Ссылка. Reassert both reserved aliases
+	// after copying metadata fields; legacy configurations may contain a field
+	// with the same spelling, and it must not replace the platform pseudo-field.
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	obj.Set("Ссылка", selfRef)
+	obj.Set("reference", selfRef)
 	tpRows := make(map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
 		rows, _ := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
@@ -1565,10 +1552,11 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 			hookErrMsg = errMsg
 			return errPostingHookFailed
 		}
-		// OnPost мог изменить расчётные реквизиты шапки — персистим их без
-		// второго инкремента _version, как это делают проведение через форму,
-		// REST и DSL. Раньше проведение из списка эти изменения теряло (#775).
-		if err := s.store.UpsertPreserveVersion(ctx, entity.Name, id, obj.Fields, entity); err != nil {
+		// OnPost мог изменить расчётные реквизиты шапки — персистим их и
+		// фиксируем одну логическую версию операции. У списочного пути до этого
+		// места ещё не было записи, поэтому PreserveVersion оставлял версию
+		// прежней, в отличие от формы, REST и DSL (#880).
+		if err := s.store.UpsertVersioned(ctx, entity.Name, id, obj.Fields, entity, &expectedVersion); err != nil {
 			return err
 		}
 		if err := s.saveMovements(ctx, entity.Name, id, mc); err != nil {
@@ -1582,6 +1570,10 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		if hookErrMsg != "" {
 			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape(hookErrMsg), http.StatusSeeOther)
+			return
+		}
+		if errors.Is(err, storage.ErrVersionConflict) {
+			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape("Объект был изменён другим пользователем, обновите страницу"), http.StatusSeeOther)
 			return
 		}
 		s.serverError(w, r, err)
@@ -1788,25 +1780,6 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Admin: check references before permanent delete.
-	// Сбой проверки — отказ: удалять, не зная о ссылках, нельзя.
-	refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
-	if refErr != nil {
-		http.Error(w, s.errText(r, refErr), 500)
-		return
-	}
-	if len(refs) > 0 {
-		var msg strings.Builder
-		lang := s.resolveLang(r)
-		msg.WriteString(s.tr(lang, "Невозможно удалить: объект используется в:") + "\n")
-		recordsWord := s.tr(lang, "записей")
-		for _, ref := range refs {
-			fmt.Fprintf(&msg, "  • %s.%s (%d %s)\n", ref.EntityName, ref.FieldName, ref.Count, recordsWord)
-		}
-		http.Error(w, msg.String(), http.StatusConflict)
-		return
-	}
-
 	// Pre-образ живого списка (план 87): читаем строку ДО удаления, чтобы её
 	// увидевшие пользователи убрали её из списка.
 	var delBefore map[string]any
@@ -1868,13 +1841,6 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				// Сбой проверки трактуем как «ссылки есть»: пропускаем запись,
-				// а не удаляем вслепую.
-				refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
-				if refErr != nil || len(refs) > 0 {
-					skipped++
-					continue
-				}
 				// Через entityservice: хуки удаления, движения, ТЧ и планы
 				// обмена в одной транзакции. Отказ хука — такой же пропуск,
 				// как непройденная проверка ссылок: объект остаётся.
@@ -1904,7 +1870,7 @@ func (s *Server) deleteMarkedAll(w http.ResponseWriter, r *http.Request) {
 			id, _ := uuid.Parse(idStr)
 			// При сбое проверки показываем запись как «есть ссылки»: так
 			// пользователь не примет её за безопасную к удалению.
-			refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
+			refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg)
 			hasRefs := refErr != nil || len(refs) > 0
 			entries = append(entries, markedEntry{
 				EntityName: entity.Name,
@@ -1949,12 +1915,6 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 		idStr, _ := row["id"].(string)
 		id, err := uuid.Parse(idStr)
 		if err != nil {
-			continue
-		}
-		// Сбой проверки трактуем как «ссылки есть»: пропускаем запись.
-		refs, refErr := s.store.CheckRefs(r.Context(), entity.Name, id, s.reg.Entities())
-		if refErr != nil || len(refs) > 0 {
-			skipped++
 			continue
 		}
 		// Через entityservice — как и остальные пути. Заодно этот путь
@@ -2369,21 +2329,4 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 		}
 	}
 	return params
-}
-
-// generateNumber returns the next document number.
-// Uses the entity's Numerator config if present; falls back to legacy NextNum.
-func (s *Server) generateNumber(ctx context.Context, entity *metadata.Entity, fields map[string]any) string {
-	// Единая точка (план 117C): период, счётчик, маски даты и формат — в
-	// storage.GenerateNumber. Копии этой логики уже расходились молча (#359).
-	if entity.Numerator != nil {
-		if v, err := s.store.GenerateNumber(ctx, entity, fields); err == nil && v != "" {
-			return v
-		}
-	}
-	// legacy fallback: plain sequential number
-	if n, err := s.store.NextNum(ctx, entity.Name); err == nil {
-		return fmt.Sprintf("%06d", n)
-	}
-	return ""
 }

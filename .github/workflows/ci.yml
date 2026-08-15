@@ -179,6 +179,45 @@ jobs:
           done
           echo "JS syntax: чисто ($n файлов)"
 
+      # Отбор по `git ls-files '*.js'` физически не видит inline-<script> внутри
+      # Go-шаблонов — а они там есть, и #758 добавил ещё один. Для компилятора
+      # Go это текст, поэтому ошибка в шаблонном JS проходит все гейты зелёной
+      # и всплывает у пользователя пустой страницей (#879, класс #684).
+      - name: Inline JS syntax check (Go templates)
+        run: |
+          set -euo pipefail
+          tmp="${RUNNER_TEMP:-/tmp}/inline-js"
+          rm -rf "$tmp"
+          # Сам экстрактор исключён: в его регулярках лежит литерал <script…>,
+          # и гейт нашёл бы «сломанный скрипт» в собственном исходнике.
+          set +e
+          git grep -l -z '<script' -- '*.go' > "$tmp.go-files"
+          grep_status=$?
+          set -e
+          [ "$grep_status" -eq 0 ] || { echo "::error::не удалось отобрать Go-шаблоны с <script> (git grep: $grep_status)"; exit 1; }
+          files=()
+          while IFS= read -r -d '' file; do
+            [[ "$file" == *_test.go || "$file" == tools/jsextract/* ]] && continue
+            files+=("$file")
+          done < "$tmp.go-files"
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::не найдено ни одного шаблона с <script> — сломан отбор"; exit 1; }
+          # jsextract сам падает, если не извлёк ни одного блока: пустая выдача
+          # означала бы не «чисто», а сломанный экстрактор.
+          go run ./tools/jsextract -out "$tmp" "${files[@]}"
+          shopt -s nullglob
+          scripts=("$tmp"/*.js "$tmp"/*.mjs)
+          [ "${#scripts[@]}" -gt 0 ] || { echo "::error::экстрактор не создал файлов для проверки"; exit 1; }
+          n=0
+          for f in "${scripts[@]}"; do
+            node --check "$f" || {
+              echo "::error::синтаксическая ошибка в inline-скрипте; источник — в первой строке $f"
+              head -1 "$f"
+              exit 1
+            }
+            n=$((n+1))
+          done
+          echo "Inline JS syntax: чисто ($n блоков)"
+
 
       # -race на Linux работает без CGo-плясок (на Windows нужен gcc) и ловит
       # гонки разделяемого интерпретатора и других синглтонов (план 52/56).
@@ -231,6 +270,28 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
+
+  # 15 windows-only исходников (5 из них — тесты) не исполняло вообще ничто:
+  # все джобы шли на ubuntu, а windows-раннер только собирал GUI. Поломка
+  # вскрывалась на релизе (план 122B).
+  #
+  # Первый прогон этого джоба (PR #921) вскрыл шесть тестов, зависящих от
+  # среды, — не от логики: короткие имена 8.3 во временном каталоге и каталог
+  # установки в общем /tmp, который selfupdate законно отказывается обновлять.
+  # Джоб включён обратно после их починки (#924).
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+      # -race на Windows намеренно не включаем: дорого, а базовый прогон и так
+      # впервые исполняет windows-only файлы.
+      - name: Unit tests (Windows)
+        run: go test ./...
 
   lint:
     runs-on: ubuntu-latest
@@ -310,17 +371,34 @@ jobs:
           # Без этой строки postgres-подтесты матричных тестов пакета
           # пропускались: TEST_DATABASE_URL задан только в этом джобе.
           go test -race -count=1 -timeout 15m -tags integration ./internal/dsl/interpreter
+          # Table-part shape compatibility is dialect-matrix tested in
+          # internal/exchange. The regular unit job has no TEST_DATABASE_URL,
+          # so explicitly gate the PostgreSQL half here.
+          go test -race -count=1 -timeout 5m ./internal/exchange \
+            -run '^TestApplyPackage_НедостающееПолеТЧПринимается$/^postgres$'
           # DR-01 (issue #784): сквозной backup→restore PostgreSQL. Проверяет,
           # что pg_dump снимает дамп, а psql-restore возвращает те же данные
           # (round-trip на выделенной базе, чтобы разрушительный restore не
           # затронул общую onebase_test). Требует pg_dump/psql — см. шаг выше.
           go test -race -count=1 -timeout 10m -tags integration ./internal/backup \
-            -run TestPostgresBackupRestoreRoundTrip
+            -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema)$'
           # Owner-aware image demo has a PostgreSQL-only inter-server race
           # regression. Select the exact matrix subtest so this job does not
           # expand into the full internal/ui suite.
           go test -race -count=1 -timeout 5m ./internal/ui \
             -run '^TestTradeImageDemo_ConcurrentRunsCreateSingleBlob$/^postgres$'
+          # Information-register record-set security is matrix-tested in the
+          # UI package. Run the PostgreSQL side explicitly: the regular unit
+          # job has no TEST_DATABASE_URL and therefore only exercises SQLite.
+          go test -race -count=1 -timeout 5m ./internal/ui \
+            -run '^(TestInfoRegDSL_(WriteReadDeleteMatrix|UpsertByKeyMatrix)|TestInfoRegSet_(ReplacesOnlyFilteredMatrix|ЦиклЧтениеЗаписьНаПериодическомMatrix|АтомаренВоВнешнейТранзакции|РегистрируетTombstoneУдалённыхСтрок|ТипизированныйОтборМатрица))$/^postgres$'
+          go test -race -count=1 -timeout 10m ./internal/ui \
+            -run '^(TestInfoRegRecordSet_ReadAppliesObjectAndRowAccessMatrix|TestInfoRegRecordSet_WritePreflightsObjectPermissionsMatrix|TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix|TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix|TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix|TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix|TestInfoRegRecordSet_PostgresConcurrentInsertCheckedByRLS)$/^postgres$'
+          # HTTP information-register deletes have their own exact-key/RLS
+          # matrix. The PostgreSQL branch includes deterministic row-lock races;
+          # the ordinary unit job only executes its SQLite side.
+          go test -race -count=1 -timeout 10m ./internal/ui \
+            -run '^(TestUIInfoRegDeleteTypedCompositeKeyMatrix|TestUIInfoRegDeleteRowPolicyNoOracleAndOutboxMatrix|TestUIInfoRegDeletePeriodMaskMatrix|TestUIInfoRegDeleteStorageErrorMatrix|TestUIInfoRegDeletePostgresConcurrentRacesMatrix)$/^postgres$'
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck
