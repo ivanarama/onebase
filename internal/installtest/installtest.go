@@ -36,9 +36,9 @@ func PrivateInstallDir(t *testing.T) string {
 	t.Helper()
 
 	if runtime.GOOS == "windows" {
-		profile := os.Getenv("USERPROFILE")
-		if profile == "" {
-			t.Skip("USERPROFILE не задан — приватную установку создать негде")
+		profile, err := privateRoot()
+		if err != nil || profile == "" {
+			t.Skipf("не удалось определить профиль пользователя: %v", err)
 		}
 		dir, err := os.MkdirTemp(profile, "onebase-install-test-")
 		if err != nil {
@@ -100,9 +100,9 @@ func CanonicalTempDir(t *testing.T) string {
 func PrivateHome(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		profile := os.Getenv("USERPROFILE")
-		if profile == "" {
-			t.Skip("USERPROFILE не задан — приватный дом создать негде")
+		profile, err := privateRoot()
+		if err != nil || profile == "" {
+			t.Skipf("не удалось определить профиль пользователя: %v", err)
 		}
 		dir, err := os.MkdirTemp(profile, "onebase-home-test-")
 		if err != nil {
