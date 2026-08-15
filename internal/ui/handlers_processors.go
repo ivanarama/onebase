@@ -61,7 +61,7 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TablePartRows": map[string][]map[string]any{},
 		}
 		s.setProcessorManagedContext(r, data, proc)
-		s.prepareManagedFormData(data, mf)
+		s.prepareManagedFormData(r.Context(), data, mf)
 		s.render(w, r, "page-managed-form", data)
 		return
 	}
@@ -282,7 +282,7 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"Ran":           true,
 	}
 	s.setProcessorManagedContext(r, data, proc)
-	s.prepareManagedFormData(data, proc.ManagedForm())
+	s.prepareManagedFormData(r.Context(), data, proc.ManagedForm())
 	s.render(w, r, "page-managed-form", data)
 }
 
