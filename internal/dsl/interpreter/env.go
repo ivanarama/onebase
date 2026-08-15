@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -61,19 +62,29 @@ func (m *MapThis) Set(name string, v any) {
 // кадрами, поэтому конкурентные запуски на одном *Interpreter не гонят по
 // curFile/curLine и видят только свой debug hook (план 52).
 type execCtx struct {
-	curFile      string // last executed statement location (for error reporting)
-	curLine      int
-	evalDepth    int       // текущая глубина вложенных Вычислить/Eval
-	debug        DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
-	deadline     time.Time // wall-clock запуска; zero = без лимита
-	maxLoopIters int       // потолок итераций цикла; 0 = maxWhileIter
-	moduleEnvs   map[string]*env
+	context             context.Context
+	curFile             string // last executed statement location (for error reporting)
+	curLine             int
+	evalDepth           int       // текущая глубина вложенных Вычислить/Eval
+	debug               DebugHook // hook этого запуска; nil = без отладки, нулевые накладные
+	deadline            time.Time // wall-clock запуска; zero = без лимита
+	maxLoopIters        int       // потолок итераций цикла; 0 = maxWhileIter
+	maxDecimalExpansion int32     // decimal exponent/coefficient bound; 0 = trusted behavior
+	maxStringExpansion  int       // string input/output/expansion byte bound; 0 = trusted behavior
+	moduleEnvs          map[string]*env
 	// sandboxVars — неизменяемый overlay запретов одного sandbox-запуска.
 	// Он отделён от пользовательских vars, поэтому присваивание, Перем,
 	// module vars и временная публикация builtins не могут переоткрыть известное
 	// capability-имя. Карта создаётся один раз в applySandboxVars и далее только
 	// читается всеми кадрами, разделяющими execCtx.
 	sandboxVars map[string]any
+	// readOnlyReason включает fail-closed режим вычисления, в котором нельзя
+	// вызывать переданные снаружи функции/фабрики и объектные методы, менять
+	// объекты/коллекции/модульное состояние, а This-значения выдаются через
+	// read-only membrane. Чистые вложенные DSL-функции разрешены.
+	// Непустая строка одновременно служит объяснением пользователю.
+	readOnlyReason    string
+	readOnlyViolation string // sticky: fmt may recover a panic from String/Format
 }
 
 // loopLimit — действующий потолок итераций цикла для запуска.
@@ -87,6 +98,9 @@ func (ec *execCtx) loopLimit() int {
 // checkDeadline жёстко останавливает запуск (dslStop, мимо Попытки), если
 // исчерпан wall-clock. Дёшево, когда дедлайн не задан.
 func (ec *execCtx) checkDeadline() {
+	if err := executionContextError(ec.context); err != nil {
+		panic(dslStop{err: err})
+	}
 	if !ec.deadline.IsZero() && time.Now().After(ec.deadline) {
 		panic(dslStop{err: errSandboxTimeout})
 	}
@@ -143,20 +157,20 @@ func (e *env) rootEnv() *env {
 func (e *env) get(name string) (any, bool) {
 	low := strings.ToLower(name)
 	if low == "this" || low == "этотобъект" {
-		return e.this, true
+		return protectReadOnly(e.ec, e.this), true
 	}
 	if e.ec != nil && e.ec.sandboxVars != nil {
 		if v, ok := e.ec.sandboxVars[low]; ok {
-			return v, true
+			return protectReadOnly(e.ec, v), true
 		}
 	}
 	name = low
 	if v, ok := e.vars[name]; ok {
-		return v, true
+		return protectReadOnly(e.ec, v), true
 	}
 	if e.module != nil {
 		if v, ok := e.module.vars[name]; ok {
-			return v, true
+			return protectReadOnly(e.ec, v), true
 		}
 	}
 	if e.parent != nil {
@@ -165,10 +179,35 @@ func (e *env) get(name string) (any, bool) {
 	return nil, false
 }
 
+// rawFormProcs returns only the interpreter-owned form procedure table. The
+// dispatcher needs the concrete Go map even while a breakpoint condition is
+// read-only, but ordinary DSL reads must keep going through get and its
+// membrane. Keeping the key fixed here prevents this from becoming a general
+// capability-unwrapping path.
+func (e *env) rawFormProcs() (any, bool) {
+	const key = "__form_procs__"
+	if e == nil {
+		return nil, false
+	}
+	if value, ok := e.vars[key]; ok {
+		return value, true
+	}
+	if e.module != nil {
+		if value, ok := e.module.vars[key]; ok {
+			return value, true
+		}
+	}
+	if e.parent != nil {
+		return e.parent.rawFormProcs()
+	}
+	return nil, false
+}
+
 func (e *env) set(name string, v any) {
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
 		if _, local := e.vars[name]; !local {
+			refuseReadOnly(e.ec, "изменение модульной переменной «"+name+"»")
 			e.module.vars[name] = v
 			return
 		}
@@ -189,6 +228,7 @@ func (e *env) declare(name string, v any) {
 func (e *env) declareModule(name string, v any) {
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
+		refuseReadOnly(e.ec, "изменение модульной переменной «"+name+"»")
 		e.module.vars[name] = v
 		return
 	}

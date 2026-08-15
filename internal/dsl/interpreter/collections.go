@@ -110,6 +110,9 @@ func (r *Ref) Get(field string) any {
 // refKey extracts the comparison key: UUID for Ref, string representation otherwise.
 // Used in Map.findIdx and equal() so *Ref and plain UUID strings match each other.
 func refKey(v any) string {
+	if wrapped, ok := v.(readOnlyStringValue); ok {
+		return wrapped.stringValue()
+	}
 	if ref, ok := v.(*Ref); ok {
 		return ref.UUID
 	}

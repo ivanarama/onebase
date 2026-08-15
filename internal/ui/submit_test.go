@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -242,6 +243,64 @@ func TestSubmit_NewDocument_AutoNumber(t *testing.T) {
 	}
 	if num == "" {
 		t.Errorf("Номер пустой — auto-number не сработал. Запись: %v", rows[0])
+	}
+}
+
+func TestSubmit_FormWriteHooksSeeAssignedAutoNumber(t *testing.T) {
+	form := managedObjectForm(
+		fieldEl("Number", "Объект.Номер"),
+		fieldEl("Before", "Объект.ВиделПеред"),
+		fieldEl("OnWrite", "Объект.ВиделПри"),
+	)
+	form.Handlers = map[metadata.FormEventType]string{
+		metadata.FormEventBeforeWrite: "ПередЗаписьюФормы",
+		metadata.FormEventOnWrite:     "ПриЗаписиФормы",
+	}
+	form.ProgramAST = mustParse(t, `
+Процедура ПередЗаписьюФормы()
+	Объект.ВиделПеред = Объект.Номер;
+КонецПроцедуры
+
+Процедура ПриЗаписиФормы()
+	Объект.ВиделПри = Объект.Номер;
+КонецПроцедуры`)
+	doc := &metadata.Entity{
+		Name: "ЗаявкаСХуками", Kind: metadata.KindDocument,
+		Numerator: &metadata.Numerator{Prefix: "З-", Length: 6},
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+			{Name: "ВиделПеред", Type: metadata.FieldTypeString},
+			{Name: "ВиделПри", Type: metadata.FieldTypeString},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{doc})
+
+	r := reqWithChi(http.MethodPost, "/ui/document/"+doc.Name+"/new",
+		url.Values{"Номер": {""}, "ВиделПеред": {""}, "ВиделПри": {""}},
+		map[string]string{"entity": doc.Name})
+	w := httptest.NewRecorder()
+	s.submit(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("ожидался 303, получен %d: %s", w.Code, w.Body.String())
+	}
+
+	rows, err := s.store.List(ctx, doc.Name, doc, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ожидалась 1 запись, получено %d", len(rows))
+	}
+	number := strings.TrimSpace(fmt.Sprint(rows[0]["Номер"]))
+	if number == "" || number == "<nil>" {
+		t.Fatalf("номер не выдан: %#v", rows[0])
+	}
+	if got := fmt.Sprint(rows[0]["ВиделПеред"]); got != number {
+		t.Fatalf("ПередЗаписью видел %q, номер=%q; row=%#v", got, number, rows[0])
+	}
+	if got := fmt.Sprint(rows[0]["ВиделПри"]); got != number {
+		t.Fatalf("ПриЗаписи видел %q, номер=%q; row=%#v", got, number, rows[0])
 	}
 }
 

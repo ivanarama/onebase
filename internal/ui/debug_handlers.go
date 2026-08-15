@@ -140,6 +140,9 @@ func (s *Server) debugGlobalBreakpoint(w http.ResponseWriter, r *http.Request) {
 
 // validateBreakpointCondition разбирает условие точки останова как выражение DSL.
 func validateBreakpointCondition(expr string) error {
+	if err := interpreter.ValidateUntrustedExpressionSource(expr); err != nil {
+		return fmt.Errorf("условие точки останова: %w", err)
+	}
 	p := parser.New(lexer.New(expr, "<условие точки останова>"))
 	if _, err := p.ParseStandaloneExpr(); err != nil {
 		return fmt.Errorf("условие точки останова: %w", err)
@@ -209,6 +212,13 @@ func (s *Server) debugGlobalEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "empty expression"})
 		return
 	}
+	// Apply the iterative gate before choosing the paused-session path. A
+	// paused evaluator uses the live interpreter directly and therefore does
+	// not pass through standaloneEval below.
+	if err := interpreter.ValidateUntrustedExpressionSource(req.Expr); err != nil {
+		writeJSON(w, 200, debugger.EvaluateResult{IsError: true, Error: err.Error()})
+		return
+	}
 
 	// If a debug session is active, only evaluate when paused — otherwise the
 	// expression refers to DSL locals (e.g. Запрос.Текст) that don't exist
@@ -251,6 +261,9 @@ func (s *Server) debugGlobalEvaluate(w http.ResponseWriter, r *http.Request) {
 
 // standaloneEval parses and evaluates a DSL expression
 func standaloneEval(s *Server, expr string) (any, error) {
+	if err := interpreter.ValidateUntrustedExpressionSource(expr); err != nil {
+		return nil, err
+	}
 	l := lexer.New(expr, "<console>")
 	p := parser.New(l)
 	parsed, err := p.ParseStandaloneExpr()

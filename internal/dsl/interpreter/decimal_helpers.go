@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"math"
+	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -20,6 +21,9 @@ const divisionPrecision = 16
 const (
 	maxDecimalQuotientExponent        int32 = 4096
 	maxDecimalQuotientCoefficientBits int   = 16384
+	// A coefficient beyond this lexical size cannot fit the bit bound above.
+	// Reject it before decimal.NewFromString allocates/parses attacker input.
+	maxSandboxDecimalTextBytes = 8192
 )
 
 func init() {
@@ -34,14 +38,41 @@ func toDecimal(v any) (decimal.Decimal, bool) {
 	switch t := v.(type) {
 	case decimal.Decimal:
 		return t, true
+	case *decimal.Decimal:
+		if t == nil {
+			return decimal.Zero, false
+		}
+		return *t, true
 	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return decimal.Zero, false
+		}
 		return decimal.NewFromFloat(t), true
+	case float32:
+		if math.IsNaN(float64(t)) || math.IsInf(float64(t), 0) {
+			return decimal.Zero, false
+		}
+		return decimal.NewFromFloat32(t), true
 	case int:
+		return decimal.NewFromInt(int64(t)), true
+	case int8:
+		return decimal.NewFromInt(int64(t)), true
+	case int16:
 		return decimal.NewFromInt(int64(t)), true
 	case int32:
 		return decimal.NewFromInt(int64(t)), true
 	case int64:
 		return decimal.NewFromInt(t), true
+	case uint:
+		return decimal.NewFromUint64(uint64(t)), true
+	case uint8:
+		return decimal.NewFromUint64(uint64(t)), true
+	case uint16:
+		return decimal.NewFromUint64(uint64(t)), true
+	case uint32:
+		return decimal.NewFromUint64(uint64(t)), true
+	case uint64:
+		return decimal.NewFromUint64(t), true
 	case string:
 		if d, err := decimal.NewFromString(t); err == nil {
 			return d, true
@@ -56,6 +87,193 @@ func decimalWithinSafeBounds(d decimal.Decimal) bool {
 		return false
 	}
 	return d.Coefficient().BitLen() <= maxDecimalQuotientCoefficientBits
+}
+
+// DecimalWithinSafeBounds reports whether decimal operations can expand d
+// without constructing an unbounded intermediate big.Int. Sandboxed callers
+// that accept data from outside the DSL use the same boundary as division,
+// remainder and numeric builtins instead of duplicating subtly different
+// exponent/coefficient checks.
+func DecimalWithinSafeBounds(d decimal.Decimal) bool {
+	return decimalWithinSafeBounds(d)
+}
+
+func decimalWithinExpansionBounds(d decimal.Decimal, maxExponent int32) bool {
+	if maxExponent <= 0 {
+		return true
+	}
+	exp := d.Exponent()
+	if exp < -maxExponent || exp > maxExponent {
+		return false
+	}
+	return d.Coefficient().BitLen() <= maxDecimalQuotientCoefficientBits
+}
+
+func requireSafeBuiltinDecimal(operation string, d decimal.Decimal, maxExponent int32, line int) {
+	if decimalWithinExpansionBounds(d, maxExponent) {
+		return
+	}
+	panic(userError{
+		Msg:  operation + ": число вне безопасного диапазона",
+		Line: line,
+	})
+}
+
+// boundedDecimalPlaces converts the DSL precision argument only after proving
+// that decimal.Round cannot rescale by an attacker-controlled int32 distance.
+// floatArg used to truncate the value first, which made an out-of-range float
+// implementation-dependent and let a small expression request gigabytes of
+// zeroes from shopspring/decimal.
+func boundedDecimalPlaces(operation string, args []any, index int, maxPlaces int32, line int) int32 {
+	if index >= len(args) {
+		return 0
+	}
+	d, ok := toDecimal(args[index])
+	if !ok {
+		return 0
+	}
+	requireSafeBuiltinDecimal(operation, d, maxPlaces, line)
+	f, ok := decimalToFiniteFloat64(d)
+	if !ok || f < -float64(maxPlaces) || f > float64(maxPlaces) {
+		panic(userError{
+			Msg:  operation + ": точность вне безопасного диапазона",
+			Line: line,
+		})
+	}
+	return int32(f)
+}
+
+// boundedSandboxBuiltin wraps ordinary builtins only for profiles that opt in
+// to MaxDecimalExpansion. The global builtin implementations retain their
+// trusted-DSL compatibility, while report/marketplace-style evaluators get a
+// fail-closed check at the actual dynamic-argument sink.
+func boundedSandboxBuiltin(name string, fn BuiltinFunc, maxDecimalExpansion int32, maxStringExpansion int) BuiltinFunc {
+	return func(args []any, file string, line int) (any, error) {
+		effectiveDecimalBound := requireSafeSandboxBuiltinInputs(name, args, maxDecimalExpansion, maxStringExpansion, line)
+
+		var result any
+		var err error
+		formatBound := effectiveDecimalBound
+		if maxStringExpansion > 0 && sandboxTemplateBuiltin(name) {
+			result = sandboxTemplateBounded(name, args, maxStringExpansion, line)
+		} else if formatBound > 0 && (strings.EqualFold(name, "формат") || strings.EqualFold(name, "format")) {
+			result, err = fmtBuiltinBounded(args, formatBound)
+		} else {
+			result, err = fn(args, file, line)
+		}
+		if err != nil {
+			return nil, err
+		}
+		requireSafeSandboxValueLimits(name, []any{result}, maxDecimalExpansion, maxStringExpansion, line)
+		return result, nil
+	}
+}
+
+func requireSafeSandboxBuiltinInputs(name string, args []any, maxDecimalExpansion int32, maxStringExpansion, line int) int32 {
+	// Validate the complete value graph before a string preflight can call fmt
+	// on a nested Decimal. Otherwise StrTemplate("%1", hugeDecimal) reaches
+	// Decimal.String before the decimal bound gets control.
+	requireSafeSandboxValueLimits(name, args, maxDecimalExpansion, maxStringExpansion, line)
+	if maxStringExpansion > 0 && sandboxBuiltinFormatsValues(name) {
+		requireSafeSandboxFormattingValueLimits(name, args, maxDecimalExpansion, maxStringExpansion, line)
+	}
+	effectiveDecimalBound := sandboxEffectiveDecimalBound(maxDecimalExpansion, maxStringExpansion)
+	requireSafeSandboxDecimalTextArgs(name, args, maxDecimalExpansion, line)
+	if maxDecimalExpansion > 0 && (strings.EqualFold(name, "окр") || strings.EqualFold(name, "round")) {
+		_ = boundedDecimalPlaces(name, args, 1, maxDecimalExpansion, line)
+	}
+	if maxStringExpansion > 0 {
+		preflightSandboxStringBuiltin(name, args, maxStringExpansion, line)
+	}
+	return effectiveDecimalBound
+}
+
+func sandboxEffectiveDecimalBound(maxDecimal int32, maxString int) int32 {
+	bound := maxDecimal
+	if maxString <= 0 {
+		return bound
+	}
+	stringBound := int64(maxString)
+	if stringBound > int64(^uint32(0)>>1) {
+		stringBound = int64(^uint32(0) >> 1)
+	}
+	if bound <= 0 || stringBound < int64(bound) {
+		return int32(stringBound)
+	}
+	return bound
+}
+
+func requireSafeSandboxDecimalTextArgs(operation string, args []any, maxExpansion int32, line int) {
+	if maxExpansion <= 0 {
+		return
+	}
+	var indexes []int
+	switch strings.ToLower(operation) {
+	case "number", "число", "round", "окр", "abs", "абс", "int", "цел",
+		"amountinwords", "числопрописью":
+		indexes = []int{0}
+	case "max", "макс", "min", "мин":
+		indexes = []int{0, 1}
+	case "sleep", "wait", "пауза", "подождать", "приостановить":
+		indexes = []int{0}
+	default:
+		return
+	}
+	for _, index := range indexes {
+		if index >= len(args) {
+			continue
+		}
+		text, ok := args[index].(string)
+		if !ok {
+			continue
+		}
+		requireSafeSandboxDecimalTextLength(operation, text, line)
+		if number, err := decimal.NewFromString(text); err == nil {
+			requireSafeBuiltinDecimal(operation, number, maxExpansion, line)
+		}
+	}
+}
+
+func requireSafeSandboxDecimalTextLength(operation string, value any, line int) {
+	if text, ok := value.(string); ok && len(text) > maxSandboxDecimalTextBytes {
+		panic(userError{Msg: operation + ": numeric text exceeds the sandbox decimal limit", Line: line})
+	}
+}
+
+func requireSafeSandboxNumber(operation string, value any, maxExpansion int32, line int) {
+	if !isNumeric(value) {
+		return
+	}
+	if f, ok := value.(float64); ok && (math.IsNaN(f) || math.IsInf(f, 0)) {
+		panic(userError{Msg: operation + ": число должно быть конечным", Line: line})
+	}
+	d, ok := toDecimal(value)
+	if !ok {
+		panic(userError{Msg: operation + ": число не удалось преобразовать", Line: line})
+	}
+	requireSafeBuiltinDecimal(operation, d, maxExpansion, line)
+}
+
+func requireSafeSandboxDecimalOperation(ec *execCtx, operation string, d decimal.Decimal, line int) {
+	if ec == nil || ec.maxDecimalExpansion <= 0 {
+		return
+	}
+	requireSafeBuiltinDecimal(operation, d, ec.maxDecimalExpansion, line)
+}
+
+func requireSafeSandboxDecimalOperand(ec *execCtx, operation string, value any, line int) {
+	if ec == nil || ec.maxDecimalExpansion <= 0 {
+		return
+	}
+	requireSafeSandboxDecimalTextLength(operation, value, line)
+	if number, ok := toDecimal(value); ok {
+		requireSafeBuiltinDecimal(operation, number, ec.maxDecimalExpansion, line)
+	}
+}
+
+func safeSandboxDecimalResult(ec *execCtx, operation string, d decimal.Decimal, line int) decimal.Decimal {
+	requireSafeSandboxDecimalOperation(ec, operation, d, line)
+	return d
 }
 
 func decimalSafeForQuotient(d decimal.Decimal) bool {
@@ -96,7 +314,9 @@ func decimalToFiniteFloat64(d decimal.Decimal) (float64, bool) {
 // должны и дальше сравниваться через refKey, а не приводиться к числу.
 func isNumeric(v any) bool {
 	switch v.(type) {
-	case decimal.Decimal, float64, int, int32, int64:
+	case decimal.Decimal, *decimal.Decimal, float32, float64,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
 		return true
 	}
 	return false
@@ -111,6 +331,9 @@ func numericZero(v any) (zero bool, ok bool) {
 	if !isNumeric(v) {
 		return false, false
 	}
-	d, _ := toDecimal(v)
+	d, ok := toDecimal(v)
+	if !ok {
+		return false, false
+	}
 	return d.IsZero(), true
 }

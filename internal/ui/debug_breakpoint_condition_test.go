@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/debugger"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -357,6 +358,8 @@ func TestBreakpointCondition_SyntaxCheckedOnSet(t *testing.T) {
 		"Сч = 4; Лишнее",
 		"Сч = 4 Лишнее",
 		"Сч = 4;;",
+		strings.Repeat("(", interpreter.MaxUntrustedExpressionSyntaxDepth+1) + "Сч = 4" +
+			strings.Repeat(")", interpreter.MaxUntrustedExpressionSyntaxDepth+1),
 	} {
 		code, resp := d.setBreakpoint(t, debugLoopBodyLine, condition)
 		if code != 400 {
@@ -370,6 +373,37 @@ func TestBreakpointCondition_SyntaxCheckedOnSet(t *testing.T) {
 	if bp := d.sess.FindBreakpoint("циклотладки.proc.os", debugLoopBodyLine); bp != nil {
 		t.Fatal("точка с неразбираемым условием всё-таки создана")
 	}
+}
+
+// The evaluate endpoint must bound source before handing it to the live paused
+// interpreter, whose recursive parser cannot be interrupted by its timeout.
+func TestDebugEvaluateRejectsUnboundedSourceWhilePaused(t *testing.T) {
+	d := newDebugSession(t, debugLoopModule)
+	if code, resp := d.setBreakpoint(t, debugLoopBodyLine, "Сч = 1"); code != 200 {
+		t.Fatalf("установка точки: код %d, ответ %v", code, resp)
+	}
+	done := d.run(t, "Итог: 15")
+	d.waitPause(t)
+
+	expr := strings.Repeat("(", interpreter.MaxUntrustedExpressionSyntaxDepth+1) + "1" +
+		strings.Repeat(")", interpreter.MaxUntrustedExpressionSyntaxDepth+1)
+	body, err := json.Marshal(map[string]string{"expr": expr})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	d.server.debugGlobalEvaluate(rec, httptest.NewRequest("POST", "/debug/global/evaluate", strings.NewReader(string(body))))
+	var result debugger.EvaluateResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("ответ evaluate не JSON (%d): %s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != 200 || !result.IsError || !strings.Contains(result.Error, "depth") {
+		t.Fatalf("неограниченное выражение не отклонено: code=%d result=%+v", rec.Code, result)
+	}
+
+	d.sess.RemoveBreakpoint("циклотладки.proc.os", debugLoopBodyLine)
+	d.sess.Continue()
+	d.waitFinish(t, done)
 }
 
 // Точка без условия работает как раньше — останавливает на первом же проходе.

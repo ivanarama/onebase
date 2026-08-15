@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -16,6 +17,12 @@ import (
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/shopspring/decimal"
+)
+
+var (
+	errInfoRegDeleteNotFound     = errors.New("information register row not found")
+	errInfoRegDeletePolicyDenied = errors.New("information register delete policy denied")
 )
 
 func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +35,14 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
 		return
 	}
-	flt := parseRegFilter(r, reg.Dimensions, true /*periodic — у движений всегда есть период*/)
+	decisions := s.registerFieldDecisions(r.Context(), reg)
+	if protectedRegisterFilterRequested(r, reg, decisions) {
+		s.renderForbidden(w, r)
+		return
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
+	showPeriodFilter := !registerFieldProtected(decisions, "period")
+	flt := parseRegFilter(r, filterFields, showPeriodFilter)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
@@ -39,13 +53,26 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Маска полей — ДО разрешения ссылок в представления: иначе защищённое
+	// значение уже превратилось бы в человекочитаемую подпись (#859).
+	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
+	filterValues := filterFormValues(r, filterFields)
+	columns := registerMovementColumnsFor(decisions)
 	s.render(w, r, "page-register-movements", map[string]any{
-		"Register":   reg,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, reg.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), reg.Dimensions, filterFormValues(r, reg.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
+		"Register":          reg,
+		"Rows":              rows,
+		"CanViewBalances":   !registerBalancesProtected(decisions, reg),
+		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
+		"VisibleResources":  visibleRegisterFields(decisions, reg.Resources),
+		"VisibleAttributes": visibleRegisterFields(decisions, reg.Attributes),
+		"ShowMovementKind":  columns.ShowKind,
+		"ShowRecorder":      columns.ShowRecorder,
+		"FilterFields":      filterFields,
+		"ShowPeriodFilter":  showPeriodFilter,
+		"Filter":            filterValues,
+		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":        !flt.IsEmpty(),
 	})
 }
 
@@ -59,8 +86,21 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
 		return
 	}
+	decisions := s.registerFieldDecisions(r.Context(), reg)
+	// Balances GROUP BY every dimension and use movement kind as the resource
+	// sign. Masking the output cannot hide either protected input.
+	if registerBalancesProtected(decisions, reg) {
+		s.renderForbidden(w, r)
+		return
+	}
+	if protectedRegisterFilterRequested(r, reg, decisions) {
+		s.renderForbidden(w, r)
+		return
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
+	showPeriodFilter := !registerFieldProtected(decisions, "period")
 	// Остатки: только «на дату» (to) + измерения; from игнорируется в storage.
-	flt := parseRegFilter(r, reg.Dimensions, true)
+	flt := parseRegFilter(r, filterFields, showPeriodFilter)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
@@ -71,14 +111,92 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
+	filterValues := filterFormValues(r, filterFields)
 	s.render(w, r, "page-register-balances", map[string]any{
-		"Register":   reg,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, reg.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), reg.Dimensions, filterFormValues(r, reg.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
+		"Register":          reg,
+		"Rows":              rows,
+		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
+		"VisibleResources":  visibleRegisterFields(decisions, reg.Resources),
+		"FilterFields":      filterFields,
+		"ShowPeriodFilter":  showPeriodFilter,
+		"Filter":            filterValues,
+		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":        !flt.IsEmpty(),
 	})
+}
+
+type documentMovementRead struct {
+	Rows    map[string][]map[string]any
+	Columns map[string]registerMovementColumns
+}
+
+// loadDocumentMovementsForRead is the document-form read boundary for
+// accumulation registers. A posted document may have movements in registers
+// the viewer cannot read, and each readable register can have its own RLS and
+// field policy. Apply every gate before resolving references or rendering.
+func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType string, recorderID uuid.UUID) documentMovementRead {
+	result := documentMovementRead{
+		Rows:    make(map[string][]map[string]any),
+		Columns: make(map[string]registerMovementColumns),
+	}
+	for _, reg := range s.reg.Registers() {
+		decision, err := s.rowDecisionFor(ctx, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg))
+		if err != nil || !decision.Allowed {
+			continue
+		}
+		fieldDecisions := s.registerFieldDecisions(ctx, reg)
+		// The document card is itself a selection by registrar. If either
+		// registrar component is protected, even the existence/count of the
+		// matching movement set would be a guessing oracle.
+		if registerFieldProtected(fieldDecisions, "recorder") || registerFieldProtected(fieldDecisions, "recorder_type") {
+			continue
+		}
+
+		filter := storage.RegFilter{}
+		if !decision.Unrestricted {
+			filter.RowFilter = decision.Predicate
+		}
+		filter = registerRecorderFilter(filter, recorderID, recorderType)
+		rows, err := s.store.GetMovements(ctx, reg.Name, reg, filter)
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			// GetDocumentMovements historically omitted these columns. Preserve
+			// that form payload and avoid redundant registrar disclosure.
+			delete(row, "recorder")
+			delete(row, "recorder_type")
+		}
+		s.maskRegisterRecords(ctx, reg, rows)
+		s.resolveRegisterRows(ctx, rows, reg)
+		if len(rows) > 0 {
+			result.Rows[reg.Name] = rows
+			result.Columns[reg.Name] = registerMovementColumnsFor(fieldDecisions)
+		}
+	}
+	return result
+}
+
+func registerRecorderFilter(filter storage.RegFilter, recorderID uuid.UUID, recorderType string) storage.RegFilter {
+	predicates := []storage.Predicate{{Field: "recorder", Op: "eq", Value: recorderID}}
+	recorderType = strings.TrimSpace(recorderType)
+	if recorderType != "" {
+		predicates = append(predicates, storage.Predicate{Field: "recorder_type", Op: "eq", Value: recorderType})
+	}
+	if filter.RowFilter == nil {
+		if len(predicates) == 1 {
+			filter.RowFilter = &predicates[0]
+		} else {
+			combined := storage.Predicate{All: predicates}
+			filter.RowFilter = &combined
+		}
+		return filter
+	}
+	combined := storage.Predicate{All: append([]storage.Predicate{*filter.RowFilter}, predicates...)}
+	filter.RowFilter = &combined
+	return filter
 }
 
 // parseRegFilter собирает storage.RegFilter из query-параметров формы отбора:
@@ -177,10 +295,18 @@ func (s *Server) resolveRegisterRows(ctx context.Context, rows []map[string]any,
 		if recType != "" && recIDStr != "" {
 			if recID, err := uuid.Parse(recIDStr); err == nil {
 				if entity := s.reg.GetEntityBySlug(recType); entity != nil {
-					if docRow, err2 := s.store.GetByID(ctx, entity.Name, recID, entity); err2 == nil {
+					fields := make([]metadata.Field, 0, 2)
+					for _, name := range []string{"Номер", "Дата"} {
+						if field, ok := entityFieldByName(entity, name); ok {
+							fields = append(fields, field)
+						}
+					}
+					readable, err2 := s.readableFieldsByIDs(ctx, entity, []uuid.UUID{recID}, fields)
+					if docRow := readable[recID.String()]; err2 == nil && docRow != nil {
 						// Представление регистратора едет в список движений, то
 						// есть номер и дата документа обязаны подчиняться той же
-						// полевой политике, что и список самого документа.
+						// объектной, строковой и полевой политике, что и список
+						// самого документа.
 						s.maskRecord(ctx, entity, docRow)
 						num := fmt.Sprintf("%v", docRow["Номер"])
 						date := regFmtDate(docRow["Дата"])
@@ -249,14 +375,24 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.store.InfoRegList(r.Context(), ir, flt)
+	rows, err := s.store.InfoRegListWithKeyValues(r.Context(), ir, flt)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
+	maskedKey := len(s.maskedInfoRegKeyFields(r.Context(), ir)) != 0
 	// Mask before resolving references: a protected UUID must not turn into a
 	// readable label, and the detail-panel payload must receive only gated rows.
 	s.maskInfoRegRecords(r.Context(), ir, rows)
+	if maskedKey {
+		// The lossless machine key is intentionally stronger than the display
+		// value. Never leave it in the template data when any part of the primary
+		// key is protected; this also removes period_key for periodic registers.
+		for _, row := range rows {
+			delete(row, storage.InfoRegKeyValuesField)
+			delete(row, "period_key")
+		}
+	}
 	s.resolveInfoRegRows(r.Context(), rows, ir)
 	s.render(w, r, "page-inforeg-list", map[string]any{
 		"InfoReg":    ir,
@@ -377,35 +513,178 @@ func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ключ удаления не должен строиться из ОТОБРАЖАЕМЫХ значений: форма списка
+	// кладёт в hidden-поля то, что видит пользователь, а под маской это «••••••».
+	// Измерения и period периодического регистра вместе образуют первичный ключ.
+	// Пока хотя бы одно из них замаскировано, роль физически не может назвать
+	// удаляемую строку, поэтому не принимаем и угаданный ключ из forged POST.
+	if masked := s.maskedInfoRegKeyFields(r.Context(), ir); len(masked) > 0 {
+		http.Error(w, s.tr(s.resolveLang(r),
+			"Удаление невозможно: у вашей роли закрыт доступ к полю ключа")+" ("+strings.Join(masked, ", ")+")",
+			http.StatusForbidden)
+		return
+	}
+
 	var periodPtr *time.Time
 	if ir.Periodic {
-		// Период берём из машинного ключа period_key (его кладёт InfoRegList в
-		// hidden-поле списка). Если ключ не разобран — ОТКАЗЫВАЕМ в удалении:
-		// иначе InfoRegDelete с nil-периодом снесёт все периоды комбинации
-		// измерений (критическая потеря данных).
-		t, ok := storage.ParseRegPeriod(r.FormValue("period"))
+		raw, err := requiredSinglePostFormValue(r, "period")
+		if err != nil {
+			http.Error(w, s.tr(s.resolveLang(r), "Некорректный ключ записи")+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		period, ok := storage.ParseRegPeriod(raw)
 		if !ok {
 			http.Error(w, s.tr(s.resolveLang(r), "Не удалось определить период записи для удаления"), http.StatusBadRequest)
 			return
 		}
-		periodPtr = &t
+		periodPtr = &period
 	}
-	dims := parseInfoRegFields(r, ir.Dimensions)
-	row, _ := s.infoRegExistingPolicyRow(r.Context(), ir, dims, periodPtr)
-	if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "delete", storage.InfoRegisterPredicateEntity(ir), row) {
+	dims, err := parseInfoRegDeleteKey(r, ir.Dimensions, s.store.IsPostgres())
+	if err != nil {
+		http.Error(w, s.tr(s.resolveLang(r), "Некорректный ключ записи")+": "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	decision, err := s.rowDecisionFor(r.Context(), "inforeg", ir.Name, "delete", storage.InfoRegisterPredicateEntity(ir))
+	if err != nil || !decision.Allowed || (!decision.Unrestricted && decision.Predicate == nil) {
+		s.renderForbidden(w, r)
+		return
+	}
+	var rowFilter *storage.Predicate
+	if !decision.Unrestricted {
+		rowFilter = decision.Predicate
+	}
+
 	plans := s.reg.ExchangePlans()
-	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-		if err := s.store.InfoRegDelete(ctx, ir, dims, periodPtr); err != nil {
+	err = s.store.WithTxScope(r.Context(), func(ctx context.Context) error {
+		deleted, err := s.store.InfoRegDeleteExactReturning(ctx, ir, dims, periodPtr, rowFilter)
+		if err != nil {
 			return err
 		}
-		return exchange.RegisterInfoRegOnSave(ctx, s.store, plans, ir, dims, true)
-	}); err != nil {
-		s.serverError(w, r, err)
+		if len(deleted) == 0 {
+			return errInfoRegDeleteNotFound
+		}
+		if len(deleted) != 1 {
+			return fmt.Errorf("delete information register %s: expected one row, deleted %d", ir.Name, len(deleted))
+		}
+		row := deleted[0]
+		// SQL-предикат — основная защита. Повторная типизированная проверка
+		// возвращённой строки страхует от расхождения SQL и in-memory семантики;
+		// ошибка откатывает provisional DELETE вместе с tombstone.
+		if !decision.Unrestricted && !s.matchRowPredicate(ctx, row, decision.Predicate) {
+			return errInfoRegDeletePolicyDenied
+		}
+		actualDims, err := infoRegReturnedKeyDimensions(s.store, ir, row)
+		if err != nil {
+			return err
+		}
+		return exchange.RegisterInfoRegOnSave(ctx, s.store, plans, ir, actualDims, true)
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errInfoRegDeletePolicyDenied):
+			s.renderForbidden(w, r)
+		case errors.Is(err, errInfoRegDeleteNotFound) && !decision.Unrestricted:
+			// A restricted DELETE returning zero rows deliberately does not reveal
+			// whether the key is absent or currently hidden by its row predicate.
+			s.renderForbidden(w, r)
+		case errors.Is(err, errInfoRegDeleteNotFound):
+			http.Error(w, s.tr(s.resolveLang(r), "Запись не найдена: возможно, она уже удалена"), http.StatusNotFound)
+		default:
+			s.serverError(w, r, err)
+		}
 		return
 	}
 	http.Redirect(w, r, "/ui/inforeg/"+strings.ToLower(ir.Name), http.StatusFound)
+}
+
+func requiredSinglePostFormValue(r *http.Request, name string) (string, error) {
+	values, ok := r.PostForm[name]
+	if !ok || len(values) != 1 {
+		return "", fmt.Errorf("поле %q должно быть задано ровно один раз", name)
+	}
+	return values[0], nil
+}
+
+func infoRegReturnedKeyDimensions(store *storage.DB, ir *metadata.InfoRegister, row map[string]any) (map[string]any, error) {
+	dims := make(map[string]any, len(ir.Dimensions))
+	keyValues, _ := row[storage.InfoRegKeyValuesField].(map[string]string)
+	for _, field := range ir.Dimensions {
+		if store.IsSQLite() && (field.Type == metadata.FieldTypeNumber || field.Type == metadata.FieldTypeDate) {
+			value, ok := keyValues[field.Name]
+			if !ok {
+				return nil, fmt.Errorf("delete information register %s: missing returned key %q", ir.Name, field.Name)
+			}
+			dims[field.Name] = value
+			continue
+		}
+		dims[field.Name] = rowValueFold(row, field.Name)
+	}
+	return dims, nil
+}
+
+func parseInfoRegDeleteKey(r *http.Request, fields []metadata.Field, postgres bool) (map[string]any, error) {
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		raw, err := requiredSinglePostFormValue(r, field.Name)
+		if err != nil {
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(raw)
+		switch {
+		case field.RefEntity != "":
+			id, err := uuid.Parse(trimmed)
+			if err != nil {
+				return nil, fmt.Errorf("поле %q: некорректная ссылка", field.Name)
+			}
+			result[field.Name] = id
+		case field.Type == metadata.FieldTypeDate:
+			_, ok := storage.ParseRegPeriod(trimmed)
+			if !ok {
+				return nil, fmt.Errorf("поле %q: некорректная дата", field.Name)
+			}
+			// Validation is typed, but the exact predicate must retain the
+			// SQLite TEXT spelling used by exchange/direct register writes.
+			result[field.Name] = raw
+		case field.Type == metadata.FieldTypeNumber:
+			// Machine keys may legitimately contain exponent notation even though
+			// ordinary human-entered number fields deliberately reject it. They may
+			// also retain the comma form accepted by the write UI on SQLite.
+			formNumber, formErr := parseFormNumber(trimmed)
+			_, decimalErr := decimal.NewFromString(trimmed)
+			if formErr != nil && decimalErr != nil {
+				return nil, fmt.Errorf("поле %q: некорректное число", field.Name)
+			}
+			if postgres {
+				if formErr == nil {
+					result[field.Name] = formNumber
+				} else {
+					// Keep exponent notation as bounded request text. Converting a
+					// maximal int32 exponent to decimal.Decimal and then letting pgx
+					// call Value/String can expand billions of zeroes in-process.
+					// PostgreSQL accepts text parameters and enforces its own numeric
+					// range without that Go-side expansion.
+					result[field.Name] = trimmed
+				}
+				continue
+			}
+			result[field.Name] = raw
+		case field.Type == metadata.FieldTypeBool:
+			switch strings.ToLower(trimmed) {
+			case "true", "1":
+				result[field.Name] = true
+			case "false", "0":
+				result[field.Name] = false
+			default:
+				return nil, fmt.Errorf("поле %q: некорректное логическое значение", field.Name)
+			}
+		default:
+			// String keys are not presentation values: preserve their bytes,
+			// including an empty or whitespace-only (but present) dimension.
+			result[field.Name] = raw
+		}
+	}
+	return result, nil
 }
 
 func parseInfoRegFields(r *http.Request, fields []metadata.Field) map[string]any {
@@ -436,10 +715,10 @@ func infoRegPolicyRow(ir *metadata.InfoRegister, dims, resources map[string]any,
 }
 
 func (s *Server) infoRegExistingPolicyRow(ctx context.Context, ir *metadata.InfoRegister, dims map[string]any, period *time.Time) (map[string]any, bool) {
-	flt := storage.RegFilter{Dims: map[string]string{}}
+	flt := storage.RegFilter{DimValues: map[string]any{}}
 	for k, v := range dims {
 		if v != nil {
-			flt.Dims[k] = fmt.Sprintf("%v", v)
+			flt.DimValues[k] = v
 		}
 	}
 	if period != nil {

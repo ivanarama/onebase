@@ -9,12 +9,20 @@ package ui
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -141,5 +149,119 @@ func TestMovements_ClearIsAllowedOutsidePosting(t *testing.T) {
 	}
 	if len(msgs) != 1 || msgs[0] != "ok" {
 		t.Fatalf("сообщения=%v, ожидалось [ok]", msgs)
+	}
+}
+
+// Публичный HTTP-путь печати обязан передать в DSL несохраняющий коллектор.
+// Тест проходит через printDocument/buildDSLPF и краснеет, если в production
+// месте создания коллектора ошибочно появится WillPersist().
+func TestMovements_InPrintFormAreRejectedByHTTPHandler(t *testing.T) {
+	doc := &metadata.Entity{
+		Name:   "Заказ",
+		Kind:   metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+	}
+	reg := &metadata.Register{
+		Name:       "ОстаткиТоваров",
+		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{doc})
+	s.reg.Load(runtime.LoadOptions{
+		Entities:  []*metadata.Entity{doc},
+		Registers: []*metadata.Register{reg},
+	})
+	const formName = "ПроверкаДвижений"
+	s.reg.LoadDSLPrintForms([]*printform.DSLPrintForm{{
+		Name:     formName,
+		Document: doc.Name,
+		Source: `Функция Сформировать()
+  Движения.ОстаткиТоваров.Добавить();
+  Возврат Новый ТабличныйДокумент;
+КонецФункции`,
+	}})
+
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, doc.Name, id, map[string]any{"Номер": "1"}, doc); err != nil {
+		t.Fatalf("создание документа: %v", err)
+	}
+	target := "/ui/document/Заказ/" + id.String() + "/print/" + formName
+	r := reqWithChi(http.MethodGet, target, nil, map[string]string{
+		"kind": "document", "entity": doc.Name, "id": id.String(), "form": formName,
+	})
+	w := httptest.NewRecorder()
+	s.printDocument(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("printDocument status=%d, ожидался 500: %s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{
+		"Движения.ОстаткиТоваров.Добавить()",
+		"сохранять некуда",
+		"печатная форма",
+	} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("в отказе печати нет %q: %s", want, w.Body.String())
+		}
+	}
+}
+
+// Тот же отказ — во всех контекстах, где коллектор не сбрасывается (#898).
+//
+// Публичные пути обработки, планировщика и печати проверяются отдельно. Эта
+// компактная матрица фиксирует общий guard и человекочитаемые подписи остальных
+// контекстов без копирования инфраструктуры каждого обработчика.
+func TestMovements_RejectedInEveryNonPersistingContext(t *testing.T) {
+	reg := &metadata.Register{
+		Name:       "ОстаткиТоваров",
+		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	s, ctx := newSubmitTestServer(t, nil)
+	s.reg.Load(runtime.LoadOptions{Registers: []*metadata.Register{reg}})
+
+	for _, c := range []struct{ docType, label string }{
+		{"scheduler", "регламентное задание"},
+		{"processor", "обработка"},
+		{"report", "отчёт"},
+		{"print", "печатная форма"},
+		{"page", "страница"},
+		{"console", "консоль кода"},
+		{"intake", "приём сообщений"},
+		{"service", "HTTP-сервис"},
+	} {
+		t.Run(c.docType, func(t *testing.T) {
+			mc := runtime.NewMovementsCollector(c.docType, uuid.Nil)
+			var msgs []string
+			vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+			defer interpreter.RollbackTxExecution(txState)
+
+			prog := mustParse(t, `Процедура Тест()
+  Движения.ОстаткиТоваров.Добавить();
+  Сообщить("дошли до конца");
+КонецПроцедуры`)
+			err := s.interp.Run(prog.Procedures[0], nil, vars)
+			if err == nil {
+				t.Fatalf("движения в контексте %q приняты молча, сообщения=%v", c.docType, msgs)
+			}
+			text := err.Error()
+			if !strings.Contains(text, "сохранять некуда") {
+				t.Errorf("не тот отказ: %s", text)
+			}
+			// Контекст назван человеческим именем: «регламентное задание», а не
+			// «scheduler» — иначе подсказка не помогает тому, кто её читает.
+			if !strings.Contains(text, c.label) {
+				t.Errorf("отказ не называет контекст %q: %s", c.label, text)
+			}
+			// Имя регистра — как в конфигурации, а не как пришло из DSL.
+			if !strings.Contains(text, "Движения.ОстаткиТоваров.Добавить()") {
+				t.Errorf("имя регистра искажено: %s", text)
+			}
+			for _, m := range msgs {
+				if strings.Contains(m, "дошли до конца") {
+					t.Error("выполнение продолжилось после отказа")
+				}
+			}
+		})
 	}
 }

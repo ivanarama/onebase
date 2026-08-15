@@ -14,6 +14,12 @@ import (
 // BuiltinFunc is a callable value that can be injected via extraVars (e.g. Сообщить).
 type BuiltinFunc func(args []any, file string, line int) (any, error)
 
+// ReadOnlyBuiltinFunc is an explicit opt-in for an injected callback that is
+// safe to invoke from an unattended debugger condition. Ordinary BuiltinFunc
+// values fail closed there: the interpreter cannot infer whether an arbitrary
+// Go closure writes data or performs an external action.
+type ReadOnlyBuiltinFunc BuiltinFunc
+
 // FallbackBuiltinFunc is an injected platform function that is used only when
 // the application does not declare a procedure with the same name. It is meant
 // for compatibility-sensitive additions to the global DSL namespace: existing
@@ -319,6 +325,9 @@ func decimalArg(args []any, i int) decimal.Decimal {
 func builtinToString(args []any, file string, line int) (any, error) {
 	if len(args) == 0 {
 		return "", nil
+	}
+	if wrapped, ok := args[0].(readOnlyStringValue); ok {
+		return wrapped.stringValue(), nil
 	}
 	if s, ok := args[0].(string); ok {
 		return s, nil

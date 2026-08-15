@@ -34,46 +34,97 @@ type Evaluator struct {
 	profile interpreter.SandboxProfile
 	mu      sync.Mutex
 	cache   map[string]*ast.ProcedureDecl
+	// Invalid external formulas are immutable too. Caching their diagnostics
+	// prevents a forbidden 128 KiB expression from being lexed/parsed once per
+	// report row outside the sandbox deadline.
+	compileErrors map[string]error
 }
 
 // Контракт: Evaluator реализует compose.Evaluator.
 var _ compose.Evaluator = (*Evaluator)(nil)
 
-// DefaultProfile — лимиты по умолчанию для формул компоновки: формула считается
-// на каждую строку отчёта и обязана быть практически мгновенной. Запреты
-// возможностей не включаем: формулы — доверенный код конфигурации, как и сам
-// запрос отчёта; ограничиваем только время и число итераций.
+// DefaultProfile — профиль формул компоновки: формула считается на каждую
+// строку отчёта, обязана быть практически мгновенной и не должна уметь того,
+// что умеет полноценный модуль.
+//
+// Лимиты времени и итераций закрывали реальный DoS (#788): «Пока Истина Цикл» в
+// формуле вешал хендлер навсегда. Но профиль ограничивал ТОЛЬКО их — файлы,
+// сеть и запуск процессов формуле оставались доступны (#884). Прежнее
+// обоснование «формулы — доверенный код конфигурации» перестало быть полным:
+// внешние отчёты загружаются через админку и живут в БД, то есть формула может
+// приехать файлом со стороны, как внешняя обработка.
+//
+// Поверх runtime-профиля действует fail-closed whitelist AST и чистых функций
+// (formula_policy.go). Runtime-профиль остаётся второй линией защиты и лимитом
+// ресурсов, но сам по себе не отличает ЗаполнитьЗначенияСвойств от СтрДлина.
 func DefaultProfile() interpreter.SandboxProfile {
 	return interpreter.SandboxProfile{
+		DenyNet:      true,
+		DenyFile:     true,
+		DenyExec:     true,
 		MaxWallClock: 10 * time.Second,
 		MaxLoopIters: 1_000_000,
+		// A wall-clock deadline is checked between DSL operations; it cannot
+		// preempt one decimal rescale/format call that is allocating memory.
+		MaxDecimalExpansion: 4096,
+		MaxStringExpansion:  maxFormulaStringValue,
 	}
 }
 
 // New строит evaluator. profile обязателен и передаётся явно: мимо песочницы
 // выражение выполнить нельзя.
-func New(interp *interpreter.Interpreter, profile interpreter.SandboxProfile) *Evaluator {
-	return &Evaluator{interp: interp, profile: profile, cache: map[string]*ast.ProcedureDecl{}}
+func New(_ *interpreter.Interpreter, profile interpreter.SandboxProfile) *Evaluator {
+	// A clean interpreter is intentional. Configured LookupProc hooks resolve
+	// before builtins and could otherwise replace even an allowed name such as
+	// Формат with a side-effecting module function. The argument stays in the
+	// API for source compatibility with existing callers.
+	return &Evaluator{
+		interp:        interpreter.New(),
+		profile:       profile,
+		cache:         map[string]*ast.ProcedureDecl{},
+		compileErrors: map[string]error{},
+	}
 }
 
-func (e *Evaluator) compile(expr string) (*ast.ProcedureDecl, error) {
+func (e *Evaluator) compile(expr string) (proc *ast.ProcedureDecl, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if p, ok := e.cache[expr]; ok {
 		return p, nil
+	}
+	if cached, ok := e.compileErrors[expr]; ok {
+		return nil, cached
+	}
+	defer func() {
+		if err != nil {
+			e.compileErrors[expr] = err
+		}
+	}()
+	if err = validateFormulaSource(expr); err != nil {
+		return nil, err
 	}
 	src := "Функция __cond()\nВозврат (" + expr + ");\nКонецФункции\n"
 	prog, err := parser.New(lexer.New(src, "cond.os")).ParseProgram()
 	if err != nil {
 		return nil, err
 	}
-	var proc *ast.ProcedureDecl
+	proc = nil
 	for _, d := range prog.Procedures {
 		proc = d
 		break
 	}
 	if proc == nil {
 		return nil, fmt.Errorf("пустое выражение условия")
+	}
+	if len(proc.Body) != 1 {
+		return nil, fmt.Errorf("формула отчёта должна состоять из одного выражения")
+	}
+	ret, ok := proc.Body[0].(*ast.ReturnStmt)
+	if !ok || ret.Value == nil {
+		return nil, fmt.Errorf("формула отчёта должна состоять из одного выражения")
+	}
+	if err := validateFormulaExpr(ret.Value); err != nil {
+		return nil, err
 	}
 	e.cache[expr] = proc
 	return proc, nil
@@ -82,6 +133,9 @@ func (e *Evaluator) compile(expr string) (*ast.ProcedureDecl, error) {
 func (e *Evaluator) EvalBool(expr string, row compose.Row) (bool, error) {
 	proc, err := e.compile(expr)
 	if err != nil {
+		return false, err
+	}
+	if err := validateRowBindings(row); err != nil {
 		return false, err
 	}
 	result, err := e.interp.CallSandboxed(proc, &interpreter.MapThis{M: row}, nil, e.profile, map[string]any(row))
@@ -102,6 +156,9 @@ func (e *Evaluator) EvalNum(expr string, row compose.Row) (decimal.Decimal, bool
 	if err != nil {
 		return decimal.Zero, false, err
 	}
+	if err := validateRowBindings(row); err != nil {
+		return decimal.Zero, false, err
+	}
 	result, err := e.interp.CallSandboxed(proc, &interpreter.MapThis{M: row}, nil, e.profile, map[string]any(row))
 	if err != nil {
 		// Деление на ноль — неопределённое значение (пустая ячейка, как в 1С), а не
@@ -113,5 +170,11 @@ func (e *Evaluator) EvalNum(expr string, row compose.Row) (decimal.Decimal, bool
 		return decimal.Zero, false, err
 	}
 	d, ok := compose.ExportToDecimal(result)
+	if ok {
+		if !interpreter.DecimalWithinSafeBounds(d) ||
+			(e.profile.MaxDecimalExpansion > 0 && (d.Exponent() < -e.profile.MaxDecimalExpansion || d.Exponent() > e.profile.MaxDecimalExpansion)) {
+			return decimal.Zero, false, fmt.Errorf("результат формулы вне безопасного числового диапазона")
+		}
+	}
 	return d, ok, nil
 }

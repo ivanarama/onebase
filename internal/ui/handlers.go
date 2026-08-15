@@ -402,7 +402,7 @@ func (s *Server) resolveRefColumns(ctx context.Context, rows []map[string]any, c
 	for entName, idset := range entityUUIDs {
 		if entName != "" {
 			if e := s.reg.GetEntity(entName); e != nil {
-				s.batchLabels(ctx, e, idset, uuidToLabel)
+				s.batchReadableLabels(ctx, e, idset, uuidToLabel)
 				continue
 			}
 		}
@@ -416,7 +416,7 @@ func (s *Server) resolveRefColumns(ctx context.Context, rows []map[string]any, c
 			if len(remaining) == 0 {
 				break
 			}
-			s.batchLabels(ctx, e, remaining, uuidToLabel)
+			s.batchReadableLabels(ctx, e, remaining, uuidToLabel)
 			for k := range remaining {
 				if _, done := uuidToLabel[k]; done {
 					delete(remaining, k)
@@ -833,7 +833,8 @@ const refLabelBatchSize = 500
 // batchLabels resolves a set of unique ids (canonical string → id) against one
 // entity, writing display labels into out keyed by canonical id string. Ids not
 // present in the entity are simply absent from out. Runs one query per batch of
-// refLabelBatchSize ids. Shared by resolveRefs and resolveRefColumns.
+// refLabelBatchSize ids. General entity lists use this historical target-RBAC/
+// RLS-unrestricted helper; register-family UI resolvers use batchReadableLabels.
 func (s *Server) batchLabels(ctx context.Context, e *metadata.Entity, idset map[string]uuid.UUID, out map[string]string) {
 	if e == nil || len(idset) == 0 {
 		return
@@ -849,6 +850,54 @@ func (s *Server) batchLabels(ctx context.Context, e *metadata.Entity, idset map[
 			end = len(ids)
 		}
 		refRows, err := s.store.GetFieldsByIDs(ctx, e, ids[start:end], fields)
+		if err != nil {
+			return
+		}
+		for idStr, refRow := range refRows {
+			out[idStr] = s.maskedRecordLabel(ctx, e, refRow)
+		}
+	}
+}
+
+// readableFieldsByIDs applies target-object RBAC and RLS before a UI resolver
+// reads reference fields. Trusted DSL/internal contexts retain their historical
+// unrestricted behaviour; unauthenticated/admin contexts are unrestricted through
+// rowDecision as before. Every error is returned so callers can fail closed.
+func (s *Server) readableFieldsByIDs(ctx context.Context, e *metadata.Entity, ids []uuid.UUID, fields []metadata.Field) (map[string]map[string]any, error) {
+	var predicate *storage.Predicate
+	if !isTrustedDSLContext(ctx) {
+		decision, err := s.rowDecision(ctx, e, "read")
+		if err != nil {
+			return nil, err
+		}
+		if !decision.Allowed {
+			return nil, fmt.Errorf("forbidden")
+		}
+		if !decision.Unrestricted {
+			predicate = decision.Predicate
+		}
+	}
+	return s.store.GetFieldsByIDsFiltered(ctx, e, ids, fields, predicate)
+}
+
+// batchReadableLabels preserves the O(ids/batch) label-resolution contract but
+// performs target RLS in SQL. A denied target object, malformed policy or read
+// error resolves no labels rather than falling back to an unrestricted query.
+func (s *Server) batchReadableLabels(ctx context.Context, e *metadata.Entity, idset map[string]uuid.UUID, out map[string]string) {
+	if e == nil || len(idset) == 0 {
+		return
+	}
+	ids := make([]uuid.UUID, 0, len(idset))
+	for _, id := range idset {
+		ids = append(ids, id)
+	}
+	fields := displayField(e)
+	for start := 0; start < len(ids); start += refLabelBatchSize {
+		end := start + refLabelBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		refRows, err := s.readableFieldsByIDs(ctx, e, ids[start:end], fields)
 		if err != nil {
 			return
 		}

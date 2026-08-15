@@ -130,6 +130,7 @@ func (e *env) GetAllVariables() map[string]any {
 
 // getTypeName returns the DSL type name for a value
 func getTypeName(v any) string {
+	v = unwrapReadOnly(v)
 	if v == nil {
 		return "Неопределено"
 	}

@@ -57,6 +57,47 @@ func TestRunProcessor_UsesVarsBuilder(t *testing.T) {
 	assert.Equal(t, "из-хука-builder\nиз-внешнего-окружения", out)
 }
 
+// Регламентное задание не имеет документа-регистратора и не сбрасывает
+// накопленные движения. Проверяем настоящий runProcessor, чтобы случайный
+// WillPersist() в месте создания коллектора не превратил отказ в тихую потерю.
+func TestRunProcessor_RejectsMovementsThatCannotPersist(t *testing.T) {
+	db, _ := openSchedulerTestDB(t)
+
+	src := `Процедура Выполнить()
+  Движения.ОстаткиТоваров.Добавить();
+КонецПроцедуры`
+	prog, err := parser.New(lexer.New(src, "movements.proc.os")).ParseProgram()
+	require.NoError(t, err)
+
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{
+		Programs: map[string]*ast.Program{"ДвиженияЗадания": prog},
+		Registers: []*metadata.Register{{
+			Name:       "ОстаткиТоваров",
+			Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+			Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+		}},
+	})
+	reg.LoadProcessors([]*processor.Processor{{Name: "ДвиженияЗадания"}})
+
+	interp := interpreter.New()
+	interp.LookupProc = reg.GetModuleProc
+	sched := New(db, reg, interp)
+
+	out, runErr := sched.runProcessor(context.Background(), &metadata.ScheduledJob{
+		Name: "Проверка движений", Processor: "ДвиженияЗадания",
+	})
+	require.Error(t, runErr)
+	assert.Empty(t, out)
+	for _, want := range []string{
+		"Движения.ОстаткиТоваров.Добавить()",
+		"сохранять некуда",
+		"регламентное задание",
+	} {
+		assert.Contains(t, runErr.Error(), want)
+	}
+}
+
 func TestRunProcessorCleansOwnedDSLTransaction(t *testing.T) {
 	db, _ := openSchedulerTestDB(t)
 
