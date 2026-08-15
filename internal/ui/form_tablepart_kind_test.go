@@ -20,18 +20,15 @@ import (
 // но HTTP-форма молча не отрисовывала таблицу.
 func TestManagedForm_TablePartKeyRenders(t *testing.T) {
 	dir := t.TempDir()
-	writeFixture := func(rel, body string) {
-		t.Helper()
-		path := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("создание каталога %s: %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatalf("запись %s: %v", path, err)
+	documentsDir := filepath.Join(dir, "documents")
+	formsDir := filepath.Join(dir, "forms", "заказ")
+	for _, path := range []string{documentsDir, formsDir} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("создание каталога %s: %v", path, err)
 		}
 	}
 
-	writeFixture("documents/заказ.yaml", `name: Заказ
+	if err := os.WriteFile(filepath.Join(documentsDir, "заказ.yaml"), []byte(`name: Заказ
 title: Заказ
 fields:
   - name: Номер
@@ -43,8 +40,10 @@ tableparts:
         type: string
       - name: Количество
         type: number
-`)
-	writeFixture("forms/заказ/объекта.form.yaml", `schema: onebase.form/v1
+`), 0o644); err != nil {
+		t.Fatalf("запись метаданных документа: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(formsDir, "объекта.form.yaml"), []byte(`schema: onebase.form/v1
 form:
   name: ФормаОбъекта
   kind: object
@@ -53,7 +52,9 @@ elements:
   - kind: ТабличнаяЧасть
     name: ТаблицаСтроки
     table_part: Строки
-`)
+`), 0o644); err != nil {
+		t.Fatalf("запись формы: %v", err)
+	}
 
 	proj, err := project.Load(dir)
 	if err != nil {
