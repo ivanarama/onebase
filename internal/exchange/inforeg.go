@@ -15,10 +15,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/shopspring/decimal"
 )
 
 // RegisterInfoRegOnSave регистрирует изменение записи регистра сведений во всех
@@ -28,7 +30,7 @@ func RegisterInfoRegOnSave(ctx context.Context, store *storage.DB, plans []*meta
 	if store == nil || ir == nil || len(plans) == 0 || ir.Periodic {
 		return nil
 	}
-	key := encodeInfoRegKey(ir, dims)
+	var key string
 	changedAt := time.Now().UnixMilli()
 	for _, plan := range plans {
 		if !plan.IncludesInfoRegister(ir.Name) {
@@ -49,7 +51,28 @@ func RegisterInfoRegOnSave(ctx context.Context, store *storage.DB, plans []*meta
 			return fmt.Errorf("exchange: текущий узел %q не описан в плане %q", thisNode, plan.Name)
 		}
 		thisNode = thisNodeDef.Code
-		for _, target := range plan.RegistrationTargets(thisNode) {
+		targets := plan.RegistrationTargets(thisNode)
+		if len(targets) == 0 {
+			continue
+		}
+		if key == "" {
+			keyDims := dims
+			if !deletion {
+				stored, err := store.InfoRegGetExactWithKeyValues(ctx, ir, dims, nil)
+				if err != nil {
+					return fmt.Errorf("exchange: read back information register %s key: %w", ir.Name, err)
+				}
+				if stored == nil {
+					return fmt.Errorf("exchange: information register %s disappeared before key registration", ir.Name)
+				}
+				keyDims, err = storedInfoRegKeyDimensions(store, ir, stored)
+				if err != nil {
+					return err
+				}
+			}
+			key = encodeInfoRegKey(store, ir, keyDims)
+		}
+		for _, target := range targets {
 			if err := store.RegisterExchangeChange(ctx, storage.ExchangeChange{
 				Plan:       plan.Name,
 				ObjectType: ir.Name,
@@ -67,12 +90,128 @@ func RegisterInfoRegOnSave(ctx context.Context, store *storage.DB, plans []*meta
 	return nil
 }
 
+func storedInfoRegKeyDimensions(store *storage.DB, ir *metadata.InfoRegister, row map[string]any) (map[string]any, error) {
+	dims := make(map[string]any, len(ir.Dimensions))
+	keyValues, _ := row[storage.InfoRegKeyValuesField].(map[string]string)
+	for _, field := range ir.Dimensions {
+		if store.IsSQLite() && (field.Type == metadata.FieldTypeNumber || field.Type == metadata.FieldTypeDate) {
+			value, ok := keyValues[field.Name]
+			if !ok {
+				return nil, fmt.Errorf("exchange: information register %s readback omitted key %q", ir.Name, field.Name)
+			}
+			dims[field.Name] = value
+			continue
+		}
+		value, ok := row[field.Name]
+		if !ok {
+			return nil, fmt.Errorf("exchange: information register %s readback omitted dimension %q", ir.Name, field.Name)
+		}
+		dims[field.Name] = value
+	}
+	return dims, nil
+}
+
 // encodeInfoRegKey строит детерминированный ключ записи из каноничных значений
 // измерений (json.Marshal сортирует ключи map — порядок стабилен). Ключ служит и
 // object_id строки очереди, и способом восстановить измерения при сборке пакета.
-func encodeInfoRegKey(ir *metadata.InfoRegister, dims map[string]any) string {
-	b, _ := json.Marshal(canonicalRow(ir.Dimensions, dims))
+func encodeInfoRegKey(store *storage.DB, ir *metadata.InfoRegister, dims map[string]any) string {
+	row := canonicalRow(ir.Dimensions, dims)
+	if store != nil {
+		for _, field := range ir.Dimensions {
+			switch {
+			case store.IsPostgres() && field.Type == metadata.FieldTypeNumber:
+				if value, ok := canonicalPostgresInfoRegNumber(dims[field.Name]); ok {
+					row[field.Name] = value
+				}
+			case store.IsPostgres() && field.Type == metadata.FieldTypeDate:
+				if value, ok := canonicalPostgresInfoRegDate(dims[field.Name]); ok {
+					row[field.Name] = value
+				}
+			case store.IsSQLite() && field.Type == metadata.FieldTypeDate:
+				if value, ok := canonicalSQLiteInfoRegDate(dims[field.Name]); ok {
+					row[field.Name] = value
+				}
+			}
+		}
+	}
+	b, _ := json.Marshal(row)
 	return string(b)
+}
+
+func canonicalPostgresInfoRegNumber(value any) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	var raw string
+	switch typed := value.(type) {
+	case string:
+		raw = typed
+	case []byte:
+		raw = string(typed)
+	default:
+		raw = fmt.Sprint(value)
+	}
+	number, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil {
+		return "", false
+	}
+	return number.String(), true
+}
+
+func canonicalPostgresInfoRegDate(value any) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	if typed, ok := value.(time.Time); ok {
+		return canonicalPostgresInfoRegTime(typed), true
+	}
+	if typed, ok := value.(*time.Time); ok {
+		if typed == nil {
+			return "", false
+		}
+		return canonicalPostgresInfoRegTime(*typed), true
+	}
+	var raw string
+	switch typed := value.(type) {
+	case string:
+		raw = typed
+	case []byte:
+		raw = string(typed)
+	default:
+		return "", false
+	}
+	parsed, ok := storage.ParseRegPeriod(raw)
+	if !ok {
+		return "", false
+	}
+	return canonicalPostgresInfoRegTime(parsed), true
+}
+
+func canonicalPostgresInfoRegTime(value time.Time) string {
+	// PostgreSQL timestamps have microsecond storage precision. Values read back
+	// from the database already satisfy it; truncation also makes deletion keys
+	// built from a Go time.Time follow pgx's binary encoder.
+	return value.UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano)
+}
+
+const infoRegSQLiteTimeLayout = "2006-01-02 15:04:05-07:00"
+
+func canonicalSQLiteInfoRegDate(value any) (string, bool) {
+	switch typed := value.(type) {
+	case time.Time:
+		return typed.UTC().Format(infoRegSQLiteTimeLayout), true
+	case *time.Time:
+		if typed == nil {
+			return "", false
+		}
+		return typed.UTC().Format(infoRegSQLiteTimeLayout), true
+	case string:
+		return typed, true
+	case []byte:
+		return string(typed), true
+	default:
+		return "", false
+	}
 }
 
 func decodeInfoRegKey(key string) (map[string]any, error) {
