@@ -102,6 +102,11 @@ func registerFieldProtected(decisions map[string]access.FieldDecision, name stri
 	return ok && decision.Masked()
 }
 
+func registerFieldHidden(decisions map[string]access.FieldDecision, name string) bool {
+	decision, ok := fieldDecisionByName(decisions, name)
+	return ok && decision.Hidden()
+}
+
 func registerHasProtectedDimension(decisions map[string]access.FieldDecision, reg *metadata.Register) bool {
 	if reg == nil {
 		return false
@@ -114,6 +119,13 @@ func registerHasProtectedDimension(decisions map[string]access.FieldDecision, re
 	return false
 }
 
+// registerBalancesProtected covers every protected input that drives the
+// aggregate: dimensions are GROUP BY keys and вид_движения chooses the sign of
+// each resource. Masking only the final cells cannot close either oracle.
+func registerBalancesProtected(decisions map[string]access.FieldDecision, reg *metadata.Register) bool {
+	return registerHasProtectedDimension(decisions, reg) || registerFieldProtected(decisions, "вид_движения")
+}
+
 func unprotectedRegisterDimensions(decisions map[string]access.FieldDecision, fields []metadata.Field) []metadata.Field {
 	result := make([]metadata.Field, 0, len(fields))
 	for _, field := range fields {
@@ -122,6 +134,33 @@ func unprotectedRegisterDimensions(decisions map[string]access.FieldDecision, fi
 		}
 	}
 	return result
+}
+
+func visibleRegisterFields(decisions map[string]access.FieldDecision, fields []metadata.Field) []metadata.Field {
+	result := make([]metadata.Field, 0, len(fields))
+	for _, field := range fields {
+		if !registerFieldHidden(decisions, field.Name) {
+			result = append(result, field)
+		}
+	}
+	return result
+}
+
+type registerMovementColumns struct {
+	ShowLineNumber bool
+	ShowKind       bool
+	ShowRecorder   bool
+}
+
+func registerMovementColumnsFor(decisions map[string]access.FieldDecision) registerMovementColumns {
+	return registerMovementColumns{
+		ShowLineNumber: !registerFieldHidden(decisions, "line_number"),
+		ShowKind:       !registerFieldHidden(decisions, "вид_движения"),
+		// The rendered registrar is a compound value. Hiding either source must
+		// remove the compound column rather than reconstruct it from the other.
+		ShowRecorder: !registerFieldHidden(decisions, "recorder") &&
+			!registerFieldHidden(decisions, "recorder_type"),
+	}
 }
 
 // protectedRegisterFilterRequested closes the inference channel where a

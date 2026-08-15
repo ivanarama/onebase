@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -57,8 +58,8 @@ func (p *accumRegProxy) ctx() context.Context {
 func (p *accumRegProxy) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "остатки", "balances":
-		if registerHasProtectedDimension(p.s.registerFieldDecisions(p.ctx(), p.reg), p.reg) {
-			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): защищённое измерение нельзя использовать для группировки")
+		if registerBalancesProtected(p.s.registerFieldDecisions(p.ctx(), p.reg), p.reg) {
+			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): защищённое поле нельзя использовать для группировки или расчёта")
 		}
 		filter, err := p.rowFilter()
 		if err != nil {
@@ -95,11 +96,18 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
 		}
-		id, recorderType, ok := recorderIdentity(args[0])
-		if !ok {
-			return rowsToArray(nil)
+		id, recorderType, err := recorderIdentity(args[0])
+		if err != nil {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
 		}
-		filter = registerRecorderFilter(filter, id, recorderType)
+		recorderEntity := p.s.reg.GetEntity(recorderType)
+		if recorderEntity == nil || recorderEntity.Kind != metadata.KindDocument {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): ссылка должна указывать на известный тип документа")
+		}
+		// Ref.Type is normally the canonical metadata name, but GetEntity also
+		// accepts case-insensitive/sluggified names. Always filter by the stored
+		// canonical recorder_type after resolving it.
+		filter = registerRecorderFilter(filter, id, recorderEntity.Name)
 		rows, err := p.s.store.GetMovements(p.ctx(), p.reg.Name, p.reg, filter)
 		if err != nil {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
@@ -141,19 +149,22 @@ func rowsToArray(rows []map[string]any) *interpreter.Array {
 	return interpreter.NewArray(items)
 }
 
-// recorderIdentity извлекает UUID и, когда доступен, тип документа-регистратора.
+// recorderIdentity accepts only a typed DSL reference and extracts its UUID
+// and document type. A bare UUID cannot identify a registrar on its own.
 // Тип не декоративный: разные таблицы документов могут содержать одинаковый
 // UUID, а движение идентифицирует регистратора парой (recorder_type, recorder).
-func recorderIdentity(v any) (uuid.UUID, string, bool) {
-	switch x := v.(type) {
-	case *interpreter.Ref:
-		if id, err := uuid.Parse(x.UUID); err == nil {
-			return id, strings.TrimSpace(x.Type), true
-		}
-	case string:
-		if id, err := uuid.Parse(x); err == nil {
-			return id, "", true
-		}
+func recorderIdentity(v any) (uuid.UUID, string, error) {
+	ref, ok := v.(*interpreter.Ref)
+	if !ok || ref == nil {
+		return uuid.UUID{}, "", fmt.Errorf("ожидается типизированная ссылка на документ; UUID-строка неоднозначна")
 	}
-	return uuid.UUID{}, "", false
+	recorderType := strings.TrimSpace(ref.Type)
+	if recorderType == "" {
+		return uuid.UUID{}, "", fmt.Errorf("у ссылки не указан тип документа")
+	}
+	id, err := uuid.Parse(ref.UUID)
+	if err != nil {
+		return uuid.UUID{}, "", fmt.Errorf("некорректный UUID регистратора")
+	}
+	return id, recorderType, nil
 }

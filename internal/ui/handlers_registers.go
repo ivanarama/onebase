@@ -51,15 +51,21 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
 	filterValues := filterFormValues(r, filterFields)
+	columns := registerMovementColumnsFor(decisions)
 	s.render(w, r, "page-register-movements", map[string]any{
-		"Register":         reg,
-		"Rows":             rows,
-		"CanViewBalances":  !registerHasProtectedDimension(decisions, reg),
-		"FilterFields":     filterFields,
-		"ShowPeriodFilter": showPeriodFilter,
-		"Filter":           filterValues,
-		"RefOpts":          s.loadRefOpts(r.Context(), filterFields, filterValues),
-		"HasFilters":       !flt.IsEmpty(),
+		"Register":          reg,
+		"Rows":              rows,
+		"CanViewBalances":   !registerBalancesProtected(decisions, reg),
+		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
+		"VisibleResources":  visibleRegisterFields(decisions, reg.Resources),
+		"VisibleAttributes": visibleRegisterFields(decisions, reg.Attributes),
+		"ShowMovementKind":  columns.ShowKind,
+		"ShowRecorder":      columns.ShowRecorder,
+		"FilterFields":      filterFields,
+		"ShowPeriodFilter":  showPeriodFilter,
+		"Filter":            filterValues,
+		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":        !flt.IsEmpty(),
 	})
 }
 
@@ -74,9 +80,9 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decisions := s.registerFieldDecisions(r.Context(), reg)
-	// Balances GROUP BY every dimension. Masking the output cannot hide which
-	// protected values exist, so a protected grouping key denies the endpoint.
-	if registerHasProtectedDimension(decisions, reg) {
+	// Balances GROUP BY every dimension and use movement kind as the resource
+	// sign. Masking the output cannot hide either protected input.
+	if registerBalancesProtected(decisions, reg) {
 		s.renderForbidden(w, r)
 		return
 	}
@@ -102,25 +108,42 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	s.resolveRegisterRows(r.Context(), rows, reg)
 	filterValues := filterFormValues(r, filterFields)
 	s.render(w, r, "page-register-balances", map[string]any{
-		"Register":         reg,
-		"Rows":             rows,
-		"FilterFields":     filterFields,
-		"ShowPeriodFilter": showPeriodFilter,
-		"Filter":           filterValues,
-		"RefOpts":          s.loadRefOpts(r.Context(), filterFields, filterValues),
-		"HasFilters":       !flt.IsEmpty(),
+		"Register":          reg,
+		"Rows":              rows,
+		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
+		"VisibleResources":  visibleRegisterFields(decisions, reg.Resources),
+		"FilterFields":      filterFields,
+		"ShowPeriodFilter":  showPeriodFilter,
+		"Filter":            filterValues,
+		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":        !flt.IsEmpty(),
 	})
+}
+
+type documentMovementRead struct {
+	Rows    map[string][]map[string]any
+	Columns map[string]registerMovementColumns
 }
 
 // loadDocumentMovementsForRead is the document-form read boundary for
 // accumulation registers. A posted document may have movements in registers
 // the viewer cannot read, and each readable register can have its own RLS and
-// field policy. Apply all three gates before resolving references or rendering.
-func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType string, recorderID uuid.UUID) map[string][]map[string]any {
-	result := make(map[string][]map[string]any)
+// field policy. Apply every gate before resolving references or rendering.
+func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType string, recorderID uuid.UUID) documentMovementRead {
+	result := documentMovementRead{
+		Rows:    make(map[string][]map[string]any),
+		Columns: make(map[string]registerMovementColumns),
+	}
 	for _, reg := range s.reg.Registers() {
 		decision, err := s.rowDecisionFor(ctx, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg))
 		if err != nil || !decision.Allowed {
+			continue
+		}
+		fieldDecisions := s.registerFieldDecisions(ctx, reg)
+		// The document card is itself a selection by registrar. If either
+		// registrar component is protected, even the existence/count of the
+		// matching movement set would be a guessing oracle.
+		if registerFieldProtected(fieldDecisions, "recorder") || registerFieldProtected(fieldDecisions, "recorder_type") {
 			continue
 		}
 
@@ -142,7 +165,8 @@ func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType 
 		s.maskRegisterRecords(ctx, reg, rows)
 		s.resolveRegisterRows(ctx, rows, reg)
 		if len(rows) > 0 {
-			result[reg.Name] = rows
+			result.Rows[reg.Name] = rows
+			result.Columns[reg.Name] = registerMovementColumnsFor(fieldDecisions)
 		}
 	}
 	return result
@@ -264,10 +288,18 @@ func (s *Server) resolveRegisterRows(ctx context.Context, rows []map[string]any,
 		if recType != "" && recIDStr != "" {
 			if recID, err := uuid.Parse(recIDStr); err == nil {
 				if entity := s.reg.GetEntityBySlug(recType); entity != nil {
-					if docRow, err2 := s.store.GetByID(ctx, entity.Name, recID, entity); err2 == nil {
+					fields := make([]metadata.Field, 0, 2)
+					for _, name := range []string{"Номер", "Дата"} {
+						if field, ok := entityFieldByName(entity, name); ok {
+							fields = append(fields, field)
+						}
+					}
+					readable, err2 := s.readableFieldsByIDs(ctx, entity, []uuid.UUID{recID}, fields)
+					if docRow := readable[recID.String()]; err2 == nil && docRow != nil {
 						// Представление регистратора едет в список движений, то
 						// есть номер и дата документа обязаны подчиняться той же
-						// полевой политике, что и список самого документа.
+						// объектной, строковой и полевой политике, что и список
+						// самого документа.
 						s.maskRecord(ctx, entity, docRow)
 						num := fmt.Sprintf("%v", docRow["Номер"])
 						date := regFmtDate(docRow["Дата"])
