@@ -361,14 +361,10 @@ func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 	return infoRegListRows(ir, raw), nil
 }
 
-// scanInfoRegRows decodes the common storage projection used by InfoRegList and
-// by DELETE ... RETURNING. It deliberately keeps the system period as a typed
-// time.Time. In particular, delete-RLS must compare the database value rather
-// than the localized display string produced for the HTML list.
-func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]map[string]any, error) {
-	return scanInfoRegRowsMode(rows, ir, selCols, false)
-}
-
+// scanInfoRegRowsMode decodes the common storage projection used by InfoRegList
+// and by DELETE ... RETURNING. It deliberately keeps the system period as a
+// typed time.Time. In particular, delete-RLS must compare the database value
+// rather than the localized display string produced for the HTML list.
 func scanInfoRegRowsMode(rows Rows, ir *metadata.InfoRegister, selCols []string, withKeyValues bool) ([]map[string]any, error) {
 	var result []map[string]any
 	for rows.Next() {
