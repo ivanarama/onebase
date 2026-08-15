@@ -21,6 +21,43 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
+func TestDocWriter_DisplayNameUsesExplicitPresentationFallback(t *testing.T) {
+	entity := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+			{Name: "Шифр", Type: metadata.FieldTypeString},
+			{Name: "Тема", Type: metadata.FieldTypeString},
+		},
+		Presentation: []string{"Шифр", "Тема"},
+	}
+	newWriter := func(code, subject string) *docWriter {
+		obj := runtime.NewObject(entity.Name, entity.Kind)
+		obj.Fields["шифр"] = code
+		obj.Fields["тема"] = subject
+		obj.Fields["номер"] = "ЗК-LEGACY"
+		return &docWriter{entity: entity, obj: obj}
+	}
+
+	if got := newWriter("EXT-1", "Поставка").displayName(); got != "EXT-1" {
+		t.Fatalf("primary displayName = %q, ожидалось EXT-1", got)
+	}
+	if got := newWriter(" ", "Поставка").displayName(); got != "Поставка" {
+		t.Fatalf("fallback displayName = %q, ожидалось Поставка", got)
+	}
+	empty := newWriter("", "")
+	if got, want := empty.displayName(), entity.Name+":"+empty.obj.ID.String()[:8]; got != want {
+		t.Fatalf("empty explicit displayName = %q, ожидался id fallback %q", got, want)
+	}
+
+	legacyEntity := &metadata.Entity{Name: "Заказ", Kind: metadata.KindDocument}
+	legacyObj := runtime.NewObject(legacyEntity.Name, legacyEntity.Kind)
+	legacyObj.Fields["номер"] = "ЗК-001"
+	if got := (&docWriter{entity: legacyEntity, obj: legacyObj}).displayName(); got != "ЗК-001" {
+		t.Fatalf("legacy displayName = %q, ожидалось ЗК-001", got)
+	}
+}
+
 // создание/проведение документов из обработки.
 // Полный сценарий: Документы.X.Создать() → заполнить шапку и ТЧ →
 // Записать() → Провести(). Проверяем что документ, его ТЧ и движения

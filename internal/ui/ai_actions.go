@@ -124,6 +124,23 @@ func aiRefLookupField(entity *metadata.Entity) string {
 	return ""
 }
 
+// aiRefLookupFields возвращает весь fallback-список только для явно заданного
+// presentation. Без ключа поведение остаётся прежним: поиск и подпись идут по
+// одному основному реквизиту.
+func aiRefLookupFields(entity *metadata.Entity) []metadata.Field {
+	if entity == nil {
+		return nil
+	}
+	fields := metadata.LabelFields(entity)
+	if len(fields) == 0 {
+		return nil
+	}
+	if len(entity.Presentation) > 0 {
+		return fields
+	}
+	return fields[:1]
+}
+
 // aiRefDisplay — представление доступной пользователю записи для подписи
 // карточки. Чтение идёт с объектной и строковой проверкой: UUID из аргументов
 // модели/клиента не должен раскрывать подпись скрытой RLS-записи.
@@ -136,14 +153,12 @@ func (s *Server) aiRefDisplay(ctx context.Context, entity *metadata.Entity, id u
 	// те же field policies, что к карточке и REST. Hidden lookup исчезнет из row,
 	// masked lookup вернётся только в замаскированном виде.
 	s.maskRecord(ctx, entity, row)
-	field := aiRefLookupField(entity)
-	if field == "" {
-		return id.String(), true
-	}
-	for k, v := range row {
-		if strings.EqualFold(k, field) && v != nil {
-			if txt := strings.TrimSpace(fmt.Sprint(v)); txt != "" {
-				return txt, true
+	for _, field := range aiRefLookupFields(entity) {
+		for k, v := range row {
+			if strings.EqualFold(k, field.Name) && v != nil {
+				if txt := strings.TrimSpace(fmt.Sprint(v)); txt != "" {
+					return txt, true
+				}
 			}
 		}
 	}
@@ -226,22 +241,36 @@ func (s *Server) aiNormalizeValue(ctx context.Context, f metadata.Field, raw any
 		if s.rowAccessRestricted(ctx, refEntity, "read") {
 			return nil, "", fmt.Errorf("поле %s: для %s действует строковый доступ — передай UUID, найденный через выполнить_запрос", f.Name, refEntity.Name)
 		}
-		lookup := aiRefLookupField(refEntity)
-		if lookup == "" {
+		lookupFields := aiRefLookupFields(refEntity)
+		if len(lookupFields) == 0 {
 			return nil, "", fmt.Errorf("поле %s: у %s нет строкового реквизита для поиска по имени — передай UUID", f.Name, refEntity.Name)
 		}
+		lookupNames := make([]string, 0, len(lookupFields))
+		for _, lookup := range lookupFields {
+			lookupNames = append(lookupNames, lookup.Name)
+		}
 		for protected := range s.fieldDecisions(ctx, refEntity) {
-			if strings.EqualFold(protected, lookup) {
-				return nil, "", fmt.Errorf("поле %s: поиск %s по защищённому полю %s запрещён — передай UUID", f.Name, refEntity.Name, lookup)
+			for _, lookup := range lookupFields {
+				if strings.EqualFold(protected, lookup.Name) {
+					return nil, "", fmt.Errorf("поле %s: поиск %s по защищённому полю %s запрещён — передай UUID", f.Name, refEntity.Name, lookup.Name)
+				}
 			}
 		}
-		id, display, count, err := s.store.MatchCatalogByField(ctx, refEntity, lookup, str)
+		lookupLabel := strings.Join(lookupNames, ", ")
+		var id, display string
+		var count int
+		var err error
+		if len(refEntity.Presentation) > 0 {
+			id, display, count, err = s.store.MatchCatalogByPresentation(ctx, refEntity, str)
+		} else {
+			id, display, count, err = s.store.MatchCatalogByField(ctx, refEntity, lookupFields[0].Name, str)
+		}
 		if err != nil {
 			return nil, "", fmt.Errorf("поле %s: поиск %q в %s: %w", f.Name, str, refEntity.Name, err)
 		}
 		switch count {
 		case 0:
-			return nil, "", fmt.Errorf("поле %s: %q не найдено в %s (поиск по %s) — уточни значение или найди UUID через выполнить_запрос", f.Name, str, refEntity.Name, lookup)
+			return nil, "", fmt.Errorf("поле %s: %q не найдено в %s (поиск по %s) — уточни значение или найди UUID через выполнить_запрос", f.Name, str, refEntity.Name, lookupLabel)
 		case 1:
 			return id, display, nil
 		default:

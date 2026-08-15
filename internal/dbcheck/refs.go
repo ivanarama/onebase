@@ -37,10 +37,12 @@ type refColumn struct {
 	// то, во что движение агрегируется, поэтому после неё нужно пересчитать итоги
 	// (план 80), иначе Остатки()/Обороты() врут молча (#619).
 	Register *metadata.Register
-	// NoNull — колонку занулить нельзя: измерение регистра сведений объявлено
-	// NOT NULL и входит в PRIMARY KEY. Автоочистка её пропускает и показывает
-	// оператору как требующую ручного разбора (#619).
-	NoNull bool
+	// Manual — причина, по которой автоочистка колонку НЕ трогает. Пусто —
+	// зануляется. Причин две, и они разные: измерение регистра сведений
+	// объявлено NOT NULL и входит в PRIMARY KEY (#619), а субконто и ресурсы
+	// бухрегистра зануляемы технически, но очистка меняет аналитику проводки —
+	// такое решение принимает бухгалтер, а не doctor (#910).
+	Manual string
 }
 
 func (c refsCheck) Run(ctx context.Context, env *Env) Result {
@@ -50,6 +52,7 @@ func (c refsCheck) Run(ctx context.Context, env *Env) Result {
 	}
 	res := Result{Check: c.Name(), Title: c.Title(), Severity: SeverityOK}
 	total := 0
+	autoFixable := 0
 	for _, rc := range cols {
 		count, examples, err := brokenRefs(ctx, env.DB, rc)
 		if err != nil {
@@ -59,9 +62,18 @@ func (c refsCheck) Run(ctx context.Context, env *Env) Result {
 			continue
 		}
 		total += count
+		detail := "ссылка на несуществующий объект"
+		if rc.Manual != "" {
+			// Причина ручного разбора видна прямо в находке: иначе оператор
+			// прочитал бы подсказку «--fix refs очистит» и не понял, почему
+			// после починки строки на месте.
+			detail += "; " + rc.Manual
+		} else {
+			autoFixable++
+		}
 		res.Findings = append(res.Findings, Finding{
 			Object:   rc.Object,
-			Detail:   "ссылка на несуществующий объект",
+			Detail:   detail,
 			Count:    count,
 			Examples: examples,
 		})
@@ -71,7 +83,13 @@ func (c refsCheck) Run(ctx context.Context, env *Env) Result {
 	}
 	res.Severity = SeverityError
 	res.Summary = fmt.Sprintf("битых ссылок: %d в %d поле(ях)", total, len(res.Findings))
-	res.FixHint = "onebase doctor --fix refs — очистить битые ссылки (значение станет пустым)"
+	if autoFixable > 0 {
+		res.FixHint = "onebase doctor --fix refs — очистить битые ссылки (значение станет пустым)"
+	} else {
+		// Обещать починку, которой не будет, нельзя: все находки требуют
+		// ручного разбора, и --fix refs не изменил бы ни строки.
+		res.FixHint = "все находки требуют ручного разбора — см. пояснение у каждой"
+	}
 	return res
 }
 
@@ -87,15 +105,14 @@ func (c refsCheck) Fix(ctx context.Context, env *Env, _ Result) (int, error) {
 	affected := map[string]*metadata.Register{} // регистры накопления к пересчёту
 	var problems []string                       // копим, а не прерываемся на первой
 	for _, rc := range cols {
-		if rc.NoNull {
-			// Занулить измерение регистра сведений нельзя — показываем оператору,
-			// если по нему есть битые ссылки: строку надо разбирать вручную.
+		if rc.Manual != "" {
+			// Колонка не зануляется автоматически — показываем оператору, если по
+			// ней есть битые ссылки: строки надо разбирать вручную.
 			n, _, err := brokenRefs(ctx, env.DB, rc)
 			if err != nil {
 				problems = append(problems, fmt.Sprintf("%s: %v", rc.Object, err))
 			} else if n > 0 {
-				problems = append(problems, fmt.Sprintf(
-					"%s: %d битых ссылок в измерении регистра сведений (NOT NULL) — занулить нельзя, разберите строки вручную", rc.Object, n))
+				problems = append(problems, fmt.Sprintf("%s: %d битых ссылок, %s", rc.Object, n, rc.Manual))
 			}
 			continue
 		}
@@ -135,8 +152,12 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 	}
 
 	var out []refColumn
-	add := func(object, table string, fields []metadata.Field, reg *metadata.Register, noNull bool) {
-		for _, f := range fields {
+	// column — как называется колонка в таблице. Обычно это имя поля, но у
+	// субконто бухрегистра имя аналитики и имя колонки не совпадают: колонки
+	// нумерованные (субконто1, субконто2…).
+	add := func(object, table string, fields []metadata.Field, reg *metadata.Register, manual string,
+		column func(i int, f metadata.Field) string) {
+		for i, f := range fields {
 			if f.RefEntity == "" {
 				continue
 			}
@@ -149,32 +170,53 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 			out = append(out, refColumn{
 				Object:   object + "." + f.Name,
 				Table:    table,
-				Column:   metadata.ColumnName(f),
+				Column:   column(i, f),
 				Target:   target,
 				Register: reg,
-				NoNull:   noNull,
+				Manual:   manual,
 			})
 		}
 	}
+	byName := func(_ int, f metadata.Field) string { return metadata.ColumnName(f) }
 
 	for _, e := range env.Entities {
-		add(e.Name, metadata.TableName(e.Name), e.Fields, nil, false)
+		add(e.Name, metadata.TableName(e.Name), e.Fields, nil, "", byName)
 		for _, tp := range e.TableParts {
-			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields, nil, false)
+			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields, nil, "", byName)
 		}
 	}
 	for _, reg := range env.Registers {
 		table := metadata.RegisterTableName(reg.Name)
 		// Измерения и реквизиты регистра накопления зануляемы, но очистка меняет
 		// агрегацию — после неё пересчитываем итоги (reg передаём в refColumn).
-		add(reg.Name, table, reg.Dimensions, reg, false)
-		add(reg.Name, table, reg.Attributes, reg, false)
+		add(reg.Name, table, reg.Dimensions, reg, "", byName)
+		// Ресурс регистра накопления обычно число, но объявить его ссылкой никто
+		// не мешает — и CheckRefs на удалении такую ссылку уже считает. Пропуск
+		// здесь означал бы, что удалить объект нельзя, а найти почему — нечем.
+		add(reg.Name, table, reg.Resources, reg, "", byName)
+		add(reg.Name, table, reg.Attributes, reg, "", byName)
 	}
 	for _, ir := range env.InfoRegisters {
 		table := metadata.InfoRegTableName(ir.Name)
 		// Измерения регистра сведений — NOT NULL и в PRIMARY KEY: занулить нельзя.
-		add(ir.Name, table, ir.Dimensions, nil, true)
-		add(ir.Name, table, ir.Resources, nil, false)
+		add(ir.Name, table, ir.Dimensions, nil,
+			"измерение регистра сведений (NOT NULL) — занулить нельзя, разберите строки вручную", byName)
+		add(ir.Name, table, ir.Resources, nil, "", byName)
+	}
+	// Регистр бухгалтерии — тот самый остаток, замеченный в #881: внешних ключей
+	// у его колонок нет, а проверка обходила его стороной, хотя субконто хранит
+	// ровно такие же ссылки.
+	//
+	// Автоочистка сюда не идёт: занулить субконто технически можно, но это
+	// меняет аналитику уже проведённой операции и итоги по ней. Такое решение
+	// принимает бухгалтер, а не doctor.
+	for _, ar := range env.AccountRegisters {
+		table := metadata.AccountRegTableName(ar.Name)
+		add(ar.Name, table, ar.Subconto, nil,
+			"субконто бухрегистра — очистка меняет аналитику проводки, разберите вручную",
+			func(i int, _ metadata.Field) string { return metadata.SubcontoColumn(i + 1) })
+		add(ar.Name, table, ar.Resources, nil,
+			"ресурс бухрегистра — очистка меняет проводку, разберите вручную", byName)
 	}
 
 	// Таблицы может не быть — например, объект только что добавили в
