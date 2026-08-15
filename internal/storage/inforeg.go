@@ -586,6 +586,12 @@ func (db *DB) InfoRegDelete(ctx context.Context, ir *metadata.InfoRegister, dimK
 // для регистров, чья primary key включает (period, dims) и где нет
 // конфликта с другими источниками (например, ручной ввод того же набора).
 func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, ir *metadata.InfoRegister, period *time.Time) error {
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		return db.writeInfoMovementsInTx(txCtx, regName, recorderType, recorderID, rows, ir, period)
+	})
+}
+
+func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, ir *metadata.InfoRegister, period *time.Time) error {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
 
@@ -602,6 +608,7 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 		phs := []string{}
 		args := []any{}
 		idx := 1
+		var rowPeriod *time.Time
 
 		if ir.Periodic {
 			// Период: явно в row либо общий период документа.
@@ -620,19 +627,22 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 			phs = append(phs, d.Placeholder(idx))
 			args = append(args, p)
 			idx++
+			rowPeriod = &p
 		}
 
+		dimKey := make(map[string]any, len(ir.Dimensions))
+		for _, f := range ir.Dimensions {
+			dimKey[f.Name] = ciGet(row, f.Name)
+		}
+		writeKey, err := db.resolveInfoRegWriteKey(ctx, ir, dimKey, rowPeriod)
+		if err != nil {
+			return fmt.Errorf("write info movement %s row %d key: %w", regName, i+1, err)
+		}
 		for _, f := range ir.Dimensions {
 			col := metadata.ColumnName(f)
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(idx))
-			v := ciGet(row, f.Name)
-			var err error
-			v, err = normalizeRegField(d, f, v)
-			if err != nil {
-				return fmt.Errorf("write info movement %s row %d dimension %s: %w", regName, i+1, f.Name, err)
-			}
-			args = append(args, v)
+			args = append(args, physicalRegFieldArg(d, f, writeKey[f.Name]))
 			idx++
 		}
 		for _, f := range ir.Resources {

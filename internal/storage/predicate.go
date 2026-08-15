@@ -90,8 +90,12 @@ func predicateSQL(d Dialect, entity *metadata.Entity, p Predicate, nextArg int, 
 		ph := make([]string, 0, len(values))
 		args := make([]any, 0, len(values))
 		for _, v := range values {
+			arg, err := predicateSQLValue(d, entity, field, v)
+			if err != nil {
+				return "", nil, nextArg, fmt.Errorf("row predicate field %q: %w", p.Field, err)
+			}
 			ph = append(ph, d.Placeholder(nextArg))
-			args = append(args, predicateSQLValue(d, entity, field, v))
+			args = append(args, arg)
 			nextArg++
 		}
 		sqlOp := "IN"
@@ -185,8 +189,12 @@ func predicateCompareSQL(d Dialect, entity *metadata.Entity, field *metadata.Fie
 		}
 		return fmt.Sprintf("%s IS NULL", col), nil, nextArg, nil
 	}
+	arg, err := predicateSQLValue(d, entity, field, value)
+	if err != nil {
+		return "", nil, nextArg, err
+	}
 	return fmt.Sprintf("%s %s %s", col, op, d.Placeholder(nextArg)),
-		[]any{predicateSQLValue(d, entity, field, value)}, nextArg + 1, nil
+		[]any{arg}, nextArg + 1, nil
 }
 
 func predicateColumn(entity *metadata.Entity, field string) (string, *metadata.Field, bool) {
@@ -264,18 +272,18 @@ func predicateEntityHasField(entity *metadata.Entity, field string) bool {
 	return false
 }
 
-func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field, value any) any {
+func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field, value any) (any, error) {
 	if field == nil {
-		return value
+		return value, nil
 	}
 	if field.RefEntity != "" || strings.EqualFold(field.Name, "id") || strings.EqualFold(field.Name, "parent_id") {
 		if id, ok := parseAnyUUID(value); ok {
-			return idArg(d, id)
+			return idArg(d, id), nil
 		}
 	}
 	if field.Type == metadata.FieldTypeBool {
 		if b, ok := parseAnyBool(value); ok {
-			return b
+			return b, nil
 		}
 	}
 	if field.Type == metadata.FieldTypeDate {
@@ -286,12 +294,15 @@ func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field
 			// the corresponding persisted representation while PostgreSQL keeps
 			// the native timestamptz value in both cases.
 			if d.Name() == "sqlite" && !predicateEntityUsesBoundTime(entity) {
-				return t.UTC().Format(time.RFC3339)
+				return t.UTC().Format(time.RFC3339), nil
 			}
-			return t
+			return t, nil
 		}
 	}
-	return value
+	if field.Type == metadata.FieldTypeNumber {
+		return canonicalNumberArg(*field, value)
+	}
+	return value, nil
 }
 
 func predicateEntityUsesBoundTime(entity *metadata.Entity) bool {
