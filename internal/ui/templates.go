@@ -1749,17 +1749,18 @@ const tplForm = `
 {{if and (not .IsNew) .DocMovements}}
 <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
   {{range $regName, $rows := .DocMovements}}
+  {{$columns := index $.DocMovementColumns $regName}}
   <details style="display:inline">
     <summary style="display:inline;cursor:pointer;font-size:12px;padding:4px 10px;background:#f0f4ff;color:#1a4a80;border-radius:4px;font-weight:600;list-style:none">
       {{$regName}} ({{len $rows}}) ▾
     </summary>
     <div style="position:absolute;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);margin-top:4px;min-width:300px;max-height:300px;overflow:auto">
       <table class="list-tbl" style="font-size:12px;margin:0">
-        <tr><th>{{t $.Lang "№"}}</th><th>{{t $.Lang "Вид"}}</th>{{$first := index $rows 0}}{{range $k, $v := $first}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<th>{{$k}}</th>{{end}}{{end}}</tr>
+        <tr>{{if $columns.ShowLineNumber}}<th>{{t $.Lang "№"}}</th>{{end}}{{if $columns.ShowKind}}<th>{{t $.Lang "Вид"}}</th>{{end}}{{$first := index $rows 0}}{{range $k, $v := $first}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<th>{{$k}}</th>{{end}}{{end}}</tr>
         {{range $i, $row := $rows}}
         <tr>
-          <td>{{add $i 1}}</td>
-          <td>{{if eq (index $row "вид_движения") "Приход"}}<span style="color:#16a34a">▲</span>{{else if eq (index $row "вид_движения") "Расход"}}<span style="color:#dc2626">▼</span>{{else}}—{{end}}</td>
+          {{if $columns.ShowLineNumber}}<td>{{index $row "line_number"}}</td>{{end}}
+          {{if $columns.ShowKind}}<td>{{$kind := index $row "вид_движения"}}{{if eq $kind "Приход"}}<span style="color:#16a34a">▲</span>{{else if eq $kind "Расход"}}<span style="color:#dc2626">▼</span>{{else}}{{$kind}}{{end}}</td>{{end}}
           {{range $k, $v := $row}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<td>{{$v}}</td>{{end}}{{end}}
         </tr>
         {{end}}
@@ -2255,24 +2256,24 @@ const tplRegister = `
 <main>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "движения"}}</h2>
-  <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>
+  {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>{{end}}
 </div>
-{{template "reg-filter-form" (dict "Fields" .Register.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" true "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s" (lower .Register.Name)) "Lang" $.Lang)}}
+{{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .ShowPeriodFilter "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
-  <th>{{t $.Lang "Вид движения"}}</th>
-  <th>{{t $.Lang "Регистратор"}}</th>
-  {{range .Register.Dimensions}}<th>{{.DisplayName $.Lang}}</th>{{end}}
-  {{range .Register.Resources}}<th>{{.DisplayName $.Lang}}</th>{{end}}
-  {{range .Register.Attributes}}<th>{{.DisplayName $.Lang}}</th>{{end}}
+  {{if .ShowMovementKind}}<th>{{t $.Lang "Вид движения"}}</th>{{end}}
+  {{if .ShowRecorder}}<th>{{t $.Lang "Регистратор"}}</th>{{end}}
+  {{range .VisibleDimensions}}<th>{{.DisplayName $.Lang}}</th>{{end}}
+  {{range .VisibleResources}}<th>{{.DisplayName $.Lang}}</th>{{end}}
+  {{range .VisibleAttributes}}<th>{{.DisplayName $.Lang}}</th>{{end}}
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr>
-  <td>{{$v := index $row "вид_движения"}}{{if eq (str $v) "Приход"}}<span style="color:#16a34a;font-weight:600">▲ {{$v}}</span>{{else}}<span style="color:#dc2626;font-weight:600">▼ {{$v}}</span>{{end}}</td>
-  <td style="font-size:12px;color:#475569">{{if index $row "recorder_label"}}{{index $row "recorder_label"}}{{else}}{{index $row "recorder_type"}}{{end}}</td>
-  {{range $.Register.Dimensions}}<td>{{index $row .Name}}</td>{{end}}
-  {{range $.Register.Resources}}<td>{{index $row .Name}}</td>{{end}}
-  {{range $.Register.Attributes}}<td>{{index $row .Name}}</td>{{end}}
+  {{if $.ShowMovementKind}}<td>{{$v := index $row "вид_движения"}}{{if eq (str $v) "Приход"}}<span style="color:#16a34a;font-weight:600">▲ {{$v}}</span>{{else if eq (str $v) "Расход"}}<span style="color:#dc2626;font-weight:600">▼ {{$v}}</span>{{else}}{{$v}}{{end}}</td>{{end}}
+  {{if $.ShowRecorder}}<td style="font-size:12px;color:#475569">{{if index $row "recorder_label"}}{{index $row "recorder_label"}}{{else}}{{index $row "recorder_type"}}{{end}}</td>{{end}}
+  {{range $.VisibleDimensions}}<td>{{index $row .Name}}</td>{{end}}
+  {{range $.VisibleResources}}<td>{{index $row .Name}}</td>{{end}}
+  {{range $.VisibleAttributes}}<td>{{index $row .Name}}</td>{{end}}
 </tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">{{t $.Lang "Движений нет"}}</p>{{end}}
@@ -2286,16 +2287,16 @@ const tplRegister = `
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "остатки"}}</h2>
   <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "← Движения"}}</a>
 </div>
-{{template "reg-filter-form" (dict "Fields" .Register.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" false "ShowToOnly" true "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s/balances" (lower .Register.Name)) "Lang" $.Lang)}}
+{{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" false "ShowToOnly" .ShowPeriodFilter "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s/balances" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
-  {{range .Register.Dimensions}}<th>{{.DisplayName $.Lang}}</th>{{end}}
-  {{range .Register.Resources}}<th>{{.DisplayName $.Lang}}</th>{{end}}
+  {{range .VisibleDimensions}}<th>{{.DisplayName $.Lang}}</th>{{end}}
+  {{range .VisibleResources}}<th>{{.DisplayName $.Lang}}</th>{{end}}
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr>
-  {{range $.Register.Dimensions}}<td>{{index $row .Name}}</td>{{end}}
-  {{range $.Register.Resources}}<td style="font-weight:600">{{index $row .Name}}</td>{{end}}
+  {{range $.VisibleDimensions}}<td>{{index $row .Name}}</td>{{end}}
+  {{range $.VisibleResources}}<td style="font-weight:600">{{index $row .Name}}</td>{{end}}
 </tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">{{t $.Lang "Остатков нет"}}</p>{{end}}

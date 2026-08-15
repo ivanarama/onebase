@@ -28,7 +28,14 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
 		return
 	}
-	flt := parseRegFilter(r, reg.Dimensions, true /*periodic — у движений всегда есть период*/)
+	decisions := s.registerFieldDecisions(r.Context(), reg)
+	if protectedRegisterFilterRequested(r, reg, decisions) {
+		s.renderForbidden(w, r)
+		return
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
+	showPeriodFilter := !registerFieldProtected(decisions, "period")
+	flt := parseRegFilter(r, filterFields, showPeriodFilter)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
@@ -39,13 +46,26 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Маска полей — ДО разрешения ссылок в представления: иначе защищённое
+	// значение уже превратилось бы в человекочитаемую подпись (#859).
+	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
+	filterValues := filterFormValues(r, filterFields)
+	columns := registerMovementColumnsFor(decisions)
 	s.render(w, r, "page-register-movements", map[string]any{
-		"Register":   reg,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, reg.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), reg.Dimensions, filterFormValues(r, reg.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
+		"Register":          reg,
+		"Rows":              rows,
+		"CanViewBalances":   !registerBalancesProtected(decisions, reg),
+		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
+		"VisibleResources":  visibleRegisterFields(decisions, reg.Resources),
+		"VisibleAttributes": visibleRegisterFields(decisions, reg.Attributes),
+		"ShowMovementKind":  columns.ShowKind,
+		"ShowRecorder":      columns.ShowRecorder,
+		"FilterFields":      filterFields,
+		"ShowPeriodFilter":  showPeriodFilter,
+		"Filter":            filterValues,
+		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":        !flt.IsEmpty(),
 	})
 }
 
@@ -59,8 +79,21 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
 		return
 	}
+	decisions := s.registerFieldDecisions(r.Context(), reg)
+	// Balances GROUP BY every dimension and use movement kind as the resource
+	// sign. Masking the output cannot hide either protected input.
+	if registerBalancesProtected(decisions, reg) {
+		s.renderForbidden(w, r)
+		return
+	}
+	if protectedRegisterFilterRequested(r, reg, decisions) {
+		s.renderForbidden(w, r)
+		return
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
+	showPeriodFilter := !registerFieldProtected(decisions, "period")
 	// Остатки: только «на дату» (to) + измерения; from игнорируется в storage.
-	flt := parseRegFilter(r, reg.Dimensions, true)
+	flt := parseRegFilter(r, filterFields, showPeriodFilter)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
@@ -71,14 +104,92 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
+	filterValues := filterFormValues(r, filterFields)
 	s.render(w, r, "page-register-balances", map[string]any{
-		"Register":   reg,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, reg.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), reg.Dimensions, filterFormValues(r, reg.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
+		"Register":          reg,
+		"Rows":              rows,
+		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
+		"VisibleResources":  visibleRegisterFields(decisions, reg.Resources),
+		"FilterFields":      filterFields,
+		"ShowPeriodFilter":  showPeriodFilter,
+		"Filter":            filterValues,
+		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":        !flt.IsEmpty(),
 	})
+}
+
+type documentMovementRead struct {
+	Rows    map[string][]map[string]any
+	Columns map[string]registerMovementColumns
+}
+
+// loadDocumentMovementsForRead is the document-form read boundary for
+// accumulation registers. A posted document may have movements in registers
+// the viewer cannot read, and each readable register can have its own RLS and
+// field policy. Apply every gate before resolving references or rendering.
+func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType string, recorderID uuid.UUID) documentMovementRead {
+	result := documentMovementRead{
+		Rows:    make(map[string][]map[string]any),
+		Columns: make(map[string]registerMovementColumns),
+	}
+	for _, reg := range s.reg.Registers() {
+		decision, err := s.rowDecisionFor(ctx, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg))
+		if err != nil || !decision.Allowed {
+			continue
+		}
+		fieldDecisions := s.registerFieldDecisions(ctx, reg)
+		// The document card is itself a selection by registrar. If either
+		// registrar component is protected, even the existence/count of the
+		// matching movement set would be a guessing oracle.
+		if registerFieldProtected(fieldDecisions, "recorder") || registerFieldProtected(fieldDecisions, "recorder_type") {
+			continue
+		}
+
+		filter := storage.RegFilter{}
+		if !decision.Unrestricted {
+			filter.RowFilter = decision.Predicate
+		}
+		filter = registerRecorderFilter(filter, recorderID, recorderType)
+		rows, err := s.store.GetMovements(ctx, reg.Name, reg, filter)
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			// GetDocumentMovements historically omitted these columns. Preserve
+			// that form payload and avoid redundant registrar disclosure.
+			delete(row, "recorder")
+			delete(row, "recorder_type")
+		}
+		s.maskRegisterRecords(ctx, reg, rows)
+		s.resolveRegisterRows(ctx, rows, reg)
+		if len(rows) > 0 {
+			result.Rows[reg.Name] = rows
+			result.Columns[reg.Name] = registerMovementColumnsFor(fieldDecisions)
+		}
+	}
+	return result
+}
+
+func registerRecorderFilter(filter storage.RegFilter, recorderID uuid.UUID, recorderType string) storage.RegFilter {
+	predicates := []storage.Predicate{{Field: "recorder", Op: "eq", Value: recorderID}}
+	recorderType = strings.TrimSpace(recorderType)
+	if recorderType != "" {
+		predicates = append(predicates, storage.Predicate{Field: "recorder_type", Op: "eq", Value: recorderType})
+	}
+	if filter.RowFilter == nil {
+		if len(predicates) == 1 {
+			filter.RowFilter = &predicates[0]
+		} else {
+			combined := storage.Predicate{All: predicates}
+			filter.RowFilter = &combined
+		}
+		return filter
+	}
+	combined := storage.Predicate{All: append([]storage.Predicate{*filter.RowFilter}, predicates...)}
+	filter.RowFilter = &combined
+	return filter
 }
 
 // parseRegFilter собирает storage.RegFilter из query-параметров формы отбора:
@@ -177,10 +288,18 @@ func (s *Server) resolveRegisterRows(ctx context.Context, rows []map[string]any,
 		if recType != "" && recIDStr != "" {
 			if recID, err := uuid.Parse(recIDStr); err == nil {
 				if entity := s.reg.GetEntityBySlug(recType); entity != nil {
-					if docRow, err2 := s.store.GetByID(ctx, entity.Name, recID, entity); err2 == nil {
+					fields := make([]metadata.Field, 0, 2)
+					for _, name := range []string{"Номер", "Дата"} {
+						if field, ok := entityFieldByName(entity, name); ok {
+							fields = append(fields, field)
+						}
+					}
+					readable, err2 := s.readableFieldsByIDs(ctx, entity, []uuid.UUID{recID}, fields)
+					if docRow := readable[recID.String()]; err2 == nil && docRow != nil {
 						// Представление регистратора едет в список движений, то
 						// есть номер и дата документа обязаны подчиняться той же
-						// полевой политике, что и список самого документа.
+						// объектной, строковой и полевой политике, что и список
+						// самого документа.
 						s.maskRecord(ctx, entity, docRow)
 						num := fmt.Sprintf("%v", docRow["Номер"])
 						date := regFmtDate(docRow["Дата"])
