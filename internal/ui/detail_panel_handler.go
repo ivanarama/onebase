@@ -2,7 +2,7 @@ package ui
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -57,17 +57,25 @@ func (s *Server) detailPanelRecord(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if payload == "" {
-		// Пустой состав панели — не ошибка: у сущности может не быть ни одного
+
+	// Ответ не пишется строкой, хотя detailPanelForEntity уже отдал JSON:
+	// значение проходит через json.Encoder, который экранирует его сам. Так
+	// ответ гарантированно валиден (сломанный payload станет 500, а не мусором
+	// у клиента), и статический анализ не считает данные из БД утёкшими в
+	// ответ как есть (G705).
+	data := detailPanelData{Tabs: []detailPanelTab{}}
+	if payload != "" {
+		if err := json.Unmarshal([]byte(payload), &data); err != nil {
+			s.serverError(w, r, fmt.Errorf("панель деталей: %w", err))
+			return
+		}
+	}
+	if data.Tabs == nil {
+		// Пустой состав — не ошибка: у сущности может не быть ни одного
 		// показываемого реквизита. Клиент покажет «нет данных».
-		_, _ = w.Write([]byte(`{"title":"","tabs":[]}`))
-		return
+		data.Tabs = []detailPanelTab{}
 	}
-	// payload уже сериализован detailPanelForEntity — отдаём как есть, но
-	// проверяем, что это валидный JSON: иначе клиент получит мусор молча.
-	if !json.Valid([]byte(payload)) {
-		s.serverError(w, r, errors.New("панель деталей: некорректный payload"))
-		return
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		s.serverError(w, r, err)
 	}
-	_, _ = w.Write([]byte(payload))
 }
