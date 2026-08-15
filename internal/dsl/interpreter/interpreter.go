@@ -838,7 +838,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		// Процедуры формы (.form.os) принадлежат текущему модулю и потому
 		// разрешаются раньше любых глобальных экспортов. Они передаются через
 		// vars["__form_procs__"] как map[lowercase]*ProcedureDecl.
-		if fpAny, ok2 := e.get("__form_procs__"); ok2 {
+		if fpAny, ok2 := e.rawFormProcs(); ok2 {
 			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
 				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 && sourceFile != "" && proc.Name.File == sourceFile {
 					return i.callUserProc(proc, e, args)

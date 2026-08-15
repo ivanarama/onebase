@@ -153,6 +153,9 @@ func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, d
 		}
 		return wrapped
 	case []any:
+		if collection == nil {
+			return collection
+		}
 		traversal.allowChildren(len(collection))
 		ec.checkDeadline()
 		if traversal.seen == nil {
@@ -173,6 +176,9 @@ func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, d
 		}
 		return copy
 	case map[string]any:
+		if collection == nil {
+			return collection
+		}
 		traversal.allowChildren(len(collection))
 		ec.checkDeadline()
 		if traversal.seen == nil {

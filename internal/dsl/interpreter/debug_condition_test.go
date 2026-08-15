@@ -109,6 +109,21 @@ func TestBreakpointCondition_WriteJSONPreservesStructAndSliceViews(t *testing.T)
 			t.Fatalf("overlapping slice views shared the wrong snapshot: stopped=%v err=%v", hook.stopped, hook.err)
 		}
 	})
+
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{name: "nil native slice", value: []any(nil)},
+		{name: "nil native map", value: map[string]any(nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hook := runWithCondition(t, `WriteJSON(Value) = "null"`, map[string]any{"Value": tc.value})
+			if hook.err != nil || !hook.stopped {
+				t.Fatalf("typed nil changed during read-only JSON conversion: stopped=%v err=%v", hook.stopped, hook.err)
+			}
+		})
+	}
 }
 
 func TestBreakpointCondition_WriteJSONRejectsNativeCollectionCycles(t *testing.T) {
@@ -338,6 +353,38 @@ func TestУсловиеТочкиОстанова_ЧистаяВложенная
 	}
 	if !hook.stopped {
 		t.Fatal("чистая helper-функция дала Ложь")
+	}
+}
+
+func TestУсловиеТочкиОстанова_ЧистаяФункцияФормыРаботает(t *testing.T) {
+	const sourceFile = "forms/order/object.form.os"
+	main := parseProcFile(t, sourceFile, `Процедура Работа()
+  Значение = 1;
+КонецПроцедуры`)
+	helper := parseProcFile(t, sourceFile, `Функция Удвоить(Значение)
+  Возврат Значение * 2;
+КонецФункции`)
+	var leaked atomic.Bool
+	hook := &condHook{expr: "Удвоить(4) = 8 И Проверить(__form_procs__)"}
+	interp := interpreter.New()
+	interp.DebugSource = func() interpreter.DebugHook { return hook }
+	if err := interp.Run(main, nil, map[string]any{
+		"__form_procs__": map[string]*ast.ProcedureDecl{"удвоить": helper},
+		"Проверить": interpreter.ReadOnlyBuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+			if len(args) > 0 {
+				_, raw := args[0].(map[string]*ast.ProcedureDecl)
+				leaked.Store(raw)
+			}
+			return true, nil
+		}),
+	}); err != nil {
+		t.Fatalf("прогон формы: %v", err)
+	}
+	if hook.err != nil || !hook.stopped {
+		t.Fatalf("чистая функция той же формы не разрешилась: stopped=%v err=%v", hook.stopped, hook.err)
+	}
+	if leaked.Load() {
+		t.Fatal("внутренняя карта процедур формы стала доступна DSL")
 	}
 }
 

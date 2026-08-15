@@ -172,6 +172,30 @@ func (e *env) get(name string) (any, bool) {
 	return nil, false
 }
 
+// rawFormProcs returns only the interpreter-owned form procedure table. The
+// dispatcher needs the concrete Go map even while a breakpoint condition is
+// read-only, but ordinary DSL reads must keep going through get and its
+// membrane. Keeping the key fixed here prevents this from becoming a general
+// capability-unwrapping path.
+func (e *env) rawFormProcs() (any, bool) {
+	const key = "__form_procs__"
+	if e == nil {
+		return nil, false
+	}
+	if value, ok := e.vars[key]; ok {
+		return value, true
+	}
+	if e.module != nil {
+		if value, ok := e.module.vars[key]; ok {
+			return value, true
+		}
+	}
+	if e.parent != nil {
+		return e.parent.rawFormProcs()
+	}
+	return nil, false
+}
+
 func (e *env) set(name string, v any) {
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
