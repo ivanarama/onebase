@@ -31,7 +31,7 @@ func (f RegFilter) IsEmpty() bool {
 // инъекции имён колонок). Значения подставляются через плейсхолдеры.
 // includeFrom/includeTo управляют включением границ периода (для остатков
 // From игнорируется). startIdx — номер первого плейсхолдера (с 1).
-func dimWhereClause(d Dialect, dims []metadata.Field, f RegFilter, startIdx int, includeFrom, includeTo bool) (string, []any) {
+func dimWhereClause(d Dialect, dims []metadata.Field, f RegFilter, startIdx int, includeFrom, includeTo bool) (string, []any, error) {
 	var conds []string
 	var args []any
 	idx := startIdx
@@ -50,7 +50,14 @@ func dimWhereClause(d Dialect, dims []metadata.Field, f RegFilter, startIdx int,
 			continue
 		}
 		col := metadata.ColumnName(fld)
-		arg := normalizeRegArg(d, val, false)
+		// Число канонизируется тем же приёмом, что и при записи (#912). Иначе
+		// отбор по числовому измерению зависел бы от источника значения: из URL
+		// приходит строка «7», из DSL — float64, а колонка number на SQLite —
+		// TEXT, где «7» и «7.0» просто разный текст.
+		arg, err := normalizeRegField(d, fld, val)
+		if err != nil {
+			return "", nil, fmt.Errorf("register filter dimension %s: %w", fld.Name, err)
+		}
 		// Для ссылочного измерения колонка хранит UUID — оборачиваем idArg,
 		// чтобы PG получил uuid.UUID, а SQLite — строку (как при записи).
 		if fld.RefEntity != "" {
@@ -99,7 +106,7 @@ func dimWhereClause(d Dialect, dims []metadata.Field, f RegFilter, startIdx int,
 	}
 
 	if len(conds) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
-	return strings.Join(conds, " AND "), args
+	return strings.Join(conds, " AND "), args, nil
 }
