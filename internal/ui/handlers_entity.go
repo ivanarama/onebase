@@ -1285,13 +1285,11 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 
 	// Load document movements for posted documents
 	var docMovements map[string][]map[string]any
+	var docMovementColumns map[string]registerMovementColumns
 	if entity.Kind == metadata.KindDocument && vals["posted"] == "true" {
-		docMovements, _ = s.store.GetDocumentMovements(r.Context(), id, s.reg.Registers())
-		for regName, regRows := range docMovements {
-			if reg := s.reg.GetRegister(regName); reg != nil {
-				s.resolveRegisterRows(r.Context(), regRows, reg)
-			}
-		}
+		movementRead := s.loadDocumentMovementsForRead(r.Context(), entity.Name, id)
+		docMovements = movementRead.Rows
+		docMovementColumns = movementRead.Columns
 	}
 
 	s.renderEntityForm(w, r, "object", map[string]any{
@@ -1311,10 +1309,11 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"DSLPrintForms": s.reg.GetDSLPrintForms(entity.Name),
 		// AllPrintForms — единый список форм всех видов (план 64, этап 3);
 		// кнопка «Печать ▾» рисуется одним циклом по нему.
-		"AllPrintForms": s.reg.GetAllPrintForms(entity.Name),
-		"HasPrintProc":  s.reg.GetProcedure(entity.Name, "Печать") != nil || s.reg.GetProcedure(entity.Name, "Print") != nil,
-		"FolderOptions": folderOptsEdit,
-		"DocMovements":  docMovements,
+		"AllPrintForms":      s.reg.GetAllPrintForms(entity.Name),
+		"HasPrintProc":       s.reg.GetProcedure(entity.Name, "Печать") != nil || s.reg.GetProcedure(entity.Name, "Print") != nil,
+		"FolderOptions":      folderOptsEdit,
+		"DocMovements":       docMovements,
+		"DocMovementColumns": docMovementColumns,
 		// StageRoute — маршрут объекта с подсветкой текущего этапа (план 121).
 		// nil, если этапы не объявлены или поле-этап под маской ПДн.
 		"StageRoute": s.buildStageRoute(r, entity, stageCurrentValue(entity, vals)),

@@ -1206,6 +1206,12 @@ const tplUpdates = `
       {{if and .U.PrevTag .U.CanWrite}}
       <a class="tbtn danger" href="#" onclick="return updRollback('{{.U.PrevTag}}')">{{t $.Lang "Вернуть версию"}} {{.U.PrevTag}}</a>
       {{end}}
+      {{if or .U.CanApply (and .U.PrevTag .U.CanWrite)}}
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#555">
+        <input type="checkbox" id="upd-backup" checked>
+        {{t $.Lang "Сделать резервные копии баз перед изменением версии"}}
+      </label>
+      {{end}}
     </div>
 
     {{if .U.StagedTag}}
@@ -1244,15 +1250,31 @@ function updAction(url, busy) {
 function setChannel(ch) {
   return updPost('/updates/channel?value=' + encodeURIComponent(ch), '', function(){ window.location.reload(); });
 }
+function updBackupEnabled() {
+  var box = document.getElementById('upd-backup');
+  return !!(box && box.checked);
+}
 function updApply() {
-  return updPost('/updates/apply', '{{t $.Lang "Обновляю и перезапускаю..."}}', function(){
+  // Копии снимаются на сервере после остановки баз и до подмены бинаря:
+  // копировать файл работающей базы небезопасно (план 92).
+  var backup = updBackupEnabled();
+  var url = '/updates/apply' + (backup ? '?backup=1' : '');
+  var busy = backup
+    ? '{{t $.Lang "Делаю копии, обновляю и перезапускаю..."}}'
+    : '{{t $.Lang "Обновляю и перезапускаю..."}}';
+  return updPost(url, busy, function(){
     // Окно закроется само: процесс поднимет новую версию и откроет своё окно.
     updStatus('{{t $.Lang "Платформа перезапускается — это окно закроется."}}');
   });
 }
 function updRollback(tag) {
   if (!confirm('{{t $.Lang "Вернуть предыдущую версию платформы?"}} ' + tag)) return false;
-  return updPost('/updates/rollback', '{{t $.Lang "Откатываю и перезапускаю..."}}', function(){
+  var backup = updBackupEnabled();
+  var url = '/updates/rollback' + (backup ? '?backup=1' : '');
+  var busy = backup
+    ? '{{t $.Lang "Делаю копии, откатываю и перезапускаю..."}}'
+    : '{{t $.Lang "Откатываю и перезапускаю..."}}';
+  return updPost(url, busy, function(){
     updStatus('{{t $.Lang "Платформа перезапускается — это окно закроется."}}');
   });
 }

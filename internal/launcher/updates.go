@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ var recoverUpdate = (*selfupdate.OperationLease).Recover
 var recoverUpdateStatus = (*selfupdate.OperationLease).RecoverWithResult
 var updateBinaryDir = selfupdate.BinaryDir
 var restartSelf = RestartSelf
+var backupBasesForUpdate = (*handler).backupAllBasesForUpdate
 
 var ErrBinaryRecoveryRestartRequired = errors.New("launcher restart is required after binary recovery")
 
@@ -293,6 +295,22 @@ func (h *handler) updatesApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
+	// Резервные копии — здесь и только здесь: базы уже остановлены (копировать
+	// файл работающей SQLite небезопасно), а бинарь ещё не подменён. План 92
+	// прямо предполагал этот шаг («перед применением предлагаем backup»), но на
+	// HEAD его не было: самый рискованный момент жизни базы оставался без
+	// страховки, хотя вся механика копий в лаунчере уже есть (#882).
+	if backupRequested(r) {
+		if err := h.backupBeforeVersionChange(r.Context(), &st, lease.ReleaseTargetReservation); err != nil {
+			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
+			// чтобы копия была. Молча обновиться без неё — обмануть.
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед изменением версии") + ": " + err.Error(),
+			})
+			return
+		}
+	}
+
 	recovered, err := lease.RecoverWithResult(vm.BinDir)
 	if err != nil {
 		// Consumers are already stopped. Recovery could not prove one complete
@@ -394,6 +412,22 @@ func (h *handler) updatesRollback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
+	// Резервные копии — здесь и только здесь: базы уже остановлены (копировать
+	// файл работающей SQLite небезопасно), а бинарь ещё не подменён. План 92
+	// прямо предполагал этот шаг («перед применением предлагаем backup»), но на
+	// HEAD его не было: самый рискованный момент жизни базы оставался без
+	// страховки, хотя вся механика копий в лаунчере уже есть (#882).
+	if backupRequested(r) {
+		if err := h.backupBeforeVersionChange(r.Context(), &st, lease.ReleaseTargetReservation); err != nil {
+			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
+			// чтобы копия была. Молча обновиться без неё — обмануть.
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед изменением версии") + ": " + err.Error(),
+			})
+			return
+		}
+	}
+
 	recovered, err := lease.RecoverWithResult(vm.BinDir)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -998,4 +1032,90 @@ func latestTag(st selfupdate.State) string {
 		return ""
 	}
 	return st.Latest.Tag
+}
+
+// backupRequested — просили ли сделать копии перед изменением версии.
+// Умолчание «нет» осознанное: параметр приходит из UI, где галка включена, но
+// автоматически копировать чужие базы по любому POST нельзя.
+func backupRequested(r *http.Request) bool {
+	v := strings.TrimSpace(r.URL.Query().Get("backup"))
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// backupBeforeVersionChange выполняется после stopAllForUpdate, когда lifecycle
+// gate всё ещё удерживается. Если копия не получилась, обновление не началось:
+// освобождаем reservation и восстанавливаем остановленные базы тем же
+// generation-bound путём, что при обычной ошибке Apply/Rollback.
+func (h *handler) backupBeforeVersionChange(
+	ctx context.Context,
+	st *selfupdate.State,
+	releaseTarget func() error,
+) error {
+	made, backupErr := backupBasesForUpdate(h, ctx)
+	if backupErr == nil {
+		if len(made) > 0 {
+			oblog.Component("launcher").Info("резервные копии перед изменением версии", "количество", len(made))
+		}
+		return nil
+	}
+	return errors.Join(backupErr, h.resumeAfterVersionChangeAbort(st, releaseTarget))
+}
+
+func (h *handler) resumeAfterVersionChangeAbort(st *selfupdate.State, releaseTarget func() error) error {
+	if releaseTarget != nil {
+		if err := releaseTarget(); err != nil {
+			// Пока reservation не снят, безопаснее оставить lifecycle gate закрытым:
+			// другой процесс мог начать работу с каталогом бинарей.
+			return fmt.Errorf("release update target before resuming bases: %w", err)
+		}
+	}
+	h.runner.AllowStarts()
+	if st == nil {
+		return nil
+	}
+	attempted := append([]selfupdate.RestartRecord(nil), st.RestartRecords...)
+	legacy := append([]string(nil), st.RestartBases...)
+	failed := h.resumeBases(attempted)
+	updated, err := recordRecoveryResult(attempted, failed, legacy)
+	if err != nil {
+		return fmt.Errorf("сохранить результат восстановления баз: %w", err)
+	}
+	*st = updated
+	return nil
+}
+
+// backupAllBasesForUpdate снимает копию каждой зарегистрированной базы.
+//
+// Вызывается ПОСЛЕ остановки баз и ДО подмены бинаря. Ошибка любой копии —
+// ошибка операции: смысл галки в том, что копия есть, и «почти сделали» здесь
+// не считается.
+func (h *handler) backupAllBasesForUpdate(ctx context.Context) ([]string, error) {
+	bases, err := h.store.List()
+	if err != nil {
+		return nil, err
+	}
+	var made []string
+	for _, b := range bases {
+		path, err := h.backupBaseForUpdate(ctx, b)
+		if err != nil {
+			return made, fmt.Errorf("%s: %w", b.Name, err)
+		}
+		made = append(made, path)
+	}
+	return made, nil
+}
+
+// backupBaseForUpdate deliberately mirrors backupCreate: OpenDB holds the
+// shared cross-process database lifetime lease, rejects a pending universal
+// restore, and pins a SQLite alias to the canonical target protected by that
+// lease. The helper scope closes the handle before the loop advances to the
+// next base, including every error path.
+func (h *handler) backupBaseForUpdate(ctx context.Context, b *Base) (string, error) {
+	dir := h.backupDir(b)
+	db, err := OpenDB(ctx, b)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	return dumpForBase(ctx, basePinnedToOpenDB(b, db), dir)
 }
