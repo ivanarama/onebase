@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,12 +32,20 @@ func userAgent() string { return "onebase/" + version.String() }
 // заведомо не он.
 const maxSHAFileBytes = 4 << 10
 
+// maxSignatureBytes — подпись Ed25519 в base64 это 88 символов; запас на
+// перевод строки и BOM.
+const maxSignatureBytes = 1 << 10
+
 // Download скачивает архив релиза в destDir и сверяет его контрольную сумму с
 // опубликованной рядом .sha256. Возвращает путь к проверенному архиву.
 //
-// Сумма берётся с того же GitHub, что и архив: это защита от битой закачки и
-// подмены на пути (прокси, зеркало), но не от компрометации самого репозитория
-// — там нужна подпись, см. план 92.
+// Цепочка доверия: подпись подтверждает файл контрольной суммы, сумма
+// подтверждает архив. Одной суммы мало — она лежит на том же GitHub, что и
+// архив, и тот, кто получил доступ к репозиторию, подменяет обе (#783).
+//
+// Подпись проверяется, если в сборку вшит открытый ключ. Её отсутствие в
+// релизе на этом этапе допустимо (мягкий переход): жёсткий отказ включается
+// сборкой с RequireSignature. Неверная подпись — отказ всегда.
 func Download(ctx context.Context, rel Release, destDir string) (string, error) {
 	if err := os.MkdirAll(destDir, fsmode.SecretDir); err != nil {
 		return "", err
@@ -46,6 +55,9 @@ func Download(ctx context.Context, rel Release, destDir string) (string, error) 
 	shaRaw, err := fetchBytes(ctx, rel.SHAURL, maxSHAFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("selfupdate: скачать контрольную сумму: %w", err)
+	}
+	if err := checkReleaseSignature(ctx, rel, shaRaw); err != nil {
+		return "", err
 	}
 	want, err := ParseSHAFile(shaRaw)
 	if err != nil {
@@ -63,6 +75,37 @@ func Download(ctx context.Context, rel Release, destDir string) (string, error) 
 		return "", err
 	}
 	return archive, nil
+}
+
+// checkReleaseSignature проверяет подпись файла контрольной суммы.
+//
+// Три состояния, и они намеренно разные:
+//   - ключ не вшит — проверять нечем, поведение как до #783 (сборка из
+//     исходников, форк со своим каналом обновлений);
+//   - подписи нет в релизе — отказ только в жёстком режиме; иначе строка в
+//     журнал, чтобы отсутствие подписи не было тихим;
+//   - подпись есть и не сходится — отказ всегда, даже в мягком режиме. Мягкость
+//     касается отсутствия подписи, а не её несовпадения.
+func checkReleaseSignature(ctx context.Context, rel Release, shaRaw []byte) error {
+	if !SignatureConfigured() {
+		return nil
+	}
+	if rel.SigURL == "" {
+		if SignatureEnforced() {
+			return fmt.Errorf("%w: в релизе %s нет %s.sha256.sig", ErrSignatureMissing, rel.Tag, rel.AssetName)
+		}
+		slog.Warn("релиз не подписан — обновление продолжено (мягкий режим)",
+			"component", "selfupdate", "релиз", rel.Tag, "архив", rel.AssetName)
+		return nil
+	}
+	sig, err := fetchBytes(ctx, rel.SigURL, maxSignatureBytes)
+	if err != nil {
+		return fmt.Errorf("selfupdate: скачать подпись релиза: %w", err)
+	}
+	if err := VerifySignature(shaRaw, sig); err != nil {
+		return err
+	}
+	return nil
 }
 
 func downloadFile(ctx context.Context, url, dst string) error {

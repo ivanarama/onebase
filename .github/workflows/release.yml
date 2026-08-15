@@ -73,7 +73,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-        run: go build -ldflags="-s -w -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }}" -o onebase${{ matrix.ext }} ./cmd/onebase
+        run: |
+          go build -ldflags="-s -w \
+            -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }} \
+            -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=${{ vars.RELEASE_PUBLIC_KEY }}" \
+            -o onebase${{ matrix.ext }} ./cmd/onebase
 
       - name: Build GUI binary (Windows native window, webview)
         if: matrix.goos == 'windows'
@@ -81,7 +85,10 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: |
-          go build -tags webview -ldflags="-s -w -H windowsgui -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }}" -o onebase-gui.exe ./cmd/onebase
+          go build -tags webview -ldflags="-s -w -H windowsgui `
+            -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }} `
+            -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=${{ vars.RELEASE_PUBLIC_KEY }}" `
+            -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)
         if: matrix.goos == 'windows'
@@ -224,6 +231,37 @@ jobs:
           path: dist
           merge-multiple: true
 
+
+      # Подпись сумм — здесь, а не в матрице сборки: приватный ключ не должен
+      # попадать на windows/macos-раннеры, а достаточно одного места. Подпись
+      # накладывается на файл .sha256, и цепочка получается полной: подпись
+      # подтверждает сумму, сумма подтверждает архив (#783).
+      #
+      # Без секрета шаг не падает, а пропускается: форк, у которого ключа нет,
+      # обязан публиковать релизы как раньше.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
+            echo "::warning::RELEASE_SIGNING_KEY не задан — релиз выйдет без подписи"
+            exit 0
+          fi
+          shopt -s nullglob
+          sums=(dist/*.sha256)
+          if [ ${#sums[@]} -eq 0 ]; then
+            echo "::error::в dist нет ни одного файла .sha256 — подписывать нечего"
+            exit 1
+          fi
+          go run ./tools/relsign sign "${sums[@]}"
+          ls -1 dist/*.sig
+
       - name: Compute commit subject
         id: subj
         # heredoc-форма GH_OUTPUT — корректно переживает спецсимволы
@@ -344,6 +382,37 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+
+      # Подпись сумм — здесь, а не в матрице сборки: приватный ключ не должен
+      # попадать на windows/macos-раннеры, а достаточно одного места. Подпись
+      # накладывается на файл .sha256, и цепочка получается полной: подпись
+      # подтверждает сумму, сумма подтверждает архив (#783).
+      #
+      # Без секрета шаг не падает, а пропускается: форк, у которого ключа нет,
+      # обязан публиковать релизы как раньше.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - name: Sign checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
+            echo "::warning::RELEASE_SIGNING_KEY не задан — релиз выйдет без подписи"
+            exit 0
+          fi
+          shopt -s nullglob
+          sums=(dist/*.sha256)
+          if [ ${#sums[@]} -eq 0 ]; then
+            echo "::error::в dist нет ни одного файла .sha256 — подписывать нечего"
+            exit 1
+          fi
+          go run ./tools/relsign sign "${sums[@]}"
+          ls -1 dist/*.sig
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
