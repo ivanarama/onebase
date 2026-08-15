@@ -293,6 +293,27 @@ jobs:
       - name: Unit tests (Windows)
         run: go test ./...
 
+      # install.ps1 не исполнял ни один джоб: скрипт установки для Windows
+      # проверялся только тем, что кто-то его запускал у себя. Опечатка в нём
+      # видна пользователю в момент установки — то есть в худший момент (#888).
+      #
+      # Разбор парсером PowerShell, а не запуск: скрипт тянет релиз из сети и
+      # ставит бинарь, исполнять его в CI незачем. Синтаксис — это всё, что
+      # можно проверить дёшево и без побочных эффектов.
+      - name: PowerShell syntax check (install.ps1)
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+            foreach ($e in $errors) {
+              Write-Host "::error file=install.ps1,line=$($e.Extent.StartLineNumber)::$($e.Message)"
+            }
+            exit 1
+          }
+          Write-Host "install.ps1: синтаксис корректен"
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
