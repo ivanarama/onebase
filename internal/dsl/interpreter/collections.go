@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -166,6 +167,22 @@ func (a *Array) CallMethod(name string, args []any) any {
 	case "вграница", "upperbound":
 		// Верхняя граница: Количество-1; для пустого массива -1.
 		return float64(len(a.items) - 1)
+	case "сортировать", "sort":
+		// Сортировать() — по возрастанию, Сортировать("Убыв") — по убыванию.
+		// Направление задаётся тем же словом, что в ТаблицаЗначений.Сортировать,
+		// сравнение — тем же compareAny: числа как числа, даты как даты,
+		// остальное строкой. Порядок равных элементов сохраняется.
+		desc := false
+		if d := strings.ToLower(strings.TrimSpace(strArg(args, 0))); d == "убыв" || d == "desc" {
+			desc = true
+		}
+		sort.SliceStable(a.items, func(i, j int) bool {
+			c := compareAny(a.items[i], a.items[j])
+			if desc {
+				return c > 0
+			}
+			return c < 0
+		})
 	case "вставить", "insert":
 		if len(args) >= 2 {
 			idx := int(floatArg(args, 0))

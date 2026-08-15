@@ -125,6 +125,22 @@ func (s staticCtx) Ctx() context.Context { return s.ctx }
 // NewStaticCtx wraps a plain context as a CtxSource.
 func NewStaticCtx(ctx context.Context) CtxSource { return staticCtx{ctx: ctx} }
 
+func firstCtxSource(sources []CtxSource) CtxSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources[0]
+}
+
+func contextFromSource(source CtxSource) context.Context {
+	if source != nil {
+		if ctx := source.Ctx(); ctx != nil {
+			return ctx
+		}
+	}
+	return context.Background()
+}
+
 // ExchangeRegistrar регистрирует изменение объекта в планах обмена (план 86)
 // после прямой записи из DSL (Справочники.X.Создать().Записать()), которая идёт
 // мимо entityservice.Save. nil — обмен не подключён (тесты/headless). Замыкание

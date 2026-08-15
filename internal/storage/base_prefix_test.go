@@ -88,3 +88,21 @@ func TestBasePrefix_ClearRestoresPlainFormat(t *testing.T) {
 		}
 	})
 }
+
+// Restore identity changes are safety-critical: a failed read must not be
+// mistaken for an absent prefix and reported as a successful reset.
+func TestResetBasePrefixAfterRestore_ReadFailureIsReported(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		if err := db.SaveBasePrefix(context.Background(), "Ф-"); err != nil {
+			t.Fatal(err)
+		}
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+		if previous, err := db.ResetBasePrefixAfterRestore(canceled); err == nil {
+			t.Fatalf("ResetBasePrefixAfterRestore = (%q, nil) on canceled read", previous)
+		}
+		if got := db.GetBasePrefix(context.Background()); got != "Ф-" {
+			t.Fatalf("failed reset changed prefix to %q", got)
+		}
+	})
+}

@@ -106,28 +106,35 @@ func stageModeFromCtx(ctx context.Context) stageWriteMode {
 
 // canonicalFieldValue читает значение реквизита из карты полей записи так же,
 // как это делает сам слой персистентности: сначала точное имя, затем его
-// lowercase-вариант (DSL справочника хранит поля в нижнем регистре). Второй
+// lowercase-вариант, затем любой EqualFold-вариант. Второй
 // результат — присутствовал ли ключ вообще: отсутствие ключа и явное пустое
 // значение — разные вещи, и гейт этапов обязан их различать.
 //
-// Единый accessor нужен, чтобы запись и проверка не разошлись: `AuditDiff`
-// читает только точное `f.Name`, и переиспользовать его для гейта нельзя.
+// Единый accessor используют запись, аудит и проверка этапов, чтобы точное и
+// lowercase-представления одного реквизита трактовались одинаково.
 func canonicalFieldValue(fields map[string]any, name string) (any, bool) {
+	present := false
 	if v, ok := fields[name]; ok {
+		present = true
 		if v != nil {
 			return v, true
 		}
-		// Ключ есть со значением nil — присутствует и пуст, но lowercase-ключ
-		// может нести реальное значение (карта собрана двумя путями).
-		if lv, lok := fields[strings.ToLower(name)]; lok && lv != nil {
-			return lv, true
-		}
-		return nil, true
 	}
 	if v, ok := fields[strings.ToLower(name)]; ok {
-		return v, true
+		present = true
+		if v != nil {
+			return v, true
+		}
 	}
-	return nil, false
+	for key, value := range fields {
+		if strings.EqualFold(key, name) {
+			present = true
+			if value != nil {
+				return value, true
+			}
+		}
+	}
+	return nil, present
 }
 
 // stageValueString приводит значение этапа к строке. Перечисление хранится

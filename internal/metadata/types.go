@@ -188,6 +188,14 @@ func (n *Numerator) PeriodOrDefault(kind Kind) string {
 const (
 	StandardCodeField   = "Код"
 	StandardCodeFieldID = "std_code"
+	// «Номер» документа синтезируется той же логикой и по той же причине
+	// нуждается в устойчивом ID (#868). Без него сценарий из пересмотра #668
+	// заканчивался потерей данных: «Номер» объявлен в YAML с id, строку убрали
+	// (numerator остался) → синтез без id → в PlanTableChanges карта wanted
+	// строится только по полям с id, сторож коллизии молчит → планируется
+	// ChangeDrop, и --allow-destructive сносит все номера документов.
+	StandardNumberField   = "Номер"
+	StandardNumberFieldID = "std_number"
 )
 
 // PredefinedItem describes a catalog record that is always present in the DB

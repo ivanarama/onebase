@@ -341,7 +341,15 @@ func with(base *yamlLintSchema, nested map[string]*yamlLintSchema) *yamlLintSche
 }
 
 func fieldYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "title", "label", "type", "allow_inline_create"), map[string]*yamlLintSchema{
+	// `id` — устойчивый идентификатор реквизита (план 81). Он НЕ декоративный:
+	// именно по нему миграция отличает переименование от «удалили одно поле,
+	// добавили другое», а PlanTableChanges строит по нему сторож от тихой
+	// потери колонки. Линт объявлял его неизвестным ключом («загрузчик его
+	// игнорирует») и советовал удалить — совет прямо противоречил и загрузчику,
+	// который его честно читает, и DEVELOPER.md, где id описан как
+	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
+	// страховку от потери данных (#873, дефект Д11 из #668).
+	return with(obj("id", "name", "title", "label", "type", "allow_inline_create"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 	})
 }

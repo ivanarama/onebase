@@ -68,6 +68,18 @@ func (db *DB) UpsertPreserveVersion(ctx context.Context, entityName string, id u
 	return db.upsert(ctx, entityName, id, fields, entity, false, upsertAuditCreate)
 }
 
+// UpsertAfterVersionBump persists fields without advancing _version after the
+// caller has already performed the one versioned write for the same logical
+// operation in the same transaction. Unlike UpsertPreserveVersion, this is for
+// an existing row and therefore records an ordinary update audit diff rather
+// than a synthetic create event.
+func (db *DB) UpsertAfterVersionBump(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
+	if !HasTx(ctx) {
+		return errors.New("storage: UpsertAfterVersionBump requires an active transaction")
+	}
+	return db.upsert(ctx, entityName, id, fields, entity, false, upsertAuditAuto)
+}
+
 type upsertAuditMode uint8
 
 const (
@@ -259,11 +271,9 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// Режим аудита здесь СОЗНАТЕЛЬНО не учитывается. Провизорная вставка нового
 	// объекта (upsertAuditSkip) — это и есть момент, когда «» → начальный этап;
 	// её запись в истории откатится вместе с транзакцией, если хук упадёт.
-	// А upsertAuditCreate («финальная запись созданного») зовут не только из
-	// entityservice: DSL-проведение дописывает им реквизиты после
-	// ОбработкаПроведения (ui/dsl_documents.go). Считать эту запись созданием
-	// значило бы при каждом проведении отвергать документ в strict-режиме и
-	// сочинять в истории переход «из ниоткуда».
+	// Audit mode intentionally does not affect stage history: a provisional
+	// insert is still the real transition from no stage to the initial stage,
+	// and its history row is committed or rolled back with the transaction.
 	if err := db.logStageTransition(ctx, entityName, id, stageTr); err != nil {
 		return err
 	}
@@ -1026,10 +1036,7 @@ func refValueAsPointer(v any) (uuidProvider, bool) {
 }
 
 func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
-	v := fields[f.Name]
-	if v == nil {
-		v = fields[strings.ToLower(f.Name)]
-	}
+	v, _ := canonicalFieldValue(fields, f.Name)
 	if f.RefEntity != "" {
 		if v == nil {
 			return nil

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,12 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/storage"
+)
+
+var (
+	errSubmitRowAccessDenied = errors.New("submit row access denied")
+	errSubmitFormHook        = errors.New("submit form hook failed")
+	errCreateRowAccessDenied = errors.New("create row access denied")
 )
 
 func (s *Server) rowDecision(ctx context.Context, entity *metadata.Entity, op string) (access.Decision, error) {
@@ -41,6 +48,14 @@ func (s *Server) applyRowFilter(w http.ResponseWriter, r *http.Request, entity *
 func (s *Server) rowAllowed(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, op string, row map[string]any) bool {
 	dec, err := s.rowDecision(r.Context(), entity, op)
 	return s.renderRowDecision(w, r, dec, err, row)
+}
+
+func (s *Server) rowAllowedContext(ctx context.Context, entity *metadata.Entity, op string, row map[string]any) bool {
+	dec, err := s.rowDecision(ctx, entity, op)
+	if err != nil || !dec.Allowed {
+		return false
+	}
+	return dec.Unrestricted || s.matchRowPredicate(ctx, row, dec.Predicate)
 }
 
 func (s *Server) rowAllowedFor(w http.ResponseWriter, r *http.Request, kind, name, op string, meta *metadata.Entity, row map[string]any) bool {

@@ -239,6 +239,7 @@ func (i *Interpreter) execBlock(stmts []ast.Stmt, e *env) {
 			i.beforeStmt(s, e)
 		}
 		i.execStmt(s, e)
+		e.ec.checkDeadline()
 	}
 }
 
@@ -502,6 +503,7 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 		if v.Value != nil {
 			val = i.evalExpr(v.Value, e)
 		}
+		e.ec.checkDeadline()
 		panic(dslReturn{val: val})
 	case *ast.TryStmt:
 		i.execTry(v, e)
@@ -891,7 +893,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		// переменной, но не ломает обычный порядок разрешения: пользовательская
 		// процедура либо доверенная инъекция Sleep/Wait по-прежнему может
 		// затенить builtin и сама контролируется общим дедлайном между операторами.
-		if e.ec != nil && !e.ec.deadline.IsZero() && isSleepBuiltinName(lowName) {
+		if e.ec != nil && (!e.ec.deadline.IsZero() || (e.ec.context != nil && e.ec.context.Done() != nil)) && isSleepBuiltinName(lowName) {
 			waitForSleep(sleepDuration(args), e.ec)
 			return nil
 		}
