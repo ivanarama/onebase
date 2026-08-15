@@ -1576,7 +1576,7 @@ internal/
   query/              — транслятор языка запросов → SQL (с JOIN)
   report/             — загрузка отчётов
   runtime/            — реестр объектов, движения регистров
-  storage/            — PostgreSQL: CRUD, DDL, миграция, вложения
+  storage/            — PostgreSQL/SQLite: CRUD, DDL, миграция, вложения
   ui/                 — веб-интерфейс: шаблоны, хэндлеры, Admin
 examples/
   trade/              — торговля и склад: документы, отчёты, роли, подсистемы, транзакции
