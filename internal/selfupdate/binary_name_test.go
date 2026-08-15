@@ -1,36 +1,18 @@
 package selfupdate
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/installtest"
 )
 
 // privateInstallDirLocal — каталог установки, который проверка приватности
-// признаёт своим. После мержа #931 заменяется на общий installtest.
+// признаёт своим.
 func privateInstallDirLocal(t *testing.T) string {
 	t.Helper()
-	if root := windowsTestPrivateInstallRoot(); root != "" {
-		dir, err := os.MkdirTemp(root, "onebase-name-test-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:gosec // G703: точный результат MkdirTemp внутри профиля
-		return dir
-	}
-	root := filepath.Join(t.TempDir(), "private")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // G302: 0700 и есть приватная граница
-		t.Fatal(err)
-	}
-	dir := filepath.Join(root, "bin")
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // G301: моделируем реальную установку
-		t.Fatal(err)
-	}
-	return dir
+	return installtest.PrivateInstallDir(t)
 }
 
 // Бинарь, названный не onebase[.exe], обязан работать (#831).
