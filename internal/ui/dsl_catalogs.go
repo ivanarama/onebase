@@ -310,6 +310,13 @@ func (w *catWriter) ref() *interpreter.Ref {
 }
 
 func (w *catWriter) displayName() string {
+	if value, configured := explicitPresentationValue(w.entity, w.obj.Fields); configured {
+		if value != "" {
+			return value
+		}
+		return shortObjectID(w.obj.ID.String())
+	}
+
 	for _, k := range []string{"наименование", "name"} {
 		if v, ok := w.obj.Fields[k]; ok && v != nil {
 			if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
@@ -317,7 +324,30 @@ func (w *catWriter) displayName() string {
 			}
 		}
 	}
-	id := w.obj.ID.String()
+	return shortObjectID(w.obj.ID.String())
+}
+
+// explicitPresentationValue returns the first non-empty configured
+// presentation value. The bool reports whether presentation is configured, so
+// callers do not accidentally fall through to their legacy heuristics when all
+// explicitly selected values are empty.
+func explicitPresentationValue(entity *metadata.Entity, values map[string]any) (string, bool) {
+	if entity == nil || len(entity.Presentation) == 0 {
+		return "", false
+	}
+	for _, field := range metadata.LabelFields(entity) {
+		_, value, ok := lookupMapCI(values, field.Name)
+		if !ok || value == nil {
+			continue
+		}
+		if label := strings.TrimSpace(fmt.Sprint(value)); label != "" {
+			return label, true
+		}
+	}
+	return "", true
+}
+
+func shortObjectID(id string) string {
 	if len(id) >= 8 {
 		return id[:8]
 	}
