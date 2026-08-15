@@ -1,0 +1,54 @@
+# Ночной fuzz парсера DSL.
+#
+# В CI fuzz-цели гоняются флагом `-run`, то есть исполняются только seed-строки —
+# десять штук. Это регресс-тест на известные входы, а не fuzzing: новых веток
+# он не ищет вовсе (#888, QUAL-03/#792).
+#
+# Настоящий прогон вынесен сюда, а не в ci.yml, по двум причинам: он занимает
+# минуты, а не секунды, и его отказ — не повод блокировать PR. Найденный
+# crasher выкладывается артефактом: без корпуса воспроизвести его нечем, а
+# «упало на каком-то входе» — бесполезное сообщение.
+name: nightly-fuzz
+
+on:
+  schedule:
+    # 03:20 UTC — вне рабочего дня, чтобы не конкурировать за раннеры с PR.
+    - cron: '20 3 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Длительность прогона (формат -fuzztime, напр. 10m)'
+        required: false
+        default: '10m'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz-parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      # -run='^$' отключает обычные тесты: иначе они выполнятся перед fuzz и
+      # съедят часть бюджета времени.
+      - name: Fuzz ParseProgram
+        run: |
+          go test -run='^$' -fuzz=FuzzParseProgram \
+            -fuzztime=${{ github.event.inputs.fuzztime || '10m' }} \
+            ./internal/dsl/parser/
+
+      # Корпус пишется в testdata/fuzz только когда прогон нашёл падение —
+      # поэтому шаг условный и только при отказе.
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: internal/dsl/parser/testdata/fuzz/
+          if-no-files-found: ignore
