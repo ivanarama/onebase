@@ -173,9 +173,26 @@ func (db *DB) HasTable(ctx context.Context, table string) bool {
 	return tableExistsIn(ctx, db, table)
 }
 
+// TableExists — то же самое, но со СБОЕМ, отделённым от «таблицы нет».
+//
+// HasTable отвечает bool, и сбой соединения там неотличим от отсутствия
+// таблицы. Для пропуска необязательной работы этого достаточно, но там, где за
+// ответом следует «значит, делать нечего», такой ответ опасен: путь молча
+// отчитывается об успехе, ничего не сделав (#611). Такие места спрашивают
+// здесь.
+func (db *DB) TableExists(ctx context.Context, table string) (bool, error) {
+	return tableExistsErr(ctx, db, table)
+}
+
 // tableExistsIn — проверка наличия служебной таблицы без её создания: команды
 // вида `onebase secret list` обязаны оставаться читающими.
 func tableExistsIn(ctx context.Context, db *DB, table string) bool {
+	exists, err := tableExistsErr(ctx, db, table)
+	return err == nil && exists
+}
+
+// tableExistsErr — та же проверка, но ошибка возвращается вызывающему.
+func tableExistsErr(ctx context.Context, db *DB, table string) (bool, error) {
 	var exists bool
 	var err error
 	if db.IsSQLite() {
@@ -190,7 +207,10 @@ func tableExistsIn(ctx context.Context, db *DB, table string) bool {
 		err = db.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM pg_tables WHERE schemaname=current_schema() AND tablename=$1)`, table).Scan(&exists)
 	}
-	return err == nil && exists
+	if err != nil {
+		return false, fmt.Errorf("storage: проверка наличия таблицы %s: %w", table, err)
+	}
+	return exists, nil
 }
 
 // SaveSetting записывает значение по ключу как есть, без интерпретации.
@@ -224,7 +244,15 @@ type TOTPSecretRow struct {
 // как «перешифровывать/гасить нечего», и secret rotate и disableUnreadableTOTP
 // тихо не сделали бы ничего, отрапортовав об успехе (#611).
 func (db *DB) ListTOTPSecrets(ctx context.Context) ([]TOTPSecretRow, error) {
-	if !db.HasTable(ctx, "_users") {
+	// Через TableExists, а не HasTable: «таблицы нет» и «спросить не удалось»
+	// здесь ведут к разным ответам. Раньше оборванное соединение давало false,
+	// и функция отвечала «секретов нет» — тот самый зелёный отчёт о ничего не
+	// сделавшей ротации, ради которого и заведена проверка ниже (#611).
+	hasUsers, err := db.TableExists(ctx, "_users")
+	if err != nil {
+		return nil, fmt.Errorf("settings: проверка таблицы пользователей: %w", err)
+	}
+	if !hasUsers {
 		return nil, nil
 	}
 	hasCol, err := db.dialect.ColumnExists(ctx, db, "_users", "totp_secret")
