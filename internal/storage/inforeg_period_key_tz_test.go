@@ -86,4 +86,46 @@ func TestInfoRegPeriodKeyIsTimezoneIndependent(t *testing.T) {
 	if !strings.HasSuffix(periodKey, "Z") {
 		t.Errorf("ключ периода не в UTC: %q", periodKey)
 	}
+
+	// Проверяем не только форму ключа, но и его конечный контракт: тот же
+	// машинный текст из списка должен адресовать ровно эту строку в DELETE.
+	parsedPeriod, ok := storage.ParseRegPeriod(periodKey)
+	if !ok {
+		t.Fatalf("канонический period_key не разбирается: %q", periodKey)
+	}
+	deleted, err := db.InfoRegDeleteExactReturning(ctx, ir,
+		map[string]any{"Момент": keys["Момент"]}, &parsedPeriod, nil)
+	if err != nil {
+		t.Fatalf("удаление каноническими UTC-ключами: %v", err)
+	}
+	if len(deleted) != 1 {
+		t.Fatalf("канонические UTC-ключи удалили %d строк, ожидалась 1", len(deleted))
+	}
+
+	// Уже открытая до обновления форма могла сохранить ключи с offset процесса.
+	// ParseRegPeriod обязан принять их, а PostgreSQL — сопоставить тот же инстант.
+	if err := db.InfoRegSet(ctx, ir,
+		map[string]any{"Момент": moment}, map[string]any{"Значение": "legacy"}, &moment); err != nil {
+		t.Fatalf("повторная запись для legacy-проверки: %v", err)
+	}
+	legacyKey := moment.In(time.Local).Format(time.RFC3339Nano)
+	legacyPeriod, ok := storage.ParseRegPeriod(legacyKey)
+	if !ok {
+		t.Fatalf("прежний offset-ключ не разбирается: %q", legacyKey)
+	}
+	deleted, err = db.InfoRegDeleteExactReturning(ctx, ir,
+		map[string]any{"Момент": legacyKey}, &legacyPeriod, nil)
+	if err != nil {
+		t.Fatalf("удаление прежними offset-ключами: %v", err)
+	}
+	if len(deleted) != 1 {
+		t.Fatalf("прежние offset-ключи удалили %d строк, ожидалась 1", len(deleted))
+	}
+	rows, err = db.InfoRegListWithKeyValues(ctx, ir, storage.RegFilter{})
+	if err != nil {
+		t.Fatalf("контрольное чтение после удалений: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("после двух точных удалений остались строки: %#v", rows)
+	}
 }
