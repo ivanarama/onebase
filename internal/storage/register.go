@@ -18,6 +18,13 @@ type refUUIDGetter interface{ GetRefUUID() string }
 // Accepts string (UUID or empty), or any type implementing GetRefUUID().
 func resolveRefArg(d Dialect, v any) any {
 	switch val := v.(type) {
+	case uuid.UUID:
+		return idArg(d, val)
+	case *uuid.UUID:
+		if val != nil {
+			return idArg(d, *val)
+		}
+		return nil
 	case string:
 		if val != "" {
 			if id, err := uuid.Parse(val); err == nil {

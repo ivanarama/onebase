@@ -421,6 +421,13 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
+	// Значения перечислений проверяются ДО хука и до записи: хук может писать
+	// в другие объекты, и откатывать его последствия из-за неверного значения
+	// в исходном — хуже, чем не начинать (#769).
+	if msg := validateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
+		return SaveResult{ID: req.ID, DSLError: msg}, nil
+	}
+
 	// Выбор хука: OnPost при проведении документа, иначе OnWrite.
 	isPosting := req.Entity.Posting && (req.Action == "post" || req.Action == "post_and_close")
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).

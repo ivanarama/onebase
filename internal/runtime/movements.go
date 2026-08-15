@@ -42,6 +42,7 @@ var contextLabels = map[string]string{
 	"scheduler": "регламентное задание",
 	"processor": "обработка",
 	"report":    "отчёт",
+	"print":     "печатная форма",
 	"page":      "страница",
 	"console":   "консоль кода",
 	"intake":    "приём сообщений",
