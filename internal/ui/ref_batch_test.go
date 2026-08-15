@@ -60,6 +60,33 @@ func TestResolveRefs_Batched(t *testing.T) {
 	}
 }
 
+func TestResolveRefs_PresentationFallbackLoadsEveryCandidate(t *testing.T) {
+	client := &metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+		Presentation: []string{"Артикул", "Наименование"},
+	}
+	doc := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Товар", Type: "reference:Номенклатура", RefEntity: client.Name}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, doc})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, client.Name, id, map[string]any{
+		"Артикул": "", "Наименование": "Стул",
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+	rows := []map[string]any{{"Товар": id.String()}}
+	s.resolveRefs(ctx, doc, rows)
+	if got := rows[0]["Товар"]; got != "Стул" {
+		t.Fatalf("fallback presentation = %v, ожидалось Стул", got)
+	}
+}
+
 func TestResolveRefColumns_KnownAndUnknownType(t *testing.T) {
 	client := refTestCatalog()
 	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client})

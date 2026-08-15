@@ -92,7 +92,7 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	argIdx := 1
 	for _, f := range entity.Fields {
 		col := metadata.ColumnName(f)
-		val, err := applyNumberSpec(f, fieldValueDialect(d, f, fields))
+		val, err := canonicalNumberArg(f, fieldValueDialect(d, f, fields))
 		if err != nil {
 			return err
 		}

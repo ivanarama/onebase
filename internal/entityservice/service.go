@@ -406,6 +406,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	obj := &runtime.Object{
 		Type:          req.Entity.Name,
 		Kind:          req.Entity.Kind,
+		Presentation:  req.Entity.Presentation,
 		ID:            req.ID,
 		Fields:        req.Fields,
 		TablePartRows: req.TablePartRows,
@@ -661,6 +662,7 @@ func (s *Service) unpostInTx(
 	obj := &runtime.Object{
 		Type:          entity.Name,
 		Kind:          entity.Kind,
+		Presentation:  entity.Presentation,
 		ID:            id,
 		Fields:        fields,
 		TablePartRows: tpRows,
@@ -910,7 +912,7 @@ func (s *Service) deleteHookObject(txCtx context.Context, entity *metadata.Entit
 		}
 		tpRows[tp.Name] = rows
 	}
-	obj := &runtime.Object{Type: entity.Name, Kind: entity.Kind, ID: id, Fields: fields, TablePartRows: tpRows}
+	obj := &runtime.Object{Type: entity.Name, Kind: entity.Kind, Presentation: entity.Presentation, ID: id, Fields: fields, TablePartRows: tpRows}
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}
@@ -1023,6 +1025,7 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	srcObj := &runtime.Object{
 		Type:          src.Name,
 		Kind:          src.Kind,
+		Presentation:  src.Presentation,
 		ID:            req.SourceID,
 		Fields:        srcFields,
 		TablePartRows: srcTP,
@@ -1054,6 +1057,7 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 
 	// Подготовка приёмника: пустой Object с инициализированными ТЧ.
 	recvObj := runtime.NewObject(req.Receiver.Name, req.Receiver.Kind)
+	recvObj.Presentation = req.Receiver.Presentation
 	for _, tp := range req.Receiver.TableParts {
 		recvObj.TablePartRows[tp.Name] = []map[string]any{}
 	}
@@ -1202,7 +1206,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
 
-	obj := &runtime.Object{Type: ent.Name, Kind: ent.Kind, ID: id, Fields: fields, TablePartRows: tps}
+	obj := &runtime.Object{Type: ent.Name, Kind: ent.Kind, Presentation: ent.Presentation, ID: id, Fields: fields, TablePartRows: tps}
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}

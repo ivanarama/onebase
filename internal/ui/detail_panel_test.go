@@ -111,6 +111,39 @@ func TestDetailPanel_AutoLayout(t *testing.T) {
 	}
 }
 
+func TestDetailPanel_UsesExplicitPresentationFallback(t *testing.T) {
+	ent := panelEntity()
+	ent.Presentation = []string{"Артикул", "Поставщик"}
+	row := map[string]any{
+		"id":           "11111111-1111-1111-1111-111111111111",
+		"Наименование": "Старое имя",
+		"Артикул":      " ",
+		"Поставщик":    "Витринное имя",
+	}
+	var data detailPanelData
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "ru")), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Title != "Витринное имя" {
+		t.Fatalf("fallback title = %q, ожидалось Витринное имя", data.Title)
+	}
+	row["Артикул"] = "A-1"
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "ru")), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Title != "A-1" {
+		t.Fatalf("primary title = %q, ожидалось A-1", data.Title)
+	}
+	row["Артикул"] = " "
+	row["Поставщик"] = ""
+	if err := json.Unmarshal([]byte(detailPanelForEntity(ent, row, nil, "ru")), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Title != "" {
+		t.Fatalf("empty explicit title = %q, ожидалось пустое значение без legacy fallback", data.Title)
+	}
+}
+
 func TestDetailPanel_AutoTabTitlesUseResolvedLanguage(t *testing.T) {
 	ent := panelEntity()
 	row := map[string]any{"Артикул": "10041", "Фото": "img-1", "Описание": "text"}
