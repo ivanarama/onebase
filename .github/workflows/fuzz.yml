@@ -38,9 +38,13 @@ jobs:
       # -run='^$' отключает обычные тесты: иначе они выполнятся перед fuzz и
       # съедят часть бюджета времени.
       - name: Fuzz ParseProgram
+        env:
+          # Не интерполировать workflow_dispatch input прямо в run: иначе
+          # shell-метасимволы в значении превращаются в команды раннера.
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '10m' }}
         run: |
           go test -run='^$' -fuzz=FuzzParseProgram \
-            -fuzztime=${{ github.event.inputs.fuzztime || '10m' }} \
+            "-fuzztime=$FUZZTIME" \
             ./internal/dsl/parser/
 
       # Корпус пишется в testdata/fuzz только когда прогон нашёл падение —
