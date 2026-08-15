@@ -121,6 +121,55 @@ func TestUpdatesPage_ApplyOnlyWhenStaged(t *testing.T) {
 	}
 }
 
+func TestUpdatesPage_BackupChoiceCoversApplyAndRollback(t *testing.T) {
+	apply := updatesVM{
+		Enabled: true, CanWrite: true,
+		Current: "build-930", StagedTag: "build-931",
+	}
+	applyPage := renderUpdatesPage(t, apply)
+	if got := strings.Count(applyPage, `id="upd-backup"`); got != 1 {
+		t.Fatalf("apply page backup checkbox count = %d, want 1", got)
+	}
+	if !strings.Contains(applyPage, `id="upd-backup" checked`) {
+		t.Fatal("backup checkbox must be enabled by default for apply")
+	}
+
+	rollback := updatesVM{
+		Enabled: true, CanWrite: true,
+		Current: "build-931", PrevTag: "build-930",
+	}
+	rollbackPage := renderUpdatesPage(t, rollback)
+	if strings.Contains(rollbackPage, `return updApply()`) {
+		t.Fatal("rollback-only page unexpectedly offers apply")
+	}
+	if got := strings.Count(rollbackPage, `id="upd-backup"`); got != 1 {
+		t.Fatalf("rollback-only page backup checkbox count = %d, want 1", got)
+	}
+	if !strings.Contains(rollbackPage, `id="upd-backup" checked`) {
+		t.Fatal("backup checkbox must be enabled by default for rollback")
+	}
+
+	start := strings.Index(rollbackPage, "function updRollback(tag)")
+	if start < 0 {
+		t.Fatal("rendered page has no rollback JavaScript")
+	}
+	rollbackJS := rollbackPage[start:]
+	for _, want := range []string{
+		"var backup = updBackupEnabled();",
+		"var url = '/updates/rollback' + (backup ? '?backup=1' : '');",
+		"return updPost(url, busy, function(){",
+	} {
+		if !strings.Contains(rollbackJS, want) {
+			t.Errorf("rollback JavaScript does not use shared backup choice: missing %q", want)
+		}
+	}
+
+	noVersionChange := updatesVM{Enabled: true, CanWrite: true, Current: "build-931"}
+	if page := renderUpdatesPage(t, noVersionChange); strings.Contains(page, `id="upd-backup"`) {
+		t.Fatal("backup checkbox is visible when neither apply nor rollback is available")
+	}
+}
+
 // Переключатель канала прячется, когда канал задан администратором.
 func TestUpdatesPage_ChannelLocked(t *testing.T) {
 	vm := updatesVM{Enabled: true, NetAllowed: true, CanWrite: true, Current: "v0.9.8", Channel: "stable", ChannelLocked: true}

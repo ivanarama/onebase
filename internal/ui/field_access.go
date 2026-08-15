@@ -71,6 +71,116 @@ func (s *Server) maskInfoRegRecords(ctx context.Context, ir *metadata.InfoRegist
 	}
 }
 
+// maskRegisterRecords applies field_access.registers at the handler boundary —
+// до разрешения ссылочных UUID в представления и до рендера.
+//
+// #767 вывел маскирование на границы журналов и регистров СВЕДЕНИЙ, а списки
+// регистров накопления остались без него: права на объект и строковый отбор
+// применялись, а маска полей — нет. При этом та же политика честно работала в
+// запросах DSL, то есть данные, скрытые от роли в отчёте, показывались ей же
+// в /ui/register/* (#859).
+func (s *Server) maskRegisterRecords(ctx context.Context, reg *metadata.Register, rows []map[string]any) {
+	if reg == nil {
+		return
+	}
+	access.MaskRecords(s.registerFieldDecisions(ctx, reg), rows)
+}
+
+// registerFieldDecisions centralises the synthetic accumulation-register
+// metadata used by every UI and DSL read boundary. Keeping the decision map
+// separate from MaskRecords also lets callers reject operations that would use
+// a protected value as a filter or GROUP BY key before storage sees it.
+func (s *Server) registerFieldDecisions(ctx context.Context, reg *metadata.Register) map[string]access.FieldDecision {
+	if reg == nil {
+		return nil
+	}
+	return s.fieldDecisionsFor(ctx, "register", reg.Name, storage.RegisterPredicateEntity(reg))
+}
+
+func registerFieldProtected(decisions map[string]access.FieldDecision, name string) bool {
+	decision, ok := fieldDecisionByName(decisions, name)
+	return ok && decision.Masked()
+}
+
+func registerFieldHidden(decisions map[string]access.FieldDecision, name string) bool {
+	decision, ok := fieldDecisionByName(decisions, name)
+	return ok && decision.Hidden()
+}
+
+func registerHasProtectedDimension(decisions map[string]access.FieldDecision, reg *metadata.Register) bool {
+	if reg == nil {
+		return false
+	}
+	for _, field := range reg.Dimensions {
+		if registerFieldProtected(decisions, field.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// registerBalancesProtected covers every protected input that drives the
+// aggregate: dimensions are GROUP BY keys and вид_движения chooses the sign of
+// each resource. Masking only the final cells cannot close either oracle.
+func registerBalancesProtected(decisions map[string]access.FieldDecision, reg *metadata.Register) bool {
+	return registerHasProtectedDimension(decisions, reg) || registerFieldProtected(decisions, "вид_движения")
+}
+
+func unprotectedRegisterDimensions(decisions map[string]access.FieldDecision, fields []metadata.Field) []metadata.Field {
+	result := make([]metadata.Field, 0, len(fields))
+	for _, field := range fields {
+		if !registerFieldProtected(decisions, field.Name) {
+			result = append(result, field)
+		}
+	}
+	return result
+}
+
+func visibleRegisterFields(decisions map[string]access.FieldDecision, fields []metadata.Field) []metadata.Field {
+	result := make([]metadata.Field, 0, len(fields))
+	for _, field := range fields {
+		if !registerFieldHidden(decisions, field.Name) {
+			result = append(result, field)
+		}
+	}
+	return result
+}
+
+type registerMovementColumns struct {
+	ShowLineNumber bool
+	ShowKind       bool
+	ShowRecorder   bool
+}
+
+func registerMovementColumnsFor(decisions map[string]access.FieldDecision) registerMovementColumns {
+	return registerMovementColumns{
+		ShowLineNumber: !registerFieldHidden(decisions, "line_number"),
+		ShowKind:       !registerFieldHidden(decisions, "вид_движения"),
+		// The rendered registrar is a compound value. Hiding either source must
+		// remove the compound column rather than reconstruct it from the other.
+		ShowRecorder: !registerFieldHidden(decisions, "recorder") &&
+			!registerFieldHidden(decisions, "recorder_type"),
+	}
+}
+
+// protectedRegisterFilterRequested closes the inference channel where a
+// caller probes a masked dimension (or period) and observes whether the result
+// set changes. Check the raw query before parsing or issuing any storage query:
+// even a syntactically invalid protected filter must not be treated as absent.
+func protectedRegisterFilterRequested(r *http.Request, reg *metadata.Register, decisions map[string]access.FieldDecision) bool {
+	if r == nil || reg == nil {
+		return false
+	}
+	query := r.URL.Query()
+	for _, field := range reg.Dimensions {
+		if registerFieldProtected(decisions, field.Name) && strings.TrimSpace(query.Get("flt_"+field.Name)) != "" {
+			return true
+		}
+	}
+	return registerFieldProtected(decisions, "period") &&
+		(strings.TrimSpace(query.Get("from")) != "" || strings.TrimSpace(query.Get("to")) != "")
+}
+
 // maskJournalRecords maps each journal output column back to the source fields
 // of the concrete document row, then applies that document's field policy to
 // the output alias. This mapping is essential for explicit map/fallback journal

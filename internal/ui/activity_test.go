@@ -479,15 +479,12 @@ func TestTreeChildrenJSON_ReturnsDirectChildren(t *testing.T) {
 	if len(row.Cells) == 0 || row.Cells[0] != "Ребёнок" {
 		t.Fatalf("cells = %#v, want child label", row.Cells)
 	}
-	if row.Detail == "" {
-		t.Fatal("lazy tree child is missing the detail-panel payload")
+	wantDetailURL := "/ui/catalog/" + strings.ToLower(ent.Name) + "/" + childID.String() + "/detail-panel"
+	if row.DetailURL != wantDetailURL {
+		t.Fatalf("detail URL = %q, want %q", row.DetailURL, wantDetailURL)
 	}
-	var panel detailPanelData
-	if err := json.Unmarshal([]byte(row.Detail), &panel); err != nil {
-		t.Fatalf("decode detail payload: %v; raw=%s", err, row.Detail)
-	}
-	if got, ok := detailPanelValueByLabel(panel, "Наименование"); !ok || got != "Ребёнок" {
-		t.Fatalf("lazy tree detail payload has no child value: got=%q ok=%v payload=%+v", got, ok, panel)
+	if strings.Contains(rec.Body.String(), `"detail":`) {
+		t.Fatalf("lazy tree response contains an inline detail payload: %s", rec.Body.String())
 	}
 }
 
@@ -504,6 +501,7 @@ func TestTreeChildrenJSON_HonorsExplicitDetailPanel(t *testing.T) {
 			{Name: "Name", Type: metadata.FieldTypeString},
 			{Name: "Secret", Type: metadata.FieldTypeString},
 		},
+		ListForm:    []string{"Name"},
 		DetailPanel: &metadata.DetailPanel{Fields: []string{"Name"}, FieldsSet: true},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
@@ -528,8 +526,24 @@ func TestTreeChildrenJSON_HonorsExplicitDetailPanel(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Rows) != 1 {
 		t.Fatalf("decode rows: err=%v rows=%#v", err, got.Rows)
 	}
+	wantDetailURL := "/ui/catalog/groups/" + childID.String() + "/detail-panel"
+	if got.Rows[0].DetailURL != wantDetailURL {
+		t.Fatalf("detail URL = %q, want %q", got.Rows[0].DetailURL, wantDetailURL)
+	}
+	if strings.Contains(rec.Body.String(), "must-not-appear") || strings.Contains(rec.Body.String(), `"detail":`) {
+		t.Fatalf("tree response contains an inline detail payload: %s", rec.Body.String())
+	}
+
+	panelReq := reqWithChi(http.MethodGet, wantDetailURL, nil, map[string]string{
+		"kind": "catalog", "entity": ent.Name, "id": childID.String(),
+	})
+	panelRec := httptest.NewRecorder()
+	s.detailPanelRecord(panelRec, panelReq)
+	if panelRec.Code != http.StatusOK {
+		t.Fatalf("detail panel code=%d body=%s", panelRec.Code, panelRec.Body.String())
+	}
 	var panel detailPanelData
-	if err := json.Unmarshal([]byte(got.Rows[0].Detail), &panel); err != nil {
+	if err := json.Unmarshal(panelRec.Body.Bytes(), &panel); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := detailPanelValueByLabel(panel, "Name"); !ok {
