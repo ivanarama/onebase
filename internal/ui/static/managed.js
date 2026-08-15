@@ -1159,8 +1159,62 @@ function obManagedInitDelegates() {
     if (fire && window.obFire) window.obFire(fire, 'ПриИзменении');
   });
 
+  // Маска ввода (#763). `mask` — это регулярное выражение проверки, оно ничего
+  // не подставляет; настоящий шаблон объявляется ключом input_mask и работает
+  // здесь: заполнители 0 (цифра), X (буква), * (цифра или буква), остальные
+  // символы литеральные и ставятся сами.
+  //
+  // Формат «набрал 123456 → в поле 12.34.56» — это ровно то, чего ждут от
+  // «маски», и без него настройка выглядела бы работающей наполовину.
+  //
+  // Висячий разделитель не дописываем: после «12» в поле остаётся «12», а точка
+  // появится вместе со следующей цифрой. Иначе пользователь, набравший половину
+  // и ушедший с поля, сохранил бы «12.» — значение с мусорным хвостом, которое
+  // ещё и не пройдёт pattern.
+  function obApplyInputMask(mask, raw) {
+    var out = '';
+    var i = 0;
+    for (var m = 0; m < mask.length && i < raw.length; m++) {
+      var slot = mask.charAt(m);
+      if (slot !== '0' && slot !== 'X' && slot !== '*') {
+        // Литерал: если пользователь набрал его сам — съедаем, иначе ставим за
+        // него. Иначе повторный ввод «12.» давал бы «12..».
+        out += slot;
+        if (raw.charAt(i) === slot) i++;
+        continue;
+      }
+      // Пропускаем символы, не подходящие под заполнитель: вставка из буфера с
+      // разделителями не должна ломать раскладку.
+      while (i < raw.length && !obInputMaskFits(slot, raw.charAt(i))) i++;
+      if (i >= raw.length) break;
+      out += raw.charAt(i++);
+    }
+    return out;
+  }
+
+  function obInputMaskFits(slot, ch) {
+    var digit = ch >= '0' && ch <= '9';
+    if (slot === '0') return digit;
+    var letter = ch.toLowerCase() !== ch.toUpperCase();
+    if (slot === 'X') return letter;
+    return digit || letter;
+  }
+
+  function obHandleInputMask(el) {
+    var mask = el.getAttribute('data-ob-input-mask');
+    if (!mask) return;
+    var atEnd = el.selectionStart === el.value.length;
+    var next = obApplyInputMask(mask, el.value);
+    if (next === el.value) return;
+    el.value = next;
+    // Курсор возвращаем в конец только если он там и был: иначе правка в
+    // середине поля выбрасывала бы каретку.
+    if (atEnd && el.setSelectionRange) el.setSelectionRange(next.length, next.length);
+  }
+
   document.addEventListener('input', function (e) {
     var el = e.target;
+    if (el && el.getAttribute && el.getAttribute('data-ob-input-mask')) obHandleInputMask(el);
     if (el && el.hasAttribute && el.hasAttribute('data-ob-recalc-tp-row') && typeof recalcTpRow === 'function') recalcTpRow(el);
   });
 

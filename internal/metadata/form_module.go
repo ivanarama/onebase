@@ -178,10 +178,16 @@ type FormElement struct {
 	NoGrid          bool              `yaml:"no_grid,omitempty"`        // отключить SlickGrid у ТЧ (вернуть простую таблицу)
 	AutoSum         bool              `yaml:"auto_sum,omitempty"`       // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
 	Hint            string            `yaml:"hint,omitempty"`           // всплывающая подсказка
-	Mask            string            `yaml:"mask,omitempty"`           // маска ввода
-	AccessKey       string            `yaml:"accesskey,omitempty"`      // HTML accesskey для браузерной активации (Alt/Option+клавиша)
-	HotKey          string            `yaml:"hotkey,omitempty"`         // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
-	Multiline       bool              `yaml:"multiline,omitempty"`      // обычное поле ввода рендерится как textarea
+	Mask            string            `yaml:"mask,omitempty"`           // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
+	// InputMask — настоящая маска ввода: заполнители подставляются по мере
+	// набора, разделители ставятся сами (#763, п. 3). Отдельный ключ, потому что
+	// `mask` — это regexp, и переиспользовать его под шаблон значило бы сломать
+	// уже написанные проверки. Заполнители: 0 — цифра, X — буква, * — цифра или
+	// буква; остальные символы литеральные.
+	InputMask string `yaml:"input_mask,omitempty"`
+	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
+	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
+	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -282,6 +288,25 @@ func splitVirtualColumnPath(path string) (ref, target string, ok bool) {
 		return "", "", false
 	}
 	return ref, target, true
+}
+
+// InputMaskPlaceholders — символы-заполнители маски ввода. Остальные символы
+// шаблона считаются литеральными и подставляются автоматически.
+const InputMaskPlaceholders = "0X*"
+
+// InputMaskDigitsOnly сообщает, состоит ли маска только из цифровых
+// заполнителей: по такому полю разумно просить у мобильной клавиатуры цифры.
+func InputMaskDigitsOnly(mask string) bool {
+	seen := false
+	for _, r := range mask {
+		switch r {
+		case '0':
+			seen = true
+		case 'X', '*':
+			return false
+		}
+	}
+	return seen
 }
 
 // FormChoice — один пункт списка значений элемента ПолеСписка. Value хранится

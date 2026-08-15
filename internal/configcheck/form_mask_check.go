@@ -29,18 +29,26 @@ func CheckFormMask(proj *project.Project) []Issue {
 		for _, form := range ent.Forms {
 			label := formFileLabel(ent, form)
 			walkFormElements(form.Elements, func(el *metadata.FormElement) {
-				msg, fix := maskDiagnosis(el.Mask)
-				if msg == "" {
-					return
+				if msg, fix := maskDiagnosis(el.Mask); msg != "" {
+					warns = append(warns, Issue{
+						File:         label,
+						Object:       ent.Name,
+						Kind:         "Управляемая форма",
+						Code:         "form.mask-not-regexp",
+						Message:      fmt.Sprintf("реквизит %q: %s", formElementName(el), msg),
+						SuggestedFix: fix,
+					})
 				}
-				warns = append(warns, Issue{
-					File:         label,
-					Object:       ent.Name,
-					Kind:         "Управляемая форма",
-					Code:         "form.mask-not-regexp",
-					Message:      fmt.Sprintf("реквизит %q: %s", formElementName(el), msg),
-					SuggestedFix: fix,
-				})
+				if msg, fix := inputMaskDiagnosis(el.InputMask); msg != "" {
+					warns = append(warns, Issue{
+						File:         label,
+						Object:       ent.Name,
+						Kind:         "Управляемая форма",
+						Code:         "form.input-mask-not-template",
+						Message:      fmt.Sprintf("реквизит %q: %s", formElementName(el), msg),
+						SuggestedFix: fix,
+					})
+				}
 			})
 		}
 	}
@@ -69,8 +77,41 @@ func maskDiagnosis(mask string) (msg, fix string) {
 	return "mask — это регулярное выражение (атрибут pattern), а не шаблон ввода 1С: " +
 			"в нём «0» значит литеральный ноль, а «.» — любой символ, поэтому такая маска " +
 			"отвергает 12.34.56 и принимает 00X00Y00",
-		`Для формата вида 12.34.56 напишите mask: '\d{2}\.\d{2}\.\d{2}'. ` +
-			"Автоподстановки разделителей платформа пока не делает — mask только проверяет значение."
+		`Для формата вида 12.34.56 напишите mask: '\d{2}\.\d{2}\.\d{2}' — это проверка значения. ` +
+			"А сам шаблон ввода, который расставляет разделители, объявляется ключом input_mask: \"00.00.00\"."
+}
+
+// inputMaskDiagnosis проверяет ключ input_mask — настоящий шаблон ввода.
+//
+// Ошибка здесь зеркальна ошибке с mask: туда пишут регулярное выражение,
+// потому что «маска» рядом уже означала regexp. Шаблон из `\d{2}` ничего не
+// отформатирует: клиент подставит эти символы литералами, и в поле поедет
+// «\d{2}\.\d{2}» вместо цифр.
+func inputMaskDiagnosis(mask string) (msg, fix string) {
+	mask = strings.TrimSpace(mask)
+	if mask == "" {
+		return "", ""
+	}
+	// Проверка на regexp идёт первой: у «\d{2}» заполнителей тоже нет, но
+	// сообщение «нет заполнителей» не назвало бы человеку его ошибку.
+	if looksLikeRegexpMask(mask) {
+		return `input_mask — это ШАБЛОН ввода, а не регулярное выражение: символы \, {, }, [, ] ` +
+				"попадут в поле литералами",
+			`Регулярное выражение задаётся ключом mask (проверка значения), шаблон — input_mask: "00.00.00".`
+	}
+	if !strings.ContainsAny(mask, metadata.InputMaskPlaceholders) {
+		return "input_mask не содержит ни одного заполнителя (0 — цифра, X — буква, * — цифра или буква), " +
+				"поэтому ввод в такое поле форматировать нечем",
+			`Шаблон формата 12.34.56 пишется как input_mask: "00.00.00".`
+	}
+	return "", ""
+}
+
+// looksLikeRegexpMask ловит характерные признаки регулярного выражения в
+// шаблоне ввода. Узко намеренно: скобки и плюс встречаются в телефонных
+// шаблонах как литералы и признаком regexp здесь не считаются.
+func looksLikeRegexpMask(mask string) bool {
+	return strings.ContainsAny(mask, `\{}[]|`)
 }
 
 // looksLikeOneCMask — маска состоит ТОЛЬКО из заполнителей 1С, цифр-литералов и

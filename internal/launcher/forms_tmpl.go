@@ -1100,7 +1100,11 @@ function renderProps() {
     addCheckProp(panel, 'Обязательное', 'required', info.required);
     addCheckProp(panel, 'Только чтение', 'readonly', info.readonly);
     if (info.kind === 'ПолеВвода') {
-      addTextProp(panel, 'Маска ввода (регулярное выражение)', 'mask', info.mask || '');
+      // Два ключа рядом и подписаны по назначению: сюда пишут шаблон, потому
+      // что «маска» — первое, что ищут глазами, и до появления input_mask
+      // шаблон уезжал в regexp-проверку (#763).
+      addTextProp(panel, 'Шаблон ввода (00.00.00)', 'input_mask', info.inputMask || '');
+      addTextProp(panel, 'Проверка значения (регулярное выражение)', 'mask', info.mask || '');
       addCheckRaw(panel, 'Файловое поле', info.fileType, function (ch) { setProp('type', ch ? 'file' : ''); });
     }
   }
