@@ -305,7 +305,7 @@ func (h *handler) updatesApply(w http.ResponseWriter, r *http.Request) {
 			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
 			// чтобы копия была. Молча обновиться без неё — обмануть.
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед обновлением") + ": " + err.Error(),
+				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед изменением версии") + ": " + err.Error(),
 			})
 			return
 		}
@@ -422,7 +422,7 @@ func (h *handler) updatesRollback(w http.ResponseWriter, r *http.Request) {
 			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
 			// чтобы копия была. Молча обновиться без неё — обмануть.
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
-				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед обновлением") + ": " + err.Error(),
+				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед изменением версии") + ": " + err.Error(),
 			})
 			return
 		}
@@ -1034,7 +1034,7 @@ func latestTag(st selfupdate.State) string {
 	return st.Latest.Tag
 }
 
-// backupRequested — просили ли сделать копии перед применением обновления.
+// backupRequested — просили ли сделать копии перед изменением версии.
 // Умолчание «нет» осознанное: параметр приходит из UI, где галка включена, но
 // автоматически копировать чужие базы по любому POST нельзя.
 func backupRequested(r *http.Request) bool {
@@ -1054,7 +1054,7 @@ func (h *handler) backupBeforeVersionChange(
 	made, backupErr := backupBasesForUpdate(h, ctx)
 	if backupErr == nil {
 		if len(made) > 0 {
-			oblog.Component("launcher").Info("резервные копии перед обновлением", "количество", len(made))
+			oblog.Component("launcher").Info("резервные копии перед изменением версии", "количество", len(made))
 		}
 		return nil
 	}
@@ -1096,11 +1096,26 @@ func (h *handler) backupAllBasesForUpdate(ctx context.Context) ([]string, error)
 	}
 	var made []string
 	for _, b := range bases {
-		path, err := dumpForBase(ctx, b, h.backupDir(b))
+		path, err := h.backupBaseForUpdate(ctx, b)
 		if err != nil {
 			return made, fmt.Errorf("%s: %w", b.Name, err)
 		}
 		made = append(made, path)
 	}
 	return made, nil
+}
+
+// backupBaseForUpdate deliberately mirrors backupCreate: OpenDB holds the
+// shared cross-process database lifetime lease, rejects a pending universal
+// restore, and pins a SQLite alias to the canonical target protected by that
+// lease. The helper scope closes the handle before the loop advances to the
+// next base, including every error path.
+func (h *handler) backupBaseForUpdate(ctx context.Context, b *Base) (string, error) {
+	dir := h.backupDir(b)
+	db, err := OpenDB(ctx, b)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	return dumpForBase(ctx, basePinnedToOpenDB(b, db), dir)
 }

@@ -1,9 +1,10 @@
 {
+  "Делаю копии, откатываю и перезапускаю...": "Sichere, rolle zurück und starte neu…",
   "Делаю копии, обновляю и перезапускаю...": "Sichere, aktualisiere und starte neu…",
-  "Не удалось создать резервную копию перед обновлением": "Sicherung vor dem Update fehlgeschlagen",
+  "Не удалось создать резервную копию перед изменением версии": "Sicherung vor dem Versionswechsel fehlgeschlagen",
   "Подпись кнопки проведения": "Beschriftung der Buchen-Schaltfläche",
   "Префикс базы снят": "Datenbank-Präfix entfernt",
-  "Сделать резервные копии баз перед обновлением": "Datenbanken vor dem Update sichern",
+  "Сделать резервные копии баз перед изменением версии": "Datenbanken vor dem Versionswechsel sichern",
   "Скрыть кнопку «Провести и закрыть»": "Schaltfläche «Buchen und schließen» ausblenden",
   "Действуют, если включено проведение. Пустая подпись — стандартная «Провести».": "Gilt bei aktivierter Buchung. Leere Beschriftung — Standard «Buchen».",
   "Файлы конфигурации": "Konfigurationsdateien",
