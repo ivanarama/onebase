@@ -247,8 +247,28 @@ func allSchemas() map[string]map[string]any {
 				"list_mode":             stringSchema("pages|feed"),
 				"fulltext":              arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
 				"search_fields":         arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
-				"detail_panel":          detailPanel,
-				"stages":                stages,
+				// Схема принимает обе формы записи: `presentation: Артикул` и
+				// `presentation: [Артикул, Наименование]` — иначе редактор
+				// подчёркивал бы как ошибку ровно тот вариант, который в
+				// документации назван основным.
+				"presentation": map[string]any{
+					"description": "Реквизит(ы) представления объекта; по умолчанию — правило по именам, «Код» последним",
+					"oneOf": []any{
+						map[string]any{
+							"type": "string", "minLength": 1,
+							"description": "Имя строкового реквизита",
+						},
+						map[string]any{
+							"type": "array", "minItems": 1, "uniqueItems": true,
+							"items": map[string]any{
+								"type": "string", "minLength": 1,
+								"description": "Имя строкового реквизита; первый непустой становится подписью",
+							},
+						},
+					},
+				},
+				"detail_panel": detailPanel,
+				"stages":       stages,
 				"numerator": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

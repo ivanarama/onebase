@@ -171,12 +171,39 @@ func compilePolicy(p auth.RowPolicy, u *auth.User, meta *metadata.Entity, lookup
 	if err != nil {
 		return storage.Predicate{}, err
 	}
+	numberField := storage.PredicateNumberField(meta, field)
+	if err := validatePolicyNumberValues(numberField, p.Op, value, values); err != nil {
+		return storage.Predicate{}, err
+	}
 	return storage.Predicate{
-		Field:  field,
-		Op:     p.Op,
-		Value:  value,
-		Values: values,
+		Field:       field,
+		Op:          p.Op,
+		Value:       value,
+		Values:      values,
+		NumberField: numberField,
 	}, nil
+}
+
+func validatePolicyNumberValues(field *metadata.Field, op string, value any, values []any) error {
+	if field == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(op)) {
+	case "in", "not_in":
+		if len(values) == 0 {
+			values, _ = value.([]any)
+		}
+		for _, item := range values {
+			if err := storage.ValidatePredicateNumberValue(field, item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "", "eq", "ne":
+		return storage.ValidatePredicateNumberValue(field, value)
+	default:
+		return nil
+	}
 }
 
 func compileReferencePolicy(p auth.RowPolicy, u *auth.User, meta *metadata.Entity, lookup EntityLookup, fieldPath string) (storage.Predicate, error) {

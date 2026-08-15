@@ -93,7 +93,7 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// полях сущности, поэтому собираем их из самой managed-формы. Единая
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
 		data["ChoiceOptions"] = loadChoiceOptions(managed, s.resolveLang(r))
-		s.prepareManagedFormData(data, managed)
+		s.prepareManagedFormData(r.Context(), data, managed)
 		s.render(w, r, "page-managed-form", data)
 		return
 	}
@@ -121,7 +121,7 @@ func hierarchyCreateHints(r *http.Request, entity *metadata.Entity, isNew bool) 
 	return isFolder, parentID
 }
 
-func (s *Server) prepareManagedFormData(data map[string]any, form *metadata.FormModule) {
+func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any, form *metadata.FormModule) {
 	if form == nil || data == nil {
 		return
 	}
@@ -129,10 +129,15 @@ func (s *Server) prepareManagedFormData(data map[string]any, form *metadata.Form
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 	}
 	rows, _ := data["TablePartRows"].(map[string][]map[string]any)
+	entity, _ := data["Entity"].(*metadata.Entity)
+	// Виртуальные колонки заполняются здесь — в единственной точке подготовки
+	// данных управляемой формы. Любой путь рендера (новая запись, правка,
+	// повторный показ с ошибкой, событие формы) проходит через неё, поэтому
+	// колонка не может оказаться заполненной «через раз» (#845).
+	s.applyVirtualTPColumns(ctx, entity, form, rows)
 	if len(rows) == 0 || len(form.Conditional) == 0 || s.interp == nil {
 		return
 	}
-	entity, _ := data["Entity"].(*metadata.Entity)
 	warnings := applyManagedFormConditionalStyles(form, rows, managedFormHeaderValues(entity, data["Values"]), newInterpEvaluator(s.interp))
 	if len(warnings) > 0 {
 		data["FormWarnings"] = appendManagedFormWarnings(data["FormWarnings"], warnings)
@@ -277,14 +282,30 @@ func appendManagedFormWarnings(existing any, warnings []string) []string {
 	return out
 }
 
-// recordCardTitle возвращает представление записи для заголовка карточки/вкладки:
-// значение поля-представления (Наименование→Description→Имя→Name→Номер→первый
-// строковый — как aiRefLookupField) из Values. "" — если поля нет или пусто
-// (напр. новая запись). Используется для #481.
+// recordCardTitle возвращает представление записи для заголовка карточки/вкладки.
+// Явный presentation перебирается до первого непустого значения; без него
+// сохраняется прежний выбор одного поля через aiRefLookupField. "" — если поля
+// нет или пусто (напр. новая запись). Используется для #481.
 func recordCardTitle(entity *metadata.Entity, values any) string {
 	if entity == nil {
 		return ""
 	}
+	if len(entity.Presentation) > 0 {
+		switch m := values.(type) {
+		case map[string]string:
+			row := make(map[string]any, len(m))
+			for key, value := range m {
+				row[key] = value
+			}
+			label, _ := explicitPresentationValue(entity, row)
+			return label
+		case map[string]any:
+			label, _ := explicitPresentationValue(entity, m)
+			return label
+		}
+		return ""
+	}
+
 	field := aiRefLookupField(entity)
 	if field == "" {
 		return ""

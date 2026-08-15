@@ -284,10 +284,17 @@ func findObjectAttributeField(entity *metadata.Entity, name string) *metadata.Fi
 func displayField(entity *metadata.Entity) []metadata.Field {
 	// Тот же выбор, что у RowLabel: по имени реквизита, а не по позиции в YAML
 	// (план 117, решение №3).
-	if f := metadata.LabelFields(entity); len(f) > 0 {
-		return f[:1]
+	fields := metadata.LabelFields(entity)
+	if len(fields) == 0 || entity == nil {
+		return nil
 	}
-	return nil
+	// При явном presentation список задаёт fallback, поэтому из БД должны быть
+	// загружены все кандидаты. Без ключа сохраняем прежний контракт и объём
+	// выборки: только основной реквизит.
+	if len(entity.Presentation) > 0 {
+		return fields
+	}
+	return fields[:1]
 }
 
 func uniqueObjectFields(fields []metadata.Field) []metadata.Field {

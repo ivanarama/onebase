@@ -266,7 +266,7 @@ func TestPrepareManagedFormDataTypesHeaderValues(t *testing.T) {
 		"TablePartRows": rows,
 	}
 	s := &Server{interp: interpreter.New()}
-	s.prepareManagedFormData(data, form)
+	s.prepareManagedFormData(context.Background(), data, form)
 	if warns, _ := data["FormWarnings"].([]string); len(warns) != 0 {
 		t.Fatalf("unexpected warnings: %v", warns)
 	}

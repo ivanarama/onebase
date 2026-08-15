@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
-	"github.com/shopspring/decimal"
 )
 
 // InfoRegGetExact reads the exact record by full primary key (dimensions, plus
@@ -21,7 +22,11 @@ import (
 func (db *DB) InfoRegGetExact(ctx context.Context, ir *metadata.InfoRegister, dimKey map[string]any, period *time.Time) (map[string]any, error) {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
-	where, args := dimWhere(d, ir, dimKey, 1)
+	lookupKey, err := db.resolveInfoRegLookupKey(ctx, ir, dimKey, period)
+	if err != nil {
+		return nil, err
+	}
+	where, args := physicalDimWhere(d, ir, lookupKey, 1)
 	if ir.Periodic && period != nil {
 		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
 		args = append(args, *period)
@@ -42,38 +47,9 @@ func (db *DB) InfoRegGetExact(ctx context.Context, ir *metadata.InfoRegister, di
 // PostgreSQL applies NUMERIC typmods or SQLite stores a time.Time as TEXT.
 func (db *DB) InfoRegGetExactWithKeyValues(ctx context.Context, ir *metadata.InfoRegister,
 	dimKey map[string]any, period *time.Time) (map[string]any, error) {
-	lookupKey := dimKey
-	if db.IsPostgres() {
-		// A NUMERIC(p,s) assignment applies the column typmod before storing the
-		// primary key, while a later `column = $1` comparison does not apply that
-		// typmod to $1. Mirror the assignment rounding so readback can find, for
-		// example, input 1.005 after PostgreSQL stored it as 1.01.
-		lookupKey = make(map[string]any, len(dimKey))
-		for name, value := range dimKey {
-			lookupKey[name] = value
-		}
-		for _, field := range ir.Dimensions {
-			if field.Type != metadata.FieldTypeNumber || field.Length <= 0 {
-				continue
-			}
-			raw := dimKey[field.Name]
-			var value any
-			switch typed := raw.(type) {
-			case string:
-				if number, err := decimal.NewFromString(strings.TrimSpace(typed)); err == nil {
-					value = number
-				}
-			case []byte:
-				if number, err := decimal.NewFromString(strings.TrimSpace(string(typed))); err == nil {
-					value = number
-				}
-			default:
-				value = normalizeNumber(raw)
-			}
-			if number, ok := value.(decimal.Decimal); ok {
-				lookupKey[field.Name] = number.Round(int32(field.Scale)) //nolint:gosec // metadata precision is validated
-			}
-		}
+	lookupKey, err := db.resolveInfoRegLookupKey(ctx, ir, dimKey, period)
+	if err != nil {
+		return nil, err
 	}
 	return db.infoRegGetExactWithKeyValues(ctx, ir, lookupKey, period)
 }
@@ -82,7 +58,7 @@ func (db *DB) infoRegGetExactWithKeyValues(ctx context.Context, ir *metadata.Inf
 	dimKey map[string]any, period *time.Time) (map[string]any, error) {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
-	where, args := dimWhere(d, ir, dimKey, 1)
+	where, args := physicalDimWhere(d, ir, dimKey, 1)
 	if ir.Periodic && period != nil {
 		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
 		args = append(args, *period)
@@ -119,7 +95,11 @@ func (db *DB) InfoRegExactMatchesRowFilter(ctx context.Context, ir *metadata.Inf
 	}
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
-	where, args := dimWhere(d, ir, dimKey, 1)
+	lookupKey, err := db.resolveInfoRegLookupKey(ctx, ir, dimKey, period)
+	if err != nil {
+		return false, err
+	}
+	where, args := physicalDimWhere(d, ir, lookupKey, 1)
 	if ir.Periodic {
 		if period == nil {
 			return false, fmt.Errorf("info register %s is periodic: period is required", ir.Name)
@@ -151,30 +131,23 @@ func (db *DB) InfoRegExactMatchesRowFilter(ctx context.Context, ir *metadata.Inf
 }
 
 // InfoRegApplyExchange применяет запись регистра сведений из пакета обмена
-// (план 86). Значения измерений/ресурсов приходят канонизированными (ссылки —
-// строкой-UUID, даты — RFC3339), поэтому приводим их к аргументам БД тем же
-// normalizeRegArg, что и запись движений. deletion=true удаляет запись по ключу.
+// (план 86). Значения измерений/ресурсов проходят через те же канонические
+// storage-boundary функции, что обычная запись; deletion=true удаляет запись
+// по exact-first ключу, сохраняя адресуемость legacy SQLite NUMBER keys.
 func (db *DB) InfoRegApplyExchange(ctx context.Context, ir *metadata.InfoRegister, dims, resources map[string]any, period *time.Time, deletion bool) error {
-	d := db.dialect
-	cdims := make(map[string]any, len(ir.Dimensions))
-	for _, f := range ir.Dimensions {
-		cdims[f.Name] = normalizeRegArg(d, dims[f.Name], f.RefEntity != "")
-	}
 	if deletion {
-		return db.InfoRegDelete(ctx, ir, cdims, period)
+		return db.InfoRegDelete(ctx, ir, dims, period)
 	}
-	cres := make(map[string]any, len(ir.Resources))
-	for _, f := range ir.Resources {
-		cres[f.Name] = normalizeRegArg(d, resources[f.Name], f.RefEntity != "")
-	}
-	return db.InfoRegSet(ctx, ir, cdims, cres, period)
+	return db.InfoRegSet(ctx, ir, dims, resources, period)
 }
 
 // InfoRegSet upserts a record in an info register.
 // For periodic registers, period must be non-nil.
 func (db *DB) InfoRegSet(ctx context.Context, ir *metadata.InfoRegister, dimKey map[string]any, resources map[string]any, period *time.Time) error {
-	_, err := db.infoRegSet(ctx, ir, dimKey, resources, period, nil)
-	return err
+	return db.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		_, err := db.infoRegSet(txCtx, ir, dimKey, resources, period, nil)
+		return err
+	})
 }
 
 // InfoRegSetIfExistingAllowed inserts a new information-register row or
@@ -191,7 +164,13 @@ func (db *DB) InfoRegSetIfExistingAllowed(ctx context.Context, ir *metadata.Info
 	if existingFilter == nil {
 		return false, errors.New("info register conditional upsert: existing-row filter is required")
 	}
-	return db.infoRegSet(ctx, ir, dimKey, resources, period, existingFilter)
+	var changed bool
+	err := db.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
+		var err error
+		changed, err = db.infoRegSet(txCtx, ir, dimKey, resources, period, existingFilter)
+		return err
+	})
+	return changed, err
 }
 
 func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
@@ -199,6 +178,10 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 	existingFilter *Predicate) (bool, error) {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
+	writeKey, err := db.resolveInfoRegWriteKey(ctx, ir, dimKey, period)
+	if err != nil {
+		return false, err
+	}
 
 	cols := []string{}
 	phs := []string{}
@@ -219,14 +202,18 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 		col := metadata.ColumnName(f)
 		cols = append(cols, col)
 		phs = append(phs, d.Placeholder(idx))
-		args = append(args, normalizeRegArg(d, dimKey[f.Name], f.RefEntity != ""))
+		args = append(args, physicalRegFieldArg(d, f, writeKey[f.Name]))
 		idx++
 	}
 	for _, f := range ir.Resources {
 		col := metadata.ColumnName(f)
 		cols = append(cols, col)
 		phs = append(phs, d.Placeholder(idx))
-		args = append(args, normalizeRegArg(d, resources[f.Name], f.RefEntity != ""))
+		value, err := normalizeRegField(d, f, resources[f.Name])
+		if err != nil {
+			return false, fmt.Errorf("info register %s resource %s: %w", ir.Name, f.Name, err)
+		}
+		args = append(args, value)
 		idx++
 	}
 	cols = append(cols, "updated_at")
@@ -273,7 +260,11 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 func (db *DB) InfoRegGet(ctx context.Context, ir *metadata.InfoRegister, dimKey map[string]any) (map[string]any, error) {
 	table := metadata.InfoRegTableName(ir.Name)
 	allCols := resourceAndDimCols(ir)
-	where, args := dimWhere(db.dialect, ir, dimKey, 1)
+	lookupKey, err := db.resolveInfoRegLookupKey(ctx, ir, dimKey, nil)
+	if err != nil {
+		return nil, err
+	}
+	where, args := physicalDimWhere(db.dialect, ir, lookupKey, 1)
 	sql := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1",
 		strings.Join(allCols, ", "), table, where)
 	return db.infoRegScan(ctx, ir, sql, args)
@@ -284,12 +275,16 @@ func (db *DB) InfoRegGetLast(ctx context.Context, ir *metadata.InfoRegister, dim
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
 	allCols := append([]string{"period"}, resourceAndDimCols(ir)...)
-	where, args := dimWhere(d, ir, dimKey, 1)
+	lookupKey, err := db.resolveInfoRegLastLookupKey(ctx, ir, dimKey, onDate)
+	if err != nil {
+		return nil, err
+	}
+	where, args := physicalDimWhere(d, ir, lookupKey, 1)
 	args = append(args, onDate)
 	sql := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s AND period <= %s ORDER BY period DESC LIMIT 1",
 		strings.Join(allCols, ", "), table, where, d.Placeholder(len(args)))
-	return db.infoRegScan(ctx, ir, sql, args)
+	return db.infoRegScanWithPeriod(ctx, ir, sql, args)
 }
 
 // InfoRegKeyValuesField is the reserved row member used only by
@@ -329,7 +324,10 @@ func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 		selCols = append(selCols, metadata.ColumnName(f))
 	}
 
-	where, args := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if err != nil {
+		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
+	}
 	whereParts := make([]string, 0, 2)
 	if where != "" {
 		whereParts = append(whereParts, where)
@@ -447,12 +445,12 @@ func infoRegKeyText(field metadata.Field, raw, normalized any) string {
 		}
 		return value.String()
 	case time.Time:
-		return value.Format(time.RFC3339Nano)
+		return value.UTC().Format(time.RFC3339Nano)
 	case *time.Time:
 		if value == nil {
 			return ""
 		}
-		return value.Format(time.RFC3339Nano)
+		return value.UTC().Format(time.RFC3339Nano)
 	}
 	if field.Type == metadata.FieldTypeBool {
 		switch value := raw.(type) {
@@ -496,7 +494,14 @@ func infoRegListRows(ir *metadata.InfoRegister, raw []map[string]any) []map[stri
 		}
 		period := source["period"].(time.Time)
 		row["period"] = period.In(time.Local).Format("02.01.2006")
-		row["period_key"] = period.Format(time.RFC3339Nano)
+		// Ключ — В UTC. Иначе его текст зависит от таймзоны ПРОЦЕССА: pgx по
+		// умолчанию сканирует timestamptz в time.Local, и одна и та же запись у
+		// приложения в Europe/Moscow давала «…T12:30:45.123+03:00», а в UTC —
+		// «…T09:30:45.123Z» (#945). Момент один, текст разный — а этим текстом
+		// строка адресуется на удаление. Разбор обратно принимает обе формы
+		// (regPeriodLayouts), поэтому старые ключи из уже открытых форм
+		// продолжают работать.
+		row["period_key"] = period.UTC().Format(time.RFC3339Nano)
 		out = append(out, row)
 	}
 	return out
@@ -550,6 +555,10 @@ func ParseRegPeriod(s string) (time.Time, bool) {
 func (db *DB) InfoRegDelete(ctx context.Context, ir *metadata.InfoRegister, dimKey map[string]any, period *time.Time) error {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
+	lookupKey, err := db.resolveInfoRegLookupKey(ctx, ir, dimKey, period)
+	if err != nil {
+		return err
+	}
 	args := []any{}
 	conds := []string{}
 	idx := 1
@@ -560,7 +569,7 @@ func (db *DB) InfoRegDelete(ctx context.Context, ir *metadata.InfoRegister, dimK
 	}
 	for _, f := range ir.Dimensions {
 		conds = append(conds, fmt.Sprintf("%s = %s", metadata.ColumnName(f), d.Placeholder(idx)))
-		args = append(args, dimKey[f.Name])
+		args = append(args, physicalRegFieldArg(d, f, lookupKey[f.Name]))
 		idx++
 	}
 	if len(conds) == 0 {
@@ -584,6 +593,12 @@ func (db *DB) InfoRegDelete(ctx context.Context, ir *metadata.InfoRegister, dimK
 // для регистров, чья primary key включает (period, dims) и где нет
 // конфликта с другими источниками (например, ручной ввод того же набора).
 func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, ir *metadata.InfoRegister, period *time.Time) error {
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		return db.writeInfoMovementsInTx(txCtx, regName, recorderType, recorderID, rows, ir, period)
+	})
+}
+
+func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, ir *metadata.InfoRegister, period *time.Time) error {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
 
@@ -600,6 +615,7 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 		phs := []string{}
 		args := []any{}
 		idx := 1
+		var rowPeriod *time.Time
 
 		if ir.Periodic {
 			// Период: явно в row либо общий период документа.
@@ -618,15 +634,22 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 			phs = append(phs, d.Placeholder(idx))
 			args = append(args, p)
 			idx++
+			rowPeriod = &p
 		}
 
+		dimKey := make(map[string]any, len(ir.Dimensions))
+		for _, f := range ir.Dimensions {
+			dimKey[f.Name] = ciGet(row, f.Name)
+		}
+		writeKey, err := db.resolveInfoRegWriteKey(ctx, ir, dimKey, rowPeriod)
+		if err != nil {
+			return fmt.Errorf("write info movement %s row %d key: %w", regName, i+1, err)
+		}
 		for _, f := range ir.Dimensions {
 			col := metadata.ColumnName(f)
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(idx))
-			v := ciGet(row, f.Name)
-			v = normalizeRegArg(d, v, f.RefEntity != "")
-			args = append(args, v)
+			args = append(args, physicalRegFieldArg(d, f, writeKey[f.Name]))
 			idx++
 		}
 		for _, f := range ir.Resources {
@@ -634,7 +657,11 @@ func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType stri
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(idx))
 			v := ciGet(row, f.Name)
-			v = normalizeRegArg(d, v, f.RefEntity != "")
+			var err error
+			v, err = normalizeRegField(d, f, v)
+			if err != nil {
+				return fmt.Errorf("write info movement %s row %d resource %s: %w", regName, i+1, f.Name, err)
+			}
 			args = append(args, v)
 			idx++
 		}
@@ -701,26 +728,22 @@ func resourceAndDimCols(ir *metadata.InfoRegister) []string {
 	return cols
 }
 
-func dimWhere(d Dialect, ir *metadata.InfoRegister, dimKey map[string]any, startIdx int) (string, []any) {
-	var conds []string
-	var args []any
-	idx := startIdx
-	for _, f := range ir.Dimensions {
-		col := metadata.ColumnName(f)
-		conds = append(conds, fmt.Sprintf("%s = %s", col, d.Placeholder(idx)))
-		args = append(args, normalizeRegArg(d, dimKey[f.Name], f.RefEntity != ""))
-		idx++
-	}
-	if len(conds) == 0 {
-		return "1=1", nil
-	}
-	return strings.Join(conds, " AND "), args
+func (db *DB) infoRegScan(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any) (map[string]any, error) {
+	return db.infoRegScanMode(ctx, ir, sql, args, false)
 }
 
-func (db *DB) infoRegScan(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any) (map[string]any, error) {
+func (db *DB) infoRegScanWithPeriod(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any) (map[string]any, error) {
+	return db.infoRegScanMode(ctx, ir, sql, args, true)
+}
+
+func (db *DB) infoRegScanMode(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any, withPeriod bool) (map[string]any, error) {
 	row := db.QueryRow(ctx, sql, args...)
 	allCols := resourceAndDimCols(ir)
-	dest := make([]any, len(allCols))
+	offset := 0
+	if withPeriod {
+		offset = 1
+	}
+	dest := make([]any, len(allCols)+offset)
 	ptrs := make([]any, len(dest))
 	for i := range dest {
 		ptrs[i] = &dest[i]
@@ -728,8 +751,16 @@ func (db *DB) infoRegScan(ctx context.Context, ir *metadata.InfoRegister, sql st
 	if err := row.Scan(ptrs...); err != nil {
 		return nil, err
 	}
-	result := make(map[string]any, len(allCols))
-	i := 0
+	result := make(map[string]any, len(allCols)+offset)
+	i := offset
+	if withPeriod {
+		period := normalizeDate(dest[0])
+		typed, ok := period.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("info register %s: invalid stored period %T(%v)", ir.Name, dest[0], dest[0])
+		}
+		result["period"] = typed
+	}
 	for _, f := range ir.Dimensions {
 		result[f.Name] = normalizeFieldValue(f, dest[i])
 		i++
@@ -753,7 +784,10 @@ func (db *DB) InfoRegDeleteByFilter(ctx context.Context, ir *metadata.InfoRegist
 	if f.IsEmpty() {
 		return fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
-	where, args := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if err != nil {
+		return fmt.Errorf("info reg delete by filter %s: %w", ir.Name, err)
+	}
 	if where == "" {
 		return fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
@@ -812,7 +846,10 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 	if f.IsEmpty() {
 		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
-	where, args := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if err != nil {
+		return nil, fmt.Errorf("info reg delete by filter %s: %w", ir.Name, err)
+	}
 	if where == "" {
 		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
@@ -851,7 +888,11 @@ func (db *DB) InfoRegDeleteExactReturning(ctx context.Context, ir *metadata.Info
 		return nil, fmt.Errorf("info reg delete exact %s: period is not allowed", ir.Name)
 	}
 
-	where, args := dimWhere(db.dialect, ir, dimKey, 1)
+	lookupKey, err := db.resolveInfoRegLookupKey(ctx, ir, dimKey, period)
+	if err != nil {
+		return nil, err
+	}
+	where, args := physicalDimWhere(db.dialect, ir, lookupKey, 1)
 	if period != nil {
 		where += " AND period = " + db.dialect.Placeholder(len(args)+1)
 		args = append(args, *period)

@@ -250,6 +250,11 @@ global.fetch = async (_url, options) => {
 resetDOM();
 const managedSource = fs.readFileSync(path.join(__dirname, 'managed.js'), 'utf8');
 vm.runInThisContext(managedSource, {filename: 'managed.js'});
+const uiSource = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+const addTpStart = uiSource.indexOf('function obTPRefOpts');
+const addTpEnd = uiSource.indexOf('function recalcTpRow', addTpStart);
+if (addTpStart < 0 || addTpEnd < 0) throw new Error('ui.js addTpRow slice not found');
+vm.runInThisContext(uiSource.slice(addTpStart, addTpEnd), {filename: 'ui-add-tp-row.js'});
 // DOMContentLoaded is intentionally not dispatched: initialise the real
 // delegated handlers directly, without running unrelated UI widgets.
 obManagedInitDelegates();
@@ -549,6 +554,117 @@ for (const order of ['readonly-first', 'writable-first']) {
     assert.equal(addTarget, writable, 'NoGrid add action targeted the first readonly duplicate');
   });
 }
+
+test('NoGrid repaint restores virtual cells for each view', () => {
+  resetDOM();
+  window._obGrids = {};
+  window._tpRefOpts = {};
+  window._tpEnumLabels = {};
+  window._tpEnumOrder = {};
+  const summary = installTableBody('tp-body-Строки', {
+    'data-ob-table-readonly': '1',
+    'data-tp-fields': 'Значение|string',
+    'data-tp-virtual-cols': '["Код"]'
+  });
+  const editor = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string',
+    'data-tp-virtual-cols': '["Дата","Номер"]'
+  });
+
+  window.applyTableParts({Строки: [{Значение: 'stored', Код: '<safe text>', Дата: 'D', Номер: 'N'}]});
+
+  assert.equal(summary.children[0].children.length, 3, 'summary lost stored/virtual/delete shape');
+  assert.equal(summary.children[0].children[1].getAttribute('data-ob-virtual-col'), 'Код');
+  assert.equal(summary.children[0].children[1].textContent, '<safe text>');
+  assert.equal(editor.children[0].children.length, 4, 'editor lost stored/virtual/delete shape');
+  assert.equal(editor.children[0].children[1].textContent, 'D');
+  assert.equal(editor.children[0].children[2].textContent, 'N');
+  assert.equal(editor.children[0].children[3].children[0].className, 'del-btn');
+});
+
+test('NoGrid add inserts empty virtual cells before delete', () => {
+  resetDOM();
+  window._tpRefOpts = {};
+  window._tpRefMeta = {};
+  const body = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string',
+    'data-tp-virtual-cols': '["Код","Дата"]'
+  });
+
+  obManagedAddTpRow({getAttribute(name) {
+    return name === 'data-ob-add-tp' ? 'Строки' : null;
+  }});
+
+  const row = body.children[0];
+  assert.equal(row.children.length, 4);
+  assert.equal(row.children[1].getAttribute('data-ob-virtual-col'), 'Код');
+  assert.equal(row.children[2].getAttribute('data-ob-virtual-col'), 'Дата');
+  assert.equal(row.children[1].children.length, 0);
+  assert.equal(row.children[3].children[0].className, 'del-btn');
+});
+
+test('NoGrid add uses the clicked duplicate view schema', () => {
+  resetDOM();
+  const first = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string', 'data-tp-virtual-cols': '["Первый"]'
+  });
+  const second = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string', 'data-tp-virtual-cols': '["Второй"]'
+  });
+  first.closest = () => ({getAttribute(name) { return name === 'data-ob-element' ? 'ПервоеПредставление' : null; }});
+  second.closest = () => ({getAttribute(name) { return name === 'data-ob-element' ? 'ВтороеПредставление' : null; }});
+  let call = null;
+  const realAddTpRow = global.addTpRow;
+  global.addTpRow = function(_name, _fields, _nums, _index, target, virtuals) {
+    call = {target, virtuals};
+  };
+  try {
+    obManagedAddTpRow({getAttribute(name) {
+      if (name === 'data-ob-add-tp') return 'Строки';
+      if (name === 'data-ob-element') return 'ВтороеПредставление';
+      return null;
+    }});
+  } finally {
+    global.addTpRow = realAddTpRow;
+  }
+  assert.equal(call.target, second);
+  assert.deepEqual(call.virtuals, ['Второй']);
+});
+
+test('NoGrid add uses its adjacent table when element names are ambiguous', () => {
+  resetDOM();
+  const first = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string', 'data-tp-virtual-cols': '["Первый"]'
+  });
+  const second = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Значение|string', 'data-tp-virtual-cols': '["Второй"]'
+  });
+  first.closest = second.closest = () => ({getAttribute() { return ''; }});
+  const adjacentTable = {
+    getAttribute(name) { return name === 'data-ob-dom-table' ? 'Строки' : null; },
+    querySelector(selector) { return selector === 'tbody[data-tp-fields]' ? second : null; }
+  };
+  let call = null;
+  const realAddTpRow = global.addTpRow;
+  global.addTpRow = function(_name, _fields, _nums, _index, target, virtuals) {
+    call = {target, virtuals};
+  };
+  try {
+    obManagedAddTpRow({
+      previousElementSibling: adjacentTable,
+      getAttribute(name) {
+        if (name === 'data-ob-add-tp') return 'Строки';
+        if (name === 'data-ob-element') return '';
+        return null;
+      }
+    });
+  } finally {
+    global.addTpRow = realAddTpRow;
+  }
+  assert.equal(call.target, second);
+  assert.deepEqual(call.virtuals, ['Второй']);
+  assert.equal(first.children.length, 0);
+});
 
 for (const order of ['readonly-first', 'writable-first']) {
   test(`ValueTable add targets writable duplicate (${order})`, () => {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -130,6 +131,41 @@ func TestRestructureNarrowingAppliedWithPermission(t *testing.T) {
 	}
 	if applied != 1 {
 		t.Fatalf("с --allow-destructive сужение обязано примениться, применено: %d", applied)
+	}
+}
+
+func TestRestructureReportWaitsForOuterCommit(t *testing.T) {
+	ctx := context.Background()
+	db := schemaTestDB(t)
+	before := catalogWithField(metadata.Field{ID: "f_sum", Name: "Сумма", Type: metadata.FieldTypeNumber})
+	if err := db.Migrate(ctx, []*metadata.Entity{before}); err != nil {
+		t.Fatal(err)
+	}
+	after := catalogWithField(metadata.Field{ID: "f_sum", Name: "Итого", Type: metadata.FieldTypeNumber})
+	reported := 0
+	db.SetSchemaOptions(SchemaOptions{Report: func(SchemaChange, bool) { reported++ }})
+
+	sentinel := errors.New("rollback after restructure")
+	earlyReports := -1
+	err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+		if err := db.restructureTable(txCtx, metadata.TableName(after.Name), after.Fields); err != nil {
+			return err
+		}
+		earlyReports = reported
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("WithTxScope error = %v, want %v", err, sentinel)
+	}
+	if earlyReports != 0 || reported != 0 {
+		t.Fatalf("Report вызван до откаченного внешнего commit: внутри=%d, после=%d", earlyReports, reported)
+	}
+	cols := columnNames(t, db, metadata.TableName(before.Name))
+	if _, ok := cols["сумма"]; !ok {
+		t.Fatalf("исходная колонка не восстановлена: %v", cols)
+	}
+	if _, ok := cols["итого"]; ok {
+		t.Fatalf("переименование пережило rollback внешней транзакции: %v", cols)
 	}
 }
 

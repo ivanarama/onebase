@@ -27,6 +27,10 @@ type managedTPColumnJSON struct {
 	Ref         string `json:"ref,omitempty"`
 	AllowCreate bool   `json:"allowCreate,omitempty"`
 	Enum        bool   `json:"enum,omitempty"`
+	// Virtual — колонка показывается, но не хранится (#845). Флаг нужен клиенту:
+	// такая колонка не редактируется и НЕ попадает в tp_json при отправке формы.
+	Virtual bool `json:"virtual,omitempty"`
+	Width   int  `json:"width,omitempty"`
 }
 
 // infoRegKeyValue serialises an information-register dimension for the hidden
@@ -805,8 +809,9 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
-		"managedTPColumnsJSON": func(fields []metadata.Field, lang string) template.JS {
-			cols := make([]managedTPColumnJSON, 0, len(fields))
+		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+			virtual = filterVirtualTPColumns(fields, virtual)
+			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
 			for _, field := range fields {
 				cols = append(cols, managedTPColumnJSON{
 					ID:          field.Name,
@@ -817,11 +822,39 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 				})
 			}
+			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
+			// менять нельзя, по нему пользователи ориентируются и его же ожидает
+			// перенос данных из буфера.
+			for _, vc := range virtual {
+				if strings.TrimSpace(vc.Name) == "" || metadata.IsReservedFormVirtualColumnName(vc.Name) {
+					continue
+				}
+				cols = append(cols, managedTPColumnJSON{
+					ID:      vc.Name,
+					Name:    vc.ColumnTitle(lang),
+					Type:    string(metadata.FieldTypeString),
+					Virtual: true,
+					Width:   vc.Width,
+				})
+			}
 			b, err := json.Marshal(cols)
 			if err != nil {
 				return template.JS("[]")
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
+		},
+		"managedTPVirtualColumns": filterVirtualTPColumns,
+		"managedTPVirtualNamesJSON": func(virtual []metadata.FormVirtualColumn) string {
+			filtered := filterVirtualTPColumns(nil, virtual)
+			names := make([]string, 0, len(filtered))
+			for _, vc := range filtered {
+				names = append(names, vc.Name)
+			}
+			b, err := json.Marshal(names)
+			if err != nil {
+				return "[]"
+			}
+			return string(b)
 		},
 		"wcell":            widgetCell,
 		"echartsJSON":      echartsJSON,

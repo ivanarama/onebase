@@ -454,6 +454,35 @@ jobs:
       - name: Unit tests (Windows)
         run: go test ./...
 
+      # install.ps1 не исполнял ни один джоб: скрипт установки для Windows
+      # проверялся только тем, что кто-то его запускал у себя. Опечатка в нём
+      # видна пользователю в момент установки — то есть в худший момент (#888).
+      #
+      # Разбор парсером PowerShell, а не запуск: скрипт тянет релиз из сети и
+      # ставит бинарь, исполнять его в CI незачем. Синтаксис — это всё, что
+      # можно проверить дёшево и без побочных эффектов.
+      - name: PowerShell syntax check (install.ps1)
+        # Установщик поддерживает штатный Windows PowerShell 5.1, а pwsh на
+        # runner'е — PowerShell 7. Проверяем минимальную поддержанную версию,
+        # чтобы CI не пропустил, например, PS7-only операторы.
+        shell: powershell
+        run: |
+          $errors = $null
+          # install.ps1 хранится как UTF-8 без BOM и штатно приходит строкой
+          # через `irm ... | iex`. Явное чтение UTF-8 воспроизводит этот путь:
+          # ParseFile в Windows PowerShell 5.1 иначе считает файл ANSI.
+          $source = [IO.File]::ReadAllText(
+            (Resolve-Path ./install.ps1), [Text.Encoding]::UTF8)
+          [System.Management.Automation.Language.Parser]::ParseInput(
+            $source, [ref]$null, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+            foreach ($e in $errors) {
+              Write-Host "::error file=install.ps1,line=$($e.Extent.StartLineNumber)::$($e.Message)"
+            }
+            exit 1
+          }
+          Write-Host "install.ps1: синтаксис корректен"
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -532,6 +561,12 @@ jobs:
           # Без этой строки postgres-подтесты матричных тестов пакета
           # пропускались: TEST_DATABASE_URL задан только в этом джобе.
           go test -race -count=1 -timeout 15m -tags integration ./internal/dsl/interpreter
+          # Матрица doctor намеренно не имеет build tag: обычный unit-job
+          # исполняет SQLite-половину, а PostgreSQL-половина без этой строки
+          # молча Skip-ается, потому что TEST_DATABASE_URL есть только здесь.
+          # Гоним весь пакет, чтобы новый матричный тест нельзя было добавить
+          # рядом с checks_matrix_test.go и случайно оставить вне PG-гейта.
+          go test -race -count=1 -timeout 15m ./internal/dbcheck
           # Table-part shape compatibility is dialect-matrix tested in
           # internal/exchange. The regular unit job has no TEST_DATABASE_URL,
           # so explicitly gate the PostgreSQL half here.
