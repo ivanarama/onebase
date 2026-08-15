@@ -58,3 +58,41 @@ func TestMaskDiagnosis_ПодсказкаСодержитРабочийПрим�
 		t.Fatalf("подсказка не показывает рабочее выражение: %s", fix)
 	}
 }
+
+// input_mask — шаблон ввода, и ошибка в нём зеркальна ошибке с mask: туда
+// пишут регулярное выражение, потому что «маска» рядом уже означала regexp.
+// Шаблон из `\d{2}` ничего не отформатирует — эти символы уедут в поле
+// литералами (#763, п. 3).
+func TestInputMaskDiagnosis(t *testing.T) {
+	cases := []struct {
+		name, mask string
+		warn       bool
+		contains   string
+	}{
+		{"цифровой шаблон", "00.00.00", false, ""},
+		{"телефон", "+7 (000) 000-00-00", false, ""},
+		{"буквы и цифры", "XX-000", false, ""},
+		{"любой символ", "*000", false, ""},
+		{"пусто", "", false, ""},
+		{"регулярное выражение", `\d{2}\.\d{2}`, true, "ШАБЛОН ввода"},
+		{"класс символов", "[0-9]{2}", true, "ШАБЛОН ввода"},
+		{"без заполнителей", "..-..", true, "ни одного заполнителя"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg, fix := inputMaskDiagnosis(c.mask)
+			if c.warn && msg == "" {
+				t.Fatalf("шаблон %q принят молча", c.mask)
+			}
+			if !c.warn && msg != "" {
+				t.Fatalf("шаблон %q помечен зря: %s", c.mask, msg)
+			}
+			if c.warn && !strings.Contains(msg, c.contains) {
+				t.Fatalf("сообщение %q не содержит %q", msg, c.contains)
+			}
+			if c.warn && fix == "" {
+				t.Fatal("предупреждение без подсказки — оператору некуда идти")
+			}
+		})
+	}
+}

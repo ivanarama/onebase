@@ -212,12 +212,13 @@ type canvasElementInfo struct {
 	Hint      string `json:"hint"`
 	Container bool   `json:"container"`
 	// Свойства batch A (выводятся в панель только там, где влияют на рантайм).
-	Mask     string `json:"mask"`     // ПолеВвода: маска ввода (pattern)
-	FileType bool   `json:"fileType"` // ПолеВвода: Type == "file" (файловое поле)
-	Picture  string `json:"picture"`  // ПолеКартинки: путь к картинке
-	Width    int    `json:"width"`    // ПолеКартинки: ширина
-	Height   int    `json:"height"`   // ПолеКартинки: высота
-	NoGrid   bool   `json:"noGrid"`   // ТабличнаяЧасть: простая таблица вместо SlickGrid
+	Mask      string `json:"mask"`      // ПолеВвода: проверка значения (regexp → pattern)
+	InputMask string `json:"inputMask"` // ПолеВвода: шаблон ввода (#763), подставляет разделители
+	FileType  bool   `json:"fileType"`  // ПолеВвода: Type == "file" (файловое поле)
+	Picture   string `json:"picture"`   // ПолеКартинки: путь к картинке
+	Width     int    `json:"width"`     // ПолеКартинки: ширина
+	Height    int    `json:"height"`    // ПолеКартинки: высота
+	NoGrid    bool   `json:"noGrid"`    // ТабличнаяЧасть: простая таблица вместо SlickGrid
 	// Orientation — раскладка детей контейнера: ""/"vertical" или "horizontal".
 	Orientation string `json:"orientation"`
 	// События элемента (batch B1): имя события → имя процедуры в .form.os.
@@ -255,6 +256,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				Hint:        el.Hint,
 				Container:   el.IsContainer(),
 				Mask:        el.Mask,
+				InputMask:   el.InputMask,
 				FileType:    el.Type == "file",
 				Picture:     el.Picture,
 				Width:       el.Width,

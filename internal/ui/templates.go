@@ -856,14 +856,18 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return string(b)
 		},
-		"wcell":            widgetCell,
-		"echartsJSON":      echartsJSON,
-		"stageChartJSON":   stageChartJSON,
-		"stageSourceLabel": stageSourceLabel,
-		"splitCamel":       splitCamel,
-		"fmtCell":          fmtReportCell,
-		"widgetChartsJSON": widgetChartsJSON,
-		"pageChartsJSON":   pageChartsJSON,
+		// inputMaskDigitsOnly — просить ли у мобильной клавиатуры цифровой режим.
+		// Решается по составу маски, а не отдельным ключом: «00.00.00» — это
+		// заведомо цифры, и заставлять автора объявлять это второй раз незачем.
+		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
+		"wcell":               widgetCell,
+		"echartsJSON":         echartsJSON,
+		"stageChartJSON":      stageChartJSON,
+		"stageSourceLabel":    stageSourceLabel,
+		"splitCamel":          splitCamel,
+		"fmtCell":             fmtReportCell,
+		"widgetChartsJSON":    widgetChartsJSON,
+		"pageChartsJSON":      pageChartsJSON,
 		// pageRaw помечает уже санитизированный HTML страницы (план 66) как
 		// безопасный. Источник — только ДобавитьСыройHTML, прошедший sanitizePageHTML.
 		"pageRaw": func(s string) template.HTML { return template.HTML(s) }, //nolint:gosec // G203: источник — только ДобавитьСыройHTML, прошедший allowlist sanitizePageHTML
