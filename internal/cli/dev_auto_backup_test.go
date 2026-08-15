@@ -7,11 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/installtest"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
 func TestDevAutoBackupTargetUsesOpenedCanonicalSQLiteFile(t *testing.T) {
-	root := t.TempDir()
+	// Канонизированный temp: на windows-раннере TEMP приходит коротким именем
+	// 8.3, и сравнение с сырым t.TempDir() ловило бы разницу представлений, а
+	// не поведение продукта (#924).
+	root := installtest.CanonicalTempDir(t)
 	realDir := filepath.Join(root, "real")
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatal(err)

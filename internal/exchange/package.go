@@ -381,9 +381,14 @@ func validateObjectShape(ent *metadata.Entity, obj PackageObject) error {
 			want[f.Name] = struct{}{}
 		}
 		for rowNo, row := range rows {
-			if len(row) != len(want) {
-				return fmt.Errorf("exchange: %s/%s.%s[%d] имеет несовместимый набор полей", ent.Name, obj.ID, tp.Name, rowNo)
-			}
+			// Строки ТЧ живут по тем же правилам, что шапка (план 117D):
+			// недостающее поле — не ошибка, неизвестное — ошибка.
+			//
+			// Прежняя проверка «набор совпадает точно» ломала как раз
+			// рекомендованный порядок обновления узлов: получателя обновляют
+			// первым, у него появляется новое поле ТЧ, а отправитель его ещё не
+			// шлёт — и пакет отклонялся целиком, хотя недостающее поле означает
+			// ровно «незаполнено» (#885).
 			for field := range row {
 				if _, ok := want[field]; !ok {
 					return fmt.Errorf("exchange: %s/%s.%s[%d] содержит неизвестное поле %q", ent.Name, obj.ID, tp.Name, rowNo, field)
@@ -841,6 +846,28 @@ func canonicalRow(fields []metadata.Field, row map[string]any) map[string]any {
 func canonicalScalar(f metadata.Field, v any) any {
 	if v == nil {
 		return nil
+	}
+	if f.RefEntity != "" {
+		var raw string
+		switch ref := v.(type) {
+		case uuid.UUID:
+			return ref.String()
+		case *uuid.UUID:
+			if ref != nil {
+				return ref.String()
+			}
+			return nil
+		case interface{ GetRefUUID() string }:
+			raw = ref.GetRefUUID()
+		case string:
+			raw = ref
+		default:
+			raw = fmt.Sprintf("%v", ref)
+		}
+		if id, err := uuid.Parse(raw); err == nil {
+			return id.String()
+		}
+		return raw
 	}
 	switch f.Type {
 	case metadata.FieldTypeBool:

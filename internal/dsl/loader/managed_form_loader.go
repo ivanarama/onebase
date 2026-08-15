@@ -168,6 +168,26 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 	if form.Kind == "" {
 		form.Kind = "custom"
 	}
+	// `table_part:` — рабочий ключ, а не украшение.
+	//
+	// Элемент табличной части, описанный через него, молча не рендерился:
+	// рендерер (как и разбор события формы, и частичная запись) берёт имя ТЧ
+	// исключительно из data_path. При этом ключ объявлен в модели, загрузчик его
+	// читает, а `check` и `forms validate` проходят зелёными — человек видел
+	// зелёную проверку и пустую форму, и искать было негде (#830).
+	//
+	// Нормализуем ЗДЕСЬ, а не в шаблоне: потребителей data_path у элемента ТЧ
+	// несколько (рендер, событие формы, частичная запись, условное оформление),
+	// и правка одного лишь рендера оставила бы форму наполовину рабочей.
+	form.Walk(func(el *metadata.FormElement) bool {
+		if el.Kind != metadata.FormElementTablePart {
+			return true
+		}
+		if strings.TrimSpace(el.DataPath) == "" && strings.TrimSpace(el.TablePart) != "" {
+			el.DataPath = "Объект." + strings.TrimSpace(el.TablePart)
+		}
+		return true
+	})
 	form.Walk(func(el *metadata.FormElement) bool {
 		if len(el.Handlers) == 0 {
 			return true
