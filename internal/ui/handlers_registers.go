@@ -39,6 +39,9 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Маска полей — ДО разрешения ссылок в представления: иначе защищённое
+	// значение уже превратилось бы в человекочитаемую подпись (#859).
+	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
 	s.render(w, r, "page-register-movements", map[string]any{
 		"Register":   reg,
@@ -71,6 +74,7 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
 	s.render(w, r, "page-register-balances", map[string]any{
 		"Register":   reg,

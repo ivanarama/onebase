@@ -65,6 +65,9 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): " + err.Error())
 		}
+		// Та же маска полей, что в списках UI (#859): политика на регистр не
+		// должна зависеть от того, читают его глазами или из модуля.
+		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
 	case "движения", "выбрать", "select":
 		filter, err := p.rowFilter()
@@ -75,6 +78,7 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("Движения(" + p.reg.Name + "): " + err.Error())
 		}
+		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
 	case "выбратьпорегистратору", "selectbyrecorder":
 		if len(args) == 0 {
@@ -92,6 +96,7 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
 		}
+		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
 	}
 	return nil

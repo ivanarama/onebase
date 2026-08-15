@@ -71,6 +71,21 @@ func (s *Server) maskInfoRegRecords(ctx context.Context, ir *metadata.InfoRegist
 	}
 }
 
+// maskRegisterRecords applies field_access.registers at the handler boundary —
+// до разрешения ссылочных UUID в представления и до рендера.
+//
+// #767 вывел маскирование на границы журналов и регистров СВЕДЕНИЙ, а списки
+// регистров накопления остались без него: права на объект и строковый отбор
+// применялись, а маска полей — нет. При этом та же политика честно работала в
+// запросах DSL, то есть данные, скрытые от роли в отчёте, показывались ей же
+// в /ui/register/* (#859).
+func (s *Server) maskRegisterRecords(ctx context.Context, reg *metadata.Register, rows []map[string]any) {
+	if reg == nil {
+		return
+	}
+	access.MaskRecords(s.fieldDecisionsFor(ctx, "register", reg.Name, storage.RegisterPredicateEntity(reg)), rows)
+}
+
 // maskJournalRecords maps each journal output column back to the source fields
 // of the concrete document row, then applies that document's field policy to
 // the output alias. This mapping is essential for explicit map/fallback journal
