@@ -389,6 +389,11 @@ jobs:
             -run '^(TestInfoRegDSL_(WriteReadDeleteMatrix|UpsertByKeyMatrix)|TestInfoRegSet_(ReplacesOnlyFilteredMatrix|ЦиклЧтениеЗаписьНаПериодическомMatrix|АтомаренВоВнешнейТранзакции|РегистрируетTombstoneУдалённыхСтрок|ТипизированныйОтборМатрица))$/^postgres$'
           go test -race -count=1 -timeout 10m ./internal/ui \
             -run '^(TestInfoRegRecordSet_ReadAppliesObjectAndRowAccessMatrix|TestInfoRegRecordSet_WritePreflightsObjectPermissionsMatrix|TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix|TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix|TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix|TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix|TestInfoRegRecordSet_PostgresConcurrentInsertCheckedByRLS)$/^postgres$'
+          # HTTP information-register deletes have their own exact-key/RLS
+          # matrix. The PostgreSQL branch includes deterministic row-lock races;
+          # the ordinary unit job only executes its SQLite side.
+          go test -race -count=1 -timeout 10m ./internal/ui \
+            -run '^(TestUIInfoRegDeleteTypedCompositeKeyMatrix|TestUIInfoRegDeleteRowPolicyNoOracleAndOutboxMatrix|TestUIInfoRegDeletePeriodMaskMatrix|TestUIInfoRegDeleteStorageErrorMatrix|TestUIInfoRegDeletePostgresConcurrentRacesMatrix)$/^postgres$'
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck

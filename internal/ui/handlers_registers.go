@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -16,6 +17,12 @@ import (
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/shopspring/decimal"
+)
+
+var (
+	errInfoRegDeleteNotFound     = errors.New("information register row not found")
+	errInfoRegDeletePolicyDenied = errors.New("information register delete policy denied")
 )
 
 func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
@@ -368,14 +375,24 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.store.InfoRegList(r.Context(), ir, flt)
+	rows, err := s.store.InfoRegListWithKeyValues(r.Context(), ir, flt)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
+	maskedKey := len(s.maskedInfoRegKeyFields(r.Context(), ir)) != 0
 	// Mask before resolving references: a protected UUID must not turn into a
 	// readable label, and the detail-panel payload must receive only gated rows.
 	s.maskInfoRegRecords(r.Context(), ir, rows)
+	if maskedKey {
+		// The lossless machine key is intentionally stronger than the display
+		// value. Never leave it in the template data when any part of the primary
+		// key is protected; this also removes period_key for periodic registers.
+		for _, row := range rows {
+			delete(row, storage.InfoRegKeyValuesField)
+			delete(row, "period_key")
+		}
+	}
 	s.resolveInfoRegRows(r.Context(), rows, ir)
 	s.render(w, r, "page-inforeg-list", map[string]any{
 		"InfoReg":    ir,
@@ -496,56 +513,178 @@ func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ключ удаления не должен строиться из ОТОБРАЖАЕМЫХ значений: форма списка
+	// кладёт в hidden-поля то, что видит пользователь, а под маской это «••••••».
+	// Измерения и period периодического регистра вместе образуют первичный ключ.
+	// Пока хотя бы одно из них замаскировано, роль физически не может назвать
+	// удаляемую строку, поэтому не принимаем и угаданный ключ из forged POST.
+	if masked := s.maskedInfoRegKeyFields(r.Context(), ir); len(masked) > 0 {
+		http.Error(w, s.tr(s.resolveLang(r),
+			"Удаление невозможно: у вашей роли закрыт доступ к полю ключа")+" ("+strings.Join(masked, ", ")+")",
+			http.StatusForbidden)
+		return
+	}
+
 	var periodPtr *time.Time
 	if ir.Periodic {
-		// Период берём из машинного ключа period_key (его кладёт InfoRegList в
-		// hidden-поле списка). Если ключ не разобран — ОТКАЗЫВАЕМ в удалении:
-		// иначе InfoRegDelete с nil-периодом снесёт все периоды комбинации
-		// измерений (критическая потеря данных).
-		t, ok := storage.ParseRegPeriod(r.FormValue("period"))
+		raw, err := requiredSinglePostFormValue(r, "period")
+		if err != nil {
+			http.Error(w, s.tr(s.resolveLang(r), "Некорректный ключ записи")+": "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		period, ok := storage.ParseRegPeriod(raw)
 		if !ok {
 			http.Error(w, s.tr(s.resolveLang(r), "Не удалось определить период записи для удаления"), http.StatusBadRequest)
 			return
 		}
-		periodPtr = &t
+		periodPtr = &period
 	}
-	// Ключ удаления не должен строиться из ОТОБРАЖАЕМЫХ значений: форма списка
-	// кладёт в hidden-поля то, что видит пользователь, а под маской это «••••••».
-	// DELETE сравнивал маску с реальным значением, не находил ни строки — и
-	// молча отвечал успехом: пользователь считал запись удалённой, а она жива
-	// (#861). Пока измерение замаскировано, ключа у этой роли попросту нет —
-	// отказываем явно, как уже делаем при неразобранном периоде.
-	if masked := s.maskedInfoRegDimensions(r.Context(), ir); len(masked) > 0 {
-		http.Error(w, s.tr(s.resolveLang(r),
-			"Удаление невозможно: у вашей роли закрыт доступ к ключевому измерению")+" ("+strings.Join(masked, ", ")+")",
-			http.StatusForbidden)
+	dims, err := parseInfoRegDeleteKey(r, ir.Dimensions, s.store.IsPostgres())
+	if err != nil {
+		http.Error(w, s.tr(s.resolveLang(r), "Некорректный ключ записи")+": "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	dims := parseInfoRegFields(r, ir.Dimensions)
-	row, found := s.infoRegExistingPolicyRow(r.Context(), ir, dims, periodPtr)
-	// Сначала проверяем row policy на запрошенном ключе. Так несуществующий ключ
-	// вне разрешённой области не превращается в oracle существования чужих строк.
-	if !s.rowAllowedFor(w, r, "inforeg", ir.Name, "delete", storage.InfoRegisterPredicateEntity(ir), row) {
+
+	decision, err := s.rowDecisionFor(r.Context(), "inforeg", ir.Name, "delete", storage.InfoRegisterPredicateEntity(ir))
+	if err != nil || !decision.Allowed || (!decision.Unrestricted && decision.Predicate == nil) {
+		s.renderForbidden(w, r)
 		return
 	}
-	// Удалять нечего — не успех. Прежде «не нашли ни строки» было неотличимо от
-	// «удалили»: ответ один и тот же. infoRegExistingPolicyRow всегда возвращает
-	// policy-row, поэтому проверять нужно found, а не row == nil.
-	if !found {
-		http.Error(w, s.tr(s.resolveLang(r), "Запись не найдена: возможно, она уже удалена"), http.StatusNotFound)
-		return
+	var rowFilter *storage.Predicate
+	if !decision.Unrestricted {
+		rowFilter = decision.Predicate
 	}
+
 	plans := s.reg.ExchangePlans()
-	if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
-		if err := s.store.InfoRegDelete(ctx, ir, dims, periodPtr); err != nil {
+	err = s.store.WithTxScope(r.Context(), func(ctx context.Context) error {
+		deleted, err := s.store.InfoRegDeleteExactReturning(ctx, ir, dims, periodPtr, rowFilter)
+		if err != nil {
 			return err
 		}
-		return exchange.RegisterInfoRegOnSave(ctx, s.store, plans, ir, dims, true)
-	}); err != nil {
-		s.serverError(w, r, err)
+		if len(deleted) == 0 {
+			return errInfoRegDeleteNotFound
+		}
+		if len(deleted) != 1 {
+			return fmt.Errorf("delete information register %s: expected one row, deleted %d", ir.Name, len(deleted))
+		}
+		row := deleted[0]
+		// SQL-предикат — основная защита. Повторная типизированная проверка
+		// возвращённой строки страхует от расхождения SQL и in-memory семантики;
+		// ошибка откатывает provisional DELETE вместе с tombstone.
+		if !decision.Unrestricted && !s.matchRowPredicate(ctx, row, decision.Predicate) {
+			return errInfoRegDeletePolicyDenied
+		}
+		actualDims, err := infoRegReturnedKeyDimensions(s.store, ir, row)
+		if err != nil {
+			return err
+		}
+		return exchange.RegisterInfoRegOnSave(ctx, s.store, plans, ir, actualDims, true)
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errInfoRegDeletePolicyDenied):
+			s.renderForbidden(w, r)
+		case errors.Is(err, errInfoRegDeleteNotFound) && !decision.Unrestricted:
+			// A restricted DELETE returning zero rows deliberately does not reveal
+			// whether the key is absent or currently hidden by its row predicate.
+			s.renderForbidden(w, r)
+		case errors.Is(err, errInfoRegDeleteNotFound):
+			http.Error(w, s.tr(s.resolveLang(r), "Запись не найдена: возможно, она уже удалена"), http.StatusNotFound)
+		default:
+			s.serverError(w, r, err)
+		}
 		return
 	}
 	http.Redirect(w, r, "/ui/inforeg/"+strings.ToLower(ir.Name), http.StatusFound)
+}
+
+func requiredSinglePostFormValue(r *http.Request, name string) (string, error) {
+	values, ok := r.PostForm[name]
+	if !ok || len(values) != 1 {
+		return "", fmt.Errorf("поле %q должно быть задано ровно один раз", name)
+	}
+	return values[0], nil
+}
+
+func infoRegReturnedKeyDimensions(store *storage.DB, ir *metadata.InfoRegister, row map[string]any) (map[string]any, error) {
+	dims := make(map[string]any, len(ir.Dimensions))
+	keyValues, _ := row[storage.InfoRegKeyValuesField].(map[string]string)
+	for _, field := range ir.Dimensions {
+		if store.IsSQLite() && (field.Type == metadata.FieldTypeNumber || field.Type == metadata.FieldTypeDate) {
+			value, ok := keyValues[field.Name]
+			if !ok {
+				return nil, fmt.Errorf("delete information register %s: missing returned key %q", ir.Name, field.Name)
+			}
+			dims[field.Name] = value
+			continue
+		}
+		dims[field.Name] = rowValueFold(row, field.Name)
+	}
+	return dims, nil
+}
+
+func parseInfoRegDeleteKey(r *http.Request, fields []metadata.Field, postgres bool) (map[string]any, error) {
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		raw, err := requiredSinglePostFormValue(r, field.Name)
+		if err != nil {
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(raw)
+		switch {
+		case field.RefEntity != "":
+			id, err := uuid.Parse(trimmed)
+			if err != nil {
+				return nil, fmt.Errorf("поле %q: некорректная ссылка", field.Name)
+			}
+			result[field.Name] = id
+		case field.Type == metadata.FieldTypeDate:
+			_, ok := storage.ParseRegPeriod(trimmed)
+			if !ok {
+				return nil, fmt.Errorf("поле %q: некорректная дата", field.Name)
+			}
+			// Validation is typed, but the exact predicate must retain the
+			// SQLite TEXT spelling used by exchange/direct register writes.
+			result[field.Name] = raw
+		case field.Type == metadata.FieldTypeNumber:
+			// Machine keys may legitimately contain exponent notation even though
+			// ordinary human-entered number fields deliberately reject it. They may
+			// also retain the comma form accepted by the write UI on SQLite.
+			formNumber, formErr := parseFormNumber(trimmed)
+			_, decimalErr := decimal.NewFromString(trimmed)
+			if formErr != nil && decimalErr != nil {
+				return nil, fmt.Errorf("поле %q: некорректное число", field.Name)
+			}
+			if postgres {
+				if formErr == nil {
+					result[field.Name] = formNumber
+				} else {
+					// Keep exponent notation as bounded request text. Converting a
+					// maximal int32 exponent to decimal.Decimal and then letting pgx
+					// call Value/String can expand billions of zeroes in-process.
+					// PostgreSQL accepts text parameters and enforces its own numeric
+					// range without that Go-side expansion.
+					result[field.Name] = trimmed
+				}
+				continue
+			}
+			result[field.Name] = raw
+		case field.Type == metadata.FieldTypeBool:
+			switch strings.ToLower(trimmed) {
+			case "true", "1":
+				result[field.Name] = true
+			case "false", "0":
+				result[field.Name] = false
+			default:
+				return nil, fmt.Errorf("поле %q: некорректное логическое значение", field.Name)
+			}
+		default:
+			// String keys are not presentation values: preserve their bytes,
+			// including an empty or whitespace-only (but present) dimension.
+			result[field.Name] = raw
+		}
+	}
+	return result, nil
 }
 
 func parseInfoRegFields(r *http.Request, fields []metadata.Field) map[string]any {
