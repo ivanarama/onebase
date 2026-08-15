@@ -167,6 +167,24 @@ func BinaryDir() (string, error) {
 	return filepath.Dir(exe), nil
 }
 
+// BinaryPath — путь ТЕКУЩЕГО исполняемого файла с разрешёнными симлинками.
+//
+// Отличается от filepath.Join(BinaryDir(), BinaryName()) именем: жёсткое имя
+// «onebase[.exe]» осмысленно только когда речь о каталоге УСТАНОВКИ (туда
+// обновление кладёт файл именно так). Для вопроса «не подменили ли бинарь, из
+// которого я загружен» имя должно быть настоящим — иначе бинарь под другим
+// именем проверяет чужой (и обычно несуществующий) файл (#831).
+func BinaryPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("selfupdate: определить текущий бинарь: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return exe, nil
+}
+
 // CanWriteBinaryDir сообщает, может ли текущий пользователь заменить бинарь.
 //
 // Это и есть граница «кому можно обновлять платформу»: на личной установке

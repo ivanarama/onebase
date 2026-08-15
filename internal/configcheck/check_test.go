@@ -136,6 +136,29 @@ func TestCheckDir_ProcessorWizardWarning(t *testing.T) {
 	}
 }
 
+func TestCheckDir_RejectsPeriodicInfoRegisterFieldNamedPeriod(t *testing.T) {
+	dir := t.TempDir()
+	inforegs := filepath.Join(dir, "inforegs")
+	if err := os.MkdirAll(inforegs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(inforegs, "history.yaml"), `name: История
+periodic: true
+dimensions:
+  - name: Период
+    type: string
+`)
+
+	issues, _ := CheckDir(dir)
+	for _, issue := range issues {
+		if strings.HasPrefix(issue.File, "inforegs/history.yaml") &&
+			strings.Contains(issue.Message, "системного периода") {
+			return
+		}
+	}
+	t.Fatalf("configcheck did not report reserved periodic Период: %+v", issues)
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

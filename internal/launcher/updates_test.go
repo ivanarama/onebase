@@ -17,6 +17,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/dblock"
+	"github.com/ivantit66/onebase/internal/installtest"
 	"github.com/ivantit66/onebase/internal/selfupdate"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/version"
@@ -26,9 +27,31 @@ import (
 // трогать ни реестр баз, ни состояние обновлений пользователя.
 func isolatedUpdatesHome(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
+	// Приватный дом, а не просто временный: каталог платформы вычисляется от
+	// HOME, и selfupdate законно отказывается обновлять установку из общего
+	// /tmp (#924).
+	dir := installtest.PrivateHome(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+}
+
+// isolatedUpdatableInstall — изоляция состояния ПЛЮС подмена каталога платформы
+// на приватный.
+//
+// Каталог платформы вычисляется от os.Executable(), а не от HOME, поэтому под
+// `go test` им оказывается временный каталог тест-бинаря — общий и потому
+// непригодный для самообновления. Хендлер честно отвечал 403 «нет прав на
+// запись в каталог платформы» вместо проверяемого исхода, и семь тестов
+// обновления падали всегда: и локально, и на первом прогоне windows-раннера
+// (#924). Дефект был в фикстуре, а выглядел как дефект продукта.
+func isolatedUpdatableInstall(t *testing.T) string {
+	t.Helper()
+	isolatedUpdatesHome(t)
+	dir := installtest.PrivateInstallDir(t)
+	old := updateBinaryDir
+	updateBinaryDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { updateBinaryDir = old })
+	return dir
 }
 
 // По умолчанию платформа не подменяется молча: на канале build сборки выходят
@@ -110,7 +133,7 @@ func TestApplyStagedOnStartWaitsForGenerationBoundRecovery(t *testing.T) {
 }
 
 func TestApplyStagedOnStartApplyFailureClearsPrev(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	stageDir := t.TempDir()
 	binaryName := selfupdate.BinaryName()
@@ -293,7 +316,9 @@ func TestResumeAfterUpdateFailsClosedForMarkerInNonSelfUpdatableInstallation(t *
 
 func TestApplyStagedOnStartKeepsGateClosedForRecoveryPendingError(t *testing.T) {
 	isolatedUpdatesHome(t)
-	targetDir := t.TempDir()
+	// Каталог платформы обязан быть приватным: обычный t.TempDir() лежит в общем
+	// /tmp, selfupdate такую установку законно не обновляет (#924).
+	targetDir := installtest.PrivateInstallDir(t)
 	stageDir := t.TempDir()
 	files := selfupdate.PackageBinaries()
 	for _, name := range files {
@@ -657,7 +682,7 @@ func TestUpdatesChannel_RejectsUnknown(t *testing.T) {
 // Применять нечего — хендлер обязан сказать это, а не остановить базы «на всякий
 // случай».
 func TestUpdatesApply_WithoutStagedIsConflict(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	h := &handler{}
 	w := httptest.NewRecorder()
 	h.updatesApply(w, httptest.NewRequest("POST", "/updates/apply", nil))
@@ -667,7 +692,7 @@ func TestUpdatesApply_WithoutStagedIsConflict(t *testing.T) {
 }
 
 func TestUpdatesApplyFailureClearsPrev(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	staged := selfupdate.StagedInfo{Tag: "build-apply-failure", Dir: t.TempDir(), Verified: true}
 	if err := selfupdate.SaveState(selfupdate.State{
@@ -716,7 +741,7 @@ func TestUpdatesApplyFailureClearsPrev(t *testing.T) {
 }
 
 func TestUpdatesApplyKeepsLifecycleGateClosedWhileRecoveryIsPending(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	staged := selfupdate.StagedInfo{Tag: "build-recovery-pending", Dir: t.TempDir(), Verified: true}
 	if err := selfupdate.SaveState(selfupdate.State{Staged: &staged}); err != nil {
@@ -1135,7 +1160,7 @@ func runningUpdateBackupTestBase(t *testing.T, token string) (*Store, *Base) {
 }
 
 func TestUpdatesApply_ОшибкаКопииВозвращаетОстановленныеБазы(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	staged := selfupdate.StagedInfo{Tag: "build-backup-failure", Dir: t.TempDir(), Verified: true}
 	if err := selfupdate.SaveState(selfupdate.State{Staged: &staged}); err != nil {
@@ -1199,7 +1224,9 @@ func TestUpdatesApply_ОшибкаКопииВозвращаетОстановл
 
 func prepareRollbackBackupTest(t *testing.T) (targetDir, probePath, wantCurrent string) {
 	t.Helper()
-	targetDir = t.TempDir()
+	// Каталог установки обязан быть приватным: применение отката проходит те же
+	// проверки, что обновление, и общий /tmp они законно отвергают (#924).
+	targetDir = installtest.PrivateInstallDir(t)
 	stageDir := t.TempDir()
 	files := selfupdate.PackageBinaries()
 	if len(files) == 0 {
@@ -1231,7 +1258,7 @@ func prepareRollbackBackupTest(t *testing.T) (targetDir, probePath, wantCurrent 
 }
 
 func TestUpdatesRollback_BackupFailureReturnsStoppedBasesWithoutBinaryMutation(t *testing.T) {
-	isolatedUpdatesHome(t)
+	isolatedUpdatableInstall(t)
 	t.Setenv(selfupdate.EnvUpdates, "")
 	targetDir, probePath, wantCurrent := prepareRollbackBackupTest(t)
 
