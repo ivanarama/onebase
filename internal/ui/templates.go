@@ -27,6 +27,10 @@ type managedTPColumnJSON struct {
 	Ref         string `json:"ref,omitempty"`
 	AllowCreate bool   `json:"allowCreate,omitempty"`
 	Enum        bool   `json:"enum,omitempty"`
+	// Virtual — колонка показывается, но не хранится (#845). Флаг нужен клиенту:
+	// такая колонка не редактируется и НЕ попадает в tp_json при отправке формы.
+	Virtual bool `json:"virtual,omitempty"`
+	Width   int  `json:"width,omitempty"`
 }
 
 // infoRegKeyValue serialises an information-register dimension for the hidden
@@ -805,8 +809,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
-		"managedTPColumnsJSON": func(fields []metadata.Field, lang string) template.JS {
-			cols := make([]managedTPColumnJSON, 0, len(fields))
+		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
 			for _, field := range fields {
 				cols = append(cols, managedTPColumnJSON{
 					ID:          field.Name,
@@ -815,6 +819,21 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Ref:         field.RefEntity,
 					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true),
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
+				})
+			}
+			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
+			// менять нельзя, по нему пользователи ориентируются и его же ожидает
+			// перенос данных из буфера.
+			for _, vc := range virtual {
+				if vc.Name == "" {
+					continue
+				}
+				cols = append(cols, managedTPColumnJSON{
+					ID:      vc.Name,
+					Name:    vc.ColumnTitle(lang),
+					Type:    string(metadata.FieldTypeString),
+					Virtual: true,
+					Width:   vc.Width,
 				})
 			}
 			b, err := json.Marshal(cols)
