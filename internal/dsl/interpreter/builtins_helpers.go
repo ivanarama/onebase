@@ -1,7 +1,6 @@
 package interpreter
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -321,11 +320,11 @@ func joinBuiltin(args []any, _ string, _ int) (any, error) {
 	var parts []string
 	if arr, ok := args[0].(*Array); ok {
 		for _, v := range arr.Iterate() {
-			parts = append(parts, fmt.Sprintf("%v", v))
+			parts = append(parts, formatReadOnlyValue(v))
 		}
 	} else if arr, ok := args[0].([]any); ok {
 		for _, v := range arr {
-			parts = append(parts, fmt.Sprintf("%v", v))
+			parts = append(parts, formatReadOnlyValue(v))
 		}
 	}
 	return strings.Join(parts, sep), nil
