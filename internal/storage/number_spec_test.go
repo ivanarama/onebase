@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/shopspring/decimal"
 )
 
@@ -113,6 +114,29 @@ func TestCanonicalNumberArg_RejectsInvalidNumberAndSpec(t *testing.T) {
 	}
 	if _, err := canonicalNumberArg(metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 2, Scale: 3}, "1"); err == nil {
 		t.Fatal("invalid number precision was silently accepted")
+	}
+}
+
+func TestCanonicalNumberArg_PGNumericSpecialValues(t *testing.T) {
+	fixed := metadata.Field{Name: "N", Type: metadata.FieldTypeNumber, Length: 10, Scale: 2}
+	got, err := canonicalNumberArg(fixed, pgtype.Numeric{Valid: true, Exp: -7})
+	if err != nil || got != "0.00" {
+		t.Fatalf("finite nil-Int zero=%T(%v), err=%v, want 0.00", got, got, err)
+	}
+
+	for _, value := range []pgtype.Numeric{
+		{Valid: true, InfinityModifier: pgtype.Infinity},
+		{Valid: true, InfinityModifier: pgtype.NegativeInfinity},
+		{Valid: true, NaN: true},
+	} {
+		if got, err := canonicalNumberArg(fixed, value); err == nil || got != nil {
+			t.Fatalf("special PG numeric %#v => %T(%v), err=%v; want rejection", value, got, got, err)
+		}
+	}
+
+	got, err = canonicalNumberArg(fixed, pgtype.Numeric{})
+	if err != nil || got != nil {
+		t.Fatalf("invalid PG numeric=%T(%v), err=%v, want empty nil", got, got, err)
 	}
 }
 

@@ -85,8 +85,17 @@ func decimalFromStorageArg(v any) (decimal.Decimal, bool, error) {
 		}
 		return *value, false, nil
 	case pgtype.Numeric:
-		if !value.Valid || value.NaN || value.Int == nil {
+		if !value.Valid {
 			return decimal.Decimal{}, true, nil
+		}
+		if value.NaN {
+			return decimal.Decimal{}, false, fmt.Errorf("NaN не является конечным числом")
+		}
+		if value.InfinityModifier != pgtype.Finite {
+			return decimal.Decimal{}, false, fmt.Errorf("%s не является конечным числом", value.InfinityModifier)
+		}
+		if value.Int == nil {
+			return decimal.New(0, value.Exp), false, nil
 		}
 		return decimal.NewFromBigInt(value.Int, value.Exp), false, nil
 	case string:
