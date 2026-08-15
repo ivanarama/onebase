@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,27 +9,27 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/backup"
+	"github.com/ivantit66/onebase/internal/dblock"
 	"github.com/ivantit66/onebase/internal/installtest"
 	"github.com/ivantit66/onebase/internal/selfupdate"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/version"
 )
 
 // isolatedUpdatesHome уводит ~/.onebase во временный каталог: тесты не должны
 // трогать ни реестр баз, ни состояние обновлений пользователя.
-// isolatedUpdatesHome уводит состояние обновлений в приватный домашний каталог.
-//
-// Приватный, а не просто временный: каталог платформы вычисляется от HOME, и
-// selfupdate законно отказывается обновлять установку из общего /tmp. С обычным
-// t.TempDir() половина тестов обновления получала 403 «нет прав на запись в
-// каталог платформы» вместо проверяемого исхода — и падала всегда, и локально,
-// и на windows-раннере (#924).
 func isolatedUpdatesHome(t *testing.T) {
 	t.Helper()
+	// Приватный дом, а не просто временный: каталог платформы вычисляется от
+	// HOME, и selfupdate законно отказывается обновлять установку из общего
+	// /tmp (#924).
 	dir := installtest.PrivateHome(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
@@ -40,7 +41,7 @@ func isolatedUpdatesHome(t *testing.T) {
 // Каталог платформы вычисляется от os.Executable(), а не от HOME, поэтому под
 // `go test` им оказывается временный каталог тест-бинаря — общий и потому
 // непригодный для самообновления. Хендлер честно отвечал 403 «нет прав на
-// запись в каталог платформы» вместо проверяемого исхода, и пять тестов
+// запись в каталог платформы» вместо проверяемого исхода, и семь тестов
 // обновления падали всегда: и локально, и на первом прогоне windows-раннера
 // (#924). Дефект был в фикстуре, а выглядел как дефект продукта.
 func isolatedUpdatableInstall(t *testing.T) string {
@@ -316,8 +317,7 @@ func TestResumeAfterUpdateFailsClosedForMarkerInNonSelfUpdatableInstallation(t *
 func TestApplyStagedOnStartKeepsGateClosedForRecoveryPendingError(t *testing.T) {
 	isolatedUpdatesHome(t)
 	// Каталог платформы обязан быть приватным: обычный t.TempDir() лежит в общем
-	// /tmp, selfupdate такую установку законно не обновляет, и тест проверял бы
-	// не тот исход (#924).
+	// /tmp, selfupdate такую установку законно не обновляет (#924).
 	targetDir := installtest.PrivateInstallDir(t)
 	stageDir := t.TempDir()
 	files := selfupdate.PackageBinaries()
@@ -979,4 +979,348 @@ func TestRestartAfterResponseFailureStillQuiescesAndQuits(t *testing.T) {
 	if !h.updateQuiescing.Load() {
 		t.Fatal("restart failure reopened old launcher")
 	}
+}
+
+func addUpdateBackupSQLiteBase(t *testing.T, store *Store, id string) (*Base, string) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), id+".db")
+	db, err := storage.ConnectSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	if _, err := db.Exec(context.Background(), "CREATE TABLE probe (id INTEGER PRIMARY KEY)"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	base := &Base{
+		ID: id, Name: id, ConfigSource: "file", Path: t.TempDir(),
+		DBType: "sqlite", DBPath: dbPath,
+	}
+	if err := store.Add(base); err != nil {
+		t.Fatalf("store.Add: %v", err)
+	}
+	return base, dbPath
+}
+
+// Перед применением обновления делаются резервные копии баз (#882, план 92).
+//
+// Самый рискованный момент жизни базы оставался без страховки: страница
+// обновления применяла его без единого предложения бэкапа, хотя вся механика
+// копий в лаунчере уже есть. Копии снимаются ПОСЛЕ остановки баз и ДО подмены
+// бинаря — копировать файл работающей SQLite небезопасно.
+func TestUpdatesApply_ДелаетКопииПередОбновлением(t *testing.T) {
+	isolatedUpdatesHome(t)
+	t.Setenv(selfupdate.EnvUpdates, "")
+
+	store := newTestStore(t)
+	_, dbPath := addUpdateBackupSQLiteBase(t, store, "backup-success")
+
+	h := &handler{store: store, runner: NewRunner()}
+	made, err := h.backupAllBasesForUpdate(context.Background())
+	if err != nil {
+		t.Fatalf("копии перед обновлением: %v", err)
+	}
+	if len(made) != 1 {
+		t.Fatalf("сделано копий %d, ожидалась 1", len(made))
+	}
+	if _, err := os.Stat(made[0]); err != nil {
+		t.Fatalf("файл копии не создан: %v", err)
+	}
+	lease, err := dblock.AcquireSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("successful backup leaked database lifetime lease: %v", err)
+	}
+	_ = lease.Close()
+}
+
+func TestBackupAllBasesForUpdate_HonorsExclusiveDatabaseLease(t *testing.T) {
+	store := newTestStore(t)
+	_, dbPath := addUpdateBackupSQLiteBase(t, store, "backup-locked")
+	owner, err := dblock.AcquireSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+
+	made, backupErr := (&handler{store: store}).backupAllBasesForUpdate(context.Background())
+	if len(made) != 0 {
+		t.Fatalf("backup published files while the database was exclusively locked: %v", made)
+	}
+	if !errors.Is(backupErr, dblock.ErrLocked) {
+		t.Fatalf("backup error = %v, want database lifetime lock rejection", backupErr)
+	}
+}
+
+func TestBackupAllBasesForUpdate_RefusesPendingRestore(t *testing.T) {
+	store := newTestStore(t)
+	base, dbPath := addUpdateBackupSQLiteBase(t, store, "backup-pending-restore")
+	db, err := openDBUnchecked(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureSettingsSchema(context.Background()); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(context.Background(), `INSERT INTO _settings(key,value) VALUES (?,?)`, testRestoreIntentKey, `{}`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+
+	made, backupErr := (&handler{store: store}).backupAllBasesForUpdate(context.Background())
+	if len(made) != 0 {
+		t.Fatalf("backup published files from a database with pending restore: %v", made)
+	}
+	if !errors.Is(backupErr, backup.ErrRestoreRecoveryRequired) {
+		t.Fatalf("backup error = %v, want ErrRestoreRecoveryRequired", backupErr)
+	}
+	lease, err := dblock.AcquireSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("pending-restore rejection leaked database lifetime lease: %v", err)
+	}
+	_ = lease.Close()
+}
+
+func TestBackupAllBasesForUpdate_PartialFailureKeepsCompletedBackupAndClosesLease(t *testing.T) {
+	store := newTestStore(t)
+	_, firstDBPath := addUpdateBackupSQLiteBase(t, store, "backup-first")
+	broken := &Base{
+		ID: "backup-broken", Name: "backup-broken", ConfigSource: "file", Path: t.TempDir(),
+		DBType: "unsupported",
+	}
+	if err := store.Add(broken); err != nil {
+		t.Fatal(err)
+	}
+
+	made, backupErr := (&handler{store: store}).backupAllBasesForUpdate(context.Background())
+	if backupErr == nil || !strings.Contains(backupErr.Error(), broken.Name) {
+		t.Fatalf("partial backup error = %v, want failing base name", backupErr)
+	}
+	if len(made) != 1 {
+		t.Fatalf("completed backups = %v, want exactly the first durable backup", made)
+	}
+	if _, err := os.Stat(made[0]); err != nil {
+		t.Fatalf("completed backup was not retained: %v", err)
+	}
+	lease, err := dblock.AcquireSQLite(firstDBPath)
+	if err != nil {
+		t.Fatalf("partial failure leaked earlier database lifetime lease: %v", err)
+	}
+	_ = lease.Close()
+}
+
+// Галка передаётся запросом: без неё копии не снимаются — автоматически
+// копировать чужие базы по любому POST нельзя.
+func TestUpdates_ФлагКопииЧитаетсяИзЗапроса(t *testing.T) {
+	for _, c := range []struct {
+		target string
+		want   bool
+	}{
+		{"/updates/apply", false},
+		{"/updates/apply?backup=1", true},
+		{"/updates/apply?backup=true", true},
+		{"/updates/apply?backup=0", false},
+		{"/updates/rollback", false},
+		{"/updates/rollback?backup=1", true},
+		{"/updates/rollback?backup=true", true},
+		{"/updates/rollback?backup=0", false},
+	} {
+		if got := backupRequested(httptest.NewRequest("POST", c.target, nil)); got != c.want {
+			t.Errorf("%s → %v, ожидалось %v", c.target, got, c.want)
+		}
+	}
+}
+
+func runningUpdateBackupTestBase(t *testing.T, token string) (*Store, *Base) {
+	t.Helper()
+	processExited := make(chan struct{})
+	useExitWaiter(t, processExited)
+	var ts *httptest.Server
+	var stopOnce sync.Once
+	ts = httptest.NewServer(authenticatedControlHandler(t, token, "base-control", func() {
+		stopOnce.Do(func() {
+			go func() {
+				ts.Close()
+				close(processExited)
+			}()
+		})
+	}))
+	t.Cleanup(ts.Close)
+	base := controlTestBase(t, ts, token)
+	store, err := NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(base); err != nil {
+		t.Fatal(err)
+	}
+	return store, base
+}
+
+func TestUpdatesApply_ОшибкаКопииВозвращаетОстановленныеБазы(t *testing.T) {
+	isolatedUpdatableInstall(t)
+	t.Setenv(selfupdate.EnvUpdates, "")
+	staged := selfupdate.StagedInfo{Tag: "build-backup-failure", Dir: t.TempDir(), Verified: true}
+	if err := selfupdate.SaveState(selfupdate.State{Staged: &staged}); err != nil {
+		t.Fatal(err)
+	}
+
+	const token = "backup-failure-control-secret"
+	store, base := runningUpdateBackupTestBase(t, token)
+
+	oldBackup := backupBasesForUpdate
+	var backupSawStopped atomic.Bool
+	backupBasesForUpdate = func(_ *handler, _ context.Context) ([]string, error) {
+		backupSawStopped.Store(portFree(base.Port))
+		return nil, errors.New("intentional backup failure")
+	}
+	t.Cleanup(func() { backupBasesForUpdate = oldBackup })
+
+	oldExePath := exePath
+	var restartAttempts atomic.Int32
+	exePath = func() (string, error) {
+		restartAttempts.Add(1)
+		return "", errors.New("intentional restart failure")
+	}
+	t.Cleanup(func() { exePath = oldExePath })
+	oldApply := applyUpdate
+	var applyCalls atomic.Int32
+	applyUpdate = func(*selfupdate.OperationLease, selfupdate.StagedInfo, string, string) error {
+		applyCalls.Add(1)
+		return errors.New("binary swap must not run after backup failure")
+	}
+	t.Cleanup(func() { applyUpdate = oldApply })
+
+	runner := NewRunner()
+	h := &handler{store: store, runner: runner}
+	rec := httptest.NewRecorder()
+	h.updatesApply(rec, httptest.NewRequest(http.MethodPost, "/updates/apply?backup=1", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if !backupSawStopped.Load() {
+		t.Fatal("backup started before the running base had stopped")
+	}
+	if restartAttempts.Load() != 1 {
+		t.Fatalf("restart attempts=%d, want 1 after backup failure", restartAttempts.Load())
+	}
+	if applyCalls.Load() != 0 {
+		t.Fatalf("binary apply ran %d times after backup failure", applyCalls.Load())
+	}
+	state, err := selfupdate.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.RestartRecords) != 1 || state.RestartRecords[0].ID != base.ID {
+		t.Fatalf("failed restart was not retained for startup recovery: %+v", state.RestartRecords)
+	}
+	if err := runner.holdStarts(); err != nil {
+		t.Fatalf("backup failure leaked lifecycle gate: %v", err)
+	}
+	runner.AllowStarts()
+}
+
+func prepareRollbackBackupTest(t *testing.T) (targetDir, probePath, wantCurrent string) {
+	t.Helper()
+	// Каталог установки обязан быть приватным: применение отката проходит те же
+	// проверки, что обновление, и общий /tmp они законно отвергают (#924).
+	targetDir = installtest.PrivateInstallDir(t)
+	stageDir := t.TempDir()
+	files := selfupdate.PackageBinaries()
+	if len(files) == 0 {
+		t.Fatal("selfupdate package contains no binaries")
+	}
+	for _, name := range files {
+		if err := os.WriteFile(filepath.Join(targetDir, name), []byte("before-"+name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stageDir, name), []byte("current-"+name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staged := selfupdate.StagedInfo{Tag: "build-current", Dir: stageDir, Files: files, Verified: true}
+	lease, err := selfupdate.AcquireOperationLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyErr := lease.ApplyWithRollbackState(staged, targetDir, "build-before")
+	releaseErr := lease.Release()
+	if err := errors.Join(applyErr, releaseErr); err != nil {
+		t.Fatalf("prepare rollback installation: %v", err)
+	}
+	oldBinaryDir := updateBinaryDir
+	updateBinaryDir = func() (string, error) { return targetDir, nil }
+	t.Cleanup(func() { updateBinaryDir = oldBinaryDir })
+	probePath = filepath.Join(targetDir, files[0])
+	return targetDir, probePath, "current-" + files[0]
+}
+
+func TestUpdatesRollback_BackupFailureReturnsStoppedBasesWithoutBinaryMutation(t *testing.T) {
+	isolatedUpdatableInstall(t)
+	t.Setenv(selfupdate.EnvUpdates, "")
+	targetDir, probePath, wantCurrent := prepareRollbackBackupTest(t)
+
+	const token = "rollback-backup-failure-control-secret"
+	store, base := runningUpdateBackupTestBase(t, token)
+	oldBackup := backupBasesForUpdate
+	var backupCalls atomic.Int32
+	var backupSawStopped atomic.Bool
+	backupBasesForUpdate = func(_ *handler, _ context.Context) ([]string, error) {
+		backupCalls.Add(1)
+		backupSawStopped.Store(portFree(base.Port))
+		return nil, errors.New("intentional rollback backup failure")
+	}
+	t.Cleanup(func() { backupBasesForUpdate = oldBackup })
+
+	oldExePath := exePath
+	var restartAttempts atomic.Int32
+	exePath = func() (string, error) {
+		restartAttempts.Add(1)
+		return "", errors.New("intentional rollback restart failure")
+	}
+	t.Cleanup(func() { exePath = oldExePath })
+
+	runner := NewRunner()
+	h := &handler{store: store, runner: runner}
+	rec := httptest.NewRecorder()
+	h.updatesRollback(rec, httptest.NewRequest(http.MethodPost, "/updates/rollback?backup=1", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if backupCalls.Load() != 1 || !backupSawStopped.Load() {
+		t.Fatalf("rollback backup calls=%d, saw stopped=%v", backupCalls.Load(), backupSawStopped.Load())
+	}
+	if restartAttempts.Load() != 1 {
+		t.Fatalf("restart attempts=%d, want 1 after rollback backup failure", restartAttempts.Load())
+	}
+	gotCurrent, err := os.ReadFile(probePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotCurrent) != wantCurrent {
+		t.Fatalf("rollback mutated binary after backup failure: got %q, want %q", gotCurrent, wantCurrent)
+	}
+	state, err := selfupdate.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Prev == nil || state.Prev.Tag != "build-before" {
+		t.Fatalf("backup failure consumed rollback snapshot: %+v", state.Prev)
+	}
+	if len(state.RestartRecords) != 1 || state.RestartRecords[0].ID != base.ID {
+		t.Fatalf("failed restart was not retained for startup recovery: %+v", state.RestartRecords)
+	}
+	consumer, err := selfupdate.AcquireConsumerLease(targetDir)
+	if err != nil {
+		t.Fatalf("rollback backup failure leaked target reservation: %v", err)
+	}
+	if err := consumer.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.holdStarts(); err != nil {
+		t.Fatalf("rollback backup failure leaked lifecycle gate: %v", err)
+	}
+	runner.AllowStarts()
 }
