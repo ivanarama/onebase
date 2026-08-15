@@ -3,9 +3,11 @@
 package backup
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -33,53 +35,55 @@ func TestUniversalBackupRoundTripInNonPublicSchema(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const schema = "ob_schema_877"
-	admin, err := storage.Connect(ctx, baseDSN)
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	if _, err := admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`); err != nil {
-		admin.Close()
-		t.Fatalf("подготовка схемы: %v", err)
-	}
-	if _, err := admin.Exec(ctx, `CREATE SCHEMA `+schema); err != nil {
-		admin.Close()
-		t.Fatalf("CREATE SCHEMA: %v", err)
-	}
-	admin.Close()
-	t.Cleanup(func() {
-		db, err := storage.Connect(context.Background(), baseDSN)
-		if err != nil {
-			return
-		}
-		defer db.Close()
-		_, _ = db.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
-	})
-
-	client := &metadata.Entity{
-		Name:   "Контрагент",
-		Kind:   metadata.KindCatalog,
-		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
-	}
-
+	schema := storage.NewEphemeralSchemaName()
 	db, err := storage.ConnectWithSchema(ctx, baseDSN, schema)
 	if err != nil {
 		t.Fatalf("ConnectWithSchema: %v", err)
 	}
-	defer db.Close()
-	if err := db.Migrate(ctx, []*metadata.Entity{client}); err != nil {
+	if err := db.CreateSchema(ctx, schema); err != nil {
+		db.Close()
+		t.Fatalf("CreateSchema: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.DropSchemaCascade(context.Background(), schema); err != nil {
+			t.Errorf("DropSchemaCascade(%s): %v", schema, err)
+		}
+		db.Close()
+	})
+
+	probe := &metadata.Entity{
+		Name:   "Schema877UniversalBackupProbe",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "ProbeValue", Type: metadata.FieldTypeString}},
+	}
+	probeTable := metadata.TableName(probe.Name)
+	// The old implementation enumerated public tables and then read them through
+	// search_path. A shared entity name could therefore make this test pass by
+	// accident even though the probe table in the active schema was never listed.
+	var existsInPublic bool
+	if err := db.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = $1
+	)`, probeTable).Scan(&existsInPublic); err != nil {
+		t.Fatalf("check public probe precondition: %v", err)
+	}
+	if existsInPublic {
+		t.Fatalf("test precondition violated: probe table %q already exists in public", probeTable)
+	}
+
+	if err := db.Migrate(ctx, []*metadata.Entity{probe}); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	id := uuid.New()
-	if err := db.Upsert(ctx, client.Name, id, map[string]any{"Наименование": "ООО Схема"}, client); err != nil {
+	if err := db.Upsert(ctx, probe.Name, id, map[string]any{"ProbeValue": "schema-877-roundtrip"}, probe); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
 
 	cfgDir := t.TempDir()
-	if err := os.MkdirAll(cfgDir+"/config", 0o750); err != nil {
+	configDir := filepath.Join(cfgDir, "config")
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cfgDir+"/config/app.yaml", []byte("name: Тест\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "app.yaml"), []byte("name: Тест\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,12 +94,32 @@ func TestUniversalBackupRoundTripInNonPublicSchema(t *testing.T) {
 	if archive.Len() == 0 {
 		t.Fatal("архив пуст")
 	}
+	zr, err := zip.NewReader(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		t.Fatalf("open exported archive: %v", err)
+	}
+	// Together with the public-schema precondition above, this is the direct
+	// regression assertion: the old public-only table listing omits this entry.
+	wantEntry := "data/" + probeTable + ".jsonl"
+	foundProbe := false
+	for _, entry := range zr.File {
+		if entry.Name == wantEntry {
+			foundProbe = true
+			break
+		}
+	}
+	if !foundProbe {
+		t.Fatalf("archive omitted non-public probe table %q (entry %q)", probeTable, wantEntry)
+	}
 
 	// «Авария»: данные снесены. Таблица останется — её восстановит импорт.
-	if _, err := db.Exec(ctx, `DELETE FROM `+metadata.TableName(client.Name)); err != nil {
+	if _, err := db.Exec(ctx, `DELETE FROM `+probeTable); err != nil {
 		t.Fatalf("симуляция аварии: %v", err)
 	}
-	if row, err := db.GetByID(ctx, client.Name, id, client); err == nil && row != nil {
+	if _, err := db.GetByID(ctx, probe.Name, id, probe); !storage.IsNotFound(err) {
+		if err != nil {
+			t.Fatalf("проверка симуляции аварии: %v", err)
+		}
 		t.Fatal("подготовка: запись не удалилась")
 	}
 
@@ -109,11 +133,11 @@ func TestUniversalBackupRoundTripInNonPublicSchema(t *testing.T) {
 		t.Fatal("отчёт импорта пуст")
 	}
 
-	row, err := db.GetByID(ctx, client.Name, id, client)
+	row, err := db.GetByID(ctx, probe.Name, id, probe)
 	if err != nil {
 		t.Fatalf("после импорта записи нет — бэкап прошёл мимо таблиц своей схемы: %v", err)
 	}
-	if got, _ := row["Наименование"].(string); got != "ООО Схема" {
-		t.Fatalf("после импорта Наименование = %q, ожидалось «ООО Схема»", got)
+	if got, _ := row["ProbeValue"].(string); got != "schema-877-roundtrip" {
+		t.Fatalf("после импорта ProbeValue = %q, ожидалось %q", got, "schema-877-roundtrip")
 	}
 }
