@@ -660,8 +660,8 @@ func toDecimal(v any) (decimal.Decimal, bool) {
 // report pipeline on the same deliberately generous boundary as the DSL.
 const (
 	maxReportDecimalExponent        int32 = 4096
-	maxReportDecimalCoefficientBits       = 16384
-	maxReportDecimalTextBytes             = 8192
+	maxReportDecimalCoefficientBits int   = 16384
+	maxReportDecimalTextBytes       int   = 8192
 )
 
 func reportDecimalWithinSafeBounds(d decimal.Decimal) bool {

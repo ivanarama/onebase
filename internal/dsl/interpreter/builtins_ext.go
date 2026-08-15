@@ -70,7 +70,7 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 	if maxDecimalPlaces > 0 && isNumeric(val) {
 		d, _ := toDecimal(val)
 		if !decimalWithinExpansionBounds(d, maxDecimalPlaces) {
-			return "", fmt.Errorf("Формат: число вне безопасного диапазона")
+			return "", fmt.Errorf("формат: число вне безопасного диапазона")
 		}
 	}
 	fmtStr := strings.ToLower(strArg(args, 1))
@@ -92,7 +92,7 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 		if d := extractFormatParam(fmtStr, "чдц="); d != "" {
 			if n, err := strconv.Atoi(d); err == nil {
 				if maxDecimalPlaces > 0 && (n < -int(maxDecimalPlaces) || n > int(maxDecimalPlaces)) {
-					return "", fmt.Errorf("Формат: точность вне безопасного диапазона")
+					return "", fmt.Errorf("формат: точность вне безопасного диапазона")
 				}
 				decimals = n
 			}
@@ -100,7 +100,7 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 		sep := " "
 		if s := extractFormatParam(fmtStr, "чрг="); s != "" {
 			if maxDecimalPlaces > 0 && len(s) > 64 {
-				return "", fmt.Errorf("Формат: разделитель разрядов слишком длинный")
+				return "", fmt.Errorf("формат: разделитель разрядов слишком длинный")
 			}
 			sep = s
 		}

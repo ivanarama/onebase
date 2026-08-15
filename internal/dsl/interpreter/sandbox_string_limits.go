@@ -24,10 +24,6 @@ type sandboxStringBudget struct {
 	seen       map[sandboxStringVisit]bool
 }
 
-func requireSafeSandboxStringValues(operation string, values []any, maxBytes, line int) {
-	requireSafeSandboxValueLimits(operation, values, 0, maxBytes, line)
-}
-
 // requireSafeSandboxValueLimits walks native value graphs without invoking
 // their formatting methods. Decimal checks happen during this walk, before a
 // string preflight is allowed to call fmt on an Array/Struct argument.
