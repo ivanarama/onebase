@@ -1202,6 +1202,10 @@ const tplUpdates = `
       {{end}}
       {{if .U.CanApply}}
       <a class="tbtn upd-badge" href="#" onclick="return updApply()">{{t $.Lang "Перезапустить и обновить"}} → {{.U.StagedTag}}</a>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#555">
+        <input type="checkbox" id="upd-backup" checked>
+        {{t $.Lang "Сделать резервные копии баз перед обновлением"}}
+      </label>
       {{end}}
       {{if and .U.PrevTag .U.CanWrite}}
       <a class="tbtn danger" href="#" onclick="return updRollback('{{.U.PrevTag}}')">{{t $.Lang "Вернуть версию"}} {{.U.PrevTag}}</a>
@@ -1245,7 +1249,14 @@ function setChannel(ch) {
   return updPost('/updates/channel?value=' + encodeURIComponent(ch), '', function(){ window.location.reload(); });
 }
 function updApply() {
-  return updPost('/updates/apply', '{{t $.Lang "Обновляю и перезапускаю..."}}', function(){
+  // Копии снимаются на сервере после остановки баз и до подмены бинаря:
+  // копировать файл работающей базы небезопасно (план 92).
+  var box = document.getElementById('upd-backup');
+  var url = '/updates/apply' + (box && box.checked ? '?backup=1' : '');
+  var busy = (box && box.checked)
+    ? '{{t $.Lang "Делаю копии, обновляю и перезапускаю..."}}'
+    : '{{t $.Lang "Обновляю и перезапускаю..."}}';
+  return updPost(url, busy, function(){
     // Окно закроется само: процесс поднимет новую версию и откроет своё окно.
     updStatus('{{t $.Lang "Платформа перезапускается — это окно закроется."}}');
   });

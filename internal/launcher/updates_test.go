@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/selfupdate"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/version"
 )
 
@@ -948,5 +950,63 @@ func TestRestartAfterResponseFailureStillQuiescesAndQuits(t *testing.T) {
 	}
 	if !h.updateQuiescing.Load() {
 		t.Fatal("restart failure reopened old launcher")
+	}
+}
+
+// Перед применением обновления делаются резервные копии баз (#882, план 92).
+//
+// Самый рискованный момент жизни базы оставался без страховки: страница
+// обновления применяла его без единого предложения бэкапа, хотя вся механика
+// копий в лаунчере уже есть. Копии снимаются ПОСЛЕ остановки баз и ДО подмены
+// бинаря — копировать файл работающей SQLite небезопасно.
+func TestUpdatesApply_ДелаетКопииПередОбновлением(t *testing.T) {
+	isolatedUpdatesHome(t)
+	t.Setenv(selfupdate.EnvUpdates, "")
+
+	store := newTestStore(t)
+	projDir := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "base.db")
+	db, err := storage.ConnectSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	if _, err := db.Exec(context.Background(), "CREATE TABLE t (id INTEGER PRIMARY KEY)"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	base := &Base{ID: "b1", Name: "База", ConfigSource: "file", Path: projDir, DBType: "sqlite", DBPath: dbPath}
+	if err := store.Add(base); err != nil {
+		t.Fatalf("store.Add: %v", err)
+	}
+
+	h := &handler{store: store, runner: NewRunner()}
+	made, err := h.backupAllBasesForUpdate(context.Background())
+	if err != nil {
+		t.Fatalf("копии перед обновлением: %v", err)
+	}
+	if len(made) != 1 {
+		t.Fatalf("сделано копий %d, ожидалась 1", len(made))
+	}
+	if _, err := os.Stat(made[0]); err != nil {
+		t.Fatalf("файл копии не создан: %v", err)
+	}
+}
+
+// Галка передаётся запросом: без неё копии не снимаются — автоматически
+// копировать чужие базы по любому POST нельзя.
+func TestUpdatesApply_ФлагКопииЧитаетсяИзЗапроса(t *testing.T) {
+	for _, c := range []struct {
+		target string
+		want   bool
+	}{
+		{"/updates/apply", false},
+		{"/updates/apply?backup=1", true},
+		{"/updates/apply?backup=true", true},
+		{"/updates/apply?backup=0", false},
+	} {
+		if got := backupRequested(httptest.NewRequest("POST", c.target, nil)); got != c.want {
+			t.Errorf("%s → %v, ожидалось %v", c.target, got, c.want)
+		}
 	}
 }

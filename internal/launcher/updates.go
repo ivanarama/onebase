@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -293,6 +294,25 @@ func (h *handler) updatesApply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
+	// Резервные копии — здесь и только здесь: базы уже остановлены (копировать
+	// файл работающей SQLite небезопасно), а бинарь ещё не подменён. План 92
+	// прямо предполагал этот шаг («перед применением предлагаем backup»), но на
+	// HEAD его не было: самый рискованный момент жизни базы оставался без
+	// страховки, хотя вся механика копий в лаунчере уже есть (#882).
+	if backupRequested(r) {
+		if made, err := h.backupAllBasesForUpdate(r.Context()); err != nil {
+			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
+			// чтобы копия была. Молча обновиться без неё — обмануть.
+			h.runner.AllowStarts()
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед обновлением") + ": " + err.Error(),
+			})
+			return
+		} else if len(made) > 0 {
+			oblog.Component("launcher").Info("резервные копии перед обновлением", "количество", len(made))
+		}
+	}
+
 	recovered, err := lease.RecoverWithResult(vm.BinDir)
 	if err != nil {
 		// Consumers are already stopped. Recovery could not prove one complete
@@ -394,6 +414,25 @@ func (h *handler) updatesRollback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
+	// Резервные копии — здесь и только здесь: базы уже остановлены (копировать
+	// файл работающей SQLite небезопасно), а бинарь ещё не подменён. План 92
+	// прямо предполагал этот шаг («перед применением предлагаем backup»), но на
+	// HEAD его не было: самый рискованный момент жизни базы оставался без
+	// страховки, хотя вся механика копий в лаунчере уже есть (#882).
+	if backupRequested(r) {
+		if made, err := h.backupAllBasesForUpdate(r.Context()); err != nil {
+			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
+			// чтобы копия была. Молча обновиться без неё — обмануть.
+			h.runner.AllowStarts()
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед обновлением") + ": " + err.Error(),
+			})
+			return
+		} else if len(made) > 0 {
+			oblog.Component("launcher").Info("резервные копии перед обновлением", "количество", len(made))
+		}
+	}
+
 	recovered, err := lease.RecoverWithResult(vm.BinDir)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -998,4 +1037,33 @@ func latestTag(st selfupdate.State) string {
 		return ""
 	}
 	return st.Latest.Tag
+}
+
+// backupRequested — просили ли сделать копии перед применением обновления.
+// Умолчание «нет» осознанное: параметр приходит из UI, где галка включена, но
+// автоматически копировать чужие базы по любому POST нельзя.
+func backupRequested(r *http.Request) bool {
+	v := strings.TrimSpace(r.URL.Query().Get("backup"))
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// backupAllBasesForUpdate снимает копию каждой зарегистрированной базы.
+//
+// Вызывается ПОСЛЕ остановки баз и ДО подмены бинаря. Ошибка любой копии —
+// ошибка операции: смысл галки в том, что копия есть, и «почти сделали» здесь
+// не считается.
+func (h *handler) backupAllBasesForUpdate(ctx context.Context) ([]string, error) {
+	bases, err := h.store.List()
+	if err != nil {
+		return nil, err
+	}
+	var made []string
+	for _, b := range bases {
+		path, err := dumpForBase(ctx, b, h.backupDir(b))
+		if err != nil {
+			return made, fmt.Errorf("%s: %w", b.Name, err)
+		}
+		made = append(made, path)
+	}
+	return made, nil
 }
