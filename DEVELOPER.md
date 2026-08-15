@@ -25,7 +25,7 @@ my-project/
 
 Запуск в файловом режиме (hot reload):
 ```bash
-onebase dev --project ./my-project --db "postgres://localhost/mydb?sslmode=disable"
+onebase dev --project ./my-project --sqlite ./my-project.db
 ```
 
 ---
@@ -1323,9 +1323,11 @@ DSL-ошибку вместо повреждённой или несериали
 bases:
   - id: <uuid>
     name: Склад
-    config_source: database   # или: file
-    path: ""                  # только для file-режима
-    db: postgres://localhost/sklad?sslmode=disable
+    config_source: file       # или: database
+    path: /home/user/sklad    # только для file-режима
+    db: ""                    # DSN, только для PostgreSQL
+    db_type: sqlite           # или: postgres
+    db_path: /home/user/sklad/sklad.db
     port: 8080
     created: 2026-04-24T00:00:00Z
 ```
@@ -1340,9 +1342,11 @@ bases:
   запускает dev-режим на SQLite вместо PostgreSQL
 - Путь к папке виден в лаунчере
 
-**`config_source: database`** — конфигурация в PostgreSQL (`_onebase_config`):
+**`config_source: database`** — конфигурация в таблице `_onebase_config` той же
+SQLite- или PostgreSQL-базы:
 - Используется для готовых баз у пользователей
-- Создаётся из лаунчера («Добавить» → галочка «Создать с нуля»)
+- Создаётся из лаунчера («Добавить» → галочка
+  «Создать пустую конфигурацию (новая база)»)
 - Редактирование: кнопка **«Конфигуратор»** → «Выгрузить» → правка → «Загрузить»
 - Выгрузка попадает в `~/.onebase/workspace/<base-id>/`
 
@@ -1351,10 +1355,13 @@ bases:
 Для командной разработки держите конфигурацию в файловом режиме:
 
 ```bash
-onebase dev --project ./my-project --db "postgres://localhost/mydb?sslmode=disable"
+onebase dev --project ./my-project --sqlite ./my-project.db
 git status
 git commit
 ```
+
+Для PostgreSQL используйте `--db "postgres://localhost/mydb?sslmode=disable"`
+вместо `--sqlite`.
 
 Git остаётся источником правды для разработчиков: код-ревью, CI, история
 изменений и ветки живут там. Перед релизом прогоняйте проверку:
@@ -1398,7 +1405,7 @@ diff/rollback без доступа к репозиторию.
 
 ### Служебные таблицы
 
-Создаются автоматически при первом запуске базы:
+Создаются автоматически по мере запуска соответствующих режимов и подсистем:
 
 | Таблица | Назначение |
 |---|---|
@@ -1529,11 +1536,16 @@ WebView2-окно: лаунчер запускает сам себя (`onebase w
 ```bash
 onebase migrate --project ./my-project --db "postgres://localhost/mydb?sslmode=disable"
 
+# То же на SQLite:
+onebase migrate --project ./my-project --sqlite ./my-project.db
+
 # В режиме конфигурации в БД:
 onebase migrate --config-source database --db "postgres://localhost/mydb?sslmode=disable"
 ```
 
-Удаление и переименование полей **не поддерживается** автоматически — вручную через SQL.
+Переименование поля с устойчивым `fields[].id` сохраняет данные автоматически.
+Удаление колонки выполняется только с `--allow-destructive`; перед изменением
+схемы план можно проверить через `--dry-run`.
 
 Миграция заодно заводит схему полнотекстового поиска (см. `fulltext`). База,
 созданная более старой версией, до `migrate` работает как раньше — просто без
@@ -1547,7 +1559,8 @@ onebase migrate --config-source database --db "postgres://localhost/mydb?sslmode
 |---|---|---|
 | `--project` | `.` | Путь к папке конфигурации (для `file`-режима) |
 | `--db` | `$DATABASE_URL` или `postgres://localhost/onebase` | Строка подключения к PostgreSQL |
-| `--port` | `8080` | Порт HTTP-сервера |
+| `--sqlite` | пусто | Путь к файлу SQLite (вместо `--db`) |
+| `--port` | `8080` | Порт HTTP-сервера (`dev`/`run`; у `migrate` флага нет) |
 | `--config-source` | `file` | Источник конфигурации: `file` или `database` |
 
 ---
@@ -1559,9 +1572,10 @@ cmd/onebase/          — точка входа
 internal/
   api/                — HTTP-сервер, роутинг
   auth/               — пользователи, сессии, middleware
-  backup/             — Dump() и Restore() через pg_dump/psql
+  backup/             — резервное копирование/восстановление: pg_dump/psql
+                        (PostgreSQL), VACUUM INTO/замена файла (SQLite)
   cli/                — Cobra-команды (dev, run, migrate, start, ibases, init, backup, restore)
-  configdb/           — хранение конфигурации в PostgreSQL
+  configdb/           — хранение конфигурации в SQLite/PostgreSQL
   converter/          — импорт конфигураций из 1С (v8.3 XML)
   devserver/          — файловый вотчер для hot reload
   dsl/                — лексер, парсер, AST, интерпретатор
@@ -1638,7 +1652,7 @@ go test -count=1 -tags=integration ./internal/configdb
 
 ## Транзакции в DSL
 
-DSL-скрипты обработок могут явно управлять PostgreSQL-транзакцией через три функции:
+DSL-скрипты обработок могут явно управлять транзакцией базы данных через три функции:
 
 ```
 НачатьТранзакцию()            // начать транзакцию (или SAVEPOINT при вложении)
@@ -2333,7 +2347,9 @@ query: |
 
 ### Реализация
 
-Виртуальные таблицы реализованы как PostgreSQL-функции (planner functions), созданные в `internal/storage/registers.go`. Транслятор в `internal/query/query.go` разворачивает `РегистрНакопления.X.Остатки(...)` в вызов `рег_x_balances(...)`.
+Виртуальные таблицы транслятор `internal/query/query.go` разворачивает в
+агрегирующие SQL-подзапросы с учётом активного диалекта; они работают на SQLite
+и PostgreSQL.
 
 ---
 
@@ -3276,7 +3292,7 @@ fields:
 
 | Ключ | По умолчанию | Что открывает |
 |---|---|---|
-| `net.enabled` | выключено | исходящие веб-хуки, HTTP-клиент DSL, входящие HTTP-сервисы, отправка почты |
+| `net.enabled` | выключено | исходящие веб-хуки, HTTP- и WebSocket-клиенты/WS-шлюзы, входящие HTTP-сервисы, отправка почты |
 | `exec.enabled` | выключено | builtin `ВыполнитьКоманду` (запуск команд ОС) |
 
 Значение — строка: включено при `1`/`true`, всё остальное считается выключенным.
