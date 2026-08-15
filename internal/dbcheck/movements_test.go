@@ -155,3 +155,84 @@ func TestCountMovementsOfRecorderTypeDoesNotDelete(t *testing.T) {
 		t.Fatalf("пустой список насчитал %d, err=%v", n, err)
 	}
 }
+
+// addAccountEntry вписывает проводку бухрегистра с заданным регистратором.
+func addAccountEntry(t *testing.T, env *Env, recorderType string, recorder uuid.UUID, sum string) {
+	t.Helper()
+	if _, err := env.DB.Exec(context.Background(),
+		`INSERT INTO акк_бухучёт (id, period, регистратор, регистратор_тип, счётдт, счёткт, сумма)
+		 VALUES (?, '2026-01-15T00:00:00Z', ?, ?, '50', '51', ?)`,
+		uuid.New().String(), recorder.String(), recorderType, sum); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func accountEntryCount(t *testing.T, env *Env) int {
+	t.Helper()
+	var n int
+	if err := env.DB.QueryRow(context.Background(), `SELECT COUNT(*) FROM акк_бухучёт`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// Проводки бухрегистра проверяются той же проверкой, что и движения
+// накопления (#881).
+//
+// Doctor обходил только env.Registers, поэтому проводки удалённого документа не
+// находила ни одна проверка: они оставались в акк_* навсегда, а обороты —
+// перекошенными на их сумму. Половина машинерии при этом уже была — #640
+// добавил проверку итогов бухрегистра.
+//
+// Различение двух случаев обязано работать и здесь: «известный документ, записи
+// нет» — сирота, «типа нет в конфигурации» — переименование, данные целы.
+func TestOrphanAccountEntries_СиротаУдаляетсяНеизвестныйТипНет(t *testing.T) {
+	ctx := context.Background()
+	env := testEnv(t)
+
+	addAccountEntry(t, env, "Реализация", uuid.New(), "500")         // документ известен, записи нет → сирота
+	addAccountEntry(t, env, "НетТакогоДокумента", uuid.New(), "700") // типа нет в конфигурации → не трогаем
+	if got := accountEntryCount(t, env); got != 2 {
+		t.Fatalf("подготовка: проводок %d", got)
+	}
+
+	rep := Run(ctx, env, []Check{orphanMovementsCheck{}}, nil)
+	res := findResult(t, rep, "orphan-movements")
+	if res.Severity != SeverityError {
+		t.Fatalf("осиротевшая проводка не замечена вовсе: severity=%q summary=%q", res.Severity, res.Summary)
+	}
+	var sawOrphan, sawUnknown bool
+	for _, f := range res.Findings {
+		if f.Object != "БухУчёт" {
+			continue
+		}
+		if strings.Contains(f.Detail, "не существует") {
+			sawOrphan = true
+		}
+		if strings.Contains(f.Detail, "нет в конфигурации") {
+			sawUnknown = true
+		}
+	}
+	if !sawOrphan {
+		t.Errorf("в отчёте нет осиротевшей проводки бухрегистра: %+v", res.Findings)
+	}
+	if !sawUnknown {
+		t.Errorf("в отчёте нет проводки документа вне конфигурации: %+v", res.Findings)
+	}
+
+	rep = Run(ctx, env, []Check{orphanMovementsCheck{}}, map[string]bool{"orphan-movements": true})
+	res = findResult(t, rep, "orphan-movements")
+	if got := accountEntryCount(t, env); got != 1 {
+		t.Fatalf("после починки проводок %d, ожидалась 1 (сирота удалена, чужой тип цел)", got)
+	}
+	var left string
+	if err := env.DB.QueryRow(ctx, `SELECT регистратор_тип FROM акк_бухучёт`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != "НетТакогоДокумента" {
+		t.Errorf("удалена не та проводка: осталась %q", left)
+	}
+	if res.Fixed == 0 {
+		t.Error("Fixed=0 при удалённой проводке — починка не отражена в отчёте")
+	}
+}

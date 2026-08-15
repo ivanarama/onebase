@@ -466,6 +466,22 @@ func executeFormEvent(t *testing.T, s *Server, ent *metadata.Entity, body url.Va
 	return rec
 }
 
+// executeFormEventRaw — то же, но без проверки кода ответа: нужен тестам,
+// которые проверяют сам код (429 при занятом слоте, #865).
+func executeFormEventRaw(t *testing.T, s *Server, ent *metadata.Entity, body url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/ui/catalog/"+ent.Name+"/form-event",
+		strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("kind", "catalog")
+	rctx.URLParams.Add("entity", ent.Name)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	s.handleManagedFormEvent(rec, req)
+	return rec
+}
+
 func decodeFormEventResponse(t *testing.T, b []byte) formEventResponse {
 	t.Helper()
 	var resp formEventResponse

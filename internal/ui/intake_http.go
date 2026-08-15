@@ -223,10 +223,16 @@ type dslIntakeHandler struct {
 
 // Handle реализует intake.Handler.
 func (h *dslIntakeHandler) Handle(ctx context.Context, env intake.Envelope) (intake.HandlerResult, error) {
+	dslCtx := ctx
+	cancel := func() {}
+	if h.timeout > 0 {
+		dslCtx, cancel = context.WithTimeout(ctx, h.timeout)
+	}
+	defer cancel()
 	conv := interpreter.JSONValueToDSL(env.Top) // конверт как *Map (как результат ПрочитатьJSON)
 	var msgs []string
 	mc := runtime.NewMovementsCollector("intake", uuid.Nil)
-	dslVars, txState := h.s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+	dslVars, txState := h.s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 	defer rollbackDSLExecution(txState)
 	dslVars["Конверт"] = conv
 	dslVars["Envelope"] = conv
@@ -237,7 +243,7 @@ func (h *dslIntakeHandler) Handle(ctx context.Context, env intake.Envelope) (int
 	)
 	if h.timeout > 0 {
 		result, err = h.s.interp.CallSandboxed(h.proc, nil, []any{conv},
-			interpreter.SandboxProfile{MaxWallClock: h.timeout}, dslVars)
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: h.timeout}, dslVars)
 	} else {
 		result, err = h.s.interp.Call(h.proc, nil, []any{conv}, dslVars)
 	}

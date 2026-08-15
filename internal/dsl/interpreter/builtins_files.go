@@ -29,12 +29,12 @@ func init() {
 func copyFileFn(args []any, _ string, _ int) (any, error) {
 	src := safePathOrRaise("КопироватьФайл", strArg(args, 0))
 	dst := safePathOrRaise("КопироватьФайл", strArg(args, 1))
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 	if err != nil {
 		RaiseUserError("КопироватьФайл: " + err.Error())
 	}
 	defer oblog.CloseQuiet("dsl", "исходный файл", in)
-	out, err := os.Create(dst)
+	out, err := os.Create(dst) //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 	if err != nil {
 		RaiseUserError("КопироватьФайл: " + err.Error())
 	}
@@ -54,7 +54,7 @@ func copyFileFn(args []any, _ string, _ int) (any, error) {
 func moveFileFn(args []any, _ string, _ int) (any, error) {
 	src := safePathOrRaise("ПереместитьФайл", strArg(args, 0))
 	dst := safePathOrRaise("ПереместитьФайл", strArg(args, 1))
-	if err := os.Rename(src, dst); err != nil {
+	if err := os.Rename(src, dst); err != nil { //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 		RaiseUserError("ПереместитьФайл: " + err.Error())
 	}
 	return nil, nil
@@ -63,7 +63,7 @@ func moveFileFn(args []any, _ string, _ int) (any, error) {
 // УдалитьФайлы(Путь) — удаление файла или пустого каталога. Намеренно не
 // рекурсивно (os.Remove), чтобы случайно не снести дерево каталогов.
 func deleteFileFn(args []any, _ string, _ int) (any, error) {
-	if err := os.Remove(safePathOrRaise("УдалитьФайлы", strArg(args, 0))); err != nil {
+	if err := os.Remove(safePathOrRaise("УдалитьФайлы", strArg(args, 0))); err != nil { //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 		RaiseUserError("УдалитьФайлы: " + err.Error())
 	}
 	return nil, nil
@@ -71,7 +71,7 @@ func deleteFileFn(args []any, _ string, _ int) (any, error) {
 
 // СоздатьКаталог(Путь) — создание каталога вместе с родительскими.
 func makeDirFn(args []any, _ string, _ int) (any, error) {
-	if err := os.MkdirAll(safePathOrRaise("СоздатьКаталог", strArg(args, 0)), fsmode.Dir); err != nil {
+	if err := os.MkdirAll(safePathOrRaise("СоздатьКаталог", strArg(args, 0)), fsmode.Dir); err != nil { //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 		RaiseUserError("СоздатьКаталог: " + err.Error())
 	}
 	return nil, nil

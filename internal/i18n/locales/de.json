@@ -1,5 +1,6 @@
 {
   "Подпись кнопки проведения": "Beschriftung der Buchen-Schaltfläche",
+  "Префикс базы снят": "Datenbank-Präfix entfernt",
   "Скрыть кнопку «Провести и закрыть»": "Schaltfläche «Buchen und schließen» ausblenden",
   "Действуют, если включено проведение. Пустая подпись — стандартная «Провести».": "Gilt bei aktivierter Buchung. Leere Beschriftung — Standard «Buchen».",
   "Файлы конфигурации": "Konfigurationsdateien",
@@ -72,6 +73,7 @@
   "Формат": "Format",
   "Число (2 знака)": "Zahl (2 Nachkommastellen)",
   "Число (3 знака)": "Zahl (3 Nachkommastellen)",
+  "копия в другой базе выдавала бы коды оригинала": "eine Kopie in einer anderen Datenbank würde die Codes des Originals vergeben",
   "нет": "kein",
   "нижний регистр": "Kleinbuchstaben",
   "Предпросмотр PDF": "PDF-Vorschau",

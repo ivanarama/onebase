@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -1011,6 +1013,83 @@ func TestDocsRoot_AutoNumberOnWrite(t *testing.T) {
 		if !got[want] {
 			t.Errorf("ожидался номер %q, получены: %v", want, got)
 		}
+	}
+}
+
+func TestDocWriter_AutoNumberRollbackAllowsRetrySameWriter(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	doc := &metadata.Entity{
+		Name: "ЗаявкаRetry", Kind: metadata.KindDocument,
+		Numerator: &metadata.Numerator{Prefix: "ЗВ-", Length: 4, Period: "none"},
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+			{Name: "Отказ", Type: metadata.FieldTypeBool},
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
+		t.Fatal(err)
+	}
+	program := mustParse(t, `
+Процедура ПриЗаписи()
+	Если ЭтотОбъект.Отказ Тогда
+		ВызватьИсключение("отказ после номера");
+	КонецЕсли;
+КонецПроцедуры`)
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{doc},
+		Programs: map[string]*ast.Program{doc.Name: program},
+	})
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy)
+	w := dp.CallMethod("создать", nil).(*docWriter)
+	w.obj.Fields["Номер"] = ""
+	w.obj.Fields["НОМЕР"] = nil
+	w.Set("Отказ", true)
+	before := map[string]any{"Номер": "", "НОМЕР": nil}
+
+	if err := w.write(); err == nil || !strings.Contains(err.Error(), "отказ после номера") {
+		t.Fatalf("первый write error = %v", err)
+	}
+	after := map[string]any{}
+	for key, value := range w.obj.Fields {
+		if strings.EqualFold(key, "Номер") {
+			after[key] = value
+		}
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rollback не восстановил поля writer: до=%#v после=%#v", before, after)
+	}
+	if _, err := db.GetByID(ctx, doc.Name, w.obj.ID, doc); err == nil {
+		t.Fatal("документ сохранился после исключения хука")
+	}
+
+	w.Set("Отказ", false)
+	if err := w.write(); err != nil {
+		t.Fatalf("retry того же writer: %v", err)
+	}
+	if got := fmt.Sprint(w.obj.Get("Номер")); got != "ЗВ-0001" {
+		t.Fatalf("retry того же writer получил номер %q", got)
+	}
+
+	next := dp.CallMethod("создать", nil).(*docWriter)
+	next.obj.Fields["Номер"] = ""
+	if err := next.write(); err != nil {
+		t.Fatalf("write следующего writer: %v", err)
+	}
+	if got := fmt.Sprint(next.obj.Get("Номер")); got != "ЗВ-0002" {
+		t.Fatalf("следующий writer получил номер %q", got)
+	}
+	if _, duplicate := next.obj.Fields["номер"]; duplicate {
+		t.Fatalf("у следующего writer появился lowercase-дубликат: %#v", next.obj.Fields)
 	}
 }
 

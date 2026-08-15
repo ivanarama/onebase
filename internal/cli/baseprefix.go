@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/storage"
@@ -93,16 +92,9 @@ func runBasePrefix(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// resetBasePrefixAfterRestore гасит префикс при восстановлении копии в ДРУГУЮ
-// базу: клон, сохранивший префикс оригинала, выдавал бы те же коды, и обмен
-// склеил бы разные объекты. Возвращает прежнее значение для сообщения.
+// resetBasePrefixAfterRestore — тонкая обёртка над общей точкой в storage.
+// Сама логика переехала туда: восстанавливают не только командой, и приватная
+// функция CLI оставляла второй вход (лаунчер) без защиты (#871).
 func resetBasePrefixAfterRestore(ctx context.Context, db *storage.DB) (string, error) {
-	prev := db.GetBasePrefix(ctx)
-	if prev == "" {
-		return "", nil
-	}
-	if err := db.SaveBasePrefix(ctx, ""); err != nil {
-		return "", fmt.Errorf("сброс префикса базы: %w", err)
-	}
-	return prev, nil
+	return db.ResetBasePrefixAfterRestore(ctx)
 }
