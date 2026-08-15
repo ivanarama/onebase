@@ -10,11 +10,14 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // ПередЗаписью мутирует реквизит через Объект.Поле = … (Object.Set пишет ключ в
@@ -100,6 +103,73 @@ func TestRunPreSaveFormHooks_NoHookNoop(t *testing.T) {
 	}
 	if obj.Fields["Наименование"] != "X" || len(obj.Fields) != 1 {
 		t.Errorf("Объект изменился без хуков: %v", obj.Fields)
+	}
+}
+
+func TestRunPreSaveFormHooks_BlocksRecursiveSaveOfSameObject(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПередЗаписьюФормы()
+	Объект.Записать();
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventBeforeWrite: "ПередЗаписьюФормы",
+	}, []*metadata.FormElement{
+		{Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование"},
+	})
+	obj := &runtime.Object{
+		ID:            uuid.New(),
+		Type:          ent.Name,
+		Kind:          ent.Kind,
+		Fields:        map[string]any{"Наименование": "recursive"},
+		TablePartRows: map[string][]map[string]any{},
+	}
+
+	var messages []string
+	err := srv.runPreSaveFormHooks(context.Background(), ent, obj, &messages)
+	if err == nil || !strings.Contains(err.Error(), "внутри обработчика записи формы") {
+		t.Fatalf("recursive Object.Write was not rejected explicitly: %v", err)
+	}
+}
+
+// #915 moves BeforeWrite/OnWrite into entityservice.Save's transaction so the
+// handlers see the assigned number and rejection rolls the counter back. That
+// transaction must still obey #914's entity.save wall-clock limit: otherwise a
+// sleeping form handler holds SQLite's only connection after the entity hook
+// deadline work deliberately closed that gap for OnWrite/OnPost.
+func TestRunPreSaveFormHooks_UsesEntitySaveDeadlineInsideTransaction(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПередЗаписьюФормы()
+	Приостановить(2);
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventBeforeWrite: "ПередЗаписьюФормы",
+	}, []*metadata.FormElement{
+		{Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование"},
+	})
+	srv.cfg.Limits.RequestTimeoutSec = 1
+
+	id := uuid.New()
+	fields := map[string]any{"Наименование": "slow"}
+	started := time.Now()
+	_, err := srv.entityService().Save(context.Background(), entityservice.SaveRequest{
+		Entity: ent,
+		ID:     id,
+		IsNew:  true,
+		Fields: fields,
+		Preflight: func(txCtx context.Context, obj *runtime.Object) error {
+			var messages []string
+			return srv.runPreSaveFormHooks(txCtx, ent, obj, &messages)
+		},
+	})
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatalf("sleeping form write hook succeeded after %v", elapsed)
+	}
+	if elapsed > 2500*time.Millisecond {
+		t.Fatalf("form write hook outlived entity.save deadline: %v", elapsed)
+	}
+	if _, getErr := srv.store.GetByID(context.Background(), ent.Name, id, ent); !storage.IsNotFound(getErr) {
+		t.Fatalf("row survived timed-out preflight: %v", getErr)
 	}
 }
 

@@ -76,7 +76,7 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.markForDeletion":             {reason: "путь записи: читает признак проведения, чтобы очистить движения"},
 	"docProxy.DeleteRef":                 {reason: "путь удаления: pre-образ только для адресации живого списка"},
 	"dslCatalogDeleter.DeleteCatalogRef": {reason: "путь удаления справочника из DSL (#854): pre-образ только для адресации живого списка"},
-	"docWriter.writeInContext":           {reason: "путь записи: pre-образ только для адресации живого списка"},
+	"docWriter.writeInContextForAction":  {reason: "путь записи: pre-образ только для адресации живого списка"},
 
 	// ── Отдаются только идентификаторы.
 	"Server.deleteMarked": {reason: "групповое удаление помеченных: из строк берётся только id"},

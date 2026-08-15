@@ -210,13 +210,10 @@ func (w *catWriter) CallMethod(method string, args []any) any {
 func (w *catWriter) write() error {
 	ctx := w.ctx()
 	isNew := !w.loaded && !w.saved
-	if w.accessID() == uuid.Nil {
-		if err := w.s.autoFillRowAccessFields(ctx, w.entity, "write", w.obj.Fields); err != nil {
+	if !isNew {
+		if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
 			return err
 		}
-	}
-	if err := w.s.checkDSLRowAccess(ctx, w.entity, "write", w.accessID(), w.obj.Fields); err != nil {
-		return err
 	}
 	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
 	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
@@ -238,6 +235,15 @@ func (w *catWriter) write() error {
 		Fields:          w.obj.Fields,
 		TablePartRows:   w.obj.TablePartRows,
 		ExpectedVersion: w.expectedVersion,
+		Preflight: func(txCtx context.Context, obj *runtime.Object) error {
+			if !isNew {
+				return nil
+			}
+			if err := w.s.autoFillRowAccessFields(txCtx, w.entity, "write", obj.Fields); err != nil {
+				return err
+			}
+			return w.s.checkDSLRowAccess(txCtx, w.entity, "write", uuid.Nil, obj.Fields)
+		},
 	})
 	if err != nil {
 		return err
