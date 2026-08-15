@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -16,8 +17,8 @@ import (
 //	РегистрыНакопления.ОстаткиТоваров.Движения()             → все движения
 //	РегистрыНакопления.ОстаткиТоваров.ВыбратьПоРегистратору(Док) → движения документа
 //
-// Чтение использует существующий storage API (GetBalances/GetMovements/
-// GetDocumentMovements). Запись наборов записей и параметры периода/отбора у
+// Чтение использует существующий storage API (GetBalances/GetMovements).
+// Запись наборов записей и параметры периода/отбора у
 // Остатки()/Обороты() — следующий шаг (см. roadmap, write-side).
 type accumRegsRoot struct {
 	s      *Server
@@ -57,6 +58,9 @@ func (p *accumRegProxy) ctx() context.Context {
 func (p *accumRegProxy) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "остатки", "balances":
+		if registerBalancesProtected(p.s.registerFieldDecisions(p.ctx(), p.reg), p.reg) {
+			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): защищённое поле нельзя использовать для группировки или расчёта")
+		}
 		filter, err := p.rowFilter()
 		if err != nil {
 			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): " + err.Error())
@@ -65,6 +69,9 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): " + err.Error())
 		}
+		// Та же маска полей, что в списках UI (#859): политика на регистр не
+		// должна зависеть от того, читают его глазами или из модуля.
+		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
 	case "движения", "выбрать", "select":
 		filter, err := p.rowFilter()
@@ -75,23 +82,41 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if err != nil {
 			interpreter.RaiseUserError("Движения(" + p.reg.Name + "): " + err.Error())
 		}
+		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
 	case "выбратьпорегистратору", "selectbyrecorder":
 		if len(args) == 0 {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): не передан регистратор")
 		}
-		id, ok := recorderID(args[0])
-		if !ok {
-			return rowsToArray(nil)
+		decisions := p.s.registerFieldDecisions(p.ctx(), p.reg)
+		if registerFieldProtected(decisions, "recorder") || registerFieldProtected(decisions, "recorder_type") {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): защищённый регистратор нельзя использовать для отбора")
 		}
-		byReg, err := p.s.store.GetDocumentMovements(p.ctx(), id, []*metadata.Register{p.reg})
+		filter, err := p.rowFilter()
 		if err != nil {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
 		}
-		rows, err := p.filterRows(byReg[p.reg.Name])
+		id, recorderType, err := recorderIdentity(args[0])
 		if err != nil {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
 		}
+		recorderEntity := p.s.reg.GetEntity(recorderType)
+		if recorderEntity == nil || recorderEntity.Kind != metadata.KindDocument {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): ссылка должна указывать на известный тип документа")
+		}
+		// Ref.Type is normally the canonical metadata name, but GetEntity also
+		// accepts case-insensitive/sluggified names. Always filter by the stored
+		// canonical recorder_type after resolving it.
+		filter = registerRecorderFilter(filter, id, recorderEntity.Name)
+		rows, err := p.s.store.GetMovements(p.ctx(), p.reg.Name, p.reg, filter)
+		if err != nil {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
+		}
+		for _, row := range rows {
+			delete(row, "recorder")
+			delete(row, "recorder_type")
+		}
+		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
 	}
 	return nil
@@ -114,20 +139,6 @@ func (p *accumRegProxy) rowFilter() (storage.RegFilter, error) {
 	return storage.RegFilter{RowFilter: dec.Predicate}, nil
 }
 
-func (p *accumRegProxy) filterRows(rows []map[string]any) ([]map[string]any, error) {
-	filter, err := p.rowFilter()
-	if err != nil || filter.RowFilter == nil {
-		return rows, err
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		if p.s.matchRowPredicate(p.ctx(), row, filter.RowFilter) {
-			out = append(out, row)
-		}
-	}
-	return out, nil
-}
-
 // rowsToArray оборачивает строки движений/остатков в Массив строк (*MapThis),
 // чтобы в DSL работали Количество()/Получить()/«Для Каждого» и Стр.Колонка.
 func rowsToArray(rows []map[string]any) *interpreter.Array {
@@ -138,17 +149,22 @@ func rowsToArray(rows []map[string]any) *interpreter.Array {
 	return interpreter.NewArray(items)
 }
 
-// recorderID извлекает UUID документа-регистратора из ссылки или строки.
-func recorderID(v any) (uuid.UUID, bool) {
-	switch x := v.(type) {
-	case *interpreter.Ref:
-		if id, err := uuid.Parse(x.UUID); err == nil {
-			return id, true
-		}
-	case string:
-		if id, err := uuid.Parse(x); err == nil {
-			return id, true
-		}
+// recorderIdentity accepts only a typed DSL reference and extracts its UUID
+// and document type. A bare UUID cannot identify a registrar on its own.
+// Тип не декоративный: разные таблицы документов могут содержать одинаковый
+// UUID, а движение идентифицирует регистратора парой (recorder_type, recorder).
+func recorderIdentity(v any) (uuid.UUID, string, error) {
+	ref, ok := v.(*interpreter.Ref)
+	if !ok || ref == nil {
+		return uuid.UUID{}, "", fmt.Errorf("ожидается типизированная ссылка на документ; UUID-строка неоднозначна")
 	}
-	return uuid.UUID{}, false
+	recorderType := strings.TrimSpace(ref.Type)
+	if recorderType == "" {
+		return uuid.UUID{}, "", fmt.Errorf("у ссылки не указан тип документа")
+	}
+	id, err := uuid.Parse(ref.UUID)
+	if err != nil {
+		return uuid.UUID{}, "", fmt.Errorf("некорректный UUID регистратора")
+	}
+	return id, recorderType, nil
 }

@@ -1100,7 +1100,7 @@ function renderProps() {
     addCheckProp(panel, 'Обязательное', 'required', info.required);
     addCheckProp(panel, 'Только чтение', 'readonly', info.readonly);
     if (info.kind === 'ПолеВвода') {
-      addTextProp(panel, 'Маска ввода', 'mask', info.mask || '');
+      addTextProp(panel, 'Маска ввода (регулярное выражение)', 'mask', info.mask || '');
       addCheckRaw(panel, 'Файловое поле', info.fileType, function (ch) { setProp('type', ch ? 'file' : ''); });
     }
   }
