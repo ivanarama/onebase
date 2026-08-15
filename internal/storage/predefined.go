@@ -594,17 +594,59 @@ func (db *DB) MatchCatalogByPresentation(ctx context.Context, entity *metadata.E
 		return "", "", 0, fmt.Errorf("entity %s has no string presentation fields", entity.Name)
 	}
 
-	parts := make([]string, 0, len(fields)+1)
-	for _, field := range fields {
+	columns := make([]string, 0, len(fields))
+	predicates := make([]string, 0, len(fields))
+	args := make([]any, 0, len(fields))
+	for i, field := range fields {
 		col := metadata.ColumnName(field)
-		parts = append(parts, fmt.Sprintf("WHEN TRIM(COALESCE(%s, '')) <> '' THEN %s", col, col))
+		columns = append(columns, col)
+		predicates = append(predicates, col+" = "+db.dialect.Placeholder(i+1))
+		args = append(args, value)
 	}
-	expression := "CASE " + strings.Join(parts, " ") + " ELSE '' END"
-	names := make([]string, 0, len(fields))
-	for _, field := range fields {
-		names = append(names, field.Name)
+	rows, err := db.Query(ctx, fmt.Sprintf("SELECT id, %s FROM %s WHERE %s",
+		strings.Join(columns, ", "), metadata.TableName(entity.Name), strings.Join(predicates, " OR ")), args...)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("match %s presentation: %w", entity.Name, err)
 	}
-	return db.matchCatalogByExpression(ctx, entity, expression, strings.Join(names, ", "), value)
+	defer rows.Close()
+
+	count := 0
+	foundID, foundDisplay := "", ""
+	for rows.Next() {
+		var id string
+		values := make([]*string, len(fields))
+		dest := make([]any, 1, len(fields)+1)
+		dest[0] = &id
+		for i := range values {
+			dest = append(dest, &values[i])
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return "", "", 0, fmt.Errorf("match %s presentation scan: %w", entity.Name, err)
+		}
+		display := ""
+		for _, candidate := range values {
+			if candidate != nil && strings.TrimSpace(*candidate) != "" {
+				display = *candidate
+				break
+			}
+		}
+		// WHERE intentionally admits matches in every candidate column. Only a
+		// value that is the row's effective first nonempty label counts.
+		if display != value {
+			continue
+		}
+		count++
+		if count == 1 {
+			foundID, foundDisplay = id, display
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", 0, fmt.Errorf("match %s presentation rows: %w", entity.Name, err)
+	}
+	if count == 1 {
+		return foundID, foundDisplay, 1, nil
+	}
+	return "", "", count, nil
 }
 
 func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, expression, fieldLabel, value string) (string, string, int, error) {

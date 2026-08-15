@@ -64,4 +64,15 @@ func TestMatchCatalogByPresentationUsesEffectiveFallback(t *testing.T) {
 			t.Fatalf("match = (id %q, count %d), want ambiguity across both candidates", id, count)
 		}
 	})
+
+	t.Run("unicode whitespace in primary field activates fallback", func(t *testing.T) {
+		fallbackID := write("\u00a0\t", "Пробельный fallback")
+		id, display, count, err := db.MatchCatalogByPresentation(ctx, entity, "Пробельный fallback")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 || id != fallbackID || display != "Пробельный fallback" {
+			t.Fatalf("match = (%q, %q, %d), want unicode-whitespace fallback %q", id, display, count, fallbackID)
+		}
+	})
 }
