@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -208,6 +209,51 @@ fields:
 		if !strings.Contains(got, must) {
 			t.Errorf("после roundtrip потерян фрагмент %q\nполучилось:\n%s", must, got)
 		}
+	}
+}
+
+// presentation допускает скаляр и список. Правка реквизитов в веб-
+// конфигураторе не должна ни стирать ключ, ни менять выбранную форму YAML.
+func TestSaveEntity_Roundtrip_СохраняетPresentation(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		wantKind    yaml.Kind
+		wantValues  []string
+	}{
+		{name: "скаляр", value: "Артикул", wantKind: yaml.ScalarNode, wantValues: []string{"Артикул"}},
+		{name: "список", value: "[Артикул, Наименование]", wantKind: yaml.SequenceNode, wantValues: []string{"Артикул", "Наименование"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "name: Номенклатура\npresentation: " + tc.value + "\nfields:\n  - name: Артикул\n    type: string\n"
+			var ent saveEntity
+			if err := yaml.Unmarshal([]byte(input), &ent); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			out, err := yaml.Marshal(&ent)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var decoded struct {
+				Presentation yaml.Node `yaml:"presentation"`
+			}
+			if err := yaml.Unmarshal(out, &decoded); err != nil {
+				t.Fatalf("повторный unmarshal: %v", err)
+			}
+			if decoded.Presentation.Kind != tc.wantKind {
+				t.Fatalf("kind=%d, ожидался %d; YAML:\n%s", decoded.Presentation.Kind, tc.wantKind, out)
+			}
+			var got []string
+			if decoded.Presentation.Kind == yaml.ScalarNode {
+				got = []string{decoded.Presentation.Value}
+			} else {
+				for _, child := range decoded.Presentation.Content {
+					got = append(got, child.Value)
+				}
+			}
+			if !reflect.DeepEqual(got, tc.wantValues) {
+				t.Fatalf("presentation=%v, ожидалось %v; YAML:\n%s", got, tc.wantValues, out)
+			}
+		})
 	}
 }
 

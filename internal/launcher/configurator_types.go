@@ -133,6 +133,11 @@ type saveEntity struct {
 	// Stages — маршрут этапов (план 121). По той же причине и тем же способом:
 	// вместе с блоком молча исчезли бы гейт переходов и отчёт «где застряло».
 	Stages yaml.Node `yaml:"stages,omitempty"`
+	// Presentation — реквизиты представления объекта (#846). Сырым узлом, потому
+	// что ключ принимает и строку, и список: зеркальный []string превратил бы
+	// `presentation: Артикул` в список из одного элемента, то есть переписал бы
+	// файл, которого автор не трогал.
+	Presentation yaml.Node `yaml:"presentation,omitempty"`
 }
 
 type saveRegister struct {
