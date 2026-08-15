@@ -445,12 +445,12 @@ func infoRegKeyText(field metadata.Field, raw, normalized any) string {
 		}
 		return value.String()
 	case time.Time:
-		return value.Format(time.RFC3339Nano)
+		return value.UTC().Format(time.RFC3339Nano)
 	case *time.Time:
 		if value == nil {
 			return ""
 		}
-		return value.Format(time.RFC3339Nano)
+		return value.UTC().Format(time.RFC3339Nano)
 	}
 	if field.Type == metadata.FieldTypeBool {
 		switch value := raw.(type) {
@@ -494,7 +494,14 @@ func infoRegListRows(ir *metadata.InfoRegister, raw []map[string]any) []map[stri
 		}
 		period := source["period"].(time.Time)
 		row["period"] = period.In(time.Local).Format("02.01.2006")
-		row["period_key"] = period.Format(time.RFC3339Nano)
+		// Ключ — В UTC. Иначе его текст зависит от таймзоны ПРОЦЕССА: pgx по
+		// умолчанию сканирует timestamptz в time.Local, и одна и та же запись у
+		// приложения в Europe/Moscow давала «…T12:30:45.123+03:00», а в UTC —
+		// «…T09:30:45.123Z» (#945). Момент один, текст разный — а этим текстом
+		// строка адресуется на удаление. Разбор обратно принимает обе формы
+		// (regPeriodLayouts), поэтому старые ключи из уже открытых форм
+		// продолжают работать.
+		row["period_key"] = period.UTC().Format(time.RFC3339Nano)
 		out = append(out, row)
 	}
 	return out
