@@ -1200,16 +1200,26 @@ function obManagedInitDelegates() {
     return digit || letter;
   }
 
+  // obInputMaskCaret — куда поставить каретку после форматирования.
+  //
+  // Присваивание el.value само по себе отправляет каретку в конец, поэтому
+  // «ничего не делать» — не значит «сохранить позицию»: правка в середине поля
+  // выбрасывала бы курсор в хвост на каждом нажатии. Считаем позицию честно:
+  // прогоняем через маску ту часть ввода, что была ДО каретки, — её длина и
+  // есть новое положение.
+  function obInputMaskCaret(mask, raw, caret) {
+    if (caret === null || caret === undefined) return null;
+    return obApplyInputMask(mask, raw.slice(0, caret)).length;
+  }
+
   function obHandleInputMask(el) {
     var mask = el.getAttribute('data-ob-input-mask');
     if (!mask) return;
-    var atEnd = el.selectionStart === el.value.length;
+    var caret = obInputMaskCaret(mask, el.value, el.selectionStart);
     var next = obApplyInputMask(mask, el.value);
     if (next === el.value) return;
     el.value = next;
-    // Курсор возвращаем в конец только если он там и был: иначе правка в
-    // середине поля выбрасывала бы каретку.
-    if (atEnd && el.setSelectionRange) el.setSelectionRange(next.length, next.length);
+    if (caret !== null && el.setSelectionRange) el.setSelectionRange(caret, caret);
   }
 
   document.addEventListener('input', function (e) {

@@ -22,9 +22,9 @@ function extract(name) {
   throw new Error('не закрыта функция ' + name);
 }
 
-const applyInputMask = new Function(
-  extract('obInputMaskFits') + '\n' + extract('obApplyInputMask') + '\nreturn obApplyInputMask;'
-)();
+const runtime = extract('obInputMaskFits') + '\n' + extract('obApplyInputMask') + '\n' + extract('obInputMaskCaret');
+const applyInputMask = new Function(runtime + '\nreturn obApplyInputMask;')();
+const inputMaskCaret = new Function(runtime + '\nreturn obInputMaskCaret;')();
 
 test('цифровой шаблон расставляет разделители сам', () => {
   assert.equal(applyInputMask('00.00.00', '123456'), '12.34.56');
@@ -73,4 +73,24 @@ test('буквенные и смешанные заполнители', () => {
 
 test('пустой ввод остаётся пустым', () => {
   assert.equal(applyInputMask('00.00.00', ''), '');
+});
+
+test('каретка держится на месте при правке в середине поля', () => {
+  // Присваивание el.value само отправляет каретку в конец, поэтому позицию
+  // надо считать: часть ввода до каретки, прогнанная через маску, и даёт её
+  // новое положение. Иначе каждое нажатие в середине выбрасывало бы курсор.
+  //
+  // Набрано «1234», каретка после «12» — пользователь допечатывает в середину.
+  assert.equal(inputMaskCaret('00.00.00', '1234', 2), 2);
+  // Каретка сразу за разделителем: «12.34», позиция 3 — после точки.
+  assert.equal(inputMaskCaret('00.00.00', '12.34', 3), 3);
+  // Каретка в конце — позиция совпадает с длиной отформатированного значения.
+  assert.equal(inputMaskCaret('00.00.00', '123456', 6), applyInputMask('00.00.00', '123456').length);
+});
+
+test('каретка не считается, если позиции нет', () => {
+  // selectionStart недоступен на некоторых типах полей — тогда позицию не
+  // трогаем вовсе, а не ставим её в 0.
+  assert.equal(inputMaskCaret('00.00.00', '1234', null), null);
+  assert.equal(inputMaskCaret('00.00.00', '1234', undefined), null);
 });
