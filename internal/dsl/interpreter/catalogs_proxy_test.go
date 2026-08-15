@@ -182,6 +182,36 @@ func TestCatalogProxy_CreateAndWrite(t *testing.T) {
 	}
 }
 
+func TestCatalogProxy_CreateAndWrite_ExplicitPresentationFallback(t *testing.T) {
+	root, _, lookup := newCatalogsTestEnv()
+	entity := lookup.m["ТипЦен"]
+	entity.Fields = append(entity.Fields,
+		metadata.Field{Name: "Артикул", Type: metadata.FieldTypeString},
+		metadata.Field{Name: "Описание", Type: metadata.FieldTypeString},
+	)
+	entity.Presentation = []string{"Артикул", "Описание"}
+	cp := root.Get(entity.Name).(*CatalogProxy)
+
+	for _, tc := range []struct {
+		name, article, description, want string
+	}{
+		{name: "primary", article: "A-1", description: "Витринное имя", want: "A-1"},
+		{name: "fallback", article: "  ", description: "Витринное имя", want: "Витринное имя"},
+		{name: "explicit list replaces legacy", article: "", description: "", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := cp.CallMethod("создать", nil).(*CatalogRecordWriter)
+			w.Set("Артикул", tc.article)
+			w.Set("Описание", tc.description)
+			w.Set("Наименование", "Старое имя")
+			ref := w.CallMethod("записать", nil).(*Ref)
+			if ref.Name != tc.want {
+				t.Fatalf("Ref.Name = %q, ожидалось %q", ref.Name, tc.want)
+			}
+		})
+	}
+}
+
 // Создать() для несуществующего справочника — Get вернёт nil.
 func TestCatalogProxy_CreateUnknownEntity(t *testing.T) {
 	root, _, _ := newCatalogsTestEnv()

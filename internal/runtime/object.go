@@ -10,8 +10,13 @@ import (
 )
 
 type Object struct {
-	Type          string
-	Kind          metadata.Kind
+	Type string
+	Kind metadata.Kind
+	// Presentation carries the entity-level explicit label candidates into
+	// DSL's Строка(ЭтотОбъект). Object intentionally does not retain the whole
+	// metadata graph, but without these names String() would bypass #846 and
+	// keep using Наименование/Номер inside hooks.
+	Presentation  []string
 	ID            uuid.UUID
 	Fields        map[string]any
 	TablePartRows map[string][]map[string]any
@@ -38,6 +43,7 @@ func (o *Object) EnsureTableParts(e *metadata.Entity) {
 	if o == nil || e == nil {
 		return
 	}
+	o.Presentation = append(o.Presentation[:0], e.Presentation...)
 	if o.TablePartRows == nil {
 		o.TablePartRows = make(map[string][]map[string]any, len(e.TableParts))
 	}
@@ -175,13 +181,21 @@ func AsTime(v any) time.Time {
 }
 
 // String — display-имя объекта для записи в string-колонки регистра
-// и DSL-функцию Строка(). Берём первое непустое поле «Наименование»
-// (учётный стандарт 1С), иначе короткий префикс UUID. Без metadata
-// мы не знаем «первого строкового поля», поэтому полагаемся на
-// конвенцию имени поля.
+// и DSL-функцию Строка(). При явном presentation перебираем его кандидаты;
+// без ключа сохраняем прежнюю конвенцию Наименование/Name/Номер/Number.
 func (o *Object) String() string {
 	if o == nil {
 		return ""
+	}
+	if len(o.Presentation) > 0 {
+		for _, name := range o.Presentation {
+			if value := o.Get(name); value != nil {
+				if label := strings.TrimSpace(fmt.Sprint(value)); label != "" {
+					return label
+				}
+			}
+		}
+		return o.shortStringID()
 	}
 	for _, k := range []string{"наименование", "name", "номер", "number"} {
 		// Fields приходят как в lowercase после Object.Set, так и в PascalCase
@@ -194,6 +208,10 @@ func (o *Object) String() string {
 		}
 	}
 	// fallback — короткий хвост UUID, чтобы не путаться при отладке
+	return o.shortStringID()
+}
+
+func (o *Object) shortStringID() string {
 	id := o.ID.String()
 	if len(id) >= 8 {
 		return o.Type + ":" + id[:8]

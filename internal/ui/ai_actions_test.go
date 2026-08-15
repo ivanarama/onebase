@@ -177,6 +177,95 @@ func TestAIActions_ReferenceLabelsHonorFieldMasking(t *testing.T) {
 	}
 }
 
+func TestAIRefDisplay_UsesPresentationFallback(t *testing.T) {
+	entity := &metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+		Presentation: []string{"Артикул", "Наименование"},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, entity.Name, id, map[string]any{
+		"Артикул": "", "Наименование": "Стул",
+	}, entity); err != nil {
+		t.Fatal(err)
+	}
+	display, ok := s.aiRefDisplay(ctx, entity, id)
+	if !ok || display != "Стул" {
+		t.Fatalf("aiRefDisplay=%q, %v; ожидалось Стул", display, ok)
+	}
+}
+
+func aiPresentationEntities() []*metadata.Entity {
+	cat := &metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Presentation: []string{"Артикул", "Наименование"},
+		Fields: []metadata.Field{
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	doc := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{
+			Name: "Товар", Type: metadata.FieldType("reference:Номенклатура"), RefEntity: "Номенклатура",
+		}},
+	}
+	return []*metadata.Entity{cat, doc}
+}
+
+func TestAIActions_NameLookupUsesEffectivePresentation(t *testing.T) {
+	ents := aiPresentationEntities()
+	s, ctx := newSubmitTestServer(t, ents)
+	write := func(article, name string) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		if err := s.store.Upsert(ctx, ents[0].Name, id, map[string]any{
+			"Артикул": article, "Наименование": name,
+		}, ents[0]); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	// Значение второго реквизита у первой строки не является её подписью:
+	// заполненный Артикул его перекрывает. Поэтому «Стул» однозначно указывает
+	// на вторую строку, где сработал fallback.
+	write("A-1", "Стул")
+	wantID := write("", "Стул")
+	action, res, _ := stageCreateOrder(t, s, map[string]any{
+		"сущность": "Заказ", "поля": map[string]any{"Товар": "Стул"},
+	})
+	if res.IsError {
+		t.Fatalf("lookup by fallback failed: %s", res.Content)
+	}
+	if got := fmt.Sprint(action.Fields["Товар"]); got != wantID.String() {
+		t.Fatalf("resolved id = %q, want fallback row %q", got, wantID)
+	}
+}
+
+func TestAIActions_NameLookupDetectsCrossCandidateAmbiguity(t *testing.T) {
+	ents := aiPresentationEntities()
+	s, ctx := newSubmitTestServer(t, ents)
+	for _, row := range []map[string]any{
+		{"Артикул": "Одинаково", "Наименование": "Другое"},
+		{"Артикул": "", "Наименование": "Одинаково"},
+	} {
+		if err := s.store.Upsert(ctx, ents[0].Name, uuid.New(), row, ents[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, res, _ := stageCreateOrder(t, s, map[string]any{
+		"сущность": "Заказ", "поля": map[string]any{"Товар": "Одинаково"},
+	})
+	if !res.IsError || !strings.Contains(res.Content, "неоднозначно (2 совпадений)") {
+		t.Fatalf("expected exact cross-field ambiguity, got %+v", res)
+	}
+}
+
 // Явно заданный «Номер» не затирается автонумерацией (Д13, issue #866):
 // локальная копия проверки пустоты читала obj.Fields["Номер"] напрямую, тогда
 // как Object.Set хранит ключи в нижнем регистре, — условие «пусто» было

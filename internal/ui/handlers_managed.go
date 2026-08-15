@@ -282,14 +282,30 @@ func appendManagedFormWarnings(existing any, warnings []string) []string {
 	return out
 }
 
-// recordCardTitle возвращает представление записи для заголовка карточки/вкладки:
-// значение поля-представления (Наименование→Description→Имя→Name→Номер→первый
-// строковый — как aiRefLookupField) из Values. "" — если поля нет или пусто
-// (напр. новая запись). Используется для #481.
+// recordCardTitle возвращает представление записи для заголовка карточки/вкладки.
+// Явный presentation перебирается до первого непустого значения; без него
+// сохраняется прежний выбор одного поля через aiRefLookupField. "" — если поля
+// нет или пусто (напр. новая запись). Используется для #481.
 func recordCardTitle(entity *metadata.Entity, values any) string {
 	if entity == nil {
 		return ""
 	}
+	if len(entity.Presentation) > 0 {
+		switch m := values.(type) {
+		case map[string]string:
+			row := make(map[string]any, len(m))
+			for key, value := range m {
+				row[key] = value
+			}
+			label, _ := explicitPresentationValue(entity, row)
+			return label
+		case map[string]any:
+			label, _ := explicitPresentationValue(entity, m)
+			return label
+		}
+		return ""
+	}
+
 	field := aiRefLookupField(entity)
 	if field == "" {
 		return ""
