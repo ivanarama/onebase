@@ -47,6 +47,12 @@ func canonicalNumberArg(f metadata.Field, v any) (any, error) {
 	}
 
 	if f.Length == 0 && f.Scale == 0 {
+		// Decimal.String expands the exponent even for a zero coefficient. Keep
+		// zero canonical and bounded before an adversarial pgtype.Numeric with a
+		// nil Int and MaxInt32/MinInt32 exponent can reach that code.
+		if dec.IsZero() {
+			return "0", nil
+		}
 		if err := checkUnboundedDecimalSize(dec); err != nil {
 			return nil, i18nerr.Wrapf(err, "поле %q", f.Name)
 		}
@@ -95,7 +101,7 @@ func decimalFromStorageArg(v any) (decimal.Decimal, bool, error) {
 			return decimal.Decimal{}, false, fmt.Errorf("%s не является конечным числом", value.InfinityModifier)
 		}
 		if value.Int == nil {
-			return decimal.New(0, value.Exp), false, nil
+			return decimal.Zero, false, nil
 		}
 		return decimal.NewFromBigInt(value.Int, value.Exp), false, nil
 	case string:

@@ -140,6 +140,43 @@ func TestCanonicalNumberArg_PGNumericSpecialValues(t *testing.T) {
 	}
 }
 
+func TestCanonicalNumberArg_PlainZeroExtremeExponentIsBounded(t *testing.T) {
+	const maxInt32 = int32(1<<31 - 1)
+	plain := metadata.Field{Name: "N", Type: metadata.FieldTypeNumber}
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{"decimal max exponent", decimal.New(0, maxInt32)},
+		{"decimal min exponent", decimal.New(0, -maxInt32-1)},
+		{"pg numeric max exponent", pgtype.Numeric{Valid: true, Exp: maxInt32}},
+		{"pg numeric min exponent", pgtype.Numeric{Valid: true, Exp: -maxInt32 - 1}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			done := make(chan struct {
+				value any
+				err   error
+			}, 1)
+			go func() {
+				value, err := canonicalNumberArg(plain, test.value)
+				done <- struct {
+					value any
+					err   error
+				}{value: value, err: err}
+			}()
+			select {
+			case result := <-done:
+				if result.err != nil || result.value != "0" {
+					t.Fatalf("plain zero=%T(%v), err=%v, want bounded canonical 0", result.value, result.value, result.err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("plain zero with extreme exponent did not finish in bounded time")
+			}
+		})
+	}
+}
+
 // Переполнение по числу целых разрядов даёт понятную ошибку, а не молчаливую
 // запись (SQLite) / numeric overflow (PG).
 func TestNumberSpec_OverflowError(t *testing.T) {
