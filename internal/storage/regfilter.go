@@ -9,11 +9,13 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
-// RegFilter — отбор для списков регистров: точные значения измерений
-// (для ссылочных — UUID строкой, для прочих — строковое значение) и
-// период от/до включительно (issue #45).
+// RegFilter — отбор для списков регистров: точные значения измерений и период
+// от/до включительно (issue #45). Dims сохраняет строковый HTTP-контракт;
+// DimValues нужен типизированным внутренним вызовам (DSL), чтобы ссылка не
+// превращалась через fmt.Sprintf в display-name, а дата/число не теряли тип.
 type RegFilter struct {
-	Dims      map[string]string // имя измерения (как в метаданных) → значение
+	Dims      map[string]string // имя измерения → строка из HTTP/query
+	DimValues map[string]any    // имя измерения → типизированное значение
 	From      *time.Time
 	To        *time.Time
 	RowFilter *Predicate // additional SQL-side row-level access predicate
@@ -21,7 +23,7 @@ type RegFilter struct {
 
 // IsEmpty сообщает, задан ли хоть один критерий отбора.
 func (f RegFilter) IsEmpty() bool {
-	return len(f.Dims) == 0 && f.From == nil && f.To == nil
+	return len(f.Dims) == 0 && len(f.DimValues) == 0 && f.From == nil && f.To == nil
 }
 
 // dimWhereClause строит условия WHERE по измерениям регистра и периоду.
@@ -35,16 +37,41 @@ func dimWhereClause(d Dialect, dims []metadata.Field, f RegFilter, startIdx int,
 	idx := startIdx
 
 	for _, fld := range dims {
-		val, ok := f.Dims[fld.Name]
-		if !ok || val == "" {
+		val, ok := f.DimValues[fld.Name]
+		if !ok {
+			var text string
+			text, ok = f.Dims[fld.Name]
+			val = text
+		}
+		if !ok || val == nil {
+			continue
+		}
+		if text, isString := val.(string); isString && text == "" {
 			continue
 		}
 		col := metadata.ColumnName(fld)
-		arg := any(val)
+		arg := normalizeRegArg(d, val, false)
 		// Для ссылочного измерения колонка хранит UUID — оборачиваем idArg,
 		// чтобы PG получил uuid.UUID, а SQLite — строку (как при записи).
 		if fld.RefEntity != "" {
-			id, err := uuid.Parse(val)
+			var id uuid.UUID
+			var err error
+			switch value := val.(type) {
+			case uuid.UUID:
+				id = value
+			case *uuid.UUID:
+				if value == nil {
+					err = fmt.Errorf("nil UUID")
+				} else {
+					id = *value
+				}
+			case refUUIDGetter:
+				id, err = uuid.Parse(value.GetRefUUID())
+			case string:
+				id, err = uuid.Parse(value)
+			default:
+				err = fmt.Errorf("unsupported reference filter %T", val)
+			}
 			if err != nil {
 				// Значение не UUID (например ручной ?Измерение=мусор в URL) —
 				// ссылочная колонка хранит UUID, совпадений быть не может.

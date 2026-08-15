@@ -847,6 +847,28 @@ func canonicalScalar(f metadata.Field, v any) any {
 	if v == nil {
 		return nil
 	}
+	if f.RefEntity != "" {
+		var raw string
+		switch ref := v.(type) {
+		case uuid.UUID:
+			return ref.String()
+		case *uuid.UUID:
+			if ref != nil {
+				return ref.String()
+			}
+			return nil
+		case interface{ GetRefUUID() string }:
+			raw = ref.GetRefUUID()
+		case string:
+			raw = ref
+		default:
+			raw = fmt.Sprintf("%v", ref)
+		}
+		if id, err := uuid.Parse(raw); err == nil {
+			return id.String()
+		}
+		return raw
+	}
 	switch f.Type {
 	case metadata.FieldTypeBool:
 		return toBool(v)
