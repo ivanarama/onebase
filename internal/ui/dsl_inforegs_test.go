@@ -1279,6 +1279,153 @@ func TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix(t *testing.
 	})
 }
 
+func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		instant := time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC)
+		offsetInstant := instant.In(time.FixedZone("+03", 3*60*60))
+		cases := []struct {
+			name       string
+			ir         *metadata.InfoRegister
+			policy     auth.RowPolicy
+			fill       func(*interpreter.MapThis)
+			wantDenied bool
+			sqlFilter  *storage.Predicate
+		}{
+			{
+				name: "date_eq_same_instant",
+				ir: &metadata.InfoRegister{
+					Name: "TypedDatePolicyEq", Periodic: true,
+					Dimensions: []metadata.Field{
+						{Name: "Slice", Type: metadata.FieldTypeString},
+						{Name: "Key", Type: metadata.FieldTypeString},
+					},
+					Resources: []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}},
+				},
+				policy: auth.RowPolicy{
+					Field: "period", Op: "eq", Value: auth.RowValue{Literal: instant},
+				},
+				fill: func(row *interpreter.MapThis) { row.Set("Период", offsetInstant) },
+				sqlFilter: &storage.Predicate{
+					Field: "period", Op: "eq", Value: instant,
+				},
+			},
+			{
+				name: "date_ne_same_instant",
+				ir: &metadata.InfoRegister{
+					Name: "TypedDatePolicyNe", Periodic: true,
+					Dimensions: []metadata.Field{
+						{Name: "Slice", Type: metadata.FieldTypeString},
+						{Name: "Key", Type: metadata.FieldTypeString},
+					},
+					Resources: []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}},
+				},
+				policy: auth.RowPolicy{
+					Field: "period", Op: "ne", Value: auth.RowValue{Literal: instant},
+				},
+				fill:       func(row *interpreter.MapThis) { row.Set("Период", offsetInstant) },
+				wantDenied: true,
+			},
+			{
+				name: "bool_rejects_non_binary_number",
+				ir: &metadata.InfoRegister{
+					Name: "TypedBoolPolicy",
+					Dimensions: []metadata.Field{
+						{Name: "Slice", Type: metadata.FieldTypeString},
+						{Name: "Key", Type: metadata.FieldTypeString},
+					},
+					Resources: []metadata.Field{
+						{Name: "Flag", Type: metadata.FieldTypeBool},
+						{Name: "Value", Type: metadata.FieldTypeString},
+					},
+				},
+				policy: auth.RowPolicy{
+					Field: "Flag", Op: "eq", Value: auth.RowValue{Literal: true},
+				},
+				fill:       func(row *interpreter.MapThis) { row.Set("Flag", float64(2)) },
+				wantDenied: true,
+			},
+			{
+				name: "sql_postcheck_rolls_back_type_mismatch",
+				ir: &metadata.InfoRegister{
+					Name: "TypedDateSQLPostcheck",
+					Dimensions: []metadata.Field{
+						{Name: "Slice", Type: metadata.FieldTypeString},
+						{Name: "Key", Type: metadata.FieldTypeString},
+					},
+					Resources: []metadata.Field{
+						{Name: "EventAt", Type: metadata.FieldTypeDate},
+						{Name: "Value", Type: metadata.FieldTypeString},
+					},
+				},
+				policy: auth.RowPolicy{
+					Field: "EventAt", Op: "ne", Value: auth.RowValue{Literal: instant},
+				},
+				// The in-memory comparator deliberately does not reinterpret a
+				// string as a typed date. SQLite stores this exact canonical form,
+				// so the authoritative SQL postcheck must reject and roll it back.
+				fill: func(row *interpreter.MapThis) {
+					row.Set("EventAt", instant.Format("2006-01-02 15:04:05-07:00"))
+				},
+				wantDenied: true,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{tc.ir}); err != nil {
+					t.Fatal(err)
+				}
+				registry := runtime.NewRegistry()
+				registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{tc.ir}})
+				s := &Server{store: db, reg: registry}
+				user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+					InfoRegs: map[string][]string{tc.ir.Name: {"write", "delete"}},
+					RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+						tc.ir.Name: {"write": tc.policy},
+					}},
+				}}}}
+
+				rs := newInfoRegRecordSet(s,
+					interpreter.NewTxState(auth.ContextWithUser(ctx, user)), tc.ir)
+				rs.filter.Set("Slice", "S")
+				row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+				row.Set("Key", "K")
+				row.Set("Value", "candidate")
+				tc.fill(row)
+				caught := captureInfoRegRecordSetPanic(rs.write)
+				if tc.wantDenied && caught == nil {
+					t.Fatal("record-set write admitted a typed value rejected by the equivalent SQL policy")
+				}
+				if !tc.wantDenied && caught != nil {
+					t.Fatalf("record-set write rejected a typed value admitted by the equivalent SQL policy: %v", caught)
+				}
+
+				rows, err := db.InfoRegList(ctx, tc.ir, storage.RegFilter{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantRows := 1
+				if tc.wantDenied {
+					wantRows = 0
+				}
+				if len(rows) != wantRows {
+					t.Fatalf("persisted rows = %#v, want %d", rows, wantRows)
+				}
+				if tc.sqlFilter != nil {
+					sqlRows, err := db.InfoRegList(ctx, tc.ir, storage.RegFilter{RowFilter: tc.sqlFilter})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(sqlRows) != wantRows {
+						t.Fatalf("SQL policy rows = %#v, want %d", sqlRows, wantRows)
+					}
+				}
+			})
+		}
+	})
+}
+
 func TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()

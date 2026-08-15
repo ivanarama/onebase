@@ -143,6 +143,13 @@ func TestPredicateValuesEqualDoesNotCoerceNumbersThroughBool(t *testing.T) {
 	if !valuesEqual(int64(1), true) {
 		t.Fatal("DB bool representation int64(1) must match true")
 	}
+	if valuesEqual(float64(2), true) {
+		t.Fatal("non-binary DSL number must not match SQL boolean true")
+	}
+	instant := time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC)
+	if !valuesEqual(instant, instant.In(time.FixedZone("+03", 3*60*60))) {
+		t.Fatal("timestamps representing the same instant must compare equal across offsets")
+	}
 }
 
 func TestPredicateSQLRejectsScalarInNotIn(t *testing.T) {
@@ -170,17 +177,26 @@ func TestMatchPredicateMatchesSQLNullSemantics(t *testing.T) {
 		Fields: []metadata.Field{
 			{Name: "Name", Type: metadata.FieldTypeString},
 			{Name: "Owner", Type: metadata.FieldTypeString},
+			{Name: "EventAt", Type: metadata.FieldTypeDate},
+			{Name: "Flag", Type: metadata.FieldTypeBool},
 		},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
 		t.Fatal(err)
 	}
+	instant := time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC)
 	for _, row := range []struct {
-		name  string
-		owner any
-	}{{"nil", nil}, {"mine", "mine"}, {"other", "other"}} {
+		name    string
+		owner   any
+		eventAt any
+		flag    any
+	}{
+		{"nil", nil, nil, nil},
+		{"mine", "mine", instant.In(time.FixedZone("+03", 3*60*60)), true},
+		{"other", "other", instant.Add(time.Hour), false},
+	} {
 		if err := db.Upsert(ctx, entity.Name, uuid.New(), map[string]any{
-			"Name": row.name, "Owner": row.owner,
+			"Name": row.name, "Owner": row.owner, "EventAt": row.eventAt, "Flag": row.flag,
 		}, entity); err != nil {
 			t.Fatal(err)
 		}
@@ -201,6 +217,10 @@ func TestMatchPredicateMatchesSQLNullSemantics(t *testing.T) {
 		{"not_in", &Predicate{Field: "Owner", Op: "not_in", Values: []any{"other"}}, []string{"mine"}},
 		{"not_in containing NULL", &Predicate{Field: "Owner", Op: "not_in", Values: []any{"other", nil}}, nil},
 		{"NOT preserves UNKNOWN", &Predicate{Not: &Predicate{Field: "Owner", Op: "eq", Value: "other"}}, []string{"mine"}},
+		{"date eq compares instants", &Predicate{Field: "EventAt", Op: "eq", Value: instant}, []string{"mine"}},
+		{"date ne compares instants", &Predicate{Field: "EventAt", Op: "ne", Value: instant}, []string{"other"}},
+		{"bool eq", &Predicate{Field: "Flag", Op: "eq", Value: true}, []string{"mine"}},
+		{"bool ne", &Predicate{Field: "Flag", Op: "ne", Value: true}, []string{"other"}},
 		{"OR can override UNKNOWN with TRUE", &Predicate{Any: []Predicate{
 			{Field: "Owner", Op: "ne", Value: "other"},
 			{Field: "Owner", Op: "eq", Value: nil},

@@ -476,7 +476,7 @@ func (rs *infoRegRecordSet) write() {
 			// which survived the filtered DELETE is therefore a silent no-op,
 			// not an overwrite and not an existence signal.
 			if err := rs.s.infoRegWriteRecordSet(txCtx, rs.ir, row.dims, row.resources,
-				row.period, allowWrite, existingFilter); err != nil {
+				row.period, allowWrite, writeFilter, existingFilter); err != nil {
 				return err
 			}
 		}

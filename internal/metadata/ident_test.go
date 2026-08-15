@@ -147,8 +147,8 @@ func TestValidateIdentifiers_ReservedColumns(t *testing.T) {
 	}
 }
 
-func TestValidateIdentifiers_PeriodicInfoRegisterReservesDSLPeriod(t *testing.T) {
-	for _, name := range []string{"Период", "period", "ПЕРИОД", "Period"} {
+func TestValidateIdentifiers_PeriodicInfoRegisterReservesPeriodTransportFields(t *testing.T) {
+	for _, name := range []string{"Период", "period", "ПЕРИОД", "Period", "period_key", "PERIOD_KEY"} {
 		t.Run(name, func(t *testing.T) {
 			ir := &InfoRegister{
 				Name:       "История",
@@ -162,12 +162,15 @@ func TestValidateIdentifiers_PeriodicInfoRegisterReservesDSLPeriod(t *testing.T)
 		})
 	}
 
-	// A non-periodic register has no synthetic period in storage. The Cyrillic
-	// metadata field remains an ordinary, addressable dimension and is kept for
+	// A non-periodic register has no synthetic period or period_key transport
+	// field. Both names remain ordinary, addressable metadata fields for
 	// backward compatibility.
 	ir := &InfoRegister{
-		Name:       "Настройки",
-		Dimensions: []Field{{Name: "Период", Type: FieldTypeString}},
+		Name: "Настройки",
+		Dimensions: []Field{
+			{Name: "Период", Type: FieldTypeString},
+			{Name: "period_key", Type: FieldTypeString},
+		},
 	}
 	if err := ValidateIdentifiers(nil, nil, []*InfoRegister{ir}, nil, nil, nil); err != nil {
 		t.Fatalf("non-periodic real field Период must remain valid: %v", err)

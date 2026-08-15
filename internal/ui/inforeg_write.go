@@ -73,7 +73,7 @@ func (s *Server) infoRegWrite(ctx context.Context, ir *metadata.InfoRegister,
 // published to exchange plans.
 func (s *Server) infoRegWriteRecordSet(ctx context.Context, ir *metadata.InfoRegister,
 	dims, resources map[string]any, period *time.Time, allow infoRegAccess,
-	existingFilter *storage.Predicate) error {
+	writeFilter, existingFilter *storage.Predicate) error {
 	if err := infoRegCheckPeriod(ir, period); err != nil {
 		return err
 	}
@@ -92,6 +92,31 @@ func (s *Server) infoRegWriteRecordSet(ctx context.Context, ir *metadata.InfoReg
 	}
 	if err != nil || !changed {
 		return err
+	}
+	if writeFilter != nil {
+		// The in-memory check above gives an early, side-effect-free denial, but
+		// SQL remains the authority for type coercion and NULL semantics. Verify
+		// the just-written exact primary key through the same predicate before
+		// publishing an exchange event. A mismatch returns an error from the
+		// surrounding transaction scope, which rolls the provisional upsert back.
+		filter := storage.RegFilter{
+			DimValues: make(map[string]any, len(dims)),
+			RowFilter: writeFilter,
+		}
+		for name, value := range dims {
+			filter.DimValues[name] = value
+		}
+		if period != nil {
+			filter.From = period
+			filter.To = period
+		}
+		rows, err := s.store.InfoRegList(ctx, ir, filter)
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 {
+			return errRowPolicyDenied
+		}
 	}
 	return exchange.RegisterInfoRegOnSave(ctx, s.store, s.reg.ExchangePlans(), ir, dims, false)
 }

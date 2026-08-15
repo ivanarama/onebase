@@ -2,7 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -67,9 +69,9 @@ func predicateSQL(d Dialect, entity *metadata.Entity, p Predicate, nextArg int, 
 	op := strings.ToLower(strings.TrimSpace(p.Op))
 	switch op {
 	case "eq", "":
-		return predicateCompareSQL(d, field, col, "=", p.Value, nextArg)
+		return predicateCompareSQL(d, entity, field, col, "=", p.Value, nextArg)
 	case "ne":
-		return predicateCompareSQL(d, field, col, "<>", p.Value, nextArg)
+		return predicateCompareSQL(d, entity, field, col, "<>", p.Value, nextArg)
 	case "in", "not_in":
 		values := p.Values
 		if len(values) == 0 {
@@ -89,7 +91,7 @@ func predicateSQL(d Dialect, entity *metadata.Entity, p Predicate, nextArg int, 
 		args := make([]any, 0, len(values))
 		for _, v := range values {
 			ph = append(ph, d.Placeholder(nextArg))
-			args = append(args, predicateSQLValue(d, field, v))
+			args = append(args, predicateSQLValue(d, entity, field, v))
 			nextArg++
 		}
 		sqlOp := "IN"
@@ -176,15 +178,15 @@ func qualifyPredicateColumn(qualifier, col string) string {
 	return qualifier + "." + col
 }
 
-func predicateCompareSQL(d Dialect, field *metadata.Field, col, op string, value any, nextArg int) (string, []any, int, error) {
-	if value == nil {
+func predicateCompareSQL(d Dialect, entity *metadata.Entity, field *metadata.Field, col, op string, value any, nextArg int) (string, []any, int, error) {
+	if isPredicateNull(value) {
 		if op == "<>" {
 			return fmt.Sprintf("%s IS NOT NULL", col), nil, nextArg, nil
 		}
 		return fmt.Sprintf("%s IS NULL", col), nil, nextArg, nil
 	}
 	return fmt.Sprintf("%s %s %s", col, op, d.Placeholder(nextArg)),
-		[]any{predicateSQLValue(d, field, value)}, nextArg + 1, nil
+		[]any{predicateSQLValue(d, entity, field, value)}, nextArg + 1, nil
 }
 
 func predicateColumn(entity *metadata.Entity, field string) (string, *metadata.Field, bool) {
@@ -262,7 +264,7 @@ func predicateEntityHasField(entity *metadata.Entity, field string) bool {
 	return false
 }
 
-func predicateSQLValue(d Dialect, field *metadata.Field, value any) any {
+func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field, value any) any {
 	if field == nil {
 		return value
 	}
@@ -276,7 +278,32 @@ func predicateSQLValue(d Dialect, field *metadata.Field, value any) any {
 			return b
 		}
 	}
+	if field.Type == metadata.FieldTypeDate {
+		if t, ok := predicateTimeValue(value); ok {
+			// Ordinary entity writes pass through fieldValueDialect and store
+			// SQLite dates as RFC3339. Register writes bind time.Time directly;
+			// the SQLite adapter stores those in sqliteTimeLayout instead. Match
+			// the corresponding persisted representation while PostgreSQL keeps
+			// the native timestamptz value in both cases.
+			if d.Name() == "sqlite" && !predicateEntityUsesBoundTime(entity) {
+				return t.UTC().Format(time.RFC3339)
+			}
+			return t
+		}
+	}
 	return value
+}
+
+func predicateEntityUsesBoundTime(entity *metadata.Entity) bool {
+	if entity == nil {
+		return false
+	}
+	switch strings.ToLower(string(entity.Kind)) {
+	case "register", "inforeg":
+		return true
+	default:
+		return false
+	}
 }
 
 func predicateStringLikeField(field *metadata.Field) bool {
@@ -312,13 +339,71 @@ func parseAnyBool(v any) (bool, bool) {
 			return false, true
 		}
 	case int:
-		return t != 0, true
+		return parseBinaryBool(int64(t))
+	case int8:
+		return parseBinaryBool(int64(t))
+	case int16:
+		return parseBinaryBool(int64(t))
+	case int32:
+		return parseBinaryBool(int64(t))
 	case int64:
-		return t != 0, true
+		return parseBinaryBool(t)
+	case uint:
+		return parseBinaryUintBool(uint64(t))
+	case uint8:
+		return parseBinaryUintBool(uint64(t))
+	case uint16:
+		return parseBinaryUintBool(uint64(t))
+	case uint32:
+		return parseBinaryUintBool(uint64(t))
+	case uint64:
+		return parseBinaryUintBool(t)
+	case float32:
+		return parseBinaryFloatBool(float64(t))
 	case float64:
-		return t != 0, true
+		return parseBinaryFloatBool(t)
+	case decimal.Decimal:
+		switch {
+		case t.IsZero():
+			return false, true
+		case t.Equal(decimal.NewFromInt(1)):
+			return true, true
+		}
 	}
 	return false, false
+}
+
+func parseBinaryBool(v int64) (bool, bool) {
+	switch v {
+	case 0:
+		return false, true
+	case 1:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func parseBinaryUintBool(v uint64) (bool, bool) {
+	switch v {
+	case 0:
+		return false, true
+	case 1:
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func parseBinaryFloatBool(v float64) (bool, bool) {
+	switch v {
+	case 0:
+		return false, true
+	case 1:
+		return true, true
+	default:
+		return false, false
+	}
 }
 
 // MatchPredicate evaluates p against an already loaded row. It is used for
@@ -402,7 +487,7 @@ func matchPredicateTruth(row map[string]any, p Predicate, resolver PredicateRefR
 			return predicateFalse
 		}
 		actual, ok := rowValue(row, p.Field)
-		if !ok || actual == nil {
+		if !ok || isPredicateNull(actual) {
 			return predicateFalse
 		}
 		id, ok := parseAnyUUID(actual)
@@ -421,18 +506,18 @@ func matchPredicateTruth(row map[string]any, p Predicate, resolver PredicateRefR
 	op := strings.ToLower(strings.TrimSpace(p.Op))
 	switch op {
 	case "eq", "":
-		if p.Value == nil {
-			return predicateTruthFromBool(!ok || actual == nil)
+		if isPredicateNull(p.Value) {
+			return predicateTruthFromBool(!ok || isPredicateNull(actual))
 		}
-		if !ok || actual == nil {
+		if !ok || isPredicateNull(actual) {
 			return predicateUnknown
 		}
 		return predicateTruthFromBool(valuesEqual(actual, p.Value))
 	case "ne":
-		if p.Value == nil {
-			return predicateTruthFromBool(ok && actual != nil)
+		if isPredicateNull(p.Value) {
+			return predicateTruthFromBool(ok && !isPredicateNull(actual))
 		}
-		if !ok || actual == nil {
+		if !ok || isPredicateNull(actual) {
 			return predicateUnknown
 		}
 		return predicateTruthFromBool(!valuesEqual(actual, p.Value))
@@ -471,12 +556,12 @@ func predicateInTruth(actual any, exists bool, values []any) predicateTruth {
 	if len(values) == 0 {
 		return predicateFalse
 	}
-	if !exists || actual == nil {
+	if !exists || isPredicateNull(actual) {
 		return predicateUnknown
 	}
 	unknown := false
 	for _, value := range values {
-		if value == nil {
+		if isPredicateNull(value) {
 			unknown = true
 			continue
 		}
@@ -510,13 +595,18 @@ func predicateValues(p Predicate) []any {
 }
 
 func valuesEqual(a, b any) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
+	if isPredicateNull(a) || isPredicateNull(b) {
+		return isPredicateNull(a) && isPredicateNull(b)
 	}
 	if isBoolValue(a) || isBoolValue(b) {
 		ab, aok := parseAnyBool(a)
 		bb, bok := parseAnyBool(b)
 		return aok && bok && ab == bb
+	}
+	if isTimeValue(a) || isTimeValue(b) {
+		at, aok := predicateTimeValue(a)
+		bt, bok := predicateTimeValue(b)
+		return aok && bok && at.Equal(bt)
 	}
 	if au, ok := parseAnyUUID(a); ok {
 		if bu, ok := parseAnyUUID(b); ok {
@@ -543,6 +633,35 @@ func valuesEqual(a, b any) bool {
 func isBoolValue(v any) bool {
 	_, ok := v.(bool)
 	return ok
+}
+
+func isTimeValue(v any) bool {
+	switch v.(type) {
+	case time.Time, *time.Time:
+		return true
+	default:
+		return false
+	}
+}
+
+func predicateTimeValue(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case time.Time:
+		return t, true
+	case *time.Time:
+		if t != nil {
+			return *t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func isPredicateNull(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
 }
 
 func numericDecimal(v any) (decimal.Decimal, bool) {
