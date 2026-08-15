@@ -111,3 +111,45 @@ fields:
 	}
 	assertFileContains(t, p, "detail_panel:", "width: 320", "fields: []")
 }
+
+// Ключ presentation (#846) переживает правку реквизитов из конфигуратора — и в
+// скалярной форме, и списком.
+//
+// Скалярная форма важна отдельно: зеркальный []string превратил бы
+// `presentation: Артикул` в список из одного элемента, то есть переписал бы
+// строку, которую автор не трогал. Поэтому ключ проводится сырым узлом.
+func TestSaveFields_KeepsPresentationKey(t *testing.T) {
+	cases := map[string]struct{ yaml, want string }{
+		"строка": {"presentation: Артикул\n", "presentation: Артикул"},
+		"список": {"presentation: [Артикул, Наименование]\n", "presentation: [Артикул, Наименование]"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, cfgDir := newFileBaseHandler(t)
+			h.runner = NewRunner()
+			p := writeCfgFile(t, cfgDir, "catalogs", "Номенклатура.yaml",
+				"name: Номенклатура\n"+tc.yaml+`fields:
+  - name: Наименование
+    type: string
+  - name: Артикул
+    type: string
+`)
+
+			form := url.Values{}
+			form.Set("entity", "Номенклатура")
+			form.Set("entity_kind", "Справочник")
+			form.Set("field.0.name", "Наименование")
+			form.Set("field.0.type", "string")
+			form.Set("field.1.name", "Артикул")
+			form.Set("field.1.type", "string")
+			form.Set("new_field.1.name", "Поставщик")
+			form.Set("new_field.1.type", "string")
+
+			rec := postCfg(t, "test", "/bases/test/configurator/fields", form, h.configuratorSaveFields)
+			if ok, errText := cfgResponse(t, rec); !ok {
+				t.Fatalf("сохранение не удалось: %s", errText)
+			}
+			assertFileContains(t, p, "Поставщик", tc.want)
+		})
+	}
+}
