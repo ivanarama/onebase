@@ -11,6 +11,11 @@ on:
   # статус-чеки при этом блокируют мерж — восстановиться было нечем.
   workflow_dispatch:
 
+# CI только читает исходники. Артефакты и кэш setup-go используют
+# внутренние runtime-токены Actions и не требуют прав на репозиторий.
+permissions:
+  contents: read
+
 # Отменять устаревшие прогоны того же ref (QUAL-04): новый push в ту же ветку/PR
 # снимает предыдущий незавершённый прогон, чтобы зависшие/лишние runs не
 # потребляли раннеры бесконечно. По ref, а не глобально, — параллельные ветки
@@ -345,7 +350,7 @@ jobs:
             trap - EXIT INT TERM
             if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
               if [ -n "$origin" ]; then
-                curl -s -o /dev/null -X POST "$origin/quit"
+                curl --connect-timeout 2 --max-time 5 -sS -o /dev/null -X POST "$origin/quit"
               fi
               for _ in $(seq 1 5); do
                 kill -0 "$pid" 2>/dev/null || break
@@ -390,13 +395,13 @@ jobs:
 
           code=""
           for _ in $(seq 1 30); do
-            code="$(curl -sS -L -o /dev/null -w '%{http_code}' "$url" 2>>"$log" || true)"
+            code="$(curl --connect-timeout 2 --max-time 5 -sS -L -o /dev/null -w '%{http_code}' "$url" 2>>"$log" || true)"
             [ "$code" = "200" ] && break
             sleep 1
           done
           [ "$code" = "200" ] || { echo "::error::GET стартового URL вернул $code:"; cat "$log"; exit 1; }
 
-          quit_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$origin/quit" 2>>"$log" || true)"
+          quit_code="$(curl --connect-timeout 2 --max-time 5 -sS -o /dev/null -w '%{http_code}' -X POST "$origin/quit" 2>>"$log" || true)"
           [ "$quit_code" = "200" ] || { echo "::error::POST /quit вернул $quit_code:"; cat "$log"; exit 1; }
           for _ in $(seq 1 30); do
             kill -0 "$pid" 2>/dev/null || break
