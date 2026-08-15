@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/url"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -90,8 +89,11 @@ func TestVerify_СнятаяГалкаНеВозвращается(t *testing.T)
 
 	rec := executeFormEvent(t, srv, ent, body)
 	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("событие формы завершилось ошибкой: %q", resp.Error)
+	}
 
-	value, ok := lookupFormValue(resp.Values, "Активна")
+	value, ok := resp.Values["Активна"]
 	if !ok {
 		t.Fatalf("поле «Активна» исчезло из ответа события: %#v\n"+
 			"клиент не трогает ключи, которых в ответе нет, — снятая галка осталась бы "+
@@ -117,8 +119,11 @@ func TestVerify_ВзведённаяГалкаВозвращаетсяВзвед
 
 	rec := executeFormEvent(t, srv, ent, body)
 	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("событие формы завершилось ошибкой: %q", resp.Error)
+	}
 
-	value, ok := lookupFormValue(resp.Values, "Активна")
+	value, ok := resp.Values["Активна"]
 	if !ok {
 		t.Fatalf("поле «Активна» исчезло из ответа события: %#v", resp.Values)
 	}
@@ -127,39 +132,18 @@ func TestVerify_ВзведённаяГалкаВозвращаетсяВзвед
 	}
 }
 
-// lookupFormValue ищет ключ без учёта регистра: Object.Set хранит имена в
-// нижнем регистре, а нормализация возвращает исходный — тест не должен зависеть
-// от того, какая из двух форм доехала.
-func lookupFormValue(values map[string]any, name string) (any, bool) {
-	if v, ok := values[name]; ok {
-		return v, true
-	}
-	for k, v := range values {
-		if strings.EqualFold(k, name) {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
-// isTruthyFormValue трактует значение так же, как клиент: непустая строка кроме
-// «false»/«0», true, ненулевое число.
+// isTruthyFormValue в точности повторяет проверку checkbox из managed.js:
+// true, строка "true" или число 1.
 func isTruthyFormValue(v any) bool {
 	switch t := v.(type) {
-	case nil:
-		return false
 	case bool:
 		return t
 	case string:
-		switch strings.ToLower(strings.TrimSpace(t)) {
-		case "", "false", "0":
-			return false
-		}
-		return true
+		return t == "true"
 	case float64:
-		return t != 0
+		return t == 1
 	case int:
-		return t != 0
+		return t == 1
 	}
 	return false
 }
