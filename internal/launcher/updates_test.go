@@ -1010,3 +1010,86 @@ func TestUpdatesApply_ФлагКопииЧитаетсяИзЗапроса(t *te
 		}
 	}
 }
+
+func TestUpdatesApply_ОшибкаКопииВозвращаетОстановленныеБазы(t *testing.T) {
+	isolatedUpdatesHome(t)
+	t.Setenv(selfupdate.EnvUpdates, "")
+	staged := selfupdate.StagedInfo{Tag: "build-backup-failure", Dir: t.TempDir(), Verified: true}
+	if err := selfupdate.SaveState(selfupdate.State{Staged: &staged}); err != nil {
+		t.Fatal(err)
+	}
+
+	const token = "backup-failure-control-secret"
+	processExited := make(chan struct{})
+	useExitWaiter(t, processExited)
+	var ts *httptest.Server
+	var stopOnce sync.Once
+	ts = httptest.NewServer(authenticatedControlHandler(t, token, "base-control", func() {
+		stopOnce.Do(func() {
+			go func() {
+				ts.Close()
+				close(processExited)
+			}()
+		})
+	}))
+	t.Cleanup(ts.Close)
+	base := controlTestBase(t, ts, token)
+	store, err := NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(base); err != nil {
+		t.Fatal(err)
+	}
+
+	oldBackup := backupBasesForUpdate
+	var backupSawStopped atomic.Bool
+	backupBasesForUpdate = func(_ *handler, _ context.Context) ([]string, error) {
+		backupSawStopped.Store(portFree(base.Port))
+		return nil, errors.New("intentional backup failure")
+	}
+	t.Cleanup(func() { backupBasesForUpdate = oldBackup })
+
+	oldExePath := exePath
+	var restartAttempts atomic.Int32
+	exePath = func() (string, error) {
+		restartAttempts.Add(1)
+		return "", errors.New("intentional restart failure")
+	}
+	t.Cleanup(func() { exePath = oldExePath })
+	oldApply := applyUpdate
+	var applyCalls atomic.Int32
+	applyUpdate = func(*selfupdate.OperationLease, selfupdate.StagedInfo, string, string) error {
+		applyCalls.Add(1)
+		return errors.New("binary swap must not run after backup failure")
+	}
+	t.Cleanup(func() { applyUpdate = oldApply })
+
+	runner := NewRunner()
+	h := &handler{store: store, runner: runner}
+	rec := httptest.NewRecorder()
+	h.updatesApply(rec, httptest.NewRequest(http.MethodPost, "/updates/apply?backup=1", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if !backupSawStopped.Load() {
+		t.Fatal("backup started before the running base had stopped")
+	}
+	if restartAttempts.Load() != 1 {
+		t.Fatalf("restart attempts=%d, want 1 after backup failure", restartAttempts.Load())
+	}
+	if applyCalls.Load() != 0 {
+		t.Fatalf("binary apply ran %d times after backup failure", applyCalls.Load())
+	}
+	state, err := selfupdate.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.RestartRecords) != 1 || state.RestartRecords[0].ID != base.ID {
+		t.Fatalf("failed restart was not retained for startup recovery: %+v", state.RestartRecords)
+	}
+	if err := runner.holdStarts(); err != nil {
+		t.Fatalf("backup failure leaked lifecycle gate: %v", err)
+	}
+	runner.AllowStarts()
+}

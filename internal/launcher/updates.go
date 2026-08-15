@@ -48,6 +48,7 @@ var recoverUpdate = (*selfupdate.OperationLease).Recover
 var recoverUpdateStatus = (*selfupdate.OperationLease).RecoverWithResult
 var updateBinaryDir = selfupdate.BinaryDir
 var restartSelf = RestartSelf
+var backupBasesForUpdate = (*handler).backupAllBasesForUpdate
 
 var ErrBinaryRecoveryRestartRequired = errors.New("launcher restart is required after binary recovery")
 
@@ -300,16 +301,13 @@ func (h *handler) updatesApply(w http.ResponseWriter, r *http.Request) {
 	// HEAD его не было: самый рискованный момент жизни базы оставался без
 	// страховки, хотя вся механика копий в лаунчере уже есть (#882).
 	if backupRequested(r) {
-		if made, err := h.backupAllBasesForUpdate(r.Context()); err != nil {
+		if err := h.backupBeforeVersionChange(r.Context(), &st, lease.ReleaseTargetReservation); err != nil {
 			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
 			// чтобы копия была. Молча обновиться без неё — обмануть.
-			h.runner.AllowStarts()
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед обновлением") + ": " + err.Error(),
 			})
 			return
-		} else if len(made) > 0 {
-			oblog.Component("launcher").Info("резервные копии перед обновлением", "количество", len(made))
 		}
 	}
 
@@ -420,16 +418,13 @@ func (h *handler) updatesRollback(w http.ResponseWriter, r *http.Request) {
 	// HEAD его не было: самый рискованный момент жизни базы оставался без
 	// страховки, хотя вся механика копий в лаунчере уже есть (#882).
 	if backupRequested(r) {
-		if made, err := h.backupAllBasesForUpdate(r.Context()); err != nil {
+		if err := h.backupBeforeVersionChange(r.Context(), &st, lease.ReleaseTargetReservation); err != nil {
 			// Отказ, а не «продолжим без копии»: галку ставят ровно затем,
 			// чтобы копия была. Молча обновиться без неё — обмануть.
-			h.runner.AllowStarts()
 			writeJSON(w, http.StatusInternalServerError, map[string]any{
 				"error": tr(resolveLang(r), "Не удалось создать резервную копию перед обновлением") + ": " + err.Error(),
 			})
 			return
-		} else if len(made) > 0 {
-			oblog.Component("launcher").Info("резервные копии перед обновлением", "количество", len(made))
 		}
 	}
 
@@ -1045,6 +1040,48 @@ func latestTag(st selfupdate.State) string {
 func backupRequested(r *http.Request) bool {
 	v := strings.TrimSpace(r.URL.Query().Get("backup"))
 	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// backupBeforeVersionChange выполняется после stopAllForUpdate, когда lifecycle
+// gate всё ещё удерживается. Если копия не получилась, обновление не началось:
+// освобождаем reservation и восстанавливаем остановленные базы тем же
+// generation-bound путём, что при обычной ошибке Apply/Rollback.
+func (h *handler) backupBeforeVersionChange(
+	ctx context.Context,
+	st *selfupdate.State,
+	releaseTarget func() error,
+) error {
+	made, backupErr := backupBasesForUpdate(h, ctx)
+	if backupErr == nil {
+		if len(made) > 0 {
+			oblog.Component("launcher").Info("резервные копии перед обновлением", "количество", len(made))
+		}
+		return nil
+	}
+	return errors.Join(backupErr, h.resumeAfterVersionChangeAbort(st, releaseTarget))
+}
+
+func (h *handler) resumeAfterVersionChangeAbort(st *selfupdate.State, releaseTarget func() error) error {
+	if releaseTarget != nil {
+		if err := releaseTarget(); err != nil {
+			// Пока reservation не снят, безопаснее оставить lifecycle gate закрытым:
+			// другой процесс мог начать работу с каталогом бинарей.
+			return fmt.Errorf("release update target before resuming bases: %w", err)
+		}
+	}
+	h.runner.AllowStarts()
+	if st == nil {
+		return nil
+	}
+	attempted := append([]selfupdate.RestartRecord(nil), st.RestartRecords...)
+	legacy := append([]string(nil), st.RestartBases...)
+	failed := h.resumeBases(attempted)
+	updated, err := recordRecoveryResult(attempted, failed, legacy)
+	if err != nil {
+		return fmt.Errorf("сохранить результат восстановления баз: %w", err)
+	}
+	*st = updated
+	return nil
 }
 
 // backupAllBasesForUpdate снимает копию каждой зарегистрированной базы.
