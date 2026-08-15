@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/shopspring/decimal"
 )
 
 // InfoRegGetExact reads the exact record by full primary key (dimensions, plus
@@ -25,13 +26,85 @@ func (db *DB) InfoRegGetExact(ctx context.Context, ir *metadata.InfoRegister, di
 		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
 		args = append(args, *period)
 	}
-	sql2 := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1",
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1",
 		strings.Join(resourceAndDimCols(ir), ", "), table, where)
-	rec, err := db.infoRegScan(ctx, ir, sql2, args)
+	record, err := db.infoRegScan(ctx, ir, query, args)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return rec, err
+	return record, err
+}
+
+// InfoRegGetExactWithKeyValues is the exchange-registration variant of
+// InfoRegGetExact. The returned record also carries InfoRegKeyValuesField with
+// the physical primary-key spelling selected by the database. This readback is
+// what keeps an initial exchange object ID identical to a later tombstone when
+// PostgreSQL applies NUMERIC typmods or SQLite stores a time.Time as TEXT.
+func (db *DB) InfoRegGetExactWithKeyValues(ctx context.Context, ir *metadata.InfoRegister,
+	dimKey map[string]any, period *time.Time) (map[string]any, error) {
+	lookupKey := dimKey
+	if db.IsPostgres() {
+		// A NUMERIC(p,s) assignment applies the column typmod before storing the
+		// primary key, while a later `column = $1` comparison does not apply that
+		// typmod to $1. Mirror the assignment rounding so readback can find, for
+		// example, input 1.005 after PostgreSQL stored it as 1.01.
+		lookupKey = make(map[string]any, len(dimKey))
+		for name, value := range dimKey {
+			lookupKey[name] = value
+		}
+		for _, field := range ir.Dimensions {
+			if field.Type != metadata.FieldTypeNumber || field.Length <= 0 {
+				continue
+			}
+			raw := dimKey[field.Name]
+			var value any
+			switch typed := raw.(type) {
+			case string:
+				if number, err := decimal.NewFromString(strings.TrimSpace(typed)); err == nil {
+					value = number
+				}
+			case []byte:
+				if number, err := decimal.NewFromString(strings.TrimSpace(string(typed))); err == nil {
+					value = number
+				}
+			default:
+				value = normalizeNumber(raw)
+			}
+			if number, ok := value.(decimal.Decimal); ok {
+				lookupKey[field.Name] = number.Round(int32(field.Scale)) //nolint:gosec // metadata precision is validated
+			}
+		}
+	}
+	return db.infoRegGetExactWithKeyValues(ctx, ir, lookupKey, period)
+}
+
+func (db *DB) infoRegGetExactWithKeyValues(ctx context.Context, ir *metadata.InfoRegister,
+	dimKey map[string]any, period *time.Time) (map[string]any, error) {
+	d := db.dialect
+	table := metadata.InfoRegTableName(ir.Name)
+	where, args := dimWhere(d, ir, dimKey, 1)
+	if ir.Periodic && period != nil {
+		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
+		args = append(args, *period)
+	}
+	cols := resourceAndDimCols(ir)
+	if ir.Periodic {
+		cols = append([]string{"period"}, cols...)
+	}
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1", strings.Join(cols, ", "), table, where)
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records, err := scanInfoRegRowsMode(rows, ir, cols, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+	return records[0], nil
 }
 
 // InfoRegExactMatchesRowFilter reports whether the row identified by the full
@@ -219,9 +292,31 @@ func (db *DB) InfoRegGetLast(ctx context.Context, ir *metadata.InfoRegister, dim
 	return db.infoRegScan(ctx, ir, sql, args)
 }
 
+// InfoRegKeyValuesField is the reserved row member used only by
+// InfoRegListWithKeyValues. Its value is map[string]string with the lossless
+// database representation of every dimension in the primary key. The NUL
+// prefix cannot collide with a SQL/metadata field name.
+//
+// A separate transport value is necessary on SQLite: NUMBER and DATE columns
+// are TEXT, so a key such as "1.00" or an RFC3339 date must not be silently
+// reformatted into a different physical primary-key value by an HTTP round trip.
+const InfoRegKeyValuesField = "\x00onebase_info_reg_key_values"
+
 // InfoRegList returns records, optionally filtered by dimension values and
 // period (период учитывается только для periodic-регистров, issue #45).
 func (db *DB) InfoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegFilter) ([]map[string]any, error) {
+	return db.infoRegList(ctx, ir, f, false)
+}
+
+// InfoRegListWithKeyValues is the UI-list variant of InfoRegList. In addition
+// to the typed display values, each row carries InfoRegKeyValuesField so a
+// delete form can round-trip the exact stored primary key. Callers must remove
+// that member before exposing a row whose key is field-masked.
+func (db *DB) InfoRegListWithKeyValues(ctx context.Context, ir *metadata.InfoRegister, f RegFilter) ([]map[string]any, error) {
+	return db.infoRegList(ctx, ir, f, true)
+}
+
+func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, withKeyValues bool) ([]map[string]any, error) {
 	table := metadata.InfoRegTableName(ir.Name)
 	var selCols []string
 	if ir.Periodic {
@@ -259,18 +354,18 @@ func (db *DB) InfoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
 	}
 	defer rows.Close()
-	raw, err := scanInfoRegRows(rows, ir, selCols)
+	raw, err := scanInfoRegRowsMode(rows, ir, selCols, withKeyValues)
 	if err != nil {
 		return nil, err
 	}
 	return infoRegListRows(ir, raw), nil
 }
 
-// scanInfoRegRows decodes the common storage projection used by InfoRegList and
-// by DELETE ... RETURNING. It deliberately keeps the system period as a typed
-// time.Time. In particular, delete-RLS must compare the database value rather
-// than the localized display string produced for the HTML list.
-func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]map[string]any, error) {
+// scanInfoRegRowsMode decodes the common storage projection used by InfoRegList
+// and by DELETE ... RETURNING. It deliberately keeps the system period as a
+// typed time.Time. In particular, delete-RLS must compare the database value
+// rather than the localized display string produced for the HTML list.
+func scanInfoRegRowsMode(rows Rows, ir *metadata.InfoRegister, selCols []string, withKeyValues bool) ([]map[string]any, error) {
 	var result []map[string]any
 	for rows.Next() {
 		dest := make([]any, len(selCols))
@@ -292,9 +387,20 @@ func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]
 			row["period"] = typed
 			i = 1
 		}
+		var keyValues map[string]string
+		if withKeyValues {
+			keyValues = make(map[string]string, len(ir.Dimensions))
+		}
 		for _, f := range ir.Dimensions {
-			row[f.Name] = normalizeFieldValue(f, dest[i])
+			normalized := normalizeFieldValue(f, dest[i])
+			row[f.Name] = normalized
+			if withKeyValues {
+				keyValues[f.Name] = infoRegKeyText(f, dest[i], normalized)
+			}
 			i++
+		}
+		if withKeyValues {
+			row[InfoRegKeyValuesField] = keyValues
 		}
 		for _, f := range ir.Resources {
 			row[f.Name] = normalizeFieldValue(f, dest[i])
@@ -317,6 +423,61 @@ func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]
 		result = append(result, row)
 	}
 	return result, rows.Err()
+}
+
+func infoRegKeyText(field metadata.Field, raw, normalized any) string {
+	// SQLite TEXT columns must retain their exact lexical representation. In
+	// particular, decimal.Decimal.String() intentionally trims zeroes and would
+	// turn a stored primary-key component "1.00" into the different TEXT "1".
+	if field.RefEntity != "" {
+		return fmt.Sprint(normalizeValue(raw))
+	}
+	if field.Type == metadata.FieldTypeNumber || field.Type == metadata.FieldTypeDate {
+		switch value := raw.(type) {
+		case string:
+			return value
+		case []byte:
+			return string(value)
+		}
+	}
+	switch value := normalized.(type) {
+	case decimal.Decimal:
+		if scale := -value.Exponent(); scale > 0 {
+			return value.StringFixed(scale)
+		}
+		return value.String()
+	case time.Time:
+		return value.Format(time.RFC3339Nano)
+	case *time.Time:
+		if value == nil {
+			return ""
+		}
+		return value.Format(time.RFC3339Nano)
+	}
+	if field.Type == metadata.FieldTypeBool {
+		switch value := raw.(type) {
+		case bool:
+			return fmt.Sprintf("%t", value)
+		case int64:
+			return fmt.Sprintf("%t", value != 0)
+		case int:
+			return fmt.Sprintf("%t", value != 0)
+		case string:
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "true", "1":
+				return "true"
+			case "false", "0":
+				return "false"
+			}
+		}
+	}
+	switch value := raw.(type) {
+	case string:
+		return value
+	case []byte:
+		return string(value)
+	}
+	return fmt.Sprint(normalized)
 }
 
 // infoRegListRows is the presentation boundary for the list/UI contract.
@@ -655,12 +816,57 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 	if where == "" {
 		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
 	}
+	return db.infoRegDeleteReturning(ctx, ir, where, args, f.RowFilter, "info reg delete by filter", false)
+}
+
+// InfoRegDeleteExactReturning atomically deletes at most one information-
+// register row by its complete primary key and returns the row actually
+// removed. Every declared dimension is significant, including an empty string;
+// this is intentionally different from the slice semantics of RegFilter.
+// rowFilter is appended to the same DELETE statement, closing the RLS TOCTOU
+// window between a policy read and the write. Returned rows also contain
+// InfoRegKeyValuesField so callers can keep exchange object identity aligned
+// with lexical SQLite NUMBER/DATE keys.
+func (db *DB) InfoRegDeleteExactReturning(ctx context.Context, ir *metadata.InfoRegister,
+	dimKey map[string]any, period *time.Time, rowFilter *Predicate) ([]map[string]any, error) {
+	if ir == nil {
+		return nil, errors.New("info reg delete exact: nil register")
+	}
+	if len(ir.Dimensions) == 0 && !ir.Periodic {
+		return nil, fmt.Errorf("info reg delete exact %s: register has no primary-key fields", ir.Name)
+	}
+	for _, field := range ir.Dimensions {
+		value, ok := dimKey[field.Name]
+		if !ok {
+			return nil, fmt.Errorf("info reg delete exact %s: missing dimension %q", ir.Name, field.Name)
+		}
+		if value == nil {
+			return nil, fmt.Errorf("info reg delete exact %s: nil dimension %q", ir.Name, field.Name)
+		}
+	}
+	if ir.Periodic && period == nil {
+		return nil, fmt.Errorf("info reg delete exact %s: period is required", ir.Name)
+	}
+	if !ir.Periodic && period != nil {
+		return nil, fmt.Errorf("info reg delete exact %s: period is not allowed", ir.Name)
+	}
+
+	where, args := dimWhere(db.dialect, ir, dimKey, 1)
+	if period != nil {
+		where += " AND period = " + db.dialect.Placeholder(len(args)+1)
+		args = append(args, *period)
+	}
+	return db.infoRegDeleteReturning(ctx, ir, where, args, rowFilter, "info reg delete exact", true)
+}
+
+func (db *DB) infoRegDeleteReturning(ctx context.Context, ir *metadata.InfoRegister,
+	where string, args []any, rowFilter *Predicate, operation string, withKeyValues bool) ([]map[string]any, error) {
 	whereParts := []string{where}
 	table := metadata.InfoRegTableName(ir.Name)
 	if condition, filterArgs, _, err := PredicateSQLQualified(
-		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
+		db.dialect, InfoRegisterPredicateEntity(ir), rowFilter, len(args)+1, table,
 	); err != nil {
-		return nil, fmt.Errorf("info reg delete by filter %s row filter: %w", ir.Name, err)
+		return nil, fmt.Errorf("%s %s row filter: %w", operation, ir.Name, err)
 	} else if condition != "" {
 		whereParts = append(whereParts, condition)
 		args = append(args, filterArgs...)
@@ -685,12 +891,12 @@ func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.I
 		table, strings.Join(whereParts, " AND "), strings.Join(cols, ", "))
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("info reg delete by filter %s returning: %w", ir.Name, err)
+		return nil, fmt.Errorf("%s %s returning: %w", operation, ir.Name, err)
 	}
 	defer rows.Close()
-	deleted, err := scanInfoRegRows(rows, ir, cols)
+	deleted, err := scanInfoRegRowsMode(rows, ir, cols, withKeyValues)
 	if err != nil {
-		return nil, fmt.Errorf("info reg delete by filter %s returning: %w", ir.Name, err)
+		return nil, fmt.Errorf("%s %s returning: %w", operation, ir.Name, err)
 	}
 	return deleted, nil
 }

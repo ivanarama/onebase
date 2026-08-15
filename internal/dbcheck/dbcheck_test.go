@@ -62,6 +62,8 @@ accounts:
 title: Бухгалтерский учёт
 accounts: Основной
 totals: { enabled: true }
+subconto:
+  - { name: Контрагент, type: reference:Контрагенты }
 resources:
   - { name: Сумма, type: number(15,2) }
 `)
