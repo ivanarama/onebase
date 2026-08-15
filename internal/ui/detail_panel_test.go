@@ -365,8 +365,11 @@ func TestDetailPanel_ClientRuntime(t *testing.T) {
 	if !strings.Contains(js[idx:idx+2000], "obDetailRender") {
 		t.Error("listSetSel не перерисовывает панель")
 	}
-	if !strings.Contains(js, "tr.dataset.obDetail = row.detail || ''") {
-		t.Error("лениво загруженная строка дерева не получает detail payload")
+	if !strings.Contains(js, "tr.dataset.obDetailUrl = row.detail_url || ''") {
+		t.Error("лениво загруженная строка дерева не получает защищённый detail URL")
+	}
+	if !strings.Contains(js, "if (typeof obDetailInvalidate === 'function') obDetailInvalidate()") {
+		t.Error("live refresh не инвалидирует кэш панели деталей")
 	}
 }
 
@@ -653,5 +656,30 @@ func TestDetailPanel_HandlerПроверяетПраваСам(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "Кресло") {
 		t.Fatalf("данные записи утекли в отказе: %s", w.Body.String())
+	}
+}
+
+func TestDetailPanel_HandlerHonorsFormReadHook(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьДоступ()
+	ВызватьИсключение("Нет доступа");
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventType("ПриЧтенииНаСервере"): "ПроверитьДоступ",
+	}, []*metadata.FormElement{
+		{Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование"},
+	})
+	id := insertContragent(t, srv, ent, "СЕКРЕТ-ДЕТАЛЬНОЙ-ПАНЕЛИ")
+	target := "/ui/catalog/" + ent.Name + "/" + id.String() + "/detail-panel"
+	r := reqWithChi(http.MethodGet, target, nil, map[string]string{
+		"kind": "catalog", "entity": ent.Name, "id": id.String(),
+	})
+	w := httptest.NewRecorder()
+	srv.detailPanelRecord(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("detail panel bypassed ПриЧтенииНаСервере: status=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "СЕКРЕТ-ДЕТАЛЬНОЙ-ПАНЕЛИ") {
+		t.Fatalf("detail panel leaked a row rejected by ПриЧтенииНаСервере: %s", w.Body.String())
 	}
 }

@@ -46,6 +46,14 @@ func (s *Server) detailPanelRecord(w http.ResponseWriter, r *http.Request) {
 	if !s.rowAllowed(w, r, entity, "read", row) {
 		return
 	}
+	// Карточка объекта и панель деталей — два равноправных read-path. Поэтому
+	// серверный read-hook формы обязан закрывать оба пути до формирования ответа.
+	if objForm := pickObjectFormWithReadHook(entity); objForm != nil {
+		if denied := s.runFormReadHook(r.Context(), entity, objForm, id); denied != nil {
+			s.renderForbidden(w, r)
+			return
+		}
+	}
 	// Порядок тот же, что в списке (handlers_entity.go): маска ПДн ДО
 	// разрешения ссылок, иначе защищённое значение уже стало бы подписью.
 	s.maskRecord(r.Context(), entity, row)
