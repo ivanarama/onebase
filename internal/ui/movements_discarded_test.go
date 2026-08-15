@@ -14,7 +14,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -141,5 +146,67 @@ func TestMovements_ClearIsAllowedOutsidePosting(t *testing.T) {
 	}
 	if len(msgs) != 1 || msgs[0] != "ok" {
 		t.Fatalf("сообщения=%v, ожидалось [ok]", msgs)
+	}
+}
+
+// Тот же отказ — во всех контекстах, где коллектор не сбрасывается (#898).
+//
+// Тест на обработке закрывал один путь из четырёх, названных в заявке
+// (регламентное задание, обработка, отчёт, печатная форма) — а именно первый из
+// них и есть тот, где человек, пришедший из 1С, пробует писать движения раньше
+// всего. Контексты различаются только меткой DocType коллектора, поэтому
+// проверяются здесь напрямую: поднимать ради этого планировщик и рендер отчёта
+// значило бы проверять их, а не границу движений.
+func TestMovements_RejectedInEveryNonPersistingContext(t *testing.T) {
+	reg := &metadata.Register{
+		Name:       "ОстаткиТоваров",
+		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	s, ctx := newSubmitTestServer(t, nil)
+	s.reg.Load(runtime.LoadOptions{Registers: []*metadata.Register{reg}})
+
+	for _, c := range []struct{ docType, label string }{
+		{"scheduler", "регламентное задание"},
+		{"processor", "обработка"},
+		{"report", "отчёт"},
+		{"page", "страница"},
+		{"console", "консоль кода"},
+		{"intake", "приём сообщений"},
+		{"service", "HTTP-сервис"},
+	} {
+		t.Run(c.docType, func(t *testing.T) {
+			mc := runtime.NewMovementsCollector(c.docType, uuid.Nil)
+			var msgs []string
+			vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
+			defer interpreter.RollbackTxExecution(txState)
+
+			prog := mustParse(t, `Процедура Тест()
+  Движения.ОстаткиТоваров.Добавить();
+  Сообщить("дошли до конца");
+КонецПроцедуры`)
+			err := s.interp.Run(prog.Procedures[0], nil, vars)
+			if err == nil {
+				t.Fatalf("движения в контексте %q приняты молча, сообщения=%v", c.docType, msgs)
+			}
+			text := err.Error()
+			if !strings.Contains(text, "сохранять некуда") {
+				t.Errorf("не тот отказ: %s", text)
+			}
+			// Контекст назван человеческим именем: «регламентное задание», а не
+			// «scheduler» — иначе подсказка не помогает тому, кто её читает.
+			if !strings.Contains(text, c.label) {
+				t.Errorf("отказ не называет контекст %q: %s", c.label, text)
+			}
+			// Имя регистра — как в конфигурации, а не как пришло из DSL.
+			if !strings.Contains(text, "Движения.ОстаткиТоваров.Добавить()") {
+				t.Errorf("имя регистра искажено: %s", text)
+			}
+			for _, m := range msgs {
+				if strings.Contains(m, "дошли до конца") {
+					t.Error("выполнение продолжилось после отказа")
+				}
+			}
+		})
 	}
 }
