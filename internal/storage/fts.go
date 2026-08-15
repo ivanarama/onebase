@@ -489,17 +489,31 @@ func ftsFieldsTitleFirst(e *metadata.Entity) []metadata.Field {
 	if len(label) == 0 || len(all) == 0 {
 		return all
 	}
-	want := label[0].Name
 	out := make([]metadata.Field, 0, len(all))
-	var rest []metadata.Field
-	for _, f := range all {
-		if strings.EqualFold(f.Name, want) {
-			out = append(out, f)
-			continue
-		}
-		rest = append(rest, f)
+	candidates := label
+	if len(e.Presentation) == 0 {
+		// Без явного ключа сохраняем прежнюю семантику: только основной label
+		// выносится вперёд, остальные поля остаются в fulltext-порядке.
+		candidates = label[:1]
 	}
-	return append(out, rest...)
+	seen := make(map[string]bool, len(candidates))
+	// Все явные кандидаты идут первыми в объявленном порядке: BuildFTSDoc
+	// возьмёт первый непустой и тем самым повторит fallback RowLabel.
+	for _, candidate := range candidates {
+		for _, f := range all {
+			if strings.EqualFold(f.Name, candidate.Name) {
+				out = append(out, f)
+				seen[strings.ToLower(f.Name)] = true
+				break
+			}
+		}
+	}
+	for _, f := range all {
+		if !seen[strings.ToLower(f.Name)] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func fieldTextValue(f metadata.Field, fields map[string]any) string {

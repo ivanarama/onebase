@@ -451,8 +451,8 @@ type stringOrList []string
 
 func (v *stringOrList) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
-		if strings.TrimSpace(node.Value) != "" {
-			*v = stringOrList{node.Value}
+		if s := strings.TrimSpace(node.Value); s != "" {
+			*v = stringOrList{s}
 		}
 		return nil
 	}

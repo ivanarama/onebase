@@ -124,6 +124,20 @@ func aiRefLookupField(entity *metadata.Entity) string {
 	return ""
 }
 
+// aiRefLookupFields возвращает весь fallback-список только для явно заданного
+// presentation. Без ключа поведение остаётся прежним: поиск и подпись идут по
+// одному основному реквизиту.
+func aiRefLookupFields(entity *metadata.Entity) []metadata.Field {
+	fields := metadata.LabelFields(entity)
+	if len(fields) == 0 || entity == nil {
+		return nil
+	}
+	if len(entity.Presentation) > 0 {
+		return fields
+	}
+	return fields[:1]
+}
+
 // aiRefDisplay — представление доступной пользователю записи для подписи
 // карточки. Чтение идёт с объектной и строковой проверкой: UUID из аргументов
 // модели/клиента не должен раскрывать подпись скрытой RLS-записи.
@@ -136,14 +150,12 @@ func (s *Server) aiRefDisplay(ctx context.Context, entity *metadata.Entity, id u
 	// те же field policies, что к карточке и REST. Hidden lookup исчезнет из row,
 	// masked lookup вернётся только в замаскированном виде.
 	s.maskRecord(ctx, entity, row)
-	field := aiRefLookupField(entity)
-	if field == "" {
-		return id.String(), true
-	}
-	for k, v := range row {
-		if strings.EqualFold(k, field) && v != nil {
-			if txt := strings.TrimSpace(fmt.Sprint(v)); txt != "" {
-				return txt, true
+	for _, field := range aiRefLookupFields(entity) {
+		for k, v := range row {
+			if strings.EqualFold(k, field.Name) && v != nil {
+				if txt := strings.TrimSpace(fmt.Sprint(v)); txt != "" {
+					return txt, true
+				}
 			}
 		}
 	}

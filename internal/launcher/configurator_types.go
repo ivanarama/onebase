@@ -87,12 +87,15 @@ type saveEntity struct {
 	Posting            bool              `yaml:"posting,omitempty"`
 	PostCaption        string            `yaml:"post_caption,omitempty"`
 	PostAndCloseHidden bool              `yaml:"post_and_close_hidden,omitempty"`
-	BasedOn            []string          `yaml:"based_on,omitempty"`
-	Numerator          *saveNumerator    `yaml:"numerator,omitempty"`
-	Predefined         []savePredefined  `yaml:"predefined,omitempty"`
-	ListForm           []string          `yaml:"list_form,omitempty"`
-	ItemForm           []string          `yaml:"item_form,omitempty"`
-	Activity           *saveActivity     `yaml:"activity,omitempty"`
+	// Presentation поддерживает и скаляр, и список. Конфигуратор пока не
+	// редактирует этот ключ, поэтому сохраняем исходную YAML-форму целиком.
+	Presentation yaml.Node        `yaml:"presentation,omitempty"`
+	BasedOn      []string         `yaml:"based_on,omitempty"`
+	Numerator    *saveNumerator   `yaml:"numerator,omitempty"`
+	Predefined   []savePredefined `yaml:"predefined,omitempty"`
+	ListForm     []string         `yaml:"list_form,omitempty"`
+	ItemForm     []string         `yaml:"item_form,omitempty"`
+	Activity     *saveActivity    `yaml:"activity,omitempty"`
 	// FullText — указатель, потому что «ключа нет» и «fulltext: []» значат
 	// разное: первое — индексировать все строковые реквизиты, второе — убрать
 	// объект из глобального поиска (план 82). Без этого поля правка объекта из

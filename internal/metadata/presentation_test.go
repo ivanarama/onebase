@@ -94,7 +94,7 @@ func TestLoadFile_PresentationСтрокаИСписок(t *testing.T) {
 		yaml string
 		want []string
 	}{
-		"строка":    {"presentation: Артикул\n", []string{"Артикул"}},
+		"строка":    {"presentation: '  Артикул  '\n", []string{"Артикул"}},
 		"список":    {"presentation: [Артикул, Наименование]\n", []string{"Артикул", "Наименование"}},
 		"нет ключа": {"", nil},
 	}

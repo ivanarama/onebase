@@ -177,6 +177,28 @@ func TestAIActions_ReferenceLabelsHonorFieldMasking(t *testing.T) {
 	}
 }
 
+func TestAIRefDisplay_UsesPresentationFallback(t *testing.T) {
+	entity := &metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+		Presentation: []string{"Артикул", "Наименование"},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, entity.Name, id, map[string]any{
+		"Артикул": "", "Наименование": "Стул",
+	}, entity); err != nil {
+		t.Fatal(err)
+	}
+	display, ok := s.aiRefDisplay(ctx, entity, id)
+	if !ok || display != "Стул" {
+		t.Fatalf("aiRefDisplay=%q, %v; ожидалось Стул", display, ok)
+	}
+}
+
 // Явно заданный «Номер» не затирается автонумерацией (Д13, issue #866):
 // локальная копия проверки пустоты читала obj.Fields["Номер"] напрямую, тогда
 // как Object.Set хранит ключи в нижнем регистре, — условие «пусто» было
