@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/dblock"
+	"github.com/ivantit66/onebase/internal/installtest"
 )
 
 func TestRestoreRefusesDatabaseOwnedByAnotherProcessAndReleasesGates(t *testing.T) {
@@ -78,7 +79,7 @@ func TestLegacySQLiteBaseUsesDeterministicLifetimeLock(t *testing.T) {
 }
 
 func TestBasePinnedToOpenDBKeepsResolvedSQLiteAlias(t *testing.T) {
-	realDir := t.TempDir()
+	realDir := installtest.CanonicalTempDir(t)
 	otherDir := t.TempDir()
 	aliasRoot := t.TempDir()
 	aliasDir := filepath.Join(aliasRoot, "alias")

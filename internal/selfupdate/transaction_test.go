@@ -11,20 +11,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ivantit66/onebase/internal/installtest"
 )
 
 func transactionInstallation(t *testing.T, version string) (string, StagedInfo) {
 	t.Helper()
-	base := t.TempDir()
-	if root := windowsTestPrivateInstallRoot(); root != "" {
-		privateBase, err := os.MkdirTemp(root, "onebase-selfupdate-test-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(privateBase) })
-		base = privateBase
-	}
-	targetDir := filepath.Join(base, "bin")
+	// Каталог установки обязан быть приватным на ЛЮБОЙ ОС: обычный t.TempDir()
+	// лежит в общем /tmp, и проверка приватности (та самая, ради которой всё
+	// это писалось) законно его отвергает — тесты падали всегда, а выглядело
+	// это как дефект продукта (#924).
+	targetDir := installtest.PrivateInstallDir(t)
 	stageDir, err := newStageDir()
 	if err != nil {
 		t.Fatal(err)
@@ -47,18 +44,12 @@ func transactionInstallation(t *testing.T, version string) (string, StagedInfo) 
 	return targetDir, staged
 }
 
+// privateTargetDir — каталог установки, который проверка приватности признаёт
+// своим. Раньше на не-Windows отдавал обычный t.TempDir(), то есть ровно тот
+// случай, который продукт отвергает: тесты падали всегда (#924).
 func privateTargetDir(t *testing.T) string {
 	t.Helper()
-	base := t.TempDir()
-	if root := windowsTestPrivateInstallRoot(); root != "" {
-		var err error
-		base, err = os.MkdirTemp(root, "onebase-selfupdate-test-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(base) })
-	}
-	return base
+	return installtest.PrivateInstallDir(t)
 }
 
 func TestTargetLockSubprocessHelper(t *testing.T) {
