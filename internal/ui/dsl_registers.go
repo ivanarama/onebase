@@ -16,8 +16,8 @@ import (
 //	РегистрыНакопления.ОстаткиТоваров.Движения()             → все движения
 //	РегистрыНакопления.ОстаткиТоваров.ВыбратьПоРегистратору(Док) → движения документа
 //
-// Чтение использует существующий storage API (GetBalances/GetMovements/
-// GetDocumentMovements). Запись наборов записей и параметры периода/отбора у
+// Чтение использует существующий storage API (GetBalances/GetMovements).
+// Запись наборов записей и параметры периода/отбора у
 // Остатки()/Обороты() — следующий шаг (см. roadmap, write-side).
 type accumRegsRoot struct {
 	s      *Server
@@ -57,6 +57,9 @@ func (p *accumRegProxy) ctx() context.Context {
 func (p *accumRegProxy) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "остатки", "balances":
+		if registerHasProtectedDimension(p.s.registerFieldDecisions(p.ctx(), p.reg), p.reg) {
+			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): защищённое измерение нельзя использовать для группировки")
+		}
 		filter, err := p.rowFilter()
 		if err != nil {
 			interpreter.RaiseUserError("Остатки(" + p.reg.Name + "): " + err.Error())
@@ -84,17 +87,26 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		if len(args) == 0 {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): не передан регистратор")
 		}
-		id, ok := recorderID(args[0])
+		decisions := p.s.registerFieldDecisions(p.ctx(), p.reg)
+		if registerFieldProtected(decisions, "recorder") || registerFieldProtected(decisions, "recorder_type") {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): защищённый регистратор нельзя использовать для отбора")
+		}
+		filter, err := p.rowFilter()
+		if err != nil {
+			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
+		}
+		id, recorderType, ok := recorderIdentity(args[0])
 		if !ok {
 			return rowsToArray(nil)
 		}
-		byReg, err := p.s.store.GetDocumentMovements(p.ctx(), id, []*metadata.Register{p.reg})
+		filter = registerRecorderFilter(filter, id, recorderType)
+		rows, err := p.s.store.GetMovements(p.ctx(), p.reg.Name, p.reg, filter)
 		if err != nil {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
 		}
-		rows, err := p.filterRows(byReg[p.reg.Name])
-		if err != nil {
-			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): " + err.Error())
+		for _, row := range rows {
+			delete(row, "recorder")
+			delete(row, "recorder_type")
 		}
 		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
 		return rowsToArray(rows)
@@ -119,20 +131,6 @@ func (p *accumRegProxy) rowFilter() (storage.RegFilter, error) {
 	return storage.RegFilter{RowFilter: dec.Predicate}, nil
 }
 
-func (p *accumRegProxy) filterRows(rows []map[string]any) ([]map[string]any, error) {
-	filter, err := p.rowFilter()
-	if err != nil || filter.RowFilter == nil {
-		return rows, err
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		if p.s.matchRowPredicate(p.ctx(), row, filter.RowFilter) {
-			out = append(out, row)
-		}
-	}
-	return out, nil
-}
-
 // rowsToArray оборачивает строки движений/остатков в Массив строк (*MapThis),
 // чтобы в DSL работали Количество()/Получить()/«Для Каждого» и Стр.Колонка.
 func rowsToArray(rows []map[string]any) *interpreter.Array {
@@ -143,17 +141,19 @@ func rowsToArray(rows []map[string]any) *interpreter.Array {
 	return interpreter.NewArray(items)
 }
 
-// recorderID извлекает UUID документа-регистратора из ссылки или строки.
-func recorderID(v any) (uuid.UUID, bool) {
+// recorderIdentity извлекает UUID и, когда доступен, тип документа-регистратора.
+// Тип не декоративный: разные таблицы документов могут содержать одинаковый
+// UUID, а движение идентифицирует регистратора парой (recorder_type, recorder).
+func recorderIdentity(v any) (uuid.UUID, string, bool) {
 	switch x := v.(type) {
 	case *interpreter.Ref:
 		if id, err := uuid.Parse(x.UUID); err == nil {
-			return id, true
+			return id, strings.TrimSpace(x.Type), true
 		}
 	case string:
 		if id, err := uuid.Parse(x); err == nil {
-			return id, true
+			return id, "", true
 		}
 	}
-	return uuid.UUID{}, false
+	return uuid.UUID{}, "", false
 }

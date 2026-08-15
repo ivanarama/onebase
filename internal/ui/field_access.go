@@ -83,7 +83,63 @@ func (s *Server) maskRegisterRecords(ctx context.Context, reg *metadata.Register
 	if reg == nil {
 		return
 	}
-	access.MaskRecords(s.fieldDecisionsFor(ctx, "register", reg.Name, storage.RegisterPredicateEntity(reg)), rows)
+	access.MaskRecords(s.registerFieldDecisions(ctx, reg), rows)
+}
+
+// registerFieldDecisions centralises the synthetic accumulation-register
+// metadata used by every UI and DSL read boundary. Keeping the decision map
+// separate from MaskRecords also lets callers reject operations that would use
+// a protected value as a filter or GROUP BY key before storage sees it.
+func (s *Server) registerFieldDecisions(ctx context.Context, reg *metadata.Register) map[string]access.FieldDecision {
+	if reg == nil {
+		return nil
+	}
+	return s.fieldDecisionsFor(ctx, "register", reg.Name, storage.RegisterPredicateEntity(reg))
+}
+
+func registerFieldProtected(decisions map[string]access.FieldDecision, name string) bool {
+	decision, ok := fieldDecisionByName(decisions, name)
+	return ok && decision.Masked()
+}
+
+func registerHasProtectedDimension(decisions map[string]access.FieldDecision, reg *metadata.Register) bool {
+	if reg == nil {
+		return false
+	}
+	for _, field := range reg.Dimensions {
+		if registerFieldProtected(decisions, field.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func unprotectedRegisterDimensions(decisions map[string]access.FieldDecision, fields []metadata.Field) []metadata.Field {
+	result := make([]metadata.Field, 0, len(fields))
+	for _, field := range fields {
+		if !registerFieldProtected(decisions, field.Name) {
+			result = append(result, field)
+		}
+	}
+	return result
+}
+
+// protectedRegisterFilterRequested closes the inference channel where a
+// caller probes a masked dimension (or period) and observes whether the result
+// set changes. Check the raw query before parsing or issuing any storage query:
+// even a syntactically invalid protected filter must not be treated as absent.
+func protectedRegisterFilterRequested(r *http.Request, reg *metadata.Register, decisions map[string]access.FieldDecision) bool {
+	if r == nil || reg == nil {
+		return false
+	}
+	query := r.URL.Query()
+	for _, field := range reg.Dimensions {
+		if registerFieldProtected(decisions, field.Name) && strings.TrimSpace(query.Get("flt_"+field.Name)) != "" {
+			return true
+		}
+	}
+	return registerFieldProtected(decisions, "period") &&
+		(strings.TrimSpace(query.Get("from")) != "" || strings.TrimSpace(query.Get("to")) != "")
 }
 
 // maskJournalRecords maps each journal output column back to the source fields

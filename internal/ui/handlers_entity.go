@@ -1287,12 +1287,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	// Load document movements for posted documents
 	var docMovements map[string][]map[string]any
 	if entity.Kind == metadata.KindDocument && vals["posted"] == "true" {
-		docMovements, _ = s.store.GetDocumentMovements(r.Context(), id, s.reg.Registers())
-		for regName, regRows := range docMovements {
-			if reg := s.reg.GetRegister(regName); reg != nil {
-				s.resolveRegisterRows(r.Context(), regRows, reg)
-			}
-		}
+		docMovements = s.loadDocumentMovementsForRead(r.Context(), entity.Name, id)
 	}
 
 	s.renderEntityForm(w, r, "object", map[string]any{

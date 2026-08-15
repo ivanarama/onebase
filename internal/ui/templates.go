@@ -2255,9 +2255,9 @@ const tplRegister = `
 <main>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "движения"}}</h2>
-  <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>
+  {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>{{end}}
 </div>
-{{template "reg-filter-form" (dict "Fields" .Register.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" true "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s" (lower .Register.Name)) "Lang" $.Lang)}}
+{{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .ShowPeriodFilter "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>
@@ -2286,7 +2286,7 @@ const tplRegister = `
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "остатки"}}</h2>
   <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "← Движения"}}</a>
 </div>
-{{template "reg-filter-form" (dict "Fields" .Register.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" false "ShowToOnly" true "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s/balances" (lower .Register.Name)) "Lang" $.Lang)}}
+{{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" false "ShowToOnly" .ShowPeriodFilter "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s/balances" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>

@@ -28,7 +28,14 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
 		return
 	}
-	flt := parseRegFilter(r, reg.Dimensions, true /*periodic — у движений всегда есть период*/)
+	decisions := s.registerFieldDecisions(r.Context(), reg)
+	if protectedRegisterFilterRequested(r, reg, decisions) {
+		s.renderForbidden(w, r)
+		return
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
+	showPeriodFilter := !registerFieldProtected(decisions, "period")
+	flt := parseRegFilter(r, filterFields, showPeriodFilter)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
@@ -43,12 +50,16 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	// значение уже превратилось бы в человекочитаемую подпись (#859).
 	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
+	filterValues := filterFormValues(r, filterFields)
 	s.render(w, r, "page-register-movements", map[string]any{
-		"Register":   reg,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, reg.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), reg.Dimensions, filterFormValues(r, reg.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
+		"Register":         reg,
+		"Rows":             rows,
+		"CanViewBalances":  !registerHasProtectedDimension(decisions, reg),
+		"FilterFields":     filterFields,
+		"ShowPeriodFilter": showPeriodFilter,
+		"Filter":           filterValues,
+		"RefOpts":          s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":       !flt.IsEmpty(),
 	})
 }
 
@@ -62,8 +73,21 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
 		return
 	}
+	decisions := s.registerFieldDecisions(r.Context(), reg)
+	// Balances GROUP BY every dimension. Masking the output cannot hide which
+	// protected values exist, so a protected grouping key denies the endpoint.
+	if registerHasProtectedDimension(decisions, reg) {
+		s.renderForbidden(w, r)
+		return
+	}
+	if protectedRegisterFilterRequested(r, reg, decisions) {
+		s.renderForbidden(w, r)
+		return
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
+	showPeriodFilter := !registerFieldProtected(decisions, "period")
 	// Остатки: только «на дату» (to) + измерения; from игнорируется в storage.
-	flt := parseRegFilter(r, reg.Dimensions, true)
+	flt := parseRegFilter(r, filterFields, showPeriodFilter)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
@@ -76,13 +100,72 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	}
 	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
+	filterValues := filterFormValues(r, filterFields)
 	s.render(w, r, "page-register-balances", map[string]any{
-		"Register":   reg,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, reg.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), reg.Dimensions, filterFormValues(r, reg.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
+		"Register":         reg,
+		"Rows":             rows,
+		"FilterFields":     filterFields,
+		"ShowPeriodFilter": showPeriodFilter,
+		"Filter":           filterValues,
+		"RefOpts":          s.loadRefOpts(r.Context(), filterFields, filterValues),
+		"HasFilters":       !flt.IsEmpty(),
 	})
+}
+
+// loadDocumentMovementsForRead is the document-form read boundary for
+// accumulation registers. A posted document may have movements in registers
+// the viewer cannot read, and each readable register can have its own RLS and
+// field policy. Apply all three gates before resolving references or rendering.
+func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType string, recorderID uuid.UUID) map[string][]map[string]any {
+	result := make(map[string][]map[string]any)
+	for _, reg := range s.reg.Registers() {
+		decision, err := s.rowDecisionFor(ctx, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg))
+		if err != nil || !decision.Allowed {
+			continue
+		}
+
+		filter := storage.RegFilter{}
+		if !decision.Unrestricted {
+			filter.RowFilter = decision.Predicate
+		}
+		filter = registerRecorderFilter(filter, recorderID, recorderType)
+		rows, err := s.store.GetMovements(ctx, reg.Name, reg, filter)
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			// GetDocumentMovements historically omitted these columns. Preserve
+			// that form payload and avoid redundant registrar disclosure.
+			delete(row, "recorder")
+			delete(row, "recorder_type")
+		}
+		s.maskRegisterRecords(ctx, reg, rows)
+		s.resolveRegisterRows(ctx, rows, reg)
+		if len(rows) > 0 {
+			result[reg.Name] = rows
+		}
+	}
+	return result
+}
+
+func registerRecorderFilter(filter storage.RegFilter, recorderID uuid.UUID, recorderType string) storage.RegFilter {
+	predicates := []storage.Predicate{{Field: "recorder", Op: "eq", Value: recorderID}}
+	recorderType = strings.TrimSpace(recorderType)
+	if recorderType != "" {
+		predicates = append(predicates, storage.Predicate{Field: "recorder_type", Op: "eq", Value: recorderType})
+	}
+	if filter.RowFilter == nil {
+		if len(predicates) == 1 {
+			filter.RowFilter = &predicates[0]
+		} else {
+			combined := storage.Predicate{All: predicates}
+			filter.RowFilter = &combined
+		}
+		return filter
+	}
+	combined := storage.Predicate{All: append([]storage.Predicate{*filter.RowFilter}, predicates...)}
+	filter.RowFilter = &combined
+	return filter
 }
 
 // parseRegFilter собирает storage.RegFilter из query-параметров формы отбора:
