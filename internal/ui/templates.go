@@ -1459,7 +1459,7 @@ const tplList = `
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
+  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
   {{range $i, $col := $treeCols}}
     {{if treeColumn $treeCols $i}}
       <td>
@@ -1512,7 +1512,7 @@ const tplList = `
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
+  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}
@@ -1570,7 +1570,7 @@ const tplList = `
   data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
   data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
   data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail='{{detailPanelEntity $.Entity $row $.EnumLabels $.Lang}}'>
+  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
