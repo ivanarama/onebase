@@ -26,6 +26,27 @@ func LabelFields(e *Entity) []Field {
 	if e == nil {
 		return nil
 	}
+	// Явное указание перекрывает правило по именам целиком: если автор сказал
+	// «представляй артикулом», подставлять следом наименование нельзя — это
+	// вернуло бы ровно то поведение, от которого он уходит. Запасные варианты
+	// задаются списком, и порядок в нём — его.
+	if len(e.Presentation) > 0 {
+		var out []Field
+		for _, name := range e.Presentation {
+			for _, f := range e.Fields {
+				if strings.EqualFold(f.Name, name) && f.Type == FieldTypeString {
+					out = append(out, f)
+					break
+				}
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+		// Пустой результат означает, что все указанные реквизиты не найдены или
+		// не строковые. Это ловит check; в рантайме откатываемся на правило по
+		// именам, чтобы объект не остался вовсе без представления.
+	}
 	var named, numbers, rest, codes []Field
 	for _, f := range e.Fields {
 		if f.Type != FieldTypeString {
@@ -83,10 +104,25 @@ func RowLabel(row map[string]any, e *Entity) string {
 	if e == nil {
 		return fmt.Sprintf("%v", row["id"])
 	}
+	// Пустое значение пропускается только при явном presentation. Список из
+	// нескольких реквизитов иначе не имел бы смысла: в строке данных поле почти
+	// всегда присутствует, и запасной вариант никогда бы не сработал — автор
+	// написал «Артикул, иначе Наименование», а получил бы пустую подпись.
+	//
+	// На правило по именам это НЕ распространяется: там пустая строка сегодня
+	// показывается как есть, и молча заменить её кодом значило бы поменять
+	// подписи в чужих конфигурациях, которые ключ не просили (#846).
+	skipEmpty := len(e.Presentation) > 0
 	for _, f := range LabelFields(e) {
-		if v, ok := row[f.Name]; ok && v != nil {
-			return fmt.Sprintf("%v", v)
+		v, ok := row[f.Name]
+		if !ok || v == nil {
+			continue
 		}
+		s := fmt.Sprintf("%v", v)
+		if skipEmpty && strings.TrimSpace(s) == "" {
+			continue
+		}
+		return s
 	}
 	// Нет строкового реквизита — для документа не проваливаемся сразу в сырой
 	// UUID (issue #361). Представление ссылки в языке запросов для документов —

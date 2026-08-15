@@ -49,6 +49,19 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: field %s references unknown enum %s", e.Name, f.Name, f.EnumName)
 			}
 		}
+		// presentation меняет представление объекта СРАЗУ ВЕЗДЕ — списки,
+		// подбор, поиск, REST, DSL. Опечатка в имени реквизита обязана падать
+		// здесь: в рантайме она выглядела бы как «представление вдруг стало
+		// другим», и искать причину пришлось бы по всему интерфейсу (#846).
+		for _, name := range e.Presentation {
+			f := findEntityFieldFold(e, name)
+			if f == nil {
+				return fmt.Errorf("entity %s: presentation ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+			if f.Type != FieldTypeString {
+				return fmt.Errorf("entity %s: presentation реквизит %s должен быть строковым (сейчас %s)", e.Name, name, f.Type)
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}

@@ -81,18 +81,21 @@ type rawEntity struct {
 	PostCaption        string            `yaml:"post_caption"`
 	PostAndCloseHidden bool              `yaml:"post_and_close_hidden"`
 	Numerator          *rawNumerator     `yaml:"numerator"`
-	Predefined         []rawPredefined   `yaml:"predefined"`
-	Hierarchical       bool              `yaml:"hierarchical"`
-	HierarchyKind      string            `yaml:"hierarchy_kind"`
-	ListForm           []string          `yaml:"list_form"`
-	ItemForm           []string          `yaml:"item_form"`
-	BasedOn            []string          `yaml:"based_on"`
-	Activity           *rawActivity      `yaml:"activity"`
-	ListMode           string            `yaml:"list_mode"`
-	ListRefreshOn      []string          `yaml:"list_refresh_on"`
-	NotifyChanges      bool              `yaml:"notify_changes"`
-	TileView           *rawTileView      `yaml:"tile_view"`
-	DetailPanel        *rawDetailPanel   `yaml:"detail_panel"`
+	// Presentation принимает и строку, и список: «одно поле» — частый случай,
+	// а список задаёт запасной вариант, если основной реквизит пуст.
+	Presentation  stringOrList    `yaml:"presentation"`
+	Predefined    []rawPredefined `yaml:"predefined"`
+	Hierarchical  bool            `yaml:"hierarchical"`
+	HierarchyKind string          `yaml:"hierarchy_kind"`
+	ListForm      []string        `yaml:"list_form"`
+	ItemForm      []string        `yaml:"item_form"`
+	BasedOn       []string        `yaml:"based_on"`
+	Activity      *rawActivity    `yaml:"activity"`
+	ListMode      string          `yaml:"list_mode"`
+	ListRefreshOn []string        `yaml:"list_refresh_on"`
+	NotifyChanges bool            `yaml:"notify_changes"`
+	TileView      *rawTileView    `yaml:"tile_view"`
+	DetailPanel   *rawDetailPanel `yaml:"detail_panel"`
 	// FullText — указатель, чтобы отличить отсутствие ключа (умолчание: все
 	// строковые реквизиты) от явного `fulltext: []` (объект вне поиска).
 	FullText *[]string `yaml:"fulltext"`
@@ -251,6 +254,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		}
 		e.Stages = st
 	}
+	e.Presentation = raw.Presentation.values()
 	if raw.Numerator != nil {
 		n := &Numerator{
 			Prefix:     raw.Numerator.Prefix,
@@ -438,6 +442,36 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 }
 
 // rawEnumValue принимает значение перечисления как скаляр (старый формат
+// stringOrList — ключ, который принимает и «одно значение», и список.
+//
+// `presentation: Артикул` — частый случай, `presentation: [Артикул,
+// Наименование]` задаёт запасной вариант. Заставлять писать список из одного
+// элемента значило бы менять формат ради удобства кода.
+type stringOrList []string
+
+func (v *stringOrList) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		if strings.TrimSpace(node.Value) != "" {
+			*v = stringOrList{node.Value}
+		}
+		return nil
+	}
+	var list []string
+	if err := node.Decode(&list); err != nil {
+		return err
+	}
+	out := make(stringOrList, 0, len(list))
+	for _, item := range list {
+		if s := strings.TrimSpace(item); s != "" {
+			out = append(out, s)
+		}
+	}
+	*v = out
+	return nil
+}
+
+func (v stringOrList) values() []string { return []string(v) }
+
 // "values: [A, B]") ИЛИ как маппинг {name, titles} (новый, с переводами).
 type rawEnumValue struct {
 	Name   string
