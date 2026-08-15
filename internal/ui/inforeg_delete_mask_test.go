@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -69,6 +70,27 @@ func TestUI_InfoRegDelete_ПодМаскойНаИзмеренииОтказыв
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("удаление под маской: код %d, ожидался 403; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Lossless machine keys used by ordinary delete forms must not bypass the
+	// field mask through a hidden input or another serialized template value.
+	listReq := reqWithChi(http.MethodGet, "/ui/inforeg/"+ir.Name, nil,
+		map[string]string{"name": ir.Name})
+	listReq = listReq.WithContext(auth.ContextWithUser(listReq.Context(), user))
+	listRec := httptest.NewRecorder()
+	s.infoRegList(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("список под маской: код %d; body=%s", listRec.Code, listRec.Body.String())
+	}
+	body := listRec.Body.String()
+	tableHTML := body
+	if start := strings.Index(body, "<table>"); start >= 0 {
+		tableHTML = body[start:]
+	}
+	// The reference filter above the table may legitimately contain the UUID;
+	// the row/detail/delete payload below it must not.
+	if strings.Contains(tableHTML, productID.String()) || strings.Contains(body, "onebase_info_reg_key_values") {
+		t.Fatalf("машинный ключ замаскированного измерения попал в HTML: %s", body)
 	}
 
 	// И запись действительно на месте: отказ обязан быть отказом, а не

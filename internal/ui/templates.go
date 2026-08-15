@@ -33,6 +33,66 @@ type managedTPColumnJSON struct {
 	Width   int  `json:"width,omitempty"`
 }
 
+// infoRegKeyValue serialises an information-register dimension for the hidden
+// delete form. Display formatting is not a primary-key format: SQLite booleans
+// arrive as 0/1 and dates as time.Time, while the delete parser requires a
+// lossless value that has the same meaning on PostgreSQL and SQLite.
+func infoRegKeyValue(field metadata.Field, row map[string]any) string {
+	if keyValues, ok := row[storage.InfoRegKeyValuesField].(map[string]string); ok {
+		if value, exists := keyValues[field.Name]; exists {
+			return value
+		}
+	}
+	value := row[field.Name]
+	if value == nil {
+		return ""
+	}
+	if field.RefEntity != "" {
+		if id, _, ok := uuidFromValue(value); ok {
+			return id
+		}
+	}
+	switch field.Type {
+	case metadata.FieldTypeDate:
+		switch typed := value.(type) {
+		case time.Time:
+			return typed.Format(time.RFC3339Nano)
+		case *time.Time:
+			if typed == nil {
+				return ""
+			}
+			return typed.Format(time.RFC3339Nano)
+		}
+	case metadata.FieldTypeBool:
+		switch typed := value.(type) {
+		case bool:
+			return fmt.Sprintf("%t", typed)
+		case int64:
+			if typed == 0 {
+				return "false"
+			}
+			if typed == 1 {
+				return "true"
+			}
+		case int:
+			if typed == 0 {
+				return "false"
+			}
+			if typed == 1 {
+				return "true"
+			}
+		case string:
+			switch strings.ToLower(strings.TrimSpace(typed)) {
+			case "true", "1":
+				return "true"
+			case "false", "0":
+				return "false"
+			}
+		}
+	}
+	return fmt.Sprintf("%v", value)
+}
+
 func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 	return template.New("root").Funcs(templateFuncs(bundle)).Parse(templateSource())
 }
@@ -45,7 +105,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		return key
 	}
 	return template.FuncMap{
-		"lower": strings.ToLower,
+		"lower":           strings.ToLower,
+		"infoRegKeyValue": infoRegKeyValue,
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
 				return processorParamPresencePrefix + name
@@ -2750,7 +2811,7 @@ const tplInfoReg = `
     <form method="POST" action="/ui/inforeg/{{lower $.InfoReg.Name}}/delete" style="display:inline"
           data-ob-confirm="{{t $.Lang "Удалить запись?"}}">
       {{if $.InfoReg.Periodic}}<input type="hidden" name="period" value="{{index $row "period_key"}}">{{end}}
-      {{range $.InfoReg.Dimensions}}<input type="hidden" name="{{.Name}}" value="{{index $row .Name}}">{{end}}
+      {{range $.InfoReg.Dimensions}}<input type="hidden" name="{{.Name}}" value="{{infoRegKeyValue . $row}}">{{end}}
       <button class="btn btn-danger btn-sm" type="submit">×</button>
     </form>
   </td>{{end}}

@@ -534,14 +534,14 @@ func maskCIKeyValue(m map[string]any, field string) (any, bool) {
 	return nil, false
 }
 
-// maskedInfoRegDimensions перечисляет ИЗМЕРЕНИЯ регистра сведений, которые
-// политика полей скрывает или маскирует для текущего пользователя.
+// maskedInfoRegKeyFields перечисляет поля первичного ключа регистра сведений,
+// которые политика полей скрывает или маскирует для текущего пользователя.
 //
-// Измерения — это ключ записи. Пока хоть одно из них закрыто, роль физически не
-// может назвать удаляемую строку: то, что она видит, — не ключ, а маска.
-// Поэтому вызывающий обязан отказать в операции, а не пытаться удалить по
-// маскированному значению (#861).
-func (s *Server) maskedInfoRegDimensions(ctx context.Context, ir *metadata.InfoRegister) []string {
+// Измерения и period периодического регистра образуют ключ записи. Пока хоть
+// одно поле закрыто, роль физически не может назвать удаляемую строку: то, что
+// она видит, — не ключ, а маска. Поэтому вызывающий обязан отказать в операции,
+// а не принимать угаданный raw-key из подделанного POST (#861).
+func (s *Server) maskedInfoRegKeyFields(ctx context.Context, ir *metadata.InfoRegister) []string {
 	if ir == nil {
 		return nil
 	}
@@ -553,6 +553,11 @@ func (s *Server) maskedInfoRegDimensions(ctx context.Context, ir *metadata.InfoR
 	for _, dim := range ir.Dimensions {
 		if d, ok := fieldDecisionByName(decisions, dim.Name); ok && d.Masked() {
 			masked = append(masked, dim.Name)
+		}
+	}
+	if ir.Periodic {
+		if d, ok := fieldDecisionByName(decisions, "period"); ok && d.Masked() {
+			masked = append(masked, "period")
 		}
 	}
 	return masked

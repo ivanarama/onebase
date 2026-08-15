@@ -478,3 +478,66 @@ form:
 		t.Fatal("expected error on unknown schema")
 	}
 }
+
+// `table_part:` у элемента ТЧ — рабочий ключ, а не украшение (#830).
+//
+// Элемент, описанный через него, молча не рендерился: имя ТЧ все потребители
+// (рендер, событие формы, частичная запись) берут из data_path. При этом ключ
+// объявлен в модели, загрузчик его читает, а check и forms validate проходят
+// зелёными — человек видел зелёную проверку и пустую форму.
+func TestManagedFormLoader_TablePartKeyFillsDataPath(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ.form.yaml")
+	doc := `schema: onebase.form/v1
+form:
+  name: ФормаЗаказа
+  kind: object
+  entity: Заказ
+elements:
+  - kind: ТабличнаяЧасть
+    name: Строки
+    table_part: Строки
+`
+	if err := os.WriteFile(yamlPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	el := form.GetElementByName("Строки")
+	if el == nil {
+		t.Fatal("элемент ТЧ не загружен")
+	}
+	if el.DataPath != "Объект.Строки" {
+		t.Fatalf("data_path = %q, ожидался «Объект.Строки» — без него таблица не отрисуется", el.DataPath)
+	}
+}
+
+// Явный data_path сильнее: если автор написал оба ключа, побеждает тот, что
+// уже работает, — иначе правка меняла бы поведение существующих форм.
+func TestManagedFormLoader_ExplicitDataPathWins(t *testing.T) {
+	dir := t.TempDir()
+	yamlPath := filepath.Join(dir, "заказ2.form.yaml")
+	doc := `schema: onebase.form/v1
+form:
+  name: ФормаЗаказа
+  kind: object
+  entity: Заказ
+elements:
+  - kind: ТабличнаяЧасть
+    name: Строки
+    table_part: Другая
+    data_path: Объект.Строки
+`
+	if err := os.WriteFile(yamlPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заказ")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	if el := form.GetElementByName("Строки"); el == nil || el.DataPath != "Объект.Строки" {
+		t.Fatalf("явный data_path перезаписан: %+v", el)
+	}
+}

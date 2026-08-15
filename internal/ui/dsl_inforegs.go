@@ -9,6 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -341,14 +342,37 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 		return &interpreter.MapThis{M: row}
 	case "количество", "count":
 		return float64(len(rs.rows))
+	case "получить", "get":
+		if len(args) == 0 {
+			interpreter.RaiseUserError("Получить(" + rs.ir.Name + "): не указан индекс строки")
+		}
+		// Индекс приходит из DSL числом; decimal и строка проходят тем же
+		// путём, что у остальных методов коллекций.
+		idx := runtime.RowIndexArg(args[0])
+		if idx < 0 || idx >= len(rs.rows) {
+			interpreter.RaiseUserError(fmt.Sprintf(
+				"Получить(%s): индекс %d вне набора (строк %d)", rs.ir.Name, idx, len(rs.rows)))
+		}
+		return &interpreter.MapThis{M: rs.rows[idx]}
 	case "записать", "write":
 		rs.write()
 		return nil
 	}
 	interpreter.RaiseUserError("НаборЗаписей(" + rs.ir.Name + "): неизвестный метод «" + method +
-		"» (доступны Прочитать, Очистить, Добавить, Количество, Записать)")
+		"» (доступны Прочитать, Очистить, Добавить, Количество, Получить, Записать)")
 	return nil
 }
+
+// IterateRows делает набор перебираемым: `Для Каждого Стр Из Набор Цикл`.
+//
+// Без него прочитанные строки были для прикладного кода непрозрачны: их можно
+// было сосчитать и перезаписать целиком, но не посмотреть и не поправить — то
+// есть типичный цикл «прочитал срез, поправил один ресурс, записал» приходилось
+// подменять на «прочитал запросом, собрал набор заново» (#905).
+//
+// Отдаётся тот же срез строк, что правит Добавить(): правка строки в цикле
+// должна попадать в Записать(), иначе перебор был бы обманчиво бесполезным.
+func (rs *infoRegRecordSet) IterateRows() []map[string]any { return rs.rows }
 
 // write замещает содержимое по отбору: удаление и вставка в одной транзакции.
 //
