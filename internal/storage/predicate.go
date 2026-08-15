@@ -22,6 +22,7 @@ type Predicate struct {
 	Op           string
 	Value        any
 	Values       []any
+	NumberField  *metadata.Field `json:"-" yaml:"-"`
 	RefEntity    *metadata.Entity
 	RefPredicate *Predicate
 }
@@ -90,8 +91,12 @@ func predicateSQL(d Dialect, entity *metadata.Entity, p Predicate, nextArg int, 
 		ph := make([]string, 0, len(values))
 		args := make([]any, 0, len(values))
 		for _, v := range values {
+			arg, err := predicateSQLValue(d, entity, field, v)
+			if err != nil {
+				return "", nil, nextArg, fmt.Errorf("row predicate field %q: %w", p.Field, err)
+			}
 			ph = append(ph, d.Placeholder(nextArg))
-			args = append(args, predicateSQLValue(d, entity, field, v))
+			args = append(args, arg)
 			nextArg++
 		}
 		sqlOp := "IN"
@@ -185,8 +190,12 @@ func predicateCompareSQL(d Dialect, entity *metadata.Entity, field *metadata.Fie
 		}
 		return fmt.Sprintf("%s IS NULL", col), nil, nextArg, nil
 	}
+	arg, err := predicateSQLValue(d, entity, field, value)
+	if err != nil {
+		return "", nil, nextArg, err
+	}
 	return fmt.Sprintf("%s %s %s", col, op, d.Placeholder(nextArg)),
-		[]any{predicateSQLValue(d, entity, field, value)}, nextArg + 1, nil
+		[]any{arg}, nextArg + 1, nil
 }
 
 func predicateColumn(entity *metadata.Entity, field string) (string, *metadata.Field, bool) {
@@ -252,6 +261,30 @@ func predicateColumn(entity *metadata.Entity, field string) (string, *metadata.F
 	return "", nil, false
 }
 
+// PredicateNumberField resolves the NUMBER metadata used by an access-policy
+// leaf, including synthetic fields and their aliases. A nil result deliberately
+// leaves comparison semantics untouched for non-number fields.
+func PredicateNumberField(entity *metadata.Entity, field string) *metadata.Field {
+	_, resolved, ok := predicateColumn(entity, field)
+	if !ok || resolved == nil || resolved.Type != metadata.FieldTypeNumber {
+		return nil
+	}
+	copy := *resolved
+	return &copy
+}
+
+// ValidatePredicateNumberValue applies the same bounded conversion used by
+// persistence and SQL predicate arguments. Access-policy compilation uses it
+// so a malformed numeric literal rejects the whole policy instead of becoming
+// a false comparison that ne/not_in (or another Any branch) could bypass.
+func ValidatePredicateNumberValue(field *metadata.Field, value any) error {
+	if field == nil || isPredicateNull(value) {
+		return nil
+	}
+	_, err := canonicalNumberArg(*field, value)
+	return err
+}
+
 func predicateEntityHasField(entity *metadata.Entity, field string) bool {
 	if entity == nil {
 		return false
@@ -264,18 +297,18 @@ func predicateEntityHasField(entity *metadata.Entity, field string) bool {
 	return false
 }
 
-func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field, value any) any {
+func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field, value any) (any, error) {
 	if field == nil {
-		return value
+		return value, nil
 	}
 	if field.RefEntity != "" || strings.EqualFold(field.Name, "id") || strings.EqualFold(field.Name, "parent_id") {
 		if id, ok := parseAnyUUID(value); ok {
-			return idArg(d, id)
+			return idArg(d, id), nil
 		}
 	}
 	if field.Type == metadata.FieldTypeBool {
 		if b, ok := parseAnyBool(value); ok {
-			return b
+			return b, nil
 		}
 	}
 	if field.Type == metadata.FieldTypeDate {
@@ -286,12 +319,15 @@ func predicateSQLValue(d Dialect, entity *metadata.Entity, field *metadata.Field
 			// the corresponding persisted representation while PostgreSQL keeps
 			// the native timestamptz value in both cases.
 			if d.Name() == "sqlite" && !predicateEntityUsesBoundTime(entity) {
-				return t.UTC().Format(time.RFC3339)
+				return t.UTC().Format(time.RFC3339), nil
 			}
-			return t
+			return t, nil
 		}
 	}
-	return value
+	if field.Type == metadata.FieldTypeNumber {
+		return canonicalNumberArg(*field, value)
+	}
+	return value, nil
 }
 
 func predicateEntityUsesBoundTime(entity *metadata.Entity) bool {
@@ -512,7 +548,7 @@ func matchPredicateTruth(row map[string]any, p Predicate, resolver PredicateRefR
 		if !ok || isPredicateNull(actual) {
 			return predicateUnknown
 		}
-		return predicateTruthFromBool(valuesEqual(actual, p.Value))
+		return predicateEqualTruth(p, actual, p.Value)
 	case "ne":
 		if isPredicateNull(p.Value) {
 			return predicateTruthFromBool(ok && !isPredicateNull(actual))
@@ -520,11 +556,11 @@ func matchPredicateTruth(row map[string]any, p Predicate, resolver PredicateRefR
 		if !ok || isPredicateNull(actual) {
 			return predicateUnknown
 		}
-		return predicateTruthFromBool(!valuesEqual(actual, p.Value))
+		return negatePredicateTruth(predicateEqualTruth(p, actual, p.Value))
 	case "in":
-		return predicateInTruth(actual, ok, predicateValues(p))
+		return predicateInTruth(actual, ok, p)
 	case "not_in":
-		return negatePredicateTruth(predicateInTruth(actual, ok, predicateValues(p)))
+		return negatePredicateTruth(predicateInTruth(actual, ok, p))
 	case "empty":
 		return predicateTruthFromBool(!ok || actual == nil || fmt.Sprintf("%v", actual) == "")
 	case "not_empty":
@@ -552,7 +588,8 @@ func negatePredicateTruth(value predicateTruth) predicateTruth {
 	}
 }
 
-func predicateInTruth(actual any, exists bool, values []any) predicateTruth {
+func predicateInTruth(actual any, exists bool, p Predicate) predicateTruth {
+	values := predicateValues(p)
 	if len(values) == 0 {
 		return predicateFalse
 	}
@@ -565,14 +602,37 @@ func predicateInTruth(actual any, exists bool, values []any) predicateTruth {
 			unknown = true
 			continue
 		}
-		if valuesEqual(actual, value) {
+		switch predicateEqualTruth(p, actual, value) {
+		case predicateTrue:
 			return predicateTrue
+		case predicateUnknown:
+			unknown = true
 		}
 	}
 	if unknown {
 		return predicateUnknown
 	}
 	return predicateFalse
+}
+
+// predicateEqualTruth uses field metadata carried by access-policy predicates
+// to mirror storage normalization. Numeric columns are persisted as canonical
+// text, so a loaded "100.00" must compare equal to policy literals such as
+// "100" or 100. A failed conversion is UNKNOWN rather than false: otherwise
+// ne/not_in would invert the failure and admit a protected row.
+func predicateEqualTruth(p Predicate, actual, expected any) predicateTruth {
+	if p.NumberField == nil {
+		return predicateTruthFromBool(valuesEqual(actual, expected))
+	}
+	actualCanonical, err := canonicalNumberArg(*p.NumberField, actual)
+	if err != nil || isPredicateNull(actualCanonical) {
+		return predicateUnknown
+	}
+	expectedCanonical, err := canonicalNumberArg(*p.NumberField, expected)
+	if err != nil || isPredicateNull(expectedCanonical) {
+		return predicateUnknown
+	}
+	return predicateTruthFromBool(valuesEqual(actualCanonical, expectedCanonical))
 }
 
 func rowValue(row map[string]any, field string) (any, bool) {
