@@ -16,9 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -94,11 +96,49 @@ type Service struct {
 	// document.save/document.post или catalog.save в зависимости от вида и Action.
 	Hooks *webhook.Dispatcher
 
+	// HookTimeout — предел времени ОДНОГО запуска прикладного хука
+	// (ОбработкаПроведения, ПриЗаписи, ОбработкаЗаполнения…). 0 = без предела.
+	//
+	// Хуки Save исполнялись обычным Interp.Run — без дедлайна и внутри открытой
+	// транзакции. `Приостановить(300)` в модуле проведения держал HTTP-запрос и
+	// БД-транзакцию пять минут; на SQLite это единственное соединение, то есть
+	// вся база (#865). Deadline-aware защита паузы (#736) существовала только
+	// для sandboxed-путей, а два самых горячих входа шли мимо неё.
+	HookTimeout time.Duration
+
 	// ChangePublisher — опциональный потребитель события «строка изменилась»
 	// (план 87, ступень A, живой список). nil = автопубликация выключена
 	// (тесты/procrun/migrate). Реализация в ui рассылает служебное событие
 	// живым спискам с адресацией строго по RLS.
 	ChangePublisher ChangePublisher
+}
+
+// runHook исполняет прикладной хук с дедлайном.
+//
+// Единственная точка запуска хуков Save: пять прежних вызовов Interp.Run
+// разошлись бы по одному, а «забыли дедлайн в одном из пяти» — ровно тот отказ,
+// который и завёл #865. Предел согласуется с дедлайном контекста
+// (interpreter.ClampWallClock): профиль в 30 секунд не должен переживать
+// 10-секундный запрос, продолжая держать транзакцию после ухода клиента.
+//
+// При HookTimeout = 0 поведение прежнее — обычный Run без лимита: нулевое
+// значение означает «предел не настроен», и менять на нём поведение молча
+// нельзя.
+func (s *Service) runHook(ctx context.Context, proc *ast.ProcedureDecl, this interpreter.This, vars map[string]any) error {
+	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
+		return s.Interp.RunSandboxed(proc, this, interpreter.SandboxProfile{Context: ctx, MaxWallClock: wall}, nil, vars)
+	}
+	return s.Interp.Run(proc, this, vars)
+}
+
+func (s *Service) hookExecutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if wall := interpreter.ClampWallClock(ctx, s.HookTimeout); wall > 0 {
+		return context.WithTimeout(ctx, wall)
+	}
+	return context.WithCancel(ctx)
 }
 
 // ChangePublisher принимает уведомление об успешном изменении строки сущности
@@ -176,6 +216,146 @@ func webhookRecord(fields map[string]any) map[string]any {
 	return rec
 }
 
+// EnsureAutoNumber заполняет реквизит автонумерации объекта, если он пуст.
+//
+// Какой именно реквизит — решает storage.AutoNumberField: «Номер» у документа
+// всегда, «Код» у справочника только при объявленном numerator:. Заполненное
+// вручную значение не трогаем: платформа не должна переписывать введённое
+// пользователем. Object.Set обновляет уже существующий ключ независимо от
+// регистра: например, пустой Pascal-case «Код» не останется рядом с новым
+// lowercase «код», из-за которого storage сохранил бы пустое значение.
+//
+// Вызывающий обязан передать контекст той же транзакции, в которой будет
+// записан объект. Тогда ошибка хука или БД откатывает и строку, и счётчик.
+func (s *Service) EnsureAutoNumber(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) error {
+	if entity == nil || obj == nil {
+		return errors.New("автонумерация: не задана сущность или объект")
+	}
+	if !storage.HasTx(ctx) {
+		return fmt.Errorf("автонумерация %s: %w", entity.Name, ErrAutoNumberRequiresTx)
+	}
+	target := storage.AutoNumberField(entity)
+	if target == "" {
+		return nil
+	}
+	if s == nil || s.Store == nil {
+		return errors.New("автонумерация: не задано хранилище")
+	}
+	for _, f := range entity.Fields {
+		if !strings.EqualFold(f.Name, target) || f.Type != metadata.FieldTypeString {
+			continue
+		}
+		if obj.Fields == nil {
+			obj.Fields = make(map[string]any)
+		}
+		if err := deferAutoNumberRestore(ctx, obj, f.Name); err != nil {
+			return fmt.Errorf("автонумерация %s.%s: %w", entity.Name, f.Name, err)
+		}
+		if value, ok := nonEmptyAutoNumberValue(obj.Fields, f.Name); ok {
+			obj.Set(f.Name, value)
+			return nil
+		}
+
+		var (
+			value string
+			err   error
+		)
+		if entity.Numerator != nil {
+			value, err = s.Store.GenerateNumber(ctx, entity, obj.Fields)
+		} else {
+			// Документы без блока numerator: исторически используют общий
+			// последовательный шестизначный номер. Для справочника сюда
+			// попасть нельзя: AutoNumberField вернул бы пустую строку.
+			var n int64
+			n, err = s.Store.NextNum(ctx, entity.Name)
+			if err == nil {
+				value = fmt.Sprintf("%06d", n)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("автонумерация %s.%s: %w", entity.Name, f.Name, err)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("автонумерация %s.%s вернула пустое значение", entity.Name, f.Name)
+		}
+		obj.Set(f.Name, value)
+		return nil
+	}
+	return nil
+}
+
+// ErrAutoNumberRequiresTx means that numbering was attempted without a
+// storage-managed transaction. Generating outside one would burn a number on
+// any later rejection and cannot provide rollback compensation for obj.Fields.
+var ErrAutoNumberRequiresTx = errors.New("автонумерация требует управляемую транзакцию storage")
+
+// deferAutoNumberRestore preserves the exact pre-generation shape of every
+// spelling of the numbered field. Database rollback already restores the
+// counter; this compensation keeps the caller-owned map in lockstep with it,
+// including retries of the same SaveRequest or DSL writer.
+func deferAutoNumberRestore(ctx context.Context, obj *runtime.Object, fieldName string) error {
+	originalFields := obj.Fields
+	originalValues := make(map[string]any)
+	for key, value := range originalFields {
+		if strings.EqualFold(key, fieldName) {
+			originalValues[key] = value
+		}
+	}
+	restore := func() {
+		// A callback is allowed to replace obj.Fields. Clean the numbered field
+		// from that map as well, then reconnect the original caller-owned map.
+		if obj.Fields != nil {
+			for key := range obj.Fields {
+				if strings.EqualFold(key, fieldName) {
+					delete(obj.Fields, key)
+				}
+			}
+		}
+		for key := range originalFields {
+			if strings.EqualFold(key, fieldName) {
+				delete(originalFields, key)
+			}
+		}
+		for key, value := range originalValues {
+			originalFields[key] = value
+		}
+		obj.Fields = originalFields
+	}
+	if !storage.DeferUntilTxRollback(ctx, restore) {
+		return ErrAutoNumberRequiresTx
+	}
+	return nil
+}
+
+// nonEmptyAutoNumberValue выбирает заданное вручную значение детерминированно:
+// точное имя из метаданных важнее lowercase-варианта, затем прочих написаний.
+func nonEmptyAutoNumberValue(fields map[string]any, canonical string) (any, bool) {
+	if value, ok := fields[canonical]; ok && autoNumberValueIsNonEmpty(value) {
+		return value, true
+	}
+	lower := strings.ToLower(canonical)
+	if value, ok := fields[lower]; ok && autoNumberValueIsNonEmpty(value) {
+		return value, true
+	}
+	var (
+		chosenKey string
+		chosen    any
+	)
+	for key, value := range fields {
+		if !strings.EqualFold(key, canonical) || !autoNumberValueIsNonEmpty(value) {
+			continue
+		}
+		if chosenKey == "" || key < chosenKey {
+			chosenKey, chosen = key, value
+		}
+	}
+	return chosen, chosenKey != ""
+}
+
+func autoNumberValueIsNonEmpty(value any) bool {
+	return value != nil && strings.TrimSpace(fmt.Sprint(value)) != ""
+}
+
 // SaveRequest — входной DTO для Service.Save.
 type SaveRequest struct {
 	Entity *metadata.Entity
@@ -184,6 +364,12 @@ type SaveRequest struct {
 
 	Fields        map[string]any
 	TablePartRows map[string][]map[string]any
+
+	// Preflight runs in the save transaction after auto-numbering and before
+	// caller-independent enrichment, provisional persistence and entity hooks.
+	// It is intended for row access and form-level BeforeWrite/OnWrite checks
+	// that must see the assigned number without consuming it on rejection.
+	Preflight func(ctx context.Context, obj *runtime.Object) error
 
 	// Action: "" (просто Записать) | "post" | "post_and_close".
 	// Для документов с Posting=true и Action=post* запускается OnPost вместо
@@ -204,8 +390,8 @@ type SaveResult struct {
 	Movements   *runtime.MovementsCollector // для отладки/инспекции (заполняется хуком OnPost)
 }
 
-// Save выполняет полный цикл сохранения: prepare → run hook → tx (upsert +
-// table parts + movements + posting).
+// Save выполняет полный цикл сохранения в одной транзакции: auto-number →
+// request preflight → prepare → hook → upsert + table parts + movements + posting.
 //
 // Возвращает (result, nil) при успехе. Если DSL-хук вернул ошибку — это НЕ
 // технический сбой: возвращается result.DSLError != "" и err == nil, caller
@@ -214,7 +400,6 @@ type SaveResult struct {
 // версий — caller должен проверить errors.Is).
 func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
 	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
-	SetPeriodFromFields(mc, req.Entity, req.Fields)
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
 
@@ -236,18 +421,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
-	// Pre-hook enrichment: даём caller'у заменить UUID-строки на *Ref и т.п.
-	if s.PrepareHook != nil {
-		s.PrepareHook(ctx, req.Entity, obj)
-	}
-	if s.EnrichTPRows != nil {
-		for _, tp := range req.Entity.TableParts {
-			if rows, ok := obj.TablePartRows[tp.Name]; ok {
-				s.EnrichTPRows(ctx, tp, rows)
-			}
-		}
-	}
-
 	// Выбор хука: OnPost при проведении документа, иначе OnWrite.
 	isPosting := req.Entity.Posting && (req.Action == "post" || req.Action == "post_and_close")
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
@@ -259,14 +432,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		}
 		if marked {
 			return SaveResult{ID: req.ID, DSLError: storage.ErrPostingDeletionMarked.Error()}, nil
-		}
-	}
-	// Дата запрета проведения (свёртка базы, план 74): документ свёрнутого
-	// периода нельзя провести/перепровести — иначе движения вернутся и дадут
-	// двойной счёт с опорными остатками. Проверяем по дате, которую проводим.
-	if isPosting && mc.Period != nil {
-		if lock, ok := s.Store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {
-			return SaveResult{ID: req.ID, DSLError: storage.PostingFrozenError(lock).Error()}, nil
 		}
 	}
 	hookName := "OnWrite"
@@ -289,6 +454,49 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// полноценная шапка: FK-ссылки из создаваемых хуком объектов уже валидны, но
 	// при любой последующей ошибке откатываются вместе с родителем.
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
+		// Единая реализация для формы, ИИ, REST v1/v2 и DSL-объектов. Номер
+		// выдаётся внутри транзакции записи и до provisional/hook: хук его
+		// видит, а его исключение или последующий сбой БД откатывает счётчик.
+		if req.IsNew {
+			if err := s.EnsureAutoNumber(txCtx, req.Entity, obj); err != nil {
+				return err
+			}
+		}
+		if req.Preflight != nil {
+			if err := req.Preflight(txCtx, obj); err != nil {
+				return err
+			}
+		}
+		// Form hooks dereference rich values before returning to persistence,
+		// including pseudo fields. Restore the authoritative self reference for
+		// the entity hook and storage, and follow a replaced Fields map locally.
+		if obj.Fields == nil {
+			obj.Fields = map[string]any{}
+		}
+		obj.Fields["ссылка"] = selfRef
+		obj.Fields["reference"] = selfRef
+		req.Fields = obj.Fields
+		req.TablePartRows = obj.TablePartRows
+		// Enrichment must follow caller preflight: row predicates retain their
+		// raw-input semantics, while the entity hook still receives rich refs.
+		if s.PrepareHook != nil {
+			s.PrepareHook(txCtx, req.Entity, obj)
+		}
+		if s.EnrichTPRows != nil {
+			for _, tp := range req.Entity.TableParts {
+				if rows, ok := obj.TablePartRows[tp.Name]; ok {
+					s.EnrichTPRows(txCtx, tp, rows)
+				}
+			}
+		}
+		SetPeriodFromFields(mc, req.Entity, obj.Fields)
+		// Form preflight may change the document date. Check the posting lock
+		// against that final value, inside the same rollback scope.
+		if isPosting && mc.Period != nil {
+			if lock, ok := s.Store.GetPostingLockDate(txCtx); ok && storage.PostingFrozen(lock, *mc.Period) {
+				return &hookRunError{err: storage.PostingFrozenError(lock)}
+			}
+		}
 		if req.Entity.Posting && !req.IsNew && !isPosting {
 			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
 			if err != nil {
@@ -302,7 +510,8 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 					return err
 				}
 			}
-			txHookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+			txHookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+			defer cancelHook()
 			var vars map[string]any
 			var txState *interpreter.TxState
 			if s.BuildVars != nil {
@@ -313,7 +522,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			if s.MakeThis != nil {
 				thisVal = s.MakeThis(txHookCtx, txState, obj, req.Entity)
 			}
-			runErr := s.Interp.Run(proc, thisVal, vars)
+			runErr := s.runHook(txHookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return &hookRunError{err: runErr}
 			}
@@ -401,9 +610,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	return SaveResult{ID: req.ID, DSLMessages: msgs, Movements: mc}, nil
 }
 
-// hookRunError distinguishes a DSL business error from a technical storage
-// error. Returning it from WithTx rolls the transaction back; Unpost then
-// exposes the message through SaveResult, consistently with Save.
+// hookRunError distinguishes a user-facing save rejection (DSL hook or a
+// platform business guard such as posting lock) from a technical storage
+// error. Returning it from WithTx rolls the transaction back; callers expose
+// the message through SaveResult.
 type hookRunError struct{ err error }
 
 func (e *hookRunError) Error() string { return e.err.Error() }
@@ -455,7 +665,8 @@ func (s *Service) unpostInTx(
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
-	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+	defer cancelHook()
 	if s.PrepareHook != nil {
 		s.PrepareHook(hookCtx, entity, obj)
 	}
@@ -478,7 +689,7 @@ func (s *Service) unpostInTx(
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		return &hookRunError{err: runErr}
 	}
@@ -637,7 +848,8 @@ func (s *Service) runDeleteHook(
 	if obj == nil {
 		return nil // объекта уже нет — звать хук не о чем
 	}
-	hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+	hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+	defer cancelHook()
 	if s.PrepareHook != nil {
 		s.PrepareHook(hookCtx, entity, obj)
 	}
@@ -660,7 +872,7 @@ func (s *Service) runDeleteHook(
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		return &hookRunError{err: runErr}
 	}
@@ -844,12 +1056,14 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 		// Нет хука — отдаём пустой объект, пользователь заполнит руками.
 		return FillResult{Fields: recvObj.Fields, TablePartRows: recvObj.TablePartRows}, nil
 	}
+	hookCtx, cancelHook := s.hookExecutionContext(ctx)
+	defer cancelHook()
 
 	var msgs []string
 	var vars map[string]any
 	var txState *interpreter.TxState
 	if s.BuildVars != nil {
-		vars, txState = s.BuildVars(ctx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
+		vars, txState = s.BuildVars(hookCtx, runtime.NewMovementsCollector(req.Receiver.Name, recvObj.ID), &msgs)
 	} else {
 		vars = make(map[string]any)
 	}
@@ -865,9 +1079,9 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	// фабрику; иначе — голый *Object (для документов без ТЧ всё равно работает).
 	var thisVal interpreter.This = recvObj
 	if s.MakeThis != nil {
-		thisVal = s.MakeThis(ctx, txState, recvObj, req.Receiver)
+		thisVal = s.MakeThis(hookCtx, txState, recvObj, req.Receiver)
 	}
-	runErr := s.Interp.Run(proc, thisVal, vars)
+	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 		normalizeTPRowKeys(recvObj.TablePartRows, req.Receiver)
 		if dslErr, ok := runErr.(*interpreter.DSLError); ok {
@@ -1005,7 +1219,8 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	proc := s.Reg.GetProcedure(ent.Name, "OnPost")
 	return s.Store.WithTx(ctx, func(txCtx context.Context) error {
 		if proc != nil {
-			hookCtx := runtime.ContextWithLockCollector(txCtx, lockCollector)
+			hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
+			defer cancelHook()
 			var msgs []string
 			var vars map[string]any
 			var txState *interpreter.TxState
@@ -1017,7 +1232,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 			if s.MakeThis != nil {
 				thisVal = s.MakeThis(hookCtx, txState, obj, ent)
 			}
-			runErr := s.Interp.Run(proc, thisVal, vars)
+			runErr := s.runHook(hookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return fmt.Errorf("перепроведение %s: ОбработкаПроведения: %w", ent.Name, runErr)
 			}

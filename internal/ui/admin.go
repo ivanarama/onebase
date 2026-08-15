@@ -871,10 +871,11 @@ func (s *Server) adminCleanup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	env := &dbcheck.Env{
-		DB:            s.store,
-		Entities:      s.reg.Entities(),
-		Registers:     s.reg.Registers(),
-		InfoRegisters: s.reg.InfoRegisters(),
+		DB:               s.store,
+		Entities:         s.reg.Entities(),
+		Registers:        s.reg.Registers(),
+		InfoRegisters:    s.reg.InfoRegisters(),
+		AccountRegisters: s.reg.AccountRegisters(),
 	}
 
 	fix := map[string]bool{}

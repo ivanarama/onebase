@@ -48,10 +48,13 @@ func TestSaveSubsystem_DBModePersistsContents(t *testing.T) {
 		{
 			Path: "subsystems/атс.yaml",
 			Content: []byte(
-				"name: АТС\n" +
+				"defaults: &defaults\n" +
+					"  icon: cart\n" +
+					"name: АТС\n" +
 					"title: АТС\n" +
 					"roles: [Диспетчер]\n" +
 					"order: 10\n" +
+					"<<: *defaults\n" +
 					"contents:\n" +
 					"  catalogs: [ГП_атс]\n",
 			),
@@ -100,6 +103,7 @@ func TestSaveSubsystem_DBModePersistsContents(t *testing.T) {
 		t.Fatalf("ReadFile: ok=%v err=%v", ok, err)
 	}
 	var saved struct {
+		Icon     string   `yaml:"icon"`
 		Roles    []string `yaml:"roles"`
 		Contents struct {
 			Catalogs []string `yaml:"catalogs"`
@@ -114,5 +118,8 @@ func TestSaveSubsystem_DBModePersistsContents(t *testing.T) {
 	}
 	if !slices.Equal(saved.Roles, []string{"Диспетчер"}) {
 		t.Fatalf("скрытый от формы whitelist roles потерян: %v", saved.Roles)
+	}
+	if saved.Icon != "" {
+		t.Fatalf("очищенное поле icon восстановилось из YAML merge: %q\n%s", saved.Icon, raw)
 	}
 }

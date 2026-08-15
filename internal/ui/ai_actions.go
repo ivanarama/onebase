@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -516,30 +517,28 @@ func (s *Server) aiActionRun(w http.ResponseWriter, r *http.Request) {
 		obj.Set(k, s.aiTypedValue(entity.Fields, k, v))
 	}
 	obj.TablePartRows = action.TPRows
-	// Автонумерация — та же общая точка, что при создании из формы (117C).
-	// Локальная копия здесь читала obj.Fields["Номер"] напрямую, а Object.Set
-	// хранит ключи в нижнем регистре — проверка пустоты всегда была истинной,
-	// и явно заданный пользователем номер молча затирался (Д13, issue #866).
-	s.ensureNewDocumentNumber(ctx, entity, obj)
-	// Строковый доступ (план 79): автозаполнение обязательных полей политики и
-	// проверка, что пользователь вправе записать такую строку.
-	if err := s.autoFillRowAccessFields(ctx, entity, "write", obj.Fields); err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "Строковый доступ: " + err.Error()})
-		return
-	}
-	if err := s.checkDSLRowAccess(ctx, entity, "write", uuid.Nil, obj.Fields); err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
-		return
-	}
-
+	var rowAccessErr error
 	result, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:        entity,
 		ID:            obj.ID,
 		IsNew:         true,
 		Fields:        obj.Fields,
 		TablePartRows: obj.TablePartRows,
+		Preflight: func(txCtx context.Context, saveObj *runtime.Object) error {
+			if rowAccessErr = s.autoFillRowAccessFields(txCtx, entity, "write", saveObj.Fields); rowAccessErr != nil {
+				return errCreateRowAccessDenied
+			}
+			if rowAccessErr = s.checkDSLRowAccess(txCtx, entity, "write", uuid.Nil, saveObj.Fields); rowAccessErr != nil {
+				return errCreateRowAccessDenied
+			}
+			return nil
+		},
 	})
 	if err != nil {
+		if errors.Is(err, errCreateRowAccessDenied) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": rowAccessErr.Error()})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"error": "Ошибка записи: " + err.Error()})
 		return
 	}

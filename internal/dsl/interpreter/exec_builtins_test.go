@@ -1,15 +1,20 @@
 package interpreter
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
 // execRunner достаёт builtin ВыполнитьКоманду с заданным guard'ом.
-func execRunner(guard ExecGuard) BuiltinFunc {
-	return NewExecFunctions(guard, nil)["ВыполнитьКоманду"].(BuiltinFunc)
+func execRunner(guard ExecGuard, ctxSources ...CtxSource) BuiltinFunc {
+	return NewExecFunctions(guard, nil, ctxSources...)["ВыполнитьКоманду"].(BuiltinFunc)
 }
 
 // echoCmd возвращает кросс-платформенную команду echo для аргумента arg.
@@ -79,6 +84,132 @@ func TestExecuteCommand_Timeout(t *testing.T) {
 	}
 	if fin, _ := res.(*MapThis).Get("Завершилась").(bool); fin {
 		t.Errorf("ожидалось Завершилась=false (убито по таймауту)")
+	}
+}
+
+func TestExecuteCommand_ExecutionContextCancelsProcess(t *testing.T) {
+	var cmd string
+	var args *Array
+	if runtime.GOOS == "windows" {
+		cmd, args = "ping", NewArray([]any{"-n", "6", "127.0.0.1"})
+	} else {
+		cmd, args = "sleep", NewArray([]any{"6"})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := execRunner(nil, NewStaticCtx(ctx))([]any{cmd, args, 10.0}, "", 0)
+	if err == nil {
+		t.Fatal("expected execution context deadline error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "врем") {
+		t.Fatalf("unexpected deadline error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("execution context did not stop process, elapsed %v", elapsed)
+	}
+}
+
+func TestExecuteCommand_ExecutionContextCancelsDescendantTree(t *testing.T) {
+	heartbeat := t.TempDir() + string(os.PathSeparator) + "descendant-heartbeat"
+	args := NewArray([]any{
+		"-test.run=^TestExecProcessTreeHelper$",
+		"--",
+		"onebase-exec-tree-helper",
+		"parent",
+		heartbeat,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type cancellationPoint struct {
+		heartbeat string
+		at        time.Time
+	}
+	canceled := make(chan cancellationPoint, 1)
+	go func() {
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			data, err := os.ReadFile(heartbeat)
+			if value := strings.TrimSpace(string(data)); err == nil && value != "" {
+				point := cancellationPoint{heartbeat: value, at: time.Now()}
+				cancel()
+				canceled <- point
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		cancel()
+		canceled <- cancellationPoint{}
+	}()
+
+	_, err := execRunner(nil, NewStaticCtx(ctx))([]any{os.Args[0], args, 20.0}, "", 0)
+	point := <-canceled
+	if point.heartbeat == "" {
+		t.Fatal("descendant did not start within 8 seconds")
+	}
+	if err == nil {
+		t.Fatal("expected execution context cancellation error")
+	}
+	if elapsed := time.Since(point.at); elapsed > 3*time.Second {
+		t.Fatalf("descendant-held output pipe outlived cancellation: %v", elapsed)
+	}
+
+	// Poll instead of taking one delayed snapshot: killing the child while
+	// os.WriteFile is between truncate and write can legitimately leave an
+	// empty file. A surviving child will publish another non-empty sequence on
+	// its next 40 ms tick, which this window must observe.
+	stableUntil := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(stableUntil) {
+		second, readErr := os.ReadFile(heartbeat)
+		if readErr != nil {
+			t.Fatalf("read descendant heartbeat after cancellation: %v", readErr)
+		}
+		if value := strings.TrimSpace(string(second)); value != "" && value != point.heartbeat {
+			t.Fatalf("descendant survived command cancellation: heartbeat advanced from %q to %q", point.heartbeat, value)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// TestExecProcessTreeHelper runs in subprocesses created by the regression
+// above. The parent intentionally does not wait for its child, while the child
+// retains stdout/stderr and updates a heartbeat. Killing only the direct parent
+// therefore leaves both a live descendant and os/exec copy goroutines blocked.
+func TestExecProcessTreeHelper(t *testing.T) {
+	separator := -1
+	for i, arg := range os.Args {
+		if arg == "onebase-exec-tree-helper" {
+			separator = i
+			break
+		}
+	}
+	if separator < 0 {
+		return
+	}
+	if len(os.Args) < separator+3 {
+		t.Fatal("process-tree helper requires mode and heartbeat path")
+	}
+	mode, heartbeat := os.Args[separator+1], os.Args[separator+2]
+	switch mode {
+	case "parent":
+		child := exec.Command(os.Args[0], "-test.run=^TestExecProcessTreeHelper$", "--", "onebase-exec-tree-helper", "child", heartbeat) //nolint:gosec // G204: fixed test binary and arguments; heartbeat is a t.TempDir path
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if err := child.Start(); err != nil {
+			t.Fatalf("start process-tree child: %v", err)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "descendant pid=%d\n", child.Process.Pid)
+		time.Sleep(12 * time.Second)
+	case "child":
+		deadline := time.Now().Add(12 * time.Second)
+		for sequence := 1; time.Now().Before(deadline); sequence++ {
+			if err := os.WriteFile(heartbeat, []byte(strconv.Itoa(sequence)), 0o600); err != nil { //nolint:gosec // G703: subprocess test helper writes only the t.TempDir path supplied by its parent
+				t.Fatalf("write process-tree heartbeat: %v", err)
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+	default:
+		t.Fatalf("unknown process-tree helper mode %q", mode)
 	}
 }
 

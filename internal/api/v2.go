@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,28 +168,6 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 		if kind == metadata.KindDocument && isPostAction(body.Action) && !requireRESTPerm(w, r, kind, entityName, "post") {
 			return
 		}
-		if kind == metadata.KindDocument {
-			ensureDocumentNumber(r.Context(), h.store, entity, body.Fields)
-		}
-		if err := h.autoFillRowAccessFields(r.Context(), entity, "write", body.Fields); err != nil {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-		if kind == metadata.KindDocument && isPostAction(body.Action) {
-			if err := h.autoFillRowAccessFields(r.Context(), entity, "post", body.Fields); err != nil {
-				writeError(w, http.StatusForbidden, "forbidden", "", 0)
-				return
-			}
-		}
-		if !h.rowAllowed(r.Context(), entity, "write", body.Fields) {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-		if kind == metadata.KindDocument && isPostAction(body.Action) && !h.rowAllowed(r.Context(), entity, "post", body.Fields) {
-			writeError(w, http.StatusForbidden, "forbidden", "", 0)
-			return
-		}
-
 		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 			Entity:        entity,
 			ID:            uuid.New(),
@@ -198,7 +175,12 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 			Fields:        body.Fields,
 			TablePartRows: body.TablePartRows,
 			Action:        body.Action,
+			Preflight:     h.createRowAccessPreflight(entity, body.Action),
 		})
+		if errors.Is(err, errCreateRowAccessDenied) {
+			writeError(w, http.StatusForbidden, "forbidden", "", 0)
+			return
+		}
 		writeSaveResultV2(w, result, err, result.ID, false)
 	}
 }
@@ -538,17 +520,6 @@ func (h *handler) reportFromV2Route(w http.ResponseWriter, r *http.Request) (*re
 		return nil, false
 	}
 	return rep, true
-}
-
-func ensureDocumentNumber(ctx context.Context, store *storage.DB, entity *metadata.Entity, fields map[string]any) {
-	for _, f := range entity.Fields {
-		if f.Name == "Номер" && f.Type == metadata.FieldTypeString {
-			if v, _ := fields["Номер"].(string); strings.TrimSpace(v) == "" {
-				fields["Номер"] = generateAutoNumber(ctx, store, entity, fields)
-			}
-			return
-		}
-	}
 }
 
 func writeSaveResultV2(w http.ResponseWriter, result entityservice.SaveResult, err error, id uuid.UUID, posted bool) {

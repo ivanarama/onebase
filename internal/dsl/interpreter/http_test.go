@@ -1,10 +1,13 @@
 package interpreter_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -26,6 +29,60 @@ func runHTTPSrc(t *testing.T, src string, extra map[string]any) any {
 	err = interp.RunWithResult(prog.Procedures[0], nil, &result, extra)
 	require.NoError(t, err)
 	return result
+}
+
+func runHTTPSrcError(t *testing.T, src string, extra map[string]any) error {
+	t.Helper()
+	prog, err := parser.New(lexer.New(src, "test.os")).ParseProgram()
+	require.NoError(t, err)
+	require.NotEmpty(t, prog.Procedures)
+	var result any
+	return interpreter.New().RunWithResult(prog.Procedures[0], nil, &result, extra)
+}
+
+func TestHTTPBuiltins_ExecutionContextCancelsBlockingRequest(t *testing.T) {
+	for _, connection := range []bool{false, true} {
+		name := "shorthand"
+		if connection {
+			name = "connection"
+		}
+		t.Run(name, func(t *testing.T) {
+			requestCanceled := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case <-r.Context().Done():
+					close(requestCanceled)
+				case <-time.After(4 * time.Second):
+					_, _ = fmt.Fprint(w, "too late")
+				}
+			}))
+			defer srv.Close()
+
+			src := fmt.Sprintf(`Procedure Test()
+  HTTPGet("%s");
+EndProcedure`, srv.URL)
+			if connection {
+				src = fmt.Sprintf(`Procedure Test()
+  Connection = New HTTPConnection("%s");
+  Request = New HTTPRequest("/");
+  Connection.Get(Request);
+EndProcedure`, srv.Listener.Addr().String())
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+			err := runHTTPSrcError(t, src, interpreter.NewHTTPFunctions(nil, interpreter.NewStaticCtx(ctx)))
+			require.Error(t, err)
+			assert.Contains(t, strings.ToLower(err.Error()), "врем")
+			assert.Less(t, time.Since(started), 3*time.Second)
+			select {
+			case <-requestCanceled:
+			case <-time.After(time.Second):
+				t.Fatal("HTTP request context was not canceled")
+			}
+		})
+	}
 }
 
 func TestHTTPGet_Shorthand(t *testing.T) {

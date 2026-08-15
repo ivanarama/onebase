@@ -279,13 +279,20 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	if kind == KindDocument && e.Numerator != nil {
 		hasNumber := false
 		for _, f := range e.Fields {
-			if strings.EqualFold(f.Name, "Номер") {
+			if strings.EqualFold(f.Name, StandardNumberField) {
 				hasNumber = true
 				break
 			}
 		}
 		if !hasNumber {
-			e.Fields = append([]Field{{Name: "Номер", Type: FieldTypeString}}, e.Fields...)
+			// ID устойчив по той же причине, что у «Кода» справочника: без него
+			// миграция принимает синтезированную колонку за новую и планирует
+			// снос старой вместе с данными (#868).
+			e.Fields = append([]Field{{
+				ID:   StandardNumberFieldID,
+				Name: StandardNumberField,
+				Type: FieldTypeString,
+			}}, e.Fields...)
 		}
 	}
 	// «Код» справочника — ровно та же история (план 117B, issue #658). До этого
