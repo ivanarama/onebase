@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/installtest"
 	"github.com/ivantit66/onebase/internal/selfupdate"
 	"github.com/spf13/cobra"
 )
@@ -126,7 +127,10 @@ func TestUpdateOffline_RequiresChecksum(t *testing.T) {
 }
 
 func TestApplyStagedBlocksGenerationBoundRecovery(t *testing.T) {
-	binDir := t.TempDir()
+	// Каталог установки обязан быть приватным: обычный t.TempDir() лежит в
+	// общем /tmp, и selfupdate законно отказывается такое обновлять — тест
+	// падал на подготовке, а выглядело это как дефект продукта (#924).
+	binDir := installtest.PrivateInstallDir(t)
 	cmd := updateCmdFor(t, binDir)
 	if err := selfupdate.SaveState(selfupdate.State{
 		RestartRecords: []selfupdate.RestartRecord{{ID: "base-1", Generation: "ct1:pending"}},

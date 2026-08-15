@@ -15,11 +15,6 @@ var windowsPrivateInstallRoot = func() (string, error) {
 	return windows.KnownFolderPath(windows.FOLDERID_Profile, windows.KF_FLAG_DEFAULT)
 }
 
-func windowsTestPrivateInstallRoot() string {
-	root, _ := windowsPrivateInstallRoot()
-	return root
-}
-
 func validateTargetCoordinationDirectory(path string, _ os.FileInfo) error {
 	// Do not trust USERPROFILE/HOME: both are caller-controlled and could be
 	// pointed at Program Files to bypass the private-install boundary.

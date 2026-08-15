@@ -432,7 +432,9 @@ func (s *Server) buildDSLPF(w http.ResponseWriter, r *http.Request, entity *meta
 	}
 
 	// 6. Build DSL environment
-	mc := runtime.NewMovementsCollector(entity.Name, id)
+	// Печатная форма только читает документ и никогда не сохраняет движения.
+	// Отдельный тип контекста даёт понятный отказ вместо имени сущности.
+	mc := runtime.NewMovementsCollector("print", id)
 	dslVars, txState := s.buildDSLVarsTx(r.Context(), mc)
 	defer rollbackDSLExecution(txState)
 
