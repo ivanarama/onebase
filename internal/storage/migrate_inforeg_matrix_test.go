@@ -81,6 +81,26 @@ func TestMigrateInfoRegisters_DropDimensionKeepsDataMatrix(t *testing.T) {
 		if sklad != "Основной" || price != "10" {
 			t.Errorf("данные искажены: склад=%q цена=%q", sklad, price)
 		}
+
+		// Сохранить колонку недостаточно: PostgreSQL не должен молча сузить PK
+		// до одной номенклатуры. Вторая строка, отличающаяся только сохранённым
+		// складом, доказывает, что старый состав ключа тоже остался на месте.
+		if _, err := db.Exec(ctx, fmt.Sprintf(
+			"INSERT INTO %s (номенклатура, склад, цена) VALUES ('Гвозди','Резервный','11')", table)); err != nil {
+			t.Fatalf("первичный ключ разрушительно сужен без --allow-destructive: %v", err)
+		}
+		var rows int
+		if err := db.QueryRow(ctx, fmt.Sprintf(
+			"SELECT COUNT(*) FROM %s WHERE номенклатура='Гвозди'", table)).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		if rows != 2 {
+			t.Fatalf("строк по сохранённому составному ключу: %d, ожидалось 2", rows)
+		}
+		if _, err := db.Exec(ctx, fmt.Sprintf(
+			"INSERT INTO %s (номенклатура, склад, цена) VALUES ('Гвозди','Основной','12')", table)); err == nil {
+			t.Fatal("точный дубль старого составного ключа принят: первичный ключ исчез")
+		}
 	})
 }
 
@@ -98,6 +118,9 @@ func TestMigrateInfoRegisters_DropDimensionWithPermissionMatrix(t *testing.T) {
 		v2 := dropDimRegister(name, false)
 		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{v2}); err != nil {
 			t.Fatalf("миграция v2: %v", err)
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{v2}); err != nil {
+			t.Fatalf("повторная миграция v2 не идемпотентна: %v", err)
 		}
 
 		if hasColumn(t, db, table, "склад") {
@@ -126,6 +149,60 @@ func TestMigrateInfoRegisters_DropDimensionWithPermissionMatrix(t *testing.T) {
 		}
 		if rows != 1 {
 			t.Fatalf("строк по ключу «Гвозди»: %d — первичный ключ не перестроен", rows)
+		}
+		if err := db.QueryRow(ctx, fmt.Sprintf(
+			"SELECT CAST(цена AS TEXT) FROM %s WHERE номенклатура='Гвозди'", table)).Scan(&price); err != nil {
+			t.Fatalf("чтение обновлённой строки: %v", err)
+		}
+		if price != "20" {
+			t.Fatalf("повторная запись не обновила ресурс: цена=%q, ожидалось 20", price)
+		}
+	})
+}
+
+// Даже разрешённое удаление должно быть атомарным. Если строки различались
+// только удаляемым измерением, новый более узкий PK создать нельзя: ошибка не
+// должна оставлять PostgreSQL уже без колонки и старого ключа.
+func TestMigrateInfoRegisters_DropDimensionConflictRollsBackMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		name := "ЦеныНоменклатуры" + strings.ToLower(uuid.NewString()[:8])
+		table := seedDropDim(t, db, dropDimRegister(name, true))
+		if _, err := db.Exec(ctx, fmt.Sprintf(
+			"INSERT INTO %s (номенклатура, склад, цена) VALUES ('Гвозди','Резервный','11')", table)); err != nil {
+			t.Fatalf("вставка конфликтующей по новому ключу строки: %v", err)
+		}
+
+		reported := 0
+		db.SetSchemaOptions(storage.SchemaOptions{
+			AllowDestructive: true,
+			Report: func(storage.SchemaChange, bool) {
+				reported++
+			},
+		})
+		t.Cleanup(func() { db.SetSchemaOptions(storage.SchemaOptions{}) })
+		err := db.MigrateInfoRegisters(ctx,
+			[]*metadata.InfoRegister{dropDimRegister(name, false)})
+		if err == nil {
+			t.Fatal("миграция с дубликатами нового ключа неожиданно прошла")
+		}
+		if reported != 0 {
+			t.Fatalf("об откаченных изменениях отправлено отчётов: %d", reported)
+		}
+		if !hasColumn(t, db, table, "склад") {
+			t.Fatal("после ошибки удалённая колонка не восстановлена")
+		}
+		var rows int
+		if err := db.QueryRow(ctx, fmt.Sprintf(
+			"SELECT COUNT(*) FROM %s WHERE номенклатура='Гвозди' AND склад IN ('Основной','Резервный')", table)).Scan(&rows); err != nil {
+			t.Fatalf("чтение строк после отката: %v", err)
+		}
+		if rows != 2 {
+			t.Fatalf("строк после отката: %d, ожидалось 2", rows)
+		}
+		if _, err := db.Exec(ctx, fmt.Sprintf(
+			"INSERT INTO %s (номенклатура, склад, цена) VALUES ('Гвозди','Основной','12')", table)); err == nil {
+			t.Fatal("после отката исчез старый составной первичный ключ")
 		}
 	})
 }

@@ -162,6 +162,30 @@ func TestMigrateInfoRegisters_RebuildsPK(t *testing.T) {
 	}
 }
 
+func TestPrimaryKeyDropsColumns(t *testing.T) {
+	tests := []struct {
+		name     string
+		actual   []string
+		expected []string
+		want     bool
+	}{
+		{name: "same", actual: []string{"a", "b"}, expected: []string{"a", "b"}},
+		{name: "add", actual: []string{"a"}, expected: []string{"a", "b"}},
+		{name: "reorder", actual: []string{"a", "b"}, expected: []string{"b", "a"}},
+		{name: "remove", actual: []string{"a", "b"}, expected: []string{"a"}, want: true},
+		{name: "replace", actual: []string{"a", "b"}, expected: []string{"a", "c"}, want: true},
+		{name: "remove all", actual: []string{"a"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := primaryKeyDropsColumns(tt.actual, tt.expected); got != tt.want {
+				t.Fatalf("primaryKeyDropsColumns(%v, %v) = %v, want %v",
+					tt.actual, tt.expected, got, tt.want)
+			}
+		})
+	}
+}
+
 // #616: удаление измерения регистра сведений без --allow-destructive НЕ должно
 // терять данные. Измерение входит в PK, поэтому его удаление даёт mismatch и шло
 // в rebuild fixInfoRegPKSQLite, который пересоздавал таблицу по новым метаданным

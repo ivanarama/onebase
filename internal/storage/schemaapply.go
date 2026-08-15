@@ -84,27 +84,32 @@ func (db *DB) restructureTable(ctx context.Context, table string, fields []metad
 	if err != nil {
 		return err
 	}
-	// Смена типа колонки меняет тип результата уже подготовленных запросов, а
-	// pgx кэширует планы на каждом соединении пула. Без сброса первое же
-	// чтение этой таблицы после ретайпа падает с «cached plan must not change
-	// result type» (SQLSTATE 0A000) — и падает не в тесте, а у живого сервера,
-	// который отмигрировал схему и продолжает работать на том же пуле.
-	// Reset закрывает простаивающие соединения и помечает занятые на закрытие,
-	// так что следующий запрос готовит план заново. Делается ПОСЛЕ коммита:
-	// откаченный план типов не менял.
-	for _, rep := range reports {
-		if rep.applied && rep.change.Kind == ChangeRetype {
-			db.resetConnPool()
-			break
+	// Побочные эффекты должны выполняться после самой внешней транзакции. Обычно
+	// restructureTable владеет транзакцией и к этому месту она уже зафиксирована.
+	// MigrateInfoRegisters, однако, объединяет реструктуризацию и смену PK в одну
+	// транзакцию; тогда этот вызов был лишь savepoint'ом, и последующий сбой PK
+	// ещё может откатить весь план.
+	postCommit := func() {
+		// Смена типа колонки меняет тип результата уже подготовленных запросов, а
+		// pgx кэширует планы на каждом соединении пула. Без сброса первое же
+		// чтение этой таблицы после ретайпа падает с «cached plan must not change
+		// result type» (SQLSTATE 0A000) — и падает не в тесте, а у живого сервера,
+		// который отмигрировал схему и продолжает работать на том же пуле.
+		for _, rep := range reports {
+			if rep.applied && rep.change.Kind == ChangeRetype {
+				db.resetConnPool()
+				break
+			}
+		}
+		// При откате ничего не применилось, поэтому Report также ждёт commit.
+		if opts.Report != nil {
+			for _, rep := range reports {
+				opts.Report(rep.change, rep.applied)
+			}
 		}
 	}
-	// Report только после фиксации транзакции: при откате (сбой посреди плана)
-	// ничего не применилось, и сообщать «применено» об откаченных изменениях —
-	// значит ввести администратора в заблуждение о состоянии базы.
-	if opts.Report != nil {
-		for _, rep := range reports {
-			opts.Report(rep.change, rep.applied)
-		}
+	if !DeferUntilTxCommit(ctx, postCommit) {
+		postCommit()
 	}
 	return nil
 }
