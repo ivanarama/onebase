@@ -510,6 +510,12 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		}
 	}
 	tableParts := serializeTablePartRowsForEntity(obj.TablePartRows, entity, form)
+	// Виртуальные колонки пересчитываются и в ответе события (#845). Клиент
+	// применяет tableparts целиком, а колонки в payload нет — без пересчёта
+	// первое же серверное событие гасило бы её значения. Побочно это и есть
+	// «пересчёт на лету»: выбрал в строке другую ссылку, обработчик строки
+	// отработал — колонка приехала обновлённой.
+	s.applyVirtualTPColumns(ctx, entity, form, tableParts)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
