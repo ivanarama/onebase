@@ -284,7 +284,7 @@ func (db *DB) InfoRegGetLast(ctx context.Context, ir *metadata.InfoRegister, dim
 	sql := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s AND period <= %s ORDER BY period DESC LIMIT 1",
 		strings.Join(allCols, ", "), table, where, d.Placeholder(len(args)))
-	return db.infoRegScan(ctx, ir, sql, args)
+	return db.infoRegScanWithPeriod(ctx, ir, sql, args)
 }
 
 // InfoRegKeyValuesField is the reserved row member used only by
@@ -722,9 +722,21 @@ func resourceAndDimCols(ir *metadata.InfoRegister) []string {
 }
 
 func (db *DB) infoRegScan(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any) (map[string]any, error) {
+	return db.infoRegScanMode(ctx, ir, sql, args, false)
+}
+
+func (db *DB) infoRegScanWithPeriod(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any) (map[string]any, error) {
+	return db.infoRegScanMode(ctx, ir, sql, args, true)
+}
+
+func (db *DB) infoRegScanMode(ctx context.Context, ir *metadata.InfoRegister, sql string, args []any, withPeriod bool) (map[string]any, error) {
 	row := db.QueryRow(ctx, sql, args...)
 	allCols := resourceAndDimCols(ir)
-	dest := make([]any, len(allCols))
+	offset := 0
+	if withPeriod {
+		offset = 1
+	}
+	dest := make([]any, len(allCols)+offset)
 	ptrs := make([]any, len(dest))
 	for i := range dest {
 		ptrs[i] = &dest[i]
@@ -732,8 +744,16 @@ func (db *DB) infoRegScan(ctx context.Context, ir *metadata.InfoRegister, sql st
 	if err := row.Scan(ptrs...); err != nil {
 		return nil, err
 	}
-	result := make(map[string]any, len(allCols))
-	i := 0
+	result := make(map[string]any, len(allCols)+offset)
+	i := offset
+	if withPeriod {
+		period := normalizeDate(dest[0])
+		typed, ok := period.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("info register %s: invalid stored period %T(%v)", ir.Name, dest[0], dest[0])
+		}
+		result["period"] = typed
+	}
 	for _, f := range ir.Dimensions {
 		result[f.Name] = normalizeFieldValue(f, dest[i])
 		i++
