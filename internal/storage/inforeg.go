@@ -79,14 +79,14 @@ func (db *DB) InfoRegSet(ctx context.Context, ir *metadata.InfoRegister, dimKey 
 		col := metadata.ColumnName(f)
 		cols = append(cols, col)
 		phs = append(phs, d.Placeholder(idx))
-		args = append(args, dimKey[f.Name])
+		args = append(args, normalizeRegArg(d, dimKey[f.Name], f.RefEntity != ""))
 		idx++
 	}
 	for _, f := range ir.Resources {
 		col := metadata.ColumnName(f)
 		cols = append(cols, col)
 		phs = append(phs, d.Placeholder(idx))
-		args = append(args, resources[f.Name])
+		args = append(args, normalizeRegArg(d, resources[f.Name], f.RefEntity != ""))
 		idx++
 	}
 	cols = append(cols, "updated_at")
@@ -173,7 +173,14 @@ func (db *DB) InfoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
 	}
 	defer rows.Close()
+	return scanInfoRegRows(rows, ir, selCols)
+}
 
+// scanInfoRegRows decodes the common projection used by InfoRegList and by
+// DELETE ... RETURNING. Keeping the decoder shared is important for record-set
+// replacement: row policies and exchange tombstones must see exactly the same
+// normalized values as an ordinary register read on both SQL dialects.
+func scanInfoRegRows(rows Rows, ir *metadata.InfoRegister, selCols []string) ([]map[string]any, error) {
 	var result []map[string]any
 	for rows.Next() {
 		dest := make([]any, len(selCols))
@@ -429,7 +436,7 @@ func dimWhere(d Dialect, ir *metadata.InfoRegister, dimKey map[string]any, start
 	for _, f := range ir.Dimensions {
 		col := metadata.ColumnName(f)
 		conds = append(conds, fmt.Sprintf("%s = %s", col, d.Placeholder(idx)))
-		args = append(args, dimKey[f.Name])
+		args = append(args, normalizeRegArg(d, dimKey[f.Name], f.RefEntity != ""))
 		idx++
 	}
 	if len(conds) == 0 {
@@ -480,4 +487,48 @@ func (db *DB) InfoRegDeleteByFilter(ctx context.Context, ir *metadata.InfoRegist
 	}
 	sql := fmt.Sprintf("DELETE FROM %s WHERE %s", metadata.InfoRegTableName(ir.Name), where)
 	return db.exec(ctx, sql, args...)
+}
+
+// InfoRegDeleteByFilterReturning atomically deletes the selected slice and
+// returns the rows that the DELETE statement actually removed. A preceding
+// SELECT is not equivalent: under PostgreSQL READ COMMITTED (and between
+// SQLite autocommit statements) concurrent changes can make that snapshot
+// stale, causing missing/phantom exchange tombstones and an RLS TOCTOU gap.
+//
+// The caller is expected to run this inside WithTxScope. It may then validate
+// delete access against the returned rows and return an error; the scope rolls
+// the provisional DELETE back, including when it is nested in a caller-owned
+// transaction.
+func (db *DB) InfoRegDeleteByFilterReturning(ctx context.Context, ir *metadata.InfoRegister, f RegFilter) ([]map[string]any, error) {
+	if f.IsEmpty() {
+		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
+	}
+	where, args := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if where == "" {
+		return nil, fmt.Errorf("info reg delete by filter %s: пустой отбор", ir.Name)
+	}
+
+	var cols []string
+	if ir.Periodic {
+		cols = append(cols, "period")
+	}
+	for _, field := range ir.Dimensions {
+		cols = append(cols, metadata.ColumnName(field))
+	}
+	for _, field := range ir.Resources {
+		cols = append(cols, metadata.ColumnName(field))
+	}
+
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s RETURNING %s",
+		metadata.InfoRegTableName(ir.Name), where, strings.Join(cols, ", "))
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("info reg delete by filter %s returning: %w", ir.Name, err)
+	}
+	defer rows.Close()
+	deleted, err := scanInfoRegRows(rows, ir, cols)
+	if err != nil {
+		return nil, fmt.Errorf("info reg delete by filter %s returning: %w", ir.Name, err)
+	}
+	return deleted, nil
 }

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -620,5 +622,360 @@ func TestInfoRegSet_СтрокаВнеОтбораОтклоняется(t *test
   Н.Записать();`)
 	if err == nil || !strings.Contains(err.Error(), "не совпадает с отбором") {
 		t.Fatalf("строка вне отбора принята: %v", err)
+	}
+}
+
+// Набор может вызываться внутри явной DSL-транзакции, а исключение от
+// Записать() — ловиться прикладным кодом. В этом случае операция всё равно
+// обязана иметь собственный savepoint: внешний commit не должен фиксировать
+// DELETE и только строки до первой ошибки.
+func TestInfoRegSet_АтомаренВоВнешнейТранзакции(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := stateInfoReg(true, false)
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		oldPeriod := time.Date(2026, 8, 1, 0, 0, 0, 0, time.Local)
+		if err := db.InfoRegSet(ctx, ir,
+			map[string]any{"Узел": "N1"},
+			map[string]any{"Состояние": "Старое", "Попыток": float64(0)},
+			&oldPeriod); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := runInfoRegDSL(t, db, ir, `
+  НачатьТранзакцию();
+  Попытка
+    Н = РегистрыСведений.СостояниеУзлов.СоздатьНаборЗаписей();
+    Н.Отбор.Узел = "N1";
+    С1 = Н.Добавить();
+    С1.Период = Дата(2026, 8, 2, 0, 0, 0);
+    С1.Состояние = "Новое";
+    С1.Попыток = 1;
+    С2 = Н.Добавить();
+    С2.Состояние = "Без периода";
+    С2.Попыток = 2;
+    Н.Записать();
+  Исключение
+    ОшибкаЗаписи = ОписаниеОшибки();
+  КонецПопытки;
+  ЗафиксироватьТранзакцию();`)
+		if err != nil {
+			t.Fatalf("DSL execution: %v", err)
+		}
+
+		rows, err := db.InfoRegList(ctx, ir,
+			storage.RegFilter{Dims: map[string]string{"Узел": "N1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || asString(rowValueFold(rows[0], "Состояние")) != "Старое" {
+			t.Fatalf("ошибка вложенной записи оставила частичное замещение: %#v", rows)
+		}
+	})
+}
+
+// Записать() пустой набор — это физическое удаление прежнего среза. Отдельное
+// право write не должно неявно выдавать delete.
+func TestInfoRegSet_УдалениеТребуетDeletePermission(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name:       "Защищённый",
+			Dimensions: []metadata.Field{{Name: "Ключ", Type: metadata.FieldTypeString}},
+			Resources:  []metadata.Field{{Name: "Значение", Type: metadata.FieldTypeString}},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InfoRegSet(ctx, ir,
+			map[string]any{"Ключ": "A"}, map[string]any{"Значение": "secret"}, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		s := &Server{store: db, reg: registry}
+		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
+			InfoRegs: map[string][]string{ir.Name: {"write"}},
+		}}}}
+		rs := newInfoRegRecordSet(s,
+			interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
+		rs.filter.Set("Ключ", "A")
+
+		var denied any
+		func() {
+			defer func() { denied = recover() }()
+			rs.write()
+		}()
+		if denied == nil {
+			t.Fatal("write-only роль удалила строку без права delete")
+		}
+		rows, err := db.InfoRegList(ctx, ir,
+			storage.RegFilter{Dims: map[string]string{"Ключ": "A"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("отказ delete не откатил удаление: %#v", rows)
+		}
+	})
+}
+
+// Менеджер записи отклоняет Период у непериодического регистра; набор обязан
+// соблюдать тот же контракт, а не молча выбрасывать поле.
+func TestInfoRegSet_НепериодическийПериодОтклоняется(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := logInfoReg()
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  С = Н.Добавить();
+  С.Событие = "Start";
+  С.Период = Дата(2026, 8, 15);
+  Н.Записать();`)
+		if err == nil || !strings.Contains(err.Error(), "период указывать нельзя") {
+			t.Fatalf("непериодический набор принял Период: %v", err)
+		}
+		rows, err := db.InfoRegList(ctx, ir,
+			storage.RegFilter{Dims: map[string]string{"Узел": "N1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("ошибочная строка записана: %#v", rows)
+		}
+	})
+}
+
+func TestInfoRegRowPeriod_ОдноимённоеПолеНепериодическогоРегистраРазрешено(t *testing.T) {
+	for _, name := range []string{"Период", "period"} {
+		t.Run(name, func(t *testing.T) {
+			ir := &metadata.InfoRegister{
+				Name:       "Непериодический",
+				Dimensions: []metadata.Field{{Name: name, Type: metadata.FieldTypeString}},
+			}
+			period, err := infoRegRowPeriod(ir, map[string]any{name: "обычное измерение"})
+			if err != nil {
+				t.Fatalf("поле метаданных %q принято за служебный период: %v", name, err)
+			}
+			if period != nil {
+				t.Fatalf("период непериодического регистра = %v, ожидался nil", period)
+			}
+		})
+	}
+}
+
+// Tombstone строится по строкам, фактически удалённым тем же DELETE, а не по
+// отдельному снимку до транзакции.
+func TestInfoRegSet_РегистрируетTombstoneУдалённыхСтрок(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := logInfoReg()
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.EnsureExchangeSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InfoRegSet(ctx, ir,
+			map[string]any{"Узел": "N1", "Событие": "E1"},
+			map[string]any{"Комментарий": "old"}, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		plan := &metadata.ExchangePlan{
+			Name:    "Обмен",
+			Content: []string{"РегистрСведений." + ir.Name},
+			Nodes:   []metadata.ExchangeNode{{Code: "center"}, {Code: "fil01"}},
+		}
+		plan.Normalize()
+		if err := db.SaveExchangeThisNode(ctx, plan.Name, "fil01"); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		registry.LoadExchangePlans([]*metadata.ExchangePlan{plan})
+		interp := interpreter.New()
+		interp.LookupProc = registry.GetModuleProc
+		s := &Server{store: db, reg: registry, interp: interp,
+			lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+
+		prog := mustParse(t, `Процедура Тест()
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "N1";
+  Н.Записать();
+КонецПроцедуры`)
+		var msgs []string
+		vars, txState := s.buildDSLVarsWithMessagesTx(ctx, nil, &msgs)
+		defer interpreter.RollbackTxExecution(txState)
+		if err := s.interp.Run(prog.Procedures[0], nil, vars); err != nil {
+			t.Fatalf("удаление набором: %v", err)
+		}
+
+		changes, err := db.PendingExchangeChanges(ctx, plan.Name, "center")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(changes) != 1 || !changes[0].Deletion ||
+			changes[0].Kind != storage.ExchangeKindInfoReg ||
+			changes[0].ObjectType != ir.Name ||
+			!strings.Contains(changes[0].ObjectID, `"Событие":"E1"`) {
+			t.Fatalf("неверный tombstone: %#v", changes)
+		}
+	})
+}
+
+// DSL-отбор хранит реальные значения, а не fmt.Sprintf-представления. Для
+// ссылки это принципиально: String() возвращает display-name, тогда как ключом
+// БД и обмена является UUID. Дата и число тоже должны дойти до драйвера в своём
+// типе на обоих диалектах.
+func TestInfoRegSet_ТипизированныйОтборМатрица(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := &metadata.InfoRegister{
+			Name: "TypedFilter",
+			Dimensions: []metadata.Field{
+				{Name: "Owner", Type: metadata.FieldType("reference:Товары"), RefEntity: "Товары"},
+				{Name: "Moment", Type: metadata.FieldTypeDate},
+				{Name: "Seq", Type: metadata.FieldTypeNumber},
+			},
+			Resources: []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}},
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+		s := &Server{store: db, reg: registry}
+		ref1 := &interpreter.Ref{
+			UUID: "11111111-1111-1111-1111-111111111111", Name: "Одинаковое имя",
+		}
+		ref2 := &interpreter.Ref{
+			UUID: "22222222-2222-2222-2222-222222222222", Name: "Одинаковое имя",
+		}
+		moment := time.Date(2026, 8, 15, 10, 11, 12, 123456000, time.UTC)
+
+		rs := newInfoRegRecordSet(s, interpreter.NewTxState(ctx), ir)
+		rs.filter.Set("Owner", ref1)
+		rs.filter.Set("Moment", moment)
+		rs.filter.Set("Seq", float64(7))
+		row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		row.Set("Value", "ok")
+		rs.write()
+
+		filter := storage.RegFilter{DimValues: map[string]any{
+			"Owner": ref1, "Moment": moment, "Seq": float64(7),
+		}}
+		rows, err := db.InfoRegList(ctx, ir, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || asString(rows[0]["Owner"]) != ref1.UUID ||
+			asString(rows[0]["Value"]) != "ok" {
+			t.Fatalf("типизированный отбор не нашёл запись: %#v", rows)
+		}
+		wrong, err := db.InfoRegList(ctx, ir, storage.RegFilter{DimValues: map[string]any{
+			"Owner": ref2, "Moment": moment, "Seq": float64(7),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(wrong) != 0 {
+			t.Fatalf("ссылка сравнилась по display-name вместо UUID: %#v", wrong)
+		}
+
+		// Две ссылки с одинаковым представлением, но разными UUID не равны и в
+		// проверке «строка не должна сбегать из отбора».
+		bad := newInfoRegRecordSet(s, interpreter.NewTxState(ctx), ir)
+		bad.filter.Set("Owner", ref1)
+		bad.filter.Set("Moment", moment)
+		bad.filter.Set("Seq", float64(7))
+		badRow := bad.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		badRow.Set("Owner", ref2)
+		badRow.Set("Value", "escape")
+		var rejected any
+		func() {
+			defer func() { rejected = recover() }()
+			bad.write()
+		}()
+		if rejected == nil {
+			t.Fatal("разные UUID с одинаковым именем признаны равными")
+		}
+	})
+}
+
+func TestInfoRegSet_ПустоеЗначениеОтбораОтклоняется(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "empty-filter.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	ir := logInfoReg()
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runInfoRegDSL(t, db, ir, `
+  Н = РегистрыСведений.ЛогОбмена.СоздатьНаборЗаписей();
+  Н.Отбор.Узел = "";
+  Н.Прочитать();`)
+	if err == nil || !strings.Contains(err.Error(), "пустое значение") {
+		t.Fatalf("пустой отбор принят как несужающий: %v", err)
+	}
+}
+
+func TestInfoRegSet_ExchangeKeyСсылкиИспользуетUUID(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "ref-key.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	ir := &metadata.InfoRegister{
+		Name: "RefExchange",
+		Dimensions: []metadata.Field{{
+			Name: "Owner", Type: metadata.FieldType("reference:Товары"), RefEntity: "Товары",
+		}},
+		Resources: []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}},
+	}
+	if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureExchangeSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	plan := &metadata.ExchangePlan{
+		Name:    "Обмен",
+		Content: []string{"РегистрСведений." + ir.Name},
+		Nodes:   []metadata.ExchangeNode{{Code: "center"}, {Code: "fil01"}},
+	}
+	plan.Normalize()
+	if err := db.SaveExchangeThisNode(ctx, plan.Name, "fil01"); err != nil {
+		t.Fatal(err)
+	}
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
+	registry.LoadExchangePlans([]*metadata.ExchangePlan{plan})
+	s := &Server{store: db, reg: registry}
+	ref := &interpreter.Ref{UUID: uuid.NewString(), Name: "Витринное имя"}
+	rs := newInfoRegRecordSet(s, interpreter.NewTxState(ctx), ir)
+	rs.filter.Set("Owner", ref)
+	row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+	row.Set("Value", "ok")
+	rs.write()
+
+	changes, err := db.PendingExchangeChanges(ctx, plan.Name, "center")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || !strings.Contains(changes[0].ObjectID, ref.UUID) ||
+		strings.Contains(changes[0].ObjectID, ref.Name) {
+		t.Fatalf("exchange key построен не по UUID ссылки: %#v", changes)
 	}
 }

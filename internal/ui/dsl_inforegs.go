@@ -347,15 +347,25 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 // записи, которых здесь уже нет.
 func (rs *infoRegRecordSet) write() {
 	f := rs.regFilter()
-	allow := rs.access("write")
+	allowWrite := rs.access("write")
+	allowDelete := rs.access("delete")
 	ctx := rs.ctx()
+	type preparedRow struct {
+		dims      map[string]any
+		resources map[string]any
+		period    *time.Time
+	}
+	prepared := make([]preparedRow, 0, len(rs.rows))
 
-	// Валидация ДО транзакции: незачем открывать её, чтобы тут же откатить.
+	// Чистая валидация ДО транзакции: незачем открывать её, чтобы тут же
+	// откатить. Проверяем здесь и период каждой строки — если оставить его в
+	// цикле записи, поздняя ошибка способна прийти уже после DELETE и нескольких
+	// успешных INSERT.
 	// Опечатка в имени поля прежде молча писала мусор — менеджер записи для той
 	// же ошибки честно поднимает исключение.
 	for i, row := range rs.rows {
 		for name := range row {
-			if strings.EqualFold(name, "Период") || strings.EqualFold(name, "period") {
+			if isPeriodName(name) && (rs.ir.Periodic || infoRegField(rs.ir, name) == nil) {
 				continue
 			}
 			if infoRegField(rs.ir, name) == nil {
@@ -368,44 +378,60 @@ func (rs *infoRegRecordSet) write() {
 		for name, want := range rs.filter.values {
 			got := rowValueFold(row, name)
 			if got == nil {
-				continue
+				interpreter.RaiseUserError(fmt.Sprintf(
+					"Записать(%s): строка %d — не задано измерение «%s» из отбора",
+					rs.ir.Name, i+1, name))
 			}
-			if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
+			if !infoRegFilterValuesEqual(infoRegField(rs.ir, name), got, want) {
 				interpreter.RaiseUserError(fmt.Sprintf(
 					"Записать(%s): строка %d — измерение «%s» = %v не совпадает с отбором (%v)",
 					rs.ir.Name, i+1, name, got, want))
 			}
 		}
+
+		dims := make(map[string]any, len(rs.ir.Dimensions))
+		resources := make(map[string]any, len(rs.ir.Resources))
+		for _, d := range rs.ir.Dimensions {
+			dims[d.Name] = rowValueFold(row, d.Name)
+		}
+		for _, r := range rs.ir.Resources {
+			resources[r.Name] = rowValueFold(row, r.Name)
+		}
+		period, err := infoRegRowPeriod(rs.ir, row)
+		if err != nil {
+			interpreter.RaiseUserError(fmt.Sprintf("Записать(%s): строка %d — %s", rs.ir.Name, i+1, err))
+		}
+		prepared = append(prepared, preparedRow{dims: dims, resources: resources, period: period})
 	}
 
-	// Проверяем и то, что удаляем, и то, что пишем: строковая политика
-	// применяется к обеим сторонам замещения, иначе набором можно было бы
-	// снести чужие строки, не имея к ним доступа.
-	existing, err := rs.s.store.InfoRegList(ctx, rs.ir, f)
-	if err != nil {
-		interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
-	}
-	if allow != nil {
-		for _, row := range existing {
-			if err := allow(ctx, row); err != nil {
-				interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
-			}
-		}
-		for _, row := range rs.rows {
-			if err := allow(ctx, row); err != nil {
-				interpreter.RaiseUserError("Записать(" + rs.ir.Name + "): " + err.Error())
-			}
-		}
-	}
-
-	err = rs.s.store.WithTxIfNeeded(ctx, func(txCtx context.Context) error {
-		if err := rs.s.store.InfoRegDeleteByFilter(txCtx, rs.ir, f); err != nil {
+	// WithTxScope даёт операции собственную границу атомарности. Если DSL уже
+	// открыл транзакцию, это savepoint: ловимое Попытка/Исключение не сможет
+	// затем зафиксировать DELETE и только часть новых строк.
+	err := rs.s.store.WithTxScope(ctx, func(txCtx context.Context) error {
+		// DELETE ... RETURNING — единый источник истины для delete-RLS и
+		// tombstone'ов. SELECT до транзакции оставлял окно, в котором конкурентная
+		// строка удалялась без проверки и без регистрации в обмене.
+		deleted, err := rs.s.store.InfoRegDeleteByFilterReturning(txCtx, rs.ir, f)
+		if err != nil {
 			return err
 		}
-		// Удалённые строки регистрируются в планах обмена: узлы обязаны узнать
-		// об исчезновении так же, как о появлении.
 		plans := rs.s.reg.ExchangePlans()
-		for _, row := range infoRegDSLRows(rs.ir, existing) {
+		for _, row := range deleted {
+			// Сохраняем контракт обычной записи: существующая строка также
+			// должна быть доступна по write-RLS. Набор дополнительно требует
+			// delete, потому что замещение физически удаляет эту строку.
+			if allowWrite != nil {
+				if err := allowWrite(txCtx, row); err != nil {
+					return err
+				}
+			}
+			// Замещение физически удаляет прежние строки, поэтому ему требуется
+			// отдельное право delete. Право write не должно неявно его выдавать.
+			if allowDelete != nil {
+				if err := allowDelete(txCtx, row); err != nil {
+					return err
+				}
+			}
 			dims := make(map[string]any, len(rs.ir.Dimensions))
 			for _, d := range rs.ir.Dimensions {
 				dims[d.Name] = rowValueFold(row, d.Name)
@@ -414,22 +440,10 @@ func (rs *infoRegRecordSet) write() {
 				return err
 			}
 		}
-		for _, row := range rs.rows {
-			dims := make(map[string]any, len(rs.ir.Dimensions))
-			res := make(map[string]any, len(rs.ir.Resources))
-			for _, d := range rs.ir.Dimensions {
-				dims[d.Name] = rowValueFold(row, d.Name)
-			}
-			for _, r := range rs.ir.Resources {
-				res[r.Name] = rowValueFold(row, r.Name)
-			}
-			period, err := infoRegRowPeriod(rs.ir, row)
-			if err != nil {
-				return err
-			}
+		for _, row := range prepared {
 			// Общая точка: политика строки, валидация периода и регистрация в
 			// планах обмена — всё то, что копия делать забывала.
-			if err := rs.s.infoRegWrite(txCtx, rs.ir, dims, res, period, allow); err != nil {
+			if err := rs.s.infoRegWrite(txCtx, rs.ir, row.dims, row.resources, row.period, allowWrite); err != nil {
 				return err
 			}
 		}
@@ -442,15 +456,21 @@ func (rs *infoRegRecordSet) write() {
 
 // regFilter переводит Отбор в storage.RegFilter. Пустой отбор отклоняется.
 func (rs *infoRegRecordSet) regFilter() storage.RegFilter {
-	dims := map[string]string{}
+	dims := map[string]any{}
 	for name, v := range rs.filter.values {
-		dims[name] = fmt.Sprintf("%v", v)
+		if v == nil {
+			interpreter.RaiseUserError("Отбор(" + rs.ir.Name + "): не задано значение измерения «" + name + "»")
+		}
+		if text, ok := v.(string); ok && text == "" {
+			interpreter.RaiseUserError("Отбор(" + rs.ir.Name + "): пустое значение измерения «" + name + "»")
+		}
+		dims[name] = v
 	}
 	if len(dims) == 0 {
 		interpreter.RaiseUserError("НаборЗаписей(" + rs.ir.Name +
 			"): не задан Отбор — запись набора без отбора снесла бы регистр целиком")
 	}
-	return storage.RegFilter{Dims: dims}
+	return storage.RegFilter{DimValues: dims}
 }
 
 func (rs *infoRegRecordSet) access(op string) infoRegAccess {
@@ -490,6 +510,33 @@ func rowValueFold(row map[string]any, name string) any {
 		}
 	}
 	return nil
+}
+
+// infoRegFilterValuesEqual compares a row dimension with its typed DSL filter.
+// In particular, *interpreter.Ref.String() is a display name, not identity;
+// reference dimensions must compare by UUID or two different objects with the
+// same name become indistinguishable.
+func infoRegFilterValuesEqual(field *metadata.Field, left, right any) bool {
+	canonical := func(v any) string {
+		if field != nil && field.RefEntity != "" {
+			if ref, ok := v.(interface{ GetRefUUID() string }); ok {
+				return strings.ToLower(ref.GetRefUUID())
+			}
+			return strings.ToLower(fmt.Sprintf("%v", v))
+		}
+		switch value := v.(type) {
+		case time.Time:
+			return value.UTC().Format(time.RFC3339Nano)
+		case *time.Time:
+			if value == nil {
+				return ""
+			}
+			return value.UTC().Format(time.RFC3339Nano)
+		default:
+			return fmt.Sprintf("%v", v)
+		}
+	}
+	return canonical(left) == canonical(right)
 }
 
 // infoRegDSLRows переводит строки хранилища в строки набора для DSL.
@@ -536,6 +583,14 @@ func infoRegDSLRows(ir *metadata.InfoRegister, rows []map[string]any) []map[stri
 // прикладной код, так и прежнее поведение Прочитать().
 func infoRegRowPeriod(ir *metadata.InfoRegister, row map[string]any) (*time.Time, error) {
 	if !ir.Periodic {
+		for name := range row {
+			if isPeriodName(name) && infoRegField(ir, name) == nil {
+				// Тот же контракт, что у менеджера записи: служебный Период у
+				// непериодического регистра не является безобидным лишним полем.
+				dummy := time.Time{}
+				return nil, infoRegCheckPeriod(ir, &dummy)
+			}
+		}
 		return nil, nil
 	}
 	v := rowValueFold(row, "Период")
