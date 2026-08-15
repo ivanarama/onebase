@@ -249,6 +249,7 @@ const tplManagedForm = `
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
   {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
+  {{$tpVirtualCols := managedTPVirtualColumns $el.VirtualColumns}}
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $tpMeta}}
   {{if $tpCmds}}
@@ -278,7 +279,7 @@ const tplManagedForm = `
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
        {{/* id — имя реквизита (по нему идёт привязка данных и разбор tp.*),
             name — только подпись колонки: синоним реквизита, как в автоформе. */}}
-       data-sg-cols='{{managedTPColumnsJSON $tpMeta.Fields $el.VirtualColumns (str $ctx.Lang)}}'
+       data-sg-cols='{{managedTPColumnsJSON $tpMeta.Fields $tpVirtualCols (str $ctx.Lang)}}'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{jsJSON $tpRows}}'
@@ -299,11 +300,11 @@ const tplManagedForm = `
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
         {{range $tpMeta.Fields}}<th>{{.DisplayName (str $ctx.Lang)}}</th>{{end}}
-        {{range $el.VirtualColumns}}<th>{{.ColumnTitle (str $ctx.Lang)}}</th>{{end}}
+        {{range $tpVirtualCols}}<th>{{.ColumnTitle (str $ctx.Lang)}}</th>{{end}}
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}">
+    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}" data-tp-virtual-cols="{{managedTPVirtualNamesJSON $tpVirtualCols}}">
     {{range $i, $row := $tpRows}}
       <tr{{with formRowClass $row}} class="{{.}}"{{end}} tabindex="-1" aria-selected="false">
         {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"{{if $tpReadOnly}} disabled{{end}}></td>{{end}}
@@ -330,18 +331,18 @@ const tplManagedForm = `
         {{end}}
         {{/* Виртуальная колонка — только текст: значение не хранится, и поля
              ввода у неё быть не должно, иначе правка выглядела бы сохраняемой. */}}
-        {{range $vc := $el.VirtualColumns}}<td data-ob-virtual-col="{{$vc.Name}}">{{index $row $vc.Name}}</td>{{end}}
+        {{range $vc := $tpVirtualCols}}<td data-ob-virtual-col="{{$vc.Name}}">{{index $row $vc.Name}}</td>{{end}}
         <td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row title="Delete" aria-keyshortcuts="Delete"{{end}}>×</button></td>
       </tr>
     {{end}}
     </tbody>
     <tfoot id="tp-foot-{{$tpName}}" class="tp-footer" style="display:none"><tr>
       {{if $tpCmds}}<td></td>{{end}}
-      {{range $f := $tpMeta.Fields}}{{if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}{{range $el.VirtualColumns}}<td></td>{{end}}<td></td>
+      {{range $f := $tpMeta.Fields}}{{if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}{{range $tpVirtualCols}}<td></td>{{end}}<td></td>
     </tr></tfoot>
   </table>
   <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
-    data-ob-add-tp="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>
+    data-ob-add-tp="{{$tpName}}" data-ob-element="{{$el.Name}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>
     + Добавить строку
   </button>
 {{end}}

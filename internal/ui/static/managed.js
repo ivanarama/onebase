@@ -40,12 +40,50 @@ function obManagedTableBodies(id, metadataAttr) {
   return matches;
 }
 
-function obManagedWritableTableBody(id, metadataAttr) {
+function obManagedWritableTableBody(id, metadataAttr, elementName) {
   var bodies = obManagedTableBodies(id, metadataAttr);
+  var legacyFallback = null;
   for (var i = 0; i < bodies.length; i++) {
-    if (!obManagedTableReadOnly(bodies[i])) return bodies[i];
+    if (obManagedTableReadOnly(bodies[i])) continue;
+    if (!elementName) return bodies[i];
+    var table = bodies[i].closest && bodies[i].closest('table[data-ob-dom-table]');
+    var bodyElement = table && table.getAttribute ? table.getAttribute('data-ob-element') : '';
+    if (bodyElement === elementName) return bodies[i];
+    // Preserve compatibility with custom/old templates that have no element
+    // identity at all, while never choosing another explicitly named view.
+    if (!bodyElement && !legacyFallback) legacyFallback = bodies[i];
   }
-  return null;
+  return legacyFallback;
+}
+
+function obManagedIsReservedVirtualColumnName(name) {
+  var normalized = String(name == null ? '' : name).trim().toLowerCase();
+  return normalized === 'id' || normalized === '_ord' ||
+    normalized === '_obrowclass' || normalized === '_obcellclasses';
+}
+
+function obManagedEscapeHTML(value) {
+  var entities = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+  return String(value).replace(/[&<>"']/g, function(ch) { return entities[ch]; });
+}
+
+function obManagedVirtualColumnNames(tbody) {
+  var raw = tbody && tbody.getAttribute ? tbody.getAttribute('data-tp-virtual-cols') : '';
+  if (!raw) return [];
+  try {
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    var seen = Object.create(null);
+    return parsed.filter(function(name) {
+      if (typeof name !== 'string' || name.trim() === '' || obManagedIsReservedVirtualColumnName(name)) return false;
+      var key = name.trim().toLowerCase();
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  } catch (e) {
+    return [];
+  }
 }
 
 // Shared by the managed-form response renderer and the separate SlickGrid
@@ -304,6 +342,7 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
         if (refIdx >= 0) return { name: name, type: rest.slice(0, refIdx), ref: rest.slice(refIdx + 1) };
         return { name: name, type: rest, ref: '' };
       });
+      const virtualNames = obManagedVirtualColumnNames(tbody);
       const rows = tps[tpName] || [];
       const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
@@ -398,6 +437,13 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
             inp.disabled = readOnly;
             td.appendChild(inp);
           }
+          tr.appendChild(td);
+        });
+        virtualNames.forEach(function(name){
+          const td = document.createElement('td');
+          td.setAttribute('data-ob-virtual-col', name);
+          const value = Object.prototype.hasOwnProperty.call(row, name) ? row[name] : '';
+          td.textContent = value == null ? '' : String(value);
           tr.appendChild(td);
         });
         const tdDel = document.createElement('td');
@@ -952,12 +998,13 @@ function obManagedParseFieldMeta(raw) {
 
 function obManagedAddTpRow(btn) {
   var tpName = btn.getAttribute('data-ob-add-tp') || '';
-  var tbody = obManagedWritableTableBody('tp-body-' + tpName, 'data-tp-fields');
+  var elementName = btn.getAttribute('data-ob-element') || '';
+  var tbody = obManagedWritableTableBody('tp-body-' + tpName, 'data-tp-fields', elementName);
   if (!tpName || !tbody || typeof addTpRow !== 'function') return;
   var meta = obManagedParseFieldMeta(tbody.getAttribute('data-tp-fields') || '');
   var fields = meta.map(function (f) { return f.name; });
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
-  addTpRow(tpName, fields, nums, tbody.rows.length, tbody);
+  addTpRow(tpName, fields, nums, tbody.rows.length, tbody, obManagedVirtualColumnNames(tbody));
   var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
   if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
@@ -1599,7 +1646,7 @@ obManagedReady(obManagedInitDelegates);
         if (c.width) col.width = c.width;
         col.formatter = function(row, cell, value) {
           if (value == null || value === "") return "";
-          return "<span style='color:#64748b'>" + String(value) + "</span>";
+          return "<span style='color:#64748b'>" + obManagedEscapeHTML(value) + "</span>";
         };
         columns.push(col);
         continue;
@@ -2152,6 +2199,9 @@ obManagedReady(obManagedInitDelegates);
     // создавался и не регистрировался, из-за чего add/удаление/подбор тихо не
     // работали именно в новых документах.
     var colsRaw = JSON.parse(div.getAttribute("data-sg-cols") || "[]") || [];
+    colsRaw = colsRaw.filter(function(c) {
+      return !(c && c.virtual && obManagedIsReservedVirtualColumnName(c.id));
+    });
     var refOpts = JSON.parse(div.getAttribute("data-sg-ref") || "null") || {};
     var enumLabels = JSON.parse(div.getAttribute("data-sg-enum") || "null") || {};
     var rowsRaw = JSON.parse(div.getAttribute("data-sg-rows") || "[]") || [];

@@ -232,6 +232,18 @@ type FormVirtualColumn struct {
 	Width    int               `yaml:"width,omitempty"`
 }
 
+// IsReservedFormVirtualColumnName reports names occupied by the managed-form
+// table runtime. A virtual column is copied into the same JS row object, so it
+// must not be allowed to overwrite identity, stable-order or styling metadata.
+func IsReservedFormVirtualColumnName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "id", "_ord", "_obrowclass", "_obcellclasses":
+		return true
+	default:
+		return false
+	}
+}
+
 // ColumnTitle — подпись колонки для языка с откатом на ru и на имя колонки.
 func (c FormVirtualColumn) ColumnTitle(lang string) string {
 	if c.TitleMap != nil {

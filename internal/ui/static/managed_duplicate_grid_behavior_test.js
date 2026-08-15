@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const source = fs.readFileSync('static/managed.js', 'utf8');
-const helperStart = source.indexOf('function obManagedSetTablePartJSON');
+const helperStart = source.indexOf('function obManagedIsReservedVirtualColumnName');
 const helperEndMarker = 'window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;';
 const helperEndAt = source.indexOf(helperEndMarker, helperStart);
 const start = source.indexOf('// SlickGrid initializer for managed-form table parts');
@@ -17,7 +17,7 @@ function eventSlot() {
   return {handlers: [], subscribe(fn) { this.handlers.push(fn); }};
 }
 
-function host(readOnly) {
+function host(readOnly, overrides) {
   const attrs = {
     'data-sg-tp': 'Lines',
     'data-sg-el': readOnly ? 'ReadonlyLines' : 'WritableLines',
@@ -26,6 +26,7 @@ function host(readOnly) {
     'data-sg-enum': 'null',
     'data-sg-rows': '[]'
   };
+  Object.assign(attrs, overrides || {});
   if (readOnly) attrs['data-sg-ro'] = '1';
   else attrs['data-sg-rowadd'] = '1';
   return {
@@ -37,9 +38,9 @@ function host(readOnly) {
   };
 }
 
-function run(order) {
-  const readonly = host(true);
-  const writable = host(false);
+function run(order, overrides) {
+  const readonly = host(true, overrides);
+  const writable = host(false, overrides);
   const hosts = order === 'readonly-first' ? [readonly, writable] : [writable, readonly];
   const created = [];
   const fired = [];
@@ -94,13 +95,43 @@ function run(order) {
     addEventListener() {},
     contains() { return true; }
   };
-  global.Slick = {Data: {DataView}, Grid};
+  global.Slick = {Data: {DataView}, Grid, Editors: {Text: function TextEditor() {}}};
   global.formGridItemMetadata = function() {};
   global.copyFormGridStyleKeys = function() {};
 
   eval(runtime);
   return {readonly, writable, created, fired, hidden, requestedFields, window: global.window};
 }
+
+test('virtual SlickGrid formatter escapes HTML', () => {
+  const state = run('writable-first', {
+    'data-sg-cols': JSON.stringify([{
+      id: 'Virtual', name: 'Virtual', type: 'string', virtual: true
+    }])
+  });
+  const formatter = state.created[0].columns[0].formatter;
+  const attack = `<img src=x onerror=alert(1)>&"'`;
+  assert.equal(
+    formatter(0, 0, attack),
+    "<span style='color:#64748b'>&lt;img src=x onerror=alert(1)&gt;&amp;&quot;&#39;</span>"
+  );
+});
+
+test('reserved virtual column cannot overwrite stable row order', () => {
+  const state = run('writable-first', {
+    'data-sg-cols': JSON.stringify([
+      {id: 'Value', name: 'Value', type: 'string'},
+      {id: '_ord', name: 'Order', type: 'string', virtual: true}
+    ]),
+    'data-sg-rows': JSON.stringify([
+      {Value: 'first', _ord: 100},
+      {Value: 'second', _ord: -1}
+    ])
+  });
+  assert.deepEqual(state.created[0].columns.map(column => column.id), ['Value']);
+  state.window.obGridSync();
+  assert.deepEqual(JSON.parse(state.hidden.value), [{Value: 'first'}, {Value: 'second'}]);
+});
 
 for (const order of ['readonly-first', 'writable-first']) {
   test(`duplicate SlickGrid keeps writable authority (${order})`, () => {

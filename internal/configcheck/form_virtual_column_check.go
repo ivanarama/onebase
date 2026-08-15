@@ -25,6 +25,7 @@ func CheckFormVirtualColumns(proj *project.Project) []Issue {
 	for _, ent := range proj.Entities {
 		for _, form := range ent.Forms {
 			label := formFileLabel(ent, form)
+			formSeen := make(map[string]formVirtualColumnUse)
 			walkFormElements(form.Elements, func(el *metadata.FormElement) {
 				if len(el.VirtualColumns) == 0 {
 					return
@@ -48,11 +49,52 @@ func CheckFormVirtualColumns(proj *project.Project) []Issue {
 				seen := make(map[string]bool, len(el.VirtualColumns))
 				for _, vc := range el.VirtualColumns {
 					checkVirtualColumn(add, byName, *tp, vc, seen)
+					checkVirtualColumnAcrossViews(add, formSeen, *tp, el, vc)
 				}
 			})
 		}
 	}
 	return issues
+}
+
+type formVirtualColumnUse struct {
+	element *metadata.FormElement
+	name    string
+	path    string
+}
+
+// checkVirtualColumnAcrossViews keeps the row-map contract unambiguous when
+// the same table part is placed on a form more than once. Presentation details
+// may differ per view, but one row key cannot represent two different paths.
+func checkVirtualColumnAcrossViews(
+	add func(msg, fix string),
+	seen map[string]formVirtualColumnUse,
+	tp metadata.TablePart,
+	el *metadata.FormElement,
+	vc metadata.FormVirtualColumn,
+) {
+	exactName := vc.Name
+	name := strings.TrimSpace(exactName)
+	if name == "" || metadata.IsReservedFormVirtualColumnName(name) {
+		return
+	}
+	refName, ok := vc.RefFieldName()
+	if !ok {
+		return
+	}
+	targetName, _ := vc.TargetFieldName()
+	key := strings.ToLower(strings.TrimSpace(tp.Name)) + "\x00" + strings.ToLower(name)
+	path := strings.ToLower(refName) + "\x00" + strings.ToLower(targetName)
+	previous, exists := seen[key]
+	if !exists {
+		seen[key] = formVirtualColumnUse{element: el, name: exactName, path: path}
+		return
+	}
+	if previous.element == el || (previous.name == exactName && previous.path == path) {
+		return
+	}
+	add(fmt.Sprintf("виртуальная колонка %q конфликтует с объявлением элемента %q для той же табличной части", name, formElementName(previous.element)),
+		"используйте одинаковые name и data_path во всех представлениях табличной части либо задайте разные имена колонок")
 }
 
 func checkVirtualColumn(
@@ -65,6 +107,11 @@ func checkVirtualColumn(
 	name := strings.TrimSpace(vc.Name)
 	if name == "" {
 		add("виртуальная колонка без name", "задайте name — по нему колонка адресуется внутри формы")
+		return
+	}
+	if metadata.IsReservedFormVirtualColumnName(name) {
+		add(fmt.Sprintf("виртуальная колонка %q использует служебное имя", name),
+			"выберите имя, отличное от id, _ord, _obRowClass и _obCellClasses")
 		return
 	}
 	// Имя колонки не должно совпадать с реквизитом ТЧ: одноимённая виртуальная
@@ -132,6 +179,9 @@ func checkVirtualColumn(
 // ключ table_part или data_path «Объект.<ТЧ>». Возвращает nil, если элемент —
 // не табличная часть сущности (например таблица значений формы).
 func virtualColumnTablePart(ent *metadata.Entity, el *metadata.FormElement) *metadata.TablePart {
+	if ent == nil || el == nil || el.Kind != metadata.FormElementTablePart {
+		return nil
+	}
 	name := strings.TrimSpace(el.TablePart)
 	if name == "" {
 		if parts := strings.Split(el.DataPath, "."); len(parts) == 2 &&

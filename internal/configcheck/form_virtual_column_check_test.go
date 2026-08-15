@@ -92,11 +92,68 @@ func TestCheckFormVirtualColumns_Дубль(t *testing.T) {
 func TestCheckFormVirtualColumns_НеТабличнаяЧасть(t *testing.T) {
 	proj := virtualColumnProject()
 	proj.Entities[1].Forms[0].Elements = []*metadata.FormElement{{
-		Kind: metadata.FormElementField, Name: "Комментарий", DataPath: "Объект.Комментарий",
+		Kind: metadata.FormElementField, Name: "ЛожнаяТаблица", DataPath: "Объект.Строки",
 		VirtualColumns: []metadata.FormVirtualColumn{{Name: "КодКлиента", DataPath: "Клиент.Код"}},
 	}}
 	issues := CheckFormVirtualColumns(proj)
 	if len(issues) != 1 || !strings.Contains(issues[0].Message, "не на табличной части") {
 		t.Fatalf("ожидалась ошибка размещения, получено: %+v", issues)
+	}
+}
+
+func TestCheckFormVirtualColumns_СлужебныеИмена(t *testing.T) {
+	for _, name := range []string{" id ", "_OrD", "_obROWclass", "_OBCELlClasses"} {
+		t.Run(name, func(t *testing.T) {
+			issues := CheckFormVirtualColumns(virtualColumnProject(
+				metadata.FormVirtualColumn{Name: name, DataPath: "Клиент.Код"},
+			))
+			if len(issues) != 1 || !strings.Contains(issues[0].Message, "служебное имя") {
+				t.Fatalf("служебное имя %q принято: %+v", name, issues)
+			}
+		})
+	}
+}
+
+func TestCheckFormVirtualColumns_КонфликтМеждуПредставлениями(t *testing.T) {
+	proj := virtualColumnProject(
+		metadata.FormVirtualColumn{Name: "КодКлиента", DataPath: "Клиент.Код"},
+	)
+	proj.Entities[1].Forms[0].Elements = append(proj.Entities[1].Forms[0].Elements, &metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "СтрокиИтоги", DataPath: "Объект.Строки",
+		VirtualColumns: []metadata.FormVirtualColumn{{Name: "КодКлиента", DataPath: "Клиент.Наименование"}},
+	})
+	issues := CheckFormVirtualColumns(proj)
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "конфликтует") {
+		t.Fatalf("конфликт одного row-key с разными путями принят: %+v", issues)
+	}
+}
+
+func TestCheckFormVirtualColumns_ОдинаковоеОбъявлениеВПредставлениях(t *testing.T) {
+	proj := virtualColumnProject(
+		metadata.FormVirtualColumn{Name: "КодКлиента", DataPath: "Клиент.Код", Width: 90},
+	)
+	proj.Entities[1].Forms[0].Elements = append(proj.Entities[1].Forms[0].Elements, &metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "СтрокиИтоги", DataPath: "Объект.Строки",
+		VirtualColumns: []metadata.FormVirtualColumn{{
+			Name: "КодКлиента", DataPath: " клиент . код ", Width: 180,
+			TitleMap: map[string]string{"ru": "Другой заголовок"},
+		}},
+	})
+	if issues := CheckFormVirtualColumns(proj); len(issues) != 0 {
+		t.Fatalf("одно и то же объявление с разными presentation-настройками отклонено: %+v", issues)
+	}
+}
+
+func TestCheckFormVirtualColumns_РегистрИмениМеждуПредставлениями(t *testing.T) {
+	proj := virtualColumnProject(
+		metadata.FormVirtualColumn{Name: "КодКлиента", DataPath: "Клиент.Код"},
+	)
+	proj.Entities[1].Forms[0].Elements = append(proj.Entities[1].Forms[0].Elements, &metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "СтрокиИтоги", DataPath: "Объект.Строки",
+		VirtualColumns: []metadata.FormVirtualColumn{{Name: "кодклиента", DataPath: "Клиент.Код"}},
+	})
+	issues := CheckFormVirtualColumns(proj)
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "конфликтует") {
+		t.Fatalf("разный регистр одного row-key принят: %+v", issues)
 	}
 }

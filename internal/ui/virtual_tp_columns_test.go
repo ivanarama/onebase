@@ -234,3 +234,82 @@ func TestVirtualTPColumn_СтрокаЗакрытаяПолитикойНеПо�
 		t.Fatalf("реквизит недоступной строки показан: %v", got)
 	}
 }
+
+func TestVirtualTPColumn_NoGridPublishesVirtualSchema(t *testing.T) {
+	s, order, orderID := virtualColumnFixture(t)
+	order.Forms[0].Elements[0].NoGrid = true
+	htmlOut := virtualColumnFormHTML(t, s, order, orderID)
+
+	const prefix = `data-tp-virtual-cols="`
+	start := strings.Index(htmlOut, prefix)
+	if start < 0 {
+		t.Fatal("no_grid tbody не содержит схему виртуальных колонок")
+	}
+	start += len(prefix)
+	end := strings.Index(htmlOut[start:], `"`)
+	if end < 0 {
+		t.Fatal("атрибут data-tp-virtual-cols не закрыт")
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(html.UnescapeString(htmlOut[start:start+end])), &names); err != nil {
+		t.Fatalf("data-tp-virtual-cols содержит невалидный JSON: %v", err)
+	}
+	if len(names) != 1 || names[0] != "КодКлиента" {
+		t.Fatalf("неверная схема виртуальных колонок: %#v", names)
+	}
+	if !strings.Contains(htmlOut, `data-ob-virtual-col="КодКлиента">К-000042</td>`) {
+		t.Fatal("начальный no_grid render потерял значение виртуальной колонки")
+	}
+}
+
+func TestFormElementTablePartRequiresTablePartKind(t *testing.T) {
+	entity := &metadata.Entity{TableParts: []metadata.TablePart{{Name: "Строки"}}}
+	el := &metadata.FormElement{
+		Kind: metadata.FormElementField, DataPath: "Объект.Строки",
+	}
+	if got := formElementTablePart(entity, el); got != nil {
+		t.Fatalf("элемент kind=%q принят как табличная часть: %+v", el.Kind, got)
+	}
+}
+
+func TestApplyVirtualTPColumns_SkipsReservedNames(t *testing.T) {
+	s, order, orderID := virtualColumnFixture(t)
+	loaded := parseManagedTPRows(t, virtualColumnFormHTML(t, s, order, orderID))
+	rows := map[string][]map[string]any{
+		"Строки": {{"Клиент": loaded[0]["Клиент"]}},
+	}
+	form := &metadata.FormModule{Elements: []*metadata.FormElement{{
+		Kind: metadata.FormElementTablePart, DataPath: "Объект.Строки",
+		VirtualColumns: []metadata.FormVirtualColumn{{Name: "_OrD", DataPath: "Клиент.Код"}},
+	}}}
+	s.applyVirtualTPColumns(context.Background(), order, form, rows)
+	if _, exists := rows["Строки"][0]["_OrD"]; exists {
+		t.Fatalf("runtime материализовал служебную колонку: %#v", rows["Строки"][0])
+	}
+}
+
+func TestApplyVirtualTPColumns_FirstValidBindingWinsAcrossViews(t *testing.T) {
+	s, order, orderID := virtualColumnFixture(t)
+	loaded := parseManagedTPRows(t, virtualColumnFormHTML(t, s, order, orderID))
+	rows := map[string][]map[string]any{
+		"Строки": {{"Клиент": loaded[0]["Клиент"]}},
+	}
+	form := &metadata.FormModule{Elements: []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementTablePart, Name: "НекорректныйВид", DataPath: "Объект.Строки",
+			VirtualColumns: []metadata.FormVirtualColumn{{Name: "Проекция", DataPath: "Нет.Код"}},
+		},
+		{
+			Kind: metadata.FormElementTablePart, Name: "ОсновнойВид", DataPath: "Объект.Строки",
+			VirtualColumns: []metadata.FormVirtualColumn{{Name: "Проекция", DataPath: "Клиент.Код"}},
+		},
+		{
+			Kind: metadata.FormElementTablePart, Name: "КонфликтующийВид", DataPath: "Объект.Строки",
+			VirtualColumns: []metadata.FormVirtualColumn{{Name: "Проекция", DataPath: "Клиент.Наименование"}},
+		},
+	}}
+	s.applyVirtualTPColumns(context.Background(), order, form, rows)
+	if got := rows["Строки"][0]["Проекция"]; got != "К-000042" {
+		t.Fatalf("последующее представление перезаписало первый валидный binding: %v", got)
+	}
+}
