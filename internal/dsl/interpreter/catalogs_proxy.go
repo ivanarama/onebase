@@ -723,10 +723,7 @@ func (w *CatalogRecordWriter) CallMethod(method string, args []any) any {
 			RaiseUserError("Записать(" + w.entity.Name + "): " + err.Error())
 		}
 		w.idStr = id
-		name := ""
-		if v := w.Get("Наименование"); v != nil {
-			name = fmt.Sprintf("%v", v)
-		}
+		name := w.displayName()
 		return &Ref{
 			UUID: id, Name: name, Type: w.entity.Name,
 			Manager: &CatalogProxy{entity: w.entity, db: w.db, ctxSrc: w.ctxSrc, access: w.access,
@@ -745,6 +742,26 @@ func (w *CatalogRecordWriter) CallMethod(method string, args []any) any {
 		return nil
 	}
 	return nil
+}
+
+func (w *CatalogRecordWriter) displayName() string {
+	if len(w.entity.Presentation) > 0 {
+		for _, field := range metadata.LabelFields(w.entity) {
+			if value := w.Get(field.Name); value != nil {
+				name := fmt.Sprintf("%v", value)
+				if strings.TrimSpace(name) != "" {
+					return name
+				}
+			}
+		}
+		return ""
+	}
+
+	// Keep the pre-presentation behaviour unchanged for legacy metadata.
+	if value := w.Get("Наименование"); value != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return ""
 }
 
 // read перечитывает поля объекта из БД (Объект.Прочитать()). Требует, чтобы
