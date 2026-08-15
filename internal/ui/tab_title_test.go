@@ -23,6 +23,15 @@ func TestRecordCardTitle(t *testing.T) {
 			{Name: "Комментарий", Type: metadata.FieldTypeString},
 		},
 	}
+	explicit := &metadata.Entity{
+		Name: "Товары",
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Описание", Type: metadata.FieldTypeString},
+		},
+		Presentation: []string{"Артикул", "Описание"},
+	}
 
 	cases := []struct {
 		name   string
@@ -35,6 +44,10 @@ func TestRecordCardTitle(t *testing.T) {
 		{"пустое Наименование → пусто", catalog, map[string]string{"Наименование": "   "}, ""},
 		{"документ без Наименования → Номер", document, map[string]string{"Номер": "000000123"}, "000000123"},
 		{"values как map[string]any", catalog, map[string]any{"Наименование": "Иванов И.И."}, "Иванов И.И."},
+		{"presentation primary", explicit, map[string]string{"Артикул": " A-1 ", "Описание": "Витринное имя", "Наименование": "Старое имя"}, "A-1"},
+		{"presentation fallback", explicit, map[string]string{"Артикул": " ", "Описание": " Витринное имя ", "Наименование": "Старое имя"}, "Витринное имя"},
+		{"presentation case-insensitive any map", explicit, map[string]any{"артикул": "", "описание": "Нижний регистр", "наименование": "Старое имя"}, "Нижний регистр"},
+		{"presentation replaces legacy", explicit, map[string]string{"Артикул": "", "Описание": "", "Наименование": "Старое имя"}, ""},
 		{"nil entity → пусто", nil, map[string]string{"Наименование": "x"}, ""},
 	}
 	for _, c := range cases {

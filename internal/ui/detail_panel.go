@@ -61,6 +61,9 @@ func detailPanelForEntity(e *metadata.Entity, row map[string]any,
 	}
 	dp := e.DetailPanel
 	title := detailPanelTitle(e.Fields, row)
+	if value, configured := explicitPresentationValue(e, row); configured {
+		title = value
+	}
 	if dp != nil && dp.Title != "" {
 		if f := findFieldFold(e.Fields, dp.Title); f != nil {
 			if rendered, ok := detailPanelFieldForRow(*f, row, enumLabels, lang); ok &&

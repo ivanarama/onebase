@@ -583,7 +583,78 @@ func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, 
 	if field == nil {
 		return "", "", 0, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
 	}
-	col := metadata.ColumnName(*field)
+	return db.matchCatalogByExpression(ctx, entity, metadata.ColumnName(*field), fieldName, value)
+}
+
+// MatchCatalogByPresentation ищет по фактическому явно заданному
+// presentation: у каждой строки берётся первый непустой реквизит из списка.
+// Это важно для safe-match: последовательные запросы по отдельным колонкам не
+// могут корректно определить неоднозначность между основным и запасным полем.
+func (db *DB) MatchCatalogByPresentation(ctx context.Context, entity *metadata.Entity, value string) (string, string, int, error) {
+	if entity == nil || len(entity.Presentation) == 0 {
+		return "", "", 0, fmt.Errorf("entity has no explicit presentation")
+	}
+	fields := metadata.LabelFields(entity)
+	if len(fields) == 0 {
+		return "", "", 0, fmt.Errorf("entity %s has no string presentation fields", entity.Name)
+	}
+
+	columns := make([]string, 0, len(fields))
+	predicates := make([]string, 0, len(fields))
+	args := make([]any, 0, len(fields))
+	for i, field := range fields {
+		col := metadata.ColumnName(field)
+		columns = append(columns, col)
+		predicates = append(predicates, col+" = "+db.dialect.Placeholder(i+1))
+		args = append(args, value)
+	}
+	rows, err := db.Query(ctx, fmt.Sprintf("SELECT id, %s FROM %s WHERE %s",
+		strings.Join(columns, ", "), metadata.TableName(entity.Name), strings.Join(predicates, " OR ")), args...)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("match %s presentation: %w", entity.Name, err)
+	}
+	defer rows.Close()
+
+	count := 0
+	foundID, foundDisplay := "", ""
+	for rows.Next() {
+		var id string
+		values := make([]*string, len(fields))
+		dest := make([]any, 1, len(fields)+1)
+		dest[0] = &id
+		for i := range values {
+			dest = append(dest, &values[i])
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return "", "", 0, fmt.Errorf("match %s presentation scan: %w", entity.Name, err)
+		}
+		display := ""
+		for _, candidate := range values {
+			if candidate != nil && strings.TrimSpace(*candidate) != "" {
+				display = *candidate
+				break
+			}
+		}
+		// WHERE intentionally admits matches in every candidate column. Only a
+		// value that is the row's effective first nonempty label counts.
+		if display != value {
+			continue
+		}
+		count++
+		if count == 1 {
+			foundID, foundDisplay = id, display
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", 0, fmt.Errorf("match %s presentation rows: %w", entity.Name, err)
+	}
+	if count == 1 {
+		return foundID, foundDisplay, 1, nil
+	}
+	return "", "", count, nil
+}
+
+func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, expression, fieldLabel, value string) (string, string, int, error) {
 	table := metadata.TableName(entity.Name)
 	d := db.dialect
 	// Один запрос: LIMIT 1 берёт id/представление первой записи, а вложенный
@@ -593,11 +664,11 @@ func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, 
 	// и SQLite (?, ?).
 	rows, err := db.Query(ctx,
 		fmt.Sprintf(`SELECT id, %s, (SELECT COUNT(*) FROM %s WHERE %s = %s) FROM %s WHERE %s = %s LIMIT 1`,
-			col, table, col, d.Placeholder(1), table, col, d.Placeholder(2)),
+			expression, table, expression, d.Placeholder(1), table, expression, d.Placeholder(2)),
 		value, value,
 	)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("match %s.%s: %w", entity.Name, fieldName, err)
+		return "", "", 0, fmt.Errorf("match %s.%s: %w", entity.Name, fieldLabel, err)
 	}
 	if !rows.Next() {
 		rows.Close()
@@ -607,11 +678,11 @@ func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, 
 	cnt := 0
 	if err := rows.Scan(&idStr, &display, &cnt); err != nil {
 		rows.Close()
-		return "", "", 0, fmt.Errorf("match %s.%s scan: %w", entity.Name, fieldName, err)
+		return "", "", 0, fmt.Errorf("match %s.%s scan: %w", entity.Name, fieldLabel, err)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return "", "", 0, fmt.Errorf("match %s.%s rows: %w", entity.Name, fieldName, err)
+		return "", "", 0, fmt.Errorf("match %s.%s rows: %w", entity.Name, fieldLabel, err)
 	}
 	rows.Close()
 	if cnt == 1 {
