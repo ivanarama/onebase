@@ -90,6 +90,38 @@ func TestObject_String_PascalCaseNumber(t *testing.T) {
 	}
 }
 
+func TestObject_String_ExplicitPresentationFallback(t *testing.T) {
+	o := &Object{
+		Type:         "Номенклатура",
+		Kind:         metadata.KindCatalog,
+		Presentation: []string{"Артикул", "Описание"},
+		ID:           uuid.MustParse("44444444-4444-4444-4444-444444444444"),
+		Fields: map[string]any{
+			"Наименование": "Старое имя", "артикул": " ", "ОПИСАНИЕ": " Витринное имя ",
+		},
+	}
+	if got := o.String(); got != "Витринное имя" {
+		t.Fatalf("explicit fallback String()=%q, ожидалось Витринное имя", got)
+	}
+	o.Fields["ОПИСАНИЕ"] = ""
+	if got := o.String(); got != "Номенклатура:44444444" {
+		t.Fatalf("empty explicit String()=%q, не должен проваливаться в Наименование", got)
+	}
+}
+
+func TestObject_EnsureTablePartsCarriesPresentationIntoDSLString(t *testing.T) {
+	o := NewObject("Номенклатура", metadata.KindCatalog)
+	o.Fields["артикул"] = "A-1"
+	o.Fields["наименование"] = "Старое имя"
+	o.EnsureTableParts(&metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Presentation: []string{"Артикул"},
+	})
+	if got := o.String(); got != "A-1" {
+		t.Fatalf("String() after EnsureTableParts=%q, ожидалось A-1", got)
+	}
+}
+
 // Без конвенционных полей — fallback на Type:short-uuid.
 func TestObject_String_Fallback(t *testing.T) {
 	o := &Object{

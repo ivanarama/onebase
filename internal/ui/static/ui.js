@@ -2449,7 +2449,7 @@ function obTPRefMeta() {
   return window._tpRefMeta || {};
 }
 
-function addTpRow(tpName, fields, numFields, idx, tbodyOverride) {
+function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields) {
   var tbody = tbodyOverride || document.getElementById('tp-body-' + tpName);
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
@@ -2518,6 +2518,12 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride) {
       }
       td.appendChild(inp);
     }
+    tr.appendChild(td);
+  });
+  (Array.isArray(virtualFields) ? virtualFields : []).forEach(function (name) {
+    var td = document.createElement('td');
+    td.setAttribute('data-ob-virtual-col', name);
+    td.textContent = '';
     tr.appendChild(td);
   });
   var tdDel = document.createElement('td');

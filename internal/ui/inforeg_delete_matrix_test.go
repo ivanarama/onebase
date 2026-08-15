@@ -189,11 +189,9 @@ func TestUIInfoRegDeleteTypedCompositeKeyMatrix(t *testing.T) {
 			}
 			dims := map[string]any{
 				"Slice": "typed", "Flag": flag, "Moment": dateValue,
-				// SQLite stores NUMBER as TEXT. The trailing zero is deliberate:
-				// normalizing this machine key to "1" targets a different row.
+				// The storage boundary now canonicalizes NUMBER by its declared scale.
 				"Seq": "1.00",
-				// PostgreSQL NUMERIC(p,s) rounds and rewrites scale. SQLite must
-				// retain rounded-looking, exponent, zero and comma forms byte-for-byte.
+				// Both backends must round and render these values identically.
 				"Scaled": " 1.005 ", "Exponent": "1e0", "Zero": "0.00",
 				"Comma": commaValue, "Owner": ownerID,
 			}
@@ -225,17 +223,16 @@ func TestUIInfoRegDeleteTypedCompositeKeyMatrix(t *testing.T) {
 		if trueForm == nil || falseForm == nil {
 			t.Fatalf("boolean keys were not serialized losslessly: %#v", forms)
 		}
-		if got := trueForm.Get("Seq"); got != "1.00" {
-			t.Fatalf("number machine key=%q, want exact SQLite/PG value 1.00", got)
+		if got := trueForm.Get("Seq"); got != "1" {
+			t.Fatalf("number machine key=%q, want canonical SQLite/PG value 1", got)
 		}
 		if got := trueForm.Get("Moment"); got != momentKey {
 			t.Fatalf("date machine key=%q, want exact RFC3339 value %q", got, momentKey)
 		}
 		wantFalseMoment := moment.UTC().Format("2006-01-02 15:04:05-07:00")
-		wantScaledForm, wantExponentForm := " 1.005 ", "1e0"
+		wantScaledForm, wantExponentForm := "1.01", "1.00"
 		if db.IsPostgres() {
 			wantFalseMoment = momentKey
-			wantScaledForm, wantExponentForm = "1.01", "1.00"
 		}
 		if got := falseForm.Get("Moment"); got != wantFalseMoment {
 			t.Fatalf("time.Time date machine key=%q, want %q", got, wantFalseMoment)
@@ -246,8 +243,8 @@ func TestUIInfoRegDeleteTypedCompositeKeyMatrix(t *testing.T) {
 		if got := trueForm.Get("Exponent"); got != wantExponentForm {
 			t.Fatalf("exponent number machine key=%q, want %q", got, wantExponentForm)
 		}
-		if db.IsSQLite() && trueForm.Get("Comma") != "1,00" {
-			t.Fatalf("comma number machine key=%q, want exact SQLite value 1,00", trueForm.Get("Comma"))
+		if got := trueForm.Get("Comma"); got != "1" {
+			t.Fatalf("comma number machine key=%q, want canonical value 1", got)
 		}
 
 		for _, field := range ir.Dimensions {
@@ -303,7 +300,7 @@ func TestUIInfoRegDeleteTypedCompositeKeyMatrix(t *testing.T) {
 		if len(pending) != 2 {
 			t.Fatalf("numeric delete created a second exchange identity: %#v", pending)
 		}
-		expectedSeq, expectedScaled, expectedExponent, expectedZero, expectedComma := "1.00", " 1.005 ", "1e0", "0.00", "1,00"
+		expectedSeq, expectedScaled, expectedExponent, expectedZero, expectedComma := "1", "1.01", "1.00", "0.00", "1"
 		if db.IsPostgres() {
 			expectedSeq, expectedScaled, expectedExponent, expectedZero, expectedComma = "1", "1.01", "1", "0", "1"
 		}

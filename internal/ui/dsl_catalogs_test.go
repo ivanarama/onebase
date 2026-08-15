@@ -83,6 +83,43 @@ func setupCatTest(t *testing.T) (context.Context, *storage.DB, *Server, *interpr
 	return ctx, db, s, proxy, txState
 }
 
+func TestCatWriter_DisplayNameUsesExplicitPresentationFallback(t *testing.T) {
+	entity := &metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Артикул", Type: metadata.FieldTypeString},
+			{Name: "Описание", Type: metadata.FieldTypeString},
+		},
+		Presentation: []string{"Артикул", "Описание"},
+	}
+	newWriter := func(article, description string) *catWriter {
+		obj := runtime.NewObject(entity.Name, entity.Kind)
+		obj.Fields["артикул"] = article
+		obj.Fields["описание"] = description
+		obj.Fields["наименование"] = "Старое имя"
+		return &catWriter{entity: entity, obj: obj}
+	}
+
+	if got := newWriter("A-1", "Витринное имя").displayName(); got != "A-1" {
+		t.Fatalf("primary displayName = %q, ожидалось A-1", got)
+	}
+	if got := newWriter("  ", "Витринное имя").displayName(); got != "Витринное имя" {
+		t.Fatalf("fallback displayName = %q, ожидалось Витринное имя", got)
+	}
+	empty := newWriter("", "")
+	if got, want := empty.displayName(), empty.obj.ID.String()[:8]; got != want {
+		t.Fatalf("empty explicit displayName = %q, ожидался id fallback %q", got, want)
+	}
+
+	legacyEntity := &metadata.Entity{Name: "Клиенты", Kind: metadata.KindCatalog}
+	legacyObj := runtime.NewObject(legacyEntity.Name, legacyEntity.Kind)
+	legacyObj.Fields["наименование"] = "Старое имя"
+	if got := (&catWriter{entity: legacyEntity, obj: legacyObj}).displayName(); got != "Старое имя" {
+		t.Fatalf("legacy displayName = %q, ожидалось Старое имя", got)
+	}
+}
+
 // Создание справочника с ТЧ из DSL: строки ТЧ сохраняются, хук ПриЗаписи
 // исполняется и видит табличную часть.
 func TestCatWriter_CreateWithTableParts(t *testing.T) {
