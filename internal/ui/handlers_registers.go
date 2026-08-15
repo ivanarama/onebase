@@ -555,10 +555,10 @@ func infoRegPolicyRow(ir *metadata.InfoRegister, dims, resources map[string]any,
 }
 
 func (s *Server) infoRegExistingPolicyRow(ctx context.Context, ir *metadata.InfoRegister, dims map[string]any, period *time.Time) (map[string]any, bool) {
-	flt := storage.RegFilter{Dims: map[string]string{}}
+	flt := storage.RegFilter{DimValues: map[string]any{}}
 	for k, v := range dims {
 		if v != nil {
-			flt.Dims[k] = fmt.Sprintf("%v", v)
+			flt.DimValues[k] = v
 		}
 	}
 	if period != nil {
