@@ -6,7 +6,6 @@ package compose
 // alignRowKeys (колонки из RunQuery приходят в нижнем регистре).
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/report"
@@ -46,7 +45,7 @@ func matchFilter(row Row, f report.Filter) bool {
 	case "contains":
 		s := ""
 		if found {
-			s = fmt.Sprint(raw)
+			s = toStr(raw)
 		}
 		return strings.Contains(strings.ToLower(s), strings.ToLower(f.Value))
 	case "eq", "ne", "gt", "ge", "lt", "le":
@@ -62,7 +61,7 @@ func matchFilter(row Row, f report.Filter) bool {
 			return cmpToBool(d.Cmp(fv), op)
 		}
 		// Иначе строковое сравнение по содержимому.
-		return cmpToBool(strings.Compare(fmt.Sprint(raw), f.Value), op)
+		return cmpToBool(strings.Compare(toStr(raw), f.Value), op)
 	default:
 		return true
 	}

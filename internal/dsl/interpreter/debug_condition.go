@@ -58,6 +58,8 @@ func withConditionLimits(e *env) func() {
 	ec := e.ec
 	savedDeadline := ec.deadline
 	savedIters := ec.maxLoopIters
+	savedDecimalExpansion := ec.maxDecimalExpansion
+	savedStringExpansion := ec.maxStringExpansion
 	savedVars := ec.sandboxVars
 	savedReadOnly := ec.readOnlyReason
 	savedViolation := ec.readOnlyViolation
@@ -74,6 +76,14 @@ func withConditionLimits(e *env) func() {
 	if savedIters > 0 && savedIters < conditionLoopIters {
 		ec.maxLoopIters = savedIters
 	}
+	ec.maxDecimalExpansion = defaultSandboxDecimalExpansion
+	if savedDecimalExpansion > 0 && savedDecimalExpansion < ec.maxDecimalExpansion {
+		ec.maxDecimalExpansion = savedDecimalExpansion
+	}
+	ec.maxStringExpansion = defaultSandboxStringExpansion
+	if savedStringExpansion > 0 && savedStringExpansion < ec.maxStringExpansion {
+		ec.maxStringExpansion = savedStringExpansion
+	}
 	ec.readOnlyReason = "условие точки останова вычисляется на каждом проходе строки и не должно менять данные"
 	ec.readOnlyViolation = ""
 
@@ -89,6 +99,8 @@ func withConditionLimits(e *env) func() {
 	return func() {
 		ec.deadline = savedDeadline
 		ec.maxLoopIters = savedIters
+		ec.maxDecimalExpansion = savedDecimalExpansion
+		ec.maxStringExpansion = savedStringExpansion
 		ec.sandboxVars = savedVars
 		ec.readOnlyReason = savedReadOnly
 		ec.readOnlyViolation = savedViolation
