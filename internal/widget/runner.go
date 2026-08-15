@@ -439,6 +439,13 @@ func (r *Runner) resolveUUIDs(ctx context.Context, rows []map[string]any) {
 			}
 			if refRow, err := r.Store.GetByID(ctx, entity.Name, id, entity); err == nil {
 				r.maskRecord(entity, refRow)
+				if len(entity.Presentation) > 0 {
+					uuidToLabel[idStr] = explicitRecordPresentation(entity, refRow)
+					if uuidToLabel[idStr] == "" {
+						uuidToLabel[idStr] = shortID(idStr)
+					}
+					continue
+				}
 				for _, f := range entity.Fields {
 					if s, ok := refRow[f.Name].(string); ok && strings.TrimSpace(s) != "" {
 						uuidToLabel[idStr] = s
@@ -720,6 +727,12 @@ func recordPresentation(ctx context.Context, r *Runner, entityName, idStr string
 		return shortID(idStr)
 	}
 	r.maskRecord(ent, row)
+	if len(ent.Presentation) > 0 {
+		if label := explicitRecordPresentation(ent, row); label != "" {
+			return label
+		}
+		return shortID(idStr)
+	}
 	if ent.Kind == metadata.KindDocument {
 		num := fmt.Sprintf("%v", firstNonEmpty(row, "Номер", "Number"))
 		dateRaw := firstNonEmpty(row, "Дата", "Date")
@@ -741,6 +754,21 @@ func recordPresentation(ctx context.Context, r *Runner, entityName, idStr string
 		}
 	}
 	return shortID(idStr)
+}
+
+func explicitRecordPresentation(entity *metadata.Entity, row map[string]any) string {
+	for _, field := range metadata.LabelFields(entity) {
+		for key, value := range row {
+			if !strings.EqualFold(key, field.Name) || value == nil {
+				continue
+			}
+			if label := strings.TrimSpace(fmt.Sprint(value)); label != "" {
+				return label
+			}
+			break
+		}
+	}
+	return ""
 }
 
 // maskRecord applies the same field-level policy as UI read paths before a

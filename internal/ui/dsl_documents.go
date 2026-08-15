@@ -935,6 +935,17 @@ func (w *docWriter) ref() *interpreter.Ref {
 }
 
 func (w *docWriter) displayName() string {
+	if value, configured := explicitPresentationValue(w.entity, w.obj.Fields); configured {
+		if value != "" {
+			return value
+		}
+		id := w.obj.ID.String()
+		if len(id) >= 8 {
+			return w.entity.Name + ":" + id[:8]
+		}
+		return w.entity.Name
+	}
+
 	for _, k := range []string{"номер", "number"} {
 		if v, ok := w.obj.Fields[k]; ok && v != nil {
 			if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
