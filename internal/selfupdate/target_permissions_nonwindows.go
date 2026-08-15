@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 )
 
-func windowsTestPrivateInstallRoot() string { return "" }
-
 func validateTargetCoordinationDirectory(path string, info os.FileInfo) error {
 	if info.Mode().Perm()&0o022 != 0 {
 		return errors.New("selfupdate: shared group/other-writable installations are not supported; update as the owner from an owner-writable installation")
