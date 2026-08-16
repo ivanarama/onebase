@@ -68,27 +68,38 @@ jobs:
             echo "ver=build-${{ github.run_number }}" >> $GITHUB_OUTPUT
           fi
 
+      # shell: bash обязателен — шаг идёт по всей матрице, а на windows-раннере
+      # умолчание GitHub это pwsh. Значения подставляются через env, а не
+      # ${{ }} прямо в команду: подстановка в текст команды исполняет то, что
+      # лежит в переменной, а собранный здесь бинарь потом подписывается
+      # настоящим ключом.
       - name: Build binary
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          BUILD_VER: ${{ steps.ver.outputs.ver }}
+          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
         run: |
-          go build -ldflags="-s -w \
-            -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }} \
-            -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=${{ vars.RELEASE_PUBLIC_KEY }}" \
-            -o onebase${{ matrix.ext }} ./cmd/onebase
+          set -euo pipefail
+          ldflags="-s -w"
+          ldflags="$ldflags -X github.com/ivantit66/onebase/internal/version.Build=$BUILD_VER"
+          ldflags="$ldflags -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$RELEASE_PUBLIC_KEY"
+          go build "-ldflags=$ldflags" -o onebase${{ matrix.ext }} ./cmd/onebase
 
       - name: Build GUI binary (Windows native window, webview)
         if: matrix.goos == 'windows'
         shell: pwsh
         env:
           CGO_ENABLED: 1
+          BUILD_VER: ${{ steps.ver.outputs.ver }}
+          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
         run: |
-          go build -tags webview -ldflags="-s -w -H windowsgui `
-            -X github.com/ivantit66/onebase/internal/version.Build=${{ steps.ver.outputs.ver }} `
-            -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=${{ vars.RELEASE_PUBLIC_KEY }}" `
-            -o onebase-gui.exe ./cmd/onebase
+          $ldflags = "-s -w -H windowsgui"
+          $ldflags += " -X github.com/ivantit66/onebase/internal/version.Build=$env:BUILD_VER"
+          $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$env:RELEASE_PUBLIC_KEY"
+          go build -tags webview "-ldflags=$ldflags" -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)
         if: matrix.goos == 'windows'
