@@ -1,8 +1,11 @@
 package i18n
 
 import (
+	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -143,6 +146,41 @@ func TestMachineTierLoadsUnderHuman(t *testing.T) {
 	// Ключ, которого у человека нет, берётся из машинного яруса.
 	if got := b.T("az", "Удалить"); got != "машина-az-2" {
 		t.Errorf("T(az, Удалить) = %q, want машинный перевод", got)
+	}
+}
+
+// Машинный ярус должен попасть во встроенную ФС. Проверка нужна именно на
+// EmbeddedLocales, а не на fstest: шаблон //go:embed легко потерять при правке
+// (locales/*.json не захватывает подкаталог), сборка при этом останется зелёной,
+// а интерфейс тихо съедет на английский на всех языках сразу.
+func TestEmbeddedMachineTierIsPresent(t *testing.T) {
+	b, err := Load(EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := fs.Glob(EmbeddedLocales, "locales/"+MachineDir+"/*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(machine) == 0 {
+		t.Fatal("машинные словари не встроены — проверьте шаблон //go:embed")
+	}
+	for _, f := range machine {
+		data, err := fs.ReadFile(EmbeddedLocales, f)
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		lang := strings.TrimSuffix(filepath.Base(f), ".json")
+		for k, v := range m {
+			if got := b.T(lang, k); got != v {
+				t.Errorf("T(%s, %q) = %q, машинный перевод %q не доехал", lang, k, got, v)
+			}
+			break // одного ключа на язык достаточно: проверяем факт слияния
+		}
 	}
 }
 
