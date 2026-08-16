@@ -68,7 +68,7 @@ func Localize(b *i18n.Bundle, lang string, err error) string {
 		return ""
 	}
 	msg := err.Error()
-	if b == nil || lang == "" || lang == "ru" {
+	if b == nil || lang == "" || i18n.IsBaseLang(lang) {
 		return msg
 	}
 	// Статическое сообщение целиком (включая ошибки без i18nerr).

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 func TestT_ReturnsTranslation(t *testing.T) {
@@ -28,14 +29,120 @@ func TestT_UnknownKey_ReturnsKey(t *testing.T) {
 	}
 }
 
-func TestT_UnknownLang_ReturnsKey(t *testing.T) {
+// Язык без словаря получает английский, а не русский ключ: русский текст в
+// чужом интерфейсе нечитаем (#960). Раньше тест фиксировал обратное.
+func TestT_UnknownLang_FallsBackToEnglish(t *testing.T) {
 	b, err := Load(EmbeddedLocales, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := b.T("xx", "Записать")
-	if got != "Записать" {
-		t.Errorf("T(xx, Записать) = %q, want key back", got)
+	if got != "Save" {
+		t.Errorf("T(xx, Записать) = %q, want English fallback %q", got, "Save")
+	}
+}
+
+// Русский — язык ключей: английский откат для него был бы регрессией.
+// Проверяем и региональный вариант: Resolve пропускает явный выбор
+// пользователя как есть, поэтому «ru-RU» доходит до T() без нормализации.
+func TestT_BaseLang_KeepsKey(t *testing.T) {
+	b, err := Load(EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lang := range []string{"ru", "ru-ru"} {
+		if got := b.T(lang, "Записать"); got != "Записать" {
+			t.Errorf("T(%s, Записать) = %q, want key back", lang, got)
+		}
+	}
+}
+
+// Непереведённый ключ в живой локали отдаётся по-английски — это и есть
+// принятая по #960 норма вместо накопления долга.
+func TestT_PartialLocale_FallsBackToEnglish(t *testing.T) {
+	b, err := Load(EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "Несуществующий в hy ключ"
+	// Ключ, которого заведомо нет ни в одной локали, возвращается как есть.
+	if got := b.T("hy", key); got != key {
+		t.Errorf("T(hy, %q) = %q, want key back", key, got)
+	}
+	// А ключ, который есть только в en, отдаётся по-английски.
+	en := b.Dict("en")
+	hy := b.dicts["hy"]
+	for k, v := range en {
+		if _, ok := hy[k]; ok {
+			continue
+		}
+		if got := b.T("hy", k); got != v {
+			t.Errorf("T(hy, %q) = %q, want English %q", k, got, v)
+		}
+		return
+	}
+}
+
+// Региональный вариант берёт словарь своего базового языка.
+func TestT_RegionalVariant_UsesBaseSubtag(t *testing.T) {
+	b, err := Load(EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := b.T("de", "Записать")
+	if got := b.T("de-at", "Записать"); got != want {
+		t.Errorf("T(de-at, Записать) = %q, want %q", got, want)
+	}
+}
+
+// Словарь для фронтенда несёт ту же цепочку отката, что и T(): клиент умеет
+// только dict[k] || k, поэтому английский должен быть уже внутри словаря.
+func TestDict_CarriesEnglishFallback(t *testing.T) {
+	b, err := Load(EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	en := b.Dict("en")
+	hy := b.Dict("hy")
+	for k, v := range en {
+		if _, ok := b.dicts["hy"][k]; ok {
+			continue
+		}
+		if hy[k] != v {
+			t.Errorf("Dict(hy)[%q] = %q, want English %q", k, hy[k], v)
+		}
+		break
+	}
+	// Русский словарь английским не разбавляется.
+	ru := b.Dict("ru")
+	if len(ru) > len(b.dicts["ru"]) {
+		t.Errorf("Dict(ru) = %d ключей, ожидалось не больше %d — английский подмешан в язык ключей", len(ru), len(b.dicts["ru"]))
+	}
+}
+
+// Человеческий перевод побеждает машинный независимо от места подкаталога
+// «machine» в лексическом обходе: fs.WalkDir прошёл бы locales/az.json ДО
+// locales/machine/az.json и ПОСЛЕ locales/machine/uz.json, то есть половина
+// языков получила бы машинный перевод поверх проверенного.
+func TestMachineTierLoadsUnderHuman(t *testing.T) {
+	fsys := fstest.MapFS{
+		"locales/az.json":         &fstest.MapFile{Data: []byte(`{"Записать":"человек-az"}`)},
+		"locales/machine/az.json": &fstest.MapFile{Data: []byte(`{"Записать":"машина-az","Удалить":"машина-az-2"}`)},
+		"locales/uz.json":         &fstest.MapFile{Data: []byte(`{"Записать":"человек-uz"}`)},
+		"locales/machine/uz.json": &fstest.MapFile{Data: []byte(`{"Записать":"машина-uz"}`)},
+	}
+	b, err := Load(fsys, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lang := range []string{"az", "uz"} {
+		if got := b.T(lang, "Записать"); got != "человек-"+lang {
+			t.Errorf("T(%s, Записать) = %q, машинный перевод перекрыл человеческий", lang, got)
+		}
+	}
+	// Ключ, которого у человека нет, берётся из машинного яруса.
+	if got := b.T("az", "Удалить"); got != "машина-az-2" {
+		t.Errorf("T(az, Удалить) = %q, want машинный перевод", got)
 	}
 }
 
