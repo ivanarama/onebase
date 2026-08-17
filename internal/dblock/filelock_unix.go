@@ -37,7 +37,21 @@ func tryAcquireFileLease(path string, shared bool) (*fileLease, bool, error) {
 	return &fileLease{file: f, shared: shared}, true, nil
 }
 
-func (l *fileLease) Downgrade(_ context.Context) error {
+// Downgrade переводит эксклюзивную аренду в разделяемую, уважая отмену
+// контекста (#962, Н5).
+//
+// Раньше здесь стоял блокирующий unix.Flock(LOCK_SH), а контекст отбрасывался
+// (`_ context.Context`). Если в конверсионный зазор — тот самый, что описан в
+// комментарии у вызывающего, — влезал другой процесс с эксклюзивной
+// блокировкой, `onebase run` вставал на старте навсегда, и Ctrl+C не помогал:
+// отмена до блокировки ОС просто не доходит. Диагностируемость нулевая —
+// процесс молчит.
+//
+// Проверено: с LOCK_SH ожидание переживает отмену контекста, с LOCK_NB тот же
+// вызов сразу возвращает EWOULDBLOCK. Поэтому берём неблокирующий захват в
+// цикле с паузой и проверкой ctx — молчаливое зависание превращается во
+// внятный отказ «база занята другим процессом».
+func (l *fileLease) Downgrade(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
@@ -46,16 +60,26 @@ func (l *fileLease) Downgrade(_ context.Context) error {
 	if l.file == nil || l.shared {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	fd := int(l.file.Fd()) //nolint:gosec // G115: round-trip of an OS descriptor returned by os.File.Fd
 	for {
-		err := unix.Flock(fd, unix.LOCK_SH)
-		if errors.Is(err, unix.EINTR) {
+		err := unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB)
+		switch {
+		case errors.Is(err, unix.EINTR):
 			continue
-		}
-		if err == nil {
+		case err == nil:
 			l.shared = true
+			return nil
+		case errors.Is(err, unix.EWOULDBLOCK):
+			// Занято другим процессом — ждём, но не насмерть.
+		default:
+			return err
 		}
-		return err
+		if err := waitBeforeRetry(ctx); err != nil {
+			return err
+		}
 	}
 }
 
