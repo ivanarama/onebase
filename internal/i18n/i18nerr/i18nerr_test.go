@@ -39,11 +39,12 @@ func TestLocalizeTemplate(t *testing.T) {
 	if got := Localize(b, "en", err); got != "unknown table товары" {
 		t.Fatalf("Localize = %q", got)
 	}
-	// ru и неизвестный язык — русский текст без изменений.
+	// ru — язык самих сообщений, текст без изменений.
 	if got := Localize(b, "ru", err); got != "неизвестная таблица товары" {
 		t.Fatalf("Localize ru = %q", got)
 	}
-	if got := Localize(b, "zz", err); got != "неизвестная таблица товары" {
+	// Язык без словаря откатывается на английский, а не на русский (#960).
+	if got := Localize(b, "zz", err); got != "unknown table товары" {
 		t.Fatalf("Localize zz = %q", got)
 	}
 }

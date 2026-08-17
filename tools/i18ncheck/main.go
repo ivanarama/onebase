@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/i18n"
 )
 
 // keyPatterns — список регулярных выражений для извлечения i18n-ключей.
@@ -39,6 +41,17 @@ var keyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\btr\(\s*\w+,\s*"((?:[^"\\]|\\.)*)"\s*\)`),
 }
 
+// jsKeyPatterns — ключи из клиентских скриптов: там перевод берётся хелпером
+// T("ключ") из словаря, отданного сервером (Bundle.Dict).
+//
+// Без этого обхода отчёт врал в самую опасную сторону: строки конструктора
+// макетов в список ключей не попадали, и инструмент печатал «0 останется
+// по-английски», хотя по-английски оставались десятки надписей. Контрибьютор,
+// добавивший строку в скрипт, получал явное «всё в порядке».
+var jsKeyPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bT\(\s*"((?:[^"\\]|\\.)*)"\s*\)`),
+}
+
 func main() {
 	root, err := repoRoot()
 	if err != nil {
@@ -55,60 +68,66 @@ func main() {
 	if err != nil {
 		fail(err.Error())
 	}
-	dicts, err := loadDicts(filepath.Join(root, "internal", "i18n", "locales"))
+	localesDir := filepath.Join(root, "internal", "i18n", "locales")
+	human, err := loadDicts(localesDir)
 	if err != nil {
 		fail(err.Error())
 	}
-	delete(dicts, "ru") // ru.json — индекс, без значений
+	machine, err := loadDicts(filepath.Join(localesDir, i18n.MachineDir))
+	if err != nil {
+		fail(err.Error())
+	}
+	delete(human, i18n.BaseLang) // ru.json — индекс, без значений
 
-	// Ключи, которых нет НИ В ОДНОЙ нерусской локали = «забытые» (блокируют коммит).
-	// Ключи, которых нет в части локалей = предупреждение (не блокирует).
-	missingAll := []string{}
-	partialMissing := map[string][]string{} // lang -> keys
+	// Гейт — только английский: он запасной вариант для всех прочих языков
+	// (i18n.Bundle.T), поэтому дырка именно в en.json утекает в интерфейс
+	// русской строкой. Раньше блокировал ключ, которого нет НИ В ОДНОЙ
+	// локали: ключ, доехавший до одного лишь de, гейт проходил, а показывался
+	// по-русски всем остальным.
+	var missingEn []string
 	for _, k := range keys {
-		inAny := false
-		for _, d := range dicts {
-			if _, ok := d[k]; ok {
-				inAny = true
-				break
-			}
-		}
-		if !inAny {
-			missingAll = append(missingAll, k)
-		}
-		for lang, d := range dicts {
-			if _, ok := d[k]; !ok {
-				partialMissing[lang] = append(partialMissing[lang], k)
-			}
+		if _, ok := human[i18n.FallbackLang][k]; !ok {
+			missingEn = append(missingEn, k)
 		}
 	}
-	sort.Strings(missingAll)
+	sort.Strings(missingEn)
 
-	fmt.Printf("i18ncheck: %d keys in templates, %d locales\n", len(keys), len(dicts))
-	if len(partialMissing) > 0 {
-		var langs []string
-		for l := range partialMissing {
+	fmt.Printf("i18ncheck: %d keys in templates, %d locales\n", len(keys), len(human))
+	var langs []string
+	for l := range human {
+		if l != i18n.FallbackLang {
 			langs = append(langs, l)
 		}
-		sort.Strings(langs)
-		for _, l := range langs {
-			n := len(partialMissing[l])
-			// Не дублируем «common missing» в per-locale, ибо там и так все языки.
-			extra := n - len(missingAll)
-			if extra > 0 {
-				fmt.Printf("  %s: missing %d (extra over common)\n", l, extra)
+	}
+	sort.Strings(langs)
+	for _, l := range langs {
+		var missing, byMachine int
+		for _, k := range keys {
+			if _, ok := human[l][k]; ok {
+				continue
+			}
+			missing++
+			if _, ok := machine[l][k]; ok {
+				byMachine++
 			}
 		}
+		if missing == 0 {
+			continue
+		}
+		// Остаток после машинного яруса и есть то, что покажется
+		// по-английски; это норма, принятая по #960, а не долг.
+		fmt.Printf("  %s: %d не переведено человеком (%d закрыто машинным ярусом, %d останется по-английски)\n",
+			l, missing, byMachine, missing-byMachine)
 	}
-	if len(missingAll) == 0 {
-		fmt.Println("OK — все ключи переведены хотя бы в одной локали")
+	if len(missingEn) == 0 {
+		fmt.Printf("OK — все ключи есть в %s.json (запасной язык интерфейса)\n", i18n.FallbackLang)
 		return
 	}
-	fmt.Printf("\nFAIL — %d ключей нет ни в одной локали:\n", len(missingAll))
-	for _, k := range missingAll {
+	fmt.Printf("\nFAIL — %d ключей нет в %s.json:\n", len(missingEn), i18n.FallbackLang)
+	for _, k := range missingEn {
 		fmt.Printf("  %q\n", k)
 	}
-	fmt.Println("\nДобавьте переводы в internal/i18n/locales/<lang>.json.")
+	fmt.Printf("\nДобавьте переводы в internal/i18n/locales/%s.json — без них строка покажется по-русски во всех языках.\n", i18n.FallbackLang)
 	os.Exit(1)
 }
 
@@ -138,20 +157,35 @@ func collectKeys(root string, subdirs []string) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			if d.IsDir() {
+				return nil
+			}
+			isGo := strings.HasSuffix(path, ".go")
+			// Клиентские скрипты переводятся тем же словарём, что и шаблоны, —
+			// значит и в чек-лист ключей обязаны попадать. Минифицированный
+			// вендоринг пропускаем: своих ключей там нет, а регулярка по
+			// сжатому файлу даёт мусор.
+			isJS := strings.HasSuffix(path, ".js") &&
+				!strings.HasSuffix(path, ".min.js") &&
+				!strings.HasSuffix(path, "_behavior_test.js")
+			if !isGo && !isJS {
 				return nil
 			}
 			// Пропускаем тестовые файлы: i18nerr-вызовы в *_test.go
 			// не требуют переводов (тесты проверяют внутреннее поведение,
 			// а не пользовательский интерфейс).
-			if strings.HasSuffix(path, "_test.go") {
+			if isGo && strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
 			data, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			if err != nil {
 				return err
 			}
-			for _, p := range keyPatterns {
+			pats := keyPatterns
+			if isJS {
+				pats = jsKeyPatterns
+			}
+			for _, p := range pats {
 				for _, m := range p.FindAllSubmatch(data, -1) {
 					seen[string(m[1])] = struct{}{}
 				}

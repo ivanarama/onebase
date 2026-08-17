@@ -18,6 +18,13 @@ func TestLocaleKeysUseSourceAlphabetOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Машинный ярус проверяем тем же тестом, и в первую очередь: гомоглиф в
+	// сгенерированном файле вероятнее, чем в написанном руками.
+	machine, err := fs.Glob(EmbeddedLocales, "locales/"+MachineDir+"/*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, machine...)
 	if len(files) == 0 {
 		t.Fatal("встроенные локали не найдены")
 	}
