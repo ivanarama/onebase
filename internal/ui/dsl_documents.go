@@ -797,6 +797,11 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	if errMsg != "" {
 		return fmt.Errorf("%s", errMsg)
 	}
+	// Хук мог присвоить реквизиту-перечислению недопустимое значение (#977):
+	// входная проверка была до него. Транзакция ещё открыта — откат бесплатен.
+	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
 	if w.expectedVersion == nil {
 		if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
 			return err
@@ -891,6 +896,11 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	w.appendHookMessages(hookMessages)
 	if errMsg != "" {
 		return fmt.Errorf("%s", errMsg)
+	}
+	// Хук мог присвоить реквизиту-перечислению недопустимое значение (#977):
+	// входная проверка была до него. Транзакция ещё открыта — откат бесплатен.
+	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	// OnPost мог изменить реквизиты шапки (расчётные поля) — персистим их upsert'ом
 	// после хука, как это делает entityservice.Save при проведении. writeInContext
