@@ -156,26 +156,25 @@ func (db *DB) publicFileWhere(ctx context.Context, column string, value any) (*P
 		FROM _public_files WHERE %s=%s`, column, d.Placeholder(1))
 	row := db.QueryRow(ctx, q, value)
 
-	// Даты читаем в any: SQLite отдаёт их строкой, PostgreSQL — time.Time.
-	// Сканирование сразу в *time.Time падает на SQLite.
+	// Идентификатор сканируется прямо в uuid.UUID: его Scan понимает и текст
+	// (SQLite), и сырые 16 байт (PostgreSQL). Промежуточное any здесь было
+	// ошибкой — parseUUIDValue разбирает 16-байтовый массив PG как текст и не
+	// находит там UUID.
+	//
+	// Даты, наоборот, читаем в any: SQLite отдаёт их строкой, и скан сразу в
+	// *time.Time на нём падает.
 	var (
 		pf         PublicFile
-		attIDRaw   any
 		expiresRaw any
 		createdRaw any
 	)
-	err := row.Scan(&pf.Token, &attIDRaw, &pf.Filename, &pf.CacheSeconds, &expiresRaw, &createdRaw, &pf.CreatedBy)
+	err := row.Scan(&pf.Token, &pf.AttachmentID, &pf.Filename, &pf.CacheSeconds, &expiresRaw, &createdRaw, &pf.CreatedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	id, ok := parseUUIDValue(attIDRaw)
-	if !ok {
-		return nil, fmt.Errorf("публикация %s: неверный идентификатор вложения %v", pf.Token, attIDRaw)
-	}
-	pf.AttachmentID = id
 	if t, ok := parseTimeValue(createdRaw); ok {
 		pf.CreatedAt = t
 	}
