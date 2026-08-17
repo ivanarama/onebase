@@ -636,6 +636,9 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 		// инжектируются точечно, и объект был бы доступен в форме, но не в
 		// регламентном задании.
 		return NewRegexObject(args)
+	case "шаблонhtml", "htmltemplate":
+		// План 125, по той же причине встроенным типом.
+		return NewHTMLTemplateObject(args)
 	}
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {

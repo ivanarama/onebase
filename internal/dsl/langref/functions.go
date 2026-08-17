@@ -109,6 +109,18 @@ var functionDescriptors = []Descriptor{
 		Group:   "Строки",
 	},
 	{
+		Name: "безопасныйhtml", Display: "БезопасныйHTML", Aliases: []string{"SafeHTML"}, Kind: KindFunc,
+		Signature: "БезопасныйHTML(Строка)",
+		Params: []Param{
+			{Name: "Строка", Type: "строка", Doc: "HTML, который нужно вставить в шаблон разметкой, а не текстом"},
+		},
+		Returns: "HTML",
+		Doc: "Очищает HTML санитайзером richtext (вырезает <script>, обработчики событий, javascript:) и помечает результат готовой разметкой " +
+			"для ШаблонHTML. Без этой функции значение вставляется как текст — теги экранируются (план 125).",
+		Example: `Д.Вставить("Описание", БезопасныйHTML(Товар.Описание));`,
+		Group:   "Строки",
+	},
+	{
 		Name: "регексэкранировать", Display: "РегексЭкранировать", Aliases: []string{"RegexEscape"}, Kind: KindFunc,
 		Signature: "РегексЭкранировать(Строка)",
 		Params: []Param{
