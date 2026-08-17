@@ -12,3 +12,5 @@ permissions:
     КатегорииКонтента: [read, write]
     Медиа: [read, write]
     Меню: [read, write]
+    Заявки: [read, write]
+    ФормыОбратнойСвязи: [read]

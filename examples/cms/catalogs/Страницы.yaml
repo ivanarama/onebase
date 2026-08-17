@@ -35,5 +35,8 @@ fields:
   - name: OGКартинка
     title: Картинка для соцсетей
     type: reference:Медиа
+  - name: Форма
+    title: Форма обратной связи на странице
+    type: reference:ФормыОбратнойСвязи
   - name: Сайт
     type: reference:Сайты

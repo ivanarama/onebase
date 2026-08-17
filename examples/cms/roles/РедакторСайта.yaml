@@ -13,3 +13,5 @@ permissions:
     Меню: [read, write]
     МаршрутыURL: [read, write]
     Редиректы: [read, write]
+    Заявки: [read, write]
+    ФормыОбратнойСвязи: [read, write]
