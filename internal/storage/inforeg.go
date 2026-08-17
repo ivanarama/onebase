@@ -510,9 +510,13 @@ func infoRegListRows(ir *metadata.InfoRegister, raw []map[string]any) []map[stri
 // regPeriodLayouts — форматы, которыми период записи регистра сведений
 // сериализуется в period_key (InfoRegList) и принимается обратно при удалении.
 // RFC3339 несёт инстант (PostgreSQL timestamptz); зононезависимые форматы —
-// стенные часы (SQLite TEXT, см. sqliteTimeLayout). time.Parse трактует
-// зононезависимый ввод как UTC; normalizeSQLiteArgs тоже хранит UTC,
-// поэтому сравнение period одинаково на SQLite и PostgreSQL.
+// стенные часы (SQLite TEXT, см. sqliteTimeLayout).
+//
+// Разбор у них разный, и это важно: формы со смещением идут через time.Parse
+// (инстант задан явно), а зононезависимые — через ParseInLocation в time.Local,
+// потому что старые значения SQLite писались местными стенными часами. Раньше
+// здесь было написано «time.Parse трактует зононезависимый ввод как UTC» — это
+// неверно для второго списка и вводило в заблуждение (#962).
 var regPeriodLayouts = []string{
 	time.RFC3339,
 	"2006-01-02 15:04:05-07:00",

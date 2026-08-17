@@ -230,6 +230,18 @@ jobs:
       - name: Unit tests (-race, coverage)
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      # Раннеры работают в UTC, поэтому целый класс дефектов «время
+      # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на
+      # локальном прогоне в Europe/Moscow. Прогоняем пакеты, где время
+      # обрабатывается, ещё раз в зоне, которая ловит больше — +05:30 отличается
+      # от UTC и смещением, и получасом, так что промахи на границе суток и
+      # округлении часа видны сразу. Москвы для этого мало: тест, красный в
+      # Дубае и Индии, в ней остаётся зелёным (#962).
+      - name: Unit tests (восточная зона)
+        env:
+          TZ: Asia/Kolkata
+        run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
+
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -5
 
