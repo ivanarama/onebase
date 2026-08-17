@@ -66,8 +66,43 @@ type Service struct {
 	// Подразумевает auth basic/session: анонимный вызов отклоняется (403).
 	Roles []string `yaml:"roles"`
 	// CORS — необязательная политика CORS уровня сервиса (для браузерных клиентов).
-	CORS      *CORSConfig   `yaml:"cors"`
-	Templates []URLTemplate `yaml:"templates"`
+	CORS *CORSConfig `yaml:"cors"`
+	// Compress — сжимать ли ответы gzip (план 128). nil = умолчание по auth:
+	// анонимный сервис сжимается, аутентифицированный — нет (BREACH: сжатие
+	// ответа с секретом вместе с отражённым вводом атакующего выдаёт секрет по
+	// длине). Владелец может включить явно.
+	Compress *bool `yaml:"compress"`
+	// SecurityHeaders — политика заголовков ЭТОЙ публичной поверхности
+	// (план 128). Глобальный набор websec подобран под админку и для сайта,
+	// отдаваемого постороннему посетителю, слишком мягкий.
+	SecurityHeaders *SecurityHeadersConfig `yaml:"security_headers"`
+	Templates       []URLTemplate          `yaml:"templates"`
+}
+
+// SecurityHeadersConfig — заголовки безопасности уровня сервиса.
+type SecurityHeadersConfig struct {
+	// CSP заменяет глобальный Content-Security-Policy (не дополняет: два
+	// заголовка браузер применяет как пересечение — политика вышла бы строже
+	// задуманной, а отладка этого занимает часы).
+	CSP string `yaml:"csp"`
+	// FrameOptions: DENY | SAMEORIGIN | «» (не ставить).
+	FrameOptions string `yaml:"frame_options"`
+	// ReferrerPolicy — значение заголовка Referrer-Policy.
+	ReferrerPolicy string `yaml:"referrer_policy"`
+	// HSTS — max-age в секундах; 0 = не ставить. Ставится только на
+	// HTTPS-запросах.
+	HSTS int `yaml:"hsts"`
+	// Extra — дополнительные заголовки (Permissions-Policy и подобные).
+	Extra map[string]string `yaml:"extra"`
+}
+
+// CompressEnabled сообщает, сжимать ли ответы сервиса. Умолчание зависит от
+// аутентификации — см. комментарий к полю Compress.
+func (s *Service) CompressEnabled() bool {
+	if s.Compress != nil {
+		return *s.Compress
+	}
+	return strings.EqualFold(strings.TrimSpace(s.Auth), "none") || strings.TrimSpace(s.Auth) == ""
 }
 
 // CORSConfig — политика Cross-Origin Resource Sharing для сервиса.
@@ -112,6 +147,11 @@ func (s *Service) Normalize() {
 		s.Auth = "none"
 	}
 	s.Auth = strings.ToLower(strings.TrimSpace(s.Auth))
+	if s.SecurityHeaders != nil {
+		s.SecurityHeaders.FrameOptions = strings.ToUpper(strings.TrimSpace(s.SecurityHeaders.FrameOptions))
+		s.SecurityHeaders.CSP = strings.TrimSpace(s.SecurityHeaders.CSP)
+		s.SecurityHeaders.ReferrerPolicy = strings.TrimSpace(s.SecurityHeaders.ReferrerPolicy)
+	}
 	for i := range s.Templates {
 		t := &s.Templates[i]
 		t.Template = "/" + strings.Trim(strings.TrimSpace(t.Template), "/")

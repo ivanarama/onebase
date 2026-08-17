@@ -161,6 +161,16 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// План 128. Заголовки — до всего остального, чтобы политика стояла и на
+	// ответах об ошибке. Сжатие — обёрткой writer'а: решение «сжимать ли»
+	// принимается по факту записи, когда известны тип и объём тела.
+	applyServiceSecurityHeaders(w, r, svc)
+	if svc.CompressEnabled() && clientAcceptsGzip(r) {
+		gzw := newGzipResponseWriter(w)
+		defer gzw.Close()
+		w = gzw
+	}
+
 	// CORS уровня сервиса. Заголовки Allow-Origin ставим на все ответы сервиса,
 	// а preflight (OPTIONS) обрабатываем здесь же, не запуская обработчик.
 	if svc.CORS != nil {

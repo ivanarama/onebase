@@ -47,6 +47,15 @@ func CheckHTTPServiceAuthWarnings(proj *project.Project) []Issue {
 	return warnings
 }
 
+// forbiddenSecurityExtraHeader — заголовки, которые нельзя переопределять через
+// security_headers.extra. Отключаемый nosniff нужен только чтобы навредить себе,
+// а CORS задаётся блоком cors: — правка его заголовков вручную разъедется с
+// preflight-ответом, который платформа формирует сама.
+func forbiddenSecurityExtraHeader(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "x-content-type-options" || strings.HasPrefix(n, "access-control-")
+}
+
 // CheckHTTPServices проверяет services/*.yaml против загруженных модулей.
 func CheckHTTPServices(proj *project.Project) []Issue {
 	var issues []Issue
@@ -100,6 +109,24 @@ func CheckHTTPServices(proj *project.Project) []Issue {
 			case "basic", "session":
 			default:
 				add(svc.Name, fmt.Sprintf("roles заданы при auth %q — отбор по ролям требует basic или session (иначе всегда 403)", svc.Auth))
+			}
+		}
+
+		// План 128: заголовки безопасности уровня сервиса.
+		if h := svc.SecurityHeaders; h != nil {
+			switch h.FrameOptions {
+			case "", "DENY", "SAMEORIGIN":
+			default:
+				add(svc.Name, fmt.Sprintf("security_headers.frame_options %q — допустимы DENY, SAMEORIGIN или пусто", h.FrameOptions))
+			}
+			if h.HSTS < 0 {
+				add(svc.Name, "security_headers.hsts не может быть отрицательным")
+			}
+			for name := range h.Extra {
+				if forbiddenSecurityExtraHeader(name) {
+					add(svc.Name, fmt.Sprintf("security_headers.extra: заголовок %q задавать нельзя "+
+						"(X-Content-Type-Options ставится всегда, Access-Control-* — это блок cors)", name))
+				}
 			}
 		}
 

@@ -99,3 +99,75 @@ func TestLoadDir_Missing(t *testing.T) {
 		t.Errorf("want nil services, got %v", services)
 	}
 }
+
+// План 128: сжатие и заголовки безопасности уровня сервиса.
+func TestLoadFile_CompressAndSecurityHeaders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "site.yaml")
+	yaml := `name: Site
+root_url: site
+auth: none
+compress: false
+security_headers:
+  csp: "default-src 'self'"
+  frame_options: deny
+  referrer_policy: no-referrer
+  hsts: 15552000
+  extra:
+    Permissions-Policy: "geolocation=()"
+templates:
+  - template: /
+    methods:
+      get: Главная
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if svc.Compress == nil || *svc.Compress {
+		t.Errorf("compress: false не прочитан (%v)", svc.Compress)
+	}
+	if svc.CompressEnabled() {
+		t.Errorf("явный compress: false должен перекрывать умолчание для auth: none")
+	}
+	h := svc.SecurityHeaders
+	if h == nil {
+		t.Fatal("security_headers не прочитаны")
+	}
+	if h.FrameOptions != "DENY" {
+		t.Errorf("frame_options=%q, ожидался нормализованный DENY", h.FrameOptions)
+	}
+	if h.CSP != "default-src 'self'" || h.ReferrerPolicy != "no-referrer" || h.HSTS != 15552000 {
+		t.Errorf("прочитано неверно: %+v", h)
+	}
+	if h.Extra["Permissions-Policy"] != "geolocation=()" {
+		t.Errorf("extra=%v", h.Extra)
+	}
+}
+
+// Умолчание сжатия зависит от аутентификации: у анонимного сервиса секретов
+// нет, у остальных сжатие включается только явно (BREACH).
+func TestCompressEnabled_DefaultsByAuth(t *testing.T) {
+	cases := []struct {
+		auth string
+		want bool
+	}{
+		{"", true}, {"none", true}, {"basic", false}, {"session", false}, {"token", false}, {"hmac", false},
+	}
+	for _, c := range cases {
+		svc := &Service{Name: "S", RootURL: "s", Auth: c.auth}
+		svc.Normalize()
+		if got := svc.CompressEnabled(); got != c.want {
+			t.Errorf("auth=%q: CompressEnabled()=%v, ожидалось %v", c.auth, got, c.want)
+		}
+	}
+	yes := true
+	svc := &Service{Name: "S", RootURL: "s", Auth: "basic", Compress: &yes}
+	svc.Normalize()
+	if !svc.CompressEnabled() {
+		t.Errorf("явный compress: true при auth: basic должен включать сжатие")
+	}
+}
