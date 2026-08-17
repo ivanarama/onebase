@@ -93,23 +93,53 @@ func TestInfoRegList_PeriodKeyRoundTripsToDelete(t *testing.T) {
 // RFC3339/SQLite UTC (несут инстант), старую зононезависимую SQLite-строку
 // (локальные стенные часы), а также суточный «2006-01-02» из формы.
 func TestParseRegPeriod(t *testing.T) {
-	cases := []string{
+	// Форматы со смещением несут инстант — его и проверяем, приведя к зоне
+	// смещения. Раньше здесь единым списком шли и зононезависимые формы, а
+	// ожидание для всех проверялось в жёстко зашитой зоне +03:00. Из-за этого
+	// тест был зелёным ровно до Москвы и краснел у любого, кто восточнее
+	// (Дубай, Индия, Сидней), — а CI работает в UTC и этого не видел (#962).
+	withOffset := []string{
 		"2026-05-01T00:00:00+03:00",
 		"2026-05-01T00:00:00.123456+03:00",
-		"2026-05-01T00:00:00Z",
 		"2026-05-01 00:00:00+03:00",
-		"2026-05-01 00:00:00",
-		"2026-05-01T00:00:00",
-		"2026-05-01",
 	}
-	for _, s := range cases {
+	for _, s := range withOffset {
 		got, ok := ParseRegPeriod(s)
 		if !ok {
 			t.Errorf("ParseRegPeriod(%q) = false, ожидался успех", s)
 			continue
 		}
 		if local := got.In(time.FixedZone("UTC+3", 3*60*60)); local.Year() != 2026 || local.Month() != time.May || local.Day() != 1 {
-			t.Errorf("ParseRegPeriod(%q) = %v, ожидался 2026-05-01", s, got)
+			t.Errorf("ParseRegPeriod(%q) = %v, ожидался 2026-05-01 в зоне +03:00", s, got)
+		}
+	}
+
+	if got, ok := ParseRegPeriod("2026-05-01T00:00:00Z"); !ok {
+		t.Error("ParseRegPeriod(Z-форма) = false, ожидался успех")
+	} else if utc := got.UTC(); utc.Year() != 2026 || utc.Month() != time.May || utc.Day() != 1 || utc.Hour() != 0 {
+		t.Errorf("ParseRegPeriod(Z-форма) = %v, ожидалось 2026-05-01 00:00 UTC", got)
+	}
+
+	// Зононезависимые формы — стенные часы в местной зоне: так исторически
+	// хранил SQLite, и ParseRegPeriod намеренно это сохраняет
+	// (ParseInLocation с time.Local). Проверять их в чужой зоне бессмысленно —
+	// результат зависел бы от того, где запущен тест.
+	wallClock := []string{
+		"2026-05-01 00:00:00",
+		"2026-05-01T00:00:00",
+		"2026-05-01",
+	}
+	for _, s := range wallClock {
+		got, ok := ParseRegPeriod(s)
+		if !ok {
+			t.Errorf("ParseRegPeriod(%q) = false, ожидался успех", s)
+			continue
+		}
+		if got.Year() != 2026 || got.Month() != time.May || got.Day() != 1 || got.Hour() != 0 {
+			t.Errorf("ParseRegPeriod(%q) = %v, ожидались стенные часы 2026-05-01 00:00", s, got)
+		}
+		if got.Location() != time.Local {
+			t.Errorf("ParseRegPeriod(%q) вернул зону %v, ожидалась местная", s, got.Location())
 		}
 	}
 	if _, ok := ParseRegPeriod("02.05.2026"); ok {
