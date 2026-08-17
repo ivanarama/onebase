@@ -184,6 +184,69 @@ func TestПаритетГарантий_МусорОтХукаОтвергает
 	})
 }
 
+// Помеченный на удаление документ провести нельзя — как в 1С. Проверка на всех
+// трёх путях: гарантия дешёвая, но её потеря означает проведённый документ,
+// помеченный на удаление, то есть движения от объекта, которого «нет».
+func TestПаритетГарантий_ПомеченныйНаУдалениеНеПроводитсяНигде(t *testing.T) {
+	const noop = `Процедура ОбработкаПроведения()
+КонецПроцедуры`
+
+	markDeleted := func(t *testing.T, ctx context.Context, db *storage.DB, id uuid.UUID) {
+		t.Helper()
+		if _, err := db.Exec(ctx, `UPDATE заказ SET deletion_mark=1 WHERE id=?`, id.String()); err != nil {
+			t.Fatalf("пометка на удаление: %v", err)
+		}
+	}
+	assertNotPosted := func(t *testing.T, ctx context.Context, db *storage.DB, id uuid.UUID) {
+		t.Helper()
+		var posted any
+		if err := db.QueryRow(ctx, `SELECT posted FROM заказ WHERE id=?`, id.String()).Scan(&posted); err != nil {
+			t.Fatalf("чтение признака проведения: %v", err)
+		}
+		if b, ok := posted.(int64); ok && b != 0 {
+			t.Fatal("документ, помеченный на удаление, всё же проведён — движения от объекта, которого «нет»")
+		}
+		if b, ok := posted.(bool); ok && b {
+			t.Fatal("документ, помеченный на удаление, всё же проведён")
+		}
+	}
+
+	t.Run("entityservice (форма/REST)", func(t *testing.T) {
+		ctx, db, s, doc := guaranteeServer(t, noop)
+		id := newOrder(t, ctx, s, doc, "У-1")
+		markDeleted(t, ctx, db, id)
+		_, _ = s.entitySvc.Save(ctx, entityservice.SaveRequest{
+			Entity: doc, ID: id, Action: "post",
+			Fields: map[string]any{"Номер": "У-1", "Статус": "Новый"},
+		})
+		assertNotPosted(t, ctx, db, id)
+	})
+
+	t.Run("DSL Провести()", func(t *testing.T) {
+		ctx, db, s, doc := guaranteeServer(t, noop)
+		id := newOrder(t, ctx, s, doc, "У-2")
+		markDeleted(t, ctx, db, id)
+		dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy)
+		loaded, err := dp.LoadObject(id.String())
+		if err != nil {
+			t.Fatalf("ПолучитьОбъект: %v", err)
+		}
+		_ = callPostCatchingError(t, loaded.(*docWriter))
+		assertNotPosted(t, ctx, db, id)
+	})
+
+	t.Run("список postDocument", func(t *testing.T) {
+		ctx, db, s, doc := guaranteeServer(t, noop)
+		id := newOrder(t, ctx, s, doc, "У-3")
+		markDeleted(t, ctx, db, id)
+		req := reqWithChi(http.MethodPost, "/ui/document/"+doc.Name+"/"+id.String()+"/post", nil,
+			map[string]string{"entity": doc.Name, "id": id.String()})
+		rec := httptest.NewRecorder()
+		s.postDocument(rec, req)
+		assertNotPosted(t, ctx, db, id)
+	})
+}
+
 // assertEnumRejected — общий критерий для всех путей: недопустимое значение не
 // сохранилось. Форма сообщения у путей разная (DSLError у сервиса, паника у
 // DSL), и требовать одинаковый текст было бы придиркой; одинаковым обязан быть
