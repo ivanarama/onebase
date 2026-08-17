@@ -425,7 +425,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// Значения перечислений проверяются ДО хука и до записи: хук может писать
 	// в другие объекты, и откатывать его последствия из-за неверного значения
 	// в исходном — хуже, чем не начинать (#769).
-	if msg := validateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
+	if msg := ValidateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
 		return SaveResult{ID: req.ID, DSLError: msg}, nil
 	}
 

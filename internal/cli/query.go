@@ -106,7 +106,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		sqlText = "SELECT * FROM (" + sqlText + ") _onebase_q LIMIT " + fmt.Sprint(limit)
 	}
 	start := time.Now()
-	rows, cols, err := db.RunQuery(ctx, sqlText, compiled.Args)
+	rows, cols, err := querylang.Run(ctx, db, &compiled)
 	if err != nil {
 		return err
 	}
