@@ -467,6 +467,9 @@ func (g *genSession) runQuery(ctx context.Context, qtext string, params map[stri
 	if err != nil {
 		return "ошибка выполнения запроса: " + err.Error()
 	}
+	// Обёртка в подзапрос не даёт использовать query.Run — зовём приведение
+	// явно, чтобы образец данных для ИИ выглядел одинаково на обоих движках.
+	querylang.NormalizeBoolColumns(compiled.BoolColumns, rows)
 	if rows == nil {
 		rows = []map[string]any{}
 	}

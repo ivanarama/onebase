@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/excel"
+	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -202,7 +203,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		return
 	}
 	opAttrs = []slog.Attr{slog.String("sql_hash", sqlHash(compiled.SQL))}
-	rows, cols, truncated, err := s.store.RunQueryLimit(opCtx, compiled.SQL, compiled.Args, s.cfg.Limits.ReportMaxRows)
+	rows, cols, truncated, err := query.RunLimit(opCtx, s.store, &compiled, s.cfg.Limits.ReportMaxRows)
 	opTruncated = truncated
 	opRows = len(rows)
 	queryWarning := ""
@@ -592,7 +593,7 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if stats != nil {
 		stats.attrs = []slog.Attr{slog.String("sql_hash", sqlHash(compiled.SQL))}
 	}
-	data, cols, truncated, err := s.store.RunQueryLimit(ctx, compiled.SQL, compiled.Args, s.cfg.Limits.ExportMaxRows)
+	data, cols, truncated, err := query.RunLimit(ctx, s.store, &compiled, s.cfg.Limits.ExportMaxRows)
 	if stats != nil {
 		stats.rows = len(data)
 		stats.truncated = truncated
