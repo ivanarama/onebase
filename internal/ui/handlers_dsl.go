@@ -302,6 +302,10 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// Вложения из DSL (план 105): ПрисоединитьФайл/СписокВложений/
 	// ПутьКВложению/УдалитьВложение. Живой контекст — как у транзакций.
 	s.registerAttachmentBuiltins(vars, txState.Ctx)
+	// Публикация вложений наружу (план 127): ОпубликоватьФайл/СсылкаНаФайл/
+	// СнятьПубликациюФайла. Рядом с остальными функциями вложений — тот же
+	// контур прав.
+	s.registerPublicFileBuiltins(vars, txState.Ctx)
 	queryFactory := interpreter.NewQueryFactoryGuarded(txState.Ctx(), s.store, s.reg, s.compileDSLQueryWithRowAccess, s.dslQueryGuard)
 	vars["__factory_Запрос"] = queryFactory
 	vars["__factory_Query"] = queryFactory

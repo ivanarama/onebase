@@ -38,6 +38,10 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		// прикладного кода, поэтому таблица нужна везде, где нужны служебные, —
 		// в том числе в матричных тестах, которые поднимают базу отсюда (#827).
 		{"scheduled runs", db.EnsureScheduledRunsTable},
+		// Публикации вложений (план 127): таблица ссылается на _attachments,
+		// поэтому заводится после неё.
+		{"attachments", db.EnsureAttachmentTable},
+		{"public files", db.EnsurePublicFilesSchema},
 		// Константы заводит MigrateConstants: таблица одна на все константы, и
 		// пустой список создаёт её же.
 		{"constants", func(ctx context.Context) error { return db.MigrateConstants(ctx, nil) }},

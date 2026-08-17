@@ -94,6 +94,9 @@ func (s *Server) MountServices(r chi.Router) {
 	r.Get("/hs/docs", s.serviceDocs)
 	r.Get("/hs/docs/rapidoc-min.js", s.serviceDocsAsset)
 	r.Handle("/hs/*", http.HandlerFunc(s.serviceDispatch))
+	// Опубликованные вложения (план 127) — тоже публичная поверхность вне
+	// session-middleware: право на файл даёт непредсказуемый токен в адресе.
+	r.Get("/pub/{token}", s.publicFileServe)
 }
 
 // serviceIndex — GET /hs: машиночитаемый список опубликованных сервисов

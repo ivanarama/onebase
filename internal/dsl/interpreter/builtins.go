@@ -554,6 +554,10 @@ func KnownBuiltinNames() map[string]struct{} {
 		"списоквложений", "listattachments",
 		"путьквложению", "attachmentpath",
 		"удалитьвложение", "deleteattachment",
+		// публикация вложений наружу (план 127, internal/ui/dsl_public_files.go)
+		"опубликоватьфайл", "publishfile",
+		"ссылканафайл", "publicfileurl",
+		"снятьпубликациюфайла", "unpublishfile",
 	} {
 		names[k] = struct{}{}
 	}
