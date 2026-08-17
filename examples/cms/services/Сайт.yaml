@@ -20,13 +20,23 @@ cache:
 # посетителем, поэтому источники скриптов ограничены своим доменом, а вставка
 # сайта во фрейм запрещена.
 security_headers:
-  csp: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+  # 'unsafe-inline' для стилей НЕ нужен: CSS отдаётся отдельным файлом
+  # /style.css, а не блоком <style> в разметке. Это заодно обошло защиту
+  # html/template, который в CSS-контексте заменяет произвольное значение на
+  # ZgotmplZ — и правильно делает.
+  csp: "default-src 'self'; img-src 'self' data:; style-src 'self'"
   frame_options: DENY
   referrer_policy: strict-origin-when-cross-origin
 templates:
   - template: /robots.txt
     methods:
       GET: Роботс
+  - template: /sitemap.xml
+    methods:
+      GET: КартаСайта
+  - template: /style.css
+    methods:
+      GET: Стили
   - template: /{*путь}
     methods:
       GET: Роутер
