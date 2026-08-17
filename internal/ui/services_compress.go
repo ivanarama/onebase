@@ -63,11 +63,11 @@ func clientAcceptsGzip(r *http.Request) bool {
 // обработчиком.
 type gzipResponseWriter struct {
 	http.ResponseWriter
-	buf      []byte
-	gz       *gzip.Writer
-	decided  bool
-	compress bool
-	status   int
+	buf        []byte
+	gz         *gzip.Writer
+	decided    bool
+	compress   bool
+	status     int
 	headersOut bool
 }
 

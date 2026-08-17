@@ -136,7 +136,11 @@ func gunzip(t *testing.T, w *httptest.ResponseRecorder) string {
 	if err != nil {
 		t.Fatalf("gzip.NewReader: %v", err)
 	}
-	defer zr.Close()
+	defer func() {
+		if err := zr.Close(); err != nil {
+			t.Errorf("закрытие gzip-потока: %v", err)
+		}
+	}()
 	data, err := io.ReadAll(zr)
 	if err != nil {
 		t.Fatalf("чтение gzip: %v", err)
