@@ -443,6 +443,64 @@ jobs:
           fi
           echo "все smoke-ячейки зелёные"
 
+  # Браузерные smoke-тесты критических путей (#791). До них ни одна проверка не
+  # открывала приложение браузером: Go-тесты смотрят на функции и обработчики,
+  # frontend-gate — только на синтаксис JS. Путь «вошёл → создал → провёл →
+  # увидел движения» не проверял никто.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install test deps
+        working-directory: e2e
+        run: npm ci
+
+      # Кешируем сам браузер: это ~115 МБ, качать его на каждый прогон —
+      # минута впустую. Ключ включает версию playwright из lock-файла, иначе
+      # после обновления пакета подтянулся бы несовместимый браузер из кеша.
+      - name: Cache browser
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+
+      - name: Install browser
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser smoke suite
+        working-directory: e2e
+        env:
+          CI: '1'
+        run: npx playwright test
+
+      # Без артефактов упавший браузерный тест разбирать нечем: трассировка
+      # показывает шаги, снимок — что было на экране в момент падения.
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          retention-days: 7
+
   # До #931 Windows-only код не исполнял ни один тестовый джоб: все тесты шли
   # на ubuntu, а Windows-цель только компилировалась. Обычные Windows-тесты
   # запускаются здесь; два файла под windows && webview — в GUI-джобе выше.
