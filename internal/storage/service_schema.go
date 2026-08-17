@@ -34,6 +34,10 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		{"intake", db.EnsureIntakeSchema},
 		{"webhook log", db.EnsureWebhookLogSchema},
 		{"report presets", db.EnsureReportPresetSchema},
+		// Журнал прогонов регламентных заданий: с планом 123 его читают из
+		// прикладного кода, поэтому таблица нужна везде, где нужны служебные, —
+		// в том числе в матричных тестах, которые поднимают базу отсюда (#827).
+		{"scheduled runs", db.EnsureScheduledRunsTable},
 		// Константы заводит MigrateConstants: таблица одна на все константы, и
 		// пустой список создаёт её же.
 		{"constants", func(ctx context.Context) error { return db.MigrateConstants(ctx, nil) }},

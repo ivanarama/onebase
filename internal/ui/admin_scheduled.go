@@ -61,7 +61,9 @@ func (s *Server) scheduledRunNow(w http.ResponseWriter, r *http.Request) {
 	if dec, err := url.PathUnescape(name); err == nil {
 		name = dec
 	}
-	if err := s.sched.RunNow(r.Context(), name); err != nil {
+	// Идентификатор прогона админке не нужен: она сразу редиректит на карточку
+	// задания, где виден весь список прогонов.
+	if _, err := s.sched.RunNow(r.Context(), name); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, scheduler.ErrJobAlreadyRunning) {
 			status = http.StatusConflict
