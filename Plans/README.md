@@ -348,12 +348,16 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
-| 124 | [124-dsl-regex.md](124-dsl-regex.md) | Регулярные выражения в DSL (RE2, без ReDoS) | ~1.25 дня | ⬜ Проект |
-| 125 | [125-dsl-html-template.md](125-dsl-html-template.md) | HTML-шаблоны с контекстным автоэкранированием + `БезопасныйHTML` | ~2.25 дня | ⬜ Проект |
-| 126 | [126-http-service-cache.md](126-http-service-cache.md) | Кэш ответов HTTP-сервисов (TTL, ETag/304, single-flight, только `auth: none`) | ~4.25 дня | ⬜ Проект |
-| 127 | [127-public-file-urls.md](127-public-file-urls.md) | Публичные ссылки на вложения (capability-токен, `/pub/<токен>`) | ~3 дня | ⬜ Проект |
-| 128 | [128-http-service-compression-and-headers.md](128-http-service-compression-and-headers.md) | gzip ответов `/hs/*` + `security_headers:` уровня сервиса | ~2.25 дня | ⬜ Проект |
+| 124 | [124-dsl-regex.md](124-dsl-regex.md) | Регулярные выражения в DSL (RE2, без ReDoS) | ~1.25 дня | ✅ Реализовано |
+| 125 | [125-dsl-html-template.md](125-dsl-html-template.md) | HTML-шаблоны с контекстным автоэкранированием + `БезопасныйHTML` | ~2.25 дня | ✅ Реализовано |
+| 126 | [126-http-service-cache.md](126-http-service-cache.md) | Кэш ответов HTTP-сервисов (TTL, ETag/304, сериализация промахов, только `auth: none`) | ~4.25 дня | ✅ Реализовано |
+| 127 | [127-public-file-urls.md](127-public-file-urls.md) | Публичные ссылки на вложения (capability-токен, `/pub/<токен>`) | ~3 дня | ✅ Реализовано |
+| 128 | [128-http-service-compression-and-headers.md](128-http-service-compression-and-headers.md) | gzip ответов `/hs/*` + `security_headers:` уровня сервиса | ~2.25 дня | ✅ Реализовано |
 | 129 | [129-cms-site-configuration.md](129-cms-site-configuration.md) | **Прикладной**: конфигурация CMS `examples/cms` (роутер, рендер, SEO, медиа, формы, роли) | ~15 дней | ⬜ Проект |
+
+Платформенная часть (124–128) реализована 2026-08-17: ветка
+`feature/124-dsl-regex` (пять коммитов, по одному на план). Прикладной план 129
+(конфигурация `examples/cms`) не начат.
 
 Ключевые решения группы, чтобы не переигрывать на ревью: кэш **запрещён** при
 `auth != none` (утечка ответа между пользователями); публикация файла — явное
