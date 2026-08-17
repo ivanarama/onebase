@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dslvars"
 	"github.com/ivantit66/onebase/internal/exchange"
@@ -358,6 +359,28 @@ func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.Mov
 	return vars, txState
 }
 
+// runEntityHook исполняет хук записи/проведения с тем же пределом, что и
+// entityservice.runHook (#962).
+//
+// Раньше здесь стоял голый Interp.Run: дедлайн, заведённый в #865, доехал до
+// Service.Save, но не до этих двух копий. А обе исполняются внутри открытой
+// транзакции — то есть `Приостановить(300)` в ОбработкаПроведения держал её
+// пять минут, и на SQLite, где соединение единственное, вместе с ней всю базу.
+// Проверено: при limits.request_timeout_sec = 5 хук со сном 20 секунд держал
+// транзакцию все 20, а параллельный запрос ждал 17; тот же документ через
+// Service.Save обрывался ровно на пятой.
+//
+// Предел согласуется с дедлайном контекста (ClampWallClock): профиль не должен
+// переживать запрос, продолжая держать транзакцию после ухода клиента. При
+// ненастроенном лимите поведение прежнее — нулевое значение означает «предел не
+// задан», и менять на нём поведение молча нельзя.
+func (s *Server) runEntityHook(ctx context.Context, proc *ast.ProcedureDecl, obj *runtime.Object, vars map[string]any) error {
+	if wall := interpreter.ClampWallClock(ctx, s.operationTimeout(opEntitySave)); wall > 0 {
+		return s.interp.RunSandboxed(proc, obj, interpreter.SandboxProfile{Context: ctx, MaxWallClock: wall}, nil, vars)
+	}
+	return s.interp.Run(proc, obj, vars)
+}
+
 func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) (string, []string) {
 	proc := s.reg.GetProcedure(obj.Type, "OnWrite")
 	if proc == nil {
@@ -385,7 +408,7 @@ func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *run
 	var msgs []string
 	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
 	defer rollbackDSLExecution(txState)
-	runErr := s.interp.Run(proc, obj, vars)
+	runErr := s.runEntityHook(ctx, proc, obj, vars)
 	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		return interpreter.FormatUserError(runErr), msgs
 	}
@@ -441,7 +464,7 @@ func (s *Server) runOnPostCtx(ctx context.Context, obj *runtime.Object, mc *runt
 	var msgs []string
 	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
 	defer rollbackDSLExecution(txState)
-	runErr := s.interp.Run(proc, obj, vars)
+	runErr := s.runEntityHook(ctx, proc, obj, vars)
 	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		return interpreter.FormatUserError(runErr), msgs
 	}

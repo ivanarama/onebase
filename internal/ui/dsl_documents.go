@@ -737,6 +737,16 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	if w.entity.NotifyChanges && w.loaded {
 		changeBefore, _ = w.s.store.GetByID(ctx, w.entity.Name, w.obj.ID, w.entity)
 	}
+	// Значения перечислений — до записи и до хука, тем же кодом, что и на пути
+	// entityservice.Save (#962). Без этого модуль клал в реквизит-перечисление
+	// произвольную строку: форма показывала пустой список, а сравнения вида
+	// «Если Статус = "Закрыта"» молча не срабатывали. Правится это здесь, а не
+	// копией проверки, потому что копий и так три.
+	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		// Как на пути справочников (dsl_catalogs.go): текст проверки уходит
+		// пользователю как есть, это не технический сбой.
+		return fmt.Errorf("%s", msg)
+	}
 	// Number first so row-level write policy and the form/entity hook observe
 	// the same value that will be persisted. writeInContext always owns a
 	// transaction/savepoint, so rejection restores both counter and obj map.
