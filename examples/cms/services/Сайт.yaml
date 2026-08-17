@@ -37,6 +37,9 @@ templates:
   - template: /style.css
     methods:
       GET: Стили
+  - template: /search
+    methods:
+      GET: Поиск
   - template: /{*путь}
     methods:
       GET: Роутер
