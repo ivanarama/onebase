@@ -143,3 +143,86 @@ func TestPublicFiles_Matrix(t *testing.T) {
 		})
 	})
 }
+
+// Публикация картинок (поле image): источник — блоб, а не вложение.
+func TestPublicFiles_Blobs_Matrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+
+		putBlob := func() uuid.UUID {
+			t.Helper()
+			b, err := db.PutBlob(ctx, "image/png", strings.NewReader("PNG"), 1<<20,
+				storage.BlobOwner{Kind: "catalog", Entity: "Товары"})
+			if err != nil {
+				t.Fatalf("PutBlob: %v", err)
+			}
+			return b.ID
+		}
+
+		t.Run("публикация картинки идемпотентна", func(t *testing.T) {
+			id := putBlob()
+			first, err := db.PublishBlob(ctx, id, storage.PublishOptions{})
+			if err != nil {
+				t.Fatalf("PublishBlob: %v", err)
+			}
+			second, err := db.PublishBlob(ctx, id, storage.PublishOptions{CacheSeconds: 120})
+			if err != nil {
+				t.Fatalf("повторная публикация: %v", err)
+			}
+			if first != second {
+				t.Fatalf("повторная публикация дала другой токен: %q → %q", first, second)
+			}
+			pf, err := db.PublicFileByToken(ctx, first)
+			if err != nil || pf == nil {
+				t.Fatalf("PublicFileByToken: %v (pf=%v)", err, pf)
+			}
+			if !pf.IsBlob() || pf.BlobID != id {
+				t.Errorf("источник определён неверно: %+v", pf)
+			}
+			if pf.CacheSeconds != 120 {
+				t.Errorf("опции не обновились: %+v", pf)
+			}
+		})
+
+		// Оба источника живут в одной таблице, и перепутать их нельзя: поиск по
+		// вложению не должен находить публикацию картинки и наоборот.
+		t.Run("источники не путаются", func(t *testing.T) {
+			blobID := putBlob()
+			attID := uploadTestAttachment(t, db, "doc.pdf")
+			blobToken, err := db.PublishBlob(ctx, blobID, storage.PublishOptions{})
+			if err != nil {
+				t.Fatalf("PublishBlob: %v", err)
+			}
+			attToken, err := db.PublishAttachment(ctx, attID, storage.PublishOptions{})
+			if err != nil {
+				t.Fatalf("PublishAttachment: %v", err)
+			}
+			if blobToken == attToken {
+				t.Fatal("разные источники получили один токен")
+			}
+			if pf, _ := db.PublicFileByBlob(ctx, blobID); pf == nil || pf.Token != blobToken {
+				t.Errorf("публикация картинки не находится по её ид")
+			}
+			if pf, _ := db.PublicFileByAttachment(ctx, blobID); pf != nil {
+				t.Errorf("поиск вложения нашёл публикацию картинки: %+v", pf)
+			}
+			if pf, _ := db.PublicFileByBlob(ctx, attID); pf != nil {
+				t.Errorf("поиск картинки нашёл публикацию вложения: %+v", pf)
+			}
+		})
+
+		t.Run("отзыв ломает ссылку", func(t *testing.T) {
+			id := putBlob()
+			token, err := db.PublishBlob(ctx, id, storage.PublishOptions{})
+			if err != nil {
+				t.Fatalf("PublishBlob: %v", err)
+			}
+			if err := db.UnpublishBlob(ctx, id); err != nil {
+				t.Fatalf("UnpublishBlob: %v", err)
+			}
+			if pf, _ := db.PublicFileByToken(ctx, token); pf != nil {
+				t.Fatalf("отозванная ссылка на картинку всё ещё работает: %+v", pf)
+			}
+		})
+	})
+}

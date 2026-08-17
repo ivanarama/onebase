@@ -559,6 +559,9 @@ func KnownBuiltinNames() map[string]struct{} {
 		"сброситькэшсервисов", "resetservicecache",
 		"размеркэшасервисов", "servicecachesize",
 		"опубликоватьфайл", "publishfile",
+		"опубликоватькартинку", "publishimage",
+		"ссылканакартинку", "publicimageurl",
+		"снятьпубликациюкартинки", "unpublishimage",
 		"ссылканафайл", "publicfileurl",
 		"снятьпубликациюфайла", "unpublishfile",
 	} {

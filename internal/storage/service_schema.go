@@ -38,9 +38,12 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		// прикладного кода, поэтому таблица нужна везде, где нужны служебные, —
 		// в том числе в матричных тестах, которые поднимают базу отсюда (#827).
 		{"scheduled runs", db.EnsureScheduledRunsTable},
-		// Публикации вложений (план 127): таблица ссылается на _attachments,
-		// поэтому заводится после неё.
+		// Публикации файлов (план 127): таблица ссылается на _attachments,
+		// поэтому заводится после неё. Блобы — второй источник публикации
+		// (поле image), и без них матричный тест падает на «no such table:
+		// _blobs» вместо внятного отказа (issue #827).
 		{"attachments", db.EnsureAttachmentTable},
+		{"blobs", db.EnsureBlobTable},
 		{"public files", db.EnsurePublicFilesSchema},
 		// Константы заводит MigrateConstants: таблица одна на все константы, и
 		// пустой список создаёт её же.

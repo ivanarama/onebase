@@ -4,6 +4,8 @@ package ui
 // аутентификации. Токен непредсказуем и отзывается — см. storage/public_files.go.
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,16 +54,43 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	f, att, err := s.store.OpenAttachment(r.Context(), pf.AttachmentID)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer closeRead("публичный файл", f)
 
-	name := pf.Filename
-	if name == "" {
-		name = att.Filename
+	var (
+		content  io.ReadSeeker
+		mimeType string
+		name     = pf.Filename
+		modified time.Time
+	)
+	if pf.IsBlob() {
+		// Картинка из поля image. OpenBlob отдаёт поток без Seek, а ServeContent
+		// требует Seeker — читаем в память: блобы ограничены размером картинки,
+		// и ради Range по мегабайтному файлу городить временный файл незачем.
+		blob, rc, berr := s.store.OpenBlob(r.Context(), pf.BlobID)
+		if berr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		data, rerr := io.ReadAll(rc)
+		closeRead("публичная картинка", rc)
+		if rerr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		content, mimeType = bytes.NewReader(data), blob.Mime
+		if name == "" {
+			name = "image"
+		}
+	} else {
+		f, att, aerr := s.store.OpenAttachment(r.Context(), pf.AttachmentID)
+		if aerr != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer closeRead("публичный файл", f)
+		content, mimeType, modified = f, att.MimeType, att.UploadedAt
+		if name == "" {
+			name = att.Filename
+		}
 	}
 
 	h := w.Header()
@@ -71,13 +100,13 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(pf.CacheSeconds)+", immutable")
 
-	if inlineSafeType(att.MimeType) {
-		h.Set("Content-Type", att.MimeType)
+	if inlineSafeType(mimeType) {
+		h.Set("Content-Type", mimeType)
 		h.Set("Content-Disposition", "inline; filename="+strconv.Quote(name))
 	} else {
 		h.Set("Content-Type", "application/octet-stream")
 		h.Set("Content-Disposition", contentDisposition(name))
 	}
 	// ServeContent сам обрабатывает Range, If-Modified-Since и If-None-Match.
-	http.ServeContent(w, r, name, att.UploadedAt, f)
+	http.ServeContent(w, r, name, modified, content)
 }

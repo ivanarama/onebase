@@ -141,12 +141,110 @@ func (s *Server) registerPublicFileBuiltins(vars map[string]any, ctxFn func() co
 		return nil, nil
 	})
 
+	// Картинки (поле image) живут в блобах, а не во вложениях, поэтому у них
+	// свои функции. Пользовательский смысл один — «дать ссылку на файл», но
+	// идентификаторы разного происхождения путать нельзя: перепутанный ид
+	// молча вернул бы «не найдено».
+	publishImageFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("ОпубликоватьКартинку(ИдКартинки[, Опции]): не передан идентификатор")
+		}
+		id, err := parseAttachmentID("ОпубликоватьКартинку", args[0])
+		if err != nil {
+			return nil, err
+		}
+		ctx := ctxFn()
+		if err := s.checkBlobAccess(ctx, id); err != nil {
+			return nil, fmt.Errorf("ОпубликоватьКартинку: %w", err)
+		}
+		var opts storage.PublishOptions
+		if len(args) > 1 {
+			opts = publishOptionsFromDSL(args[1])
+		}
+		token, err := s.store.PublishBlob(ctx, id, opts)
+		if err != nil {
+			return nil, fmt.Errorf("ОпубликоватьКартинку: %w", err)
+		}
+		return publicFileURL(token), nil
+	})
+
+	imageURLFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("СсылкаНаКартинку(ИдКартинки): не передан идентификатор")
+		}
+		id, err := parseAttachmentID("СсылкаНаКартинку", args[0])
+		if err != nil {
+			return nil, err
+		}
+		ctx := ctxFn()
+		if err := s.checkBlobAccess(ctx, id); err != nil {
+			return nil, fmt.Errorf("СсылкаНаКартинку: %w", err)
+		}
+		pf, err := s.store.PublicFileByBlob(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("СсылкаНаКартинку: %w", err)
+		}
+		if pf == nil || pf.Expired(time.Now()) {
+			return nil, nil
+		}
+		return publicFileURL(pf.Token), nil
+	})
+
+	unpublishImageFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		if len(args) < 1 {
+			return nil, fmt.Errorf("СнятьПубликациюКартинки(ИдКартинки): не передан идентификатор")
+		}
+		id, err := parseAttachmentID("СнятьПубликациюКартинки", args[0])
+		if err != nil {
+			return nil, err
+		}
+		ctx := ctxFn()
+		if err := s.checkBlobAccess(ctx, id); err != nil {
+			return nil, fmt.Errorf("СнятьПубликациюКартинки: %w", err)
+		}
+		if err := s.store.UnpublishBlob(ctx, id); err != nil {
+			return nil, fmt.Errorf("СнятьПубликациюКартинки: %w", err)
+		}
+		return nil, nil
+	})
+
+	vars["ОпубликоватьКартинку"] = publishImageFn
+	vars["PublishImage"] = publishImageFn
+	vars["СсылкаНаКартинку"] = imageURLFn
+	vars["PublicImageURL"] = imageURLFn
+	vars["СнятьПубликациюКартинки"] = unpublishImageFn
+	vars["UnpublishImage"] = unpublishImageFn
+
 	vars["ОпубликоватьФайл"] = publishFn
 	vars["PublishFile"] = publishFn
 	vars["СсылкаНаФайл"] = urlFn
 	vars["PublicFileURL"] = urlFn
 	vars["СнятьПубликациюФайла"] = unpublishFn
 	vars["UnpublishFile"] = unpublishFn
+}
+
+// checkBlobAccess проверяет доступ к картинке через сущность-владельца блоба.
+//
+// У блоба, в отличие от вложения, нет идентификатора СТРОКИ-владельца — только
+// вид и имя сущности (storage.Blob). Поэтому проверка идёт на уровне сущности:
+// строковые политики здесь неприменимы, и это стоит помнить, публикуя картинки
+// из справочника с построчным доступом.
+func (s *Server) checkBlobAccess(ctx context.Context, blobID uuid.UUID) error {
+	blob, rc, err := s.store.OpenBlob(ctx, blobID)
+	if err != nil {
+		return fmt.Errorf("картинка не найдена")
+	}
+	closeRead("проверка доступа к картинке", rc)
+	if blob.OwnerEntity == "" {
+		// Легаси-блоб без владельца: публиковать его вправе только код
+		// конфигурации, который и так исполняется с полномочиями контекста.
+		return nil
+	}
+	entity := s.reg.GetEntity(blob.OwnerEntity)
+	if entity == nil {
+		return fmt.Errorf("неизвестный владелец картинки %s", blob.OwnerEntity)
+	}
+	return s.checkDSLRowAccess(ctx, entity, "write", uuid.Nil, nil)
 }
 
 // checkAttachmentAccess проверяет доступ к вложению через его владельца
