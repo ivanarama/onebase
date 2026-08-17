@@ -24,6 +24,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -140,7 +142,11 @@ func scheduledRunStruct(run *storage.ScheduledRun) any {
 	} else {
 		st.Set("Конец", nil)
 	}
-	st.Set("ДлительностьМс", float64(run.DurationMs))
+	// decimal, а не float64: числа DSL — это decimal.Decimal, и float64 при
+	// склейке со строкой форматируется через %v, то есть научной нотацией.
+	// Часовой обмен (3 600 000 мс) превратился бы в «3.6e+06 мс» ровно в том
+	// примере, который приведён в справке.
+	st.Set("ДлительностьМс", decimal.NewFromInt(run.DurationMs))
 	st.Set("Ошибка", run.Error)
 	st.Set("Вывод", run.Output)
 	return st
