@@ -109,6 +109,17 @@ var functionDescriptors = []Descriptor{
 		Group:   "Строки",
 	},
 	{
+		Name: "регексэкранировать", Display: "РегексЭкранировать", Aliases: []string{"RegexEscape"}, Kind: KindFunc,
+		Signature: "РегексЭкранировать(Строка)",
+		Params: []Param{
+			{Name: "Строка", Type: "строка", Doc: "текст, который должен искаться буквально"},
+		},
+		Returns: "строка",
+		Doc:     "Экранирует спецсимволы регулярного выражения, чтобы строку можно было вставить в шаблон как литерал (план 124).",
+		Example: `Рег = Новый Регекс("^" + РегексЭкранировать(Префикс) + "\\d+$");`,
+		Group:   "Строки",
+	},
+	{
 		Name: "стрзаменить", Display: "СтрЗаменить", Aliases: []string{"StrReplace"}, Kind: KindFunc,
 		Signature: "СтрЗаменить(Строка, Что, Чем)",
 		Params: []Param{
