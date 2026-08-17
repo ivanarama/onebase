@@ -466,6 +466,7 @@ func (s *Scheduler) run(ctx context.Context, ready chan<- struct{}) error {
 	cron := s.cron
 	cron.Start()
 	s.mu.Unlock()
+	s.tidyRunHistory(ctx)
 	if ready != nil {
 		close(ready)
 	}
@@ -479,6 +480,38 @@ func (s *Scheduler) run(ctx context.Context, ready chan<- struct{}) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return s.Shutdown(shutdownCtx)
+}
+
+// RunHistoryMaxAge — сколько хранится журнал прогонов. Не настройка базы
+// намеренно: значение по умолчанию должно быть разумным без вмешательства, а
+// тем, кому нужен другой срок, проще будет добавить настройку тогда, когда
+// появится живой запрос.
+const RunHistoryMaxAge = 90 * 24 * time.Hour
+
+// tidyRunHistory приводит журнал прогонов в порядок при старте: помечает
+// брошенные прогоны и подрезает старые (#966).
+//
+// Делается один раз при запуске, а не по расписанию: обе операции дешёвые, но
+// частить ими незачем — брошенные прогоны появляются только после жёсткого
+// завершения процесса, то есть ровно перед следующим стартом.
+//
+// Сбой уборки не должен мешать работе планировщика: журнал — вспомогательная
+// вещь, и отказываться стартовать из-за него значило бы разменять работающие
+// задания на аккуратность истории.
+func (s *Scheduler) tidyRunHistory(ctx context.Context) {
+	if s.db == nil {
+		return
+	}
+	if n, err := s.db.SweepStaleScheduledRuns(ctx); err != nil {
+		s.log.Warn("scheduler: не удалось пометить брошенные прогоны", "err", err)
+	} else if n > 0 {
+		s.log.Info("scheduler: брошенные прогоны помечены прерванными", "count", n)
+	}
+	if n, err := s.db.PruneScheduledRuns(ctx, RunHistoryMaxAge); err != nil {
+		s.log.Warn("scheduler: не удалось подрезать журнал прогонов", "err", err)
+	} else if n > 0 {
+		s.log.Info("scheduler: журнал прогонов подрезан", "removed", n, "older_than", RunHistoryMaxAge)
+	}
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
