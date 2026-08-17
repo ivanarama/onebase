@@ -1552,6 +1552,13 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 			hookErrMsg = errMsg
 			return errPostingHookFailed
 		}
+		// Значение перечисления, присвоенное хуком (#977). На этом пути входной
+		// проверки нет вовсе: документ уже записан, а поля приходят только из
+		// хука — значит она и есть единственная.
+		if msg := entityservice.ValidateEnumFields(s.reg, entity, obj.Fields, obj.TablePartRows); msg != "" {
+			hookErrMsg = msg
+			return errPostingHookFailed
+		}
 		// OnPost мог изменить расчётные реквизиты шапки — персистим их и
 		// фиксируем одну логическую версию операции. У списочного пути до этого
 		// места ещё не было записи, поэтому PreserveVersion оставлял версию

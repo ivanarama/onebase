@@ -502,7 +502,7 @@ func (r *Runner) runQuery(ctx context.Context, w *metadata.Widget) ([]map[string
 	if maskPlan.Denied != "" {
 		return nil, nil, &accessDeniedError{object: "поле «" + maskPlan.Denied + "»"}
 	}
-	rows, cols, err := r.Store.RunQuery(ctx, compiled.SQL, compiled.Args)
+	rows, cols, err := query.Run(ctx, r.Store, &compiled)
 	if err != nil {
 		return rows, cols, err
 	}

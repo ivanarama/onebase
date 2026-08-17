@@ -1,0 +1,11 @@
+{
+  "name": "onebase-e2e",
+  "private": true,
+  "description": "Браузерные smoke-тесты критических путей (#791)",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
