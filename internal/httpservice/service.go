@@ -76,7 +76,59 @@ type Service struct {
 	// (план 128). Глобальный набор websec подобран под админку и для сайта,
 	// отдаваемого постороннему посетителю, слишком мягкий.
 	SecurityHeaders *SecurityHeadersConfig `yaml:"security_headers"`
-	Templates       []URLTemplate          `yaml:"templates"`
+	// Cache — кэш ответов (план 126). Только для auth: none и только GET/HEAD:
+	// ответ, собранный под правами одного пользователя (RLS, маскирование,
+	// роли), не должен достаться другому.
+	Cache     *CacheConfig  `yaml:"cache"`
+	Templates []URLTemplate `yaml:"templates"`
+}
+
+// CacheConfig — параметры кэша ответов сервиса.
+type CacheConfig struct {
+	// TTL — время жизни записи в секундах; 0 = кэш выключен.
+	TTL int `yaml:"ttl"`
+	// Vary — что входит в ключ помимо пути: query, host, lang.
+	// Пусто = [query]; явный пустой список — «одна страница для всех».
+	Vary []string `yaml:"vary"`
+	// Public — отдавать ли наружу Cache-Control: public, max-age=<ttl>.
+	Public bool `yaml:"public"`
+	// MaxBody — ответы крупнее не кэшируются (байт); 0 = 1 МиБ.
+	MaxBody int64 `yaml:"max_body"`
+	// varySet — нормализованный Vary; заполняется Normalize.
+	varySet map[string]bool `yaml:"-"`
+}
+
+// DefaultCacheMaxBody — предел размера кэшируемого ответа по умолчанию.
+const DefaultCacheMaxBody = 1 << 20
+
+// Enabled сообщает, включён ли кэш.
+func (c *CacheConfig) Enabled() bool { return c != nil && c.TTL > 0 }
+
+// VaryBy сообщает, входит ли составляющая в ключ кэша.
+func (c *CacheConfig) VaryBy(part string) bool {
+	if c == nil {
+		return false
+	}
+	return c.varySet[part]
+}
+
+// BodyLimit возвращает предел размера кэшируемого тела.
+func (c *CacheConfig) BodyLimit() int64 {
+	if c == nil || c.MaxBody <= 0 {
+		return DefaultCacheMaxBody
+	}
+	return c.MaxBody
+}
+
+// CacheUsable сообщает, будет ли кэш реально работать. Кэш при auth ≠ none
+// игнорируется (см. комментарий к полю Cache); `onebase check` в этом случае
+// даёт ошибку, а рантайм — предупреждение в лог.
+func (s *Service) CacheUsable() bool {
+	if !s.Cache.Enabled() {
+		return false
+	}
+	auth := strings.ToLower(strings.TrimSpace(s.Auth))
+	return auth == "" || auth == "none"
 }
 
 // SecurityHeadersConfig — заголовки безопасности уровня сервиса.
@@ -147,6 +199,18 @@ func (s *Service) Normalize() {
 		s.Auth = "none"
 	}
 	s.Auth = strings.ToLower(strings.TrimSpace(s.Auth))
+	if s.Cache != nil {
+		// Пустой ключ vary и ОТСУТСТВУЮЩИЙ vary — разные вещи: первый значит
+		// «одна страница для всех», второй — умолчание [query]. Различаем по
+		// nil, поэтому список не нормализуем в непустой.
+		if s.Cache.Vary == nil {
+			s.Cache.Vary = []string{"query"}
+		}
+		s.Cache.varySet = make(map[string]bool, len(s.Cache.Vary))
+		for _, v := range s.Cache.Vary {
+			s.Cache.varySet[strings.ToLower(strings.TrimSpace(v))] = true
+		}
+	}
 	if s.SecurityHeaders != nil {
 		s.SecurityHeaders.FrameOptions = strings.ToUpper(strings.TrimSpace(s.SecurityHeaders.FrameOptions))
 		s.SecurityHeaders.CSP = strings.TrimSpace(s.SecurityHeaders.CSP)

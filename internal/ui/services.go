@@ -225,6 +225,39 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Кэш ответов (план 126). Только GET/HEAD и только при auth: none —
+	// иначе ответ, собранный под правами одного пользователя, достался бы
+	// другому. Промахи по одному ключу сериализуются: параллельные запросы на
+	// холодную страницу не должны запускать несколько исполнений DSL.
+	if s.serviceCacheUsable(svc, r) {
+		key := serviceCacheKey(svc, r, s.resolveLang(r))
+		if resp, ok := s.svcCache.Get(key); ok {
+			writeCachedResponse(w, r, resp, svc)
+			return
+		}
+		release := s.svcCache.lockKey(key)
+		defer release()
+		// Пока ждали замок, ответ мог собрать сосед.
+		if resp, ok := s.svcCache.Get(key); ok {
+			writeCachedResponse(w, r, resp, svc)
+			return
+		}
+		out := w
+		capture := newCacheCapture()
+		defer func() {
+			if capture.cacheable(svc.Cache.BodyLimit()) {
+				resp := capture.toCachedResponse()
+				s.svcCache.Put(key, svc.RootURL, resp, time.Duration(svc.Cache.TTL)*time.Second)
+				writeCachedResponse(out, r, resp, svc)
+				return
+			}
+			// Ошибки, слишком большие тела и ответы с Set-Cookie отдаём как
+			// есть, мимо кэша.
+			flushCapture(out, capture)
+		}()
+		w = capture
+	}
+
 	// Тело читаем целиком ДО аутентификации (ограничено maxFileSizeBytes):
 	// auth hmac проверяет подпись тела, а обработчик получает его как
 	// байты/строку без возни с потоком.

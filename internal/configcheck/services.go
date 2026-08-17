@@ -112,6 +112,39 @@ func CheckHTTPServices(proj *project.Project) []Issue {
 			}
 		}
 
+		// План 126: кэш ответов. Разрешён только анонимным сервисам — иначе
+		// ответ, собранный под правами одного пользователя (RLS, маскирование,
+		// роли), достанется другому. Это ошибка конфигурации, а не
+		// предупреждение: рантайм такой кэш игнорирует, и владелец останется в
+		// уверенности, что кэш работает.
+		if svc.Cache != nil {
+			if svc.Cache.TTL < 0 {
+				add(svc.Name, "cache.ttl не может быть отрицательным")
+			}
+			if svc.Cache.TTL > 0 && !svc.CacheUsable() {
+				add(svc.Name, fmt.Sprintf("cache задан при auth %q — кэш допустим только при auth: none, "+
+					"иначе ответ одного пользователя достанется другому. Вынесите публичную часть в отдельный сервис", svc.Auth))
+			}
+			for _, v := range svc.Cache.Vary {
+				switch strings.ToLower(strings.TrimSpace(v)) {
+				case "query", "host", "lang":
+				default:
+					add(svc.Name, fmt.Sprintf("cache.vary: неизвестное значение %q (допустимы query, host, lang)", v))
+				}
+			}
+			hasGet := false
+			for _, t := range svc.Templates {
+				for m := range t.Methods {
+					if m == "GET" || m == "HEAD" {
+						hasGet = true
+					}
+				}
+			}
+			if svc.Cache.TTL > 0 && !hasGet {
+				add(svc.Name, "cache задан, но у сервиса нет ни одного GET/HEAD-метода — кэшируются только они")
+			}
+		}
+
 		// План 128: заголовки безопасности уровня сервиса.
 		if h := svc.SecurityHeaders; h != nil {
 			switch h.FrameOptions {

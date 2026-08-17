@@ -276,6 +276,13 @@ func (s *Server) InvalidateWidgetCache() {
 	}
 }
 
+// InvalidateServiceCache сбрасывает кэш ответов HTTP-сервисов (план 126).
+func (s *Server) InvalidateServiceCache() {
+	if s != nil && s.uiSrv != nil {
+		s.uiSrv.InvalidateServiceCache()
+	}
+}
+
 // ResyncWSIntakes приводит WS-соединения приёмки к текущему реестру (план
 // 120A): вызывается при старте сервера и после горячей перезагрузки проекта.
 func (s *Server) ResyncWSIntakes() {

@@ -171,3 +171,64 @@ func TestCompressEnabled_DefaultsByAuth(t *testing.T) {
 		t.Errorf("явный compress: true при auth: basic должен включать сжатие")
 	}
 }
+
+// План 126: разбор блока cache и умолчание vary.
+func TestLoadFile_Cache(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "site.yaml")
+	yaml := `name: Site
+root_url: site
+auth: none
+cache:
+  ttl: 60
+  public: true
+templates:
+  - template: /
+    methods:
+      get: Главная
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if !svc.Cache.Enabled() || svc.Cache.TTL != 60 || !svc.Cache.Public {
+		t.Fatalf("блок cache прочитан неверно: %+v", svc.Cache)
+	}
+	// Отсутствующий vary — умолчание [query]; пустой список значит другое.
+	if !svc.Cache.VaryBy("query") {
+		t.Errorf("vary по умолчанию должен включать query")
+	}
+	if svc.Cache.VaryBy("host") {
+		t.Errorf("host не должен входить в ключ без явного указания")
+	}
+	if svc.Cache.BodyLimit() != DefaultCacheMaxBody {
+		t.Errorf("BodyLimit()=%d, ожидался дефолт %d", svc.Cache.BodyLimit(), DefaultCacheMaxBody)
+	}
+	if !svc.CacheUsable() {
+		t.Errorf("при auth: none кэш должен быть применим")
+	}
+}
+
+// Пустой vary — «одна страница для всех», а не умолчание.
+func TestCache_EmptyVaryIsNotDefault(t *testing.T) {
+	svc := &Service{Name: "S", RootURL: "s", Auth: "none",
+		Cache: &CacheConfig{TTL: 30, Vary: []string{}}}
+	svc.Normalize()
+	if svc.Cache.VaryBy("query") {
+		t.Errorf("явный пустой vary не должен превращаться в [query]")
+	}
+}
+
+// Кэш при auth ≠ none неприменим: ответ одного пользователя достался бы другому.
+func TestCacheUsable_RequiresAnonymous(t *testing.T) {
+	for _, auth := range []string{"basic", "session", "token", "hmac"} {
+		svc := &Service{Name: "S", RootURL: "s", Auth: auth, Cache: &CacheConfig{TTL: 60}}
+		svc.Normalize()
+		if svc.CacheUsable() {
+			t.Errorf("auth=%q: кэш считается применимым", auth)
+		}
+	}
+}

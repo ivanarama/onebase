@@ -555,6 +555,9 @@ func KnownBuiltinNames() map[string]struct{} {
 		"путьквложению", "attachmentpath",
 		"удалитьвложение", "deleteattachment",
 		// публикация вложений наружу (план 127, internal/ui/dsl_public_files.go)
+		// кэш ответов HTTP-сервисов (план 126, internal/ui/dsl_service_cache.go)
+		"сброситькэшсервисов", "resetservicecache",
+		"размеркэшасервисов", "servicecachesize",
 		"опубликоватьфайл", "publishfile",
 		"ссылканафайл", "publicfileurl",
 		"снятьпубликациюфайла", "unpublishfile",

@@ -164,3 +164,60 @@ func TestCheckHTTPServices_SecurityHeaders(t *testing.T) {
 		}
 	})
 }
+
+// План 126: гейт на блок cache.
+func TestCheckHTTPServices_Cache(t *testing.T) {
+	prog := parseServiceProg(t, `Функция Главная(Запрос) Экспорт
+  Возврат "ok";
+КонецФункции`)
+	getTmpl := httpservice.URLTemplate{Template: "/", Methods: map[string]string{"GET": "Главная"}}
+	postTmpl := httpservice.URLTemplate{Template: "/", Methods: map[string]string{"POST": "Главная"}}
+
+	mk := func(auth string, cache *httpservice.CacheConfig, tmpl httpservice.URLTemplate) *project.Project {
+		s := &httpservice.Service{Name: "Site", RootURL: "site", Auth: auth,
+			Cache: cache, Templates: []httpservice.URLTemplate{tmpl}}
+		s.Normalize()
+		return &project.Project{
+			HTTPServices:    []*httpservice.Service{s},
+			ServicePrograms: map[string]*ast.Program{"Site": prog},
+		}
+	}
+
+	t.Run("корректный блок проходит", func(t *testing.T) {
+		issues := CheckHTTPServices(mk("none", &httpservice.CacheConfig{TTL: 60, Vary: []string{"query", "host"}}, getTmpl))
+		if len(issues) != 0 {
+			t.Fatalf("неожиданные замечания: %v", issues)
+		}
+	})
+
+	// Главный гейт плана: кэш ответа при auth ≠ none раздал бы ответ одного
+	// пользователя другому.
+	t.Run("кэш при auth basic — ошибка", func(t *testing.T) {
+		issues := CheckHTTPServices(mk("basic", &httpservice.CacheConfig{TTL: 60}, getTmpl))
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "auth: none") {
+			t.Fatalf("ожидалось замечание про auth: none, получено: %v", issues)
+		}
+	})
+
+	t.Run("неизвестное значение vary", func(t *testing.T) {
+		issues := CheckHTTPServices(mk("none", &httpservice.CacheConfig{TTL: 60, Vary: []string{"cookie"}}, getTmpl))
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "vary") {
+			t.Fatalf("ожидалось замечание про vary, получено: %v", issues)
+		}
+	})
+
+	t.Run("отрицательный ttl", func(t *testing.T) {
+		issues := CheckHTTPServices(mk("none", &httpservice.CacheConfig{TTL: -5}, getTmpl))
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "ttl") {
+			t.Fatalf("ожидалось замечание про ttl, получено: %v", issues)
+		}
+	})
+
+	// Кэшируются только GET/HEAD — на сервисе без них блок cache бесполезен.
+	t.Run("кэш без GET-методов", func(t *testing.T) {
+		issues := CheckHTTPServices(mk("none", &httpservice.CacheConfig{TTL: 60}, postTmpl))
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "GET") {
+			t.Fatalf("ожидалось замечание про GET/HEAD, получено: %v", issues)
+		}
+	})
+}
