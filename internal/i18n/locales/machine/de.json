@@ -1,5 +1,5 @@
 {
- "%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается": "%s wird in Unterabfragen und VEREINIGEN-Zweigen noch nicht unterstützt",
+ "%s во вложенных запросах и ветвях ОБЪЕДИНИТЬ пока не поддерживается": "%s wird in Unterabfragen und UNION-Zweigen noch nicht unterstützt",
  "%s требует неотрицательное целое число записей": "%s erfordert eine nicht negative ganzzahlige Datensatzanzahl",
  "%s требует неотрицательное целое число записей, получено %q": "%s erfordert eine nicht negative ganzzahlige Datensatzanzahl, erhalten %q",
  "API-токены": "API-Token",
@@ -195,7 +195,7 @@
  "Ошибка создания временного файла": "Temporäre Datei konnte nicht erstellt werden",
  "Ошибка чтения выгрузки": "Der Export konnte nicht gelesen werden",
  "Ошибка, о которой идёт речь": "Der betreffende Fehler",
- "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "ERSTE/TOP in einer Abfrage mit VEREINIGEN wird noch nicht unterstützt: Die Beschränkung gilt für einen einzelnen Zweig",
+ "ПЕРВЫЕ/TOP в запросе с ОБЪЕДИНИТЬ пока не поддерживается: ограничение относится к отдельной ветви": "TOP in einer Abfrage mit UNION wird noch nicht unterstützt: Die Beschränkung gilt für einen einzelnen Zweig",
  "Пакет сохранён": "Paket gespeichert",
  "Первый пользователь должен быть администратором": "Der erste Benutzer muss Administrator sein",
  "Переводы": "Übersetzungen",

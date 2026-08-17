@@ -41,6 +41,17 @@ var keyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\btr\(\s*\w+,\s*"((?:[^"\\]|\\.)*)"\s*\)`),
 }
 
+// jsKeyPatterns — ключи из клиентских скриптов: там перевод берётся хелпером
+// T("ключ") из словаря, отданного сервером (Bundle.Dict).
+//
+// Без этого обхода отчёт врал в самую опасную сторону: строки конструктора
+// макетов в список ключей не попадали, и инструмент печатал «0 останется
+// по-английски», хотя по-английски оставались десятки надписей. Контрибьютор,
+// добавивший строку в скрипт, получал явное «всё в порядке».
+var jsKeyPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bT\(\s*"((?:[^"\\]|\\.)*)"\s*\)`),
+}
+
 func main() {
 	root, err := repoRoot()
 	if err != nil {
@@ -146,20 +157,35 @@ func collectKeys(root string, subdirs []string) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			if d.IsDir() {
+				return nil
+			}
+			isGo := strings.HasSuffix(path, ".go")
+			// Клиентские скрипты переводятся тем же словарём, что и шаблоны, —
+			// значит и в чек-лист ключей обязаны попадать. Минифицированный
+			// вендоринг пропускаем: своих ключей там нет, а регулярка по
+			// сжатому файлу даёт мусор.
+			isJS := strings.HasSuffix(path, ".js") &&
+				!strings.HasSuffix(path, ".min.js") &&
+				!strings.HasSuffix(path, "_behavior_test.js")
+			if !isGo && !isJS {
 				return nil
 			}
 			// Пропускаем тестовые файлы: i18nerr-вызовы в *_test.go
 			// не требуют переводов (тесты проверяют внутреннее поведение,
 			// а не пользовательский интерфейс).
-			if strings.HasSuffix(path, "_test.go") {
+			if isGo && strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
 			data, err := os.ReadFile(path) //nolint:gosec // G122: обход идёт по каталогу проекта или по временному каталогу, который мы сами распаковали; переход на os.Root — отдельная задача, он меняет поведение
 			if err != nil {
 				return err
 			}
-			for _, p := range keyPatterns {
+			pats := keyPatterns
+			if isJS {
+				pats = jsKeyPatterns
+			}
+			for _, p := range pats {
 				for _, m := range p.FindAllSubmatch(data, -1) {
 					seen[string(m[1])] = struct{}{}
 				}
