@@ -371,3 +371,26 @@ func keysOf(m map[string]any) []string {
 	}
 	return out
 }
+
+// Разбор формы проверяется на уровне объекта запроса: обработчик в тестовом
+// сервисе возвращает тело как есть, а нам нужны именно разобранные поля.
+func TestServiceRequest_FormDataParsing(t *testing.T) {
+	body := []byte("имя=Иван+Петров&контакт=ivan%40example.com&пусто=&website=")
+	req := interpreter.NewServiceRequest("POST", "echo", "/hs/echo/", nil, nil, nil, body)
+	res := req.CallMethod("формаданные", nil)
+	m, ok := res.(*interpreter.Map)
+	if !ok {
+		t.Fatalf("ожидалось Соответствие, получено %T", res)
+	}
+	if got := m.Get("имя"); got != "Иван Петров" {
+		t.Errorf("имя=%v — плюс должен раскодироваться в пробел", got)
+	}
+	if got := m.Get("контакт"); got != "ivan@example.com" {
+		t.Errorf("контакт=%v", got)
+	}
+	// Пустое поле присутствует, но пустое: honeypot-проверка в конфигурации
+	// опирается именно на это — «поле есть и заполнено» против «поля нет».
+	if got := m.Get("website"); got != "" {
+		t.Errorf("website=%v, ожидалась пустая строка", got)
+	}
+}
