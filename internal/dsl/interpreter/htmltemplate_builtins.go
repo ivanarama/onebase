@@ -199,15 +199,51 @@ func htmlTemplateFuncs() template.FuncMap {
 }
 
 // дата(Значение, Формат) — формат по образцу Go («02.01.2006 15:04»).
+//
+// Значение приходит не только объектом даты: реквизит типа date на SQLite
+// читается строкой. Возвращать при этом пустоту — худший вариант: в вёрстке
+// появляется пустой <time>, и причину видно только по исходнику шаблона.
+// Поэтому строка сперва разбирается по типовым форматам, а если не разобралась
+// — отдаётся как есть.
 func templateFuncDate(v any, layout string) string {
-	t, ok := v.(time.Time)
-	if !ok {
-		return ""
-	}
 	if layout == "" {
 		layout = "02.01.2006"
 	}
-	return t.Format(layout)
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case time.Time:
+		return t.Format(layout)
+	case string:
+		if parsed, ok := parseTemplateDate(t); ok {
+			return parsed.Format(layout)
+		}
+		return t
+	}
+	return ""
+}
+
+// parseTemplateDate разбирает строковое представление даты. Порядок форматов —
+// от самого частого (хранение в базе) к вводу пользователя.
+func parseTemplateDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+		"02.01.2006 15:04:05",
+		"02.01.2006",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // число(Значение, ЗнаковПослеЗапятой) — фиксированное число знаков, разделитель
