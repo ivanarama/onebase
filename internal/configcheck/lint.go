@@ -487,11 +487,18 @@ func processorYAMLSchema() *yamlLintSchema {
 func serviceYAMLSchema() *yamlLintSchema {
 	cors := obj("origins", "headers", "credentials", "max_age")
 	template := with(obj("template"), map[string]*yamlLintSchema{"methods": freeMap()})
-	return with(obj("name", "title", "root_url", "auth", "secret", "rate_limit", "roles"), map[string]*yamlLintSchema{
-		"titles":    freeMap(),
-		"cors":      cors,
-		"templates": seq(template),
-	})
+	// План 126: кэш ответов. План 128: сжатие и заголовки безопасности.
+	cache := obj("ttl", "vary", "public", "max_body")
+	securityHeaders := with(obj("csp", "frame_options", "referrer_policy", "hsts"),
+		map[string]*yamlLintSchema{"extra": freeMap()})
+	return with(obj("name", "title", "root_url", "auth", "secret", "rate_limit", "roles", "compress"),
+		map[string]*yamlLintSchema{
+			"titles":           freeMap(),
+			"cors":             cors,
+			"cache":            cache,
+			"security_headers": securityHeaders,
+			"templates":        seq(template),
+		})
 }
 
 func pageYAMLSchema() *yamlLintSchema {
