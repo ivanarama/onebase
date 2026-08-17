@@ -33,6 +33,9 @@ func newPublicFilesServer(t *testing.T) (*Server, http.Handler, *storage.DB) {
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -213,5 +216,90 @@ func TestPublicFile_FilenameOverride(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
 	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "прайс-август.pdf") && !strings.Contains(cd, "%D0%BF") {
 		t.Errorf("Content-Disposition=%q — имя из опций не применилось", cd)
+	}
+}
+
+// Картинка из поля image отдаётся тем же публичным маршрутом, что и вложение:
+// у пользователя «ссылка на файл» одна, независимо от того, где платформа
+// хранит содержимое.
+func TestPublicFile_BlobServedAnonymously(t *testing.T) {
+	_, r, db := newPublicFilesServer(t)
+	blob, err := db.PutBlob(t.Context(), "image/png", strings.NewReader("PNG-BYTES"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: "Товары"})
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	token, err := db.PublishBlob(t.Context(), blob.ID, storage.PublishOptions{CacheSeconds: 300, Filename: "logo.png"})
+	if err != nil {
+		t.Fatalf("PublishBlob: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "PNG-BYTES" {
+		t.Errorf("тело=%q", got)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type=%q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "logo.png") {
+		t.Errorf("Content-Disposition=%q — имя из опций не применилось", cd)
+	}
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=300") {
+		t.Errorf("Cache-Control=%q", cc)
+	}
+}
+
+// Range работает и для картинок: они читаются в память, но отдаются тем же
+// ServeContent.
+func TestPublicFile_BlobRange(t *testing.T) {
+	_, r, db := newPublicFilesServer(t)
+	blob, err := db.PutBlob(t.Context(), "image/png", strings.NewReader("0123456789"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: "Товары"})
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	token, err := db.PublishBlob(t.Context(), blob.ID, storage.PublishOptions{})
+	if err != nil {
+		t.Fatalf("PublishBlob: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/pub/"+token, nil)
+	req.Header.Set("Range", "bytes=0-3")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("status=%d, ожидался 206", w.Code)
+	}
+	if got := w.Body.String(); got != "0123" {
+		t.Errorf("кусок=%q", got)
+	}
+}
+
+// Удалённая картинка даёт 404, а не 500: у блобов нет каскада, поэтому запись
+// публикации переживает файл, и отдача обязана это пережить корректно.
+func TestPublicFile_DeletedBlob404(t *testing.T) {
+	_, r, db := newPublicFilesServer(t)
+	blob, err := db.PutBlob(t.Context(), "image/png", strings.NewReader("PNG"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: "Товары"})
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	token, err := db.PublishBlob(t.Context(), blob.ID, storage.PublishOptions{})
+	if err != nil {
+		t.Fatalf("PublishBlob: %v", err)
+	}
+	if err := db.DeleteBlob(t.Context(), blob.ID); err != nil {
+		t.Fatalf("DeleteBlob: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status=%d, ожидался 404", w.Code)
 	}
 }
