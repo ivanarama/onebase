@@ -1,0 +1,8 @@
+name: РедакторСайта
+description: Контент плюс оформление — стили, шаблоны и блоки
+permissions:
+  catalogs:
+    Сайты: [read, write]
+    СтилиСайта: [read, write]
+    ШаблоныСайта: [read, write]
+    Блоки: [read, write]

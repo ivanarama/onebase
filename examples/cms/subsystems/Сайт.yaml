@@ -1,0 +1,6 @@
+name: Сайт
+title: Сайт
+icon: globe
+order: 10
+contents:
+  catalogs: [Сайты, СтилиСайта, ШаблоныСайта, Блоки]

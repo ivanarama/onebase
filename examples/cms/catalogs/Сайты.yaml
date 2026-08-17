@@ -1,0 +1,21 @@
+name: Сайты
+title: Сайты
+# Сайт = домен + стиль + шаблон + корневая страница. Несколько сайтов на одной
+# базе различаются доменом: роутер выбирает сайт по заголовку Host.
+search_fields: [Наименование, Домен]
+fields:
+  - name: Наименование
+    type: string
+  - name: Домен
+    type: string
+  - name: Стиль
+    type: reference:СтилиСайта
+  - name: Шаблон
+    type: reference:ШаблоныСайта
+  - name: Язык
+    type: string
+  - name: РоботсTxt
+    title: Содержимое robots.txt
+    type: string
+  - name: Активен
+    type: bool
