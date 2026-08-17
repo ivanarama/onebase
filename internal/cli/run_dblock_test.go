@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dblock"
@@ -100,8 +101,8 @@ func TestPerformScheduledDemoResetSQLiteIsOfflineAndUsesPinnedFilesDir(t *testin
 		t.Fatal(err)
 	}
 	runStarted := time.Now()
-	runID, err := target.InsertScheduledRun(ctx, "DemoReset", runStarted)
-	if err != nil {
+	runID := uuid.New()
+	if err := target.InsertScheduledRun(ctx, runID, "DemoReset", runStarted); err != nil {
 		target.Close()
 		t.Fatal(err)
 	}
@@ -169,8 +170,8 @@ func TestPerformScheduledDemoResetRefusesLiveSQLiteConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	startedAt := time.Now()
-	runID, err := db.InsertScheduledRun(t.Context(), "DemoReset", startedAt)
-	if err != nil {
+	runID := uuid.New()
+	if err := db.InsertScheduledRun(t.Context(), runID, "DemoReset", startedAt); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

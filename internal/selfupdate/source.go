@@ -58,6 +58,10 @@ type Release struct {
 	AssetURL    string
 	AssetSize   int64
 	SHAURL      string
+	// SigURL — ассет <архив>.sha256.sig, подпись файла контрольной суммы
+	// (#783). Пусто — релиз не подписан; что с этим делать, решает Download по
+	// вшитому ключу и режиму (мягкий переход или жёсткий).
+	SigURL string
 }
 
 // ghRelease/ghAsset — подмножество ответа GitHub API, которое мы читаем.
@@ -160,6 +164,8 @@ func toRelease(r ghRelease) (Release, error) {
 			out.AssetSize = a.Size
 		case want + ".sha256":
 			out.SHAURL = a.URL
+		case want + ".sha256.sig":
+			out.SigURL = a.URL
 		}
 	}
 	if out.AssetURL == "" {

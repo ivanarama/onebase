@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/stretchr/testify/assert"
@@ -36,13 +37,16 @@ func TestShutdownDrainsRunningGoJob(t *testing.T) {
 	release := make(chan struct{})
 	jobCtx, done, err := sched.beginJob("SlowJob")
 	assert.NoError(t, err)
+	startedAt := time.Now()
+	runID, err := sched.beginRun(jobCtx, "SlowJob", startedAt)
+	assert.NoError(t, err)
 	go func() {
 		defer done()
 		sched.executeGoJob(jobCtx, "SlowJob", func(context.Context) error {
 			close(started)
 			<-release
 			return nil
-		})
+		}, runID, startedAt)
 	}()
 	<-started
 
@@ -119,6 +123,11 @@ func TestAcceptedGoRunNeverLeavesHistoryRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	startedAt := time.Now()
+	runID, err := sched.beginRun(jobCtx, "DemoReset", startedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sched.executeGoJob(jobCtx, "DemoReset", func(ctx context.Context) error {
 		var ok bool
 		info, ok = CurrentRun(ctx)
@@ -126,7 +135,7 @@ func TestAcceptedGoRunNeverLeavesHistoryRunning(t *testing.T) {
 			return errors.New("current run info missing")
 		}
 		return Accepted("offline reset request accepted")
-	})
+	}, runID, startedAt)
 	done()
 
 	runs, err := db.ScheduledRuns(ctx, "DemoReset", 1)
@@ -160,6 +169,9 @@ func TestShutdownDeadlineMarksRunningGoJobInterrupted(t *testing.T) {
 	jobDone := make(chan struct{})
 	jobCtx, done, err := sched.beginJob("BlockedJob")
 	assert.NoError(t, err)
+	blockedStartedAt := time.Now()
+	blockedRunID, err := sched.beginRun(jobCtx, "BlockedJob", blockedStartedAt)
+	assert.NoError(t, err)
 	go func() {
 		defer close(jobDone)
 		defer done()
@@ -167,7 +179,7 @@ func TestShutdownDeadlineMarksRunningGoJobInterrupted(t *testing.T) {
 			close(started)
 			<-release
 			return nil
-		})
+		}, blockedRunID, blockedStartedAt)
 	}()
 	<-started
 
@@ -218,9 +230,10 @@ func TestRunNowGoJobIsSingleFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assert.NoError(t, sched.RunNow(context.Background(), "nativejob"))
+	_, err := sched.RunNow(context.Background(), "nativejob")
+	assert.NoError(t, err)
 	<-started
-	err := sched.RunNow(context.Background(), "NativeJob")
+	_, err = sched.RunNow(context.Background(), "NativeJob")
 	assert.ErrorIs(t, err, ErrJobAlreadyRunning)
 
 	close(release)
@@ -252,8 +265,8 @@ func TestRunInsertedAfterCancellationIsMarkedInterrupted(t *testing.T) {
 	_, done, err := sched.beginJob("LateInsert")
 	assert.NoError(t, err)
 	startedAt := time.Now()
-	runID, err := db.InsertScheduledRun(ctx, "LateInsert", startedAt)
-	assert.NoError(t, err)
+	runID := uuid.New()
+	assert.NoError(t, db.InsertScheduledRun(ctx, runID, "LateInsert", startedAt))
 
 	sched.cancelActiveJobs()
 	sched.trackActiveRun(runID, "LateInsert", startedAt)
@@ -276,7 +289,8 @@ func TestGoJobPanicIsRecordedAsError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assert.NoError(t, sched.RunNow(context.Background(), "PanickingJob"))
+	_, err := sched.RunNow(context.Background(), "PanickingJob")
+	assert.NoError(t, err)
 	assert.NoError(t, sched.Shutdown(context.Background()))
 	runs, err := db.ScheduledRuns(ctx, "PanickingJob", 1)
 	assert.NoError(t, err)
@@ -336,7 +350,8 @@ func TestReloadProjectJobsPreservesNativeJobs(t *testing.T) {
 	assert.Nil(t, sched.GetJob("Before"))
 	assert.NotNil(t, sched.GetJob("After"))
 	assert.NotNil(t, sched.GetJob("Native"))
-	assert.NoError(t, sched.RunNow(context.Background(), "native"))
+	_, err := sched.RunNow(context.Background(), "native")
+	assert.NoError(t, err)
 	select {
 	case <-nativeRan:
 	case <-time.After(time.Second):

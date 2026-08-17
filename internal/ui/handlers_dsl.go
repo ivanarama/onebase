@@ -273,6 +273,11 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	wsGlobal := newWSRoot(s, txState)
 	vars["ВебСокет"] = wsGlobal
 	vars["WebSocket"] = wsGlobal
+	// Запуск регламентного задания по требованию (план 123). Живой контекст
+	// txState нужен, чтобы отказать при открытой транзакции инициатора.
+	scheduledJobs := newScheduledJobsRoot(s, txState)
+	vars["РегламентныеЗадания"] = scheduledJobs
+	vars["ScheduledJobs"] = scheduledJobs
 	vars["БлокировкаДанных"] = lockFactory
 	vars["DataLock"] = lockFactory
 	vars["ТекущийПользователь"] = currentUserFn
