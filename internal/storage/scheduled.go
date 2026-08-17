@@ -158,3 +158,58 @@ func (db *DB) ScheduledRuns(ctx context.Context, jobName string, limit int) ([]S
 	}
 	return result, rows.Err()
 }
+
+// StaleRunGrace — возраст, начиная с которого прогон в статусе running
+// считается брошенным. Порог намеренно большой: single-flight планировщика
+// живёт в памяти процесса, и при нескольких инстансах на одной базе агрессивный
+// sweep пометил бы «прерванным» живой прогон соседа. Сутки заведомо больше
+// любого разумного задания (таймаут по умолчанию — час).
+const StaleRunGrace = 24 * time.Hour
+
+// SweepStaleScheduledRuns помечает брошенные прогоны прерванными и возвращает
+// их число.
+//
+// Прогон переходит из running в терминальный статус единственным UPDATE в конце
+// исполнения. Если процесс умер жёстко — питание, OOM, kill -9, — этого UPDATE
+// не случается, и строка остаётся running навсегда: в админке задание вечно
+// «выполняется», а прикладной цикл ожидания терминального статуса не
+// заканчивается никогда (#966).
+func (db *DB) SweepStaleScheduledRuns(ctx context.Context) (int64, error) {
+	d := db.dialect
+	q := fmt.Sprintf(
+		`UPDATE _scheduled_runs SET status=%s, finished_at=%s, error=%s
+		 WHERE status='running' AND started_at < %s`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4))
+	now := time.Now()
+	tag, err := db.Exec(ctx, q, "interrupted", now, "прогон прерван: процесс завершился, не дописав результат",
+		now.Add(-StaleRunGrace))
+	if err != nil {
+		return 0, fmt.Errorf("sweep stale scheduled runs: %w", err)
+	}
+	return tag.RowsAffected, nil
+}
+
+// PruneScheduledRuns удаляет завершённые прогоны старше maxAge и возвращает их
+// число. Нулевой или отрицательный maxAge отключает уборку.
+//
+// Ретенции у журнала не было вовсе — ни одного DELETE во всём репозитории.
+// Таблица росла линейно и навсегда, а с запуском заданий по требованию (#742)
+// темп вырос: конфигурация с 16 заданиями-шардами, тикающими раз в 30 секунд,
+// даёт около 46 тысяч строк в сутки. В колонке output при этом лежит склейка
+// всех Сообщить() задания без ограничения размера.
+//
+// Незавершённые прогоны не трогаем: их судьба — дело SweepStaleScheduledRuns,
+// и удалять running значило бы терять след работающего задания.
+func (db *DB) PruneScheduledRuns(ctx context.Context, maxAge time.Duration) (int64, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	d := db.dialect
+	q := fmt.Sprintf(
+		`DELETE FROM _scheduled_runs WHERE status <> 'running' AND started_at < %s`, d.Placeholder(1))
+	tag, err := db.Exec(ctx, q, time.Now().Add(-maxAge))
+	if err != nil {
+		return 0, fmt.Errorf("prune scheduled runs: %w", err)
+	}
+	return tag.RowsAffected, nil
+}
