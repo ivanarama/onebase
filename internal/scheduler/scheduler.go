@@ -335,7 +335,13 @@ func (s *Scheduler) scheduledJobCallback(job *metadata.ScheduledJob) func() {
 			return
 		}
 		defer done()
-		s.runScheduledJob(ctx, job)
+		startedAt := time.Now()
+		runID, err := s.beginRun(ctx, job.Name, startedAt)
+		if err != nil {
+			s.log.Error("scheduler: insert run", "job", job.Name, "err", err)
+			return
+		}
+		s.runScheduledJob(ctx, job, runID, startedAt)
 	}
 }
 
@@ -347,8 +353,30 @@ func (s *Scheduler) goJobCallback(name string, fn func(context.Context) error) f
 			return
 		}
 		defer done()
-		s.executeGoJob(ctx, name, fn)
+		startedAt := time.Now()
+		runID, err := s.beginRun(ctx, name, startedAt)
+		if err != nil {
+			s.log.Error("scheduler: insert go run", "job", name, "err", err)
+			return
+		}
+		s.executeGoJob(ctx, name, fn, runID, startedAt)
 	}
+}
+
+// beginRun заводит запись прогона и берёт его на учёт.
+//
+// Вынесено из executeJob/executeGoJob наружу ради #742 (план 123): запуск из
+// DSL обязан вернуть идентификатор прогона вызывающему, а значит запись должна
+// появиться ДО старта горутины. Побочно это чинит давнюю неприятность —
+// раньше сбой вставки логировался и проглатывался, и «запустил» не означало
+// «запустилось».
+func (s *Scheduler) beginRun(ctx context.Context, jobName string, startedAt time.Time) (uuid.UUID, error) {
+	id := uuid.New()
+	if err := s.db.InsertScheduledRun(ctx, id, jobName, startedAt); err != nil {
+		return uuid.Nil, err
+	}
+	s.trackActiveRun(id, jobName, startedAt)
+	return id, nil
 }
 
 func (s *Scheduler) logSkippedJob(name string, err error) {
@@ -699,54 +727,75 @@ func (s *Scheduler) jobByKeyLocked(key string) *metadata.ScheduledJob {
 	return nil
 }
 
-func (s *Scheduler) RunNow(_ context.Context, jobName string) error {
+// RunNow запускает задание немедленно и возвращает идентификатор прогона.
+// Управление возвращается сразу — задание работает в фоне.
+//
+// Контекст вызывающего не используется намеренно (был `_` и остаётся им по
+// смыслу): и само задание, и запись его прогона живут на контексте
+// планировщика. Причин две. Первая известна давно: HTTP-запрос админки
+// отменяется сразу после редиректа, и задание умирало бы вместе с ним.
+// Вторая появилась вместе с синхронной вставкой (#742): `storage.DB.Exec`
+// подхватывает транзакцию из контекста, поэтому запуск из кода, идущего
+// внутри транзакции, уложил бы строку прогона в чужую транзакцию — задание её
+// не увидит, финальный UPDATE не найдёт строку, а откат инициатора сотрёт
+// запись уже отработавшего задания.
+func (s *Scheduler) RunNow(_ context.Context, jobName string) (uuid.UUID, error) {
 	key := jobKey(jobName)
 	s.mu.Lock()
 	job := cloneScheduledJob(s.jobByKeyLocked(key))
 	goJob := s.goJobs[key]
 	s.mu.Unlock()
 	if job == nil {
-		return fmt.Errorf("job not found: %s", jobName)
+		return uuid.Nil, fmt.Errorf("job not found: %s", jobName)
 	}
-	// Use background context: request context will be cancelled after redirect
 	jobCtx, done, err := s.beginJob(job.Name)
 	if err != nil {
-		return err
+		return uuid.Nil, err
+	}
+	startedAt := time.Now()
+	runID, err := s.beginRun(jobCtx, job.Name, startedAt)
+	if err != nil {
+		// Замок обязан освободиться здесь же: иначе имя задания останется
+		// занятым в activeJobs навсегда, и все следующие запуски — включая
+		// cron-тик — будут вечно получать «уже выполняется».
+		done()
+		return uuid.Nil, err
 	}
 	go func() {
 		defer done()
 		if goJob != nil {
-			s.executeGoJob(jobCtx, job.Name, goJob)
+			s.executeGoJob(jobCtx, job.Name, goJob, runID, startedAt)
 			return
 		}
-		s.runScheduledJob(jobCtx, job)
+		s.runScheduledJob(jobCtx, job, runID, startedAt)
 	}()
-	return nil
+	return runID, nil
+}
+
+// RunByID возвращает прогон по идентификатору или nil, если журнал такого не
+// помнит. Нужен запуску из DSL: по возвращённому Запустить() идентификатору
+// прикладной код спрашивает статус.
+func (s *Scheduler) RunByID(ctx context.Context, id uuid.UUID) (*storage.ScheduledRun, error) {
+	return s.db.ScheduledRunByID(ctx, id)
 }
 
 func (s *Scheduler) Runs(ctx context.Context, jobName string, limit int) ([]storage.ScheduledRun, error) {
 	return s.db.ScheduledRuns(ctx, jobName, limit)
 }
 
-func (s *Scheduler) runScheduledJob(ctx context.Context, job *metadata.ScheduledJob) {
+func (s *Scheduler) runScheduledJob(ctx context.Context, job *metadata.ScheduledJob, runID uuid.UUID, startedAt time.Time) {
 	if job.Timeout <= 0 {
-		s.executeJob(ctx, job)
+		s.executeJob(ctx, job, runID, startedAt)
 		return
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(job.Timeout)*time.Second)
 	defer cancel()
-	s.executeJob(timeoutCtx, job)
+	s.executeJob(timeoutCtx, job, runID, startedAt)
 }
 
-func (s *Scheduler) executeJob(ctx context.Context, job *metadata.ScheduledJob) {
-	startedAt := time.Now()
-	runID, err := s.db.InsertScheduledRun(ctx, job.Name, startedAt)
-	if err != nil {
-		s.log.Error("scheduler: insert run", "job", job.Name, "err", err)
-		return
-	}
-	s.trackActiveRun(runID, job.Name, startedAt)
-
+// executeJob исполняет задание по уже заведённой записи прогона: id и время
+// старта приходят снаружи (см. beginRun).
+func (s *Scheduler) executeJob(ctx context.Context, job *metadata.ScheduledJob, runID uuid.UUID, startedAt time.Time) {
 	var output, status, errText string
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -766,15 +815,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *metadata.ScheduledJob) 
 	status, errText = scheduledRunStatus(ctx, runErr)
 }
 
-func (s *Scheduler) executeGoJob(ctx context.Context, name string, fn func(ctx context.Context) error) {
-	startedAt := time.Now()
-	runID, err := s.db.InsertScheduledRun(ctx, name, startedAt)
-	if err != nil {
-		s.log.Error("scheduler: insert go run", "job", name, "err", err)
-		return
-	}
-	s.trackActiveRun(runID, name, startedAt)
-
+func (s *Scheduler) executeGoJob(ctx context.Context, name string, fn func(ctx context.Context) error, runID uuid.UUID, startedAt time.Time) {
 	var status, output, errText string
 	var runErr error
 	var acceptedResult *AcceptedResult

@@ -46,16 +46,20 @@ func (db *DB) EnsureScheduledRunsTable(ctx context.Context) error {
 	return nil
 }
 
-func (db *DB) InsertScheduledRun(ctx context.Context, jobName string, startedAt time.Time) (uuid.UUID, error) {
+// InsertScheduledRun записывает начатый прогон с ГОТОВЫМ идентификатором.
+//
+// Идентификатор приходит снаружи, а не рождается здесь (#742, план 123):
+// планировщик обязан вернуть его вызывающему до старта горутины, иначе из DSL
+// нечем спросить статус только что запущенного задания.
+func (db *DB) InsertScheduledRun(ctx context.Context, id uuid.UUID, jobName string, startedAt time.Time) error {
 	d := db.dialect
-	id := uuid.New()
 	q := fmt.Sprintf(
 		`INSERT INTO _scheduled_runs (id, job_name, started_at, status) VALUES (%s, %s, %s, 'running')`,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
 	if _, err := db.Exec(ctx, q, id.String(), jobName, startedAt); err != nil {
-		return uuid.Nil, fmt.Errorf("insert scheduled run: %w", err)
+		return fmt.Errorf("insert scheduled run: %w", err)
 	}
-	return id, nil
+	return nil
 }
 
 func (db *DB) UpdateScheduledRun(ctx context.Context, id uuid.UUID, status, output, errText string, durationMs int64) error {
@@ -73,6 +77,51 @@ func (db *DB) UpdateScheduledRun(ctx context.Context, id uuid.UUID, status, outp
 		return fmt.Errorf("update scheduled run %s: run not found", id)
 	}
 	return nil
+}
+
+// ScheduledRunByID читает один прогон по идентификатору. Прогона нет —
+// `nil, nil`: для вызывающего это не ошибка, а «журнал такого не помнит»
+// (запись могла быть подрезана ретенцией или id пришёл чужой).
+func (db *DB) ScheduledRunByID(ctx context.Context, id uuid.UUID) (*ScheduledRun, error) {
+	d := db.dialect
+	q := fmt.Sprintf(
+		`SELECT id, job_name, started_at, finished_at, status, output, error, duration_ms
+		 FROM _scheduled_runs WHERE id=%s`, d.Placeholder(1))
+	var r ScheduledRun
+	var output, errText *string
+	var startedAtRaw, finishedAtRaw any
+	var durationMs *int64
+	err := db.QueryRow(ctx, q, id.String()).Scan(
+		&r.ID, &r.JobName, &startedAtRaw, &finishedAtRaw, &r.Status, &output, &errText, &durationMs)
+	if IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scheduled run by id: %w", err)
+	}
+	fillScheduledRun(&r, startedAtRaw, finishedAtRaw, output, errText, durationMs)
+	return &r, nil
+}
+
+// fillScheduledRun доводит строку до вида, пригодного вызывающему: время
+// приходит из драйверов по-разному, а NULL-колонки — указателями.
+func fillScheduledRun(r *ScheduledRun, startedAtRaw, finishedAtRaw any, output, errText *string, durationMs *int64) {
+	r.StartedAt = parseAuditTime(startedAtRaw)
+	if output != nil {
+		r.Output = *output
+	}
+	if errText != nil {
+		r.Error = *errText
+	}
+	if finishedAtRaw != nil {
+		finishedAt := parseAuditTime(finishedAtRaw)
+		if !finishedAt.IsZero() {
+			r.FinishedAt = &finishedAt
+		}
+	}
+	if durationMs != nil {
+		r.DurationMs = *durationMs
+	}
 }
 
 func (db *DB) ScheduledRuns(ctx context.Context, jobName string, limit int) ([]ScheduledRun, error) {
@@ -104,22 +153,7 @@ func (db *DB) ScheduledRuns(ctx context.Context, jobName string, limit int) ([]S
 		if err := rows.Scan(&r.ID, &r.JobName, &startedAtRaw, &finishedAtRaw, &r.Status, &output, &errText, &durationMs); err != nil {
 			return nil, err
 		}
-		r.StartedAt = parseAuditTime(startedAtRaw)
-		if output != nil {
-			r.Output = *output
-		}
-		if errText != nil {
-			r.Error = *errText
-		}
-		if finishedAtRaw != nil {
-			finishedAt := parseAuditTime(finishedAtRaw)
-			if !finishedAt.IsZero() {
-				r.FinishedAt = &finishedAt
-			}
-		}
-		if durationMs != nil {
-			r.DurationMs = *durationMs
-		}
+		fillScheduledRun(&r, startedAtRaw, finishedAtRaw, output, errText, durationMs)
 		result = append(result, r)
 	}
 	return result, rows.Err()
