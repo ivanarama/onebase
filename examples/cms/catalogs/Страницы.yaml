@@ -1,0 +1,39 @@
+name: Страницы
+title: Страницы
+hierarchical: true
+# Статические страницы сайта: «О компании», «Контакты», «Доставка».
+# Слаг — адрес страницы, поэтому по нему ищет роутер; уникальность проверяет
+# модуль слаги.module.os при записи.
+search_fields: [Наименование, Слаг, Заголовок]
+fulltext: [Наименование, Заголовок, Содержимое]
+fields:
+  - name: Наименование
+    type: string
+  - name: Слаг
+    title: Адрес страницы (слаг)
+    type: string
+  - name: Заголовок
+    title: Заголовок на странице
+    type: string
+  - name: Содержимое
+    type: richtext
+  - name: Обложка
+    type: reference:Медиа
+  - name: Порядок
+    type: number
+  # ─── общий контентный контур (см. план 129, решение 4) ───────────────
+  - name: СтатусПубликации
+    type: enum:СтатусПубликации
+  - name: ДатаПубликации
+    type: date
+  - name: ЗаголовокSEO
+    title: "SEO: заголовок страницы"
+    type: string
+  - name: ОписаниеSEO
+    title: "SEO: описание для поисковиков"
+    type: string
+  - name: OGКартинка
+    title: Картинка для соцсетей
+    type: reference:Медиа
+  - name: Сайт
+    type: reference:Сайты
