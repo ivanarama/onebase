@@ -14,3 +14,4 @@ permissions:
     Меню: [read, write]
     Заявки: [read, write]
     ФормыОбратнойСвязи: [read]
+    Товары: [read, write]

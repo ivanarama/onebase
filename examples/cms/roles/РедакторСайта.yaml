@@ -15,3 +15,4 @@ permissions:
     Редиректы: [read, write]
     Заявки: [read, write]
     ФормыОбратнойСвязи: [read, write]
+    Товары: [read, write]
