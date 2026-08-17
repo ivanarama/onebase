@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -397,7 +398,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
 		}
-		rows, cols, truncated, err := h.store.RunQueryLimit(r.Context(), compiled.SQL, compiled.Args, limit)
+		rows, cols, truncated, err := query.RunLimit(r.Context(), h.store, &compiled, limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 			return
