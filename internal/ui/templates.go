@@ -255,6 +255,27 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return strings.Join(names, ",")
 		},
+		// boolFieldNamesCSV — булевы колонки табличной части для addTpRow:
+		// новая строка должна получить флажок, а не поле ввода (#1010). Имена
+		// перечислений JS достаёт из ob-tp-enum-labels, а тип bool в разметке
+		// автоформы больше ниоткуда не виден.
+		"boolFieldNamesCSV": func(fields []metadata.Field) string {
+			names := make([]string, 0, len(fields))
+			for _, f := range fields {
+				if fmt.Sprintf("%v", f.Type) == string(metadata.FieldTypeBool) {
+					names = append(names, f.Name)
+				}
+			}
+			return strings.Join(names, ",")
+		},
+		// tpEnumOptions — варианты для <select> enum-колонки табличной части
+		// в порядке объявления values: (#1010). Данные берём из уже готовых
+		// TPEnumLabels/TPEnumOrder контекста, чтобы не заводить третью карту.
+		"tpEnumOptions": tpEnumOptions,
+		// checked — «взведён ли флажок» для булевой колонки ТЧ. Значение
+		// приезжает разнотипным: bool из PostgreSQL, int64 1/0 из SQLite,
+		// строка "true" после неудачного сохранения формы.
+		"checked": truthyCell,
 		// entityHasRichText — есть ли среди реквизитов шапки сущности richtext-поле.
 		// Quill (vendor-ассеты + init) грузятся на форме только при true, чтобы не
 		// тянуть редактор на формы без richtext-полей.
@@ -310,7 +331,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
 		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
 		// доступа к реквизиту делается политикой поля.
-		"itemFormVisible": func(entity *metadata.Entity) []metadata.Field {
+		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis
 		},
@@ -1028,6 +1049,10 @@ tr:hover td{background:#f8fafc}
 label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:#475569}
 input[type=text],input[type=datetime-local],input[type=date],input[type=number],select{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none;background:#fff}
 input:focus,select:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+/* Реквизит «только просмотр» (item_form: readonly, #1011): видно, что поле не
+   для ввода. Без этого readonly-поле неотличимо от обычного, и пользователь
+   решает, что форма сломалась, когда в него не печатается. */
+input[readonly],textarea[readonly],select:disabled,input:disabled{background:#f1f5f9;color:#475569;cursor:default}
 .error{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px}
 .empty{color:#94a3b8;text-align:center;padding:48px;font-size:15px}
 .row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;max-width:1400px}
@@ -1893,44 +1918,54 @@ const tplForm = `
 </div>
 {{end}}
 {{range itemFormHidden .Entity}}<input type="hidden" name="{{.Name}}" value="{{index $.Values .Name}}">
-{{end}}{{range itemFormVisible .Entity}}{{$fn := .Name}}{{$flabel := .DisplayName $.Lang}}
+{{end}}{{range itemFormVisible .Entity}}{{$fn := .Name}}{{$flabel := .DisplayName $.Lang}}{{$ro := .ReadOnly}}
+{{/* $ro — реквизит помечен «только просмотр» в item_form (#1011). Поля ввода
+     получают readonly (значение всё равно уходит в запрос), а списки — disabled
+     плюс скрытый input-двойник: отключённый select браузер не отправляет вовсе,
+     и без двойника сборка полей формы обнулила бы реквизит при записи. */}}
 <div class="form-group">
-  <label>{{$flabel}}</label>
+  <label>{{$flabel}}{{if $ro}} <span style="color:#94a3b8;font-size:11px;font-weight:400">({{t $.Lang "только просмотр"}})</span>{{end}}</label>
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
-      <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if .InlineCreateEnabled false}} data-ref-allow-create="1"{{end}}>
+      {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
+      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (not $ro) (.InlineCreateEnabled false)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
-      <button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+      {{if not $ro}}<button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>{{end}}
+      {{/* «Открыть карточку» остаётся и в режиме просмотра: посмотреть, на что
+           ссылается служебный реквизит, — ровно то, зачем его показывают. */}}
       <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
     </div>
   {{else if isEnum (str .Type)}}
-    <select name="{{$fn}}">
+    {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
+    <select{{if not $ro}} name="{{$fn}}"{{end}}{{if $ro}} disabled{{end}}>
       <option value="">{{t $.Lang "— выбрать —"}}</option>
       {{range index $.EnumOptions $fn}}
       <option value="{{.Value}}" {{if eq .Value (index $.Values $fn)}}selected{{end}}>{{.Label}}</option>
       {{end}}
     </select>
   {{else if eq (str .Type) "date"}}
-    <input type="datetime-local" name="{{$fn}}" value="{{index $.Values $fn}}">
+    <input type="datetime-local" name="{{$fn}}" value="{{index $.Values $fn}}"{{if $ro}} readonly{{end}}>
   {{else if eq (str .Type) "bool"}}
-    <select name="{{$fn}}">
+    {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
+    <select{{if not $ro}} name="{{$fn}}"{{end}}{{if $ro}} disabled{{end}}>
       <option value="false" {{if eq (index $.Values $fn) "false"}}selected{{end}}>{{t $.Lang "Нет"}}</option>
       <option value="true"  {{if eq (index $.Values $fn) "true"}}selected{{end}}>{{t $.Lang "Да"}}</option>
     </select>
   {{else if eq (str .Type) "number"}}
-    <input type="text" autocomplete="off" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}" title="{{t $.Lang "Введите число; десятичный разделитель — запятая или точка"}}">
+    <input type="text" autocomplete="off" inputmode="decimal" pattern="[+-]?([0-9]+([.,][0-9]+)?|[.,][0-9]+)" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}" title="{{t $.Lang "Введите число; десятичный разделитель — запятая или точка"}}"{{if $ro}} readonly{{end}}>
   {{else if isRichText (str .Type)}}
     {{/* textarea — скрытое form-backing поле (хранит санитизированный HTML).
          Без JS остаётся видимым и рабочим (прогрессивное улучшение). С JS
          Quill (этап 2) инициализируется над .richtext-editor и синхронизирует
          содержимое обратно в textarea перед submit — серверный санитайзер
-         обрабатывает результат. */}}
-    <textarea name="{{$fn}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%">{{index $.Values $fn}}</textarea>
-    <div class="richtext-editor"></div>
+         обрабатывает результат. В режиме просмотра редактор не поднимаем:
+         Quill не знает про readonly и снова дал бы править текст. */}}
+    <textarea name="{{$fn}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%"{{if $ro}} readonly{{end}}>{{index $.Values $fn}}</textarea>
+    {{if not $ro}}<div class="richtext-editor"></div>{{end}}
   {{else if isImage (str .Type)}}
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
          Без JS остаётся скрытый input — значение не теряется при записи. */}}
@@ -1938,13 +1973,15 @@ const tplForm = `
     <div class="img-field">
       <input type="hidden" name="{{$fn}}" value="{{$iv}}">
       <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
+      {{if not $ro}}
       <div class="img-actions">
         <label class="btn btn-sm btn-secondary">{{t $.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/_image"></label>
         <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $.Lang "Очистить"}}</button>
       </div>
+      {{end}}
     </div>
   {{else}}
-    <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}">
+    <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>
   {{end}}
 </div>
 {{end}}
@@ -1977,6 +2014,23 @@ const tplForm = `
         {{else if eq (str .Type) "number"}}
           <input type="number" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-tp-num="{{$fn}}" data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
+        {{else if isEnum (str .Type)}}
+          {{/* Перечисление — список, а не свободный текст (#1010): руками в
+               ячейке набирали строку, и опечатка молча ломала прикладные
+               сравнения. Значение вне перечисления показываем отдельным
+               пунктом с ⚠, иначе браузер выбрал бы первый вариант и открытие
+               формы подменило бы данные. */}}
+          <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}"{{if $tpReadOnly}} disabled{{end}}>
+            <option value="">{{t $.Lang "— выбрать —"}}</option>
+            {{range tpEnumOptions $.TPEnumLabels $.TPEnumOrder $tpName $fn (index $row $fn)}}
+            <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:#dc2626"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
+            {{end}}
+          </select>
+        {{else if eq (str .Type) "bool"}}
+          {{/* Флажок, а не текст (#1010): в текстовом поле стояло сырое
+               значение из БД («1» на SQLite), а разбор сохранения признаёт
+               истиной только «true» — пересохранение формы снимало флажок. */}}
+          <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="true"{{if checked (index $row $fn)}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
         {{else}}
           <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
@@ -1992,7 +2046,7 @@ const tplForm = `
   </tr></tfoot>
 </table>
 <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin-bottom:8px"
-  data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}"
+  data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}" data-tp-bool-fields="{{boolFieldNamesCSV .Fields}}"
   {{if $tpReadOnly}}disabled{{else}}title="Insert" aria-keyshortcuts="Insert"{{end}}>
   + {{t $.Lang "Добавить строку"}}
 </button>
@@ -2055,6 +2109,12 @@ const tplForm = `
 {{end}}
 <script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
+{{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
+     их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
+     текстовое поле. Порядок отдельно от подписей: JSON-карта приезжает с
+     алфавитным порядком ключей, а в списке нужен порядок объявления values:. */}}
+<script type="application/json" id="ob-tp-enum-labels">{{jsJSON .TPEnumLabels}}</script>
+<script type="application/json" id="ob-tp-enum-order">{{jsJSON .TPEnumOrder}}</script>
 {{end}}
 `
 

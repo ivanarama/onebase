@@ -384,7 +384,12 @@ func entityYAMLSchema() *yamlLintSchema {
 		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
-		"titles":       freeMap(),
+		"titles": freeMap(),
+		// item_form принимает и строку (имя реквизита), и запись
+		// {name, readonly} — «показывать, но не давать править» (#1011).
+		// Скалярные элементы схема пропускает, а опечатку в ключе записи
+		// (read_only) ловит.
+		"item_form":    seq(obj("name", "readonly")),
 		"fields":       seq(fieldYAMLSchema()),
 		"tableparts":   seq(tablePartYAMLSchema()),
 		"indexes":      seq(indexYAMLSchema()),

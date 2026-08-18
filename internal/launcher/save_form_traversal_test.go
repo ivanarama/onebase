@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // configuratorSaveForm читает YAML сущности, дописывает в него list_form/
@@ -140,5 +142,59 @@ func TestSaveFormDoesNotPersistUnsupportedTablePartFields(t *testing.T) {
 	}
 	if strings.Contains(text, "tp.Lines.Quantity") {
 		t.Fatalf("unsupported table-part field was persisted:\n%s", text)
+	}
+}
+
+// «Только просмотр» из редактора состава форм записывается расширенной записью
+// item_form, а обычные реквизиты остаются строками (#1011). Иначе сохранение
+// состава форм стирало бы признак, которого редактор не видит.
+func TestSaveFormPersistsReadonlyItemFormFlag(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, "catalogs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cfgDir, "catalogs", "клиенты.yaml")
+	config := "name: Клиенты\nfields:\n  - {name: Наименование, type: string}\n  - {name: ТелефоныНорм, type: string}\n"
+	if err := os.WriteFile(target, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newTestStore(t)
+	if err := store.Add(&Base{ID: "b", Name: "b", ConfigSource: "file", Path: cfgDir}); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"entity":    {"Клиенты"},
+		"ef.0.name": {"Наименование"},
+		"ef.0.vis":  {"1"},
+		"ef.1.name": {"ТелефоныНорм"},
+		"ef.1.vis":  {"1"},
+		"ef.1.ro":   {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/bases/b/configurator/form/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = requestWithBaseID(req, "b")
+	rec := httptest.NewRecorder()
+	(&handler{store: store, runner: NewRunner()}).configuratorSaveForm(rec, req)
+
+	got, err := os.ReadFile(target) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	if !strings.Contains(text, "- Наименование") {
+		t.Fatalf("обычный реквизит перестал быть строкой:\n%s", text)
+	}
+	if !strings.Contains(text, "name: ТелефоныНорм") || !strings.Contains(text, "readonly: true") {
+		t.Fatalf("признак «только просмотр» не сохранился:\n%s", text)
+	}
+
+	// И читается обратно тем же загрузчиком метаданных.
+	e, err := metadata.LoadFile(target, metadata.KindCatalog)
+	if err != nil {
+		t.Fatalf("перечитать сохранённое не удалось: %v", err)
+	}
+	if len(e.ItemForm) != 2 || e.ItemForm[0].ReadOnly || !e.ItemForm[1].ReadOnly {
+		t.Fatalf("после круга по конфигуратору item_form = %+v", e.ItemForm)
 	}
 }

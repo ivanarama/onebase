@@ -317,7 +317,19 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqObj := interpreter.NewServiceRequest(r.Method, svc.RootURL, r.URL.Path, pathParams, r.URL.Query(), r.Header, body)
+	// Host в Go живёт отдельным полем запроса: net/http вынимает его из карты
+	// заголовков ещё при разборе. Обработчик про это не знает и читает
+	// «Запрос.Заголовки.Получить("Host")» — получал пустую строку, а вместе с
+	// ней молчаливо неверный ответ. Так в examples/cms выбор сайта по домену
+	// не работал вовсе: маршрут всегда доставался первому активному сайту,
+	// хотя кэш при этом варьировался по host правильно (движок берёт r.Host
+	// напрямую) — расхождение, которое из конфигурации не видно никак.
+	hdr := r.Header
+	if r.Host != "" && hdr.Get("Host") == "" {
+		hdr = r.Header.Clone()
+		hdr.Set("Host", r.Host)
+	}
+	reqObj := interpreter.NewServiceRequest(r.Method, svc.RootURL, r.URL.Path, pathParams, r.URL.Query(), hdr, body)
 
 	opCtx, finish, ok := s.beginOperation(r, opHTTPServiceRun, svc.Name+"."+handlerName)
 	if !ok {
