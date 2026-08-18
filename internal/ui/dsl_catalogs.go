@@ -21,8 +21,17 @@ import (
 // MakeThis — обёртка с методами ТЧ. Используется и полным сервером (New), и
 // offline-запуском обработок (RunProcessorOffline).
 func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Service {
+	// Пустое хранилище кладём нетипизированным nil. Server штатно поднимается
+	// без БД (ui.New(reg, nil, ...)), а интерфейс, обёрнутый вокруг
+	// (*storage.DB)(nil), сам по себе не равен nil — прямое присваивание молча
+	// обезвредило бы проверки `s.Store == nil` внутри сервиса, и вместо
+	// внятной ошибки получилась бы паника на первом же обращении к базе.
+	var store entityservice.Storage
+	if s.store != nil {
+		store = s.store
+	}
 	return &entityservice.Service{
-		Store:        s.store,
+		Store:        store,
 		Reg:          s.reg,
 		Interp:       s.interp,
 		PrepareHook:  s.enrichHeaderRefs,
@@ -30,6 +39,12 @@ func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Serv
 		BuildVars:    s.buildDSLVarsWithMessagesTx,
 		MakeThis: func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
 			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
+		},
+		// Регистрация записи в планах обмена (план 86): exchange принимает
+		// конкретный *storage.DB, а сервис знает только порт Storage, поэтому
+		// вызов попадает в него швом — симметрично удалению ниже.
+		RegisterExchangeSave: func(ctx context.Context, e *metadata.Entity, id uuid.UUID, deletion bool) error {
+			return exchange.RegisterOnSave(ctx, s.store, s.reg.ExchangePlans(), e, id, deletion)
 		},
 		// Регистрация удаления в планах обмена (план 86): exchange живёт в
 		// ui-слое, поэтому в сервис попадает швом.

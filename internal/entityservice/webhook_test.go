@@ -47,7 +47,10 @@ func (h *hookSink) handler() http.HandlerFunc {
 	}
 }
 
-func newWebhookSvc(t *testing.T, entities []*metadata.Entity, hooks []webhook.Config) (*Service, *webhook.Dispatcher) {
+// Третьим значением отдаётся сам *storage.DB: поле Service.Store — узкий порт
+// (ports.go), а тесту нужен BeginTx, которого в порту нет и который сервису не
+// нужен.
+func newWebhookSvc(t *testing.T, entities []*metadata.Entity, hooks []webhook.Config) (*Service, *webhook.Dispatcher, *storage.DB) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "wh.db"))
@@ -66,7 +69,7 @@ func newWebhookSvc(t *testing.T, entities []*metadata.Entity, hooks []webhook.Co
 		defer cancel()
 		_ = d.Close(ctx)
 	})
-	return &Service{Store: db, Reg: registry, Interp: interpreter.New(), Hooks: d}, d
+	return &Service{Store: db, Reg: registry, Interp: interpreter.New(), Hooks: d}, d, db
 }
 
 func TestSave_DispatchesCatalogSaveWebhook(t *testing.T) {
@@ -78,7 +81,7 @@ func TestSave_DispatchesCatalogSaveWebhook(t *testing.T) {
 		Name: "Товары", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
 	}
-	svc, d := newWebhookSvc(t, []*metadata.Entity{cat}, []webhook.Config{{
+	svc, d, _ := newWebhookSvc(t, []*metadata.Entity{cat}, []webhook.Config{{
 		Name: "n8n", On: "catalog.save", URL: srv.URL,
 		Body: `{"event":"{{entity}}","name":"{{Наименование}}","id":"{{id}}"}`,
 	}})
@@ -111,7 +114,7 @@ func TestSave_DispatchesDocumentPostWebhook(t *testing.T) {
 		Name: "Реализация", Kind: metadata.KindDocument, Posting: true,
 		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
 	}
-	svc, d := newWebhookSvc(t, []*metadata.Entity{doc}, []webhook.Config{
+	svc, d, _ := newWebhookSvc(t, []*metadata.Entity{doc}, []webhook.Config{
 		{Name: "post-hook", On: "document.post", URL: srv.URL, Body: `{"n":"{{Номер}}"}`},
 		{Name: "save-hook", On: "document.save", URL: srv.URL, Body: `{"saved":"{{Номер}}"}`},
 	})
@@ -144,7 +147,7 @@ func TestSave_NoWebhookOnDSLError(t *testing.T) {
 		Name: "Товары", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
 	}
-	svc, d := newWebhookSvc(t, []*metadata.Entity{cat}, []webhook.Config{{
+	svc, d, _ := newWebhookSvc(t, []*metadata.Entity{cat}, []webhook.Config{{
 		Name: "x", On: "catalog.save", URL: srv.URL, Body: "{}",
 	}})
 	// OnWrite с ошибкой — сохранение отменяется бизнес-правилом
@@ -185,11 +188,11 @@ func TestSave_DefersWebhookUntilExplicitTransactionCommit(t *testing.T) {
 		Name: "Товары", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
 	}
-	svc, d := newWebhookSvc(t, []*metadata.Entity{cat}, []webhook.Config{{
+	svc, d, db := newWebhookSvc(t, []*metadata.Entity{cat}, []webhook.Config{{
 		Name: "tx-hook", On: "catalog.save", URL: srv.URL, Body: `{"id":"{{id}}"}`,
 	}})
 
-	tx, txCtx, err := svc.Store.BeginTx(context.Background())
+	tx, txCtx, err := db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +215,7 @@ func TestSave_DefersWebhookUntilExplicitTransactionCommit(t *testing.T) {
 		t.Fatalf("webhook dispatched for rolled-back save: %d", got)
 	}
 
-	tx, txCtx, err = svc.Store.BeginTx(context.Background())
+	tx, txCtx, err = db.BeginTx(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
