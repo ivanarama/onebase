@@ -39,13 +39,37 @@ jobs:
             runner: windows-latest
             ext: .exe
             archive: zip
+          # windows/arm64 уезжает БЕЗ onebase-gui.exe — см. гейт шага «Build GUI
+          # binary» ниже. Нативное окно требует CGo, а C-тулчейна под arm64 на
+          # amd64-раннере нет; сервер и CLI при этом нативные, а GUI под ARM
+          # доступен из amd64-архива через эмуляцию x64 (#988, А1).
+          - goos: windows
+            goarch: arm64
+            runner: windows-latest
+            ext: .exe
+            archive: zip
           - goos: linux
             goarch: amd64
             runner: ubuntu-latest
             ext: ''
             archive: tar
+          # Целевая аудитория «сервер учёта в углу офиса» — Raspberry Pi, мини-ПК
+          # и NAS, то есть как раз arm64. Кросс-сборка достаточна: CGO_ENABLED=0,
+          # а modernc.org/sqlite — чистый Go и берёт все цели без тулчейна.
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+            ext: ''
+            archive: tar
           - goos: darwin
             goarch: amd64
+            runner: macos-latest
+            ext: ''
+            archive: tar
+          # Все Mac с 2020 года. До этого ARM-раннер macos-latest кросс-собирал
+          # только amd64-бинарь, нативно не нужный почти никому.
+          - goos: darwin
+            goarch: arm64
             runner: macos-latest
             ext: ''
             archive: tar
@@ -98,8 +122,12 @@ jobs:
           ldflags="$ldflags -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$RELEASE_PUBLIC_KEY"
           go build "-ldflags=$ldflags" -o onebase${{ matrix.ext }} ./cmd/onebase
 
+      # Гейт по goarch, а не только по goos: шаг требует CGO_ENABLED=1, то есть
+      # C-компилятор ПОД ЦЕЛЕВУЮ архитектуру. Раннер здесь amd64, тулчейна под
+      # arm64 в образе нет — без этого условия ARM-ячейка валила бы шаг, а
+      # следом «Package (Windows)», ждущий onebase-gui.exe, и релиз целиком.
       - name: Build GUI binary (Windows native window, webview)
-        if: matrix.goos == 'windows'
+        if: matrix.goos == 'windows' && matrix.goarch == 'amd64'
         shell: pwsh
         env:
           CGO_ENABLED: 1
@@ -118,7 +146,17 @@ jobs:
           $name = "onebase-${{ matrix.goos }}-${{ matrix.goarch }}"
           New-Item -ItemType Directory -Name $name
           Copy-Item onebase.exe "$name\"
-          Copy-Item onebase-gui.exe "$name\"
+          # Для arm64 GUI-бинаря нет по построению, а для amd64 его отсутствие —
+          # поломка. Без явной проверки архив без нативного окна собрался бы
+          # молча и выглядел бы обычным релизом: расхождение всплыло бы уже у
+          # пользователя, а не на раннере.
+          if ("${{ matrix.goarch }}" -eq "amd64") {
+            if (-not (Test-Path onebase-gui.exe)) {
+              Write-Error "onebase-gui.exe не собран — архив amd64 без нативного окна не публикуем"
+              exit 1
+            }
+            Copy-Item onebase-gui.exe "$name\"
+          }
           Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
           Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
           Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
@@ -387,15 +425,22 @@ jobs:
           ## Установка
 
           ### Windows
-          1. Скачайте `onebase-windows-amd64.zip`
+          1. Скачайте `onebase-windows-amd64.zip` (на Windows ARM — `onebase-windows-arm64.zip`)
           2. Распакуйте в любую папку, например `C:\onebase\`
           3. Запустите `onebase-gui.exe`
+
+          В arm64-архиве `onebase-gui.exe` нет: нативное окно требует WebView2
+          через CGo. Лаунчер там открывается в браузере, всё остальное нативно.
 
           ### Linux / macOS
           ```bash
           tar xzf onebase-linux-amd64.tar.gz
           ./onebase-linux-amd64/onebase start
           ```
+
+          Под ARM берите архив с `-arm64`: `onebase-linux-arm64.tar.gz`
+          (Raspberry Pi, мини-ПК, NAS) или `onebase-darwin-arm64.tar.gz`
+          (Mac на Apple Silicon).
 
           ### Требования
           - PostgreSQL 14+ нужен только для многопользовательского режима
