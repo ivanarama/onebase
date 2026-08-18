@@ -354,7 +354,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 126 | [126-http-service-cache.md](126-http-service-cache.md) | Кэш ответов HTTP-сервисов (TTL, ETag/304, сериализация промахов, только `auth: none`) | ~4.25 дня | ✅ Реализовано |
 | 127 | [127-public-file-urls.md](127-public-file-urls.md) | Публичные ссылки на вложения (capability-токен, `/pub/<токен>`) | ~3 дня | ✅ Реализовано |
 | 128 | [128-http-service-compression-and-headers.md](128-http-service-compression-and-headers.md) | gzip ответов `/hs/*` + `security_headers:` уровня сервиса | ~2.25 дня | ✅ Реализовано |
-| 129 | [129-cms-site-configuration.md](129-cms-site-configuration.md) | **Прикладной**: конфигурация CMS `examples/cms` (роутер, рендер, SEO, медиа, формы, роли) | ~15 дней | ⬜ Проект |
+| 129 | [129-cms-site-configuration.md](129-cms-site-configuration.md) | **Прикладной**: конфигурация CMS `examples/cms` (роутер, рендер, SEO, медиа, формы, роли) | ~15 дней | 🟡 Частично реализовано 2026-08-18 (PR #983). Нет управляемых форм (C2), письма по заявке (C8), витрины товаров и правил `МаршрутыURL` (C3) |
 
 Платформенная часть (124–128) реализована 2026-08-17: ветка
 `feature/124-dsl-regex` (пять коммитов, по одному на план). Прикладной план 129
