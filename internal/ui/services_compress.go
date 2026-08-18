@@ -12,6 +12,7 @@ package ui
 import (
 	"compress/gzip"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -48,10 +49,15 @@ func clientAcceptsGzip(r *http.Request) bool {
 		if !strings.EqualFold(strings.TrimSpace(enc), "gzip") {
 			continue
 		}
-		// «gzip;q=0» — явный отказ от кодирования.
-		if strings.Contains(strings.ReplaceAll(strings.ToLower(params), " ", ""), "q=0") &&
-			!strings.Contains(strings.ToLower(params), "q=0.") {
-			return false
+		// q=0 в любой записи (0, 0., 0.0, 0.000) — явный отказ от кодирования.
+		for _, param := range strings.Split(strings.ToLower(params), ";") {
+			k, v, _ := strings.Cut(strings.TrimSpace(param), "=")
+			if strings.TrimSpace(k) != "q" {
+				continue
+			}
+			if q, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && q == 0 {
+				return false
+			}
 		}
 		return true
 	}
@@ -101,15 +107,15 @@ func (w *gzipResponseWriter) Write(p []byte) (int, error) {
 // сжатие не включается независимо от типа.
 func (w *gzipResponseWriter) decide(enough bool) {
 	w.decided = true
-	w.compress = enough && compressibleType(w.Header().Get("Content-Type"))
+	// Уже закодированное тело (обработчик отдал готовый gzip или br) сжимать
+	// второй раз нельзя. Vary ставит вызывающая сторона — на оба варианта.
+	w.compress = enough && w.Header().Get("Content-Encoding") == "" &&
+		compressibleType(w.Header().Get("Content-Type"))
 	if !w.compress {
 		return
 	}
 	h := w.Header()
 	h.Set("Content-Encoding", "gzip")
-	// Без Vary промежуточный кэш (в том числе наш, план 126) отдаст сжатое тело
-	// клиенту, который gzip не принимает.
-	h.Add("Vary", "Accept-Encoding")
 	// Длина несжатого тела к сжатому не относится.
 	h.Del("Content-Length")
 	gz, _ := gzipWriterPool.Get().(*gzip.Writer)

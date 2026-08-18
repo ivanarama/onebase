@@ -112,6 +112,10 @@ func annotateIssue(is Issue) Issue {
 		set("dsl.unknown-function", "Проверьте имя процедуры/функции, импортируемый модуль или используйте существенный builtin из `onebase ai-guide`.")
 	case strings.HasSuffix(lowFile, ".os") || strings.Contains(lowKind, "dsl"):
 		set("dsl.syntax", "Проверьте синтаксис модуля около указанной строки и колонки.")
+	// Расписание разбирается до YAML-ветки: сам YAML тут корректен, неверно
+	// значение, и совет «исправьте синтаксис и отступы» увёл бы не туда.
+	case strings.Contains(lowMsg, "расписание") && strings.Contains(lowMsg, "не разбирается"):
+		set("scheduled.schedule-invalid", "Расписание задаётся пятью полями «минуты часы день месяц день_недели» (например `0 9 * * 1-5`) либо сокращением `@daily`/`@every 30m`. До #965 такая опечатка проходила проверку и роняла запуск сервера.")
 	case strings.Contains(lowMsg, "yaml:") || strings.Contains(lowMsg, "cannot unmarshal") || strings.Contains(lowMsg, "unmarshal errors") || strings.Contains(lowMsg, "did not find expected"):
 		set("yaml.invalid", "Исправьте YAML-синтаксис, отступы и тип значения в указанном файле.")
 	case strings.Contains(lowKind, "запрос") || strings.Contains(lowMsg, "compile query") || strings.Contains(lowMsg, "no such table") || strings.Contains(lowMsg, "ambiguous column"):

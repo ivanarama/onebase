@@ -83,6 +83,16 @@ jobs:
           RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          # Пустая переменная молча выключает проверку подписи во всех
+          # выпущенных бинарях: -X ...PublicKey= компилируется успешно, а
+          # SignatureConfigured() возвращает false. При этом .sig-ассеты в
+          # релиз всё равно кладутся, и снаружи он выглядит подписанным —
+          # состояние «проверка выключена» неотличимо от «проверка работает»
+          # до самого инцидента (#967). Для форков это законно, поэтому
+          # предупреждение, а не отказ.
+          if [ -z "${RELEASE_PUBLIC_KEY:-}" ]; then
+            echo "::warning::RELEASE_PUBLIC_KEY не задан — сборки выйдут без проверки подписи"
+          fi
           ldflags="-s -w"
           ldflags="$ldflags -X github.com/ivantit66/onebase/internal/version.Build=$BUILD_VER"
           ldflags="$ldflags -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$RELEASE_PUBLIC_KEY"
@@ -258,6 +268,11 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          # Открытый ключ передаётся не для подписи, а для сверки половин пары:
+          # приватный живёт в секретах, открытый в переменных, и перепутать их
+          # при ротации ничего не мешало. Рассинхрон давал зелёный релиз,
+          # который не принимает ни один установленный бинарь (#967).
+          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
@@ -410,6 +425,11 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          # Открытый ключ передаётся не для подписи, а для сверки половин пары:
+          # приватный живёт в секретах, открытый в переменных, и перепутать их
+          # при ротации ничего не мешало. Рассинхрон давал зелёный релиз,
+          # который не принимает ни один установленный бинарь (#967).
+          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then

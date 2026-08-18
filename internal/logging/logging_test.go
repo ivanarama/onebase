@@ -18,6 +18,11 @@ func TestRedactURI(t *testing.T) {
 		{"/plain", "/plain"},
 		{"/q?a=1&b=2", "/q?a=1&b=2"},
 		{"/q?", "/q?"},
+		// Capability-токен /pub — само право доступа: в лог только префикс.
+		{"/pub/AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJ", "/pub/AAAABBBB***"},
+		{"/pub/AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJ?dl=1", "/pub/AAAABBBB***?dl=1"},
+		{"/pub/short", "/pub/short"},
+		{"/hs/site/pub/page", "/hs/site/pub/page"},
 	}
 	for _, c := range cases {
 		if got := RedactURI(c.in); got != c.want {

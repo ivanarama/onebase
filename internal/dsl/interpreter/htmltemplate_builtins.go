@@ -104,6 +104,11 @@ func lowerFieldNamesNode(n parse.Node) {
 			v.Field[i] = strings.ToLower(v.Field[i])
 		}
 		lowerFieldNamesNode(v.Node)
+	case *parse.VariableNode:
+		// «{{$стр.Имя}}»: Ident[0] — имя самой переменной, дальше — поля.
+		for i := 1; i < len(v.Ident); i++ {
+			v.Ident[i] = strings.ToLower(v.Ident[i])
+		}
 	case *parse.ListNode:
 		if v == nil {
 			return
@@ -170,6 +175,9 @@ func (t *dslHTMLTemplate) CallMethod(name string, args []any) any {
 		}
 		return w.b.String()
 	}
+	// Молчаливое Неопределено спрятало бы опечатку в имени метода — падаем,
+	// как остальные объекты интерпретатора.
+	RaiseUserError("ШаблонHTML: неизвестный метод «" + name + "»")
 	return nil
 }
 

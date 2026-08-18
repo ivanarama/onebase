@@ -22,7 +22,6 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
-	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -54,7 +53,9 @@ func SetPeriodFromFields(mc *runtime.MovementsCollector, entity *metadata.Entity
 
 // Service выполняет сохранение объектов вместе с побочными эффектами.
 type Service struct {
-	Store  *storage.DB
+	// Store — порт хранилища (ports.go), а не *storage.DB: сервису нужны 22
+	// метода из 314, и объявлены здесь только они.
+	Store  Storage
 	Reg    *runtime.Registry
 	Interp *interpreter.Interpreter
 
@@ -85,6 +86,13 @@ type Service struct {
 	// получает obj напрямую, что для документов без ТЧ тоже работает. ctxSrc
 	// передаёт живой контекст DSL-транзакции объектным методам.
 	MakeThis func(ctx context.Context, ctxSrc interpreter.CtxSource, obj *runtime.Object, entity *metadata.Entity) interpreter.This
+
+	// RegisterExchangeSave регистрирует запись объекта в планах обмена
+	// (план 86); deletion=true приходит из пути пометки на удаление.
+	// Шов симметричен RegisterExchangeDelete: exchange принимает конкретный
+	// *storage.DB, поэтому сервис, знающий только порт Storage, зовёт его через
+	// замыкание ui-слоя. nil = обмен не настроен.
+	RegisterExchangeSave func(ctx context.Context, entity *metadata.Entity, id uuid.UUID, deletion bool) error
 
 	// RegisterExchangeDelete регистрирует удаление в планах обмена (план 86).
 	// Вынесено швом, потому что exchange живёт в ui-слое; nil = обмен не
@@ -425,7 +433,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// Значения перечислений проверяются ДО хука и до записи: хук может писать
 	// в другие объекты, и откатывать его последствия из-за неверного значения
 	// в исходном — хуже, чем не начинать (#769).
-	if msg := validateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
+	if msg := ValidateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
 		return SaveResult{ID: req.ID, DSLError: msg}, nil
 	}
 
@@ -533,6 +541,19 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			runErr := s.runHook(txHookCtx, proc, thisVal, vars)
 			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
 				return &hookRunError{err: runErr}
+			}
+			// Повторно — уже после хука (#977). Входная проверка защищает от
+			// значения, пришедшего от пользователя, но хук может присвоить
+			// реквизиту-перечислению что угодно, и до сих пор это доезжало до
+			// базы: форма показывала пустой выбор, а сравнение «Если Статус =
+			// …» молча не срабатывало.
+			//
+			// Прежний довод «откатывать последствия хука хуже, чем не
+			// начинать» не выдержал проверки: хук исполняется ВНУТРИ этой
+			// транзакции, и его последствия откатываются вместе с ней даром.
+			// Платить нечем, а тихая порча данных остаётся навсегда.
+			if msg := ValidateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
+				return &hookRunError{err: errors.New(msg)}
 			}
 		}
 
@@ -1157,14 +1178,14 @@ func IsBadRequest(err error) bool {
 // nil-Reg и отсутствие планов — быстрый выход без обращения к БД (обмен не
 // настроен). deletion=true передаётся из пути пометки на удаление.
 func (s *Service) registerExchange(ctx context.Context, entity *metadata.Entity, id uuid.UUID, deletion bool) error {
-	if s.Reg == nil {
+	if s.Reg == nil || s.RegisterExchangeSave == nil {
 		return nil
 	}
 	plans := s.Reg.ExchangePlans()
 	if len(plans) == 0 {
 		return nil
 	}
-	return exchange.RegisterOnSave(ctx, s.Store, plans, entity, id, deletion)
+	return s.RegisterExchangeSave(ctx, entity, id, deletion)
 }
 
 // Repost перепроводит уже записанный документ: перечитывает его из БД, запускает

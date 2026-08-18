@@ -68,6 +68,7 @@ func Component(name string) *slog.Logger {
 // RedactURI masks sensitive query parameter values while preserving the rest of
 // the URI as-is, including raw escaping and parameter order.
 func RedactURI(uri string) string {
+	uri = redactPubToken(uri)
 	q := strings.IndexByte(uri, '?')
 	if q < 0 {
 		return uri
@@ -89,6 +90,28 @@ func RedactURI(uri string) string {
 		return uri
 	}
 	return path + "?" + strings.Join(parts, "&")
+}
+
+// redactPubToken прячет capability-токен публичной ссылки /pub/<токен> (план
+// 127): знание токена и есть право доступа к файлу, поэтому целиком в лог он
+// попадать не должен. Короткий префикс остаётся для корреляции записей.
+func redactPubToken(uri string) string {
+	const marker = "/pub/"
+	if !strings.HasPrefix(uri, marker) {
+		return uri
+	}
+	rest := uri[len(marker):]
+	end := len(rest)
+	for j := 0; j < len(rest); j++ {
+		if rest[j] == '/' || rest[j] == '?' {
+			end = j
+			break
+		}
+	}
+	if end <= 8 {
+		return uri
+	}
+	return marker + rest[:8] + "***" + rest[end:]
 }
 
 // RedactArgs masks values of sensitive CLI flags while preserving argument

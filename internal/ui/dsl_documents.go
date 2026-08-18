@@ -737,6 +737,16 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	if w.entity.NotifyChanges && w.loaded {
 		changeBefore, _ = w.s.store.GetByID(ctx, w.entity.Name, w.obj.ID, w.entity)
 	}
+	// Значения перечислений — до записи и до хука, тем же кодом, что и на пути
+	// entityservice.Save (#962). Без этого модуль клал в реквизит-перечисление
+	// произвольную строку: форма показывала пустой список, а сравнения вида
+	// «Если Статус = "Закрыта"» молча не срабатывали. Правится это здесь, а не
+	// копией проверки, потому что копий и так три.
+	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		// Как на пути справочников (dsl_catalogs.go): текст проверки уходит
+		// пользователю как есть, это не технический сбой.
+		return fmt.Errorf("%s", msg)
+	}
 	// Number first so row-level write policy and the form/entity hook observe
 	// the same value that will be persisted. writeInContext always owns a
 	// transaction/savepoint, so rejection restores both counter and obj map.
@@ -786,6 +796,11 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	w.appendHookMessages(hookMessages)
 	if errMsg != "" {
 		return fmt.Errorf("%s", errMsg)
+	}
+	// Хук мог присвоить реквизиту-перечислению недопустимое значение (#977):
+	// входная проверка была до него. Транзакция ещё открыта — откат бесплатен.
+	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	if w.expectedVersion == nil {
 		if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
@@ -881,6 +896,11 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	w.appendHookMessages(hookMessages)
 	if errMsg != "" {
 		return fmt.Errorf("%s", errMsg)
+	}
+	// Хук мог присвоить реквизиту-перечислению недопустимое значение (#977):
+	// входная проверка была до него. Транзакция ещё открыта — откат бесплатен.
+	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	// OnPost мог изменить реквизиты шапки (расчётные поля) — персистим их upsert'ом
 	// после хука, как это делает entityservice.Save при проведении. writeInContext

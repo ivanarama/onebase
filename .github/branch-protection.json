@@ -2,7 +2,7 @@
   "_comment": "Защита ветки main (план 115, этап A). Восстановить после аварийного снятия: gh api -X PUT repos/ivanarama/onebase/branches/main/protection --input .github/branch-protection.json",
   "required_status_checks": {
     "strict": true,
-    "contexts": ["build", "lint", "postgres-integration", "vuln", "smoke"]
+    "contexts": ["build", "lint", "postgres-integration", "vuln", "smoke", "e2e"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": null,

@@ -48,7 +48,16 @@ func tryAcquireFileLease(path string, shared bool) (*fileLease, bool, error) {
 	return lease, true, nil
 }
 
-func (l *fileLease) Downgrade(_ context.Context) error {
+// Downgrade переводит эксклюзивную аренду в разделяемую, уважая отмену
+// контекста (#962, Н5).
+//
+// Раньше контекст отбрасывался, а LockFileEx вызывался без
+// LOCKFILE_FAIL_IMMEDIATELY — то есть блокировался бессрочно. Если в
+// конверсионный зазор влезал другой процесс с эксклюзивной блокировкой,
+// `onebase run` вставал на старте навсегда и не реагировал на отмену: ожидание
+// примитива ОС о контексте ничего не знает. Симметрично unix-реализации берём
+// неблокирующий захват в цикле с паузой и проверкой ctx.
+func (l *fileLease) Downgrade(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
@@ -57,6 +66,9 @@ func (l *fileLease) Downgrade(_ context.Context) error {
 	if l.file == nil || l.shared {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	handle := windows.Handle(l.file.Fd())
 	if l.locked {
 		if err := windows.UnlockFileEx(handle, 0, 1, 0, &l.overlapped); err != nil {
@@ -64,13 +76,22 @@ func (l *fileLease) Downgrade(_ context.Context) error {
 		}
 		l.locked = false
 	}
-	l.overlapped = windows.Overlapped{}
-	if err := windows.LockFileEx(handle, 0, 0, 1, 0, &l.overlapped); err != nil {
-		return err
+	for {
+		l.overlapped = windows.Overlapped{}
+		err := windows.LockFileEx(handle, windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &l.overlapped)
+		if err == nil {
+			l.locked = true
+			l.shared = true
+			return nil
+		}
+		if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return err
+		}
+		// Занято другим процессом — ждём, но с оглядкой на отмену.
+		if waitErr := waitBeforeRetry(ctx); waitErr != nil {
+			return waitErr
+		}
 	}
-	l.locked = true
-	l.shared = true
-	return nil
 }
 
 func (l *fileLease) Close() error {

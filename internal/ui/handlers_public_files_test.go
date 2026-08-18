@@ -5,6 +5,7 @@ package ui
 // посетителя, без cookie и токенов.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -301,5 +302,108 @@ func TestPublicFile_DeletedBlob404(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status=%d, ожидался 404", w.Code)
+	}
+}
+
+// У блобов нет времени загрузки, поэтому условные запросы для них держатся на
+// ETag от токена: повторный визит с If-None-Match не должен тянуть тело заново.
+func TestPublicFile_BlobConditionalByETag(t *testing.T) {
+	_, r, db := newPublicFilesServer(t)
+	blob, err := db.PutBlob(t.Context(), "image/png", strings.NewReader("PNG-BYTES"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: "Товары"})
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	token, err := db.PublishBlob(t.Context(), blob.ID, storage.PublishOptions{})
+	if err != nil {
+		t.Fatalf("PublishBlob: %v", err)
+	}
+
+	first := httptest.NewRecorder()
+	r.ServeHTTP(first, httptest.NewRequest("GET", "/pub/"+token, nil))
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("нет ETag — условные запросы для блобов не работают")
+	}
+
+	req := httptest.NewRequest("GET", "/pub/"+token, nil)
+	req.Header.Set("If-None-Match", etag)
+	second := httptest.NewRecorder()
+	r.ServeHTTP(second, req)
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("повтор с If-None-Match: status=%d, ожидался 304", second.Code)
+	}
+	if second.Body.Len() != 0 {
+		t.Errorf("304 пришёл с телом: %q", second.Body.String())
+	}
+}
+
+// Анонимная поверхность обязана иметь предел одновременных отдач: без него
+// N медленных клиентов держат N буферов тела в памяти единственного бинаря.
+// Но превышение предела — это ОЖИДАНИЕ, а не отказ: страница с двумя десятками
+// картинок штатно даёт всплеск запросов, и 503 читался бы как сломанный сайт.
+func TestPublicFile_ConcurrencyWaitsNotRejects(t *testing.T) {
+	s, r, db := newPublicFilesServer(t)
+	token := publishTestFile(t, db, "big.bin", "application/pdf", "данные", storage.PublishOptions{})
+
+	// Занимаем все слоты лимитера — как будто столько отдач уже висит.
+	s.ops = newOperationLimiter()
+	var releases []func()
+	for i := 0; i < publicFileServeConcurrency; i++ {
+		release, ok := s.ops.tryAcquire(opPublicFileServe, publicFileServeConcurrency)
+		if !ok {
+			t.Fatalf("слот %d не занялся", i)
+		}
+		releases = append(releases, release)
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
+		done <- w.Code
+	}()
+
+	// Пока слоты заняты, запрос обязан ждать, а не отвечать отказом.
+	select {
+	case code := <-done:
+		t.Fatalf("запрос при занятых слотах ответил сразу (%d) вместо ожидания", code)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Освобождение слота пропускает ожидающего.
+	releases[0]()
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("после освобождения слота status=%d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ожидающий запрос не подхватил освободившийся слот")
+	}
+	for _, rel := range releases[1:] {
+		rel()
+	}
+}
+
+// Безнадёжное ожидание всё-таки обрывается: отключившийся клиент (отменённый
+// контекст) не должен висеть в очереди до упора.
+func TestPublicFile_AbandonedWaitGivesUp(t *testing.T) {
+	s, r, db := newPublicFilesServer(t)
+	token := publishTestFile(t, db, "big.bin", "application/pdf", "данные", storage.PublishOptions{})
+
+	s.ops = newOperationLimiter()
+	for i := 0; i < publicFileServeConcurrency; i++ {
+		if _, ok := s.ops.tryAcquire(opPublicFileServe, publicFileServeConcurrency); !ok {
+			t.Fatalf("слот %d не занялся", i)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil).WithContext(ctx))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("отменённый запрос при занятых слотах: status=%d, ожидался 503", w.Code)
 	}
 }

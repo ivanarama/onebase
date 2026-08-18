@@ -113,6 +113,31 @@ func TestPublicFiles_Matrix(t *testing.T) {
 			}
 		})
 
+		// Контракт «опубликовать» — ссылка работает: повторный вызов без нового
+		// срока обязан оживить истёкшую публикацию, а не вернуть мёртвый URL.
+		t.Run("повторная публикация оживляет истёкшую", func(t *testing.T) {
+			id := uploadTestAttachment(t, db, "g.png")
+			past := time.Now().Add(-time.Hour)
+			token, err := db.PublishAttachment(ctx, id, storage.PublishOptions{ExpiresAt: &past})
+			if err != nil {
+				t.Fatalf("PublishAttachment: %v", err)
+			}
+			again, err := db.PublishAttachment(ctx, id, storage.PublishOptions{})
+			if err != nil {
+				t.Fatalf("повторная публикация: %v", err)
+			}
+			if again != token {
+				t.Fatalf("оживление сменило токен: %q → %q", token, again)
+			}
+			pf, err := db.PublicFileByToken(ctx, again)
+			if err != nil || pf == nil {
+				t.Fatalf("PublicFileByToken: %v (pf=%v)", err, pf)
+			}
+			if pf.Expired(time.Now()) {
+				t.Fatalf("после повторной публикации срок остался в прошлом: %+v", pf)
+			}
+		})
+
 		// Без каскада ссылка пережила бы файл и отдавала 500 вместо 404.
 		t.Run("удаление вложения снимает публикацию", func(t *testing.T) {
 			id := uploadTestAttachment(t, db, "e.png")

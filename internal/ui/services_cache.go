@@ -144,7 +144,16 @@ func (c *serviceCache) Put(key, root string, resp *cachedResponse, ttl time.Dura
 		return
 	}
 	resp.Expires = c.timeNow().Add(ttl)
-	size := int64(len(resp.Body)) + 512 // заголовки и служебное — грубой оценкой
+	// Ключ и заголовки входят в учёт обязательно: при vary по query ключ несёт
+	// весь query-string, и мусорные параметры атакующего раздували бы память
+	// мимо лимита — фактический RSS в разы больше «размера кэша» из метрики.
+	size := int64(len(resp.Body)) + int64(len(key)) + 512 // 512 — служебные структуры
+	for k, vals := range resp.Header {
+		size += int64(len(k))
+		for _, v := range vals {
+			size += int64(len(v))
+		}
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -308,6 +317,12 @@ func writeCachedResponse(w http.ResponseWriter, r *http.Request, resp *cachedRes
 	}
 	if resp.ETag != "" {
 		h.Set("ETag", resp.ETag)
+	}
+	if svc.Cache.VaryBy("lang") {
+		// Ключ кэша дробится по языку из Accept-Language. Внешние кэши обязаны
+		// узнать об этом из Vary, иначе public-ответ на языке первого клиента
+		// достанется из прокси клиентам с другим языком.
+		h.Add("Vary", "Accept-Language")
 	}
 	if svc.Cache.Public {
 		h.Set("Cache-Control", "public, max-age="+strconv.Itoa(svc.Cache.TTL))

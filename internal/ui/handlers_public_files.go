@@ -5,6 +5,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -35,6 +36,21 @@ func inlineSafeType(mime string) bool {
 	return false
 }
 
+// opPublicFileServe ограничивает одновременные отдачи /pub: поверхность
+// анонимная, а блоб из стора без Seek читается в память целиком — без предела
+// N параллельных медленных клиентов держали бы N буферов.
+//
+// Лишние запросы ЖДУТ очереди, а не получают отказ сразу: страница с двумя
+// десятками картинок и несколькими посетителями штатно даёт больше сотни
+// одновременных запросов, и отказ по превышению выглядел бы как сломанный
+// сайт. Память при этом ограничена так же — ожидающий буфера не держит.
+// Отказ остаётся только для того, кто не дождался за publicFileServeWait.
+const (
+	opPublicFileServe          = "public_file.serve"
+	publicFileServeConcurrency = 64
+	publicFileServeWait        = 10 * time.Second
+)
+
 // publicFileServe отдаёт файл по токену публикации. Любая неудача — 404:
 // существование вложения тоже информация.
 func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +60,20 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, ErrNetworkLocked.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	if s.ops == nil {
+		s.ops = newOperationLimiter()
+	}
+	waitCtx, cancelWait := context.WithTimeout(r.Context(), publicFileServeWait)
+	release, ok := s.ops.acquire(waitCtx, opPublicFileServe, publicFileServeConcurrency)
+	cancelWait()
+	if !ok {
+		// Сюда попадают двое: не дождавшийся за отведённое время и уже
+		// отключившийся клиент. Второму ответ некуда девать, но и вреда нет.
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "слишком много одновременных запросов", http.StatusServiceUnavailable)
+		return
+	}
+	defer release()
 	token := strings.TrimSpace(chi.URLParam(r, "token"))
 	if token == "" {
 		http.NotFound(w, r)
@@ -62,21 +92,29 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 		modified time.Time
 	)
 	if pf.IsBlob() {
-		// Картинка из поля image. OpenBlob отдаёт поток без Seek, а ServeContent
-		// требует Seeker — читаем в память: блобы ограничены размером картинки,
-		// и ради Range по мегабайтному файлу городить временный файл незачем.
+		// Картинка из поля image.
 		blob, rc, berr := s.store.OpenBlob(r.Context(), pf.BlobID)
 		if berr != nil {
 			http.NotFound(w, r)
 			return
 		}
-		data, rerr := io.ReadAll(rc)
-		closeRead("публичная картинка", rc)
-		if rerr != nil {
-			http.NotFound(w, r)
-			return
+		if rs, seekable := rc.(io.ReadSeeker); seekable {
+			// Файловый стор отдаёт *os.File: ServeContent работает по Seek,
+			// копия в память не нужна — блоб может весить до maxFileSizeBytes.
+			defer closeRead("публичная картинка", rc)
+			content = rs
+		} else {
+			// Стор без Seek (S3-поток): читаем в память — ServeContent требует
+			// Seeker ради Range. Одновременные чтения ограничены лимитером выше.
+			data, rerr := io.ReadAll(rc)
+			closeRead("публичная картинка", rc)
+			if rerr != nil {
+				http.NotFound(w, r)
+				return
+			}
+			content = bytes.NewReader(data)
 		}
-		content, mimeType = bytes.NewReader(data), blob.Mime
+		mimeType = blob.Mime
 		if name == "" {
 			name = "image"
 		}
@@ -94,15 +132,34 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h := w.Header()
+	// Слабый ETag от токена: содержимое за токеном не меняется, а у блобов нет
+	// времени загрузки — без ETag условные запросы для них не работали бы вовсе
+	// и каждый повторный визит перечитывал тело целиком. Токен уже есть в URL,
+	// так что в заголовке он ничего не раскрывает.
+	h.Set("ETag", `W/"`+pf.Token+`"`)
 	h.Set("X-Content-Type-Options", "nosniff")
 	// Файл пользователя не должен исполняться как часть интерфейса, даже если
 	// тип оказался «безопасным»: sandbox отключает скрипты и формы.
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(pf.CacheSeconds)+", immutable")
+	// max-age не должен пережить ДействуетДо, а immutable сюда не годится:
+	// ссылка отзываемая, и «никогда не перепроверять» продлил бы жизнь и
+	// отозванной, и истёкшей копии в браузере.
+	maxAge := pf.CacheSeconds
+	if pf.ExpiresAt != nil {
+		if left := int(time.Until(*pf.ExpiresAt).Seconds()); left < maxAge {
+			maxAge = left
+		}
+		if maxAge < 0 {
+			maxAge = 0
+		}
+	}
+	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(maxAge))
 
 	if inlineSafeType(mimeType) {
 		h.Set("Content-Type", mimeType)
-		h.Set("Content-Disposition", "inline; filename="+strconv.Quote(name))
+		// Через dispositionHeader, а не strconv.Quote: сырой UTF-8 в
+		// quoted-string браузеры читают как latin-1 (issue #46).
+		h.Set("Content-Disposition", dispositionHeader("inline", name))
 	} else {
 		h.Set("Content-Type", "application/octet-stream")
 		h.Set("Content-Disposition", contentDisposition(name))
