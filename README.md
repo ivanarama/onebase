@@ -37,18 +37,37 @@ irm https://raw.githubusercontent.com/ivanarama/onebase/main/install.ps1 | iex
 ### Linux
 
 ```bash
-tar xzf onebase-linux-amd64.tar.gz
+tar xzf onebase-linux-amd64.tar.gz          # arm64: onebase-linux-arm64.tar.gz
 sudo mv onebase-linux-amd64/onebase /usr/local/bin/
 onebase start
 ```
 
-### macOS (Intel / Rosetta 2)
+### macOS
 
 ```bash
-tar xzf onebase-darwin-amd64.tar.gz
-sudo mv onebase-darwin-amd64/onebase /usr/local/bin/
+tar xzf onebase-darwin-arm64.tar.gz         # Apple Silicon (M1 и новее)
+sudo mv onebase-darwin-arm64/onebase /usr/local/bin/
 onebase start
 ```
+
+Для Mac на Intel — `onebase-darwin-amd64.tar.gz`.
+
+### Какой архив брать
+
+| Платформа | Архив | Нативное окно |
+|---|---|---|
+| Windows на Intel/AMD | `onebase-windows-amd64.zip` | да |
+| Windows на ARM | `onebase-windows-arm64.zip` | нет, лаунчер откроется в браузере |
+| Linux x86-64 | `onebase-linux-amd64.tar.gz` | — |
+| Linux ARM (Raspberry Pi, мини-ПК, NAS) | `onebase-linux-arm64.tar.gz` | — |
+| macOS Apple Silicon | `onebase-darwin-arm64.tar.gz` | — |
+| macOS Intel | `onebase-darwin-amd64.tar.gz` | — |
+
+Нативное окно (`onebase-gui.exe`) собирается только под Windows на Intel/AMD:
+оно требует WebView2 через CGo, а C-тулчейна под ARM в релизной сборке нет.
+На Windows ARM бери `onebase-windows-arm64.zip` — сервер и CLI там нативные,
+лаунчер открывается в браузере; если нужно именно нативное окно, подойдёт
+amd64-архив, Windows запустит его через эмуляцию x64.
 
 ### Требования
 
@@ -128,6 +147,7 @@ Edge/Chrome/Chromium. В меню рядом можно явно выбрать 
 | `onebase run --project ./my-app --sqlite ./my-app.db` | Production-сервер (файловый режим) |
 | `onebase migrate --project ./my-app --sqlite ./my-app.db` | Применить схему БД (`--db` — PostgreSQL) |
 | `onebase init [dir]` | Создать заготовку нового проекта |
+| `onebase langref` | Полный справочник встроенного языка (см. [`docs/dsl-reference.md`](docs/dsl-reference.md)) |
 
 ---
 
@@ -248,6 +268,14 @@ Onebase DSL — язык для написания бизнес-логики, с
 | Печатные формы | `Новый ТабличныйДокумент` |
 | HTTP-запросы | `HTTPЗапрос("GET", "https://...")` |
 
+**Полный справочник языка — [`docs/dsl-reference.md`](docs/dsl-reference.md):**
+155 функций, 150 методов объектов, 18 конструкций и 37 элементов языка
+запросов, с сигнатурами, параметрами и примерами. Открывается прямо здесь, на
+GitHub — качать платформу, чтобы посмотреть язык, не нужно.
+
+Справочник генерируется из самой платформы (`onebase langref`), поэтому не
+может разойтись с ней: сверка живёт в тестах.
+
 ---
 
 ## Диаграммы в отчётах
@@ -296,6 +324,18 @@ chart_proc: СформироватьДиаграмму
 
 - **Типы диаграмм:** `Гистограмма` (bar), `Линейная` (line), `Круговая` (pie)
 - **Свойства:** `Заголовок`, `Тип`, `Легенда`, `Подписи`, `Подсказки`
+
+---
+
+## Что менялось между версиями
+
+[`CHANGELOG.md`](CHANGELOG.md) — сводка по версиям со ссылками на полные заметки
+в [`docs/releases/`](docs/releases/). Смотрите туда перед обновлением движка на
+рабочей базе.
+
+Между версиями каждый коммит в `main` выходит автосборкой `build-NNN`; что в них
+появилось — в [`docs/features.md`](docs/features.md), с инструкциями «как
+попробовать».
 
 ---
 

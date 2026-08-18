@@ -20,7 +20,20 @@ $installDir = "$env:USERPROFILE\.onebase\bin"
 # Имена ассетов совпадают с теми, что публикует release.yml
 # ($name = "onebase-$goos-$goarch"): для целевой платформы они стабильны и не
 # зависят от версии.
-$zipName    = "onebase-windows-amd64.zip"
+#
+# Архитектуру определяем по PROCESSOR_ARCHITECTURE, а не считаем amd64: на
+# Windows ARM жёстко зашитый amd64-архив ставился бы под эмуляцией x64 — молча
+# медленнее, и разницы не видно до профилирования (#988, А1). Под 32-битным
+# процессом переменная врёт (даёт x86), поэтому сначала смотрим на
+# PROCESSOR_ARCHITEW6432, которую WOW64 ставит с настоящим значением.
+$arch = $env:PROCESSOR_ARCHITEW6432
+if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+switch ($arch) {
+    "ARM64" { $goarch = "arm64" }
+    "AMD64" { $goarch = "amd64" }
+    default { throw "Архитектура '$arch' не поддерживается: сборок под неё нет." }
+}
+$zipName    = "onebase-windows-$goarch.zip"
 $shaName    = "$zipName.sha256"
 
 Write-Host "onebase installer" -ForegroundColor Cyan
@@ -92,9 +105,9 @@ try {
     # --- Install (замена только после успешной проверки) ----------------------
     Write-Host "Installing to $installDir..."
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-    # Переносим содержимое каталога с бинарём (onebase.exe, onebase-gui.exe,
-    # README, examples) в installDir, замещая прежние файлы. Копируем из
-    # каталога, где лежит проверенный onebase.exe.
+    # Переносим содержимое каталога с бинарём (onebase.exe, README, examples,
+    # а на amd64 ещё и onebase-gui.exe) в installDir, замещая прежние файлы.
+    # Копируем из каталога, где лежит проверенный onebase.exe.
     $payloadDir = $stagedExe.Directory.FullName
     Copy-Item -Path (Join-Path $payloadDir '*') -Destination $installDir -Recurse -Force
 

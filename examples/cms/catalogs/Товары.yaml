@@ -1,0 +1,40 @@
+name: Товары
+title: Товары
+hierarchical: true
+# Каталог витрины. Тот же контентный контур, что у страниц и новостей — слаг,
+# статус, SEO — поэтому роутер и рендер работают с товарами тем же кодом.
+search_fields: [Наименование, Артикул, Слаг]
+fulltext: [Наименование, Артикул, Описание]
+fields:
+  - name: Наименование
+    type: string
+  - name: Артикул
+    type: string
+  - name: Слаг
+    type: string
+  - name: Цена
+    type: number
+  - name: Валюта
+    type: string
+  - name: Картинка
+    type: reference:Медиа
+  - name: КартинкаURL
+    title: Адрес картинки в источнике
+    type: string
+  - name: Описание
+    type: richtext
+  - name: ВнешнийКод
+    title: Код в системе-источнике
+    type: string
+  - name: СтатусПубликации
+    type: enum:СтатусПубликации
+  - name: ДатаПубликации
+    type: date
+  - name: ЗаголовокSEO
+    title: "SEO: заголовок страницы"
+    type: string
+  - name: ОписаниеSEO
+    title: "SEO: описание для поисковиков"
+    type: string
+  - name: Сайт
+    type: reference:Сайты
