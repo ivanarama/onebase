@@ -26,6 +26,8 @@ list_form:
   - ФормаСписка
 item_form:
   - ФормаОбъекта
+  - name: Активный
+    readonly: true
 predefined:
   - name: Услуги
     fields:
@@ -64,6 +66,11 @@ tableparts:
 		"hierarchy_kind: folders_and_items",
 		"list_form:",
 		"item_form:",
+		// Расширенная запись состава формы (#1011) обязана пережить круг:
+		// при []string разбор такого YAML падал бы целиком, и правка
+		// реквизитов в конфигураторе переставала работать.
+		"name: Активный",
+		"readonly: true",
 		"predefined:",
 		"- name: Услуги",
 		"Артикул: SERV",
