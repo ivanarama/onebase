@@ -76,6 +76,9 @@ docs/*
 !docs/releases/
 !docs/history/
 
+# Генерируется `onebase langref`; сверяется тестом TestDSLReferenceUpToDate.
+!docs/dsl-reference.md
+
 # Локальные демо-артефакты (выгрузки, скриншоты печати)
 demo/
 
