@@ -255,6 +255,27 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return strings.Join(names, ",")
 		},
+		// boolFieldNamesCSV — булевы колонки табличной части для addTpRow:
+		// новая строка должна получить флажок, а не поле ввода (#1010). Имена
+		// перечислений JS достаёт из ob-tp-enum-labels, а тип bool в разметке
+		// автоформы больше ниоткуда не виден.
+		"boolFieldNamesCSV": func(fields []metadata.Field) string {
+			names := make([]string, 0, len(fields))
+			for _, f := range fields {
+				if fmt.Sprintf("%v", f.Type) == string(metadata.FieldTypeBool) {
+					names = append(names, f.Name)
+				}
+			}
+			return strings.Join(names, ",")
+		},
+		// tpEnumOptions — варианты для <select> enum-колонки табличной части
+		// в порядке объявления values: (#1010). Данные берём из уже готовых
+		// TPEnumLabels/TPEnumOrder контекста, чтобы не заводить третью карту.
+		"tpEnumOptions": tpEnumOptions,
+		// checked — «взведён ли флажок» для булевой колонки ТЧ. Значение
+		// приезжает разнотипным: bool из PostgreSQL, int64 1/0 из SQLite,
+		// строка "true" после неудачного сохранения формы.
+		"checked": truthyCell,
 		// entityHasRichText — есть ли среди реквизитов шапки сущности richtext-поле.
 		// Quill (vendor-ассеты + init) грузятся на форме только при true, чтобы не
 		// тянуть редактор на формы без richtext-полей.
@@ -1993,6 +2014,23 @@ const tplForm = `
         {{else if eq (str .Type) "number"}}
           <input type="number" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-tp-num="{{$fn}}" data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
+        {{else if isEnum (str .Type)}}
+          {{/* Перечисление — список, а не свободный текст (#1010): руками в
+               ячейке набирали строку, и опечатка молча ломала прикладные
+               сравнения. Значение вне перечисления показываем отдельным
+               пунктом с ⚠, иначе браузер выбрал бы первый вариант и открытие
+               формы подменило бы данные. */}}
+          <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}"{{if $tpReadOnly}} disabled{{end}}>
+            <option value="">{{t $.Lang "— выбрать —"}}</option>
+            {{range tpEnumOptions $.TPEnumLabels $.TPEnumOrder $tpName $fn (index $row $fn)}}
+            <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:#dc2626"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
+            {{end}}
+          </select>
+        {{else if eq (str .Type) "bool"}}
+          {{/* Флажок, а не текст (#1010): в текстовом поле стояло сырое
+               значение из БД («1» на SQLite), а разбор сохранения признаёт
+               истиной только «true» — пересохранение формы снимало флажок. */}}
+          <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="true"{{if checked (index $row $fn)}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
         {{else}}
           <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
@@ -2008,7 +2046,7 @@ const tplForm = `
   </tr></tfoot>
 </table>
 <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin-bottom:8px"
-  data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}"
+  data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}" data-tp-bool-fields="{{boolFieldNamesCSV .Fields}}"
   {{if $tpReadOnly}}disabled{{else}}title="Insert" aria-keyshortcuts="Insert"{{end}}>
   + {{t $.Lang "Добавить строку"}}
 </button>
@@ -2071,6 +2109,12 @@ const tplForm = `
 {{end}}
 <script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
+{{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
+     их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
+     текстовое поле. Порядок отдельно от подписей: JSON-карта приезжает с
+     алфавитным порядком ключей, а в списке нужен порядок объявления values:. */}}
+<script type="application/json" id="ob-tp-enum-labels">{{jsJSON .TPEnumLabels}}</script>
+<script type="application/json" id="ob-tp-enum-order">{{jsJSON .TPEnumOrder}}</script>
 {{end}}
 `
 

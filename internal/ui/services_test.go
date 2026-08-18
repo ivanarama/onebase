@@ -39,6 +39,10 @@ const serviceHandlersSrc = `
 Функция Кто(Запрос) Экспорт
     Возврат ОтветТекст(200, ИмяПользователя());
 КонецФункции
+
+Функция Хост(Запрос) Экспорт
+    Возврат ОтветТекст(200, Запрос.Заголовки.Получить("Host"));
+КонецФункции
 `
 
 func newServiceTestServer(t *testing.T) (*Server, context.Context) {
@@ -69,6 +73,7 @@ func newServiceTestServer(t *testing.T) (*Server, context.Context) {
 		Templates: []httpservice.URLTemplate{
 			{Template: "/", Methods: map[string]string{"GET": "Корень", "POST": "Эхо"}},
 			{Template: "/{id}", Methods: map[string]string{"GET": "Получить"}},
+			{Template: "/meta/host", Methods: map[string]string{"GET": "Хост"}},
 		}}
 	secure := &httpservice.Service{Name: "Secure", RootURL: "secure", Auth: "basic", Templates: []httpservice.URLTemplate{
 		{Template: "/", Methods: map[string]string{"GET": "Кто"}},
@@ -392,5 +397,29 @@ func TestServiceRequest_FormDataParsing(t *testing.T) {
 	// опирается именно на это — «поле есть и заполнено» против «поля нет».
 	if got := m.Get("website"); got != "" {
 		t.Errorf("website=%v, ожидалась пустая строка", got)
+	}
+}
+
+// Host виден обработчику как обычный заголовок.
+//
+// В Go он живёт отдельным полем запроса — net/http вынимает его из карты
+// заголовков при разборе, — поэтому «Запрос.Заголовки.Получить("Host")»
+// возвращал пустую строку. Конфигурация про это не знает и получает молча
+// неверный ответ: в examples/cms так не работал выбор сайта по домену, а
+// заметить было нечем — кэш при этом варьируется по host правильно, потому
+// что движок берёт r.Host напрямую.
+func TestServiceRequest_HostHeaderVisible(t *testing.T) {
+	s, _ := newServiceTestServer(t)
+
+	r := httptest.NewRequest("GET", "/hs/echo/meta/host", nil)
+	r.Host = "site-b.example:8080"
+	w := httptest.NewRecorder()
+	s.serviceDispatch(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "site-b.example:8080" {
+		t.Fatalf("Заголовки.Получить(\"Host\") = %q, ожидался домен запроса", got)
 	}
 }
