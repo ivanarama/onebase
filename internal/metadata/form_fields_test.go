@@ -14,13 +14,13 @@ func TestValidateFormFieldsLegacyTablePartReferences(t *testing.T) {
 			Name:   "Lines",
 			Fields: []Field{{Name: "Quantity", Type: FieldTypeNumber}},
 		}},
-		ItemForm: []string{"Name", "tp.Lines.Quantity"},
+		ItemForm: []ItemFormField{{Name: "Name"}, {Name: "tp.Lines.Quantity"}},
 	}
 	if err := Validate([]*Entity{entity}, nil); err != nil {
 		t.Fatalf("legacy item_form table-part field rejected: %v", err)
 	}
 
-	entity.ItemForm = []string{"tp.Lines.Missing"}
+	entity.ItemForm = []ItemFormField{{Name: "tp.Lines.Missing"}}
 	if err := Validate([]*Entity{entity}, nil); err == nil || !strings.Contains(err.Error(), "item_form") {
 		t.Fatalf("unknown legacy table-part field accepted: %v", err)
 	}
