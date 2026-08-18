@@ -408,19 +408,47 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
             const sel = document.createElement('select');
             sel.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
             const cur = (v == null ? '' : String(v));
+            // Пустой пункт обязателен: без него у строки с незаполненным
+            // перечислением браузер показывал ПЕРВОЕ значение, и следующая
+            // запись формы подставляла его вместо пустого (#1010).
+            const enumEmpty = document.createElement('option');
+            enumEmpty.value = '';
+            enumEmpty.textContent = '— выбрать —';
+            sel.appendChild(enumEmpty);
             // Используем _tpEnumOrder для правильного порядка значений (порядок
             // объявления values:), а не алфавитный Object.keys(enumLabMap).
             const orderedVals = (tpEnumOrder[f.name] && tpEnumOrder[f.name].length > 0)
               ? tpEnumOrder[f.name] : Object.keys(enumLabMap);
+            let curFound = false;
             orderedVals.forEach(function(val){
               const o = document.createElement('option');
               o.value = val;
               o.textContent = enumLabMap[val] !== undefined ? enumLabMap[val] : val;
-              if (val === cur) o.selected = true;
+              if (val === cur) { o.selected = true; curFound = true; }
               sel.appendChild(o);
             });
+            // Значение записано, но в перечислении его больше нет: показываем
+            // как есть — молча подменять данные списком нельзя.
+            if (cur !== '' && !curFound) {
+              const stale = document.createElement('option');
+              stale.value = cur;
+              stale.textContent = '⚠ ' + cur;
+              stale.style.color = '#dc2626';
+              stale.selected = true;
+              sel.appendChild(stale);
+            }
             sel.disabled = readOnly;
             td.appendChild(sel);
+          } else if (f.type === 'bool') {
+            // Флажок, а не текстовое поле: значение из базы приезжает как
+            // true/1, а сохранение признаёт истиной только «true» (#1010).
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = 'true';
+            cb.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
+            cb.checked = (v === true || v === 1 || v === '1' || v === 'true');
+            cb.disabled = readOnly;
+            td.appendChild(cb);
           } else {
             const inp = document.createElement('input');
             inp.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
@@ -1015,7 +1043,8 @@ function obManagedAddTpRow(btn) {
   var meta = obManagedParseFieldMeta(tbody.getAttribute('data-tp-fields') || '');
   var fields = meta.map(function (f) { return f.name; });
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
-  addTpRow(tpName, fields, nums, tbody.rows.length, tbody, obManagedVirtualColumnNames(tbody));
+  var bools = meta.filter(function (f) { return f.type === 'bool'; }).map(function (f) { return f.name; });
+  addTpRow(tpName, fields, nums, tbody.rows.length, tbody, obManagedVirtualColumnNames(tbody), bools);
   var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
   if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
@@ -1665,6 +1694,91 @@ obManagedReady(obManagedInitDelegates);
     this.init();
   }
 
+  // Редактор ячейки-перечисления: список значений вместо свободного текста
+  // (#1010). Раньше здесь стоял Slick.Editors.Text — в ячейку набиралась
+  // произвольная строка, форматтер показывал её как есть, а прикладные
+  // сравнения («Стр.Вид = "Телефон"») молча переставали срабатывать из-за
+  // опечатки. Допустимые значения при этом нигде не были видны.
+  //
+  // labels — карта значение→подпись (data-sg-enum), order — порядок объявления
+  // values: перечисления (window._tpEnumOrder): у JSON-карты порядок ключей
+  // алфавитный, а в списке пользователь ждёт порядок из конфигурации.
+  function ObEnumEditor(enumField, labels, order, args) {
+    var select, staleOption = null, defaultValue = '';
+    var labelMap = labels || {};
+    var values = (order && order.length) ? order.slice() : Object.keys(labelMap);
+
+    function known(val) {
+      for (var i = 0; i < values.length; i++) {
+        if (String(values[i]) === String(val)) return true;
+      }
+      return false;
+    }
+
+    function onKeyDown(e) {
+      var key = e.key || '';
+      // Без stopPropagation стрелки уводят курсор грида на соседнюю строку, а
+      // список так и не раскрывается: обработчик грида зовёт preventDefault и
+      // штатное поведение <select> не срабатывает.
+      if (key === 'ArrowDown' || key === 'ArrowUp') e.stopPropagation();
+    }
+
+    this.init = function() {
+      select = document.createElement('select');
+      select.className = 'editor-enum';
+      select.style.cssText = 'width:100%;height:100%;border:none;outline:none;font-size:13px;background:#fff';
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '';
+      select.appendChild(empty);
+      for (var i = 0; i < values.length; i++) {
+        var o = document.createElement('option');
+        o.value = values[i];
+        o.textContent = (labelMap[values[i]] !== undefined) ? labelMap[values[i]] : values[i];
+        select.appendChild(o);
+      }
+      args.container.appendChild(select);
+      select.addEventListener('keydown', onKeyDown);
+      this.loadValue(args.item);
+      select.focus();
+    };
+    this.destroy = function() {
+      if (select) {
+        select.removeEventListener('keydown', onKeyDown);
+        select.remove();
+      }
+    };
+    this.focus = function() { if (select) select.focus(); };
+    this.getValue = function() { return select.value; };
+    this.setValue = function(val) { select.value = (val == null) ? '' : String(val); };
+    this.loadValue = function(item) {
+      var v = item[args.column.field];
+      defaultValue = (v == null) ? '' : String(v);
+      // Значение записано, но в перечислении его больше нет: добавляем
+      // отдельным пунктом. Без него <select> показал бы пустоту, и коммит
+      // ячейки молча стёр бы данные вместо того, чтобы их показать.
+      // Пункт ровно один: loadValue зовёт и init, и сам SlickGrid.
+      if (staleOption) { staleOption.remove(); staleOption = null; }
+      if (defaultValue !== '' && !known(defaultValue)) {
+        staleOption = document.createElement('option');
+        staleOption.value = defaultValue;
+        staleOption.textContent = '⚠ ' + defaultValue;
+        staleOption.style.color = '#dc2626';
+        select.appendChild(staleOption);
+      }
+      select.value = defaultValue;
+    };
+    this.serializeValue = function() { return select.value; };
+    this.applyValue = function(item, state) { item[args.column.field] = state; };
+    this.isValueChanged = function() { return String(select.value) !== String(defaultValue); };
+    this.validate = function() {
+      var val = select.value;
+      if (val === '' || known(val)) return {valid: true, msg: null};
+      return {valid: false, msg: 'Недопустимое значение «' + val + '»: выберите из списка'};
+    };
+    this.init();
+  }
+
   // Custom number editor with locale-aware parsing (plan 48, phase 3).
   function ObNumberEditor(args) {
     var input, defaultValue;
@@ -1706,7 +1820,7 @@ obManagedReady(obManagedInitDelegates);
   }
 
   // Build SlickGrid columns from metadata with editors (plan 48, phase 3).
-  function buildColumns(colsMeta, refOpts, enumLabels) {
+  function buildColumns(colsMeta, refOpts, enumLabels, enumOrder) {
     var columns = [];
     for (var i = 0; i < colsMeta.length; i++) {
       var c = colsMeta[i];
@@ -1774,13 +1888,21 @@ obManagedReady(obManagedInitDelegates);
         })(c.id);
       } else if (c.enum) {
         col.cssClass = "ob-enum";
-        col.editor = Slick.Editors.Text;
+        col.editor = (function(enumField) {
+          return ObEnumEditor.bind(null, enumField, (enumLabels && enumLabels[enumField]) || {},
+            (enumOrder && enumOrder[enumField]) || []);
+        })(c.id);
         col.formatter = (function(enumField) {
           return function(row, cell, value) {
             if (value == null || value === "") return "";
             var labels = (enumLabels && enumLabels[enumField]) || {};
             var lbl = labels[value];
-            return "<span>" + (lbl != null ? lbl : String(value)) + "</span>";
+            // Значения нет в перечислении — показываем красным, а не как
+            // обычную подпись: иначе испорченные данные выглядят нормальными.
+            if (lbl == null) {
+              return "<span style='color:#dc2626' title='Значения нет в перечислении'>" + obManagedEscapeHTML(String(value)) + "</span>";
+            }
+            return "<span>" + lbl + "</span>";
           };
         })(c.id);
       } else if (c.type === "bool") {
@@ -2281,7 +2403,11 @@ obManagedReady(obManagedInitDelegates);
     var enumLabels = JSON.parse(div.getAttribute("data-sg-enum") || "null") || {};
     var rowsRaw = JSON.parse(div.getAttribute("data-sg-rows") || "[]") || [];
 
-    var columns = buildColumns(colsRaw, refOpts, enumLabels);
+    // Порядок значений перечислений живёт в общем глобале (его же читает
+    // applyTableParts для DOM-таблиц): в data-sg-enum порядок ключей JSON
+    // алфавитный, а список должен идти в порядке объявления values:.
+    var enumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
+    var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder);
     // _ord — исходный порядок строки. Клиентская сортировка меняет ПОРЯДОК
     // ОТОБРАЖЕНИЯ (dataView.sort), но при сохранении (obGridSync) строки
     // сериализуются по _ord — чтобы сортировка «для просмотра» не переставляла

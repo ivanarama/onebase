@@ -358,17 +358,23 @@ func (h *handler) configuratorSaveForm(w http.ResponseWriter, r *http.Request) {
 		delete(doc, "list_form")
 	}
 
-	// Build item_form from ef.N.name + ef.N.vis
-	var itemForm []string
+	// Build item_form from ef.N.name + ef.N.vis (+ ef.N.ro — «только просмотр»).
+	// Помеченный реквизит пишем записью {name, readonly}, остальные — строкой:
+	// так старые конфигурации остаются посимвольно теми же (#1011).
+	var itemForm []any
 	for i := 0; ; i++ {
 		name := r.FormValue(fmt.Sprintf("ef.%d.name", i))
 		if name == "" {
 			break
 		}
-		vis := r.FormValue(fmt.Sprintf("ef.%d.vis", i))
-		if vis == "1" {
-			itemForm = append(itemForm, name)
+		if r.FormValue(fmt.Sprintf("ef.%d.vis", i)) != "1" {
+			continue
 		}
+		if r.FormValue(fmt.Sprintf("ef.%d.ro", i)) == "1" {
+			itemForm = append(itemForm, map[string]any{"name": name, "readonly": true})
+			continue
+		}
+		itemForm = append(itemForm, name)
 	}
 	if len(itemForm) > 0 {
 		doc["item_form"] = itemForm

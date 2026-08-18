@@ -1315,5 +1315,7 @@
   "— общий счётчик —": "— shared counter —",
   "У справочника счётчик кода не сбрасывается: сброс выдал бы уже занятый код": "A catalog code counter is never reset: a reset would hand out a code that is already taken",
   "Уникальность вместе со сбросом счётчика требует маску даты, различающую периоды, например {YYYY}{MM}{DD}-": "Uniqueness together with a counter reset requires a date mask that distinguishes periods, for example {YYYY}{MM}{DD}-",
-  "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "The prefix supports date masks: {YYYY}, {YY}, {MM}, {DD}. Uniqueness combined with a counter reset requires a mask — otherwise the value repeats in the next period. Existing records keep an empty value; onebase renumber fills them in."
+  "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "The prefix supports date masks: {YYYY}, {YY}, {MM}, {DD}. Uniqueness combined with a counter reset requires a mask — otherwise the value repeats in the next period. Existing records keep an empty value; onebase renumber fills them in.",
+  "только просмотр": "view only",
+  "Показывать, но не давать править": "Show but do not allow editing"
 }

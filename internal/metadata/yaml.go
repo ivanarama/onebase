@@ -88,14 +88,16 @@ type rawEntity struct {
 	Hierarchical  bool            `yaml:"hierarchical"`
 	HierarchyKind string          `yaml:"hierarchy_kind"`
 	ListForm      []string        `yaml:"list_form"`
-	ItemForm      []string        `yaml:"item_form"`
-	BasedOn       []string        `yaml:"based_on"`
-	Activity      *rawActivity    `yaml:"activity"`
-	ListMode      string          `yaml:"list_mode"`
-	ListRefreshOn []string        `yaml:"list_refresh_on"`
-	NotifyChanges bool            `yaml:"notify_changes"`
-	TileView      *rawTileView    `yaml:"tile_view"`
-	DetailPanel   *rawDetailPanel `yaml:"detail_panel"`
+	// ItemForm принимает и строку, и запись {name: X, readonly: true} —
+	// см. rawItemFormField.
+	ItemForm      []rawItemFormField `yaml:"item_form"`
+	BasedOn       []string           `yaml:"based_on"`
+	Activity      *rawActivity       `yaml:"activity"`
+	ListMode      string             `yaml:"list_mode"`
+	ListRefreshOn []string           `yaml:"list_refresh_on"`
+	NotifyChanges bool               `yaml:"notify_changes"`
+	TileView      *rawTileView       `yaml:"tile_view"`
+	DetailPanel   *rawDetailPanel    `yaml:"detail_panel"`
 	// FullText — указатель, чтобы отличить отсутствие ключа (умолчание: все
 	// строковые реквизиты) от явного `fulltext: []` (объект вне поиска).
 	FullText *[]string `yaml:"fulltext"`
@@ -104,6 +106,32 @@ type rawEntity struct {
 	Search *[]string `yaml:"search_fields"`
 	// Stages — этапы объекта (план 121).
 	Stages *rawStages `yaml:"stages"`
+}
+
+// rawItemFormField — запись блока item_form. Историческая форма — просто имя
+// реквизита; расширенная — `{name: X, readonly: true}` (#1011). Обе живут в
+// одном списке, поэтому разбор идёт вручную: строка это или отображение.
+type rawItemFormField struct {
+	Name     string `yaml:"name"`
+	ReadOnly bool   `yaml:"readonly"`
+}
+
+func (f *rawItemFormField) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		return node.Decode(&f.Name)
+	}
+	// Псевдоним типа обязателен: без него Decode снова позвал бы этот метод и
+	// разбор ушёл бы в бесконечную рекурсию.
+	type plain rawItemFormField
+	var p plain
+	if err := node.Decode(&p); err != nil {
+		return err
+	}
+	*f = rawItemFormField(p)
+	if strings.TrimSpace(f.Name) == "" {
+		return fmt.Errorf("item_form: запись без ключа name (строка %d)", node.Line)
+	}
+	return nil
 }
 
 type rawDetailPanel struct {
@@ -150,7 +178,13 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		}
 	}
 	e.ListForm = raw.ListForm
-	e.ItemForm = raw.ItemForm
+	for _, f := range raw.ItemForm {
+		name := strings.TrimSpace(f.Name)
+		if name == "" {
+			continue
+		}
+		e.ItemForm = append(e.ItemForm, ItemFormField{Name: name, ReadOnly: f.ReadOnly})
+	}
 	e.BasedOn = raw.BasedOn
 	if raw.Activity != nil {
 		hide := true

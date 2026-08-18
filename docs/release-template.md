@@ -82,19 +82,20 @@
 ## 📦 Установка
 
 ### Windows
-1. Скачайте `onebase-windows-amd64.zip`
+1. Скачайте `onebase-windows-amd64.zip` (на Windows ARM — `onebase-windows-arm64.zip`,
+   в нём нет `onebase-gui.exe`: лаунчер откроется в браузере)
 2. Распакуйте в любую папку
 3. Запустите `onebase-gui.exe`
 
 ### Linux
 ```bash
-tar xzf onebase-linux-amd64.tar.gz
+tar xzf onebase-linux-amd64.tar.gz     # Raspberry Pi, NAS: onebase-linux-arm64.tar.gz
 ./onebase start
 ```
 
 ### macOS
 ```bash
-tar xzf onebase-darwin-amd64.tar.gz
+tar xzf onebase-darwin-arm64.tar.gz    # Apple Silicon; Intel: onebase-darwin-amd64.tar.gz
 ./onebase start
 ```
 
