@@ -66,8 +66,95 @@ type Service struct {
 	// Подразумевает auth basic/session: анонимный вызов отклоняется (403).
 	Roles []string `yaml:"roles"`
 	// CORS — необязательная политика CORS уровня сервиса (для браузерных клиентов).
-	CORS      *CORSConfig   `yaml:"cors"`
+	CORS *CORSConfig `yaml:"cors"`
+	// Compress — сжимать ли ответы gzip (план 128). nil = умолчание по auth:
+	// анонимный сервис сжимается, аутентифицированный — нет (BREACH: сжатие
+	// ответа с секретом вместе с отражённым вводом атакующего выдаёт секрет по
+	// длине). Владелец может включить явно.
+	Compress *bool `yaml:"compress"`
+	// SecurityHeaders — политика заголовков ЭТОЙ публичной поверхности
+	// (план 128). Глобальный набор websec подобран под админку и для сайта,
+	// отдаваемого постороннему посетителю, слишком мягкий.
+	SecurityHeaders *SecurityHeadersConfig `yaml:"security_headers"`
+	// Cache — кэш ответов (план 126). Только для auth: none и только GET/HEAD:
+	// ответ, собранный под правами одного пользователя (RLS, маскирование,
+	// роли), не должен достаться другому.
+	Cache     *CacheConfig  `yaml:"cache"`
 	Templates []URLTemplate `yaml:"templates"`
+}
+
+// CacheConfig — параметры кэша ответов сервиса.
+type CacheConfig struct {
+	// TTL — время жизни записи в секундах; 0 = кэш выключен.
+	TTL int `yaml:"ttl"`
+	// Vary — что входит в ключ помимо пути: query, host, lang.
+	// Пусто = [query]; явный пустой список — «одна страница для всех».
+	Vary []string `yaml:"vary"`
+	// Public — отдавать ли наружу Cache-Control: public, max-age=<ttl>.
+	Public bool `yaml:"public"`
+	// MaxBody — ответы крупнее не кэшируются (байт); 0 = 1 МиБ.
+	MaxBody int64 `yaml:"max_body"`
+	// varySet — нормализованный Vary; заполняется Normalize.
+	varySet map[string]bool `yaml:"-"`
+}
+
+// DefaultCacheMaxBody — предел размера кэшируемого ответа по умолчанию.
+const DefaultCacheMaxBody = 1 << 20
+
+// Enabled сообщает, включён ли кэш.
+func (c *CacheConfig) Enabled() bool { return c != nil && c.TTL > 0 }
+
+// VaryBy сообщает, входит ли составляющая в ключ кэша.
+func (c *CacheConfig) VaryBy(part string) bool {
+	if c == nil {
+		return false
+	}
+	return c.varySet[part]
+}
+
+// BodyLimit возвращает предел размера кэшируемого тела.
+func (c *CacheConfig) BodyLimit() int64 {
+	if c == nil || c.MaxBody <= 0 {
+		return DefaultCacheMaxBody
+	}
+	return c.MaxBody
+}
+
+// CacheUsable сообщает, будет ли кэш реально работать. Кэш при auth ≠ none
+// игнорируется (см. комментарий к полю Cache); `onebase check` в этом случае
+// даёт ошибку, а рантайм — предупреждение в лог.
+func (s *Service) CacheUsable() bool {
+	if !s.Cache.Enabled() {
+		return false
+	}
+	auth := strings.ToLower(strings.TrimSpace(s.Auth))
+	return auth == "" || auth == "none"
+}
+
+// SecurityHeadersConfig — заголовки безопасности уровня сервиса.
+type SecurityHeadersConfig struct {
+	// CSP заменяет глобальный Content-Security-Policy (не дополняет: два
+	// заголовка браузер применяет как пересечение — политика вышла бы строже
+	// задуманной, а отладка этого занимает часы).
+	CSP string `yaml:"csp"`
+	// FrameOptions: DENY | SAMEORIGIN | «» (не ставить).
+	FrameOptions string `yaml:"frame_options"`
+	// ReferrerPolicy — значение заголовка Referrer-Policy.
+	ReferrerPolicy string `yaml:"referrer_policy"`
+	// HSTS — max-age в секундах; 0 = не ставить. Ставится только на
+	// HTTPS-запросах.
+	HSTS int `yaml:"hsts"`
+	// Extra — дополнительные заголовки (Permissions-Policy и подобные).
+	Extra map[string]string `yaml:"extra"`
+}
+
+// CompressEnabled сообщает, сжимать ли ответы сервиса. Умолчание зависит от
+// аутентификации — см. комментарий к полю Compress.
+func (s *Service) CompressEnabled() bool {
+	if s.Compress != nil {
+		return *s.Compress
+	}
+	return strings.EqualFold(strings.TrimSpace(s.Auth), "none") || strings.TrimSpace(s.Auth) == ""
 }
 
 // CORSConfig — политика Cross-Origin Resource Sharing для сервиса.
@@ -112,6 +199,23 @@ func (s *Service) Normalize() {
 		s.Auth = "none"
 	}
 	s.Auth = strings.ToLower(strings.TrimSpace(s.Auth))
+	if s.Cache != nil {
+		// Пустой ключ vary и ОТСУТСТВУЮЩИЙ vary — разные вещи: первый значит
+		// «одна страница для всех», второй — умолчание [query]. Различаем по
+		// nil, поэтому список не нормализуем в непустой.
+		if s.Cache.Vary == nil {
+			s.Cache.Vary = []string{"query"}
+		}
+		s.Cache.varySet = make(map[string]bool, len(s.Cache.Vary))
+		for _, v := range s.Cache.Vary {
+			s.Cache.varySet[strings.ToLower(strings.TrimSpace(v))] = true
+		}
+	}
+	if s.SecurityHeaders != nil {
+		s.SecurityHeaders.FrameOptions = strings.ToUpper(strings.TrimSpace(s.SecurityHeaders.FrameOptions))
+		s.SecurityHeaders.CSP = strings.TrimSpace(s.SecurityHeaders.CSP)
+		s.SecurityHeaders.ReferrerPolicy = strings.TrimSpace(s.SecurityHeaders.ReferrerPolicy)
+	}
 	for i := range s.Templates {
 		t := &s.Templates[i]
 		t.Template = "/" + strings.Trim(strings.TrimSpace(t.Template), "/")

@@ -26,13 +26,15 @@ exit
 GIT_WORKFLOW.md
 
 # Internal docs (drafts, plans, specs)
-starterplan.MD
-tz.md
-improvement-roadmap.md
+# Эти три уехали в docs/history/ и там отслеживаются осознанно (#988, А3);
+# правила оставлены, чтобы одноимённый черновик не появился в корне снова.
+/starterplan.MD
+/tz.md
+/improvement-roadmap.md
 
 # Локальные заметки ручной проверки фич (не в публичном репо)
 ПРОВЕРКА*.md
-!ПРОВЕРКА-ai-tools-video-script.md
+!docs/history/ПРОВЕРКА-ai-tools-video-script.md
 
 # OS
 .DS_Store
@@ -68,6 +70,12 @@ docs/*
 !docs/DEPLOYMENT.md
 !docs/reverse-proxy.md
 !docs/release-signing.md
+# Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
+# исключённый каталог git не заходит — правило вида `!docs/releases/*.md`
+# не сработало бы, и новые заметки молча не попадали бы в коммит (#988, А3).
+!docs/releases/
+!docs/history/
+
 # Генерируется `onebase langref`; сверяется тестом TestDSLReferenceUpToDate.
 !docs/dsl-reference.md
 

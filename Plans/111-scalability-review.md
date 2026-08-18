@@ -305,7 +305,7 @@ admin/роль-на-объект + серверные form-хуки; общег�
   безопасен для конкурентных запусков; изменяемое состояние (`curFile/curLine`,
   debug-hook) вынесено в per-run `execCtx` (`internal/dsl/interpreter/env.go:87`,
   `interpreter.go` — доккоммент структуры, план 52). Гонка из старого
-  `АнализПроекта-2026-06-10.md` **исправлена**.
+  `docs/history/АнализПроекта-2026-06-10.md` **исправлена**.
 - **Модель блокировок проведения** — process-local + PG advisory xact locks
   (`internal/runtime/locks.go:206`). Корректно и на SQLite, и на многопроцессном
   PostgreSQL.

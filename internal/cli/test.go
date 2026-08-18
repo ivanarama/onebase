@@ -126,12 +126,11 @@ func runTest(cmd *cobra.Command, _ []string) error {
 	}
 
 	if !res.OK() {
-		if cleanupSchema != nil {
-			cleanupSchema() // defer не выполнится при os.Exit — чистим схему явно
-		}
-		db.Close()
-		bc.Cleanup()
-		os.Exit(1)
+		// Ровно как в check: errSilentExit даёт тот же код возврата, но не
+		// пропускает defer. Ручная уборка здесь была обязательной именно
+		// из-за os.Exit — причём эфемерную схему PostgreSQL забыть опаснее
+		// всего: она пережила бы процесс (#988, А6).
+		return errSilentExit
 	}
 	return nil
 }

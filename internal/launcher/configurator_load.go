@@ -196,13 +196,21 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		}
 		if len(e.ItemForm) > 0 {
 			ifSet := make(map[string]bool, len(e.ItemForm))
+			roSet := make(map[string]bool, len(e.ItemForm))
 			for _, n := range e.ItemForm {
-				ifSet[n] = true
+				ifSet[n.Name] = true
+				if n.ReadOnly {
+					roSet[n.Name] = true
+				}
 			}
 			for i := range ev.Fields {
 				if !ifSet[ev.Fields[i].Name] {
 					ev.Fields[i].FormItemHidden = true
 				}
+				// «Только просмотр» показываем галочкой рядом с видимостью:
+				// иначе сохранение состава форм из конфигуратора стирало бы
+				// признак, которого редактор не видит (#1011).
+				ev.Fields[i].FormItemReadOnly = roSet[ev.Fields[i].Name]
 			}
 		}
 		data.Entities = append(data.Entities, ev)

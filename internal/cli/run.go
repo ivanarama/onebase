@@ -659,6 +659,9 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		return fmt.Errorf("attachments table: %w", err)
 	}
+	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
+		return fmt.Errorf("public files table: %w", err)
+	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return fmt.Errorf("blobs table: %w", err)
 	}
@@ -808,9 +811,8 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 		uiCfg.Webhooks = d
 		outf("веб-хуки: настроено %d\n", len(appCfg.Webhooks))
 		if !db.GetNetworkEnabled(ctx) {
-			outln("  ⚠ сеть заблокирована предохранителем — хуки не будут отправляться,\n" +
-				"    пока не включить «Разрешить сетевые операции» в конфигураторе\n" +
-				"    или командой: onebase settings set net.enabled вкл")
+			outln("  ⚠ сеть заблокирована предохранителем — хуки не будут отправляться.\n" +
+				"    " + storage.NetworkEnabledHint)
 		}
 	}
 

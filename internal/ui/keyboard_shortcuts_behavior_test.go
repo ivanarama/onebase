@@ -676,6 +676,8 @@ dynamicTbody = {
 dynamicTable.tBodies = [dynamicTbody];
 function obTPRefOpts() { return {}; }
 function obTPRefMeta() { return {}; }
+function obTPEnumLabels() { return {}; }
+function obTPEnumOrder() { return {}; }
 eval(source.slice(addTpStart, addTpEnd));
 addTpRow('Dynamic', ['Name'], [], 0);
 let dynamicDelete = dynamicTbody.rows[0].children[1].children[0];
