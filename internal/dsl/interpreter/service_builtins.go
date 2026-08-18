@@ -99,6 +99,27 @@ func (r *DSLServiceRequest) CallMethod(name string, args []any) any {
 			return r.query.Get(fmt.Sprintf("%v", args[0]))
 		}
 		return ""
+	case "формаданные", "formdata":
+		// Разбор обычной HTML-формы (application/x-www-form-urlencoded).
+		// Без этого приём формы в конфигурации невозможен в принципе: значения
+		// приходят в процентном кодировании, а декодера в DSL нет — кириллица и
+		// пробелы превращались бы в мусор.
+		//
+		// Возвращается Соответствие имя → значение; для повторяющихся имён
+		// берётся первое: множественный выбор — отдельная задача, и молча
+		// склеивать значения в строку хуже, чем не поддерживать их вовсе.
+		values, err := url.ParseQuery(string(r.body))
+		if err != nil {
+			panic(userError{Msg: "HTTPСервисЗапрос.ФормаДанные: " + err.Error()})
+		}
+		out := &Map{}
+		for key, vals := range values {
+			if len(vals) == 0 {
+				continue
+			}
+			out.CallMethod("вставить", []any{key, vals[0]})
+		}
+		return out
 	case "телоjson", "bodyjson", "прочитатьтелокакjson":
 		// Удобство сверх 1С: сразу разобрать тело как JSON в Структуру/Массив.
 		var raw any

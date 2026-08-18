@@ -166,6 +166,9 @@ func applyAllMigrations(ctx context.Context, db *storage.DB, proj *project.Proje
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		return err
 	}
+	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
+		return err
+	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return err
 	}
