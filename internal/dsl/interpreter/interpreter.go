@@ -631,6 +631,14 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 		return newStruct(args)
 	case "таблицазначений", "valuetable":
 		return NewValueTable(args)
+	case "регекс", "regex":
+		// План 124. Встроенным типом, а не фабрикой окружения: фабрики
+		// инжектируются точечно, и объект был бы доступен в форме, но не в
+		// регламентном задании.
+		return NewRegexObject(args)
+	case "шаблонhtml", "htmltemplate":
+		// План 125, по той же причине встроенным типом.
+		return NewHTMLTemplateObject(args)
 	}
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {

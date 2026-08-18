@@ -87,6 +87,10 @@ var systemTables = []string{
 	"_schema_fields",
 	"_blobs",
 	"_attachments",
+	// Публичные ссылки на файлы (план 127). Токен — единственный носитель
+	// права доступа: без переноса все розданные ссылки после восстановления
+	// молча умирают. Строго после _attachments — на них смотрит FK с каскадом.
+	"_public_files",
 	"_audit",
 	"_ai_audit",
 	// История переходов между этапами (план 121). Она не выводится из данных:
@@ -2395,6 +2399,11 @@ func migrateSchema(ctx context.Context, db *storage.DB, configDest, cfgFileDir s
 	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return fmt.Errorf("ensure blobs: %w", err)
+	}
+	// Публичные ссылки приезжают в system/: без явного создания импорт падал
+	// бы на «no such table: _public_files». После вложений — FK с каскадом.
+	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
+		return fmt.Errorf("ensure public files: %w", err)
 	}
 	// Migrate currently creates these tables as a side effect, but universal
 	// restore treats them as first-class portable state. Keep the contract
