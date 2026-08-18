@@ -1,0 +1,37 @@
+name: Новости
+title: Новости и статьи
+# Публикации с датой: список отдаётся по /news, детальная — /news/<слаг>.
+# Роутер показывает только Опубликовано с ДатаПубликации <= сейчас, поэтому
+# отложенная публикация работает без регламентного задания.
+search_fields: [Наименование, Слаг]
+fulltext: [Наименование, Анонс, Содержимое]
+fields:
+  - name: Наименование
+    type: string
+  - name: Слаг
+    type: string
+  - name: Анонс
+    type: richtext
+  - name: Содержимое
+    type: richtext
+  - name: Картинка
+    type: reference:Медиа
+  - name: Категория
+    type: reference:КатегорииКонтента
+  - name: Автор
+    type: string
+  - name: СтатусПубликации
+    type: enum:СтатусПубликации
+  - name: ДатаПубликации
+    type: date
+  - name: ЗаголовокSEO
+    title: "SEO: заголовок страницы"
+    type: string
+  - name: ОписаниеSEO
+    title: "SEO: описание для поисковиков"
+    type: string
+  - name: OGКартинка
+    title: Картинка для соцсетей
+    type: reference:Медиа
+  - name: Сайт
+    type: reference:Сайты

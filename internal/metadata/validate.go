@@ -390,7 +390,7 @@ func validateFormFields(e *Entity) error {
 		}
 		return nil
 	}
-	if err := check("item_form", e.ItemForm, true); err != nil {
+	if err := check("item_form", e.ItemFormNames(), true); err != nil {
 		return err
 	}
 	return check("list_form", e.ListForm, false)
