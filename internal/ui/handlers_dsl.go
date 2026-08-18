@@ -279,6 +279,12 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	scheduledJobs := newScheduledJobsRoot(s, txState)
 	vars["РегламентныеЗадания"] = scheduledJobs
 	vars["ScheduledJobs"] = scheduledJobs
+	// Очередь фоновых заданий (план 130): параллельное исполнение одного
+	// задания многими исполнителями. Постановка в транзакции разрешена — см.
+	// dsl_jobqueue.go.
+	backgroundJobs := newJobQueueRoot(s, txState)
+	vars["ФоновыеЗадания"] = backgroundJobs
+	vars["BackgroundJobs"] = backgroundJobs
 	vars["БлокировкаДанных"] = lockFactory
 	vars["DataLock"] = lockFactory
 	vars["ТекущийПользователь"] = currentUserFn

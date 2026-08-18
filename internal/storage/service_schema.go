@@ -38,6 +38,9 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		// прикладного кода, поэтому таблица нужна везде, где нужны служебные, —
 		// в том числе в матричных тестах, которые поднимают базу отсюда (#827).
 		{"scheduled runs", db.EnsureScheduledRunsTable},
+		// Очередь фоновых заданий (план 130): её читают и прикладной код, и
+		// монитор админки, поэтому таблица нужна везде, где нужны служебные.
+		{"job queue", db.EnsureJobQueueSchema},
 		// Константы заводит MigrateConstants: таблица одна на все константы, и
 		// пустой список создаёт её же.
 		{"constants", func(ctx context.Context) error { return db.MigrateConstants(ctx, nil) }},

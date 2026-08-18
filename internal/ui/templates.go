@@ -1202,6 +1202,7 @@ const tplNav = `
           <a href="/ui/admin/exchange">{{t $.Lang "Обмен данными"}}</a>
           <a href="/ui/admin/intake">{{t $.Lang "Входная приёмка"}}</a>
           <a href="/ui/admin/scheduled">{{t $.Lang "Регламентные задания"}}</a>
+          <a href="/ui/admin/queue">{{t $.Lang "Очередь фоновых заданий"}}</a>
           <a href="/ui/admin/webhooks">{{t $.Lang "Журнал веб-хуков"}}</a>
         </div>
       </details>
@@ -3285,6 +3286,87 @@ const tplScheduled = `
 <p class="empty">{{t $.Lang "Регламентных заданий нет. Создайте файлы в папке <code>scheduled/</code> вашей конфигурации."}}</p>
 {{end}}
 </div>
+</main></div></body></html>
+{{end}}
+
+{{define "page-job-queue"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<div class="row-top">
+  <h2>{{t $.Lang "Очередь фоновых заданий"}}</h2>
+  <span style="color:#94a3b8;font-size:13px">
+    {{t $.Lang "Исполнителей:"}} {{.Workers}}{{if .InFlight}} · {{t $.Lang "в работе:"}} {{.InFlight}}{{end}}
+  </span>
+</div>
+{{if not .Available}}
+<div class="card"><p class="empty">{{t $.Lang "Очередь недоступна в этом режиме работы сервера."}}</p></div>
+{{else}}
+{{if not .Enabled}}
+<div class="card" style="margin-bottom:16px;border-left:3px solid #f97316">
+  {{t $.Lang "Очередь выключена настройкой queue.workers: 0 — задачи не принимаются и не исполняются."}}
+</div>
+{{end}}
+{{if .Degraded}}
+<div class="card" style="margin-bottom:16px;border-left:3px solid #f97316">
+  {{t $.Lang "База на SQLite: параллелизм недоступен, работает один исполнитель. Пул на 16–32 исполнителя требует PostgreSQL."}}
+</div>
+{{end}}
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+{{range .Cards}}
+  <a href="/ui/admin/queue{{if not .Active}}?status={{.Status}}{{end}}" class="card"
+     style="flex:1 1 150px;text-decoration:none;color:inherit;padding:12px 16px;{{if .Active}}outline:2px solid #2563eb{{end}}">
+    <div style="font-size:24px;font-weight:600">{{.Count}}</div>
+    <div style="color:#64748b;font-size:13px">{{t $.Lang .Title}}</div>
+  </a>
+{{end}}
+</div>
+<div class="card">
+{{if .Tasks}}
+<table><thead><tr>
+  <th>{{t $.Lang "Задание"}}</th>
+  <th>{{t $.Lang "Параметры"}}</th>
+  <th>{{t $.Lang "Статус"}}</th>
+  <th>{{t $.Lang "Попытки"}}</th>
+  <th>{{t $.Lang "Поставлена"}}</th>
+  <th>{{t $.Lang "Длительность"}}</th>
+  <th style="width:170px"></th>
+</tr></thead>
+<tbody>
+{{range .Tasks}}
+<tr>
+  <td>
+    <strong>{{.JobName}}</strong>
+    <br><small style="color:#94a3b8" title="{{.ID}}">{{.ShortID}}</small>
+    {{if .Key}}<br><small style="color:#94a3b8">{{t $.Lang "ключ:"}} {{.Key}}</small>{{end}}
+  </td>
+  <td><small>{{.Params}}</small></td>
+  <td>
+    <span style="color:{{if eq .Status "done"}}#22c55e{{else if eq .Status "dead"}}#ef4444{{else if eq .Status "running"}}#2563eb{{else}}#94a3b8{{end}}">{{.Status}}</span>
+    {{if .RetryAt}}<br><small style="color:#94a3b8">{{t $.Lang "повтор в"}} {{fmtDate .RetryAt}}</small>{{end}}
+    {{if .Error}}<br><small style="color:#ef4444">{{.Error}}</small>{{end}}
+  </td>
+  <td>{{.Attempts}} / {{.MaxAttempts}}</td>
+  <td>{{if .CreatedAt}}<small>{{fmtDate .CreatedAt}}</small>{{else}}—{{end}}</td>
+  <td>{{if .DurationMs}}{{.DurationMs}} {{t $.Lang "мс"}}{{else}}—{{end}}</td>
+  <td>
+    {{if .Quarantined}}
+      <form method="POST" action="/ui/admin/queue/{{.ID}}/replay{{if $.Status}}?status={{$.Status}}{{end}}" style="display:inline">
+        <button class="btn btn-sm btn-primary" type="submit">{{t $.Lang "Повторить"}}</button>
+      </form>
+    {{else if not .Terminal}}
+      <form method="POST" action="/ui/admin/queue/{{.ID}}/cancel{{if $.Status}}?status={{$.Status}}{{end}}" style="display:inline">
+        <button class="btn btn-sm" type="submit">{{t $.Lang "Отменить"}}</button>
+      </form>
+    {{end}}
+  </td>
+</tr>
+{{end}}
+</tbody></table>
+{{else}}
+<p class="empty">{{t $.Lang "Задач нет. Ставит их прикладной код: ФоновыеЗадания.Поставить(«ИмяЗадания», Параметры)."}}</p>
+{{end}}
+</div>
+{{end}}
 </main></div></body></html>
 {{end}}
 

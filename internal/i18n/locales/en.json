@@ -1315,5 +1315,18 @@
   "— общий счётчик —": "— shared counter —",
   "У справочника счётчик кода не сбрасывается: сброс выдал бы уже занятый код": "A catalog code counter is never reset: a reset would hand out a code that is already taken",
   "Уникальность вместе со сбросом счётчика требует маску даты, различающую периоды, например {YYYY}{MM}{DD}-": "Uniqueness together with a counter reset requires a date mask that distinguishes periods, for example {YYYY}{MM}{DD}-",
-  "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "The prefix supports date masks: {YYYY}, {YY}, {MM}, {DD}. Uniqueness combined with a counter reset requires a mask — otherwise the value repeats in the next period. Existing records keep an empty value; onebase renumber fills them in."
+  "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber.": "The prefix supports date masks: {YYYY}, {YY}, {MM}, {DD}. Uniqueness combined with a counter reset requires a mask — otherwise the value repeats in the next period. Existing records keep an empty value; onebase renumber fills them in.",
+  "Очередь фоновых заданий": "Background job queue",
+  "Задание": "Job",
+  "Попытки": "Attempts",
+  "Поставлена": "Queued at",
+  "Отменить": "Cancel",
+  "Исполнителей:": "Workers:",
+  "в работе:": "running:",
+  "ключ:": "key:",
+  "повтор в": "retry at",
+  "Очередь недоступна в этом режиме работы сервера.": "The queue is not available in this server mode.",
+  "Очередь выключена настройкой queue.workers: 0 — задачи не принимаются и не исполняются.": "The queue is disabled by queue.workers: 0 — tasks are neither accepted nor executed.",
+  "База на SQLite: параллелизм недоступен, работает один исполнитель. Пул на 16–32 исполнителя требует PostgreSQL.": "This database runs on SQLite: no parallelism, a single worker. A pool of 16–32 workers requires PostgreSQL.",
+  "Задач нет. Ставит их прикладной код: ФоновыеЗадания.Поставить(«ИмяЗадания», Параметры).": "No tasks yet. Application code queues them: BackgroundJobs.Enqueue(\"JobName\", Params)."
 }

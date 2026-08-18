@@ -20,6 +20,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/extform"
 	"github.com/ivantit66/onebase/internal/i18n"
+	"github.com/ivantit66/onebase/internal/jobqueue"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/mailer"
 	"github.com/ivantit66/onebase/internal/project"
@@ -110,6 +111,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 
 	if err := db.EnsureScheduledRunsTable(ctx); err != nil {
 		return fmt.Errorf("scheduled runs schema: %w", err)
+	}
+	if err := db.EnsureJobQueueSchema(ctx); err != nil {
+		return fmt.Errorf("job queue schema: %w", err)
 	}
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		return fmt.Errorf("attachments table: %w", err)
@@ -315,6 +319,10 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	uiCfg.Bundle = appBundle
+	// Очередь фоновых заданий (план 130) — и в dev-режиме тоже: прикладной код,
+	// который ставит задачи, должен работать там же, где его пишут.
+	queue := jobqueue.New(db, sched, runtimeQueueConfigFromApp(appCfg))
+	uiCfg.JobQueue = queue
 	// dev-сервер — всегда loopback (план 53: secure-by-default bind)
 	srv = api.New(reg, db, interp, authRepo, "127.0.0.1", port, uiCfg, sched)
 
@@ -378,6 +386,15 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		defer close(schedDone)
 		sched.Start(schedCtx)
 	}()
+	queueCtx, queueCancel := context.WithCancel(ctx)
+	defer queueCancel()
+	queueDone := make(chan struct{})
+	go func() {
+		defer close(queueDone)
+		if err := queue.Run(queueCtx); err != nil {
+			devLog.Warn("job queue drain", "err", err)
+		}
+	}()
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -414,6 +431,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		stopWatch = nil
 	}
 	schedCancel()
+	queueCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	shutdownErr := srv.Shutdown(shutdownCtx)
@@ -421,6 +439,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		listenErr = <-serveErr
 	}
 	<-schedDone
+	<-queueDone
 	return errors.Join(listenErr, shutdownErr)
 }
 
