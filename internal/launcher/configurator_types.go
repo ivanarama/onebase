@@ -91,8 +91,11 @@ type saveEntity struct {
 	Numerator          *saveNumerator    `yaml:"numerator,omitempty"`
 	Predefined         []savePredefined  `yaml:"predefined,omitempty"`
 	ListForm           []string          `yaml:"list_form,omitempty"`
-	ItemForm           []string          `yaml:"item_form,omitempty"`
-	Activity           *saveActivity     `yaml:"activity,omitempty"`
+	// ItemForm — []any, а не []string: запись состава формы может быть и
+	// отображением {name, readonly} (#1011). При []string правка реквизитов
+	// в конфигураторе роняла бы разбор такого YAML целиком.
+	ItemForm []any         `yaml:"item_form,omitempty"`
+	Activity *saveActivity `yaml:"activity,omitempty"`
 	// FullText — указатель, потому что «ключа нет» и «fulltext: []» значат
 	// разное: первое — индексировать все строковые реквизиты, второе — убрать
 	// объект из глобального поиска (план 82). Без этого поля правка объекта из
@@ -266,14 +269,17 @@ func applyAccountRegFields(raw []byte, reg saveAccountReg, setTitles bool) ([]by
 // ── view types ────────────────────────────────────────────────────────────────
 
 type cfgField struct {
-	Name              string
-	Type              string
-	RefEntity         string
-	EnumName          string
-	Length            int // разрядность number(L,P): всего знаков (Длина)
-	Scale             int // знаков после запятой (Точность)
-	FormListHidden    bool
-	FormItemHidden    bool
+	Name           string
+	Type           string
+	RefEntity      string
+	EnumName       string
+	Length         int // разрядность number(L,P): всего знаков (Длина)
+	Scale          int // знаков после запятой (Точность)
+	FormListHidden bool
+	FormItemHidden bool
+	// FormItemReadOnly — реквизит показан в форме элемента, но только для
+	// просмотра (`item_form: [{name: X, readonly: true}]`, #1011).
+	FormItemReadOnly  bool
 	AllowInlineCreate *bool             // nil = дефолт контекста (true в шапке, false в ТЧ)
 	Titles            map[string]string // переводы синонима поля
 }

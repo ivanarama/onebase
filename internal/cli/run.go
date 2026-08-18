@@ -659,6 +659,9 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		return fmt.Errorf("attachments table: %w", err)
 	}
+	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
+		return fmt.Errorf("public files table: %w", err)
+	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return fmt.Errorf("blobs table: %w", err)
 	}
