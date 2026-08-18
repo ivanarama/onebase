@@ -51,6 +51,15 @@ func TestUniversalPortableSystemStateRoundTrip(t *testing.T) {
 	if err := auth.NewRepo(src).EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := src.EnsureAttachmentTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.EnsurePublicFilesSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	statements := []struct {
 		query string
@@ -67,6 +76,10 @@ func TestUniversalPortableSystemStateRoundTrip(t *testing.T) {
 		{`INSERT INTO _ext_reports(id,name,content,enabled) VALUES (?,?,?,?)`, []any{"report-1", "Margin", []byte("report-yaml"), true}},
 		{`INSERT INTO _ext_processors(id,name,content,enabled,trusted) VALUES (?,?,?,?,?)`, []any{"processor-1", "Reprice", []byte("processor-yaml"), true, true}},
 		{`INSERT INTO _webhook_log(id,webhook_name,error) VALUES (?,?,?)`, []any{"webhook-1", "notify", "target-local diagnostic"}},
+		// Токен публикации — единственный носитель права доступа к файлу:
+		// потеря строки после restore молча убила бы все розданные ссылки.
+		{`INSERT INTO _public_files(token,blob_id,filename,cache_seconds) VALUES (?,?,?,?)`,
+			[]any{"portable-token-1", "5f0f2a49-4f6e-4a37-9d5e-2b8f6c3d1e0a", "logo.png", 600}},
 	}
 	for _, stmt := range statements {
 		if _, err := src.Exec(ctx, stmt.query, stmt.args...); err != nil {
@@ -83,7 +96,7 @@ func TestUniversalPortableSystemStateRoundTrip(t *testing.T) {
 	for _, tableName := range []string{
 		"_sequences", "_schema_fields", "_intake_log", "_intake_dlq",
 		"_ai_audit", "_rollup", "_config_versions", "_ext_printforms",
-		"_ext_reports", "_ext_processors",
+		"_ext_reports", "_ext_processors", "_public_files",
 	} {
 		if !entries["system/"+tableName+".jsonl"] {
 			t.Errorf("portable table %s is absent from archive", tableName)
@@ -112,7 +125,7 @@ func TestUniversalPortableSystemStateRoundTrip(t *testing.T) {
 	for _, tableName := range []string{
 		"_sequences", "_schema_fields", "_intake_log", "_intake_dlq",
 		"_ai_audit", "_rollup", "_config_versions", "_ext_printforms",
-		"_ext_reports", "_ext_processors",
+		"_ext_reports", "_ext_processors", "_public_files",
 	} {
 		if got := report.Tables[tableName]; got != 1 {
 			t.Errorf("report.Tables[%s] = %d, want 1", tableName, got)

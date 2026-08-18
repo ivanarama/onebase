@@ -55,6 +55,23 @@ func registerRuntimeMetrics(reg *metrics.Registry, authRepo *auth.Repo, uiSrv *u
 	reg.RegisterGaugeFunc("onebase_active_scheduled_jobs", "Активные регламентные задания.", func() float64 {
 		return float64(sched.ActiveRunCount())
 	})
+	// Кэш ответов HTTP-сервисов (план 126).
+	reg.RegisterCounterFunc("onebase_http_cache_hits_total", "Ответы HTTP-сервисов, отданные из кэша.", func() float64 {
+		h, _, _, _ := uiSrv.ServiceCacheStats()
+		return float64(h)
+	})
+	reg.RegisterCounterFunc("onebase_http_cache_misses_total", "Промахи кэша ответов HTTP-сервисов.", func() float64 {
+		_, m, _, _ := uiSrv.ServiceCacheStats()
+		return float64(m)
+	})
+	reg.RegisterCounterFunc("onebase_http_cache_evictions_total", "Записи, вытесненные из кэша ответов по лимиту памяти.", func() float64 {
+		_, _, e, _ := uiSrv.ServiceCacheStats()
+		return float64(e)
+	})
+	reg.RegisterGaugeFunc("onebase_http_cache_bytes", "Объём кэша ответов HTTP-сервисов, байт.", func() float64 {
+		_, _, _, b := uiSrv.ServiceCacheStats()
+		return float64(b)
+	})
 	if hooks != nil {
 		reg.RegisterGaugeFunc("onebase_webhook_inflight", "Webhook-вызовы в очереди или выполнении.", func() float64 {
 			return float64(hooks.Metrics().Inflight)
