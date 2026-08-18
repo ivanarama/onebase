@@ -68,6 +68,8 @@ docs/*
 !docs/DEPLOYMENT.md
 !docs/reverse-proxy.md
 !docs/release-signing.md
+# Генерируется `onebase langref`; сверяется тестом TestDSLReferenceUpToDate.
+!docs/dsl-reference.md
 
 # Локальные демо-артефакты (выгрузки, скриншоты печати)
 demo/
