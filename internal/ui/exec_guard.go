@@ -8,13 +8,15 @@ package ui
 import (
 	"context"
 	"errors"
+
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // ErrExecLocked — текст отказа, видимый пользователю (DSL-ошибка, ловится
 // Попыткой). Прямо подсказывает, где включить.
-// Как и у сети (#709): помимо пункта меню называем ключ и команду — иначе в
-// headless-окружении сообщение не отвечает на вопрос «что сделать».
-var ErrExecLocked = errors.New("выполнение команд ОС отключено — включите «Разрешить выполнение команд ОС» в конфигураторе (Система → Настройки) либо командой: onebase settings set exec.enabled вкл")
+// Как и у сети (#709): помимо пути в конфигураторе называем ключ и команду —
+// иначе в headless-окружении сообщение не отвечает на вопрос «что сделать».
+var ErrExecLocked = errors.New("выполнение команд ОС отключено — " + storage.ExecEnabledHint)
 
 // execEnabled сообщает, разрешён ли запуск команд ОС для текущей базы.
 func (s *Server) execEnabled(ctx context.Context) bool {
