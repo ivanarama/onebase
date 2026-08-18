@@ -31,10 +31,10 @@ func TestТикУважаетАдминистративноеВключение(
 	db, ctx := openSchedulerTestDB(t)
 	sched := New(db, nil, nil)
 	if err := sched.LoadJobs([]*metadata.ScheduledJob{{
-		Name:      "Молчун",
-		Schedule:  "@every 1s",
-		Enabled:   false, // выключен в конфигурации
-		Timeout:   10,
+		Name:     "Молчун",
+		Schedule: "@every 1s",
+		Enabled:  false, // выключен в конфигурации
+		Timeout:  10,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestJobStatesНакладываетРешения(t *testing.T) {
 
 	// Два решения поверх двух конфигурационных дефолтов — все четыре
 	// состояния источника, которые показывает админка.
-	assert.NoError(t, db.SaveScheduledEnabled(ctx, "ВключеноеКонфигурацией", false)) // выключено администратором
+	assert.NoError(t, db.SaveScheduledEnabled(ctx, "ВключеноеКонфигурацией", false))  // выключено администратором
 	assert.NoError(t, db.SaveScheduledEnabled(ctx, "ВыключенноеКонфигурацией", true)) // включено администратором
 
 	byName := map[string]JobState{}

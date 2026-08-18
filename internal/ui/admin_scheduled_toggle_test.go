@@ -52,11 +52,11 @@ func toggleTestServer(t *testing.T) (*Server, *storage.DB) {
 	t.Cleanup(func() { _ = sched.Shutdown(context.Background()) })
 
 	return &Server{
-		store:     db,
-		reg:       runtime.NewRegistry(),
-		sched:     sched,
-		messages:  NewMessageStore(),
-		lockMgr:   runtime.NewLockManager(),
+		store:    db,
+		reg:      runtime.NewRegistry(),
+		sched:    sched,
+		messages: NewMessageStore(),
+		lockMgr:  runtime.NewLockManager(),
 	}, db
 }
 
