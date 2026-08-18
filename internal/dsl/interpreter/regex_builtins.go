@@ -212,6 +212,9 @@ func (r *dslRegex) CallMethod(name string, args []any) any {
 		}
 		return NewArray(items)
 	}
+	// Молчаливое Неопределено спрятало бы опечатку в имени метода — падаем,
+	// как остальные объекты интерпретатора.
+	RaiseUserError("Регекс: неизвестный метод «" + name + "»")
 	return nil
 }
 
@@ -244,8 +247,14 @@ func (r *dslRegex) findAll(args []any) any {
 			"Регекс.НайтиВсе: больше %d совпадений; сузьте шаблон или передайте предел вторым аргументом", maxRegexMatches))
 	}
 	items := make([]any, 0, len(locs))
+	// Позиция считается бегущим счётчиком рун: совпадения идут по возрастанию
+	// смещения, и пересчёт от начала строки на каждое (RuneCountInString(s[:i]))
+	// давал бы квадратичное время на больших входах.
+	runes, fromByte := 0, 0
 	for _, loc := range locs {
-		items = append(items, r.matchStruct(s, loc))
+		runes += utf8.RuneCountInString(s[fromByte:loc[0]])
+		fromByte = loc[0]
+		items = append(items, r.matchStructAt(s, loc, runes))
 	}
 	return NewArray(items)
 }
@@ -254,10 +263,15 @@ func (r *dslRegex) findAll(args []any) any {
 // РУНАХ, как у СтрНайти (builtins.go: len([]rune(s[:idx]))+1); байтовое
 // смещение Go на кириллице дало бы значение, не совпадающее с остальным DSL.
 func (r *dslRegex) matchStruct(s string, loc []int) *Struct {
+	return r.matchStructAt(s, loc, utf8.RuneCountInString(s[:loc[0]]))
+}
+
+// matchStructAt — то же с уже посчитанной руновой позицией начала совпадения.
+func (r *dslRegex) matchStructAt(s string, loc []int, startRunes int) *Struct {
 	res := NewStructFromMap(nil)
 	value := s[loc[0]:loc[1]]
 	res.Set("Значение", value)
-	res.Set("Позиция", float64(utf8.RuneCountInString(s[:loc[0]])+1))
+	res.Set("Позиция", float64(startRunes+1))
 	res.Set("Длина", float64(utf8.RuneCountInString(value)))
 
 	groups := make([]any, 0, len(loc)/2)

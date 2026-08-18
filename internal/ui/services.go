@@ -97,6 +97,9 @@ func (s *Server) MountServices(r chi.Router) {
 	// Опубликованные вложения (план 127) — тоже публичная поверхность вне
 	// session-middleware: право на файл даёт непредсказуемый токен в адресе.
 	r.Get("/pub/{token}", s.publicFileServe)
+	// HEAD обязателен для публичной раздачи: CDN и мониторинги проверяют им
+	// доступность; ServeContent сам не пишет тело на HEAD.
+	r.Head("/pub/{token}", s.publicFileServe)
 }
 
 // serviceIndex — GET /hs: машиночитаемый список опубликованных сервисов
@@ -168,10 +171,16 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 	// ответах об ошибке. Сжатие — обёрткой writer'а: решение «сжимать ли»
 	// принимается по факту записи, когда известны тип и объём тела.
 	applyServiceSecurityHeaders(w, r, svc)
-	if svc.CompressEnabled() && clientAcceptsGzip(r) {
-		gzw := newGzipResponseWriter(w)
-		defer gzw.Close()
-		w = gzw
+	if svc.CompressEnabled() {
+		// URL с включённым сжатием существует в двух вариантах — сжатом и нет,
+		// поэтому Vary обязан стоять на ОБОИХ: общий кэш без него отдаст
+		// вариант первого клиента всем остальным.
+		w.Header().Add("Vary", "Accept-Encoding")
+		if clientAcceptsGzip(r) {
+			gzw := newGzipResponseWriter(w)
+			defer gzw.Close()
+			w = gzw
+		}
 	}
 
 	// CORS уровня сервиса. Заголовки Allow-Origin ставим на все ответы сервиса,
@@ -245,6 +254,13 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		out := w
 		capture := newCacheCapture()
 		defer func() {
+			// Паника обработчика раскручивает стек через этот defer: capture в
+			// этот момент — нетронутый 200 с пустым телом, и без проверки он
+			// ушёл бы в кэш на весь TTL. Пробрасываем панику дальше, в
+			// incident.Recoverer — тот отдаст 500, заголовок ещё не отправлен.
+			if rec := recover(); rec != nil {
+				panic(rec)
+			}
 			if capture.cacheable(svc.Cache.BodyLimit()) {
 				resp := capture.toCachedResponse()
 				s.svcCache.Put(key, svc.RootURL, resp, time.Duration(svc.Cache.TTL)*time.Second)

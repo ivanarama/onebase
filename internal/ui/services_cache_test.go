@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/auth"
@@ -18,6 +19,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/httpservice"
+	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -48,6 +50,10 @@ const cacheHandlersSrc = `
     Отв.УстановитьЗаголовок("Set-Cookie", "sid=abc");
     Отв.УстановитьТелоИзСтроки("сессия");
     Возврат Отв;
+КонецФункции
+
+Функция Бум(Запрос) Экспорт
+    Возврат Утилиты.Бах(Запрос);
 КонецФункции
 
 Функция Большая(Запрос) Экспорт
@@ -117,7 +123,7 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 	registry.Load(runtime.LoadOptions{
 		Entities: []*metadata.Entity{counter},
 		ServicePrograms: map[string]*ast.Program{
-			"Pub": prog, "NoVary": prog, "Priv": prog,
+			"Pub": prog, "NoVary": prog, "Priv": prog, "Lang": prog,
 		},
 	})
 
@@ -126,6 +132,7 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 		{Template: "/missing", Methods: map[string]string{"GET": "Ошибка404"}},
 		{Template: "/cookie", Methods: map[string]string{"GET": "Куки"}},
 		{Template: "/big", Methods: map[string]string{"GET": "Большая"}},
+		{Template: "/boom", Methods: map[string]string{"GET": "Бум"}},
 	}
 	pub := &httpservice.Service{Name: "Pub", RootURL: "pub", Auth: "none", Templates: tmpl,
 		Cache: &httpservice.CacheConfig{TTL: 60, Vary: []string{"query", "host"}, Public: true, MaxBody: 2048}}
@@ -133,10 +140,12 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 		Cache: &httpservice.CacheConfig{TTL: 60, Vary: []string{}}}
 	priv := &httpservice.Service{Name: "Priv", RootURL: "priv", Auth: "basic", Templates: tmpl,
 		Cache: &httpservice.CacheConfig{TTL: 60}}
-	for _, svc := range []*httpservice.Service{pub, noVary, priv} {
+	langSvc := &httpservice.Service{Name: "Lang", RootURL: "lang", Auth: "none", Templates: tmpl,
+		Cache: &httpservice.CacheConfig{TTL: 60, Vary: []string{"lang"}, Public: true}}
+	for _, svc := range []*httpservice.Service{pub, noVary, priv, langSvc} {
 		svc.Normalize()
 	}
-	registry.LoadHTTPServices([]*httpservice.Service{pub, noVary, priv})
+	registry.LoadHTTPServices([]*httpservice.Service{pub, noVary, priv, langSvc})
 
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
@@ -149,6 +158,18 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 	cts := &cacheTestServer{cache: cache, clock: time.Now(), db: db, t: t}
 	cache.now = func() time.Time { return cts.clock }
 
+	// Бандл с en и ru: без него resolveLang всегда отвечает «ru», и дробление
+	// ключа кэша по языку (vary: lang) нечем проверить. Базовый язык конфигурации
+	// пуст намеренно: в цепочке приоритетов он стоит выше Accept-Language и
+	// заглушил бы его.
+	bundle, err := i18n.Load(fstest.MapFS{
+		"locales/en.json": &fstest.MapFile{Data: []byte(`{}`)},
+		"locales/ru.json": &fstest.MapFile{Data: []byte(`{}`)},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	s := &Server{
 		store:            db,
 		reg:              registry,
@@ -159,6 +180,7 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 		maxFileSizeBytes: 1 << 20,
 		loginLimit:       auth.NewLoginLimiter(5, time.Minute),
 		svcCache:         cache,
+		cfg:              Config{Bundle: bundle},
 	}
 	s.entitySvc = s.newEntityService(nil)
 	cts.srv = s
@@ -180,6 +202,84 @@ func (c *cacheTestServer) get(t *testing.T, path string, headers ...string) *htt
 	w := httptest.NewRecorder()
 	c.srv.serviceDispatch(w, r)
 	return w
+}
+
+// Go-паника обработчика (не DSL-ошибка) раскручивает serviceDispatch через
+// defer кэширования: без проверки recover туда уезжал бы нетронутый capture —
+// пустой 200 — и жил бы в кэше весь TTL. Паника инжектируется через
+// LookupModuleProc — шов, который дёргается изнутри исполнения DSL.
+func TestServiceCache_PanicNotCached(t *testing.T) {
+	c := newCacheTestServer(t)
+	c.srv.interp.LookupModuleProc = func(module, name string) *ast.ProcedureDecl {
+		panic("рукотворная Go-паника обработчика")
+	}
+
+	r := httptest.NewRequest("GET", "/hs/pub/boom", nil)
+	w := httptest.NewRecorder()
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		c.srv.serviceDispatch(w, r)
+	}()
+	if recovered == nil {
+		t.Fatal("паника обработчика не дошла до внешнего Recoverer — её съели по дороге")
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("при панике клиенту успело уйти тело: %q", w.Body.String())
+	}
+	if n := c.cache.Size(); n != 0 {
+		t.Fatalf("паника оставила запись в кэше (size=%d)", n)
+	}
+}
+
+// vary: lang дробит ключ по языку из Accept-Language, поэтому внешние кэши
+// обязаны получить Vary: Accept-Language — иначе public-ответ на языке первого
+// клиента прокси раздаст клиентам с другим языком.
+func TestServiceCache_VaryLang(t *testing.T) {
+	c := newCacheTestServer(t)
+
+	en := c.get(t, "/hs/lang/page", "Accept-Language", "en")
+	if en.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", en.Code, en.Body.String())
+	}
+	varyOK := false
+	for _, v := range en.Header().Values("Vary") {
+		if strings.Contains(v, "Accept-Language") {
+			varyOK = true
+		}
+	}
+	if !varyOK {
+		t.Errorf("нет Vary: Accept-Language, Vary=%v", en.Header().Values("Vary"))
+	}
+	if cc := en.Header().Get("Cache-Control"); !strings.Contains(cc, "public") {
+		t.Errorf("ожидался Cache-Control: public, получен %q", cc)
+	}
+
+	c.get(t, "/hs/lang/page", "Accept-Language", "ru")
+	if got := c.calls(); got != 2 {
+		t.Errorf("другой язык должен дать промах: обработчик вызван %d раз(а), ожидалось 2", got)
+	}
+	c.get(t, "/hs/lang/page", "Accept-Language", "en")
+	if got := c.calls(); got != 2 {
+		t.Errorf("повтор языка должен дать хит: обработчик вызван %d раз(а), ожидалось 2", got)
+	}
+}
+
+// Ключ (при vary: query — весь query-string) и заголовки обязаны входить в
+// учёт размера: иначе мусорные уникальные параметры раздувают память мимо
+// лимита, а метрика размера кэша врёт в разы.
+func TestServiceCache_SizeCountsKeyAndHeaders(t *testing.T) {
+	cache := newServiceCache(0)
+	key := strings.Repeat("k", 10_000)
+	resp := &cachedResponse{
+		Status: http.StatusOK,
+		Header: http.Header{"X-Long": []string{strings.Repeat("v", 5_000)}},
+		Body:   []byte("тело"),
+	}
+	cache.Put(key, "svc", resp, time.Minute)
+	if got := cache.Size(); got < 15_000 {
+		t.Fatalf("размер кэша не учитывает ключ и заголовки: %d", got)
+	}
 }
 
 func TestServiceCache_HitSkipsHandler(t *testing.T) {
@@ -320,17 +420,24 @@ func TestServiceCache_ETag304(t *testing.T) {
 }
 
 // Кэш при auth ≠ none игнорируется: иначе ответ одного пользователя достался
-// бы другому.
+// бы другому. Обработчик обязан реально исполниться под учёткой — тест с 401
+// до обработчика не может упасть: не-200 и так не кэшируется.
 func TestServiceCache_AuthNotNoneNotCached(t *testing.T) {
 	c := newCacheTestServer(t)
+	if _, err := c.srv.authRepo.Create(t.Context(), "admin", "S3cret-pass", "Админ", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	for i := 0; i < 2; i++ {
 		r := httptest.NewRequest("GET", "/hs/priv/page", nil)
-		r.SetBasicAuth("нет", "нет")
+		r.SetBasicAuth("admin", "S3cret-pass")
 		w := httptest.NewRecorder()
 		c.srv.serviceDispatch(w, r)
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("ожидался 401 (учётки нет), получено %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Fatalf("запрос %d: status=%d body=%s", i+1, w.Code, w.Body.String())
 		}
+	}
+	if got := c.calls(); got != 2 {
+		t.Fatalf("кэш при auth: basic сработал: обработчик вызван %d раз(а), ожидалось 2", got)
 	}
 	if c.cache.Size() != 0 {
 		t.Fatalf("кэш непуст (%d байт) для сервиса с auth: basic", c.cache.Size())
@@ -399,5 +506,45 @@ func TestServiceCache_LRUEviction(t *testing.T) {
 	}
 	if small.evictions.Load() == 0 {
 		t.Errorf("вытеснения не происходило — лимит памяти не работает")
+	}
+}
+
+// Сброс и размер кэша из DSL — через боевую регистрацию builtins. Сброс по
+// ИМЕНИ сервиса проверяет и резолв имя → root_url: ключи кэша строятся по URL.
+func TestServiceCache_DSLResetAndSize(t *testing.T) {
+	c := newCacheTestServer(t)
+	if got := c.get(t, "/hs/pub/page"); got.Code != http.StatusOK {
+		t.Fatalf("прогрев: status=%d", got.Code)
+	}
+
+	vars := map[string]any{}
+	c.srv.registerServiceCacheBuiltins(vars)
+	call := func(name string, args ...any) any {
+		fn, ok := vars[name].(interpreter.BuiltinFunc)
+		if !ok {
+			t.Fatalf("функция %s не зарегистрирована в DSL", name)
+		}
+		res, err := fn(args, "", 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return res
+	}
+
+	if size := call("РазмерКэшаСервисов").(float64); size <= 0 {
+		t.Fatalf("РазмерКэшаСервисов=%v после прогрева, ожидалось > 0", size)
+	}
+	if cleared := call("СброситьКэшСервисов", "Pub").(float64); cleared != 1 {
+		t.Fatalf("СброситьКэшСервисов(\"Pub\")=%v, ожидалась 1 запись", cleared)
+	}
+	if size := call("РазмерКэшаСервисов").(float64); size != 0 {
+		t.Fatalf("после сброса размер=%v", size)
+	}
+
+	// После сброса запрос снова доходит до обработчика.
+	c.reset()
+	c.get(t, "/hs/pub/page")
+	if got := c.calls(); got != 1 {
+		t.Fatalf("после сброса обработчик вызван %d раз(а), ожидался 1", got)
 	}
 }

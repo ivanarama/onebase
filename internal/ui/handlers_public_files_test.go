@@ -303,3 +303,74 @@ func TestPublicFile_DeletedBlob404(t *testing.T) {
 		t.Fatalf("status=%d, ожидался 404", w.Code)
 	}
 }
+
+// У блобов нет времени загрузки, поэтому условные запросы для них держатся на
+// ETag от токена: повторный визит с If-None-Match не должен тянуть тело заново.
+func TestPublicFile_BlobConditionalByETag(t *testing.T) {
+	_, r, db := newPublicFilesServer(t)
+	blob, err := db.PutBlob(t.Context(), "image/png", strings.NewReader("PNG-BYTES"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: "Товары"})
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	token, err := db.PublishBlob(t.Context(), blob.ID, storage.PublishOptions{})
+	if err != nil {
+		t.Fatalf("PublishBlob: %v", err)
+	}
+
+	first := httptest.NewRecorder()
+	r.ServeHTTP(first, httptest.NewRequest("GET", "/pub/"+token, nil))
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("нет ETag — условные запросы для блобов не работают")
+	}
+
+	req := httptest.NewRequest("GET", "/pub/"+token, nil)
+	req.Header.Set("If-None-Match", etag)
+	second := httptest.NewRecorder()
+	r.ServeHTTP(second, req)
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("повтор с If-None-Match: status=%d, ожидался 304", second.Code)
+	}
+	if second.Body.Len() != 0 {
+		t.Errorf("304 пришёл с телом: %q", second.Body.String())
+	}
+}
+
+// Анонимная поверхность обязана иметь предел одновременных отдач: без него
+// N медленных клиентов держат N буферов тела в памяти единственного бинаря.
+func TestPublicFile_ConcurrencyLimit503(t *testing.T) {
+	s, r, db := newPublicFilesServer(t)
+	token := publishTestFile(t, db, "big.bin", "application/pdf", "данные", storage.PublishOptions{})
+
+	// Занимаем все слоты лимитера — как будто столько отдач уже висит.
+	s.ops = newOperationLimiter()
+	var releases []func()
+	for i := 0; i < publicFileServeConcurrency; i++ {
+		release, ok := s.ops.tryAcquire(opPublicFileServe, publicFileServeConcurrency)
+		if !ok {
+			t.Fatalf("слот %d не занялся", i)
+		}
+		releases = append(releases, release)
+	}
+	defer func() {
+		for _, rel := range releases {
+			rel()
+		}
+	}()
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("при занятых слотах status=%d, ожидался 503", w.Code)
+	}
+
+	// Освобождение слота возвращает отдачу в строй.
+	releases[0]()
+	releases = releases[:copy(releases, releases[1:])]
+	ok := httptest.NewRecorder()
+	r.ServeHTTP(ok, httptest.NewRequest("GET", "/pub/"+token, nil))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("после освобождения слота status=%d", ok.Code)
+	}
+}

@@ -50,6 +50,18 @@ const compressHandlersSrc = `
     Отв.УстановитьТелоИзСтроки(т);
     Возврат Отв;
 КонецФункции
+
+Функция Готовый(Запрос) Экспорт
+    т = "";
+    Для Сч = 1 По 300 Цикл
+        т = т + "0123456789";
+    КонецЦикла;
+    Отв = Новый HTTPСервисОтвет(200);
+    Отв.УстановитьЗаголовок("Content-Type", "text/html; charset=utf-8");
+    Отв.УстановитьЗаголовок("Content-Encoding", "gzip");
+    Отв.УстановитьТелоИзСтроки(т);
+    Возврат Отв;
+КонецФункции
 `
 
 // newCompressTestServer поднимает сервер с тремя сервисами: публичный (сжатие
@@ -83,6 +95,7 @@ func newCompressTestServer(t *testing.T) *Server {
 		{Template: "/big", Methods: map[string]string{"GET": "Большой"}},
 		{Template: "/small", Methods: map[string]string{"GET": "Маленький"}},
 		{Template: "/png", Methods: map[string]string{"GET": "Картинка"}},
+		{Template: "/precompressed", Methods: map[string]string{"GET": "Готовый"}},
 	}
 	yes := true
 	pub := &httpservice.Service{Name: "Pub", RootURL: "pub", Auth: "none", Templates: tmpl}
@@ -224,14 +237,21 @@ func TestCompress_DefaultByAuth(t *testing.T) {
 		t.Errorf("сервис с auth: basic сжат по умолчанию — это BREACH-риск")
 	}
 
+	// Явный compress: true при auth: basic — под настоящей учёткой, чтобы
+	// обработчик реально исполнился: ассерт на 401-ответе не может упасть.
+	if _, err := s.authRepo.Create(t.Context(), "admin", "S3cret-pass", "Админ", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	privZip := httptest.NewRecorder()
 	rz := httptest.NewRequest("GET", "/hs/privzip/big", nil)
 	rz.Header.Set("Accept-Encoding", "gzip")
+	rz.SetBasicAuth("admin", "S3cret-pass")
 	s.serviceDispatch(privZip, rz)
-	// Ответ будет 401 (учётки нет), но решение о сжатии принимается до auth —
-	// проверяем, что явный compress: true уважается.
-	if enc := privZip.Header().Get("Content-Encoding"); enc != "" && enc != "gzip" {
-		t.Errorf("неожиданный Content-Encoding=%q", enc)
+	if privZip.Code != http.StatusOK {
+		t.Fatalf("privzip под учёткой: status=%d body=%s", privZip.Code, privZip.Body.String())
+	}
+	if enc := privZip.Header().Get("Content-Encoding"); enc != "gzip" {
+		t.Errorf("явный compress: true при auth: basic не сжал ответ (Content-Encoding=%q)", enc)
 	}
 }
 
@@ -246,9 +266,34 @@ func TestCompress_ContentLengthRemoved(t *testing.T) {
 
 func TestCompress_ClientRefusesGzip(t *testing.T) {
 	s := newCompressTestServer(t)
-	w := doGzipReq(t, s, "/hs/pub/big", "gzip;q=0")
-	if enc := w.Header().Get("Content-Encoding"); enc != "" {
-		t.Fatalf("клиент отказался от gzip (q=0), а ответ сжат: %q", enc)
+	// q=0 в любой записи — отказ: q=0.0 по RFC ровно то же, что q=0.
+	for _, accept := range []string{"gzip;q=0", "gzip;q=0.0", "gzip; q=0.000"} {
+		w := doGzipReq(t, s, "/hs/pub/big", accept)
+		if enc := w.Header().Get("Content-Encoding"); enc != "" {
+			t.Fatalf("клиент отказался от gzip (%q), а ответ сжат: %q", accept, enc)
+		}
+	}
+}
+
+// Vary обязан стоять и на НЕсжатом варианте: общий кэш без него отдаст ответ
+// клиента без gzip клиенту с gzip (и наоборот).
+func TestCompress_VaryOnUncompressed(t *testing.T) {
+	s := newCompressTestServer(t)
+	w := doGzipReq(t, s, "/hs/pub/big", "")
+	if v := w.Header().Get("Vary"); !strings.Contains(v, "Accept-Encoding") {
+		t.Fatalf("Vary=%q на несжатом ответе сервиса со сжатием", v)
+	}
+}
+
+// Тело с уже выставленным Content-Encoding не сжимаем второй раз.
+func TestCompress_AlreadyEncodedNotRecompressed(t *testing.T) {
+	s := newCompressTestServer(t)
+	w := doGzipReq(t, s, "/hs/pub/precompressed", "gzip")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if w.Body.Len() != 3000 {
+		t.Fatalf("тело изменилось (%d байт вместо 3000) — похоже на двойное сжатие", w.Body.Len())
 	}
 }
 

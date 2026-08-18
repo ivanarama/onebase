@@ -128,3 +128,96 @@ func TestDSLPublicFile_PublishAndServe(t *testing.T) {
 		t.Fatalf("после снятия публикации ссылка отвечает %d вместо 404", after.Code)
 	}
 }
+
+// Тот же DSL-путь для картинок (поле image): у них свои функции, потому что
+// блоб — не вложение, и до этого теста вся тройка не была покрыта вовсе.
+func TestDSLPublicImage_PublishAndServe(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	cat := &metadata.Entity{
+		Name:   "Медиа",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{cat}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureAttachmentTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveNetworkEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{cat}})
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
+
+	blob, err := db.PutBlob(ctx, "image/png", strings.NewReader("IMG-BYTES"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: "Медиа"})
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+
+	vars := map[string]any{}
+	s.registerPublicFileBuiltins(vars, func() context.Context { return ctx })
+	call := func(name string, args ...any) any {
+		fn, ok := vars[name].(interpreter.BuiltinFunc)
+		if !ok {
+			t.Fatalf("функция %s не зарегистрирована в DSL", name)
+		}
+		res, err := fn(args, "", 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return res
+	}
+
+	id := blob.ID.String()
+	if got := call("СсылкаНаКартинку", id); got != nil {
+		t.Fatalf("СсылкаНаКартинку до публикации = %v, ожидалось Неопределено", got)
+	}
+	url, ok := call("ОпубликоватьКартинку", id).(string)
+	if !ok || !strings.HasPrefix(url, "/pub/") {
+		t.Fatalf("ОпубликоватьКартинку вернул %v, ожидался путь /pub/<токен>", url)
+	}
+	if again := call("СсылкаНаКартинку", id); again != url {
+		t.Errorf("СсылкаНаКартинку=%v, ожидалась та же ссылка %q", again, url)
+	}
+	if repeat := call("ОпубликоватьКартинку", id); repeat != url {
+		t.Errorf("повторная публикация дала другую ссылку: %v", repeat)
+	}
+
+	r := chi.NewRouter()
+	s.MountServices(r)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest("GET", url, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("скачивание картинки по ссылке из DSL: status=%d", rec.Code)
+	}
+	if got := rec.Body.String(); got != "IMG-BYTES" {
+		t.Errorf("содержимое=%q", got)
+	}
+
+	call("СнятьПубликациюКартинки", id)
+	after := httptest.NewRecorder()
+	r.ServeHTTP(after, httptest.NewRequest("GET", url, nil))
+	if after.Code != http.StatusNotFound {
+		t.Fatalf("после снятия публикации ссылка отвечает %d вместо 404", after.Code)
+	}
+}

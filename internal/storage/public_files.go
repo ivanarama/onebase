@@ -127,7 +127,10 @@ func (db *DB) publish(ctx context.Context, column string, id uuid.UUID, opts Pub
 		if opts.CacheSeconds <= 0 {
 			opts.CacheSeconds = existing.CacheSeconds
 		}
-		if opts.ExpiresAt == nil {
+		if opts.ExpiresAt == nil && !existing.Expired(time.Now()) {
+			// Живой срок повторная публикация сохраняет, истёкший — нет:
+			// вернуть токен, по которому /pub уже отвечает 404, — это не
+			// «опубликовать». Без нового срока публикация снова бессрочна.
 			opts.ExpiresAt = existing.ExpiresAt
 		}
 		q := fmt.Sprintf(`UPDATE _public_files SET filename=%s, cache_seconds=%s, expires_at=%s WHERE token=%s`,
