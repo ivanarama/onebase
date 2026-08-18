@@ -324,6 +324,19 @@ const tplManagedForm = `
             </div>
           {{else if eq (str $f.Type) "number"}}
             <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
+          {{else if isEnum (str $f.Type)}}
+            {{/* Список значений перечисления, как в автоформе (#1010). Перерисовка
+                 таблицы после события формы (applyTableParts) рисовала <select>
+                 уже давно — а первичный рендер оставался текстовым полем, и
+                 набранное руками значение доезжало до записи. */}}
+            <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}"{{if $tpReadOnly}} disabled{{end}}>
+              <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
+              {{range tpEnumOptions $ctx.TPEnumLabels $ctx.TPEnumOrder $tpName $f.Name $v}}
+              <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:#dc2626"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
+              {{end}}
+            </select>
+          {{else if eq (str $f.Type) "bool"}}
+            <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="true"{{if checked $v}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
           {{else}}
             <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
           {{end}}

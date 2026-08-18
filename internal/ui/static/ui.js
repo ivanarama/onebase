@@ -2400,7 +2400,8 @@ function obInitFormDelegates() {
       e.preventDefault();
       var tpName = addTp.getAttribute('data-tp-name') || '';
       var tbody = document.getElementById('tp-body-' + tpName);
-      addTpRow(tpName, obSplitDataList(addTp.getAttribute('data-tp-fields')), obSplitDataList(addTp.getAttribute('data-tp-num-fields')), tbody ? tbody.rows.length : 0);
+      addTpRow(tpName, obSplitDataList(addTp.getAttribute('data-tp-fields')), obSplitDataList(addTp.getAttribute('data-tp-num-fields')), tbody ? tbody.rows.length : 0,
+        null, null, obSplitDataList(addTp.getAttribute('data-tp-bool-fields')));
       var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
       if (table) obDOMNotifyMutation(table, 'add');
       return;
@@ -2449,13 +2450,32 @@ function obTPRefMeta() {
   return window._tpRefMeta || {};
 }
 
-function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields) {
+// Подписи и порядок значений перечислений колонок ТЧ (#1010). На managed-форме
+// эти же глобалы уже наполнил managed.js из своих script-тегов, поэтому читаем
+// ТОЛЬКО когда их нет: иначе автоформенный тег (пустой на managed-странице)
+// затёр бы данные грида.
+function obTPEnumLabels() {
+  if (!window._tpEnumLabels) window._tpEnumLabels = obReadJSONScript('ob-tp-enum-labels', {});
+  return window._tpEnumLabels || {};
+}
+
+function obTPEnumOrder() {
+  if (!window._tpEnumOrder) window._tpEnumOrder = obReadJSONScript('ob-tp-enum-order', {});
+  return window._tpEnumOrder || {};
+}
+
+// boolFields — список булевых колонок: тип колонки в разметке автоформы больше
+// нигде не виден, а флажок вместо текстового поля нужен и в добавленной строке.
+function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, boolFields) {
   var tbody = tbodyOverride || document.getElementById('tp-body-' + tpName);
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
   var tr = document.createElement('tr');
   var refOpts = (obTPRefOpts()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
+  var enumLabels = (obTPEnumLabels()[tpName]) || {};
+  var enumOrder = (obTPEnumOrder()[tpName]) || {};
+  var bools = Array.isArray(boolFields) ? boolFields : [];
   if (tbody && tbody.getAttribute('data-tp-cmd') === '1') {
     var tdSel = document.createElement('td');
     tdSel.style.textAlign = 'center';
@@ -2506,6 +2526,31 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields) 
         wrapper.appendChild(openBtn);
       }
       td.appendChild(wrapper);
+    } else if (enumLabels[fn]) {
+      // Перечисление — список значений в порядке объявления values:, первый
+      // пункт пустой (значение «не выбрано» законно).
+      var enumSel = document.createElement('select');
+      enumSel.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      var enumEmpty = document.createElement('option');
+      enumEmpty.value = '';
+      enumEmpty.textContent = '— выбрать —';
+      enumSel.appendChild(enumEmpty);
+      var enumVals = (enumOrder[fn] && enumOrder[fn].length) ? enumOrder[fn] : Object.keys(enumLabels[fn]);
+      enumVals.forEach(function (val) {
+        var o = document.createElement('option');
+        o.value = val;
+        o.textContent = (enumLabels[fn][val] !== undefined) ? enumLabels[fn][val] : val;
+        enumSel.appendChild(o);
+      });
+      td.appendChild(enumSel);
+    } else if (bools.indexOf(fn) !== -1) {
+      // Флажок: снятый чекбокс не уезжает в запрос вовсе, и разбор строки ТЧ
+      // читает отсутствие поля как «ложь» — ровно то, что нужно.
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = 'true';
+      cb.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      td.appendChild(cb);
     } else {
       var inp = document.createElement('input');
       inp.name = 'tp.' + tpName + '.' + idx + '.' + fn;
