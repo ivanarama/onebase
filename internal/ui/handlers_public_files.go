@@ -5,6 +5,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -36,11 +37,18 @@ func inlineSafeType(mime string) bool {
 }
 
 // opPublicFileServe ограничивает одновременные отдачи /pub: поверхность
-// анонимная, а блоб может весить до maxFileSizeBytes — без предела N
-// параллельных медленных клиентов держали бы N буферов в памяти.
+// анонимная, а блоб из стора без Seek читается в память целиком — без предела
+// N параллельных медленных клиентов держали бы N буферов.
+//
+// Лишние запросы ЖДУТ очереди, а не получают отказ сразу: страница с двумя
+// десятками картинок и несколькими посетителями штатно даёт больше сотни
+// одновременных запросов, и отказ по превышению выглядел бы как сломанный
+// сайт. Память при этом ограничена так же — ожидающий буфера не держит.
+// Отказ остаётся только для того, кто не дождался за publicFileServeWait.
 const (
 	opPublicFileServe          = "public_file.serve"
 	publicFileServeConcurrency = 64
+	publicFileServeWait        = 10 * time.Second
 )
 
 // publicFileServe отдаёт файл по токену публикации. Любая неудача — 404:
@@ -55,8 +63,12 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 	if s.ops == nil {
 		s.ops = newOperationLimiter()
 	}
-	release, ok := s.ops.tryAcquire(opPublicFileServe, publicFileServeConcurrency)
+	waitCtx, cancelWait := context.WithTimeout(r.Context(), publicFileServeWait)
+	release, ok := s.ops.acquire(waitCtx, opPublicFileServe, publicFileServeConcurrency)
+	cancelWait()
 	if !ok {
+		// Сюда попадают двое: не дождавшийся за отведённое время и уже
+		// отключившийся клиент. Второму ответ некуда девать, но и вреда нет.
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "слишком много одновременных запросов", http.StatusServiceUnavailable)
 		return

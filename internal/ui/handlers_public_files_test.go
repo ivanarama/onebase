@@ -5,6 +5,7 @@ package ui
 // посетителя, без cookie и токенов.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -339,7 +340,9 @@ func TestPublicFile_BlobConditionalByETag(t *testing.T) {
 
 // Анонимная поверхность обязана иметь предел одновременных отдач: без него
 // N медленных клиентов держат N буферов тела в памяти единственного бинаря.
-func TestPublicFile_ConcurrencyLimit503(t *testing.T) {
+// Но превышение предела — это ОЖИДАНИЕ, а не отказ: страница с двумя десятками
+// картинок штатно даёт всплеск запросов, и 503 читался бы как сломанный сайт.
+func TestPublicFile_ConcurrencyWaitsNotRejects(t *testing.T) {
 	s, r, db := newPublicFilesServer(t)
 	token := publishTestFile(t, db, "big.bin", "application/pdf", "данные", storage.PublishOptions{})
 
@@ -353,24 +356,54 @@ func TestPublicFile_ConcurrencyLimit503(t *testing.T) {
 		}
 		releases = append(releases, release)
 	}
-	defer func() {
-		for _, rel := range releases {
-			rel()
-		}
+
+	done := make(chan int, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
+		done <- w.Code
 	}()
 
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil))
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("при занятых слотах status=%d, ожидался 503", w.Code)
+	// Пока слоты заняты, запрос обязан ждать, а не отвечать отказом.
+	select {
+	case code := <-done:
+		t.Fatalf("запрос при занятых слотах ответил сразу (%d) вместо ожидания", code)
+	case <-time.After(150 * time.Millisecond):
 	}
 
-	// Освобождение слота возвращает отдачу в строй.
+	// Освобождение слота пропускает ожидающего.
 	releases[0]()
-	releases = releases[:copy(releases, releases[1:])]
-	ok := httptest.NewRecorder()
-	r.ServeHTTP(ok, httptest.NewRequest("GET", "/pub/"+token, nil))
-	if ok.Code != http.StatusOK {
-		t.Fatalf("после освобождения слота status=%d", ok.Code)
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("после освобождения слота status=%d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ожидающий запрос не подхватил освободившийся слот")
+	}
+	for _, rel := range releases[1:] {
+		rel()
+	}
+}
+
+// Безнадёжное ожидание всё-таки обрывается: отключившийся клиент (отменённый
+// контекст) не должен висеть в очереди до упора.
+func TestPublicFile_AbandonedWaitGivesUp(t *testing.T) {
+	s, r, db := newPublicFilesServer(t)
+	token := publishTestFile(t, db, "big.bin", "application/pdf", "данные", storage.PublishOptions{})
+
+	s.ops = newOperationLimiter()
+	for i := 0; i < publicFileServeConcurrency; i++ {
+		if _, ok := s.ops.tryAcquire(opPublicFileServe, publicFileServeConcurrency); !ok {
+			t.Fatalf("слот %d не занялся", i)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/pub/"+token, nil).WithContext(ctx))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("отменённый запрос при занятых слотах: status=%d, ожидался 503", w.Code)
 	}
 }
