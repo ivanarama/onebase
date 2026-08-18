@@ -1,0 +1,22 @@
+name: СтилиСайта
+title: Стили сайта
+# Оформление сайта: палитра + произвольный CSS. CSS хранится строкой, а не
+# richtext: санитайзер richtext вырезал бы <style> целиком. В управляемой форме
+# поле выводится как ПолеКода с подсветкой (kind: ПолеКода, language: css).
+fields:
+  - name: Наименование
+    type: string
+  - name: ЦветОсновной
+    title: Основной цвет
+    type: string
+  - name: ЦветДополнительный
+    title: Дополнительный цвет
+    type: string
+  - name: ЦветФона
+    title: Цвет фона
+    type: string
+  - name: CSS
+    title: Дополнительный CSS
+    type: string
+  - name: Описание
+    type: string

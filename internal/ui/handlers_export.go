@@ -67,6 +67,12 @@ func (s *Server) listExcel(w http.ResponseWriter, r *http.Request) {
 // filename*=UTF-8” (issue #46 — сырой UTF-8 в quoted-string браузеры
 // декодируют как latin-1, имя файла превращается в кракозябры).
 func contentDisposition(filename string) string {
+	return dispositionHeader("attachment", filename)
+}
+
+// dispositionHeader строит Content-Disposition указанного вида (attachment или
+// inline) с ASCII-fallback и filename*=UTF-8” для не-ASCII имён.
+func dispositionHeader(disposition, filename string) string {
 	fallback := make([]rune, 0, len(filename))
 	for _, r := range sanitizeFilename(filename) {
 		if r < 0x80 {
@@ -75,7 +81,7 @@ func contentDisposition(filename string) string {
 			fallback = append(fallback, '_')
 		}
 	}
-	return "attachment; filename=\"" + string(fallback) + "\"; filename*=UTF-8''" + encodeRFC5987(filename)
+	return disposition + "; filename=\"" + string(fallback) + "\"; filename*=UTF-8''" + encodeRFC5987(filename)
 }
 
 // encodeRFC5987 кодирует строку для filename*=UTF-8” — percent-кодируется

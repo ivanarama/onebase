@@ -94,6 +94,12 @@ func (s *Server) MountServices(r chi.Router) {
 	r.Get("/hs/docs", s.serviceDocs)
 	r.Get("/hs/docs/rapidoc-min.js", s.serviceDocsAsset)
 	r.Handle("/hs/*", http.HandlerFunc(s.serviceDispatch))
+	// Опубликованные вложения (план 127) — тоже публичная поверхность вне
+	// session-middleware: право на файл даёт непредсказуемый токен в адресе.
+	r.Get("/pub/{token}", s.publicFileServe)
+	// HEAD обязателен для публичной раздачи: CDN и мониторинги проверяют им
+	// доступность; ServeContent сам не пишет тело на HEAD.
+	r.Head("/pub/{token}", s.publicFileServe)
 }
 
 // serviceIndex — GET /hs: машиночитаемый список опубликованных сервисов
@@ -161,6 +167,22 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// План 128. Заголовки — до всего остального, чтобы политика стояла и на
+	// ответах об ошибке. Сжатие — обёрткой writer'а: решение «сжимать ли»
+	// принимается по факту записи, когда известны тип и объём тела.
+	applyServiceSecurityHeaders(w, r, svc)
+	if svc.CompressEnabled() {
+		// URL с включённым сжатием существует в двух вариантах — сжатом и нет,
+		// поэтому Vary обязан стоять на ОБОИХ: общий кэш без него отдаст
+		// вариант первого клиента всем остальным.
+		w.Header().Add("Vary", "Accept-Encoding")
+		if clientAcceptsGzip(r) {
+			gzw := newGzipResponseWriter(w)
+			defer gzw.Close()
+			w = gzw
+		}
+	}
+
 	// CORS уровня сервиса. Заголовки Allow-Origin ставим на все ответы сервиса,
 	// а preflight (OPTIONS) обрабатываем здесь же, не запуская обработчик.
 	if svc.CORS != nil {
@@ -212,6 +234,46 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Кэш ответов (план 126). Только GET/HEAD и только при auth: none —
+	// иначе ответ, собранный под правами одного пользователя, достался бы
+	// другому. Промахи по одному ключу сериализуются: параллельные запросы на
+	// холодную страницу не должны запускать несколько исполнений DSL.
+	if s.serviceCacheUsable(svc, r) {
+		key := serviceCacheKey(svc, r, s.resolveLang(r))
+		if resp, ok := s.svcCache.Get(key); ok {
+			writeCachedResponse(w, r, resp, svc)
+			return
+		}
+		release := s.svcCache.lockKey(key)
+		defer release()
+		// Пока ждали замок, ответ мог собрать сосед.
+		if resp, ok := s.svcCache.Get(key); ok {
+			writeCachedResponse(w, r, resp, svc)
+			return
+		}
+		out := w
+		capture := newCacheCapture()
+		defer func() {
+			// Паника обработчика раскручивает стек через этот defer: capture в
+			// этот момент — нетронутый 200 с пустым телом, и без проверки он
+			// ушёл бы в кэш на весь TTL. Пробрасываем панику дальше, в
+			// incident.Recoverer — тот отдаст 500, заголовок ещё не отправлен.
+			if rec := recover(); rec != nil {
+				panic(rec)
+			}
+			if capture.cacheable(svc.Cache.BodyLimit()) {
+				resp := capture.toCachedResponse()
+				s.svcCache.Put(key, svc.RootURL, resp, time.Duration(svc.Cache.TTL)*time.Second)
+				writeCachedResponse(out, r, resp, svc)
+				return
+			}
+			// Ошибки, слишком большие тела и ответы с Set-Cookie отдаём как
+			// есть, мимо кэша.
+			flushCapture(out, capture)
+		}()
+		w = capture
+	}
+
 	// Тело читаем целиком ДО аутентификации (ограничено maxFileSizeBytes):
 	// auth hmac проверяет подпись тела, а обработчик получает его как
 	// байты/строку без возни с потоком.
@@ -255,7 +317,19 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqObj := interpreter.NewServiceRequest(r.Method, svc.RootURL, r.URL.Path, pathParams, r.URL.Query(), r.Header, body)
+	// Host в Go живёт отдельным полем запроса: net/http вынимает его из карты
+	// заголовков ещё при разборе. Обработчик про это не знает и читает
+	// «Запрос.Заголовки.Получить("Host")» — получал пустую строку, а вместе с
+	// ней молчаливо неверный ответ. Так в examples/cms выбор сайта по домену
+	// не работал вовсе: маршрут всегда доставался первому активному сайту,
+	// хотя кэш при этом варьировался по host правильно (движок берёт r.Host
+	// напрямую) — расхождение, которое из конфигурации не видно никак.
+	hdr := r.Header
+	if r.Host != "" && hdr.Get("Host") == "" {
+		hdr = r.Header.Clone()
+		hdr.Set("Host", r.Host)
+	}
+	reqObj := interpreter.NewServiceRequest(r.Method, svc.RootURL, r.URL.Path, pathParams, r.URL.Query(), hdr, body)
 
 	opCtx, finish, ok := s.beginOperation(r, opHTTPServiceRun, svc.Name+"."+handlerName)
 	if !ok {

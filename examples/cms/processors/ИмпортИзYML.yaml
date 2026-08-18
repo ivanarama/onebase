@@ -1,0 +1,6 @@
+name: ИмпортИзYML
+title: Импорт каталога из YML-выгрузки
+params:
+  - name: Файл
+    type: file
+    label: Файл выгрузки (YML)
