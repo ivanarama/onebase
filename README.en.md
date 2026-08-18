@@ -88,9 +88,9 @@ cd onebase-linux-amd64
 ```
 
 The browser opens at `http://localhost:8080/ui` once the server is ready. There
-are eight example configurations in `examples/` — trade, accounting, CRM,
-personal finance, task tracking, a call centre, document registration and a
-minimal teaching template.
+are nine example configurations in `examples/` — trade, accounting, CRM,
+personal finance, task tracking, a call centre, document registration, a CMS
+website and a minimal teaching template.
 
 On Windows, run `onebase-gui.exe` instead for a native launcher window.
 
@@ -98,9 +98,9 @@ On Windows, run `onebase-gui.exe` instead for a native launcher window.
 
 | | |
 |---|---|
-| [`docs/dsl-reference.md`](docs/dsl-reference.md) | **the whole language on one page** — 155 functions, 150 object methods, 18 constructs, 37 query-language elements, with signatures and examples. The most useful page here if you do not read Russian: the code samples speak for themselves |
+| [`docs/dsl-reference.md`](docs/dsl-reference.md) | **the whole language on one page** — every built-in function, object method, language construct and query-language element, with signatures and examples. The most useful page here if you do not read Russian: the code samples speak for themselves |
 | [`docs/rest-api-v2.md`](docs/rest-api-v2.md) | REST API — English field names |
-| [`examples/`](examples/) | eight working configurations to read |
+| [`examples/`](examples/) | nine working configurations to read |
 | [`QUICKSTART.md`](QUICKSTART.md) | getting started (Russian) |
 | [`DEVELOPER.md`](DEVELOPER.md) | full object-format reference (Russian) |
 | [`CHANGELOG.md`](CHANGELOG.md) | what changed between versions |
