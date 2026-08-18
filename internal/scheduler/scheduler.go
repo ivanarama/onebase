@@ -176,17 +176,17 @@ func (s *Scheduler) RegisterGoJob(name, title, schedule string, fn func(ctx cont
 	if s.jobByKeyLocked(key) != nil {
 		return fmt.Errorf("scheduler: duplicate job name %q", name)
 	}
-	_, err := s.cron.AddFunc(schedule, s.goJobCallback(name, fn))
-	if err != nil {
-		return fmt.Errorf("scheduler: RegisterGoJob %s: %w", name, err)
-	}
-	s.goJobs[key] = fn
-	s.jobs = append(s.jobs, cloneScheduledJob(&metadata.ScheduledJob{
+	job := &metadata.ScheduledJob{
 		Name:     name,
 		Title:    title,
 		Schedule: schedule,
 		Enabled:  true,
-	}))
+	}
+	if _, err := s.cron.AddFunc(schedule, s.goJobCallback(job, fn)); err != nil {
+		return fmt.Errorf("scheduler: RegisterGoJob %s: %w", name, err)
+	}
+	s.goJobs[key] = fn
+	s.jobs = append(s.jobs, cloneScheduledJob(job))
 	return nil
 }
 
@@ -313,12 +313,17 @@ func (s *Scheduler) buildCron(jobs []*metadata.ScheduledJob, goJobs map[string]f
 		}
 		names[key] = struct{}{}
 		nextJobs = append(nextJobs, job)
-		if !job.Enabled {
+		// Пустое расписание — задание «по требованию» (RunNow/«Запустить
+		// сейчас»): в cron не заводится ни в каком состоянии (см.
+		// metadata.ValidateSchedule). Включённость здесь не отсекается:
+		// административное решение из _settings читается на каждом тике
+		// (#991) и может включить задание без пересборки cron.
+		if strings.TrimSpace(job.Schedule) == "" {
 			continue
 		}
 		callback := s.scheduledJobCallback(job)
 		if fn, native := goJobs[key]; native {
-			callback = s.goJobCallback(job.Name, fn)
+			callback = s.goJobCallback(job, fn)
 		}
 		if _, err := nextCron.AddFunc(job.Schedule, callback); err != nil {
 			return nil, nil, fmt.Errorf("scheduler: invalid schedule for %s: %w", job.Name, err)
@@ -329,6 +334,9 @@ func (s *Scheduler) buildCron(jobs []*metadata.ScheduledJob, goJobs map[string]f
 
 func (s *Scheduler) scheduledJobCallback(job *metadata.ScheduledJob) func() {
 	return func() {
+		if !s.tickEnabled(job) {
+			return
+		}
 		ctx, done, err := s.beginJob(job.Name)
 		if err != nil {
 			s.logSkippedJob(job.Name, err)
@@ -345,8 +353,12 @@ func (s *Scheduler) scheduledJobCallback(job *metadata.ScheduledJob) func() {
 	}
 }
 
-func (s *Scheduler) goJobCallback(name string, fn func(context.Context) error) func() {
+func (s *Scheduler) goJobCallback(job *metadata.ScheduledJob, fn func(context.Context) error) func() {
 	return func() {
+		if !s.tickEnabled(job) {
+			return
+		}
+		name := job.Name
 		ctx, done, err := s.beginJob(name)
 		if err != nil {
 			s.logSkippedJob(name, err)
@@ -361,6 +373,38 @@ func (s *Scheduler) goJobCallback(name string, fn func(context.Context) error) f
 		}
 		s.executeGoJob(ctx, name, fn, runID, startedAt)
 	}
+}
+
+// overrideReadTimeout ограничивает чтение административного решения на тике.
+const overrideReadTimeout = 5 * time.Second
+
+// tickEnabled — фактическая включённость задания на момент срабатывания
+// расписания (#991): конфигурационный Enabled может быть перекрыт
+// административным решением из _settings.
+//
+// Читаем на каждом тике, а не при сборке cron: тумблер в админке или CLI
+// (другой процесс, работающая база) подхватывается со следующего тика, без
+// рестарта и пересборки. Прецедент per-run чтения из _settings —
+// NetGuard/ExecGuard в buildDSLVars.
+//
+// Без базы (db=nil в тестах) и при сбое чтения действует конфигурация: сбой
+// некритичен, потому что без БД прогон всё равно не запишется в
+// _scheduled_runs.
+func (s *Scheduler) tickEnabled(job *metadata.ScheduledJob) bool {
+	if s.db == nil {
+		return job.Enabled
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), overrideReadTimeout)
+	defer cancel()
+	on, ok, err := s.db.GetScheduledEnabled(ctx, job.Name)
+	if err != nil {
+		s.log.Warn("scheduler: чтение состояния задания, действует конфигурация", "job", job.Name, "err", err)
+		return job.Enabled
+	}
+	if !ok {
+		return job.Enabled
+	}
+	return on
 }
 
 // beginRun заводит запись прогона и берёт его на учёт.
@@ -758,6 +802,63 @@ func (s *Scheduler) jobByKeyLocked(key string) *metadata.ScheduledJob {
 		}
 	}
 	return nil
+}
+
+// JobState — задание с расчётом фактической включённости (#991): единый
+// три-состояний расчёт для админки (список/карточка/тумблер) и CLI.
+type JobState struct {
+	Job         *metadata.ScheduledJob
+	OverrideSet bool // в базе есть административное решение
+	OverrideOn  bool // его значение
+	EffectiveOn bool // OverrideOn при OverrideSet, иначе Job.Enabled
+}
+
+// JobStates возвращает состояния всех заданий (включая выключенные — как
+// Jobs) с наложенными административными решениями. Без базы и при сбое
+// чтения следует конфигурации.
+func (s *Scheduler) JobStates(ctx context.Context) []JobState {
+	jobs := s.Jobs()
+	overrides := map[string]bool{}
+	if s.db != nil {
+		m, err := s.db.ScheduledEnabledOverrides(ctx)
+		if err != nil {
+			s.log.Warn("scheduler: чтение состояний заданий, действует конфигурация", "err", err)
+		} else if m != nil {
+			overrides = m
+		}
+	}
+	states := make([]JobState, len(jobs))
+	for i, job := range jobs {
+		st := JobState{Job: job, EffectiveOn: job.Enabled}
+		if on, ok := overrides[jobKey(job.Name)]; ok {
+			st.OverrideSet = true
+			st.OverrideOn = on
+			st.EffectiveOn = on
+		}
+		states[i] = st
+	}
+	return states
+}
+
+// JobStateByName — состояние одного задания по имени (jobKey-поиск, как
+// GetJob); nil, если задания нет.
+func (s *Scheduler) JobStateByName(ctx context.Context, name string) *JobState {
+	job := s.GetJob(name)
+	if job == nil {
+		return nil
+	}
+	st := JobState{Job: job, EffectiveOn: job.Enabled}
+	if s.db != nil {
+		on, ok, err := s.db.GetScheduledEnabled(ctx, job.Name)
+		if err != nil {
+			s.log.Warn("scheduler: чтение состояния задания, действует конфигурация", "job", job.Name, "err", err)
+		} else if ok {
+			st.OverrideSet = true
+			st.OverrideOn = on
+			st.EffectiveOn = on
+		}
+	}
+	return &st
 }
 
 // RunNow запускает задание немедленно и возвращает идентификатор прогона.
