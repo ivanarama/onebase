@@ -119,3 +119,13 @@ func TestDate_Compare(t *testing.T) {
 		t.Errorf("сравнение дат дало %v, ожидалось «до»", r)
 	}
 }
+
+// Форматирование даты: ДФ=dd.MM.yyyy и ДФ=dd.mm.yyyy.
+func TestDate_Format(t *testing.T) {
+	r := evalBreakFunc(t, `Функция Тест()
+  Возврат Формат(Дата(2026, 8, 19), "ДФ=dd.MM.yyyy");
+КонецФункции`)
+	if r != "19.08.2026" {
+		t.Errorf("Формат(ДФ=dd.MM.yyyy) = %v, ожидалось «19.08.2026»", r)
+	}
+}

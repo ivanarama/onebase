@@ -140,6 +140,7 @@ func formatDate(t time.Time, pattern string) string {
 	goFmt = strings.ReplaceAll(goFmt, "yyyy", "2006")
 	goFmt = strings.ReplaceAll(goFmt, "yy", "06")
 	goFmt = strings.ReplaceAll(goFmt, "MM", "01")
+	goFmt = strings.ReplaceAll(goFmt, "mm", "01")
 	goFmt = strings.ReplaceAll(goFmt, "dd", "02")
 	return t.Format(goFmt)
 }
