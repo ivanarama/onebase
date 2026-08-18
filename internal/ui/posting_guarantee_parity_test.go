@@ -110,11 +110,8 @@ func statusInDB(t *testing.T, ctx context.Context, db *storage.DB, id uuid.UUID)
 // записанный документ и полей не принимает. Проверять на нём нечего — и
 // делать вид, что проверяем, значило бы получить зелёный тест ни о чём.
 //
-// Отдельно: значение, присвоенное САМИМ ХУКОМ, сейчас не проверяет ни один из
-// трёх путей — проверка стоит до хука осознанно (#769: «откатывать
-// последствия хука из-за неверного значения в исходном хуже, чем не
-// начинать»). Это общая дыра, а не расхождение путей, поэтому здесь она не
-// проверяется; заведена отдельной заявкой.
+// Значение, присвоенное САМИМ ХУКОМ, проверяется отдельным тестом ниже: до
+// #977 его не проверял ни один из трёх путей.
 func TestПаритетГарантий_МусорВПеречисленииОтвергаетсяВезде(t *testing.T) {
 	const noop = `Процедура ОбработкаПроведения()
 КонецПроцедуры`
@@ -141,6 +138,49 @@ func TestПаритетГарантий_МусорВПеречисленииОт
 		w := loaded.(*docWriter)
 		w.Set("Статус", bad)
 		assertEnumRejected(t, ctx, db, id, callWriteCatchingError(t, w), nil)
+	})
+}
+
+// Значение, присвоенное хуком, обязано отклоняться так же, как пришедшее от
+// пользователя. До #977 не проверял ни один путь: входная проверка стоит до
+// хука, и присвоенное им доезжало до базы навсегда.
+//
+// Этот тест — про паритет в полном составе: списочный путь сюда входит, потому
+// что для него хук вообще единственный источник полей.
+func TestПаритетГарантий_МусорОтХукаОтвергаетсяВезде(t *testing.T) {
+	const onPost = `Процедура ОбработкаПроведения()
+  ЭтотОбъект.Статус = "ТАКОГО_НЕТ";
+КонецПроцедуры`
+
+	t.Run("entityservice (форма/REST)", func(t *testing.T) {
+		ctx, db, s, doc := guaranteeServer(t, onPost)
+		id := newOrder(t, ctx, s, doc, "Х-1")
+		res, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
+			Entity: doc, ID: id, Action: "post",
+			Fields: map[string]any{"Номер": "Х-1", "Статус": "Новый"},
+		})
+		assertEnumRejected(t, ctx, db, id, res.DSLError, err)
+	})
+
+	t.Run("DSL Провести()", func(t *testing.T) {
+		ctx, db, s, doc := guaranteeServer(t, onPost)
+		id := newOrder(t, ctx, s, doc, "Х-2")
+		dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy)
+		loaded, err := dp.LoadObject(id.String())
+		if err != nil {
+			t.Fatalf("ПолучитьОбъект: %v", err)
+		}
+		assertEnumRejected(t, ctx, db, id, callPostCatchingError(t, loaded.(*docWriter)), nil)
+	})
+
+	t.Run("список postDocument", func(t *testing.T) {
+		ctx, db, s, doc := guaranteeServer(t, onPost)
+		id := newOrder(t, ctx, s, doc, "Х-3")
+		req := reqWithChi(http.MethodPost, "/ui/document/"+doc.Name+"/"+id.String()+"/post", nil,
+			map[string]string{"entity": doc.Name, "id": id.String()})
+		rec := httptest.NewRecorder()
+		s.postDocument(rec, req)
+		assertEnumRejected(t, ctx, db, id, rec.Header().Get("Location"), nil)
 	})
 }
 
