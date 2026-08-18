@@ -9,7 +9,12 @@ auth: none
 rate_limit: 60
 compress: true
 security_headers:
-  csp: "default-src 'none'"
+  # Та же политика, что у «Сайта», а не `default-src 'none'`: сервис отвечает
+  # не JSON'ом, а полноценной страницей сайта в общем макете — со ссылкой на
+  # /hs/site/style.css. При `none` браузер эту таблицу стилей блокирует
+  # (style-src наследует default-src), и посетитель после КАЖДОЙ отправки
+  # формы видит нестилизованный HTML.
+  csp: "default-src 'self'; img-src 'self' data:; style-src 'self'"
   frame_options: DENY
 templates:
   # Адрес латиницей намеренно: кириллический сегмент шаблона сопоставляется
