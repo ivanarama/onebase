@@ -2037,6 +2037,14 @@ security_headers:
     Permissions-Policy: "geolocation=(), camera=()"
 ```
 
+`extra` — только для заголовков без выделенного поля. Заголовок, у которого поле
+есть (`csp`, `frame_options`, `referrer_policy`, `hsts`), а также
+`X-Content-Type-Options` и `Access-Control-*`, там задавать нельзя, и `onebase
+check` на это ругается с указанием нужного поля: через `extra` проверки поля не
+выполняются — `X-Frame-Options` уехал бы с любым значением, а
+`Strict-Transport-Security` ушёл бы и по обычному HTTP, где браузер запомнит
+домен как HTTPS-only.
+
 Сжатие включается для текста, JSON и XML начиная с 1 КБ — выгрузка обмена едет
 в несколько раз быстрее. Картинки, PDF и архивы не трогаются, клиент без
 поддержки gzip получает обычный ответ.
