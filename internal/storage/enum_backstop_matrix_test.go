@@ -43,6 +43,10 @@ func backstopEntity() *metadata.Entity {
 			{Name: "Номер", Type: metadata.FieldTypeString},
 			{Name: "Статус", Type: metadata.FieldTypeString, EnumName: "СтатусЗаказа"},
 		},
+		TableParts: []metadata.TablePart{{Name: "Строки", Fields: []metadata.Field{
+			{Name: "Товар", Type: metadata.FieldTypeString},
+			{Name: "СостояниеСтроки", Type: metadata.FieldTypeString, EnumName: "СтатусЗаказа"},
+		}}},
 	}
 }
 
@@ -112,17 +116,47 @@ func TestEnumBackstop_Matrix(t *testing.T) {
 			}
 		})
 
+		t.Run("строки табличной части тоже прикрыты", func(t *testing.T) {
+			// Строки пишутся отдельным вызовом, и шапочная проверка их не видит:
+			// без собственной страховки мусор в реквизите строки доезжал бы до
+			// базы, даже когда шапка проверена.
+			id := uuid.New()
+			if err := db.Upsert(ctx, doc.Name, id,
+				map[string]any{"номер": "З-6", "статус": "Новый"}, doc); err != nil {
+				t.Fatal(err)
+			}
+			tp := doc.TableParts[0]
+			err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, id,
+				[]map[string]any{{"товар": "Стол", "состояниестроки": "ТАКОГО_НЕТ"}}, tp)
+			if !errors.Is(err, storage.ErrEnumValueUnknown) {
+				t.Fatalf("страховка пропустила мусор в строке ТЧ: %v", err)
+			}
+			// Допустимое значение в строке проходит.
+			if err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, id,
+				[]map[string]any{{"товар": "Стол", "состояниестроки": "Закрыт"}}, tp); err != nil {
+				t.Fatalf("страховка отвергла допустимое значение в строке ТЧ: %v", err)
+			}
+		})
+
 		// Обмен проходит мимо страховки намеренно: узел-приёмник может работать
 		// на другой версии конфигурации, и обрывать репликацию из-за одного
 		// реквизита дороже, чем принять запись. Что делать с такими значениями —
 		// отдельное решение (#1037); здесь оно НЕ принимается, но исключение
 		// закреплено тестом, чтобы не исчезло молча.
 		t.Run("обмен проходит мимо страховки (решение по #1037 отдельно)", func(t *testing.T) {
-			err := db.ApplyReplicatedEntity(ctx, doc.Name, uuid.New(),
-				map[string]any{"номер": "З-5", "статус": "ЗНАЧЕНИЕ_ЧУЖОГО_УЗЛА"}, doc,
-				`["exchange","План","Узел",1]`)
-			if err != nil {
+			id := uuid.New()
+			source := `["exchange","План","Узел",1]`
+			if err := db.ApplyReplicatedEntity(ctx, doc.Name, id,
+				map[string]any{"номер": "З-5", "статус": "ЗНАЧЕНИЕ_ЧУЖОГО_УЗЛА"}, doc, source); err != nil {
 				t.Fatalf("обмен отклонён страховкой: %v", err)
+			}
+			// Строки ТЧ обмена — тем же writer-ом: голый UpsertTablePartRows их
+			// не пометил бы, и репликация рвалась бы на расхождении версий
+			// конфигурации там, где решение ещё не принято.
+			tp := doc.TableParts[0]
+			if err := db.ApplyReplicatedTablePartRows(ctx, doc.Name, tp.Name, id,
+				[]map[string]any{{"товар": "Стол", "состояниестроки": "ЗНАЧЕНИЕ_ЧУЖОГО_УЗЛА"}}, tp, source); err != nil {
+				t.Fatalf("строки обмена отклонены страховкой: %v", err)
 			}
 		})
 	})

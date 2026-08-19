@@ -81,10 +81,37 @@ func (db *DB) enumBackstop(ctx context.Context, entity *metadata.Entity, fields 
 		return nil
 	}
 	// Табличные части сюда не приходят: они пишутся отдельным вызовом
-	// (UpsertTablePartRows), и страховка для них — следующий шаг, а не молчаливо
-	// пропущенный случай.
+	// (UpsertTablePartRows) и прикрыты enumBackstopRows.
 	if msg := ValidateEnumValues(src, entity, fields, nil); msg != "" {
 		return fmt.Errorf("%w: %s", ErrEnumValueUnknown, msg)
+	}
+	return nil
+}
+
+// enumBackstopRows — та же страховка для строк табличной части: они пишутся
+// отдельным вызовом, и шапочная проверка их не видит. Метаданные ТЧ приходят
+// параметром, поэтому сущность здесь не нужна.
+func (db *DB) enumBackstopRows(ctx context.Context, entityName string, tp metadata.TablePart, rows []map[string]any) error {
+	src := db.enumSourceOrNil()
+	if src == nil || len(rows) == 0 {
+		return nil
+	}
+	if stageModeFromCtx(ctx).Source == StageSourceExchange {
+		return nil
+	}
+	if len(src.Enums()) == 0 {
+		return nil
+	}
+	for i, row := range rows {
+		for _, f := range tp.Fields {
+			if f.EnumName == "" {
+				continue
+			}
+			where := fmt.Sprintf("%s.%s[%d].%s", entityName, tp.Name, i+1, f.Name)
+			if msg := checkEnumValue(src, where, f.EnumName, valueByNameFold(row, f.Name)); msg != "" {
+				return fmt.Errorf("%w: %s", ErrEnumValueUnknown, msg)
+			}
+		}
 	}
 	return nil
 }
