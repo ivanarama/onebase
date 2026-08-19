@@ -19,6 +19,7 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/incident"
+	"github.com/ivantit66/onebase/internal/jobqueue"
 	"github.com/ivantit66/onebase/internal/mailer"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
@@ -70,6 +71,10 @@ type Config struct {
 	LoginLimit *auth.LoginLimiter
 	Limits     RuntimeLimits
 	Metrics    *metrics.Registry
+	// JobQueue — очередь фоновых заданий и её пул исполнителей (план 130).
+	// nil = режим без очереди (procrun, раннер конфигтестов, сервер, собранный
+	// в тесте напрямую): постановка задачи тогда честно отказывает.
+	JobQueue *jobqueue.Pool
 	// Dev включает сервисные события для разработчика (`onebase dev`): страница
 	// сама перечитывается после перезагрузки конфигурации и после перезапуска
 	// процесса. В обычном режиме этого нет намеренно: рестарт прода не должен
@@ -507,6 +512,13 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/scheduled", s.scheduledList)
 	r.Get("/ui/admin/scheduled/{name}", s.scheduledDetail)
 	r.Post("/ui/admin/scheduled/{name}/run-now", s.scheduledRunNow)
+	r.Post("/ui/admin/scheduled/{name}/toggle", s.scheduledToggle)
+	r.Post("/ui/admin/scheduled/{name}/reset", s.scheduledReset)
+
+	// Admin: очередь фоновых заданий (план 130)
+	r.Get("/ui/admin/queue", s.jobQueueMonitor)
+	r.Post("/ui/admin/queue/{id}/replay", s.jobQueueReplay)
+	r.Post("/ui/admin/queue/{id}/cancel", s.jobQueueCancel)
 
 	// Account registers
 	r.Get("/ui/accounts/{plan}", s.accountsList)

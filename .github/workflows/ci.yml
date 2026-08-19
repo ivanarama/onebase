@@ -649,6 +649,12 @@ jobs:
           # Гоним весь пакет, чтобы новый матричный тест нельзя было добавить
           # рядом с checks_matrix_test.go и случайно оставить вне PG-гейта.
           go test -race -count=1 -timeout 15m ./internal/dbcheck
+          # Очередь фоновых заданий (план 130). Юнит-джоб гоняет её на SQLite,
+          # где исполнитель ровно один по построению — то есть ГЛАВНОЕ свойство
+          # подсистемы, параллельная работа N исполнителей и расхождение
+          # конкурентов через FOR UPDATE SKIP LOCKED, там не проверяется вообще.
+          # Без этой строки пул на 16–32 исполнителя не доказан ни одним гейтом.
+          go test -race -count=1 -timeout 15m ./internal/jobqueue
           # Table-part shape compatibility is dialect-matrix tested in
           # internal/exchange. The regular unit job has no TEST_DATABASE_URL,
           # so explicitly gate the PostgreSQL half here.
