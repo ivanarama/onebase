@@ -258,7 +258,7 @@ func (db *DB) tableColumns(ctx context.Context, table string) (map[string]string
 		// (не из запроса пользователя) и уже нормализовано ColumnName/TableName.
 		rows, err = db.Query(ctx, `SELECT name, type FROM pragma_table_info(?)`, table)
 	} else {
-		// current_schema(), а не жёстко 'public': при schema-изоляции (план 108)
+		// current_schema(), а не жёстко 'public': при schema-изоляции (план 136)
 		// таблицы лежат в эфемерной схеме, и фильтр по 'public' возвращал пустоту.
 		// Планировщик считал таблицу несуществующей и вместо retype/rename выдавал
 		// add на каждое поле — то есть вся реструктуризация плана 81 молча
