@@ -498,3 +498,37 @@ func TestPickManagedForm_AnyKind(t *testing.T) {
 		t.Errorf("по '' должна быть любая managed, получили %+v", got)
 	}
 }
+
+func TestPageManagedForm_EditableRefRendersMagnifier(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Продажа",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{
+			Name:      "Клиент",
+			Type:      metadata.FieldType("reference:Клиенты"),
+			RefEntity: "Клиенты",
+		}},
+	}
+	el := &metadata.FormElement{
+		Kind:     metadata.FormElementField,
+		Name:     "ПолеКлиент",
+		DataPath: "Объект.Клиент",
+		ReadOnly: false,
+	}
+	ctx := map[string]any{
+		"Entity":      ent,
+		"Values":      map[string]string{"Клиент": ""},
+		"RefOptions":  map[string]any{"Клиент": []map[string]any{{"id": "cl-1", "_label": "Иван"}}},
+		"EnumOptions": map[string]any{},
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
+		t.Fatalf("execute managed-element: %v", err)
+	}
+	html := buf.String()
+	want := `data-ob-ref-current="ref-Клиент"`
+	if !strings.Contains(html, want) {
+		t.Errorf("на редактируемой форме пустое поле-ссылка обязано содержать кнопку перехода в карточку %q:\n%s", want, html)
+	}
+}
+

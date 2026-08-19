@@ -125,3 +125,29 @@ func TestHead_EmbeddedChromeHidden(t *testing.T) {
 		}
 	}
 }
+
+func TestTabs_OpenableAllowsRefOpen(t *testing.T) {
+	data := map[string]any{
+		"Cfg":              Config{AppName: "Test"},
+		"Lang":             "ru",
+		"Subsystems":       []any{},
+		"CurrentSubsystem": "",
+		"Nav":              []any{},
+		"CollapsibleNav":   false,
+		"IsAdmin":          false,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "page-app-shell", data); err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	html := buf.String()
+	want := `(admin|about|logout|login|logo|debug|app|_(?!ref-open|ref-create))`
+	if !strings.Contains(html, want) {
+		t.Errorf("оболочка вкладок не содержит исключение для _ref-open/_ref-create: %q", want)
+	}
+	js := string(uiJS)
+	if !strings.Contains(js, want) {
+		t.Errorf("ui.js не содержит исключение для _ref-open/_ref-create: %q", want)
+	}
+}
+
