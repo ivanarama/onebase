@@ -20,3 +20,10 @@ fields:
     type: bool
   - name: Активна
     type: bool
+
+# Без блока activity созданная в интерфейсе запись приходила с пустым флагом,
+# то есть неактивной, и молча не показывалась на сайте (#1014).
+activity:
+  field: Активна
+  default_scope: active
+  hide_from_choice: true

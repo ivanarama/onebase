@@ -28,3 +28,10 @@ fields:
     type: bool
   - name: Сайт
     type: reference:Сайты
+
+# Без блока activity созданная в интерфейсе запись приходила с пустым флагом,
+# то есть неактивной, и молча не показывалась на сайте (#1014).
+activity:
+  field: Активен
+  default_scope: active
+  hide_from_choice: true
