@@ -339,6 +339,29 @@ func (db *DB) LogDisclose(ctx context.Context, kind, entityName, recordID, field
 	})
 }
 
+// LogExchangeMismatch фиксирует расхождение конфигураций, принятое обменом:
+// узел-отправитель прислал значение, которого нет в местных метаданных
+// (#1037). Запись при этом принимается — рвать репликацию из-за одного
+// реквизита дороже, — но событие обязано остаться видимым, иначе расхождение
+// версий обнаруживается только сверкой отчётов.
+//
+// Пишется БЕЗУСЛОВНО, как раскрытие поля: выключенный журнал регистрации не
+// должен стирать след того, что в базе лежит значение, которого конфигурация
+// не знает. Событие редкое — оно случается лишь при разъехавшихся версиях.
+func (db *DB) LogExchangeMismatch(ctx context.Context, kind, entityName, recordID, detail, sourceRef string) error {
+	u, _ := auditUserFromCtx(ctx)
+	return db.Log(ctx, &AuditEntry{
+		UserID:     u.UserID,
+		UserLogin:  u.UserLogin,
+		Action:     "exchange_mismatch",
+		EntityKind: kind,
+		EntityName: entityName,
+		RecordID:   recordID,
+		NewValue:   "(принято обменом)",
+		Reason:     detail + " · источник: " + sourceRef,
+	})
+}
+
 // LogDecisionAction records an auditable privileged lifecycle decision
 // (publish/rollback). It is unconditional, like LogDisclose: disabling the
 // general registration journal must not erase governance events.

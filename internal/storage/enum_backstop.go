@@ -116,6 +116,45 @@ func (db *DB) enumBackstopRows(ctx context.Context, entityName string, tp metada
 	return nil
 }
 
+// EnumMismatches перечисляет значения перечислений, которых нет в местной
+// конфигурации. Ошибкой не является: используется приёмной стороной обмена,
+// где запись принимается, а расхождение только фиксируется (#1037).
+//
+// Отдельная функция, а не «проверка с флагом»: у отказа и у отметки в журнале
+// разная природа — первый обязан остановить запись, вторая обязана её не
+// трогать. Один вызов с булевым параметром рано или поздно вызвали бы не с тем
+// значением.
+func (db *DB) EnumMismatches(entity *metadata.Entity, fields map[string]any,
+	tpRows map[string][]map[string]any) []string {
+	src := db.enumSourceOrNil()
+	if src == nil || entity == nil || len(src.Enums()) == 0 {
+		return nil
+	}
+	var out []string
+	for _, f := range entity.Fields {
+		if f.EnumName == "" {
+			continue
+		}
+		if msg := checkEnumValue(src, entity.Name+"."+f.Name, f.EnumName, valueByNameFold(fields, f.Name)); msg != "" {
+			out = append(out, msg)
+		}
+	}
+	for _, tp := range entity.TableParts {
+		for i, row := range tpRows[tp.Name] {
+			for _, f := range tp.Fields {
+				if f.EnumName == "" {
+					continue
+				}
+				where := fmt.Sprintf("%s.%s[%d].%s", entity.Name, tp.Name, i+1, f.Name)
+				if msg := checkEnumValue(src, where, f.EnumName, valueByNameFold(row, f.Name)); msg != "" {
+					out = append(out, msg)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // ValidateEnumValues проверяет значения enum-реквизитов шапки и строк табличных
 // частей. Возвращает текст пользовательской ошибки либо пустую строку.
 //
