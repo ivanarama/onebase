@@ -150,4 +150,3 @@ func TestTabs_OpenableAllowsRefOpen(t *testing.T) {
 		t.Errorf("ui.js не содержит исключение для _ref-open/_ref-create: %q", want)
 	}
 }
-

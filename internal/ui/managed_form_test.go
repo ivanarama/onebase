@@ -531,4 +531,3 @@ func TestPageManagedForm_EditableRefRendersMagnifier(t *testing.T) {
 		t.Errorf("на редактируемой форме пустое поле-ссылка обязано содержать кнопку перехода в карточку %q:\n%s", want, html)
 	}
 }
-
