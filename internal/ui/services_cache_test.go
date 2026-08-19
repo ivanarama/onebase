@@ -56,6 +56,21 @@ const cacheHandlersSrc = `
     Возврат Утилиты.Бах(Запрос);
 КонецФункции
 
+// Отказ, проходящий через модульный шов: тест подменяет LookupModuleProc и
+// держит обработчик внутри вызова, чтобы увидеть, идут запросы параллельно
+// или по одному. Ответ 404 в кэш не попадает никогда.
+Функция ОтказСМодулем(Запрос) Экспорт
+    Попытка
+        Утилиты.Ждать();
+    Исключение
+    КонецПопытки;
+    Возврат ОтветТекст(404, "не найдено");
+КонецФункции
+
+Функция Язык(Запрос) Экспорт
+    Возврат ОтветТекст(200, НСтр("ru = 'привет'; en = 'hello'"));
+КонецФункции
+
 Функция Большая(Запрос) Экспорт
     Э = Справочники.Вызовы.Создать();
     Э.Наименование = "вызов";
@@ -133,6 +148,8 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 		{Template: "/cookie", Methods: map[string]string{"GET": "Куки"}},
 		{Template: "/big", Methods: map[string]string{"GET": "Большая"}},
 		{Template: "/boom", Methods: map[string]string{"GET": "Бум"}},
+		{Template: "/slow404", Methods: map[string]string{"GET": "ОтказСМодулем"}},
+		{Template: "/lang", Methods: map[string]string{"GET": "Язык"}},
 	}
 	pub := &httpservice.Service{Name: "Pub", RootURL: "pub", Auth: "none", Templates: tmpl,
 		Cache: &httpservice.CacheConfig{TTL: 60, Vary: []string{"query", "host"}, Public: true, MaxBody: 2048}}
@@ -546,5 +563,149 @@ func TestServiceCache_DSLResetAndSize(t *testing.T) {
 	c.get(t, "/hs/pub/page")
 	if got := c.calls(); got != 1 {
 		t.Fatalf("после сброса обработчик вызван %d раз(а), ожидался 1", got)
+	}
+}
+
+// #1000: замок ключа задумывался разовой защитой холодного старта, но для
+// страницы, ответ по которой некэшируем всегда (404, Set-Cookie, тело больше
+// max_body), кэш по ключу не наполняется никогда — и запросы выстраивались в
+// очередь по одному навсегда, то есть параллелизм выходил хуже, чем с
+// выключенным кэшем. После первого некэшируемого ответа ключ помечается, и
+// замок под него больше не берётся.
+func TestServiceCache_UncacheableKeyDoesNotSerialize(t *testing.T) {
+	c := newCacheTestServer(t)
+
+	// Шов модуля отдаёт настоящую (пустую) процедуру: вернуть nil значило бы
+	// уронить обработчик в 500 и проверять не то.
+	modProg, err := parser.New(lexer.New("Процедура Ждать() Экспорт\nКонецПроцедуры", "утилиты.module.os")).ParseProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitProc := modProg.Procedures[0]
+
+	// Первый запрос проходит насквозь и помечает ключ: шов пока не держит
+	// обработчик.
+	c.srv.interp.LookupModuleProc = func(module, name string) *ast.ProcedureDecl { return waitProc }
+	if w := c.get(t, "/hs/pub/slow404"); w.Code != http.StatusNotFound {
+		t.Fatalf("подготовка: код ответа %d, ожидался 404 (тело: %s)", w.Code, w.Body.String())
+	}
+
+	const parallel = 3
+	entered := make(chan struct{}, parallel)
+	release := make(chan struct{})
+	c.srv.interp.LookupModuleProc = func(module, name string) *ast.ProcedureDecl {
+		entered <- struct{}{}
+		<-release
+		return waitProc
+	}
+
+	var wg sync.WaitGroup
+	codes := make([]int, parallel)
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := httptest.NewRequest("GET", "/hs/pub/slow404", nil)
+			w := httptest.NewRecorder()
+			c.srv.serviceDispatch(w, r)
+			codes[i] = w.Code
+		}(i)
+	}
+
+	deadline := time.After(5 * time.Second)
+	for i := 0; i < parallel; i++ {
+		select {
+		case <-entered:
+		case <-deadline:
+			close(release)
+			wg.Wait()
+			t.Fatalf("до обработчика дошло %d запрос(а) из %d: остальные ждут замок ключа, "+
+				"хотя ответ по нему некэшируем в принципе", i, parallel)
+		}
+	}
+	close(release)
+	wg.Wait()
+	for i, code := range codes {
+		if code != http.StatusNotFound {
+			t.Fatalf("запрос %d вернул %d, ожидался 404", i, code)
+		}
+	}
+}
+
+// Отметка снимается, когда ответ по ключу снова кэшируется, и протухает сама:
+// страница может перестать быть некэшируемой (404 исчез, тело ужалось), и
+// отрицательный список не должен этого скрывать.
+func TestServiceCache_UncacheableMarkLifecycle(t *testing.T) {
+	c := newCacheTestServer(t)
+	const key = "pub|GET|/hs/pub/missing"
+
+	c.cache.markUncacheable(key, "pub")
+	if !c.cache.uncacheableRecently(key) {
+		t.Fatal("отметка не поставилась")
+	}
+
+	c.cache.forgetUncacheable(key)
+	if c.cache.uncacheableRecently(key) {
+		t.Fatal("отметка пережила forgetUncacheable")
+	}
+
+	c.cache.markUncacheable(key, "pub")
+	c.clock = c.clock.Add(uncacheableTTL + time.Second)
+	if c.cache.uncacheableRecently(key) {
+		t.Fatal("отметка не протухла по TTL")
+	}
+
+	c.cache.markUncacheable(key, "pub")
+	c.cache.markUncacheable("other|GET|/hs/novary/missing", "novary")
+	c.cache.Clear("pub")
+	if c.cache.uncacheableRecently(key) {
+		t.Fatal("сброс сервиса не снял его отрицательные отметки")
+	}
+	if !c.cache.uncacheableRecently("other|GET|/hs/novary/missing") {
+		t.Fatal("сброс одного сервиса снял отметки чужого")
+	}
+}
+
+// Некэшируемый ответ помечает ключ прямо на боевом пути — без этого отметка
+// была бы мёртвым кодом, который дёргает только тест.
+func TestServiceCache_DispatchMarksUncacheable(t *testing.T) {
+	c := newCacheTestServer(t)
+	for _, path := range []string{"/hs/pub/missing", "/hs/pub/cookie", "/hs/pub/big"} {
+		t.Run(path, func(t *testing.T) {
+			c.get(t, path)
+			key := "pub|GET|" + path + "||" + strings.ToLower("example.com")
+			if !c.cache.uncacheableRecently(key) {
+				t.Fatalf("ключ %q не помечен некэшируемым после ответа", key)
+			}
+		})
+	}
+}
+
+// #1000: ключ дробился по языку, а обработчику язык не доставался — НСтр всегда
+// брал язык базы, и vary: lang заводил по записи на язык с ОДИНАКОВЫМ телом.
+func TestServiceCache_VaryLangGivesHandlerTheLanguage(t *testing.T) {
+	c := newCacheTestServer(t)
+
+	en := c.get(t, "/hs/lang/lang", "Accept-Language", "en")
+	if got := strings.TrimSpace(en.Body.String()); got != "hello" {
+		t.Fatalf("Accept-Language: en → %q, ожидалось «hello»", got)
+	}
+	ru := c.get(t, "/hs/lang/lang", "Accept-Language", "ru")
+	if got := strings.TrimSpace(ru.Body.String()); got != "привет" {
+		t.Fatalf("Accept-Language: ru → %q, ожидалось «привет»", got)
+	}
+	if got := c.calls(); got != 0 {
+		t.Fatalf("обработчик /lang не пишет в справочник, а счётчик=%d", got)
+	}
+}
+
+// Обратная сторона правила: если кэш ключ по языку НЕ дробит, язык обработчику
+// не отдаётся — иначе ответ, собранный на языке первого клиента, лёг бы в общую
+// запись и достался всем остальным.
+func TestServiceCache_NoVaryLangKeepsBaseLanguage(t *testing.T) {
+	c := newCacheTestServer(t)
+	w := c.get(t, "/hs/novary/lang", "Accept-Language", "en")
+	if got := strings.TrimSpace(w.Body.String()); got != "привет" {
+		t.Fatalf("без vary: lang ответ %q, ожидался язык базы («привет»)", got)
 	}
 }
