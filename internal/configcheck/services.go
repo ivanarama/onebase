@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
+	"github.com/ivantit66/onebase/internal/httpservice"
 	"github.com/ivantit66/onebase/internal/project"
 )
 
@@ -45,15 +46,6 @@ func CheckHTTPServiceAuthWarnings(proj *project.Project) []Issue {
 		})
 	}
 	return warnings
-}
-
-// forbiddenSecurityExtraHeader — заголовки, которые нельзя переопределять через
-// security_headers.extra. Отключаемый nosniff нужен только чтобы навредить себе,
-// а CORS задаётся блоком cors: — правка его заголовков вручную разъедется с
-// preflight-ответом, который платформа формирует сама.
-func forbiddenSecurityExtraHeader(name string) bool {
-	n := strings.ToLower(strings.TrimSpace(name))
-	return n == "x-content-type-options" || strings.HasPrefix(n, "access-control-")
 }
 
 // CheckHTTPServices проверяет services/*.yaml против загруженных модулей.
@@ -155,10 +147,13 @@ func CheckHTTPServices(proj *project.Project) []Issue {
 			if h.HSTS < 0 {
 				add(svc.Name, "security_headers.hsts не может быть отрицательным")
 			}
+			// Заголовок, у которого есть выделенное поле, через extra запрещён:
+			// extra обходит проверки этого поля (#1002). Сообщение называет
+			// нужное поле — обычно extra пишут не в обход гейта, а не зная, что
+			// поле существует.
 			for name := range h.Extra {
-				if forbiddenSecurityExtraHeader(name) {
-					add(svc.Name, fmt.Sprintf("security_headers.extra: заголовок %q задавать нельзя "+
-						"(X-Content-Type-Options ставится всегда, Access-Control-* — это блок cors)", name))
+				if why := httpservice.ExtraHeaderRejection(name); why != "" {
+					add(svc.Name, fmt.Sprintf("security_headers.extra: заголовок %q задавать нельзя — %s", name, why))
 				}
 			}
 		}
