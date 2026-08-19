@@ -1,6 +1,9 @@
 name: ИмпортИзYML
 title: Импорт каталога из YML-выгрузки
 params:
+  - name: Сайт
+    type: reference:Сайты
+    label: Сайт-владелец каталога
   - name: Файл
     type: file
     label: Файл выгрузки (YML)

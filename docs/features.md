@@ -2014,7 +2014,11 @@ cache:
 ```bash
 onebase migrate --project examples/cms --sqlite cms.db
 onebase procrun --project examples/cms --sqlite cms.db --proc ЗаполнитьТестовуюБазу
-onebase procrun --project examples/cms --sqlite cms.db --proc ИмпортИзYML   --file Файл=examples/cms/demo/catalog.yml
+onebase query --project examples/cms --sqlite cms.db --json \
+  'ВЫБРАТЬ Ссылка, Наименование ИЗ Справочник.Сайты'
+onebase procrun --project examples/cms --sqlite cms.db --proc ИмпортИзYML \
+  --set Сайт=<UUID из предыдущей команды> \
+  --file Файл=examples/cms/demo/catalog.yml
 onebase run --project examples/cms --sqlite cms.db --port 8080
 ```
 
