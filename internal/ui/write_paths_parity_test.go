@@ -77,6 +77,11 @@ func parityServer(t *testing.T, onPost string) (*Server, *metadata.Entity, *stor
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 
+	// Страховка значений перечислений включается как в проде (ui.New и
+	// NewOfflineServer): без неё тест проверял бы конфигурацию, которой не
+	// существует ни на сервере, ни в procrun.
+	db.SetEnumSource(registry)
+
 	s := &Server{
 		store:    db,
 		reg:      registry,
