@@ -23,6 +23,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/extform"
 	"github.com/ivantit66/onebase/internal/i18n"
+	"github.com/ivantit66/onebase/internal/jobqueue"
 	"github.com/ivantit66/onebase/internal/launcher"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/mailer"
@@ -656,6 +657,9 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if err := db.EnsureScheduledRunsTable(ctx); err != nil {
 		return fmt.Errorf("scheduled runs schema: %w", err)
 	}
+	if err := db.EnsureJobQueueSchema(ctx); err != nil {
+		return fmt.Errorf("job queue schema: %w", err)
+	}
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		return fmt.Errorf("attachments table: %w", err)
 	}
@@ -669,6 +673,11 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if err := sched.LoadJobs(proj.ScheduledJobs); err != nil {
 		return fmt.Errorf("scheduler: %w", err)
 	}
+	// Очередь фоновых заданий (план 130). Исполнителем работает планировщик:
+	// он знает обработки, DSL-окружение и таймауты заданий, а очередь владеет
+	// параллелизмом и судьбой задачи.
+	queue := jobqueue.New(db, sched, runtimeQueueConfigFromApp(appCfg))
+	uiCfg.JobQueue = queue
 	demoResetRequests := make(chan *scheduledDemoResetRequest, 1)
 	var demoResetRequestMu sync.Mutex
 	demoResetRequested := false
@@ -934,6 +943,12 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	go func() {
 		schedDone <- sched.RunReady(schedCtx, schedReady)
 	}()
+	queueCtx, queueCancel := context.WithCancel(ctx)
+	defer queueCancel()
+	queueDone := make(chan error, 1)
+	go func() {
+		queueDone <- queue.Run(queueCtx)
+	}()
 	select {
 	case <-schedReady:
 	case startErr := <-schedDone:
@@ -993,8 +1008,15 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 		stopWatch()
 		stopWatch = nil
 	}
+	// Очередь и планировщик дренируются параллельно: задачи очереди живут на
+	// собственном контексте пула, а не на контексте планировщика, поэтому
+	// последовательное ожидание сложило бы два дедлайна дренажа в один долгий.
+	queueCancel()
 	schedCancel()
 	schedulerErr := <-schedDone
+	if queueErr := <-queueDone; queueErr != nil {
+		runLog.Warn("job queue drain", "err", queueErr)
+	}
 	if demoResetRequest == nil {
 		// The terminal event may have won the first select concurrently with the
 		// handoff. Scheduler drain proves no later enqueue can still appear.
@@ -1079,6 +1101,39 @@ func watchConfigVersions(ctx context.Context, cfgRepo *configdb.Repo, last strin
 			}
 		}
 	}
+}
+
+// runtimeQueueConfigFromApp переводит блок `queue:` из app.yaml в настройки
+// пула. Нет блока — значения по умолчанию (4 исполнителя); `workers: 0` —
+// очередь выключена совсем, и постановка задачи честно отказывает.
+func runtimeQueueConfigFromApp(app *project.AppConfig) jobqueue.Config {
+	cfg := jobqueue.DefaultConfig()
+	if app == nil || app.Queue == nil {
+		return cfg
+	}
+	q := app.Queue
+	if q.Workers != nil {
+		cfg.Workers = *q.Workers
+	}
+	if q.PollIntervalSec > 0 {
+		cfg.PollInterval = time.Duration(q.PollIntervalSec) * time.Second
+	}
+	if q.LeaseSec > 0 {
+		cfg.Lease = time.Duration(q.LeaseSec) * time.Second
+	}
+	if q.MaxAttempts > 0 {
+		cfg.MaxAttempts = q.MaxAttempts
+	}
+	if q.RetryBackoffSec > 0 {
+		cfg.RetryBackoff = time.Duration(q.RetryBackoffSec) * time.Second
+	}
+	if q.RetentionDays > 0 {
+		cfg.Retention = time.Duration(q.RetentionDays) * 24 * time.Hour
+	}
+	if q.DrainTimeoutSec > 0 {
+		cfg.DrainTimeout = time.Duration(q.DrainTimeoutSec) * time.Second
+	}
+	return cfg
 }
 
 func runtimeLimitsFromApp(l *project.LimitsConfig) ui.RuntimeLimits {
