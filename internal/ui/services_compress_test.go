@@ -22,6 +22,7 @@ import (
 	"github.com/ivantit66/onebase/internal/httpservice"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/websec"
 )
 
 const compressHandlersSrc = `
@@ -140,6 +141,24 @@ func doGzipReq(t *testing.T, s *Server, path, acceptEncoding string) *httptest.R
 		r.Header.Set("Accept-Encoding", acceptEncoding)
 	}
 	s.serviceDispatch(w, r)
+	return w
+}
+
+// doReqThroughStack прогоняет запрос через тот же стек, что и прод: глобальная
+// websec.SecurityHeaders (в api/server.go она r.Use до MountServices), а за ней
+// serviceDispatch.
+//
+// Отдельный хелпер, а не замена doGzipReq: без глобальной политики проверяются
+// заголовки САМОГО сервиса (например «nosniff ставится всегда» — с глобальной
+// middleware этот ассерт стал бы бессмысленным, nosniff пришёл бы снаружи), а с
+// ней — взаимодействие двух слоёв. Ассерт «политика сервиса заменяет
+// глобальную» без глобального слоя упасть не мог вовсе: замена h.Set на h.Add
+// оставляла тест зелёным (#1004).
+func doReqThroughStack(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", path, nil)
+	websec.SecurityHeaders(http.HandlerFunc(s.serviceDispatch)).ServeHTTP(w, r)
 	return w
 }
 
@@ -297,9 +316,13 @@ func TestCompress_AlreadyEncodedNotRecompressed(t *testing.T) {
 	}
 }
 
+// Политика сервиса ЗАМЕНЯЕТ глобальную, а не добавляется к ней: два заголовка
+// CSP браузер применяет как пересечение, и политика вышла бы строже задуманной.
+// Запрос идёт через прод-стек с глобальной middleware — без неё ассерт про
+// замену не мог упасть в принципе (#1004).
 func TestSecurityHeaders_ServiceValues(t *testing.T) {
 	s := newCompressTestServer(t)
-	w := doGzipReq(t, s, "/hs/hdr/small", "")
+	w := doReqThroughStack(t, s, "/hs/hdr/small")
 
 	h := w.Header()
 	if got := h.Values("Content-Security-Policy"); len(got) != 1 || got[0] != "default-src 'self'" {
@@ -308,11 +331,28 @@ func TestSecurityHeaders_ServiceValues(t *testing.T) {
 	if h.Get("X-Frame-Options") != "DENY" {
 		t.Errorf("X-Frame-Options=%q", h.Get("X-Frame-Options"))
 	}
-	if h.Get("Referrer-Policy") != "no-referrer" {
-		t.Errorf("Referrer-Policy=%q", h.Get("Referrer-Policy"))
+	// Глобальная middleware ставит Referrer-Policy: same-origin — значение
+	// сервиса обязано остаться единственным.
+	if got := h.Values("Referrer-Policy"); len(got) != 1 || got[0] != "no-referrer" {
+		t.Errorf("Referrer-Policy=%v — значение сервиса должно заменять глобальное", got)
 	}
 	if h.Get("Permissions-Policy") != "geolocation=()" {
 		t.Errorf("Permissions-Policy=%q", h.Get("Permissions-Policy"))
+	}
+}
+
+// Страховка от повторения #1004: тест выше имеет смысл, только пока в стеке
+// действительно есть глобальная политика. Если её однажды уберут из хелпера,
+// ассерт «сервис заменяет глобальную» снова станет невозможным для падения —
+// поймает этот тест.
+func TestSecurityHeaders_TestStackCarriesGlobalPolicy(t *testing.T) {
+	s := newCompressTestServer(t)
+	// Сервис pub объявлен без блока security_headers: всё, что видно в ответе
+	// из политики, пришло от глобальной middleware.
+	w := doReqThroughStack(t, s, "/hs/pub/small")
+	got := w.Header().Values("Content-Security-Policy")
+	if len(got) != 1 || !strings.Contains(got[0], "frame-ancestors") {
+		t.Fatalf("глобальная CSP в тестовом стеке отсутствует: %v", got)
 	}
 }
 

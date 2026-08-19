@@ -25,7 +25,7 @@ if (window.__obEmbedded) {
   // в той же вкладке — у них тот же путь списка, без id-сегмента).
   var obOpenableForm = function (href) {
     if (!/^\/ui\//.test(href)) return false;
-    if (/^\/ui\/(admin|about|logout|login|logo|debug|app|_)/.test(href)) return false;
+    if (/^\/ui\/(admin|about|logout|login|logo|debug|app|_(?!ref-open|ref-create))/.test(href)) return false;
     if (href.indexOf('_popup=1') >= 0) return false;
     if (/^\/ui\/(report|processor)\/[^\/?#]+/.test(href)) return true;
     if (/^\/ui\/[^\/?#]+\/[^\/?#]+\/[^\/?#]+/.test(href)) return true;
@@ -2357,7 +2357,15 @@ function obInitFormDelegates() {
     var refCurrent = e.target.closest('[data-ob-ref-current]');
     if (refCurrent) {
       e.preventDefault();
-      openRefCurrent(refCurrent.getAttribute('data-ob-ref-current') || '');
+      var targetId = refCurrent.getAttribute('data-ob-ref-current') || '';
+      openRefCurrent(targetId === 'closest' ? obClosestSelect(refCurrent) : targetId);
+      return;
+    }
+    var refPicker = e.target.closest('[data-ob-ref-picker]');
+    if (refPicker) {
+      e.preventDefault();
+      var pickerTarget = refPicker.getAttribute('data-ob-ref-picker') || '';
+      openRefPicker(pickerTarget === 'closest' ? obClosestSelect(refPicker) : pickerTarget);
       return;
     }
     var refPickerSelf = e.target.closest('[data-ob-ref-picker-self]');

@@ -54,6 +54,12 @@ type Result struct {
 	// булево поле. Потребитель приводит их значения к булеву типу: из БД они
 	// приходят по-разному (PostgreSQL — bool, SQLite — int64), см. #704.
 	BoolColumns []string
+	// DateColumns — то же для колонок, читающих поле-дату. На SQLite дата
+	// хранится TEXT, и без приведения из запроса приходила строка RFC3339,
+	// тогда как объектный путь (ПолучитьОбъект) отдаёт значение даты. Сравнение
+	// такой строки уходило в текстовое: разделитель «T» больше пробела, и любой
+	// материал с сегодняшней датой оказывался «в будущем» (#1013).
+	DateColumns []string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -4019,6 +4025,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
 		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
+		DateColumns:      typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
 	}, nil
 }
 
@@ -4031,6 +4038,14 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 // агрегатов и ОБЪЕДИНИТЬ соответствие «колонка ↔ поле» неоднозначно, и молча
 // приводить их значения нельзя.
 func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType) []string {
+	return typedOutputColumns(p, colTypes, metadata.FieldTypeBool)
+}
+
+// typedOutputColumns — общий перебор колонок проекции, читающих поле заданного
+// типа. Кроме булевых так же приводятся даты: на SQLite они хранятся TEXT, и
+// без приведения путь запроса отдавал строку там, где объектный путь отдаёт
+// значение даты (#1013).
+func typedOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType, want metadata.FieldType) []string {
 	if !p.Simple {
 		return nil
 	}
@@ -4039,7 +4054,7 @@ func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType)
 		if c.Star || c.Output == "" || len(c.Fields) != 1 {
 			continue
 		}
-		if colTypes[lowerFast(c.Fields[0])] == metadata.FieldTypeBool {
+		if colTypes[lowerFast(c.Fields[0])] == want {
 			cols = append(cols, c.Output)
 		}
 	}

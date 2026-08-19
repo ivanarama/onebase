@@ -258,11 +258,14 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 			}
 			stack[len(stack)-1].text.Write([]byte(t))
 		case xml.Comment:
-			return nil, fmt.Errorf("комментарии XML не поддерживаются")
+			// Пропускаем молча — см. prepareXMLDecoderInput (#962, Н6).
+			continue
 		case xml.Directive:
+			// DTD остаётся запрещённой: именно она открывает XXE и
+			// «billion laughs».
 			return nil, fmt.Errorf("директивы XML не поддерживаются")
 		case xml.ProcInst:
-			return nil, fmt.Errorf("инструкции обработки XML не поддерживаются")
+			continue
 		}
 	}
 	if len(stack) != 0 {
@@ -370,6 +373,18 @@ func validateXMLDeclaration(declaration string) error {
 	return nil
 }
 
+// xmlProcInstTarget возвращает имя инструкции обработки — всё до первого
+// пробельного символа.
+func xmlProcInstTarget(body string) string {
+	if idx := strings.IndexAny(body, xmlWhitespaceChars); idx >= 0 {
+		return body[:idx]
+	}
+	return body
+}
+
+// xmlWhitespaceChars — пробельные символы XML (пробел, табуляция, CR, LF).
+const xmlWhitespaceChars = " \t\r\n"
+
 // prepareXMLDecoderInput обходит ограничение encoding/xml: стандартный decoder
 // проверяет имена по устаревшим Unicode-категориям, а не по полным диапазонам
 // XML 1.0 Fifth Edition. Валидные имена временно заменяются ASCII-именами той
@@ -390,7 +405,17 @@ func prepareXMLDecoderInput(text string) ([]byte, []xmlLexicalToken, error) {
 			continue
 		}
 		if strings.HasPrefix(source[i:], "<!--") {
-			return nil, nil, fmt.Errorf("комментарии XML не поддерживаются")
+			// Комментарий пропускается целиком: ничего не расширяет и ничего
+			// не объявляет, поэтому запрещать его незачем — а встречается он
+			// в обычных выгрузках 1С, SOAP-ответах и вообще где угодно.
+			// Раньше модуль, читающий чужой файл, падал на ровном месте
+			// (#962, находка Н6). Отклонение DTD остаётся как было.
+			end := strings.Index(source[i+len("<!--"):], "-->")
+			if end < 0 {
+				return nil, nil, fmt.Errorf("незавершённый комментарий XML")
+			}
+			i += len("<!--") + end + len("-->")
+			continue
 		}
 		if strings.HasPrefix(source[i:], "<![CDATA[") {
 			end := strings.Index(source[i+len("<![CDATA["):], "]]>")
@@ -404,7 +429,21 @@ func prepareXMLDecoderInput(text string) ([]byte, []xmlLexicalToken, error) {
 			return nil, nil, fmt.Errorf("директивы XML не поддерживаются")
 		}
 		if strings.HasPrefix(source[i:], "<?") {
-			return nil, nil, fmt.Errorf("инструкции обработки XML не поддерживаются")
+			// Инструкция обработки (<?xml-stylesheet …?>) тоже пропускается:
+			// на содержимое документа она не влияет. Объявление <?xml …?>
+			// снимается раньше, в stripXMLDeclaration.
+			end := strings.Index(source[i+len("<?"):], "?>")
+			if end < 0 {
+				return nil, nil, fmt.Errorf("незавершённая инструкция обработки XML")
+			}
+			body := source[i+len("<?") : i+len("<?")+end]
+			// Цель «xml» зарезервирована: это объявление документа, и вне
+			// начала файла оно означает битый XML, а не безобидную инструкцию.
+			if strings.EqualFold(xmlProcInstTarget(body), "xml") {
+				return nil, nil, fmt.Errorf("объявление XML допустимо только в начале документа")
+			}
+			i += len("<?") + end + len("?>")
+			continue
 		}
 
 		if i+1 < len(source) && source[i+1] == '/' {
