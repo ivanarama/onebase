@@ -190,3 +190,76 @@ func TestHierarchyPreservedOnRewrite_Matrix(t *testing.T) {
 		})
 	})
 }
+
+func TestHierarchyVersionedPreservesAndUpdatesServiceFields_Matrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ent := hierCatalog()
+		if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+			t.Fatal(err)
+		}
+
+		parent := uuid.New()
+		if err := db.Upsert(ctx, ent.Name, parent,
+			map[string]any{"наименование": "Оборудование", "ЭтоГруппа": true}, ent); err != nil {
+			t.Fatal(err)
+		}
+		group := uuid.New()
+		if err := db.Upsert(ctx, ent.Name, group, map[string]any{
+			"наименование": "Насосы", "ЭтоГруппа": true, "Родитель": parent.String(),
+		}, ent); err != nil {
+			t.Fatal(err)
+		}
+
+		version, err := db.EntityVersion(ctx, ent.Name, group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.UpsertVersioned(ctx, ent.Name, group,
+			map[string]any{"наименование": "Насосное оборудование", "слаг": "nasosy"}, ent, &version); err != nil {
+			t.Fatal(err)
+		}
+		row := hierRow(t, db, ctx, ent, group)
+		if !asBoolValue(row["is_folder"]) {
+			t.Error("версионная запись без служебных полей превратила группу в обычный элемент")
+		}
+		if got := valueString(row["parent_id"]); got != parent.String() {
+			t.Errorf("родитель после версионной записи = %q, ожидался %s", got, parent)
+		}
+
+		newParent := uuid.New()
+		if err := db.Upsert(ctx, ent.Name, newParent,
+			map[string]any{"наименование": "Архив", "ЭтоГруппа": true}, ent); err != nil {
+			t.Fatal(err)
+		}
+		version, err = db.EntityVersion(ctx, ent.Name, group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.UpsertVersioned(ctx, ent.Name, group, map[string]any{
+			"наименование": "Насосное оборудование", "Родитель": hierRef{id: newParent.String()}, "ЭтоГруппа": false,
+		}, ent, &version); err != nil {
+			t.Fatal(err)
+		}
+		row = hierRow(t, db, ctx, ent, group)
+		if asBoolValue(row["is_folder"]) {
+			t.Error("версионная запись не применила ЭтоГруппа = Ложь")
+		}
+		if got := valueString(row["parent_id"]); got != newParent.String() {
+			t.Errorf("родитель из DSL-ссылки = %q, ожидался %s", got, newParent)
+		}
+
+		version, err = db.EntityVersion(ctx, ent.Name, group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.UpsertVersioned(ctx, ent.Name, group,
+			map[string]any{"наименование": "Насосное оборудование", "Родитель": ""}, ent, &version); err != nil {
+			t.Fatal(err)
+		}
+		row = hierRow(t, db, ctx, ent, group)
+		if got := valueString(row["parent_id"]); got != "" {
+			t.Errorf("родитель после явной версионной очистки = %q, ожидалась пустота", got)
+		}
+	})
+}
