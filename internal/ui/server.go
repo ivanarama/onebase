@@ -512,6 +512,10 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/scheduled", s.scheduledList)
 	r.Get("/ui/admin/scheduled/{name}", s.scheduledDetail)
 	r.Post("/ui/admin/scheduled/{name}/run-now", s.scheduledRunNow)
+	r.Post("/ui/admin/scheduled/{name}/toggle", s.scheduledToggle)
+	r.Post("/ui/admin/scheduled/{name}/reset", s.scheduledReset)
+
+	// Admin: очередь фоновых заданий (план 130)
 	r.Get("/ui/admin/queue", s.jobQueueMonitor)
 	r.Post("/ui/admin/queue/{id}/replay", s.jobQueueReplay)
 	r.Post("/ui/admin/queue/{id}/cancel", s.jobQueueCancel)
