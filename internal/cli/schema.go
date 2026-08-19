@@ -243,10 +243,28 @@ func allSchemas() map[string]map[string]any {
 				"hierarchy_kind":        stringSchema("folders_and_items|items_only"),
 				"based_on":              arrayOf(stringSchema("Имя исходного объекта")),
 				"list_form":             arrayOf(stringSchema("Имя поля")),
-				"item_form":             arrayOf(stringSchema("Имя поля")),
-				"list_mode":             stringSchema("pages|feed"),
-				"fulltext":              arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
-				"search_fields":         arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
+				// item_form принимает обе формы записи: имя строкой и
+				// `{name: X, readonly: true}` — «показывать, но не давать
+				// править» (#1011). Без oneOf редактор подчёркивал бы
+				// расширенную запись как ошибку.
+				"item_form": arrayOf(map[string]any{
+					"description": "Реквизит формы элемента: имя или запись с признаком «только просмотр»",
+					"oneOf": []any{
+						map[string]any{"type": "string", "minLength": 1, "description": "Имя поля"},
+						map[string]any{
+							"type":                 "object",
+							"required":             []string{"name"},
+							"additionalProperties": false,
+							"properties": map[string]any{
+								"name":     stringSchema("Имя поля"),
+								"readonly": map[string]any{"type": "boolean", "description": "Показывать, но не давать править"},
+							},
+						},
+					},
+				}),
+				"list_mode":     stringSchema("pages|feed"),
+				"fulltext":      arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
+				"search_fields": arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
 				// Схема принимает обе формы записи: `presentation: Артикул` и
 				// `presentation: [Артикул, Наименование]` — иначе редактор
 				// подчёркивал бы как ошибку ровно тот вариант, который в

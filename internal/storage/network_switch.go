@@ -22,6 +22,18 @@ import (
 // netEnabledKey — ключ _settings предохранителя сети.
 const netEnabledKey = "net.enabled"
 
+// NetworkEnabledHint — «что сделать», общий для всех отказов предохранителя:
+// DSL-ошибка (ui.ErrNetworkLocked), отказ регламентного задания
+// (scheduler.ErrNetworkLocked), предупреждение при старте сервера. Живёт рядом с
+// самим флагом, потому что три копии одной фразы в трёх пакетах уже разъехались
+// с интерфейсом: текст звал в «Систему → Настройки», которых в конфигураторе
+// нет вовсе (меню «Система» есть только в «Предприятии», и предохранителя там
+// нет). Настоящий путь — Меню → «Параметры базы» → «Безопасность»
+// (internal/launcher/configurator_tmpl_shell.go, cfgAdminSettings).
+const NetworkEnabledHint = "включите «Разрешить сетевые операции конфигурации» " +
+	"в конфигураторе (Меню → «Параметры базы» → «Безопасность») либо командой: " +
+	"onebase settings set net.enabled вкл"
+
 // GetNetworkEnabled сообщает, разрешены ли сетевые возможности конфигурации.
 // Отсутствие ключа/таблицы → false (сеть заблокирована — secure by default).
 func (db *DB) GetNetworkEnabled(ctx context.Context) bool {
