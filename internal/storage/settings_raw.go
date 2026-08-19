@@ -200,7 +200,7 @@ func tableExistsErr(ctx context.Context, db *DB, table string) (bool, error) {
 			`SELECT COUNT(*)>0 FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists)
 	} else {
 		// current_schema(), а не литерал 'public': служебные таблицы создаются
-		// неквалифицированно и потому ложатся в схему подключения (план 108).
+		// неквалифицированно и потому ложатся в схему подключения (план 136).
 		// Фильтр по 'public' заставлял loadSchemaMap отдавать в эфемерной схеме
 		// пустую карту полей — реструктуризация плана 81 молча превращалась в
 		// no-op (#638). При обычном подключении current_schema() и есть 'public'.

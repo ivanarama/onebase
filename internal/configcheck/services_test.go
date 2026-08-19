@@ -163,6 +163,42 @@ func TestCheckHTTPServices_SecurityHeaders(t *testing.T) {
 			t.Fatalf("ожидалось замечание про Access-Control-*, получено: %v", issues)
 		}
 	})
+
+	// #1002: заголовок, у которого есть выделенное поле, через extra обходил
+	// проверки этого поля — X-Frame-Options с любым значением, HSTS по HTTP.
+	// Замечание обязано называть поле: extra пишут не в обход гейта, а не зная,
+	// что поле существует.
+	t.Run("заголовки с выделенным полем в extra", func(t *testing.T) {
+		cases := map[string]string{
+			"X-Frame-Options":           "frame_options",
+			"Strict-Transport-Security": "hsts",
+			"Content-Security-Policy":   "csp",
+			"Referrer-Policy":           "referrer_policy",
+			// Регистр заголовка значения не имеет.
+			"strict-transport-security": "hsts",
+		}
+		for header, field := range cases {
+			issues := CheckHTTPServices(mk(&httpservice.SecurityHeadersConfig{
+				Extra: map[string]string{header: "что угодно"},
+			}))
+			if len(issues) != 1 {
+				t.Fatalf("%s: замечаний %d, ожидалось одно: %v", header, len(issues), issues)
+			}
+			if !strings.Contains(issues[0].Message, field) {
+				t.Fatalf("%s: замечание %q не называет поле %q", header, issues[0].Message, field)
+			}
+		}
+	})
+
+	// Запрет точечный: прочие заголовки в extra остаются законными.
+	t.Run("обычный заголовок в extra разрешён", func(t *testing.T) {
+		issues := CheckHTTPServices(mk(&httpservice.SecurityHeadersConfig{
+			Extra: map[string]string{"Permissions-Policy": "geolocation=()"},
+		}))
+		if len(issues) != 0 {
+			t.Fatalf("неожиданные замечания: %v", issues)
+		}
+	})
 }
 
 // План 126: гейт на блок cache.

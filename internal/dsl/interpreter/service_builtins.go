@@ -1,8 +1,11 @@
 package interpreter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -100,26 +103,14 @@ func (r *DSLServiceRequest) CallMethod(name string, args []any) any {
 		}
 		return ""
 	case "формаданные", "formdata":
-		// Разбор обычной HTML-формы (application/x-www-form-urlencoded).
-		// Без этого приём формы в конфигурации невозможен в принципе: значения
-		// приходят в процентном кодировании, а декодера в DSL нет — кириллица и
-		// пробелы превращались бы в мусор.
+		// Разбор HTML-формы. Без него приём формы в конфигурации невозможен в
+		// принципе: значения приходят в процентном кодировании, а декодера в
+		// DSL нет — кириллица и пробелы превращались бы в мусор.
 		//
 		// Возвращается Соответствие имя → значение; для повторяющихся имён
 		// берётся первое: множественный выбор — отдельная задача, и молча
 		// склеивать значения в строку хуже, чем не поддерживать их вовсе.
-		values, err := url.ParseQuery(string(r.body))
-		if err != nil {
-			panic(userError{Msg: "HTTPСервисЗапрос.ФормаДанные: " + err.Error()})
-		}
-		out := &Map{}
-		for key, vals := range values {
-			if len(vals) == 0 {
-				continue
-			}
-			out.CallMethod("вставить", []any{key, vals[0]})
-		}
-		return out
+		return r.formData()
 	case "телоjson", "bodyjson", "прочитатьтелокакjson":
 		// Удобство сверх 1С: сразу разобрать тело как JSON в Структуру/Массив.
 		var raw any
@@ -129,6 +120,92 @@ func (r *DSLServiceRequest) CallMethod(name string, args []any) any {
 		return jsonToValue(raw)
 	}
 	panic(userError{Msg: "HTTPСервисЗапрос: неизвестный метод " + name})
+}
+
+// maxFormDataMemory — сколько байт multipart-разбор держит в памяти, прежде чем
+// сливать части во временные файлы. Тело сервиса и так прочитано в память
+// целиком, так что запас берём щедрый — временные файлы здесь только лишний
+// путь на диск.
+const maxFormDataMemory = 32 << 20
+
+// formData разбирает тело как форму, глядя на Content-Type.
+//
+// Раньше тело безусловно уходило в url.ParseQuery, и это давало два разных
+// молчаливых провала (#1003):
+//   - multipart (обязателен, если в форме есть файл) падал с англоязычным
+//     «invalid semicolon separator in query» — из-за точек с запятой в
+//     Content-Disposition; причину сообщение не называло никак;
+//   - JSON-тело разбиралось БЕЗ ошибки в мусор: url.ParseQuery честно считает
+//     «{"a":1}» именем параметра, конфигурация получала пустые поля и не
+//     понимала, почему.
+func (r *DSLServiceRequest) formData() any {
+	mediaType, params := r.contentType()
+	switch mediaType {
+	case "", "application/x-www-form-urlencoded":
+		// Пустой Content-Type трактуем как форму: тело такого вида шлют простые
+		// клиенты и curl без -H, и ломать их из-за отсутствующего заголовка
+		// смысла нет — разбор всё равно проверяет содержимое.
+		values, err := url.ParseQuery(string(r.body))
+		if err != nil {
+			panic(userError{Msg: "HTTPСервисЗапрос.ФормаДанные: тело не разбирается как форма: " + err.Error()})
+		}
+		return mapFromFirstValues(values)
+	case "multipart/form-data":
+		return r.multipartFormData(params["boundary"])
+	default:
+		panic(userError{Msg: fmt.Sprintf(
+			"HTTPСервисЗапрос.ФормаДанные: тело с Content-Type %q формой не является; "+
+				"для JSON используйте Запрос.ТелоJSON(), для произвольного тела — Запрос.ПолучитьТелоКакСтроку()",
+			mediaType)})
+	}
+}
+
+// contentType возвращает нормализованный тип содержимого и его параметры.
+// Неразбираемый заголовок отдаётся как есть — чтобы в сообщении об ошибке
+// пользователь увидел ровно то, что прислал клиент.
+func (r *DSLServiceRequest) contentType() (string, map[string]string) {
+	raw := strings.TrimSpace(r.headers.Get("Content-Type"))
+	if raw == "" {
+		return "", nil
+	}
+	mediaType, params, err := mime.ParseMediaType(raw)
+	if err != nil {
+		return strings.ToLower(raw), nil
+	}
+	return strings.ToLower(mediaType), params
+}
+
+// multipartFormData разбирает multipart-форму. Файловые части не берёт: у файла
+// нет текстового значения, а вернуть пустую строку значило бы сделать вид, что
+// поле пришло пустым. Поэтому — явная ошибка с именем поля.
+func (r *DSLServiceRequest) multipartFormData(boundary string) any {
+	if boundary == "" {
+		panic(userError{Msg: "HTTPСервисЗапрос.ФормаДанные: multipart-форма без boundary в Content-Type"})
+	}
+	reader := multipart.NewReader(bytes.NewReader(r.body), boundary)
+	form, err := reader.ReadForm(maxFormDataMemory)
+	if err != nil {
+		panic(userError{Msg: "HTTPСервисЗапрос.ФормаДанные: не удалось разобрать multipart-форму: " + err.Error()})
+	}
+	defer func() { _ = form.RemoveAll() }()
+	for name := range form.File {
+		panic(userError{Msg: fmt.Sprintf(
+			"HTTPСервисЗапрос.ФормаДанные: поле %q содержит файл — приём файлов через ФормаДанные не поддерживается; "+
+				"текстовые поля такой формы читаются, только если файловых частей в ней нет", name)})
+	}
+	return mapFromFirstValues(form.Value)
+}
+
+// mapFromFirstValues собирает Соответствие имя → первое значение.
+func mapFromFirstValues(values map[string][]string) *Map {
+	out := &Map{}
+	for key, vals := range values {
+		if len(vals) == 0 {
+			continue
+		}
+		out.CallMethod("вставить", []any{key, vals[0]})
+	}
+	return out
 }
 
 // ─── DSLServiceResponse ───────────────────────────────────────────────────────
