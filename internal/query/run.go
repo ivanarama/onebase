@@ -22,6 +22,7 @@ package query
 
 import (
 	"context"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -33,13 +34,13 @@ type queryRunner interface {
 	RunQueryLimit(ctx context.Context, sql string, args []any, maxRows int) ([]map[string]any, []string, bool, error)
 }
 
-// Run исполняет скомпилированный запрос и приводит булевы колонки к bool.
+// Run исполняет скомпилированный запрос и приводит типизированные колонки.
 func Run(ctx context.Context, db queryRunner, res *Result) ([]map[string]any, []string, error) {
 	rows, cols, err := db.RunQuery(ctx, res.SQL, res.Args)
 	if err != nil {
 		return rows, cols, err
 	}
-	NormalizeBoolColumns(res.BoolColumns, rows)
+	NormalizeColumns(res, rows)
 	return rows, cols, nil
 }
 
@@ -50,8 +51,66 @@ func RunLimit(ctx context.Context, db queryRunner, res *Result, maxRows int) ([]
 	if err != nil {
 		return rows, cols, truncated, err
 	}
-	NormalizeBoolColumns(res.BoolColumns, rows)
+	NormalizeColumns(res, rows)
 	return rows, cols, truncated, nil
+}
+
+// NormalizeColumns приводит значения всех типизированных колонок результата.
+//
+// Одна точка вместо перечисления типов у каждого вызывающего: датам приведение
+// добавили после булевых, и место, где о них забыли, обнаруживалось не отказом,
+// а молча неверными сравнениями (#1013). Новый тип колонки добавляется здесь, и
+// его получают все потребители сразу.
+func NormalizeColumns(res *Result, rows []map[string]any) {
+	if res == nil {
+		return
+	}
+	NormalizeBoolColumns(res.BoolColumns, rows)
+	NormalizeDateColumns(res.DateColumns, rows)
+}
+
+// NormalizeDateColumns приводит значения перечисленных колонок к значению даты.
+//
+// На SQLite дата хранится строкой RFC3339 (SQLiteDialect.TypeTimestamp), и без
+// приведения путь запроса отдавал строку там, где объектный путь
+// (Ссылка.ПолучитьОбъект → normalizeFieldValue) отдаёт time.Time. Дальше
+// сравнение дат уходило в текстовое: разделитель «T» (0x54) больше пробела
+// (0x20), поэтому запись с сегодняшней датой оказывалась «в будущем». Дефект
+// зависел от часового пояса машины — на MSK текстовое сравнение случайно давало
+// верный ответ, на UTC ломалось (#1013).
+//
+// NULL остаётся nil, неразобранная строка — как есть: молча подменять
+// «не заполнено» или непонятный формат нулевой датой опаснее, чем отдать
+// исходное значение.
+func NormalizeDateColumns(cols []string, rows []map[string]any) {
+	if len(cols) == 0 {
+		return
+	}
+	for _, row := range rows {
+		for _, col := range cols {
+			v, ok := row[col]
+			if !ok || v == nil {
+				continue
+			}
+			if t, converted := ToDateValue(v); converted {
+				row[col] = t
+			}
+		}
+	}
+}
+
+// ToDateValue приводит значение колонки-даты к time.Time. Второе значение —
+// признак того, что приведение состоялось. Разбор строки тот же, что у
+// объектного пути (storage.ParseRegPeriod), чтобы два пути чтения не разошлись
+// в понимании одного и того же формата.
+func ToDateValue(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case time.Time:
+		return t, true
+	case string:
+		return storage.ParseRegPeriod(t)
+	}
+	return time.Time{}, false
 }
 
 // NormalizeBoolColumns приводит значения перечисленных колонок к bool.

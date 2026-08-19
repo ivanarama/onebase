@@ -139,7 +139,7 @@ const tplAppShell = `{{define "page-app-shell"}}
 
   function openable(href){
     if(!/^\/ui\//.test(href))return false;
-    if(/^\/ui\/(admin|about|logout|login|logo|debug|app|_)/.test(href))return false;
+    if(/^\/ui\/(admin|about|logout|login|logo|debug|app|_(?!ref-open|ref-create))/.test(href))return false;
     return true;
   }
   function shellHomeURL(href){
