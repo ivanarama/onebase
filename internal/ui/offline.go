@@ -73,6 +73,11 @@ func NewOfflineServer(proj *project.Project, db *storage.DB) (*Server, *runtime.
 	}
 	// Запись справочников/документов из обработки (catWriter/docWriter →
 	// entityservice.Save) должна работать и в offline-режиме.
+	//
+	// Страховка значений перечислений включается и здесь: procrun и onebase test
+	// пишут в базу тем же кодом, и «гарантия только на веб-сервере» — это ровно
+	// та половинчатость, из-за которой заведена находка Н3 (#962).
+	db.SetEnumSource(reg)
 	s.entitySvc = s.newEntityService(nil)
 	// Отладка тем же способом, что и на полном сервере. Пока сессия не включена,
 	// источник отдаёт nil и накладных расходов нет; debug-эндпоинты в offline

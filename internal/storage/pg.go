@@ -43,7 +43,10 @@ type DB struct {
 	// migrate, падала бы на INSERT в несуществующий _fts. См. ftsAvailable.
 	ftsState int32
 	// ftsCfg — имя конфигурации текстового поиска PostgreSQL (russian/simple).
-	ftsCfg     atomic.Value
+	ftsCfg atomic.Value
+	// enumSource — источник метаданных перечислений для страховки записи
+	// (#962, Н3). nil = страховка выключена; инжектится сервером, как rlsGuard.
+	enumSource atomic.Value
 	closeMu    sync.Mutex
 	closeHooks []func() error
 	closed     bool

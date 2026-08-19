@@ -60,6 +60,24 @@ func TestLauncherReportProblem_PreviewIsEditable(t *testing.T) {
 	}
 }
 
+// Со страницы отчёта должен быть выход на каждом шаге. Тулбара лаунчера на ней
+// нет, а в нативном окне нет и браузерного «назад»: единственный путь обратно —
+// тот, что нарисован на самой странице. Раньше его не было ни в предпросмотре,
+// ни на экране «пакет сохранён» — пользователь оставался в тупике.
+func TestLauncherReportProblem_EveryStepHasWayBack(t *testing.T) {
+	steps := map[string]map[string]any{
+		"форма":             nil,
+		"предпросмотр":      {"Preview": "# отчёт", "BaseID": "b1"},
+		"пакет сохранён":    {"Preview": "# отчёт", "SavedPath": `C:\Users\u\.onebase\reports\r.zip`},
+		"ошибка сохранения": {"Preview": "# отчёт", "Error": "нет места на диске"},
+	}
+	for step, data := range steps {
+		if !strings.Contains(renderReportProblemPage(t, data), `href="/"`) {
+			t.Errorf("шаг %q: со страницы не вернуться к списку баз", step)
+		}
+	}
+}
+
 func TestLauncherReportProblem_ShowsSavedPathAndError(t *testing.T) {
 	ok := renderReportProblemPage(t, map[string]any{"SavedPath": `C:\Users\u\.onebase\reports\r.zip`})
 	if !strings.Contains(ok, `C:\Users\u\.onebase\reports\r.zip`) {
@@ -82,6 +100,51 @@ func TestLauncherReportProblem_ToolbarHasLink(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "/report-problem") {
 		t.Error("в тулбаре лаунчера нет кнопки «Сообщить об ошибке»")
+	}
+}
+
+// «Изменить описание» возвращает форму заполненной. Раньше это была ссылка на
+// пустой бланк: единственный путь назад стирал написанное, и вернуться «просто
+// посмотреть» было нельзя.
+func TestLauncherReportProblem_EditKeepsDescription(t *testing.T) {
+	h := &handler{store: newTestStore(t)}
+	form := url.Values{
+		"did": {"открыл список"}, "expected": {"список открылся"}, "got": {"пустой экран"},
+		"attach_log": {"1"},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/report-problem", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.reportProblemPreview(rec, req)
+
+	// Предпросмотр несёт описание скрытыми полями и шлёт их на /edit — иначе
+	// возвращать в форму будет нечего.
+	preview := rec.Body.String()
+	for _, want := range []string{
+		`name="did" value="открыл список"`,
+		`name="expected" value="список открылся"`,
+		`name="got" value="пустой экран"`,
+		`formaction="/report-problem/edit"`,
+	} {
+		if !strings.Contains(preview, want) {
+			t.Errorf("в предпросмотре нет %s", want)
+		}
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("POST", "/report-problem/edit", strings.NewReader(form.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.reportProblemEdit(rec2, req2)
+
+	back := rec2.Body.String()
+	if strings.Contains(back, `id="rp-text"`) {
+		t.Fatal("«Изменить описание» вернуло предпросмотр вместо формы")
+	}
+	for _, want := range []string{"открыл список", "список открылся", "пустой экран"} {
+		if !strings.Contains(back, want) {
+			t.Errorf("форма открылась без %q — текст пришлось бы набирать заново", want)
+		}
 	}
 }
 
@@ -163,7 +226,11 @@ func TestLauncherReportProblem_EndToEnd(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	edited := "# мой отчёт\nбез лишнего\n"
-	save := url.Values{"report": {edited}, "base": {"b1"}, "attach_log": {"1"}}
+	save := url.Values{
+		"report": {edited}, "base": {"b1"}, "attach_log": {"1"},
+		// Скрытые поля предпросмотра уходят вместе с отчётом.
+		"did": {"нажал «Провести»"}, "expected": {"документ проведён"}, "got": {"ошибка"},
+	}
 	rec2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest("POST", "/report-problem/save", strings.NewReader(save.Encode()))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -174,6 +241,13 @@ func TestLauncherReportProblem_EndToEnd(t *testing.T) {
 	}
 	if strings.Contains(rec2.Body.String(), "Не удалось сохранить") {
 		t.Fatalf("страница сообщила об ошибке сохранения:\n%s", rec2.Body.String())
+	}
+	// Пакет собран — работа кончилась, и уйти со страницы должно быть чем.
+	if !strings.Contains(rec2.Body.String(), `href="/"`) {
+		t.Error("с экрана «пакет сохранён» не вернуться к списку баз")
+	}
+	if !strings.Contains(rec2.Body.String(), `name="did" value="нажал «Провести»"`) {
+		t.Error("после сохранения описание потерялось — «Изменить описание» откроет пустой бланк")
 	}
 
 	found, err := filepath.Glob(filepath.Join(home, ".onebase", "reports", "*.zip"))
