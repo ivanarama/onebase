@@ -60,6 +60,9 @@ type serviceCache struct {
 	// исполнений DSL — это ровно тот момент, когда сайт и падает.
 	keyMu    sync.Mutex
 	keyLocks map[string]*keyLock
+	// uncacheable — ключи, ответ по которым уже оказался некэшируемым. Живёт
+	// под тем же keyMu, что и keyLocks: обе карты про один ключ.
+	uncacheable map[string]uncacheableMark
 	// now подменяется в тестах, чтобы не спать по-настоящему.
 	now func() time.Time
 
@@ -73,11 +76,89 @@ func newServiceCache(maxBytes int64) *serviceCache {
 		maxBytes = defaultServiceCacheMaxBytes
 	}
 	return &serviceCache{
-		entries:  make(map[string]*list.Element),
-		order:    list.New(),
-		maxBytes: maxBytes,
-		keyLocks: make(map[string]*keyLock),
-		now:      time.Now,
+		entries:     make(map[string]*list.Element),
+		order:       list.New(),
+		maxBytes:    maxBytes,
+		keyLocks:    make(map[string]*keyLock),
+		uncacheable: make(map[string]uncacheableMark),
+		now:         time.Now,
+	}
+}
+
+const (
+	// uncacheableTTL — насколько долго ключ считается заведомо некэшируемым.
+	// Короткий намеренно: страница может стать кэшируемой (404 исчез, тело
+	// ужалось, обработчик перестал ставить Set-Cookie), и цена ошибки —
+	// ровно один незащищённый промах.
+	uncacheableTTL = 30 * time.Second
+	// maxUncacheableKeys — потолок отрицательного списка. При переполнении он
+	// чистится целиком: это оптимизация, а не источник истины, и терять её
+	// безопаснее, чем расти без предела на потоке уникальных URL.
+	maxUncacheableKeys = 4096
+)
+
+// uncacheableMark — отметка «ответ по этому ключу кэшировать нельзя». root
+// хранится, чтобы точечный сброс сервиса снимал и отрицательные отметки.
+type uncacheableMark struct {
+	until time.Time
+	root  string
+}
+
+// uncacheableRecently — правда ли, что ответ по ключу недавно оказался
+// некэшируемым. Такой ключ кэш не наполнит никогда (тело больше max_body,
+// Set-Cookie, горячий 404), и брать под него замок вредно: сериализация
+// промахов из разовой защиты холодного старта превращается в постоянную
+// очередь по одному — параллелизм хуже, чем с выключенным кэшем (#1000).
+func (c *serviceCache) uncacheableRecently(key string) bool {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	mark, ok := c.uncacheable[key]
+	if !ok {
+		return false
+	}
+	if c.timeNow().After(mark.until) {
+		delete(c.uncacheable, key)
+		return false
+	}
+	return true
+}
+
+// markUncacheable запоминает ключ как некэшируемый на uncacheableTTL.
+func (c *serviceCache) markUncacheable(key, root string) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	now := c.timeNow()
+	if len(c.uncacheable) >= maxUncacheableKeys {
+		for k, m := range c.uncacheable {
+			if now.After(m.until) {
+				delete(c.uncacheable, k)
+			}
+		}
+		if len(c.uncacheable) >= maxUncacheableKeys {
+			c.uncacheable = make(map[string]uncacheableMark, maxUncacheableKeys)
+		}
+	}
+	c.uncacheable[key] = uncacheableMark{until: now.Add(uncacheableTTL), root: root}
+}
+
+// forgetUncacheable снимает отметку: ответ по ключу снова кэшируется, и
+// защита холодного старта этому ключу опять полагается.
+func (c *serviceCache) forgetUncacheable(key string) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	delete(c.uncacheable, key)
+}
+
+// clearUncacheable снимает отметки сервиса (или все при пустом root) — чтобы
+// сброс кэша не оставлял за собой невидимый отрицательный хвост.
+func (c *serviceCache) clearUncacheable(root string) {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	root = strings.ToLower(strings.Trim(strings.TrimSpace(root), "/"))
+	for k, m := range c.uncacheable {
+		if root == "" || strings.ToLower(m.root) == root {
+			delete(c.uncacheable, k)
+		}
 	}
 }
 
@@ -176,6 +257,9 @@ func (c *serviceCache) Put(key, root string, resp *cachedResponse, ttl time.Dura
 // Clear сбрасывает кэш сервиса (root == "" — весь). Возвращает число
 // выброшенных записей.
 func (c *serviceCache) Clear(root string) int {
+	// Отрицательные отметки снимаем вместе с записями: после правки модуля
+	// страница может стать кэшируемой, и хвост отметок это бы скрыл.
+	c.clearUncacheable(root)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	root = strings.ToLower(strings.Trim(strings.TrimSpace(root), "/"))
