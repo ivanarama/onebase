@@ -133,6 +133,10 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	}
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), incidents: incident.NewStore(incident.DefaultLimit), widgetCache: widget.NewCache(60 * time.Second), svcCache: newServiceCache(0), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
+	// Страховка значений перечислений на уровне записи (#962, Н3): проверки у
+	// входов остаются, но перестают быть единственной защитой — любой новый
+	// путь записи наследует её, не вспоминая о ней.
+	store.SetEnumSource(reg)
 	s.entitySvc = s.newEntityService(cfg.Webhooks)
 	if cfg.Dev {
 		// Метка живёт ровно столько, сколько процесс: по её смене браузер
