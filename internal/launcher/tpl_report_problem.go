@@ -26,12 +26,20 @@ const tplReportProblem = `
   <form method="post" action="/report-problem/save">
     <input type="hidden" name="base" value="{{.BaseID}}">
     <input type="hidden" name="attach_log" value="{{if .AttachLog}}1{{end}}">
+    {{/* Описание едет с собой скрытыми полями: «Изменить описание» обязано
+         вернуть форму заполненной, иначе текст пришлось бы набирать заново. */}}
+    <input type="hidden" name="did" value="{{.Did}}">
+    <input type="hidden" name="expected" value="{{.Expected}}">
+    <input type="hidden" name="got" value="{{.Got}}">
     <textarea id="rp-text" name="report" rows="20" spellcheck="false"
       style="width:100%;padding:8px;border:1px solid #ACA899;border-radius:2px;font-family:Consolas,monospace;font-size:12px;line-height:1.5">{{.Preview}}</textarea>
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn-ok" type="submit">{{t $.Lang "Сохранить пакет…"}}</button>
       <button class="btn-cancel" type="button" id="rp-copy">{{t $.Lang "Скопировать текст"}}</button>
-      <a class="btn-cancel" href="/report-problem{{if .BaseID}}?base={{.BaseID}}{{end}}">{{t $.Lang "Изменить описание"}}</a>
+      <button class="btn-cancel" type="submit" formaction="/report-problem/edit">{{t $.Lang "Изменить описание"}}</button>
+      {{/* Выход отсюда есть только свой: страница отчёта рисуется без тулбара
+           лаунчера, а нативное окно не даёт браузерного «назад». */}}
+      <a class="btn-cancel" href="/">← {{t $.Lang "Назад к списку баз"}}</a>
       <span id="rp-copied" style="color:#166534;font-size:12px;display:none">{{t $.Lang "Скопировано"}}</span>
     </div>
     <div style="margin-top:8px;font-size:12px;color:#777">
