@@ -349,7 +349,7 @@ func fieldYAMLSchema() *yamlLintSchema {
 	// который его честно читает, и DEVELOPER.md, где id описан как
 	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
 	// страховку от потери данных (#873, дефект Д11 из #668).
-	return with(obj("id", "name", "title", "label", "type", "allow_inline_create"), map[string]*yamlLintSchema{
+	return with(obj("id", "name", "title", "label", "type", "allow_inline_create", "required"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 	})
 }

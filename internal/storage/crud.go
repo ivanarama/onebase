@@ -89,6 +89,9 @@ const (
 )
 
 func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
+	if err := db.requiredBackstop(ctx, entity, fields); err != nil {
+		return err
+	}
 	// Сущность с объявленными этапами (план 121) пишется сериализованным циклом
 	// «прочитать → проверить переход → записать → записать историю». Решение о
 	// допустимости принимается по прочитанному значению, поэтому между чтением и

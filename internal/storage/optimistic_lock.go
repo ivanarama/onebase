@@ -34,6 +34,11 @@ var ErrVersionConflict = errors.New("storage: объект изменён дру
 // поэтому конкурентная PostgreSQL-запись не может пройти между отдельным
 // SELECT и последующим Upsert.
 func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, expectedVersion *int64) error {
+	// Отдельная ветка записи — отдельный вызов проверки: upsert() сюда не
+	// заходит, и «одна точка» осталась бы заявлением.
+	if err := db.requiredBackstop(ctx, entity, fields); err != nil {
+		return err
+	}
 	if expectedVersion == nil {
 		return db.Upsert(ctx, entityName, id, fields, entity)
 	}

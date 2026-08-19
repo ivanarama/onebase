@@ -437,6 +437,14 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		return SaveResult{ID: req.ID, DSLError: msg}, nil
 	}
 
+	// Обязательные реквизиты: при создании требуется полный набор, при правке —
+	// только непустота того, что передали. Полнота проверяется здесь, а не в
+	// хранилище, потому что объект целиком известен именно тут: в частичной
+	// записи отсутствие ключа означает «не меняем» (#1033).
+	if msg := storage.ValidateRequiredValues(req.Entity, obj.Fields, req.IsNew); msg != "" {
+		return SaveResult{ID: req.ID, DSLError: msg}, nil
+	}
+
 	// Выбор хука: OnPost при проведении документа, иначе OnWrite.
 	isPosting := req.Entity.Posting && (req.Action == "post" || req.Action == "post_and_close")
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
