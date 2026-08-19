@@ -411,7 +411,15 @@ jobs:
         id: release_body
         shell: bash
         run: |
-          notes="release_${GITHUB_REF_NAME}.md"
+          # Заметки переехали из корня в docs/releases/ (#988, А3). Корень
+          # проверяется вторым не ради совместимости, а ради предсказуемого
+          # отказа: тег, для которого заметка осталась по старому пути, иначе
+          # молча получил бы дефолтное тело вместо своего текста.
+          notes="docs/releases/release_${GITHUB_REF_NAME}.md"
+          if [[ ! -f "$notes" && -f "release_${GITHUB_REF_NAME}.md" ]]; then
+            notes="release_${GITHUB_REF_NAME}.md"
+            echo "::warning::заметка $notes лежит в корне; место для них — docs/releases/"
+          fi
           if [[ -f "$notes" ]]; then
             echo "path=$notes" >> "$GITHUB_OUTPUT"
           else

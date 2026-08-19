@@ -133,6 +133,18 @@ var safeSettingKeys = map[string]bool{
 	"ai.daily_token_cap": true,
 }
 
+// scheduledEnabledPrefix — семейство ключей с административными решениями о
+// включённости регламентных заданий (#991). Переезжает в .obz безусловно:
+// состояние заданий — не идентичность базы (в отличие от exchange.this_node,
+// который импортируется только при полном восстановлении), и копия должна
+// вести задания так же, как источник, — иначе восстановленный «выключенный
+// автобэкап» молча оживает.
+const scheduledEnabledPrefix = "scheduled.enabled."
+
+func isScheduledEnabledKey(key string) bool {
+	return strings.HasPrefix(strings.ToLower(key), scheduledEnabledPrefix)
+}
+
 // byteColumns lists known binary columns in system tables.
 // Key: "table.column", value: true.
 var byteColumns = map[string]bool{
@@ -888,7 +900,7 @@ func exportSafeSettings(ctx context.Context, db safeSettingsDB, zw *zip.Writer) 
 		if err := rows.Scan(&key, &value); err != nil {
 			return 0, fmt.Errorf("scan safe setting: %w", err)
 		}
-		if safeSettingKeys[key] || strings.HasPrefix(strings.ToLower(key), "exchange.this_node.") {
+		if safeSettingKeys[key] || strings.HasPrefix(strings.ToLower(key), "exchange.this_node.") || isScheduledEnabledKey(key) {
 			selected = append(selected, map[string]string{"key": key, "value": value})
 		}
 	}
@@ -1642,7 +1654,10 @@ func clearPortableSettings(ctx context.Context, db *storage.DB) error {
 			return err
 		}
 	}
-	_, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), "exchange.this_node.%")
+	if _, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), "exchange.this_node.%"); err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), scheduledEnabledPrefix+"%")
 	return err
 }
 
@@ -2075,7 +2090,8 @@ func importSafeSettings(ctx context.Context, db *storage.DB, filePath string, in
 			return n, fmt.Errorf("parse row %d: %w", n+1, err)
 		}
 		isExchangeNode := strings.HasPrefix(strings.ToLower(row.Key), "exchange.this_node.")
-		if !safeSettingKeys[row.Key] && (!includeExchangeNode || !isExchangeNode) {
+		// Решения о заданиях импортируются в любом режиме восстановления.
+		if !safeSettingKeys[row.Key] && !isScheduledEnabledKey(row.Key) && (!includeExchangeNode || !isExchangeNode) {
 			continue
 		}
 		if _, err := db.Exec(ctx, q, row.Key, row.Value); err != nil {

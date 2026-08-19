@@ -1227,6 +1227,7 @@ const tplNav = `
           <a href="/ui/admin/exchange">{{t $.Lang "Обмен данными"}}</a>
           <a href="/ui/admin/intake">{{t $.Lang "Входная приёмка"}}</a>
           <a href="/ui/admin/scheduled">{{t $.Lang "Регламентные задания"}}</a>
+          <a href="/ui/admin/queue">{{t $.Lang "Очередь фоновых заданий"}}</a>
           <a href="/ui/admin/webhooks">{{t $.Lang "Журнал веб-хуков"}}</a>
         </div>
       </details>
@@ -3313,7 +3314,7 @@ const tplScheduled = `
   <th>{{t $.Lang "Статус"}}</th>
   <th>{{t $.Lang "Последний запуск"}}</th>
   <th>{{t $.Lang "Длительность"}}</th>
-  <th style="width:90px"></th>
+  <th style="width:170px"></th>
 </tr></thead>
 <tbody>
 {{range .JobRows}}
@@ -3322,7 +3323,7 @@ const tplScheduled = `
   <td><strong>{{$job.Title}}</strong><br><small style="color:#94a3b8">{{$job.Name}}</small></td>
   <td><code>{{$job.Schedule}}</code></td>
   <td>{{$job.Processor}}</td>
-  <td>{{if $job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}</td>
+  <td>{{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:#22c55e">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if $job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}</td>
   <td>
     {{if .LastRun}}
       {{$r := .LastRun}}
@@ -3337,6 +3338,9 @@ const tplScheduled = `
   </td>
   <td>
     <a class="btn btn-sm btn-primary" href="/ui/admin/scheduled/{{$job.Name}}">{{t $.Lang "Подробнее"}}</a>
+    <form method="POST" action="/ui/admin/scheduled/{{$job.Name}}/toggle" style="display:inline;margin-left:6px">
+      <button class="btn btn-sm btn-secondary" type="submit">{{if .State.EffectiveOn}}{{t $.Lang "Выключить"}}{{else}}{{t $.Lang "Включить"}}{{end}}</button>
+    </form>
   </td>
 </tr>
 {{end}}
@@ -3345,6 +3349,87 @@ const tplScheduled = `
 <p class="empty">{{t $.Lang "Регламентных заданий нет. Создайте файлы в папке <code>scheduled/</code> вашей конфигурации."}}</p>
 {{end}}
 </div>
+</main></div></body></html>
+{{end}}
+
+{{define "page-job-queue"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<div class="row-top">
+  <h2>{{t $.Lang "Очередь фоновых заданий"}}</h2>
+  <span style="color:#94a3b8;font-size:13px">
+    {{t $.Lang "Исполнителей:"}} {{.Workers}}{{if .InFlight}} · {{t $.Lang "в работе:"}} {{.InFlight}}{{end}}
+  </span>
+</div>
+{{if not .Available}}
+<div class="card"><p class="empty">{{t $.Lang "Очередь недоступна в этом режиме работы сервера."}}</p></div>
+{{else}}
+{{if not .Enabled}}
+<div class="card" style="margin-bottom:16px;border-left:3px solid #f97316">
+  {{t $.Lang "Очередь выключена настройкой queue.workers: 0 — задачи не принимаются и не исполняются."}}
+</div>
+{{end}}
+{{if .Degraded}}
+<div class="card" style="margin-bottom:16px;border-left:3px solid #f97316">
+  {{t $.Lang "База на SQLite: параллелизм недоступен, работает один исполнитель. Пул на 16–32 исполнителя требует PostgreSQL."}}
+</div>
+{{end}}
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+{{range .Cards}}
+  <a href="/ui/admin/queue{{if not .Active}}?status={{.Status}}{{end}}" class="card"
+     style="flex:1 1 150px;text-decoration:none;color:inherit;padding:12px 16px;{{if .Active}}outline:2px solid #2563eb{{end}}">
+    <div style="font-size:24px;font-weight:600">{{.Count}}</div>
+    <div style="color:#64748b;font-size:13px">{{t $.Lang .Title}}</div>
+  </a>
+{{end}}
+</div>
+<div class="card">
+{{if .Tasks}}
+<table><thead><tr>
+  <th>{{t $.Lang "Задание"}}</th>
+  <th>{{t $.Lang "Параметры"}}</th>
+  <th>{{t $.Lang "Статус"}}</th>
+  <th>{{t $.Lang "Попытки"}}</th>
+  <th>{{t $.Lang "Поставлена"}}</th>
+  <th>{{t $.Lang "Длительность"}}</th>
+  <th style="width:170px"></th>
+</tr></thead>
+<tbody>
+{{range .Tasks}}
+<tr>
+  <td>
+    <strong>{{.JobName}}</strong>
+    <br><small style="color:#94a3b8" title="{{.ID}}">{{.ShortID}}</small>
+    {{if .Key}}<br><small style="color:#94a3b8">{{t $.Lang "ключ:"}} {{.Key}}</small>{{end}}
+  </td>
+  <td><small>{{.Params}}</small></td>
+  <td>
+    <span style="color:{{if eq .Status "done"}}#22c55e{{else if eq .Status "dead"}}#ef4444{{else if eq .Status "running"}}#2563eb{{else}}#94a3b8{{end}}">{{.Status}}</span>
+    {{if .RetryAt}}<br><small style="color:#94a3b8">{{t $.Lang "повтор в"}} {{fmtDate .RetryAt}}</small>{{end}}
+    {{if .Error}}<br><small style="color:#ef4444">{{.Error}}</small>{{end}}
+  </td>
+  <td>{{.Attempts}} / {{.MaxAttempts}}</td>
+  <td>{{if .CreatedAt}}<small>{{fmtDate .CreatedAt}}</small>{{else}}—{{end}}</td>
+  <td>{{if .DurationMs}}{{.DurationMs}} {{t $.Lang "мс"}}{{else}}—{{end}}</td>
+  <td>
+    {{if .Quarantined}}
+      <form method="POST" action="/ui/admin/queue/{{.ID}}/replay{{if $.Status}}?status={{$.Status}}{{end}}" style="display:inline">
+        <button class="btn btn-sm btn-primary" type="submit">{{t $.Lang "Повторить"}}</button>
+      </form>
+    {{else if not .Terminal}}
+      <form method="POST" action="/ui/admin/queue/{{.ID}}/cancel{{if $.Status}}?status={{$.Status}}{{end}}" style="display:inline">
+        <button class="btn btn-sm" type="submit">{{t $.Lang "Отменить"}}</button>
+      </form>
+    {{end}}
+  </td>
+</tr>
+{{end}}
+</tbody></table>
+{{else}}
+<p class="empty">{{t $.Lang "Задач нет. Ставит их прикладной код: ФоновыеЗадания.Поставить(«ИмяЗадания», Параметры)."}}</p>
+{{end}}
+</div>
+{{end}}
 </main></div></body></html>
 {{end}}
 
@@ -3366,14 +3451,27 @@ const tplScheduled = `
   <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "При ошибке"}}</td><td>{{.Job.OnError}}</td></tr>
   <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Таймаут"}}</td><td>{{.Job.Timeout}} {{t $.Lang "сек."}}</td></tr>
   <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Состояние"}}</td><td>
-    {{if .Job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}
+    {{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:#22c55e">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if .Job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}
   </td></tr>
 </table>
 </div>
 
-<form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/run-now" style="margin-bottom:20px">
-  <button class="btn btn-primary" type="submit">{{t $.Lang "▶ Запустить сейчас"}}</button>
-</form>
+{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">✓ {{.Msg}}</div>{{end}}
+{{if .Err}}<div class="error" style="max-width:1000px;margin-bottom:16px">{{.Err}}</div>{{end}}
+
+<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+  <form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/toggle">
+    <button class="btn {{if .State.EffectiveOn}}btn-secondary{{else}}btn-primary{{end}}" type="submit">{{if .State.EffectiveOn}}{{t $.Lang "Выключить"}}{{else}}{{t $.Lang "Включить"}}{{end}}</button>
+  </form>
+  {{if .State.OverrideSet}}
+  <form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/reset">
+    <button class="btn btn-secondary" type="submit">{{t $.Lang "Вернуть как в конфигурации"}}</button>
+  </form>
+  {{end}}
+  <form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/run-now">
+    <button class="btn btn-primary" type="submit">{{t $.Lang "▶ Запустить сейчас"}}</button>
+  </form>
+</div>
 
 <h3>{{t $.Lang "История запусков (последние 50)"}}</h3>
 <div class="card">

@@ -134,12 +134,17 @@ func extractFormatParam(fmtStr, key string) string {
 }
 
 // formatDate converts a 1C-style date pattern to Go format and formats.
+//
+// Шаблон приходит сюда уже в нижнем регистре: fmtBuiltinBounded понижает регистр
+// ВСЕЙ строки формата, чтобы ключи «ДФ=»/«ЧДЦ=» распознавались в любом написании.
+// Поэтому месяц ищется как «mm» — верхнерегистровая «MM» до этой функции не доходит,
+// и отдельная замена для неё была бы мёртвым кодом. Порядок важен: «yyyy» заменяется
+// раньше «yy», иначе год превратился бы в «0606».
 func formatDate(t time.Time, pattern string) string {
 	// Convert 1C patterns to Go
 	goFmt := pattern
 	goFmt = strings.ReplaceAll(goFmt, "yyyy", "2006")
 	goFmt = strings.ReplaceAll(goFmt, "yy", "06")
-	goFmt = strings.ReplaceAll(goFmt, "MM", "01")
 	goFmt = strings.ReplaceAll(goFmt, "mm", "01")
 	goFmt = strings.ReplaceAll(goFmt, "dd", "02")
 	return t.Format(goFmt)
