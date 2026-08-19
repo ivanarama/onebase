@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -82,9 +83,22 @@ var namedGroupSyntax = regexp.MustCompile(`\(\?P?<([^>]*)>`)
 // ошибки нет. Поэтому имя заменяется на «obN», а наружу (ГруппыПоИмени, ${имя}
 // в строке замены) возвращается исходное.
 func prepareNamedGroups(pattern string) (string, map[string]string, map[string]string) {
-	if !namedGroupSyntax.MatchString(pattern) {
+	decls := namedGroupSyntax.FindAllStringSubmatch(pattern, -1)
+	if len(decls) == 0 {
 		return pattern, nil, nil
 	}
+	declared := make([]string, 0, len(decls))
+	needAlias := false
+	for _, d := range decls {
+		declared = append(declared, d[1])
+		if !isASCIIGroupName(d[1]) {
+			needAlias = true
+		}
+	}
+	if !needAlias {
+		return pattern, nil, nil
+	}
+	prefix := aliasPrefix(declared)
 	aliases := map[string]string{}
 	byName := map[string]string{}
 	n := 0
@@ -94,12 +108,37 @@ func prepareNamedGroups(pattern string) (string, map[string]string, map[string]s
 			return decl
 		}
 		n++
-		alias := fmt.Sprintf("ob%d", n)
+		alias := fmt.Sprintf("%s%d", prefix, n)
 		aliases[alias] = name
 		byName[name] = alias
 		return strings.Replace(decl, "<"+name+">", "<"+alias+">", 1)
 	})
 	return out, aliases, byName
+}
+
+// aliasPrefix подбирает префикс псевдонима, с которым не столкнётся ни одно имя
+// группы из самого шаблона.
+//
+// Раньше префикс был жёстко «ob», и шаблон «(?P<ob1>x)-(?P<год>y)» превращался
+// в «(?P<ob1>x)-(?P<ob1>y)». RE2 дубликаты имён не отвергает, поэтому дальше всё
+// молча кривое: обе группы попадают в ГруппыПоИмени под одним ключом, побеждает
+// последняя (#997). Цикл конечен: каждый шаг удлиняет префикс, а имён в шаблоне
+// конечное число и все они конечной длины.
+func aliasPrefix(declared []string) string {
+	prefix := "ob"
+	for {
+		clash := false
+		for _, name := range declared {
+			if strings.HasPrefix(name, prefix) {
+				clash = true
+				break
+			}
+		}
+		if !clash {
+			return prefix
+		}
+		prefix += "_"
+	}
 }
 
 func isASCIIGroupName(name string) bool {
@@ -124,18 +163,87 @@ func (r *dslRegex) groupName(compiled string) string {
 	return compiled
 }
 
-// expandReplacement переводит ссылки «${имя}» на русские группы в ссылки на
-// ASCII-псевдонимы, с которыми группа реально скомпилирована. Формы «$имя» без
-// скобок нет: в Go имя после «$» читается до первого не-word символа, то есть
-// кириллица там не распознаётся в принципе.
+// expandReplacement переводит ссылки на группы с не-ASCII именами в ссылки на
+// ASCII-псевдонимы, с которыми группа реально скомпилирована — обе формы,
+// «${имя}» и «$имя».
+//
+// Форма без скобок раньше не переводилась: считалось, что кириллица после «$»
+// не распознаётся в принципе. Это неверно — Regexp.Expand читает имя через
+// unicode.IsLetter, то есть «$год» разбирается как ссылка на группу «год».
+// Такой группы в скомпилированном шаблоне нет (она переименована в псевдоним),
+// а ссылка на несуществующую группу по контракту Expand заменяется пустой
+// строкой: Заменить(С, "$год-$месяц") молча возвращал пустоту (#997).
+//
+// Разбор повторяет Expand: имя читается до первого символа, который не буква,
+// не цифра и не «_», а «$$» — экранированный доллар, имя за ним не читается.
 func (r *dslRegex) expandReplacement(repl string) string {
 	if len(r.byName) == 0 {
 		return repl
 	}
-	for name, alias := range r.byName {
-		repl = strings.ReplaceAll(repl, "${"+name+"}", "${"+alias+"}")
+	var b strings.Builder
+	for i := 0; i < len(repl); {
+		if repl[i] != '$' {
+			b.WriteByte(repl[i])
+			i++
+			continue
+		}
+		if i+1 < len(repl) && repl[i+1] == '$' {
+			b.WriteString("$$")
+			i += 2
+			continue
+		}
+		name, brace, rest, ok := extractGroupRef(repl[i:])
+		if !ok {
+			b.WriteByte('$')
+			i++
+			continue
+		}
+		switch alias, aliased := r.byName[name]; {
+		case aliased:
+			b.WriteString("${" + alias + "}")
+		case brace:
+			b.WriteString("${" + name + "}")
+		default:
+			b.WriteString("$" + name)
+		}
+		i = len(repl) - len(rest)
 	}
-	return repl
+	return b.String()
+}
+
+// extractGroupRef читает ссылку на группу в начале строки — «$имя» или
+// «${имя}» — теми же правилами, что и Regexp.Expand. Возвращает имя, была ли
+// форма со скобками, остаток строки и признак того, что ссылка разобрана.
+// Неразобранное (одинокий «$», незакрытая скобка) Expand считает обычным
+// текстом — здесь такой кусок тоже остаётся нетронутым.
+func extractGroupRef(s string) (name string, brace bool, rest string, ok bool) {
+	if len(s) < 2 || s[0] != '$' {
+		return "", false, s, false
+	}
+	body := s[1:]
+	if body[0] == '{' {
+		brace = true
+		body = body[1:]
+	}
+	i := 0
+	for i < len(body) {
+		c, size := utf8.DecodeRuneInString(body[i:])
+		if !unicode.IsLetter(c) && !unicode.IsDigit(c) && c != '_' {
+			break
+		}
+		i += size
+	}
+	if i == 0 {
+		return "", brace, s, false
+	}
+	name = body[:i]
+	if brace {
+		if i >= len(body) || body[i] != '}' {
+			return "", brace, s, false
+		}
+		return name, true, body[i+1:], true
+	}
+	return name, false, body[i:], true
 }
 
 // regexFlagPrefix переводит буквы флагов в префикс группы RE2. Пустая строка
