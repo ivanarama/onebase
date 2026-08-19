@@ -3313,7 +3313,7 @@ const tplScheduled = `
   <th>{{t $.Lang "Статус"}}</th>
   <th>{{t $.Lang "Последний запуск"}}</th>
   <th>{{t $.Lang "Длительность"}}</th>
-  <th style="width:90px"></th>
+  <th style="width:170px"></th>
 </tr></thead>
 <tbody>
 {{range .JobRows}}
@@ -3322,7 +3322,7 @@ const tplScheduled = `
   <td><strong>{{$job.Title}}</strong><br><small style="color:#94a3b8">{{$job.Name}}</small></td>
   <td><code>{{$job.Schedule}}</code></td>
   <td>{{$job.Processor}}</td>
-  <td>{{if $job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}</td>
+  <td>{{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:#22c55e">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if $job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}</td>
   <td>
     {{if .LastRun}}
       {{$r := .LastRun}}
@@ -3337,6 +3337,9 @@ const tplScheduled = `
   </td>
   <td>
     <a class="btn btn-sm btn-primary" href="/ui/admin/scheduled/{{$job.Name}}">{{t $.Lang "Подробнее"}}</a>
+    <form method="POST" action="/ui/admin/scheduled/{{$job.Name}}/toggle" style="display:inline;margin-left:6px">
+      <button class="btn btn-sm btn-secondary" type="submit">{{if .State.EffectiveOn}}{{t $.Lang "Выключить"}}{{else}}{{t $.Lang "Включить"}}{{end}}</button>
+    </form>
   </td>
 </tr>
 {{end}}
@@ -3366,14 +3369,27 @@ const tplScheduled = `
   <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "При ошибке"}}</td><td>{{.Job.OnError}}</td></tr>
   <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Таймаут"}}</td><td>{{.Job.Timeout}} {{t $.Lang "сек."}}</td></tr>
   <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Состояние"}}</td><td>
-    {{if .Job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}
+    {{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:#22c55e">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if .Job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}
   </td></tr>
 </table>
 </div>
 
-<form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/run-now" style="margin-bottom:20px">
-  <button class="btn btn-primary" type="submit">{{t $.Lang "▶ Запустить сейчас"}}</button>
-</form>
+{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">✓ {{.Msg}}</div>{{end}}
+{{if .Err}}<div class="error" style="max-width:1000px;margin-bottom:16px">{{.Err}}</div>{{end}}
+
+<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+  <form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/toggle">
+    <button class="btn {{if .State.EffectiveOn}}btn-secondary{{else}}btn-primary{{end}}" type="submit">{{if .State.EffectiveOn}}{{t $.Lang "Выключить"}}{{else}}{{t $.Lang "Включить"}}{{end}}</button>
+  </form>
+  {{if .State.OverrideSet}}
+  <form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/reset">
+    <button class="btn btn-secondary" type="submit">{{t $.Lang "Вернуть как в конфигурации"}}</button>
+  </form>
+  {{end}}
+  <form method="POST" action="/ui/admin/scheduled/{{.Job.Name}}/run-now">
+    <button class="btn btn-primary" type="submit">{{t $.Lang "▶ Запустить сейчас"}}</button>
+  </form>
+</div>
 
 <h3>{{t $.Lang "История запусков (последние 50)"}}</h3>
 <div class="card">

@@ -507,6 +507,8 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/scheduled", s.scheduledList)
 	r.Get("/ui/admin/scheduled/{name}", s.scheduledDetail)
 	r.Post("/ui/admin/scheduled/{name}/run-now", s.scheduledRunNow)
+	r.Post("/ui/admin/scheduled/{name}/toggle", s.scheduledToggle)
+	r.Post("/ui/admin/scheduled/{name}/reset", s.scheduledReset)
 
 	// Account registers
 	r.Get("/ui/accounts/{plan}", s.accountsList)
