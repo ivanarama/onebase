@@ -238,18 +238,32 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 	// иначе ответ, собранный под правами одного пользователя, достался бы
 	// другому. Промахи по одному ключу сериализуются: параллельные запросы на
 	// холодную страницу не должны запускать несколько исполнений DSL.
-	if s.serviceCacheUsable(svc, r) {
-		key := serviceCacheKey(svc, r, s.resolveLang(r))
+	reqLang := s.resolveLang(r)
+	cacheUsable := s.serviceCacheUsable(svc, r)
+	// Язык отдаём обработчику там, где он не отравит общую запись кэша: либо
+	// кэш этот запрос не обслуживает, либо ключ разведён по языку (vary: lang).
+	// Иначе НСтр в сервисе всегда берёт язык базы, а vary: lang заводит по
+	// записи на язык с одинаковым содержимым — расход памяти без пользы (#1000).
+	passLang := !cacheUsable || svc.Cache.VaryBy("lang")
+
+	if cacheUsable {
+		key := serviceCacheKey(svc, r, reqLang)
 		if resp, ok := s.svcCache.Get(key); ok {
 			writeCachedResponse(w, r, resp, svc)
 			return
 		}
-		release := s.svcCache.lockKey(key)
-		defer release()
-		// Пока ждали замок, ответ мог собрать сосед.
-		if resp, ok := s.svcCache.Get(key); ok {
-			writeCachedResponse(w, r, resp, svc)
-			return
+		// Замок берём только там, где кэш может наполниться. Ключ, ответ по
+		// которому уже оказался некэшируемым, помечен отрицательно: без этого
+		// запросы к такой странице выстраивались бы в очередь по одному
+		// навсегда (#1000).
+		if !s.svcCache.uncacheableRecently(key) {
+			release := s.svcCache.lockKey(key)
+			defer release()
+			// Пока ждали замок, ответ мог собрать сосед.
+			if resp, ok := s.svcCache.Get(key); ok {
+				writeCachedResponse(w, r, resp, svc)
+				return
+			}
 		}
 		out := w
 		capture := newCacheCapture()
@@ -264,11 +278,14 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 			if capture.cacheable(svc.Cache.BodyLimit()) {
 				resp := capture.toCachedResponse()
 				s.svcCache.Put(key, svc.RootURL, resp, time.Duration(svc.Cache.TTL)*time.Second)
+				s.svcCache.forgetUncacheable(key)
 				writeCachedResponse(out, r, resp, svc)
 				return
 			}
 			// Ошибки, слишком большие тела и ответы с Set-Cookie отдаём как
-			// есть, мимо кэша.
+			// есть, мимо кэша. Ключ запоминаем как некэшируемый — следующие
+			// запросы к нему не будут ждать замок впустую.
+			s.svcCache.markUncacheable(key, svc.RootURL)
 			flushCapture(out, capture)
 		}()
 		w = capture
@@ -337,6 +354,11 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx = auth.ContextWithUser(opCtx, auth.UserFromContext(ctx))
+	// Язык кладётся ПОСЛЕ beginOperation: opCtx растёт от контекста запроса, а
+	// не от ctx, поэтому значение, положенное раньше, здесь бы потерялось.
+	if passLang {
+		ctx = withLang(ctx, reqLang)
+	}
 	opStatus := "ok"
 	defer func() { finish(opStatus, 0, false) }()
 

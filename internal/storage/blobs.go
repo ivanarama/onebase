@@ -320,7 +320,12 @@ func (db *DB) DeleteBlob(ctx context.Context, id uuid.UUID) error {
 		// disk / db / легаси: файла на диске может не быть (db-режим) — это не ошибка.
 		removeFile(filepath.Join(db.filesDir, blobsDirName, id.String()))
 	}
-	_, err := db.Exec(ctx,
-		fmt.Sprintf(`DELETE FROM _blobs WHERE id=%s`, d.Placeholder(1)), id.String())
-	return err
+	if _, err := db.Exec(ctx,
+		fmt.Sprintf(`DELETE FROM _blobs WHERE id=%s`, d.Placeholder(1)), id.String()); err != nil {
+		return err
+	}
+	// Публикация блоба каскадом не убирается: внешнего ключа у blob_id нет
+	// осознанно (у блобов своя жизнь). Убираем строку сами — иначе публикация
+	// исчезнувшего файла висела бы в _public_files вечно, отдавая 404 (#1001).
+	return db.deletePublicFileByBlob(ctx, id)
 }
