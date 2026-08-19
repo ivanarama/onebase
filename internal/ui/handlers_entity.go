@@ -1719,6 +1719,13 @@ func (s *Server) setRecordActivity(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Activity is updated directly in storage, bypassing the entity OnWrite
+	// hook that configurations normally use to invalidate cached HTTP-service
+	// responses. An activity flag can affect any service, so clear the whole
+	// process-local service cache only after the update has succeeded.
+	if s.svcCache != nil {
+		s.svcCache.Clear("")
+	}
 	http.Redirect(w, r, safeBackURL(r, listURL(entity)), http.StatusSeeOther)
 }
 

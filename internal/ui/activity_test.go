@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -100,6 +101,64 @@ func TestPageList_ActivityControlsAndActions(t *testing.T) {
 	}
 	if strings.Contains(html, "activity%3d") {
 		t.Errorf("activity list HTML contains escaped query separator: %s", "activity%3d")
+	}
+}
+
+func TestSetRecordActivity_ClearsServiceResponseCache(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ent := activityCatalogEntity()
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.New()
+	if err := db.Upsert(ctx, ent.Name, id, map[string]any{
+		"Наименование": "Скрыть",
+		"Активный":     true,
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	cache := newServiceCache(0)
+	cache.Put("cached-page", "site", &cachedResponse{
+		Status: http.StatusOK,
+		Header: make(http.Header),
+		Body:   []byte("old response"),
+	}, time.Minute)
+	if cache.Size() == 0 {
+		t.Fatal("service cache was not populated")
+	}
+
+	srv := &Server{reg: reg, store: db, svcCache: cache}
+	req := httptest.NewRequest(http.MethodPost,
+		"/ui/catalog/"+url.PathEscape(ent.Name)+"/"+id.String()+"/activity?active=0", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("entity", ent.Name)
+	rctx.URLParams.Add("id", id.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.setRecordActivity(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if got := cache.Size(); got != 0 {
+		t.Fatalf("service cache size after activity update = %d, want 0", got)
+	}
+	row, err := db.GetByID(ctx, ent.Name, id, ent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, _ := row["Активный"].(bool); active {
+		t.Fatal("activity flag was not updated")
 	}
 }
 
