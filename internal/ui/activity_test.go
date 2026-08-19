@@ -16,6 +16,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/ast"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -159,6 +161,334 @@ func TestSetRecordActivity_ClearsServiceResponseCache(t *testing.T) {
 	}
 	if active, _ := row["Активный"].(bool); active {
 		t.Fatal("activity flag was not updated")
+	}
+}
+
+func TestSetRecordActivity_RLSDoesNotRevealRecordExistence(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ent := activityCatalogEntity()
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	deniedID := uuid.New()
+	if err := db.Upsert(ctx, ent.Name, deniedID, map[string]any{
+		"Наименование": "Скрытая запись",
+		"Активный":     true,
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	srv := &Server{reg: reg, store: db}
+	user := &auth.User{Login: "restricted", Roles: []*auth.Role{{Permissions: auth.Permission{
+		Catalogs: map[string][]string{ent.Name: {"write"}},
+		RowAccess: auth.RowAccess{Catalogs: map[string]auth.RowPolicies{
+			ent.Name: {"write": {Field: "Наименование", Op: "eq", Value: auth.RowValue{Literal: "Разрешённая запись"}}},
+		}},
+	}}}}
+
+	call := func(id uuid.UUID) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost,
+			"/ui/catalog/"+url.PathEscape(ent.Name)+"/"+id.String()+"/activity?active=0", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("entity", ent.Name)
+		rctx.URLParams.Add("id", id.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(auth.ContextWithUser(req.Context(), user))
+		rec := httptest.NewRecorder()
+		srv.setRecordActivity(rec, req)
+		return rec
+	}
+
+	denied := call(deniedID)
+	missing := call(uuid.New())
+	if denied.Code != http.StatusForbidden || missing.Code != http.StatusForbidden {
+		t.Fatalf("restricted activity statuses: denied=%d missing=%d, want both %d",
+			denied.Code, missing.Code, http.StatusForbidden)
+	}
+}
+
+func TestSetRecordActivity_RunsOnWriteWithCompleteSnapshot(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ent := &metadata.Entity{
+		Name:         "ИерархияАктивности",
+		Kind:         metadata.KindCatalog,
+		Hierarchical: true,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Активный", Type: metadata.FieldTypeBool},
+			{Name: "Сводка", Type: metadata.FieldTypeString},
+		},
+		TableParts: []metadata.TablePart{{
+			Name: "Контакты",
+			Fields: []metadata.Field{
+				{Name: "Значение", Type: metadata.FieldTypeString},
+			},
+		}},
+		Activity: &metadata.ActivityConfig{
+			Field:          "Активный",
+			DefaultScope:   metadata.ActivityScopeActive,
+			HideFromChoice: true,
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+
+	rootID := uuid.New()
+	if err := db.Upsert(ctx, ent.Name, rootID, map[string]any{
+		"Наименование": "Корень",
+		"Активный":     true,
+		"Сводка":       "root",
+		"is_folder":    true,
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+	targetID := uuid.New()
+	if err := db.Upsert(ctx, ent.Name, targetID, map[string]any{
+		"Наименование": "Не затирать",
+		"Активный":     true,
+		"Сводка":       "before-hook",
+		"is_folder":    true,
+		"parent_id":    rootID,
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertTablePartRows(ctx, ent.Name, "Контакты", targetID,
+		[]map[string]any{{"Значение": "kept-row"}}, ent.TableParts[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	program := mustParse(t, `
+Процедура ПриЗаписи()
+	Если ЗначениеЗаполнено(ЭтотОбъект._version) Тогда
+		ВызватьИсключение("служебная версия попала в OnWrite");
+	КонецЕсли;
+	Если ЗначениеЗаполнено(ЭтотОбъект.id) Тогда
+		ВызватьИсключение("служебный id попал в OnWrite");
+	КонецЕсли;
+	Если ЭтотОбъект.Активный Тогда
+		ЭтотОбъект.Сводка = "active";
+	Иначе
+		ЭтотОбъект.Сводка = "inactive";
+	КонецЕсли;
+	Для Каждого Стр Из ЭтотОбъект.Контакты Цикл
+		ЭтотОбъект.Сводка = ЭтотОбъект.Сводка + ":" + Стр.Значение;
+	КонецЦикла;
+КонецПроцедуры`)
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{ent},
+		Programs: map[string]*ast.Program{ent.Name: program},
+	})
+	interp := interpreter.New()
+	interp.LookupProc = reg.GetModuleProc
+	srv := &Server{
+		reg:      reg,
+		store:    db,
+		interp:   interp,
+		lockMgr:  runtime.NewLockManager(),
+		messages: NewMessageStore(),
+	}
+	srv.entitySvc = srv.newEntityService(nil)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/ui/catalog/"+url.PathEscape(ent.Name)+"/"+targetID.String()+"/activity?active=0", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("entity", ent.Name)
+	rctx.URLParams.Add("id", targetID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	srv.setRecordActivity(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	row, err := db.GetByID(ctx, ent.Name, targetID, ent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asBool(row["Активный"]) {
+		t.Fatal("activity flag was not updated")
+	}
+	if got := row["Сводка"]; got != "inactive:kept-row" {
+		t.Fatalf("OnWrite summary = %v, want inactive:kept-row", got)
+	}
+	if got := row["Наименование"]; got != "Не затирать" {
+		t.Fatalf("unrelated field = %v, want preserved value", got)
+	}
+	if !asBool(row["is_folder"]) {
+		t.Fatal("activity toggle changed a folder into an element")
+	}
+	if got := refValueString(row["parent_id"]); got != rootID.String() {
+		t.Fatalf("parent_id = %q, want %s", got, rootID)
+	}
+	rows, err := db.GetTablePartRows(ctx, ent.Name, "Контакты", targetID, ent.TableParts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["Значение"] != "kept-row" {
+		t.Fatalf("table part rows after activity toggle = %#v", rows)
+	}
+}
+
+func TestSetRecordActivity_MediaRevokesAndRepublishesImage(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	media := &metadata.Entity{
+		Name: "Медиа",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Файл", Type: metadata.FieldTypeImage},
+			{Name: "ПубличнаяСсылка", Type: metadata.FieldTypeString},
+			{Name: "Активен", Type: metadata.FieldTypeBool},
+		},
+		Activity: &metadata.ActivityConfig{
+			Field:          "Активен",
+			DefaultScope:   metadata.ActivityScopeActive,
+			HideFromChoice: true,
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{media}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureBlobTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureAttachmentTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsurePublicFilesSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveNetworkEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := db.PutBlob(ctx, "image/png", strings.NewReader("MEDIA-IMAGE"), 1<<20,
+		storage.BlobOwner{Kind: "catalog", Entity: media.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := db.PublishBlob(ctx, blob.ID, storage.PublishOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldURL := publicFileURL(token)
+	mediaID := uuid.New()
+	if err := db.Upsert(ctx, media.Name, mediaID, map[string]any{
+		"Наименование":    "Логотип",
+		"Файл":            blob.ID.String(),
+		"ПубличнаяСсылка": oldURL,
+		"Активен":         true,
+	}, media); err != nil {
+		t.Fatal(err)
+	}
+
+	program := mustParse(t, `
+Процедура ПриЗаписи()
+	Если ЗначениеЗаполнено(ЭтотОбъект.Файл) Тогда
+		Если ЭтотОбъект.Активен Тогда
+			ЭтотОбъект.ПубличнаяСсылка = ОпубликоватьКартинку(ЭтотОбъект.Файл);
+		Иначе
+			СнятьПубликациюКартинки(ЭтотОбъект.Файл);
+			ЭтотОбъект.ПубличнаяСсылка = "";
+		КонецЕсли;
+	КонецЕсли;
+КонецПроцедуры`)
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{media},
+		Programs: map[string]*ast.Program{media.Name: program},
+	})
+	interp := interpreter.New()
+	interp.LookupProc = reg.GetModuleProc
+	srv := &Server{
+		reg:      reg,
+		store:    db,
+		interp:   interp,
+		lockMgr:  runtime.NewLockManager(),
+		messages: NewMessageStore(),
+	}
+	srv.entitySvc = srv.newEntityService(nil)
+	publicRouter := chi.NewRouter()
+	srv.MountServices(publicRouter)
+
+	fetchPublic := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		publicRouter.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	toggle := func(active bool) *httptest.ResponseRecorder {
+		t.Helper()
+		activeValue := "0"
+		if active {
+			activeValue = "1"
+		}
+		req := httptest.NewRequest(http.MethodPost,
+			"/ui/catalog/"+url.PathEscape(media.Name)+"/"+mediaID.String()+"/activity?active="+activeValue, nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("entity", media.Name)
+		rctx.URLParams.Add("id", mediaID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		rec := httptest.NewRecorder()
+		srv.setRecordActivity(rec, req)
+		return rec
+	}
+
+	if rec := fetchPublic(oldURL); rec.Code != http.StatusOK || rec.Body.String() != "MEDIA-IMAGE" {
+		t.Fatalf("published image precondition: status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if rec := toggle(false); rec.Code != http.StatusSeeOther {
+		t.Fatalf("deactivate status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	row, err := db.GetByID(ctx, media.Name, mediaID, media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asBool(row["Активен"]) || row["ПубличнаяСсылка"] != "" {
+		t.Fatalf("deactivated media row = %#v", row)
+	}
+	if rec := fetchPublic(oldURL); rec.Code != http.StatusNotFound {
+		t.Fatalf("revoked URL status=%d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	if rec := toggle(true); rec.Code != http.StatusSeeOther {
+		t.Fatalf("reactivate status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	row, err = db.GetByID(ctx, media.Name, mediaID, media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newURL, _ := row["ПубличнаяСсылка"].(string)
+	if !asBool(row["Активен"]) || !strings.HasPrefix(newURL, "/pub/") {
+		t.Fatalf("reactivated media row = %#v", row)
+	}
+	if newURL == oldURL {
+		t.Fatalf("reactivation reused revoked URL %q", newURL)
+	}
+	if rec := fetchPublic(newURL); rec.Code != http.StatusOK || rec.Body.String() != "MEDIA-IMAGE" {
+		t.Fatalf("republished image: status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 
