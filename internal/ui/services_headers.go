@@ -16,13 +16,6 @@ import (
 	"github.com/ivantit66/onebase/internal/httpservice"
 )
 
-// forbiddenExtraHeaders — заголовки, которые нельзя задать через extra:
-// nosniff отключать незачем, а CORS живёт своим механизмом сервиса.
-func forbiddenExtraHeader(name string) bool {
-	n := strings.ToLower(strings.TrimSpace(name))
-	return n == "x-content-type-options" || strings.HasPrefix(n, "access-control-")
-}
-
 // applyServiceSecurityHeaders ставит заголовки ДО исполнения обработчика —
 // чтобы они были и на ответах об ошибке (404 ресурса, 403, 500). Страница
 // ошибки без политики — дыра в этой самой политике.
@@ -54,8 +47,12 @@ func applyServiceSecurityHeaders(w http.ResponseWriter, r *http.Request, svc *ht
 		h.Set("Strict-Transport-Security", "max-age="+strconv.Itoa(cfg.HSTS))
 	}
 	for name, value := range cfg.Extra {
-		if forbiddenExtraHeader(name) {
-			continue // отсеивается ещё в onebase check; здесь — страховка
+		// Заголовки с выделенным полем и служебные (nosniff, CORS) через extra
+		// не проходят: extra обходит проверки этих полей. Отсеивается ещё в
+		// onebase check; здесь — страховка на случай базы, обновлённой мимо
+		// гейта.
+		if httpservice.ExtraHeaderForbidden(name) {
+			continue
 		}
 		h.Set(name, value)
 	}

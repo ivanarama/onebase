@@ -24,7 +24,7 @@ type Processor struct {
 	Title  string            `yaml:"title"`
 	Titles map[string]string `yaml:"titles"`
 	// Kind помечает роль обработки. Пусто — обычная обработка. "test" — тест
-	// уровня конфигурации: попадает в дискавери `onebase test` (план 108) и
+	// уровня конфигурации: попадает в дискавери `onebase test` (план 136) и
 	// прячется из общего списка обработок пользователя.
 	Kind       string                 `yaml:"kind"`
 	Params     []Param                `yaml:"params"`

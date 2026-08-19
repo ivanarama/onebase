@@ -36,8 +36,15 @@ type GCStats struct {
 // всех переданных сущностей (живые ссылки). image-поля бывают только у сущностей
 // верхнего уровня (в табличных частях запрещены), поэтому достаточно перебрать
 // e.Fields. Идентификаторы таблиц/колонок берём из metadata как и в crud.go.
+//
+// Действующая публикация (_public_files) — тоже живая ссылка. Без этого
+// опубликованная картинка, заменённая потом в карточке, собиралась сборщиком, и
+// публичная ссылка начинала отвечать 404 при живой строке публикации (#1001).
 func (db *DB) CollectImageRefs(ctx context.Context, entities []*metadata.Entity) (map[uuid.UUID]bool, error) {
 	live := map[uuid.UUID]bool{}
+	if err := db.collectPublishedBlobRefs(ctx, live); err != nil {
+		return nil, err
+	}
 	for _, e := range entities {
 		table := metadata.TableName(e.Name)
 		for _, f := range e.Fields {
@@ -69,6 +76,48 @@ func (db *DB) CollectImageRefs(ctx context.Context, entities []*metadata.Entity)
 		}
 	}
 	return live, nil
+}
+
+// collectPublishedBlobRefs добавляет к живым ссылкам блобы с действующей
+// публикацией. Истёкшие публикации не защищают: по такой ссылке /pub уже
+// отвечает 404, а строку публикации уберёт DeleteBlob вместе с блобом.
+//
+// Ошибку чтения глотать нельзя: молча пустой результат означал бы «публикаций
+// нет», и сборщик удалил бы опубликованные файлы. Отсутствие самой таблицы —
+// другое дело: служебную схему заводит EnsureServiceSchema, и до баз, где её
+// нет, публикации просто не доехали.
+func (db *DB) collectPublishedBlobRefs(ctx context.Context, live map[uuid.UUID]bool) error {
+	ok, err := db.TableExists(ctx, "_public_files")
+	if err != nil {
+		return fmt.Errorf("gc: проверка таблицы публикаций: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	rows, err := db.Query(ctx, `SELECT blob_id, expires_at FROM _public_files WHERE blob_id IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("gc: чтение публикаций: %w", err)
+	}
+	defer rows.Close()
+	now := time.Now()
+	for rows.Next() {
+		var ref string
+		// Срок читаем в any: SQLite отдаёт время строкой, и скан сразу в
+		// *time.Time на нём падает (та же причина, что в publicFileWhere).
+		var expiresRaw any
+		if err := rows.Scan(&ref, &expiresRaw); err != nil {
+			return fmt.Errorf("gc: scan публикации: %w", err)
+		}
+		if expiresRaw != nil {
+			if expires, ok := parseTimeValue(expiresRaw); ok && now.After(expires) {
+				continue
+			}
+		}
+		if id, err := uuid.Parse(ref); err == nil {
+			live[id] = true
+		}
+	}
+	return rows.Err()
 }
 
 // blobRef — минимальные метаданные блоба для сборки мусора.
