@@ -22,12 +22,21 @@ import (
 )
 
 func itemFormCatalog(itemForm []string) *metadata.Entity {
+	fields := make([]metadata.ItemFormField, 0, len(itemForm))
+	for _, name := range itemForm {
+		fields = append(fields, metadata.ItemFormField{Name: name})
+	}
+	return itemFormCatalogFields(fields...)
+}
+
+func itemFormCatalogFields(itemForm ...metadata.ItemFormField) *metadata.Entity {
 	return &metadata.Entity{
 		Name: "Контрагенты", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{
 			{Name: metadata.StandardCodeField, Type: metadata.FieldTypeString},
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Комментарий", Type: metadata.FieldTypeString},
+			{Name: "Активен", Type: metadata.FieldTypeBool},
 		},
 		ItemForm: itemForm,
 	}
@@ -160,6 +169,99 @@ func TestItemForm_AbsentShowsEverything(t *testing.T) {
 	if strings.Contains(html, `<input type="hidden" name="Комментарий"`) {
 		t.Error("без item_form реквизит отрисован скрытым")
 	}
+}
+
+// Реквизит, помеченный `{name: X, readonly: true}`, показывается, но не
+// редактируется (#1011). До этого «видно, но не править» требовало managed-формы:
+// ради одного служебного реквизита приходилось описывать в YAML всю форму
+// целиком — все поля и все табличные части.
+func TestItemForm_ReadOnlyFieldIsShownButNotEditable(t *testing.T) {
+	ent := itemFormCatalogFields(
+		metadata.ItemFormField{Name: "Наименование"},
+		metadata.ItemFormField{Name: "Комментарий", ReadOnly: true},
+	)
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"Наименование": "Альфа", "Комментарий": "собрано модулем",
+	}, ent); err != nil {
+		t.Fatalf("вставка: %v", err)
+	}
+
+	html := renderEditForm(t, s, id)
+	if !strings.Contains(html, `name="Комментарий" value="собрано модулем" placeholder="Комментарий" readonly>`) {
+		t.Errorf("реквизит «только просмотр» отрисован обычным полем ввода:\n%s", itemFormFragment(html, "Комментарий"))
+	}
+	// Скрытым он не стал: смысл признака — именно показать значение.
+	if strings.Contains(html, `<input type="hidden" name="Комментарий"`) {
+		t.Error("реквизит «только просмотр» уехал в скрытое поле вместо видимого")
+	}
+	// Соседний реквизит правится как раньше.
+	if strings.Contains(html, `name="Наименование" value="Альфа" placeholder="Наименование" readonly`) {
+		t.Error("readonly просочился на реквизит, который им не помечен")
+	}
+}
+
+// Списковые поля (ссылка, перечисление, булево) в режиме просмотра рисуются
+// disabled — а отключённый select браузер не отправляет вовсе. Поэтому рядом
+// обязан ехать скрытый двойник: без него сборка полей формы (formToFields)
+// положила бы nil, и первое же сохранение обнулило бы реквизит.
+func TestItemForm_ReadOnlySelectKeepsValueOnSave(t *testing.T) {
+	ent := itemFormCatalogFields(
+		metadata.ItemFormField{Name: "Наименование"},
+		metadata.ItemFormField{Name: "Активен", ReadOnly: true},
+	)
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"Наименование": "Альфа", "Активен": true,
+	}, ent); err != nil {
+		t.Fatalf("вставка: %v", err)
+	}
+
+	html := renderEditForm(t, s, id)
+	if !strings.Contains(html, `<input type="hidden" name="Активен" value="true">`) {
+		t.Fatalf("нет скрытого двойника значения:\n%s", itemFormFragment(html, "Активен"))
+	}
+	if !strings.Contains(html, `<select disabled>`) {
+		t.Errorf("список не заблокирован:\n%s", itemFormFragment(html, "Активен"))
+	}
+
+	// Браузер отправит только hidden — disabled-элементы в запрос не попадают.
+	form := url.Values{"Наименование": {"Альфа-2"}, "Активен": {"true"}}
+	r := reqWithChi("POST", "/ui/catalog/Контрагенты/"+id.String(), form, map[string]string{
+		"entity": "Контрагенты", "id": id.String(),
+	})
+	w := httptest.NewRecorder()
+	s.submitEdit(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("сохранение отдало %d: %s", w.Code, w.Body.String())
+	}
+	rec, err := s.store.GetByID(ctx, ent.Name, id, ent)
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	if !isTruthyStored(rec["Активен"]) {
+		t.Errorf("значение реквизита «только просмотр» потеряно при записи: %#v", rec["Активен"])
+	}
+}
+
+// itemFormFragment — кусок формы вокруг поля, чтобы в отчёте теста была видна
+// причина, а не вся страница.
+func itemFormFragment(html, field string) string {
+	at := strings.Index(html, field)
+	if at < 0 {
+		return html
+	}
+	from := at - 200
+	if from < 0 {
+		from = 0
+	}
+	to := at + 600
+	if to > len(html) {
+		to = len(html)
+	}
+	return html[from:to]
 }
 
 func itemFormValue(rec map[string]any, field string) string {

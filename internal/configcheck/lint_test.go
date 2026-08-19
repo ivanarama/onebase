@@ -867,3 +867,50 @@ fields:
 		t.Fatal("опечатка «ид» вместо «id» не замечена — проверка перестала ловить то, ради чего заведена")
 	}
 }
+
+// Расширенная запись item_form (#1011) должна проходить линт как есть, а
+// опечатка в её ключе — ловиться. Иначе `readonly: true`, написанное как
+// `read_only`, молча ничего не делает: поле остаётся редактируемым, и понять
+// это можно только по поведению формы.
+func TestLintItemFormReadonlyEntry(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "catalogs", "клиент.yaml"), `name: Клиент
+fields:
+  - name: Наименование
+    type: string
+  - name: ТелефоныНорм
+    type: string
+item_form:
+  - Наименование
+  - name: ТелефоныНорм
+    readonly: true
+`)
+	res := RunFullWithOptions(dir, Options{Lint: true})
+	for _, w := range res.Warnings {
+		if w.Code == "metadata.unvalidated-key" {
+			t.Fatalf("корректная запись item_form помечена как неизвестный ключ: %+v", w)
+		}
+	}
+
+	mkFile(t, filepath.Join(dir, "catalogs", "клиент.yaml"), `name: Клиент
+fields:
+  - name: Наименование
+    type: string
+  - name: ТелефоныНорм
+    type: string
+item_form:
+  - Наименование
+  - name: ТелефоныНорм
+    read_only: true
+`)
+	res = RunFullWithOptions(dir, Options{Lint: true})
+	var found bool
+	for _, w := range res.Warnings {
+		if w.Code == "metadata.unvalidated-key" && strings.Contains(w.Message, "read_only") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("опечатка в ключе записи item_form не замечена: %+v", res.Warnings)
+	}
+}

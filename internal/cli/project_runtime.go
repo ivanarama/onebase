@@ -62,6 +62,9 @@ func reloadProjectRuntime(reg *runtime.Registry, sched *scheduler.Scheduler, srv
 	reg.ReplaceProjectFrom(next)
 	if srv != nil {
 		srv.InvalidateWidgetCache()
+		// Кэш ответов сервисов держит HTML/JSON, собранный СТАРЫМ кодом
+		// модулей: без сброса правка обработчика не видна до истечения TTL.
+		srv.InvalidateServiceCache()
 		// WS-шлюзы приёмки: изменённые соединения пересоздаются, нетронутые
 		// живут дальше (правка обработчика переподключения не требует).
 		srv.ResyncWSIntakes()

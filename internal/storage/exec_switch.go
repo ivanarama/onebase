@@ -19,6 +19,13 @@ import (
 // execEnabledKey — ключ _settings переключателя команд ОС.
 const execEnabledKey = "exec.enabled"
 
+// ExecEnabledHint — «что сделать» для отказа переключателя команд ОС; парный к
+// NetworkEnabledHint и по той же причине лежит рядом с флагом. Путь в
+// конфигураторе — тот же экран «Параметры базы», галочка ниже сетевой.
+const ExecEnabledHint = "включите «Разрешить выполнение команд ОС» " +
+	"в конфигураторе (Меню → «Параметры базы» → «Безопасность») либо командой: " +
+	"onebase settings set exec.enabled вкл"
+
 // GetExecEnabled сообщает, разрешено ли выполнение команд ОС из DSL.
 // Отсутствие ключа/таблицы → false (запрещено — secure by default).
 func (db *DB) GetExecEnabled(ctx context.Context) bool {
