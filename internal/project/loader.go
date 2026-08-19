@@ -180,6 +180,26 @@ type DBConfig struct {
 	PoolMinConns int32 `yaml:"pool_min_conns,omitempty"` // тёплый минимум пула (0 = дефолт 2)
 }
 
+// QueueConfig — очередь фоновых заданий и её пул исполнителей (план 130).
+// Задачи ставит прикладной код (`ФоновыеЗадания.Поставить`), исполняет пул на
+// стороне сервера базы.
+//
+// Workers — указатель намеренно: нужно различать «блока нет» (пул по
+// умолчанию), «workers: 0» (очередь выключена совсем) и «workers: 16». Без
+// указателя `queue: {max_attempts: 5}` молча выключил бы очередь.
+//
+// На SQLite число исполнителей срезается до одного (там один коннект на базу) —
+// с предупреждением при старте, см. jobqueue.New.
+type QueueConfig struct {
+	Workers         *int `yaml:"workers,omitempty"`           // nil = 4; 0 = выключено
+	PollIntervalSec int  `yaml:"poll_interval_sec,omitempty"` // как часто спрашивать очередь (по умолчанию 2)
+	LeaseSec        int  `yaml:"lease_sec,omitempty"`         // аренда задачи; после истечения её изымают (300)
+	MaxAttempts     int  `yaml:"max_attempts,omitempty"`      // попыток до карантина (3)
+	RetryBackoffSec int  `yaml:"retry_backoff_sec,omitempty"` // база экспоненциальной отсрочки повтора (15)
+	RetentionDays   int  `yaml:"retention_days,omitempty"`    // сколько хранить выполненные задачи (14)
+	DrainTimeoutSec int  `yaml:"drain_timeout_sec,omitempty"` // сколько ждать взятые задачи при остановке (30)
+}
+
 // AppConfig holds the optional config/app.yaml metadata.
 type AppConfig struct {
 	Name    string `yaml:"name"`
@@ -211,6 +231,7 @@ type AppConfig struct {
 	Limits                *LimitsConfig      `yaml:"limits,omitempty"`
 	DSL                   *DSLConfig         `yaml:"dsl,omitempty"`
 	DB                    *DBConfig          `yaml:"db,omitempty"`
+	Queue                 *QueueConfig       `yaml:"queue,omitempty"`
 	// LLM — необязательный конфиг ИИ-помощника прямо в конфигурации. Когда задан,
 	// применяется к базе при старте (см. run.go) и имеет приоритет над _settings.
 	// Ключи задавайте через ${env:VAR}, чтобы секрет жил в окружении, а не в
