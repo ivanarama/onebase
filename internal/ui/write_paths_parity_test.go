@@ -219,3 +219,134 @@ func TestWritePaths_ValidEnumPassesOnEveryDoor(t *testing.T) {
 		})
 	}
 }
+
+// ─── вторая гарантия: помеченный на удаление документ не проводится ─────────
+//
+// Инвариант «как в 1С»: пометка удаления запрещает проведение. Он тоже написан
+// трижды — Save зовёт Store.IsMarkedForDeletion (service.go), DSL-путь делает
+// то же самостоятельно (dsl_documents.go), кнопка «Провести» смотрит на
+// deletion_mark в строке, которую и так прочитала (handlers_entity.go). Три
+// реализации одного правила: расхождение здесь не гипотеза, а вопрос времени.
+
+// postMarkedViaSave — дверь №1: Save с действием «post» по помеченному документу.
+func postMarkedViaSave(t *testing.T) error {
+	t.Helper()
+	s, doc, db, ctx := parityServer(t, "")
+	id := markedDoc(t, db, doc, ctx)
+	res, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
+		Entity: doc, ID: id, IsNew: false, Action: "post",
+		Fields: map[string]any{"номер": "З-4", "статус": "Новый"},
+	})
+	if err != nil {
+		return err
+	}
+	if res.DSLError != "" {
+		return fmt.Errorf("%s", res.DSLError)
+	}
+	return nil
+}
+
+// postMarkedViaDSL — дверь №2: Документы.X.ПолучитьОбъект(…).Провести().
+func postMarkedViaDSL(t *testing.T) (err error) {
+	t.Helper()
+	s, doc, db, ctx := parityServer(t, "")
+	id := markedDoc(t, db, doc, ctx)
+
+	root := newDocsRoot(s, interpreter.NewTxState(ctx))
+	proxy, ok := root.Get("Заказ").(*docProxy)
+	if !ok {
+		t.Fatal("Документы.Заказ вернул не docProxy")
+	}
+	// ПолучитьОбъект — метод ССЫЛКИ, а не менеджера: ссылку берём тем же
+	// НайтиПоИдентификатору, каким её берёт прикладной код из результата запроса.
+	ref, ok := proxy.CallMethod("найтипоидентификатору", []any{id.String()}).(*interpreter.Ref)
+	if !ok {
+		t.Fatal("НайтиПоИдентификатору() вернул не ссылку")
+	}
+	w, ok := ref.CallMethod("получитьобъект", nil).(*docWriter)
+	if !ok {
+		t.Fatal("ПолучитьОбъект() вернул не docWriter")
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("%v", rec)
+		}
+	}()
+	w.CallMethod("провести", nil)
+	return nil
+}
+
+// postMarkedViaButton — дверь №3: POST …/post по помеченному документу.
+func postMarkedViaButton(t *testing.T) error {
+	t.Helper()
+	s, doc, db, ctx := parityServer(t, "")
+	id := markedDoc(t, db, doc, ctx)
+
+	r := reqWithChi("POST", "/ui/document/заказ/"+id.String()+"/post", url.Values{},
+		map[string]string{"kind": "document", "entity": "заказ", "id": id.String()})
+	rec := httptest.NewRecorder()
+	s.postDocument(rec, r)
+
+	row, err := db.GetByID(ctx, doc.Name, id, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asBool(row["posted"]) {
+		return nil // дверь провела помеченный документ
+	}
+	return fmt.Errorf("документ не проведён: %s", strings.TrimSpace(rec.Header().Get("Location")))
+}
+
+// markedDoc создаёт документ и ставит пометку удаления.
+func markedDoc(t *testing.T, db *storage.DB, doc *metadata.Entity, ctx context.Context) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	if err := db.Upsert(ctx, doc.Name, id, map[string]any{"номер": "З-9", "статус": "Новый"}, doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkForDeletion(ctx, doc.Name, id, true); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// ВАЖНОЕ НАБЛЮДЕНИЕ, ради которого эта гарантия и добавлена второй.
+//
+// Снять проверку у одной двери недостаточно, чтобы тест упал: у инвариантa есть
+// СТРАХОВКА В ХРАНИЛИЩЕ — Store.SetPosted сам отказывается проводить помеченный
+// документ («backstop … страховка от будущих путей», crud.go). То есть эта
+// гарантия уже сведена в одну точку, через которую обязаны пройти все двери, а
+// проверки у входов лишь дают внятное сообщение раньше.
+//
+// У проверки перечислений такой страховки нет: она живёт тремя копиями у самих
+// дверей, и выключение любой из них тест ловит поимённо. Отсюда рабочий рецепт
+// для Н3 — не «свести три двери одним прыжком», а для каждой гарантии завести
+// backstop там, где мимо не пройти, и уже потом убирать дублирующие проверки.
+// Пометка удаления показывает, что так уже делали и это работает.
+
+// Помеченный на удаление документ обязан быть отвергнут КАЖДОЙ дверью:
+// проведённый «удалённый» документ оставляет движения, которых по учёту быть
+// не должно, а увидеть это можно только в отчётах.
+func TestWritePaths_MarkedForDeletionRejectedOnEveryDoor(t *testing.T) {
+	doors := []struct {
+		name string
+		post func(t *testing.T) error
+	}{
+		{"entityservice.Save (форма, REST)", postMarkedViaSave},
+		{"DSL Документы.X.Провести()", postMarkedViaDSL},
+		{"POST …/post (кнопка «Провести»)", postMarkedViaButton},
+	}
+	var passed []string
+	for _, door := range doors {
+		t.Run(door.name, func(t *testing.T) {
+			if err := door.post(t); err == nil {
+				passed = append(passed, door.name)
+				t.Fatal("дверь провела документ, помеченный на удаление")
+			}
+		})
+	}
+	if len(passed) > 0 {
+		t.Errorf("запрет проведения помеченного документа держится не на всех входах; пропустили: %s",
+			strings.Join(passed, ", "))
+	}
+}
