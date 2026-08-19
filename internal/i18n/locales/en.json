@@ -1328,5 +1328,7 @@
   "Очередь недоступна в этом режиме работы сервера.": "The queue is not available in this server mode.",
   "Очередь выключена настройкой queue.workers: 0 — задачи не принимаются и не исполняются.": "The queue is disabled by queue.workers: 0 — tasks are neither accepted nor executed.",
   "База на SQLite: параллелизм недоступен, работает один исполнитель. Пул на 16–32 исполнителя требует PostgreSQL.": "This database runs on SQLite: no parallelism, a single worker. A pool of 16–32 workers requires PostgreSQL.",
-  "Задач нет. Ставит их прикладной код: ФоновыеЗадания.Поставить(«ИмяЗадания», Параметры).": "No tasks yet. Application code queues them: BackgroundJobs.Enqueue(\"JobName\", Params)."
+  "Задач нет. Ставит их прикладной код: ФоновыеЗадания.Поставить(«ИмяЗадания», Параметры).": "No tasks yet. Application code queues them: BackgroundJobs.Enqueue(\"JobName\", Params).",
+  "только просмотр": "view only",
+  "Показывать, но не давать править": "Show but do not allow editing"
 }

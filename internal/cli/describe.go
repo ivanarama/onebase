@@ -95,8 +95,13 @@ type descEntity struct {
 	Stages   *descStages `json:"stages,omitempty"`
 	ListForm []string    `json:"listForm,omitempty"`
 	ItemForm []string    `json:"itemForm,omitempty"`
-	Forms    []descForm  `json:"forms,omitempty"`
-	Source   *descSource `json:"source,omitempty"`
+	// ItemFormReadonly — реквизиты формы элемента, помеченные «только
+	// просмотр» (#1011). Отдельным списком, а не объектами в itemForm: состав
+	// формы читают и люди, и ИИ-помощник, и ломать привычную форму ключа ради
+	// редкого признака незачем.
+	ItemFormReadonly []string    `json:"itemFormReadonly,omitempty"`
+	Forms            []descForm  `json:"forms,omitempty"`
+	Source           *descSource `json:"source,omitempty"`
 }
 
 type descRegister struct {
@@ -367,13 +372,14 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 		de := descEntity{
 			Name: e.Name, Title: e.Title, Description: e.Description,
 			Hierarchical: e.Hierarchical, Posting: e.Posting,
-			Fields:   toDescFields(e.Fields),
-			BasedOn:  e.BasedOn,
-			ListForm: e.ListForm,
-			ItemForm: e.ItemForm,
-			Forms:    toDescForms(e.Forms),
-			Source:   src.yaml(subdir, e.Name),
-			Stages:   toDescStages(e.Stages),
+			Fields:           toDescFields(e.Fields),
+			BasedOn:          e.BasedOn,
+			ListForm:         e.ListForm,
+			ItemForm:         e.ItemFormNames(),
+			ItemFormReadonly: itemFormReadonlyNames(e),
+			Forms:            toDescForms(e.Forms),
+			Source:           src.yaml(subdir, e.Name),
+			Stages:           toDescStages(e.Stages),
 		}
 		for _, tp := range e.TableParts {
 			de.TableParts = append(de.TableParts, descTablePart{Name: tp.Name, Fields: toDescFields(tp.Fields)})
@@ -547,6 +553,18 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
+}
+
+// itemFormReadonlyNames — реквизиты формы элемента, помеченные «только
+// просмотр» (#1011).
+func itemFormReadonlyNames(e *metadata.Entity) []string {
+	var out []string
+	for _, f := range e.ItemForm {
+		if f.ReadOnly {
+			out = append(out, f.Name)
+		}
+	}
+	return out
 }
 
 func toDescFields(fields []metadata.Field) []descField {

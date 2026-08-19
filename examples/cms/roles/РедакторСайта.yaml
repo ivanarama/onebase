@@ -1,0 +1,18 @@
+name: РедакторСайта
+description: Контент плюс оформление, маршруты и редиректы
+permissions:
+  catalogs:
+    Сайты: [read, write]
+    СтилиСайта: [read, write]
+    ШаблоныСайта: [read, write]
+    Блоки: [read, write]
+    Страницы: [read, write]
+    Новости: [read, write]
+    КатегорииКонтента: [read, write]
+    Медиа: [read, write]
+    Меню: [read, write]
+    МаршрутыURL: [read, write]
+    Редиректы: [read, write]
+    Заявки: [read, write]
+    ФормыОбратнойСвязи: [read, write]
+    Товары: [read, write]

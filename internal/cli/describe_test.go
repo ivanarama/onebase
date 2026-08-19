@@ -21,7 +21,10 @@ func TestRunDescribe_V2Contract(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mustWrite("catalogs/клиент.yaml", "name: Клиент\nfields:\n  - {name: Наименование, type: string}\n")
+	// item_form с расширенной записью — describe обязан отдавать и состав
+	// формы, и признак «только просмотр» (#1011): по этому контракту работают
+	// ИИ-помощник и внешние инструменты.
+	mustWrite("catalogs/клиент.yaml", "name: Клиент\nfields:\n  - {name: Наименование, type: string}\n  - {name: ТелефоныНорм, type: string}\nitem_form:\n  - Наименование\n  - name: ТелефоныНорм\n    readonly: true\n")
 	mustWrite("documents/заказ.yaml", "name: Заказ\nposting: true\nfields:\n  - {name: Клиент, type: reference:Клиент}\ntableparts:\n  - name: Товары\n    fields:\n      - {name: Количество, type: number}\n")
 	mustWrite("reports/продажи.yaml", "name: Продажи\nquery: \"ВЫБРАТЬ 1 КАК Сумма\"\nparams:\n  - {name: Период, type: date}\n")
 	mustWrite("widgets/продажи.yaml", "name: Продажи\ntype: chart\nquery: \"ВЫБРАТЬ 1 КАК Период, 2 КАК Сумма\"\nchart_kind: line\nx_field: Период\ny_fields: [Сумма]\n")
@@ -65,7 +68,12 @@ func TestRunDescribe_V2Contract(t *testing.T) {
 
 	var got struct {
 		SchemaVersion int `json:"schemaVersion"`
-		Reports       []struct {
+		Catalogs      []struct {
+			Name             string   `json:"name"`
+			ItemForm         []string `json:"itemForm"`
+			ItemFormReadonly []string `json:"itemFormReadonly"`
+		} `json:"catalogs"`
+		Reports []struct {
 			Name   string `json:"name"`
 			Query  string `json:"query"`
 			Source struct {
@@ -110,6 +118,12 @@ func TestRunDescribe_V2Contract(t *testing.T) {
 	}
 	if got.SchemaVersion != 2 {
 		t.Fatalf("schemaVersion=%d, want 2", got.SchemaVersion)
+	}
+	if len(got.Catalogs) != 1 || strings.Join(got.Catalogs[0].ItemForm, ",") != "Наименование,ТелефоныНорм" {
+		t.Fatalf("состав формы элемента не раскрыт: %+v", got.Catalogs)
+	}
+	if strings.Join(got.Catalogs[0].ItemFormReadonly, ",") != "ТелефоныНорм" {
+		t.Fatalf("признак «только просмотр» не раскрыт: %+v", got.Catalogs[0])
 	}
 	if len(got.Reports) != 1 || got.Reports[0].Query == "" || got.Reports[0].Source.File != "reports/продажи.yaml" {
 		t.Fatalf("reports не раскрыты: %+v", got.Reports)

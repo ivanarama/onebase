@@ -258,8 +258,12 @@ type Entity struct {
 	Hierarchical       bool              // catalog with parent_id / is_folder tree support
 	HierarchyKind      string            // "folders_and_items" (default) | "items_only"
 	ListForm           []string          // visible fields in list form (nil = all)
-	ItemForm           []string          // visible fields in item form (nil = all)
-	Forms              []*FormModule     // form modules (object form, list form, custom forms)
+	// ItemForm — состав формы элемента: какие реквизиты видны и в каком
+	// порядке (nil = все). Запись может быть помечена «только просмотр»
+	// (#1011): служебный реквизит, который пересобирает модуль при записи,
+	// показывать надо, а править в нём нечего.
+	ItemForm []ItemFormField
+	Forms    []*FormModule // form modules (object form, list form, custom forms)
 	// BasedOn — типы источников, на основании которых разрешено вводить эту
 	// сущность (аналог «Вводится на основании» в 1С). Имена сущностей —
 	// catalog или document. Проверяются Validate. Пустой/nil — ввод на
@@ -315,6 +319,34 @@ type Entity struct {
 	// переходы на существующем поле-перечислении. Nil — сущность про этапы
 	// ничего не знает и ведёт себя ровно как раньше.
 	Stages *Stages
+}
+
+// ItemFormField — запись блока `item_form:` формы элемента. В YAML это либо
+// строка (имя реквизита), либо `{name: X, readonly: true}` — «показывать, но
+// не давать править» (#1011). До этого единственным способом защитить
+// служебный реквизит от ручного ввода была managed-форма: ради одного-двух
+// вычисляемых реквизитов приходилось переписывать в YAML всю форму целиком —
+// все поля и все табличные части.
+//
+// ReadOnly — про интерфейс, а не про доступ: значение по-прежнему уезжает с
+// формой при записи (иначе сборка полей обнулила бы реквизит — ровно так же,
+// как у скрытых), а ограничение доступа делается политикой поля.
+type ItemFormField struct {
+	Name     string
+	ReadOnly bool
+}
+
+// ItemFormNames — имена реквизитов блока item_form в объявленном порядке.
+// Нужен всем, кому важен только состав: валидатору, describe, конфигуратору.
+func (e *Entity) ItemFormNames() []string {
+	if e == nil || len(e.ItemForm) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(e.ItemForm))
+	for _, f := range e.ItemForm {
+		names = append(names, f.Name)
+	}
+	return names
 }
 
 // SearchFields возвращает реквизиты, по которым идёт поиск подстроки в списке и

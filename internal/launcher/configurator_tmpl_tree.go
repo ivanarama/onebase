@@ -1750,6 +1750,13 @@ const cfgTabTree = `{{define "tab-tree"}}
     <span style="color:#1a4a80">{{$f.Name}}</span>
     <span class="ft {{fieldTypeClass $f.Type}}" style="font-size:11px">{{fieldTypeLabel $f.Type $f.RefEntity}}</span>
   </label>
+  {{/* «Только просмотр» — реквизит виден, но не редактируется (#1011).
+       Раньше такое требовало managed-формы: ради одного служебного поля
+       приходилось описывать в YAML всю форму целиком. */}}
+  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:#64748b" title="{{t $.Lang "Показывать, но не давать править"}}">
+    <input type="checkbox" name="ef.{{$i}}.ro" value="1" {{if $f.FormItemReadOnly}}checked{{end}}>
+    {{t $.Lang "только просмотр"}}
+  </label>
 </div>
 {{end}}
 </div>

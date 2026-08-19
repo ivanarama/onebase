@@ -1,0 +1,30 @@
+name: Меню
+title: Меню сайта
+hierarchical: true
+# Одно меню рендерится в нескольких местах: пункты группируются по КодМеню
+# («Главное», «Подвал»). Тип ссылки решает, куда ведёт пункт: на объект базы
+# или на внешний адрес.
+search_fields: [Наименование, КодМеню]
+fields:
+  - name: Наименование
+    type: string
+  - name: КодМеню
+    title: Код меню
+    type: string
+  - name: ТипСсылки
+    type: enum:ТипСсылкиМеню
+  - name: Страница
+    type: reference:Страницы
+  - name: Новость
+    type: reference:Новости
+  - name: Категория
+    type: reference:КатегорииКонтента
+  - name: Адрес
+    title: Внешний адрес
+    type: string
+  - name: Порядок
+    type: number
+  - name: Активен
+    type: bool
+  - name: Сайт
+    type: reference:Сайты

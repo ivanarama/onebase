@@ -40,7 +40,16 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		{"scheduled runs", db.EnsureScheduledRunsTable},
 		// Очередь фоновых заданий (план 130): её читают и прикладной код, и
 		// монитор админки, поэтому таблица нужна везде, где нужны служебные.
+		// Порядок здесь свободный — на другие служебные таблицы она не
+		// ссылается, в отличие от блока публикаций ниже.
 		{"job queue", db.EnsureJobQueueSchema},
+		// Публикации файлов (план 127): таблица ссылается на _attachments,
+		// поэтому заводится после неё. Блобы — второй источник публикации
+		// (поле image), и без них матричный тест падает на «no such table:
+		// _blobs» вместо внятного отказа (issue #827).
+		{"attachments", db.EnsureAttachmentTable},
+		{"blobs", db.EnsureBlobTable},
+		{"public files", db.EnsurePublicFilesSchema},
 		// Константы заводит MigrateConstants: таблица одна на все константы, и
 		// пустой список создаёт её же.
 		{"constants", func(ctx context.Context) error { return db.MigrateConstants(ctx, nil) }},

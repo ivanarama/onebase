@@ -95,6 +95,7 @@ type Server struct {
 	globalDebug            *debugger.GlobalDebugController
 	messages               *MessageStore
 	incidents              *incident.Store // последние ошибки и паники с кодом E-… (план 116)
+	svcCache               *serviceCache   // кэш ответов HTTP-сервисов (план 126)
 	widgetCache            *widget.Cache
 	lockMgr                *runtime.LockManager   // #2 managed locks
 	entitySvc              *entityservice.Service // упсёрт + ТЧ + движения + проведение + удаление, разделяется с api
@@ -131,7 +132,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		loginLimit = auth.NewLoginLimiter(5, time.Minute)
 	}
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
-	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), incidents: incident.NewStore(incident.DefaultLimit), widgetCache: widget.NewCache(60 * time.Second), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
+	s := &Server{reg: reg, store: store, interp: interp, authRepo: authRepo, cfg: cfg, sched: sched, mailer: cfg.Mailer, maxFileSizeBytes: maxBytes, allowedAttachmentTypes: cfg.AllowedTypes, globalDebug: debugger.NewGlobalDebugController(), messages: NewMessageStore(), incidents: incident.NewStore(incident.DefaultLimit), widgetCache: widget.NewCache(60 * time.Second), svcCache: newServiceCache(0), lockMgr: runtime.NewLockManager(), aiChatLimit: newAIWindowLimiter(10, time.Minute), loginLimit: loginLimit, extforms: extform.New(store), extreports: extform.NewReports(store), extprocessors: extform.NewProcessors(store), tmpl: template.Must(newTemplate(cfg.Bundle)), hub: realtime.NewHub(), ops: newOperationLimiter(), backgroundCtx: backgroundCtx, backgroundCancel: backgroundCancel}
 	s.entitySvc = s.newEntityService(cfg.Webhooks)
 	if cfg.Dev {
 		// Метка живёт ровно столько, сколько процесс: по её смене браузер
@@ -296,6 +297,24 @@ func (s *Server) backgroundRequestContext(requestCtx context.Context) (context.C
 // InvalidateWidgetCache drops every cached widget result. The dev/reload path
 // calls this so users see fresh data after metadata changes.
 func (s *Server) InvalidateWidgetCache() { s.widgetCache.Invalidate() }
+
+// ServiceCacheStats — счётчики кэша ответов сервисов для /metrics (план 126).
+// Без них нельзя ответить на вопрос «кэш вообще работает?».
+func (s *Server) ServiceCacheStats() (hits, misses, evictions uint64, bytes int64) {
+	if s == nil || s.svcCache == nil {
+		return 0, 0, 0, 0
+	}
+	return s.svcCache.hits.Load(), s.svcCache.misses.Load(), s.svcCache.evictions.Load(), s.svcCache.Size()
+}
+
+// InvalidateServiceCache сбрасывает кэш ответов HTTP-сервисов (план 126).
+// Вызывается при горячей перезагрузке конфигурации: без этого правка модуля не
+// видна на сайте до истечения TTL и выглядит как «платформа не перезагрузилась».
+func (s *Server) InvalidateServiceCache() {
+	if s != nil && s.svcCache != nil {
+		s.svcCache.Clear("")
+	}
+}
 
 // GlobalDebug returns the global debug controller for the server.
 func (s *Server) GlobalDebug() *debugger.GlobalDebugController { return s.globalDebug }
