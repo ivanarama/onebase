@@ -113,7 +113,13 @@ func parseXMLDocument(text string) (*xmlNode, error) {
 	if len(decoderInput) > maxXMLDocumentBytes {
 		return nil, fmt.Errorf("размер XML превышает предел %d байт", maxXMLDocumentBytes)
 	}
-	decoderInput, err := stripXMLDeclaration(decoderInput)
+	// Кодировка приводится ДО снятия объявления: решение принимается по байтам
+	// документа, а само объявление после этого уже не нужно (#1036).
+	decoderInput, err := decodeXMLByDeclaration(decoderInput)
+	if err != nil {
+		return nil, err
+	}
+	decoderInput, err = stripXMLDeclaration(decoderInput)
 	if err != nil {
 		return nil, err
 	}
@@ -304,9 +310,10 @@ func stripXMLDeclaration(text string) (string, error) {
 
 // validateXMLDeclaration разбирает псевдоатрибуты version, encoding и standalone.
 // Порядок фиксирован грамматикой (XML 1.0, раздел 2.8), повторы недопустимы.
-// Кодировка проверяется отдельно: на вход ПрочитатьXML приходит уже готовая
-// строка Go в UTF-8, поэтому объявленная windows-1251 означала бы, что документ
-// прочитан не так, как записан, — молча принять это нельзя.
+// Кодировка к моменту проверки уже приведена к UTF-8 (decodeXMLByDeclaration):
+// объявленная windows-1251 законна — так выглядят выгрузки 1С, — а незнакомая
+// кодировка по-прежнему отвергается, потому что разобрать документ не так, как
+// он записан, хуже отказа (#1036).
 func validateXMLDeclaration(declaration string) error {
 	pseudoAttributes := [...]string{"version", "encoding", "standalone"}
 	next := 0
@@ -354,8 +361,11 @@ func validateXMLDeclaration(declaration string) error {
 				return fmt.Errorf("версия XML «%s» не поддерживается, ожидается 1.0", content)
 			}
 		case "encoding":
-			if !strings.EqualFold(content, "utf-8") {
-				return fmt.Errorf("кодировка XML «%s» не поддерживается, ожидается UTF-8", content)
+			// Кодировку к этому моменту уже привели (decodeXMLByDeclaration):
+			// здесь остаётся отвергнуть только незнакомую — принять её значило
+			// бы разобрать документ не так, как он записан.
+			if !xmlSupportedEncoding(content) {
+				return fmt.Errorf("кодировка XML «%s» не поддерживается: перекодируйте документ в UTF-8", content)
 			}
 		case "standalone":
 			if content != "yes" && content != "no" {
