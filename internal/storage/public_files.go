@@ -115,31 +115,12 @@ func (db *DB) PublishBlob(ctx context.Context, blobID uuid.UUID, opts PublishOpt
 // существующий токен, обновляя только переданные опции.
 func (db *DB) publish(ctx context.Context, column string, id uuid.UUID, opts PublishOptions) (string, error) {
 	d := db.dialect
-	if existing, err := db.publicFileWhere(ctx, column, idArg(d, id)); err != nil {
+	existing, err := db.publicFileWhere(ctx, column, idArg(d, id))
+	if err != nil {
 		return "", err
-	} else if existing != nil {
-		// Обновляем ТОЛЬКО переданные поля: повторная публикация без опций —
-		// обычное дело в цикле рендера, и она не должна сбрасывать настройки,
-		// заданные при первой публикации.
-		if opts.Filename == "" {
-			opts.Filename = existing.Filename
-		}
-		if opts.CacheSeconds <= 0 {
-			opts.CacheSeconds = existing.CacheSeconds
-		}
-		if opts.ExpiresAt == nil && !existing.Expired(time.Now()) {
-			// Живой срок повторная публикация сохраняет, истёкший — нет:
-			// вернуть токен, по которому /pub уже отвечает 404, — это не
-			// «опубликовать». Без нового срока публикация снова бессрочна.
-			opts.ExpiresAt = existing.ExpiresAt
-		}
-		q := fmt.Sprintf(`UPDATE _public_files SET filename=%s, cache_seconds=%s, expires_at=%s WHERE token=%s`,
-			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4))
-		if _, err := db.Exec(ctx, q, opts.Filename, opts.CacheSeconds, opts.ExpiresAt, existing.Token); err != nil {
-			return "", err
-		}
-		db.logPublicFileAudit(ctx, "publish", id)
-		return existing.Token, nil
+	}
+	if existing != nil {
+		return db.republish(ctx, column, id, existing, opts)
 	}
 	if opts.CacheSeconds <= 0 {
 		opts.CacheSeconds = defaultPublicCacheSeconds
@@ -150,15 +131,60 @@ func (db *DB) publish(ctx context.Context, column string, id uuid.UUID, opts Pub
 		return "", err
 	}
 	createdBy := AuditUserLogin(ctx)
+	// ON CONFLICT DO NOTHING: между чтением выше и этой вставкой публикацию мог
+	// завести сосед — два параллельных рендера страницы, впервые публикующей
+	// картинку, оба видели «записи нет». Раньше второй падал на уникальном
+	// индексе, и ошибка уходила пользователю исключением из ОпубликоватьФайл
+	// (#1001). Целевой столбец не указан намеренно: конфликт возможен и по
+	// token, и по источнику, а DO NOTHING без цели поддержан обоими диалектами.
 	q := fmt.Sprintf(`INSERT INTO _public_files (token, %s, filename, cache_seconds, expires_at, created_at, created_by)
-		VALUES (%s, %s, %s, %s, %s, %s, %s)`, column,
+		VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING`, column,
 		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5), d.Placeholder(6), d.Placeholder(7))
 	if _, err := db.Exec(ctx, q, token, idArg(d, id), opts.Filename, opts.CacheSeconds, opts.ExpiresAt, time.Now().UTC(), createdBy); err != nil {
 		return "", err
 	}
+	saved, err := db.publicFileWhere(ctx, column, idArg(d, id))
+	if err != nil {
+		return "", err
+	}
+	if saved == nil {
+		return "", fmt.Errorf("публикация файла %s: строка не найдена после вставки", id)
+	}
+	if saved.Token != token {
+		// Гонку выиграл сосед: его строка и есть публикация, но наши опции
+		// применить всё равно надо — иначе тот, кто просил срок или имя файла,
+		// молча получил бы чужие настройки.
+		return db.republish(ctx, column, id, saved, opts)
+	}
 	// «Файл стал доступен всему интернету» обязано иметь автора и время.
-	db.logPublicFileAudit(ctx, "publish", id)
+	db.logPublicFileAudit(ctx, "publish", column, id)
 	return token, nil
+}
+
+// republish обновляет существующую публикацию. Обновляет ТОЛЬКО переданные
+// поля: повторная публикация без опций — обычное дело в цикле рендера, и она не
+// должна сбрасывать настройки, заданные при первой публикации.
+func (db *DB) republish(ctx context.Context, column string, id uuid.UUID, existing *PublicFile, opts PublishOptions) (string, error) {
+	d := db.dialect
+	if opts.Filename == "" {
+		opts.Filename = existing.Filename
+	}
+	if opts.CacheSeconds <= 0 {
+		opts.CacheSeconds = existing.CacheSeconds
+	}
+	if opts.ExpiresAt == nil && !existing.Expired(time.Now()) {
+		// Живой срок повторная публикация сохраняет, истёкший — нет:
+		// вернуть токен, по которому /pub уже отвечает 404, — это не
+		// «опубликовать». Без нового срока публикация снова бессрочна.
+		opts.ExpiresAt = existing.ExpiresAt
+	}
+	q := fmt.Sprintf(`UPDATE _public_files SET filename=%s, cache_seconds=%s, expires_at=%s WHERE token=%s`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4))
+	if _, err := db.Exec(ctx, q, opts.Filename, opts.CacheSeconds, opts.ExpiresAt, existing.Token); err != nil {
+		return "", err
+	}
+	db.logPublicFileAudit(ctx, "publish", column, id)
+	return existing.Token, nil
 }
 
 // UnpublishAttachment отзывает публикацию вложения. Отсутствие публикации — не
@@ -175,11 +201,32 @@ func (db *DB) UnpublishBlob(ctx context.Context, blobID uuid.UUID) error {
 func (db *DB) unpublish(ctx context.Context, column string, id uuid.UUID) error {
 	d := db.dialect
 	q := fmt.Sprintf(`DELETE FROM _public_files WHERE %s=%s`, column, d.Placeholder(1))
-	if _, err := db.Exec(ctx, q, idArg(d, id)); err != nil {
+	tag, err := db.Exec(ctx, q, idArg(d, id))
+	if err != nil {
 		return err
 	}
-	db.logPublicFileAudit(ctx, "unpublish", id)
+	// Отзыв, которого не было, в журнал не пишем: запись «отозвана публикация»
+	// там, где публикации не существовало, при расследовании читается как факт
+	// и уводит в сторону (#1001).
+	if tag.RowsAffected > 0 {
+		db.logPublicFileAudit(ctx, "unpublish", column, id)
+	}
 	return nil
+}
+
+// deletePublicFileByBlob убирает публикацию удаляемого блоба. Вызывается из
+// DeleteBlob — у blob_id внешнего ключа нет, каскад его не подчистит.
+func (db *DB) deletePublicFileByBlob(ctx context.Context, blobID uuid.UUID) error {
+	// Таблицы может не быть: служебную схему заводит EnsureServiceSchema, а
+	// блобы живут и в базах, до которых она не дошла. Отсутствие таблицы — не
+	// ошибка удаления блоба.
+	ok, err := db.TableExists(ctx, "_public_files")
+	if err != nil || !ok {
+		return nil
+	}
+	q := fmt.Sprintf(`DELETE FROM _public_files WHERE blob_id=%s`, db.dialect.Placeholder(1))
+	_, err = db.Exec(ctx, q, idArg(db.dialect, blobID))
+	return err
 }
 
 // PublicFileByToken находит публикацию по токену из URL.
@@ -251,7 +298,20 @@ func (pf *PublicFile) Expired(now time.Time) bool {
 //
 // Сам токен в журнал НЕ попадает — журнал читают шире, чем сам файл, и запись
 // превратилась бы во второй канал доступа к содержимому.
-func (db *DB) logPublicFileAudit(ctx context.Context, action string, attID uuid.UUID) {
+//
+// Вид записи берётся из источника публикации, а не проставляется «attachment»
+// всегда: при публикации картинки в record_id лежит ид блоба, и помеченный
+// вложением он не находился среди _attachments — след расследования «какой файл
+// засветили наружу» обрывался на пустом месте (#1001).
+func (db *DB) logPublicFileAudit(ctx context.Context, action, column string, id uuid.UUID) {
 	u, _ := auditUserFromCtx(ctx)
-	db.LogAction(ctx, action, "attachment", "_public_files", attID.String(), u.UserID, u.UserLogin, "")
+	db.LogAction(ctx, action, publicFileKind(column), "_public_files", id.String(), u.UserID, u.UserLogin, "")
+}
+
+// publicFileKind переводит колонку источника в вид записи аудита.
+func publicFileKind(column string) string {
+	if column == "blob_id" {
+		return "blob"
+	}
+	return "attachment"
 }

@@ -87,6 +87,24 @@ func (h *handler) reportProblemPreview(w http.ResponseWriter, r *http.Request) {
 	h.renderReportProblem(w, r, vm)
 }
 
+// reportProblemEdit возвращает с предпросмотра к форме, не теряя написанного:
+// описание приезжает обратно скрытыми полями. Раньше «Изменить описание» вело
+// ссылкой на пустой бланк, и текст приходилось набирать заново.
+func (h *handler) reportProblemEdit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, reportMaxTextBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	h.renderReportProblem(w, r, reportVM{
+		Did:       r.FormValue("did"),
+		Expected:  r.FormValue("expected"),
+		Got:       r.FormValue("got"),
+		BaseID:    strings.TrimSpace(r.FormValue("base")),
+		AttachLog: r.FormValue("attach_log") == "1",
+	})
+}
+
 // reportInput собирает данные отчёта по состоянию формы.
 func (h *handler) reportInput(r *http.Request, vm reportVM) bugreport.Input {
 	in := bugreport.Input{
@@ -126,6 +144,11 @@ func (h *handler) reportProblemSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vm := reportVM{
+		// Описание держим и после сохранения: страница остаётся на экране, и
+		// «Изменить описание» с неё должно открывать заполненную форму.
+		Did:       r.FormValue("did"),
+		Expected:  r.FormValue("expected"),
+		Got:       r.FormValue("got"),
 		BaseID:    strings.TrimSpace(r.FormValue("base")),
 		AttachLog: r.FormValue("attach_log") == "1",
 	}

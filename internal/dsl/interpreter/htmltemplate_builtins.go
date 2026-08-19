@@ -19,6 +19,7 @@ import (
 	"strings"
 	"text/template/parse"
 	"time"
+	"unicode"
 
 	"github.com/shopspring/decimal"
 
@@ -197,13 +198,45 @@ func (w *limitedBuilder) Write(p []byte) (int, error) {
 // htmlTemplateFuncs — фиксированный набор функций шаблона. Произвольные
 // функции конфигурации сюда не пробрасываются: шаблон остаётся вёрсткой, а не
 // вторым языком внутри языка.
+//
+// Каждое имя регистрируется в трёх регистрах: платформа регистронезависима, а
+// нормализация по дереву шаблона понижает только имена ПОЛЕЙ. Имена функций она
+// тронуть не может — text/template проверяет существование функции на этапе
+// Parse, то есть до нормализации, и «{{Дата .Дата}}» падало с англоязычным
+// «function "Дата" not defined» (#999). Дешевле зарегистрировать варианты, чем
+// двигать момент нормализации.
 func htmlTemplateFuncs() template.FuncMap {
-	return template.FuncMap{
+	fm := template.FuncMap{}
+	for name, fn := range map[string]any{
 		"дата":   templateFuncDate,
 		"date":   templateFuncDate,
 		"число":  templateFuncNumber,
 		"number": templateFuncNumber,
+	} {
+		for _, variant := range nameCases(name) {
+			fm[variant] = fn
+		}
 	}
+	return fm
+}
+
+// nameCases — употребимые регистры имени: «дата», «Дата», «ДАТА». Смешанные
+// («ДаТа») не поддерживаются осознанно: набор вариантов должен оставаться
+// обозримым, а эти три покрывают то, как имя пишут руками.
+func nameCases(name string) []string {
+	lower := strings.ToLower(name)
+	upper := strings.ToUpper(name)
+	title := lower
+	if r := []rune(lower); len(r) > 0 {
+		title = string(unicode.ToUpper(r[0])) + string(r[1:])
+	}
+	out := []string{lower}
+	for _, v := range []string{title, upper} {
+		if v != lower {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // дата(Значение, Формат) — формат по образцу Go («02.01.2006 15:04»).
@@ -258,6 +291,12 @@ func parseTemplateDate(s string) (time.Time, bool) {
 // разрядов — пробел: тот же, что у платформенного Формат() по умолчанию
 // (builtins_ext.go, sep := " "), чтобы числа в письме и в отчёте выглядели
 // одинаково.
+//
+// Строковый случай обязателен, а не «на всякий случай»: number на SQLite
+// хранится как TEXT, и результат Запрос.Выполнить() доходит до DSL строкой —
+// normalizeValue строку не конвертирует. Раньше «{{число .Сумма}}» по данным
+// запроса молча давал пустоту (#999). Неразобранная строка отдаётся как есть —
+// тем же правилом, что и у соседней «дата».
 func templateFuncNumber(v any, digits int) string {
 	var d decimal.Decimal
 	switch n := v.(type) {
@@ -269,6 +308,12 @@ func templateFuncNumber(v any, digits int) string {
 		d = decimal.NewFromInt(int64(n))
 	case int64:
 		d = decimal.NewFromInt(n)
+	case string:
+		parsed, ok := parseTemplateNumber(n)
+		if !ok {
+			return n
+		}
+		d = parsed
 	default:
 		return ""
 	}
@@ -277,6 +322,27 @@ func templateFuncNumber(v any, digits int) string {
 	}
 	s := d.StringFixed(int32(digits)) //nolint:gosec // G115: digits ограничено сверху вызывающим шаблоном, отрицательное приведено к 0
 	return groupThousands(s)
+}
+
+// parseTemplateNumber разбирает строковое представление числа — так число
+// приходит из запроса на SQLite. Пустая строка числом не считается: пустое поле
+// в базе осмысленнее показать пустотой, чем нулём. Запятая как десятичный
+// разделитель принимается (так число набирает человек), но только когда точки в
+// строке нет — иначе «1.234,56» разобралось бы наугад.
+func parseTemplateNumber(s string) (decimal.Decimal, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return decimal.Decimal{}, false
+	}
+	if d, err := decimal.NewFromString(s); err == nil {
+		return d, true
+	}
+	if !strings.Contains(s, ".") && strings.Count(s, ",") == 1 {
+		if d, err := decimal.NewFromString(strings.Replace(s, ",", ".", 1)); err == nil {
+			return d, true
+		}
+	}
+	return decimal.Decimal{}, false
 }
 
 // groupThousands расставляет разделители разрядов в уже отформатированном
