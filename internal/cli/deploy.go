@@ -137,6 +137,13 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	if err := db.SyncAllPredefined(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("sync predefined: %w", err)
 	}
+	// Ревизия схемы (#1057). Именно этот путь и создал базу в #1053:
+	// конфигуратор на Windows развернул PostgreSQL на сервере, а сервер там
+	// подняли старым бинарём. Проштампованную базу такой бинарь больше не
+	// откроет молча.
+	if err := stampSchemaRevision(ctx, db); err != nil {
+		return err
+	}
 
 	versionMessage := deployVersionMessage(dir, messageFlag, appCfg)
 	version, err := cfgRepo.CreateVersion(ctx, configdb.VersionOptions{Message: versionMessage})

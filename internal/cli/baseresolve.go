@@ -88,6 +88,13 @@ func openCLIStorage(ctx context.Context, dbType, sqlitePath, dsn string) (*stora
 		db.Close()
 		return nil, fmt.Errorf("database has an interrupted restore: %w", err)
 	}
+	// Ревизия схемы (#1057) — после маркера восстановления и до любой работы с
+	// данными: прерванное восстановление старше по важности, а всё остальное в
+	// этой базе для старого бинаря уже небезопасно.
+	if err := guardSchemaRevision(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
 }
 

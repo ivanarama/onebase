@@ -252,6 +252,62 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 }
 
+// migrateServerSchema приводит схему базы к конфигурации на старте сервера и
+// докладывает администратору о том, что применить не удалось.
+//
+// Вынесено из runServerGeneration отдельной фазой: сборка сервера растёт под
+// бюджетом (#787, план 137), и каждая новая строка в ней делает отложенный
+// рефакторинг дороже. Фаза цельная — миграции и отчёт о них, — поэтому
+// отделяется без остатка.
+//
+// Реструктуризация (план 81) при старте идёт без права терять данные и не
+// молча. Прежде опции здесь были нулевыми: изменение, которое округляет числа
+// или удаляет колонку, применялось бы на ближайшем рестарте — без флага, без
+// --dry-run и без строчки в выводе. Теперь такие изменения откладываются
+// (данные и прежний тип колонки остаются на месте), а администратор видит, что
+// схема расходится с конфигурацией и чем это лечится. Сужение точности числа с
+// этой правкой тоже считается потерей данных, см. SchemaChange.Destructive.
+func migrateServerSchema(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	var deferredSchema []string
+	db.SetSchemaOptions(storage.SchemaOptions{
+		Report: func(c storage.SchemaChange, applied bool) {
+			if !applied {
+				deferredSchema = append(deferredSchema, c.String())
+			}
+		},
+	})
+	steps := []struct {
+		what string
+		fn   func() error
+	}{
+		{"migrate", func() error { return db.Migrate(ctx, proj.Entities) }},
+		{"migrate registers", func() error { return db.MigrateRegisters(ctx, proj.Registers) }},
+		{"migrate info registers", func() error { return db.MigrateInfoRegisters(ctx, proj.InfoRegisters) }},
+		{"migrate constants", func() error { return db.MigrateConstants(ctx, proj.Constants) }},
+		{"audit schema", func() error { return db.EnsureAuditSchema(ctx) }},
+		{"stage history schema", func() error { return db.EnsureStageHistorySchema(ctx) }},
+		{"exchange schema", func() error { return db.EnsureExchangeSchema(ctx) }},
+		{"intake schema", func() error { return db.EnsureIntakeSchema(ctx) }},
+	}
+	for _, s := range steps {
+		if err := s.fn(); err != nil {
+			return fmt.Errorf("%s: %w", s.what, err)
+		}
+	}
+	// Отложенное печатаем после всех миграций: изменения приходят из разных
+	// вызовов (сущности, регистры, ТЧ), и одним списком администратору понятнее.
+	if len(deferredSchema) > 0 {
+		errln("Схема базы расходится с конфигурацией — эти изменения потеряли бы данные и НЕ применены:")
+		for _, s := range deferredSchema {
+			errln("  " + s)
+		}
+		errln("Колонки остались как есть, сервер работает на прежней схеме.")
+		errln("Посмотреть план: onebase migrate --project <кат> --dry-run")
+		errln("Применить осознанно (сначала резервная копия): onebase migrate --allow-destructive")
+	}
+	return nil
+}
+
 func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, browserOnce *sync.Once) (resultErr error) {
 	runLog := oblog.Component("cli.run")
 	baseID, _ := cmd.Flags().GetString("id")
@@ -414,6 +470,13 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	if ps := db.PoolStats(); ps != nil {
 		runLog.Info("postgresql pool configured", "max_conns", ps.MaxConns)
 	}
+	// Ревизия схемы (#1057): отказать до первой DDL и до первой операции с
+	// данными. Ниже по этому же телу идут EnsureSchema/Migrate — база, которую
+	// обслуживала платформа новее, не должна получить от старого бинаря даже
+	// «безобидную» совместимостную DDL.
+	if err := guardSchemaRevision(ctx, db); err != nil {
+		return err
+	}
 
 	authRepo := auth.NewRepo(db)
 	if err := authRepo.EnsureSchema(ctx); err != nil {
@@ -483,56 +546,8 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 		return fmt.Errorf("load app config: %w", err)
 	}
 
-	// Реструктуризация схемы (план 81) при старте сервера идёт без права терять
-	// данные и не молча. Прежде опции здесь были нулевыми: изменение, которое
-	// округляет числа или удаляет колонку, применялось бы на ближайшем
-	// рестарте — без флага, без --dry-run и без строчки в выводе. Теперь такие
-	// изменения откладываются (данные и прежний тип колонки остаются на месте),
-	// а администратор видит, что схема расходится с конфигурацией и чем это
-	// лечится. Сужение точности числа с этой правкой тоже считается потерей
-	// данных, см. SchemaChange.Destructive.
-	var deferredSchema []string
-	db.SetSchemaOptions(storage.SchemaOptions{
-		Report: func(c storage.SchemaChange, applied bool) {
-			if !applied {
-				deferredSchema = append(deferredSchema, c.String())
-			}
-		},
-	})
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
-		return fmt.Errorf("migrate registers: %w", err)
-	}
-	if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
-		return fmt.Errorf("migrate info registers: %w", err)
-	}
-	if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
-		return fmt.Errorf("migrate constants: %w", err)
-	}
-	if err := db.EnsureAuditSchema(ctx); err != nil {
-		return fmt.Errorf("audit schema: %w", err)
-	}
-	if err := db.EnsureStageHistorySchema(ctx); err != nil {
-		return fmt.Errorf("stage history schema: %w", err)
-	}
-	if err := db.EnsureExchangeSchema(ctx); err != nil {
-		return fmt.Errorf("exchange schema: %w", err)
-	}
-	if err := db.EnsureIntakeSchema(ctx); err != nil {
-		return fmt.Errorf("intake schema: %w", err)
-	}
-	// Отложенное печатаем после всех миграций: изменения приходят из разных
-	// вызовов (сущности, регистры, ТЧ), и одним списком администратору понятнее.
-	if len(deferredSchema) > 0 {
-		errln("Схема базы расходится с конфигурацией — эти изменения потеряли бы данные и НЕ применены:")
-		for _, s := range deferredSchema {
-			errln("  " + s)
-		}
-		errln("Колонки остались как есть, сервер работает на прежней схеме.")
-		errln("Посмотреть план: onebase migrate --project <кат> --dry-run")
-		errln("Применить осознанно (сначала резервная копия): onebase migrate --allow-destructive")
+	if err := migrateServerSchema(ctx, db, proj); err != nil {
+		return err
 	}
 
 	// Sync roles from YAML. Malformed or unreadable role files must not leave
@@ -668,6 +683,12 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	}
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return fmt.Errorf("blobs table: %w", err)
+	}
+	// Схема приведена в порядок — можно проштамповать базу своей ревизией
+	// (#1057). Строго после миграций: ревизия обещает, что схема ей
+	// соответствует, а не что бинарь такой версии её однажды открывал.
+	if err := stampSchemaRevision(ctx, db); err != nil {
+		return err
 	}
 	sched := scheduler.New(db, reg, interp)
 	if err := sched.LoadJobs(proj.ScheduledJobs); err != nil {

@@ -2,11 +2,13 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/dblock"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -27,7 +29,32 @@ func OpenDB(ctx context.Context, b *Base) (*storage.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("launcher: database has an interrupted restore: %w", err)
 	}
+	// Ревизия схемы (#1057). Флага командной строки у лаунчера нет — осознанный
+	// обход задаётся только переменной окружения, и ровно она названа в тексте
+	// отказа.
+	if err := checkSchemaRevision(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+// checkSchemaRevision — гейт ревизии для лаунчера: база, обслуженная платформой
+// новее, не открывается, пока обход не разрешён явно.
+func checkSchemaRevision(ctx context.Context, db *storage.DB) error {
+	err := db.CheckSchemaRevision(ctx)
+	if err == nil {
+		return nil
+	}
+	var newer *storage.NewerSchemaError
+	if errors.As(err, &newer) && os.Getenv(storage.AllowNewerSchemaEnv) != "" {
+		oblog.Component("launcher").Warn("база обслуживалась платформой новее этого бинаря — открыта по явному разрешению",
+			"ревизия_базы", newer.Base,
+			"ревизия_бинаря", newer.Known,
+			"обслужил", newer.UpdatedBy)
+		return nil
+	}
+	return fmt.Errorf("launcher: %w", err)
 }
 
 func acquireBaseReadLease(ctx context.Context, b *Base) (dblock.Lease, *Base, error) {

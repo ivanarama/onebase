@@ -29,7 +29,7 @@ import (
 // startupStatementBudget — сколько операторов сейчас в runServerGeneration.
 // Уменьшили функцию — уменьшите и число: бюджет, оторвавшийся от факта,
 // перестаёт что-либо держать.
-const startupStatementBudget = 519
+const startupStatementBudget = 493
 
 // startupFunc — точка сборки сервера, за размером которой следим.
 const startupFunc = "runServerGeneration"

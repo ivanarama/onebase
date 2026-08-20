@@ -37,5 +37,7 @@ func init() {
 	rootCmd.SilenceErrors = true
 	rootCmd.PersistentFlags().BoolVar(&noGUI, "no-gui", false,
 		"не открывать GUI; ошибки остаются в stderr — для скриптов и CI (также ONEBASE_NO_GUI=1)")
+	rootCmd.PersistentFlags().BoolVar(&allowNewerSchema, "allow-newer-schema", false,
+		"открыть базу, обслуженную платформой новее этого бинаря, на свой страх (также ONEBASE_ALLOW_NEWER_SCHEMA=1)")
 	rootCmd.AddCommand(initCmd, devCmd, runCmd, migrateCmd, buildCmd, startCmd, ibasesCmd, convertCmd, backupCmd, restoreCmd, demoResetCmd, deployCmd, serviceCmd, benchCmd, generateCmd, recalcTotalsCmd, reindexCmd, updateCmd, settingsCmd, jobsCmd, deviceAgentCmd)
 }

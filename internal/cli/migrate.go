@@ -172,7 +172,10 @@ func applyAllMigrations(ctx context.Context, db *storage.DB, proj *project.Proje
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		return err
 	}
-	return nil
+	// Ревизия схемы (#1057) поднимается последней: она утверждает, что схема
+	// базы соответствует известной этому бинарю, — значит, ставится только после
+	// того, как все миграции прошли.
+	return stampSchemaRevision(ctx, db)
 }
 
 func dsnFromFlags(cmd *cobra.Command) string {

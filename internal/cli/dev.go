@@ -196,6 +196,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			devLog.Warn("migrate account registers failed", "err", err)
 			return fmt.Errorf("migrate account registers: %w", err)
 		}
+		// Ревизия схемы (#1057) — после миграций, как и в run/migrate/deploy.
+		if err := stampSchemaRevision(loadCtx, db); err != nil {
+			devLog.Warn("schema revision stamp failed", "err", err)
+			return err
+		}
 		roles, err := auth.LoadRolesYAML(filepath.Join(proj.Dir, "roles"))
 		if err != nil {
 			devLog.Warn("roles load failed", "err", err)
