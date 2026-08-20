@@ -36,19 +36,68 @@ import (
 	"strings"
 )
 
-// multiPart — номера, под которыми лежат части одного плана. Значение — тема,
-// чтобы запись нельзя было оставить без объяснения.
-var multiPart = map[int]string{
-	36:  "дорожная карта DSL: обзор + детализация",
-	50:  "пометка удаления и проведение: план + реализация",
-	51:  "ИИ-помощник для бизнеса: план + follow-up'ы + реализация",
-	55:  "раскол монолита и embed фронтенда: план + три итерации реализации",
-	57:  "ИИ-конфигуратор: этапы 0–3, у каждого спека и реализация",
-	59:  "компоновка отчётов: план, дизайн и две реализации",
-	63:  "фиксы ишью #48/#49: дизайн-спека + план реализации",
-	86:  "обмен данными: план + сценарий демонстрации",
-	146: "синтакс-помощник: план + реализация",
-	149: "визуальный конструктор форм: план + доводка",
+// multiPart — ровно те файлы, которые являются частями одного плана.
+// Тема объясняет исключение, а точный список не даёт третьему несвязанному
+// плану незаметно пройти CI под уже разрешённым номером.
+type multiPartPlan struct {
+	topic string
+	files []string
+}
+
+var multiPart = map[int]multiPartPlan{
+	36: {
+		topic: "дорожная карта DSL: обзор + детализация",
+		files: []string{"36-dsl-language-roadmap.md", "36-dsl-language-roadmap-detail.md"},
+	},
+	50: {
+		topic: "пометка удаления и проведение: план + реализация",
+		files: []string{"50-deletion-mark-posting.md", "50-deletion-mark-posting-impl.md"},
+	},
+	51: {
+		topic: "ИИ-помощник для бизнеса: план + follow-up'ы + реализация",
+		files: []string{"51-ai-assistant-followups.md", "51-followups-impl.md", "51-llm-business-assistant.md"},
+	},
+	55: {
+		topic: "раскол монолита и embed фронтенда: план + три итерации реализации",
+		files: []string{"55-impl-htmltemplate-embed.md", "55-impl-htmltemplate-embed-plan.md", "55-impl-htmltemplate-embed-plan2.md", "55-monolith-split-embed-frontend.md"},
+	},
+	57: {
+		topic: "ИИ-конфигуратор: этапы 0–3, у каждого спека и реализация",
+		files: []string{
+			"57-ai-configurator-codegen.md",
+			"57-ai-history-and-genformat-impl.md",
+			"57-stage0-sandbox-impl.md",
+			"57-stage0-sandbox-profile.md",
+			"57-stage1-describe-context.md",
+			"57-stage1-describe-context-impl.md",
+			"57-stage2a-generation.md",
+			"57-stage2a-generation-impl.md",
+			"57-stage2b-apply-ui.md",
+			"57-stage2b-apply-ui-impl.md",
+			"57-stage3-explain-query.md",
+			"57-stage3-explain-query-impl.md",
+		},
+	},
+	59: {
+		topic: "компоновка отчётов: план, дизайн и две реализации",
+		files: []string{"59-report-composition.md", "59-report-composition-design.md", "59-stage1-engine-runtime-impl.md", "59-stage2-configurator-builder-impl.md"},
+	},
+	63: {
+		topic: "фиксы ишью #48/#49: дизайн-спека + план реализации",
+		files: []string{"63-implementation.md", "63-issues-48-49-fixes.md"},
+	},
+	86: {
+		topic: "обмен данными: план + сценарий демонстрации",
+		files: []string{"86-data-exchange.md", "86-data-exchange-demo.md"},
+	},
+	146: {
+		topic: "синтакс-помощник: план + реализация",
+		files: []string{"146-syntax-assistant.md", "146-syntax-assistant-impl.md"},
+	},
+	149: {
+		topic: "визуальный конструктор форм: план + доводка",
+		files: []string{"149-visual-form-designer.md", "149-visual-form-designer-followup.md"},
+	},
 }
 
 var (
@@ -79,7 +128,7 @@ func main() {
 
 // check возвращает список нарушений и количество занятых номеров. Список
 // отсортирован, чтобы вывод не плясал от порядка обхода каталога.
-func check(dir string, allowed map[int]string) ([]string, int, error) {
+func check(dir string, allowed map[int]multiPartPlan) ([]string, int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, 0, err
@@ -129,11 +178,21 @@ func check(dir string, allowed map[int]string) ([]string, int, error) {
 				n, strings.Join(files, ", ")))
 		}
 	}
-	for n, topic := range allowed {
+	for n, plan := range allowed {
 		if len(byNum[n]) < 2 {
 			problems = append(problems, fmt.Sprintf(
 				"multiPart[%d] («%s») протух: под номером %d файлов %d — уберите запись, "+
-					"иначе исключение молча разрешит новую коллизию", n, topic, n, len(byNum[n])))
+					"иначе исключение молча разрешит новую коллизию", n, plan.topic, n, len(byNum[n])))
+			continue
+		}
+		actual := append([]string(nil), byNum[n]...)
+		expected := append([]string(nil), plan.files...)
+		sort.Strings(actual)
+		sort.Strings(expected)
+		if strings.Join(actual, "\x00") != strings.Join(expected, "\x00") {
+			problems = append(problems, fmt.Sprintf(
+				"multiPart[%d] («%s») разрешает только %s; найдено %s — третий несвязанный план не должен проходить по историческому исключению",
+				n, plan.topic, strings.Join(expected, ", "), strings.Join(actual, ", ")))
 		}
 	}
 	sort.Strings(problems)

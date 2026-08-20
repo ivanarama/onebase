@@ -60,7 +60,10 @@ func TestCheck_MultiPartAllowed(t *testing.T) {
 		"86-data-exchange.md":      "# План 86 - Обмен данными",
 		"86-data-exchange-demo.md": "# Демо: обмен данными между базами (план 86, фаза 1)",
 	})
-	problems, total, err := check(dir, map[int]string{86: "обмен данными: план + демо"})
+	problems, total, err := check(dir, map[int]multiPartPlan{86: {
+		topic: "обмен данными: план + демо",
+		files: []string{"86-data-exchange.md", "86-data-exchange-demo.md"},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,11 +73,32 @@ func TestCheck_MultiPartAllowed(t *testing.T) {
 	}
 }
 
+// Историческое multiPart-исключение не должно отключать гейт для всего
+// номера: третий несвязанный план обязан уронить CI.
+func TestCheck_MultiPartRejectsUnrelatedThirdPlan(t *testing.T) {
+	dir := plans(t, map[string]string{
+		"86-data-exchange.md":      "# План 86 - Обмен данными",
+		"86-data-exchange-demo.md": "# Демо: обмен данными между базами (план 86, фаза 1)",
+		"86-unrelated-cashflow.md": "# План 86 - Прогноз денежного потока",
+	})
+	problems, _, err := check(dir, map[int]multiPartPlan{86: {
+		topic: "обмен данными: план + демо",
+		files: []string{"86-data-exchange.md", "86-data-exchange-demo.md"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireProblem(t, problems, "третий несвязанный план")
+}
+
 // Исключение, переставшее быть правдой, опаснее отсутствующего: оно молча
 // разрешает новую коллизию под тем же номером.
 func TestCheck_StaleMultiPartEntryIsReported(t *testing.T) {
 	dir := plans(t, map[string]string{"86-data-exchange.md": "# План 86 — Обмен данными"})
-	problems, _, err := check(dir, map[int]string{86: "обмен данными: план + демо"})
+	problems, _, err := check(dir, map[int]multiPartPlan{86: {
+		topic: "обмен данными: план + демо",
+		files: []string{"86-data-exchange.md", "86-data-exchange-demo.md"},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
