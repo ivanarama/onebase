@@ -557,6 +557,15 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			}
 		}
 
+		// Required проверяется по ФИНАЛЬНОМУ объекту: автонумерация, Preflight,
+		// PrepareHook/EnrichTPRows и OnWrite/OnPost вправе заполнить реквизит.
+		// Ранняя проверка отвергала такие законные создания; проверка только в
+		// storage, наоборот, не видела ТЧ. Здесь отказ ещё откатывает provisional
+		// row, номер и все побочные записи хука, а caller получает DSLError.
+		if msg := storage.ValidateRequiredObjectValues(req.Entity, obj.Fields, obj.TablePartRows, req.IsNew); msg != "" {
+			return &hookRunError{err: errors.New(msg)}
+		}
+
 		if err := s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys()); err != nil {
 			return err
 		}
@@ -589,7 +598,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			// кладёт пустой слайс для пустых), а частичные REST-запросы и
 			// POST /post с пустым телом могут ключ опустить — тогда строки
 			// ТЧ не должны затираться.
-			rows, ok := req.TablePartRows[tp.Name]
+			// Persist the same live object map that final validation inspected.
+			// Preflight/PrepareHook/OnWrite may replace TablePartRows wholesale;
+			// req.TablePartRows can then still point at the pre-hook map.
+			rows, ok := obj.TablePartRows[tp.Name]
 			if !ok {
 				continue
 			}

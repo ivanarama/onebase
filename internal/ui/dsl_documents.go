@@ -731,6 +731,7 @@ func (w *docWriter) writeInContext(ctx context.Context) error {
 }
 
 func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) error {
+	isNew := !w.loaded && !w.saved
 	// Pre-образ живого списка (план 87): для существующего документа читаем строку
 	// ДО записи, чтобы прежний владелец убрал её из списка при смене прав.
 	var changeBefore map[string]any
@@ -802,17 +803,42 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
 		return fmt.Errorf("%s", msg)
 	}
-	if w.expectedVersion == nil {
+	// A plain write ends here, so OnWrite has produced its final state and all
+	// required values must be present. Posting is different: OnPost is also part
+	// of the write contract and may fill a missing header or table-part value.
+	// Its intermediate snapshot is persisted only by the two narrow tx-only
+	// prelude writers below; the ordinary final backstops run after OnPost.
+	if !posting {
+		if msg := storage.ValidateRequiredObjectValues(w.entity, w.obj.Fields, w.obj.TablePartRows, true); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+	}
+	switch {
+	case posting && isNew:
+		if err := w.s.store.UpsertProvisional(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+			return err
+		}
+	case posting:
+		if err := w.s.store.UpsertPostingPreludeVersioned(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity, w.expectedVersion); err != nil {
+			return err
+		}
+	case w.expectedVersion == nil:
 		if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if err := w.s.store.UpsertVersioned(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity, w.expectedVersion); err != nil {
 			return err
 		}
 	}
-	if err := w.s.saveTablePartsDirect(ctx, w.entity, w.obj.ID, w.obj.TablePartRows); err != nil {
-		return err
+	if posting {
+		if err := w.s.saveTablePartsPostingPrelude(ctx, w.entity, w.obj.ID, w.obj.TablePartRows); err != nil {
+			return err
+		}
+	} else {
+		if err := w.s.saveTablePartsDirect(ctx, w.entity, w.obj.ID, w.obj.TablePartRows); err != nil {
+			return err
+		}
 	}
 	// Регистрация изменения для планов обмена (план 86): запись документа из DSL
 	// идёт мимо entityservice.Save. Провести() зовёт write() → регистрируется и оно.
@@ -856,10 +882,11 @@ func (w *docWriter) accessID() uuid.UUID {
 // OnWrite, OnPost and all nested DSL writes share the same transaction/scope.
 func (w *docWriter) conduct() error {
 	return w.withLockScope(func(ctx context.Context) error {
+		provisionalCreate := !w.loaded && !w.saved
 		if err := w.writeInContextForAction(ctx, true); err != nil {
 			return err
 		}
-		return w.postInContextAfterAccess(ctx)
+		return w.postInContextAfterAccess(ctx, true, provisionalCreate)
 	})
 }
 
@@ -873,10 +900,10 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.obj.ID, w.obj.Fields); err != nil {
 		return err
 	}
-	return w.postInContextAfterAccess(ctx)
+	return w.postInContextAfterAccess(ctx, false, false)
 }
 
-func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
+func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, provisionalCreate bool) error {
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
 	if marked, err := w.s.store.IsMarkedForDeletion(ctx, w.entity.Name, w.obj.ID); err != nil {
 		return err
@@ -902,12 +929,46 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
 		return fmt.Errorf("%s", msg)
 	}
-	// OnPost мог изменить реквизиты шапки (расчётные поля) — персистим их upsert'ом
-	// после хука, как это делает entityservice.Save при проведении. writeInContext
-	// уже создал ровно одну логическую версию этой операции, поэтому сохраняем
-	// hook-поля без второго инкремента _version.
-	if err := w.s.store.UpsertAfterVersionBump(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
-		return err
+	// OnPost may change both header fields and table-part rows. Revalidate the
+	// full, loaded document before persisting hook effects and movements.
+	if msg := storage.ValidateRequiredObjectValues(w.entity, w.obj.Fields, w.obj.TablePartRows, true); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
+	// Persist exactly the live map inspected by the post-hook enum/required
+	// checks. Conduct() has explicit header/table-part preludes which must each
+	// be consumed by a matching final writer; a standalone post uses ordinary
+	// validated writers and creates its own logical version.
+	if hasPrelude {
+		if err := w.s.finalizeTablePartsPostingPrelude(ctx, w.entity, w.obj.ID, w.obj.TablePartRows); err != nil {
+			return err
+		}
+		if provisionalCreate {
+			if err := w.s.store.UpsertPreserveVersion(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+				return err
+			}
+		} else {
+			if err := w.s.store.UpsertAfterVersionBump(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+				return err
+			}
+		}
+	} else {
+		if err := w.s.store.UpsertVersioned(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity, w.expectedVersion); err != nil {
+			return err
+		}
+		if err := w.s.saveTablePartsDirect(ctx, w.entity, w.obj.ID, w.obj.TablePartRows); err != nil {
+			return err
+		}
+		version, err := w.s.store.EntityVersion(ctx, w.entity.Name, w.obj.ID)
+		if err != nil {
+			return err
+		}
+		wasSaved, previousVersion := w.saved, w.expectedVersion
+		w.saved = true
+		w.expectedVersion = &version
+		storage.DeferUntilTxRollback(ctx, func() {
+			w.saved = wasSaved
+			w.expectedVersion = previousVersion
+		})
 	}
 	if err := w.s.saveMovements(ctx, w.entity.Name, w.obj.ID, mc); err != nil {
 		return err
