@@ -55,6 +55,14 @@ func (sqliteFullText) Search(ctx context.Context, db *DB, q FTSQuery) ([]FTSHit,
 			args = append(args, n)
 		}
 	}
+	scopeSQL, scopeArgs, _, err := ftsScopeSQL(db.dialect, q.Scopes, len(args)+1)
+	if err != nil {
+		return nil, err
+	}
+	if scopeSQL != "" {
+		where += " AND (" + scopeSQL + ")"
+		args = append(args, scopeArgs...)
+	}
 	args = append(args, q.Limit, q.Offset)
 	// bm25 тем меньше, чем релевантнее строка; инвертируем, чтобы контракт
 	// FTSHit.Rank («больше = лучше») был одинаков на обоих диалектах.

@@ -112,6 +112,67 @@ func TestDSLFullTextSearch_LimitAndEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestDSLFullTextSearch_FieldAndEntityFilterBeforeTopN(t *testing.T) {
+	ctx := context.Background()
+	s, cat, _ := newSearchTestServer(t)
+	const marker = "dslfilterboundarytoken"
+
+	for i := 0; i < 31; i++ {
+		if err := s.store.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+			"Наименование": marker + " foreign",
+			"Tenant":       "site-b",
+		}, cat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	localID := uuid.New()
+	if err := s.store.Upsert(ctx, cat.Name, localID, map[string]any{
+		"Наименование": "local",
+		"Менеджер":     marker,
+		"Tenant":       "site-a",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+
+	items := dslSearchResults(t, s, ctx, marker, 30, "tenant", "site-a", []any{cat.Name})
+	if len(items) != 1 {
+		t.Fatalf("отбор DSL должен войти в запрос до top-N: %+v", items)
+	}
+	ref, ok := items[0].(*interpreter.Struct).Get("Ссылка").(*interpreter.Ref)
+	if !ok || ref.UUID != localID.String() {
+		t.Fatalf("отбор вернул не локальную запись: %+v", items[0])
+	}
+
+	if _, err := s.dslFullTextSearch(ctx, []any{marker, 30, "Tenant"}); err == nil {
+		t.Fatal("поле отбора без значения должно отклоняться")
+	}
+	if _, err := s.dslFullTextSearch(ctx, []any{marker, 30, "Tenant", "site-a", []any{cat.Name}, "лишнее"}); err == nil {
+		t.Fatal("лишние аргументы не должны молча игнорироваться")
+	}
+	if got := dslSearchResults(t, s, ctx, marker, 30, "НетТакогоПоля", "site-a"); len(got) != 0 {
+		t.Fatalf("объекты без поля отбора не должны искаться глобально: %+v", got)
+	}
+}
+
+func TestDSLFullTextSearch_MaskedFilterFieldDenied(t *testing.T) {
+	ctx := context.Background()
+	s, cat, _ := newSearchTestServer(t)
+	user := &auth.User{Login: "operator", Roles: []*auth.Role{{
+		Permissions: auth.Permission{
+			Catalogs: map[string][]string{cat.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{Catalogs: map[string]auth.FieldPolicies{
+				cat.Name: {"Tenant": auth.FieldPolicy{Read: "hide"}},
+			}},
+		},
+	}}}
+	userCtx := auth.ContextWithUser(ctx, user)
+	if _, err := s.dslFullTextSearch(userCtx, []any{
+		"marker", 30, "Tenant", "site-a", []any{cat.Name},
+	}); err == nil {
+		t.Fatal("отбор по замаскированному полю создаёт guessing oracle и должен отклоняться")
+	}
+}
+
 // Проверяем именно регистрацию в наборе переменных: без неё функция есть в
 // коде, но недоступна из модулей конфигурации.
 func TestDSLFullTextSearch_RegisteredInVars(t *testing.T) {

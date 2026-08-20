@@ -24,6 +24,7 @@ func ftsTestEntities() []*metadata.Entity {
 				{Name: "Наименование", Type: metadata.FieldTypeString},
 				{Name: "ИНН", Type: metadata.FieldTypeString},
 				{Name: "Комментарий", Type: metadata.FieldTypeString},
+				{Name: "Tenant", Type: metadata.FieldTypeString},
 			},
 		},
 		{
@@ -113,6 +114,66 @@ func TestFullText_FindsObjectsAcrossEntities(t *testing.T) {
 	}
 	if hits[0].Title != "ООО Ромашка" || hits[0].Kind != "catalog" || hits[0].Name != "Контрагент" {
 		t.Fatalf("неожиданное представление совпадения: %+v", hits[0])
+	}
+}
+
+// Отбор исходной таблицы обязан войти в FTS-запрос до top-N. Постфильтр
+// ломается, когда более релевантные записи другого tenant-а заполняют LIMIT.
+func TestFullText_ScopeAppliedBeforeTopN(t *testing.T) {
+	ctx := context.Background()
+	db, entities := newFTSTestDB(t)
+	cat := entities[0]
+	const marker = "scopeboundarytoken"
+
+	for i := 0; i < 31; i++ {
+		if err := db.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+			"Наименование": marker + " foreign",
+			"Tenant":       "site-b",
+		}, cat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	localID := uuid.New()
+	if err := db.Upsert(ctx, cat.Name, localID, map[string]any{
+		"Наименование": "local page",
+		"Комментарий":  marker,
+		"Tenant":       "site-a",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+
+	global, err := db.SearchFullText(ctx, FTSQuery{Text: marker, Names: []string{cat.Name}, Limit: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hitIDs(global)[localID] {
+		t.Fatalf("инвариант регрессии нарушен: body-hit попал в глобальную top-30: %+v", global)
+	}
+
+	scoped, err := db.SearchFullText(ctx, FTSQuery{
+		Text:  marker,
+		Names: []string{cat.Name},
+		Scopes: []FTSScope{{
+			Entity:    cat,
+			Predicate: Predicate{Field: "Tenant", Op: "eq", Value: "site-a"},
+		}},
+		Limit: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) != 1 || scoped[0].ID != localID {
+		t.Fatalf("scope должен примениться до top-N, получено %+v", scoped)
+	}
+
+	none, err := db.SearchFullText(ctx, FTSQuery{
+		Text: marker, Names: []string{cat.Name}, Scopes: []FTSScope{}, Limit: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("явно пустой scope не должен откатываться к глобальному поиску: %+v", none)
 	}
 }
 

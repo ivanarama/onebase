@@ -58,9 +58,63 @@ type FTSQuery struct {
 	// вызывающий накладывает объектный RBAC: чего нет в списке — не ищется.
 	// Пустой список означает «без ограничения», поэтому вызывающая сторона
 	// обязана сама решить, что делать с пользователем без прав (см. UI/REST).
-	Names  []string
+	Names []string
+	// Scopes ограничивает строки индекса предикатами исходных объектов ДО
+	// сортировки и LIMIT. nil сохраняет глобальный поиск; непустой список
+	// объединяется по ИЛИ (по одной ветке на сущность). Пустой, но не nil,
+	// список означает «ничего» и никогда не откатывается к глобальной выдаче.
+	Scopes []FTSScope
 	Limit  int
 	Offset int
+}
+
+// FTSScope связывает сущность индекса со структурированным предикатом её
+// исходной таблицы. SQL-текст извне не принимается: имена колонок разрешает
+// PredicateSQLQualified по метаданным, значения всегда идут параметрами.
+type FTSScope struct {
+	Entity    *metadata.Entity
+	Predicate Predicate
+}
+
+// ftsScopeSQL строит ветки вида
+//
+//	f.owner_name = ? AND EXISTS (
+//	  SELECT 1 FROM <entity> s WHERE s.id = f.owner_id AND <predicate>)
+//
+// Они добавляются в запрос FTS до ORDER BY/LIMIT, поэтому совпадения другого
+// tenant-а не могут вытеснить разрешённые строки из top-N.
+func ftsScopeSQL(d Dialect, scopes []FTSScope, nextArg int) (string, []any, int, error) {
+	if scopes == nil {
+		return "", nil, nextArg, nil
+	}
+	if len(scopes) == 0 {
+		return "1=0", nil, nextArg, nil
+	}
+	parts := make([]string, 0, len(scopes))
+	var args []any
+	for i, scope := range scopes {
+		if scope.Entity == nil {
+			return "", nil, nextArg, fmt.Errorf("полнотекстовый поиск: пустая сущность отбора")
+		}
+		ownerPH := d.Placeholder(nextArg)
+		nextArg++
+		alias := fmt.Sprintf("fts_scope_%d", i)
+		predicateSQL, predicateArgs, next, err := PredicateSQLQualified(
+			d, scope.Entity, &scope.Predicate, nextArg, alias)
+		if err != nil {
+			return "", nil, nextArg, fmt.Errorf("полнотекстовый поиск: отбор %s: %w", scope.Entity.Name, err)
+		}
+		if strings.TrimSpace(predicateSQL) == "" {
+			return "", nil, nextArg, fmt.Errorf("полнотекстовый поиск: пустой отбор %s", scope.Entity.Name)
+		}
+		nextArg = next
+		parts = append(parts, fmt.Sprintf(
+			"(f.owner_name = %s AND EXISTS (SELECT 1 FROM %s %s WHERE %s.id = f.owner_id AND (%s)))",
+			ownerPH, metadata.TableName(scope.Entity.Name), alias, alias, predicateSQL))
+		args = append(args, scope.Entity.Name)
+		args = append(args, predicateArgs...)
+	}
+	return strings.Join(parts, " OR "), args, nextArg, nil
 }
 
 // FullTextIndex — часть полнотекстового поиска, зависящая от диалекта.

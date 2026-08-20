@@ -215,6 +215,53 @@ func TestXML_AttributeAndTextBudgets(t *testing.T) {
 	})
 }
 
+// #962, находка Н6: комментарии и инструкции обработки считались фатальной
+// ошибкой. Ни то, ни другое ничего не расширяет и не объявляет — в отличие от
+// DTD, — а встречаются они в обычных выгрузках 1С, SOAP-ответах и вообще где
+// угодно: модуль, читающий чужой файл, падал на ровном месте.
+func TestReadXML_SkipsCommentsAndProcessingInstructions(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  string
+	}{
+		{"комментарий внутри элемента", `<a><!-- важный комментарий --><b>текст</b></a>`},
+		{"комментарий до корня", `<!-- шапка выгрузки --><a><b>текст</b></a>`},
+		{"комментарий с угловыми скобками", `<a><!-- было <c>1</c> --><b>текст</b></a>`},
+		{"инструкция обработки", `<?xml-stylesheet type="text/xsl" href="s.xsl"?><a><b>текст</b></a>`},
+		{"инструкция с именем на xml", `<?xmlfoo bar?><a><b>текст</b></a>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := builtinReadXML([]any{tc.doc}, "", 0)
+			if err != nil {
+				t.Fatalf("ПрочитатьXML вернул ошибку: %v", err)
+			}
+			root, ok := v.(*Struct)
+			if !ok {
+				t.Fatalf("ожидалась Структура, получено %T", v)
+			}
+			if got := root.Get(xmlFieldName); got != "a" {
+				t.Fatalf("корень = %v, ожидалось a", got)
+			}
+			children, ok := root.Get(xmlFieldChildren).(*Array)
+			if !ok {
+				t.Fatalf("Элементы: ожидался Массив, получено %T", root.Get(xmlFieldChildren))
+			}
+			if len(children.Iterate()) != 1 {
+				t.Fatalf("вложенных элементов %d, ожидался 1 — комментарий или инструкция попали в дерево",
+					len(children.Iterate()))
+			}
+			child := children.Index(0).(*Struct)
+			if got := child.Get(xmlFieldName); got != "b" {
+				t.Fatalf("вложенный элемент = %v, ожидалось b", got)
+			}
+			if got := child.Get(xmlFieldText); got != "текст" {
+				t.Fatalf("текст = %v, ожидалось «текст»", got)
+			}
+		})
+	}
+}
+
 func TestReadXML_RejectsUnrepresentableContent(t *testing.T) {
 	cases := []struct {
 		name string
@@ -223,11 +270,12 @@ func TestReadXML_RejectsUnrepresentableContent(t *testing.T) {
 	}{
 		{"mixed content", `<a>до<b/>после</a>`, "смешанное содержимое"},
 		{"non XML whitespace mixed content", "<a>\u00a0<b/></a>", "смешанное содержимое"},
-		{"comment", `<a><!-- важный комментарий --></a>`, "комментарии"},
 		{"directive", `<!DOCTYPE a><a/>`, "директивы"},
-		{"processing instruction", `<?target value?><a/>`, "инструкции обработки"},
-		{"processing instruction named like declaration", `<?xmlfoo bar?><a/>`, "инструкции обработки"},
-		{"declaration not at start", `<a/><?xml version="1.0"?>`, "инструкции обработки"},
+		// Объявление документа вне начала файла — битый XML, а не безобидная
+		// инструкция обработки: цель «xml» зарезервирована.
+		{"declaration not at start", `<a/><?xml version="1.0"?>`, "только в начале документа"},
+		{"unterminated comment", `<a><!-- без конца</a>`, "незавершённый комментарий"},
+		{"unterminated processing instruction", `<?target value<a/>`, "незавершённая инструкция"},
 		{"empty prefix", `<:a/>`, "префикс"},
 		{"empty local name", `<a:/>`, "локальное имя"},
 		{"two colons", `<a:b:c/>`, "более одного символа"},

@@ -1,0 +1,74 @@
+schema: onebase.form/v1
+
+# Управляемая форма стиля сайта (план 129, раздел 10): CSS правится полем кода
+# с подсветкой, а цвета остаются обычными полями — их удобнее задавать текстом
+# (#1a4a80), чем искать в таблице стилей.
+
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: СтилиСайта
+  title:
+    ru: "Стиль сайта"
+    en: "Site style"
+  auto_save_settings: true
+  vertical_scroll: auto
+
+attributes:
+  - name: Объект
+    type: CatalogRef.СтилиСайта
+    save: true
+    main: true
+
+elements:
+  - kind: ГруппаФормы
+    name: ГруппаОсновное
+    title:
+      ru: "Палитра"
+      en: "Palette"
+    children:
+      - kind: ПолеВвода
+        name: ПолеНаименование
+        title:
+          ru: "Наименование"
+          en: "Name"
+        data_path: Объект.Наименование
+      - kind: ПолеВвода
+        name: ПолеЦветОсновной
+        title:
+          ru: "Основной цвет"
+          en: "Primary color"
+        data_path: Объект.ЦветОсновной
+      - kind: ПолеВвода
+        name: ПолеЦветДополнительный
+        title:
+          ru: "Дополнительный цвет"
+          en: "Secondary color"
+        data_path: Объект.ЦветДополнительный
+      - kind: ПолеВвода
+        name: ПолеЦветФона
+        title:
+          ru: "Цвет фона"
+          en: "Background color"
+        data_path: Объект.ЦветФона
+      - kind: ПолеВвода
+        name: ПолеОписание
+        title:
+          ru: "Описание"
+          en: "Description"
+        data_path: Объект.Описание
+        multiline: true
+
+  - kind: ГруппаФормы
+    name: ГруппаCSS
+    title:
+      ru: "Таблица стилей"
+      en: "Stylesheet"
+    children:
+      - kind: ПолеКода
+        name: ПолеCSS
+        title:
+          ru: "CSS сайта"
+          en: "Site CSS"
+        data_path: Объект.CSS
+        language: css
