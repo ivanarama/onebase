@@ -1,4 +1,6 @@
-# Синтакс-помощник OneBase — Implementation Plan
+# План 146 — Синтакс-помощник OneBase — Implementation Plan
+
+> Номер сменён с 52 на 146 (issue #1035): под 52 жили разные планы, и ссылка «план 52» перестала быть однозначной. Номер 52 остался за планом «Потокобезопасность DSL-интерпретатора» (52-interpreter-concurrency). Ссылки «план 52» на эту тему читать как «план 146».
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,9 +10,9 @@
 
 **Tech Stack:** Go (stdlib + chi v5), Monaco Editor (vendored JS), Go `html/template`. Без новых зависимостей; сборка без CGo не меняется.
 
-**Спека:** `Plans/52-syntax-assistant.md` (согласованные решения по развилкам).
+**Спека:** `Plans/146-syntax-assistant.md` (согласованные решения по развилкам).
 
-**Соглашения проекта:** ветка `feature/52-syntax-assistant` (уже создана от `main`). Коммиты — `тип(scope): описание` по-русски, с `Co-Authored-By`. После каждой Go-правки гонять `go build ./...` и `go test ./...`; после правок конфигураций — `onebase check`.
+**Соглашения проекта:** ветка `feature/146-syntax-assistant` (уже создана от `main`). Коммиты — `тип(scope): описание` по-русски, с `Co-Authored-By`. После каждой Go-правки гонять `go build ./...` и `go test ./...`; после правок конфигураций — `onebase check`.
 
 ---
 
@@ -1466,7 +1468,7 @@ git commit -m "feat(configurator): окно Синтакс-помощник (д�
 
 ## Self-review плана
 
-**Покрытие спеки (Plans/52-syntax-assistant.md):**
+**Покрытие спеки (Plans/146-syntax-assistant.md):**
 - Часть A (пакет langref, модель) → Task 1. ✓
 - Часть B (гибрид: гейт + структурная + отчёт) → Task 2. ✓ (+ фикс KnownBuiltinNames для корректности reverse-гейта).
 - Часть C (ai-guide из langref, удаление фабрик, тест) → Task 7. ✓
