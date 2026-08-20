@@ -1375,6 +1375,9 @@ func ImportUniversalWithOptions(
 				rollbackFiles())
 		}
 	}
+	if _, err := db.RaiseSchemaRevision(txCtx); err != nil {
+		return report, errors.Join(rollbackDB(fmt.Errorf("import: publish schema revision: %w", err)), rollbackFiles())
+	}
 	if intent != nil {
 		if err := intent.MarkCommitted(txCtx); err != nil {
 			return report, errors.Join(rollbackDB(err), rollbackFiles())

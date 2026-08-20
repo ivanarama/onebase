@@ -289,12 +289,12 @@ func restoreForBase(ctx context.Context, b *Base, fp string) error {
 // начала (117D), а восстановление через лаунчер шло мимо: защита работала на
 // одном входе из двух (#871).
 //
-// Вызывается ПОД тем же эксклюзивным лизом, что и само восстановление, поэтому
-// база открывается openDBUnchecked — как и импорт конфигурации рядом.
+// Вызывается ПОД тем же эксклюзивным лизом, что и само восстановление; opener
+// обязательно публикует/проверяет schema barrier до normal Connect.
 // Возвращает прежний префикс, чтобы сказать об этом человеку: молча снятый
 // префикс — это тихое изменение поведения нумерации.
 func resetBasePrefixAfterRestore(ctx context.Context, b *Base) (string, error) {
-	db, err := openDBUnchecked(ctx, b)
+	db, err := openDBWithExclusiveSchemaGate(ctx, b)
 	if err != nil {
 		return "", err
 	}
@@ -306,12 +306,7 @@ func resetBasePrefixAfterRestore(ctx context.Context, b *Base) (string, error) {
 // Raw engine dumps cannot resolve a universal restore's external directory
 // journal, so they must never overwrite the database that contains its marker.
 func checkRawRestoreAllowed(ctx context.Context, b *Base) error {
-	db, err := openDBUnchecked(ctx, b)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := backup.CheckNoPendingRestore(ctx, db); err != nil {
+	if err := checkNoPendingRestoreReadOnly(ctx, b); err != nil {
 		return fmt.Errorf("raw database restore refused while universal recovery is pending: %w", err)
 	}
 	return nil
@@ -438,6 +433,16 @@ func (h *handler) acquireFullExportSnapshot(ctx context.Context, b *Base) (*full
 		releaseGates()
 		return nil, errors.Join(fmt.Errorf("заблокировать БД для полной выгрузки: %w", err), restartErr)
 	}
+	gateErr := checkNoPendingRestoreReadOnly(ctx, b)
+	if gateErr == nil {
+		gateErr = publishBaseSchemaRevisionExclusive(ctx, b)
+	}
+	if gateErr != nil {
+		leaseErr := databaseLease.Close()
+		restartErr := h.restartBaseAfterFullExport(b, wasRunning)
+		releaseGates()
+		return nil, errors.Join(fmt.Errorf("проверить схему БД перед полной выгрузкой: %w", gateErr), leaseErr, restartErr)
+	}
 	h.invalidateStatus(b.ID)
 	return &fullExportSnapshotLease{
 		h: h, base: b, database: databaseLease, releaseCfg: releaseCfg,
@@ -445,7 +450,11 @@ func (h *handler) acquireFullExportSnapshot(ctx context.Context, b *Base) (*full
 	}, nil
 }
 
-func (h *handler) withFullExportSnapshot(ctx context.Context, b *Base, export func() error) (resultErr error) {
+func (h *handler) withFullExportSnapshot(ctx context.Context, b *Base, export func() error) error {
+	return h.withFullExportSnapshotContext(ctx, b, func(context.Context) error { return export() })
+}
+
+func (h *handler) withFullExportSnapshotContext(ctx context.Context, b *Base, export func(context.Context) error) (resultErr error) {
 	lease, err := h.acquireFullExportSnapshot(ctx, b)
 	if err != nil {
 		return err
@@ -453,7 +462,7 @@ func (h *handler) withFullExportSnapshot(ctx context.Context, b *Base, export fu
 	defer func() {
 		resultErr = errors.Join(resultErr, lease.release())
 	}()
-	return export()
+	return export(context.WithValue(ctx, cfgDBExclusiveLeaseKey{}, b.ID))
 }
 
 func sameFullExportBaseSnapshot(a, b *Base) bool {
@@ -931,7 +940,7 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 
-		exportErr := h.withFullExportSnapshot(r.Context(), b, func() (resultErr error) {
+		exportErr := h.withFullExportSnapshotContext(r.Context(), b, func(snapshotCtx context.Context) (resultErr error) {
 			defer func() {
 				syncErr := tmp.Sync()
 				closeErr := tmp.Close()
@@ -939,18 +948,15 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 				resultErr = errors.Join(resultErr, syncErr, closeErr)
 			}()
 			// acquireFullExportSnapshot already holds the exclusive database
-			// lifetime lease; opening through OpenDB would self-contend on its
-			// shared lease. Use the guarded raw handle inside this exact scope.
-			db, err := openDBUnchecked(r.Context(), b)
+			// lifetime lease; use its guarded opener so a future schema is refused
+			// before normal connection setup can mutate it.
+			db, err := openDBWithExclusiveSchemaGate(snapshotCtx, b)
 			if err != nil {
 				return fmt.Errorf("подключиться к БД для полной выгрузки: %w", err)
 			}
 			defer db.Close()
-			if err := backup.CheckNoPendingRestore(r.Context(), db); err != nil {
-				return fmt.Errorf("полная выгрузка запрещена до восстановления: %w", err)
-			}
 			return backup.ExportUniversal(
-				r.Context(), db,
+				snapshotCtx, db,
 				configSource, b.Path,
 				db.FilesDir(),
 				b.Name,
@@ -1003,7 +1009,7 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	buildErr := h.withFullExportSnapshot(r.Context(), b, func() (resultErr error) {
+	buildErr := h.withFullExportSnapshotContext(r.Context(), b, func(snapshotCtx context.Context) (resultErr error) {
 		defer func() {
 			syncErr := archiveTmp.Sync()
 			closeErr := archiveTmp.Close()
@@ -1011,7 +1017,7 @@ func (h *handler) backupFullExport(w http.ResponseWriter, r *http.Request) {
 			resultErr = errors.Join(resultErr, syncErr, closeErr)
 		}()
 
-		dumpPath, err := dumpForBase(r.Context(), b, tmpDir)
+		dumpPath, err := dumpForBase(snapshotCtx, b, tmpDir)
 		if err != nil {
 			return fmt.Errorf("выгрузить дамп БД: %w", err)
 		}
@@ -1211,7 +1217,15 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		// ImportUniversal performs and resolves durable restore recovery itself.
 		// The handler already owns cfg/lifecycle/database exclusive leases here,
 		// so this is the only safe launcher path that may open past the marker.
-		db, cerr := openDBForRestore(restoreCtx, b)
+		configDest := b.ConfigSource
+		if configDest == "" {
+			configDest = "database"
+		}
+		var recoveryDestinations []string
+		if configDest == "file" {
+			recoveryDestinations = append(recoveryDestinations, b.Path)
+		}
+		db, cerr := openDBForRestore(restoreCtx, b, recoveryDestinations...)
 		if cerr != nil {
 			// Never rename an unreadable SQLite file here. ImportUniversal cannot
 			// persist its restore intent inside a database it cannot open, so a
@@ -1227,10 +1241,6 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 		}
 		defer db.Close()
 
-		configDest := b.ConfigSource
-		if configDest == "" {
-			configDest = "database"
-		}
 		cfgFileDir := b.Path
 
 		report, importErr := backup.ImportUniversalWithOptions(
@@ -1349,10 +1359,9 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 	var configErr error
 	if restoreErr == nil && configDir != "" {
 		if b.ConfigSource == "database" {
-			// The handler already holds the exclusive database lease; OpenDB would
-			// self-contend on a shared lease. This raw handle is confined to that
-			// exclusive scope and the pending marker was checked above.
-			db, cerr := openDBUnchecked(restoreCtx, b)
+			// The handler already holds the exclusive database lease; the guarded
+			// opener revalidates/publishes the restored generation before config writes.
+			db, cerr := openDBWithExclusiveSchemaGate(restoreCtx, b)
 			if cerr != nil {
 				configErr = cerr
 			} else {

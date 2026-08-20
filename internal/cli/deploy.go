@@ -137,7 +137,6 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	if err := db.SyncAllPredefined(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("sync predefined: %w", err)
 	}
-
 	versionMessage := deployVersionMessage(dir, messageFlag, appCfg)
 	version, err := cfgRepo.CreateVersion(ctx, configdb.VersionOptions{Message: versionMessage})
 	if err != nil {

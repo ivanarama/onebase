@@ -32,3 +32,19 @@ func TestIsBinaryVersionProbeInvocation(t *testing.T) {
 		})
 	}
 }
+
+func TestBinaryWriterCommandIncludesRootDefaultStart(t *testing.T) {
+	for _, args := range [][]string{
+		{"start"},
+		{"--no-gui"},
+		{"--allow-newer-schema"},
+		{"--no-gui", "--allow-newer-schema"},
+	} {
+		if !binaryWriterCommand(args) {
+			t.Errorf("binaryWriterCommand(%q) = false, want true", args)
+		}
+	}
+	if binaryWriterCommand([]string{"run"}) {
+		t.Error("run is a binary consumer, not the launcher writer")
+	}
+}

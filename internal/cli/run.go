@@ -123,22 +123,13 @@ func recordScheduledDemoResetResult(request *scheduledDemoResetRequest, runErr e
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	lease, sqlitePath, err := acquireServerDatabaseLease(ctx, request.dbType, request.sqlitePath, request.dsn, true)
+	db, err := openCLIStorageReadOnly(ctx, request.dbType, request.sqlitePath, request.dsn)
 	if err != nil {
-		return fmt.Errorf("record scheduled demo reset result lock: %w", err)
-	}
-	var db *storage.DB
-	if request.dbType == "sqlite" {
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
-	} else {
-		db, err = storage.Connect(ctx, request.dsn)
-	}
-	if err != nil {
-		return errors.Join(fmt.Errorf("record scheduled demo reset result open database: %w", err), lease.Close())
+		return fmt.Errorf("record scheduled demo reset result open database: %w", err)
 	}
 	completionErr := updateScheduledDemoResetRun(request, db, runErr)
 	db.Close()
-	return errors.Join(completionErr, lease.Close())
+	return completionErr
 }
 
 func warnScheduledDemoResetResult(request *scheduledDemoResetRequest, runErr error) {
@@ -167,21 +158,15 @@ func performScheduledDemoReset(ctx context.Context, request *scheduledDemoResetR
 		return nil, lockErr
 	}
 
-	var db *storage.DB
-	if request.dbType == "sqlite" {
-		// Open the exact canonical target returned with the exclusive lease. In
-		// particular, do not resolve a registry symlink again after locking it.
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
-	} else {
-		db, err = storage.Connect(ctx, request.dsn)
-	}
+	// Open the exact canonical target returned with the exclusive lease. The
+	// helper recovers a prior durable intent first, then publishes/checks the
+	// schema barrier before DemoReset performs destructive import/migration.
+	db, err := openExclusiveRecoveryStorage(ctx, request.dbType, sqlitePath, request.dsn, request.filesDir)
 	if err != nil {
 		openErr := errors.Join(err, lease.Close())
 		warnScheduledDemoResetResult(request, openErr)
 		return nil, openErr
 	}
-	db.SetFilesDir(request.filesDir)
-
 	report, resetErr := backup.DemoReset(ctx, db, request.backupPath)
 	// The database pool must be gone before another shared/exclusive lifetime
 	// lease can observe this database as available.
@@ -250,6 +235,266 @@ func runServer(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
+}
+
+// migrateServerSchema приводит схему базы к конфигурации на старте сервера и
+// докладывает администратору о том, что применить не удалось.
+//
+// Вынесено из runServerGeneration отдельной фазой: сборка сервера растёт под
+// бюджетом (#787, план 137), и каждая новая строка в ней делает отложенный
+// рефакторинг дороже. Фаза цельная — миграции и отчёт о них, — поэтому
+// отделяется без остатка.
+//
+// Реструктуризация (план 81) при старте идёт без права терять данные и не
+// молча. Прежде опции здесь были нулевыми: изменение, которое округляет числа
+// или удаляет колонку, применялось бы на ближайшем рестарте — без флага, без
+// --dry-run и без строчки в выводе. Теперь такие изменения откладываются
+// (данные и прежний тип колонки остаются на месте), а администратор видит, что
+// схема расходится с конфигурацией и чем это лечится. Сужение точности числа с
+// этой правкой тоже считается потерей данных, см. SchemaChange.Destructive.
+func migrateServerSchema(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	var deferredSchema []string
+	db.SetSchemaOptions(storage.SchemaOptions{
+		Report: func(c storage.SchemaChange, applied bool) {
+			if !applied {
+				deferredSchema = append(deferredSchema, c.String())
+			}
+		},
+	})
+	steps := []struct {
+		what string
+		fn   func() error
+	}{
+		{"migrate", func() error { return db.Migrate(ctx, proj.Entities) }},
+		{"migrate registers", func() error { return db.MigrateRegisters(ctx, proj.Registers) }},
+		{"migrate info registers", func() error { return db.MigrateInfoRegisters(ctx, proj.InfoRegisters) }},
+		{"migrate constants", func() error { return db.MigrateConstants(ctx, proj.Constants) }},
+		{"audit schema", func() error { return db.EnsureAuditSchema(ctx) }},
+		{"stage history schema", func() error { return db.EnsureStageHistorySchema(ctx) }},
+		{"exchange schema", func() error { return db.EnsureExchangeSchema(ctx) }},
+		{"intake schema", func() error { return db.EnsureIntakeSchema(ctx) }},
+	}
+	for _, s := range steps {
+		if err := s.fn(); err != nil {
+			return fmt.Errorf("%s: %w", s.what, err)
+		}
+	}
+	// Отложенное печатаем после всех миграций: изменения приходят из разных
+	// вызовов (сущности, регистры, ТЧ), и одним списком администратору понятнее.
+	if len(deferredSchema) > 0 {
+		errln("Схема базы расходится с конфигурацией — эти изменения потеряли бы данные и НЕ применены:")
+		for _, s := range deferredSchema {
+			errln("  " + s)
+		}
+		errln("Колонки остались как есть, сервер работает на прежней схеме.")
+		errln("Посмотреть план: onebase migrate --project <кат> --dry-run")
+		errln("Применить осознанно (сначала резервная копия): onebase migrate --allow-destructive")
+	}
+	return nil
+}
+
+func probeServerSchemaRevision(ctx context.Context, dbType, sqlitePath, dsn string) (storage.SchemaRevisionState, error) {
+	if dbType == "sqlite" {
+		return storage.ProbeSQLiteSchemaRevision(ctx, sqlitePath)
+	}
+	return storage.ProbePostgresSchemaRevision(ctx, dsn)
+}
+
+func guardKnownServerSchemaRevision(ctx context.Context, dbType, sqlitePath, dsn string) error {
+	state, err := probeServerSchemaRevision(ctx, dbType, sqlitePath, dsn)
+	if err != nil || !state.Known {
+		return err
+	}
+	return guardProbedSchemaRevision(state)
+}
+
+func probeServerRestoreMarker(ctx context.Context, dbType, sqlitePath, dsn string) (bool, error) {
+	if dbType == "sqlite" {
+		return backup.HasPendingRestoreSQLite(ctx, sqlitePath)
+	}
+	return backup.HasPendingRestorePostgres(ctx, dsn)
+}
+
+// recoverServerRestoreIfPending upgrades the continuously-held shared lifetime
+// lease only when a raw marker requires recovery. It keeps the resulting
+// exclusive lease for schema-barrier publication by the next startup phase.
+func recoverServerRestoreIfPending(ctx context.Context, dbType string, sqlitePath *string, dsn, configSource, dir string, lease *dblock.Lease) (leaseExclusive bool, resultErr error) {
+	pending, err := probeServerRestoreMarker(ctx, dbType, *sqlitePath, dsn)
+	if err != nil {
+		return false, fmt.Errorf("inspect restore recovery marker read-only: %w", err)
+	}
+	if !pending {
+		return false, nil
+	}
+	if err := (*lease).Close(); err != nil {
+		return false, fmt.Errorf("release shared database lifetime lock for recovery: %w", err)
+	}
+	*lease = nil
+	exclusiveLease, canonical, err := acquireServerDatabaseLease(ctx, dbType, *sqlitePath, dsn, false)
+	if err != nil {
+		return false, fmt.Errorf("database recovery requires exclusive lifetime lock: %w", err)
+	}
+	*lease = exclusiveLease
+	if dbType == "sqlite" {
+		*sqlitePath = canonical
+	}
+	pending, err = probeServerRestoreMarker(ctx, dbType, *sqlitePath, dsn)
+	if err != nil {
+		return true, fmt.Errorf("recheck restore recovery marker under exclusive lease: %w", err)
+	}
+	if !pending {
+		return true, nil
+	}
+	if err := guardKnownServerSchemaRevision(ctx, dbType, *sqlitePath, dsn); err != nil {
+		return true, err
+	}
+	var recoveryDB *storage.DB
+	if dbType == "sqlite" {
+		recoveryDB, err = storage.ConnectSQLite(ctx, *sqlitePath)
+	} else {
+		recoveryDB, err = storage.ConnectWithPool(ctx, dsn, storage.PoolConfig{})
+	}
+	if err != nil {
+		return true, err
+	}
+	destinations := []string{recoveryDB.FilesDir()}
+	if configSource != "database" {
+		destinations = append(destinations, dir)
+	}
+	recoveryErr := backup.RecoverPendingRestore(ctx, recoveryDB, destinations...)
+	recoveryDB.Close()
+	if recoveryErr != nil {
+		return true, fmt.Errorf("recover interrupted restore: %w", recoveryErr)
+	}
+	return true, nil
+}
+
+// prepareServerSchemaRevision publishes a minimum-reader barrier under an
+// exclusive lifetime lease before normal Connect/schema setup. leaseExclusive
+// is true when startup recovery already owns that lease; keeping it across the
+// recovery-to-revision handoff prevents an older consumer entering in between.
+// Pointers make ownership transfer explicit: after a successful shared release
+// *lease is nil until the exclusive lease has been acquired.
+func prepareServerSchemaRevision(ctx context.Context, dbType string, sqlitePath *string, dsn string, lease *dblock.Lease, leaseExclusive bool) (prepareAfterOpen bool, resultErr error) {
+	probeRestore := func() (bool, error) {
+		return probeServerRestoreMarker(ctx, dbType, *sqlitePath, dsn)
+	}
+	probeRevision := func() (storage.SchemaRevisionState, error) {
+		return probeServerSchemaRevision(ctx, dbType, *sqlitePath, dsn)
+	}
+	prepareRevision := func() (storage.SchemaRevisionState, error) {
+		if dbType == "sqlite" {
+			return storage.PrepareSQLiteSchemaRevision(ctx, *sqlitePath)
+		}
+		return storage.PreparePostgresSchemaRevision(ctx, dsn)
+	}
+
+	if leaseExclusive {
+		pending, err := probeRestore()
+		if err != nil {
+			return false, fmt.Errorf("recheck restore recovery marker before schema upgrade: %w", err)
+		}
+		if pending {
+			return false, fmt.Errorf("%w: restore marker remains before schema upgrade", backup.ErrRestoreRecoveryRequired)
+		}
+	}
+	state, err := probeRevision()
+	if err != nil {
+		return false, err
+	}
+	if state.Known && state.Revision < 0 {
+		return false, guardProbedSchemaRevision(state)
+	}
+	prepareAfterOpen = dbType == "sqlite" && storage.IsInMemorySQLitePath(*sqlitePath) && state.NeedsUpgrade()
+	if prepareAfterOpen {
+		return true, guardProbedSchemaRevision(state)
+	}
+	for {
+		if state.Known && state.Revision < 0 {
+			return false, guardProbedSchemaRevision(state)
+		}
+		if !leaseExclusive {
+			if !state.NeedsUpgrade() {
+				return false, guardProbedSchemaRevision(state)
+			}
+			if err := (*lease).Close(); err != nil {
+				return false, fmt.Errorf("release shared database lifetime lock for schema upgrade: %w", err)
+			}
+			*lease = nil
+			exclusiveLease, canonical, err := acquireServerDatabaseLease(ctx, dbType, *sqlitePath, dsn, false)
+			if err != nil {
+				return false, fmt.Errorf("schema revision upgrade requires exclusive database access: %w", err)
+			}
+			*lease = exclusiveLease
+			leaseExclusive = true
+			if dbType == "sqlite" {
+				*sqlitePath = canonical
+			}
+			pending, err := probeRestore()
+			if err != nil {
+				return false, fmt.Errorf("recheck restore recovery marker before schema upgrade: %w", err)
+			}
+			if pending {
+				return false, fmt.Errorf("%w: restore marker appeared before schema upgrade", backup.ErrRestoreRecoveryRequired)
+			}
+			state, err = probeRevision()
+			if err != nil {
+				return false, err
+			}
+			continue
+		}
+		if state.Known {
+			if err := guardProbedSchemaRevision(state); err != nil {
+				return false, err
+			}
+		}
+		if state.NeedsUpgrade() {
+			state, err = prepareRevision()
+			if err != nil {
+				return false, err
+			}
+		}
+		if err := guardProbedSchemaRevision(state); err != nil {
+			return false, err
+		}
+		// No pool is open across Downgrade: every implementation may have a
+		// conversion gap. Recheck both durable markers while holding the resulting
+		// shared lease and repeat if a competing restore replaced the generation.
+		if err := (*lease).Downgrade(ctx); err != nil {
+			return false, fmt.Errorf("downgrade schema-upgrade database lease: %w", err)
+		}
+		leaseExclusive = false
+		pending, err := probeRestore()
+		if err != nil {
+			return false, fmt.Errorf("recheck restore marker after schema-upgrade lease downgrade: %w", err)
+		}
+		if pending {
+			return false, fmt.Errorf("%w: restore marker appeared during schema-upgrade lease downgrade", backup.ErrRestoreRecoveryRequired)
+		}
+		state, err = probeRevision()
+		if err != nil {
+			return false, err
+		}
+	}
+}
+
+func finishServerSchemaOpen(ctx context.Context, db *storage.DB, prepareAfterOpen bool) error {
+	if prepareAfterOpen {
+		if err := stampSchemaRevision(ctx, db); err != nil {
+			return err
+		}
+	}
+	return guardSchemaRevision(ctx, db)
+}
+
+func loadServerPoolConfig(dbType, configSource, dir string) storage.PoolConfig {
+	if dbType == "sqlite" || configSource == "database" {
+		return storage.PoolConfig{}
+	}
+	if ac, err := project.LoadConfig(dir); err == nil && ac.DB != nil {
+		return storage.PoolConfig{MaxConns: ac.DB.PoolMaxConns, MinConns: ac.DB.PoolMinConns}
+	}
+	return storage.PoolConfig{}
 }
 
 func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, browserOnce *sync.Once) (resultErr error) {
@@ -328,6 +573,9 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	// Registered before db.Close below: LIFO cleanup closes all application
 	// connections before publishing the database as available to another process.
 	defer func() {
+		if databaseLease == nil {
+			return
+		}
 		if closeErr := databaseLease.Close(); closeErr != nil {
 			wrapped := fmt.Errorf("release database lifetime lock: %w", closeErr)
 			var resetRequest *scheduledDemoResetRequest
@@ -342,70 +590,19 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 		}
 	}()
 
-	recoverRestore := func(recoveryDB *storage.DB) error {
-		destinations := []string{recoveryDB.FilesDir()}
-		if configSource != "database" {
-			destinations = append(destinations, dir)
-		}
-		if recoveryErr := backup.RecoverPendingRestore(ctx, recoveryDB, destinations...); recoveryErr != nil {
-			return fmt.Errorf("recover interrupted restore: %w", recoveryErr)
-		}
-		return nil
-	}
-	probeRestoreMarker := func() (bool, error) {
-		if dbType == "sqlite" {
-			return backup.HasPendingRestoreSQLite(ctx, sqlitePath)
-		}
-		return backup.HasPendingRestorePostgres(ctx, dsn)
-	}
-	// Do not use storage.Connect for this preflight: normal SQLite setup changes
-	// journal mode and normal PostgreSQL setup performs compatibility DDL. A
-	// pending restore must be detected before either kind of mutation occurs.
-	markerPending, err := probeRestoreMarker()
+	// Raw preflight/recovery runs before normal connection setup and returns with
+	// the exclusive lease still held when it had to resolve a marker.
+	schemaLeaseExclusive, err := recoverServerRestoreIfPending(ctx, dbType, &sqlitePath, dsn, configSource, dir, &databaseLease)
 	if err != nil {
-		return fmt.Errorf("inspect restore recovery marker read-only: %w", err)
+		return err
 	}
 
-	if markerPending {
-		if closeErr := databaseLease.Close(); closeErr != nil {
-			return fmt.Errorf("release shared database lifetime lock for recovery: %w", closeErr)
-		}
-		exclusiveLease, leaseErr := acquireDatabaseLease(false)
-		if leaseErr != nil {
-			return fmt.Errorf("database recovery requires exclusive lifetime lock: %w", leaseErr)
-		}
-		databaseLease = exclusiveLease
-
-		recoveryDB, openErr := openDatabase(storage.PoolConfig{})
-		if openErr != nil {
-			return openErr
-		}
-		recoveryErr := recoverRestore(recoveryDB)
-		recoveryDB.Close()
-		if recoveryErr != nil {
-			return recoveryErr
-		}
-		// No database connection may span the exclusive-to-shared handoff. A
-		// competing restore can win the conversion gap on platforms that cannot
-		// atomically downgrade; the final marker check below then observes its
-		// completed generation or fails closed on its recovery journal.
-		if err := databaseLease.Downgrade(ctx); err != nil {
-			return fmt.Errorf("database lifetime lock downgrade: %w", err)
-		}
-		markerPending, err = probeRestoreMarker()
-		if err != nil {
-			return fmt.Errorf("recheck restore recovery marker read-only: %w", err)
-		}
-		if markerPending {
-			return fmt.Errorf("%w: marker remains after startup recovery", backup.ErrRestoreRecoveryRequired)
-		}
+	prepareRevisionAfterOpen, err := prepareServerSchemaRevision(ctx, dbType, &sqlitePath, dsn, &databaseLease, schemaLeaseExclusive)
+	if err != nil {
+		return err
 	}
 
-	if dbType != "sqlite" && configSource != "database" {
-		if ac, loadErr := project.LoadConfig(dir); loadErr == nil && ac.DB != nil {
-			poolCfg = storage.PoolConfig{MaxConns: ac.DB.PoolMaxConns, MinConns: ac.DB.PoolMinConns}
-		}
-	}
+	poolCfg = loadServerPoolConfig(dbType, configSource, dir)
 	db, err = openDatabase(poolCfg)
 	if err != nil {
 		return err
@@ -413,6 +610,9 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 	defer db.Close()
 	if ps := db.PoolStats(); ps != nil {
 		runLog.Info("postgresql pool configured", "max_conns", ps.MaxConns)
+	}
+	if err := finishServerSchemaOpen(ctx, db, prepareRevisionAfterOpen); err != nil {
+		return err
 	}
 
 	authRepo := auth.NewRepo(db)
@@ -483,56 +683,8 @@ func runServerGeneration(ctx context.Context, cmd *cobra.Command, _ []string, br
 		return fmt.Errorf("load app config: %w", err)
 	}
 
-	// Реструктуризация схемы (план 81) при старте сервера идёт без права терять
-	// данные и не молча. Прежде опции здесь были нулевыми: изменение, которое
-	// округляет числа или удаляет колонку, применялось бы на ближайшем
-	// рестарте — без флага, без --dry-run и без строчки в выводе. Теперь такие
-	// изменения откладываются (данные и прежний тип колонки остаются на месте),
-	// а администратор видит, что схема расходится с конфигурацией и чем это
-	// лечится. Сужение точности числа с этой правкой тоже считается потерей
-	// данных, см. SchemaChange.Destructive.
-	var deferredSchema []string
-	db.SetSchemaOptions(storage.SchemaOptions{
-		Report: func(c storage.SchemaChange, applied bool) {
-			if !applied {
-				deferredSchema = append(deferredSchema, c.String())
-			}
-		},
-	})
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
-		return fmt.Errorf("migrate registers: %w", err)
-	}
-	if err := db.MigrateInfoRegisters(ctx, proj.InfoRegisters); err != nil {
-		return fmt.Errorf("migrate info registers: %w", err)
-	}
-	if err := db.MigrateConstants(ctx, proj.Constants); err != nil {
-		return fmt.Errorf("migrate constants: %w", err)
-	}
-	if err := db.EnsureAuditSchema(ctx); err != nil {
-		return fmt.Errorf("audit schema: %w", err)
-	}
-	if err := db.EnsureStageHistorySchema(ctx); err != nil {
-		return fmt.Errorf("stage history schema: %w", err)
-	}
-	if err := db.EnsureExchangeSchema(ctx); err != nil {
-		return fmt.Errorf("exchange schema: %w", err)
-	}
-	if err := db.EnsureIntakeSchema(ctx); err != nil {
-		return fmt.Errorf("intake schema: %w", err)
-	}
-	// Отложенное печатаем после всех миграций: изменения приходят из разных
-	// вызовов (сущности, регистры, ТЧ), и одним списком администратору понятнее.
-	if len(deferredSchema) > 0 {
-		errln("Схема базы расходится с конфигурацией — эти изменения потеряли бы данные и НЕ применены:")
-		for _, s := range deferredSchema {
-			errln("  " + s)
-		}
-		errln("Колонки остались как есть, сервер работает на прежней схеме.")
-		errln("Посмотреть план: onebase migrate --project <кат> --dry-run")
-		errln("Применить осознанно (сначала резервная копия): onebase migrate --allow-destructive")
+	if err := migrateServerSchema(ctx, db, proj); err != nil {
+		return err
 	}
 
 	// Sync roles from YAML. Malformed or unreadable role files must not leave

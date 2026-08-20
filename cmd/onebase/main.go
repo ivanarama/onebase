@@ -65,7 +65,12 @@ func isBinaryVersionProbeInvocation(args []string) bool {
 }
 
 func binaryWriterCommand(args []string) bool {
-	return commandName(args) == "start"
+	name := commandName(args)
+	// The root command defaults to runStart when only persistent flags are
+	// present (for example --no-gui or --allow-newer-schema). Treat that form as
+	// the same binary-writer path as an explicit `start`; otherwise main holds a
+	// consumer lease and runStart immediately deadlocks on its own writer lease.
+	return name == "" || name == "start"
 }
 
 func commandName(args []string) string {

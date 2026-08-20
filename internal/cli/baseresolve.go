@@ -58,35 +58,170 @@ func (bc *baseConfig) OpenDB(ctx context.Context) (*storage.DB, error) {
 }
 
 // openCLIStorage is the fail-closed entry point for ordinary CLI consumers.
-// Recovery-capable commands (run/restore) deliberately use the raw storage
-// constructors and resolve the durable intent before serving or mutating data.
+// Recovery-capable commands use dedicated exclusive openers that resolve the
+// durable intent and publish the same barrier before serving or mutating data.
 func openCLIStorage(ctx context.Context, dbType, sqlitePath, dsn string) (*storage.DB, error) {
+	return openCLIStorageMode(ctx, dbType, sqlitePath, dsn, true)
+}
+
+// openCLIStorageReadOnly applies both read-only gates but does not publish a
+// newer minimum-reader revision. It is intentionally narrow: a backup must
+// remain usable with a read-only PostgreSQL role and performs no schema setup.
+func openCLIStorageReadOnly(ctx context.Context, dbType, sqlitePath, dsn string) (*storage.DB, error) {
+	return openCLIStorageMode(ctx, dbType, sqlitePath, dsn, false)
+}
+
+func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, publishRevision bool) (_ *storage.DB, resultErr error) {
 	var (
-		db     *storage.DB
-		lease  dblock.Lease
-		err    error
-		target = sqlitePath
+		lease            dblock.Lease
+		err              error
+		target           = sqlitePath
+		prepareAfterOpen bool
 	)
-	if dbType == "sqlite" {
-		lease, target, err = dblock.AcquireSQLiteSharedTarget(sqlitePath)
-	} else {
-		lease, err = dblock.AcquirePostgresShared(ctx, dsn)
+	acquire := func(shared bool) error {
+		if dbType == "sqlite" {
+			if shared {
+				lease, target, err = dblock.AcquireSQLiteSharedTarget(target)
+			} else {
+				lease, target, err = dblock.AcquireSQLiteTarget(target)
+			}
+		} else if shared {
+			lease, err = dblock.AcquirePostgresShared(ctx, dsn)
+		} else {
+			lease, err = dblock.AcquirePostgres(ctx, dsn)
+		}
+		if err != nil {
+			return fmt.Errorf("database lifetime lock: %w", err)
+		}
+		return nil
 	}
+	if err := acquire(true); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if lease != nil {
+			resultErr = errors.Join(resultErr, lease.Close())
+		}
+	}()
+
+	checkRestore := func() error {
+		var pending bool
+		if dbType == "sqlite" {
+			pending, err = backup.HasPendingRestoreSQLite(ctx, target)
+		} else {
+			pending, err = backup.HasPendingRestorePostgres(ctx, dsn)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect interrupted restore marker read-only: %w", err)
+		}
+		if pending {
+			return fmt.Errorf("%w: interrupted restore marker exists", backup.ErrRestoreRecoveryRequired)
+		}
+		return nil
+	}
+	probeRevision := func() (storage.SchemaRevisionState, error) {
+		if dbType == "sqlite" {
+			return storage.ProbeSQLiteSchemaRevision(ctx, target)
+		}
+		return storage.ProbePostgresSchemaRevision(ctx, dsn)
+	}
+	prepareRevision := func() (storage.SchemaRevisionState, error) {
+		if dbType == "sqlite" {
+			return storage.PrepareSQLiteSchemaRevision(ctx, target)
+		}
+		return storage.PreparePostgresSchemaRevision(ctx, dsn)
+	}
+
+	if err := checkRestore(); err != nil {
+		return nil, fmt.Errorf("database has an interrupted restore: %w", err)
+	}
+	state, err := probeRevision()
 	if err != nil {
-		return nil, fmt.Errorf("database lifetime lock: %w", err)
+		return nil, err
 	}
+	if state.Known && state.Revision < 0 {
+		return nil, guardProbedSchemaRevision(state)
+	}
+	if publishRevision && state.NeedsUpgrade() && dbType == "sqlite" && storage.IsInMemorySQLitePath(target) {
+		prepareAfterOpen = true
+	} else if publishRevision {
+		// A revision transition fences every already-running older consumer. The
+		// marker is then published atomically before normal Connect mutates SQLite
+		// pragmas or PostgreSQL compatibility objects. Downgrade may have a handoff
+		// gap, so repeat the raw gates under the resulting shared lease. If a restore
+		// replaced the database in that gap, loop through a fresh exclusive phase.
+		for state.NeedsUpgrade() {
+			if state.Known && state.Revision < 0 {
+				return nil, guardProbedSchemaRevision(state)
+			}
+			if err := lease.Close(); err != nil {
+				return nil, fmt.Errorf("release shared database lifetime lock for schema upgrade: %w", err)
+			}
+			lease = nil
+			if err := acquire(false); err != nil {
+				return nil, fmt.Errorf("schema revision upgrade requires exclusive database access: %w", err)
+			}
+			if err := checkRestore(); err != nil {
+				return nil, fmt.Errorf("database has an interrupted restore: %w", err)
+			}
+			state, err = probeRevision()
+			if err != nil {
+				return nil, err
+			}
+			if state.Known {
+				if err := guardProbedSchemaRevision(state); err != nil {
+					return nil, err
+				}
+			}
+			if state.NeedsUpgrade() {
+				state, err = prepareRevision()
+				if err != nil {
+					return nil, err
+				}
+			}
+			if err := guardProbedSchemaRevision(state); err != nil {
+				return nil, err
+			}
+			if err := lease.Downgrade(ctx); err != nil {
+				return nil, fmt.Errorf("downgrade schema-upgrade database lease: %w", err)
+			}
+			if err := checkRestore(); err != nil {
+				return nil, fmt.Errorf("database changed during schema-upgrade lease downgrade: %w", err)
+			}
+			state, err = probeRevision()
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := guardProbedSchemaRevision(state); err != nil {
+		return nil, err
+	}
+
+	var db *storage.DB
 	if dbType == "sqlite" {
 		db, err = storage.ConnectSQLite(ctx, target)
 	} else {
 		db, err = storage.Connect(ctx, dsn)
 	}
 	if err != nil {
-		return nil, errors.Join(err, lease.Close())
+		return nil, err
+	}
+	if prepareAfterOpen {
+		if err := stampSchemaRevision(ctx, db); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	db.AddCloseHook(lease.Close)
+	lease = nil // ownership transferred to db
 	if err := backup.CheckNoPendingRestore(ctx, db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("database has an interrupted restore: %w", err)
+	}
+	if err := guardSchemaRevision(ctx, db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return db, nil
 }

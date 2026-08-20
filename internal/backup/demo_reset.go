@@ -294,6 +294,9 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (report *
 		}
 		fkDisabled = false
 	}
+	if _, err := db.RaiseSchemaRevision(ctx); err != nil {
+		return report, fmt.Errorf("demo reset: publish schema revision: %w", err)
+	}
 	if err := intent.MarkCommitted(ctx); err != nil {
 		txOpen = false
 		rollbackErr := tx.Rollback(ctx)
