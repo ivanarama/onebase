@@ -62,8 +62,8 @@
   вложений, `/metrics`, `slog` и `onebase lint`.
 - **План 65** реализован: richtext-поле, Quill, санитайзер, лимит размера и
   вывод richtext в HTML/PDF печатных формах.
-- **План 74 AI/dev tools** реализован: `fmt`, schema/describe/query/eval/MCP,
+- **План 152 AI/dev tools** реализован: `fmt`, schema/describe/query/eval/MCP,
   impact/refactor helpers, tool trace и rollback через snapshots.
 - **План 55, этап 3** частично закрыт: глобальный UI JS вынесен в
   `/static/ui.js`; остаток — template-bound скрипты.
-- **План 46** относится скорее к упаковке и маркетингу PWA.
+- **План 145** относится скорее к упаковке и маркетингу PWA.

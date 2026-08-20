@@ -913,7 +913,7 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, pr
 	w.ensureSelfRef()
 	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)
-	// Дата запрета проведения (свёртка базы, план 74).
+	// Дата запрета проведения (свёртка базы, план 151).
 	if mc.Period != nil {
 		if lock, ok := w.s.store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {
 			return storage.PostingFrozenError(lock)

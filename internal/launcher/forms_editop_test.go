@@ -293,7 +293,7 @@ func TestApplyEditOp_MoveCrossContainer(t *testing.T) {
 }
 
 // Невалидный YAML, неизвестная операция и устаревший node-id — штатные ошибки,
-// без паники (план 71: баннер/конфликт на клиенте).
+// без паники (план 149: баннер/конфликт на клиенте).
 func TestApplyEditOp_Errors(t *testing.T) {
 	cases := []struct {
 		name string

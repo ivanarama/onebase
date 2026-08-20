@@ -279,7 +279,9 @@ func TestReadXML_RejectsUnrepresentableContent(t *testing.T) {
 		{"empty prefix", `<:a/>`, "префикс"},
 		{"empty local name", `<a:/>`, "локальное имя"},
 		{"two colons", `<a:b:c/>`, "более одного символа"},
-		{"non UTF-8 encoding", `<?xml version="1.0" encoding="windows-1251"?><a/>`, "кодировка XML"},
+		// windows-1251 и прочие однобайтовые теперь читаются (#1036), отвергаем
+		// только те, что перекодировать нечем.
+		{"unknown encoding", `<?xml version="1.0" encoding="utf-16"?><a/>`, "кодировка XML"},
 		{"unsupported version", `<?xml version="2.0"?><a/>`, "версия XML"},
 		{"declaration without version", `<?xml encoding="UTF-8"?><a/>`, "version"},
 		{"unterminated declaration", `<?xml version="1.0"`, "незавершённое объявление"},

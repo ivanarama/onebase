@@ -2518,7 +2518,7 @@ func (tr *translator) emitVTSubquery(subq, defaultAlias string) error {
 	tr.emit("(" + subq + ") AS " + alias)
 	// Авто-JOIN refDims — только для главной таблицы (первого источника FROM),
 	// иначе при присоединении через явный JOIN авто-JOIN вклинивается перед ON
-	// присоединяемого источника (план 39, п.50).
+	// присоединяемого источника (план 143, п.50).
 	if tr.section == sectionFrom && !tr.mainEmitted {
 		for _, rd := range tr.refDims {
 			if rd.isVT {
@@ -3686,7 +3686,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			// JOIN (ЛЕВОЕ СОЕДИНЕНИЕ ... ПО ...) не должны перезаписывать mainTable
 			// и не порождают повторных авто-JOIN'ов refDims (это поля главной
 			// таблицы) — иначе авто-JOIN вклинивается между присоединяемой таблицей
-			// и её ON, ломая SQL (план 39, п.50).
+			// и её ON, ломая SQL (план 143, п.50).
 			isMain := !tr.mainEmitted
 			if isMain {
 				tr.mainTable = tableName
