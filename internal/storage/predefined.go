@@ -176,10 +176,24 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 	// Шаг 3: вставка в порядке зависимостей.
 	stageF := e.StageField()
 	for _, item := range ordered {
+		// SyncPredefined is a direct-SQL entity writer. Read the persisted
+		// pre-image before composing the INSERT so required validation sees the
+		// same effective state as the ordinary partial-write paths: omitted
+		// fields are preserved on conflict, but a new item must provide every
+		// required value. Unexpected reads fail closed rather than turning an
+		// unknown existing row into an apparently valid create.
+		var oldRow map[string]any
+		if existing, readErr := db.GetByID(ctx, e.Name, nameToUUID[item.Name], e); readErr == nil {
+			oldRow = existing
+		} else if !IsNotFound(readErr) && !IsNotFound(errors.Unwrap(readErr)) {
+			return fmt.Errorf("sync predefined %s.%s: read persisted values: %w", e.Name, item.Name, readErr)
+		}
+
 		cols := []string{"id", "_predefined_name", "_is_predefined"}
 		phs := []string{d.Placeholder(1), d.Placeholder(2), boolTrue}
 		args := []any{idArg(d, nameToUUID[item.Name]), item.Name}
 		updates := []string{"_is_predefined = " + boolTrue}
+		incomingFields := make(map[string]any, len(item.Fields)+1)
 		argIdx := 3
 
 		// Этапы (план 121): прежнее состояние читается ДО записи — по нему
@@ -196,6 +210,7 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 				cols = append(cols, col)
 				phs = append(phs, d.Placeholder(argIdx))
 				args = append(args, stagePlan.Value)
+				incomingFields[stageF.Name] = stagePlan.Value
 				argIdx++
 				if stagePlan.UpdateOnConflict {
 					updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
@@ -248,8 +263,14 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(argIdx))
 			args = append(args, val)
+			incomingFields[f.Name] = val
 			updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
 			argIdx++
+		}
+
+		effectiveFields := effectiveEntityValues(e, oldRow, incomingFields)
+		if err := db.requiredBackstop(ctx, e, effectiveFields); err != nil {
+			return fmt.Errorf("sync predefined %s.%s: %w", e.Name, item.Name, err)
 		}
 
 		sql := fmt.Sprintf(
@@ -274,7 +295,7 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 		if err != nil {
 			return fmt.Errorf("sync predefined %s.%s: %w", e.Name, item.Name, err)
 		}
-		if err := db.IndexObject(ctx, e, predefinedID, item.Fields); err != nil {
+		if err := db.IndexObject(ctx, e, predefinedID, effectiveFields); err != nil {
 			return err
 		}
 		if stagePlan != nil {

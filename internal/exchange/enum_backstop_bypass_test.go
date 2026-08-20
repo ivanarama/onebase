@@ -53,6 +53,11 @@ func TestApplyPackage_ForeignEnumValuePassesBackstop(t *testing.T) {
 	if err := db.SaveExchangeThisNode(ctx, "Обмен", "fil01"); err != nil {
 		t.Fatal(err)
 	}
+	// Журнал регистрации в боевой базе заводит служебная схема; здесь поднимаем
+	// его явно — иначе проверять отметку о расхождении будет негде.
+	if err := db.EnsureAuditSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
 	// Локальная конфигурация знает два значения; узел-отправитель прислал третье.
 	db.SetEnumSource(bypassEnums{enums: []*metadata.Enum{
 		{Name: "СтатусЗаявки", Values: []string{"Новая", "Закрыта"}},
@@ -80,8 +85,22 @@ func TestApplyPackage_ForeignEnumValuePassesBackstop(t *testing.T) {
 		Nodes:   []metadata.ExchangeNode{{Code: "center"}, {Code: "fil01"}},
 	}
 	plan.Normalize()
-	if _, err := exchange.ApplyPackage(ctx, db, fakeResolver{"Заявка": ent}, plan, data, exchange.ApplyOptions{}); err != nil {
+	res, err := exchange.ApplyPackage(ctx, db, fakeResolver{"Заявка": ent}, plan, data, exchange.ApplyOptions{})
+	if err != nil {
 		t.Fatalf("обмен отклонён страховкой перечислений: %v", err)
+	}
+
+	// Принято — но не молча: расхождение посчитано и записано в журнал (#1037).
+	if res.Mismatches == 0 {
+		t.Error("расхождение конфигураций принято без отметки: счётчик пуст")
+	}
+	var logged int
+	if err := db.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM _audit WHERE action = 'exchange_mismatch'`).Scan(&logged); err != nil {
+		t.Fatal(err)
+	}
+	if logged == 0 {
+		t.Error("расхождение не попало в журнал регистрации — обнаружить его можно будет только сверкой отчётов")
 	}
 
 	row, err := db.GetByID(context.Background(), ent.Name, id, ent)

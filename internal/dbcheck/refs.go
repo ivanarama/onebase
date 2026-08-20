@@ -156,6 +156,7 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 	// субконто бухрегистра имя аналитики и имя колонки не совпадают: колонки
 	// нумерованные (субконто1, субконто2…).
 	add := func(object, table string, fields []metadata.Field, reg *metadata.Register, manual string,
+		protectRequired bool,
 		column func(i int, f metadata.Field) string) {
 		for i, f := range fields {
 			if f.RefEntity == "" {
@@ -167,41 +168,45 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 				// `onebase check`, а не наша: данных для проверки просто нет.
 				continue
 			}
+			fieldManual := manual
+			if protectRequired && f.Required {
+				fieldManual = "обязательный реквизит — занулить нельзя, восстановите ссылку вручную"
+			}
 			out = append(out, refColumn{
 				Object:   object + "." + f.Name,
 				Table:    table,
 				Column:   column(i, f),
 				Target:   target,
 				Register: reg,
-				Manual:   manual,
+				Manual:   fieldManual,
 			})
 		}
 	}
 	byName := func(_ int, f metadata.Field) string { return metadata.ColumnName(f) }
 
 	for _, e := range env.Entities {
-		add(e.Name, metadata.TableName(e.Name), e.Fields, nil, "", byName)
+		add(e.Name, metadata.TableName(e.Name), e.Fields, nil, "", true, byName)
 		for _, tp := range e.TableParts {
-			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields, nil, "", byName)
+			add(e.Name+"."+tp.Name, metadata.TablePartTableName(e.Name, tp.Name), tp.Fields, nil, "", true, byName)
 		}
 	}
 	for _, reg := range env.Registers {
 		table := metadata.RegisterTableName(reg.Name)
 		// Измерения и реквизиты регистра накопления зануляемы, но очистка меняет
 		// агрегацию — после неё пересчитываем итоги (reg передаём в refColumn).
-		add(reg.Name, table, reg.Dimensions, reg, "", byName)
+		add(reg.Name, table, reg.Dimensions, reg, "", false, byName)
 		// Ресурс регистра накопления обычно число, но объявить его ссылкой никто
 		// не мешает — и CheckRefs на удалении такую ссылку уже считает. Пропуск
 		// здесь означал бы, что удалить объект нельзя, а найти почему — нечем.
-		add(reg.Name, table, reg.Resources, reg, "", byName)
-		add(reg.Name, table, reg.Attributes, reg, "", byName)
+		add(reg.Name, table, reg.Resources, reg, "", false, byName)
+		add(reg.Name, table, reg.Attributes, reg, "", false, byName)
 	}
 	for _, ir := range env.InfoRegisters {
 		table := metadata.InfoRegTableName(ir.Name)
 		// Измерения регистра сведений — NOT NULL и в PRIMARY KEY: занулить нельзя.
 		add(ir.Name, table, ir.Dimensions, nil,
-			"измерение регистра сведений (NOT NULL) — занулить нельзя, разберите строки вручную", byName)
-		add(ir.Name, table, ir.Resources, nil, "", byName)
+			"измерение регистра сведений (NOT NULL) — занулить нельзя, разберите строки вручную", false, byName)
+		add(ir.Name, table, ir.Resources, nil, "", false, byName)
 	}
 	// Регистр бухгалтерии — тот самый остаток, замеченный в #881: внешних ключей
 	// у его колонок нет, а проверка обходила его стороной, хотя субконто хранит
@@ -214,9 +219,10 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 		table := metadata.AccountRegTableName(ar.Name)
 		add(ar.Name, table, ar.Subconto, nil,
 			"субконто бухрегистра — очистка меняет аналитику проводки, разберите вручную",
+			false,
 			func(i int, _ metadata.Field) string { return metadata.SubcontoColumn(i + 1) })
 		add(ar.Name, table, ar.Resources, nil,
-			"ресурс бухрегистра — очистка меняет проводку, разберите вручную", byName)
+			"ресурс бухрегистра — очистка меняет проводку, разберите вручную", false, byName)
 	}
 
 	// Таблицы может не быть — например, объект только что добавили в

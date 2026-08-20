@@ -79,6 +79,10 @@ type LoadResult struct {
 	Deleted   int `json:"deleted"`            // применено с пометкой на удаление
 	Conflicts int `json:"conflicts"`          // обнаружено встречных правок (разрешено правилом)
 	Reposted  int `json:"reposted,omitempty"` // перепроведено документов на приёмнике (repost)
+	// Mismatches — принято записей со значениями, которых нет в местной
+	// конфигурации (расхождение версий узлов, #1037). Не ошибка: запись
+	// применена, событие записано в журнал регистрации.
+	Mismatches int `json:"mismatches,omitempty"`
 }
 
 // BuildPackage собирает пакет незапподтверждённых изменений для узла toNode,
@@ -731,7 +735,7 @@ func applyEntity(ctx context.Context, store *storage.DB, resolver EntityResolver
 			return false, obj.Version == localVer, nil
 		}
 	}
-	if err := applyObject(ctx, store, ent, id, obj, replicationSourceRef(plan.Name, fromNode, messageNo)); err != nil {
+	if err := applyObject(ctx, store, ent, id, obj, replicationSourceRef(plan.Name, fromNode, messageNo), res); err != nil {
 		return false, false, err
 	}
 	if hasLocal {
@@ -773,10 +777,27 @@ func needsRepost(ctx context.Context, store *storage.DB, resolver EntityResolver
 	return !toBool(row["posted"]), nil
 }
 
-func applyObject(ctx context.Context, store *storage.DB, ent *metadata.Entity, id uuid.UUID, obj PackageObject, sourceRef string) error {
+func applyObject(ctx context.Context, store *storage.DB, ent *metadata.Entity, id uuid.UUID, obj PackageObject, sourceRef string, res *LoadResult) error {
 	_, exists, err := store.EntityVersionExists(ctx, ent.Name, id)
 	if err != nil {
 		return err
+	}
+	// Значения, которых нет в местной конфигурации, обмен принимает: узел-
+	// отправитель может работать на другой версии, и рвать репликацию из-за
+	// одного реквизита дороже. Но событие фиксируется — иначе расхождение
+	// версий обнаруживается сверкой отчётов через месяц (#1037).
+	if mismatches := store.EnumMismatches(ent, obj.Fields, obj.TableParts); len(mismatches) > 0 {
+		for _, detail := range mismatches {
+			if logErr := store.LogExchangeMismatch(ctx, string(ent.Kind), ent.Name, id.String(), detail, sourceRef); logErr != nil {
+				// Журнал не должен рвать репликацию: расхождение уже принято,
+				// а потеря записи о нём — меньшее зло, чем оборванный обмен.
+				// Счётчик в результате загрузки остаётся видимым в любом случае.
+				break
+			}
+		}
+		if res != nil {
+			res.Mismatches += len(mismatches)
+		}
 	}
 	if !obj.Tombstone || !exists {
 		// Этапы (план 121): запись идёт узким writer-ом репликации, а не обычным

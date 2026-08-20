@@ -1,4 +1,4 @@
-# Конфигуратор: вынос фронта в go:embed (Фаза 2) — план реализации
+# Конфигуратор: вынос фронта в go:embed (Фаза 2) — план реализации (план 55)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [ ]`.
 

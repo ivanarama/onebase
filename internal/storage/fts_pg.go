@@ -73,6 +73,14 @@ func (pgFullText) Search(ctx context.Context, db *DB, q FTSQuery) ([]FTSHit, err
 		args = append(args, q.Names)
 		where += fmt.Sprintf(" AND f.owner_name = ANY($%d)", len(args))
 	}
+	scopeSQL, scopeArgs, _, err := ftsScopeSQL(db.dialect, q.Scopes, len(args)+1)
+	if err != nil {
+		return nil, err
+	}
+	if scopeSQL != "" {
+		where += " AND (" + scopeSQL + ")"
+		args = append(args, scopeArgs...)
+	}
 	args = append(args, q.Limit, q.Offset)
 	sqlText := fmt.Sprintf(`
 		SELECT f.owner_kind, f.owner_name, f.owner_id, f.title, ts_rank(f.search_tsv, q) AS rank

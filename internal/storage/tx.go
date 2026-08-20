@@ -289,12 +289,31 @@ func (db *DB) WithTxScope(ctx context.Context, fn func(context.Context) error) (
 		return fmt.Errorf("create savepoint %s: %w", savepoint, err)
 	}
 	PushTxHookScope(ctx)
+	// Cleanup belongs to the database transaction, not to a derived request
+	// context. A canceled child context must not prevent ROLLBACK/RELEASE while
+	// still allowing its hook scope (including lifecycle commit guards) to be
+	// discarded as if the savepoint had been rolled back.
+	cleanupCtx := context.WithoutCancel(ctx)
+	preserveFailedScope := func(action string, cause error) error {
+		poisonErr := fmt.Errorf("savepoint %s %s left transaction state unknown: %w", savepoint, action, cause)
+		// If SQL cleanup did not complete, the child writes may still be present.
+		// Fold every hook into the parent and poison its commit. Discarding this
+		// scope would lose both incomplete-write guards and rollback callbacks.
+		if !DeferBeforeTxCommit(cleanupCtx, func() error { return poisonErr }) {
+			poisonErr = errors.Join(poisonErr, errors.New("storage: cannot guard outer transaction after savepoint failure"))
+		}
+		CommitTxHookScope(cleanupCtx)
+		return poisonErr
+	}
 
 	rollback := func() error {
-		_, rollbackErr := db.Exec(ctx, "ROLLBACK TO SAVEPOINT "+savepoint)
-		_, releaseErr := db.Exec(ctx, "RELEASE SAVEPOINT "+savepoint)
+		_, rollbackErr := db.Exec(cleanupCtx, "ROLLBACK TO SAVEPOINT "+savepoint)
+		_, releaseErr := db.Exec(cleanupCtx, "RELEASE SAVEPOINT "+savepoint)
+		if cleanupErr := errors.Join(rollbackErr, releaseErr); cleanupErr != nil {
+			return preserveFailedScope("rollback", cleanupErr)
+		}
 		RollbackTxHookScope(ctx)
-		return errors.Join(rollbackErr, releaseErr)
+		return nil
 	}
 	defer func() {
 		if p := recover(); p != nil {
@@ -309,9 +328,12 @@ func (db *DB) WithTxScope(ctx context.Context, fn func(context.Context) error) (
 		}
 		return err
 	}
-	if _, err = db.Exec(ctx, "RELEASE SAVEPOINT "+savepoint); err != nil {
-		RollbackTxHookScope(ctx)
-		return fmt.Errorf("release savepoint %s: %w", savepoint, err)
+	if _, err = db.Exec(cleanupCtx, "RELEASE SAVEPOINT "+savepoint); err != nil {
+		releaseErr := fmt.Errorf("release savepoint %s: %w", savepoint, err)
+		if rollbackErr := rollback(); rollbackErr != nil {
+			return errors.Join(releaseErr, rollbackErr)
+		}
+		return releaseErr
 	}
 	CommitTxHookScope(ctx)
 	return nil

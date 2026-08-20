@@ -47,14 +47,57 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 	// crud.go:upsert. Без этапов путь остаётся прежним — без транзакции-обёртки
 	// и без блокировки.
 	if !stagedEntity(entity) {
-		return db.upsertVersionedInTx(ctx, entityName, id, fields, entity, expectedVersion)
+		return db.upsertVersionedInTx(ctx, entityName, id, fields, entity, expectedVersion,
+			versionedWriteOptions{validateRequired: true, validateStage: true, durableEffects: true})
 	}
 	return db.WithTxScope(ctx, func(txCtx context.Context) error {
-		return db.upsertVersionedInTx(txCtx, entityName, id, fields, entity, expectedVersion)
+		return db.upsertVersionedInTx(txCtx, entityName, id, fields, entity, expectedVersion,
+			versionedWriteOptions{validateRequired: true, validateStage: true, durableEffects: true})
 	})
 }
 
-func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, expectedVersion *int64) error {
+// UpsertPostingPreludeVersioned performs the CAS/version-bump write which a
+// DSL document posting needs before OnPost. It is deliberately transaction-only
+// and skips required validation only for this one intermediate row: nested hook
+// writes cannot inherit the exemption. The caller must finish with
+// UpsertAfterVersionBump, whose ordinary storage backstop validates the final
+// post-hook state before commit.
+func (db *DB) UpsertPostingPreludeVersioned(ctx context.Context, entityName string, id uuid.UUID,
+	fields map[string]any, entity *metadata.Entity, expectedVersion *int64) error {
+	if !HasTx(ctx) {
+		return errors.New("storage: UpsertPostingPreludeVersioned requires an active transaction")
+	}
+	if expectedVersion == nil {
+		return errors.New("storage: UpsertPostingPreludeVersioned requires an expected version")
+	}
+	if err := db.enumBackstop(ctx, entity, fields); err != nil {
+		return err
+	}
+	state, err := beginWriteLifecycle(ctx,
+		entityWriteLifecycleKey(db, "posting-prelude", entityName, id),
+		"posting prelude "+entityName+" "+id.String())
+	if err != nil {
+		return err
+	}
+	var original map[string]any
+	err = db.upsertVersionedInTx(ctx, entityName, id, fields, entity, expectedVersion,
+		versionedWriteOptions{captureOld: &original})
+	if err != nil {
+		return err
+	}
+	state.original = original
+	return armWriteLifecycle(ctx, state)
+}
+
+type versionedWriteOptions struct {
+	validateRequired bool
+	validateStage    bool
+	durableEffects   bool
+	captureOld       *map[string]any
+}
+
+func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any,
+	entity *metadata.Entity, expectedVersion *int64, options versionedWriteOptions) error {
 	d := db.dialect
 	table := metadata.TableName(entityName)
 	staged := stagedEntity(entity)
@@ -71,6 +114,9 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 		if staged && !IsNotFound(errors.Unwrap(err)) && !IsNotFound(err) {
 			return fmt.Errorf("upsert versioned %s: чтение текущего этапа: %w", entityName, err)
 		}
+		if stageModeFromCtx(ctx).Source != StageSourceExchange && hasRequiredEntityFields(entity) && !IsNotFound(err) {
+			return fmt.Errorf("upsert versioned %s: чтение текущих значений required-реквизитов: %w", entityName, err)
+		}
 	} else {
 		oldRow = existing
 	}
@@ -79,8 +125,22 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	// перехода: пользователь редактировал не то состояние, которое сейчас в
 	// базе, и «недопустимый переход» сказало бы ему не про ту проблему. Ни
 	// история, ни предупреждение при этом не пишутся.
-	if staged && oldRow != nil && stageReadVersion(oldRow) != *expectedVersion {
+	if oldRow != nil && stageReadVersion(oldRow) != *expectedVersion {
 		return ErrVersionConflict
+	}
+	if options.captureOld != nil {
+		*options.captureOld = oldRow
+	}
+
+	// UpsertVersioned — только update. Отсутствующие ключи сохраняют значения
+	// прочитанной CAS-версии; проверяем полный effective-снимок. Если строки уже
+	// нет, required не должен маскировать ErrVersionConflict: ноль затронутых
+	// строк ниже вернёт именно конфликт версии.
+	effectiveFields := effectiveEntityValues(entity, oldRow, fields)
+	if options.validateRequired && oldRow != nil {
+		if err := db.requiredBackstop(ctx, entity, effectiveFields); err != nil {
+			return err
+		}
 	}
 
 	// Гейт переходов между этапами (план 121). Точек записи две, и это вторая:
@@ -88,15 +148,23 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	// DSL), поэтому гейт только в upsert пропускал бы ровно тот случай, ради
 	// которого он написан. Пара «проверка до записи + история после» здесь
 	// обязана повторять crud.go:upsert.
-	stageTr, err := db.checkStageTransition(ctx, entityName, entity, oldRow, fields)
-	if err != nil {
-		return err
+	var stageTr *stageTransition
+	if options.validateStage {
+		var err error
+		stageTr, err = db.checkStageTransition(ctx, entityName, entity, oldRow, fields)
+		if err != nil {
+			return err
+		}
 	}
 
 	sets := []string{}
 	args := []any{}
 	argIdx := 1
 	for _, f := range entity.Fields {
+		_, given := canonicalFieldValue(fields, f.Name)
+		if !given {
+			continue
+		}
 		col := metadata.ColumnName(f)
 		val, err := canonicalNumberArg(f, fieldValueDialect(d, f, fields))
 		if err != nil {
@@ -162,12 +230,19 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	if tag.RowsAffected != 1 {
 		return ErrVersionConflict
 	}
+	if !options.durableEffects {
+		// The prelude exists only so OnPost and nested reads observe the OnWrite
+		// snapshot after a successful CAS. Required, stage gates/history, FTS and
+		// audit are all computed once by the matching final write from original
+		// state to final state.
+		return nil
+	}
 	// Полнотекстовый индекс (план 82) — в той же транзакции, что и запись.
 	// Через этот путь идут ВСЕ правки существующих объектов (форма UI и REST
 	// с If-Match всегда шлют версию, DSL выставляет её при чтении объекта), а
 	// собственный UPDATE мимо upsert хук индексации не задевал: в выдаче
 	// оставалось прежнее значение — в том числе стёртый пользователем телефон.
-	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+	if err := db.IndexObject(ctx, entity, id, effectiveFields); err != nil {
 		return err
 	}
 	// История переходов (план 121) — безусловно и в той же транзакции, как в
@@ -176,7 +251,7 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 		return err
 	}
 	if oldRow != nil {
-		if changes := AuditDiff(oldRow, fields, entity); len(changes) > 0 {
+		if changes := AuditDiff(oldRow, effectiveFields, entity); len(changes) > 0 {
 			db.logUpdate(ctx, string(entity.Kind), entityName, id, changes)
 		}
 	}

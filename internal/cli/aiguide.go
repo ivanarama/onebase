@@ -381,7 +381,7 @@ func renderLangDSL(b *strings.Builder) {
 			queries = append(queries, d)
 		default:
 			// KindKeyword намеренно не попадает в AGENTS.md — конструкции языка
-			// показываются в окне-справочнике конфигуратора (Часть E плана 52).
+			// показываются в окне-справочнике конфигуратора (Часть E плана 146).
 		}
 	}
 	line := func(d langref.Descriptor) {
