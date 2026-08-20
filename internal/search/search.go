@@ -76,12 +76,35 @@ type Deps interface {
 // сообщает о скрытых правами строках (issue #578, см. ниже).
 const scanBudgetFactor = 10
 
+// EqualFilter сужает полнотекстовый индекс равенством по реквизиту исходной
+// записи. Entities nil означает все доступные сущности с таким реквизитом;
+// непустой список дополнительно ограничивает типы объектов. Сущности без поля
+// исключаются — они не должны незаметно попасть в выдачу без отбора.
+type EqualFilter struct {
+	Field    string
+	Value    any
+	Entities []string
+}
+
 // Run выполняет глобальный поиск с учётом прав пользователя из ctx.
 // Продолжение листания задаётся курсором из предыдущего ответа, а не числом:
 // разбирает его сам Run, своими же text и limit. Это не удобство — иначе точка
 // входа могла бы расшифровать курсор одним запросом, а искать другим, и
 // привязка курсора к запросу (cursorScope) ничего бы не значила.
 func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit int, cursor string) (Page, error) {
+	return run(ctx, store, deps, text, limit, cursor, nil)
+}
+
+// RunFiltered выполняет поиск с равенством по реквизиту исходного объекта.
+// Отбор компилируется storage в EXISTS внутри FTS-запроса до ORDER BY/LIMIT;
+// постфильтрация здесь снова допустила бы starvation от чужих tenant-ов.
+// Листание намеренно не принимается: публичный cursorScope пока не кодирует
+// параметры отбора, а неполная привязка курсора была бы небезопасной.
+func RunFiltered(ctx context.Context, store *storage.DB, deps Deps, text string, limit int, filter EqualFilter) (Page, error) {
+	return run(ctx, store, deps, text, limit, "", &filter)
+}
+
+func run(ctx context.Context, store *storage.DB, deps Deps, text string, limit int, cursor string, filter *EqualFilter) (Page, error) {
 	if store == nil || deps == nil || strings.TrimSpace(text) == "" {
 		return Page{}, nil
 	}
@@ -96,12 +119,39 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit i
 
 	byName := make(map[string]*metadata.Entity)
 	var names []string
+	var scopes []storage.FTSScope
+	allowedNames := make(map[string]bool)
+	if filter != nil && filter.Entities != nil {
+		for _, name := range filter.Entities {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				allowedNames[strings.ToLower(name)] = true
+			}
+		}
+	}
 	for _, e := range deps.Entities() {
 		if e == nil || !deps.CanRead(ctx, e) {
 			continue
 		}
+		if filter != nil && filter.Entities != nil && !allowedNames[strings.ToLower(e.Name)] {
+			continue
+		}
 		if len(metadata.FullTextFields(e)) == 0 {
 			continue
+		}
+		if filter != nil {
+			field, ok := entityFilterField(e, filter.Field)
+			if !ok {
+				continue
+			}
+			scopes = append(scopes, storage.FTSScope{
+				Entity: e,
+				Predicate: storage.Predicate{
+					Field: field.Name,
+					Op:    "eq",
+					Value: filter.Value,
+				},
+			})
 		}
 		names = append(names, e.Name)
 		byName[e.Name] = e
@@ -125,6 +175,7 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit i
 		hits, err := store.SearchFullText(ctx, storage.FTSQuery{
 			Text:   text,
 			Names:  names,
+			Scopes: scopes,
 			Limit:  n,
 			Offset: page.NextOffset,
 		})
@@ -164,6 +215,19 @@ func Run(ctx context.Context, store *storage.DB, deps Deps, text string, limit i
 	// бюджетом, а точную позицию всё равно прячет курсор.
 	page.HasMore = len(page.Items) == limit
 	return withCursor(page, scope), nil
+}
+
+func entityFilterField(e *metadata.Entity, name string) (metadata.Field, bool) {
+	name = strings.TrimSpace(name)
+	if e == nil || name == "" {
+		return metadata.Field{}, false
+	}
+	for _, field := range e.Fields {
+		if strings.EqualFold(field.Name, name) {
+			return field, true
+		}
+	}
+	return metadata.Field{}, false
 }
 
 // withCursor проставляет непрозрачную позицию чтения. Вызывается на каждом
