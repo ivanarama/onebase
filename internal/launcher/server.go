@@ -255,6 +255,7 @@ func (s *Server) ListenAndServe() error {
 	// «Сообщить об ошибке» (план 116): форма → предпросмотр → пакет на диск.
 	r.Get("/report-problem", s.h.reportProblem)
 	r.Post("/report-problem", s.h.reportProblemPreview)
+	r.Post("/report-problem/edit", s.h.reportProblemEdit)
 	r.Post("/report-problem/save", s.h.reportProblemSave)
 	r.Get("/bases/new", s.h.newForm)
 	r.Post("/bases", s.h.create)

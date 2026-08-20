@@ -1,0 +1,68 @@
+schema: onebase.form/v1
+
+# Управляемая форма шаблона сайта (план 129, раздел 10).
+#
+# Смысл формы ровно один: макет страницы правится ПОЛЕМ КОДА, а не однострочным
+# вводом. В форке заказчика ради этого патчили платформу (увеличивали высоту
+# textarea в templates_managed.go) — правка не нужна, «ПолеКода» с подсветкой
+# и номерами строк есть в самой платформе, и редактор встроен в бинарь, без
+# внешних загрузок (важно для офлайн-инсталляций и строгих CSP).
+
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ШаблоныСайта
+  title:
+    ru: "Шаблон сайта"
+    en: "Site template"
+  auto_save_settings: true
+  vertical_scroll: auto
+
+attributes:
+  - name: Объект
+    type: CatalogRef.ШаблоныСайта
+    save: true
+    main: true
+
+elements:
+  - kind: ГруппаФормы
+    name: ГруппаШапка
+    title:
+      ru: "Шаблон"
+      en: "Template"
+    children:
+      - kind: ПолеВвода
+        name: ПолеНаименование
+        title:
+          ru: "Наименование"
+          en: "Name"
+        data_path: Объект.Наименование
+      - kind: ПолеВвода
+        name: ПолеВерсия
+        title:
+          ru: "Версия"
+          en: "Version"
+        data_path: Объект.Версия
+      - kind: ПолеВвода
+        name: ПолеОписание
+        title:
+          ru: "Описание"
+          en: "Description"
+        data_path: Объект.Описание
+        multiline: true
+
+  - kind: ГруппаФормы
+    name: ГруппаМакет
+    title:
+      ru: "Макет страницы"
+      en: "Page layout"
+    children:
+      # Плейсхолдеры шаблонизатора ({{.Заголовок}}, {{range .Список}} и прочие)
+      # — обычный HTML с подстановками, поэтому подсветка именно html.
+      - kind: ПолеКода
+        name: ПолеМакетHTML
+        title:
+          ru: "HTML-макет"
+          en: "HTML layout"
+        data_path: Объект.МакетHTML
+        language: html

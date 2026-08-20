@@ -798,7 +798,10 @@ func applyObject(ctx context.Context, store *storage.DB, ent *metadata.Entity, i
 		if !ok {
 			continue
 		}
-		if err := store.UpsertTablePartRows(ctx, ent.Name, tp.Name, id, rows, tp); err != nil {
+		// Тем же writer-ом репликации, что и шапка: пометка режима записи нужна
+		// строкам не меньше — иначе страховки уровня хранилища рвали бы обмен
+		// при расхождении версий конфигурации (#962, Н3).
+		if err := store.ApplyReplicatedTablePartRows(ctx, ent.Name, tp.Name, id, rows, tp, sourceRef); err != nil {
 			return err
 		}
 	}
