@@ -3,9 +3,9 @@
 package selfupdate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -17,8 +17,15 @@ func TestSharedWritableTargetIsExplicitlyRejected(t *testing.T) {
 	if err := os.Chmod(target, 0o775); err != nil { //nolint:gosec // G302: intentionally create a group-writable target to verify fail-closed policy
 		t.Fatal(err)
 	}
-	if _, err := targetCoordinationPermissions(target); err == nil || !strings.Contains(err.Error(), "shared") {
-		t.Fatalf("shared writable target error = %v, want explicit rejection", err)
+	// Класс причины проверяется через errors.Is, а не по тексту: по нему
+	// интерфейс выбирает, что советовать пользователю, и «нет прав» здесь был бы
+	// неверным советом — писать в каталог он как раз может (#1065).
+	_, err := targetCoordinationPermissions(target)
+	if !errors.Is(err, ErrTargetNotPrivate) {
+		t.Fatalf("shared writable target error = %v, want ErrTargetNotPrivate", err)
+	}
+	if errors.Is(err, ErrTargetNotWritable) {
+		t.Fatalf("общая установка выдана за отказ по правам: %v", err)
 	}
 }
 
@@ -31,7 +38,7 @@ func TestPublicReadOnlySystemStyleTargetCannotSelfUpdate(t *testing.T) {
 	if err := os.Chmod(target, 0o755); err != nil { //nolint:gosec // G302: intentionally model a public system-style install target
 		t.Fatal(err)
 	}
-	if _, err := targetCoordinationPermissions(target); err == nil || !strings.Contains(err.Error(), "system installations") {
-		t.Fatalf("public system-style target error = %v, want safe self-update rejection", err)
+	if _, err := targetCoordinationPermissions(target); !errors.Is(err, ErrTargetNotPrivate) {
+		t.Fatalf("public system-style target error = %v, want ErrTargetNotPrivate", err)
 	}
 }

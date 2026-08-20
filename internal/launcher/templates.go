@@ -1170,6 +1170,13 @@ const tplUpdates = `
     <div class="upd-note">{{t $.Lang "Проверить обновления не удалось"}}: {{.U.CheckError}}</div>
     {{end}}
 
+    {{if not .U.CurrentRecognized}}
+    <div class="upd-note">{{t $.Lang "Версия этой сборки не сопоставима с выпусками канала (ожидается build-<число> или vX.Y.Z), поэтому обновление ей не будет предложено никогда — даже когда выйдет заведомо более новое."}}
+      {{if not .U.BackgroundCheck}} {{t $.Lang "Фоновая проверка обновлений для неё не выполняется: строка «Проверено» относится к результату другого бинаря."}}{{end}}
+      <div style="color:#888;margin-top:4px">{{t $.Lang "Обновите платформу вручную или поставьте сборку из канала."}}</div>
+    </div>
+    {{end}}
+
     {{if .U.LatestTag}}
       {{if .U.Available}}
         <div class="upd-avail">
@@ -1182,13 +1189,26 @@ const tplUpdates = `
           {{if .U.LatestURL}} · <a href="{{.U.LatestURL}}" target="_blank" style="color:#1a5fa8">{{t $.Lang "страница выпуска"}} ↗</a>{{end}}
         </div>
         {{if .U.LatestNotes}}<pre class="upd-notes">{{.U.LatestNotes}}</pre>{{end}}
-      {{else}}
+      {{else if .U.CurrentRecognized}}
         <div class="upd-note">{{t $.Lang "Установлена актуальная версия"}} — {{.U.LatestTag}}</div>
+      {{else}}
+        <div class="upd-note">{{t $.Lang "Последняя версия в канале"}} — {{.U.LatestTag}}</div>
       {{end}}
     {{end}}
 
-    {{if not .U.CanWrite}}
+    {{if .U.BlockedByPermissions}}
     <div class="upd-note">{{t $.Lang "Нет прав на запись в каталог платформы — обновление доступно только администратору"}}
+      <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
+    </div>
+    {{end}}
+    {{if .U.BlockedByLocation}}
+    <div class="upd-note">{{t $.Lang "Платформа установлена вне личного каталога пользователя, поэтому обновлять сама себя она не может: этой установкой пользуются и другие, а согласовать с ними замену файлов нечем. Права здесь ни при чём — запуск от имени администратора ничего не изменит, у него другой личный каталог."}}
+      <div style="color:#888;margin-top:4px">{{t $.Lang "Выходы: обновить платформу вручную (скачать сборку и заменить файлы) или переставить её в свой личный каталог."}}</div>
+      <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
+    </div>
+    {{end}}
+    {{if .U.BlockedByOther}}
+    <div class="upd-note">{{t $.Lang "Самообновление для этой установки недоступно"}}: {{.U.BlockDetail}}
       <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
     </div>
     {{end}}

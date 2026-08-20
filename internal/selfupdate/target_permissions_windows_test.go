@@ -3,9 +3,9 @@
 package selfupdate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -18,8 +18,14 @@ func TestWindowsSystemInstallIsNotSelfUpdatableEvenWithWriteAccess(t *testing.T)
 	}
 	volume := filepath.VolumeName(profile)
 	systemTarget := filepath.Join(volume+string(filepath.Separator), "Program Files", "onebase")
-	if err := validateTargetCoordinationDirectory(systemTarget, nil); err == nil || !strings.Contains(err.Error(), "system installations") {
-		t.Fatalf("system installation policy error = %v, want explicit rejection", err)
+	// Именно ErrTargetNotPrivate: страница обновления по классу причины решает,
+	// говорить про права или про расположение установки (#1065).
+	err = validateTargetCoordinationDirectory(systemTarget, nil)
+	if !errors.Is(err, ErrTargetNotPrivate) {
+		t.Fatalf("system installation policy error = %v, want ErrTargetNotPrivate", err)
+	}
+	if errors.Is(err, ErrTargetNotWritable) {
+		t.Fatalf("расположение установки выдано за отказ по правам: %v", err)
 	}
 }
 

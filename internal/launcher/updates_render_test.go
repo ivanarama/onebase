@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/selfupdate"
+	"github.com/ivantit66/onebase/internal/version"
 )
 
 func renderUpdatesPage(t *testing.T, vm updatesVM) string {
@@ -75,6 +77,7 @@ func TestUpdates_PolicyDisabledHidesEverything(t *testing.T) {
 func TestUpdatesPage_NoWriteAccessExplained(t *testing.T) {
 	vm := updatesVM{
 		Enabled: true, NetAllowed: true, CanWrite: false,
+		Block:   selfupdate.TargetBlockNotWritable,
 		BinDir:  `C:\Program Files\onebase`,
 		Current: "build-660", LatestTag: "build-672", Available: true, SameScheme: true,
 		StagedTag: "build-672",
@@ -88,6 +91,86 @@ func TestUpdatesPage_NoWriteAccessExplained(t *testing.T) {
 	}
 	if strings.Contains(page, `return updApply()`) {
 		t.Error("кнопки применения без прав на запись быть не должно")
+	}
+}
+
+// Установка вне личного каталога — не отказ по правам (#1065). Запись туда
+// есть, и совет «обратитесь к администратору» ведёт в тупик: у администратора
+// другой личный каталог.
+func TestUpdatesPage_OutsideProfileIsNotReportedAsPermissions(t *testing.T) {
+	vm := updatesVM{
+		Enabled: true, NetAllowed: true, CanWrite: false,
+		Block:       selfupdate.TargetBlockNotPrivate,
+		BlockDetail: `selfupdate: C:\Projects\onebase is outside the current user profile C:\Users\ivan`,
+		BinDir:      `C:\Projects\onebase`,
+		Current:     "build-660", LatestTag: "build-672", Available: true, SameScheme: true,
+	}
+	page := renderUpdatesPage(t, vm)
+	if strings.Contains(page, "Нет прав на запись") {
+		t.Error("расположение установки выдано за отказ по правам")
+	}
+	if !strings.Contains(page, "вне личного каталога пользователя") {
+		t.Error("страница не называет настоящую причину — расположение установки")
+	}
+	if !strings.Contains(page, "вручную") || !strings.Contains(page, "переставить") {
+		t.Error("страница не называет ни одного настоящего выхода")
+	}
+	if !strings.Contains(page, `C:\Projects\onebase`) {
+		t.Error("в объяснении должен быть путь установки")
+	}
+}
+
+// Нераспознанная версия — не «актуальная»: сравнить её не с чем, и обновление
+// такой сборке не предложат никогда.
+func TestUpdatesPage_UnrecognizedVersionIsNotCalledUpToDate(t *testing.T) {
+	vm := updatesVM{
+		Enabled: true, NetAllowed: true, CanWrite: true,
+		Current: "build-793fix", LatestTag: "build-793",
+		BinDir: `C:\Users\ivan\.onebase\bin`,
+	}
+	page := renderUpdatesPage(t, vm)
+	if strings.Contains(page, "Установлена актуальная версия") {
+		t.Error("нераспознанная версия объявлена актуальной — это прямая неправда")
+	}
+	if !strings.Contains(page, "не сопоставима с выпусками канала") {
+		t.Error("страница не говорит, что версию не с чем сравнить")
+	}
+	if !strings.Contains(page, "build-793") {
+		t.Error("последнюю версию канала всё равно надо показать")
+	}
+}
+
+// dev-сборка вдобавок не проверяется фоном, поэтому «Проверено» относится к
+// чужому результату — про это тоже надо сказать.
+func TestUpdatesPage_DevBuildWarnsAboutBackgroundCheck(t *testing.T) {
+	old := version.Build
+	version.Build = ""
+	t.Cleanup(func() { version.Build = old })
+
+	vm := updatesVM{
+		Enabled: true, NetAllowed: true, CanWrite: true,
+		Current: "dev-3c79f25e", LatestTag: "build-793",
+		CheckedAt: time.Now().Add(-72 * time.Hour),
+	}
+	page := renderUpdatesPage(t, vm)
+	if !strings.Contains(page, "Фоновая проверка обновлений") {
+		t.Error("страница молчит о том, что фоновая проверка не идёт, хотя показывает дату проверки")
+	}
+}
+
+// Обычная сборка со свежей версией по-прежнему говорит «актуальная» — правка не
+// должна превратить нормальный случай в предупреждение.
+func TestUpdatesPage_RecognizedVersionStillCalledUpToDate(t *testing.T) {
+	vm := updatesVM{
+		Enabled: true, NetAllowed: true, CanWrite: true,
+		Current: "build-793", LatestTag: "build-793",
+	}
+	page := renderUpdatesPage(t, vm)
+	if !strings.Contains(page, "Установлена актуальная версия") {
+		t.Error("свежая распознанная версия должна называться актуальной")
+	}
+	if strings.Contains(page, "не сопоставима с выпусками канала") {
+		t.Error("предупреждение о несопоставимой версии вылезло на нормальной сборке")
 	}
 }
 
