@@ -31,15 +31,16 @@ func setSchemaRevision(t *testing.T, db *storage.DB, revision int) {
 	}
 }
 
-// TestSchemaRevisionGateMatrix — полный цикл: непроштампованная база
-// открывается, подъём монотонен, база из будущего отказывает обеим СУБД
+// TestSchemaRevisionGateMatrix — полный цикл: незавершённый marker отказывает,
+// атомарный подъём делает его валидным, база из будущего отказывает обеим СУБД
 // одинаково.
 func TestSchemaRevisionGateMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
 
-		// Таблица заведена служебной схемой, но строки ещё нет: базу создали, а
-		// проштамповать не успели. Отказывать тут не за что.
+		// Таблица есть, строки ещё нет: это не legacy, а оборванный/повреждённый
+		// marker. Обычный consumer обязан отказать; exclusive upgrader ниже
+		// атомарно восстановит singleton.
 		rev, known, by, err := db.SchemaRevisionOf(ctx)
 		if err != nil {
 			t.Fatalf("SchemaRevisionOf на пустой таблице: %v", err)
@@ -47,8 +48,8 @@ func TestSchemaRevisionGateMatrix(t *testing.T) {
 		if known || rev != 0 || by != "" {
 			t.Fatalf("непроштампованная база: got (%d, %v, %q), want (0, false, \"\")", rev, known, by)
 		}
-		if err := db.CheckSchemaRevision(ctx); err != nil {
-			t.Fatalf("непроштампованная база должна открываться: %v", err)
+		if err := db.CheckSchemaRevision(ctx); !errors.Is(err, storage.ErrSchemaRevisionIncomplete) {
+			t.Fatalf("пустой marker error = %v, want ErrSchemaRevisionIncomplete", err)
 		}
 
 		// Подъём ставит ревизию этого бинаря и называет, кто её поставил.

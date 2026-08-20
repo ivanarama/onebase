@@ -27,9 +27,9 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		fn   func(context.Context) error
 	}{
 		// Ревизия схемы (#1057) идёт первой: это удостоверение базы, а не одна из
-		// её подсистем. Таблицу заводим, но не штампуем — ревизию поднимают
-		// только пути, которые действительно привели схему в соответствие
-		// (run/migrate/deploy/dev).
+		// её подсистем. В production барьер уже атомарно опубликован протоколом
+		// открытия до обычного Connect; Ensure здесь сохраняет самодостаточность
+		// тестовых/встроенных инициализаторов.
 		{"schema revision", db.EnsureSchemaRevisionSchema},
 		{"audit", db.EnsureAuditSchema},
 		{"settings", db.EnsureSettingsSchema},

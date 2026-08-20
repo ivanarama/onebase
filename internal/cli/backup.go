@@ -7,7 +7,6 @@ import (
 
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/dblock"
-	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +53,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	if backupSQLite != "" {
 		dbType = "sqlite"
 	}
-	guardDB, err := openCLIStorage(cmd.Context(), dbType, backupSQLite, backupDB)
+	guardDB, err := openCLIStorageReadOnly(cmd.Context(), dbType, backupSQLite, backupDB)
 	if err != nil {
 		return err
 	}
@@ -143,19 +142,17 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	// A raw engine restore cannot resolve external directory swaps because this
 	// command has no trusted destination allowlist. Refuse to erase the sole
 	// recovery marker; the launcher/full-import path must resolve it first.
-	var guardDB *storage.DB
+	var pending bool
 	if restoreSQLite != "" {
-		guardDB, err = storage.ConnectSQLite(cmd.Context(), sqliteTarget)
+		pending, err = backup.HasPendingRestoreSQLite(cmd.Context(), sqliteTarget)
 	} else {
-		guardDB, err = storage.Connect(cmd.Context(), restoreDB)
+		pending, err = backup.HasPendingRestorePostgres(cmd.Context(), restoreDB)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("raw restore: inspect recovery marker read-only: %w", err)
 	}
-	guardErr := backup.CheckNoPendingRestore(cmd.Context(), guardDB)
-	guardDB.Close()
-	if guardErr != nil {
-		return fmt.Errorf("raw restore refused while universal recovery is pending: %w", guardErr)
+	if pending {
+		return fmt.Errorf("raw restore refused while universal recovery is pending: %w", backup.ErrRestoreRecoveryRequired)
 	}
 
 	if restoreSQLite != "" {
@@ -171,7 +168,11 @@ func runRestore(cmd *cobra.Command, args []string) error {
 	// Префикс базы гасим после восстановления: копия могла уехать в ДРУГУЮ
 	// базу, и клон с префиксом оригинала выдавал бы те же коды — обмен склеил
 	// бы разные объекты (план 117D). Задать заново: onebase base prefix --set.
-	if prev := resetPrefixAfterRestore(cmd.Context(), restoreDB, sqliteTarget); prev != "" {
+	prev, barrierErr := resetPrefixAfterRestore(cmd.Context(), restoreDB, sqliteTarget)
+	if barrierErr != nil {
+		return fmt.Errorf("database restore completed, but publishing its schema barrier failed: %w", barrierErr)
+	}
+	if prev != "" {
 		outf("Префикс базы %q снят: задайте его заново командой onebase base prefix --set\n", prev)
 	}
 	outln("Восстановление завершено.")
@@ -180,29 +181,24 @@ func runRestore(cmd *cobra.Command, args []string) error {
 
 // resetPrefixAfterRestore открывает восстановленную базу и снимает префикс.
 // Ошибки не роняют восстановление: база уже восстановлена, и отказ на этом
-// шаге сделал бы успешную операцию похожей на провал. Возвращает прежнее
-// значение (пусто — префикса не было или открыть базу не удалось).
-func resetPrefixAfterRestore(ctx context.Context, dsn, sqlitePath string) string {
-	var (
-		db  *storage.DB
-		err error
-	)
+// шаге не должны скрывать уже завершённое восстановление. Ошибка открытия/gate,
+// однако, возвращается: успешная команда обязана оставить durable schema barrier.
+func resetPrefixAfterRestore(ctx context.Context, dsn, sqlitePath string) (string, error) {
+	dbType := "postgres"
 	if sqlitePath != "" {
-		db, err = storage.ConnectSQLite(ctx, sqlitePath)
-	} else {
-		db, err = storage.Connect(ctx, dsn)
+		dbType = "sqlite"
 	}
+	db, err := openExclusiveRecoveryStorage(ctx, dbType, sqlitePath, dsn, "")
 	if err != nil {
-		errln("не удалось снять префикс базы после восстановления:", err)
-		return ""
+		return "", err
 	}
 	defer db.Close()
 	prev, err := resetBasePrefixAfterRestore(ctx, db)
 	if err != nil {
 		errln("не удалось снять префикс базы после восстановления:", err)
-		return ""
+		return "", nil
 	}
-	return prev
+	return prev, nil
 }
 
 var (
@@ -235,9 +231,10 @@ func runDemoReset(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("database lifetime lock: %w", err)
 	}
 	defer lease.Close() //nolint:errcheck // process exit also releases the advisory lock
-	// DemoReset is recovery-capable and already owns the exclusive DB lease;
-	// use a raw handle so its internal protocol can resolve a pending marker.
-	db, err := storage.Connect(ctx, demoResetDB)
+	// DemoReset is recovery-capable and already owns the exclusive DB lease.
+	// Resolve an older intent first, then enforce/publish the schema barrier
+	// before the destructive import begins.
+	db, err := openExclusiveRecoveryStorage(ctx, "postgres", "", demoResetDB, "")
 	if err != nil {
 		return err
 	}

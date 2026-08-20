@@ -265,6 +265,9 @@ func (intent *restoreIntent) ResolveCommitError(rootCtx context.Context, swaps [
 	if resolvedErr != nil {
 		return errors.Join(commitErr, resolvedErr, ErrRestoreRecoveryRequired)
 	}
+	if _, err := intent.db.RaiseSchemaRevision(txCtx); err != nil {
+		return errors.Join(commitErr, fmt.Errorf("restore: publish schema revision during commit resolution: %w", err), ErrRestoreRecoveryRequired)
+	}
 	if err := tx.Commit(txCtx); err != nil {
 		open = false
 		return errors.Join(fmt.Errorf("restore: resolution commit outcome is unknown: %w", err), commitErr, ErrRestoreRecoveryRequired)
@@ -355,6 +358,9 @@ func recoverPendingRestoreLocked(ctx context.Context, db *storage.DB, allowedDes
 		return err
 	}
 	if !ok {
+		if _, err := db.RaiseSchemaRevision(txCtx); err != nil {
+			return fmt.Errorf("restore: publish schema revision in empty recovery barrier: %w", err)
+		}
 		if err := tx.Commit(txCtx); err != nil {
 			open = false
 			return fmt.Errorf("restore: commit empty recovery barrier: %w", err)
@@ -389,6 +395,12 @@ func recoverPendingRestoreLocked(ctx context.Context, db *storage.DB, allowedDes
 	}
 	if err != nil {
 		return errors.Join(ErrRestoreRecoveryRequired, err)
+	}
+	// Publish the compatibility barrier in the same durable transaction that
+	// removes the recovery intent. A crash must never expose a recovered schema
+	// with neither the restore marker nor its minimum-reader revision.
+	if _, err := db.RaiseSchemaRevision(txCtx); err != nil {
+		return errors.Join(ErrRestoreRecoveryRequired, fmt.Errorf("restore: publish schema revision during recovery: %w", err))
 	}
 	if err := tx.Commit(txCtx); err != nil {
 		open = false

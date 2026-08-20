@@ -119,6 +119,39 @@ func TestRecoverPendingRestoreRollsBackEveryPublishedCutPoint(t *testing.T) {
 	}
 }
 
+func TestRecoverPendingRestorePublishesRevisionFromIncompleteMarker(t *testing.T) {
+	ctx := context.Background()
+	db := newSQLite(t, "pending-incomplete-revision")
+	if err := db.EnsureSchemaRevisionSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.SchemaRevisionStateOf(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(state.Check(), storage.ErrSchemaRevisionIncomplete) {
+		t.Fatalf("initial state = %+v, want ErrSchemaRevisionIncomplete", state)
+	}
+
+	swap := prepareRestoreIntentSwap(t, true)
+	beginRestoreIntentForTest(t, db, swap)
+	if err := RecoverPendingRestore(ctx, db, swap.dest); err != nil {
+		t.Fatalf("RecoverPendingRestore: %v", err)
+	}
+	assertPendingTreeRestored(t, swap, true)
+	assertNoRestoreIntent(t, db)
+	state, err = db.SchemaRevisionStateOf(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Known || state.Revision != storage.SchemaRevision {
+		t.Fatalf("recovered state = %+v, want known revision %d", state, storage.SchemaRevision)
+	}
+	if err := state.Check(); err != nil {
+		t.Fatalf("recovered revision rejected: %v", err)
+	}
+}
+
 func TestRecoverCommittedRestoreFinalizesAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	db := newSQLite(t, "committed-cut")
