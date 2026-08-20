@@ -90,7 +90,16 @@
 ### Linux
 ```bash
 tar xzf onebase-linux-amd64.tar.gz     # Raspberry Pi, NAS: onebase-linux-arm64.tar.gz
-./onebase start
+./onebase-linux-amd64/onebase start
+```
+
+Обновляете установленную копию — замените файл в PATH, иначе команда `onebase`
+продолжит звать старую версию (архив распаковывается в подкаталог и сам ничего
+не заменяет):
+
+```bash
+sudo mv onebase-linux-amd64/onebase /usr/local/bin/onebase
+onebase version                        # версия, коммит и путь исполняемого файла
 ```
 
 ### macOS
