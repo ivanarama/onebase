@@ -53,6 +53,7 @@ func newSearchFixture(t *testing.T, count int) (*storage.DB, *metadata.Entity) {
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Менеджер", Type: metadata.FieldTypeString},
+			{Name: "Tenant", Type: metadata.FieldTypeString},
 		},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{e}); err != nil {
@@ -98,6 +99,60 @@ func TestRun_RefillsPageAfterFilteredRows(t *testing.T) {
 	}
 	if page.NextOffset <= 1 {
 		t.Fatalf("NextOffset должен считаться по просмотренным строкам индекса: %+v", page)
+	}
+}
+
+func TestRunFiltered_AppliesEntityFieldBeforeTopN(t *testing.T) {
+	ctx := context.Background()
+	db, e := newSearchFixture(t, 0)
+	const marker = "filteredboundarytoken"
+
+	for i := 0; i < 31; i++ {
+		if err := db.Upsert(ctx, e.Name, uuid.New(), map[string]any{
+			"Наименование": marker + " foreign",
+			"Tenant":       "site-b",
+		}, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	localID := uuid.New()
+	if err := db.Upsert(ctx, e.Name, localID, map[string]any{
+		"Наименование": "local",
+		"Менеджер":     marker,
+		"Tenant":       "site-a",
+	}, e); err != nil {
+		t.Fatal(err)
+	}
+	deps := fakeDeps{entities: []*metadata.Entity{e}}
+
+	global, err := Run(ctx, db, deps, marker, 30, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range global.Items {
+		if item.ID == localID {
+			t.Fatalf("инвариант регрессии нарушен: local body-hit попал в global top-30")
+		}
+	}
+
+	filtered, err := RunFiltered(ctx, db, deps, marker, 30, EqualFilter{
+		Field: "tenant", Value: "site-a", Entities: []string{e.Name},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Items) != 1 || filtered.Items[0].ID != localID {
+		t.Fatalf("отбор исходной таблицы не применился до top-N: %+v", filtered)
+	}
+
+	missing, err := RunFiltered(ctx, db, deps, marker, 30, EqualFilter{
+		Field: "НетТакогоПоля", Value: "site-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing.Items) != 0 {
+		t.Fatalf("сущность без поля отбора не должна идти unscoped: %+v", missing)
 	}
 }
 

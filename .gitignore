@@ -81,6 +81,8 @@ docs/*
 
 # Локальные демо-артефакты (выгрузки, скриншоты печати)
 demo/
+!examples/cms/demo/
+!examples/cms/demo/catalog.yml
 
 # Артефакты нагрузочного тестирования
 loadtest/seed/counterparties.json

@@ -110,6 +110,24 @@ func TestExecuteCommand_ExecutionContextCancelsProcess(t *testing.T) {
 	}
 }
 
+// Бюджет старта дерева процессов — не часть проверяемой гарантии. Тест
+// доказывает, что потомок УМИРАЕТ после отмены; сколько он стартовал, значения
+// не имеет. Между тем старт стоит дорого и цена зависит от машины: помощник и
+// его потомок — два отдельных запуска тестового бинаря, а на Windows первый
+// запуск свежесобранного .exe уходит на антивирусную проверку файла (замерено
+// 6,9 с против 0,15 с у второго запуска того же файла). Под параллельной
+// сборкой и прогоном соседних пакетов цена растёт дальше. Прежние 8 секунд
+// ложились в неё впритык, и тест краснел на загруженной машине, ничего не
+// сообщая о настоящей гарантии (#1038).
+//
+// Время жизни помощников заведомо больше бюджета старта: иначе медленный старт
+// съедает их жизнь, помощник выходит сам, отмене нечего убивать — и тест падает
+// уже на «ожидалась ошибка отмены», уводя разбор в сторону.
+const (
+	execTreeStartBudget = 45 * time.Second
+	execTreeHelperLife  = 90 * time.Second
+)
+
 func TestExecuteCommand_ExecutionContextCancelsDescendantTree(t *testing.T) {
 	heartbeat := t.TempDir() + string(os.PathSeparator) + "descendant-heartbeat"
 	args := NewArray([]any{
@@ -126,8 +144,9 @@ func TestExecuteCommand_ExecutionContextCancelsDescendantTree(t *testing.T) {
 		at        time.Time
 	}
 	canceled := make(chan cancellationPoint, 1)
+	started := time.Now()
 	go func() {
-		deadline := time.Now().Add(8 * time.Second)
+		deadline := started.Add(execTreeStartBudget)
 		for time.Now().Before(deadline) {
 			data, err := os.ReadFile(heartbeat)
 			if value := strings.TrimSpace(string(data)); err == nil && value != "" {
@@ -145,8 +164,11 @@ func TestExecuteCommand_ExecutionContextCancelsDescendantTree(t *testing.T) {
 	_, err := execRunner(nil, NewStaticCtx(ctx))([]any{os.Args[0], args, 20.0}, "", 0)
 	point := <-canceled
 	if point.heartbeat == "" {
-		t.Fatal("descendant did not start within 8 seconds")
+		t.Fatalf("descendant did not start within %s (process-tree startup budget, see #1038)", execTreeStartBudget)
 	}
+	// Замер в журнал: если бюджета однажды перестанет хватать, следующий человек
+	// увидит настоящую цену старта, а не будет добывать её заново.
+	t.Logf("дерево процессов стартовало за %s (бюджет %s)", point.at.Sub(started).Round(time.Millisecond), execTreeStartBudget)
 	if err == nil {
 		t.Fatal("expected execution context cancellation error")
 	}
@@ -199,9 +221,9 @@ func TestExecProcessTreeHelper(t *testing.T) {
 			t.Fatalf("start process-tree child: %v", err)
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "descendant pid=%d\n", child.Process.Pid)
-		time.Sleep(12 * time.Second)
+		time.Sleep(execTreeHelperLife)
 	case "child":
-		deadline := time.Now().Add(12 * time.Second)
+		deadline := time.Now().Add(execTreeHelperLife)
 		for sequence := 1; time.Now().Before(deadline); sequence++ {
 			if err := os.WriteFile(heartbeat, []byte(strconv.Itoa(sequence)), 0o600); err != nil { //nolint:gosec // G703: subprocess test helper writes only the t.TempDir path supplied by its parent
 				t.Fatalf("write process-tree heartbeat: %v", err)
