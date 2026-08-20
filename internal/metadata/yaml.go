@@ -22,6 +22,7 @@ type rawField struct {
 	// AllowInlineCreate — pointer to differ unset from explicit false. nil
 	// means «keep context default» (true в шапке, false в ТЧ).
 	AllowInlineCreate *bool `yaml:"allow_inline_create"`
+	Required          bool  `yaml:"required"`
 }
 
 type rawTablePart struct {
@@ -612,7 +613,8 @@ func parseField(rf rawField) Field {
 	if title == "" {
 		title = rf.Label
 	}
-	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type), AllowInlineCreate: rf.AllowInlineCreate}
+	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
+		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

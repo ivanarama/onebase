@@ -41,6 +41,7 @@ func newPGFTSFixture(t *testing.T) (*DB, *metadata.Entity, *metadata.Entity) {
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Комментарий", Type: metadata.FieldTypeString},
+			{Name: "Tenant", Type: metadata.FieldTypeString},
 		},
 	}
 	doc := &metadata.Entity{
@@ -115,6 +116,52 @@ func TestFullTextPG_FindsObjectsAcrossEntities(t *testing.T) {
 	}
 	if got := searchPG(t, db, "ромашк", doc.Name); len(got) != 1 || got[0].ID != invoice {
 		t.Fatalf("выдача должна ограничиваться переданными объектами: %+v", got)
+	}
+}
+
+func TestFullTextPG_ScopeAppliedBeforeTopN(t *testing.T) {
+	ctx := context.Background()
+	db, cat, _ := newPGFTSFixture(t)
+	const marker = "scopeboundarytoken"
+
+	for i := 0; i < 31; i++ {
+		if err := db.Upsert(ctx, cat.Name, uuid.New(), map[string]any{
+			"Наименование": marker + " foreign",
+			"Tenant":       "site-b",
+		}, cat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	localID := uuid.New()
+	if err := db.Upsert(ctx, cat.Name, localID, map[string]any{
+		"Наименование": "local page",
+		"Комментарий":  marker,
+		"Tenant":       "site-a",
+	}, cat); err != nil {
+		t.Fatal(err)
+	}
+
+	global, err := db.SearchFullText(ctx, FTSQuery{Text: marker, Names: []string{cat.Name}, Limit: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hitIDs(global)[localID] {
+		t.Fatalf("инвариант регрессии нарушен: body-hit попал в глобальную top-30: %+v", global)
+	}
+	scoped, err := db.SearchFullText(ctx, FTSQuery{
+		Text:  marker,
+		Names: []string{cat.Name},
+		Scopes: []FTSScope{{
+			Entity:    cat,
+			Predicate: Predicate{Field: "Tenant", Op: "eq", Value: "site-a"},
+		}},
+		Limit: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) != 1 || scoped[0].ID != localID {
+		t.Fatalf("scope должен примениться до top-N, получено %+v", scoped)
 	}
 }
 

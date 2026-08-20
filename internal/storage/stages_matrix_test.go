@@ -201,6 +201,107 @@ func TestStagesHistoryRecordsWhoAndWhen(t *testing.T) {
 	})
 }
 
+func TestPostingPrelude_StageAndAuditAreOriginalToFinalOnce(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		e := stagesEntity(metadata.StageEnforceStrict)
+		migrateStages(t, ctx, db, e)
+		if err := db.EnsureAuditSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		id := uuid.New()
+		if err := db.Upsert(ctx, e.Name, id, stageFields("Один переход", "Черновик"), e); err != nil {
+			t.Fatalf("seed staged object: %v", err)
+		}
+		expected := int64(1)
+		if err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+			// The transient state deliberately skips the strict route. A posting
+			// prelude is only CAS + SQL/version and must neither gate nor publish it.
+			if err := db.UpsertPostingPreludeVersioned(txCtx, e.Name, id,
+				stageFields("Один переход", "Утверждена"), e, &expected); err != nil {
+				return err
+			}
+			return db.UpsertAfterVersionBump(txCtx, e.Name, id,
+				stageFields("Один переход", "НаСогласовании"), e)
+		}); err != nil {
+			t.Fatalf("complete staged posting lifecycle: %v", err)
+		}
+
+		row, err := db.GetByID(ctx, e.Name, id, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row["Состояние"] != "НаСогласовании" || row["_version"] != int64(2) {
+			t.Fatalf("final staged row = %#v, want НаСогласовании at version 2", row)
+		}
+
+		hist, err := db.StageHistory(ctx, e.Name, id)
+		if err != nil {
+			t.Fatalf("StageHistory: %v", err)
+		}
+		if len(hist) != 2 {
+			t.Fatalf("stage events = %d, want create + one final transition: %+v", len(hist), hist)
+		}
+		if hist[0].FromStage != "Черновик" || hist[0].ToStage != "НаСогласовании" {
+			t.Fatalf("final stage event = %q -> %q, want Черновик -> НаСогласовании",
+				hist[0].FromStage, hist[0].ToStage)
+		}
+
+		entries, err := db.AuditByRecord(ctx, e.Name, id)
+		if err != nil {
+			t.Fatalf("AuditByRecord: %v", err)
+		}
+		var stageUpdates []*storage.AuditEntry
+		for _, entry := range entries {
+			if entry.Action == "update" && entry.Field == "Состояние" {
+				stageUpdates = append(stageUpdates, entry)
+			}
+		}
+		if len(stageUpdates) != 1 {
+			t.Fatalf("stage audit updates = %d, want 1: %#v", len(stageUpdates), stageUpdates)
+		}
+		if stageUpdates[0].OldValue != "Черновик" || stageUpdates[0].NewValue != "НаСогласовании" {
+			t.Fatalf("stage audit = %#v -> %#v, want Черновик -> НаСогласовании",
+				stageUpdates[0].OldValue, stageUpdates[0].NewValue)
+		}
+
+		blockedID := uuid.New()
+		if err := db.Upsert(ctx, e.Name, blockedID, stageFields("Не пропустить", "Черновик"), e); err != nil {
+			t.Fatalf("seed second staged object: %v", err)
+		}
+		blockedExpected := int64(1)
+		err = db.WithTxScope(ctx, func(txCtx context.Context) error {
+			if err := db.UpsertPostingPreludeVersioned(txCtx, e.Name, blockedID,
+				stageFields("Не пропустить", "Утверждена"), e, &blockedExpected); err != nil {
+				return err
+			}
+			// Omitting the stage in the partial final write retains the prelude
+			// value physically. It must still be gated as Черновик -> Утверждена.
+			return db.UpsertAfterVersionBump(txCtx, e.Name, blockedID,
+				map[string]any{"Наименование": "Не пропустить — final"}, e)
+		})
+		if err == nil || errors.Is(err, storage.ErrVersionConflict) {
+			t.Fatalf("partial final write retained a forbidden prelude stage: %v", err)
+		}
+		blockedRow, getErr := db.GetByID(ctx, e.Name, blockedID, e)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if blockedRow["Состояние"] != "Черновик" || blockedRow["Наименование"] != "Не пропустить" ||
+			blockedRow["_version"] != int64(1) {
+			t.Fatalf("rejected partial final changed staged row: %#v", blockedRow)
+		}
+		blockedHistory, histErr := db.StageHistory(ctx, e.Name, blockedID)
+		if histErr != nil {
+			t.Fatal(histErr)
+		}
+		if len(blockedHistory) != 1 || blockedHistory[0].FromStage != "" || blockedHistory[0].ToStage != "Черновик" {
+			t.Fatalf("rejected transient stage leaked into history: %+v", blockedHistory)
+		}
+	})
+}
+
 // TestStagesHistoryWrittenWithAuditDisabled — история не зависит от журнала
 // регистрации. Именно поэтому она живёт в своей таблице: аудит выключается
 // настройкой и тогда молча ничего не пишет, а «где застряло» обязано работать.

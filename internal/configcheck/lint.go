@@ -340,7 +340,7 @@ func with(base *yamlLintSchema, nested map[string]*yamlLintSchema) *yamlLintSche
 	return base
 }
 
-func fieldYAMLSchema() *yamlLintSchema {
+func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 	// `id` — устойчивый идентификатор реквизита (план 81). Он НЕ декоративный:
 	// именно по нему миграция отличает переименование от «удалили одно поле,
 	// добавили другое», а PlanTableChanges строит по нему сторож от тихой
@@ -349,15 +349,22 @@ func fieldYAMLSchema() *yamlLintSchema {
 	// который его честно читает, и DEVELOPER.md, где id описан как
 	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
 	// страховку от потери данных (#873, дефект Д11 из #668).
-	return with(obj("id", "name", "title", "label", "type", "allow_inline_create"), map[string]*yamlLintSchema{
+	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create"}
+	if allowRequired {
+		// Required is currently a write invariant for entity headers and table
+		// parts. Register recorders have a different persistence path and must
+		// not silently accept a declaration they do not enforce.
+		keys = append(keys, "required")
+	}
+	return with(obj(keys...), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 	})
 }
 
-func tablePartYAMLSchema() *yamlLintSchema {
+func tablePartYAMLSchema(allowRequired bool) *yamlLintSchema {
 	return with(obj("name", "title"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
-		"fields": seq(fieldYAMLSchema()),
+		"fields": seq(fieldYAMLSchema(allowRequired)),
 	})
 }
 
@@ -390,8 +397,8 @@ func entityYAMLSchema() *yamlLintSchema {
 		// Скалярные элементы схема пропускает, а опечатку в ключе записи
 		// (read_only) ловит.
 		"item_form":    seq(obj("name", "readonly")),
-		"fields":       seq(fieldYAMLSchema()),
-		"tableparts":   seq(tablePartYAMLSchema()),
+		"fields":       seq(fieldYAMLSchema(true)),
+		"tableparts":   seq(tablePartYAMLSchema(true)),
 		"indexes":      seq(indexYAMLSchema()),
 		"numerator":    obj("prefix", "length", "period", "scope", "base_prefix", "unique"),
 		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
@@ -405,17 +412,17 @@ func entityYAMLSchema() *yamlLintSchema {
 func registerYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
 		"titles":     freeMap(),
-		"dimensions": seq(fieldYAMLSchema()),
-		"resources":  seq(fieldYAMLSchema()),
-		"attributes": seq(fieldYAMLSchema()),
+		"dimensions": seq(fieldYAMLSchema(false)),
+		"resources":  seq(fieldYAMLSchema(false)),
+		"attributes": seq(fieldYAMLSchema(false)),
 	})
 }
 
 func infoRegisterYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "periodic", "recorder"), map[string]*yamlLintSchema{
 		"titles":     freeMap(),
-		"dimensions": seq(fieldYAMLSchema()),
-		"resources":  seq(fieldYAMLSchema()),
+		"dimensions": seq(fieldYAMLSchema(false)),
+		"resources":  seq(fieldYAMLSchema(false)),
 	})
 }
 
@@ -483,9 +490,12 @@ func roleYAMLSchema() *yamlLintSchema {
 func processorYAMLSchema() *yamlLintSchema {
 	param := with(obj("name", "type", "label", "default", "options"), map[string]*yamlLintSchema{"labels": freeMap()})
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
-		"titles":      freeMap(),
-		"params":      seq(param),
-		"table_parts": seq(tablePartYAMLSchema()),
+		"titles": freeMap(),
+		"params": seq(param),
+		// Processor table parts are transient runtime values. Unlike entity table
+		// parts they have no storage writer enforcing required, so accepting the
+		// key here would advertise an invariant the platform does not provide.
+		"table_parts": seq(tablePartYAMLSchema(false)),
 	})
 }
 
@@ -556,8 +566,8 @@ func accountsYAMLSchema() *yamlLintSchema {
 func accountRegisterYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "accounts"), map[string]*yamlLintSchema{
 		"titles":    freeMap(),
-		"resources": seq(fieldYAMLSchema()),
-		"subconto":  seq(fieldYAMLSchema()),
+		"resources": seq(fieldYAMLSchema(false)),
+		"subconto":  seq(fieldYAMLSchema(false)),
 	})
 }
 
@@ -579,6 +589,11 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
 		"halign", "valign", "readonly", "use_grid", "no_grid", "auto_sum", "hint", "mask",
 		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
+		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
+		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
+		// документированный «language» у kind: ПолеКода не давал примеру
+		// пройти собственную проверку (#1014).
+		"orientation", "input_mask", "language", "virtual_columns",
 	} {
 		element.keys[k] = nil
 	}

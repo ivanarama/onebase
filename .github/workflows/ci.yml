@@ -50,6 +50,13 @@ jobs:
       - name: i18n translations check
         run: go run ./tools/i18ncheck
 
+      # Уникальность номеров планов: номер — это ссылка («план 74» в коде,
+      # «см. план 52» в обсуждении), а под одним номером успели поселиться
+      # разные планы, и проверить такую ссылку стало нельзя (#1035, пятнадцать
+      # переездов). Гейт держит развод: он дешевле, чем разводить снова.
+      - name: Plan numbers are unique
+        run: go run ./tools/plannum
+
       - name: Lint shipped example/template configurations
         run: |
           set -euo pipefail
@@ -92,7 +99,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           go build -o "$tmp/onebase" ./cmd/onebase
           failed=0
-          for ex in trade crm finance tasks; do
+          for ex in trade crm finance tasks cms; do
             echo "::group::seed $ex"
             if ! "$tmp/onebase" migrate --project "examples/$ex" --sqlite "$tmp/seed-$ex.db"; then
               echo "::error::$ex: миграция не прошла"
@@ -120,7 +127,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           go build -o "$tmp/onebase" ./cmd/onebase
           failed=0
-          for ex in minimal callcenter trade; do
+          for ex in minimal callcenter trade cms; do
             echo "::group::onebase test $ex"
             out="$("$tmp/onebase" test --project "examples/$ex" --sqlite "$tmp/$ex.db" --format tap 2>&1)"; code=$?
             echo "$out"
