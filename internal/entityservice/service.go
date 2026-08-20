@@ -1217,7 +1217,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 
 	mc := runtime.NewMovementsCollector(ent.Name, id).WillPersist()
 	SetPeriodFromFields(mc, ent, fields)
-	// Дата запрета проведения (свёртка базы, план 74): в замороженный период не
+	// Дата запрета проведения (свёртка базы, план 151): в замороженный период не
 	// перепроводим, иначе движения вернутся и дадут двойной счёт с опорными остатками.
 	if mc.Period != nil {
 		if lock, ok := s.Store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {

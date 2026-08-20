@@ -615,7 +615,7 @@ func (e *Entity) StageField() *Field {
 	return nil
 }
 
-// Виды регистра накопления (план 74). Балансовый (остатки) — по умолчанию;
+// Виды регистра накопления (план 151). Балансовый (остатки) — по умолчанию;
 // оборотный нельзя сворачивать в остаток, поэтому свёртка его не предлагает.
 const (
 	RegisterKindBalance  = "balance"
@@ -628,7 +628,7 @@ type Register struct {
 	Titles map[string]string
 	// Kind — вид регистра: "" / RegisterKindBalance (остатки, по умолчанию) или
 	// RegisterKindTurnover (обороты). Оборотный регистр накапливает обороты за
-	// период; свернуть его в один остаток нельзя — свёртка (план 74) его минует.
+	// период; свернуть его в один остаток нельзя — свёртка (план 151) его минует.
 	Kind       string
 	Dimensions []Field        // form the grouping key for balances
 	Resources  []Field        // accumulated (summed with sign based on movement type)

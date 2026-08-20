@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Вид регистра (план 74): kind:обороты → оборотный, отсутствие/прочее → балансовый.
+// Вид регистра (план 151): kind:обороты → оборотный, отсутствие/прочее → балансовый.
 func TestLoadRegisterFile_Kind(t *testing.T) {
 	cases := []struct {
 		name       string

@@ -50,6 +50,13 @@ jobs:
       - name: i18n translations check
         run: go run ./tools/i18ncheck
 
+      # Уникальность номеров планов: номер — это ссылка («план 74» в коде,
+      # «см. план 52» в обсуждении), а под одним номером успели поселиться
+      # разные планы, и проверить такую ссылку стало нельзя (#1035, пятнадцать
+      # переездов). Гейт держит развод: он дешевле, чем разводить снова.
+      - name: Plan numbers are unique
+        run: go run ./tools/plannum
+
       - name: Lint shipped example/template configurations
         run: |
           set -euo pipefail

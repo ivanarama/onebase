@@ -78,7 +78,7 @@ func TestNodeByID_ResolvesEveryElement(t *testing.T) {
 }
 
 // Невалидный node-id (вне диапазона, неизвестный ключ, пустой) — ошибка, а не
-// паника: команда в устаревший/битый узел должна откатываться штатно (план 71).
+// паника: команда в устаревший/битый узел должна откатываться штатно (план 149).
 func TestNodeByID_Errors(t *testing.T) {
 	doc, err := Load([]byte(elemSample))
 	if err != nil {

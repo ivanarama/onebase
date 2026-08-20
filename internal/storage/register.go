@@ -149,7 +149,7 @@ func (db *DB) orphanIn(ctx context.Context, sources []movementSource, entities [
 		rows.Close()
 
 		for _, rt := range recTypes {
-			// Опорные движения свёртки (план 74) — не сироты: у них нет
+			// Опорные движения свёртки (план 151) — не сироты: у них нет
 			// документа-регистратора по замыслу. Пропускаем, иначе «Очистка
 			// регистров» предложила бы удалить опорные остатки.
 			if rt.recType == RollupRecorderType {
@@ -243,7 +243,7 @@ func (db *DB) deleteOrphansIn(ctx context.Context, sources []movementSource, ent
 		d := db.dialect
 		for _, recType := range types {
 			if recType == RollupRecorderType {
-				continue // опорные движения свёртки — не сироты (план 74)
+				continue // опорные движения свёртки — не сироты (план 151)
 			}
 			tbl, exists := entityTable[strings.ToLower(recType)]
 			if !exists {
