@@ -227,17 +227,17 @@ func (h *Handlers) OIDCStart(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := randomToken()
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "генерация state для SSO", err)
 		return
 	}
 	nonce, err := randomToken()
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "генерация nonce для SSO", err)
 		return
 	}
 	verifier, err := randomToken()
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "генерация verifier для SSO", err)
 		return
 	}
 	returnURL := r.URL.Query().Get("return")
@@ -377,7 +377,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "создание сессии после входа через SSO", err)
 		return
 	}
 	if h.Auditor != nil {

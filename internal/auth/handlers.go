@@ -152,7 +152,7 @@ func (h *Handlers) IssueOneTimeCode(w http.ResponseWriter, r *http.Request) {
 	}
 	code, err := h.Codes.Issue(cookie.Value)
 	if err != nil {
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		h.internalErrorJSON(w, r, "выдача одноразового кода", err)
 		return
 	}
 	respondJSONTo(w, map[string]any{"code": code})
@@ -277,7 +277,7 @@ func (h *Handlers) LoginSubmit(w http.ResponseWriter, r *http.Request) {
 
 	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "создание сессии", err)
 		return
 	}
 
@@ -332,6 +332,9 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 	// требует QR и резервных кодов, поэтому такой ответ ведёт в веб-интерфейс.
 	switch enabled, terr := h.Repo.TOTPEnabled(r.Context(), user.ID); {
 	case terr != nil:
+		// 503, а не 500: состояние 2FA временно недоступно. Причину всё равно
+		// пишем — молчащий отказ входа разбирать нечем (#1053).
+		logInternalError(r, "проверка состояния 2FA (JSON-вход)", terr)
 		http.Error(w, `{"error":"internal"}`, http.StatusServiceUnavailable)
 		return
 	case enabled, h.Repo.RequiresTwoFactor(r.Context(), policy, user):
@@ -339,14 +342,14 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 		if ch.Enroll {
 			secret, serr := GenerateTOTPSecret()
 			if serr != nil {
-				http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+				h.internalErrorJSON(w, r, "генерация секрета 2FA", serr)
 				return
 			}
 			ch.Secret = secret
 		}
 		token, cerr := h.challenges().Issue(ch)
 		if cerr != nil {
-			http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+			h.internalErrorJSON(w, r, "выдача challenge второго фактора", cerr)
 			return
 		}
 		h.setChallengeCookie(w, r, token)
@@ -366,7 +369,7 @@ func (h *Handlers) LoginJSON(w http.ResponseWriter, r *http.Request) {
 
 	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
 	if err != nil {
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		h.internalErrorJSON(w, r, "создание сессии (JSON-вход)", err)
 		return
 	}
 
@@ -457,7 +460,7 @@ func (h *Handlers) Bootstrap(w http.ResponseWriter, r *http.Request) {
 	// reusing the configurator bearer token in the base browser origin.
 	token, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "создание сессии Предприятия из конфигуратора", err)
 		return
 	}
 	h.setSessionCookie(w, r, token)
