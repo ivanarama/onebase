@@ -89,6 +89,9 @@ const (
 )
 
 func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
+	if err := db.enumBackstop(ctx, entity, fields); err != nil {
+		return err
+	}
 	if err := db.requiredBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
@@ -169,9 +172,21 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	}
 
 	if entity.Hierarchical {
+		// Иерархия обновляется, ТОЛЬКО если о ней сказали. Раньше служебные
+		// колонки писались всегда: отсутствие ключа означало false и NULL, а не
+		// «не трогать». ПолучитьОбъект() эти поля не читает (их нет в
+		// метаданных), поэтому любая правка группы из DSL — переименование,
+		// простановка слага, обновление при повторном импорте — молча
+		// превращала раздел в обычный элемент и обнуляла родителя (#1040).
+		//
+		// На INSERT значения по умолчанию прежние (не группа, без родителя):
+		// колонка в списке остаётся, из UPDATE исключается только она.
+		parentValue, parentGiven := hierarchyValue(fields, "parent_id", "родитель", "parent")
+		folderValue, folderGiven := hierarchyValue(fields, "is_folder", "этогруппа", "isfolder")
+
 		parentIDStr := ""
-		if v := fields["parent_id"]; v != nil {
-			parentIDStr = fmt.Sprintf("%v", v)
+		if parentValue != nil {
+			parentIDStr = refUUIDString(parentValue)
 		}
 		if pID, err := uuid.Parse(parentIDStr); err == nil {
 			if pID != id {
@@ -187,22 +202,26 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		} else {
 			cols = append(cols, "parent_id")
 			placeholders = append(placeholders, "NULL")
-			updates = append(updates, "parent_id = NULL")
+			if parentGiven {
+				// Родителя передали пустым — это «убрать родителя», а не
+				// «не трогать».
+				updates = append(updates, "parent_id = NULL")
+			}
 		}
 		isFolder := false
-		if v := fields["is_folder"]; v != nil {
-			switch tv := v.(type) {
-			case bool:
-				isFolder = tv
-			case string:
-				isFolder = tv == "true"
-			}
+		switch tv := folderValue.(type) {
+		case bool:
+			isFolder = tv
+		case string:
+			isFolder = tv == "true" || tv == "Истина"
 		}
 		cols = append(cols, "is_folder")
 		placeholders = append(placeholders, d.Placeholder(argIdx))
 		args = append(args, isFolder)
 		argIdx++
-		updates = append(updates, "is_folder = EXCLUDED.is_folder")
+		if folderGiven {
+			updates = append(updates, "is_folder = EXCLUDED.is_folder")
+		}
 	}
 	// Оптимистическая блокировка: на каждом UPDATE инкрементируем _version.
 	// На INSERT — DEFAULT 1 из DDL. См. UpsertVersioned для проверки ожидаемой
@@ -896,6 +915,11 @@ func (db *DB) GetTablePartRows(ctx context.Context, entityName, tpName string, p
 
 // UpsertTablePartRows replaces all rows for the given parent with the provided rows.
 func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string, parentID uuid.UUID, rows []map[string]any, tp metadata.TablePart) error {
+	// Страховка значений перечислений в строках (#962, Н3): шапочная проверка
+	// сюда не достаёт — строки пишутся отдельным вызовом.
+	if err := db.enumBackstopRows(ctx, entityName, tp, rows); err != nil {
+		return err
+	}
 	d := db.dialect
 	table := metadata.TablePartTableName(entityName, tpName)
 

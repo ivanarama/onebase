@@ -164,7 +164,7 @@ func (q *queryProxy) execute() *Array {
 			panic(userError{Msg: "Запрос: " + err.Error()})
 		}
 	}
-	query.NormalizeBoolColumns(res.BoolColumns, rows)
+	query.NormalizeColumns(&res, rows)
 	arr := &Array{}
 	for _, row := range rows {
 		arr.items = append(arr.items, newQueryResultRow(row))

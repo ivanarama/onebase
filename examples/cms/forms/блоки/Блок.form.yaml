@@ -1,0 +1,73 @@
+schema: onebase.form/v1
+
+# Управляемая форма блока (план 129, раздел 10): содержимое блока — фрагмент
+# разметки (шапка, подвал, баннер), поэтому правится полем кода с подсветкой
+# html, а не однострочным вводом.
+
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Блоки
+  title:
+    ru: "Блок сайта"
+    en: "Site block"
+  auto_save_settings: true
+  vertical_scroll: auto
+
+attributes:
+  - name: Объект
+    type: CatalogRef.Блоки
+    save: true
+    main: true
+
+elements:
+  - kind: ГруппаФормы
+    name: ГруппаШапка
+    title:
+      ru: "Блок"
+      en: "Block"
+    children:
+      - kind: ПолеВвода
+        name: ПолеНаименование
+        title:
+          ru: "Наименование"
+          en: "Name"
+        data_path: Объект.Наименование
+      - kind: ПолеВвода
+        name: ПолеКодБлока
+        title:
+          ru: "Код блока"
+          en: "Block code"
+        data_path: Объект.КодБлока
+      - kind: ПолеВвода
+        name: ПолеСайт
+        title:
+          ru: "Сайт"
+          en: "Site"
+        data_path: Объект.Сайт
+      - kind: ПолеВвода
+        name: ПолеПорядок
+        title:
+          ru: "Порядок"
+          en: "Order"
+        data_path: Объект.Порядок
+      - kind: Флажок
+        name: ФлажокАктивен
+        title:
+          ru: "Активен"
+          en: "Active"
+        data_path: Объект.Активен
+
+  - kind: ГруппаФормы
+    name: ГруппаСодержимое
+    title:
+      ru: "Разметка блока"
+      en: "Block markup"
+    children:
+      - kind: ПолеКода
+        name: ПолеСодержимое
+        title:
+          ru: "Содержимое"
+          en: "Content"
+        data_path: Объект.Содержимое
+        language: html

@@ -94,6 +94,24 @@ func (db *DB) ApplyReplicatedEntity(ctx context.Context, entityName string, id u
 	return db.Upsert(ctx, entityName, id, fields, entity)
 }
 
+// ApplyReplicatedTablePartRows — строки табличной части, приехавшие обменом.
+//
+// Отдельный writer, а не голый UpsertTablePartRows: пометка режима записи
+// нужна и здесь. Без неё страховка значений перечислений (#962, Н3) отвергала
+// бы строки узла, работающего на другой версии конфигурации, — то есть обмен
+// рвался бы ровно там, где решение «принимать или нет» ещё не принято (#1037).
+// Симметрия с ApplyReplicatedEntity здесь не украшение: разъехавшись, эти два
+// вызова дали бы обмену половину гарантий и половину исключений.
+func (db *DB) ApplyReplicatedTablePartRows(ctx context.Context, entityName, tpName string, parentID uuid.UUID,
+	rows []map[string]any, tp metadata.TablePart, sourceRef string) error {
+	ctx = withStageWriteMode(ctx, stageWriteMode{
+		Source:        StageSourceExchange,
+		SourceRef:     sourceRef,
+		SkipAdjacency: true,
+	})
+	return db.UpsertTablePartRows(ctx, entityName, tpName, parentID, rows, tp)
+}
+
 func stageModeFromCtx(ctx context.Context) stageWriteMode {
 	if m, ok := ctx.Value(stageModeCtxKey{}).(stageWriteMode); ok {
 		if m.Source == "" {

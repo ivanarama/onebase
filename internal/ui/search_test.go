@@ -28,6 +28,7 @@ func searchTestEntities() (*metadata.Entity, *metadata.Entity) {
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Менеджер", Type: metadata.FieldTypeString},
 			{Name: "Телефон", Type: metadata.FieldTypeString},
+			{Name: "Tenant", Type: metadata.FieldTypeString},
 		},
 	}
 	doc := &metadata.Entity{
@@ -36,6 +37,7 @@ func searchTestEntities() (*metadata.Entity, *metadata.Entity) {
 		Fields: []metadata.Field{
 			{Name: "Номер", Type: metadata.FieldTypeString},
 			{Name: "Основание", Type: metadata.FieldTypeString},
+			{Name: "Tenant", Type: metadata.FieldTypeString},
 		},
 	}
 	return cat, doc

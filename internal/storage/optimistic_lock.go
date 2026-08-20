@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -34,8 +35,11 @@ var ErrVersionConflict = errors.New("storage: объект изменён дру
 // поэтому конкурентная PostgreSQL-запись не может пройти между отдельным
 // SELECT и последующим Upsert.
 func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, expectedVersion *int64) error {
-	// Отдельная ветка записи — отдельный вызов проверки: upsert() сюда не
-	// заходит, и «одна точка» осталась бы заявлением.
+	// Отдельная ветка записи — отдельный вызов страховки: upsert() ниже по
+	// коду сюда не заходит, и «одна точка» осталась бы заявлением.
+	if err := db.enumBackstop(ctx, entity, fields); err != nil {
+		return err
+	}
 	if err := db.requiredBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
@@ -106,34 +110,39 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 		argIdx++
 	}
 	if entity.Hierarchical {
-		parentIDStr := ""
-		if v := fields["parent_id"]; v != nil {
-			parentIDStr = fmt.Sprintf("%v", v)
-		}
-		if pID, err := uuid.Parse(parentIDStr); err == nil {
-			if pID != id {
-				if cycle, _ := db.WouldCycle(ctx, table, id, pID); cycle {
-					return fmt.Errorf("нельзя переместить группу в её подчинённую группу")
-				}
+		parentValue, parentGiven := hierarchyValue(fields, "parent_id", "родитель", "parent")
+		folderValue, folderGiven := hierarchyValue(fields, "is_folder", "этогруппа", "isfolder")
+
+		if parentGiven {
+			parentIDStr := ""
+			if parentValue != nil {
+				parentIDStr = refUUIDString(parentValue)
 			}
-			sets = append(sets, fmt.Sprintf("parent_id = %s", d.Placeholder(argIdx)))
-			args = append(args, idArg(d, pID))
-			argIdx++
-		} else {
-			sets = append(sets, "parent_id = NULL")
+			if pID, err := uuid.Parse(parentIDStr); err == nil {
+				if pID != id {
+					if cycle, _ := db.WouldCycle(ctx, table, id, pID); cycle {
+						return i18nerr.New("нельзя переместить группу в её подчинённую группу")
+					}
+				}
+				sets = append(sets, fmt.Sprintf("parent_id = %s", d.Placeholder(argIdx)))
+				args = append(args, idArg(d, pID))
+				argIdx++
+			} else {
+				sets = append(sets, "parent_id = NULL")
+			}
 		}
-		isFolder := false
-		if v := fields["is_folder"]; v != nil {
-			switch tv := v.(type) {
+		if folderGiven {
+			isFolder := false
+			switch tv := folderValue.(type) {
 			case bool:
 				isFolder = tv
 			case string:
-				isFolder = tv == "true"
+				isFolder = tv == "true" || tv == "Истина"
 			}
+			sets = append(sets, fmt.Sprintf("is_folder = %s", d.Placeholder(argIdx)))
+			args = append(args, isFolder)
+			argIdx++
 		}
-		sets = append(sets, fmt.Sprintf("is_folder = %s", d.Placeholder(argIdx)))
-		args = append(args, isFolder)
-		argIdx++
 	}
 	sets = append(sets, "_version = _version + 1")
 
