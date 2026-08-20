@@ -3,9 +3,9 @@
 package selfupdate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -18,8 +18,10 @@ func TestWindowsSystemInstallIsNotSelfUpdatableEvenWithWriteAccess(t *testing.T)
 	}
 	volume := filepath.VolumeName(profile)
 	systemTarget := filepath.Join(volume+string(filepath.Separator), "Program Files", "onebase")
-	if err := validateTargetCoordinationDirectory(systemTarget, nil); err == nil || !strings.Contains(err.Error(), "system installations") {
-		t.Fatalf("system installation policy error = %v, want explicit rejection", err)
+	// Причину читают через errors.Is: интерфейс формулирует общую установку и
+	// отсутствие прав по-разному, а на текст сообщения опираться нельзя.
+	if err := validateTargetCoordinationDirectory(systemTarget, nil); !errors.Is(err, ErrTargetShared) {
+		t.Fatalf("system installation policy error = %v, want ErrTargetShared", err)
 	}
 }
 

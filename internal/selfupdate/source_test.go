@@ -170,3 +170,28 @@ func TestNewer(t *testing.T) {
 		})
 	}
 }
+
+// KnownVersionScheme отвечает на вопрос «эту версию вообще есть с чем
+// сравнивать». Ложь означает, что Newer откажет всегда, и интерфейс обязан
+// сказать об этом вслух, а не показывать «установлена актуальная версия».
+func TestKnownVersionScheme(t *testing.T) {
+	cases := []struct {
+		version string
+		want    bool
+	}{
+		{"build-930", true},
+		{"v0.10.0", true},
+		{"v0.9.8-rc1", true},
+		// Настоящий случай из ~/.onebase/updates/state.json: ярлык локальной
+		// сборки с суффиксом молча выключил обновления навсегда.
+		{"build-793fix", false},
+		{"dev-cb5276e", false},
+		{"dev", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := KnownVersionScheme(c.version); got != c.want {
+			t.Errorf("KnownVersionScheme(%q) = %v, ждали %v", c.version, got, c.want)
+		}
+	}
+}

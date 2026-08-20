@@ -146,6 +146,25 @@ func updateTargetDir(cmd *cobra.Command) (string, error) {
 	return selfupdate.BinaryDir()
 }
 
+// updateTargetRefusal превращает отказ проверки каталога в совет, который можно
+// выполнить. Раньше все причины сливались в одну строку «не поддерживает
+// безопасное самообновление», и пользователь общей установки шёл искать
+// администратора — хотя администратор здесь не при чём: правило смотрит на
+// расположение каталога.
+func updateTargetRefusal(action, dir string, err error) error {
+	switch {
+	case errors.Is(err, selfupdate.ErrTargetShared):
+		return fmt.Errorf("%s недоступно: платформа установлена в общий каталог %s, а самообновление работает только из личной установки"+
+			" (на Windows — каталог внутри профиля пользователя). Запуск от администратора этого не меняет."+
+			" Обновите вручную, распаковав архив выпуска поверх, либо переустановите платформу в свой профиль", action, dir)
+	case errors.Is(err, selfupdate.ErrTargetNotWritable):
+		return fmt.Errorf("%s недоступно: нет прав на запись в каталог платформы %s —"+
+			" выполните команду под учётной записью, которой принадлежит установка", action, dir)
+	default:
+		return fmt.Errorf("установка %s не поддерживает безопасное изменение версии: %w", dir, err)
+	}
+}
+
 func runUpdateCheck(cmd *cobra.Command) error {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	uc, err := newUpdateContext(cmd)
@@ -169,6 +188,10 @@ func runUpdateCheck(cmd *cobra.Command) error {
 			"channel":          string(uc.channel),
 			"repo":             uc.repo,
 			"update_available": available,
+			// Ложь здесь объясняет, почему update_available всегда false:
+			// версию такого бинаря не с чем сравнивать. Мониторингу это надо
+			// отличать от «стоит свежая версия».
+			"version_comparable": selfupdate.KnownVersionScheme(current),
 		}
 		if st.Latest != nil {
 			out["latest"] = st.Latest.Tag
@@ -186,6 +209,10 @@ func runUpdateCheck(cmd *cobra.Command) error {
 
 	outf("Текущая версия:  %s\n", current)
 	outf("Канал:           %s (%s)\n", uc.channel, uc.repo)
+	if !selfupdate.KnownVersionScheme(current) {
+		outln("Версия не сопоставляется с выпусками (сборка разработчика или нестандартный ярлык) —")
+		outln("обновление предложено не будет. Сравнимы только build-<число> и vX.Y.Z.")
+	}
 	if st.Latest == nil {
 		outln("В канале нет доступных релизов.")
 		return nil
@@ -266,7 +293,7 @@ func applyStaged(cmd *cobra.Command, uc updateContext, staged selfupdate.StagedI
 		return err
 	}
 	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
-		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", uc.targetDir, err)
+		return updateTargetRefusal("обновление платформы", uc.targetDir, err)
 	}
 	lease, err := selfupdate.AcquireOperationLease()
 	if err != nil {
@@ -432,7 +459,7 @@ func runUpdateRollback(cmd *cobra.Command) (resultErr error) {
 		return err
 	}
 	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
-		return fmt.Errorf("установка %s не поддерживает безопасный откат: %w", uc.targetDir, err)
+		return updateTargetRefusal("возврат версии", uc.targetDir, err)
 	}
 	lease, err := selfupdate.AcquireOperationLease()
 	if err != nil {
@@ -555,7 +582,7 @@ func runUpdateOffline(cmd *cobra.Command) (resultErr error) {
 		return fmt.Errorf("укажите --sha256: обновление без проверки контрольной суммы запрещено")
 	}
 	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
-		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", uc.targetDir, err)
+		return updateTargetRefusal("обновление платформы", uc.targetDir, err)
 	}
 
 	// 1. Проверить артефакт обновления, затем извлечь бинари во временный каталог.

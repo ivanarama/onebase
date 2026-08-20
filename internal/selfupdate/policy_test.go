@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -119,5 +120,18 @@ func TestCanWriteBinaryDir(t *testing.T) {
 	}
 	if CanWriteBinaryDir(ro) {
 		t.Fatal("в каталог без прав на запись обновляться нельзя")
+	}
+}
+
+// Причина отказа должна быть машиночитаемой: интерфейс и CLI формулируют
+// «нет прав» и «общая установка» по-разному, потому что лечатся они разным.
+func TestValidateBinaryUpdateTarget_NotWritableIsTypedReason(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "нет-такого-каталога")
+	err := ValidateBinaryUpdateTarget(missing)
+	if !errors.Is(err, ErrTargetNotWritable) {
+		t.Fatalf("ValidateBinaryUpdateTarget(%q) = %v, ждали ErrTargetNotWritable", missing, err)
+	}
+	if errors.Is(err, ErrTargetShared) {
+		t.Error("отсутствие каталога выдано за общую установку")
 	}
 }

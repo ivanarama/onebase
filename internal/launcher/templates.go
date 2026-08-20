@@ -1170,6 +1170,12 @@ const tplUpdates = `
     <div class="upd-note">{{t $.Lang "Проверить обновления не удалось"}}: {{.U.CheckError}}</div>
     {{end}}
 
+    {{if .U.VersionUnknown}}
+    <div class="upd-note">{{t $.Lang "Версия этой сборки не сопоставляется с выпусками — обновление не будет предложено"}}
+      <div style="color:#888;margin-top:4px">{{t $.Lang "Так выглядит сборка разработчика или бинарь с нестандартным ярлыком версии: сравниваются только build-<число> и vX.Y.Z. Фоновая проверка на таких сборках не идёт, поэтому дата проверки могла остаться от прежнего бинаря."}}</div>
+    </div>
+    {{end}}
+
     {{if .U.LatestTag}}
       {{if .U.Available}}
         <div class="upd-avail">
@@ -1182,15 +1188,24 @@ const tplUpdates = `
           {{if .U.LatestURL}} · <a href="{{.U.LatestURL}}" target="_blank" style="color:#1a5fa8">{{t $.Lang "страница выпуска"}} ↗</a>{{end}}
         </div>
         {{if .U.LatestNotes}}<pre class="upd-notes">{{.U.LatestNotes}}</pre>{{end}}
+      {{else if .U.VersionUnknown}}
+        <div class="upd-note">{{t $.Lang "Последний выпуск в канале"}} — {{.U.LatestTag}}</div>
       {{else}}
         <div class="upd-note">{{t $.Lang "Установлена актуальная версия"}} — {{.U.LatestTag}}</div>
       {{end}}
     {{end}}
 
     {{if not .U.CanWrite}}
-    <div class="upd-note">{{t $.Lang "Нет прав на запись в каталог платформы — обновление доступно только администратору"}}
-      <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
-    </div>
+      {{if .U.SharedInstall}}
+      <div class="upd-note">{{t $.Lang "Платформа установлена вне личного каталога пользователя — самообновление недоступно. Запуск от администратора этого не меняет: правило смотрит на расположение каталога, а не на права."}}
+        <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
+        <div style="color:#888;margin-top:4px">{{t $.Lang "Обновите вручную, распаковав архив выпуска поверх, либо переустановите платформу в каталог своего профиля."}}</div>
+      </div>
+      {{else}}
+      <div class="upd-note">{{t $.Lang "Нет прав на запись в каталог платформы — обновление доступно только администратору"}}
+        <div style="color:#888;margin-top:4px">{{.U.BinDir}}</div>
+      </div>
+      {{end}}
     {{end}}
 
     <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap">

@@ -47,6 +47,10 @@ var applyUpdate = (*selfupdate.OperationLease).ApplyWithRollbackState
 var recoverUpdate = (*selfupdate.OperationLease).Recover
 var recoverUpdateStatus = (*selfupdate.OperationLease).RecoverWithResult
 var updateBinaryDir = selfupdate.BinaryDir
+
+// validateUpdateTarget — тестовый шов: причину отказа надо уметь показать, не
+// подделывая права и расположение настоящего каталога установки.
+var validateUpdateTarget = selfupdate.ValidateBinaryUpdateTarget
 var restartSelf = RestartSelf
 var backupBasesForUpdate = (*handler).backupAllBasesForUpdate
 
@@ -58,16 +62,24 @@ type updatesVM struct {
 	Enabled bool
 	// NetAllowed — политика разрешает сетевые проверки.
 	NetAllowed bool
-	// CanWrite — у пользователя есть право заменить бинарь. Ложь на общей
-	// установке (Program Files, терминальный сервер): там платформой
-	// распоряжается администратор.
+	// CanWrite — установка допускает подмену бинаря текущим пользователем.
 	CanWrite bool
-	BinDir   string
+	// SharedInstall — отказ вызван не правами, а расположением: каталог общий
+	// (на Windows — вне профиля пользователя). Права тут ни при чём, и совет
+	// «обратитесь к администратору» был бы заведомо бесполезным.
+	SharedInstall bool
+	BinDir        string
 
 	Current       string
 	Channel       string
 	ChannelLocked bool
 	Repo          string
+
+	// VersionUnknown — версию этого бинаря не с чем сравнивать (dev-сборка или
+	// нестандартный ярлык вроде build-793fix). Обновление такому бинарю не
+	// предложат никогда, и фоновая проверка на нём не идёт, поэтому «установлена
+	// актуальная версия» здесь было бы неправдой.
+	VersionUnknown bool
 
 	CheckedAt  time.Time
 	CheckError string
@@ -104,7 +116,13 @@ func (h *handler) updatesState() updatesVM {
 	vm.Enabled = policy.UIAllowed()
 	vm.NetAllowed = policy.CheckAllowed()
 	vm.ChannelLocked = policy.ChannelLocked()
-	vm.CanWrite = selfupdate.CanSafelyUpdateBinaryDir(binDir)
+	switch err := validateUpdateTarget(binDir); {
+	case err == nil:
+		vm.CanWrite = true
+	case errors.Is(err, selfupdate.ErrTargetShared):
+		vm.SharedInstall = true
+	}
+	vm.VersionUnknown = !selfupdate.KnownVersionScheme(vm.Current)
 
 	st, err := selfupdate.LoadState()
 	if err != nil {

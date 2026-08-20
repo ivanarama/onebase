@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,5 +163,29 @@ func writeUpdatePolicy(t *testing.T, dir, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, selfupdate.PolicyFileName), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Отказ должен советовать выполнимое. Общая установка не лечится правами:
+// правило смотрит на расположение каталога, поэтому «обратитесь к
+// администратору» здесь — ложный след, стоивший пользователю похода за правами.
+func TestUpdateTargetRefusal_ExplainsReasonSeparately(t *testing.T) {
+	const dir = `C:\Projects\onebase`
+
+	shared := updateTargetRefusal("обновление платформы", dir,
+		fmt.Errorf("%w: %s is outside the private user profile", selfupdate.ErrTargetShared, dir)).Error()
+	for _, want := range []string{dir, "общий каталог", "Запуск от администратора этого не меняет", "распаковав архив выпуска"} {
+		if !strings.Contains(shared, want) {
+			t.Errorf("в отказе общей установке нет %q: %s", want, shared)
+		}
+	}
+
+	notWritable := updateTargetRefusal("обновление платформы", dir,
+		fmt.Errorf("%w: %s", selfupdate.ErrTargetNotWritable, dir)).Error()
+	if !strings.Contains(notWritable, "нет прав на запись") {
+		t.Errorf("отказ по правам должен называть права: %s", notWritable)
+	}
+	if strings.Contains(notWritable, "общий каталог") {
+		t.Errorf("причины перепутаны: %s", notWritable)
 	}
 }

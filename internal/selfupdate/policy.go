@@ -203,6 +203,21 @@ func CanWriteBinaryDir(dir string) bool {
 	return true
 }
 
+// Причины отказа разведены, потому что лечатся они по-разному, а интерфейс
+// обязан советовать выполнимое. Нет прав — поможет владелец установки или
+// администратор. Общая установка — не поможет никто: правило смотрит на
+// РАСПОЛОЖЕНИЕ каталога, и запуск от администратора его не меняет (профиль у
+// администратора вообще другой). Один текст на оба случая посылал половину
+// пользователей делать заведомо бесполезное.
+var (
+	// ErrTargetNotWritable — в каталог установки не пишет текущий пользователь.
+	ErrTargetNotWritable = errors.New("selfupdate: installation directory is not writable by the current user")
+	// ErrTargetShared — установка общая: её обычные потребители не могут
+	// участвовать в протоколе блокировок, поэтому подменять бинарь небезопасно
+	// даже при наличии прав на запись.
+	ErrTargetShared = errors.New("selfupdate: shared/system installations cannot be self-updated safely")
+)
+
 // CanSafelyUpdateBinaryDir additionally requires installation-scoped consumer
 // coordination to be enforceable. Shared/read-only system installations may
 // be executable by users who cannot join the lock protocol, so self-update is
@@ -215,9 +230,12 @@ func CanSafelyUpdateBinaryDir(dir string) bool {
 // consumer/writer lifecycle protocol. A writable directory alone is not
 // sufficient when other users can execute the same package without access to
 // its coordination files.
+//
+// Причину отказа читают через errors.Is: ErrTargetNotWritable либо
+// ErrTargetShared.
 func ValidateBinaryUpdateTarget(dir string) error {
 	if !CanWriteBinaryDir(dir) {
-		return errors.New("selfupdate: installation directory is not writable by the current user")
+		return fmt.Errorf("%w: %s", ErrTargetNotWritable, dir)
 	}
 	_, err := targetCoordinationPermissions(dir)
 	return err

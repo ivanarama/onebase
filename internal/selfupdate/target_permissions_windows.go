@@ -3,7 +3,7 @@
 package selfupdate
 
 import (
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +31,7 @@ func validateTargetCoordinationDirectory(path string, _ os.FileInfo) error {
 		return err
 	}
 	if !pathWithinWindowsRoot(home, path) {
-		return errors.New("selfupdate: shared/readable system installations cannot be self-updated safely; use a private per-user installation")
+		return fmt.Errorf("%w: %s is outside the private user profile %s", ErrTargetShared, path, home)
 	}
 	return nil
 }
