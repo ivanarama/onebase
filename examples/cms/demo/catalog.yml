@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<yml_catalog date="2026-08-19 12:00">
+  <shop>
+    <name>Демо-каталог OneBase</name>
+    <company>OneBase</company>
+    <url>https://example.invalid/</url>
+    <currencies>
+      <currency id="RUR" rate="1"/>
+    </currencies>
+    <categories>
+      <category id="tools">Инструменты</category>
+      <category id="power-tools" parentId="tools">Электроинструменты</category>
+    </categories>
+    <offers>
+      <offer id="drill-101" available="true">
+        <name>Дрель ударная ДУ-101</name>
+        <categoryId>power-tools</categoryId>
+        <price>5990.00</price>
+        <currencyId>RUR</currencyId>
+        <vendorCode>ДУ-101</vendorCode>
+        <picture>https://example.invalid/images/drill-101.jpg</picture>
+        <description>Демонстрационный товар для проверки YML-импорта.</description>
+      </offer>
+      <offer id="saw-202" available="true">
+        <name>Пила дисковая ПД-202</name>
+        <categoryId>power-tools</categoryId>
+        <price>8450.00</price>
+        <currencyId>RUR</currencyId>
+        <vendorCode>ПД-202</vendorCode>
+        <picture>https://example.invalid/images/saw-202.jpg</picture>
+        <description>Второй товар демонстрационной выгрузки.</description>
+      </offer>
+    </offers>
+  </shop>
+</yml_catalog>
