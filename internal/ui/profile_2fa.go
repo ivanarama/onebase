@@ -315,5 +315,5 @@ func (s *Server) selfTwoFactorQR(w http.ResponseWriter, r *http.Request) {
 	if issuer == "" {
 		issuer = "OneBase"
 	}
-	auth.WriteOTPAuthQR(w, issuer, u.Login, ch.Secret)
+	auth.WriteOTPAuthQR(w, r, issuer, u.Login, ch.Secret)
 }

@@ -160,7 +160,7 @@ func (h *Handlers) beginSecondFactor(w http.ResponseWriter, r *http.Request, use
 	if enroll && enrollAuthorized {
 		secret, err := GenerateTOTPSecret()
 		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			h.internalError(w, r, "генерация секрета 2FA", err)
 			return
 		}
 		ch.Secret = secret
@@ -168,7 +168,7 @@ func (h *Handlers) beginSecondFactor(w http.ResponseWriter, r *http.Request, use
 	}
 	token, err := h.challenges().Issue(ch)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "выдача challenge второго фактора", err)
 		return
 	}
 	h.setChallengeCookie(w, r, token)
@@ -239,7 +239,7 @@ func (h *Handlers) TwoFactorQR(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeOTPAuthQR(w, h.issuerName(), ch.Login, ch.Secret)
+	writeOTPAuthQR(w, r, h.issuerName(), ch.Login, ch.Secret)
 }
 
 // EnrollCookie — кука с токеном начатой настройки 2FA в профиле. Секрет живёт
@@ -277,15 +277,15 @@ func Enrollment(token string) (Challenge, bool) {
 func FinishEnrollment(token string) { DefaultChallenges().Delete(token) }
 
 // WriteOTPAuthQR отдаёт PNG с QR-кодом otpauth:// — для экрана профиля.
-func WriteOTPAuthQR(w http.ResponseWriter, issuer, account, secret string) {
-	writeOTPAuthQR(w, issuer, account, secret)
+func WriteOTPAuthQR(w http.ResponseWriter, r *http.Request, issuer, account, secret string) {
+	writeOTPAuthQR(w, r, issuer, account, secret)
 }
 
 // writeOTPAuthQR рисует QR со ссылкой otpauth://.
-func writeOTPAuthQR(w http.ResponseWriter, issuer, account, secret string) {
+func writeOTPAuthQR(w http.ResponseWriter, r *http.Request, issuer, account, secret string) {
 	code, err := qr.Encode(OTPAuthURI(issuer, account, secret), qr.M)
 	if err != nil {
-		http.Error(w, "не удалось построить QR-код", http.StatusInternalServerError)
+		internalErrorMsg(w, r, "построение QR-кода 2FA", "не удалось построить QR-код", err)
 		return
 	}
 	png := code.PNG()
@@ -350,7 +350,7 @@ func (h *Handlers) completeBindTicket(w http.ResponseWriter, r *http.Request, ch
 	}
 	secret, err := GenerateTOTPSecret()
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "генерация секрета 2FA", err)
 		return
 	}
 	// Правим challenge на месте — тот же токен и кука. Счётчик попыток сбрасываем:
@@ -392,7 +392,7 @@ func (h *Handlers) completeEnrollment(w http.ResponseWriter, r *http.Request, ch
 		return
 	}
 	if err := h.Repo.EnableTOTP(r.Context(), ch.UserID, ch.Secret, step); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "включение 2FA", err)
 		return
 	}
 	// Билет гасим здесь: привязка состоялась. Ошибку только логируем — второй
@@ -428,12 +428,12 @@ type challengeOutcome struct{ returnURL string }
 func (h *Handlers) completeChallengeSession(w http.ResponseWriter, r *http.Request, ch Challenge, token, auditAction string) (challengeOutcome, error) {
 	user, err := h.Repo.GetByID(r.Context(), ch.UserID)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "чтение пользователя после второго фактора", err)
 		return challengeOutcome{}, err
 	}
 	sessionToken, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		h.internalError(w, r, "создание сессии после второго фактора", err)
 		return challengeOutcome{}, err
 	}
 	h.challenges().Delete(token)
@@ -524,12 +524,12 @@ func (h *Handlers) TwoFactorJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.Repo.GetByID(r.Context(), ch.UserID)
 	if err != nil {
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		h.internalErrorJSON(w, r, "чтение пользователя после второго фактора", err)
 		return
 	}
 	sessionToken, err := h.Repo.CreateSession(r.Context(), user.ID, sessionMetaFromRequest(r))
 	if err != nil {
-		http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+		h.internalErrorJSON(w, r, "создание сессии после второго фактора (JSON)", err)
 		return
 	}
 	h.challenges().Delete(token)
