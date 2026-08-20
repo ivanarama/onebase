@@ -45,7 +45,23 @@ func main() {
 }
 
 func isBinaryVersionProbeInvocation(args []string) bool {
-	return len(args) == 1 && args[0] == "--version"
+	// Version inspection must also work while an update transaction is pending;
+	// it neither consumes nor mutates the installed binary generation.
+	versionFlag := false
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == "--version" || arg == "-v" {
+			versionFlag = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return arg == "version"
+	}
+	return versionFlag
 }
 
 func binaryWriterCommand(args []string) bool {
