@@ -361,10 +361,10 @@ func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 	})
 }
 
-func tablePartYAMLSchema() *yamlLintSchema {
+func tablePartYAMLSchema(allowRequired bool) *yamlLintSchema {
 	return with(obj("name", "title"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
-		"fields": seq(fieldYAMLSchema(true)),
+		"fields": seq(fieldYAMLSchema(allowRequired)),
 	})
 }
 
@@ -398,7 +398,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		// (read_only) ловит.
 		"item_form":    seq(obj("name", "readonly")),
 		"fields":       seq(fieldYAMLSchema(true)),
-		"tableparts":   seq(tablePartYAMLSchema()),
+		"tableparts":   seq(tablePartYAMLSchema(true)),
 		"indexes":      seq(indexYAMLSchema()),
 		"numerator":    obj("prefix", "length", "period", "scope", "base_prefix", "unique"),
 		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
@@ -490,9 +490,12 @@ func roleYAMLSchema() *yamlLintSchema {
 func processorYAMLSchema() *yamlLintSchema {
 	param := with(obj("name", "type", "label", "default", "options"), map[string]*yamlLintSchema{"labels": freeMap()})
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
-		"titles":      freeMap(),
-		"params":      seq(param),
-		"table_parts": seq(tablePartYAMLSchema()),
+		"titles": freeMap(),
+		"params": seq(param),
+		// Processor table parts are transient runtime values. Unlike entity table
+		// parts they have no storage writer enforcing required, so accepting the
+		// key here would advertise an invariant the platform does not provide.
+		"table_parts": seq(tablePartYAMLSchema(false)),
 	})
 }
 

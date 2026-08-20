@@ -47,7 +47,11 @@ type FilterValue struct {
 
 // Upsert inserts or updates the object fields.
 func (db *DB) Upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
-	return db.upsert(ctx, entityName, id, fields, entity, true, upsertAuditAuto)
+	return db.upsert(ctx, entityName, id, fields, entity, upsertWriteOptions{
+		bumpVersion:      true,
+		validateRequired: true,
+		auditMode:        upsertAuditAuto,
+	})
 }
 
 // UpsertProvisional inserts a transaction-local parent row without writing an
@@ -55,7 +59,23 @@ func (db *DB) Upsert(ctx context.Context, entityName string, id uuid.UUID, field
 // refer to the parent. The final UpsertPreserveVersion writes the single
 // externally visible create event after the hook and all final fields succeed.
 func (db *DB) UpsertProvisional(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
-	return db.upsert(ctx, entityName, id, fields, entity, true, upsertAuditSkip)
+	if !HasTx(ctx) {
+		return errors.New("storage: UpsertProvisional requires an active transaction")
+	}
+	state, err := beginWriteLifecycle(ctx,
+		entityWriteLifecycleKey(db, "provisional-create", entityName, id),
+		"provisional create "+entityName+" "+id.String())
+	if err != nil {
+		return err
+	}
+	if err := db.upsert(ctx, entityName, id, fields, entity, upsertWriteOptions{
+		bumpVersion:      true,
+		validateRequired: false,
+		auditMode:        upsertAuditSkip,
+	}); err != nil {
+		return err
+	}
+	return armWriteLifecycle(ctx, state)
 }
 
 // UpsertPreserveVersion updates fields without advancing _version on conflict.
@@ -65,7 +85,21 @@ func (db *DB) UpsertProvisional(ctx context.Context, entityName string, id uuid.
 // the provisional insert deliberately does not audit. The externally visible
 // committed object still starts at version 1. Ordinary callers must use Upsert.
 func (db *DB) UpsertPreserveVersion(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
-	return db.upsert(ctx, entityName, id, fields, entity, false, upsertAuditCreate)
+	if !HasTx(ctx) {
+		return errors.New("storage: UpsertPreserveVersion requires an active transaction")
+	}
+	state, err := pendingWriteLifecycle(ctx,
+		entityWriteLifecycleKey(db, "provisional-create", entityName, id))
+	if err != nil {
+		return err
+	}
+	if err := db.upsert(ctx, entityName, id, fields, entity, upsertWriteOptions{
+		validateRequired: true,
+		auditMode:        upsertAuditCreate,
+	}); err != nil {
+		return err
+	}
+	return finishWriteLifecycle(ctx, state)
 }
 
 // UpsertAfterVersionBump persists fields without advancing _version after the
@@ -77,7 +111,19 @@ func (db *DB) UpsertAfterVersionBump(ctx context.Context, entityName string, id 
 	if !HasTx(ctx) {
 		return errors.New("storage: UpsertAfterVersionBump requires an active transaction")
 	}
-	return db.upsert(ctx, entityName, id, fields, entity, false, upsertAuditAuto)
+	state, err := pendingWriteLifecycle(ctx,
+		entityWriteLifecycleKey(db, "posting-prelude", entityName, id))
+	if err != nil {
+		return err
+	}
+	if err := db.upsert(ctx, entityName, id, fields, entity, upsertWriteOptions{
+		validateRequired:  true,
+		auditMode:         upsertAuditAuto,
+		effectOldOverride: state.original,
+	}); err != nil {
+		return err
+	}
+	return finishWriteLifecycle(ctx, state)
 }
 
 type upsertAuditMode uint8
@@ -88,7 +134,17 @@ const (
 	upsertAuditCreate
 )
 
-func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
+type upsertWriteOptions struct {
+	bumpVersion bool
+	// validateRequired is false only for an active provisional-create
+	// lifecycle. Audit policy is deliberately independent of this invariant.
+	validateRequired  bool
+	auditMode         upsertAuditMode
+	effectOldOverride map[string]any
+}
+
+func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any,
+	entity *metadata.Entity, options upsertWriteOptions) error {
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
@@ -102,14 +158,15 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	// блокировки и с прежними ошибками. Это условие важно держать узким: цена
 	// сериализации не должна доставаться тем, кто про этапы ничего не объявлял.
 	if !stagedEntity(entity) {
-		return db.upsertInTx(ctx, entityName, id, fields, entity, bumpVersion, auditMode)
+		return db.upsertInTx(ctx, entityName, id, fields, entity, options)
 	}
 	return db.WithTxScope(ctx, func(txCtx context.Context) error {
-		return db.upsertInTx(txCtx, entityName, id, fields, entity, bumpVersion, auditMode)
+		return db.upsertInTx(txCtx, entityName, id, fields, entity, options)
 	})
 }
 
-func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity, bumpVersion bool, auditMode upsertAuditMode) error {
+func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any,
+	entity *metadata.Entity, options upsertWriteOptions) error {
 	d := db.dialect
 	staged := stagedEntity(entity)
 	if staged {
@@ -136,13 +193,22 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		// Для required-полей нельзя продолжать с неизвестным старым состоянием:
 		// частичная запись должна либо сохранить заполненное значение, либо
 		// честно отказаться. Ошибка чтения не вправе притвориться созданием.
-		if auditMode != upsertAuditSkip && stageModeFromCtx(ctx).Source != StageSourceExchange &&
+		if options.validateRequired && stageModeFromCtx(ctx).Source != StageSourceExchange &&
 			hasRequiredEntityFields(entity) && !IsNotFound(err) {
 			return fmt.Errorf("upsert %s: чтение текущих значений required-реквизитов: %w", entityName, err)
 		}
 		isNew = true
 	} else {
 		oldRow = existing
+	}
+	effectOldRow := oldRow
+	if options.effectOldOverride != nil {
+		// A posting prelude already made the OnWrite snapshot visible inside the
+		// transaction and bumped the version. Durable effects belong to the one
+		// logical operation, so stage history and audit compare the original row
+		// directly with the final OnPost state instead of recording the transient
+		// (possibly incomplete) snapshot.
+		effectOldRow = options.effectOldOverride
 	}
 
 	// Частичная запись сохраняет отсутствующие реквизиты. Проверяем итоговый
@@ -151,7 +217,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// вставка перед OnWrite исключена; финальный UpsertPreserveVersion проверит
 	// уже дополненный хуком объект в той же транзакции.
 	effectiveFields := effectiveEntityValues(entity, oldRow, fields)
-	if auditMode != upsertAuditSkip {
+	if options.validateRequired {
 		// effectiveFields is the complete persisted snapshot for both create and
 		// update, so every required field must now be present. The only incomplete
 		// state permitted is the explicit provisional row above.
@@ -164,7 +230,10 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// прочитанном старом значении. Вторая точка записи — UpsertVersioned
 	// (optimistic_lock.go), там стоит такая же пара вызовов: разъехаться им
 	// нельзя, иначе правка объекта из формы пройдёт мимо проверки.
-	stageTr, err := db.checkStageTransition(ctx, entityName, entity, oldRow, fields)
+	// Compare against the persisted final snapshot, not just raw incoming keys.
+	// A posting final may omit the stage and thereby retain the transient prelude
+	// value; that retained value still has to pass the original-to-final route.
+	stageTr, err := db.checkStageTransition(ctx, entityName, entity, effectOldRow, effectiveFields)
 	if err != nil {
 		return err
 	}
@@ -248,7 +317,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// Оптимистическая блокировка: на каждом UPDATE инкрементируем _version.
 	// На INSERT — DEFAULT 1 из DDL. См. UpsertVersioned для проверки ожидаемой
 	// ревизии перед записью.
-	if bumpVersion {
+	if options.bumpVersion {
 		updates = append(updates, "_version = "+table+"._version + 1")
 	}
 
@@ -325,15 +394,15 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// Audit (best-effort, non-blocking)
 	kind := string(entity.Kind)
 	switch {
-	case auditMode == upsertAuditSkip:
+	case options.auditMode == upsertAuditSkip:
 		// A provisional row is not externally visible and is followed by the
 		// final create audit in the same transaction.
-	case auditMode == upsertAuditCreate:
+	case options.auditMode == upsertAuditCreate:
 		db.logCreate(ctx, kind, entityName, id)
 	case isNew:
 		db.logCreate(ctx, kind, entityName, id)
-	case oldRow != nil:
-		changes := AuditDiff(oldRow, effectiveFields, entity)
+	case effectOldRow != nil:
+		changes := AuditDiff(effectOldRow, effectiveFields, entity)
 		if len(changes) > 0 {
 			db.logUpdate(ctx, kind, entityName, id, changes)
 		}
@@ -937,13 +1006,82 @@ func (db *DB) GetTablePartRows(ctx context.Context, entityName, tpName string, p
 
 // UpsertTablePartRows replaces all rows for the given parent with the provided rows.
 func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string, parentID uuid.UUID, rows []map[string]any, tp metadata.TablePart) error {
+	return db.upsertTablePartRows(ctx, entityName, tpName, parentID, rows, tp, true)
+}
+
+// UpsertPostingPreludeTablePartRows persists the table-part snapshot which
+// OnPost must observe after OnWrite. Like the versioned header prelude it is
+// transaction-only and suppresses required validation for this call alone;
+// FinalizePostingPreludeTablePartRows must consume the matching lifecycle in
+// the same transaction. Nested writes made by either hook are never exempt.
+func (db *DB) UpsertPostingPreludeTablePartRows(ctx context.Context, entityName, tpName string,
+	parentID uuid.UUID, rows []map[string]any, tp metadata.TablePart) error {
+	if !HasTx(ctx) {
+		return errors.New("storage: UpsertPostingPreludeTablePartRows requires an active transaction")
+	}
+	original, err := db.GetTablePartRows(ctx, entityName, tpName, parentID, tp)
+	if err != nil {
+		return fmt.Errorf("read tablepart %s.%s before posting prelude: %w", entityName, tpName, err)
+	}
+	state, err := beginWriteLifecycle(ctx,
+		tablePartWriteLifecycleKey(db, entityName, tpName, parentID),
+		"posting prelude table part "+entityName+"."+tpName+" "+parentID.String())
+	if err != nil {
+		return err
+	}
+	state.tablePartRows = original
+	if err := db.upsertTablePartRows(ctx, entityName, tpName, parentID, rows, tp, false); err != nil {
+		return err
+	}
+	return armWriteLifecycle(ctx, state)
+}
+
+// FinalizePostingPreludeTablePartRows applies the final OnPost snapshot and
+// consumes a matching table-part prelude. When provided is false, omission
+// means a partial object and the rows from before the logical operation are
+// restored. If OnPost introduces a table part which had no prelude, this falls
+// back to the ordinary validated writer.
+func (db *DB) FinalizePostingPreludeTablePartRows(ctx context.Context, entityName, tpName string,
+	parentID uuid.UUID, rows []map[string]any, provided bool, tp metadata.TablePart) error {
+	if !HasTx(ctx) {
+		return errors.New("storage: FinalizePostingPreludeTablePartRows requires an active transaction")
+	}
+	state := lookupWriteLifecycle(ctx, tablePartWriteLifecycleKey(db, entityName, tpName, parentID))
+	if state == nil {
+		if !provided {
+			return nil
+		}
+		return db.UpsertTablePartRows(ctx, entityName, tpName, parentID, rows, tp)
+	}
+	if !state.armed.Load() {
+		return fmt.Errorf("%w: table-part posting prelude did not complete: %s.%s %s",
+			ErrIncompleteWriteLifecycle, entityName, tpName, parentID)
+	}
+
+	validateRequired := true
+	if !provided {
+		rows = state.tablePartRows
+		// Omission preserves an already persisted snapshot, including legacy or
+		// replicated rows which may predate the local required invariant.
+		validateRequired = false
+	}
+	if err := db.upsertTablePartRows(ctx, entityName, tpName, parentID, rows, tp, validateRequired); err != nil {
+		return err
+	}
+	return finishWriteLifecycle(ctx, state)
+}
+
+func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string, parentID uuid.UUID,
+	rows []map[string]any, tp metadata.TablePart, validateRequired bool) error {
 	// Страховка значений перечислений в строках (#962, Н3): шапочная проверка
 	// сюда не достаёт — строки пишутся отдельным вызовом.
 	if err := db.enumBackstopRows(ctx, entityName, tp, rows); err != nil {
 		return err
 	}
-	if err := db.requiredBackstopRows(ctx, entityName, tp, rows); err != nil {
-		return err
+	if validateRequired {
+		if err := db.requiredBackstopRows(ctx, entityName, tp, rows); err != nil {
+			return err
+		}
 	}
 	d := db.dialect
 	table := metadata.TablePartTableName(entityName, tpName)

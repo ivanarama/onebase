@@ -29,8 +29,16 @@ resources:
   - name: Value
     type: number
 `)
+	mkFile(t, filepath.Join(dir, "processors", "unsupported.yaml"), `name: UnsupportedProcessorRequired
+table_parts:
+  - name: Rows
+    fields:
+      - name: Value
+        type: string
+        required: true
+`)
 
-	var registerWarning bool
+	var registerWarning, processorWarning bool
 	for _, issue := range CheckLintYAML(dir) {
 		if issue.Code != "metadata.unvalidated-key" {
 			continue
@@ -41,8 +49,14 @@ resources:
 		if strings.Contains(issue.File, "registers") && strings.Contains(issue.Message, "required") {
 			registerWarning = true
 		}
+		if strings.Contains(issue.File, "processors") && strings.Contains(issue.Message, "required") {
+			processorWarning = true
+		}
 	}
 	if !registerWarning {
 		t.Fatal("register required declaration was silently accepted although register writers do not enforce it")
+	}
+	if !processorWarning {
+		t.Fatal("processor table-part required declaration was silently accepted although processor writers do not enforce it")
 	}
 }

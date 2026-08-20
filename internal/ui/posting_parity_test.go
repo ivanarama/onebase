@@ -43,6 +43,7 @@ type postingEffects struct {
 	Posted        bool
 	Version       int64
 	CalcField     string   // реквизит, который проставил ОбработкаПроведения
+	TableParts    []string // свежий DB-снимок строк, изменённых ОбработкаПроведения
 	Movements     []string // «номенклатура=количество», отсортировано
 	TotalsDelta   float64  // изменение предрасчитанных итогов этой операцией
 	AuditActions  []string // действия журнала регистрации по документу
@@ -99,9 +100,10 @@ func newParityServer(t *testing.T) (context.Context, *storage.DB, *Server, *meta
 	// правит расчётный реквизит шапки. Второе особенно важно — именно его
 	// проведение из списка когда-то теряло (#775).
 	onPostSrc := `Процедура ОбработкаПроведения()
-  Всего = 0;
-  Для Каждого Стр Из ЭтотОбъект.Товары Цикл
-    Дв = Движения.ОстаткиТоваров.Добавить();
+	  Всего = 0;
+	  Для Каждого Стр Из ЭтотОбъект.Товары Цикл
+	    Стр.Номенклатура = Стр.Номенклатура + "-POST";
+	    Дв = Движения.ОстаткиТоваров.Добавить();
     Дв.ВидДвижения = "Приход";
     Дв.Номенклатура = Стр.Номенклатура;
     Дв.Количество = Стр.Количество;
@@ -185,6 +187,15 @@ func snapshot(t *testing.T, ctx context.Context, db *storage.DB, doc *metadata.E
 	if v, ok := row["_version"]; ok {
 		eff.Version = int64(toFloat(v))
 	}
+	tpRows, err := db.GetTablePartRows(ctx, doc.Name, doc.TableParts[0].Name, id, doc.TableParts[0])
+	if err != nil {
+		t.Fatalf("чтение табличной части после проведения: %v", err)
+	}
+	for _, tpRow := range tpRows {
+		eff.TableParts = append(eff.TableParts,
+			fmt.Sprintf("%v=%g", tpRow["Номенклатура"], toFloat(tpRow["Количество"])))
+	}
+	sort.Strings(eff.TableParts)
 	// CAST намеренно: number на SQLite хранится TEXT, и его текстовое
 	// представление зависит от того, пришло значение числом или строкой
 	// («100.0» против «100»). Паритет — про ЗНАЧЕНИЯ движений, а не про байты;
@@ -335,6 +346,10 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 		if fmt.Sprint(p.eff.Movements) != fmt.Sprint(base.eff.Movements) {
 			t.Errorf("движения: %s=%v, %s=%v", base.name, base.eff.Movements, p.name, p.eff.Movements)
 		}
+		if fmt.Sprint(p.eff.TableParts) != fmt.Sprint(base.eff.TableParts) {
+			t.Errorf("табличные части, изменённые хуком: %s=%v, %s=%v — путь валидирует live map, но не сохраняет его",
+				base.name, base.eff.TableParts, p.name, p.eff.TableParts)
+		}
 		if p.eff.Version != base.eff.Version {
 			t.Errorf("версия строки: %s=%d, %s=%d", base.name, base.eff.Version, p.name, p.eff.Version)
 		}
@@ -346,6 +361,12 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 		}
 	}
 	for _, p := range paths {
+		if fmt.Sprint(p.eff.TableParts) != "[Тумбочка-POST=100]" {
+			t.Errorf("%s: свежий DB-снимок ТЧ = %v, want mutation from OnPost", p.name, p.eff.TableParts)
+		}
+		if fmt.Sprint(p.eff.Movements) != "[Тумбочка-POST=100]" {
+			t.Errorf("%s: движения = %v, want same post-hook row state", p.name, p.eff.Movements)
+		}
 		seenPosted := false
 		for _, action := range p.eff.ChangeActions {
 			if action == "проведён" {

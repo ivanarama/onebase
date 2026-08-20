@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -12,18 +14,23 @@ import (
 type txHooksKey struct{}
 
 type txHookScope struct {
-	commit   []func()
-	rollback []func()
+	beforeCommit []func() error
+	commit       []func()
+	rollback     []func()
 }
 
 type txHooks struct {
-	mu     sync.Mutex
-	scopes []txHookScope
-	done   bool
+	mu              sync.Mutex
+	scopes          []txHookScope
+	writeLifecycles map[string]*writeLifecycle
+	done            bool
 }
 
 func newTxHooks() *txHooks {
-	return &txHooks{scopes: []txHookScope{{}}}
+	return &txHooks{
+		scopes:          []txHookScope{{}},
+		writeLifecycles: make(map[string]*writeLifecycle),
+	}
 }
 
 func txHooksFromContext(ctx context.Context) *txHooks {
@@ -43,6 +50,28 @@ func DeferUntilTxCommit(ctx context.Context, fn func()) bool {
 // by the parent transaction.
 func DeferUntilTxRollback(ctx context.Context, fn func()) bool {
 	return addTxHook(ctx, fn, false)
+}
+
+// DeferBeforeTxCommit registers an invariant which must hold immediately
+// before the outer database transaction commits. Returning an error aborts and
+// rolls back that transaction. Savepoint scopes follow the same rules as the
+// ordinary hooks: release inherits the check, rollback discards it.
+func DeferBeforeTxCommit(ctx context.Context, fn func() error) bool {
+	if fn == nil {
+		return false
+	}
+	hooks := txHooksFromContext(ctx)
+	if hooks == nil {
+		return false
+	}
+	hooks.mu.Lock()
+	defer hooks.mu.Unlock()
+	if hooks.done || len(hooks.scopes) == 0 {
+		return false
+	}
+	scope := &hooks.scopes[len(hooks.scopes)-1]
+	scope.beforeCommit = append(scope.beforeCommit, fn)
+	return true
 }
 
 func addTxHook(ctx context.Context, fn func(), onCommit bool) bool {
@@ -95,6 +124,7 @@ func CommitTxHookScope(ctx context.Context) {
 	child := hooks.scopes[len(hooks.scopes)-1]
 	hooks.scopes = hooks.scopes[:len(hooks.scopes)-1]
 	parent := &hooks.scopes[len(hooks.scopes)-1]
+	parent.beforeCommit = append(parent.beforeCommit, child.beforeCommit...)
 	parent.commit = append(parent.commit, child.commit...)
 	parent.rollback = append(parent.rollback, child.rollback...)
 }
@@ -133,6 +163,25 @@ func (h *txHooks) commitAll() {
 	runTxHooks(callbacks)
 }
 
+func (h *txHooks) checkBeforeCommit() error {
+	h.mu.Lock()
+	if h.done {
+		h.mu.Unlock()
+		return errors.New("storage: transaction hooks already completed")
+	}
+	var callbacks []func() error
+	for _, scope := range h.scopes {
+		callbacks = append(callbacks, scope.beforeCommit...)
+	}
+	h.mu.Unlock()
+	for _, fn := range callbacks {
+		if err := runBeforeCommitHook(fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *txHooks) rollbackAll() {
 	h.mu.Lock()
 	if h.done {
@@ -168,12 +217,26 @@ func runTxHook(fn func()) {
 	fn()
 }
 
+func runBeforeCommitHook(fn func() error) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("storage: before-commit hook panic: %v", recovered)
+		}
+	}()
+	return fn()
+}
+
 type hookedTx struct {
 	Tx
 	hooks *txHooks
 }
 
 func (t *hookedTx) Commit(ctx context.Context) error {
+	if err := t.hooks.checkBeforeCommit(); err != nil {
+		rollbackErr := t.Tx.Rollback(ctx)
+		t.hooks.rollbackAll()
+		return errors.Join(err, rollbackErr)
+	}
 	err := t.Tx.Commit(ctx)
 	if err != nil {
 		t.hooks.rollbackAll()

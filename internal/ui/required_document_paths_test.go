@@ -192,6 +192,74 @@ func TestRequiredDocument_DSLOnPostClearRollsBackImplicitWrite(t *testing.T) {
 	assertRequiredDocumentState(t, db, ctx, doc, id, "Новый", 1, false)
 }
 
+func TestRequiredDocument_DSLOnPostFillsHeaderAndTablePartBeforeFinalWrite(t *testing.T) {
+	module := `Процедура ОбработкаПроведения()
+  ЭтотОбъект.Статус = "Закрыт";
+  Для Каждого Стр Из ЭтотОбъект.Товары Цикл
+    Стр.Номенклатура = "Стол";
+  КонецЦикла;
+КонецПроцедуры`
+	s, doc, db, ctx := requiredDocumentServer(t, module, true)
+	w := newRequiredDocumentWriter(t, s, ctx)
+	w.Set("Номер", "З-POST-FILL")
+	tp := doc.TableParts[0]
+	proxy, ok := w.Get(tp.Name).(*tpProxy)
+	if !ok {
+		t.Fatalf("%s = %T, want *tpProxy", tp.Name, w.Get(tp.Name))
+	}
+	if row, ok := proxy.CallMethod("добавить", nil).(*interpreter.MapThis); !ok || row == nil {
+		t.Fatalf("%s.Добавить() = %T, want row", tp.Name, row)
+	}
+
+	if err := callRequiredDocumentMethod(w, "провести"); err != nil {
+		t.Fatalf("OnPost-filled required object was rejected: %v", err)
+	}
+	assertRequiredDocumentState(t, db, ctx, doc, w.obj.ID, "Закрыт", 1, true)
+
+	// Only a fresh DB-backed object proves both final writers consumed the same
+	// live maps that OnPost mutated, rather than merely validating them in memory.
+	reloaded := loadRequiredDocumentWriter(t, s, ctx, w.obj.ID)
+	if got := fmt.Sprint(reloaded.Get("Статус")); got != "Закрыт" {
+		t.Fatalf("fresh DSL reload Статус = %q, want Закрыт", got)
+	}
+	rows, err := db.GetTablePartRows(ctx, doc.Name, tp.Name, w.obj.ID, tp)
+	if err != nil {
+		t.Fatalf("fresh table-part reload: %v", err)
+	}
+	if len(rows) != 1 || fmt.Sprint(rows[0]["Номенклатура"]) != "Стол" {
+		t.Fatalf("fresh table-part reload = %#v, want OnPost-filled row", rows)
+	}
+}
+
+func TestRequiredDocument_DSLOnPostTablePartClearRollsBackPrelude(t *testing.T) {
+	module := `Процедура ОбработкаПроведения()
+  Для Каждого Стр Из ЭтотОбъект.Товары Цикл
+    Стр.Номенклатура = "";
+  КонецЦикла;
+КонецПроцедуры`
+	s, doc, db, ctx := requiredDocumentServer(t, module, true)
+	id := seedRequiredDocument(t, db, ctx, doc)
+	tp := doc.TableParts[0]
+	if err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, id,
+		[]map[string]any{{"Номенклатура": "Стул"}}, tp); err != nil {
+		t.Fatalf("seed table part: %v", err)
+	}
+	w := loadRequiredDocumentWriter(t, s, ctx, id)
+
+	err := callRequiredDocumentMethod(w, "провести")
+	if err == nil || !strings.Contains(err.Error(), "Товары[1].Номенклатура") {
+		t.Fatalf("OnPost-cleared TP required value: got %v", err)
+	}
+	assertRequiredDocumentState(t, db, ctx, doc, id, "Новый", 1, false)
+	rows, loadErr := db.GetTablePartRows(ctx, doc.Name, tp.Name, id, tp)
+	if loadErr != nil {
+		t.Fatalf("reload table part: %v", loadErr)
+	}
+	if len(rows) != 1 || fmt.Sprint(rows[0]["Номенклатура"]) != "Стул" {
+		t.Fatalf("rejected OnPost changed persisted rows: %#v", rows)
+	}
+}
+
 func TestRequiredDocument_DSLTablePartRejectionIsAtomic(t *testing.T) {
 	s, doc, db, ctx := requiredDocumentServer(t, "", true)
 	id := seedRequiredDocument(t, db, ctx, doc)
@@ -249,4 +317,110 @@ func TestRequiredDocument_ListButtonOnPostClearRejected(t *testing.T) {
 		t.Fatalf("list post did not report required Статус: %q", decoded)
 	}
 	assertRequiredDocumentState(t, db, ctx, doc, id, "Новый", 1, false)
+}
+
+func TestRequiredDocument_ListButtonPersistsOnPostTablePartMutation(t *testing.T) {
+	module := `Процедура ОбработкаПроведения()
+  Для Каждого Стр Из ЭтотОбъект.Товары Цикл
+    Стр.Номенклатура = "Стол";
+  КонецЦикла;
+КонецПроцедуры`
+	s, doc, db, ctx := requiredDocumentServer(t, module, true)
+	id := seedRequiredDocument(t, db, ctx, doc)
+	tp := doc.TableParts[0]
+	if err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, id,
+		[]map[string]any{{"Номенклатура": "Стул"}}, tp); err != nil {
+		t.Fatalf("seed table part: %v", err)
+	}
+
+	r := reqWithChi("POST", "/ui/document/заказ/"+id.String()+"/post", url.Values{},
+		map[string]string{"kind": "document", "entity": "заказ", "id": id.String()})
+	rec := httptest.NewRecorder()
+	s.postDocument(rec, r)
+	if rec.Code != http.StatusSeeOther || strings.Contains(rec.Header().Get("Location"), "posting_error=") {
+		t.Fatalf("list post failed: code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	assertRequiredDocumentState(t, db, ctx, doc, id, "Новый", 2, true)
+	rows, err := db.GetTablePartRows(ctx, doc.Name, tp.Name, id, tp)
+	if err != nil {
+		t.Fatalf("reload table part: %v", err)
+	}
+	if len(rows) != 1 || fmt.Sprint(rows[0]["Номенклатура"]) != "Стол" {
+		t.Fatalf("list-post OnPost TP mutation was not persisted: %#v", rows)
+	}
+}
+
+func TestRequiredDocument_ListButtonOnPostTablePartClearRollsBack(t *testing.T) {
+	module := `Процедура ОбработкаПроведения()
+  Для Каждого Стр Из ЭтотОбъект.Товары Цикл
+    Стр.Номенклатура = "";
+  КонецЦикла;
+КонецПроцедуры`
+	s, doc, db, ctx := requiredDocumentServer(t, module, true)
+	id := seedRequiredDocument(t, db, ctx, doc)
+	tp := doc.TableParts[0]
+	if err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, id,
+		[]map[string]any{{"Номенклатура": "Стул"}}, tp); err != nil {
+		t.Fatalf("seed table part: %v", err)
+	}
+
+	r := reqWithChi("POST", "/ui/document/заказ/"+id.String()+"/post", url.Values{},
+		map[string]string{"kind": "document", "entity": "заказ", "id": id.String()})
+	rec := httptest.NewRecorder()
+	s.postDocument(rec, r)
+	decoded, err := url.QueryUnescape(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("decode posting redirect: %v", err)
+	}
+	if rec.Code != http.StatusSeeOther || !strings.Contains(decoded, "Товары[1].Номенклатура") {
+		t.Fatalf("list post did not reject cleared required TP: code=%d location=%q", rec.Code, decoded)
+	}
+	assertRequiredDocumentState(t, db, ctx, doc, id, "Новый", 1, false)
+	rows, loadErr := db.GetTablePartRows(ctx, doc.Name, tp.Name, id, tp)
+	if loadErr != nil {
+		t.Fatalf("reload table part: %v", loadErr)
+	}
+	if len(rows) != 1 || fmt.Sprint(rows[0]["Номенклатура"]) != "Стул" {
+		t.Fatalf("rejected list post changed persisted rows: %#v", rows)
+	}
+}
+
+func TestSaveTablePartsDirect_OmittedPreservesExplicitEmptyClears(t *testing.T) {
+	s, doc, db, ctx := requiredDocumentServer(t, "", true)
+	id := seedRequiredDocument(t, db, ctx, doc)
+	tp := doc.TableParts[0]
+	seed := []map[string]any{{"Номенклатура": "Стул"}}
+	if err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, id, seed, tp); err != nil {
+		t.Fatalf("seed table part: %v", err)
+	}
+
+	if err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+		if err := s.saveTablePartsPostingPrelude(txCtx, doc, id, map[string][]map[string]any{
+			tp.Name: {{"Номенклатура": "Промежуточное"}},
+		}); err != nil {
+			return err
+		}
+		return s.finalizeTablePartsPostingPrelude(txCtx, doc, id, map[string][]map[string]any{})
+	}); err != nil {
+		t.Fatalf("persist omitted table part: %v", err)
+	}
+	rows, err := db.GetTablePartRows(ctx, doc.Name, tp.Name, id, tp)
+	if err != nil || len(rows) != 1 || fmt.Sprint(rows[0]["Номенклатура"]) != "Стул" {
+		t.Fatalf("omitted table part did not preserve rows: rows=%#v err=%v", rows, err)
+	}
+
+	if err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+		if err := s.saveTablePartsPostingPrelude(txCtx, doc, id,
+			map[string][]map[string]any{tp.Name: seed}); err != nil {
+			return err
+		}
+		return s.finalizeTablePartsPostingPrelude(txCtx, doc, id,
+			map[string][]map[string]any{tp.Name: nil})
+	}); err != nil {
+		t.Fatalf("clear explicit table part: %v", err)
+	}
+	rows, err = db.GetTablePartRows(ctx, doc.Name, tp.Name, id, tp)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("explicit empty table part did not clear rows: rows=%#v err=%v", rows, err)
+	}
 }

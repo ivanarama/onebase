@@ -1521,7 +1521,11 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	obj.Set("reference", selfRef)
 	tpRows := make(map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
-		rows, _ := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
+		rows, loadErr := s.store.GetTablePartRows(r.Context(), entity.Name, tp.Name, id, tp)
+		if loadErr != nil {
+			s.serverError(w, r, fmt.Errorf("post document %s: load table part %s: %w", id, tp.Name, loadErr))
+			return
+		}
 		s.enrichTPRowsWithRefs(r.Context(), tp, rows)
 		tpRows[tp.Name] = rows
 	}
@@ -1571,6 +1575,12 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 		// места ещё не было записи, поэтому PreserveVersion оставлял версию
 		// прежней, в отличие от формы, REST и DSL (#880).
 		if err := s.store.UpsertVersioned(ctx, entity.Name, id, obj.Fields, entity, &expectedVersion); err != nil {
+			return err
+		}
+		// Persist the same post-hook live rows which enum/required validation
+		// inspected. A failure rolls back the header CAS, movements and posted
+		// flag because all four writes share this transaction.
+		if err := s.saveTablePartsDirect(ctx, entity, id, obj.TablePartRows); err != nil {
 			return err
 		}
 		if err := s.saveMovements(ctx, entity.Name, id, mc); err != nil {
@@ -2074,11 +2084,56 @@ func setPeriodFromFields(mc *runtime.MovementsCollector, entity *metadata.Entity
 // saveTablePartsDirect persists tablepart rows from the provided map (possibly modified by DSL).
 func (s *Server) saveTablePartsDirect(ctx context.Context, entity *metadata.Entity, parentID uuid.UUID, tpRows map[string][]map[string]any) error {
 	for _, tp := range entity.TableParts {
-		rows := tpRows[tp.Name]
+		rows, ok := tpRows[tp.Name]
+		if !ok {
+			// Missing means partial object state: preserve persisted rows. An
+			// explicit nil/empty slice below still means clear the table part.
+			continue
+		}
 		if rows == nil {
 			rows = []map[string]any{}
 		}
 		if err := s.store.UpsertTablePartRows(ctx, entity.Name, tp.Name, parentID, rows, tp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// saveTablePartsPostingPrelude makes the OnWrite snapshot visible to OnPost
+// without weakening required validation for any nested hook write. The storage
+// method is transaction-only; postInContextAfterAccess always follows it with
+// finalizeTablePartsPostingPrelude before commit.
+func (s *Server) saveTablePartsPostingPrelude(ctx context.Context, entity *metadata.Entity, parentID uuid.UUID,
+	tpRows map[string][]map[string]any) error {
+	for _, tp := range entity.TableParts {
+		rows, ok := tpRows[tp.Name]
+		if !ok {
+			continue
+		}
+		if rows == nil {
+			rows = []map[string]any{}
+		}
+		if err := s.store.UpsertPostingPreludeTablePartRows(ctx, entity.Name, tp.Name, parentID, rows, tp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finalizeTablePartsPostingPrelude persists the final OnPost snapshot and
+// consumes every matching prelude lifecycle. A missing key preserves the rows
+// from before the logical operation; explicit nil/empty still clears them.
+func (s *Server) finalizeTablePartsPostingPrelude(ctx context.Context, entity *metadata.Entity, parentID uuid.UUID,
+	tpRows map[string][]map[string]any) error {
+	for _, tp := range entity.TableParts {
+		rows, provided := tpRows[tp.Name]
+		if provided && rows == nil {
+			rows = []map[string]any{}
+		}
+		if err := s.store.FinalizePostingPreludeTablePartRows(
+			ctx, entity.Name, tp.Name, parentID, rows, provided, tp,
+		); err != nil {
 			return err
 		}
 	}
