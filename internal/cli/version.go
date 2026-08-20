@@ -18,8 +18,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/version"
 	"github.com/spf13/cobra"
@@ -35,8 +37,11 @@ var versionCmd = &cobra.Command{
 показывает, какой именно.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "onebase version %s\n", version.String())
+		// Текст собирается целиком и пишется одной операцией: у команды есть код
+		// возврата, и отказ записи обязан до него доехать, а не теряться в
+		// нескольких непроверенных вызовах печати.
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("onebase version %s\n", version.String()))
 		if c := version.Commit(); c != "" {
 			line := "коммит:      " + c
 			if d := version.CommitDate(); d != "" {
@@ -45,11 +50,13 @@ var versionCmd = &cobra.Command{
 			if version.Modified() {
 				line += " (собран с незакоммиченными правками)"
 			}
-			fmt.Fprintln(out, line)
+			b.WriteString(line + "\n")
 		}
-		fmt.Fprintf(out, "платформа:   %s/%s, Go %s\n", runtime.GOOS, runtime.GOARCH, runtime.Version())
-		fmt.Fprintf(out, "исполняется: %s\n", executablePath())
-		return nil
+		b.WriteString(fmt.Sprintf("платформа:   %s/%s, Go %s\n", runtime.GOOS, runtime.GOARCH, runtime.Version()))
+		b.WriteString(fmt.Sprintf("исполняется: %s\n", executablePath()))
+
+		_, err := io.WriteString(cmd.OutOrStdout(), b.String())
+		return err
 	},
 }
 
