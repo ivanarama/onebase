@@ -36,18 +36,22 @@ func evalWithVars(t *testing.T, src string, vars map[string]any) any {
 	return result
 }
 
-// sameMomentInUTC — тот же момент, что и локальный литерал, но в зоне UTC:
-// ровно в таком виде дата приезжает из результата запроса на SQLite.
-func sameMomentInUTC() time.Time {
-	return time.Date(2026, 3, 15, 12, 0, 0, 0, time.Local).UTC()
+// sameMomentDifferentZones возвращает один момент в двух заведомо разных
+// зонах. FixedZone делает регрессию детерминированной и на CI с локальной UTC:
+// прежний вариант через time.Local там мог случайно сравнивать две UTC-даты.
+func sameMomentDifferentZones() (time.Time, time.Time) {
+	utc := time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)
+	moscow := utc.In(time.FixedZone("UTC+3", 3*60*60))
+	return utc, moscow
 }
 
 func TestDateEquality_SameMomentDifferentZones(t *testing.T) {
-	vars := map[string]any{"ИзЗапроса": sameMomentInUTC()}
+	fromQuery, localValue := sameMomentDifferentZones()
+	vars := map[string]any{"ИзЗапроса": fromQuery, "Локальная": localValue}
 
 	t.Run("равно", func(t *testing.T) {
 		src := `Функция Т()
-  Возврат ИзЗапроса = Дата(2026, 3, 15, 12, 0, 0);
+  Возврат ИзЗапроса = Локальная;
 КонецФункции`
 		assert.Equal(t, true, evalWithVars(t, src, vars),
 			"один и тот же момент в разных зонах должен быть равен")
@@ -55,7 +59,7 @@ func TestDateEquality_SameMomentDifferentZones(t *testing.T) {
 
 	t.Run("не равно даёт Ложь", func(t *testing.T) {
 		src := `Функция Т()
-  Возврат ИзЗапроса <> Дата(2026, 3, 15, 12, 0, 0);
+  Возврат ИзЗапроса <> Локальная;
 КонецФункции`
 		assert.Equal(t, false, evalWithVars(t, src, vars))
 	})
@@ -63,7 +67,7 @@ func TestDateEquality_SameMomentDifferentZones(t *testing.T) {
 	// Согласованность с «<=» и «>=»: раньше они говорили «равны», а «=» — нет.
 	t.Run("согласовано со сравнением", func(t *testing.T) {
 		src := `Функция Т()
-  Эталон = Дата(2026, 3, 15, 12, 0, 0);
+  Эталон = Локальная;
   Возврат Строка(ИзЗапроса <= Эталон) + "/" + Строка(ИзЗапроса >= Эталон) + "/" + Строка(ИзЗапроса = Эталон);
 КонецФункции`
 		assert.Equal(t, "true/true/true", evalWithVars(t, src, vars))
@@ -73,9 +77,10 @@ func TestDateEquality_SameMomentDifferentZones(t *testing.T) {
 // Разные моменты по-прежнему не равны: починка равенства не должна превратиться
 // в «любые две даты равны».
 func TestDateEquality_DifferentMomentsStillDiffer(t *testing.T) {
-	vars := map[string]any{"ИзЗапроса": sameMomentInUTC()}
+	fromQuery, _ := sameMomentDifferentZones()
+	vars := map[string]any{"ИзЗапроса": fromQuery}
 	src := `Функция Т()
-  Возврат ИзЗапроса = Дата(2026, 3, 15, 12, 0, 1);
+  Возврат ИзЗапроса = Дата(2026, 3, 15, 9, 0, 1);
 КонецФункции`
 	assert.Equal(t, false, evalWithVars(t, src, vars))
 }
@@ -83,9 +88,25 @@ func TestDateEquality_DifferentMomentsStillDiffer(t *testing.T) {
 // Дата и строка сравниваются как раньше: правило добавлено только для пары
 // «дата и дата», чтобы не превратить сравнение с текстом в неожиданную истину.
 func TestDateEquality_DateVersusStringUnchanged(t *testing.T) {
-	vars := map[string]any{"ИзЗапроса": sameMomentInUTC()}
+	fromQuery, _ := sameMomentDifferentZones()
+	vars := map[string]any{"ИзЗапроса": fromQuery}
 	src := `Функция Т()
   Возврат ИзЗапроса = "2026-03-15";
 КонецФункции`
 	assert.Equal(t, false, evalWithVars(t, src, vars))
+}
+
+// Ключи Соответствия используют ту же семантику равенства дат, что и «=»:
+// вставка того же момента в другой зоне обновляет запись, а не создаёт дубль.
+func TestDateEquality_MapKeySameMomentDifferentZones(t *testing.T) {
+	fromQuery, localValue := sameMomentDifferentZones()
+	vars := map[string]any{"ИзЗапроса": fromQuery, "Локальная": localValue}
+	src := `Функция Т()
+  Данные = Новый Соответствие;
+  Данные.Вставить(ИзЗапроса, "первое");
+  ДоЗамены = Данные.Получить(Локальная);
+  Данные.Вставить(Локальная, "второе");
+  Возврат ДоЗамены + "/" + Данные.Получить(ИзЗапроса) + "/" + Строка(Данные.Количество());
+КонецФункции`
+	assert.Equal(t, "первое/второе/1", evalWithVars(t, src, vars))
 }
