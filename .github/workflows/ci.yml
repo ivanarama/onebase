@@ -99,7 +99,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           go build -o "$tmp/onebase" ./cmd/onebase
           failed=0
-          for ex in trade crm finance tasks; do
+          for ex in trade crm finance tasks cms; do
             echo "::group::seed $ex"
             if ! "$tmp/onebase" migrate --project "examples/$ex" --sqlite "$tmp/seed-$ex.db"; then
               echo "::error::$ex: миграция не прошла"
@@ -127,7 +127,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           go build -o "$tmp/onebase" ./cmd/onebase
           failed=0
-          for ex in minimal callcenter trade; do
+          for ex in minimal callcenter trade cms; do
             echo "::group::onebase test $ex"
             out="$("$tmp/onebase" test --project "examples/$ex" --sqlite "$tmp/$ex.db" --format tap 2>&1)"; code=$?
             echo "$out"

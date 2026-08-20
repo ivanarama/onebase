@@ -579,6 +579,11 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
 		"halign", "valign", "readonly", "use_grid", "no_grid", "auto_sum", "hint", "mask",
 		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
+		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
+		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
+		// документированный «language» у kind: ПолеКода не давал примеру
+		// пройти собственную проверку (#1014).
+		"orientation", "input_mask", "language", "virtual_columns",
 	} {
 		element.keys[k] = nil
 	}

@@ -1711,13 +1711,85 @@ func (s *Server) setRecordActivity(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", 400)
 		return
 	}
+	// Keep the row gate before hydration: under a restricted policy both a
+	// forbidden record and a missing UUID must remain the same 403, otherwise
+	// this endpoint becomes a record-existence oracle.
 	if !s.rowAllowedID(w, r, entity, "write", id) {
 		return
 	}
-	active := r.URL.Query().Get("active") == "1" || strings.EqualFold(r.URL.Query().Get("active"), "true")
-	if err := s.store.SetActivity(r.Context(), entity, id, active); err != nil {
+	snapshot, err := s.store.GetByID(r.Context(), entity.Name, id, entity)
+	if err != nil {
+		if storage.IsNotFound(err) {
+			http.Error(w, s.errText(r, err), http.StatusNotFound)
+			return
+		}
 		s.serverError(w, r, err)
 		return
+	}
+	expectedVersion, ok := snapshot["_version"].(int64)
+	if !ok {
+		s.serverError(w, r, fmt.Errorf("activity %s/%s: invalid _version %T", entity.Name, id, snapshot["_version"]))
+		return
+	}
+	// Save is a full-object operation: storage writes every declared field, so a
+	// partial map would null all unrelated requisites. Build the complete field
+	// set from one raw snapshot, but keep transport-only id/_version/deletion_mark
+	// out of the object hook and catalog.save webhook payload.
+	fields := make(map[string]any, len(entity.Fields)+2)
+	for _, field := range entity.Fields {
+		fields[field.Name] = snapshot[field.Name]
+	}
+	active := r.URL.Query().Get("active") == "1" || strings.EqualFold(r.URL.Query().Get("active"), "true")
+	fields[entity.Activity.Field] = active
+	// A hierarchical catalog stores these two values outside entity.Fields.
+	// GetByID returns SQLite's INTEGER representation for is_folder, while the
+	// ordinary save path expects a bool/string; normalize it before the full
+	// snapshot is handed to Save so an activity toggle cannot turn a folder into
+	// an element or move it to the root.
+	if entity.Hierarchical {
+		fields["parent_id"] = snapshot["parent_id"]
+		fields["is_folder"] = asBool(snapshot["is_folder"])
+	}
+	if !s.rowAllowedUpdate(w, r, entity, "write", id, fields) {
+		return
+	}
+
+	tablePartRows := make(map[string][]map[string]any, len(entity.TableParts))
+	for _, tablePart := range entity.TableParts {
+		rows, loadErr := s.store.GetTablePartRows(r.Context(), entity.Name, tablePart.Name, id, tablePart)
+		if loadErr != nil {
+			s.serverError(w, r, loadErr)
+			return
+		}
+		tablePartRows[tablePart.Name] = rows
+	}
+
+	result, err := s.entityService().Save(r.Context(), entityservice.SaveRequest{
+		Entity:          entity,
+		ID:              id,
+		IsNew:           false,
+		Fields:          fields,
+		TablePartRows:   tablePartRows,
+		ExpectedVersion: &expectedVersion,
+	})
+	if err != nil {
+		if errors.Is(err, storage.ErrVersionConflict) {
+			s.renderVersionConflict(w, r, entity, id)
+			return
+		}
+		s.serverError(w, r, err)
+		return
+	}
+	if result.DSLError != "" {
+		http.Error(w, s.errText(r, errors.New(result.DSLError)), http.StatusConflict)
+		return
+	}
+	// The entity hook may invalidate a narrower service-cache tag, but activity
+	// is a platform-level visibility switch and can affect services that the
+	// configuration did not explicitly tag. Clear the process-local cache only
+	// after the complete Save lifecycle has committed successfully.
+	if s.svcCache != nil {
+		s.svcCache.Clear("")
 	}
 	http.Redirect(w, r, safeBackURL(r, listURL(entity)), http.StatusSeeOther)
 }

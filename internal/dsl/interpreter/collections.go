@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ─── Ref (ссылка на объект метаданных) ───────────────────────────────────────
@@ -324,6 +325,14 @@ type Map struct {
 func (m *Map) findIdx(key any) int {
 	ks := refKey(key)
 	for i, k := range m.keys {
+		// Keep map-key identity consistent with the DSL equality operator:
+		// two time.Time values that describe the same instant are one key even
+		// when their locations (and therefore refKey strings) differ (#1034).
+		if kt, ok := k.(time.Time); ok {
+			if keyTime, ok := key.(time.Time); ok && kt.Equal(keyTime) {
+				return i
+			}
+		}
 		if refKey(k) == ks {
 			return i
 		}

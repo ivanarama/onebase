@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/encoding/charmap"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -98,6 +99,23 @@ type xmlPoisonStringer struct {
 func (p *xmlPoisonStringer) String() string {
 	*p.called = true
 	return "<Корень/>"
+}
+
+// #1036: выгрузка 1С объявляет windows-1251 — раньше ПрочитатьXML отвергала её
+// из DSL целиком, и обойти это в конфигурации было нечем. Байты передаём
+// переменной: сам модуль обязан быть в UTF-8.
+func TestDSL_ReadXML_Windows1251(t *testing.T) {
+	doc := `<?xml version="1.0" encoding="windows-1251"?><Товар>Насос «Гроза»</Товар>`
+	raw, err := charmap.Windows1251.NewEncoder().String(doc)
+	require.NoError(t, err)
+
+	src := `Процедура Тест()
+		Дерево = ПрочитатьXML(Документ);
+		Возврат Дерево.Текст;
+	КонецПроцедуры`
+	got, err := evalXMLWithVars(t, src, map[string]any{"Документ": raw})
+	require.NoError(t, err)
+	assert.Equal(t, "Насос «Гроза»", got)
 }
 
 func TestDSL_ReadXML_NameAttrsText(t *testing.T) {

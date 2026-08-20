@@ -66,12 +66,20 @@ func maskedIndexedFields(decisions map[string]access.FieldDecision, e *metadata.
 	return out
 }
 
-// dslFullTextSearch — встроенная функция DSL ПолнотекстовыйПоиск(Текст, Лимит).
+// dslFullTextSearch — встроенная функция DSL
+// ПолнотекстовыйПоиск(Текст, Лимит, ПолеОтбора, ЗначениеОтбора, Объекты).
 // Права те же, что у пользователя сессии: обработка не должна видеть больше,
-// чем тот же пользователь увидел бы в интерфейсе.
+// чем тот же пользователь увидел бы в интерфейсе. Отбор опционален, но поле и
+// значение передаются только парой; Объекты дополнительно сужают типы выдачи.
 func (s *Server) dslFullTextSearch(ctx context.Context, args []any) (any, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("ПолнотекстовыйПоиск: нужен аргумент — строка поиска")
+	}
+	if len(args) == 3 {
+		return nil, fmt.Errorf("ПолнотекстовыйПоиск: поле отбора требует четвёртый аргумент — значение")
+	}
+	if len(args) > 5 {
+		return nil, fmt.Errorf("ПолнотекстовыйПоиск: ожидается не больше пяти аргументов")
 	}
 	text := strings.TrimSpace(fmt.Sprintf("%v", args[0]))
 	if text == "" {
@@ -89,7 +97,64 @@ func (s *Server) dslFullTextSearch(ctx context.Context, args []any) (any, error)
 		limit = searchDSLMaxLimit
 	}
 
-	page, err := search.Run(ctx, s.store, uiSearchDeps{s}, text, limit, "")
+	var (
+		page search.Page
+		err  error
+	)
+	if len(args) >= 4 {
+		field := strings.TrimSpace(fmt.Sprint(args[2]))
+		if field == "" || field == "<nil>" {
+			return nil, fmt.Errorf("ПолнотекстовыйПоиск: поле отбора не указано")
+		}
+		if args[3] == nil {
+			return nil, fmt.Errorf("ПолнотекстовыйПоиск: значение отбора не указано")
+		}
+
+		filter := search.EqualFilter{Field: field, Value: args[3]}
+		if len(args) == 5 {
+			items, ok := valueItems(args[4])
+			if !ok || len(items) == 0 {
+				return nil, fmt.Errorf("ПолнотекстовыйПоиск: Объекты должны быть непустым массивом имён")
+			}
+			filter.Entities = make([]string, 0, len(items))
+			seen := make(map[string]bool, len(items))
+			for _, item := range items {
+				name := strings.TrimSpace(fmt.Sprint(item))
+				key := strings.ToLower(name)
+				if name == "" || seen[key] {
+					continue
+				}
+				seen[key] = true
+				filter.Entities = append(filter.Entities, name)
+			}
+			if len(filter.Entities) == 0 {
+				return nil, fmt.Errorf("ПолнотекстовыйПоиск: список Объекты пуст")
+			}
+		}
+
+		allowed := make(map[string]bool, len(filter.Entities))
+		for _, name := range filter.Entities {
+			allowed[strings.ToLower(name)] = true
+		}
+		deps := uiSearchDeps{s}
+		for _, entity := range s.reg.Entities() {
+			if entity == nil || !deps.CanRead(ctx, entity) {
+				continue
+			}
+			if filter.Entities != nil && !allowed[strings.ToLower(entity.Name)] {
+				continue
+			}
+			if findObjectAttributeField(entity, field) == nil {
+				continue
+			}
+			if s.dslFieldSearchDenied(ctx, entity, field) {
+				return nil, fmt.Errorf("ПолнотекстовыйПоиск: реквизит %s.%s защищён политикой поля", entity.Name, field)
+			}
+		}
+		page, err = search.RunFiltered(ctx, s.store, deps, text, limit, filter)
+	} else {
+		page, err = search.Run(ctx, s.store, uiSearchDeps{s}, text, limit, "")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ПолнотекстовыйПоиск: %w", err)
 	}
