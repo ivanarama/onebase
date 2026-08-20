@@ -1559,6 +1559,13 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 			hookErrMsg = msg
 			return errPostingHookFailed
 		}
+		// This posting door loads the complete document and runs OnPost without
+		// entityservice.Save. Validate the final header and table parts here so
+		// hook-cleared required values roll back with movements and posted state.
+		if msg := storage.ValidateRequiredObjectValues(entity, obj.Fields, obj.TablePartRows, true); msg != "" {
+			hookErrMsg = msg
+			return errPostingHookFailed
+		}
 		// OnPost мог изменить расчётные реквизиты шапки — персистим их и
 		// фиксируем одну логическую версию операции. У списочного пути до этого
 		// места ещё не было записи, поэтому PreserveVersion оставлял версию

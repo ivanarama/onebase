@@ -802,6 +802,13 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
 		return fmt.Errorf("%s", msg)
 	}
+	// Validate the object only after auto-numbering, access preflight and
+	// OnWrite have produced the values that will actually be persisted. The
+	// storage backstop still protects direct writers; this object-level check
+	// also covers table parts before either the header or its rows are written.
+	if msg := storage.ValidateRequiredObjectValues(w.entity, w.obj.Fields, w.obj.TablePartRows, true); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
 	if w.expectedVersion == nil {
 		if err := w.s.store.Upsert(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
 			return err
@@ -900,6 +907,11 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context) error {
 	// Хук мог присвоить реквизиту-перечислению недопустимое значение (#977):
 	// входная проверка была до него. Транзакция ещё открыта — откат бесплатен.
 	if msg := entityservice.ValidateEnumFields(w.s.reg, w.entity, w.obj.Fields, w.obj.TablePartRows); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
+	// OnPost may change both header fields and table-part rows. Revalidate the
+	// full, loaded document before persisting hook effects and movements.
+	if msg := storage.ValidateRequiredObjectValues(w.entity, w.obj.Fields, w.obj.TablePartRows, true); msg != "" {
 		return fmt.Errorf("%s", msg)
 	}
 	// OnPost мог изменить реквизиты шапки (расчётные поля) — персистим их upsert'ом

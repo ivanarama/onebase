@@ -340,7 +340,7 @@ func with(base *yamlLintSchema, nested map[string]*yamlLintSchema) *yamlLintSche
 	return base
 }
 
-func fieldYAMLSchema() *yamlLintSchema {
+func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 	// `id` — устойчивый идентификатор реквизита (план 81). Он НЕ декоративный:
 	// именно по нему миграция отличает переименование от «удалили одно поле,
 	// добавили другое», а PlanTableChanges строит по нему сторож от тихой
@@ -349,7 +349,14 @@ func fieldYAMLSchema() *yamlLintSchema {
 	// который его честно читает, и DEVELOPER.md, где id описан как
 	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
 	// страховку от потери данных (#873, дефект Д11 из #668).
-	return with(obj("id", "name", "title", "label", "type", "allow_inline_create", "required"), map[string]*yamlLintSchema{
+	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create"}
+	if allowRequired {
+		// Required is currently a write invariant for entity headers and table
+		// parts. Register recorders have a different persistence path and must
+		// not silently accept a declaration they do not enforce.
+		keys = append(keys, "required")
+	}
+	return with(obj(keys...), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 	})
 }
@@ -357,7 +364,7 @@ func fieldYAMLSchema() *yamlLintSchema {
 func tablePartYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
-		"fields": seq(fieldYAMLSchema()),
+		"fields": seq(fieldYAMLSchema(true)),
 	})
 }
 
@@ -390,7 +397,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		// Скалярные элементы схема пропускает, а опечатку в ключе записи
 		// (read_only) ловит.
 		"item_form":    seq(obj("name", "readonly")),
-		"fields":       seq(fieldYAMLSchema()),
+		"fields":       seq(fieldYAMLSchema(true)),
 		"tableparts":   seq(tablePartYAMLSchema()),
 		"indexes":      seq(indexYAMLSchema()),
 		"numerator":    obj("prefix", "length", "period", "scope", "base_prefix", "unique"),
@@ -405,17 +412,17 @@ func entityYAMLSchema() *yamlLintSchema {
 func registerYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
 		"titles":     freeMap(),
-		"dimensions": seq(fieldYAMLSchema()),
-		"resources":  seq(fieldYAMLSchema()),
-		"attributes": seq(fieldYAMLSchema()),
+		"dimensions": seq(fieldYAMLSchema(false)),
+		"resources":  seq(fieldYAMLSchema(false)),
+		"attributes": seq(fieldYAMLSchema(false)),
 	})
 }
 
 func infoRegisterYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "periodic", "recorder"), map[string]*yamlLintSchema{
 		"titles":     freeMap(),
-		"dimensions": seq(fieldYAMLSchema()),
-		"resources":  seq(fieldYAMLSchema()),
+		"dimensions": seq(fieldYAMLSchema(false)),
+		"resources":  seq(fieldYAMLSchema(false)),
 	})
 }
 
@@ -556,8 +563,8 @@ func accountsYAMLSchema() *yamlLintSchema {
 func accountRegisterYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "title", "accounts"), map[string]*yamlLintSchema{
 		"titles":    freeMap(),
-		"resources": seq(fieldYAMLSchema()),
-		"subconto":  seq(fieldYAMLSchema()),
+		"resources": seq(fieldYAMLSchema(false)),
+		"subconto":  seq(fieldYAMLSchema(false)),
 	})
 }
 

@@ -40,9 +40,6 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
-	if err := db.requiredBackstop(ctx, entity, fields); err != nil {
-		return err
-	}
 	if expectedVersion == nil {
 		return db.Upsert(ctx, entityName, id, fields, entity)
 	}
@@ -74,6 +71,9 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 		if staged && !IsNotFound(errors.Unwrap(err)) && !IsNotFound(err) {
 			return fmt.Errorf("upsert versioned %s: чтение текущего этапа: %w", entityName, err)
 		}
+		if stageModeFromCtx(ctx).Source != StageSourceExchange && hasRequiredEntityFields(entity) && !IsNotFound(err) {
+			return fmt.Errorf("upsert versioned %s: чтение текущих значений required-реквизитов: %w", entityName, err)
+		}
 	} else {
 		oldRow = existing
 	}
@@ -82,8 +82,19 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	// перехода: пользователь редактировал не то состояние, которое сейчас в
 	// базе, и «недопустимый переход» сказало бы ему не про ту проблему. Ни
 	// история, ни предупреждение при этом не пишутся.
-	if staged && oldRow != nil && stageReadVersion(oldRow) != *expectedVersion {
+	if oldRow != nil && stageReadVersion(oldRow) != *expectedVersion {
 		return ErrVersionConflict
+	}
+
+	// UpsertVersioned — только update. Отсутствующие ключи сохраняют значения
+	// прочитанной CAS-версии; проверяем полный effective-снимок. Если строки уже
+	// нет, required не должен маскировать ErrVersionConflict: ноль затронутых
+	// строк ниже вернёт именно конфликт версии.
+	effectiveFields := effectiveEntityValues(entity, oldRow, fields)
+	if oldRow != nil {
+		if err := db.requiredBackstop(ctx, entity, effectiveFields); err != nil {
+			return err
+		}
 	}
 
 	// Гейт переходов между этапами (план 121). Точек записи две, и это вторая:
@@ -100,6 +111,10 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	args := []any{}
 	argIdx := 1
 	for _, f := range entity.Fields {
+		_, given := canonicalFieldValue(fields, f.Name)
+		if !given {
+			continue
+		}
 		col := metadata.ColumnName(f)
 		val, err := canonicalNumberArg(f, fieldValueDialect(d, f, fields))
 		if err != nil {
@@ -170,7 +185,7 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	// с If-Match всегда шлют версию, DSL выставляет её при чтении объекта), а
 	// собственный UPDATE мимо upsert хук индексации не задевал: в выдаче
 	// оставалось прежнее значение — в том числе стёртый пользователем телефон.
-	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+	if err := db.IndexObject(ctx, entity, id, effectiveFields); err != nil {
 		return err
 	}
 	// История переходов (план 121) — безусловно и в той же транзакции, как в
@@ -179,7 +194,7 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 		return err
 	}
 	if oldRow != nil {
-		if changes := AuditDiff(oldRow, fields, entity); len(changes) > 0 {
+		if changes := AuditDiff(oldRow, effectiveFields, entity); len(changes) > 0 {
 			db.logUpdate(ctx, string(entity.Kind), entityName, id, changes)
 		}
 	}

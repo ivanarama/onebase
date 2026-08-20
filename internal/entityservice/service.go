@@ -437,14 +437,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		return SaveResult{ID: req.ID, DSLError: msg}, nil
 	}
 
-	// Обязательные реквизиты: при создании требуется полный набор, при правке —
-	// только непустота того, что передали. Полнота проверяется здесь, а не в
-	// хранилище, потому что объект целиком известен именно тут: в частичной
-	// записи отсутствие ключа означает «не меняем» (#1033).
-	if msg := storage.ValidateRequiredValues(req.Entity, obj.Fields, req.IsNew); msg != "" {
-		return SaveResult{ID: req.ID, DSLError: msg}, nil
-	}
-
 	// Выбор хука: OnPost при проведении документа, иначе OnWrite.
 	isPosting := req.Entity.Posting && (req.Action == "post" || req.Action == "post_and_close")
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
@@ -565,6 +557,15 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			}
 		}
 
+		// Required проверяется по ФИНАЛЬНОМУ объекту: автонумерация, Preflight,
+		// PrepareHook/EnrichTPRows и OnWrite/OnPost вправе заполнить реквизит.
+		// Ранняя проверка отвергала такие законные создания; проверка только в
+		// storage, наоборот, не видела ТЧ. Здесь отказ ещё откатывает provisional
+		// row, номер и все побочные записи хука, а caller получает DSLError.
+		if msg := storage.ValidateRequiredObjectValues(req.Entity, obj.Fields, obj.TablePartRows, req.IsNew); msg != "" {
+			return &hookRunError{err: errors.New(msg)}
+		}
+
 		if err := s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys()); err != nil {
 			return err
 		}
@@ -597,7 +598,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			// кладёт пустой слайс для пустых), а частичные REST-запросы и
 			// POST /post с пустым телом могут ключ опустить — тогда строки
 			// ТЧ не должны затираться.
-			rows, ok := req.TablePartRows[tp.Name]
+			// Persist the same live object map that final validation inspected.
+			// Preflight/PrepareHook/OnWrite may replace TablePartRows wholesale;
+			// req.TablePartRows can then still point at the pre-hook map.
+			rows, ok := obj.TablePartRows[tp.Name]
 			if !ok {
 				continue
 			}

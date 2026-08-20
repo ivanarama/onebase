@@ -92,9 +92,6 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
-	if err := db.requiredBackstop(ctx, entity, fields); err != nil {
-		return err
-	}
 	// Сущность с объявленными этапами (план 121) пишется сериализованным циклом
 	// «прочитать → проверить переход → записать → записать историю». Решение о
 	// допустимости принимается по прочитанному значению, поэтому между чтением и
@@ -136,9 +133,31 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		if staged && !IsNotFound(errors.Unwrap(err)) && !IsNotFound(err) {
 			return fmt.Errorf("upsert %s: чтение текущего этапа: %w", entityName, err)
 		}
+		// Для required-полей нельзя продолжать с неизвестным старым состоянием:
+		// частичная запись должна либо сохранить заполненное значение, либо
+		// честно отказаться. Ошибка чтения не вправе притвориться созданием.
+		if auditMode != upsertAuditSkip && stageModeFromCtx(ctx).Source != StageSourceExchange &&
+			hasRequiredEntityFields(entity) && !IsNotFound(err) {
+			return fmt.Errorf("upsert %s: чтение текущих значений required-реквизитов: %w", entityName, err)
+		}
 		isNew = true
 	} else {
 		oldRow = existing
+	}
+
+	// Частичная запись сохраняет отсутствующие реквизиты. Проверяем итоговый
+	// снимок, а не только входную map: direct create обязан передать все
+	// required-поля, update — не стереть их пропущенным ключом. Провизорная
+	// вставка перед OnWrite исключена; финальный UpsertPreserveVersion проверит
+	// уже дополненный хуком объект в той же транзакции.
+	effectiveFields := effectiveEntityValues(entity, oldRow, fields)
+	if auditMode != upsertAuditSkip {
+		// effectiveFields is the complete persisted snapshot for both create and
+		// update, so every required field must now be present. The only incomplete
+		// state permitted is the explicit provisional row above.
+		if err := db.requiredBackstop(ctx, entity, effectiveFields); err != nil {
+			return err
+		}
 	}
 
 	// Гейт переходов между этапами (план 121) — до построения запроса, на уже
@@ -158,6 +177,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 
 	argIdx := 2
 	for _, f := range entity.Fields {
+		_, given := canonicalFieldValue(fields, f.Name)
 		col := metadata.ColumnName(f)
 		ph := d.Placeholder(argIdx)
 		argIdx++
@@ -168,7 +188,9 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		cols = append(cols, col)
 		placeholders = append(placeholders, ph)
 		args = append(args, val)
-		updates = append(updates, col+" = EXCLUDED."+col)
+		if given {
+			updates = append(updates, col+" = EXCLUDED."+col)
+		}
 	}
 
 	if entity.Hierarchical {
@@ -282,7 +304,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// Здесь, а не в entityservice, потому что путей записи несколько
 	// (entityservice.Save, ui/dsl_documents, обмен, приёмка) — общий у них
 	// только этот upsert.
-	if err := db.IndexObject(ctx, entity, id, fields); err != nil {
+	if err := db.IndexObject(ctx, entity, id, effectiveFields); err != nil {
 		return err
 	}
 
@@ -311,7 +333,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	case isNew:
 		db.logCreate(ctx, kind, entityName, id)
 	case oldRow != nil:
-		changes := AuditDiff(oldRow, fields, entity)
+		changes := AuditDiff(oldRow, effectiveFields, entity)
 		if len(changes) > 0 {
 			db.logUpdate(ctx, kind, entityName, id, changes)
 		}
@@ -918,6 +940,9 @@ func (db *DB) UpsertTablePartRows(ctx context.Context, entityName, tpName string
 	// Страховка значений перечислений в строках (#962, Н3): шапочная проверка
 	// сюда не достаёт — строки пишутся отдельным вызовом.
 	if err := db.enumBackstopRows(ctx, entityName, tp, rows); err != nil {
+		return err
+	}
+	if err := db.requiredBackstopRows(ctx, entityName, tp, rows); err != nil {
 		return err
 	}
 	d := db.dialect
