@@ -619,7 +619,7 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 			}
 		}
 		if err := h.runner.Start(b); err != nil {
-			writeJSON(w, 500, map[string]any{"error": errText(r, err)})
+			h.startFailure(w, r, b, err)
 			return false
 		}
 		h.invalidateStatus(b.ID) // статус в списке должен обновиться сразу
@@ -633,7 +633,9 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 	}
 	// Wait until the base server is ready before handing the URL to the client.
 	if err := h.runner.WaitReady(b, 15*time.Second); err != nil {
-		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
+		// Именно сюда попадает упавшая миграция: процесс завершился до открытия
+		// порта, и в ошибке лежит хвост его лога с настоящей причиной.
+		h.startFailure(w, r, b, err)
 		return false
 	}
 	return true

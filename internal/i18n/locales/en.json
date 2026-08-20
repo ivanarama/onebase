@@ -1335,5 +1335,17 @@
   "База на SQLite: параллелизм недоступен, работает один исполнитель. Пул на 16–32 исполнителя требует PostgreSQL.": "This database runs on SQLite: no parallelism, a single worker. A pool of 16–32 workers requires PostgreSQL.",
   "Задач нет. Ставит их прикладной код: ФоновыеЗадания.Поставить(«ИмяЗадания», Параметры).": "No tasks yet. Application code queues them: BackgroundJobs.Enqueue(\"JobName\", Params).",
   "только просмотр": "view only",
-  "Показывать, но не давать править": "Show but do not allow editing"
+  "Показывать, но не давать править": "Show but do not allow editing",
+  "Не удалось запустить базу": "The database could not be started",
+  "Платформа знает, как это исправить": "The platform knows how to fix this",
+  "Пустые коды и номера будут проставлены платформой; уже заполненные значения не меняются. Это изменение данных базы.": "The platform will fill in the empty codes and numbers; values that are already set are left untouched. This changes the data in the database.",
+  "записей без значения": "records with no value in",
+  "Дозаполнить и запустить": "Fill in and start",
+  "Дозаполняю коды…": "Filling in codes…",
+  "Дозаполнено записей": "Records filled in",
+  "Скопировать текст ошибки": "Copy the error text",
+  "Текст ошибки скопирован": "Error text copied",
+  "Скопировать не удалось — выделите текст мышью": "Copying failed — select the text with the mouse",
+  "Неизвестная ошибка": "Unknown error",
+  "База запущена — остановите её перед дозаполнением кодов": "The database is running — stop it before filling in the codes"
 }

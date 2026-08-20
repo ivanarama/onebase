@@ -84,12 +84,13 @@ func normalizeHost(s string) string {
 	return "127.0.0.1"
 }
 
-// runArgs собирает аргументы дочернего `onebase run` для базы. Вынесено из Start
-// ради юнит-тестов. Главное здесь — проброс --host: без него дочерний процесс
-// всегда брал дефолт 127.0.0.1, и открыть базу в локальную сеть через лаунчер
-// было нельзя (issue #590). Loopback тоже передаём явно, чтобы поведение не
-// зависело от дефолта подкоманды run.
-func runArgs(base *Base) []string {
+// baseTargetArgs — куда смотрит дочерний процесс: та же БД и та же
+// конфигурация, что у самой базы. Общее для run/migrate/renumber: команда,
+// запущенная лаунчером «над этой базой», обязана попасть в неё же, а не в
+// каталог, откуда запустили лаунчер. Раньше каждый вызов собирал эти флаги
+// сам, и migrate уже разошёлся с run: базу старого формата (пустые db_type и
+// db) он отправлял в ветку `--db ""`.
+func baseTargetArgs(base *Base) []string {
 	var args []string
 	if base.DBType == "sqlite" || (base.DBType == "" && base.DB == "") {
 		// backward-compat: пустой db и пустой db_type → SQLite (как было до
@@ -98,17 +99,27 @@ func runArgs(base *Base) []string {
 		if dbPath == "" {
 			dbPath = filepath.Join(os.TempDir(), "onebase_"+base.ID+".db")
 		}
-		args = []string{"run", "--sqlite", dbPath, "--port", fmt.Sprintf("%d", base.Port)}
+		args = []string{"--sqlite", dbPath}
 	} else {
-		args = []string{"run", "--db", base.DB, "--port", fmt.Sprintf("%d", base.Port)}
+		args = []string{"--db", base.DB}
 	}
 	if base.ConfigSource == "file" {
 		args = append(args, "--project", base.Path)
 	} else {
 		args = append(args, "--config-source", "database")
 	}
-	args = append(args, "--host", normalizeHost(base.Host))
 	return args
+}
+
+// runArgs собирает аргументы дочернего `onebase run` для базы. Вынесено из Start
+// ради юнит-тестов. Главное здесь — проброс --host: без него дочерний процесс
+// всегда брал дефолт 127.0.0.1, и открыть базу в локальную сеть через лаунчер
+// было нельзя (issue #590). Loopback тоже передаём явно, чтобы поведение не
+// зависело от дефолта подкоманды run.
+func runArgs(base *Base) []string {
+	args := append([]string{"run"}, baseTargetArgs(base)...)
+	args = append(args, "--port", fmt.Sprintf("%d", base.Port))
+	return append(args, "--host", normalizeHost(base.Host))
 }
 
 func (r *Runner) Start(base *Base) error { return r.start(base, false) }
@@ -831,17 +842,7 @@ func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
 		return "", err
 	}
 
-	var args []string
-	if base.DBType == "sqlite" {
-		args = []string{"migrate", "--sqlite", base.DBPath}
-	} else {
-		args = []string{"migrate", "--db", base.DB}
-	}
-	if base.ConfigSource == "file" {
-		args = append(args, "--project", base.Path)
-	} else {
-		args = append(args, "--config-source", "database")
-	}
+	args := append([]string{"migrate"}, baseTargetArgs(base)...)
 
 	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // G204: имя программы фиксировано, аргументы — из флагов CLI администратора на его же машине; shell не запускается
 	noWindow(cmd)
