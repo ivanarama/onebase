@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -173,7 +172,7 @@ func (s *Server) fillVirtualColumn(
 		for idStr, refRow := range refRows {
 			s.maskRecord(ctx, target, refRow)
 			if v, ok := refRow[targetField.Name]; ok && v != nil {
-				values[idStr] = fmt.Sprintf("%v", v)
+				values[idStr] = virtualColumnDisplayValue(targetField, v)
 			}
 		}
 	}
@@ -195,6 +194,30 @@ func (s *Server) fillVirtualColumn(
 		}
 	}
 	return true
+}
+
+// virtualColumnDisplayValue приводит реквизит по ссылке к строке, которую
+// увидит пользователь.
+//
+// Форматировать обязан сервер. Клиенту виртуальная колонка объявлена строковой
+// (в data-sg-cols у неё type: string), редактора и типового форматтера у неё
+// нет — что сервер положил в ячейку, то и покажется. У хранимых колонок иначе:
+// там клиент знает тип и приводит значение сам.
+//
+// Сырое значение драйвера для этого не годится: диалекты отдают его по-разному.
+// SQLite возвращает boolean как int64, а дату — строкой в UTC; pgx — bool и
+// time.Time в локальной зоне. Поэтому fmt.Sprintf("%v") показывал «1» на SQLite
+// против «true» на PostgreSQL, а дату — как «1985-03-13 21:00:00 +0000 UTC»,
+// то есть ещё и на сутки раньше записанной.
+func virtualColumnDisplayValue(field metadata.Field, v any) string {
+	s := formatFieldValueForInput(field, v)
+	if field.Type == metadata.FieldTypeDate {
+		// Дата без времени показывается датой. «T00:00» — это формат
+		// datetime-local, он нужен полю ввода; в ячейке только для чтения
+		// пользователь читает его как мусор.
+		s = strings.TrimSuffix(s, "T00:00")
+	}
+	return s
 }
 
 // formElementTablePart — табличная часть сущности, к которой привязан элемент
