@@ -19,7 +19,11 @@ import (
 // must rebind it to the current transaction; otherwise ПолучитьОбъект() waits
 // for a second connection forever because SQLite deliberately uses a pool of 1.
 func TestDocWriterOnWriteRebindsTablePartReferenceToTransaction(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	// Это предохранитель от исходного deadlock, а не performance assertion.
+	// Две секунды оказались меньше честного времени на загруженном Windows
+	// runner: исторический отказ #1062 завершился за 5.28s, тогда как тот же код
+	// в соседних прогонах проходил. Настоящий deadlock по-прежнему ограничен.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
