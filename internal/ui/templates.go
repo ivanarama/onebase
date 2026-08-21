@@ -124,15 +124,27 @@ func fmtDateValue(v any) string {
 		if i := strings.Index(s, " m=+"); i >= 0 {
 			s = s[:i]
 		}
+		// Форматы С зоной разбираются как есть: зона в самой строке.
 		for _, layout := range []string{
 			time.RFC3339, time.RFC3339Nano,
 			"2006-01-02 15:04:05-07:00",
 			"2006-01-02 15:04:05 -0700 MST",
 			"2006-01-02 15:04:05.999999999 -0700 MST",
+		} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return fmtT(t)
+			}
+		}
+		// Форматы БЕЗ зоны — ParseInLocation, а не Parse. time.Parse считает
+		// такую строку UTC, и следующий за ним In(time.Local) сдвигал бы её на
+		// смещение хоста: «2026-05-22» превращалось в «22.05.2026 03:00:00», а
+		// дата без времени переставала быть датой без времени. Строка без зоны —
+		// это стенные часы, и трогать их нельзя (#1076).
+		for _, layout := range []string{
 			"2006-01-02T15:04:05", "2006-01-02 15:04:05",
 			"2006-01-02T15:04", "2006-01-02",
 		} {
-			if t, err := time.Parse(layout, s); err == nil {
+			if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
 				return fmtT(t)
 			}
 		}
@@ -899,8 +911,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"stageSourceLabel":    stageSourceLabel,
 		"splitCamel":          splitCamel,
 		"fmtCell":             fmtReportCell,
-		"widgetChartsJSON":    widgetChartsJSON,
-		"pageChartsJSON":      pageChartsJSON,
+		// fmtBool нужен там, где шаблон РАЗБИРАЕТ тип колонки: без типа поля
+		// int64(1)-булево неотличимо от числа 1, и bool доезжал до fmtCell,
+		// показываясь как «1» на SQLite против «true» на PostgreSQL (#1076).
+		"fmtBool": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			if asBool(v) {
+				return "✓"
+			}
+			return "—"
+		},
+		"widgetChartsJSON": widgetChartsJSON,
+		"pageChartsJSON":   pageChartsJSON,
 		// pageRaw помечает уже санитизированный HTML страницы (план 66) как
 		// безопасный. Источник — только ДобавитьСыройHTML, прошедший sanitizePageHTML.
 		"pageRaw": func(s string) template.HTML { return template.HTML(s) }, //nolint:gosec // G203: источник — только ДобавитьСыройHTML, прошедший allowlist sanitizePageHTML
@@ -1605,9 +1629,10 @@ const tplList = `
             style="background:none;border:none;cursor:pointer;padding:0 2px;font-size:13px">▶</button>
           📁
         {{else}}📄{{end}}
-        {{if eq (str $col.Type) "date"}}{{fmtDate (index $row $col.Name)}}{{else if isRichText (str $col.Type)}}{{richPlain (index $row $col.Name)}}{{else if isEnum (str $col.Type)}}{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}{{else}}{{fmtCell (index $row $col.Name)}}{{end}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}
+        {{if eq (str $col.Type) "date"}}{{fmtDate (index $row $col.Name)}}{{else if eq (str $col.Type) "bool"}}{{fmtBool (index $row $col.Name)}}{{else if isRichText (str $col.Type)}}{{richPlain (index $row $col.Name)}}{{else if isEnum (str $col.Type)}}{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}{{else}}{{fmtCell (index $row $col.Name)}}{{end}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}
       </td>
     {{else if eq (str $col.Type) "date"}}<td>{{fmtDate (index $row $col.Name)}}</td>
+    {{else if eq (str $col.Type) "bool"}}<td>{{fmtBool (index $row $col.Name)}}</td>
     {{else if isRichText (str $col.Type)}}<td style="color:#64748b">{{richPlain (index $row $col.Name)}}</td>
     {{else if isEnum (str $col.Type)}}<td>{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}</td>
     {{else}}<td>{{fmtCell (index $row $col.Name)}}</td>{{end}}
@@ -1656,10 +1681,10 @@ const tplList = `
     <div class="tile-title">{{if $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}{{if eq (str $.Entity.Kind) "document"}}{{if index $row "posted"}} <span class="tile-posted" title="{{t $.Lang "Проведён"}}">✓</span>{{end}}{{end}}</div>
   {{end}}
   {{with $tile.SubtitleField}}{{$v := index $row .Name}}{{if hasValue $v}}
-    <div class="tile-subtitle">{{if eq (str .Type) "date"}}{{fmtDate $v}}{{else if isRichText (str .Type)}}{{richPlain $v}}{{else if isEnum (str .Type)}}{{enumLabel $.EnumLabels .Name (str $v)}}{{else}}{{fmtCell $v}}{{end}}</div>
+    <div class="tile-subtitle">{{if eq (str .Type) "date"}}{{fmtDate $v}}{{else if eq (str .Type) "bool"}}{{fmtBool $v}}{{else if isRichText (str .Type)}}{{richPlain $v}}{{else if isEnum (str .Type)}}{{enumLabel $.EnumLabels .Name (str $v)}}{{else}}{{fmtCell $v}}{{end}}</div>
   {{end}}{{end}}
   {{range $f := $tile.Fields}}{{$v := index $row $f.Name}}{{if hasValue $v}}
-    <div class="tile-field"><span class="tile-label">{{$f.DisplayName $.Lang}}:</span> {{if eq (str $f.Type) "date"}}<span class="tile-val">{{fmtDate $v}}</span>{{else if isRichText (str $f.Type)}}<span class="tile-val">{{richPlain $v}}</span>{{else if isEnum (str $f.Type)}}<span class="tile-val">{{enumLabel $.EnumLabels $f.Name (str $v)}}</span>{{else if isImage (str $f.Type)}}<span class="tile-val">{{if $v}}<img src="/ui/_image/{{$v}}" style="height:28px;width:28px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}—{{end}}</span>{{else}}<span class="tile-val">{{fmtCell $v}}</span>{{end}}</div>
+    <div class="tile-field"><span class="tile-label">{{$f.DisplayName $.Lang}}:</span> {{if eq (str $f.Type) "date"}}<span class="tile-val">{{fmtDate $v}}</span>{{else if eq (str $f.Type) "bool"}}<span class="tile-val">{{fmtBool $v}}</span>{{else if isRichText (str $f.Type)}}<span class="tile-val">{{richPlain $v}}</span>{{else if isEnum (str $f.Type)}}<span class="tile-val">{{enumLabel $.EnumLabels $f.Name (str $v)}}</span>{{else if isImage (str $f.Type)}}<span class="tile-val">{{if $v}}<img src="/ui/_image/{{$v}}" style="height:28px;width:28px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}—{{end}}</span>{{else}}<span class="tile-val">{{fmtCell $v}}</span>{{end}}</div>
   {{end}}{{end}}
   <div class="tile-foot">
     {{if and $isFolder $.Entity.Hierarchical}}
@@ -1714,6 +1739,7 @@ const tplList = `
   {{end}}
   {{range listColumns $.Entity}}
     {{if eq (str .Type) "date"}}<td style="white-space:nowrap">{{fmtDate (index $row .Name)}}</td>
+    {{else if eq (str .Type) "bool"}}<td style="white-space:nowrap">{{fmtBool (index $row .Name)}}</td>
     {{else if isImage (str .Type)}}<td>{{$iv := index $row .Name}}{{if $iv}}<img src="/ui/_image/{{$iv}}" style="height:34px;width:34px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
     {{else if isRichText (str .Type)}}<td style="white-space:nowrap;color:#64748b">{{richPlain (index $row .Name)}}</td>
     {{else if isEnum (str .Type)}}<td style="white-space:nowrap">{{enumLabel $.EnumLabels .Name (str (index $row .Name))}}</td>
