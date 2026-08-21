@@ -42,6 +42,10 @@ body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:13px;background:#E
 .upd-note{background:#FFF9E6;border:1px solid #E8D9A0;border-radius:2px;padding:8px 10px;font-size:12px;color:#6b5a1e;margin-bottom:8px}
 .upd-avail{background:#EAF7EC;border:1px solid #A8D8B4;border-radius:2px;padding:8px 10px;font-size:12px;color:#166534}
 .upd-notes{margin-top:8px;padding:8px 10px;background:#F7F7F4;border:1px solid #E0DDD2;border-radius:2px;font-size:11px;line-height:1.45;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:'Segoe UI',Tahoma,Arial,sans-serif}
+/* Текст ошибки запуска: моноширинный (это вывод программы), выделяемый и
+   прокручиваемый — его показывают разработчику, значит его надо уметь
+   скопировать, а не пересказать по памяти (#1067). */
+.err-pre{margin:0 0 10px;padding:8px 10px;background:#F7F7F4;border:1px solid #E0DDD2;border-radius:2px;font:12px/1.45 Consolas,'Courier New',monospace;color:#333;max-height:40vh;overflow:auto;white-space:pre-wrap;word-break:break-word;user-select:text}
 
 /* main layout */
 .content{display:flex;flex:1;min-height:0}
@@ -281,6 +285,27 @@ const tplIndex = `
         <button type="button" id="close-modal-continue" class="btn-ok" style="display:none" onclick="return continueCloseWithoutRemembering()">{{t $.Lang "Продолжить без запоминания"}}</button>
         <button type="button" id="close-modal-error-cancel" class="btn-cancel" onclick="return closeChoice('cancel')">{{t $.Lang "Отмена"}}</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="start-error-modal" class="modal-back" style="display:none" role="dialog" aria-modal="true"
+     aria-labelledby="start-error-title" aria-hidden="true">
+  <!-- Шире обычного диалога: внутри хвост лога, который читают, а не
+       просматривают, и три кнопки, которые иначе переносятся на две строки. -->
+  <div class="modal" id="start-error-card" tabindex="-1" style="width:660px">
+    <h3 id="start-error-title">{{t $.Lang "Не удалось запустить базу"}}</h3>
+    <pre id="start-error-text" class="err-pre" tabindex="0"></pre>
+    <div id="start-error-fix" style="display:none">
+      <p><b>{{t $.Lang "Платформа знает, как это исправить"}}</b></p>
+      <ul id="start-error-fix-list"></ul>
+      <p>{{t $.Lang "Пустые коды и номера будут проставлены платформой; уже заполненные значения не меняются. Это изменение данных базы."}}</p>
+    </div>
+    <div id="start-error-status" style="font-size:12px;color:#555" role="status" aria-live="polite"></div>
+    <div class="modal-btns">
+      <button type="button" id="start-error-fix-btn" class="btn-ok" style="display:none" onclick="return runStartFix()">{{t $.Lang "Дозаполнить и запустить"}}</button>
+      <button type="button" id="start-error-copy" class="btn-cancel" onclick="return copyStartError()">{{t $.Lang "Скопировать текст ошибки"}}</button>
+      <button type="button" id="start-error-close" class="btn-cancel" onclick="return closeStartError()">{{t $.Lang "Закрыть"}}</button>
     </div>
   </div>
 </div>
@@ -851,17 +876,19 @@ document.addEventListener('click', function(){
   if (m && m.style.display === 'block') m.style.display = 'none';
 });
 function startIsolated(el, id, mode) {
-  el.preventDefault ? el.preventDefault() : (el.returnValue = false);
+  suppressEvent(el);
   var m = document.getElementById('iso-menu'); if (m) m.style.display = 'none';
   // Окно открывает сервер лаунчера (нативное WebView2 или внешний браузер с
   // отдельным профилем), window.open не нужен — работает и из GUI-режима.
   fetch('/bases/' + id + '/start-isolated' + (mode ? ('?mode=' + mode) : ''), {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if (d && d.error) { alert('Ошибка запуска:\n' + d.error); }
+      // Путь тот же самый (ensureBaseReady), значит и отказ тот же: упавшая
+      // миграция здесь не менее вероятна, чем при обычном запуске.
+      if (d && d.error) { showStartErrorModal(d.error, d.fix, id); }
       else { setTimeout(function(){ window.location.href = '/?sel=' + id; }, 500); }
     })
-    .catch(function(e){ alert('Ошибка запуска: ' + e); });
+    .catch(function(e){ showStartErrorModal(String(e), null, id); });
   return false;
 }
 function cleanProfiles(id) {
@@ -875,11 +902,147 @@ function cleanProfiles(id) {
     .catch(function(e){ alert('Ошибка: ' + e); });
   return false;
 }
+// Ошибка запуска базы (#1067).
+//
+// Показывается диалогом в окне лаунчера, а не alert-ом: в alert текст не
+// выделяется — его нельзя ни скопировать разработчику, ни прочитать целиком,
+// когда причина длиной в абзац. Здесь же место для действия: класс ошибок
+// «уникальность включена, но у N записей код пуст» платформа умеет вылечить
+// сама, и пользователю, открывшему базу кнопкой, предлагается кнопка.
+var _startFix = null;     // предложенное лекарство из ответа сервера
+var _startFixBase = '';   // база, к которой оно относится
+
+function suppressEvent(el) {
+  if (!el) return;
+  el.preventDefault ? el.preventDefault() : (el.returnValue = false);
+}
+
+// startButton — кнопка, с которой начался запуск. После починки запуск
+// повторяется уже без неё, поэтому весь код обязан переживать её отсутствие.
+function startButton(el) { return el ? (el.target || el) : null; }
+
+function setStartButtonHTML(btn, html) {
+  if (btn && btn.innerHTML) btn.innerHTML = html;
+}
+
+function startErrorStatus(text) {
+  var el = document.getElementById('start-error-status');
+  if (el) el.textContent = text || '';
+}
+
+function openStartErrorModal() {
+  var modal = document.getElementById('start-error-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden', 'false');
+  setLauncherInert(true);
+  var card = document.getElementById('start-error-card');
+  if (card) card.focus();
+}
+
+function closeStartError() {
+  var modal = document.getElementById('start-error-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+  }
+  setLauncherInert(false);
+  return false;
+}
+
+// showStartErrorModal — причина отказа + предложенное лечение, если оно есть.
+function showStartErrorModal(msg, fix, id) {
+  var text = String(msg || '{{t $.Lang "Неизвестная ошибка"}}');
+  var pre = document.getElementById('start-error-text');
+  if (!pre) { alert(text); return; }
+  pre.textContent = text;
+  startErrorStatus('');
+  _startFix = (fix && fix.kind === 'renumber' && fix.objects && fix.objects.length) ? fix : null;
+  _startFixBase = id || '';
+  var block = document.getElementById('start-error-fix');
+  var button = document.getElementById('start-error-fix-btn');
+  var list = document.getElementById('start-error-fix-list');
+  if (list) list.innerHTML = '';
+  if (_startFix && list) {
+    for (var i = 0; i < _startFix.objects.length; i++) {
+      var obj = _startFix.objects[i];
+      var li = document.createElement('li');
+      li.textContent = String(obj.object) + ' — ' + obj.empty + ' {{t $.Lang "записей без значения"}} «' + String(obj.field) + '»';
+      list.appendChild(li);
+    }
+  }
+  if (block) block.style.display = _startFix ? 'block' : 'none';
+  if (button) button.style.display = _startFix ? 'inline-block' : 'none';
+  openStartErrorModal();
+}
+
+// fallbackCopy — путь для окружений без Clipboard API. Ради него текст и лежит
+// в выделяемом <pre>: если не сработает и это, останется выделить мышью.
+function fallbackCopy(text) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  } catch (e) { return false; }
+}
+
+function copyStartError() {
+  var pre = document.getElementById('start-error-text');
+  var text = pre ? pre.textContent : '';
+  var done = function(ok) {
+    startErrorStatus(ok ? '{{t $.Lang "Текст ошибки скопирован"}}' : '{{t $.Lang "Скопировать не удалось — выделите текст мышью"}}');
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function(){ done(true); }, function(){ done(fallbackCopy(text)); });
+  } else {
+    done(fallbackCopy(text));
+  }
+  return false;
+}
+
+// runStartFix — «Дозаполнить и запустить». Пишет данные, поэтому объём показан
+// выше в диалоге, а нажатие кнопки и есть подтверждение.
+function runStartFix() {
+  if (!_startFix || !_startFixBase) return false;
+  var id = _startFixBase;
+  var button = document.getElementById('start-error-fix-btn');
+  if (button) button.disabled = true;
+  startErrorStatus('⏳ {{t $.Lang "Дозаполняю коды…"}}');
+  fetch('/bases/' + id + '/renumber?write=1', {method:'POST'})
+    .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, body:j}; }); })
+    .then(function(res){
+      if (button) button.disabled = false;
+      if (!res.ok) { startErrorStatus(res.body.error || '{{t $.Lang "Неизвестная ошибка"}}'); return; }
+      startErrorStatus('{{t $.Lang "Дозаполнено записей"}}: ' + (res.body.filled || 0));
+      closeStartError();
+      startBaseByID(id);
+    })
+    .catch(function(e){
+      if (button) button.disabled = false;
+      startErrorStatus(String(e));
+    });
+  return false;
+}
+
+// startBaseByID повторяет запуск после починки — тем же путём, каким база
+// открывается кнопкой «Предприятие».
+function startBaseByID(id) {
+  return _nativeOK ? startBaseNative(null, id) : startBase(null, id);
+}
+
 // showStartError показывает ошибку запуска в уже открытом окне-заготовке.
 // Раньше окно закрывалось, а alert уходил под него — в WebView2 это выглядело
 // как «вечный белый экран» (закрытие попапа может не сработать, и ошибка
-// оставалась невидимой за ним).
-function showStartError(win, msg) {
+// оставалась невидимой за ним). Диалог в окне лаунчера рисуется в любом
+// случае: только там есть кнопка «исправить».
+function showStartError(win, msg, fix, id) {
   var text = String(msg);
   if (win) {
     try {
@@ -887,17 +1050,16 @@ function showStartError(win, msg) {
       win.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>onebase</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:28px"><h3 style="color:#c00;margin:0 0 12px">Ошибка запуска базы</h3><pre id="err" style="white-space:pre-wrap;font:13px Consolas,monospace;color:#333"></pre></body></html>');
       win.document.getElementById('err').textContent = text;
       win.document.close();
-      return;
     } catch (e) { try { win.close(); } catch (e2) {} }
   }
-  alert('Ошибка запуска:\n' + text);
+  showStartErrorModal(text, fix, id);
 }
 function startBase(el, id) {
   if (_nativeOK) return startBaseNative(el, id);
-  el.preventDefault ? el.preventDefault() : (el.returnValue = false);
-  var btn = el.target || el;
-  var origText = btn.textContent || '';
-  if (btn.innerHTML) btn.innerHTML = '⏳ Запуск...';
+  suppressEvent(el);
+  var btn = startButton(el);
+  var origHTML = btn ? btn.innerHTML : '';
+  setStartButtonHTML(btn, '⏳ Запуск...');
   var win = window.open('', '_blank');
   // Заготовка вместо белого экрана: первый запуск мигрирует схему БД до открытия
   // порта и может длиться дольше минуты — окно всё это время ждёт ответ /start.
@@ -914,13 +1076,13 @@ function startBase(el, id) {
         if (win) win.location.href = d.url;
         setTimeout(function(){ window.location.href = '/?sel=' + id; }, 800);
       } else {
-        showStartError(win, d.error || 'Неизвестная ошибка');
-        if (btn.innerHTML) btn.innerHTML = origText;
+        showStartError(win, d.error || '{{t $.Lang "Неизвестная ошибка"}}', d.fix, id);
+        setStartButtonHTML(btn, origHTML);
       }
     })
     .catch(function(e){
-      showStartError(win, e);
-      if (btn.innerHTML) btn.innerHTML = origText;
+      showStartError(win, e, null, id);
+      setStartButtonHTML(btn, origHTML);
     });
   return false;
 }
@@ -928,26 +1090,37 @@ function startBase(el, id) {
 // сам, без window.open — иначе WebView2 отдал бы URL внешнему браузеру с
 // адресной строкой). Окно на общем профиле = обычный сеанс Предприятия.
 function startBaseNative(el, id) {
-  el.preventDefault ? el.preventDefault() : (el.returnValue = false);
-  var btn = el.target || el;
-  var origHTML = btn.innerHTML;
-  if (btn.innerHTML) btn.innerHTML = '⏳ Запуск...';
+  suppressEvent(el);
+  var btn = startButton(el);
+  var origHTML = btn ? btn.innerHTML : '';
+  setStartButtonHTML(btn, '⏳ Запуск...');
   fetch('/bases/' + id + '/start-native', {method:'POST'})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.error) {
-        alert('Ошибка запуска:\n' + d.error);
-        if (btn.innerHTML) btn.innerHTML = origHTML;
+        showStartErrorModal(d.error, d.fix, id);
+        setStartButtonHTML(btn, origHTML);
       } else {
         setTimeout(function(){ window.location.href = '/?sel=' + id; }, 500);
       }
     })
     .catch(function(e){
-      alert('Ошибка запуска: ' + e);
-      if (btn.innerHTML) btn.innerHTML = origHTML;
+      showStartErrorModal(String(e), null, id);
+      setStartButtonHTML(btn, origHTML);
     });
   return false;
 }
+// Esc закрывает окно с ошибкой: причина уже прочитана, а лечение — дело
+// добровольное. Обработчик отдельный от диалога закрытия лаунчера: тот
+// выходит раньше, когда его собственное окно скрыто.
+document.addEventListener('keydown', function(ev) {
+  var modal = document.getElementById('start-error-modal');
+  if (!modal || modal.style.display !== 'flex') return;
+  if (ev.key !== 'Escape') return;
+  if (ev.preventDefault) ev.preventDefault();
+  if (ev.stopPropagation) ev.stopPropagation();
+  closeStartError();
+});
 </script>
 </body></html>
 {{end}}

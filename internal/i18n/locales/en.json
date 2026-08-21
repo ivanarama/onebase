@@ -1344,5 +1344,17 @@
   "Выходы: обновить платформу вручную (скачать сборку и заменить файлы) или переставить её в свой личный каталог.": "The ways out: update the platform manually (download a build and replace the files) or reinstall it into your own personal directory.",
   "Самообновление для этой установки недоступно": "Self-update is not available for this installation",
   "Платформа установлена вне личного каталога пользователя — самообновление недоступно. Запуск от имени администратора не поможет: обновите платформу вручную или переставьте её в свой личный каталог.": "The platform is installed outside the user's personal directory — self-update is not available. Running as an administrator will not help: update the platform manually or reinstall it into your own personal directory.",
-  "Нет прав на запись в каталог платформы — обратитесь к администратору": "No write access to the platform directory — contact your administrator"
+  "Нет прав на запись в каталог платформы — обратитесь к администратору": "No write access to the platform directory — contact your administrator",
+  "Не удалось запустить базу": "The database could not be started",
+  "Платформа знает, как это исправить": "The platform knows how to fix this",
+  "Пустые коды и номера будут проставлены платформой; уже заполненные значения не меняются. Это изменение данных базы.": "The platform will fill in the empty codes and numbers; values that are already set are left untouched. This changes the data in the database.",
+  "записей без значения": "records with no value in",
+  "Дозаполнить и запустить": "Fill in and start",
+  "Дозаполняю коды…": "Filling in codes…",
+  "Дозаполнено записей": "Records filled in",
+  "Скопировать текст ошибки": "Copy the error text",
+  "Текст ошибки скопирован": "Error text copied",
+  "Скопировать не удалось — выделите текст мышью": "Copying failed — select the text with the mouse",
+  "Неизвестная ошибка": "Unknown error",
+  "База запущена — остановите её перед дозаполнением кодов": "The database is running — stop it before filling in the codes"
 }

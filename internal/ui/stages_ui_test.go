@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"html"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -116,6 +117,70 @@ func TestStageChartJSONBuildsGraphSeries(t *testing.T) {
 	}
 	if highlighted != 1 {
 		t.Fatalf("подсвечено узлов: %d, ожидался ровно 1", highlighted)
+	}
+}
+
+// Длинные и обратные переходы не должны получать постоянную большую кривизну:
+// ECharts масштабирует её вместе с длиной ребра, и дуга уходит за canvas.
+func TestStageChartJSONNormalizesCurvenessBySpan(t *testing.T) {
+	view := &stageRouteView{
+		Nodes: []stageNodeView{
+			{Name: "draft", Label: "Черновик"},
+			{Name: "review", Label: "На согласовании"},
+			{Name: "approved", Label: "Утверждена"},
+			{Name: "rejected", Label: "Отклонена"},
+		},
+		Edges: [][2]string{
+			{"draft", "review"},
+			{"review", "rejected"},
+			{"rejected", "draft"},
+		},
+	}
+	var opt struct {
+		Series []struct {
+			Links []struct {
+				Source    string `json:"source"`
+				Target    string `json:"target"`
+				LineStyle struct {
+					Curveness float64 `json:"curveness"`
+				} `json:"lineStyle"`
+			} `json:"links"`
+		} `json:"series"`
+	}
+	if err := json.Unmarshal([]byte(stageChartJSON(view)), &opt); err != nil {
+		t.Fatalf("option не разбирается: %v", err)
+	}
+	if len(opt.Series) != 1 || len(opt.Series[0].Links) != 3 {
+		t.Fatalf("неожиданные серии/рёбра: %+v", opt.Series)
+	}
+	want := []float64{0, 0.075, -0.06}
+	for i, link := range opt.Series[0].Links {
+		if math.Abs(link.LineStyle.Curveness-want[i]) > 1e-9 {
+			t.Errorf("ребро %s → %s: curveness=%v, ожидалось %v", link.Source, link.Target, link.LineStyle.Curveness, want[i])
+		}
+	}
+}
+
+func TestStageCurvenessCapsShortDetours(t *testing.T) {
+	tests := []struct {
+		name     string
+		from, to int
+		total    int
+		want     float64
+	}{
+		{name: "same node", from: 1, to: 1, total: 4, want: 0},
+		{name: "invalid total", from: 1, to: 0, total: 1, want: 0},
+		{name: "adjacent forward", from: 1, to: 2, total: 4, want: 0},
+		{name: "adjacent reverse capped", from: 10, to: 9, total: 20, want: -0.35},
+		{name: "short forward jump capped", from: 0, to: 2, total: 20, want: 0.25},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := curvenessFor(tt.from, tt.to, tt.total)
+			if math.Abs(got-tt.want) > 1e-9 {
+				t.Fatalf("curvenessFor(%d, %d, %d)=%v, ожидалось %v", tt.from, tt.to, tt.total, got, tt.want)
+			}
+		})
 	}
 }
 
