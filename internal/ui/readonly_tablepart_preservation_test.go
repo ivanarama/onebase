@@ -227,7 +227,11 @@ func TestParseTablePartRows_WritableDuplicateWinsReadonlyJSONMirror(t *testing.T
 	if err := req.ParseForm(); err != nil {
 		t.Fatal(err)
 	}
-	rows := parseTablePartRows(req, ent)["Lines"]
+	parsed, err := parseTablePartRows(req, ent)
+	if err != nil {
+		t.Fatalf("parseTablePartRows: %v", err)
+	}
+	rows := parsed["Lines"]
 	if len(rows) != 1 || rows[0]["Name"] != "editable-current" {
 		t.Fatalf("duplicate TP parse = %#v", rows)
 	}
