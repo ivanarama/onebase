@@ -1482,7 +1482,7 @@ const tplIndex = `
 
 {{define "widget-actions-body"}}
 <div class="w-actions-row">
-  {{range .Actions}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<div class="w-empty">нет действий</div>{{end}}
+  {{range .Actions}}<a href="{{.URL}}"{{if .NewTab}} target="_blank" rel="noopener"{{end}}>{{.Label}}</a>{{else}}<div class="w-empty">нет действий</div>{{end}}
 </div>
 {{end}}
 
