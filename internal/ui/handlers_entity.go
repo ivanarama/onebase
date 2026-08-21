@@ -22,7 +22,6 @@ import (
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
-	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/webhook"
@@ -1058,25 +1057,11 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 	return out
 }
 
+// treeCellText — текст ячейки дерева. Была одной из копий типового
+// форматирования; после #1076 делегирует общей точке, иначе правка типа
+// доходила бы до дерева, но не до панели деталей, или наоборот.
 func treeCellText(v any, f metadata.Field, enumLabels map[string]map[string]string) string {
-	if f.EnumName != "" {
-		val := fmt.Sprintf("%v", v)
-		if labels := enumLabels[f.Name]; labels != nil {
-			if label := labels[val]; label != "" {
-				return label
-			}
-		}
-		return val
-	}
-	if metadata.IsRichText(f.Type) {
-		text := richtext.Plaintext(fmt.Sprintf("%v", v))
-		runes := []rune(text)
-		if len(runes) > 100 {
-			return string(runes[:100]) + "…"
-		}
-		return text
-	}
-	return fmtReportCell(v)
+	return fieldDisplayText(f, v, enumLabels)
 }
 
 // renderPopupSaved отдаёт минимальную HTML-страницу, которая через
