@@ -111,8 +111,8 @@ func tpw1074Post(t *testing.T, ts *httptest.Server, doc *metadata.Entity, id uui
 	if err != nil {
 		t.Fatalf("POST формы документа: %v", err)
 	}
-	defer resp.Body.Close()        //nolint:errcheck // тело не нужно
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck // тело не нужно
+	defer resp.Body.Close()               //nolint:errcheck // тело не нужно
+	_, _ = io.Copy(io.Discard, resp.Body) // тело не нужно, но соединение переиспользуется
 	return resp.StatusCode
 }
 
