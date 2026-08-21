@@ -445,7 +445,7 @@ func widgetYAMLSchema() *yamlLintSchema {
 		"columns": seq(with(obj("field", "label", "format", "align"), map[string]*yamlLintSchema{
 			"labels": freeMap(),
 		})),
-		"items": seq(with(obj("label", "entity", "url"), map[string]*yamlLintSchema{
+		"items": seq(with(obj("label", "entity", "url", "new_tab"), map[string]*yamlLintSchema{
 			"labels": freeMap(),
 		})),
 	})

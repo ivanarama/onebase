@@ -48,6 +48,12 @@ type WidgetAction struct {
 	Labels map[string]string `yaml:"labels"`
 	Entity string            `yaml:"entity"` // creates /ui/<kind>/<Entity>/new
 	URL    string            `yaml:"url"`    // raw URL alternative if Entity is empty
+
+	// NewTab открывает ссылку в новой вкладке. Нужен там, куда ведёт ссылка из
+	// админки НАРУЖУ — на публичный сайт, во внешнюю систему: в той же вкладке
+	// пользователь остаётся без интерфейса и без пути назад, потому что на той
+	// стороне ссылки на базу нет и быть не должно.
+	NewTab bool `yaml:"new_tab"`
 }
 
 // DisplayLabel возвращает подпись кнопки виджета с учётом языка.

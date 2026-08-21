@@ -376,7 +376,7 @@ func allSchemas() map[string]map[string]any {
 				"query": stringSchema("Запрос"), "params": stringMapSchema(), "format": stringSchema("money|number|percent"), "compare_to": stringSchema("prev_period"), "limit": map[string]any{"type": "integer"},
 				"columns":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"field": stringSchema("Поле"), "label": stringSchema("Подпись"), "labels": stringMapSchema(), "format": stringSchema("Формат"), "align": stringSchema("left|right|center")}}),
 				"chart_kind": stringSchema("bar|line|pie"), "chart_type": stringSchema("legacy alias: bar|line|pie"), "x_field": stringSchema("Поле X"), "y_fields": arrayOf(stringSchema("Поле Y")),
-				"items":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"label": stringSchema("Подпись"), "labels": stringMapSchema(), "entity": stringSchema("Объект"), "url": stringSchema("URL")}}),
+				"items":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"label": stringSchema("Подпись"), "labels": stringMapSchema(), "entity": stringSchema("Объект"), "url": stringSchema("URL"), "new_tab": boolSchema("Открывать в новой вкладке")}}),
 				"entities": arrayOf(stringSchema("Объект")), "scope": stringSchema("current_user|all"),
 			},
 		},
@@ -397,6 +397,10 @@ func allSchemas() map[string]map[string]any {
 
 func stringSchema(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
+}
+
+func boolSchema(description string) map[string]any {
+	return map[string]any{"type": "boolean", "description": description}
 }
 
 func stringMapSchema() map[string]any {
