@@ -224,12 +224,21 @@ func fmtReportCell(v any) string {
 		return ""
 	}
 	switch t := v.(type) {
-	case time.Time:
-		h, m, sec := t.Clock()
-		if h != 0 || m != 0 || sec != 0 {
-			return t.Format("02.01.2006 15:04:05")
+	case bool:
+		// Драйверы отдают bool по-разному: pgx булевым, SQLite числом. Числовую
+		// половину здесь не поймать — int64(1) неотличим от числа 1 без типа
+		// поля, — поэтому у кого тип есть, тот должен звать fieldDisplayText.
+		// Эта ветка закрывает то, что закрыть отсюда возможно: раньше bool
+		// доезжал до финального «%v» и показывался как «true»/«false» (#1076).
+		if t {
+			return "✓"
 		}
-		return t.Format("02.01.2006")
+		return "—"
+	case time.Time:
+		// In(time.Local) обязателен: без него момент печатается в зоне, в
+		// которой его отдал драйвер (SQLite всегда UTC, pgx — зона процесса), и
+		// на хосте со смещением от UTC съезжает КАЛЕНДАРНЫЙ ДЕНЬ (#1076).
+		return fmtDateValue(t)
 	case decimal.Decimal:
 		if t.IsInteger() {
 			return groupThousands(t.IntPart())
@@ -249,18 +258,13 @@ func fmtReportCell(v any) string {
 	case int64:
 		return groupThousands(t)
 	case string:
+		// Дата могла приехать строкой (так её отдаёт SQLite). fmtDateValue
+		// разбирает те же форматы и ещё несколько, а НЕ разобрав — возвращает
+		// исходную строку, поэтому обычный текст проходит насквозь.
+		// Здесь та же причина использовать именно его: он единственный
+		// приводит момент к местной зоне перед печатью.
 		if len(t) >= 10 {
-			for _, layout := range []string{
-				time.RFC3339, "2006-01-02 15:04:05-07:00", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02",
-			} {
-				if pt, err := time.Parse(layout, t); err == nil {
-					h, m, sec := pt.Clock()
-					if h != 0 || m != 0 || sec != 0 {
-						return pt.Format("02.01.2006 15:04:05")
-					}
-					return pt.Format("02.01.2006")
-				}
-			}
+			return fmtDateValue(t)
 		}
 		return t
 	}
