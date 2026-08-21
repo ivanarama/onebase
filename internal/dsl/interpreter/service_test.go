@@ -47,6 +47,28 @@ func TestServiceResponse_New(t *testing.T) {
 	assert.Equal(t, "yes", resp.HeadersMap()["X-Test"])
 }
 
+// Тело ответа читается из DSL: без этого обработчик сервиса нечем проверить
+// конфигурационным тестом — видно код состояния, но не разметку, которую
+// получит посетитель.
+func TestServiceResponse_ReadBody(t *testing.T) {
+	src := `Функция Тест()
+  Ответ = Новый HTTPСервисОтвет(200);
+  Ответ.УстановитьТелоИзСтроки("<h1>Привет</h1>");
+  Возврат Ответ.ПолучитьТелоКакСтроку();
+КонецФункции`
+	assert.Equal(t, "<h1>Привет</h1>", runServiceSrc(t, src, nil))
+}
+
+func TestServiceResponse_ReadBody_JSONAndEmpty(t *testing.T) {
+	src := `Функция Тест()
+  Пустой = Новый HTTPСервисОтвет(204);
+  Ответ = Новый HTTPСервисОтвет(200);
+  Ответ.УстановитьТелоJSON(Новый Структура("сумма", 100));
+  Возврат Ответ.ПолучитьТелоКакСтроку() + "|" + Пустой.ПолучитьТелоКакСтроку();
+КонецФункции`
+	assert.Equal(t, `{"сумма":100}|`, runServiceSrc(t, src, nil))
+}
+
 func TestResponseJSON_Shorthand(t *testing.T) {
 	src := `Функция Тест()
   стр = Новый Структура;

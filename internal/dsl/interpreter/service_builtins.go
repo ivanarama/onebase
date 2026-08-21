@@ -256,6 +256,11 @@ func (r *DSLServiceResponse) Set(field string, val any) {
 
 func (r *DSLServiceResponse) CallMethod(name string, args []any) any {
 	switch name {
+	case "получитьтелокакстроку", "getbodyasstring":
+		// Симметрично записи: без чтения тела обработчик сервиса невозможно
+		// проверить конфигурационным тестом — он видит только код состояния,
+		// а разметку, которую получит посетитель, приходится смотреть глазами.
+		return string(r.body)
 	case "установитьтелоизстроки", "setbodyfromstring":
 		if len(args) > 0 {
 			r.body = []byte(fmt.Sprintf("%v", args[0]))
