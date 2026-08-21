@@ -29,8 +29,8 @@ func TestShutdownClosesSSEAndOwnedBackgroundResources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := New(runtime.NewRegistry(), db, interpreter.New(), authRepo, "127.0.0.1", 0, ui.Config{}, nil)
-	t.Cleanup(srv.uiSrv.Close)
+	srv := newTestServer(runtime.NewRegistry(), db, interpreter.New(), authRepo, "127.0.0.1", 0, ui.Config{}, nil)
+	t.Cleanup(srv.frontend.(*ui.Server).Close)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -48,10 +48,10 @@ func TestShutdownClosesSSEAndOwnedBackgroundResources(t *testing.T) {
 		t.Fatalf("events status = %d", resp.StatusCode)
 	}
 	deadline := time.Now().Add(time.Second)
-	for srv.uiSrv.SSESubscriberCount() == 0 && time.Now().Before(deadline) {
+	for srv.frontend.SSESubscriberCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if srv.uiSrv.SSESubscriberCount() != 1 {
+	if srv.frontend.SSESubscriberCount() != 1 {
 		t.Fatal("SSE subscriber was not registered")
 	}
 

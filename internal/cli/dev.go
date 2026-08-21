@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/api"
+	runtimeapp "github.com/ivantit66/onebase/internal/app"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/backup"
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -327,7 +327,14 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	queue := jobqueue.New(db, sched, runtimeQueueConfigFromApp(appCfg))
 	uiCfg.JobQueue = queue
 	// dev-сервер — всегда loopback (план 53: secure-by-default bind)
-	srv = api.New(reg, db, interp, authRepo, "127.0.0.1", port, uiCfg, sched)
+	application, err := runtimeapp.Build(ctx, runtimeapp.Config{
+		Registry: reg, Store: db, Interpreter: interp, AuthRepo: authRepo,
+		Host: "127.0.0.1", Port: port, UI: uiCfg, Scheduler: sched,
+	})
+	if err != nil {
+		return err
+	}
+	srv = application.Server()
 
 	var stopWatch func()
 	switch configSource {
@@ -376,43 +383,18 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 
-	listener, err := srv.Listen()
-	if err != nil {
-		return fmt.Errorf("listen on 127.0.0.1:%d: %w", port, err)
+	application.SetBeforeDrain(func() {
+		if stopWatch != nil {
+			stopWatch()
+			stopWatch = nil
+		}
+	})
+	application.SetQueueErrorHandler(func(queueErr error) {
+		devLog.Warn("job queue drain", "err", queueErr)
+	})
+	if err := application.Run(ctx); err != nil {
+		return fmt.Errorf("start app on 127.0.0.1:%d: %w", port, err)
 	}
-	defer func() { _ = listener.Close() }()
-
-	schedCtx, schedCancel := context.WithCancel(ctx)
-	defer schedCancel()
-	schedDone := make(chan struct{})
-	go func() {
-		defer close(schedDone)
-		sched.Start(schedCtx)
-	}()
-	queueCtx, queueCancel := context.WithCancel(ctx)
-	defer queueCancel()
-	queueDone := make(chan struct{})
-	go func() {
-		defer close(queueDone)
-		if err := queue.Run(queueCtx); err != nil {
-			devLog.Warn("job queue drain", "err", err)
-		}
-	}()
-
-	serveErr := make(chan error, 1)
-	go func() {
-		listenErr := srv.Serve(listener)
-		if errors.Is(listenErr, http.ErrServerClosed) {
-			listenErr = nil
-		} else if listenErr != nil {
-			devLog.Error("server failed", "err", listenErr)
-		}
-		serveErr <- listenErr
-	}()
-
-	// WS-шлюзы приёмки (план 120A): hot-reload делает resync через
-	// reloadProjectRuntime, стартовый вызов — здесь.
-	srv.ResyncWSIntakes()
 
 	outf("onebase dev running on :%d\n", port)
 	if openBrowser, _ := cmd.Flags().GetBool("open"); openBrowser {
@@ -421,29 +403,14 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(quit)
-	serveResultReceived := false
-	var listenErr error
 	select {
 	case <-quit:
 	case <-srv.Done():
-	case listenErr = <-serveErr:
-		serveResultReceived = true
+	case <-application.Stopped():
 	}
-	if stopWatch != nil {
-		stopWatch()
-		stopWatch = nil
-	}
-	schedCancel()
-	queueCancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	shutdownErr := srv.Shutdown(shutdownCtx)
-	if !serveResultReceived {
-		listenErr = <-serveErr
-	}
-	<-schedDone
-	<-queueDone
-	return errors.Join(listenErr, shutdownErr)
+	return application.Close(shutdownCtx)
 }
 
 func devAutoBackupTarget(db *storage.DB, dbType, dsn, projectDir string) (backup.AutoTarget, error) {
