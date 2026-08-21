@@ -854,6 +854,45 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
+		// managedTPRowsJSON отдаёт гриду строки табличной части, приводя значения
+		// ДАТ к одному виду.
+		//
+		// Раньше здесь стоял jsJSON, то есть голый json.Marshal, а он печатает
+		// time.Time в той зоне, в которой его отдал драйвер. Зоны у диалектов
+		// разные — SQLite всегда UTC, pgx берёт зону Go-процесса, — поэтому одна
+		// и та же дата приезжала в браузер как «1985-03-13T21:00:00Z» на SQLite
+		// и «1985-03-14T00:00:00+03:00» на PostgreSQL. На хосте со смещением от
+		// UTC у SQLite при этом съезжал КАЛЕНДАРНЫЙ ДЕНЬ (#1077).
+		//
+		// Формат — тот же, что у даты в шапке формы (formatDateValueForInput):
+		// «2006-01-02T15:04» в местной зоне. Значит браузеру не нужно ни знать
+		// про зоны, ни разбирать две разные метки: он получает готовые стенные
+		// часы и работает с ними как с текстом.
+		"managedTPRowsJSON": func(fields []metadata.Field, rows []map[string]any) template.JS {
+			dateFields := make(map[string]bool, len(fields))
+			for _, f := range fields {
+				if f.Type == metadata.FieldTypeDate {
+					dateFields[strings.ToLower(f.Name)] = true
+				}
+			}
+			out := make([]map[string]any, 0, len(rows))
+			for _, row := range rows {
+				copied := make(map[string]any, len(row))
+				for k, v := range row {
+					if dateFields[strings.ToLower(k)] {
+						copied[k] = formatDateValueForInput(v)
+						continue
+					}
+					copied[k] = v
+				}
+				out = append(out, copied)
+			}
+			b, err := json.Marshal(out)
+			if err != nil {
+				return template.JS("[]")
+			}
+			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
+		},
 		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
 			virtual = filterVirtualTPColumns(fields, virtual)
 			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
