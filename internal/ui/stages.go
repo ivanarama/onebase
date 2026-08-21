@@ -166,7 +166,7 @@ func stageChartJSON(v any) template.JS {
 		links = append(links, map[string]any{
 			"source":    view.Nodes[fi].Label,
 			"target":    view.Nodes[ti].Label,
-			"lineStyle": map[string]any{"color": "#94a3b8", "curveness": curvenessFor(fi, ti)},
+			"lineStyle": map[string]any{"color": "#94a3b8", "curveness": curvenessFor(fi, ti, len(view.Nodes))},
 		})
 	}
 	opt := map[string]any{
@@ -189,14 +189,25 @@ func stageChartJSON(v any) template.JS {
 	return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности
 }
 
-// curvenessFor выгибает обратные переходы (возврат «Отклонена → Черновик»),
-// чтобы они не ложились поверх прямой стрелки.
-func curvenessFor(from, to int) float64 {
-	if to < from {
-		return -0.35
+// curvenessFor выгибает обратные и пропускающие этапы переходы, чтобы они не
+// ложились поверх прямых стрелок. ECharts умножает curveness на экранную длину
+// ребра: прежние постоянные -0.35/0.25 выбрасывали длинные дуги за верхнюю
+// границу невысокого canvas. Нормализация по доле маршрута оставляет примерно
+// одинаковый вертикальный прогиб для коротких и длинных переходов.
+func curvenessFor(from, to, total int) float64 {
+	if from == to || total < 2 {
+		return 0
 	}
-	if to-from > 1 {
-		return 0.25
+	span := to - from
+	if span < 0 {
+		span = -span
+	}
+	scale := float64(total-1) / float64(span)
+	if to < from {
+		return -min(0.35, 0.06*scale)
+	}
+	if span > 1 {
+		return min(0.25, 0.05*scale)
 	}
 	return 0
 }
