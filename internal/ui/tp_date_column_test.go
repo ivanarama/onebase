@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -163,4 +165,75 @@ func TestTPDateColumn_ОдинаковаНаДиалектахИСВернымД
 				name, sq[name], pg[name])
 		}
 	}
+}
+
+// Круг «показали → отредактировали → записали → показали» не должен смещать дату.
+//
+// Это стык #1077 и #1074: грид отдаёт значение в виде «2006-01-02T15:04», ровно
+// его редактор кладёт обратно в tp_json, а приведение типа на записи обязано
+// принять этот вид и сохранить тот же день. Каждый из двух PR по отдельности
+// проверяет свою половину; смещение возникло бы именно на стыке, и поймать его
+// можно только пройдя круг целиком.
+func TestTPDateColumn_КругПоказРедактированиеЗапись_НеСмещаетДень_1077(t *testing.T) {
+	saved := time.Local
+	time.Local = time.FixedZone("MSK", 3*60*60)
+	t.Cleanup(func() { time.Local = saved })
+
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		dialect := "sqlite"
+		if strings.Contains(t.Name(), "postgres") {
+			dialect = "postgres"
+		}
+		ctx := context.Background()
+		doc := tpd1077Doc()
+		ts := tpd1077Server(t, db, doc)
+
+		id := uuid.New()
+		if err := db.Upsert(ctx, doc.Name, id,
+			map[string]any{"Дата": time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local)}, doc); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		if err := db.UpsertTablePartRows(ctx, doc.Name, "Строки", id, []map[string]any{{
+			"ДатаБезВремени": time.Date(1985, 3, 14, 0, 0, 0, 0, time.Local),
+			"ДатаСоВременем": time.Date(1985, 3, 14, 13, 45, 0, 0, time.Local),
+			"Прочее":         "x",
+		}}, doc.TableParts[0]); err != nil {
+			t.Fatalf("UpsertTablePartRows: %v", err)
+		}
+
+		read := func(step string) map[string]any {
+			t.Helper()
+			rows := parseManagedTPRows(t, getBody(t,
+				ts.URL+"/ui/document/"+url.PathEscape(doc.Name)+"/"+id.String()))
+			if len(rows) != 1 {
+				t.Fatalf("[%s] %s: строк ТЧ %d, ожидалась 1", dialect, step, len(rows))
+			}
+			return rows[0]
+		}
+
+		before := read("до правки")
+		// Пользователь ничего не менял: редактор кладёт обратно то же значение,
+		// что показал грид.
+		blob, err := json.Marshal([]map[string]any{{
+			"ДатаБезВремени": before["ДатаБезВремени"],
+			"ДатаСоВременем": before["ДатаСоВременем"],
+			"Прочее":         "x",
+		}})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if code := tpw1074Post(t, ts, doc, id, url.Values{
+			"tp_json.Строки": {string(blob)},
+		}); code != http.StatusSeeOther {
+			t.Fatalf("[%s] запись вернула %d, ожидалось %d", dialect, code, http.StatusSeeOther)
+		}
+
+		after := read("после правки")
+		for _, name := range []string{"ДатаБезВремени", "ДатаСоВременем"} {
+			if before[name] != after[name] {
+				t.Errorf("[%s] круг сместил %s: было %v, стало %v",
+					dialect, name, before[name], after[name])
+			}
+		}
+	})
 }
