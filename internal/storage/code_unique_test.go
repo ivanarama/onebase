@@ -123,8 +123,12 @@ func TestUniqueCode_PreconditionEmptyValuesMatrix(t *testing.T) {
 		if err == nil {
 			t.Fatal("уникальность включена при пустых кодах — молча и без эффекта")
 		}
-		if !strings.Contains(err.Error(), "renumber") {
-			t.Errorf("в отказе нет подсказки про onebase renumber: %v", err)
+		// Сверка именно с константой: по ней лаунчер узнаёт класс ошибки в
+		// хвосте лога дочернего процесса и показывает кнопку «дозаполнить коды»
+		// вместо инструкции для консоли (#1067). Разойдутся текст и маркер —
+		// кнопка тихо перестанет появляться.
+		if !strings.Contains(err.Error(), storage.RenumberHint) {
+			t.Errorf("в отказе нет подсказки про %s: %v", storage.RenumberHint, err)
 		}
 	})
 }

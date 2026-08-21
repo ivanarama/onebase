@@ -58,11 +58,18 @@ type updatesVM struct {
 	Enabled bool
 	// NetAllowed — политика разрешает сетевые проверки.
 	NetAllowed bool
-	// CanWrite — у пользователя есть право заменить бинарь. Ложь на общей
-	// установке (Program Files, терминальный сервер): там платформой
-	// распоряжается администратор.
+	// CanWrite — платформу можно обновить отсюда. Ложь и на общей установке
+	// (Program Files, терминальный сервер, каталог вне профиля), и при
+	// отсутствии прав на запись — какой именно случай, говорит Block.
 	CanWrite bool
-	BinDir   string
+	// Block — почему обновление недоступно. Права и расположение требуют разных
+	// действий от пользователя, и один текст на оба случая отправлял его не
+	// туда: на установке вне профиля запуск от администратора не помогает
+	// ничем (#1065).
+	Block selfupdate.TargetBlock
+	// BlockDetail — техническая причина для случаев вне известных классов.
+	BlockDetail string
+	BinDir      string
 
 	Current       string
 	Channel       string
@@ -104,7 +111,12 @@ func (h *handler) updatesState() updatesVM {
 	vm.Enabled = policy.UIAllowed()
 	vm.NetAllowed = policy.CheckAllowed()
 	vm.ChannelLocked = policy.ChannelLocked()
-	vm.CanWrite = selfupdate.CanSafelyUpdateBinaryDir(binDir)
+	if blockErr := selfupdate.ValidateBinaryUpdateTarget(binDir); blockErr != nil {
+		vm.Block = selfupdate.ClassifyTargetBlock(blockErr)
+		vm.BlockDetail = blockErr.Error()
+	} else {
+		vm.CanWrite = true
+	}
 
 	st, err := selfupdate.LoadState()
 	if err != nil {
@@ -152,6 +164,38 @@ func (h *handler) updatesState() updatesVM {
 
 // ShowBadge сообщает, рисовать ли отметку об обновлении в шапке лаунчера.
 func (v updatesVM) ShowBadge() bool { return v.Enabled && v.Available }
+
+// CurrentRecognized — версию можно сопоставить с выпусками канала. Ложь для
+// «build-793fix» и dev-сборок: им обновление не предложат никогда, поэтому
+// «установлена актуальная версия» про них говорить нельзя (#1065). Метод, а не
+// поле: вычисляется из той же строки, которую показывает страница, и разойтись
+// с ней не может.
+func (v updatesVM) CurrentRecognized() bool { return selfupdate.VersionRecognized(v.Current) }
+
+// BackgroundCheck — идёт ли фоновая проверка обновлений. Условие повторяет
+// checkUpdatesQuiet: политика плюс сборка со штампом версии. Без неё строка
+// «Проверено» показывает возраст результата, полученного другим бинарём.
+func (v updatesVM) BackgroundCheck() bool { return v.Enabled && v.NetAllowed && version.Build != "" }
+
+// Причина отказа для шаблона: сравнивать строки в разметке — заведомая
+// возможность разойтись с константой молча.
+func (v updatesVM) BlockedByPermissions() bool { return v.Block == selfupdate.TargetBlockNotWritable }
+func (v updatesVM) BlockedByLocation() bool    { return v.Block == selfupdate.TargetBlockNotPrivate }
+func (v updatesVM) BlockedByOther() bool       { return v.Block == selfupdate.TargetBlockOther }
+
+// blockMessage — отказ операции обновления с названной причиной. Тот же разбор,
+// что на странице: кнопку нажали, значит ответ обязан объяснить, что делать, а
+// не повторять про администратора там, где администратор не поможет.
+func (v updatesVM) blockMessage(lang string) string {
+	switch v.Block {
+	case selfupdate.TargetBlockNotWritable:
+		return tr(lang, "Нет прав на запись в каталог платформы — обратитесь к администратору")
+	case selfupdate.TargetBlockNotPrivate:
+		return tr(lang, "Платформа установлена вне личного каталога пользователя — самообновление недоступно. Запуск от имени администратора не поможет: обновите платформу вручную или переставьте её в свой личный каталог.")
+	default:
+		return tr(lang, "Самообновление для этой установки недоступно") + ": " + v.BlockDetail
+	}
+}
 
 // CanApply сообщает, можно ли прямо сейчас применить скачанное обновление.
 func (v updatesVM) CanApply() bool {
@@ -254,7 +298,7 @@ func (h *handler) updatesApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !vm.CanWrite {
-		writeJSON(w, 403, map[string]any{"error": tr(resolveLang(r), "Нет прав на запись в каталог платформы — обратитесь к администратору")})
+		writeJSON(w, 403, map[string]any{"error": vm.blockMessage(resolveLang(r))})
 		return
 	}
 	lease, err := selfupdate.AcquireOperationLease()
@@ -359,8 +403,15 @@ func (h *handler) updatesRollback(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.updateMu.Unlock()
 	vm := h.updatesState()
-	if !vm.Enabled || !vm.CanWrite {
+	if !vm.Enabled {
 		writeJSON(w, 403, map[string]any{"error": tr(resolveLang(r), "Обновление платформы запрещено политикой")})
+		return
+	}
+	if !vm.CanWrite {
+		// Раньше откат на общей установке отвечал «запрещено политикой» — про
+		// политику, которой нет. Причина та же, что у обновления, и называть её
+		// надо так же (#1065).
+		writeJSON(w, 403, map[string]any{"error": vm.blockMessage(resolveLang(r))})
 		return
 	}
 	lease, err := selfupdate.AcquireOperationLease()

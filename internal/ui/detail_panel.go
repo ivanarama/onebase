@@ -273,12 +273,15 @@ func detailPanelFieldForRow(f metadata.Field, row map[string]any,
 		}
 		field.Kind = "image"
 	case metadata.IsRichText(f.Type):
+		// Своя ветка, а не общая: панели нужен ещё и Kind, по которому шаблон
+		// решает, как показывать.
 		field.Value = richPlainExcerpt(v)
 		field.Kind = "rich"
-	case f.EnumName != "":
-		field.Value = enumLabelFor(enumLabels, f.Name, fmtReportCell(v))
 	default:
-		field.Value = fmtReportCell(v)
+		// Перечисление, дата, булево и всё остальное — через общую точку
+		// (#1076). Раньше здесь стоял типобезразличный fmtReportCell, и панель
+		// показывала «1» на SQLite против «true» на PostgreSQL.
+		field.Value = fieldDisplayText(f, v, enumLabels)
 	}
 	return field, true
 }

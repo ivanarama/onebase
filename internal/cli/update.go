@@ -146,6 +146,40 @@ func updateTargetDir(cmd *cobra.Command) (string, error) {
 	return selfupdate.BinaryDir()
 }
 
+// explainTargetBlock называет причину отказа словами, разными для разных
+// причин. Одна строка «установка не поддерживает безопасное самообновление» на
+// оба случая молчала о том, что делать: «нет прав» снимается тем, у кого права
+// есть, а «установка вне личного каталога» правами не снимается вовсе — там
+// выходов ровно два, и оба надо назвать (#1065).
+func explainTargetBlock(dir string, err error, action string) error {
+	switch selfupdate.ClassifyTargetBlock(err) {
+	case selfupdate.TargetBlockNotWritable:
+		return fmt.Errorf("нет прав на запись в каталог платформы %s — %s её может только владелец каталога: %w", dir, action, err)
+	case selfupdate.TargetBlockNotPrivate:
+		return fmt.Errorf("платформа установлена вне личного каталога пользователя (%s), поэтому %s себя сама она не может: "+
+			"этой установкой пользуются и другие, а согласовать с ними замену файлов нечем. "+
+			"Права здесь ни при чём — запуск от имени администратора ничего не изменит, у него другой личный каталог. "+
+			"Выходы: обновить платформу вручную (скачать сборку и заменить файлы) "+
+			"или переставить её в свой личный каталог: %w", dir, action, err)
+	default:
+		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", dir, err)
+	}
+}
+
+// warnUnrecognizedVersion печатает предупреждение, если текущая версия не
+// сопоставима с выпусками канала: такому бинарю обновление не предложат
+// никогда, и «установлена актуальная версия» про него — неправда.
+// Возвращает true, если предупреждение напечатано.
+func warnUnrecognizedVersion(current string) bool {
+	if selfupdate.VersionRecognized(current) {
+		return false
+	}
+	outf("Версия %s не сопоставима с выпусками канала (ожидается build-<число> или vX.Y.Z) — "+
+		"обновление этой сборке не будет предложено никогда, даже когда выйдет заведомо более новое.\n"+
+		"Обновите платформу вручную или поставьте сборку из канала.\n", current)
+	return true
+}
+
 func runUpdateCheck(cmd *cobra.Command) error {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	uc, err := newUpdateContext(cmd)
@@ -169,6 +203,9 @@ func runUpdateCheck(cmd *cobra.Command) error {
 			"channel":          string(uc.channel),
 			"repo":             uc.repo,
 			"update_available": available,
+			// Отдельный признак: update_available=false у нераспознанной версии
+			// означает не «свежая», а «сравнить не с чем».
+			"current_recognized": selfupdate.VersionRecognized(current),
 		}
 		if st.Latest != nil {
 			out["latest"] = st.Latest.Tag
@@ -192,6 +229,8 @@ func runUpdateCheck(cmd *cobra.Command) error {
 	}
 	outf("Доступна версия: %s от %s\n", st.Latest.Tag, st.Latest.PublishedAt.Local().Format("02.01.2006 15:04"))
 	switch {
+	case !available && !selfupdate.VersionRecognized(current):
+		warnUnrecognizedVersion(current)
 	case !available:
 		outln("Обновление не требуется — установлена актуальная версия.")
 	case !selfupdate.SameScheme(current, st.Latest.Tag):
@@ -226,6 +265,9 @@ func runUpdateNetwork(cmd *cobra.Command) error {
 		return fmt.Errorf("в канале %s нет доступных релизов", uc.channel)
 	}
 	if !st.UpdateAvailable(current) {
+		if warnUnrecognizedVersion(current) {
+			return nil
+		}
 		outf("Установлена актуальная версия %s — обновление не требуется.\n", current)
 		return nil
 	}
@@ -266,7 +308,7 @@ func applyStaged(cmd *cobra.Command, uc updateContext, staged selfupdate.StagedI
 		return err
 	}
 	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
-		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", uc.targetDir, err)
+		return explainTargetBlock(uc.targetDir, err, "обновить")
 	}
 	lease, err := selfupdate.AcquireOperationLease()
 	if err != nil {
@@ -432,7 +474,7 @@ func runUpdateRollback(cmd *cobra.Command) (resultErr error) {
 		return err
 	}
 	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
-		return fmt.Errorf("установка %s не поддерживает безопасный откат: %w", uc.targetDir, err)
+		return explainTargetBlock(uc.targetDir, err, "откатить")
 	}
 	lease, err := selfupdate.AcquireOperationLease()
 	if err != nil {
@@ -555,7 +597,7 @@ func runUpdateOffline(cmd *cobra.Command) (resultErr error) {
 		return fmt.Errorf("укажите --sha256: обновление без проверки контрольной суммы запрещено")
 	}
 	if err := selfupdate.ValidateBinaryUpdateTarget(uc.targetDir); err != nil {
-		return fmt.Errorf("установка %s не поддерживает безопасное самообновление: %w", uc.targetDir, err)
+		return explainTargetBlock(uc.targetDir, err, "обновить")
 	}
 
 	// 1. Проверить артефакт обновления, затем извлечь бинари во временный каталог.

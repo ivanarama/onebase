@@ -40,7 +40,15 @@ func init() {
 		"не открывать GUI; ошибки остаются в stderr — для скриптов и CI (также ONEBASE_NO_GUI=1)")
 	rootCmd.PersistentFlags().BoolVar(&allowNewerSchema, "allow-newer-schema", false,
 		"открыть базу, обслуженную платформой новее этого бинаря, на свой страх (также ONEBASE_ALLOW_NEWER_SCHEMA=1)")
-	rootCmd.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		// Команда вызвана правильно (флаги разобраны, аргументы приняты) —
+		// значит, всё, что случится дальше, это отказ ИСПОЛНЕНИЯ, и справка по
+		// флагам к нему отношения не имеет. Cobra же печатает usage на любую
+		// ошибку RunE: 20 строк списка флагов вытесняли причину, а в окно
+		// лаунчера (туда попадает хвост лога дочернего процесса) осмысленное
+		// сообщение уже не влезало (#1067). Ошибку разбора флагов это не
+		// затрагивает: PersistentPreRunE до неё не доходит, и там usage к месту.
+		cmd.SilenceUsage = true
 		if !allowNewerSchema {
 			return nil
 		}

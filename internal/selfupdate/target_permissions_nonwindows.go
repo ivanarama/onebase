@@ -4,13 +4,18 @@ package selfupdate
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
 func validateTargetCoordinationDirectory(path string, info os.FileInfo) error {
 	if info.Mode().Perm()&0o022 != 0 {
-		return errors.New("selfupdate: shared group/other-writable installations are not supported; update as the owner from an owner-writable installation")
+		// Общая установка, а не отказ по правам: писать сюда текущий
+		// пользователь как раз может. Класс причины различается через
+		// errors.Is — интерфейс на нём выбирает текст (#1065).
+		return fmt.Errorf("%w: %s is group/other-writable; update as the owner from an owner-writable installation",
+			ErrTargetNotPrivate, path)
 	}
 	// A read-only shared installation is still unsafe to replace: its ordinary
 	// consumers cannot create/open our installation-scoped locks. Require a
@@ -34,7 +39,7 @@ func validateTargetCoordinationDirectory(path string, info os.FileInfo) error {
 		}
 		current = parent
 	}
-	return errors.New("selfupdate: shared/readable system installations cannot be self-updated safely; use a private per-user installation")
+	return fmt.Errorf("%w: %s has no private traversal boundary up to the filesystem root", ErrTargetNotPrivate, path)
 }
 
 func applyTargetCoordinationPermissions(file *os.File, mode os.FileMode) error {
