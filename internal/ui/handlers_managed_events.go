@@ -683,7 +683,10 @@ func buildObjectFromForm(
 	form *metadata.FormModule,
 	canWrite bool,
 ) (*runtime.Object, error) {
-	fields := formToFields(r, entity)
+	fields, err := formToFields(r, entity)
+	if err != nil {
+		return nil, err
+	}
 	tpRows, err := parseTablePartRowsForManagedForm(r, entity, form, canWrite)
 	if err != nil {
 		return nil, err
