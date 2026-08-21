@@ -990,3 +990,20 @@ func (s *Server) setLang(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, r.Header.Get("Referer"), http.StatusSeeOther)
 }
+
+// resolveLangCtx — язык интерфейса там, где есть только контекст.
+//
+// Отличается от resolveLang ровно одним: не видит заголовок Accept-Language,
+// потому что запроса под рукой нет. Язык пользователя и язык базы учитываются
+// так же. Нужен путям подготовки данных формы, куда *http.Request не доходит
+// (например, заполнение виртуальных колонок ТЧ, #1078).
+func (s *Server) resolveLangCtx(ctx context.Context) string {
+	if s.cfg.Bundle == nil {
+		return "ru"
+	}
+	var userLang string
+	if u := auth.UserFromContext(ctx); u != nil {
+		userLang = u.Lang
+	}
+	return i18n.Resolve(userLang, s.cfg.Lang, "", s.cfg.Bundle)
+}

@@ -29,6 +29,38 @@ func openSchedulerTestDB(t *testing.T) (*storage.DB, context.Context) {
 	return db, ctx
 }
 
+// runSchedulerUntilCleanup starts the same blocking Run path as production and
+// registers a cleanup that not only cancels it, but also waits for graceful
+// shutdown. A bare defer cancel() lets the test return first; the earlier
+// db.Close cleanup then races the scheduler's final status write (#1062).
+func runSchedulerUntilCleanup(t *testing.T, sched *Scheduler, parent context.Context) {
+	t.Helper()
+	runCtx, cancel := context.WithCancel(parent)
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- sched.RunReady(runCtx, ready) }()
+	select {
+	case <-ready:
+	case err := <-done:
+		cancel()
+		t.Fatalf("scheduler stopped before ready: %v", err)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("scheduler did not become ready")
+	}
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("scheduler shutdown: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("scheduler did not stop before database cleanup")
+		}
+	})
+}
+
 func TestShutdownDrainsRunningGoJob(t *testing.T) {
 	db, ctx := openSchedulerTestDB(t)
 	sched := New(db, nil, nil)

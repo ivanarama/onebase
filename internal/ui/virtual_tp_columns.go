@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -158,6 +157,7 @@ func (s *Server) fillVirtualColumn(
 	}
 
 	values := make(map[string]string, len(ids))
+	raw := make(map[string]any, len(ids))
 	for start := 0; start < len(ids); start += refLabelBatchSize {
 		end := start + refLabelBatchSize
 		if end > len(ids) {
@@ -173,8 +173,26 @@ func (s *Server) fillVirtualColumn(
 		for idStr, refRow := range refRows {
 			s.maskRecord(ctx, target, refRow)
 			if v, ok := refRow[targetField.Name]; ok && v != nil {
-				values[idStr] = fmt.Sprintf("%v", v)
+				raw[idStr] = v
 			}
+		}
+	}
+
+	// Текст ячейки считается ПОСЛЕ всех батчей: ссылочному реквизиту цели нужен
+	// ещё один проход чтения (второй уровень разыменования), и делать его на
+	// каждый батч значило бы вернуть «запрос на строку» — ровно то, ради чего
+	// фича и появилась.
+	if targetField.RefEntity != "" {
+		labels := s.virtualColumnRefLabels(ctx, targetField, raw)
+		for idStr, v := range raw {
+			if refIDStr, _, ok := uuidFromValue(v); ok {
+				values[idStr] = labels[refIDStr]
+			}
+		}
+	} else {
+		enumLabels := s.virtualColumnEnumLabels(ctx, target, targetField)
+		for idStr, v := range raw {
+			values[idStr] = fieldDisplayText(targetField, v, enumLabels)
 		}
 	}
 
@@ -195,6 +213,101 @@ func (s *Server) fillVirtualColumn(
 		}
 	}
 	return true
+}
+
+// virtualColumnCellText превращает значение реквизита цели в текст ячейки С
+// УЧЁТОМ ЕГО ТИПА.
+//
+// Почему это обязано жить на сервере. Клиенту виртуальная колонка объявлена
+// строковой (managedTPColumnsJSON в templates.go прибивает `Type` константой), а
+// в buildColumns ветка `if (c.virtual)` замыкает рендер до всех типовых
+// проверок — то есть что сервер положил, то пользователь и увидит. Одной только
+// отправки настоящего типа клиенту не хватило бы.
+//
+// До #1071 здесь стоял `fmt.Sprintf("%v", v)`, и в ячейку попадало внутреннее
+// представление Go. Для bool и date оно вдобавок ЗАВИСЕЛО ОТ ДИАЛЕКТА: одна и та
+// же конфигурация на одних и тех же данных показывала «1» на SQLite и «true» на
+// PostgreSQL, а дату — «1985-03-13 21:00:00 +0000 UTC» против
+// «1985-03-14 00:00:00 +0300 MSK», причём на SQLite ещё и днём раньше
+// записанного.
+//
+// В #1071 здесь разбирались только bool и date — те типы, по которым расходились
+// диалекты. Остальные показывались внутренним значением: перечисление кодом,
+// richtext разметкой, ссылка голым UUID. В #1078 разбор отдан общей точке
+// fieldDisplayText, той же, через которую показывают ячейку дерево и панель
+// деталей: у виртуальной колонки нет причин показывать значение иначе, чем его
+// показывает соседний список.
+//
+// virtualColumnEnumLabels — подписи значений перечисления для реквизита ЦЕЛИ.
+//
+// Карта строится по целевой сущности, а не по той, чья форма открыта: реквизит
+// живёт в ней, и перечисление объявлено там же.
+func (s *Server) virtualColumnEnumLabels(
+	ctx context.Context,
+	target *metadata.Entity,
+	f metadata.Field,
+) map[string]map[string]string {
+	if f.EnumName == "" || target == nil {
+		return nil
+	}
+	return s.buildEnumLabels(target, s.resolveLangCtx(ctx))
+}
+
+// virtualColumnRefLabels разыменовывает ВТОРОЙ уровень: реквизит цели сам
+// ссылочный, и в ячейке должно быть представление объекта, а не его UUID.
+//
+// Доступ здесь такой же строгий, как у первого уровня (readableFieldsByIDs плюс
+// маска ПДн), а не как у подписи ссылки в обычной строке ТЧ. Причина та же, что
+// в #845: виртуальная колонка показывает ПРОИЗВОЛЬНЫЙ реквизит произвольной
+// сущности, и расширять на неё исторический зазор нельзя. Недоступная запись
+// даёт пусто, как и битая ссылка.
+//
+// Чтение батчами, а не по строке: иначе документ с сотней строк дал бы сотню
+// запросов — ровно то, ради чего фича и появилась.
+func (s *Server) virtualColumnRefLabels(
+	ctx context.Context,
+	f metadata.Field,
+	raw map[string]any,
+) map[string]string {
+	refEntity := s.reg.GetEntity(f.RefEntity)
+	if refEntity == nil {
+		return nil
+	}
+	idsByString := map[string]uuid.UUID{}
+	for _, v := range raw {
+		if idStr, id, ok := uuidFromValue(v); ok {
+			idsByString[idStr] = id
+		}
+	}
+	if len(idsByString) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(idsByString))
+	for _, id := range idsByString {
+		ids = append(ids, id)
+	}
+	labelFields := displayField(refEntity)
+	if len(labelFields) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(ids))
+	for start := 0; start < len(ids); start += refLabelBatchSize {
+		end := start + refLabelBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		rows, err := s.readableFieldsByIDs(ctx, refEntity, ids[start:end], labelFields)
+		if err != nil {
+			// Как и на первом уровне: отказ оставляет колонку пустой целиком.
+			// Частичная колонка была бы хуже — по ней не отличить «нет
+			// значения» от «часть батча не прочиталась».
+			return nil
+		}
+		for idStr, row := range rows {
+			out[idStr] = s.maskedRecordLabel(ctx, refEntity, row)
+		}
+	}
+	return out
 }
 
 // formElementTablePart — табличная часть сущности, к которой привязан элемент

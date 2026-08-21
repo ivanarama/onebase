@@ -3777,6 +3777,7 @@ function obDetailRender() {
         label.textContent = f.label;
         wrap.appendChild(label);
         if (f.kind === 'image' && f.value) {
+          wrap.className += ' ob-detail-field-image';
           var img = document.createElement('img');
           img.className = 'ob-detail-image';
           img.src = '/ui/_image/' + encodeURIComponent(f.value);
@@ -3874,7 +3875,10 @@ function initDetailPanel() {
     '.ob-detail-field{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:13px}' +
     '.ob-detail-label{flex:0 0 42%;color:#64748b}' +
     '.ob-detail-value{flex:1 1 auto;word-break:break-word}' +
-    '.ob-detail-image{max-width:100%;border-radius:6px;margin-top:4px}' +
+    '.ob-detail-field-image{display:block;overflow:hidden}' +
+    '.ob-detail-field-image .ob-detail-label{display:block;margin-bottom:6px}' +
+    '.ob-detail-image{display:block;width:100%;height:auto;max-width:100%;max-height:calc(100vh - 260px);' +
+    'object-fit:contain;object-position:center;border-radius:6px}' +
     '.ob-detail-empty{color:#94a3b8;font-size:13px;margin:4px 0 0}' +
     /* Узкий экран: третья колонка недопустима — панель уходит под список. */
     '@media(max-width:820px){.ob-list-wrap{flex-direction:column}.ob-detail{width:auto!important;max-height:none}}';

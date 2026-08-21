@@ -22,7 +22,6 @@ import (
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
-	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/version"
 	"github.com/ivantit66/onebase/internal/webhook"
 	"github.com/ivantit66/onebase/internal/websec"
@@ -31,7 +30,7 @@ import (
 type Server struct {
 	srv         *http.Server
 	handler     http.Handler
-	uiSrv       *ui.Server
+	frontend    Frontend
 	hooks       *webhook.Dispatcher
 	processDone <-chan struct{}
 	h2c         bool // cleartext HTTP/2 к апстриму включён (ONEBASE_H2C), план 111 P2-1
@@ -39,45 +38,38 @@ type Server struct {
 
 // New строит HTTP-сервер базы. host «» = 127.0.0.1 (см. addr.go): наружу
 // сервер выставляется только явным --host 0.0.0.0.
-func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo, host string, port int, uiCfg ui.Config, sched *scheduler.Scheduler) *Server {
+func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpreter, authRepo *auth.Repo, host string, port int, cfg Config, frontend Frontend, sched *scheduler.Scheduler) *Server {
 	// Debug API защищён внутренним токеном. Без него (плоский `onebase run`,
 	// опубликованная база) debug-маршруты не монтируются вовсе.
-	debugToken := os.Getenv("ONEBASE_DEBUG_TOKEN")
+	debugToken := cfg.DebugToken
+	if debugToken != "" && cfg.Metrics == nil {
+		cfg.Metrics = metrics.New()
+	}
 	controlToken := os.Getenv("ONEBASE_CONTROL_TOKEN")
 	baseID := os.Getenv("ONEBASE_BASE_ID")
 	processDone := make(chan struct{})
 	var processStopOnce sync.Once
 	processInstance, processInstanceErr := processcontrol.NewNonce()
-	uiCfg.DebugToken = debugToken
 	// Единый лимитер попыток входа: форма /login и basic-auth HTTP-сервисов
 	// троттлятся вместе, чтобы брутфорс нельзя было размазать по двум каналам.
-	loginLimit := auth.NewLoginLimiter(5, time.Minute)
-	uiCfg.LoginLimit = loginLimit
-	var metricsReg *metrics.Registry
-	if debugToken != "" {
-		metricsReg = metrics.New()
-		uiCfg.Metrics = metricsReg
+	loginLimit := cfg.LoginLimit
+	if loginLimit == nil {
+		loginLimit = auth.NewLoginLimiter(5, time.Minute)
 	}
-	uiSrv := ui.New(reg, store, interp, authRepo, uiCfg, sched)
-	// Регламентные задания получают полное DSL-окружение ui (Справочники,
-	// Документы, вложения, транзакции) — план 101.
-	if sched != nil {
-		sched.SetVarsBuilder(uiSrv.BuildJobDSLVars)
-	}
-	if metricsReg != nil {
-		registerRuntimeMetrics(metricsReg, authRepo, uiSrv, sched, uiCfg.Webhooks)
+	if cfg.Metrics != nil {
+		registerRuntimeMetrics(cfg.Metrics, authRepo, frontend, sched, cfg.Webhooks)
 	}
 	h := &handler{
-		reg: reg, store: store, interp: interp, entitySvc: uiSrv.EntitySvc(), hooks: uiCfg.Webhooks,
-		maxFileSizeBytes:       int64(uiCfg.MaxFileSizeMB) * 1024 * 1024,
-		allowedAttachmentTypes: uiCfg.AllowedTypes,
+		reg: reg, store: store, interp: interp, entitySvc: frontend.EntitySvc(), hooks: cfg.Webhooks,
+		maxFileSizeBytes:       int64(cfg.MaxFileSizeMB) * 1024 * 1024,
+		allowedAttachmentTypes: cfg.AllowedTypes,
 	}
 	r := chi.NewRouter()
 	r.Use(requestLogger()) // как middleware.Logger, но режет токены/коды из URI (план 53)
 	// Вместо chi middleware.Recoverer: тот же перехват, но паника получает код
 	// инцидента, который виден пользователю и подставляется в «Сообщить об
 	// ошибке» вместе со стеком (план 116).
-	r.Use(incident.Recoverer(uiSrv.Incidents(), func(r *http.Request) string {
+	r.Use(incident.Recoverer(frontend.Incidents(), func(r *http.Request) string {
 		if u := auth.UserFromContext(r.Context()); u != nil {
 			return u.Login
 		}
@@ -90,7 +82,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// задан ONEBASE_DEBUG_TOKEN. Middleware ставим до маршрутов, чтобы он
 	// оборачивал весь роутер; сам /metrics монтируется ниже под токен-гейтом.
 	if debugToken != "" {
-		r.Use(metricsReg.Middleware)
+		r.Use(cfg.Metrics.Middleware)
 	}
 
 	// Public auth routes (no authentication required)
@@ -109,7 +101,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		LoginLimit: loginLimit,
 		// Имя базы попадает в otpauth-ссылку — в аутентификаторе рядом с кодом
 		// видно, к какой базе он относится (план 84).
-		AppName: uiCfg.AppName,
+		AppName: cfg.AppName,
 		// Внешний адрес для redirect_uri провайдера SSO: за обратным прокси
 		// Host запроса не совпадает с публичным адресом.
 		BaseURL: publicURL,
@@ -179,17 +171,17 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// Браузер фечит manifest/иконки без credentials, а install-промпт работает
 	// вне сессии: под auth-мидлварой они отдавали бы 401 и PWA не устанавливался
 	// бы на инстансе с пользователями. Ассеты не содержат данных (план 45).
-	uiSrv.MountPWA(r)
+	frontend.MountPWA(r)
 
 	// HTTP-сервисы конфигурации (план 61) — /hs/<корень>/…. Монтируются ВНЕ
 	// session-middleware: каждый сервис сам объявляет аутентификацию
 	// (none/basic/session/token/hmac), поэтому публичные приёмники вебхуков
 	// работают без cookie, а защищённые проверяют свой механизм внутри.
-	uiSrv.MountServices(r)
+	frontend.MountServices(r)
 
 	// Онлайн-обмен между базами (план 86) — /exchange/<план>/push|pull. Тоже вне
 	// session-middleware: базы аутентифицируются общим Bearer-токеном плана.
-	uiSrv.MountExchange(r)
+	frontend.MountExchange(r)
 
 	// Встроенная статика — вендор-ассеты (Monaco/ECharts/SlickGrid/Quill) и
 	// app-JS. Несекретны и одинаковы для всех, поэтому монтируются ВНЕ
@@ -197,7 +189,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// ревалидация app-JS (no-cache → 304) проходили через сессионную
 	// авторизацию. Вендор уже отдаётся с immutable-кэшем; app-JS сохраняет
 	// ETag-ревалидацию, но больше не платит за auth на каждый 304.
-	uiSrv.MountStatic(r)
+	frontend.MountStatic(r)
 
 	// REST API v2 accepts either an integration Bearer token or the existing
 	// browser session cookie. Keep it outside the UI/session-only group so
@@ -227,7 +219,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		r.Post("/documents/{entity}/{id}/post", h.postDocument())
 
 		// Web UI
-		uiSrv.Mount(r)
+		frontend.Mount(r)
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/ui", http.StatusFound)
@@ -238,9 +230,9 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	// задан: без него опубликованная база не имеет debug-поверхности.
 	// Туда же вешаем pprof — профилирование под тем же токеном (см. mountPprof).
 	if debugToken != "" {
-		uiSrv.MountDebug(r)
+		frontend.MountDebug(r)
 		mountPprof(r, debugToken)
-		mountMetrics(r, debugToken, metricsReg, store)
+		mountMetrics(r, debugToken, cfg.Metrics, store)
 	}
 
 	// h2c включается на самом сервере (Protocols), а не оборачиванием handler:
@@ -259,7 +251,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 		IdleTimeout:       120 * time.Second,
 	}
 	configureH2C(httpSrv, enableH2C)
-	return &Server{handler: r, uiSrv: uiSrv, hooks: uiCfg.Webhooks,
+	return &Server{handler: r, frontend: frontend, hooks: cfg.Webhooks,
 		processDone: processDone, h2c: enableH2C, srv: httpSrv}
 }
 
@@ -271,23 +263,23 @@ func envBool(name string) bool {
 // InvalidateWidgetCache makes metadata hot reload immediately visible on the
 // dashboard instead of waiting for the widget TTL.
 func (s *Server) InvalidateWidgetCache() {
-	if s != nil && s.uiSrv != nil {
-		s.uiSrv.InvalidateWidgetCache()
+	if s != nil && s.frontend != nil {
+		s.frontend.InvalidateWidgetCache()
 	}
 }
 
 // InvalidateServiceCache сбрасывает кэш ответов HTTP-сервисов (план 126).
 func (s *Server) InvalidateServiceCache() {
-	if s != nil && s.uiSrv != nil {
-		s.uiSrv.InvalidateServiceCache()
+	if s != nil && s.frontend != nil {
+		s.frontend.InvalidateServiceCache()
 	}
 }
 
 // ResyncWSIntakes приводит WS-соединения приёмки к текущему реестру (план
 // 120A): вызывается при старте сервера и после горячей перезагрузки проекта.
 func (s *Server) ResyncWSIntakes() {
-	if s != nil && s.uiSrv != nil {
-		s.uiSrv.ResyncWSIntakes()
+	if s != nil && s.frontend != nil {
+		s.frontend.ResyncWSIntakes()
 	}
 }
 
@@ -295,8 +287,8 @@ func (s *Server) ResyncWSIntakes() {
 // DSL notifications cannot construct this envelope even if they reuse the
 // visible event name.
 func (s *Server) PublishDevReload() {
-	if s != nil && s.uiSrv != nil {
-		s.uiSrv.PublishDevReload()
+	if s != nil && s.frontend != nil {
+		s.frontend.PublishDevReload()
 	}
 }
 
@@ -374,14 +366,17 @@ func (s *Server) Serve(listener net.Listener) error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.uiSrv != nil {
-		s.uiSrv.BeginShutdown()
+	if s.frontend != nil {
+		s.frontend.BeginShutdown()
 	}
 	httpErr := s.srv.Shutdown(ctx)
 	var uiErr error
-	if s.uiSrv != nil {
-		uiErr = s.uiSrv.Shutdown(ctx)
+	if s.frontend != nil {
+		uiErr = s.frontend.Shutdown(ctx)
 	}
-	hookErr := s.hooks.Close(ctx)
+	var hookErr error
+	if s.hooks != nil {
+		hookErr = s.hooks.Close(ctx)
+	}
 	return errors.Join(httpErr, uiErr, hookErr)
 }

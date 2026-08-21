@@ -39,9 +39,7 @@ func TestТикУважаетАдминистративноеВключение(
 		t.Fatal(err)
 	}
 
-	runCtx, stop := context.WithCancel(ctx)
-	go func() { _ = sched.Run(runCtx) }()
-	defer stop()
+	runSchedulerUntilCleanup(t, sched, ctx)
 
 	// Выключенное в конфигурации не тикает.
 	assert.Never(t, func() bool { return runCount(t, db, "Молчун") > 0 },
@@ -81,9 +79,7 @@ func TestТикУважаетАдминистративноеВыключени�
 		t.Fatal(err)
 	}
 
-	runCtx, stop := context.WithCancel(ctx)
-	go func() { _ = sched.Run(runCtx) }()
-	defer stop()
+	runSchedulerUntilCleanup(t, sched, ctx)
 
 	assert.Never(t, func() bool { return runCount(t, db, "АвтоОтчёт") > 0 },
 		2500*time.Millisecond, 200*time.Millisecond,
@@ -98,9 +94,7 @@ func TestТикГейтитНативноеЗадание(t *testing.T) {
 	assert.NoError(t, sched.RegisterGoJob("НативноеЗадание", "", "@every 1s",
 		func(context.Context) error { return nil }))
 
-	runCtx, stop := context.WithCancel(ctx)
-	go func() { _ = sched.Run(runCtx) }()
-	defer stop()
+	runSchedulerUntilCleanup(t, sched, ctx)
 
 	assert.Never(t, func() bool { return runCount(t, db, "НативноеЗадание") > 0 },
 		2500*time.Millisecond, 200*time.Millisecond,

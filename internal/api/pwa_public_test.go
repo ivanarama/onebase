@@ -35,7 +35,7 @@ func newServerWithUser(t *testing.T) *Server {
 	if has, err := authRepo.HasUsers(ctx); err != nil || !has {
 		t.Fatalf("HasUsers=%v err=%v, ожидалось true", has, err)
 	}
-	return New(runtime.NewRegistry(), db, interpreter.New(), authRepo, "", 0, ui.Config{}, nil)
+	return newTestServer(runtime.NewRegistry(), db, interpreter.New(), authRepo, "", 0, ui.Config{}, nil)
 }
 
 // TestPWAAssetsPublicWhenUsersExist: ассеты PWA доступны БЕЗ аутентификации,

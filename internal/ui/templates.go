@@ -97,6 +97,66 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 	return template.New("root").Funcs(templateFuncs(bundle)).Parse(templateSource())
 }
 
+// fmtDateValue — единственное в проекте место, где значение даты превращается в
+// текст для показа ПРАВИЛЬНО: с приведением к местной зоне (`t.In(time.Local)`).
+// Без него момент печатается в той зоне, в которой его отдал драйвер, а она у
+// диалектов разная — SQLite всегда UTC, pgx берёт зону Go-процесса. На хосте со
+// смещением от UTC это меняет не только время, но и КАЛЕНДАРНЫЙ ДЕНЬ: дата,
+// записанная как 14.03.1985, показывалась на SQLite как 13-е (#1071).
+//
+// Функция пакетного уровня, а не замыкание в templateFuncs, именно поэтому:
+// показ даты нужен не только шаблонам, и каждая новая копия этой логики — новый
+// шанс забыть про `In(time.Local)`.
+func fmtDateValue(v any) string {
+	fmtT := func(t time.Time) string {
+		lt := t.In(time.Local)
+		h, m, sec := lt.Clock()
+		if h != 0 || m != 0 || sec != 0 {
+			return lt.Format("02.01.2006 15:04:05")
+		}
+		return lt.Format("02.01.2006")
+	}
+	if t, ok := v.(time.Time); ok {
+		return fmtT(t)
+	}
+	if s, ok := v.(string); ok && len(s) >= 10 {
+		// Strip Go monotonic clock suffix " m=+..."
+		if i := strings.Index(s, " m=+"); i >= 0 {
+			s = s[:i]
+		}
+		// Форматы С зоной разбираются как есть: зона в самой строке.
+		for _, layout := range []string{
+			time.RFC3339, time.RFC3339Nano,
+			"2006-01-02 15:04:05-07:00",
+			"2006-01-02 15:04:05 -0700 MST",
+			"2006-01-02 15:04:05.999999999 -0700 MST",
+		} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return fmtT(t)
+			}
+		}
+		// Форматы БЕЗ зоны — ParseInLocation, а не Parse. time.Parse считает
+		// такую строку UTC, и следующий за ним In(time.Local) сдвигал бы её на
+		// смещение хоста: «2026-05-22» превращалось в «22.05.2026 03:00:00», а
+		// дата без времени переставала быть датой без времени. Строка без зоны —
+		// это стенные часы, и трогать их нельзя (#1076).
+		for _, layout := range []string{
+			"2006-01-02T15:04:05", "2006-01-02 15:04:05",
+			"2006-01-02T15:04", "2006-01-02",
+		} {
+			if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+				return fmtT(t)
+			}
+		}
+		if len(s) >= 10 {
+			if t, err := time.ParseInLocation("2006-01-02", s[:10], time.Local); err == nil {
+				return fmtT(t)
+			}
+		}
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 	translate := func(lang, key string) string {
 		if bundle != nil {
@@ -574,43 +634,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return b.String()
 		},
-		"fmtDate": func(v any) string {
-			fmtT := func(t time.Time) string {
-				lt := t.In(time.Local)
-				h, m, sec := lt.Clock()
-				if h != 0 || m != 0 || sec != 0 {
-					return lt.Format("02.01.2006 15:04:05")
-				}
-				return lt.Format("02.01.2006")
-			}
-			if t, ok := v.(time.Time); ok {
-				return fmtT(t)
-			}
-			if s, ok := v.(string); ok && len(s) >= 10 {
-				// Strip Go monotonic clock suffix " m=+..."
-				if i := strings.Index(s, " m=+"); i >= 0 {
-					s = s[:i]
-				}
-				for _, layout := range []string{
-					time.RFC3339, time.RFC3339Nano,
-					"2006-01-02 15:04:05-07:00",
-					"2006-01-02 15:04:05 -0700 MST",
-					"2006-01-02 15:04:05.999999999 -0700 MST",
-					"2006-01-02T15:04:05", "2006-01-02 15:04:05",
-					"2006-01-02T15:04", "2006-01-02",
-				} {
-					if t, err := time.Parse(layout, s); err == nil {
-						return fmtT(t)
-					}
-				}
-				if len(s) >= 10 {
-					if t, err := time.ParseInLocation("2006-01-02", s[:10], time.Local); err == nil {
-						return fmtT(t)
-					}
-				}
-			}
-			return fmt.Sprintf("%v", v)
-		},
+		"fmtDate": fmtDateValue,
 		"filterVal": func(params storage.ListParams, fieldName string) storage.FilterValue {
 			return filterValue(params, fieldName)
 		},
@@ -830,6 +854,45 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 		},
+		// managedTPRowsJSON отдаёт гриду строки табличной части, приводя значения
+		// ДАТ к одному виду.
+		//
+		// Раньше здесь стоял jsJSON, то есть голый json.Marshal, а он печатает
+		// time.Time в той зоне, в которой его отдал драйвер. Зоны у диалектов
+		// разные — SQLite всегда UTC, pgx берёт зону Go-процесса, — поэтому одна
+		// и та же дата приезжала в браузер как «1985-03-13T21:00:00Z» на SQLite
+		// и «1985-03-14T00:00:00+03:00» на PostgreSQL. На хосте со смещением от
+		// UTC у SQLite при этом съезжал КАЛЕНДАРНЫЙ ДЕНЬ (#1077).
+		//
+		// Формат — тот же, что у даты в шапке формы (formatDateValueForInput):
+		// «2006-01-02T15:04» в местной зоне. Значит браузеру не нужно ни знать
+		// про зоны, ни разбирать две разные метки: он получает готовые стенные
+		// часы и работает с ними как с текстом.
+		"managedTPRowsJSON": func(fields []metadata.Field, rows []map[string]any) template.JS {
+			dateFields := make(map[string]bool, len(fields))
+			for _, f := range fields {
+				if f.Type == metadata.FieldTypeDate {
+					dateFields[strings.ToLower(f.Name)] = true
+				}
+			}
+			out := make([]map[string]any, 0, len(rows))
+			for _, row := range rows {
+				copied := make(map[string]any, len(row))
+				for k, v := range row {
+					if dateFields[strings.ToLower(k)] {
+						copied[k] = formatDateValueForInput(v)
+						continue
+					}
+					copied[k] = v
+				}
+				out = append(out, copied)
+			}
+			b, err := json.Marshal(out)
+			if err != nil {
+				return template.JS("[]")
+			}
+			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
+		},
 		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
 			virtual = filterVirtualTPColumns(fields, virtual)
 			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
@@ -887,8 +950,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"stageSourceLabel":    stageSourceLabel,
 		"splitCamel":          splitCamel,
 		"fmtCell":             fmtReportCell,
-		"widgetChartsJSON":    widgetChartsJSON,
-		"pageChartsJSON":      pageChartsJSON,
+		// fmtBool нужен там, где шаблон РАЗБИРАЕТ тип колонки: без типа поля
+		// int64(1)-булево неотличимо от числа 1, и bool доезжал до fmtCell,
+		// показываясь как «1» на SQLite против «true» на PostgreSQL (#1076).
+		"fmtBool": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			if asBool(v) {
+				return "✓"
+			}
+			return "—"
+		},
+		"widgetChartsJSON": widgetChartsJSON,
+		"pageChartsJSON":   pageChartsJSON,
 		// pageRaw помечает уже санитизированный HTML страницы (план 66) как
 		// безопасный. Источник — только ДобавитьСыройHTML, прошедший sanitizePageHTML.
 		"pageRaw": func(s string) template.HTML { return template.HTML(s) }, //nolint:gosec // G203: источник — только ДобавитьСыройHTML, прошедший allowlist sanitizePageHTML
@@ -1593,9 +1668,10 @@ const tplList = `
             style="background:none;border:none;cursor:pointer;padding:0 2px;font-size:13px">▶</button>
           📁
         {{else}}📄{{end}}
-        {{if eq (str $col.Type) "date"}}{{fmtDate (index $row $col.Name)}}{{else if isRichText (str $col.Type)}}{{richPlain (index $row $col.Name)}}{{else if isEnum (str $col.Type)}}{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}{{else}}{{fmtCell (index $row $col.Name)}}{{end}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}
+        {{if eq (str $col.Type) "date"}}{{fmtDate (index $row $col.Name)}}{{else if eq (str $col.Type) "bool"}}{{fmtBool (index $row $col.Name)}}{{else if isRichText (str $col.Type)}}{{richPlain (index $row $col.Name)}}{{else if isEnum (str $col.Type)}}{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}{{else}}{{fmtCell (index $row $col.Name)}}{{end}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}
       </td>
     {{else if eq (str $col.Type) "date"}}<td>{{fmtDate (index $row $col.Name)}}</td>
+    {{else if eq (str $col.Type) "bool"}}<td>{{fmtBool (index $row $col.Name)}}</td>
     {{else if isRichText (str $col.Type)}}<td style="color:#64748b">{{richPlain (index $row $col.Name)}}</td>
     {{else if isEnum (str $col.Type)}}<td>{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}</td>
     {{else}}<td>{{fmtCell (index $row $col.Name)}}</td>{{end}}
@@ -1644,10 +1720,10 @@ const tplList = `
     <div class="tile-title">{{if $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}{{if eq (str $.Entity.Kind) "document"}}{{if index $row "posted"}} <span class="tile-posted" title="{{t $.Lang "Проведён"}}">✓</span>{{end}}{{end}}</div>
   {{end}}
   {{with $tile.SubtitleField}}{{$v := index $row .Name}}{{if hasValue $v}}
-    <div class="tile-subtitle">{{if eq (str .Type) "date"}}{{fmtDate $v}}{{else if isRichText (str .Type)}}{{richPlain $v}}{{else if isEnum (str .Type)}}{{enumLabel $.EnumLabels .Name (str $v)}}{{else}}{{fmtCell $v}}{{end}}</div>
+    <div class="tile-subtitle">{{if eq (str .Type) "date"}}{{fmtDate $v}}{{else if eq (str .Type) "bool"}}{{fmtBool $v}}{{else if isRichText (str .Type)}}{{richPlain $v}}{{else if isEnum (str .Type)}}{{enumLabel $.EnumLabels .Name (str $v)}}{{else}}{{fmtCell $v}}{{end}}</div>
   {{end}}{{end}}
   {{range $f := $tile.Fields}}{{$v := index $row $f.Name}}{{if hasValue $v}}
-    <div class="tile-field"><span class="tile-label">{{$f.DisplayName $.Lang}}:</span> {{if eq (str $f.Type) "date"}}<span class="tile-val">{{fmtDate $v}}</span>{{else if isRichText (str $f.Type)}}<span class="tile-val">{{richPlain $v}}</span>{{else if isEnum (str $f.Type)}}<span class="tile-val">{{enumLabel $.EnumLabels $f.Name (str $v)}}</span>{{else if isImage (str $f.Type)}}<span class="tile-val">{{if $v}}<img src="/ui/_image/{{$v}}" style="height:28px;width:28px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}—{{end}}</span>{{else}}<span class="tile-val">{{fmtCell $v}}</span>{{end}}</div>
+    <div class="tile-field"><span class="tile-label">{{$f.DisplayName $.Lang}}:</span> {{if eq (str $f.Type) "date"}}<span class="tile-val">{{fmtDate $v}}</span>{{else if eq (str $f.Type) "bool"}}<span class="tile-val">{{fmtBool $v}}</span>{{else if isRichText (str $f.Type)}}<span class="tile-val">{{richPlain $v}}</span>{{else if isEnum (str $f.Type)}}<span class="tile-val">{{enumLabel $.EnumLabels $f.Name (str $v)}}</span>{{else if isImage (str $f.Type)}}<span class="tile-val">{{if $v}}<img src="/ui/_image/{{$v}}" style="height:28px;width:28px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}—{{end}}</span>{{else}}<span class="tile-val">{{fmtCell $v}}</span>{{end}}</div>
   {{end}}{{end}}
   <div class="tile-foot">
     {{if and $isFolder $.Entity.Hierarchical}}
@@ -1702,6 +1778,7 @@ const tplList = `
   {{end}}
   {{range listColumns $.Entity}}
     {{if eq (str .Type) "date"}}<td style="white-space:nowrap">{{fmtDate (index $row .Name)}}</td>
+    {{else if eq (str .Type) "bool"}}<td style="white-space:nowrap">{{fmtBool (index $row .Name)}}</td>
     {{else if isImage (str .Type)}}<td>{{$iv := index $row .Name}}{{if $iv}}<img src="/ui/_image/{{$iv}}" style="height:34px;width:34px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
     {{else if isRichText (str .Type)}}<td style="white-space:nowrap;color:#64748b">{{richPlain (index $row .Name)}}</td>
     {{else if isEnum (str .Type)}}<td style="white-space:nowrap">{{enumLabel $.EnumLabels .Name (str (index $row .Name))}}</td>

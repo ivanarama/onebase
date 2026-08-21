@@ -53,7 +53,10 @@ func TestParseTablePartRows_TpJSON(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", nil)
 	req.PostForm = body
 
-	tpRows := parseTablePartRows(req, ent)
+	tpRows, err := parseTablePartRows(req, ent)
+	if err != nil {
+		t.Fatalf("parseTablePartRows: %v", err)
+	}
 	rows := tpRows["Товары"]
 	if len(rows) != 2 {
 		t.Fatalf("Товары: got %d rows, want 2", len(rows))
@@ -115,7 +118,10 @@ func TestParseTablePartRows_TpJSON_EmptyRows(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", nil)
 	req.PostForm = body
 
-	tpRows := parseTablePartRows(req, ent)
+	tpRows, err := parseTablePartRows(req, ent)
+	if err != nil {
+		t.Fatalf("parseTablePartRows: %v", err)
+	}
 	rows := tpRows["Строки"]
 	if len(rows) != 2 {
 		t.Fatalf("Строки: got %d rows, want 2 (empty row filtered)", len(rows))
@@ -166,7 +172,10 @@ func TestParseTablePartRows_LegacyNotBroken(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", nil)
 	req.PostForm = body
 
-	tpRows := parseTablePartRows(req, ent)
+	tpRows, err := parseTablePartRows(req, ent)
+	if err != nil {
+		t.Fatalf("parseTablePartRows: %v", err)
+	}
 	rows := tpRows["Позиции"]
 	if len(rows) != 1 {
 		t.Fatalf("Позиции: got %d rows, want 1", len(rows))

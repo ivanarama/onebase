@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ivantit66/onebase/internal/api"
+	runtimeapp "github.com/ivantit66/onebase/internal/app"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -169,7 +169,14 @@ func newIntegrationServer(t *testing.T, db *storage.DB, authRepo *auth.Repo, pro
 	interp.LookupSiblingProc = reg.GetSiblingProc
 	interp.LookupModuleProc = reg.GetModuleNamespacedProc
 	sched := scheduler.New(db, reg, interp)
-	srv := api.New(reg, db, interp, authRepo, "127.0.0.1", 0, ui.Config{}, sched)
+	application, err := runtimeapp.Build(context.Background(), runtimeapp.Config{
+		Registry: reg, Store: db, Interpreter: interp, AuthRepo: authRepo,
+		Host: "127.0.0.1", UI: ui.Config{}, Scheduler: sched,
+	})
+	if err != nil {
+		t.Fatalf("build app: %v", err)
+	}
+	srv := application.Server()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
