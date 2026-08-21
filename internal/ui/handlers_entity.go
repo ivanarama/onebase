@@ -580,16 +580,12 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		http.Error(w, s.errText(r, err), 400)
 		return
 	}
-	if err := checkFormNumberFields(r, entity); err != nil {
-		http.Error(w, s.errText(r, err), http.StatusBadRequest)
-		return
-	}
-	fields = formToFields(r, entity)
-	if form := pickManagedForm(entity, "object"); form != nil {
+	form := pickManagedForm(entity, "object")
+	if form != nil {
 		var parseErr error
 		tpRows, parseErr = parseTablePartRowsForManagedForm(r, entity, form, true)
 		if parseErr != nil {
-			http.Error(w, s.errText(r, parseErr), http.StatusBadRequest)
+			s.renderObjectFormBadRequest(w, r, entity, existingID == nil, parseErr.Error(), tpRows)
 			return
 		}
 		// ValueTable attributes are form-local and are not persisted by
@@ -598,7 +594,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		// through the hooks; Save still writes only entity.TableParts.
 		valueTables, parseErr := parseValueTableRowsForManagedForm(r, form, entity, true)
 		if parseErr != nil {
-			http.Error(w, s.errText(r, parseErr), http.StatusBadRequest)
+			s.renderObjectFormBadRequest(w, r, entity, existingID == nil, parseErr.Error(), tpRows)
 			return
 		}
 		for name, rows := range valueTables {
@@ -608,9 +604,19 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		var parseErr error
 		tpRows, parseErr = parseTablePartRows(r, entity)
 		if parseErr != nil {
-			http.Error(w, s.errText(r, parseErr), http.StatusBadRequest)
+			s.renderObjectFormBadRequest(w, r, entity, existingID == nil, parseErr.Error(), tpRows)
 			return
 		}
+	}
+
+	// Разбираем шапку после табличных частей: при ошибке типа форма
+	// перерисовывается с теми же строками, а не выбрасывает весь введённый
+	// документ на отдельную текстовую страницу (#1083).
+	var fieldsErr error
+	fields, fieldsErr = formToFields(r, entity)
+	if fieldsErr != nil {
+		s.renderObjectFormBadRequest(w, r, entity, existingID == nil, fieldsErr.Error(), tpRows)
+		return
 	}
 
 	if entity.Hierarchical {
@@ -688,6 +694,14 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		data["IsPopup"] = r.FormValue("_popup") == "1" //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 	}
 	s.renderEntityForm(w, r, "object", data)
+}
+
+func (s *Server) renderObjectFormBadRequest(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, errMsg string, tpRows map[string][]map[string]any) {
+	// render() выставляет тот же заголовок, но после WriteHeader менять его уже
+	// поздно. Ответ остаётся настоящим 400 и при этом является HTML-формой.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	s.renderObjectFormError(w, r, entity, isNew, errMsg, nil, tpRows)
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
@@ -2243,6 +2257,17 @@ func parseManagedTablePartRows(
 // nil дал бы «<nil>», поэтому проверка на nil там добавлена явно — иначе
 // полностью пустые строки перестали бы отсеиваться.
 func tablePartFieldValue(f metadata.Field, raw string) (any, error) {
+	value, err := typedFormFieldValue(f, raw)
+	if err != nil {
+		return nil, fmt.Errorf("реквизит %q: %v", f.Name, err)
+	}
+	return value, nil
+}
+
+// typedFormFieldValue — общий разбор скалярных типов для шапки и табличных
+// частей. Ошибка здесь не содержит имени реквизита: каждый публичный путь
+// добавляет своё понятие (поле формы или реквизит строки) сам.
+func typedFormFieldValue(f metadata.Field, raw string) (any, error) {
 	switch f.Type {
 	case metadata.FieldTypeNumber:
 		if raw == "" {
@@ -2250,7 +2275,7 @@ func tablePartFieldValue(f metadata.Field, raw string) (any, error) {
 		}
 		number, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			return nil, fmt.Errorf("реквизит %q: %q не число", f.Name, raw)
+			return nil, fmt.Errorf("%q не число", raw)
 		}
 		return number, nil
 	case metadata.FieldTypeBool:
@@ -2261,7 +2286,7 @@ func tablePartFieldValue(f metadata.Field, raw string) (any, error) {
 		}
 		canonical, ok := canonicalFormDate(raw)
 		if !ok {
-			return nil, fmt.Errorf("реквизит %q: %q не дата", f.Name, raw)
+			return nil, fmt.Errorf("%q не дата", raw)
 		}
 		return canonical, nil
 	}

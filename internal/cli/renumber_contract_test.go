@@ -29,6 +29,12 @@ func renumberContractFixture(t *testing.T) (dir, dbPath string) {
 	writeProcrunFixture(t, dir, "config/app.yaml", "name: renumber-contract\nversion: \"1.0\"\n")
 	writeProcrunFixture(t, dir, "catalogs/Контрагенты.yaml",
 		"name: Контрагенты\nnumerator:\n  prefix: \"К-\"\n  length: 6\nfields:\n  - name: Наименование\n    type: string\n")
+	// Конфигурация уже знает следующий объект, но его таблицы ещё нет: ровно
+	// такое состояние оставляет миграция, остановленная гейтом уникальности на
+	// Контрагентах (#1080). Публичная команда и вызывающий её лаунчер должны
+	// считать это «дозаполнять нечего», а не падать с no such table.
+	writeProcrunFixture(t, dir, "catalogs/НовыйОбъект.yaml",
+		"name: НовыйОбъект\nnumerator:\n  prefix: \"Н-\"\n  length: 6\nfields:\n  - name: Наименование\n    type: string\n")
 
 	ent := renumberCatalog()
 	dbPath = filepath.Join(t.TempDir(), "contract.db")
