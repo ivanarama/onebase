@@ -840,12 +840,18 @@ func serializeValue(v any) any {
 		// секунд. Без явного формата time.Time.String() даёт
 		// "2026-05-26 10:00:00 +0300 MSK" — браузер не распознаёт и
 		// очищает значение поля.
-		return t.Format("2006-01-02T15:04")
+		//
+		// In(time.Local) обязателен: формат без зоны печатает стенные часы, а
+		// драйверы отдают момент в РАЗНЫХ зонах (SQLite всегда UTC, pgx — в зоне
+		// процесса). Без приведения одна и та же дата давала разные стенные часы
+		// на разных СУБД, а на хосте со смещением от UTC у SQLite съезжал
+		// календарный день (#1077).
+		return t.In(time.Local).Format("2006-01-02T15:04")
 	case *time.Time:
 		if t == nil {
 			return ""
 		}
-		return t.Format("2006-01-02T15:04")
+		return t.In(time.Local).Format("2006-01-02T15:04")
 	case fmt.Stringer:
 		return t.String()
 	}

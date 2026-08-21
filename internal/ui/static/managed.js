@@ -1779,6 +1779,83 @@ obManagedReady(obManagedInitDelegates);
     this.init();
   }
 
+  // obManagedSplitDate разбирает значение даты, пришедшее с сервера, ТЕКСТОМ.
+  //
+  // Сервер присылает «2006-01-02T15:04» уже в местной зоне (managedTPRowsJSON
+  // и serializeValue), поэтому здесь нужны стенные часы, а не момент времени.
+  // new Date(...) тут был бы ошибкой: он превратил бы строку в момент и снова
+  // пересчитал бы её по зоне браузера, вернув ровно тот съезд календарного дня,
+  // ради которого #1077 и заводился.
+  //
+  // Разбирается и «YYYY-MM-DD», и полная метка с зоной: старые значения,
+  // сохранённые до #1077, могут прийти в любом из этих видов.
+  function obManagedSplitDate(value) {
+    if (value == null || value === '') return null;
+    var s = String(value);
+    var m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(s);
+    if (!m) return null;
+    return {
+      date: m[1] + '-' + m[2] + '-' + m[3],
+      day: m[3] + '.' + m[2] + '.' + m[1],
+      time: (m[4] !== undefined) ? (m[4] + ':' + m[5]) : ''
+    };
+  }
+
+  // obManagedFormatDate — вид даты в ячейке: «14.03.1985», со временем только
+  // когда оно ненулевое. Тот же принцип, что у fmtDate на сервере.
+  function obManagedFormatDate(value) {
+    var parts = obManagedSplitDate(value);
+    if (!parts) {
+      if (value == null || value === '') return '';
+      // Значение есть, но датой не является. Показываем красным, а не как
+      // обычный текст: иначе испорченные данные выглядят нормальными — тот же
+      // приём, что у перечисления с неизвестным значением.
+      return "<span style='color:#dc2626' title='Значение не является датой'>"
+        + obManagedEscapeHTML(String(value)) + "</span>";
+    }
+    if (parts.time && parts.time !== '00:00') {
+      return '<span>' + parts.day + ' ' + parts.time + '</span>';
+    }
+    return '<span>' + parts.day + '</span>';
+  }
+
+  // Редактор даты. Тип поля — datetime-local, как у даты в шапке управляемой
+  // формы: реквизит date в этой платформе может нести время, и редактор,
+  // умеющий только день, молча обнулял бы его при каждой правке строки.
+  function ObDateEditor(args) {
+    var input, defaultValue = '';
+    this.init = function() {
+      input = document.createElement('input');
+      input.type = 'datetime-local';
+      input.className = 'editor-text';
+      input.style.cssText = 'width:100%;height:100%;border:none;outline:none;padding:2px 4px;font-size:13px';
+      args.container.appendChild(input);
+      this.loadValue(args.item);
+      input.focus();
+    };
+    this.destroy = function() { if (input) input.remove(); };
+    this.focus = function() { if (input) input.focus(); };
+    this.getValue = function() { return input.value; };
+    this.setValue = function(val) { input.value = (val == null) ? '' : String(val); };
+    this.loadValue = function(item) {
+      var parts = obManagedSplitDate(item[args.column.field]);
+      defaultValue = parts ? (parts.date + 'T' + (parts.time || '00:00')) : '';
+      input.value = defaultValue;
+    };
+    // Пустая ячейка отдаётся пустой строкой: сервер понимает её как «значения
+    // нет» и пишет NULL. Отдавать сюда «0001-01-01» нельзя — это уже значение.
+    this.serializeValue = function() { return input.value || ''; };
+    this.applyValue = function(item, state) { item[args.column.field] = state; };
+    this.isValueChanged = function() { return String(input.value) !== String(defaultValue); };
+    this.validate = function() {
+      // Браузер сам не пускает в datetime-local произвольный текст, но
+      // значение может прийти вставкой. Пустое допустимо — это очистка.
+      if (input.value === '' || obManagedSplitDate(input.value)) return {valid: true, msg: null};
+      return {valid: false, msg: 'Недопустимая дата «' + input.value + '»'};
+    };
+    this.init();
+  }
+
   // Custom number editor with locale-aware parsing (plan 48, phase 3).
   function ObNumberEditor(args) {
     var input, defaultValue;
@@ -1912,6 +1989,15 @@ obManagedReady(obManagedInitDelegates);
           var on = (value === true || value === "true" || value === 1 || value === "1");
           return on ? '<span style="color:#16a34a;font-weight:700">✓</span>'
                     : '<span style="color:#cbd5e1">—</span>';
+        };
+      } else if (c.type === "date") {
+        // До #1077 ветки для даты здесь не было вовсе: колонка падала в else,
+        // редактировалась свободным текстом и рисовалась defaultFormatter-ом
+        // SlickGrid — то есть сырой меткой вида «1985-03-13T21:00:00Z».
+        col.cssClass = "ob-date";
+        col.editor = ObDateEditor;
+        col.formatter = function(row, cell, value) {
+          return obManagedFormatDate(value);
         };
       } else {
         col.editor = Slick.Editors.Text;
