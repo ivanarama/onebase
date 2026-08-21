@@ -97,6 +97,54 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 	return template.New("root").Funcs(templateFuncs(bundle)).Parse(templateSource())
 }
 
+// fmtDateValue — единственное в проекте место, где значение даты превращается в
+// текст для показа ПРАВИЛЬНО: с приведением к местной зоне (`t.In(time.Local)`).
+// Без него момент печатается в той зоне, в которой его отдал драйвер, а она у
+// диалектов разная — SQLite всегда UTC, pgx берёт зону Go-процесса. На хосте со
+// смещением от UTC это меняет не только время, но и КАЛЕНДАРНЫЙ ДЕНЬ: дата,
+// записанная как 14.03.1985, показывалась на SQLite как 13-е (#1071).
+//
+// Функция пакетного уровня, а не замыкание в templateFuncs, именно поэтому:
+// показ даты нужен не только шаблонам, и каждая новая копия этой логики — новый
+// шанс забыть про `In(time.Local)`.
+func fmtDateValue(v any) string {
+	fmtT := func(t time.Time) string {
+		lt := t.In(time.Local)
+		h, m, sec := lt.Clock()
+		if h != 0 || m != 0 || sec != 0 {
+			return lt.Format("02.01.2006 15:04:05")
+		}
+		return lt.Format("02.01.2006")
+	}
+	if t, ok := v.(time.Time); ok {
+		return fmtT(t)
+	}
+	if s, ok := v.(string); ok && len(s) >= 10 {
+		// Strip Go monotonic clock suffix " m=+..."
+		if i := strings.Index(s, " m=+"); i >= 0 {
+			s = s[:i]
+		}
+		for _, layout := range []string{
+			time.RFC3339, time.RFC3339Nano,
+			"2006-01-02 15:04:05-07:00",
+			"2006-01-02 15:04:05 -0700 MST",
+			"2006-01-02 15:04:05.999999999 -0700 MST",
+			"2006-01-02T15:04:05", "2006-01-02 15:04:05",
+			"2006-01-02T15:04", "2006-01-02",
+		} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return fmtT(t)
+			}
+		}
+		if len(s) >= 10 {
+			if t, err := time.ParseInLocation("2006-01-02", s[:10], time.Local); err == nil {
+				return fmtT(t)
+			}
+		}
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 	translate := func(lang, key string) string {
 		if bundle != nil {
@@ -574,43 +622,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return b.String()
 		},
-		"fmtDate": func(v any) string {
-			fmtT := func(t time.Time) string {
-				lt := t.In(time.Local)
-				h, m, sec := lt.Clock()
-				if h != 0 || m != 0 || sec != 0 {
-					return lt.Format("02.01.2006 15:04:05")
-				}
-				return lt.Format("02.01.2006")
-			}
-			if t, ok := v.(time.Time); ok {
-				return fmtT(t)
-			}
-			if s, ok := v.(string); ok && len(s) >= 10 {
-				// Strip Go monotonic clock suffix " m=+..."
-				if i := strings.Index(s, " m=+"); i >= 0 {
-					s = s[:i]
-				}
-				for _, layout := range []string{
-					time.RFC3339, time.RFC3339Nano,
-					"2006-01-02 15:04:05-07:00",
-					"2006-01-02 15:04:05 -0700 MST",
-					"2006-01-02 15:04:05.999999999 -0700 MST",
-					"2006-01-02T15:04:05", "2006-01-02 15:04:05",
-					"2006-01-02T15:04", "2006-01-02",
-				} {
-					if t, err := time.Parse(layout, s); err == nil {
-						return fmtT(t)
-					}
-				}
-				if len(s) >= 10 {
-					if t, err := time.ParseInLocation("2006-01-02", s[:10], time.Local); err == nil {
-						return fmtT(t)
-					}
-				}
-			}
-			return fmt.Sprintf("%v", v)
-		},
+		"fmtDate": fmtDateValue,
 		"filterVal": func(params storage.ListParams, fieldName string) storage.FilterValue {
 			return filterValue(params, fieldName)
 		},
