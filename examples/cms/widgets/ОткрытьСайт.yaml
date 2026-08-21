@@ -8,14 +8,23 @@ title: Посмотреть сайт
 # платформы. За reverse proxy сайт виден в корне домена, и тогда ссылки в этом
 # виджете правятся под настоящий адрес: виджет знает про платформу, а не про
 # внешний адрес сайта.
+#
+# new_tab обязателен: сайт — это НЕ интерфейс базы, ссылок назад в админку там
+# нет и быть не должно. Открытый в той же вкладке, он оставляет пользователя
+# без пути обратно, кроме кнопки «назад» в браузере.
 items:
   - label: Главная
     url: /hs/site/
+    new_tab: true
   - label: Каталог
     url: /hs/site/catalog
+    new_tab: true
   - label: Новости
     url: /hs/site/news
+    new_tab: true
   - label: Карта сайта
     url: /hs/site/sitemap.xml
+    new_tab: true
   - label: robots.txt
     url: /hs/site/robots.txt
+    new_tab: true

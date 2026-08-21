@@ -130,8 +130,9 @@ func EChartsOption(chart *ChartData) map[string]any {
 
 // ActionLink is a single rendered button on the actions widget.
 type ActionLink struct {
-	Label string
-	URL   string
+	Label  string
+	URL    string
+	NewTab bool
 }
 
 // Runner executes widgets against the database. It holds references to the
@@ -300,7 +301,7 @@ func resolveFieldName(cols []string, declared string) string {
 func (r *Runner) runActions(w *metadata.Widget, res *Result) {
 	deniedSome := false
 	for _, item := range w.Items {
-		link := ActionLink{Label: item.Label}
+		link := ActionLink{Label: item.Label, NewTab: item.NewTab}
 		switch {
 		case item.URL != "":
 			link.URL = item.URL

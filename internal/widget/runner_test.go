@@ -244,6 +244,38 @@ func TestRunActions_FilteredByWriteRights(t *testing.T) {
 	}
 }
 
+// new_tab доезжает от метаданных до результата. Признак нужен ссылкам НАРУЖУ
+// (на публичный сайт, во внешнюю систему): открытые в той же вкладке, они
+// оставляют пользователя без интерфейса и без пути назад.
+func TestRunActions_NewTab(t *testing.T) {
+	ctx, runner, entity := newRowAccessRunner(t)
+	runner.User = nil // права здесь не проверяем
+
+	res := runner.Run(ctx, &metadata.Widget{
+		Name: "Ссылки",
+		Type: metadata.WidgetTypeActions,
+		Items: []metadata.WidgetAction{
+			{Label: "Сайт", URL: "/hs/site/", NewTab: true},
+			{Label: "Отчёт", URL: "/ui/report/остатки"},
+			{Label: "Товар", Entity: entity.Name, NewTab: true},
+		},
+	})
+	if len(res.Actions) != 3 {
+		t.Fatalf("ожидались три кнопки, получено %+v", res.Actions)
+	}
+	if !res.Actions[0].NewTab {
+		t.Errorf("внешняя ссылка должна открываться в новой вкладке: %+v", res.Actions[0])
+	}
+	// Умолчание — прежнее поведение: переход в текущей вкладке.
+	if res.Actions[1].NewTab {
+		t.Errorf("без new_tab ссылка обязана открываться в той же вкладке: %+v", res.Actions[1])
+	}
+	// Признак не теряется и на кнопке создания объекта.
+	if !res.Actions[2].NewTab {
+		t.Errorf("new_tab у entity-кнопки потерялся: %+v", res.Actions[2])
+	}
+}
+
 func newRowAccessRunner(t *testing.T) (context.Context, *Runner, *metadata.Entity) {
 	t.Helper()
 

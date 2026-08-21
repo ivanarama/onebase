@@ -50,6 +50,37 @@ func TestUI_IndexChartsUseJSONBootstrap(t *testing.T) {
 	}
 }
 
+// Ссылка actions-виджета с new_tab открывается в новой вкладке, остальные —
+// в текущей. Проверяется РАЗМЕТКА, а не поле результата: признак дошёл до
+// runner-а и потерялся в шаблоне — ровно тот случай, когда тест на структуре
+// зелёный, а пользователь всё равно уходит из интерфейса без пути назад.
+func TestUI_WidgetActionNewTab(t *testing.T) {
+	var buf bytes.Buffer
+	data := map[string]any{"Actions": []struct {
+		Label  string
+		URL    string
+		NewTab bool
+	}{
+		{Label: "Сайт", URL: "/hs/site/", NewTab: true},
+		{Label: "Отчёт", URL: "/ui/report/stock"},
+	}}
+	if err := tmpl.ExecuteTemplate(&buf, "widget-actions-body", data); err != nil {
+		t.Fatalf("render widget-actions-body: %v", err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `<a href="/hs/site/" target="_blank" rel="noopener">Сайт</a>`) {
+		t.Errorf("ссылка с new_tab не открывается в новой вкладке: %s", html)
+	}
+	// rel="noopener" обязателен вместе с target: без него открытая страница
+	// получает доступ к window.opener исходной вкладки.
+	if strings.Contains(html, `target="_blank"`) && !strings.Contains(html, `rel="noopener"`) {
+		t.Errorf("target без rel=noopener: %s", html)
+	}
+	if !strings.Contains(html, `<a href="/ui/report/stock">Отчёт</a>`) {
+		t.Errorf("обычная ссылка не должна получать target: %s", html)
+	}
+}
+
 // РМК — платформенная функция: администратор открывает её через «Все
 // функции», но прежний доступ обычного кассира не пропадает. Настройки агента
 // остаются в системной группе администратора.
