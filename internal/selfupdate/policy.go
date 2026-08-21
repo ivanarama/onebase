@@ -211,13 +211,63 @@ func CanSafelyUpdateBinaryDir(dir string) bool {
 	return ValidateBinaryUpdateTarget(dir) == nil
 }
 
+// Две причины отказа, которые нельзя сваливать в одну (#1065).
+//
+// Права и расположение — разные препятствия с разными выходами. «Нет прав»
+// снимается тем, у кого права есть (владелец каталога, администратор).
+// «Установка вне личного каталога» не снимается вообще ничем из интерфейса:
+// у администратора другой профиль, и запуск от его имени границу не двигает —
+// выходов ровно два, обновиться вручную или переставить платформу в свой
+// профиль. Один текст на оба случая посылал пользователя туда, где решения
+// нет, и он же не давал понять, какой именно случай перед ним.
+var (
+	// ErrTargetNotWritable — каталог установки недоступен на запись текущему
+	// пользователю.
+	ErrTargetNotWritable = errors.New("selfupdate: installation directory is not writable by the current user")
+	// ErrTargetNotPrivate — каталог доступен на запись, но самообновление в нём
+	// небезопасно: он общий (лежит вне личного каталога пользователя или открыт
+	// на запись другим), и обычные потребители не смогут участвовать в протоколе
+	// блокировок.
+	ErrTargetNotPrivate = errors.New("selfupdate: shared/readable system installations cannot be self-updated safely; use a private per-user installation")
+)
+
+// TargetBlock — класс причины, по которой самообновление недоступно. Нужен
+// интерфейсу: текст отказа выбирается по нему, а не по разбору сообщения.
+type TargetBlock string
+
+const (
+	// TargetBlockNone — препятствий нет.
+	TargetBlockNone TargetBlock = ""
+	// TargetBlockNotWritable — нет прав на запись в каталог установки.
+	TargetBlockNotWritable TargetBlock = "not-writable"
+	// TargetBlockNotPrivate — установка общая: правами это не лечится.
+	TargetBlockNotPrivate TargetBlock = "not-private"
+	// TargetBlockOther — прочее (каталог исчез, не каталог, ошибка ФС).
+	TargetBlockOther TargetBlock = "other"
+)
+
+// ClassifyTargetBlock переводит ошибку ValidateBinaryUpdateTarget в класс
+// причины.
+func ClassifyTargetBlock(err error) TargetBlock {
+	switch {
+	case err == nil:
+		return TargetBlockNone
+	case errors.Is(err, ErrTargetNotWritable):
+		return TargetBlockNotWritable
+	case errors.Is(err, ErrTargetNotPrivate):
+		return TargetBlockNotPrivate
+	default:
+		return TargetBlockOther
+	}
+}
+
 // ValidateBinaryUpdateTarget explains why dir cannot participate in the full
 // consumer/writer lifecycle protocol. A writable directory alone is not
 // sufficient when other users can execute the same package without access to
 // its coordination files.
 func ValidateBinaryUpdateTarget(dir string) error {
 	if !CanWriteBinaryDir(dir) {
-		return errors.New("selfupdate: installation directory is not writable by the current user")
+		return fmt.Errorf("%w: %s", ErrTargetNotWritable, dir)
 	}
 	_, err := targetCoordinationPermissions(dir)
 	return err
