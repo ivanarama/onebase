@@ -12,7 +12,6 @@ import (
 	"github.com/ivantit66/onebase/internal/metrics"
 	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
-	"github.com/ivantit66/onebase/internal/ui"
 	"github.com/ivantit66/onebase/internal/webhook"
 
 	oblog "github.com/ivantit66/onebase/internal/logging"
@@ -36,7 +35,7 @@ func mountMetrics(r chi.Router, token string, reg *metrics.Registry, store *stor
 	})
 }
 
-func registerRuntimeMetrics(reg *metrics.Registry, authRepo *auth.Repo, uiSrv *ui.Server, sched *scheduler.Scheduler, hooks *webhook.Dispatcher) {
+func registerRuntimeMetrics(reg *metrics.Registry, authRepo *auth.Repo, frontend AppServices, sched *scheduler.Scheduler, hooks *webhook.Dispatcher) {
 	reg.RegisterGaugeFunc("onebase_active_sessions", "Активные пользовательские сессии.", func() float64 {
 		if authRepo == nil {
 			return 0
@@ -50,26 +49,29 @@ func registerRuntimeMetrics(reg *metrics.Registry, authRepo *auth.Repo, uiSrv *u
 		return float64(n)
 	})
 	reg.RegisterGaugeFunc("onebase_sse_subscribers", "Активные SSE-подписчики.", func() float64 {
-		return float64(uiSrv.SSESubscriberCount())
+		return float64(frontend.SSESubscriberCount())
 	})
 	reg.RegisterGaugeFunc("onebase_active_scheduled_jobs", "Активные регламентные задания.", func() float64 {
+		if sched == nil {
+			return 0
+		}
 		return float64(sched.ActiveRunCount())
 	})
 	// Кэш ответов HTTP-сервисов (план 126).
 	reg.RegisterCounterFunc("onebase_http_cache_hits_total", "Ответы HTTP-сервисов, отданные из кэша.", func() float64 {
-		h, _, _, _ := uiSrv.ServiceCacheStats()
+		h, _, _, _ := frontend.ServiceCacheStats()
 		return float64(h)
 	})
 	reg.RegisterCounterFunc("onebase_http_cache_misses_total", "Промахи кэша ответов HTTP-сервисов.", func() float64 {
-		_, m, _, _ := uiSrv.ServiceCacheStats()
+		_, m, _, _ := frontend.ServiceCacheStats()
 		return float64(m)
 	})
 	reg.RegisterCounterFunc("onebase_http_cache_evictions_total", "Записи, вытесненные из кэша ответов по лимиту памяти.", func() float64 {
-		_, _, e, _ := uiSrv.ServiceCacheStats()
+		_, _, e, _ := frontend.ServiceCacheStats()
 		return float64(e)
 	})
 	reg.RegisterGaugeFunc("onebase_http_cache_bytes", "Объём кэша ответов HTTP-сервисов, байт.", func() float64 {
-		_, _, _, b := uiSrv.ServiceCacheStats()
+		_, _, _, b := frontend.ServiceCacheStats()
 		return float64(b)
 	})
 	if hooks != nil {
