@@ -8,6 +8,7 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -297,6 +298,44 @@ func TestDetailPanel_HandlerHonorsExplicitComposition(t *testing.T) {
 	}
 }
 
+// Пункт 1 #1083: после записи панель обязана читать текущий снимок из БД, а не
+// пустые/устаревшие значения строки, с которой открыли форму. Проверка идёт
+// публичными submitEdit → detailPanelRecord, как пользовательский путь.
+func TestDetailPanel_AfterEditShowsSavedValues_1083(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Номенклатура", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Вес", Type: metadata.FieldTypeNumber},
+		},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"Наименование": "До правки", "Вес": "1",
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	request := reqWithChi(http.MethodPost, "/ui/catalog/Номенклатура/"+id.String(), url.Values{
+		"Наименование": {"После правки"},
+		"Вес":          {"12,4"},
+	}, map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+	response := httptest.NewRecorder()
+	s.submitEdit(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("submitEdit: статус=%d, body=%s", response.Code, response.Body.String())
+	}
+
+	panel := fetchDetailPanel(t, s, ent, id)
+	if got, ok := detailPanelValueByLabel(panel, "Наименование"); !ok || got != "После правки" {
+		t.Fatalf("панель не показала сохранённое наименование: %+v", panel)
+	}
+	if got, ok := detailPanelValueByLabel(panel, "Вес"); !ok || got != "12.4" {
+		t.Fatalf("панель не показала сохранённый вес: %+v", panel)
+	}
+}
+
 // fetchDetailPanel зовёт публичный хендлер панели и разбирает ответ.
 func fetchDetailPanel(t *testing.T, s *Server, ent *metadata.Entity, id uuid.UUID) detailPanelData {
 	t.Helper()
@@ -404,6 +443,9 @@ func TestDetailPanel_ClientRuntime(t *testing.T) {
 	}
 	if !strings.Contains(js, "if (typeof obDetailInvalidate === 'function') obDetailInvalidate()") {
 		t.Error("live refresh не инвалидирует кэш панели деталей")
+	}
+	if !strings.Contains(js, "ob-detail-field-image") || !strings.Contains(js, "object-fit:contain") {
+		t.Error("картинка панели не получает отдельную компоновку с автоподгоном")
 	}
 }
 

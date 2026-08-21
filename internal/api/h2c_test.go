@@ -33,8 +33,8 @@ func serveH2CTestServer(t *testing.T) string {
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	srv := New(runtime.NewRegistry(), db, interpreter.New(), authRepo, "127.0.0.1", 0, ui.Config{}, nil)
-	t.Cleanup(srv.uiSrv.Close)
+	srv := newTestServer(runtime.NewRegistry(), db, interpreter.New(), authRepo, "127.0.0.1", 0, ui.Config{}, nil)
+	t.Cleanup(srv.frontend.(*ui.Server).Close)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

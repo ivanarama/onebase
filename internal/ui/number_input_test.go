@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -93,8 +94,15 @@ func TestParseSubmitForm_InvalidNumberReturnsWarningBeforeStorage(t *testing.T) 
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("статус = %d, ожидался 400", response.Code)
 	}
-	if body := response.Body.String(); !strings.Contains(body, "поле \"Значение\": некорректное число") {
+	if body := html.UnescapeString(response.Body.String()); !strings.Contains(body, "поле \"Значение\": некорректное число") {
 		t.Errorf("нет понятного предупреждения: %q", body)
+	} else {
+		if !strings.Contains(body, "<form") {
+			t.Errorf("ошибка показана отдельной текстовой страницей, а не в форме: %q", body)
+		}
+		if !strings.Contains(body, `value="12,3x"`) {
+			t.Errorf("форма потеряла введённое значение: %q", body)
+		}
 	}
 }
 

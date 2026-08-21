@@ -283,7 +283,7 @@ const tplManagedForm = `
        data-sg-cols='{{managedTPColumnsJSON $tpMeta.Fields $tpVirtualCols (str $ctx.Lang)}}'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
-       data-sg-rows='{{jsJSON $tpRows}}'
+       data-sg-rows='{{managedTPRowsJSON $tpMeta.Fields $tpRows}}'
        {{if $tpCmds}}data-sg-cmd="1"{{end}}
        {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}></div>
   {{if not $tpReadOnly}}<input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">{{end}}

@@ -698,26 +698,11 @@ func parseFormNumber(raw string) (decimal.Decimal, error) {
 	return result, nil
 }
 
-// checkFormNumberFields валидирует числовые реквизиты до запуска hook-ов и
-// транзакции записи, чтобы пользователь получил понятный ответ формы, а не
-// техническую ошибку драйвера PostgreSQL.
-func checkFormNumberFields(r *http.Request, entity *metadata.Entity) error {
-	for _, f := range entity.Fields {
-		if f.Type != metadata.FieldTypeNumber {
-			continue
-		}
-		raw := r.FormValue(f.Name)
-		if strings.TrimSpace(raw) == "" {
-			continue
-		}
-		if _, err := parseFormNumber(raw); err != nil {
-			return i18nerr.Errorf("поле %q: %v", f.Name, err)
-		}
-	}
-	return nil
-}
-
-func formToFields(r *http.Request, entity *metadata.Entity) map[string]any {
+// formToFields приводит каждый присланный реквизит шапки к объявленному типу
+// до границы storage. Табличные части идут через tablePartFieldValue; шапка
+// обязана пользоваться тем же закрытым разбором даты, иначе SQLite принимает
+// произвольный текст в TEXT-колонку даты, а PostgreSQL отвечает 500 (#1085).
+func formToFields(r *http.Request, entity *metadata.Entity) (map[string]any, error) {
 	fields := make(map[string]any)
 	for _, f := range entity.Fields {
 		val := r.FormValue(f.Name)
@@ -726,35 +711,27 @@ func formToFields(r *http.Request, entity *metadata.Entity) map[string]any {
 			continue
 		}
 		switch f.Type {
-		case metadata.FieldTypeDate:
-			parsed := false
-			for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"} {
-				if t, err := time.ParseInLocation(layout, val, time.Local); err == nil {
-					fields[f.Name] = t
-					parsed = true
-					break
-				}
-			}
-			if !parsed {
-				fields[f.Name] = val
-			}
-		case metadata.FieldTypeBool:
-			fields[f.Name] = val == "true"
-		case metadata.FieldTypeNumber:
-			if n, err := parseFormNumber(val); err == nil {
-				fields[f.Name] = n
-			} else {
-				fields[f.Name] = val
-			}
 		case metadata.FieldTypeRichText:
 			// Санитизация на ЗАПИСИ: вырезаем script/on*/внешние src ещё до
 			// сохранения (на выводе санитизируем повторно — defense-in-depth).
 			fields[f.Name] = richtext.Sanitize(val)
+		case metadata.FieldTypeNumber:
+			value, err := parseFormNumber(val)
+			if err != nil {
+				return nil, i18nerr.Errorf("поле %q: %v", f.Name, err)
+			}
+			fields[f.Name] = value
+		case metadata.FieldTypeDate, metadata.FieldTypeBool:
+			value, err := typedFormFieldValue(f, val)
+			if err != nil {
+				return nil, i18nerr.Errorf("поле %q: %v", f.Name, err)
+			}
+			fields[f.Name] = value
 		default:
 			fields[f.Name] = val
 		}
 	}
-	return fields
+	return fields, nil
 }
 
 // checkRichTextLimits проверяет, что ни одно richtext-поле формы не превышает

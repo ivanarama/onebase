@@ -27,7 +27,7 @@ func newDebugTestServer(t *testing.T) *Server {
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return New(runtime.NewRegistry(), db, interpreter.New(), authRepo, "", 0, ui.Config{}, nil)
+	return newTestServer(runtime.NewRegistry(), db, interpreter.New(), authRepo, "", 0, ui.Config{}, nil)
 }
 
 // Без ONEBASE_DEBUG_TOKEN debug-маршруты не регистрируются вовсе —

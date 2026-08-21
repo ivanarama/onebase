@@ -143,6 +143,18 @@ func renumberTargets(proj *project.Project, only string) ([]*metadata.Entity, er
 func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, write bool) (renumberEntityReport, error) {
 	field := storage.AutoNumberField(ent)
 	rep := renumberEntityReport{Object: ent.Name, Field: field}
+	// Частично выполненная миграция — основной сценарий этой команды: гейт
+	// уникальности мог остановить схему на одном объекте, а следующие таблицы
+	// ещё не созданы. Для такого объекта дозаполнять нечего. Проверяем наличие
+	// явно, не распознаём текст ошибки List: TableExists отделяет «нет таблицы»
+	// от настоящего сбоя соединения на обоих диалектах (#1080).
+	exists, err := db.TableExists(ctx, metadata.TableName(ent.Name))
+	if err != nil {
+		return rep, err
+	}
+	if !exists {
+		return rep, nil
+	}
 
 	lastRows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
 		Sort: "id", Dir: "desc", Limit: 1,

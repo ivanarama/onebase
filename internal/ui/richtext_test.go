@@ -32,7 +32,10 @@ func TestFormToFields_SanitizesRichText(t *testing.T) {
 	req := httptest.NewRequest("POST", "/", nil)
 	req.PostForm = body
 
-	fields := formToFields(req, richtextEntity())
+	fields, err := formToFields(req, richtextEntity())
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, _ := fields["Результат"].(string)
 	if got == "" {
 		t.Fatalf("Результат пуст, ожидался санитизированный HTML")
