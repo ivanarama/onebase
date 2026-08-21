@@ -92,6 +92,8 @@ loadtest/reports/
 *.db
 *.db-shm
 *.db-wal
+# Lifetime-lock базы (internal/dblock); остаётся после жёсткого kill сервера
+*.onebase.lock
 
 # Бэкапы
 *.obz
