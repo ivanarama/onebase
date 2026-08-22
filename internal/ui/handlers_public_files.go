@@ -8,7 +8,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +84,26 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h := w.Header()
+	// Слабый ETag зависит только от capability-токена: содержимое за живым
+	// токеном неизменно. Ставим валидаторы и обрабатываем совпадение ДО открытия
+	// вложения/S3-блоба — иначе обязательная ревалидация сначала скачивала бы
+	// весь объект, а уже затем возвращала короткий 304.
+	etag := `W/"` + pf.Token + `"`
+	h.Set("ETag", etag)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	// Тело можно хранить и повторно использовать после 304, но перед КАЖДЫМ
+	// использованием кэш обязан свериться с origin. Иначе fresh max-age позволил
+	// бы браузеру или shared proxy отдавать файл после удаления capability-токена
+	// из БД. Это условие одновременно обеспечивает немедленный отзыв и окончание
+	// ДействуетДо без попытки очищать неподконтрольные onebase внешние кэши.
+	h.Set("Cache-Control", "public, no-cache, max-age=0, must-revalidate")
+	if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	var (
 		content  io.ReadSeeker
 		mimeType string
@@ -130,30 +149,6 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 			name = att.Filename
 		}
 	}
-
-	h := w.Header()
-	// Слабый ETag от токена: содержимое за токеном не меняется, а у блобов нет
-	// времени загрузки — без ETag условные запросы для них не работали бы вовсе
-	// и каждый повторный визит перечитывал тело целиком. Токен уже есть в URL,
-	// так что в заголовке он ничего не раскрывает.
-	h.Set("ETag", `W/"`+pf.Token+`"`)
-	h.Set("X-Content-Type-Options", "nosniff")
-	// Файл пользователя не должен исполняться как часть интерфейса, даже если
-	// тип оказался «безопасным»: sandbox отключает скрипты и формы.
-	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	// max-age не должен пережить ДействуетДо, а immutable сюда не годится:
-	// ссылка отзываемая, и «никогда не перепроверять» продлил бы жизнь и
-	// отозванной, и истёкшей копии в браузере.
-	maxAge := pf.CacheSeconds
-	if pf.ExpiresAt != nil {
-		if left := int(time.Until(*pf.ExpiresAt).Seconds()); left < maxAge {
-			maxAge = left
-		}
-		if maxAge < 0 {
-			maxAge = 0
-		}
-	}
-	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(maxAge))
 
 	if inlineSafeType(mimeType) {
 		h.Set("Content-Type", mimeType)
