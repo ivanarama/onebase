@@ -60,8 +60,14 @@ func TestIndex_StartErrorFixButtonPresent(t *testing.T) {
 	html := startErrorPage(t)
 	for _, want := range []string{
 		`id="start-error-fix-btn"`,
+		`id="start-error-skipped"`,
+		`id="start-error-skipped-list"`,
+		`id="start-error-continue-btn"`,
 		"function runStartFix()",
+		"function continueStartAfterRenumber()",
 		"'/bases/' + id + '/renumber?write=1'",
+		"var _onebaseStartFixBegin = true;",
+		"var _onebaseStartFixEnd = true;",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в странице нет %q — предложенное лечение нажать нечем", want)

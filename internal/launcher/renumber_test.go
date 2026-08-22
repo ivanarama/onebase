@@ -191,6 +191,28 @@ func TestRenumberHandlerWritesOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+func TestRenumberHandlerPreservesSkippedObjects(t *testing.T) {
+	h, b := renumberTestBase(t)
+	fakeRenumber(t, RenumberReport{Write: true, Objects: []RenumberObject{
+		{Object: "Контрагент", Field: "Код", Empty: 2, Filled: 2},
+		{Object: "Номенклатура", Field: "Код", Error: "нет колонок is_folder, parent_id"},
+	}}, nil)
+
+	rec := postRenumber(t, h, b.ID, "?write=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код ответа = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeJSON(t, rec)
+	skipped, ok := body["skipped"].([]any)
+	if !ok || len(skipped) != 1 {
+		t.Fatalf("skipped потерян в HTTP-ответе: %#v", body["skipped"])
+	}
+	obj, _ := skipped[0].(map[string]any)
+	if obj["object"] != "Номенклатура" || obj["error"] != "нет колонок is_folder, parent_id" {
+		t.Fatalf("неверный skipped: %#v", obj)
+	}
+}
+
 // Запись в базу под работающим сервером недопустима: файл SQLite открыт им.
 func TestRenumberHandlerRefusesRunningBase(t *testing.T) {
 	h, b := renumberTestBase(t)

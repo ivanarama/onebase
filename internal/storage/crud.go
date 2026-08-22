@@ -646,6 +646,30 @@ func deletionMarkWhere(d Dialect, exclude bool) string {
 	return fmt.Sprintf("(deletion_mark IS NULL OR deletion_mark = %s)", boolFalseLit(d))
 }
 
+// ListEntityColumns returns every physical column selected by DB.List, in the
+// same order in which List decodes the row. Keep the column contract in one
+// place: callers which check whether an entity can be listed must not forget
+// optional service columns when metadata enables documents, predefined items
+// or hierarchy.
+func ListEntityColumns(entity *metadata.Entity) []string {
+	cols := make([]string, 0, len(entity.Fields)+6)
+	cols = append(cols, "id")
+	for _, f := range entity.Fields {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	if entity.Kind == metadata.KindDocument {
+		cols = append(cols, "posted")
+	}
+	cols = append(cols, "deletion_mark")
+	if entity.Kind == metadata.KindCatalog && len(entity.Predefined) > 0 {
+		cols = append(cols, "_is_predefined")
+	}
+	if entity.Hierarchical {
+		cols = append(cols, "is_folder", "parent_id")
+	}
+	return cols
+}
+
 func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) ([]map[string]any, error) {
 	// План 79F (defense-in-depth, по умолчанию выключен): если у сущности есть
 	// строковая политика, но список запрошен без вычисления строкового доступа
@@ -668,21 +692,8 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	}
 	d := db.dialect
 	table := metadata.TableName(entityName)
-	cols := []string{"id"}
-	for _, f := range entity.Fields {
-		cols = append(cols, metadata.ColumnName(f))
-	}
-	if entity.Kind == metadata.KindDocument {
-		cols = append(cols, "posted")
-	}
-	cols = append(cols, "deletion_mark")
+	cols := ListEntityColumns(entity)
 	hasPredefined := entity.Kind == metadata.KindCatalog && len(entity.Predefined) > 0
-	if hasPredefined {
-		cols = append(cols, "_is_predefined")
-	}
-	if entity.Hierarchical {
-		cols = append(cols, "is_folder", "parent_id")
-	}
 
 	var whereParts []string
 	var args []any

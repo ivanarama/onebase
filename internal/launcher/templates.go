@@ -301,9 +301,15 @@ const tplIndex = `
       <ul id="start-error-fix-list"></ul>
       <p>{{t $.Lang "Пустые коды и номера будут проставлены платформой; уже заполненные значения не меняются. Это изменение данных базы."}}</p>
     </div>
+    <div id="start-error-skipped" class="modal-error" style="display:none" role="alert" aria-live="assertive">
+      <p><b>{{t $.Lang "Часть объектов пока нельзя обработать"}}</b></p>
+      <ul id="start-error-skipped-list"></ul>
+      <p>{{t $.Lang "Их схема ещё не приведена к конфигурации. Проверьте причины и продолжите запуск, чтобы миграция догнала эти объекты."}}</p>
+    </div>
     <div id="start-error-status" style="font-size:12px;color:#555" role="status" aria-live="polite"></div>
     <div class="modal-btns">
       <button type="button" id="start-error-fix-btn" class="btn-ok" style="display:none" onclick="return runStartFix()">{{t $.Lang "Дозаполнить и запустить"}}</button>
+      <button type="button" id="start-error-continue-btn" class="btn-ok" style="display:none" onclick="return continueStartAfterRenumber()">{{t $.Lang "Продолжить запуск"}}</button>
       <button type="button" id="start-error-copy" class="btn-cancel" onclick="return copyStartError()">{{t $.Lang "Скопировать текст ошибки"}}</button>
       <button type="button" id="start-error-close" class="btn-cancel" onclick="return closeStartError()">{{t $.Lang "Закрыть"}}</button>
     </div>
@@ -909,6 +915,7 @@ function cleanProfiles(id) {
 // когда причина длиной в абзац. Здесь же место для действия: класс ошибок
 // «уникальность включена, но у N записей код пуст» платформа умеет вылечить
 // сама, и пользователю, открывшему базу кнопкой, предлагается кнопка.
+var _onebaseStartFixBegin = true;
 var _startFix = null;     // предложенное лекарство из ответа сервера
 var _startFixBase = '';   // база, к которой оно относится
 
@@ -928,6 +935,41 @@ function setStartButtonHTML(btn, html) {
 function startErrorStatus(text) {
   var el = document.getElementById('start-error-status');
   if (el) el.textContent = text || '';
+}
+
+function clearRenumberSkipped() {
+  var block = document.getElementById('start-error-skipped');
+  var list = document.getElementById('start-error-skipped-list');
+  var button = document.getElementById('start-error-continue-btn');
+  if (list) list.innerHTML = '';
+  if (block) block.style.display = 'none';
+  if (button) button.style.display = 'none';
+}
+
+// showRenumberSkipped оставляет предупреждение перед глазами до явного
+// подтверждения. Сразу закрыть диалог значило бы формально передать skipped в
+// JSON, но снова потерять его на последнем метре — в браузере лаунчера.
+function showRenumberSkipped(skipped) {
+  clearRenumberSkipped();
+  var block = document.getElementById('start-error-skipped');
+  var list = document.getElementById('start-error-skipped-list');
+  var button = document.getElementById('start-error-continue-btn');
+  var shown = 0;
+  if (list && Array.isArray(skipped)) {
+    for (var i = 0; i < skipped.length; i++) {
+      var obj = skipped[i] || {};
+      if (!obj.error) continue;
+      var li = document.createElement('li');
+      var label = String(obj.object || '?');
+      if (obj.field) label += '.' + String(obj.field);
+      li.textContent = label + ' — ' + String(obj.error);
+      list.appendChild(li);
+      shown++;
+    }
+  }
+  if (block) block.style.display = shown ? 'block' : 'none';
+  if (button) button.style.display = shown ? 'inline-block' : 'none';
+  return shown;
 }
 
 function openStartErrorModal() {
@@ -962,6 +1004,7 @@ function showStartErrorModal(msg, fix, id) {
   var block = document.getElementById('start-error-fix');
   var button = document.getElementById('start-error-fix-btn');
   var list = document.getElementById('start-error-fix-list');
+  clearRenumberSkipped();
   if (list) list.innerHTML = '';
   if (_startFix && list) {
     for (var i = 0; i < _startFix.objects.length; i++) {
@@ -1020,7 +1063,15 @@ function runStartFix() {
     .then(function(res){
       if (button) button.disabled = false;
       if (!res.ok) { startErrorStatus(res.body.error || '{{t $.Lang "Неизвестная ошибка"}}'); return; }
-      startErrorStatus('{{t $.Lang "Дозаполнено записей"}}: ' + (res.body.filled || 0));
+      var filled = (res.body && res.body.filled) || 0;
+      var skipped = (res.body && res.body.skipped) || [];
+      var skippedCount = showRenumberSkipped(skipped);
+      if (skippedCount) {
+        if (button) button.style.display = 'none';
+        startErrorStatus('{{t $.Lang "Дозаполнено записей"}}: ' + filled + '. {{t $.Lang "Пропущено объектов"}}: ' + skippedCount + '.');
+        return;
+      }
+      startErrorStatus('{{t $.Lang "Дозаполнено записей"}}: ' + filled);
       closeStartError();
       startBaseByID(id);
     })
@@ -1031,11 +1082,20 @@ function runStartFix() {
   return false;
 }
 
+function continueStartAfterRenumber() {
+  if (!_startFixBase) return false;
+  var id = _startFixBase;
+  closeStartError();
+  startBaseByID(id);
+  return false;
+}
+
 // startBaseByID повторяет запуск после починки — тем же путём, каким база
 // открывается кнопкой «Предприятие».
 function startBaseByID(id) {
   return _nativeOK ? startBaseNative(null, id) : startBase(null, id);
 }
+var _onebaseStartFixEnd = true;
 
 // showStartError показывает ошибку запуска в уже открытом окне-заготовке.
 // Раньше окно закрывалось, а alert уходил под него — в WebView2 это выглядело
