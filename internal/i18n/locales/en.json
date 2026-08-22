@@ -640,6 +640,8 @@
   "Политика базы требует двухфакторной аутентификации. Включите её в режиме Предприятия (Профиль → Второй фактор) и повторите вход.": "This database requires two-factor authentication. Enable it in Enterprise mode (Profile → Second factor) and sign in again.",
   "Полная выгрузка (база + конфигурация)": "Full export (database + configuration)",
   "Полное восстановление выполнено: %d таблиц, %d файлов вложений": "Full restore completed: %d tables, %d attachment files",
+  "Правка не применена: с ней конфигурация не загружается, а откат не удался": "Edit not applied: the configuration does not load with it, and the rollback failed",
+  "Правка отклонена и откачена: с ней конфигурация перестала бы загружаться": "Edit rejected and rolled back: the configuration would stop loading",
   "Префикс базы снят": "Database prefix cleared",
   "Сброшен второй фактор (перепривяжите): %s": "Two-factor authentication was reset (re-enroll): %s",
   "Полное восстановление выполнено: база данных + конфигурация": "Full restore completed: database + configuration",
