@@ -317,7 +317,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="r-{{.Name}}">
     <div class="panel-title">📊 {{.Name}}</div>
     <div class="panel-kind">{{t $.Lang "Регистр накопления"}}</div>
-    {{template "register-detail" (dict "Register" . "BaseID" $.Base.ID "AllEntityNames" $.AllEntityNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity "Lang" $.Lang "AvailableLangs" $.AvailableLangs)}}
+    {{template "register-detail" (dict "Register" . "BaseID" $.Base.ID "AllEntityNames" $.AllEntityNames "AllEnumNames" $.AllEnumNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity "Lang" $.Lang "AvailableLangs" $.AvailableLangs)}}
   </div>
   {{end}}
 
@@ -339,6 +339,7 @@ const cfgTabTree = `{{define "tab-tree"}}
     </div>
     {{if $.AvailableLangs}}{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" "titles" "Values" .Titles)}}{{end}}
     {{$allEntities := $.AllEntityNames}}
+    {{$allEnums := $.AllEnumNames}}
     {{if .Dimensions}}
     <details open><summary class="section-hd" style="cursor:pointer">{{t $.Lang "Измерения"}} ({{len .Dimensions}})</summary>
     <table class="fields-tbl" id="ir-dim-{{.Name}}">
@@ -354,6 +355,7 @@ const cfgTabTree = `{{define "tab-tree"}}
           <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
           <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>{{t $.Lang "булево"}}</option>
           <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>{{t $.Lang "ссылка →"}}</option>
+          <option value="enum"      {{if eq $f.Type "enum"}}selected{{end}}>{{t $.Lang "перечисление →"}}</option>
         </select>
         <span id="irdn-{{$ir.Name}}-{{$i}}"{{if ne $f.Type "number"}} style="display:none"{{end}} title="{{t $.Lang "Длина, Точность"}}">
           <input type="number" min="1" name="dim.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
@@ -361,9 +363,13 @@ const cfgTabTree = `{{define "tab-tree"}}
         </span>
       </td>
       <td>
-        <select name="dim.{{$i}}.ref" id="irdr-{{$ir.Name}}-{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+        <select name="dim.{{$i}}.ref" id="irdr-{{$ir.Name}}-{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
           <option value="">{{t $.Lang "— выбрать —"}}</option>
-          {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+          {{if eq $f.Type "enum"}}
+            {{range $allEnums}}<option value="{{.}}"{{if eq . $f.EnumName}} selected{{end}}>{{.}}</option>{{end}}
+          {{else}}
+            {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+          {{end}}
         </select>
       </td>
       <td style="text-align:center"><button type="button" onclick="cfgDeleteField(this)" title="{{t $.Lang "Удалить поле"}}" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button></td>
@@ -389,6 +395,7 @@ const cfgTabTree = `{{define "tab-tree"}}
           <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
           <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>{{t $.Lang "булево"}}</option>
           <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>{{t $.Lang "ссылка →"}}</option>
+          <option value="enum"      {{if eq $f.Type "enum"}}selected{{end}}>{{t $.Lang "перечисление →"}}</option>
         </select>
         <span id="irrn-{{$ir.Name}}-{{$i}}"{{if ne $f.Type "number"}} style="display:none"{{end}} title="{{t $.Lang "Длина, Точность"}}">
           <input type="number" min="1" name="res.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
@@ -396,9 +403,13 @@ const cfgTabTree = `{{define "tab-tree"}}
         </span>
       </td>
       <td>
-        <select name="res.{{$i}}.ref" id="irrr-{{$ir.Name}}-{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+        <select name="res.{{$i}}.ref" id="irrr-{{$ir.Name}}-{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
           <option value="">{{t $.Lang "— выбрать —"}}</option>
-          {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+          {{if eq $f.Type "enum"}}
+            {{range $allEnums}}<option value="{{.}}"{{if eq . $f.EnumName}} selected{{end}}>{{.}}</option>{{end}}
+          {{else}}
+            {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+          {{end}}
         </select>
       </td>
       <td style="text-align:center"><button type="button" onclick="cfgDeleteField(this)" title="{{t $.Lang "Удалить поле"}}" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button></td>
@@ -1981,6 +1992,7 @@ const cfgRegDetail = `{{define "register-detail"}}
 {{$rg := .Register}}
 {{$baseID := .BaseID}}
 {{$allEntities := .AllEntityNames}}
+{{$allEnums := .AllEnumNames}}
 {{$fSaved := .FieldsSaved}}
 {{$fSavedEnt := .FieldsSavedEntity}}
 
@@ -2002,6 +2014,7 @@ const cfgRegDetail = `{{define "register-detail"}}
       <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
       <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>{{t $.Lang "булево"}}</option>
       <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>{{t $.Lang "ссылка →"}}</option>
+      <option value="enum"      {{if eq $f.Type "enum"}}selected{{end}}>{{t $.Lang "перечисление →"}}</option>
     </select>
     <span id="cfn-{{$rg.Name}}-d{{$i}}"{{if ne $f.Type "number"}} style="display:none"{{end}} title="{{t $.Lang "Длина, Точность"}}">
       <input type="number" min="1" name="dim.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
@@ -2009,9 +2022,13 @@ const cfgRegDetail = `{{define "register-detail"}}
     </span>
   </td>
   <td>
-    <select name="dim.{{$i}}.ref" id="cfr-{{$rg.Name}}-d{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+    <select name="dim.{{$i}}.ref" id="cfr-{{$rg.Name}}-d{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
       <option value="">{{t $.Lang "— выбрать —"}}</option>
-      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+      {{if eq $f.Type "enum"}}
+        {{range $allEnums}}<option value="{{.}}"{{if eq . $f.EnumName}} selected{{end}}>{{.}}</option>{{end}}
+      {{else}}
+        {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+      {{end}}
     </select>
   </td>
   <td style="text-align:center"><button type="button" onclick="cfgDeleteField(this)" title="{{t $.Lang "Удалить поле"}}" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button></td>
@@ -2035,6 +2052,7 @@ const cfgRegDetail = `{{define "register-detail"}}
       <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
       <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>{{t $.Lang "булево"}}</option>
       <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>{{t $.Lang "ссылка →"}}</option>
+      <option value="enum"      {{if eq $f.Type "enum"}}selected{{end}}>{{t $.Lang "перечисление →"}}</option>
     </select>
     <span id="cfn-{{$rg.Name}}-r{{$i}}"{{if ne $f.Type "number"}} style="display:none"{{end}} title="{{t $.Lang "Длина, Точность"}}">
       <input type="number" min="1" name="res.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
@@ -2042,9 +2060,13 @@ const cfgRegDetail = `{{define "register-detail"}}
     </span>
   </td>
   <td>
-    <select name="res.{{$i}}.ref" id="cfr-{{$rg.Name}}-r{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+    <select name="res.{{$i}}.ref" id="cfr-{{$rg.Name}}-r{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
       <option value="">{{t $.Lang "— выбрать —"}}</option>
-      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+      {{if eq $f.Type "enum"}}
+        {{range $allEnums}}<option value="{{.}}"{{if eq . $f.EnumName}} selected{{end}}>{{.}}</option>{{end}}
+      {{else}}
+        {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+      {{end}}
     </select>
   </td>
   <td style="text-align:center"><button type="button" onclick="cfgDeleteField(this)" title="{{t $.Lang "Удалить поле"}}" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button></td>
@@ -2068,6 +2090,7 @@ const cfgRegDetail = `{{define "register-detail"}}
       <option value="date"      {{if eq $f.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
       <option value="bool"      {{if eq $f.Type "bool"}}selected{{end}}>{{t $.Lang "булево"}}</option>
       <option value="reference" {{if eq $f.Type "reference"}}selected{{end}}>{{t $.Lang "ссылка →"}}</option>
+      <option value="enum"      {{if eq $f.Type "enum"}}selected{{end}}>{{t $.Lang "перечисление →"}}</option>
     </select>
     <span id="cfn-{{$rg.Name}}-a{{$i}}"{{if ne $f.Type "number"}} style="display:none"{{end}} title="{{t $.Lang "Длина, Точность"}}">
       <input type="number" min="1" name="attr.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
@@ -2075,9 +2098,13 @@ const cfgRegDetail = `{{define "register-detail"}}
     </span>
   </td>
   <td>
-    <select name="attr.{{$i}}.ref" id="cfr-{{$rg.Name}}-a{{$i}}"{{if ne $f.Type "reference"}} style="display:none"{{end}}>
+    <select name="attr.{{$i}}.ref" id="cfr-{{$rg.Name}}-a{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
       <option value="">{{t $.Lang "— выбрать —"}}</option>
-      {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+      {{if eq $f.Type "enum"}}
+        {{range $allEnums}}<option value="{{.}}"{{if eq . $f.EnumName}} selected{{end}}>{{.}}</option>{{end}}
+      {{else}}
+        {{range $allEntities}}<option value="{{.}}"{{if eq . $f.RefEntity}} selected{{end}}>{{.}}</option>{{end}}
+      {{end}}
     </select>
   </td>
   <td style="text-align:center"><button type="button" onclick="cfgDeleteField(this)" title="{{t $.Lang "Удалить поле"}}" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button></td>
