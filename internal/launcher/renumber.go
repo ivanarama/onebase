@@ -48,6 +48,12 @@ type RenumberObject struct {
 	Field  string `json:"field"`
 	Empty  int    `json:"empty"`
 	Filled int    `json:"filled"`
+	// Error — объект пропущен командой: его таблицы ещё нет или в ней нет
+	// колонок под объявленные реквизиты. Только этот класс и пропускается —
+	// сорвавшаяся работа роняет команду целиком, и тогда сюда не доходит
+	// вообще ничего. Кнопке пропуск не мешает: лечится то, что прочиталось,
+	// остальное догонит миграция при следующем запуске базы.
+	Error string `json:"error,omitempty"`
 }
 
 // RenumberReport — отчёт дочерней команды целиком.
@@ -74,6 +80,17 @@ func (rep RenumberReport) Pending() []RenumberObject {
 	var out []RenumberObject
 	for _, obj := range rep.Objects {
 		if obj.Empty > 0 {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
+// Skipped — объекты, которые команда не смогла прочитать.
+func (rep RenumberReport) Skipped() []RenumberObject {
+	var out []RenumberObject
+	for _, obj := range rep.Objects {
+		if obj.Error != "" {
 			out = append(out, obj)
 		}
 	}
@@ -167,6 +184,13 @@ func (h *handler) renumberFix(ctx context.Context, base *Base, startErr error) *
 			"baseID", base.ID, "err", err)
 		return nil
 	}
+	// Пропуски не отменяют кнопку, но и молчать о них нельзя: если
+	// дозаполнение не помогло, в журнале должно быть видно, чего команда не
+	// увидела.
+	for _, obj := range rep.Skipped() {
+		oblog.Component("launcher").Warn("объект пропущен при дозаполнении кодов",
+			"baseID", base.ID, "object", obj.Object, "err", obj.Error)
+	}
 	pending := rep.Pending()
 	if len(pending) == 0 {
 		return nil
@@ -222,11 +246,15 @@ func (h *handler) renumber(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}
+	// skipped едет рядом с filled намеренно: «дозаполнено 0» и «дозаполнено 0,
+	// но три объекта пропущены» — разные ответы, и второй объясняет, почему
+	// запуск может не поправиться с первого раза.
 	writeJSON(w, 200, map[string]any{
 		"ok":      true,
 		"write":   write,
 		"empty":   rep.EmptyCount(),
 		"filled":  rep.FilledCount(),
 		"objects": rep.Pending(),
+		"skipped": rep.Skipped(),
 	})
 }

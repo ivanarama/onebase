@@ -61,6 +61,10 @@ type renumberEntityReport struct {
 	Empty   int      `json:"empty"`
 	Filled  int      `json:"filled"`
 	Samples []string `json:"samples,omitempty"`
+	// Error — почему объект пропущен. Пустая строка = объект обработан.
+	// Причина едет в отчёте, а не в коде возврата: непрочитанный объект не
+	// отменяет работу по остальным (см. runRenumber).
+	Error string `json:"error,omitempty"`
 }
 
 func runRenumber(cmd *cobra.Command, _ []string) error {
@@ -96,8 +100,30 @@ func runRenumber(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Отставшая схема — не ошибка команды, а её рабочий случай. Команду зовут
+	// ровно тогда, когда схема базы РАСХОДИТСЯ с конфигурацией: гейт
+	// уникальности остановил миграцию на первом же объекте, и всё, что шло
+	// после него, осталось без новых колонок. Раньше чтение такого соседа
+	// падало («no such column») и уносило весь отчёт — вместе с тем объектом,
+	// из-за которого база и не стартовала; пользователь лаунчера терял кнопку
+	// «Дозаполнить коды», потому что она рисуется по отчёту (#1105).
+	//
+	// Отставание диагностируется ДО обработки и только по схеме. Любая ошибка
+	// самой работы — чтения, генерации номера, записи — по-прежнему валит
+	// команду немедленно: «часть объектов пропущена» и «запись сорвалась на
+	// середине» обязаны отличаться, иначе лаунчер ответит ok:true на неудачу.
 	reports := make([]renumberEntityReport, 0, len(targets))
 	for _, ent := range targets {
+		gap, err := renumberSchemaGap(ctx, db, ent)
+		if err != nil {
+			return fmt.Errorf("%s: %w", ent.Name, err)
+		}
+		if gap != "" {
+			reports = append(reports, renumberEntityReport{
+				Object: ent.Name, Field: storage.AutoNumberField(ent), Error: gap,
+			})
+			continue
+		}
 		rep, err := renumberEntity(ctx, db, ent, write)
 		if err != nil {
 			return fmt.Errorf("%s: %w", ent.Name, err)
@@ -115,6 +141,55 @@ func runRenumber(cmd *cobra.Command, _ []string) error {
 	}
 	printRenumberReport(reports, write)
 	return nil
+}
+
+// renumberSchemaGap отвечает на один вопрос: отстала ли таблица объекта от
+// конфигурации настолько, что его нельзя даже прочитать. Пустая строка —
+// объект обрабатывается обычным путём; непустая — причина пропуска, годная для
+// показа человеку.
+//
+// Смотрим схему, а не текст ошибки чтения. Распознавание «no such column» в
+// сообщении драйвера означало бы, что любая опечатка в SQL или сбой соединения
+// с похожим текстом тоже станет «пропуском» — то есть успехом. Здесь же обе
+// проверки задают схеме прямой вопрос и различают «нет колонки» и «сорвалась
+// интроспекция»: вторая — ошибка, и она уходит наверх.
+func renumberSchemaGap(ctx context.Context, db *storage.DB, ent *metadata.Entity) (string, error) {
+	table := metadata.TableName(ent.Name)
+	// Таблицы ещё нет — миграция до объекта не дошла (#1080). Тот же класс, что
+	// и недостающая колонка: дозаполнять нечего, работа не сорвана.
+	exists, err := db.TableExists(ctx, table)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return fmt.Sprintf("таблицы %s ещё нет: миграция до объекта не дошла", table), nil
+	}
+	// Таблица есть, а одной из колонок, которые читает List, нет: гейт
+	// уникальности остановил миграцию раньше, чем она дошла сюда. Проверяем тот
+	// же список, что строит сам List, включая posted/deletion_mark и служебные
+	// колонки иерархии/predefined. Иначе объект без нового реквизита пропустим,
+	// а объект без нового is_folder ошибочно выдадим за настоящий сбой чтения.
+	var missing []string
+	for _, col := range storage.ListEntityColumns(ent) {
+		has, err := db.Dialect().ColumnExists(ctx, db, table, col)
+		if err != nil {
+			return "", fmt.Errorf("проверка колонки %s.%s: %w", table, col, err)
+		}
+		if !has {
+			// id создаётся вместе с таблицей и никогда не добавляется догоняющей
+			// миграцией. Таблица без первичного ключа повреждена, а не отстала:
+			// такой объект нельзя превращать в успешный skip.
+			if col == "id" {
+				return "", fmt.Errorf("таблица %s повреждена: нет обязательной колонки id", table)
+			}
+			missing = append(missing, col)
+		}
+	}
+	if len(missing) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("таблица %s отстала от конфигурации: нет колонок %s",
+		table, strings.Join(missing, ", ")), nil
 }
 
 // renumberTargets отбирает объекты с объявленным нумератором.
@@ -143,18 +218,6 @@ func renumberTargets(proj *project.Project, only string) ([]*metadata.Entity, er
 func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, write bool) (renumberEntityReport, error) {
 	field := storage.AutoNumberField(ent)
 	rep := renumberEntityReport{Object: ent.Name, Field: field}
-	// Частично выполненная миграция — основной сценарий этой команды: гейт
-	// уникальности мог остановить схему на одном объекте, а следующие таблицы
-	// ещё не созданы. Для такого объекта дозаполнять нечего. Проверяем наличие
-	// явно, не распознаём текст ошибки List: TableExists отделяет «нет таблицы»
-	// от настоящего сбоя соединения на обоих диалектах (#1080).
-	exists, err := db.TableExists(ctx, metadata.TableName(ent.Name))
-	if err != nil {
-		return rep, err
-	}
-	if !exists {
-		return rep, nil
-	}
 
 	lastRows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
 		Sort: "id", Dir: "desc", Limit: 1,
@@ -277,8 +340,13 @@ func printRenumberReport(reports []renumberEntityReport, write bool) {
 		outf("Объектов с объявленным numerator: не найдено.\n")
 		return
 	}
-	total := 0
+	total, skipped := 0, 0
 	for _, r := range reports {
+		if r.Error != "" {
+			skipped++
+			outf("%s.%s: пропущен — %s\n", r.Object, r.Field, r.Error)
+			continue
+		}
 		if write {
 			outf("%s.%s: заполнено %d\n", r.Object, r.Field, r.Filled)
 			total += r.Filled
@@ -292,7 +360,20 @@ func printRenumberReport(reports []renumberEntityReport, write bool) {
 	}
 	if write {
 		outf("\nИтого заполнено: %d\n", total)
+		printRenumberSkipped(skipped)
 		return
 	}
 	outf("\nИтого без значения: %d. Ничего не изменено — повторите с --write.\n", total)
+	printRenumberSkipped(skipped)
+}
+
+// printRenumberSkipped объясняет пропуск: сам по себе он выглядит как отказ, а
+// означает «схема этих объектов ещё не догнала конфигурацию». Догоняет её
+// миграция при следующем запуске базы — после того, как дозаполнение снимет
+// то, обо что она споткнулась.
+func printRenumberSkipped(skipped int) {
+	if skipped == 0 {
+		return
+	}
+	outf("Пропущено объектов: %d — их таблицы ещё не приведены к конфигурации; повторите после запуска базы.\n", skipped)
 }
