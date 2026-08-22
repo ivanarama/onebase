@@ -241,10 +241,9 @@ func taskParamValue(name string, value any) any {
 	case decimal.Decimal:
 		return typed
 	case time.Time:
-		// Дата едет строкой RFC3339 и возвращается датой при чтении задачи —
-		// тем же способом, каким шаблоны {{today}} превращаются в даты на пути
-		// params регламентного задания.
-		return typed.Format(time.RFC3339)
+		// Storage сохраняет тип даты в служебной карте: строкой её здесь делать
+		// нельзя, иначе обработка очереди получит RFC3339 вместо DSL Даты.
+		return typed
 	}
 	interpreter.RaiseUserError("ФоновыеЗадания.Поставить: параметр «" + name +
 		"» имеет неподдерживаемый тип — допустимы строка, число, булево и дата " +
@@ -276,8 +275,9 @@ func jobTaskStruct(task *storage.JobTask) any {
 	return st
 }
 
-// restoreTaskParam возвращает значение параметра в DSL-виде: строка в формате
-// RFC3339 снова становится датой (см. taskParamValue).
+// restoreTaskParam сохраняет совместимость со строковыми датами в задачах,
+// поставленных до появления типизированной сериализации. Новые задачи storage
+// уже возвращает с time.Time и этот эвристический путь не используют.
 func restoreTaskParam(value any) any {
 	if text, ok := value.(string); ok {
 		if parsed, err := time.Parse(time.RFC3339, text); err == nil {

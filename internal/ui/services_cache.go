@@ -296,8 +296,9 @@ func (c *serviceCache) removeElement(el *list.Element) {
 
 // serviceCacheKey строит ключ запроса.
 //
-// Параметры запроса сортируются: без этого «?a=1&b=2» и «?b=2&a=1» дали бы две
-// записи с одинаковым содержимым.
+// Имена параметров запроса сортируются: без этого «?a=1&b=2» и «?b=2&a=1»
+// дали бы две записи с одинаковым содержимым. Значения одного имени сохраняют
+// исходный порядок: DSL читает первое значение, поэтому переставлять их нельзя.
 func serviceCacheKey(svc *httpservice.Service, r *http.Request, lang string) string {
 	var b strings.Builder
 	b.WriteString(svc.RootURL)
@@ -331,9 +332,7 @@ func sortedQuery(q url.Values) string {
 	sort.Strings(keys)
 	var b strings.Builder
 	for _, k := range keys {
-		vals := append([]string(nil), q[k]...)
-		sort.Strings(vals)
-		for _, v := range vals {
+		for _, v := range q[k] {
 			b.WriteString(url.QueryEscape(k))
 			b.WriteByte('=')
 			b.WriteString(url.QueryEscape(v))
@@ -348,38 +347,159 @@ func computeETag(body []byte) string {
 	return `W/"` + hex.EncodeToString(sum[:8]) + `"`
 }
 
-// cacheCapture собирает ответ обработчика в память вместо отправки клиенту.
+// cacheCapture собирает ответ обработчика в память до limit. Если очередная
+// запись пересекает предел, уже собранный префикс и все последующие байты сразу
+// уходят в out: max_body остаётся настоящим пределом памяти, а клиент не теряет
+// ни статус, ни заголовки, ни начало тела.
 type cacheCapture struct {
-	header http.Header
-	status int
-	body   []byte
+	out         http.ResponseWriter
+	header      http.Header
+	status      int
+	body        []byte
+	limit       int64
+	wroteHeader bool
+	passthrough bool
 }
 
-func newCacheCapture() *cacheCapture {
-	return &cacheCapture{header: make(http.Header), status: http.StatusOK}
+func newCacheCapture(out http.ResponseWriter, limit int64) *cacheCapture {
+	return &cacheCapture{out: out, header: make(http.Header), status: http.StatusOK, limit: limit}
 }
 
 func (c *cacheCapture) Header() http.Header { return c.header }
 
-func (c *cacheCapture) WriteHeader(status int) { c.status = status }
+func (c *cacheCapture) WriteHeader(status int) {
+	if c.wroteHeader {
+		return
+	}
+	c.wroteHeader = true
+	c.status = status
+}
 
 func (c *cacheCapture) Write(p []byte) (int, error) {
+	if c.passthrough {
+		return c.out.Write(p) //nolint:gosec // тело формирует обработчик сервиса
+	}
+	if !c.wroteHeader {
+		c.WriteHeader(http.StatusOK)
+	}
+	remaining := c.limit - int64(len(c.body))
+	if remaining >= 0 && int64(len(p)) <= remaining {
+		c.appendBody(p)
+		return len(p), nil
+	}
+
+	c.passthrough = true
+	copyCapturedHeaders(c.out.Header(), c.header)
+	c.out.WriteHeader(c.status)
+	if len(c.body) > 0 {
+		if _, err := c.out.Write(c.body); err != nil { //nolint:gosec // тело формирует обработчик сервиса
+			c.body = nil
+			return 0, err
+		}
+		c.body = nil
+	}
+	return c.out.Write(p) //nolint:gosec // тело формирует обработчик сервиса
+}
+
+// appendBody растит буфер геометрически, но его capacity никогда не превышает
+// max_body. Это важно: проверка только len оставила бы скрытый перерасход из-за
+// запаса, который append выделяет самостоятельно.
+func (c *cacheCapture) appendBody(p []byte) {
+	newLen := len(c.body) + len(p)
+	if newLen > cap(c.body) {
+		newCap := cap(c.body)
+		if newCap == 0 {
+			newCap = 512
+			if int64(newCap) > c.limit {
+				newCap = newLen
+			}
+		}
+		for newCap < newLen {
+			grown := newCap + newCap/2
+			if grown <= newCap || int64(grown) > c.limit {
+				newCap = newLen
+				break
+			}
+			newCap = grown
+		}
+		next := make([]byte, len(c.body), newCap)
+		copy(next, c.body)
+		c.body = next
+	}
 	c.body = append(c.body, p...)
-	return len(p), nil
+}
+
+func copyCapturedHeaders(dst, src http.Header) {
+	for k, vals := range src {
+		for _, v := range vals {
+			dst.Add(k, v)
+		}
+	}
 }
 
 // cacheable решает, можно ли сохранить собранный ответ.
 //
-// Только 200 и только без Set-Cookie: «404 залип на час» — типовой инцидент
-// CMS, а кэшированный Set-Cookie раздал бы одну сессию нескольким клиентам.
-func (c *cacheCapture) cacheable(limit int64) bool {
-	if c.status != http.StatusOK {
+// Помимо 200 запрещены Set-Cookie, приватные cache directives и Vary, который
+// внутренний ключ не умеет воспроизвести. Иначе один клиент мог бы наполнить
+// общую запись персонализированным ответом для всех остальных.
+func (c *cacheCapture) cacheable(svc *httpservice.Service) bool {
+	if c.passthrough || c.status != http.StatusOK {
 		return false
 	}
-	if len(c.header.Values("Set-Cookie")) > 0 {
+	if len(c.header.Values("Set-Cookie")) > 0 ||
+		(c.out != nil && len(c.out.Header().Values("Set-Cookie")) > 0) {
 		return false
 	}
-	return int64(len(c.body)) <= limit
+	if cacheControlDisallowsStorage(c.header) ||
+		(c.out != nil && cacheControlDisallowsStorage(c.out.Header())) {
+		return false
+	}
+	if !handlerVarySupported(c.header, svc) {
+		return false
+	}
+	return int64(len(c.body)) <= c.limit
+}
+
+func cacheControlDisallowsStorage(h http.Header) bool {
+	for _, value := range h.Values("Cache-Control") {
+		for _, raw := range strings.Split(value, ",") {
+			name, directiveValue, hasValue := strings.Cut(strings.TrimSpace(raw), "=")
+			switch strings.ToLower(strings.TrimSpace(name)) {
+			case "no-store", "private", "no-cache":
+				return true
+			case "max-age", "s-maxage":
+				if !hasValue {
+					continue
+				}
+				directiveValue = strings.Trim(strings.TrimSpace(directiveValue), `"`)
+				seconds, err := strconv.ParseUint(directiveValue, 10, 64)
+				if err == nil && seconds == 0 {
+					// Внутренний кэш не умеет revalidation: немедленно
+					// протухший ответ нельзя подменять его собственным TTL.
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// handlerVarySupported проверяет только Vary, заданный самим обработчиком.
+// Vary: Accept-Encoding, который ставит внешний слой компрессии, сюда не
+// попадает: в кэше хранится несжатое тело, а кодирование выбирается при выдаче.
+func handlerVarySupported(h http.Header, svc *httpservice.Service) bool {
+	for _, value := range h.Values("Vary") {
+		for _, raw := range strings.Split(value, ",") {
+			name := strings.ToLower(strings.TrimSpace(raw))
+			if name == "" {
+				continue
+			}
+			if name != "accept-language" || !svc.Cache.VaryBy("lang") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *cacheCapture) toCachedResponse() *cachedResponse {
@@ -423,12 +543,11 @@ func writeCachedResponse(w http.ResponseWriter, r *http.Request, resp *cachedRes
 
 // flushCapture отдаёт некэшируемый ответ клиенту как есть.
 func flushCapture(w http.ResponseWriter, c *cacheCapture) {
-	h := w.Header()
-	for k, vals := range c.header {
-		for _, v := range vals {
-			h.Add(k, v)
-		}
+	if c.passthrough {
+		return
 	}
+	h := w.Header()
+	copyCapturedHeaders(h, c.header)
 	w.WriteHeader(c.status)
 	_, _ = w.Write(c.body) //nolint:gosec // G705: ответ уже сформирован обработчиком сервиса
 }
@@ -445,6 +564,15 @@ func (s *Server) serviceCacheUsable(svc *httpservice.Service, r *http.Request) b
 	}
 	if !svc.CacheUsable() {
 		warnCacheIgnoredOnce(svc)
+		return false
+	}
+	// Даже auth: none может получить Cookie/Authorization, а DSL видит все
+	// заголовки запроса. Не даём такому клиенту наполнить общую запись своим
+	// персонализированным ответом. no-cache/no-store на запросе тоже требуют
+	// полного обхода локального кэша: механизм revalidation здесь отсутствует.
+	if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" ||
+		r.Header.Get("Proxy-Authorization") != "" || cacheControlDisallowsStorage(r.Header) ||
+		strings.EqualFold(strings.TrimSpace(r.Header.Get("Pragma")), "no-cache") {
 		return false
 	}
 	return true

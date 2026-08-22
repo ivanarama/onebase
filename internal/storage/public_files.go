@@ -49,7 +49,10 @@ func (pf *PublicFile) IsBlob() bool { return pf != nil && pf.BlobID != uuid.Nil 
 type PublishOptions struct {
 	// Filename — имя файла при скачивании; пусто = имя вложения.
 	Filename string
-	// CacheSeconds — max-age в Cache-Control; 0 = defaultPublicCacheSeconds.
+	// CacheSeconds сохранён для совместимости с публикациями до v0.10.2.
+	// Отзываемые ссылки всегда требуют ревалидации, поэтому HTTP max-age равен 0.
+	// 0 при записи по-прежнему заменяется на defaultPublicCacheSeconds, чтобы не
+	// ломать схему и повторную публикацию старых баз.
 	CacheSeconds int
 	// ExpiresAt — момент, после которого ссылка перестаёт работать; nil =
 	// бессрочно.

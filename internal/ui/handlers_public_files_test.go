@@ -86,8 +86,8 @@ func TestPublicFile_ServedAnonymously(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
 		t.Errorf("Content-Type=%q", ct)
 	}
-	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=600") {
-		t.Errorf("Cache-Control=%q", cc)
+	if cc := w.Header().Get("Cache-Control"); !publicFileCacheRequiresRevalidation(cc) {
+		t.Errorf("Cache-Control=%q — отзываемая ссылка может остаться fresh в кэше", cc)
 	}
 	if cd := w.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "inline") {
 		t.Errorf("Content-Disposition=%q — картинка должна открываться в браузере", cd)
@@ -250,9 +250,15 @@ func TestPublicFile_BlobServedAnonymously(t *testing.T) {
 	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "logo.png") {
 		t.Errorf("Content-Disposition=%q — имя из опций не применилось", cd)
 	}
-	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=300") {
-		t.Errorf("Cache-Control=%q", cc)
+	if cc := w.Header().Get("Cache-Control"); !publicFileCacheRequiresRevalidation(cc) {
+		t.Errorf("Cache-Control=%q — отзываемая ссылка может остаться fresh в кэше", cc)
 	}
+}
+
+func publicFileCacheRequiresRevalidation(cc string) bool {
+	return strings.Contains(cc, "no-cache") &&
+		strings.Contains(cc, "max-age=0") &&
+		strings.Contains(cc, "must-revalidate")
 }
 
 // Range работает и для картинок: они читаются в память, но отдаются тем же
@@ -324,6 +330,12 @@ func TestPublicFile_BlobConditionalByETag(t *testing.T) {
 	etag := first.Header().Get("ETag")
 	if etag == "" {
 		t.Fatal("нет ETag — условные запросы для блобов не работают")
+	}
+	// Делаем содержимое заведомо нечитаемым, не удаляя живой capability-токен.
+	// Если условный запрос попытается открыть blob до проверки ETag, он вернёт
+	// 404 из-за size mismatch вместо 304.
+	if _, err := db.Exec(t.Context(), `UPDATE _blobs SET size = size + 1 WHERE id = ?`, blob.ID.String()); err != nil {
+		t.Fatalf("повредить blob для проверки ранней ревалидации: %v", err)
 	}
 
 	req := httptest.NewRequest("GET", "/pub/"+token, nil)

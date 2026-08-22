@@ -12,11 +12,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/i18n"
@@ -27,18 +31,17 @@ import (
 // 1. Шаблонные ключи: {{t $.Lang "..."}} и {{t .Lang "..."}}
 // 2. i18nerr.New("ключ") и i18nerr.Errorf("ключ", args...)
 // 3. i18nerr.Wrapf(err, "ключ", args...)
-// 4. tr(lang, "ключ") и s.tr(lang, "ключ")
+// 4. tr(lang, "ключ") и s.tr(lang, "ключ") разбираются через Go AST ниже.
 //
 // Ограничение: ключи с Go-экранированием (например \n или \") не раскодируются —
 // такие строки редки в UI-ключах; при необходимости добавьте strconv.Unquote.
 var keyPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\{\{t\s+\$[.\w]*\s+"((?:[^"\\]|\\.)*)"\s*\}\}`),
+	regexp.MustCompile(`\{\{t\s+(?:\$[.\w]*|\.[.\w]*)\s+"((?:[^"\\]|\\.)*)"\s*\}\}`),
 	regexp.MustCompile(`i18nerr\.(?:New|Errorf)\(\s*"((?:[^"\\]|\\.)*)"`),
 	// (?s).*? вместо [^,]+: err-аргумент часто содержит запятые
 	// (Wrapf(load(a, b), "ключ")) — жадность до первой запятой молча
 	// теряла ключ из проверки.
 	regexp.MustCompile(`(?s)i18nerr\.Wrapf\(.*?,\s*"((?:[^"\\]|\\.)*)"`),
-	regexp.MustCompile(`\btr\(\s*\w+,\s*"((?:[^"\\]|\\.)*)"\s*\)`),
 }
 
 // jsKeyPatterns — ключи из клиентских скриптов: там перевод берётся хелпером
@@ -181,11 +184,17 @@ func collectKeys(root string, subdirs []string) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			pats := keyPatterns
-			if isJS {
-				pats = jsKeyPatterns
+			if isGo {
+				fileKeys, err := extractGoKeys(data)
+				if err != nil {
+					return fmt.Errorf("parse %s: %w", path, err)
+				}
+				for _, key := range fileKeys {
+					seen[key] = struct{}{}
+				}
+				return nil
 			}
-			for _, p := range pats {
+			for _, p := range jsKeyPatterns {
 				for _, m := range p.FindAllSubmatch(data, -1) {
 					seen[string(m[1])] = struct{}{}
 				}
@@ -202,6 +211,63 @@ func collectKeys(root string, subdirs []string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// extractGoKeys combines textual template extraction with syntax-aware Go-call
+// extraction. The language argument to tr may be a selector or an arbitrary
+// call expression (data.Lang, resolveLang(r), s.resolveLang(r), ...), so a
+// regular expression over the first argument is necessarily incomplete.
+func extractGoKeys(data []byte) ([]string, error) {
+	seen := map[string]struct{}{}
+	for _, p := range keyPatterns {
+		for _, m := range p.FindAllSubmatch(data, -1) {
+			seen[string(m[1])] = struct{}{}
+		}
+	}
+
+	file, err := parser.ParseFile(token.NewFileSet(), "", data, 0)
+	if err != nil {
+		return nil, err
+	}
+	var unquoteErr error
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || !isTranslationCall(call.Fun) || len(call.Args) < 2 {
+			return true
+		}
+		literal, ok := call.Args[1].(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			return true
+		}
+		key, err := strconv.Unquote(literal.Value)
+		if err != nil {
+			unquoteErr = err
+			return false
+		}
+		seen[key] = struct{}{}
+		return true
+	})
+	if unquoteErr != nil {
+		return nil, unquoteErr
+	}
+
+	out := make([]string, 0, len(seen))
+	for key := range seen {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func isTranslationCall(fun ast.Expr) bool {
+	switch fn := fun.(type) {
+	case *ast.Ident:
+		return fn.Name == "tr"
+	case *ast.SelectorExpr:
+		return fn.Sel.Name == "tr"
+	default:
+		return false
+	}
 }
 
 func loadDicts(dir string) (map[string]map[string]string, error) {

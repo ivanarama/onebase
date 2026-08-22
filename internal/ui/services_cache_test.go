@@ -6,6 +6,7 @@ package ui
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -49,6 +50,24 @@ const cacheHandlersSrc = `
     Отв = Новый HTTPСервисОтвет(200);
     Отв.УстановитьЗаголовок("Set-Cookie", "sid=abc");
     Отв.УстановитьТелоИзСтроки("сессия");
+    Возврат Отв;
+КонецФункции
+
+Функция Персональный(Запрос) Экспорт
+    Возврат ОтветТекст(200, Запрос.ПолучитьЗаголовок("Cookie") + Запрос.ПолучитьЗаголовок("Authorization"));
+КонецФункции
+
+Функция УправлениеКэшем(Запрос) Экспорт
+    Отв = Новый HTTPСервисОтвет(200);
+    Отв.УстановитьЗаголовок("Cache-Control", Запрос.ПолучитьЗаголовок("X-Cache-Policy"));
+    Отв.УстановитьТелоИзСтроки(Запрос.ПолучитьЗаголовок("X-Client"));
+    Возврат Отв;
+КонецФункции
+
+Функция ПоАрендатору(Запрос) Экспорт
+    Отв = Новый HTTPСервисОтвет(200);
+    Отв.УстановитьЗаголовок("Vary", "X-Tenant");
+    Отв.УстановитьТелоИзСтроки(Запрос.ПолучитьЗаголовок("X-Tenant"));
     Возврат Отв;
 КонецФункции
 
@@ -146,6 +165,9 @@ func newCacheTestServer(t *testing.T) *cacheTestServer {
 		{Template: "/page", Methods: map[string]string{"GET": "Страница", "POST": "Страница"}},
 		{Template: "/missing", Methods: map[string]string{"GET": "Ошибка404"}},
 		{Template: "/cookie", Methods: map[string]string{"GET": "Куки"}},
+		{Template: "/personal", Methods: map[string]string{"GET": "Персональный"}},
+		{Template: "/cache-policy", Methods: map[string]string{"GET": "УправлениеКэшем"}},
+		{Template: "/tenant", Methods: map[string]string{"GET": "ПоАрендатору"}},
 		{Template: "/big", Methods: map[string]string{"GET": "Большая"}},
 		{Template: "/boom", Methods: map[string]string{"GET": "Бум"}},
 		{Template: "/slow404", Methods: map[string]string{"GET": "ОтказСМодулем"}},
@@ -351,6 +373,22 @@ func TestServiceCache_VaryQuery(t *testing.T) {
 	}
 }
 
+// Значения одного query-параметра не взаимозаменяемы: DSL берёт первое.
+// Имена параметров можно канонизировать, но сортировка значений склеила бы
+// семантически разные запросы в одну запись.
+func TestServiceCache_VaryQueryPreservesRepeatedValueOrder(t *testing.T) {
+	c := newCacheTestServer(t)
+	c.get(t, "/hs/pub/page?role=user&role=admin")
+	c.get(t, "/hs/pub/page?role=admin&role=user")
+	if got := c.calls(); got != 2 {
+		t.Fatalf("разный порядок повторяющихся значений склеен в один cache key, вызовов=%d", got)
+	}
+	c.get(t, "/hs/pub/page?role=user&role=admin")
+	if got := c.calls(); got != 2 {
+		t.Fatalf("точный повтор первого запроса не дал hit, вызовов=%d", got)
+	}
+}
+
 // Пустой vary — осознанный режим «одна страница для всех».
 func TestServiceCache_VaryEmptyIgnoresQuery(t *testing.T) {
 	c := newCacheTestServer(t)
@@ -401,6 +439,105 @@ func TestServiceCache_NoCacheForErrorsAndCookies(t *testing.T) {
 	}
 }
 
+// Даже сервис auth:none видит Cookie и Authorization через объект Запрос.
+// Такие запросы не должны наполнять общий кэш: иначе ответ первого клиента
+// станет ответом второго, даже если обработчик не выставил Vary сам.
+func TestServiceCache_SensitiveRequestHeadersKeepClientsIsolated(t *testing.T) {
+	for _, tc := range []struct {
+		name, header, first, second, path string
+	}{
+		{"cookie", "Cookie", "client=alice", "client=bob", "/hs/pub/personal?kind=cookie"},
+		{"authorization", "Authorization", "Bearer alice", "Bearer bob", "/hs/pub/personal?kind=auth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCacheTestServer(t)
+			first := c.get(t, tc.path, tc.header, tc.first)
+			second := c.get(t, tc.path, tc.header, tc.second)
+			if got := first.Body.String(); got != tc.first {
+				t.Fatalf("первый клиент получил %q, ожидалось %q", got, tc.first)
+			}
+			if got := second.Body.String(); got != tc.second {
+				t.Fatalf("второй клиент получил %q, ожидалось %q", got, tc.second)
+			}
+			if size := c.cache.Size(); size != 0 {
+				t.Fatalf("персонализированный ответ попал в общий кэш: size=%d", size)
+			}
+		})
+	}
+}
+
+func TestServiceCache_ResponseCacheControlKeepsClientsIsolated(t *testing.T) {
+	for _, policy := range []string{
+		"no-store", "private, max-age=60", "no-cache", "max-age=0", `s-maxage="0"`,
+	} {
+		t.Run(policy, func(t *testing.T) {
+			c := newCacheTestServer(t)
+			first := c.get(t, "/hs/pub/cache-policy", "X-Cache-Policy", policy, "X-Client", "alice")
+			second := c.get(t, "/hs/pub/cache-policy", "X-Cache-Policy", policy, "X-Client", "bob")
+			if got := first.Body.String(); got != "alice" {
+				t.Fatalf("первый клиент получил %q", got)
+			}
+			if got := second.Body.String(); got != "bob" {
+				t.Fatalf("директива %q не изолировала второго клиента: тело=%q", policy, got)
+			}
+			if got := second.Header().Get("Cache-Control"); got != policy {
+				t.Fatalf("Cache-Control потерян: %q", got)
+			}
+			if size := c.cache.Size(); size != 0 {
+				t.Fatalf("ответ с Cache-Control %q попал в кэш: size=%d", policy, size)
+			}
+		})
+	}
+}
+
+func TestServiceCache_RequestZeroMaxAgeBypassesReadAndWrite(t *testing.T) {
+	for _, directive := range []string{"max-age=0", `s-maxage="0"`} {
+		t.Run(directive, func(t *testing.T) {
+			c := newCacheTestServer(t)
+			path := "/hs/pub/page?request-cache-control=" + url.QueryEscape(directive)
+
+			// Холодный запрос с обязательной ревалидацией не должен наполнять
+			// кэш: следующий обычный запрос обязан снова дойти до origin.
+			c.get(t, path, "Cache-Control", directive)
+			c.get(t, path)
+			if got := c.calls(); got != 2 {
+				t.Fatalf("первый запрос с %q попал в кэш, вызовов origin=%d", directive, got)
+			}
+
+			// Обычный запрос выше уже прогрел запись; точный повтор даёт hit.
+			c.get(t, path)
+			if got := c.calls(); got != 2 {
+				t.Fatalf("обычная запись не дала hit, вызовов origin=%d", got)
+			}
+
+			// Но клиент с max-age=0/s-maxage=0 не может получить эту запись
+			// без origin revalidation, которой внутренний кэш не реализует.
+			c.get(t, path, "Cache-Control", directive)
+			if got := c.calls(); got != 3 {
+				t.Fatalf("запрос с %q прочитал готовую запись без origin, вызовов=%d", directive, got)
+			}
+		})
+	}
+}
+
+func TestServiceCache_UnsupportedHandlerVaryKeepsClientsIsolated(t *testing.T) {
+	c := newCacheTestServer(t)
+	first := c.get(t, "/hs/pub/tenant", "X-Tenant", "alpha")
+	second := c.get(t, "/hs/pub/tenant", "X-Tenant", "beta")
+	if got := first.Body.String(); got != "alpha" {
+		t.Fatalf("первый tenant получил %q", got)
+	}
+	if got := second.Body.String(); got != "beta" {
+		t.Fatalf("неподдерживаемый Vary склеил клиентов: второй tenant получил %q", got)
+	}
+	if got := strings.Join(second.Header().Values("Vary"), ","); !strings.Contains(got, "X-Tenant") {
+		t.Fatalf("Vary обработчика потерян: %q", got)
+	}
+	if size := c.cache.Size(); size != 0 {
+		t.Fatalf("ответ с неподдерживаемым Vary попал в кэш: size=%d", size)
+	}
+}
+
 func TestServiceCache_MaxBody(t *testing.T) {
 	c := newCacheTestServer(t)
 	first := c.get(t, "/hs/pub/big")
@@ -413,6 +550,45 @@ func TestServiceCache_MaxBody(t *testing.T) {
 	c.get(t, "/hs/pub/big")
 	if c.calls() != 2 {
 		t.Fatalf("ответ больше max_body попал в кэш, вызовов=%d", c.calls())
+	}
+}
+
+func TestCacheCapture_MaxBodySwitchesToPassthroughWithoutLoss(t *testing.T) {
+	out := httptest.NewRecorder()
+	capture := newCacheCapture(out, 5)
+	capture.Header().Set("X-Capture", "kept")
+	capture.WriteHeader(http.StatusCreated)
+
+	if n, err := capture.Write([]byte("1234")); err != nil || n != 4 {
+		t.Fatalf("первая запись: n=%d err=%v", n, err)
+	}
+	if got := out.Body.String(); got != "" {
+		t.Fatalf("до достижения max_body данные ушли клиенту: %q", got)
+	}
+	if got := cap(capture.body); got > 5 {
+		t.Fatalf("capture выделил %d байт при max_body=5", got)
+	}
+
+	if n, err := capture.Write([]byte("567")); err != nil || n != 3 {
+		t.Fatalf("переход в passthrough: n=%d err=%v", n, err)
+	}
+	if n, err := capture.Write([]byte("89")); err != nil || n != 2 {
+		t.Fatalf("запись после перехода: n=%d err=%v", n, err)
+	}
+	if !capture.passthrough {
+		t.Fatal("превышение max_body не включило passthrough")
+	}
+	if len(capture.body) != 0 || cap(capture.body) != 0 {
+		t.Fatalf("capture удерживает тело после перехода: len=%d cap=%d", len(capture.body), cap(capture.body))
+	}
+	if out.Code != http.StatusCreated {
+		t.Fatalf("status=%d, ожидался %d", out.Code, http.StatusCreated)
+	}
+	if got := out.Header().Get("X-Capture"); got != "kept" {
+		t.Fatalf("заголовок потерян: %q", got)
+	}
+	if got := out.Body.String(); got != "123456789" {
+		t.Fatalf("тело потеряно/дублировано при переходе: %q", got)
 	}
 }
 

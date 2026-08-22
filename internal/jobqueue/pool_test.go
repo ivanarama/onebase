@@ -336,6 +336,52 @@ func TestPool_ОтменаСнимаетОжидающуюИПрерываетИ
 	})
 }
 
+func TestPool_УдаленнаяОтменаВыигрываетГонкуДоHeartbeat(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		for _, tc := range []struct {
+			name   string
+			runErr error
+		}{
+			{name: "ошибка ведёт к RetryJobTask", runErr: errors.New("узел не ответил")},
+			{name: "успех ведёт к FinishJobTask"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				release := make(chan struct{})
+				exec := newFakeExec(func(context.Context, map[string]any) (string, error) {
+					<-release
+					return "результат", tc.runErr
+				})
+				cfg := testConfig(1)
+				cfg.Lease = 30 * time.Second // heartbeat не успеет увидеть отмену
+				cfg.MaxAttempts = 3
+				pool, stop := startPool(t, db, exec, cfg)
+
+				task, _, err := pool.Enqueue(context.Background(), "ОбменСУзлом", nil, "")
+				if err != nil {
+					t.Fatalf("Enqueue: %v", err)
+				}
+				waitStarts(t, exec, 1)
+				state, err := db.RequestJobTaskCancel(context.Background(), task.ID, time.Now().UnixMilli(), "отменена другим сервером")
+				if err != nil || state != "cancelling" {
+					t.Fatalf("RequestJobTaskCancel: state=%q err=%v", state, err)
+				}
+				close(release)
+
+				cancelled := waitStatus(t, pool, task.ID, storage.JobTaskCancelled)
+				if cancelled.Attempts != 1 || cancelled.Error != "отменена другим сервером" {
+					t.Fatalf("удаленная отмена потерялась: %+v", cancelled)
+				}
+				if got := exec.attempts(); got != 1 {
+					t.Fatalf("после отмены задача стартовала %d раз", got)
+				}
+				if err := stop(); err != nil {
+					t.Fatalf("stop: %v", err)
+				}
+			})
+		}
+	})
+}
+
 func TestPool_ОстановкаДожидаетсяВзятыхЗадач(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		exec := newFakeExec(func(context.Context, map[string]any) (string, error) {
