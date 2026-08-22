@@ -196,3 +196,46 @@ fields:
 		t.Errorf("после отклонённой правки конфигурация не загружается: %v", err)
 	}
 }
+
+// Откат обязан возвращать состояние целиком, включая файлы, которых после
+// правки не стало. Проверяем сам откат: редакторы, подключённые к гейту
+// сейчас, файлы не удаляют, но контракт держится на откате, а не на памяти о
+// его вызывающих.
+func TestRestore_ReturnsFullSnapshot(t *testing.T) {
+	h, cfgDir := newFileBaseHandler(t)
+	h.runner = NewRunner()
+	kept := writeCfgFile(t, cfgDir, "catalogs", "Склад.yaml", "name: Склад\n")
+	doomed := writeCfgFile(t, cfgDir, "catalogs", "Контрагент.yaml", "name: Контрагент\n")
+
+	b, err := h.store.Get("test")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	snap, err := h.snapshotConfig(context.Background(), b)
+	if err != nil {
+		t.Fatalf("снимок: %v", err)
+	}
+
+	// Пока снимок на руках, конфигурацию портят тремя способами разом.
+	if err := os.Remove(doomed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("name: НеСклад\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	added := writeCfgFile(t, cfgDir, "catalogs", "Лишний.yaml", "name: Лишний\n")
+
+	if err := h.restore(context.Background(), b, snap); err != nil {
+		t.Fatalf("откат: %v", err)
+	}
+
+	if got, err := os.ReadFile(kept); err != nil || string(got) != "name: Склад\n" {
+		t.Errorf("изменённый файл не восстановлен: %q (%v)", got, err)
+	}
+	if got, err := os.ReadFile(doomed); err != nil || string(got) != "name: Контрагент\n" {
+		t.Errorf("удалённый файл не восстановлен: %q (%v)", got, err)
+	}
+	if _, err := os.Stat(added); !os.IsNotExist(err) {
+		t.Errorf("появившийся файл не удалён: %v", err)
+	}
+}

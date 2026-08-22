@@ -55,14 +55,26 @@ func (h *handler) snapshotConfig(ctx context.Context, b *Base) (*configSnapshot,
 }
 
 // restore возвращает конфигурацию к снятому состоянию: изменённым файлам
-// возвращает прежнее содержимое, появившиеся удаляет. Файлы, которых снимок не
-// видел (не-YAML в файловом режиме), не трогает — их редакторы объектов и не
-// пишут.
+// возвращает прежнее содержимое, появившиеся удаляет, исчезнувшие заводит
+// заново. Файлы, которых снимок не видел (не-YAML в файловом режиме), не
+// трогает — их редакторы объектов и не пишут.
+//
+// Ветка «исчезнувшие» нужна не про запас: откат обязан возвращать состояние
+// целиком, иначе он чинит наполовину. Ни один из подключённых сейчас
+// редакторов файлы не удаляет, но контракт держится на самом откате, а не на
+// том, что мы помним про всех его вызывающих.
 func (h *handler) restore(ctx context.Context, b *Base, snap *configSnapshot) error {
 	current, err := h.listConfiguratorFiles(ctx, b)
 	if err != nil {
 		return err
 	}
+	alive := make(map[string]bool, len(current))
+	for _, f := range current {
+		if f.Content != nil {
+			alive[f.Path] = true
+		}
+	}
+
 	if b.ConfigSource == "database" {
 		db, err := OpenDB(ctx, b)
 		if err != nil {
@@ -86,8 +98,17 @@ func (h *handler) restore(ctx context.Context, b *Base, snap *configSnapshot) er
 				}
 			}
 		}
+		for path, was := range snap.files {
+			if alive[path] {
+				continue
+			}
+			if err := cfgUpsert(ctx, db, path, was); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
+
 	for _, f := range current {
 		if f.Content == nil {
 			continue
@@ -103,6 +124,18 @@ func (h *handler) restore(ctx context.Context, b *Base, snap *configSnapshot) er
 			if err := os.WriteFile(full, was, fsmode.File); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта в listConfiguratorFiles, из запроса он не приходит
 				return err
 			}
+		}
+	}
+	for path, was := range snap.files {
+		if alive[path] {
+			continue
+		}
+		full := filepath.Join(b.Path, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), fsmode.Dir); err != nil {
+			return err
+		}
+		if err := os.WriteFile(full, was, fsmode.File); err != nil { //nolint:gosec // G703: путь пришёл из снимка, снятого обходом каталога проекта, а не из запроса
+			return err
 		}
 	}
 	return nil
