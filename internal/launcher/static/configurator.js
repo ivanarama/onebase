@@ -313,7 +313,33 @@ function cfgAppendDeleteCell(tr, tbl) {
   td.innerHTML = cfgDeleteFieldButtonHTML();
   tr.appendChild(td);
 }
-function cfgAddField(tblId, prefix, entityName) {
+// Наборы типов для НОВОЙ строки. Отдельно от серверных списков в
+// configurator_tmpl_tree.go и по той же причине, по какой те продублированы в
+// Go: подписи обязаны остаться вызовами T(), иначе ключи выпадут из-под гейта
+// переводов. Расхождение наборов сторожит TestCfgTypeSets_MatchTemplateOptions.
+//
+// Набор регистра шире серверного: измерение-перечисление здесь завести можно
+// (cfgToggleRef подставит список перечислений), а в отрисованной строке
+// существующего измерения пункта «перечисление» нет. Асимметрия досталась в
+// наследство; порчи она больше не даёт — запасной пункт сохраняет такой тип, —
+// но выбрать другое перечисление у существующего измерения по-прежнему нельзя.
+function cfgTypeOptionsHTML(set) {
+  // Подписи — литеральные вызовы перевода, а не значения из переменной: ключи собирает
+  // регулярка tools/i18ncheck, и T(перем) она не видит.
+  var base = [['string', T("строка")], ['number', T("число")], ['date', T("дата")],
+    ['bool', T("булево")], ['reference', T("ссылка →")], ['enum', T("перечисление →")]];
+  var sets = {
+    entity: base.concat([['image', T("картинка")], ['richtext', T("форматированный текст")]]),
+    register: base
+  };
+  var list = sets[set] || sets.register;
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    html += '<option value="' + list[i][0] + '">' + list[i][1] + '</option>';
+  }
+  return html;
+}
+function cfgAddField(tblId, prefix, entityName, set) {
   _cfgNewFieldIdx++;
   var tbl = document.getElementById(tblId);
   if (!tbl) return;
@@ -322,7 +348,7 @@ function cfgAddField(tblId, prefix, entityName) {
   var tr = document.createElement('tr');
   tr.innerHTML = '<td><input name="'+prefix+'.'+_cfgNewFieldIdx+'.name" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="ИмяПоля"></td>'
     +'<td><select name="'+prefix+'.'+_cfgNewFieldIdx+'.type" onchange="cfgToggleRef(this,\''+refId+'\');cfgToggleNum(this,\''+numId+'\')">'
-    +'<option value="string">'+T("строка")+'</option><option value="number">'+T("число")+'</option><option value="date">'+T("дата")+'</option><option value="bool">'+T("булево")+'</option><option value="reference">'+T("ссылка →")+'</option><option value="enum">'+T("перечисление →")+'</option>'
+    +cfgTypeOptionsHTML(set)
     +'</select>'
     +' <span id="'+numId+'" style="display:none" title="'+T("Длина, Точность")+'">'
     +'<input type="number" min="1" name="'+prefix+'.'+_cfgNewFieldIdx+'.length" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">'
@@ -351,10 +377,10 @@ function cfgAddTP(btn, entityName) {
     +'<div class="tp-block"><table class="fields-tbl" id="'+tblId+'">'
     +'<tr><th>'+T("Поле")+'</th><th>'+T("Тип")+'</th><th style="min-width:150px">'+T("Объект")+'</th><th style="width:44px"></th></tr>'
     +'</table>'
-    +'<button type="button" onclick="cfgAddField(\''+tblId+'\',\''+fldPrefix+'\',\''+entityName+'\')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ '+T("Добавить поле")+'</button>'
+    +'<button type="button" onclick="cfgAddField(\''+tblId+'\',\''+fldPrefix+'\',\''+entityName+'\',\'entity\')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ '+T("Добавить поле")+'</button>'
     +'</div>';
   btn.parentNode.insertBefore(wrapper, btn);
-  cfgAddField(tblId, fldPrefix, entityName);
+  cfgAddField(tblId, fldPrefix, entityName, 'entity');
 }
 // ── Predefined items row ──────────────────────────────────────────
 var _cfgPreRowIdx = 10000;
