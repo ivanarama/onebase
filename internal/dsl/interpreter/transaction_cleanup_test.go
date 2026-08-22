@@ -65,6 +65,43 @@ func callTxBuiltin(t *testing.T, funcs map[string]any, name string) {
 	}
 }
 
+func callTxBuiltinResult(t *testing.T, funcs map[string]any, name string) any {
+	t.Helper()
+	fn, ok := funcs[name].(interpreter.BuiltinFunc)
+	if !ok {
+		t.Fatalf("builtin %s has type %T", name, funcs[name])
+	}
+	result, err := fn(nil, "transaction_active_test.os", 1)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return result
+}
+
+func TestTransactionActiveBuiltinTracksOwnedTransactionAndSavepoint(t *testing.T) {
+	events := []string{}
+	db := &cleanupFakeDB{events: &events}
+	state := interpreter.NewTxState(context.Background())
+	funcs := interpreter.NewTxFunctions(state, db)
+
+	if got := callTxBuiltinResult(t, funcs, "ТранзакцияАктивна"); got != false {
+		t.Fatalf("ТранзакцияАктивна before begin = %#v, want false", got)
+	}
+	callTxBuiltin(t, funcs, "НачатьТранзакцию")
+	if got := callTxBuiltinResult(t, funcs, "TransactionActive"); got != true {
+		t.Fatalf("TransactionActive in transaction = %#v, want true", got)
+	}
+	callTxBuiltin(t, funcs, "BeginTransaction")
+	callTxBuiltin(t, funcs, "RollbackTransaction")
+	if got := callTxBuiltinResult(t, funcs, "ТранзакцияАктивна"); got != true {
+		t.Fatalf("ТранзакцияАктивна after savepoint rollback = %#v, want true", got)
+	}
+	callTxBuiltin(t, funcs, "CommitTransaction")
+	if got := callTxBuiltinResult(t, funcs, "TransactionActive"); got != false {
+		t.Fatalf("TransactionActive after commit = %#v, want false", got)
+	}
+}
+
 func TestTxStateRollbackOpenUsesDetachedContextAndInnerToOuterOrder(t *testing.T) {
 	executionCtx, cancelExecution := context.WithCancel(context.Background())
 	events := []string{}

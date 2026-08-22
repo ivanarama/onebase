@@ -187,6 +187,21 @@ func (p *TestProfile) Vars() map[string]any {
 		recordCall(p.mock.http, map[string]any{"Метод": "GET", "URL": strArg(args, 0)})
 		return &dslHTTPResponse{statusCode: 200}, nil
 	})
+	httpURLAllowed := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		return safeHTTPURLAllowed(strArg(args, 0), strArg(args, 1)), nil
+	})
+	httpSafeGet := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		rawURL, rawPolicy := strArg(args, 0), strArg(args, 1)
+		_, _, matched, policyErr := matchSafeHTTPURL(rawURL, rawPolicy)
+		if !matched {
+			return nil, nil
+		}
+		if policyErr != nil {
+			panic(userError{Msg: "HTTPПолучитьБезопасно: " + policyErr.Error()})
+		}
+		recordCall(p.mock.http, map[string]any{"Метод": "SAFE GET", "URL": rawURL, "Источник": rawPolicy})
+		return &dslHTTPResponse{statusCode: 200}, nil
+	})
 	httpPost := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
 		recordCall(p.mock.http, map[string]any{"Метод": "POST", "URL": strArg(args, 0), "Тело": strArg(args, 1)})
 		return &dslHTTPResponse{statusCode: 200}, nil
@@ -222,6 +237,8 @@ func (p *TestProfile) Vars() map[string]any {
 
 		// сеть
 		"HTTPПолучить": httpGet, "HTTPGet": httpGet,
+		"HTTPАдресРазрешён": httpURLAllowed, "HTTPURLAllowed": httpURLAllowed,
+		"HTTPПолучитьБезопасно": httpSafeGet, "HTTPSafeGet": httpSafeGet,
 		"HTTPОтправить": httpPost, "HTTPPost": httpPost,
 
 		// команды ОС

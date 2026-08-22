@@ -40,10 +40,17 @@ func callBuiltinExpectPanic(t *testing.T, fn any, args []any) string {
 func TestHTTPBuiltins_BlockedByGuard(t *testing.T) {
 	m := NewHTTPFunctions(lockedGuard)
 
-	for _, name := range []string{"HTTPПолучить", "HTTPОтправить"} {
-		msg := callBuiltinExpectPanic(t, m[name], []any{"http://example.com", "{}"})
+	for _, tc := range []struct {
+		name string
+		args []any
+	}{
+		{name: "HTTPПолучить", args: []any{"http://example.com"}},
+		{name: "HTTPПолучитьБезопасно", args: []any{"http://8.8.8.8", "8.8.8.8"}},
+		{name: "HTTPОтправить", args: []any{"http://example.com", "{}"}},
+	} {
+		msg := callBuiltinExpectPanic(t, m[tc.name], tc.args)
 		if !strings.Contains(msg, "предохранител") {
-			t.Errorf("%s: ожидалось сообщение про предохранитель, получено %q", name, msg)
+			t.Errorf("%s: ожидалось сообщение про предохранитель, получено %q", tc.name, msg)
 		}
 	}
 }

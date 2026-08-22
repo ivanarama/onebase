@@ -185,6 +185,33 @@ func NewHTTPFunctions(guard NetGuard, ctxSources ...CtxSource) map[string]any {
 		return &dslHTTPResponse{statusCode: resp.StatusCode, headers: resp.Header, body: string(b)}, nil
 	})
 
+	// HTTPАдресРазрешён is a side-effect-free preflight for URLs sourced from
+	// untrusted files. HTTPПолучитьБезопасно repeats the same policy and adds
+	// DNS/IP validation at the actual dial, so the preflight is never the
+	// security boundary by itself.
+	httpURLAllowed := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+		return safeHTTPURLAllowed(strArg(args, 0), strArg(args, 1)), nil
+	})
+	httpSafeGet := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+		rawURL, rawPolicy := strArg(args, 0), strArg(args, 1)
+		policy, parsedURL, matched, policyErr := matchSafeHTTPURL(rawURL, rawPolicy)
+		if !matched {
+			return nil, nil
+		}
+		if policyErr != nil {
+			panic(userError{Msg: "HTTPПолучитьБезопасно: " + policyErr.Error()})
+		}
+		checkNet(guard)
+		ctx := contextFromSource(ctxSource)
+		checkExecutionContext(ctx)
+		resp, err := performSafeHTTPGet(ctx, policy, parsedURL)
+		if err != nil {
+			checkExecutionContext(ctx)
+			panic(userError{Msg: "HTTPПолучитьБезопасно: " + err.Error()})
+		}
+		return resp, nil
+	})
+
 	httpPost := BuiltinFunc(func(args []any, file string, line int) (any, error) {
 		checkNet(guard)
 		url := strArg(args, 0)
@@ -210,6 +237,10 @@ func NewHTTPFunctions(guard NetGuard, ctxSources ...CtxSource) map[string]any {
 
 	m["HTTPПолучить"] = httpGet
 	m["HTTPGet"] = httpGet
+	m["HTTPАдресРазрешён"] = httpURLAllowed
+	m["HTTPURLAllowed"] = httpURLAllowed
+	m["HTTPПолучитьБезопасно"] = httpSafeGet
+	m["HTTPSafeGet"] = httpSafeGet
 	m["HTTPОтправить"] = httpPost
 	m["HTTPPost"] = httpPost
 	return m
