@@ -46,6 +46,10 @@ func TestAppShell_Render(t *testing.T) {
 		`scrollIntoView`,           // автоскролл активной вкладки
 		`shellHomeURL`,             // переход по подсистемам строит URL через searchParams
 		`#ob-tabhome a[href]`,      // ссылки рабочего стола открываются через shell
+		// F5 в режиме вкладок не должен сбрасывать на первую: активная вкладка
+		// запоминается отдельным ключом и восстанавливается, если ещё жива.
+		`'obTabsActive'`,   // ключ sessionStorage с id/URL активной вкладки
+		`restore||tabs[0]`, // fallback на первую, когда сохранённая закрыта/нет
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("оболочка вкладок не содержит %q", want)
