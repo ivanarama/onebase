@@ -1103,6 +1103,7 @@
   "счетов": "accounts",
   "табличная часть": "tabular section",
   "тип": "type",
+  "файл изменён %s; проверить конфигурацию целиком: onebase check --project %s": "file modified %s; check the whole configuration: onebase check --project %s",
   "файл не выбран": "no file selected",
   "файл превышает максимальный размер %d МБ": "the file exceeds the maximum size of %d MB",
   "форматированный текст": "rich text",
