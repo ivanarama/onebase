@@ -200,6 +200,32 @@ func validateEntityFieldEdit(entityName, entityKind string, fields []saveField, 
 	return metadata.ValidateIdentifiers([]*metadata.Entity{ent}, nil, nil, nil, nil, nil)
 }
 
+// bareRefTypeMessage ловит поле регистра, у которого выбран ссылочный тип, но
+// не выбран объект: разбор формы оставляет в таком поле голое «reference» или
+// «enum», и в YAML уезжает тип, которого не существует.
+//
+// У реквизитов объекта и полей ТЧ такая проверка есть с самого начала
+// (configuratorSaveFields, buildTPSaveField), а у регистров её не было: там
+// перечисление и выбрать-то было нельзя, а ссылку — можно, и «выбрал тип, забыл
+// объект» молча портило регистр. Возвращает пустую строку, если всё в порядке.
+func bareRefTypeMessage(lang string, groups ...[]saveField) string {
+	for _, fields := range groups {
+		for _, f := range fields {
+			kind := ""
+			switch f.Type {
+			case "reference":
+				kind = "объект для ссылки"
+			case "enum":
+				kind = "перечисление"
+			default:
+				continue
+			}
+			return fmt.Sprintf(tr(lang, "Поле «%s»: выберите %s"), f.Name, tr(lang, kind))
+		}
+	}
+	return ""
+}
+
 func validateRegisterFieldEdit(regName string, dims, res, attrs []saveField) error {
 	reg := &metadata.Register{
 		Name:       regName,

@@ -138,6 +138,13 @@ func (h *handler) configuratorSaveRegisterFields(w http.ResponseWriter, r *http.
 		regTitles = &t
 	}
 
+	if msg := bareRefTypeMessage(lang, dims, res, attrs); msg != "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = msg
+		renderCfg(w, r, data)
+		return
+	}
+
 	if err := validateRegisterFieldEdit(regName, dims, res, attrs); err != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")
 		data.Error = tr(lang, "Ошибка проверки") + ": " + err.Error()
@@ -290,6 +297,12 @@ func (h *handler) configuratorSaveInfoRegFields(w http.ResponseWriter, r *http.R
 		t := parseMapForm(r, "titles")
 		objTitles = &t
 	}
+	if msg := bareRefTypeMessage(lang, reg.Dimensions, reg.Resources); msg != "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = msg
+		renderCfg(w, r, data)
+		return
+	}
 	if err := validateInfoRegFieldEdit(reg); err != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")
 		data.Error = tr(lang, "Ошибка проверки") + ": " + err.Error()
@@ -429,6 +442,12 @@ func (h *handler) configuratorSaveAccountRegister(w http.ResponseWriter, r *http
 	setTitles := formHasMapField(r, "titles")
 	if setTitles {
 		reg.Titles = parseMapForm(r, "titles")
+	}
+	if msg := bareRefTypeMessage(lang, reg.Resources); msg != "" {
+		data := h.loadCfgData(r.Context(), b, "tree")
+		data.Error = msg
+		renderCfg(w, r, data)
+		return
 	}
 	if err := validateAccountRegFieldEdit(reg); err != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")
