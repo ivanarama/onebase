@@ -116,8 +116,8 @@ func TestDSLPublicFile_PublishAndServe(t *testing.T) {
 	if got := rec.Body.String(); got != "PNG-CONTENT" {
 		t.Errorf("содержимое=%q", got)
 	}
-	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=120") {
-		t.Errorf("Cache-Control=%q — опция КэшСекунд не применилась", cc)
+	if cc := rec.Header().Get("Cache-Control"); !publicFileCacheRequiresRevalidation(cc) {
+		t.Errorf("Cache-Control=%q — отзываемая ссылка может остаться fresh в кэше", cc)
 	}
 
 	// Снятие публикации ломает ссылку немедленно.
