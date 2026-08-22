@@ -71,29 +71,57 @@ const tplAppShell = `{{define "page-app-shell"}}
   var body=document.getElementById('ob-tabbody');
   var empty=document.getElementById('ob-tabempty');
   var home=document.getElementById('ob-tabhome');
-  var tabs=[]; var active=null; var STORE='obTabs'; var STORE_ACTIVE='obTabsActive';
+  var tabs=[]; var active=null; var tabSeq=0; var STORE='obTabs'; var STORE_ACTIVE='obTabsActive';
   var SHOW_HOME=false;
   try{ SHOW_HOME = new URLSearchParams(location.search).get('home')==='1'; }catch(e){}
 
-  function persist(){ try{ sessionStorage.setItem(STORE, JSON.stringify(tabs.map(function(t){return {url:t.url,title:t.title};}))); }catch(e){} }
+  function tabByID(id){ for(var i=0;i<tabs.length;i++){ if(tabs[i].id===id)return tabs[i]; } return null; }
+  function freshTabID(){
+    var id='';
+    do{
+      try{ if(window.crypto && typeof window.crypto.randomUUID==='function') id='tab:'+window.crypto.randomUUID(); }catch(e){ id=''; }
+      if(!id){ tabSeq++; id='tab:'+Date.now().toString(36)+':'+tabSeq.toString(36)+':'+Math.random().toString(36).slice(2); }
+    }while(tabByID(id));
+    return id;
+  }
+  function uniqueTabID(value){
+    var id=(value===undefined||value===null)?'':String(value);
+    return id && !tabByID(id) ? id : freshTabID();
+  }
+  function readSavedActive(){
+    var raw='';
+    try{ raw=String(sessionStorage.getItem(STORE_ACTIVE)||''); }catch(e){}
+    if(!raw)return {id:'',url:''};
+    try{
+      var saved=JSON.parse(raw);
+      if(saved && typeof saved==='object')return {id:saved.id?String(saved.id):'',url:saved.url?String(saved.url):''};
+    }catch(e){}
+    // До появления стабильных id ключ содержал голый URL.
+    return {id:'',url:raw};
+  }
+  function persist(){ try{ sessionStorage.setItem(STORE, JSON.stringify(tabs.map(function(t){return {id:t.id,url:t.url,title:t.title};}))); }catch(e){} }
+  function persistActive(t){ try{ sessionStorage.setItem(STORE_ACTIVE, JSON.stringify({id:t.id,url:t.url})); }catch(e){} }
+  function clearPersistedActive(){ try{ sessionStorage.removeItem(STORE_ACTIVE); }catch(e){} }
   function syncEmpty(){ if(empty) empty.style.display = (!home && !tabs.length) ? '' : 'none'; }
   function setActive(t){
     active=t||null;
     tabs.forEach(function(x){ x.btn.classList.toggle('active',x===t); x.frame.classList.toggle('active',x===t); });
     if(home) home.style.display = t ? 'none' : '';
     if(active && active.btn.scrollIntoView) active.btn.scrollIntoView({inline:'nearest',block:'nearest'}); // фаза 4: активная вкладка в видимую область
-    // Активная вкладка запоминается отдельно от списка: перезагрузка оболочки
-    // (F5) не должна сбрасывать пользователя на первую вкладку. Пишем только
-    // при реальном выборе вкладки — показ рабочего стола (?home=1) ключ не
-    // стирает, поэтому возврат на /ui/app без home откроет прежнюю вкладку.
-    if(active){ try{ sessionStorage.setItem(STORE_ACTIVE, String(active.url)); }catch(e){} }
+    // id отличает несколько экземпляров одного URL. setActive(null) при
+    // ?home=1 намеренно не стирает выбор: возврат открывает прежнюю вкладку.
+    if(active)persistActive(active);
     syncEmpty();
   }
   function closeTab(t){
     var i=tabs.indexOf(t); if(i<0)return;
     if(t.dirty && !window.confirm('В этой вкладке есть несохранённые изменения. Закрыть вкладку?'))return; // фаза 3
     t.btn.remove(); t.frame.remove(); tabs.splice(i,1);
-    if(active===t) setActive(tabs[Math.min(i,tabs.length-1)]||null);
+    if(active===t){
+      var next=tabs[Math.min(i,tabs.length-1)]||null;
+      setActive(next);
+      if(!next)clearPersistedActive();
+    }
     persist();
   }
   // Фаза 4: управление множеством вкладок — контекст-меню по правому клику.
@@ -111,19 +139,20 @@ const tplAppShell = `{{define "page-app-shell"}}
   }
   function openTab(url,title,opts){
     opts=opts||{};
-    if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===url){ setActive(tabs[i]); return tabs[i]; } } }
+    if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===url){ if(!opts.restoring)setActive(tabs[i]); return tabs[i]; } } }
     var btn=document.createElement('div'); btn.className='ob-tab'; btn.setAttribute('role','tab'); btn.title=title||'Форма'; // фаза 4: тултип полного заголовка
     var lab=document.createElement('span'); lab.className='ob-tab-label'; lab.textContent=title||'Форма'; btn.appendChild(lab);
     var dup=document.createElement('span'); dup.className='ob-tab-dup'; dup.textContent='⧉'; dup.title='Открыть ещё один экземпляр'; btn.appendChild(dup);
     var cl=document.createElement('span'); cl.className='ob-tab-close'; cl.textContent='✕'; cl.title='Закрыть'; btn.appendChild(cl);
     var frame=document.createElement('iframe'); frame.src=url;
-    var t={url:url,title:title,btn:btn,frame:frame,label:lab};
+    var t={id:uniqueTabID(opts.id),url:url,title:title,btn:btn,frame:frame,label:lab};
     btn.addEventListener('click',function(e){ if(e.target===cl||e.target===dup)return; setActive(t); });
     btn.addEventListener('mousedown',function(e){ if(e.button===1){ e.preventDefault(); closeTab(t); } });
     cl.addEventListener('click',function(e){ e.stopPropagation(); closeTab(t); });
     dup.addEventListener('click',function(e){ e.stopPropagation(); openTab(t.url, t.title, {allowDup:true}); }); // #130
     btn.addEventListener('contextmenu',function(e){ e.preventDefault(); setActive(t); tabMenu(t,e.clientX,e.clientY); }); // фаза 4
-    strip.appendChild(btn); body.appendChild(frame); tabs.push(t); setActive(t); persist();
+    strip.appendChild(btn); body.appendChild(frame); tabs.push(t);
+    if(!opts.restoring){ setActive(t); persist(); }
     return t;
   }
   window.obOpenTab=openTab;
@@ -171,16 +200,20 @@ const tplAppShell = `{{define "page-app-shell"}}
     openTab(href,(a.getAttribute('title')||a.textContent||'').replace(/\s+/g,' ').trim()||'Форма');
   });
 
+  // Снимок читаем ДО openTab: восстановление само создаёт вкладки и не должно
+  // успеть заменить сохранённый выбор последней добавленной вкладкой.
+  var savedActive=readSavedActive();
   try{
     var saved=JSON.parse(sessionStorage.getItem(STORE)||'[]');
-    saved.forEach(function(s){ if(s&&s.url) openTab(String(s.url), s.title?String(s.title):'Форма'); });
-    // Восстановить АКТИВНУЮ вкладку прошлого сеанса по сохранённому URL;
-    // если её уже нет (закрыта в другом окне/список сменился) — первая, как было.
-    var savedActive='';
-    try{ savedActive=String(sessionStorage.getItem(STORE_ACTIVE)||''); }catch(e){}
+    // restoring не активирует/не сохраняет промежуточные вкладки; allowDup
+    // сохраняет отдельные экземпляры одного URL (#130).
+    saved.forEach(function(s){ if(s&&s.url) openTab(String(s.url), s.title?String(s.title):'Форма', {allowDup:true,id:s.id,restoring:true}); });
     var restore=null;
-    for(var i=0;i<tabs.length;i++){ if(tabs[i].url===savedActive){ restore=tabs[i]; break; } }
+    if(savedActive.id)restore=tabByID(savedActive.id);
+    // Backward compatibility: старые версии хранили в obTabsActive только URL.
+    if(!restore && !savedActive.id && savedActive.url){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===savedActive.url){ restore=tabs[i]; break; } } }
     if(tabs.length && !SHOW_HOME) setActive(restore||tabs[0]); else setActive(null);
+    persist(); // добавить id в legacy obTabs и убрать невалидные записи
   }catch(e){}
   syncEmpty();
 
