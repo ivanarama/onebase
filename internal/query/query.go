@@ -3973,7 +3973,21 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						case sectionGroupBy, sectionOrderBy:
 							tr.emit(rd.displayCol())
 						default:
-							tr.emit(rd.idCol)
+							// Колонка-идентификатор ссылки квалифицируется так же,
+							// как любая своя колонка (п.48). Без этого условие
+							// «ГДЕ Сайт = &Сайт» ломалось, как только у
+							// присоединённого по другой ссылке справочника
+							// заводили одноимённое поле: JOIN приносил второй
+							// «сайт_id», и запрос падал ambiguous column name.
+							// Правка в конфигурации при этом выглядит совершенно
+							// посторонней — падает не тот запрос, который меняли.
+							// VT-источник не трогаем: там idCol — логический
+							// алиас подзапроса, а не колонка основной таблицы.
+							if rd.isVT {
+								tr.emit(rd.idCol)
+							} else {
+								tr.emit(tr.qualifyOwn(rd.idCol, lower))
+							}
 						}
 					}
 				} else if col, ok := tr.colMap[lower]; ok && !prevDot {
