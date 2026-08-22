@@ -67,6 +67,11 @@ func main() {
 		"internal/dsl",
 		"internal/query",
 		"internal/entityservice",
+		// internal/project — ошибки загрузки конфигурации: их читает пользователь
+		// в окне «не удалось запустить базу», а гейт сюда не заглядывал, и
+		// первый же i18nerr-ключ отсюда уехал бы в интерфейс по-русски на всех
+		// языках.
+		"internal/project",
 	})
 	if err != nil {
 		fail(err.Error())

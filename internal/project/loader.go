@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/loader"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/httpservice"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/llm"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/page"
@@ -243,6 +245,32 @@ type AppConfig struct {
 	Webhooks []webhook.Config `yaml:"webhooks,omitempty"`
 }
 
+// configFileNote — приписка к ошибке разбора файла конфигурации: когда файл
+// меняли в последний раз и чем проверить конфигурацию целиком.
+//
+// Отвечает на вопрос, который у пользователя возникает первым, когда база
+// перестала запускаться сразу после обновления платформы: «это обновление
+// сломало или моя старая правка?». В #1098 верным был второй ответ, но узнать
+// это удалось только раскопками: app.yaml сломали 09.06 лишним отступом в
+// блоке llm, до фикса #417 ошибку разбора молча проглатывали (конфиг ИИ просто
+// не применялся), и фатальной она стала лишь через два с половиной месяца — при
+// обновлении. Время изменения файла разводит эти два случая одной строкой.
+//
+// Приписка отдельной ошибкой, а не текстом в обёртке: errors.Join печатает её
+// со своей строки, а i18nerr-ключ виден гейту переводов.
+//
+// nil, если файла нет или stat не удался: приписка — удобство, и терять из-за
+// неё исходную ошибку нельзя.
+func configFileNote(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	return i18nerr.Errorf("файл изменён %s; проверить конфигурацию целиком: onebase check --project %s",
+		st.ModTime().Format("02.01.2006 15:04"),
+		filepath.Dir(filepath.Dir(path)))
+}
+
 // LoadConfig reads config/app.yaml from the project directory.
 func LoadConfig(dir string) (*AppConfig, error) {
 	path := filepath.Join(dir, "config", "app.yaml")
@@ -262,14 +290,16 @@ func LoadConfig(dir string) (*AppConfig, error) {
 		if err == io.EOF {
 			return &AppConfig{Name: filepath.Base(dir)}, nil
 		}
-		return nil, fmt.Errorf("project: parse %s: %w", path, err)
+		return nil, errors.Join(fmt.Errorf("project: parse %s: %w", path, err), configFileNote(path))
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return nil, fmt.Errorf("project: parse %s: multiple YAML documents are not allowed", path)
+			return nil, errors.Join(
+				fmt.Errorf("project: parse %s: multiple YAML documents are not allowed", path),
+				configFileNote(path))
 		}
-		return nil, fmt.Errorf("project: parse %s: %w", path, err)
+		return nil, errors.Join(fmt.Errorf("project: parse %s: %w", path, err), configFileNote(path))
 	}
 	// Секреты (ключи ИИ, токены вебхуков, креды S3, секреты HTTP-сервисов и
 	// шлюзов приёма) здесь НАМЕРЕННО не разыменовываются: ссылка env:/file:/enc:
