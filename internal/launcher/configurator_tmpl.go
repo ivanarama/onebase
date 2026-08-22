@@ -53,6 +53,11 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 		}
 		return template.JS(b) //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	},
+	// Запасной пункт выпадающего списка типа: непустой ответ означает, что тип
+	// поля в наборе не предлагается и список обязан дорисовать его сам —
+	// иначе браузер отправит первый пункт и сохранение затрёт тип (#1090).
+	"unlistedType":      cfgUnlistedType,
+	"unlistedFieldType": cfgUnlistedFieldType,
 	"fieldTypeLabel": func(typ, ref string) string {
 		switch typ {
 		case "string":
