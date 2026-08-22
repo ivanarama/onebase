@@ -589,7 +589,7 @@ jobs:
 
   postgres-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16
@@ -673,23 +673,12 @@ jobs:
           # затронул общую onebase_test). Требует pg_dump/psql — см. шаг выше.
           go test -race -count=1 -timeout 10m -tags integration ./internal/backup \
             -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema)$'
-          # Owner-aware image demo has a PostgreSQL-only inter-server race
-          # regression. Select the exact matrix subtest so this job does not
-          # expand into the full internal/ui suite.
-          go test -race -count=1 -timeout 5m ./internal/ui \
-            -run '^TestTradeImageDemo_ConcurrentRunsCreateSingleBlob$/^postgres$'
-          # Information-register record-set security is matrix-tested in the
-          # UI package. Run the PostgreSQL side explicitly: the regular unit
-          # job has no TEST_DATABASE_URL and therefore only exercises SQLite.
-          go test -race -count=1 -timeout 5m ./internal/ui \
-            -run '^(TestInfoRegDSL_(WriteReadDeleteMatrix|UpsertByKeyMatrix)|TestInfoRegSet_(ReplacesOnlyFilteredMatrix|ЦиклЧтениеЗаписьНаПериодическомMatrix|АтомаренВоВнешнейТранзакции|РегистрируетTombstoneУдалённыхСтрок|ТипизированныйОтборМатрица))$/^postgres$'
-          go test -race -count=1 -timeout 10m ./internal/ui \
-            -run '^(TestInfoRegRecordSet_ReadAppliesObjectAndRowAccessMatrix|TestInfoRegRecordSet_WritePreflightsObjectPermissionsMatrix|TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix|TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix|TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix|TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix|TestInfoRegRecordSet_PostgresConcurrentInsertCheckedByRLS)$/^postgres$'
-          # HTTP information-register deletes have their own exact-key/RLS
-          # matrix. The PostgreSQL branch includes deterministic row-lock races;
-          # the ordinary unit job only executes its SQLite side.
-          go test -race -count=1 -timeout 10m ./internal/ui \
-            -run '^(TestUIInfoRegDeleteTypedCompositeKeyMatrix|TestUIInfoRegDeleteRowPolicyNoOracleAndOutboxMatrix|TestUIInfoRegDeletePeriodMaskMatrix|TestUIInfoRegDeleteStorageErrorMatrix|TestUIInfoRegDeletePostgresConcurrentRacesMatrix)$/^postgres$'
+          # Run the whole UI package while TEST_DATABASE_URL is present. Every
+          # dbtest.ForEachDialect call therefore executes its PostgreSQL branch,
+          # including a newly added matrix test without maintaining a fragile
+          # test-name allowlist here. The package has no parallel top-level tests,
+          # so its matrix cases can safely share this service database.
+          go test -race -count=1 -timeout 20m ./internal/ui
 
   vuln:
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck

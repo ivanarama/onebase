@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -14,6 +15,40 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
 )
+
+// Date-only из браузера означает локальную полночь. Если вернуть отсюда голую
+// строку YYYY-MM-DD, PostgreSQL TIMESTAMPTZ истолкует её в timezone сессии
+// (на CI — UTC), и та же дата при показе в MSK внезапно станет 03:00.
+func TestTypedFormFieldValue_DateOnlyIsTypedLocalMidnight(t *testing.T) {
+	saved := time.Local
+	time.Local = time.FixedZone("MSK", 3*60*60)
+	t.Cleanup(func() { time.Local = saved })
+
+	dateField := metadata.Field{Name: "Дата", Type: metadata.FieldTypeDate}
+	value, err := typedFormFieldValue(dateField, "1985-03-14")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := value.(time.Time)
+	if !ok {
+		t.Fatalf("тип даты %T, ожидался time.Time", value)
+	}
+	if got.Format(time.RFC3339) != "1985-03-14T00:00:00+03:00" {
+		t.Fatalf("дата формы = %s, ожидалась локальная полночь", got.Format(time.RFC3339))
+	}
+	// PostgreSQL может вернуть тот же TIMESTAMPTZ-инстант в UTC. Отображение
+	// всё равно обязано восстановить исходные локальные часы и скрыть 00:00.
+	if display := fieldDisplayText(dateField, got.UTC(), nil); display != "14.03.1985" {
+		t.Fatalf("отображение после PostgreSQL round-trip = %q, ожидалось %q", display, "14.03.1985")
+	}
+	entity := &metadata.Entity{
+		Fields:    []metadata.Field{dateField},
+		Numerator: &metadata.Numerator{Period: "year"},
+	}
+	if period := storage.PeriodKeyFor(entity, entity.Numerator, map[string]any{"Дата": value}); period != "1985" {
+		t.Fatalf("период нумератора = %q, ожидался год даты формы", period)
+	}
+}
 
 // Регрессия #1085 идёт публичным путём POST формы и одной матрицей держит
 // SQLite/PostgreSQL. До фикса SQLite подтверждал запись произвольного текста в
