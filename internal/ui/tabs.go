@@ -71,7 +71,7 @@ const tplAppShell = `{{define "page-app-shell"}}
   var body=document.getElementById('ob-tabbody');
   var empty=document.getElementById('ob-tabempty');
   var home=document.getElementById('ob-tabhome');
-  var tabs=[]; var active=null; var STORE='obTabs';
+  var tabs=[]; var active=null; var STORE='obTabs'; var STORE_ACTIVE='obTabsActive';
   var SHOW_HOME=false;
   try{ SHOW_HOME = new URLSearchParams(location.search).get('home')==='1'; }catch(e){}
 
@@ -82,6 +82,11 @@ const tplAppShell = `{{define "page-app-shell"}}
     tabs.forEach(function(x){ x.btn.classList.toggle('active',x===t); x.frame.classList.toggle('active',x===t); });
     if(home) home.style.display = t ? 'none' : '';
     if(active && active.btn.scrollIntoView) active.btn.scrollIntoView({inline:'nearest',block:'nearest'}); // фаза 4: активная вкладка в видимую область
+    // Активная вкладка запоминается отдельно от списка: перезагрузка оболочки
+    // (F5) не должна сбрасывать пользователя на первую вкладку. Пишем только
+    // при реальном выборе вкладки — показ рабочего стола (?home=1) ключ не
+    // стирает, поэтому возврат на /ui/app без home откроет прежнюю вкладку.
+    if(active){ try{ sessionStorage.setItem(STORE_ACTIVE, String(active.url)); }catch(e){} }
     syncEmpty();
   }
   function closeTab(t){
@@ -169,7 +174,13 @@ const tplAppShell = `{{define "page-app-shell"}}
   try{
     var saved=JSON.parse(sessionStorage.getItem(STORE)||'[]');
     saved.forEach(function(s){ if(s&&s.url) openTab(String(s.url), s.title?String(s.title):'Форма'); });
-    if(tabs.length && !SHOW_HOME) setActive(tabs[0]); else setActive(null);
+    // Восстановить АКТИВНУЮ вкладку прошлого сеанса по сохранённому URL;
+    // если её уже нет (закрыта в другом окне/список сменился) — первая, как было.
+    var savedActive='';
+    try{ savedActive=String(sessionStorage.getItem(STORE_ACTIVE)||''); }catch(e){}
+    var restore=null;
+    for(var i=0;i<tabs.length;i++){ if(tabs[i].url===savedActive){ restore=tabs[i]; break; } }
+    if(tabs.length && !SHOW_HOME) setActive(restore||tabs[0]); else setActive(null);
   }catch(e){}
   syncEmpty();
 
