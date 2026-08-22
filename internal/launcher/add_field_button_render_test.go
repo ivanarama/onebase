@@ -34,9 +34,9 @@ func TestConfigurator_AddFieldButtonQuotesEntity(t *testing.T) {
 
 	for _, want := range []string{
 		// реквизиты шапки (строка-кнопка после таблицы полей)
-		`cfgAddField('ft-Номенклатура','new_field','Номенклатура')`,
+		`cfgAddField('ft-Номенклатура','new_field','Номенклатура','entity')`,
 		// поля табличной части
-		`cfgAddField('ft-Номенклатура-tp0','new_tp.Состав.field','Номенклатура')`,
+		`cfgAddField('ft-Номенклатура-tp0','new_tp.Состав.field','Номенклатура','entity')`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в onclick кнопки «Добавить поле» нет ожидаемого фрагмента: %q", want)

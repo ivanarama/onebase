@@ -1,6 +1,9 @@
 package launcher
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -98,6 +101,63 @@ func TestCfgTypeSets_MatchTemplateOptions(t *testing.T) {
 					name, c.set, got, cfgTypeSets[c.set])
 			}
 		}
+	}
+}
+
+// Строку для НОВОГО поля рисует не шаблон, а cfgAddField в
+// static/configurator.js — и её список типов расходился с серверным незаметно:
+// пункты «картинка» и «форматированный текст» появились в разметке, а в
+// скрипте их не было, из-за чего завести поле-картинку кнопкой «+ Добавить»
+// по-прежнему было нельзя. Сторож читает набор прямо из скрипта.
+func TestCfgTypeSets_MatchScriptOptions(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("static", "configurator.js"))
+	if err != nil {
+		t.Fatalf("чтение configurator.js: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "function cfgTypeOptionsHTML")
+	if start < 0 {
+		t.Fatal("в configurator.js нет cfgTypeOptionsHTML — набор типов новой строки переехал")
+	}
+	end := strings.Index(body[start:], "\nfunction ")
+	if end < 0 {
+		t.Fatal("не найден конец cfgTypeOptionsHTML")
+	}
+	fn := body[start : start+end]
+
+	// base — общая часть, к ней entity дописывает свои пункты через concat.
+	values := regexp.MustCompile(`\['([a-z]+)',\s*T\(`).FindAllStringSubmatch(fn, -1)
+	if len(values) == 0 {
+		t.Fatal("в cfgTypeOptionsHTML не разобрать ни одного значения типа")
+	}
+	var base, entityExtra []string
+	concat := strings.Index(fn, "base.concat(")
+	for _, m := range values {
+		if idx := strings.Index(fn, m[0]); concat >= 0 && idx > concat {
+			entityExtra = append(entityExtra, m[1])
+			continue
+		}
+		base = append(base, m[1])
+	}
+
+	got := map[string][]string{
+		"register-new": base,
+		"entity-new":   append(append([]string(nil), base...), entityExtra...),
+	}
+	for set, list := range got {
+		want := append([]string(nil), cfgTypeSets[set]...)
+		sort.Strings(want)
+		sorted := append([]string(nil), list...)
+		sort.Strings(sorted)
+		if strings.Join(sorted, ",") != strings.Join(want, ",") {
+			t.Errorf("набор %s в configurator.js — %v, а в cfgTypeSets — %v", set, list, cfgTypeSets[set])
+		}
+	}
+
+	// Новую строку реквизита обязан рисовать набор «entity-new», иначе
+	// картинку по-прежнему нельзя завести. Проверяем сам вызов из разметки.
+	if !strings.Contains(cfgTabTree, `'new_field','{{$e.Name}}','entity'`) {
+		t.Error("кнопка «+ Добавить поле» у реквизитов объекта зовёт cfgAddField без набора entity")
 	}
 }
 

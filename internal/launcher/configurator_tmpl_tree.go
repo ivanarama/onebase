@@ -371,7 +371,7 @@ const cfgTabTree = `{{define "tab-tree"}}
     {{if $.AvailableLangs}}<tr data-cfg-field-extra="1"><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "dim.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
     {{end}}
     </table>
-    <button type="button" onclick="cfgAddField('ir-dim-{{.Name}}','new_dim','')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить измерение"}}</button>
+    <button type="button" onclick="cfgAddField('ir-dim-{{.Name}}','new_dim','','register')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить измерение"}}</button>
     </details>
     {{end}}
     {{if .Resources}}
@@ -406,7 +406,7 @@ const cfgTabTree = `{{define "tab-tree"}}
     {{if $.AvailableLangs}}<tr data-cfg-field-extra="1"><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "res.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
     {{end}}
     </table>
-    <button type="button" onclick="cfgAddField('ir-res-{{.Name}}','new_res','')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить ресурс"}}</button>
+    <button type="button" onclick="cfgAddField('ir-res-{{.Name}}','new_res','','register')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить ресурс"}}</button>
     </details>
     {{end}}
     <div class="module-save-row" style="margin-bottom:14px;margin-top:10px">
@@ -1629,7 +1629,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 {{if $availLangs}}<tr data-cfg-field-extra="1"><td colspan="5" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $lang "Langs" $availLangs "Prefix" (printf "field.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
 {{end}}
 </table>
-<button type="button" onclick="cfgAddField('ft-{{$e.Name}}','new_field','{{$e.Name}}')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить поле"}}</button>
+<button type="button" onclick="cfgAddField('ft-{{$e.Name}}','new_field','{{$e.Name}}','entity')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить поле"}}</button>
 </details>
 {{end}}
 
@@ -1679,7 +1679,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 {{if $availLangs}}<tr data-cfg-field-extra="1"><td colspan="5" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $lang "Langs" $availLangs "Prefix" (printf "tp.%s.field.%d.titles" $tp.Name $i) "Values" $f.Titles)}}</td></tr>{{end}}
 {{end}}
 </table>
-<button type="button" onclick="cfgAddField('ft-{{$e.Name}}-tp{{$j}}','new_tp.{{$tp.Name}}.field','{{$e.Name}}')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить поле"}}</button>
+<button type="button" onclick="cfgAddField('ft-{{$e.Name}}-tp{{$j}}','new_tp.{{$tp.Name}}.field','{{$e.Name}}','entity')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить поле"}}</button>
 </div>
 </details>
 {{end}}
@@ -2019,7 +2019,7 @@ const cfgRegDetail = `{{define "register-detail"}}
 {{if $.AvailableLangs}}<tr data-cfg-field-extra="1"><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "dim.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
 {{end}}
 </table>
-<button type="button" onclick="cfgAddField('rg-dim-{{$rg.Name}}','new_dim','')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить измерение"}}</button>
+<button type="button" onclick="cfgAddField('rg-dim-{{$rg.Name}}','new_dim','','register')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить измерение"}}</button>
 
 <div class="section-hd">{{t $.Lang "Ресурсы"}}</div>
 <table class="fields-tbl" id="rg-res-{{$rg.Name}}">
@@ -2052,7 +2052,7 @@ const cfgRegDetail = `{{define "register-detail"}}
 {{if $.AvailableLangs}}<tr data-cfg-field-extra="1"><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "res.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
 {{end}}
 </table>
-<button type="button" onclick="cfgAddField('rg-res-{{$rg.Name}}','new_res','')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить ресурс"}}</button>
+<button type="button" onclick="cfgAddField('rg-res-{{$rg.Name}}','new_res','','register')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить ресурс"}}</button>
 
 <div class="section-hd">{{t $.Lang "Реквизиты"}}</div>
 <table class="fields-tbl" id="rg-attr-{{$rg.Name}}">
@@ -2085,7 +2085,7 @@ const cfgRegDetail = `{{define "register-detail"}}
 {{if $.AvailableLangs}}<tr data-cfg-field-extra="1"><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "attr.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
 {{end}}
 </table>
-<button type="button" onclick="cfgAddField('rg-attr-{{$rg.Name}}','new_attr','')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить реквизит"}}</button>
+<button type="button" onclick="cfgAddField('rg-attr-{{$rg.Name}}','new_attr','','register')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить реквизит"}}</button>
 
 <div class="module-save-row" style="margin-bottom:14px">
   <button class="btn-save" type="submit">{{t $.Lang "Сохранить типы полей"}}</button>
