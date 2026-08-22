@@ -33,9 +33,9 @@ func TestRegisterDetail_PrecisionAndAddButtons(t *testing.T) {
 	for _, want := range []string{
 		`name="res.0.length"`,
 		`name="res.0.scale"`,
-		`cfgAddField('rg-dim-Остатки','new_dim','')`,
-		`cfgAddField('rg-res-Остатки','new_res','')`,
-		`cfgAddField('rg-attr-Остатки','new_attr','')`,
+		`cfgAddField('rg-dim-Остатки','new_dim','','register')`,
+		`cfgAddField('rg-res-Остатки','new_res','','register')`,
+		`cfgAddField('rg-attr-Остатки','new_attr','','register')`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("register-detail: нет фрагмента %q", want)
