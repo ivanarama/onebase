@@ -843,16 +843,16 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var saveErr error
-	if b.ConfigSource == "database" {
-		saveErr = h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator, objTitles)
-	} else {
-		saveErr = saveEntityFieldsToFile(b.Path, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator, objTitles)
-	}
+	saveErr := h.guardConfigLoadable(r.Context(), b, func() error {
+		if b.ConfigSource == "database" {
+			return h.saveEntityFieldsToDB(r.Context(), b, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator, objTitles)
+		}
+		return saveEntityFieldsToFile(b.Path, entityName, fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator, objTitles)
+	})
 
 	data := h.loadCfgData(r.Context(), b, "tree")
 	if saveErr != nil {
-		data.Error = tr(lang, "Ошибка сохранения") + ": " + saveErr.Error()
+		data.Error = cfgSaveErrorText(lang, saveErr)
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = entityName

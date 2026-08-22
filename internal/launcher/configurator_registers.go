@@ -145,16 +145,16 @@ func (h *handler) configuratorSaveRegisterFields(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var saveErr error
-	if b.ConfigSource == "database" {
-		saveErr = h.saveRegisterFieldsToDB(r.Context(), b, regName, dims, res, attrs, regTitles)
-	} else {
-		saveErr = saveRegisterFieldsToFile(b.Path, regName, dims, res, attrs, regTitles)
-	}
+	saveErr := h.guardConfigLoadable(r.Context(), b, func() error {
+		if b.ConfigSource == "database" {
+			return h.saveRegisterFieldsToDB(r.Context(), b, regName, dims, res, attrs, regTitles)
+		}
+		return saveRegisterFieldsToFile(b.Path, regName, dims, res, attrs, regTitles)
+	})
 
 	data := h.loadCfgData(r.Context(), b, "tree")
 	if saveErr != nil {
-		data.Error = tr(lang, "Ошибка сохранения") + ": " + saveErr.Error()
+		data.Error = cfgSaveErrorText(lang, saveErr)
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = regName
@@ -296,15 +296,15 @@ func (h *handler) configuratorSaveInfoRegFields(w http.ResponseWriter, r *http.R
 		renderCfg(w, r, data)
 		return
 	}
-	var saveErr error
-	if b.ConfigSource == "database" {
-		saveErr = h.saveInfoRegToDB(r.Context(), b, reg, objTitles)
-	} else {
-		saveErr = saveInfoRegToFile(b.Path, reg, objTitles)
-	}
+	saveErr := h.guardConfigLoadable(r.Context(), b, func() error {
+		if b.ConfigSource == "database" {
+			return h.saveInfoRegToDB(r.Context(), b, reg, objTitles)
+		}
+		return saveInfoRegToFile(b.Path, reg, objTitles)
+	})
 	data := h.loadCfgData(r.Context(), b, "tree")
 	if saveErr != nil {
-		data.Error = tr(lang, "Ошибка сохранения") + ": " + saveErr.Error()
+		data.Error = cfgSaveErrorText(lang, saveErr)
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = reg.Name
@@ -436,15 +436,15 @@ func (h *handler) configuratorSaveAccountRegister(w http.ResponseWriter, r *http
 		renderCfg(w, r, data)
 		return
 	}
-	var saveErr error
-	if b.ConfigSource == "database" {
-		saveErr = h.saveAccountRegToDB(r.Context(), b, reg, setTitles)
-	} else {
-		saveErr = saveAccountRegToFile(b.Path, reg, setTitles)
-	}
+	saveErr := h.guardConfigLoadable(r.Context(), b, func() error {
+		if b.ConfigSource == "database" {
+			return h.saveAccountRegToDB(r.Context(), b, reg, setTitles)
+		}
+		return saveAccountRegToFile(b.Path, reg, setTitles)
+	})
 	data := h.loadCfgData(r.Context(), b, "tree")
 	if saveErr != nil {
-		data.Error = tr(lang, "Ошибка сохранения") + ": " + saveErr.Error()
+		data.Error = cfgSaveErrorText(lang, saveErr)
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = reg.Name

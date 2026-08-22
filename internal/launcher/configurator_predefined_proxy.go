@@ -47,15 +47,15 @@ func (h *handler) configuratorSavePredefined(w http.ResponseWriter, r *http.Requ
 		predefined = append(predefined, pd)
 	}
 
-	var saveErr error
-	if b.ConfigSource == "database" {
-		saveErr = h.savePredefinedToDB(r.Context(), b, entityName, predefined)
-	} else {
-		saveErr = savePredefinedToFile(b.Path, entityName, predefined)
-	}
+	saveErr := h.guardConfigLoadable(r.Context(), b, func() error {
+		if b.ConfigSource == "database" {
+			return h.savePredefinedToDB(r.Context(), b, entityName, predefined)
+		}
+		return savePredefinedToFile(b.Path, entityName, predefined)
+	})
 	data := h.loadCfgData(r.Context(), b, "tree")
 	if saveErr != nil {
-		data.Error = tr(lang, "Ошибка сохранения") + ": " + saveErr.Error()
+		data.Error = cfgSaveErrorText(lang, saveErr)
 	} else {
 		data.FieldsSaved = true
 		data.FieldsSavedEntity = entityName
