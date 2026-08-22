@@ -164,20 +164,24 @@ func renumberSchemaGap(ctx context.Context, db *storage.DB, ent *metadata.Entity
 	if !exists {
 		return fmt.Sprintf("таблицы %s ещё нет: миграция до объекта не дошла", table), nil
 	}
-	// Таблица есть, а колонки под объявленный реквизит нет: гейт уникальности
-	// остановил миграцию раньше, чем она дошла сюда. List выбирает все поля
-	// объекта, поэтому такой объект не читается целиком.
+	// Таблица есть, а одной из колонок, которые читает List, нет: гейт
+	// уникальности остановил миграцию раньше, чем она дошла сюда. Проверяем тот
+	// же список, что строит сам List, включая posted/deletion_mark и служебные
+	// колонки иерархии/predefined. Иначе объект без нового реквизита пропустим,
+	// а объект без нового is_folder ошибочно выдадим за настоящий сбой чтения.
 	var missing []string
-	for _, f := range ent.Fields {
-		col := metadata.ColumnName(f)
-		if col == "" {
-			continue
-		}
+	for _, col := range storage.ListEntityColumns(ent) {
 		has, err := db.Dialect().ColumnExists(ctx, db, table, col)
 		if err != nil {
 			return "", fmt.Errorf("проверка колонки %s.%s: %w", table, col, err)
 		}
 		if !has {
+			// id создаётся вместе с таблицей и никогда не добавляется догоняющей
+			// миграцией. Таблица без первичного ключа повреждена, а не отстала:
+			// такой объект нельзя превращать в успешный skip.
+			if col == "id" {
+				return "", fmt.Errorf("таблица %s повреждена: нет обязательной колонки id", table)
+			}
 			missing = append(missing, col)
 		}
 	}
