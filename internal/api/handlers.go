@@ -248,16 +248,33 @@ func (h *handler) createObject(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 
+		// Значения по умолчанию и хук ПриСозданииНового (план 153) — той же
+		// реализацией, что у формы и DSL. Переданные в теле значения
+		// главнее дефолтов и видны хуку.
+		newRes, err := h.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
+			Entity:        entity,
+			Fields:        body.Fields,
+			TablePartRows: body.TablePartRows,
+		})
+		if err != nil {
+			writeSaveError(w, err)
+			return
+		}
+		if newRes.DSLError != "" {
+			writeError(w, http.StatusUnprocessableEntity, newRes.DSLError, "", 0)
+			return
+		}
+
 		// Автонумерация здесь больше не делается: её выполняет
 		// entityservice.Save для ЛЮБОГО нового объекта (#869). Прежняя копия
 		// искала поле по имени «Номер» и потому не нумеровала справочники
 		// вовсе — элемент, созданный через REST, оставался без кода.
 		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 			Entity:        entity,
-			ID:            uuid.New(),
+			ID:            newRes.Object.ID,
 			IsNew:         true,
-			Fields:        body.Fields,
-			TablePartRows: body.TablePartRows,
+			Fields:        newRes.Object.Fields,
+			TablePartRows: newRes.Object.TablePartRows,
 			Action:        body.Action,
 			Preflight:     h.createRowAccessPreflight(entity, body.Action),
 		})

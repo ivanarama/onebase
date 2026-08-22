@@ -144,6 +144,7 @@ func TestPageAction_RunsProcAndRedirects(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Имя страницы/действия — percent-encoded (как в ссылках меню), чтобы заодно
 	// проверить decodePathParam; query — ASCII, чтобы ассерт на Location был чистым.
@@ -214,6 +215,7 @@ func TestPageAction_ExportGate(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	call := func(action string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/ui/page/Тест/action/"+action, nil)
@@ -268,6 +270,7 @@ func TestLocalizePageBlocks_TranslatesLabelsNotData(t *testing.T) {
 		t.Fatalf("i18n.Load: %v", err)
 	}
 	s := &Server{cfg: Config{Bundle: bundle}}
+	s.entitySvc = s.newEntityService(nil)
 
 	b := interpreter.NewPageBuilder()
 	b.CallMethod("заголовок", []any{"Заголовок"})
@@ -395,6 +398,7 @@ func TestPageNStr_DefaultsToRequestLanguage(t *testing.T) {
 		messages: NewMessageStore(),
 		cfg:      Config{Bundle: bundle, Lang: "en"},
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	req := httptest.NewRequest("GET", "/ui/page/Тест?период=Июнь", nil)
 

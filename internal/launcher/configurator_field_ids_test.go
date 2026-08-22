@@ -63,3 +63,42 @@ func TestEnsureFieldIDsRespectsIncoming(t *testing.T) {
 		t.Fatalf("пришедший id заменён на %s", got[0].ID)
 	}
 }
+
+// Ключ `default` (план 153) редактор реквизитов не показывает и потому не
+// присылает обратно. Он обязан пережить сохранение — иначе правка типа одного
+// реквизита молча снимала бы значения по умолчанию со всего объекта: та же
+// потеря, ради которой заведён перенос id и saveNumerator.
+func TestEnsureFieldIDsKeepsDefault(t *testing.T) {
+	prev := []saveField{
+		{ID: "f_aaa", Name: "Дата", Type: "date", Default: "сейчас"},
+		{ID: "f_bbb", Name: "Организация", Type: "reference:Организация", Default: "константа.НашаОрганизация"},
+		{ID: "f_ccc", Name: "Комментарий", Type: "string"},
+	}
+	next := []saveField{
+		{Name: "Дата", Type: "date"},
+		{Name: "Организация", Type: "reference:Организация"},
+		{Name: "Комментарий", Type: "string"},
+		{Name: "Новый", Type: "string"},
+	}
+
+	got := ensureFieldIDs(prev, next)
+	if got[0].Default != "сейчас" {
+		t.Errorf("default даты потерян: %q", got[0].Default)
+	}
+	if got[1].Default != "константа.НашаОрганизация" {
+		t.Errorf("default организации потерян: %q", got[1].Default)
+	}
+	if got[2].Default != "" || got[3].Default != "" {
+		t.Errorf("дефолт появился там, где его не было: %+v", got[2:])
+	}
+}
+
+// Значение, пришедшее из формы, главнее прежнего: иначе редактор, когда
+// научится править дефолты, не смог бы их изменить.
+func TestEnsureFieldIDsFormDefaultWins(t *testing.T) {
+	prev := []saveField{{ID: "f_aaa", Name: "Дата", Type: "date", Default: "сейчас"}}
+	next := []saveField{{Name: "Дата", Type: "date", Default: "сегодня"}}
+	if got := ensureFieldIDs(prev, next); got[0].Default != "сегодня" {
+		t.Errorf("default = %q, ожидалось значение из формы", got[0].Default)
+	}
+}

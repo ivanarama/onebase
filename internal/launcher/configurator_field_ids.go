@@ -22,25 +22,36 @@ import (
 )
 
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по
-// имени реквизита либо сгенерированными.
+// имени реквизита либо сгенерированными. Заодно переносит ключи, которых
+// редактор не знает и потому не прислал бы обратно, — сейчас это `default`
+// (план 153).
 func ensureFieldIDs(prev, next []saveField) []saveField {
 	byName := make(map[string]string, len(prev))
+	defaults := make(map[string]string, len(prev))
 	used := make(map[string]bool, len(prev))
 	for _, f := range prev {
+		key := strings.ToLower(strings.TrimSpace(f.Name))
+		if f.Default != "" {
+			defaults[key] = f.Default
+		}
 		if f.ID == "" {
 			continue
 		}
-		byName[strings.ToLower(strings.TrimSpace(f.Name))] = f.ID
+		byName[key] = f.ID
 		used[f.ID] = true
 	}
 	out := make([]saveField, len(next))
 	copy(out, next)
 	for i := range out {
+		key := strings.ToLower(strings.TrimSpace(out[i].Name))
+		if out[i].Default == "" {
+			out[i].Default = defaults[key]
+		}
 		if out[i].ID != "" {
 			used[out[i].ID] = true
 			continue
 		}
-		if id, ok := byName[strings.ToLower(strings.TrimSpace(out[i].Name))]; ok {
+		if id, ok := byName[key]; ok {
 			out[i].ID = id
 			continue
 		}

@@ -138,6 +138,7 @@ func TestDocsRoot_CreateWritePost(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Сценарий обработки: создать документ, заполнить, записать, провести.
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
@@ -254,6 +255,7 @@ func TestDocsRoot_DirectPostCreatesSingleVersion(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
 	s := &Server{store: db, reg: registry, interp: interpreter.New(), lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	writer := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy).
 		CallMethod("создать", nil).(*docWriter)
@@ -362,6 +364,7 @@ func TestDocsRoot_LoadedWritersUseOptimisticLock(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{task}})
 	s := &Server{store: db, reg: registry, interp: interpreter.New(), lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	proxy := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(task.Name).(*docProxy)
 
 	firstAny, err := proxy.LoadObject(id.String())
@@ -443,6 +446,7 @@ func TestDocsRoot_DeleteClearsMovements(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("ПоступлениеТоваров").(*docProxy)
@@ -507,6 +511,7 @@ func TestDocsRoot_FindByNumberAndDelete(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
 	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("ЗаказПокупателя").(*docProxy)
 
@@ -577,6 +582,7 @@ func TestDocWriter_IsNewAndRead(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
 	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("Заметка").(*docProxy)
 
@@ -621,6 +627,7 @@ func TestDocWriter_RollbackRestoresIsNew(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
 	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	txState := interpreter.NewTxState(ctx)
 	root := newDocsRoot(s, txState)
 	dp := root.Get("Заметка").(*docProxy)
@@ -683,6 +690,7 @@ func TestDocsRoot_GetObject_UpdateExisting(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
 	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("ВходящееПисьмо").(*docProxy)
 
@@ -775,6 +783,7 @@ func TestRefField_FromHeader_GetObjectWorks(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{inbox, outbox}})
 	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Создаём ВходящееПисьмо.
 	docsRoot := newDocsRoot(s, interpreter.NewTxState(ctx))
@@ -880,6 +889,7 @@ func TestDocsRoot_OnWriteRunsOnSave(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("Счёт").(*docProxy)
@@ -963,6 +973,7 @@ func TestDocsRoot_OnWriteHasSelfRef(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("СамоДок").(*docProxy)
@@ -1023,6 +1034,7 @@ func TestDocsRoot_AutoNumberOnWrite(t *testing.T) {
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}})
 	s := &Server{store: db, reg: registry, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	dp := root.Get("Заявка").(*docProxy)
 
@@ -1086,6 +1098,7 @@ func TestDocWriter_AutoNumberRollbackAllowsRetrySameWriter(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 	dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy)
 	w := dp.CallMethod("создать", nil).(*docWriter)
 	w.obj.Fields["Номер"] = ""
@@ -1133,6 +1146,7 @@ func TestDocWriter_AutoNumberRollbackAllowsRetrySameWriter(t *testing.T) {
 // Документы.X для несуществующего/несдокументного — nil.
 func TestDocsRoot_UnknownDocument(t *testing.T) {
 	s := &Server{reg: runtime.NewRegistry()}
+	s.entitySvc = s.newEntityService(nil)
 	root := newDocsRoot(s, interpreter.NewTxState(context.Background()))
 	if v := root.Get("НетТакого"); v != nil {
 		t.Errorf("Документы.НетТакого → %v, ожидался nil", v)

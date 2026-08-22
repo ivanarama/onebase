@@ -193,6 +193,7 @@ func TestDeleteHook_BlocksEveryPath(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	id := uuid.New()
 	if err := db.Upsert(ctx, doc.Name, id, map[string]any{"Комментарий": "тест"}, doc); err != nil {
@@ -281,6 +282,7 @@ func TestDSLCatalogDelete_BlockedByTablePartRef(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	goodsID := uuid.New()
 	if err := db.Upsert(ctx, cat.Name, goodsID, map[string]any{"Наименование": "Гвозди"}, cat); err != nil {

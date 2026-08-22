@@ -169,12 +169,28 @@ func (h *handler) createObjectV2(kind metadata.Kind) http.HandlerFunc {
 		if kind == metadata.KindDocument && isPostAction(body.Action) && !requireRESTPerm(w, r, kind, entityName, "post") {
 			return
 		}
-		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
+		// Значения по умолчанию и хук ПриСозданииНового (план 153) — той же
+		// реализацией, что у формы и DSL. Переданные в теле значения
+		// главнее дефолтов и видны хуку.
+		newRes, err := h.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
 			Entity:        entity,
-			ID:            uuid.New(),
-			IsNew:         true,
 			Fields:        body.Fields,
 			TablePartRows: body.TablePartRows,
+		})
+		if err != nil {
+			writeSaveError(w, err)
+			return
+		}
+		if newRes.DSLError != "" {
+			writeError(w, http.StatusUnprocessableEntity, newRes.DSLError, "", 0)
+			return
+		}
+		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
+			Entity:        entity,
+			ID:            newRes.Object.ID,
+			IsNew:         true,
+			Fields:        newRes.Object.Fields,
+			TablePartRows: newRes.Object.TablePartRows,
 			Action:        body.Action,
 			Preflight:     h.createRowAccessPreflight(entity, body.Action),
 		})

@@ -66,6 +66,7 @@ func TestAccumRegProxy_ReadSide(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Создаём и проводим документ с двумя строками.
 	docsRoot := newDocsRoot(s, interpreter.NewTxState(ctx))

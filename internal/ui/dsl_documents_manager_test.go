@@ -54,6 +54,7 @@ func TestDocsRoot_ManagerMethod(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	root := newDocsRoot(s, interpreter.NewTxState(ctx))
 	proxy := root.Get("Счёт").(*docProxy)
@@ -105,6 +106,7 @@ func TestCatalogsRoot_ManagerMethod(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Реальный сценарий: vars из buildDSLVars содержит Справочники с
 	// подключённым ManagerCaller. Тянем catalogs из vars вместо

@@ -69,6 +69,7 @@ func TestProcessorFormEvent_TrustGate(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	fire := func() formEventResponse {
 		body := url.Values{}

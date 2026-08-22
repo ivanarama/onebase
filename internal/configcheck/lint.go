@@ -1155,6 +1155,7 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 				"OnPost", "ОбработкаПроведения",
 				"OnUnpost", "ОбработкаУдаленияПроведения",
 				"OnFill", "ОбработкаЗаполнения",
+				"OnCreate", "ПриСозданииНового",
 				"Печать", "Print",
 			), false)
 		default:

@@ -74,6 +74,7 @@ func newWSIntakeServer(t *testing.T, url string, netOn bool) *Server {
 		messages:         NewMessageStore(),
 		maxFileSizeBytes: 1 << 20,
 	}
+	s.entitySvc = s.newEntityService(nil)
 	t.Cleanup(func() { wsClose(t, s) })
 	return s
 }

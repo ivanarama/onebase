@@ -69,7 +69,7 @@ func schedTestServer(t *testing.T, jobName, procBody string, enabled bool) *Serv
 	}
 	t.Cleanup(func() { _ = sched.Shutdown(context.Background()) })
 
-	return &Server{
+	srv := &Server{
 		store:            db,
 		reg:              registry,
 		interp:           interp,
@@ -78,6 +78,8 @@ func schedTestServer(t *testing.T, jobName, procBody string, enabled bool) *Serv
 		messages:         NewMessageStore(),
 		maxFileSizeBytes: 1 << 20,
 	}
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv
 }
 
 // runSchedDSL исполняет тело процедуры так же, как это делает обработка.

@@ -95,6 +95,7 @@ func newCallcenterServer(t *testing.T) (*Server, context.Context, *realtime.Hub)
 		loginLimit:       auth.NewLoginLimiter(5, time.Minute),
 		hub:              hub,
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Демо-данные: оператор ivan на экстеншене 101 и клиент с известным номером.
 	opEnt := reg.GetEntity("Оператор")

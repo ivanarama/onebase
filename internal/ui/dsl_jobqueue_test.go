@@ -101,7 +101,7 @@ func queueTestServer(t *testing.T, jobName, procBody string) *Server {
 		<-queueDone
 	})
 
-	return &Server{
+	srv := &Server{
 		store:            db,
 		reg:              registry,
 		interp:           interp,
@@ -111,6 +111,8 @@ func queueTestServer(t *testing.T, jobName, procBody string) *Server {
 		messages:         NewMessageStore(),
 		maxFileSizeBytes: 1 << 20,
 	}
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv
 }
 
 // runQueueDSL исполняет тело процедуры так же, как это делает обработка.

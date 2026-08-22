@@ -405,6 +405,9 @@ func TestDocWriterPost_DSL_PersistsOnPostFieldEdits(t *testing.T) {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 	s := &Server{store: db, reg: registry, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	// Документы.X.Создать() идёт через entityservice (план 153: дефолты и
+	// ПриСозданииНового), поэтому сервер собираем как в проде.
+	s.entitySvc = s.newEntityService(nil)
 
 	dp := newDocsRoot(s, interpreter.NewTxState(ctx)).Get("РасходТоваров").(*docProxy)
 	w := dp.CallMethod("создать", nil).(*docWriter)

@@ -98,6 +98,7 @@ func TestManagedFormEventStateAddsConditionalClasses(t *testing.T) {
 		},
 	}
 	s := &Server{interp: interpreter.New()}
+	s.entitySvc = s.newEntityService(nil)
 	st := s.serializeManagedFormEventState(context.Background(), form, ent, obj, form.Conditional, nil)
 	tableParts, css, msgs := st.TableParts, st.ConditionalCSS, st.Messages
 	if len(msgs) != 0 {
@@ -266,6 +267,7 @@ func TestPrepareManagedFormDataTypesHeaderValues(t *testing.T) {
 		"TablePartRows": rows,
 	}
 	s := &Server{interp: interpreter.New()}
+	s.entitySvc = s.newEntityService(nil)
 	s.prepareManagedFormData(context.Background(), data, form)
 	if warns, _ := data["FormWarnings"].([]string); len(warns) != 0 {
 		t.Fatalf("unexpected warnings: %v", warns)

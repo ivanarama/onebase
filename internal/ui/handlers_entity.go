@@ -271,23 +271,34 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	lang := s.resolveLang(r)
 	enumOpts := s.loadEnumOptions(entity, lang)
 	tpEnumLabels := s.buildTPEnumLabels(entity, lang)
-	// Pre-fill date fields with current datetime for new documents
+	// Значения по умолчанию (план 153) + хук ПриСозданииНового. Единая точка
+	// с DSL и REST: раньше здесь стояла подстановка даты и активности прямо в
+	// обработчике, и никакой другой путь создания её не видел.
 	values := map[string]string{}
-	if entity.Kind == metadata.KindDocument {
-		now := time.Now().Format("2006-01-02T15:04")
-		for _, f := range entity.Fields {
-			if f.Type == metadata.FieldTypeDate {
-				values[f.Name] = now
-			}
-		}
-	}
-	if entity.Activity != nil {
-		values[entity.Activity.Field] = "true"
-	}
 	tablePartRows := map[string][]map[string]any{}
 	var fillError string
 	var fillMessages []string
 	var copySourceID string
+
+	newRes, err := s.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{Entity: entity, FormEntry: true})
+	if err != nil {
+		// Дефолт не смог вычислиться (недоступна константа, сбой чтения
+		// справочника). Форма всё равно открывается: пользователь заполнит
+		// поле руками, увидев причину, — как и при сбое ввода на основании.
+		fillError = err.Error()
+	}
+	if newRes.Object != nil {
+		applyObjectValuesToForm(entity, newRes.Object.Fields, values)
+		for tpName, rows := range newRes.Object.TablePartRows {
+			if len(rows) > 0 {
+				tablePartRows[tpName] = rows
+			}
+		}
+	}
+	if newRes.DSLError != "" && fillError == "" {
+		fillError = newRes.DSLError
+	}
+	fillMessages = append(fillMessages, newRes.DSLMessages...)
 
 	// Ввод на основании: GET /ui/{kind}/{name}/new?based_on=<src>&based_on_id=<uuid>.
 	// Загружаем источник и запускаем ОбработкаЗаполнения у приёмника — её
@@ -343,6 +354,23 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		// Шаблон скрывает nav/тулбар и меняет кнопку на «Записать и выбрать».
 		"IsPopup": r.URL.Query().Get("_popup") == "1",
 	})
+}
+
+// applyObjectValuesToForm переносит поля объекта в строковые значения формы.
+// Тот же перевод, что делает applyFillFromQuery для результата
+// ОбработкаЗаполнения: форма работает со строками, объект — со значениями.
+func applyObjectValuesToForm(entity *metadata.Entity, fields map[string]any, values map[string]string) {
+	for k, v := range fields {
+		if v == nil {
+			continue
+		}
+		key := fieldKeyForForm(entity, k)
+		if field, ok := entityFieldByName(entity, key); ok {
+			values[key] = formatFieldValueForInput(field, v)
+			continue
+		}
+		values[key] = formatUntypedValueForInput(v)
+	}
 }
 
 // applyFillFromQuery загружает источник и запускает ОбработкаЗаполнения у

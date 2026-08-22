@@ -111,6 +111,7 @@ func newServiceTestServer(t *testing.T) (*Server, context.Context) {
 		maxFileSizeBytes: 1 << 20,
 		loginLimit:       auth.NewLoginLimiter(5, time.Minute),
 	}
+	s.entitySvc = s.newEntityService(nil)
 	return s, ctx
 }
 

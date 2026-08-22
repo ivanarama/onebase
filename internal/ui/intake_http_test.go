@@ -64,7 +64,7 @@ func newIntakeTestServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 
-	return &Server{
+	srv := &Server{
 		store:            db,
 		reg:              registry,
 		interp:           interp,
@@ -72,6 +72,8 @@ func newIntakeTestServer(t *testing.T) *Server {
 		messages:         NewMessageStore(),
 		maxFileSizeBytes: 1 << 20,
 	}
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv
 }
 
 func postIntake(t *testing.T, s *Server, body string) (*httptest.ResponseRecorder, map[string]any) {

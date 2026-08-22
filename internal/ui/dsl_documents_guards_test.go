@@ -66,6 +66,7 @@ func docGuardServer(t *testing.T, onPost string, limitSec int) (*Server, context
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 	s.cfg.Limits.RequestTimeoutSec = limitSec
 	return s, ctx
 }

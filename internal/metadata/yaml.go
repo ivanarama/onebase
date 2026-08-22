@@ -23,6 +23,10 @@ type rawField struct {
 	// means «keep context default» (true в шапке, false в ТЧ).
 	AllowInlineCreate *bool `yaml:"allow_inline_create"`
 	Required          bool  `yaml:"required"`
+	// Default — значение по умолчанию при создании нового объекта (план 153).
+	// Читается строкой: и `сейчас`, и `12`, и `Истина` попадают сюда как есть,
+	// разбирает их metadata.ParseDefault.
+	Default defaultScalar `yaml:"default"`
 }
 
 type rawTablePart struct {
@@ -482,6 +486,23 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 // `presentation: Артикул` — частый случай, `presentation: [Артикул,
 // Наименование]` задаёт запасной вариант. Заставлять писать список из одного
 // элемента значило бы менять формат ради удобства кода.
+// defaultScalar — значение ключа `default:` реквизита, каким бы скаляром его ни
+// написали. YAML разбирает `12` числом, `true` булевым, `сейчас` строкой; для
+// механизма дефолтов (план 153) все три — исходный текст, который дальше читает
+// metadata.ParseDefault. Без этого типа `default: 12` на числовом реквизите
+// ронял бы разбор всего файла ошибкой «cannot unmarshal !!int into string» —
+// то есть конфигурация переставала грузиться из-за самого естественного
+// написания.
+type defaultScalar string
+
+func (v *defaultScalar) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode {
+		return fmt.Errorf("line %d: default должен быть скаляром", node.Line)
+	}
+	*v = defaultScalar(strings.TrimSpace(node.Value))
+	return nil
+}
+
 type stringOrList []string
 
 func (v *stringOrList) UnmarshalYAML(node *yaml.Node) error {
@@ -614,7 +635,7 @@ func parseField(rf rawField) Field {
 		title = rf.Label
 	}
 	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
-		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required}
+		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default)}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

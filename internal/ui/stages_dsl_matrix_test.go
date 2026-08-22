@@ -43,8 +43,11 @@ func stagesDSLServer(t *testing.T, db *storage.DB, e *metadata.Entity, programs 
 	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{e}, Programs: programs})
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
-	return &Server{store: db, reg: registry, interp: interp,
+	srv := &Server{store: db, reg: registry, interp: interp,
 		lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
+	// Создать() ходит в entityservice (дефолты и ПриСозданииНового, план 153).
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv
 }
 
 // stagesDSLCall исполняет вызов DSL-объекта и превращает RaiseUserError

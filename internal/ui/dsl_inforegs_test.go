@@ -61,6 +61,7 @@ func runInfoRegDSL(t *testing.T, db *storage.DB, ir *metadata.InfoRegister, body
 	for _, p := range prog.Procedures {
 		proc = p
 	}
+	s.entitySvc = s.newEntityService(nil)
 	var msgs []string
 	vars, txState := s.buildDSLVarsWithMessagesTx(context.Background(), nil, &msgs)
 	defer interpreter.RollbackTxExecution(txState)
@@ -567,6 +568,7 @@ func TestInfoRegSet_РегистрируетИзменениеВПланахОб
 	if err := s.interp.Run(prog.Procedures[0], nil, vars); err != nil {
 		t.Fatalf("запись набора: %v", err)
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	var changes int
 	if err := db.QueryRow(ctx,
@@ -698,6 +700,7 @@ func TestInfoRegSet_УдалениеТребуетDeletePermission(t *testing.T)
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
 			InfoRegs: map[string][]string{ir.Name: {"write"}},
 		}}}}
@@ -823,6 +826,7 @@ func TestInfoRegSet_РегистрируетTombstoneУдалённыхСтро�
 		if err := s.interp.Run(prog.Procedures[0], nil, vars); err != nil {
 			t.Fatalf("удаление набором: %v", err)
 		}
+		s.entitySvc = s.newEntityService(nil)
 
 		changes, err := db.PendingExchangeChanges(ctx, plan.Name, "center")
 		if err != nil {
@@ -859,6 +863,7 @@ func TestInfoRegSet_ТипизированныйОтборМатрица(t *test
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 		ref1 := &interpreter.Ref{
 			UUID: "11111111-1111-1111-1111-111111111111", Name: "Одинаковое имя",
 		}
@@ -969,6 +974,7 @@ func TestInfoRegSet_ExchangeKeyСсылкиИспользуетUUID(t *testing.T
 	registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 	registry.LoadExchangePlans([]*metadata.ExchangePlan{plan})
 	s := &Server{store: db, reg: registry}
+	s.entitySvc = s.newEntityService(nil)
 	ref := &interpreter.Ref{UUID: uuid.NewString(), Name: "Витринное имя"}
 	rs := newInfoRegRecordSet(s, interpreter.NewTxState(ctx), ir)
 	rs.filter.Set("Owner", ref)
@@ -1020,6 +1026,7 @@ func TestInfoRegRecordSet_ReadAppliesObjectAndRowAccessMatrix(t *testing.T) {
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 		role := &auth.Role{Permissions: auth.Permission{
 			InfoRegs: map[string][]string{ir.Name: {"read"}},
 			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
@@ -1072,6 +1079,7 @@ func TestInfoRegRecordSet_WritePreflightsObjectPermissionsMatrix(t *testing.T) {
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 
 		for _, tc := range []struct {
 			name string
@@ -1151,6 +1159,7 @@ func TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix(t *testing.T) {
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		registry.LoadExchangePlans([]*metadata.ExchangePlan{plan})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 		policy := auth.RowPolicy{Field: "Owner", Op: "eq", Value: auth.RowValue{Literal: "mine"}}
 		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
 			InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
@@ -1247,6 +1256,7 @@ func TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix(t *testing.
 				registry := runtime.NewRegistry()
 				registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 				s := &Server{store: db, reg: registry}
+				s.entitySvc = s.newEntityService(nil)
 				user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
 					InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
 					RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
@@ -1379,6 +1389,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				registry := runtime.NewRegistry()
 				registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{tc.ir}})
 				s := &Server{store: db, reg: registry}
+				s.entitySvc = s.newEntityService(nil)
 				user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
 					InfoRegs: map[string][]string{tc.ir.Name: {"write", "delete"}},
 					RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
@@ -1499,6 +1510,7 @@ func TestInfoRegRecordSet_DeletePeriodRLSUsesTypedPeriodMatrix(t *testing.T) {
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
 			InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
 			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
@@ -1544,6 +1556,7 @@ func TestInfoRegRecordSet_PostgresConcurrentInsertCheckedByRLS(t *testing.T) {
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{InfoRegs: []*metadata.InfoRegister{ir}})
 		s := &Server{store: db, reg: registry}
+		s.entitySvc = s.newEntityService(nil)
 		policy := auth.RowPolicy{Field: "Owner", Op: "eq", Value: auth.RowValue{Literal: "mine"}}
 		user := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{
 			InfoRegs: map[string][]string{ir.Name: {"write", "delete"}},
