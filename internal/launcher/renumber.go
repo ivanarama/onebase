@@ -48,6 +48,10 @@ type RenumberObject struct {
 	Field  string `json:"field"`
 	Empty  int    `json:"empty"`
 	Filled int    `json:"filled"`
+	// Error — объект пропущен командой (его таблица ещё не приведена к
+	// конфигурации). Кнопке это не мешает: лечится то, что прочиталось, а
+	// остальное догонит миграция при следующем запуске базы.
+	Error string `json:"error,omitempty"`
 }
 
 // RenumberReport — отчёт дочерней команды целиком.
@@ -74,6 +78,17 @@ func (rep RenumberReport) Pending() []RenumberObject {
 	var out []RenumberObject
 	for _, obj := range rep.Objects {
 		if obj.Empty > 0 {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
+// Skipped — объекты, которые команда не смогла прочитать.
+func (rep RenumberReport) Skipped() []RenumberObject {
+	var out []RenumberObject
+	for _, obj := range rep.Objects {
+		if obj.Error != "" {
 			out = append(out, obj)
 		}
 	}
@@ -166,6 +181,13 @@ func (h *handler) renumberFix(ctx context.Context, base *Base, startErr error) *
 		oblog.Component("launcher").Warn("не удалось оценить объём дозаполнения кодов",
 			"baseID", base.ID, "err", err)
 		return nil
+	}
+	// Пропуски не отменяют кнопку, но и молчать о них нельзя: если
+	// дозаполнение не помогло, в журнале должно быть видно, чего команда не
+	// увидела.
+	for _, obj := range rep.Skipped() {
+		oblog.Component("launcher").Warn("объект пропущен при дозаполнении кодов",
+			"baseID", base.ID, "object", obj.Object, "err", obj.Error)
 	}
 	pending := rep.Pending()
 	if len(pending) == 0 {

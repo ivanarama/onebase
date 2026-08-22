@@ -61,6 +61,10 @@ type renumberEntityReport struct {
 	Empty   int      `json:"empty"`
 	Filled  int      `json:"filled"`
 	Samples []string `json:"samples,omitempty"`
+	// Error — почему объект пропущен. Пустая строка = объект обработан.
+	// Причина едет в отчёте, а не в коде возврата: непрочитанный объект не
+	// отменяет работу по остальным (см. runRenumber).
+	Error string `json:"error,omitempty"`
 }
 
 func runRenumber(cmd *cobra.Command, _ []string) error {
@@ -96,13 +100,31 @@ func runRenumber(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Сбой на одном объекте не отменяет остальные. Команду зовут ровно тогда,
+	// когда схема базы РАСХОДИТСЯ с конфигурацией: гейт уникальности остановил
+	// миграцию на первом же объекте, и всё, что шло после него, осталось без
+	// новых колонок. Чтение такого объекта падает («no such column»), и раньше
+	// это падение уносило весь отчёт — вместе с тем объектом, из-за которого
+	// база и не стартовала. Пользователь лаунчера при этом терял кнопку
+	// «Дозаполнить коды»: она рисуется по отчёту, которого не было (#1067).
 	reports := make([]renumberEntityReport, 0, len(targets))
+	failed := 0
+	var firstErr error
 	for _, ent := range targets {
 		rep, err := renumberEntity(ctx, db, ent, write)
 		if err != nil {
-			return fmt.Errorf("%s: %w", ent.Name, err)
+			rep.Error = err.Error()
+			failed++
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", ent.Name, err)
+			}
 		}
 		reports = append(reports, rep)
+	}
+	// Ни одного прочитанного объекта — это уже не «часть схемы отстала», а
+	// нерабочая база: отчёт всё равно пуст, и молчать о причине нельзя.
+	if failed > 0 && failed == len(targets) {
+		return firstErr
 	}
 
 	if asJSON {
@@ -277,8 +299,13 @@ func printRenumberReport(reports []renumberEntityReport, write bool) {
 		outf("Объектов с объявленным numerator: не найдено.\n")
 		return
 	}
-	total := 0
+	total, skipped := 0, 0
 	for _, r := range reports {
+		if r.Error != "" {
+			skipped++
+			outf("%s.%s: пропущен — %s\n", r.Object, r.Field, r.Error)
+			continue
+		}
 		if write {
 			outf("%s.%s: заполнено %d\n", r.Object, r.Field, r.Filled)
 			total += r.Filled
@@ -292,7 +319,20 @@ func printRenumberReport(reports []renumberEntityReport, write bool) {
 	}
 	if write {
 		outf("\nИтого заполнено: %d\n", total)
+		printRenumberSkipped(skipped)
 		return
 	}
 	outf("\nИтого без значения: %d. Ничего не изменено — повторите с --write.\n", total)
+	printRenumberSkipped(skipped)
+}
+
+// printRenumberSkipped объясняет пропуск: сам по себе он выглядит как отказ, а
+// означает «схема этих объектов ещё не догнала конфигурацию». Догоняет её
+// миграция при следующем запуске базы — после того, как дозаполнение снимет
+// то, обо что она споткнулась.
+func printRenumberSkipped(skipped int) {
+	if skipped == 0 {
+		return
+	}
+	outf("Пропущено объектов: %d — их таблицы ещё не приведены к конфигурации; повторите после запуска базы.\n", skipped)
 }
