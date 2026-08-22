@@ -48,8 +48,10 @@ type RenumberObject struct {
 	Field  string `json:"field"`
 	Empty  int    `json:"empty"`
 	Filled int    `json:"filled"`
-	// Error — объект пропущен командой (его таблица ещё не приведена к
-	// конфигурации). Кнопке это не мешает: лечится то, что прочиталось, а
+	// Error — объект пропущен командой: его таблицы ещё нет или в ней нет
+	// колонок под объявленные реквизиты. Только этот класс и пропускается —
+	// сорвавшаяся работа роняет команду целиком, и тогда сюда не доходит
+	// вообще ничего. Кнопке пропуск не мешает: лечится то, что прочиталось,
 	// остальное догонит миграция при следующем запуске базы.
 	Error string `json:"error,omitempty"`
 }
@@ -244,11 +246,15 @@ func (h *handler) renumber(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}
+	// skipped едет рядом с filled намеренно: «дозаполнено 0» и «дозаполнено 0,
+	// но три объекта пропущены» — разные ответы, и второй объясняет, почему
+	// запуск может не поправиться с первого раза.
 	writeJSON(w, 200, map[string]any{
 		"ok":      true,
 		"write":   write,
 		"empty":   rep.EmptyCount(),
 		"filled":  rep.FilledCount(),
 		"objects": rep.Pending(),
+		"skipped": rep.Skipped(),
 	})
 }

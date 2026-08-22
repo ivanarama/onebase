@@ -11,8 +11,8 @@ package cli
 import (
 	"context"
 	"os"
-	"strings"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -178,17 +178,25 @@ func TestRenumberReportsUnreadableObjectAndKeepsRest(t *testing.T) {
 	if len(pending) != 1 || pending[0].Object != "Контрагенты" {
 		t.Fatalf("Pending = %+v, ожидались Контрагенты — иначе кнопки в лаунчере нет", pending)
 	}
-	skipped := rep.Skipped()
-	if len(skipped) != 1 || skipped[0].Object != "Поступления" {
-		t.Fatalf("Skipped = %+v, ожидались Поступления", skipped)
+	// Оба разрыва схемы одного класса: у НовогоОбъекта нет таблицы, у
+	// Поступлений — колонки под новый реквизит.
+	skipped := map[string]string{}
+	for _, obj := range rep.Skipped() {
+		skipped[obj.Object] = obj.Error
+		if obj.Empty != 0 {
+			t.Errorf("у пропущенного %s empty = %d, ожидался 0", obj.Object, obj.Empty)
+		}
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("Skipped = %+v, ожидались НовыйОбъект и Поступления", rep.Skipped())
 	}
 	// Причина пропуска обязана доехать до журнала: без неё «объект пропущен»
 	// неотличимо от «объект в порядке».
-	if !strings.Contains(skipped[0].Error, "организация") {
-		t.Errorf("причина пропуска = %q, в ней нет недостающей колонки", skipped[0].Error)
+	if !strings.Contains(skipped["Поступления"], "организация") {
+		t.Errorf("причина пропуска = %q, в ней нет недостающей колонки", skipped["Поступления"])
 	}
-	if skipped[0].Empty != 0 {
-		t.Errorf("у непрочитанного объекта empty = %d, ожидался 0", skipped[0].Empty)
+	if !strings.Contains(skipped["НовыйОбъект"], "новыйобъект") {
+		t.Errorf("причина пропуска = %q, в ней нет имени таблицы", skipped["НовыйОбъект"])
 	}
 
 	// Лечение доходит до конца: непрочитанный сосед не мешает дозаполнить то,
@@ -202,12 +210,13 @@ func TestRenumberReportsUnreadableObjectAndKeepsRest(t *testing.T) {
 	}
 }
 
-// Обратная граница: если не читается НИ ОДИН объект, это не «часть схемы
-// отстала», а нерабочая база — команда обязана отказать, а не рапортовать
-// пустым отчётом об успехе.
-func TestRenumberFailsWhenNoObjectReadable(t *testing.T) {
+// Граница пропуска со стороны схемы: если отстали ВСЕ объекты, лечить нечем.
+// Команда отрабатывает без ошибки (нечего делать — не сбой), но отчёт обязан
+// остаться пустым по объёму: иначе лаунчер предложит кнопку, которая ничего не
+// изменит, и пользователь пойдёт по кругу.
+func TestRenumberWithoutReadableObjectsOffersNothing(t *testing.T) {
 	dir := t.TempDir()
-	writeProcrunFixture(t, dir, "config/app.yaml", "name: renumber-broken\nversion: \"1.0\"\n")
+	writeProcrunFixture(t, dir, "config/app.yaml", "name: renumber-behind\nversion: \"1.0\"\n")
 	writeProcrunFixture(t, dir, "catalogs/Поступления.yaml",
 		"name: Поступления\nnumerator:\n  prefix: \"П-\"\n  length: 6\nfields:\n"+
 			"  - name: Наименование\n    type: string\n  - name: Организация\n    type: string\n")
@@ -220,7 +229,7 @@ func TestRenumberFailsWhenNoObjectReadable(t *testing.T) {
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 		},
 	}
-	dbPath := filepath.Join(t.TempDir(), "broken.db")
+	dbPath := filepath.Join(t.TempDir(), "behind.db")
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, dbPath)
 	if err != nil {
@@ -231,7 +240,86 @@ func TestRenumberFailsWhenNoObjectReadable(t *testing.T) {
 	}
 	db.Close()
 
-	rootCmd.SetArgs([]string{"renumber", "--project", dir, "--sqlite", dbPath, "--json"})
+	rep, err := launcher.ParseRenumberReport([]byte(runRenumberJSON(t, dir, dbPath, false)))
+	if err != nil {
+		t.Fatalf("отчёт не разобран: %v", err)
+	}
+	if len(rep.Pending()) != 0 || rep.EmptyCount() != 0 {
+		t.Errorf("предложено лечение по отставшей схеме: %+v", rep.Pending())
+	}
+	if len(rep.Skipped()) != 1 {
+		t.Fatalf("Skipped = %+v, ожидался один объект", rep.Skipped())
+	}
+}
+
+// Обратная сторона пропуска: пропускается ТОЛЬКО отставшая схема. Любая другая
+// ошибка обязана уронить команду, даже если предыдущий объект уже обработан и
+// часть записи прошла. Иначе лаунчер ответит на сорвавшееся лечение ok:true,
+// пользователь нажмёт «Дозаполнить и запустить» и получит ту же ошибку старта
+// без единого следа причины.
+func TestRenumberFailsOnRealErrorAfterSuccessfulObject(t *testing.T) {
+	dir := t.TempDir()
+	writeProcrunFixture(t, dir, "config/app.yaml", "name: renumber-partial\nversion: \"1.0\"\n")
+	writeProcrunFixture(t, dir, "catalogs/Контрагенты.yaml",
+		"name: Контрагенты\nnumerator:\n  prefix: \"К-\"\n  length: 6\nfields:\n"+
+			"  - name: Наименование\n    type: string\n")
+	writeProcrunFixture(t, dir, "catalogs/Поступления.yaml",
+		"name: Поступления\nnumerator:\n  prefix: \"П-\"\n  length: 6\nfields:\n"+
+			"  - name: Наименование\n    type: string\n")
+
+	ent := renumberCatalog()
+	// Схема Поступлений в порядке — сорвётся сама работа: у записи
+	// идентификатор не UUID, и разбор строки в renumberRowID откажет. Годится
+	// любая невозможная запись; важно, что это не отставание схемы.
+	broken := &metadata.Entity{
+		Name: "Поступления",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: metadata.StandardCodeField, Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	dbPath := filepath.Join(t.TempDir(), "partial.db")
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{ent, broken}); err != nil {
+		t.Fatalf("миграция: %v", err)
+	}
+	if err := db.EnsureNumeratorSchema(ctx); err != nil {
+		t.Fatalf("схема нумератора: %v", err)
+	}
+	// Контрагенты идут раньше по алфавиту: к моменту сбоя один объект уже
+	// дозаполнен, то есть запись частичная.
+	if err := db.Upsert(ctx, ent.Name, uuid.New(), map[string]any{"Наименование": "Альфа"}, ent); err != nil {
+		t.Fatalf("вставка: %v", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO поступления (id, наименование) VALUES ('не-uuid', 'Тест')"); err != nil {
+		t.Fatalf("вставка испорченной записи: %v", err)
+	}
+	db.Close()
+
+	out, err := runRenumberExpectingFailure(t, dir, dbPath)
+	if err == nil {
+		t.Fatalf("частичная запись со сбоем отчиталась об успехе: %s", out)
+	}
+	if !strings.Contains(err.Error(), "Поступления") {
+		t.Errorf("в ошибке нет имени объекта: %v", err)
+	}
+	// И этот сбой не должен выглядеть как отставание схемы: пропуск объясняют
+	// пользователю, а здесь объяснять нечего — работа не выполнена.
+	if strings.Contains(err.Error(), "отстала от конфигурации") {
+		t.Errorf("настоящий сбой выдан за отставание схемы: %v", err)
+	}
+}
+
+// runRenumberExpectingFailure гоняет команду тем же путём, что и runRenumberJSON,
+// но отдаёт ошибку вызывающему: тесты отказа проверяют именно её.
+func runRenumberExpectingFailure(t *testing.T, dir, dbPath string) (string, error) {
+	t.Helper()
+	rootCmd.SetArgs([]string{"renumber", "--project", dir, "--sqlite", dbPath, "--json", "--write"})
 	t.Cleanup(func() {
 		rootCmd.SetArgs(nil)
 		for _, name := range []string{"project", "sqlite", "object"} {
@@ -249,11 +337,5 @@ func TestRenumberFailsWhenNoObjectReadable(t *testing.T) {
 			}
 		}
 	})
-	out, err := captureStdout(t, rootCmd.Execute)
-	if err == nil {
-		t.Fatalf("команда отчиталась об успехе на нечитаемой базе: %s", out)
-	}
-	if !strings.Contains(err.Error(), "Поступления") {
-		t.Errorf("в ошибке нет имени объекта: %v", err)
-	}
+	return captureStdout(t, rootCmd.Execute)
 }

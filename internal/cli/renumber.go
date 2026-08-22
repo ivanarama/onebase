@@ -100,31 +100,35 @@ func runRenumber(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Сбой на одном объекте не отменяет остальные. Команду зовут ровно тогда,
-	// когда схема базы РАСХОДИТСЯ с конфигурацией: гейт уникальности остановил
-	// миграцию на первом же объекте, и всё, что шло после него, осталось без
-	// новых колонок. Чтение такого объекта падает («no such column»), и раньше
-	// это падение уносило весь отчёт — вместе с тем объектом, из-за которого
-	// база и не стартовала. Пользователь лаунчера при этом терял кнопку
-	// «Дозаполнить коды»: она рисуется по отчёту, которого не было (#1067).
+	// Отставшая схема — не ошибка команды, а её рабочий случай. Команду зовут
+	// ровно тогда, когда схема базы РАСХОДИТСЯ с конфигурацией: гейт
+	// уникальности остановил миграцию на первом же объекте, и всё, что шло
+	// после него, осталось без новых колонок. Раньше чтение такого соседа
+	// падало («no such column») и уносило весь отчёт — вместе с тем объектом,
+	// из-за которого база и не стартовала; пользователь лаунчера терял кнопку
+	// «Дозаполнить коды», потому что она рисуется по отчёту (#1105).
+	//
+	// Отставание диагностируется ДО обработки и только по схеме. Любая ошибка
+	// самой работы — чтения, генерации номера, записи — по-прежнему валит
+	// команду немедленно: «часть объектов пропущена» и «запись сорвалась на
+	// середине» обязаны отличаться, иначе лаунчер ответит ok:true на неудачу.
 	reports := make([]renumberEntityReport, 0, len(targets))
-	failed := 0
-	var firstErr error
 	for _, ent := range targets {
+		gap, err := renumberSchemaGap(ctx, db, ent)
+		if err != nil {
+			return fmt.Errorf("%s: %w", ent.Name, err)
+		}
+		if gap != "" {
+			reports = append(reports, renumberEntityReport{
+				Object: ent.Name, Field: storage.AutoNumberField(ent), Error: gap,
+			})
+			continue
+		}
 		rep, err := renumberEntity(ctx, db, ent, write)
 		if err != nil {
-			rep.Error = err.Error()
-			failed++
-			if firstErr == nil {
-				firstErr = fmt.Errorf("%s: %w", ent.Name, err)
-			}
+			return fmt.Errorf("%s: %w", ent.Name, err)
 		}
 		reports = append(reports, rep)
-	}
-	// Ни одного прочитанного объекта — это уже не «часть схемы отстала», а
-	// нерабочая база: отчёт всё равно пуст, и молчать о причине нельзя.
-	if failed > 0 && failed == len(targets) {
-		return firstErr
 	}
 
 	if asJSON {
@@ -137,6 +141,51 @@ func runRenumber(cmd *cobra.Command, _ []string) error {
 	}
 	printRenumberReport(reports, write)
 	return nil
+}
+
+// renumberSchemaGap отвечает на один вопрос: отстала ли таблица объекта от
+// конфигурации настолько, что его нельзя даже прочитать. Пустая строка —
+// объект обрабатывается обычным путём; непустая — причина пропуска, годная для
+// показа человеку.
+//
+// Смотрим схему, а не текст ошибки чтения. Распознавание «no such column» в
+// сообщении драйвера означало бы, что любая опечатка в SQL или сбой соединения
+// с похожим текстом тоже станет «пропуском» — то есть успехом. Здесь же обе
+// проверки задают схеме прямой вопрос и различают «нет колонки» и «сорвалась
+// интроспекция»: вторая — ошибка, и она уходит наверх.
+func renumberSchemaGap(ctx context.Context, db *storage.DB, ent *metadata.Entity) (string, error) {
+	table := metadata.TableName(ent.Name)
+	// Таблицы ещё нет — миграция до объекта не дошла (#1080). Тот же класс, что
+	// и недостающая колонка: дозаполнять нечего, работа не сорвана.
+	exists, err := db.TableExists(ctx, table)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return fmt.Sprintf("таблицы %s ещё нет: миграция до объекта не дошла", table), nil
+	}
+	// Таблица есть, а колонки под объявленный реквизит нет: гейт уникальности
+	// остановил миграцию раньше, чем она дошла сюда. List выбирает все поля
+	// объекта, поэтому такой объект не читается целиком.
+	var missing []string
+	for _, f := range ent.Fields {
+		col := metadata.ColumnName(f)
+		if col == "" {
+			continue
+		}
+		has, err := db.Dialect().ColumnExists(ctx, db, table, col)
+		if err != nil {
+			return "", fmt.Errorf("проверка колонки %s.%s: %w", table, col, err)
+		}
+		if !has {
+			missing = append(missing, col)
+		}
+	}
+	if len(missing) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("таблица %s отстала от конфигурации: нет колонок %s",
+		table, strings.Join(missing, ", ")), nil
 }
 
 // renumberTargets отбирает объекты с объявленным нумератором.
@@ -165,18 +214,6 @@ func renumberTargets(proj *project.Project, only string) ([]*metadata.Entity, er
 func renumberEntity(ctx context.Context, db *storage.DB, ent *metadata.Entity, write bool) (renumberEntityReport, error) {
 	field := storage.AutoNumberField(ent)
 	rep := renumberEntityReport{Object: ent.Name, Field: field}
-	// Частично выполненная миграция — основной сценарий этой команды: гейт
-	// уникальности мог остановить схему на одном объекте, а следующие таблицы
-	// ещё не созданы. Для такого объекта дозаполнять нечего. Проверяем наличие
-	// явно, не распознаём текст ошибки List: TableExists отделяет «нет таблицы»
-	// от настоящего сбоя соединения на обоих диалектах (#1080).
-	exists, err := db.TableExists(ctx, metadata.TableName(ent.Name))
-	if err != nil {
-		return rep, err
-	}
-	if !exists {
-		return rep, nil
-	}
 
 	lastRows, err := db.List(ctx, ent.Name, ent, storage.ListParams{
 		Sort: "id", Dir: "desc", Limit: 1,
