@@ -139,7 +139,7 @@ func TestSafeHTTPDialPinsValidatedAddress(t *testing.T) {
 	dial := func(_ context.Context, _, address string) (net.Conn, error) {
 		dialed = address
 		client, server := net.Pipe()
-		go server.Close()
+		go func() { _ = server.Close() }()
 		return client, nil
 	}
 	d := safeHTTPDialer{policy: policy, resolver: resolver, dial: dial}
@@ -214,7 +214,7 @@ func TestSafeHTTPClientDoesNotInheritDefaultTransportTLSHooks(t *testing.T) {
 	if transport.DialContext == nil {
 		t.Fatal("safe transport has no validated DialContext")
 	}
-	if transport.DialTLS != nil || transport.DialTLSContext != nil {
+	if transport.DialTLS != nil || transport.DialTLSContext != nil { //nolint:staticcheck // SA1019: this regression test must also inspect the legacy bypass hook.
 		t.Fatal("safe transport inherited a TLS dial hook which can bypass validated DialContext")
 	}
 	if transport.Proxy != nil {
@@ -262,7 +262,10 @@ func TestSafeHTTPRedirectRechecksHostAllowlist(t *testing.T) {
 		"http://evil.example:" + port + "/other-host",
 	} {
 		target = redirect
-		_, err := client.Get("http://images.example:" + port + "/start")
+		resp, err := client.Get("http://images.example:" + port + "/start")
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 		if err == nil || !strings.Contains(err.Error(), "перенаправление запрещено") {
 			t.Fatalf("redirect %q error = %v", redirect, err)
 		}
@@ -286,7 +289,10 @@ func TestSafeHTTPRedirectRedialRejectsDNSRebinding(t *testing.T) {
 	client, _, dials := safeHTTPTestClient(t, srv, resolver)
 	port := strconv.Itoa(srv.Listener.Addr().(*net.TCPAddr).Port)
 
-	_, err := client.Get("http://images.example:" + port + "/start")
+	resp, err := client.Get("http://images.example:" + port + "/start")
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err == nil || !strings.Contains(err.Error(), "непубличный IP") {
 		t.Fatalf("DNS rebinding error = %v", err)
 	}
