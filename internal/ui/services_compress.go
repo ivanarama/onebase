@@ -11,6 +11,7 @@ package ui
 
 import (
 	"compress/gzip"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -159,6 +160,34 @@ func (w *gzipResponseWriter) Close() {
 		if err := w.gz.Close(); err != nil {
 			oblog.Component("http").Warn("сжатие ответа: не удалось закрыть поток", "error", err)
 		}
+		gzipWriterPool.Put(w.gz)
+		w.gz = nil
+	}
+}
+
+// closeAfterHandler завершает поток только при нормальном возврате. Если
+// обработчик запаниковал до отправки заголовков, буфер надо отбросить: иначе
+// обычный defer Close зафиксировал бы неявный 200 раньше внешнего Recoverer.
+// После commit исправить статус уже невозможно, поэтому начатый gzip-поток
+// всё же закрываем, чтобы не отдавать клиенту заведомо битое тело.
+func (w *gzipResponseWriter) closeAfterHandler() {
+	rec := recover()
+	if rec == nil {
+		w.Close()
+		return
+	}
+	if w.headersOut {
+		w.Close()
+	} else {
+		w.abort()
+	}
+	panic(rec)
+}
+
+func (w *gzipResponseWriter) abort() {
+	w.buf = nil
+	if w.gz != nil {
+		w.gz.Reset(io.Discard)
 		gzipWriterPool.Put(w.gz)
 		w.gz = nil
 	}

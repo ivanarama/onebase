@@ -20,6 +20,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/httpservice"
+	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/websec"
@@ -63,6 +64,10 @@ const compressHandlersSrc = `
     Отв.УстановитьТелоИзСтроки(т);
     Возврат Отв;
 КонецФункции
+
+Функция Бум(Запрос) Экспорт
+    Возврат Утилиты.Бах(Запрос);
+КонецФункции
 `
 
 // newCompressTestServer поднимает сервер с тремя сервисами: публичный (сжатие
@@ -97,6 +102,7 @@ func newCompressTestServer(t *testing.T) *Server {
 		{Template: "/small", Methods: map[string]string{"GET": "Маленький"}},
 		{Template: "/png", Methods: map[string]string{"GET": "Картинка"}},
 		{Template: "/precompressed", Methods: map[string]string{"GET": "Готовый"}},
+		{Template: "/boom", Methods: map[string]string{"GET": "Бум"}},
 	}
 	yes := true
 	pub := &httpservice.Service{Name: "Pub", RootURL: "pub", Auth: "none", Templates: tmpl}
@@ -222,6 +228,29 @@ func TestCompress_BelowThreshold(t *testing.T) {
 	}
 	if got := w.Body.String(); got != "мало" {
 		t.Errorf("тело=%q, ожидалось «мало»", got)
+	}
+}
+
+func TestCompress_PanicBeforeCommitReachesRecoverer(t *testing.T) {
+	s := newCompressTestServer(t)
+	s.interp.LookupModuleProc = func(module, name string) *ast.ProcedureDecl {
+		panic("паника до commit")
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/hs/pub/boom", nil)
+	r.Header.Set("Accept-Encoding", "gzip")
+	h := incident.Recoverer(nil, nil)(http.HandlerFunc(s.serviceDispatch))
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("gzip defer преждевременно зафиксировал status=%d, ожидался 500; body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Encoding"); got != "" {
+		t.Fatalf("Recoverer получил незавершённый Content-Encoding=%q", got)
+	}
+	if !strings.Contains(w.Body.String(), incident.Message("")) {
+		t.Fatalf("ответ Recoverer не дошёл до клиента: %q", w.Body.String())
 	}
 }
 
