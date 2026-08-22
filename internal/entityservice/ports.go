@@ -3,14 +3,14 @@ package entityservice
 // Порты хранилища (шаг 2 ARCH-01, issue #787).
 //
 // Интерфейсы объявлены на стороне потребителя: здесь перечислена ровно та
-// поверхность *storage.DB, которой пользуется сам сервис, — 22 метода из 314.
+// поверхность *storage.DB, которой пользуется сам сервис, — 24 метода из 314.
 // internal/storage о них не знает и не меняется, *storage.DB удовлетворяет им
 // как есть (см. compile-time проверку в конце файла).
 //
 // Зачем: раньше поле Service.Store имело тип *storage.DB, и сигнатура ничего не
 // сообщала о контракте — чтобы узнать, что сервису нужно от базы, приходилось
 // читать сервис целиком. Теперь набор виден объявлением, а изменение любого из
-// остальных 292 методов storage.DB сервиса не задевает.
+// остальных 290 методов storage.DB сервиса не задевает.
 //
 // Роли объявлены раздельно, чтобы будущие потребители могли зависеть от узкой
 // части; поле Store пока держит совокупный Storage — это оставляет все точки
@@ -109,6 +109,17 @@ type RawExecutor interface {
 	Dialect() storage.Dialect
 }
 
+// DefaultsStore — чтение, нужное значениям по умолчанию (план 153): значение
+// константы для `default: константа.X` и список элементов справочника для
+// `default: единственный`.
+type DefaultsStore interface {
+	// GetConstant читает текущее значение константы.
+	GetConstant(ctx context.Context, name string) (any, error)
+	// List читает строки сущности; дефолтам нужен предел в две строки и
+	// предикат строкового доступа.
+	List(ctx context.Context, entityName string, entity *metadata.Entity, params storage.ListParams) ([]map[string]any, error)
+}
+
 // Storage — совокупный порт, который держит Service в поле Store.
 type Storage interface {
 	EntityStore
@@ -118,6 +129,7 @@ type Storage interface {
 	NumberGenerator
 	PostingLockReader
 	RawExecutor
+	DefaultsStore
 }
 
 // *storage.DB обязан удовлетворять порту без единой правки в internal/storage.

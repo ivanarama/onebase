@@ -147,6 +147,7 @@ func TestProcessorRun_PublishesRealtimeToast(t *testing.T) {
 		messages: NewMessageStore(),
 		lockMgr:  runtime.NewLockManager(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 	r := chi.NewRouter()
 	s.Mount(r)
 	srv := httptest.NewServer(r)

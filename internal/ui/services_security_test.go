@@ -53,7 +53,7 @@ func newSecuredServiceServer(t *testing.T, svc *httpservice.Service) *Server {
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
 
-	return &Server{
+	srv := &Server{
 		store:            db,
 		reg:              registry,
 		interp:           interp,
@@ -63,6 +63,8 @@ func newSecuredServiceServer(t *testing.T, svc *httpservice.Service) *Server {
 		maxFileSizeBytes: 1 << 20,
 		loginLimit:       auth.NewLoginLimiter(5, time.Minute),
 	}
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv
 }
 
 func TestService_TokenAuth(t *testing.T) {

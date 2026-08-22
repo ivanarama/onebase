@@ -42,14 +42,16 @@ func newProcessorFormEventExecutionServer(t *testing.T, proc *processor.Processo
 		t.Fatal(err)
 	}
 
-	return &Server{
+	srv := &Server{
 		store:    db,
 		reg:      registry,
 		interp:   interp,
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 		ops:      newOperationLimiter(),
-	}, db
+	}
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv, db
 }
 
 func postProcessorFormEventExecution(t *testing.T, srv *Server, procName, contentType string, body io.Reader) *httptest.ResponseRecorder {

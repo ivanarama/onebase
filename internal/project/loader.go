@@ -370,6 +370,12 @@ func Load(dir string) (*Project, error) {
 	if err := metadata.ValidateConstants(p.Constants, p.Entities, p.Enums); err != nil {
 		return nil, err
 	}
+	// Дефолты проверяются после констант: `default: константа.X` ссылается на
+	// них, и сообщение «нет такой константы» должно приходить от механизма
+	// дефолтов, а не от опечатки в самой константе.
+	if err := metadata.ValidateDefaults(p.Entities, p.Enums, p.Constants); err != nil {
+		return nil, err
+	}
 	if err := p.loadDSL(); err != nil {
 		return nil, err
 	}

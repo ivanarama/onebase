@@ -36,6 +36,12 @@ type ListParams struct {
 	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
 	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
 	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
+	// ExcludeMarked отбрасывает помеченные на удаление строки (план 153).
+	// Нужен источнику дефолта `единственный`: помеченный элемент — кандидат
+	// на исчезновение, подставлять его в новый документ нельзя. Обычные
+	// списки его не задают и показывают пометку зачёркиванием, как раньше.
+	// Учитывается и в CountList — иначе счётчик разошёлся бы с выдачей.
+	ExcludeMarked bool
 }
 
 // FilterValue holds a filter for one field.
@@ -631,6 +637,15 @@ func folderScopeWhere(d Dialect, entity *metadata.Entity, onlyFolders, excludeFo
 	return fmt.Sprintf("(is_folder IS NULL OR is_folder = %s)", boolFalseLit(d))
 }
 
+// deletionMarkWhere отбрасывает помеченные на удаление строки. NULL — не
+// пометка: строки, записанные до появления колонки, помеченными не считаются.
+func deletionMarkWhere(d Dialect, exclude bool) string {
+	if !exclude {
+		return ""
+	}
+	return fmt.Sprintf("(deletion_mark IS NULL OR deletion_mark = %s)", boolFalseLit(d))
+}
+
 func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) ([]map[string]any, error) {
 	// План 79F (defense-in-depth, по умолчанию выключен): если у сущности есть
 	// строковая политика, но список запрошен без вычисления строкового доступа
@@ -687,6 +702,9 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		whereParts = append(whereParts, cond)
 	}
 	if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
+		whereParts = append(whereParts, cond)
+	}
+	if cond := deletionMarkWhere(d, params.ExcludeMarked); cond != "" {
 		whereParts = append(whereParts, cond)
 	}
 
@@ -881,6 +899,9 @@ func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata
 		whereParts = append(whereParts, cond)
 	}
 	if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
+		whereParts = append(whereParts, cond)
+	}
+	if cond := deletionMarkWhere(d, params.ExcludeMarked); cond != "" {
 		whereParts = append(whereParts, cond)
 	}
 

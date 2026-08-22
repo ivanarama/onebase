@@ -355,6 +355,14 @@ func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 		// parts. Register recorders have a different persistence path and must
 		// not silently accept a declaration they do not enforce.
 		keys = append(keys, "required")
+		// default (план 153) гейтится тем же признаком и по той же причине:
+		// объявление имеет силу только там, где его кто-то исполняет. У шапки
+		// объекта дефолт применяется при создании; у реквизита ТЧ ключ читается
+		// тем же parseField, но ValidateDefaults отвергает его отдельным
+		// сообщением — линту здесь придираться не к чему, ошибку выдаст check.
+		// У измерений и ресурсов регистров дефолт не применяется вовсе, и там
+		// «неизвестный ключ» — правда: значение действительно никуда не идёт.
+		keys = append(keys, "default")
 	}
 	return with(obj(keys...), map[string]*yamlLintSchema{
 		"titles": freeMap(),
@@ -1155,6 +1163,7 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 				"OnPost", "ОбработкаПроведения",
 				"OnUnpost", "ОбработкаУдаленияПроведения",
 				"OnFill", "ОбработкаЗаполнения",
+				"OnCreate", "ПриСозданииНового",
 				"Печать", "Print",
 			), false)
 		default:

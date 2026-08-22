@@ -76,6 +76,7 @@ func TestDocWriterOnWriteRebindsTablePartReferenceToTransaction(t *testing.T) {
 		store: db, reg: registry, interp: interp,
 		lockMgr: runtime.NewLockManager(), messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	// Both proxies start with the outer context. The reference therefore has a
 	// stale manager by the time packet.write opens its transaction.

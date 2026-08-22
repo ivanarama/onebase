@@ -58,6 +58,7 @@ func TestDocsRoot_OnWriteApplicationAuditProcedureShadowsPlatformFallback(t *tes
 		store: db, reg: registry, interp: interp,
 		lockMgr: runtime.NewLockManager(), messages: NewMessageStore(),
 	}
+	server.entitySvc = server.newEntityService(nil)
 
 	writer := newDocsRoot(server, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy).
 		CallMethod("создать", nil).(*docWriter)

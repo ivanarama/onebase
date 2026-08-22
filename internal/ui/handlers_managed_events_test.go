@@ -140,6 +140,7 @@ elements:
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	srv.entitySvc = srv.newEntityService(nil)
 
 	body := url.Values{}
 	body.Set("_element", "КнопкаТест")
@@ -218,6 +219,7 @@ elements:
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	srv.entitySvc = srv.newEntityService(nil)
 
 	body := url.Values{}
 	body.Set("_element", "Выполнить")
@@ -443,6 +445,7 @@ func setupManagedEventsServer(t *testing.T, formOSSource string, formHandlers ma
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 	return s, ent
 }
 

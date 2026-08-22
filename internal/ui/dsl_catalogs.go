@@ -86,12 +86,21 @@ func (s *Server) catObjectFactory(ctxSrc docsCtxSource) interpreter.CatalogObjec
 	return &catFactory{s: s, ctxSrc: ctxSrc}
 }
 
+// NewCatalogObject — Справочники.X.Создать(). Значения по умолчанию и хук
+// ПриСозданииНового (план 153) берутся из entityservice, как в форме и REST.
 func (f *catFactory) NewCatalogObject(entity *metadata.Entity) any {
+	res, err := f.s.entitySvc.NewObject(f.ctx(), entityservice.NewObjectRequest{Entity: entity})
+	if err != nil {
+		interpreter.RaiseUserError("Создать(" + entity.Name + "): " + err.Error())
+	}
+	if res.DSLError != "" {
+		interpreter.RaiseUserError("ПриСозданииНового(" + entity.Name + "): " + res.DSLError)
+	}
 	return &catWriter{
 		s:      f.s,
 		ctxSrc: f.ctxSrc,
 		entity: entity,
-		obj:    runtime.NewObject(entity.Name, entity.Kind),
+		obj:    res.Object,
 	}
 }
 

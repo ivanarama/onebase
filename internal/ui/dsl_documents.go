@@ -177,22 +177,41 @@ func (p *docProxy) ctx() context.Context {
 	return context.Background()
 }
 
+// create реализует Документы.X.Создать(): новый объект с применёнными
+// значениями по умолчанию и запущенным хуком ПриСозданииНового (план 153).
+//
+// Дефолты берутся из entityservice — той же реализации, что у формы и REST.
+// Отдельная подстановка здесь означала бы, что документ, созданный из
+// обработки, отличается от созданного руками; ровно так уже расходились
+// проведение и отмена проведения (#366).
+func (p *docProxy) create() any {
+	res, err := p.s.entitySvc.NewObject(p.ctx(), entityservice.NewObjectRequest{Entity: p.entity})
+	if err != nil {
+		interpreter.RaiseUserError("Создать(" + p.entity.Name + "): " + err.Error())
+	}
+	if res.DSLError != "" {
+		// Ошибка ПриСозданииНового — отказ создания: в отличие от формы,
+		// здесь некому увидеть сообщение и продолжить ввод руками.
+		interpreter.RaiseUserError("ПриСозданииНового(" + p.entity.Name + "): " + res.DSLError)
+	}
+	if p.messages != nil {
+		*p.messages = append(*p.messages, res.DSLMessages...)
+	}
+	// ID и Kind проставил runtime.NewObject внутри сервиса; переприсваивать
+	// ID нельзя — хук ПриСозданииНового мог уже сослаться на него.
+	return &docWriter{
+		s:        p.s,
+		ctxSrc:   p.ctxSrc,
+		entity:   p.entity,
+		messages: p.messages,
+		obj:      res.Object,
+	}
+}
+
 func (p *docProxy) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "создать", "create":
-		return &docWriter{
-			s:        p.s,
-			ctxSrc:   p.ctxSrc,
-			entity:   p.entity,
-			messages: p.messages,
-			obj: &runtime.Object{
-				ID:            uuid.New(),
-				Type:          p.entity.Name,
-				Kind:          p.entity.Kind,
-				Fields:        map[string]any{},
-				TablePartRows: map[string][]map[string]any{},
-			},
-		}
+		return p.create()
 	case "найтипономеру", "findbynumber":
 		if len(args) == 0 {
 			return nil

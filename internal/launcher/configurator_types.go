@@ -32,6 +32,10 @@ type saveField struct {
 	// AllowInlineCreate — pointer-bool, чтобы omitempty отличал «явно false»
 	// от «не задано». nil → дефолт контекста (true в шапке, false в ТЧ).
 	AllowInlineCreate *bool `yaml:"allow_inline_create,omitempty"`
+	// Default — значение по умолчанию (план 153). Редактор реквизитов его не
+	// показывает, поэтому ключ переносится из прежнего состояния файла, как
+	// id: иначе правка любого реквизита молча стирала бы дефолты у всех.
+	Default string `yaml:"default,omitempty"`
 }
 
 type saveTP struct {

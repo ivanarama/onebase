@@ -34,6 +34,7 @@ func TestEntityServiceSaveRegistersExchangeChange(t *testing.T) {
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	id := uuid.New()
 	if _, err := s.entityService().Save(ctx, entityservice.SaveRequest{

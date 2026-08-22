@@ -60,6 +60,7 @@ func newConstantsServer(t *testing.T) (*Server, context.Context, uuid.UUID) {
 		messages: NewMessageStore(),
 		cfg:      Config{AppName: "test"},
 	}
+	s.entitySvc = s.newEntityService(nil)
 
 	orgID := uuid.New()
 	if err := db.Upsert(ctx, org.Name, orgID, map[string]any{"Наименование": "Головная"}, org); err != nil {

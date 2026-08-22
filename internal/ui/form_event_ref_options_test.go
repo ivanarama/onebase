@@ -104,6 +104,7 @@ func setupRefOptionEventServer(t *testing.T) (*Server, *metadata.Entity, uuid.UU
 		lockMgr:  runtime.NewLockManager(),
 		messages: NewMessageStore(),
 	}
+	s.entitySvc = s.newEntityService(nil)
 	return s, order, target
 }
 

@@ -127,7 +127,7 @@ func newCompressTestServer(t *testing.T) *Server {
 	if err := authRepo.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return &Server{
+	srv := &Server{
 		store:            db,
 		reg:              registry,
 		interp:           interp,
@@ -137,6 +137,8 @@ func newCompressTestServer(t *testing.T) *Server {
 		maxFileSizeBytes: 1 << 20,
 		loginLimit:       auth.NewLoginLimiter(5, time.Minute),
 	}
+	srv.entitySvc = srv.newEntityService(nil)
+	return srv
 }
 
 func doGzipReq(t *testing.T, s *Server, path, acceptEncoding string) *httptest.ResponseRecorder {
