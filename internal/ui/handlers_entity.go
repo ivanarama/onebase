@@ -2243,9 +2243,9 @@ func parseManagedTablePartRows(
 // ветки type==="date" в buildColumns нет (#1077), — так что повод ввести туда
 // произвольный текст у человека самый обычный.
 //
-// Значение не просто проверяется, но и приводится к каноническому ISO: дальше по
-// стеку строку разбирает storage, и он должен получить один формат, а не тот,
-// который случайно набрал пользователь.
+// Значение не просто проверяется, но и приводится к объявленному Go-типу. Для
+// даты это time.Time: storage получает один и тот же инстант с явно заданной
+// зоной, а не строку, которую PostgreSQL и SQLite могут истолковать по-разному.
 //
 // Пустое значение даты и числа даёт nil, то есть NULL в базе. Раньше туда шла
 // пустая строка, и незаполненный необязательный реквизит — вполне рядовое
@@ -2284,24 +2284,25 @@ func typedFormFieldValue(f metadata.Field, raw string) (any, error) {
 		if raw == "" {
 			return nil, nil
 		}
-		canonical, ok := canonicalFormDate(raw)
+		parsed, ok := canonicalFormDate(raw)
 		if !ok {
 			return nil, fmt.Errorf("%q не дата", raw)
 		}
-		return canonical, nil
+		return parsed, nil
 	}
 	return raw, nil
 }
 
 // canonicalFormDate разбирает дату в том виде, в каком её может прислать форма,
-// и возвращает канонический ISO.
+// и возвращает типизированное значение. Форматы без зоны считаются локальными
+// стенными часами; RFC3339 сохраняет заданный пользователем инстант.
 //
 // Список форматов закрытый и включает тот, которым дата ПОКАЗЫВАЕТСЯ
 // («14.03.1985», см. fmtDateValue): пользователь, скопировавший значение из
 // соседней ячейки, не должен получать отказ. Угадывать что-либо сверх списка
 // нельзя — «03.04.2026» в неизвестной раскладке это либо 3 апреля, либо
 // 4 марта, и молча выбрать один из вариантов хуже, чем отказать.
-func canonicalFormDate(raw string) (string, bool) {
+func canonicalFormDate(raw string) (time.Time, bool) {
 	dateOnly := []string{"2006-01-02", "02.01.2006"}
 	withTime := []string{
 		time.RFC3339, time.RFC3339Nano,
@@ -2310,15 +2311,15 @@ func canonicalFormDate(raw string) (string, bool) {
 	}
 	for _, layout := range dateOnly {
 		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
-			return t.Format("2006-01-02"), true
+			return t, true
 		}
 	}
 	for _, layout := range withTime {
 		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
-			return t.Format(time.RFC3339), true
+			return t, true
 		}
 	}
-	return "", false
+	return time.Time{}, false
 }
 
 func convertManagedTablePartRows(rows []map[string]any, tablePart metadata.TablePart) ([]map[string]any, error) {

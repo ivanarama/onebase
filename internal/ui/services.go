@@ -178,7 +178,7 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Accept-Encoding")
 		if clientAcceptsGzip(r) {
 			gzw := newGzipResponseWriter(w)
-			defer gzw.Close()
+			defer gzw.closeAfterHandler()
 			w = gzw
 		}
 	}
@@ -266,7 +266,7 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out := w
-		capture := newCacheCapture()
+		capture := newCacheCapture(out, svc.Cache.BodyLimit())
 		defer func() {
 			// Паника обработчика раскручивает стек через этот defer: capture в
 			// этот момент — нетронутый 200 с пустым телом, и без проверки он
@@ -275,7 +275,7 @@ func (s *Server) serviceDispatch(w http.ResponseWriter, r *http.Request) {
 			if rec := recover(); rec != nil {
 				panic(rec)
 			}
-			if capture.cacheable(svc.Cache.BodyLimit()) {
+			if capture.cacheable(svc) {
 				resp := capture.toCachedResponse()
 				s.svcCache.Put(key, svc.RootURL, resp, time.Duration(svc.Cache.TTL)*time.Second)
 				s.svcCache.forgetUncacheable(key)

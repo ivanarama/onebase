@@ -148,7 +148,7 @@ type Pool struct {
 	mu         sync.Mutex
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
-	inflight   map[uuid.UUID]*inflightTask
+	inflight   map[storage.JobTaskLease]*inflightTask
 	stopping   bool
 }
 
@@ -157,6 +157,8 @@ type inflightTask struct {
 	cancel      context.CancelFunc
 	cancelled   bool // отмену запросил пользователь
 	interrupted bool // прервана остановкой сервера
+	leaseLost   bool // попытку уже изъял и заново захватил другой исполнитель
+	lease       storage.JobTaskLease
 }
 
 // New собирает пул. Обращений к базе не делает: схему заводит Run (и
@@ -183,7 +185,7 @@ func New(db *storage.DB, exec Executor, cfg Config) *Pool {
 		worker:   workerID(),
 		degraded: degraded,
 		nudge:    make(chan struct{}, 1),
-		inflight: make(map[uuid.UUID]*inflightTask),
+		inflight: make(map[storage.JobTaskLease]*inflightTask),
 	}
 	if cfg.Workers > 0 {
 		p.sem = make(chan struct{}, cfg.Workers)
@@ -281,7 +283,7 @@ func (p *Pool) Cancel(ctx context.Context, id uuid.UUID) (string, error) {
 		return "", err
 	}
 	if state == "cancelling" {
-		p.cancelLocal(id)
+		p.cancelLocalByID(id)
 	}
 	return state, nil
 }
@@ -422,7 +424,8 @@ func (p *Pool) start(task storage.JobTask) {
 		return
 	}
 	taskCtx, cancel := context.WithCancel(p.rootCtx)
-	p.inflight[task.ID] = &inflightTask{cancel: cancel}
+	lease := task.Lease()
+	p.inflight[lease] = &inflightTask{cancel: cancel, lease: lease}
 	p.wg.Add(1)
 	p.mu.Unlock()
 
@@ -441,13 +444,20 @@ func (p *Pool) start(task storage.JobTask) {
 func (p *Pool) execute(ctx context.Context, task storage.JobTask) {
 	started := time.Now()
 	output, err := p.exec.ExecuteJobOnce(ctx, task.JobName, task.Params)
-	state := p.finishInflight(task.ID)
+	state := p.finishInflight(task.Lease())
 	duration := time.Since(started)
 
 	switch {
+	case state.leaseLost:
+		// Heartbeat proved that this execution no longer owns the row. It may
+		// finish local cleanup, but any durable write would corrupt the newer
+		// attempt that reclaimed the task.
+		p.log.Warn("очередь: результат устаревшей попытки отброшен",
+			"job", task.JobName, "task", task.ID.String(), "attempt", task.Attempts)
 	case state.cancelled:
-		p.finalize(task, storage.JobTaskCancelled, output, "отменена пользователем")
-		p.log.Info("очередь: задача отменена", "job", task.JobName, "task", task.ID.String())
+		if p.finalize(task, storage.JobTaskCancelled, output, "отменена пользователем") == storage.JobTaskCancelled {
+			p.log.Info("очередь: задача отменена", "job", task.JobName, "task", task.ID.String())
+		}
 	case state.interrupted:
 		// Прервана остановкой сервера: попытка потрачена не по вине задачи,
 		// поэтому она возвращается в очередь немедленно (или уходит в карантин,
@@ -456,9 +466,14 @@ func (p *Pool) execute(ctx context.Context, task storage.JobTask) {
 	case err != nil:
 		p.retryOrQuarantine(task, output, err, p.backoff(task.Attempts))
 	default:
-		p.finalize(task, storage.JobTaskDone, output, "")
-		p.log.Info("очередь: задача выполнена", "job", task.JobName, "task", task.ID.String(),
-			"duration_ms", duration.Milliseconds(), "attempt", task.Attempts)
+		switch p.finalize(task, storage.JobTaskDone, output, "") {
+		case storage.JobTaskDone:
+			p.log.Info("очередь: задача выполнена", "job", task.JobName, "task", task.ID.String(),
+				"duration_ms", duration.Milliseconds(), "attempt", task.Attempts)
+		case storage.JobTaskCancelled:
+			p.log.Info("очередь: задача отменена до записи успешного результата",
+				"job", task.JobName, "task", task.ID.String())
+		}
 	}
 }
 
@@ -466,8 +481,20 @@ func (p *Pool) retryOrQuarantine(task storage.JobTask, output string, runErr err
 	if task.Attempts < task.MaxAttempts {
 		ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
 		defer cancel()
-		if err := p.db.RetryJobTask(ctx, task.ID, time.Now().Add(delay).UnixMilli(), runErr.Error()); err != nil {
+		now := time.Now()
+		actual, err := p.db.RetryJobTask(ctx, task.Lease(), now.Add(delay).UnixMilli(), now.UnixMilli(), runErr.Error())
+		if err != nil {
+			if errors.Is(err, storage.ErrJobLeaseLost) {
+				p.log.Warn("очередь: повтор устаревшей попытки отброшен",
+					"task", task.ID.String(), "attempt", task.Attempts)
+				return
+			}
 			p.log.Error("очередь: не удалось вернуть задачу в очередь", "task", task.ID.String(), "err", err)
+			return
+		}
+		if actual == storage.JobTaskCancelled {
+			p.log.Info("очередь: отмена выиграла гонку с повтором",
+				"job", task.JobName, "task", task.ID.String(), "attempt", task.Attempts)
 			return
 		}
 		p.log.Warn("очередь: задача упала, будет повтор", "job", task.JobName, "task", task.ID.String(),
@@ -477,22 +504,35 @@ func (p *Pool) retryOrQuarantine(task storage.JobTask, output string, runErr err
 		}
 		return
 	}
-	p.finalize(task, storage.JobTaskDead, output, runErr.Error())
-	p.log.Error("очередь: задача в карантине — попытки исчерпаны", "job", task.JobName,
-		"task", task.ID.String(), "attempts", task.Attempts, "err", runErr)
+	switch p.finalize(task, storage.JobTaskDead, output, runErr.Error()) {
+	case storage.JobTaskDead:
+		p.log.Error("очередь: задача в карантине — попытки исчерпаны", "job", task.JobName,
+			"task", task.ID.String(), "attempts", task.Attempts, "err", runErr)
+	case storage.JobTaskCancelled:
+		p.log.Info("очередь: отмена выиграла гонку с карантином",
+			"job", task.JobName, "task", task.ID.String(), "attempt", task.Attempts)
+	}
 }
 
 // finalize пишет терминальный статус на отдельном ограниченном контексте:
 // контекст задачи к этому моменту может быть уже отменён (таймаут, остановка),
 // а результат обязан дойти до базы — иначе задача останется running до
 // истечения аренды и будет исполнена повторно без причины.
-func (p *Pool) finalize(task storage.JobTask, status, output, errText string) {
+func (p *Pool) finalize(task storage.JobTask, status, output, errText string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
 	defer cancel()
-	if err := p.db.FinishJobTask(ctx, task.ID, status, output, errText, nowMs()); err != nil {
+	actual, err := p.db.FinishJobTask(ctx, task.Lease(), status, output, errText, nowMs())
+	if err != nil {
+		if errors.Is(err, storage.ErrJobLeaseLost) {
+			p.log.Warn("очередь: результат устаревшей попытки отброшен",
+				"task", task.ID.String(), "attempt", task.Attempts, "status", status)
+			return ""
+		}
 		p.log.Error("очередь: не удалось записать результат задачи",
 			"task", task.ID.String(), "status", status, "err", err)
+		return ""
 	}
+	return actual
 }
 
 // requeueUnstarted возвращает в очередь задачу, которую захватили, но так и не
@@ -506,7 +546,8 @@ func (p *Pool) finalize(task storage.JobTask, status, output, errText string) {
 func (p *Pool) requeueUnstarted(task storage.JobTask, reason string) {
 	ctx, cancel := context.WithTimeout(context.Background(), finalizeTimeout)
 	defer cancel()
-	if err := p.db.RetryJobTask(ctx, task.ID, nowMs(), reason); err != nil {
+	now := nowMs()
+	if _, err := p.db.RetryJobTask(ctx, task.Lease(), now, now, reason); err != nil {
 		p.log.Error("очередь: не удалось вернуть незапущенную задачу", "task", task.ID.String(), "err", err)
 	}
 }
@@ -545,19 +586,22 @@ func (p *Pool) heartbeatLoop(ctx context.Context) {
 }
 
 func (p *Pool) heartbeat(ctx context.Context) {
-	ids := p.inflightIDs()
-	if len(ids) == 0 {
+	leases := p.inflightLeases()
+	if len(leases) == 0 {
 		return
 	}
-	cancelled, err := p.db.RenewJobLeases(ctx, ids, time.Now().Add(p.cfg.Lease).UnixMilli())
+	cancelled, lost, err := p.db.RenewJobLeases(ctx, leases, time.Now().Add(p.cfg.Lease).UnixMilli())
 	if err != nil {
 		if ctx.Err() == nil {
-			p.log.Warn("очередь: не удалось продлить аренду задач", "count", len(ids), "err", err)
+			p.log.Warn("очередь: не удалось продлить аренду задач", "count", len(leases), "err", err)
 		}
 		return
 	}
-	for _, id := range cancelled {
-		p.cancelLocal(id)
+	for _, lease := range cancelled {
+		p.cancelLocal(lease)
+	}
+	for _, lease := range lost {
+		p.loseLocalLease(lease)
 	}
 }
 
@@ -674,9 +718,9 @@ func (p *Pool) interruptInflight() int {
 	return len(tasks)
 }
 
-func (p *Pool) cancelLocal(id uuid.UUID) {
+func (p *Pool) cancelLocal(lease storage.JobTaskLease) {
 	p.mu.Lock()
-	task := p.inflight[id]
+	task := p.inflight[lease]
 	if task != nil {
 		task.cancelled = true
 	}
@@ -686,26 +730,53 @@ func (p *Pool) cancelLocal(id uuid.UUID) {
 	}
 }
 
+func (p *Pool) cancelLocalByID(id uuid.UUID) {
+	p.mu.Lock()
+	tasks := make([]*inflightTask, 0, 1)
+	for lease, task := range p.inflight {
+		if lease.ID == id {
+			task.cancelled = true
+			tasks = append(tasks, task)
+		}
+	}
+	p.mu.Unlock()
+	for _, task := range tasks {
+		task.cancel()
+	}
+}
+
+func (p *Pool) loseLocalLease(lease storage.JobTaskLease) {
+	p.mu.Lock()
+	task := p.inflight[lease]
+	if task != nil {
+		task.leaseLost = true
+	}
+	p.mu.Unlock()
+	if task != nil {
+		task.cancel()
+	}
+}
+
 // finishInflight снимает задачу с учёта и отдаёт её финальное состояние.
-func (p *Pool) finishInflight(id uuid.UUID) inflightTask {
+func (p *Pool) finishInflight(lease storage.JobTaskLease) inflightTask {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	task := p.inflight[id]
-	delete(p.inflight, id)
+	task := p.inflight[lease]
+	delete(p.inflight, lease)
 	if task == nil {
 		return inflightTask{}
 	}
 	return *task
 }
 
-func (p *Pool) inflightIDs() []uuid.UUID {
+func (p *Pool) inflightLeases() []storage.JobTaskLease {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	ids := make([]uuid.UUID, 0, len(p.inflight))
-	for id := range p.inflight {
-		ids = append(ids, id)
+	leases := make([]storage.JobTaskLease, 0, len(p.inflight))
+	for lease := range p.inflight {
+		leases = append(leases, lease)
 	}
-	return ids
+	return leases
 }
 
 func (p *Pool) isStopping() bool {

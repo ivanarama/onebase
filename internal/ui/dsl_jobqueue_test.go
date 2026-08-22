@@ -8,11 +8,13 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -42,7 +44,7 @@ func queueTestServer(t *testing.T, jobName, procBody string) *Server {
 		t.Fatal(err)
 	}
 
-	src := "Процедура Выполнить(Узел = \"\")\n" + procBody + "\nКонецПроцедуры"
+	src := "Процедура Выполнить(Узел = \"\", Сумма = 0, Момент = Неопределено)\n" + procBody + "\nКонецПроцедуры"
 	prog, err := parser.New(lexer.New(src, "фоновая.proc.os")).ParseProgram()
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +56,11 @@ func queueTestServer(t *testing.T, jobName, procBody string) *Server {
 		Title: "Фоновая",
 		// Параметр объявлен: очередь перекрывает params задания поимённо, а
 		// runProcessor отдаёт обработке только объявленные параметры.
-		Params: []processor.Param{{Name: "Узел", Type: "string"}},
+		Params: []processor.Param{
+			{Name: "Узел", Type: "string"},
+			{Name: "Сумма", Type: "number"},
+			{Name: "Момент", Type: "date"},
+		},
 	}})
 
 	interp := interpreter.New()
@@ -169,6 +175,64 @@ func TestФоновыеЗадания_ПоставитьИсполняетЗад
 	// 360 задач круга отличаются ровно узлом.
 	if !strings.Contains(done[1], "обмен с узлом N-042") {
 		t.Fatalf("вывод задачи = %q, ожидался обмен с узлом N-042", done[1])
+	}
+}
+
+func TestФоновыеЗадания_ЧислоИДатаДоходятДоФактическогоВыполненияСТипами(t *testing.T) {
+	s := queueTestServer(t, "ТипизированнаяЗадача", `
+		Сообщить(ТипЗнч(Сумма));
+		Сообщить(ТипЗнч(Момент));
+		Сообщить(Сумма + 0.75);
+		Если Момент = Дата(2026, 8, 22, 14, 35, 17) Тогда
+			Сообщить("дата совпала");
+		Иначе
+			Сообщить("дата потеряна");
+		КонецЕсли;`)
+
+	msgs, err := runQueueDSL(t, s, `
+		Параметры = Новый Структура;
+		Параметры.Вставить("Сумма", 41.25);
+		Параметры.Вставить("Момент", Дата(2026, 8, 22, 14, 35, 17));
+		Сообщить(ФоновыеЗадания.Поставить("ТипизированнаяЗадача", Параметры));`)
+	if err != nil {
+		t.Fatalf("Поставить: %v", err)
+	}
+	if len(msgs) != 1 || strings.TrimSpace(msgs[0]) == "" {
+		t.Fatalf("Поставить вернул %v, ожидался идентификатор задачи", msgs)
+	}
+
+	done := ждёмСтатусЗадачи(t, s, msgs[0], storage.JobTaskDone)
+	if got, want := done[1], "Число\nДата\n42\nдата совпала"; got != want {
+		t.Fatalf("типизированные параметры дошли как %q, ожидалось %q", got, want)
+	}
+}
+
+func TestФоновыеЗадания_LegacyRFC3339СтрокаОстаётсяСтрокойПриВыполнении(t *testing.T) {
+	const (
+		jobName = "LegacyСтроковаяДата"
+		value   = "2026-08-22T14:35:17+03:00"
+	)
+	s := queueTestServer(t, jobName, `
+		Сообщить(ТипЗнч(Момент));
+		Сообщить(Момент);`)
+	ctx := context.Background()
+	if err := s.store.EnsureJobQueueSchema(ctx); err != nil {
+		t.Fatalf("EnsureJobQueueSchema: %v", err)
+	}
+
+	// Имитируем задачу, записанную версией до type-sidecar. RFC3339 сам по
+	// себе не доказывает тип Дата: пользователь мог намеренно передать строку.
+	id := uuid.New()
+	d := s.store.Dialect()
+	q := fmt.Sprintf(`INSERT INTO _job_queue (id, job_name, params) VALUES (%s, %s, %s)`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3))
+	if _, err := s.store.Exec(ctx, q, id.String(), jobName, `{"Момент":"`+value+`"}`); err != nil {
+		t.Fatalf("вставка legacy-задачи: %v", err)
+	}
+
+	done := ждёмСтатусЗадачи(t, s, id.String(), storage.JobTaskDone)
+	if got, want := done[1], "Строка\n"+value; got != want {
+		t.Fatalf("legacy-параметр дошёл как %q, ожидалось %q", got, want)
 	}
 }
 

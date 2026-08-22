@@ -57,7 +57,6 @@
 
 // С параметрами
 Опции = Новый Структура;
-Опции.Вставить("КэшСекунд", 86400);          // Cache-Control: public, max-age=86400
 Опции.Вставить("ДействуетДо", '20260901');    // после — 404
 Опции.Вставить("Имя", "прайс-август.pdf");    // имя файла при скачивании
 Ссылка = ОпубликоватьФайл(ИдВложения, Опции);
@@ -73,7 +72,9 @@
 `UnpublishFile(id)`.
 
 Отдача: `GET /pub/<токен>` — без авторизации, `Range`/`ETag`/`Last-Modified`,
-`Cache-Control: public, max-age=<КэшСекунд>, immutable`.
+`Cache-Control: public, no-cache, max-age=0, must-revalidate`. Кэш хранит тело и
+получает 304 при живом токене, но обязан проверить origin перед использованием;
+иначе fresh-ответ пережил бы удаление токена и немедленный отзыв был бы ложным.
 
 ## Принятые решения
 
@@ -192,7 +193,8 @@ type PublicFile struct {
 7. `TestPublicFile_UnknownToken404` — неизвестный/отозванный токен → 404.
 8. `TestPublicFile_RangeAndETag` — `Range: bytes=0-3` даёт 206 и правильный
    кусок; повтор с `If-None-Match` → 304.
-9. `TestPublicFile_CacheControl` — заголовок содержит `max-age` из опций.
+9. `TestPublicFile_CacheControl` — заголовок требует ревалидации перед каждым
+   использованием (`no-cache`, `max-age=0`, `must-revalidate`).
 10. `TestPublicFile_HTMLNotInline` — вложение `text/html` (и `image/svg+xml`)
     отдаётся с `Content-Disposition: attachment`, `Content-Type:
     application/octet-stream`, `nosniff` и CSP `sandbox`. **Регрессионный тест
