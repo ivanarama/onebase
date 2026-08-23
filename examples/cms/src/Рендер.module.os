@@ -30,16 +30,20 @@
     |</head>
     |<body>
     |<header class=""site-header"">
+    |<div class=""site-bar"">
     |<a class=""site-title"" href=""{{.Префикс}}/"">{{.НазваниеСайта}}</a>
-    |<form class=""site-search"" method=""get"" action=""{{.Префикс}}/search"">
-    |<input name=""q"" type=""search"" placeholder=""Поиск по сайту"" value=""{{.Поиск}}"">
-    |</form>
     |<nav class=""site-menu""><ul>
     |{{range .Меню}}<li{{if .Активный}} class=""active""{{end}}><a href=""{{.Адрес}}"">{{.Заголовок}}</a></li>{{end}}
     |</ul></nav>
+    |<form class=""site-search"" method=""get"" action=""{{.Префикс}}/search"" role=""search"">
+    |<input name=""q"" type=""search"" placeholder=""Поиск по сайту"" value=""{{.Поиск}}"" aria-label=""Поиск по сайту"">
+    |<button type=""submit"">Найти</button>
+    |</form>
+    |</div>
     |</header>
-    |<main class=""site-main"">
+    |<main class=""site-main {{.КлассСтраницы}}"">
     |<h1>{{.Заголовок}}</h1>
+    |{{if .Цена}}<div class=""price"">{{.Цена}}</div>{{end}}
     |{{if .Картинка}}<img class=""cover"" src=""{{.Картинка}}"" alt=""{{.Заголовок}}"">{{end}}
     |{{.Содержимое}}
     |{{if .Сообщение}}<p class=""form-result"">{{.Сообщение}}</p>{{end}}
@@ -51,20 +55,27 @@
     |<input class=""hp"" name=""website"" tabindex=""-1"" autocomplete=""off"">
     |<button type=""submit"">{{.Форма.ТекстКнопки}}</button>
     |</form>{{end}}
-    |{{if .Список}}<ul class=""news-list"">
-    |{{range .Список}}<li class=""news-item"">
-    |{{if .Картинка}}<img class=""thumb"" src=""{{.Картинка}}"" alt=""{{.Заголовок}}"">{{end}}
-    |<a href=""{{.Адрес}}"">{{.Заголовок}}</a>
-    |{{if .Дата}}<time>{{дата .Дата ""02.01.2006""}}</time>{{end}}
-    |<div class=""news-anons"">{{.Анонс}}</div>
+    |{{if .Список}}<ul class=""cards"">
+    |{{range .Список}}<li class=""card"">
+    |<a class=""card-media"" href=""{{.Адрес}}"" tabindex=""-1"" aria-hidden=""true"">
+    |{{if .Картинка}}<img src=""{{.Картинка}}"" alt="""" loading=""lazy"">{{else}}<span class=""card-noimg""></span>{{end}}
+    |</a>
+    |<div class=""card-body"">
+    |<a class=""card-title"" href=""{{.Адрес}}"">{{.Заголовок}}</a>
+    |{{if .Дата}}<time class=""card-date"">{{дата .Дата ""02.01.2006""}}</time>{{end}}
+    |<div class=""card-text"">{{.Анонс}}</div>
+    |{{if .Цена}}<div class=""card-price"">{{.Цена}}</div>{{end}}
+    |</div>
     |</li>{{end}}
     |</ul>{{end}}
     |</main>
     |<footer class=""site-footer"">
+    |<div class=""footer-inner"">
+    |<div class=""footer-name"">{{.НазваниеСайта}}</div>
     |<nav class=""footer-menu""><ul>
     |{{range .МенюПодвала}}<li><a href=""{{.Адрес}}"">{{.Заголовок}}</a></li>{{end}}
     |</ul></nav>
-    |<div>{{.НазваниеСайта}}</div>
+    |</div>
     |</footer>
     |</body>
     |</html>";
@@ -84,31 +95,102 @@
 
     Переменные = ":root{--основной:" + ЗначениеИлиУмолчание(Основной, "#2563eb")
         + ";--дополнительный:" + ЗначениеИлиУмолчание(Дополнительный, "#0f172a")
-        + ";--фон:" + ЗначениеИлиУмолчание(Фон, "#ffffff") + "}";
-    Базовый = "body{margin:0;background:var(--фон);color:var(--дополнительный);"
+        + ";--фон:" + ЗначениеИлиУмолчание(Фон, "#ffffff")
+        // Нейтральные тона не берутся из палитры сайта намеренно: их три на все
+        // случаи, а палитра — про акцент. Иначе редактор, поменявший основной
+        // цвет, случайно перекрашивает рамки и подписи.
+        + ";--поверхность:#f8fafc;--граница:#e2e8f0;--приглушённый:#64748b}";
+    Базовый = "*,*::before,*::after{box-sizing:border-box}"
+        + "body{margin:0;background:var(--фон);color:var(--дополнительный);"
         + "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;line-height:1.55}"
-        + ".site-header,.site-footer{padding:16px 24px;background:var(--основной);color:#fff}"
-        + ".site-title{color:#fff;text-decoration:none;font-weight:600}"
-        + ".site-menu ul,.footer-menu ul{list-style:none;display:flex;gap:16px;margin:8px 0 0;padding:0}"
-        + ".site-menu a,.footer-menu a{color:#fff;text-decoration:none;opacity:.85}"
-        + ".site-menu li.active a{opacity:1;text-decoration:underline}"
-        + ".site-main{max-width:860px;margin:0 auto;padding:24px}"
-        + ".news-list{list-style:none;padding:0}"
-        + ".news-item{padding:12px 0;border-bottom:1px solid rgba(0,0,0,.08)}"
-        + ".news-item time{display:block;font-size:13px;opacity:.7;margin:4px 0}"
-        + ".cover{max-width:100%;height:auto;border-radius:8px;margin:12px 0}"
-        + ".thumb{float:left;width:96px;height:auto;margin:0 12px 8px 0;border-radius:6px}"
-        + ".feedback label{display:block;margin:10px 0}"
-        + ".feedback input,.feedback textarea{display:block;width:100%;padding:8px;"
-        + "border:1px solid rgba(0,0,0,.2);border-radius:6px}"
-        + ".feedback button{margin-top:12px;padding:10px 18px;border:0;border-radius:6px;"
-        + "background:var(--основной);color:#fff;cursor:pointer}"
-        + ".form-result{padding:10px 14px;background:rgba(0,0,0,.05);border-radius:6px}"
+        + "img{max-width:100%;height:auto}"
+        // ── шапка: белая полоса с акцентом, а не сплошная заливка ──
+        + ".site-header{position:sticky;top:0;z-index:5;background:var(--фон);"
+        + "border-bottom:1px solid var(--граница)}"
+        + ".site-bar{max-width:1120px;margin:0 auto;padding:12px 24px;display:flex;"
+        + "align-items:center;gap:16px;flex-wrap:wrap}"
+        + ".site-title{color:var(--дополнительный);text-decoration:none;font-weight:700;"
+        + "font-size:20px;letter-spacing:.02em;margin-right:auto}"
+        + ".site-menu ul{list-style:none;display:flex;gap:18px;margin:0;padding:0;flex-wrap:wrap}"
+        + ".site-menu a{color:var(--дополнительный);text-decoration:none;opacity:.75;font-size:15px}"
+        + ".site-menu a:hover{opacity:1}"
+        + ".site-menu li.active a{opacity:1;color:var(--основной);font-weight:600}"
+        + ".site-search{display:flex;gap:6px}"
+        + ".site-search input{padding:8px 12px;border:1px solid var(--граница);border-radius:8px;"
+        + "background:var(--поверхность);min-width:180px;font:inherit}"
+        + ".site-search button{padding:8px 14px;border:0;border-radius:8px;background:var(--основной);"
+        + "color:#fff;cursor:pointer;font:inherit}"
+        // ── содержимое ──
+        + ".site-main{max-width:1120px;margin:0 auto;padding:28px 24px 48px}"
+        + ".site-main h1{font-size:30px;line-height:1.2;margin:0 0 16px}"
+        + ".cover{border-radius:12px;margin:0 0 18px;border:1px solid var(--граница);"
+        + "max-height:420px;object-fit:contain;background:var(--поверхность);padding:12px}"
+        // Цена карточки товара: крупная, сразу под названием — за ней и приходят.
+        + ".price{font-size:28px;font-weight:700;margin:0 0 16px}"
+        // Карточка товара — две колонки: фото слева, название с ценой и
+        // описанием справа. Иначе снимок страницы — одинокая картинка и
+        // половина экрана пустоты.
+        + ".site-main.product{display:grid;grid-template-columns:minmax(240px,380px) 1fr;"
+        + "gap:4px 32px;align-items:start}"
+        + ".site-main.product h1{grid-column:2;grid-row:1;margin:0 0 8px}"
+        + ".site-main.product .price{grid-column:2;grid-row:2}"
+        + ".site-main.product .cover{grid-column:1;grid-row:1/span 4;margin:0;align-self:start}"
+        + ".site-main.product>*:not(h1):not(.price):not(.cover){grid-column:2}"
+        // ── витрина карточками ──
+        + ".cards{list-style:none;margin:24px 0 0;padding:0;display:grid;gap:18px;"
+        + "grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}"
+        + ".card{display:flex;flex-direction:column;border:1px solid var(--граница);"
+        + "border-radius:14px;overflow:hidden;background:var(--фон);transition:box-shadow .15s,transform .15s}"
+        + ".card:hover{box-shadow:0 8px 24px rgba(15,23,42,.10);transform:translateY(-2px)}"
+        + ".card-media{display:block;aspect-ratio:4/3;background:var(--поверхность);overflow:hidden}"
+        + ".card-media img{width:100%;height:100%;object-fit:contain;padding:10px}"
+        // Позиция без картинки не должна ломать сетку: место занимает пустая
+        // плашка того же размера, иначе карточки съезжают по высоте.
+        + ".card-noimg{display:block;width:100%;height:100%;background:"
+        + "repeating-linear-gradient(45deg,var(--поверхность),var(--поверхность) 10px,#f1f5f9 10px,#f1f5f9 20px)}"
+        // flex:1 обязателен: сетка растягивает карточки до одной высоты, но без
+        // этого тело остаётся по содержимому, и «margin-top:auto» у цены не
+        // выравнивает ценники — они пляшут по строке вслед за длиной названия.
+        + ".card-body{flex:1;display:flex;flex-direction:column;gap:6px;padding:12px 14px 16px}"
+        + ".card-title{color:var(--дополнительный);text-decoration:none;font-weight:600;line-height:1.35}"
+        + ".card-title:hover{color:var(--основной)}"
+        + ".card-date{font-size:13px;color:var(--приглушённый)}"
+        + ".card-text{font-size:14px;color:var(--приглушённый)}"
+        // Цена — крупная и последней строкой: карточки в ряду разной высоты, и
+        // ценники должны стоять на одной линии, а не плавать по сетке.
+        + ".card-price{margin-top:auto;padding-top:8px;font-size:19px;font-weight:700;"
+        + "color:var(--дополнительный)}"
+        // ── форма обратной связи ──
+        + ".feedback{max-width:520px;margin:28px 0 0;padding:20px;border:1px solid var(--граница);"
+        + "border-radius:14px;background:var(--поверхность)}"
+        + ".feedback h2{margin:0 0 8px;font-size:20px}"
+        + ".feedback label{display:block;margin:12px 0;font-size:14px;color:var(--приглушённый)}"
+        + ".feedback input,.feedback textarea{display:block;width:100%;margin-top:4px;padding:9px 12px;"
+        + "border:1px solid var(--граница);border-radius:8px;font:inherit;background:var(--фон)}"
+        + ".feedback button{margin-top:14px;padding:11px 20px;border:0;border-radius:9px;"
+        + "background:var(--основной);color:#fff;cursor:pointer;font:inherit;font-weight:600}"
+        + ".form-result{padding:12px 16px;background:var(--поверхность);border:1px solid var(--граница);"
+        + "border-radius:10px}"
         // Honeypot прячем стилями, а не type=hidden: скрытое поле бот
         // распознаёт по типу и пропускает, а невидимое глазу — заполняет.
         + ".hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}"
-        + ".site-search{float:right}"
-        + ".site-search input{padding:6px 10px;border:0;border-radius:6px}";
+        // ── подвал ──
+        + ".site-footer{border-top:1px solid var(--граница);background:var(--поверхность);"
+        + "color:var(--приглушённый)}"
+        + ".footer-inner{max-width:1120px;margin:0 auto;padding:20px 24px;display:flex;gap:16px;"
+        + "align-items:center;flex-wrap:wrap}"
+        + ".footer-name{font-weight:600;color:var(--дополнительный);margin-right:auto}"
+        + ".footer-menu ul{list-style:none;display:flex;gap:16px;margin:0;padding:0;flex-wrap:wrap}"
+        + ".footer-menu a{color:var(--приглушённый);text-decoration:none}"
+        + ".footer-menu a:hover{color:var(--дополнительный)}"
+        // ── телефон ──
+        + "@media(max-width:640px){.site-bar{padding:10px 16px}.site-search{width:100%;order:3}"
+        + ".site-search input{flex:1;min-width:0}.site-main{padding:20px 16px 36px}"
+        + ".site-main h1{font-size:24px}"
+        + ".cards{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}"
+        // На телефоне две колонки не помещаются: карточка товара идёт одной,
+        // фото сверху.
+        + ".site-main.product{display:block}.site-main.product .cover{margin:0 0 16px}}";
     Возврат Переменные + Базовый + ЗначениеИлиУмолчание(Свой, "");
 КонецФункции
 
@@ -172,6 +254,13 @@
     // Картинка страницы служит и иллюстрацией, и превью для соцсетей:
     // раздельные поля означали бы, что одно из них рано или поздно забудут.
     Данные.Вставить("Картинка", "");
+    // Цена есть у каждой страницы, пусть и пустая: макет один на все страницы,
+    // а «{{if .Цена}}» на отсутствующем ключе — не то же самое, что на пустом.
+    Данные.Вставить("Цена", "");
+    // Класс страницы позволяет ОДНОМУ макету раскладывать карточку товара в две
+    // колонки, а остальные страницы — в одну. Без него пришлось бы заводить
+    // второй шаблон, то есть чинить вёрстку дважды.
+    Данные.Вставить("КлассСтраницы", "");
     Данные.Вставить("Форма", Неопределено);
     Данные.Вставить("Сообщение", "");
     Данные.Вставить("Поиск", "");
@@ -255,11 +344,14 @@
 // КарточкаТовара — страница /product/<слаг>.
 Функция КарточкаТовара(Сайт, Товар, Путь) Экспорт
     Заголовок = Строка(Товар.Наименование);
-    Содержимое = Роутер.ПодписьТовара(Товар);
-    Если Не ПустаяСтрока(Содержимое) Тогда
+    Цена = Роутер.ЦенаСтрокой(Товар.Цена, Товар.Валюта);
+    Содержимое = "";
+    Подпись = Роутер.ПодписьТовара(Товар);
+    Если Не ПустаяСтрока(Подпись) Тогда
         // Без класса: содержимое страницы проходит через санитайзер, и
         // атрибуты он срезает — класс в разметке создавал бы иллюзию стиля.
-        Содержимое = "<p>" + Содержимое + "</p>";
+        // Поэтому крупная цена идёт не сюда, а отдельным полем макета.
+        Содержимое = "<p>" + Подпись + "</p>";
     КонецЕсли;
     Описание = СокрЛП(Строка(Товар.Описание));
     Если Не ПустаяСтрока(Описание) И Описание <> "<nil>" Тогда
@@ -267,7 +359,9 @@
     КонецЕсли;
 
     Данные = ДанныеСтраницы(Сайт, Путь, Заголовок,
-        ЗначениеИлиУмолчание(Товар.ОписаниеSEO, Роутер.ПодписьТовара(Товар)), Содержимое);
+        ЗначениеИлиУмолчание(Товар.ОписаниеSEO, ?(ПустаяСтрока(Цена), Подпись, Цена)), Содержимое);
+    Данные.Вставить("Цена", Цена);
+    Данные.Вставить("КлассСтраницы", "product");
     Данные.Вставить("SEOЗаголовок", ЗначениеИлиУмолчание(Товар.ЗаголовокSEO, Заголовок));
 
     // Картинка из медиатеки приоритетнее адреса из выгрузки: своя лежит рядом
