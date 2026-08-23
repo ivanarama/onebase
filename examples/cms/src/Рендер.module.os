@@ -174,9 +174,47 @@
         // Honeypot прячем стилями, а не type=hidden: скрытое поле бот
         // распознаёт по типу и пропускает, а невидимое глазу — заполняет.
         + ".hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}"
+        // ── совместимость с ПРЕДЫДУЩЕЙ разметкой ──
+        //
+        // Макет живёт в базе и обновляется отдельно (по номеру версии), а CSS
+        // отдаётся модулем и приезжает сразу. Между этими двумя моментами база
+        // работает на старой разметке с новыми стилями, и без правил ниже сайт
+        // выглядит ХУЖЕ, чем до обновления: шапка рассыпается в столбик, а
+        // витрина превращается в маркированный список синих ссылок. Такое
+        // «обновился и стало хуже» недопустимо, поэтому прежние классы
+        // приводятся к тому же виду, что и новые.
+        //
+        // Правила удалятся, когда поддерживать старые базы станет незачем.
+        // Отступы висят на самих элементах, а не на шапке: если браузер не знает
+        // «:has()», старая разметка ляжет столбиком — но с полями, а не впритык
+        // к краю окна.
+        + ".site-header>.site-title,.site-header>.site-search,.site-header>.site-menu{padding:6px 24px}"
+        + ".site-header:not(:has(.site-bar)){display:flex;align-items:center;gap:8px;"
+        + "flex-wrap:wrap;max-width:1120px;margin:0 auto;padding:6px 0}"
+        + ".site-header:not(:has(.site-bar))>.site-title{margin-right:auto}"
+        + ".news-list{list-style:none;margin:24px 0 0;padding:0;display:grid;gap:18px;"
+        + "grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}"
+        + ".news-item{display:flex;flex-direction:column;gap:6px;padding:12px 14px 16px;"
+        + "border:1px solid var(--граница);border-radius:14px;overflow:hidden}"
+        + ".news-item>a{color:var(--дополнительный);text-decoration:none;font-weight:600}"
+        + ".news-item>a:hover{color:var(--основной)}"
+        + ".news-item time{font-size:13px;color:var(--приглушённый)}"
+        + ".news-item .thumb{float:none;width:100%;height:150px;object-fit:contain;"
+        + "background:var(--поверхность);border-radius:10px;margin:0 0 8px}"
+        + ".news-anons{font-size:14px;color:var(--приглушённый)}"
         // ── подвал ──
         + ".site-footer{border-top:1px solid var(--граница);background:var(--поверхность);"
         + "color:var(--приглушённый)}"
+        // «:not(.footer-inner)» — не украшение: в НОВОЙ разметке обёртка подвала
+        // тоже div и тоже прямой ребёнок подвала, а «.site-footer>div» (0-1-1)
+        // специфичнее «.footer-inner» (0-1-0) и перебивает её при любом порядке
+        // правил. Без скобки правило совместимости поджимало подвал с 20px до
+        // 6px на всех базах с УЖЕ обновлённым макетом — то самое «обновился и
+        // стало хуже», против которого написаны эти строки.
+        + ".site-footer>.footer-menu,.site-footer>div:not(.footer-inner){padding:6px 24px}"
+        + ".site-footer:not(:has(.footer-inner)){display:flex;align-items:center;gap:8px;"
+        + "flex-wrap:wrap-reverse;justify-content:space-between;max-width:1120px;margin:0 auto;"
+        + "padding:14px 0}"
         + ".footer-inner{max-width:1120px;margin:0 auto;padding:20px 24px;display:flex;gap:16px;"
         + "align-items:center;flex-wrap:wrap}"
         + ".footer-name{font-weight:600;color:var(--дополнительный);margin-right:auto}"
