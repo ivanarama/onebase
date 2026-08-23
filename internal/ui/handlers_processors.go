@@ -103,6 +103,43 @@ func (s *Server) loadProcessorRefOpts(ctx context.Context, params []processorpkg
 	return opts
 }
 
+// missingRequiredParams возвращает подписи незаполненных обязательных
+// параметров через запятую (пусто — все на месте). Пустая строка и отсутствие
+// ключа равнозначны: файловый параметр после перезагрузки формы приходит именно
+// пустым.
+func missingRequiredParams(params []processorpkg.Param, values map[string]any) string {
+	var missing []string
+	for _, p := range params {
+		if !p.Required {
+			continue
+		}
+		v, ok := values[p.Name]
+		if !ok || paramValueBlank(v) {
+			label := p.Label
+			if label == "" {
+				label = p.Name
+			}
+			missing = append(missing, "«"+label+"»")
+		}
+	}
+	return strings.Join(missing, ", ")
+}
+
+// paramValueBlank — «значение не заполнено». Строка разбирается БЕЗ Sprintf:
+// у параметра типа file здесь лежит всё содержимое загруженного файла (до
+// предела вложений, полсотни мегабайт), и «%v» копировал бы его целиком ради
+// проверки на пустоту.
+func paramValueBlank(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(t) == ""
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", t)) == ""
+	}
+}
+
 func processorRefEntities(params []processorpkg.Param) map[string]string {
 	out := make(map[string]string)
 	for _, p := range params {
@@ -188,6 +225,34 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		opStatus = "error"
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
+
+	// Обязательные параметры проверяются ДО запуска. Атрибут required в форме
+	// останавливает обычного пользователя, но он же — подсказка, а не гарантия:
+	// запрос приходит и мимо браузера. Отказ здесь заодно даёт человеческий
+	// текст: прикладной модуль сообщал бы про ключ командной строки тому, кто
+	// стоит перед формой.
+	if missing := missingRequiredParams(proc.Params, paramValues); missing != "" {
+		opStatus = "error"
+		runErr := s.tr(s.resolveLang(r), "Заполните обязательные поля:") + " " + missing +
+			". " + s.tr(s.resolveLang(r), "Файл после запуска приходится прикладывать заново — вернуть его в поле браузер не позволяет.")
+		// Отказ рисуется ТОЙ ЖЕ формой, с которой пришли, — как и все прочие
+		// отказы запуска ниже. У обработки с управляемой формой page-processor
+		// не её страница: человек получил бы вместо своей формы автогенерённую,
+		// без введённых значений и без табличных частей.
+		if proc.ManagedForm() != nil {
+			s.renderProcessorManagedResult(w, r, proc, paramValues, nil, runErr)
+			return
+		}
+		refOpts := s.loadProcessorRefOpts(r.Context(), proc.Params, paramValues)
+		s.render(w, r, "page-processor", map[string]any{
+			"Processor":          proc,
+			"ParamValues":        paramValues,
+			"RefOptions":         refOpts,
+			"ProcessorRefEntity": processorRefEntities(proc.Params),
+			"RunError":           runErr,
+		})
 		return
 	}
 

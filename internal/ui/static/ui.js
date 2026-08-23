@@ -3886,3 +3886,53 @@ function initDetailPanel() {
   st.textContent = css;
   (document.head || document.documentElement).appendChild(st);
 })();
+
+/* Индикатор выполнения у форм с data-ob-busy (обработки, отчёты).
+   Обычная отправка формы не меняет страницу, пока сервер не ответит: браузер
+   рисует крошечный волчок во вкладке, и всё. Обработка, которая качает каталог
+   минуту, выглядела как несработавшее нажатие — человек жал «Выполнить» второй
+   раз и запускал ту же работу заново поверх первой.
+   Кнопка выключается ПОСЛЕ отправки (в setTimeout): выключенная кнопка не
+   отправляет форму, и снятие обработчика раньше времени просто отменило бы
+   запуск. Значение подписи приходит из разметки — переводы живут на сервере. */
+(function () {
+  var css = '' +
+    '.ob-busy{position:relative;opacity:.75;cursor:progress}' +
+    '.ob-busy-spin{display:inline-block;width:12px;height:12px;margin-right:7px;vertical-align:-1px;' +
+    'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;' +
+    'animation:ob-busy-rot .7s linear infinite}' +
+    '@keyframes ob-busy-rot{to{transform:rotate(360deg)}}' +
+    /* Уважаем системную настройку «меньше движения»: индикатор остаётся, но
+       перестаёт крутиться. */
+    '@media(prefers-reduced-motion:reduce){.ob-busy-spin{animation:none}}';
+  var st = document.createElement('style');
+  st.textContent = css;
+  (document.head || document.documentElement).appendChild(st);
+
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || !form.getAttribute) return;
+    var label = form.getAttribute('data-ob-busy');
+    if (label === null) return;
+    if (e.defaultPrevented) return;
+    // Проверка обязательных полей могла не пройти: форма никуда не уходит, и
+    // выключать кнопку нельзя — иначе повторно отправить будет нечем.
+    if (form.checkValidity && !form.checkValidity()) return;
+    var btn = form.querySelector('button[type=submit],input[type=submit]');
+    if (!btn || btn.disabled) return;
+    setTimeout(function () {
+      btn.disabled = true;
+      btn.classList.add('ob-busy');
+      var text = label || 'Выполняется…';
+      if (btn.tagName === 'INPUT') {
+        btn.value = text;
+        return;
+      }
+      btn.textContent = '';
+      var spin = document.createElement('span');
+      spin.className = 'ob-busy-spin';
+      btn.appendChild(spin);
+      btn.appendChild(document.createTextNode(text));
+    }, 0);
+  }, true);
+})();

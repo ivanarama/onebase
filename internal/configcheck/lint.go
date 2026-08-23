@@ -473,7 +473,10 @@ func reportYAMLSchema() *yamlLintSchema {
 		"chart":       obj("type", "category", "series"),
 	})
 	return with(obj("name", "title", "query", "chart_proc", "output_format"), map[string]*yamlLintSchema{
-		"titles":      freeMap(),
+		"titles": freeMap(),
+		// У отчёта «required» НЕТ намеренно: report.Param такого поля не знает,
+		// и разрешённый линтом ключ молча ничего бы не делал. Обязательность
+		// параметра пока только у обработок (processor.Param).
 		"params":      seq(with(obj("name", "type", "label", "options"), map[string]*yamlLintSchema{"labels": freeMap()})),
 		"composition": composition,
 		"variants":    seq(with(obj("name"), map[string]*yamlLintSchema{"composition": composition})),
@@ -496,7 +499,7 @@ func roleYAMLSchema() *yamlLintSchema {
 }
 
 func processorYAMLSchema() *yamlLintSchema {
-	param := with(obj("name", "type", "label", "default", "options"), map[string]*yamlLintSchema{"labels": freeMap()})
+	param := with(obj("name", "type", "label", "default", "options", "required"), map[string]*yamlLintSchema{"labels": freeMap()})
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		"params": seq(param),
