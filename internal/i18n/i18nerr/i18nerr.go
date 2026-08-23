@@ -80,11 +80,12 @@ func Localize(b *i18n.Bundle, lang string, err error) string {
 }
 
 // localizeChain собирает перевод по структуре цепочки ошибок: i18nerr-звенья
-// переводятся по своему шаблону, обёртки fmt.Errorf("…: %w") сохраняют свой
-// префикс с переводом хвоста, прочие ошибки переводятся exact-match-ом или
-// остаются как есть. Структурная сборка (а не strings.Replace по полному
-// тексту) исключает ложные подстановки, когда перевод внешнего звена содержит
-// русский рендер внутреннего как подстроку.
+// переводятся по своему шаблону, ветки errors.Join — каждая по отдельности,
+// обёртки fmt.Errorf("…: %w") сохраняют свой префикс с переводом хвоста,
+// прочие ошибки переводятся exact-match-ом или остаются как есть. Структурная
+// сборка (а не strings.Replace по полному тексту) исключает ложные
+// подстановки, когда перевод внешнего звена содержит русский рендер
+// внутреннего как подстроку.
 func localizeChain(b *i18n.Bundle, lang string, err error) string {
 	if e, ok := err.(*Error); ok {
 		head := e.localize(b, lang)
@@ -92,6 +93,20 @@ func localizeChain(b *i18n.Bundle, lang string, err error) string {
 			return head
 		}
 		return head + ": " + localizeChain(b, lang, e.wrapped)
+	}
+	// errors.Join: несколько независимых причин одного отказа. Без этой ветки
+	// errors.Unwrap вернул бы nil (у Join сигнатура Unwrap() []error), перевод
+	// свёлся бы к exact-match по склеенному тексту и не находил бы ничего —
+	// каждая причина по отдельности при этом переводится прекрасно. Разделитель
+	// тот же, каким Join печатает свой Error().
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		if parts := multi.Unwrap(); len(parts) > 0 {
+			out := make([]string, 0, len(parts))
+			for _, part := range parts {
+				out = append(out, localizeChain(b, lang, part))
+			}
+			return strings.Join(out, "\n")
+		}
 	}
 	inner := errors.Unwrap(err)
 	if inner == nil {

@@ -531,6 +531,21 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	ordered := orderByDependency(entities)
+	// Отказы преконтроля уникальности КОПЯТСЯ, а не прерывают цикл (#1080, #1105).
+	//
+	// Раньше первый же объект с пустыми кодами уносил всю миграцию: `Контрагент`
+	// стоит в порядке зависимостей раньше документов, и после выхода из цикла ни
+	// одна таблица за ним схему не получала. Дальше начиналось то, ради чего эта
+	// проверка и существует: `onebase renumber` не мог прочитать отставшие
+	// объекты и пропускал их, лечение шло кругами «дозаполнили → перезапустили →
+	// догнали → дозаполнили», а пользователь лаунчера видел девять «нельзя
+	// обработать» на объектах, с которыми всё в порядке.
+	//
+	// Отсрочка меняет ровно это: схема доводится до конца по всем объектам, а
+	// отказ возвращается один раз и сразу со всеми виновниками. Ошибкой миграция
+	// быть не перестаёт — база с невыполненным предусловием по-прежнему не
+	// стартует, но один прогон renumber теперь видит всё и лечит всё.
+	var notReady []error
 	for _, e := range ordered {
 		if _, err := db.Exec(ctx, CreateTableSQL(d, e)); err != nil {
 			return fmt.Errorf("migrate %s: %w", e.Name, err)
@@ -575,7 +590,13 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 			}
 		}
 		if err := db.ensureEntityIndexes(ctx, e); err != nil {
-			return fmt.Errorf("migrate %s indexes: %w", e.Name, err)
+			if !errors.Is(err, ErrCodeUniqueNotReady) {
+				return fmt.Errorf("migrate %s indexes: %w", e.Name, err)
+			}
+			// Префикса «migrate … indexes» здесь нет намеренно: этот текст
+			// читает не разработчик, а тот, кто нажал «Запустить», и объект в
+			// нём уже назван.
+			notReady = append(notReady, err)
 		}
 		for _, tp := range e.TableParts {
 			if _, err := db.Exec(ctx, CreateTablePartSQL(d, e, tp)); err != nil {
@@ -594,6 +615,13 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 				return fmt.Errorf("migrate %s.%s parent index: %w", e.Name, tp.Name, err)
 			}
 		}
+	}
+	// Отказ возвращается здесь: схема уже приведена к конфигурации целиком —
+	// ровно то, что нужно renumber, — но данных мы больше не касаемся. Идти
+	// дальше и заводить предопределённые элементы на базе, которая всё равно не
+	// стартует, незачем: это сделает первая же удачная миграция.
+	if len(notReady) > 0 {
+		return errors.Join(notReady...)
 	}
 	if err := db.SyncAllPredefined(ctx, entities); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -630,13 +658,32 @@ func (db *DB) ensureEntityIndexes(ctx context.Context, e *metadata.Entity) error
 	// реализации уникальности заводить незачем (план 117E). Проверка до DDL:
 	// пустые значения уникальный индекс не ловит (NULL не конфликтуют), и без
 	// неё «включили уникальность» проходило бы молча.
+	var notReady error
+	var keepUnique string
 	if spec, need := UniqueCodeIndexSpec(e); need {
-		if err := db.CheckCodeUniquePrecondition(ctx, e); err != nil {
+		cols, err := entityIndexColumns(e, spec)
+		if err != nil {
 			return err
 		}
-		indexes = append(append([]metadata.IndexSpec{}, indexes...), spec)
+		switch err := db.CheckCodeUniquePrecondition(ctx, e); {
+		case err == nil:
+			indexes = append(append([]metadata.IndexSpec{}, indexes...), spec)
+		case errors.Is(err, ErrCodeUniqueNotReady):
+			// Индекса сейчас не будет — но и снимать уже стоящий нельзя.
+			// Уникальность могли включить на пустой базе, а пустые значения
+			// появиться позже (NULL уникальному индексу не мешают): без этой
+			// строки dropStaleUniqueCodeIndexes принял бы индекс за брошенный и
+			// молча отменил работающую гарантию — отказом миграции.
+			keepUnique = stableIndexName(table, cols, true)
+			notReady = err
+		default:
+			return err
+		}
 	}
-	keep := make(map[string]bool, len(indexes))
+	keep := make(map[string]bool, len(indexes)+1)
+	if keepUnique != "" {
+		keep[keepUnique] = true
+	}
 	for _, idx := range indexes {
 		cols, err := entityIndexColumns(e, idx)
 		if err != nil {
@@ -647,7 +694,10 @@ func (db *DB) ensureEntityIndexes(ctx context.Context, e *metadata.Entity) error
 			return err
 		}
 	}
-	return db.dropStaleUniqueCodeIndexes(ctx, e, keep)
+	if err := db.dropStaleUniqueCodeIndexes(ctx, e, keep); err != nil {
+		return err
+	}
+	return notReady
 }
 
 func entityIndexColumns(e *metadata.Entity, idx metadata.IndexSpec) ([]string, error) {

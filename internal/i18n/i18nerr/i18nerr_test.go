@@ -83,6 +83,27 @@ func TestLocalizeWrappedChain(t *testing.T) {
 	}
 }
 
+// errors.Join: у мультиошибки Unwrap() отдаёт срез, а не одну ошибку, поэтому
+// без отдельной ветки перевод сваливался бы в exact-match по склеенному тексту
+// и не находил ничего. Так миграция называет сразу все объекты, не прошедшие
+// предусловие уникальности (#1080).
+func TestLocalizeJoinedErrors(t *testing.T) {
+	b := testBundle(t)
+	joined := errors.Join(
+		Errorf("неизвестная таблица %s", "товары"),
+		New("Деление на ноль"),
+	)
+	want := "unknown table товары\nDivision by zero"
+	if got := Localize(b, "en", joined); got != want {
+		t.Fatalf("Localize = %q, ждали %q", got, want)
+	}
+	// Одна причина в Join — тот же перевод, что и без него.
+	single := errors.Join(Errorf("неизвестная таблица %s", "склады"))
+	if got := Localize(b, "en", single); got != "unknown table склады" {
+		t.Fatalf("Localize одиночного Join = %q", got)
+	}
+}
+
 // Перевод внешнего звена, содержащий русский рендер внутреннего как
 // подстроку, не должен портить сборку (структурная локализация vs Replace).
 func TestLocalizeChainNoFalseSubstitution(t *testing.T) {
