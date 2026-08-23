@@ -157,6 +157,10 @@ func TestTx_BorrowedOuterTransactionUsesSavepointSQLite(t *testing.T) {
 			return execErr
 		}
 		state := interpreter.NewTxState(txCtx)
+		funcs := interpreter.NewTxFunctions(state, db)
+		if got := callTxBuiltinResult(t, funcs, "ТранзакцияАктивна"); got != true {
+			return fmt.Errorf("borrowed transaction was not visible before DSL begin: %#v", got)
+		}
 		src := `Процедура Тест()
 			НачатьТранзакцию();
 			Создать("items", "inner");
@@ -164,6 +168,9 @@ func TestTx_BorrowedOuterTransactionUsesSavepointSQLite(t *testing.T) {
 		КонецПроцедуры`
 		if runErr := runTxProc(t, db, state, src); runErr != nil {
 			return runErr
+		}
+		if got := callTxBuiltinResult(t, funcs, "TransactionActive"); got != true {
+			return fmt.Errorf("borrowed transaction disappeared after savepoint rollback: %#v", got)
 		}
 		var count int
 		if scanErr := db.QueryRow(txCtx, `SELECT COUNT(*) FROM _tx_test_items`).Scan(&count); scanErr != nil {

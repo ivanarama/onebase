@@ -270,6 +270,8 @@ func TestSandbox_DenyOverlayCannotBeShadowed(t *testing.T) {
 		{name: "temp EN", call: `GetTempFileName()`, want: "файловые операции запрещены"},
 		{name: "net RU", call: `HTTPПолучить("http://127.0.0.1:1")`, want: "сеть запрещена"},
 		{name: "net EN", call: `HTTPGet("http://127.0.0.1:1")`, want: "сеть запрещена"},
+		{name: "safe net RU", call: `HTTPПолучитьБезопасно("http://8.8.8.8", "8.8.8.8")`, want: "сеть запрещена"},
+		{name: "safe net EN", call: `HTTPSafeGet("http://8.8.8.8", "8.8.8.8")`, want: "сеть запрещена"},
 		{name: "exec RU", call: `ВыполнитьКоманду("sandbox-must-not-run")`, want: "выполнение команд ОС запрещено"},
 		{name: "exec EN", call: `ExecuteCommand("sandbox-must-not-run")`, want: "выполнение команд ОС запрещено"},
 		{name: "LLM RU", call: `ЗапросИИ("привет")`, want: "ИИ-запросы запрещены"},

@@ -63,6 +63,17 @@ func (s *TxState) HasOpen() bool {
 	return s != nil && len(s.txs) > 0
 }
 
+// InTransaction reports whether the current execution context is already in a
+// transaction, including one borrowed from an outer service/test boundary.
+// HasOpen alone cannot see that borrowed transaction before the first explicit
+// DSL BeginTransaction creates its savepoint.
+func (s *TxState) InTransaction() bool {
+	if s == nil || len(s.ctxStack) == 0 {
+		return false
+	}
+	return s.HasOpen() || storage.HasTx(s.Ctx())
+}
+
 // RollbackOpen unwinds every transaction/savepoint still owned by the DSL,
 // from the innermost level to the outermost one. The supplied context should be
 // detached from the execution cancellation (and bounded by the caller), while
@@ -230,6 +241,9 @@ func NewTxFunctions(state *TxState, db TxDB) map[string]any {
 		state.rollback()
 		return nil, nil
 	})
+	active := BuiltinFunc(func(args []any, file string, line int) (any, error) {
+		return state.InTransaction(), nil
+	})
 	return map[string]any{
 		"НачатьТранзакцию":        begin,
 		"BeginTransaction":        begin,
@@ -237,5 +251,7 @@ func NewTxFunctions(state *TxState, db TxDB) map[string]any {
 		"CommitTransaction":       commit,
 		"ОтменитьТранзакцию":      rollback,
 		"RollbackTransaction":     rollback,
+		"ТранзакцияАктивна":       active,
+		"TransactionActive":       active,
 	}
 }
