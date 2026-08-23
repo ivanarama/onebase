@@ -205,7 +205,13 @@
         // ── подвал ──
         + ".site-footer{border-top:1px solid var(--граница);background:var(--поверхность);"
         + "color:var(--приглушённый)}"
-        + ".site-footer>.footer-menu,.site-footer>div{padding:6px 24px}"
+        // «:not(.footer-inner)» — не украшение: в НОВОЙ разметке обёртка подвала
+        // тоже div и тоже прямой ребёнок подвала, а «.site-footer>div» (0-1-1)
+        // специфичнее «.footer-inner» (0-1-0) и перебивает её при любом порядке
+        // правил. Без скобки правило совместимости поджимало подвал с 20px до
+        // 6px на всех базах с УЖЕ обновлённым макетом — то самое «обновился и
+        // стало хуже», против которого написаны эти строки.
+        + ".site-footer>.footer-menu,.site-footer>div:not(.footer-inner){padding:6px 24px}"
         + ".site-footer:not(:has(.footer-inner)){display:flex;align-items:center;gap:8px;"
         + "flex-wrap:wrap-reverse;justify-content:space-between;max-width:1120px;margin:0 auto;"
         + "padding:14px 0}"
