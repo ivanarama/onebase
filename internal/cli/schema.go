@@ -142,6 +142,21 @@ func allSchemas() map[string]map[string]any {
 			"options": arrayOf(stringSchema("Значение")),
 		},
 	}
+	// Параметр ОБРАБОТКИ знает обязательность, параметр отчёта — нет
+	// (report.Param такого поля не имеет). Схемы разведены, чтобы редактор не
+	// подсказывал ключ, который в отчёте молча ничего не сделает.
+	procParam := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"name", "type"},
+		"properties": map[string]any{
+			"name":     stringSchema("Имя параметра"),
+			"type":     stringSchema("Тип параметра"),
+			"label":    stringSchema("Подпись"),
+			"options":  arrayOf(stringSchema("Значение")),
+			"required": boolSchema("Обязательный параметр"),
+		},
+	}
 	detailPanelTab := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -355,7 +370,7 @@ func allSchemas() map[string]map[string]any {
 			"type":                 "object",
 			"required":             []string{"name"},
 			"additionalProperties": true,
-			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(param), "tableparts": arrayOf(tablePart)},
+			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(procParam), "tableparts": arrayOf(tablePart)},
 		},
 		"report": {
 			"$schema":              "https://json-schema.org/draft/2020-12/schema",

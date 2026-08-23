@@ -2581,7 +2581,11 @@ const tplProcessor = `
 <h2>{{.Processor.DisplayName $.Lang}}</h2>
 {{if .Processor.Params}}
 <div class="card" style="margin-bottom:16px">
-<form method="POST" enctype="multipart/form-data">
+{{/* data-ob-busy: пока идёт запуск, кнопка выключается и говорит, что работа
+     идёт. Обработка может качать каталог минуту и дольше, а страница при
+     обычной отправке формы не менялась вовсе — человек решал, что нажатие не
+     сработало, и жал ещё раз. Обработчик — в /static/ui.js. */}}
+<form method="POST" enctype="multipart/form-data" data-ob-busy="{{t $.Lang "Выполняется…"}}">
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
   {{range .Processor.Params}}{{$pname := .Name}}
     {{if eq .Type "bool"}}
@@ -2594,8 +2598,12 @@ const tplProcessor = `
     </div>
     {{else if eq .Type "file"}}
     <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
-      <label>{{.DisplayLabel $.Lang}}</label>
-      <input type="file" name="{{$pname}}">
+      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626">*</span>{{end}}</label>
+      {{/* Файл нельзя вернуть в поле после перезагрузки — это запрет браузера, а
+           не недоделка. Поэтому после запуска поле пустое, и повторное
+           «Выполнить» без файла обязано останавливаться здесь, а не улетать на
+           сервер за ошибкой прикладного модуля. */}}
+      <input type="file" name="{{$pname}}" {{if .Required}}required{{end}}>
     </div>
     {{else if eq .Type "text"}}
     <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
@@ -2604,18 +2612,18 @@ const tplProcessor = `
     </div>
     {{else}}
     <div class="form-group" style="margin-bottom:0">
-      <label>{{.DisplayLabel $.Lang}}</label>
+      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626">*</span>{{end}}</label>
       {{if eq .Type "date"}}
-        <input type="date" name="{{$pname}}" value="{{index $.ParamValues $pname}}">
+        <input type="date" name="{{$pname}}" value="{{index $.ParamValues $pname}}" {{if .Required}}required{{end}}>
       {{else if eq .Type "number"}}
-        <input type="number" name="{{$pname}}" value="{{index $.ParamValues $pname}}">
+        <input type="number" name="{{$pname}}" value="{{index $.ParamValues $pname}}" {{if .Required}}required{{end}}>
       {{else if eq .Type "choice"}}
-        <select name="{{$pname}}">
+        <select name="{{$pname}}" {{if .Required}}required{{end}}>
           {{range .Options}}<option value="{{.}}" {{if eq . (index $.ParamValues $pname)}}selected{{end}}>{{.}}</option>{{end}}
         </select>
       {{else if isRef (str .Type)}}
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}">
+          <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}" {{if .Required}}required{{end}}>
             <option value="">{{t $.Lang "— выбрать —"}}</option>
             {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}" {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
           </select>
@@ -2623,7 +2631,7 @@ const tplProcessor = `
           <button type="button" data-ob-ref-current="pp-{{$pname}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
         </div>
       {{else}}
-        <input type="text" name="{{$pname}}" value="{{index $.ParamValues $pname}}">
+        <input type="text" name="{{$pname}}" value="{{index $.ParamValues $pname}}" {{if .Required}}required{{end}}>
       {{end}}
     </div>
     {{end}}
@@ -2639,7 +2647,12 @@ const tplProcessor = `
 </form>
 </div>
 {{end}}
-{{if .Ran}}
+{{/* Карточка результата показывается и когда запуска НЕ БЫЛО, но есть что
+     сказать: отказ по незаполненным обязательным полям, ненайденная процедура
+     Выполнить(). Под «{{if .Ran}}» такой отказ не рисовался вовсе — человек
+     получал ту же форму без единого слова, то есть ровно то «нажал, и ничего
+     не произошло», ради которого всё и затевалось. */}}
+{{if or .Ran .RunError}}
 <div class="card">
 {{if .RunError}}
   <div class="error">{{.RunError}}</div>
