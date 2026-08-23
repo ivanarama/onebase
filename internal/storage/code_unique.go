@@ -45,6 +45,13 @@ var ErrCodeDuplicate = errors.New("значение уже занято")
 // Связь текста с маркером держит TestUniqueCode_PreconditionEmptyValuesMatrix.
 const RenumberHint = "onebase renumber"
 
+// ErrCodeUniqueNotReady — уникальность объявлена, но данные к ней не готовы:
+// есть записи без значения или уже существующие дубли. От прочих отказов
+// миграции отличается тем, что схема при этом исправна, а лечатся данные —
+// поэтому Migrate такой отказ КОПИТ и доводит схему до конца, вместо того
+// чтобы выйти на первом же объекте (см. Migrate, #1080).
+var ErrCodeUniqueNotReady = errors.New("данные не готовы к уникальности")
+
 // duplicateError несёт локализуемое сообщение и при этом опознаётся через
 // errors.Is(err, ErrCodeDuplicate). i18nerr.Wrapf для этого не годится: он
 // дописал бы к тексту хвост «: значение уже занято» — пользователю, который и
@@ -55,6 +62,16 @@ type duplicateError struct{ msg error }
 func (e duplicateError) Error() string        { return e.msg.Error() }
 func (e duplicateError) Unwrap() error        { return e.msg }
 func (e duplicateError) Is(target error) bool { return target == ErrCodeDuplicate }
+
+// notReadyError — тот же приём для ErrCodeUniqueNotReady: текст остаётся
+// прежним и локализуемым, а класс отказа читается через errors.Is. Отличать
+// его от настоящей поломки обязательно: «данные не готовы» миграцию не
+// прерывает, а сорвавшийся запрос к схеме — прерывает.
+type notReadyError struct{ msg error }
+
+func (e notReadyError) Error() string        { return e.msg.Error() }
+func (e notReadyError) Unwrap() error        { return e.msg }
+func (e notReadyError) Is(target error) bool { return target == ErrCodeUniqueNotReady }
 
 // uniqueCodeIndexFields возвращает поле, на которое ставится уникальный индекс
 // по numerator.unique. Пусто — уникальность не запрошена.
@@ -125,7 +142,8 @@ func (db *DB) CodeStats(ctx context.Context, e *metadata.Entity) (CodeStats, boo
 
 // CheckCodeUniquePrecondition проверяет, можно ли включать уникальность: нет ли
 // уже существующих дублей и пустых значений. Возвращает ошибку с человеческим
-// текстом и подсказкой — что именно сделать.
+// текстом и подсказкой — что именно сделать; она опознаётся через
+// errors.Is(err, ErrCodeUniqueNotReady).
 //
 // Разрез проверки тот же, что у будущего индекса (со scope: — разрез + код),
 // иначе проверка запрещала бы то, что индекс разрешит, и наоборот.
@@ -138,14 +156,14 @@ func (db *DB) CheckCodeUniquePrecondition(ctx context.Context, e *metadata.Entit
 		return nil // таблицы может ещё не быть — миграция создаст её сама
 	}
 	if st.Empty > 0 {
-		return i18nerr.Errorf(
+		return notReadyError{i18nerr.Errorf(
 			"%s: уникальность %s включена, но у %d записей значение пусто; пустые значения уникальный индекс не ловит — дозаполните их командой onebase renumber",
-			e.Name, st.Field, st.Empty)
+			e.Name, st.Field, st.Empty)}
 	}
 	if st.Duplicates > 0 {
-		return i18nerr.Errorf(
+		return notReadyError{i18nerr.Errorf(
 			"%s: уникальность %s включена, но в базе уже есть %d повторяющихся значений; исправьте их до включения",
-			e.Name, st.Field, st.Duplicates)
+			e.Name, st.Field, st.Duplicates)}
 	}
 	return nil
 }

@@ -187,6 +187,134 @@ func TestUniqueCode_CleanBaseMigratesMatrix(t *testing.T) {
 	})
 }
 
+// Невыполненное предусловие не оставляет миграцию на полпути: объекты, стоящие
+// в очереди ЗА виновником, схему получают (#1080).
+//
+// Ради этого тест и матричный, и «через Migrate целиком»: раньше цикл выходил
+// на первом же объекте, и все следующие таблицы оставались без колонок — а
+// потом `onebase renumber` не мог их прочитать и пропускал ровно те объекты,
+// ради которых его и позвали.
+func TestUniqueCode_GateDoesNotStopSchemaMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		suffix := uuid.NewString()[:8]
+		blocker := "Контрагенты" + suffix
+		follower := "Заказы" + suffix
+
+		if err := db.Migrate(ctx, []*metadata.Entity{uniqueCatalog(blocker, false)}); err != nil {
+			t.Fatalf("миграция без unique: %v", err)
+		}
+		plain := uniqueCatalog(blocker, false)
+		if err := db.Upsert(ctx, blocker, uuid.New(), map[string]any{"Наименование": "Без кода"}, plain); err != nil {
+			t.Fatalf("вставка: %v", err)
+		}
+
+		// Документ ссылается на справочник — значит, в порядке зависимостей он
+		// заведомо ПОСЛЕ виновника, а не как повезёт с порядком в срезе.
+		comment := metadata.Field{Name: "Комментарий", Type: metadata.FieldTypeString}
+		doc := &metadata.Entity{
+			Name: follower, Kind: metadata.KindDocument,
+			Fields: []metadata.Field{
+				{Name: "Контрагент", Type: metadata.FieldType("reference:" + blocker), RefEntity: blocker},
+				comment,
+			},
+		}
+		err := db.Migrate(ctx, []*metadata.Entity{uniqueCatalog(blocker, true), doc})
+		if err == nil {
+			t.Fatal("уникальность включена при пустых кодах — молча и без эффекта")
+		}
+		if !strings.Contains(err.Error(), storage.RenumberHint) {
+			t.Errorf("в отказе нет подсказки про %s: %v", storage.RenumberHint, err)
+		}
+
+		table := metadata.TableName(follower)
+		exists, err := db.TableExists(ctx, table)
+		if err != nil {
+			t.Fatalf("проверка таблицы %s: %v", table, err)
+		}
+		if !exists {
+			t.Fatalf("таблицы %s нет: миграция снова вышла на первом объекте", table)
+		}
+		col := metadata.ColumnName(comment)
+		has, err := db.Dialect().ColumnExists(ctx, db, table, col)
+		if err != nil {
+			t.Fatalf("проверка колонки %s.%s: %v", table, col, err)
+		}
+		if !has {
+			t.Errorf("таблица %s создана без колонки %s: схема догнала конфигурацию не полностью", table, col)
+		}
+	})
+}
+
+// Отказ преконтроля НЕ снимает уже работающий уникальный индекс.
+//
+// Пустые значения появляются и после включения уникальности — NULL уникальному
+// индексу не мешают. Раз индекс в этот прогон не создаётся, его легко принять
+// за брошенный и удалить: тогда неудачная миграция молча отменяла бы гарантию,
+// которую до неё база держала.
+func TestUniqueCode_GateKeepsExistingIndexMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ent := uniqueCatalog("Валюты"+uuid.NewString()[:8], true)
+		if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+			t.Fatalf("миграция чистой базы: %v", err)
+		}
+		taken := map[string]any{metadata.StandardCodeField: "К-000042", "Наименование": "Рубль"}
+		if err := db.Upsert(ctx, ent.Name, uuid.New(), taken, ent); err != nil {
+			t.Fatalf("первая запись: %v", err)
+		}
+		if err := db.Upsert(ctx, ent.Name, uuid.New(), map[string]any{"Наименование": "Без кода"}, ent); err != nil {
+			t.Fatalf("запись без кода: %v", err)
+		}
+
+		if err := db.Migrate(ctx, []*metadata.Entity{ent}); err == nil {
+			t.Fatal("предусловие не сработало на появившемся пустом значении")
+		}
+
+		dup := map[string]any{metadata.StandardCodeField: "К-000042", "Наименование": "Дубль"}
+		if err := db.Upsert(ctx, ent.Name, uuid.New(), dup, ent); !errors.Is(err, storage.ErrCodeDuplicate) {
+			t.Fatalf("дубль принят после неудачной миграции (%v): уникальность снята вместе с отказом", err)
+		}
+	})
+}
+
+// Виновники называются все сразу: пользователь чинит их одним прогоном
+// renumber, а не узнаёт о следующем после очередного перезапуска.
+func TestUniqueCode_GateNamesEveryOffenderMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		suffix := uuid.NewString()[:8]
+		names := []string{"Партнёры" + suffix, "Склады" + suffix}
+
+		var plain []*metadata.Entity
+		for _, name := range names {
+			plain = append(plain, uniqueCatalog(name, false))
+		}
+		if err := db.Migrate(ctx, plain); err != nil {
+			t.Fatalf("миграция без unique: %v", err)
+		}
+		for i, name := range names {
+			if err := db.Upsert(ctx, name, uuid.New(), map[string]any{"Наименование": "Без кода"}, plain[i]); err != nil {
+				t.Fatalf("вставка в %s: %v", name, err)
+			}
+		}
+
+		var strict []*metadata.Entity
+		for _, name := range names {
+			strict = append(strict, uniqueCatalog(name, true))
+		}
+		err := db.Migrate(ctx, strict)
+		if err == nil {
+			t.Fatal("уникальность включена при пустых кодах")
+		}
+		for _, name := range names {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("в отказе нет объекта %s: %v", name, err)
+			}
+		}
+	})
+}
+
 // Ручной уникальный индекс по тому же полю не дублируется автоматическим: две
 // одинаковые гарантии дали бы два индекса и два разных сообщения об одном и том
 // же отказе.
