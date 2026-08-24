@@ -88,6 +88,24 @@ function obManagedVirtualColumnNames(tbody) {
   }
 }
 
+// obManagedHiddenColumnNames — реквизиты, выведенные из состава колонок формы
+// (план 154). Ячейка такого реквизита ОСТАЁТСЯ в строке и лишь прячется
+// стилем: спрятанный стилем input браузер отправляет как обычный (не шлёт он
+// только disabled), а выброшенная ячейка означала бы затирание реквизита при
+// следующей записи — convertManagedTablePartRows подставляет пустое значение
+// всему, чего нет в присланной строке.
+function obManagedHiddenColumnNames(tbody) {
+  var raw = tbody && tbody.getAttribute ? tbody.getAttribute('data-tp-hidden-cols') : '';
+  if (!raw) return [];
+  try {
+    var parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(function(name) { return typeof name === 'string' && name.trim() !== ''; });
+  } catch (e) {
+    return [];
+  }
+}
+
 // Shared by the managed-form response renderer and the separate SlickGrid
 // runtime below. Keep this outside either IIFE: Slick submit/event sync must
 // be able to update the authoritative hidden payload in the real browser
@@ -345,6 +363,7 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
         return { name: name, type: rest, ref: '' };
       });
       const virtualNames = obManagedVirtualColumnNames(tbody);
+      const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
       const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
@@ -382,6 +401,7 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
         fieldsMeta.forEach(function(f){
           const td = document.createElement('td');
           td.className = obFormCellClass(row, f.name);
+          if (hiddenNames.indexOf(f.name) >= 0) td.style.display = 'none';
           const v = row[f.name];
           const isRef = f.type === 'reference' || f.type.indexOf('reference') === 0;
           const isEnum = f.type === 'enum' || f.type.indexOf('enum') === 0;
@@ -1034,6 +1054,18 @@ function obManagedAdjacentTableBody(btn, tpName, metadataAttr) {
   return tbody && !obManagedTableReadOnly(tbody) ? tbody : null;
 }
 
+// obManagedHideRowColumns прячет ячейки скрытых колонок в одной строке.
+// offset — сколько служебных ячеек идёт перед колонками реквизитов (галочка
+// выделения у ТЧ с командами).
+function obManagedHideRowColumns(tr, fields, hiddenNames, offset) {
+  if (!tr || !tr.cells || !hiddenNames || !hiddenNames.length) return;
+  for (var i = 0; i < fields.length; i++) {
+    if (hiddenNames.indexOf(fields[i]) < 0) continue;
+    var cell = tr.cells[(offset || 0) + i];
+    if (cell) cell.style.display = 'none';
+  }
+}
+
 function obManagedAddTpRow(btn) {
   var tpName = btn.getAttribute('data-ob-add-tp') || '';
   var elementName = btn.getAttribute('data-ob-element') || '';
@@ -1045,6 +1077,11 @@ function obManagedAddTpRow(btn) {
   var nums = meta.filter(function (f) { return f.type === 'number'; }).map(function (f) { return f.name; });
   var bools = meta.filter(function (f) { return f.type === 'bool'; }).map(function (f) { return f.name; });
   addTpRow(tpName, fields, nums, tbody.rows.length, tbody, obManagedVirtualColumnNames(tbody), bools);
+  // Новая строка строится по data-tp-fields, где скрытые колонки перечислены
+  // наравне с показываемыми (без них значения не уехали бы на сервер). Прячем
+  // их ячейки так же, как это делают первичный рендер и applyTableParts.
+  obManagedHideRowColumns(tbody.rows[tbody.rows.length - 1], fields,
+    obManagedHiddenColumnNames(tbody), tbody.getAttribute('data-tp-cmd') === '1' ? 1 : 0);
   var table = tbody.closest && tbody.closest('table[data-ob-dom-table]');
   if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
@@ -1901,7 +1938,13 @@ obManagedReady(obManagedInitDelegates);
     var columns = [];
     for (var i = 0; i < colsMeta.length; i++) {
       var c = colsMeta[i];
-      var col = {id: c.id, name: c.name, field: c.id, width: 120, resizable: true, sortable: true};
+      // Скрытая колонка (план 154) не рисуется, но остаётся в colsMeta —
+      // значит и в columnsMeta, по которому obGridSync собирает tp_json.
+      // Выкинуть её отсюда И оттуда значило бы стирать реквизит при записи:
+      // сервер подставляет пустое значение всему, чего нет в строке.
+      if (c && c.hidden) continue;
+      var col = {id: c.id, name: c.name, field: c.id, width: 120, resizable: true, sortable: true,
+                 metaIndex: (c && typeof c.index === "number") ? c.index : -1};
       if (c.virtual) {
         // Виртуальная колонка (#845): значение приехало с сервера по ссылке из
         // строки и в базе не хранится. Без редактора и в сером — иначе правка
@@ -2100,13 +2143,22 @@ obManagedReady(obManagedInitDelegates);
     if (rowIndex < 0 && args && typeof args.row === "number") rowIndex = args.row;
     var cellIndex = (args && typeof args.cell === "number") ? args.cell : -1;
     var colName = "";
-    if (cellIndex >= 0 && columns && columns[cellIndex]) colName = columns[cellIndex].field || columns[cellIndex].id || "";
+    // Индекс колонки сервер сверяет с порядком реквизитов в МЕТАДАННЫХ
+    // (canonicalTPColumn), а не с порядком показа. Пока состав колонок был
+    // жёстко равен метаданным, номер ячейки годился как индекс; с выбором
+    // состава (план 154) порядки разошлись, и индекс приезжает с сервера
+    // вместе с колонкой.
+    var metaIndex = -1;
+    if (cellIndex >= 0 && columns && columns[cellIndex]) {
+      colName = columns[cellIndex].field || columns[cellIndex].id || "";
+      if (typeof columns[cellIndex].metaIndex === "number") metaIndex = columns[cellIndex].metaIndex;
+    }
     return {
       _tp: tpName,
       _tp_row: rowIndex >= 0 ? String(rowIndex) : "",
       _tp_row_number: rowIndex >= 0 ? String(rowIndex + 1) : "",
       _tp_col: colName,
-      _tp_col_index: cellIndex >= 0 ? String(cellIndex) : ""
+      _tp_col_index: metaIndex >= 0 ? String(metaIndex) : ""
     };
   }
 
@@ -2646,7 +2698,17 @@ obManagedReady(obManagedInitDelegates);
     // ТЧ есть такой обработчик (data-sg-recalc) — иначе впустую гоняли бы сеть
     // на каждый ввод. Debounce 250 мс коалесцирует быстрые правки (вопрос O3).
     // Деньги считаются на сервере (decimal), клиент лишь отображает результат.
-    if (div.getAttribute("data-sg-recalc") === "1" || div.getAttribute("data-sg-rowchange") === "1") {
+    // Обработчики отдельных колонок (план 154): «реквизит → имя элемента
+    // kind: Колонка». Имя элемента, а не процедуры — резолвинг обработчика
+    // остаётся серверным и fail-closed (resolveBrowserFormEvent).
+    var colEvents = {};
+    try {
+      colEvents = JSON.parse(div.getAttribute("data-sg-colevents") || "null") || {};
+    } catch (er) {
+      colEvents = {};
+    }
+    var hasColEvents = Object.keys(colEvents).length > 0;
+    if (div.getAttribute("data-sg-recalc") === "1" || div.getAttribute("data-sg-rowchange") === "1" || hasColEvents) {
       var elName = div.getAttribute("data-sg-el") || tpName;
       var recalcTimer = null;
       var wantChange = div.getAttribute("data-sg-recalc") === "1";
@@ -2656,16 +2718,27 @@ obManagedReady(obManagedInitDelegates);
         if (recalcTimer) clearTimeout(recalcTimer);
         recalcTimer = setTimeout(function() {
           if (!window.obFire) return;
-          // Последовательно: оба ответа применяют значения к форме, и
+          // Строго последовательно: каждый ответ применяет значения к форме, и
           // параллельный запуск дал бы гонку «кто последний записал».
-          var chain = wantChange ? window.obFire(elName, "ПриИзменении", params) : null;
-          if (!wantRowChange) return;
-          var next = function() { window.obFire(elName, "ПриИзмененииСтроки", params); };
-          if (chain && typeof chain.then === "function") {
-            chain.then(next, next);
-          } else {
-            next();
-          }
+          var steps = [];
+          // Обработчик колонки идёт первым и обработчик таблицы НЕ отменяет:
+          // иначе событие, добавленное на колонку, молча гасило бы уже
+          // работающий обработчик ТЧ — а в диффе этого не видно.
+          var colElName = colEvents[params._tp_col];
+          if (colElName) steps.push([colElName, "ПриИзменении"]);
+          if (wantChange) steps.push([elName, "ПриИзменении"]);
+          if (wantRowChange) steps.push([elName, "ПриИзмененииСтроки"]);
+          var run = function(i) {
+            if (i >= steps.length) return;
+            var res = window.obFire(steps[i][0], steps[i][1], params);
+            var next = function() { run(i + 1); };
+            if (res && typeof res.then === "function") {
+              res.then(next, next);
+            } else {
+              next();
+            }
+          };
+          run(0);
         }, 250);
       });
     }

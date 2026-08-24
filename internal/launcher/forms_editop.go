@@ -58,7 +58,7 @@ type formInfo struct {
 // (чекбоксы панели свойств шлют "true"/"" — пишем в YAML булев скаляр, не строку).
 var boolProps = map[string]bool{
 	"required": true, "readonly": true, "choice": true,
-	"visible": true, "enabled": true, "no_grid": true,
+	"visible": true, "enabled": true, "no_grid": true, "auto_sum": true,
 }
 
 // numProps — целочисленные свойства: пишем в YAML числом, а не строкой (иначе

@@ -31,6 +31,14 @@ type managedTPColumnJSON struct {
 	// такая колонка не редактируется и НЕ попадает в tp_json при отправке формы.
 	Virtual bool `json:"virtual,omitempty"`
 	Width   int  `json:"width,omitempty"`
+	// Hidden — колонка не показывается, но остаётся в columnsMeta и потому
+	// по-прежнему сериализуется в tp_json (план 154). Ровно наоборот к Virtual:
+	// та видима и не отправляется, эта отправляется и не видима.
+	Hidden bool `json:"hidden,omitempty"`
+	// Index — позиция реквизита в метаданных табличной части. Клиент кладёт её
+	// в _tp_col_index: сервер сверяет индекс с порядком метаданных, а порядок
+	// показа с ним больше не совпадает. Для виртуальной колонки — -1.
+	Index int `json:"index"`
 }
 
 // infoRegKeyValue serialises an information-register dimension for the hidden
@@ -893,10 +901,15 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
-		"managedTPColumnsJSON": func(fields []metadata.Field, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+		"managedTPColumnsJSON": func(plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+			fields := make([]metadata.Field, 0, len(plan))
+			for _, column := range plan {
+				fields = append(fields, column.Field)
+			}
 			virtual = filterVirtualTPColumns(fields, virtual)
-			cols := make([]managedTPColumnJSON, 0, len(fields)+len(virtual))
-			for _, field := range fields {
+			cols := make([]managedTPColumnJSON, 0, len(plan)+len(virtual))
+			for _, column := range plan {
+				field := column.Field
 				cols = append(cols, managedTPColumnJSON{
 					ID:          field.Name,
 					Name:        field.DisplayName(lang),
@@ -904,6 +917,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Ref:         field.RefEntity,
 					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true),
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
+					Hidden:      column.Hidden,
+					Index:       column.Index,
 				})
 			}
 			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
@@ -919,6 +934,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Type:    string(metadata.FieldTypeString),
 					Virtual: true,
 					Width:   vc.Width,
+					Index:   -1, // не реквизит ТЧ: индекса в метаданных нет
 				})
 			}
 			b, err := json.Marshal(cols)
@@ -926,6 +942,51 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return template.JS("[]")
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
+		},
+		"managedTPColumnPlan": managedTPColumnPlan,
+		// managedTPFieldsAttr — значение data-tp-fields в порядке отрисовки
+		// ячеек: applyTableParts перестраивает строку по этому списку, и любое
+		// расхождение порядка развалило бы соответствие ячеек колонкам.
+		"managedTPFieldsAttr": func(plan []managedTPColumn) string {
+			parts := make([]string, 0, len(plan))
+			for _, column := range plan {
+				field := column.Field
+				part := field.Name + "|" + string(field.Type)
+				if field.RefEntity != "" {
+					part += ":" + field.RefEntity
+				}
+				parts = append(parts, part)
+			}
+			return strings.Join(parts, ",")
+		},
+		// managedTPHiddenColsJSON — имена скрытых колонок для перерисовки
+		// таблицы после события формы: ячейка остаётся в DOM (иначе значение
+		// потерялось бы при записи), но не показывается.
+		"managedTPHiddenColsJSON": func(plan []managedTPColumn) string {
+			names := make([]string, 0, len(plan))
+			for _, column := range plan {
+				if column.Hidden {
+					names = append(names, column.Field.Name)
+				}
+			}
+			b, err := json.Marshal(names)
+			if err != nil {
+				return "[]"
+			}
+			return string(b)
+		},
+		// managedTPColumnEventsJSON — «реквизит → имя элемента-колонки» для
+		// колонок со своим ПриИзменении (план 154, Р4).
+		"managedTPColumnEventsJSON": func(plan []managedTPColumn, readOnly bool) string {
+			events := managedTPColumnEvents(plan, readOnly)
+			if len(events) == 0 {
+				return ""
+			}
+			b, err := json.Marshal(events)
+			if err != nil {
+				return ""
+			}
+			return string(b)
 		},
 		"managedTPVirtualColumns": filterVirtualTPColumns,
 		"managedTPVirtualNamesJSON": func(virtual []metadata.FormVirtualColumn) string {
