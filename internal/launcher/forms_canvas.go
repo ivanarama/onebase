@@ -219,6 +219,7 @@ type canvasElementInfo struct {
 	Width     int    `json:"width"`     // ПолеКартинки: ширина
 	Height    int    `json:"height"`    // ПолеКартинки: высота
 	NoGrid    bool   `json:"noGrid"`    // ТабличнаяЧасть: простая таблица вместо SlickGrid
+	AutoSum   bool   `json:"autoSum"`   // ТабличнаяЧасть: Сумма = Количество × Цена по именам колонок
 	// Orientation — раскладка детей контейнера: ""/"vertical" или "horizontal".
 	Orientation string `json:"orientation"`
 	// События элемента (batch B1): имя события → имя процедуры в .form.os.
@@ -262,6 +263,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				Width:       el.Width,
 				Height:      el.Height,
 				NoGrid:      el.NoGrid,
+				AutoSum:     el.AutoSum,
 				Orientation: el.Orientation,
 				View:        el.View,
 			}

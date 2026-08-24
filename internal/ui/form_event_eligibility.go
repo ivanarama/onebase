@@ -104,6 +104,11 @@ func browserEventAllowedForElement(kind metadata.FormElementType, event metadata
 			event == metadata.FormEventOnRowDeleted || event == metadata.FormEventOnChoice ||
 			event == metadata.FormEventOnRowActivated || event == metadata.FormEventOnRowChanged ||
 			event == metadata.FormEventAfterRowAdd
+	case metadata.FormElementColumn:
+		// Колонка табличной части шлёт только правку своей ячейки (план 154).
+		// Остальные события строки принадлежат таблице целиком: строка
+		// добавляется и удаляется не «в колонке».
+		return event == metadata.FormEventOnChange
 	default:
 		return false
 	}
