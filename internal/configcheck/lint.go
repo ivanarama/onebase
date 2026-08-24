@@ -666,6 +666,11 @@ type lintProgram struct {
 	roots       map[string]bool
 	rootAll     bool
 	testContext bool
+	// tpContextProcs — процедуры, привязанные к событию табличной части или её
+	// колонки. Только им платформа инжектирует ТекущаяСтрока и соседей, поэтому
+	// держать эти имена в commonDSLGlobals нельзя: опечатка в обычном модуле
+	// перестала бы ловиться (та же причина, что у testDSLGlobals).
+	tpContextProcs map[string]bool
 }
 
 // CheckLintDSL reports declared but unread DSL variables and procedures that
@@ -742,6 +747,17 @@ var commonDSLGlobals = map[string]bool{
 	"объект": true, "форма": true, "элементы": true, "элементыформы": true,
 	"отказ": true, "параметры": true, "параметрысеанса": true, "запрос_": true,
 }
+
+// formTPContextGlobals — контекст события табличной части, доступный только
+// внутри её обработчиков. Словарь имён живёт в metadata рядом с событиями форм,
+// значения инжектирует рантайм; расхождение сторожит тест в internal/ui.
+var formTPContextGlobals = func() map[string]bool {
+	set := map[string]bool{}
+	for _, name := range metadata.FormTablePartContextVars() {
+		set[strings.ToLower(name)] = true
+	}
+	return set
+}()
 
 // testDSLGlobals инжектируются только в обработки с kind: test. Держать их в
 // commonDSLGlobals нельзя: иначе опечатка/неподдерживаемый Мок.Email в обычном
@@ -870,9 +886,11 @@ func lintUnknownGlobalMembers(lp lintProgram, globals map[string]bool) []Issue {
 			names = append(names, name)
 		}
 		sort.Strings(names)
+		inTPHandler := lp.tpContextProcs[strings.ToLower(pr.Name.Literal)]
 		for _, name := range names {
 			if owned[name] || moduleVars[name] || procNames[name] || commonDSLGlobals[name] || globals[name] ||
-				lp.testContext && testDSLGlobals[name] {
+				lp.testContext && testDSLGlobals[name] ||
+				inTPHandler && formTPContextGlobals[name] {
 				continue
 			}
 			tok := bases[name]
@@ -1216,9 +1234,46 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 				formName = ent.Name
 			}
 			add(ent.Name+"/"+formName, "DSL форма", prog, roots, false)
+			// Контекст табличной части знает только её обработчик, поэтому
+			// список процедур прикладывается к уже добавленной программе, а не
+			// расширяет общий словарь глобалов.
+			out[len(out)-1].tpContextProcs = collectTablePartHandlerProcs(form)
 		}
 	}
 	return out
+}
+
+// collectTablePartHandlerProcs — процедуры, привязанные к событию табличной
+// части или любого её потомка (колонки, кнопки подбора). Именно им рантайм
+// собирает контекст строки; какой конкретно набор имён доедет, зависит от
+// события и от того, что прислал клиент, поэтому разбирать это здесь не стоит:
+// проверка отвечает на вопрос «существует ли такое имя вообще», а не «заполнено
+// ли оно сейчас».
+func collectTablePartHandlerProcs(form *metadata.FormModule) map[string]bool {
+	if form == nil {
+		return nil
+	}
+	procs := map[string]bool{}
+	var walk func(elements []*metadata.FormElement, insideTablePart bool)
+	walk = func(elements []*metadata.FormElement, insideTablePart bool) {
+		for _, el := range elements {
+			if el == nil {
+				continue
+			}
+			inside := insideTablePart || el.Kind == metadata.FormElementTablePart
+			if inside {
+				for _, handler := range el.Handlers {
+					addRoot(procs, handler)
+				}
+			}
+			walk(el.Children, inside)
+		}
+	}
+	walk(form.Elements, false)
+	if len(procs) == 0 {
+		return nil
+	}
+	return procs
 }
 
 func collectFormHandlerRoots(form *metadata.FormModule, roots map[string]bool) {

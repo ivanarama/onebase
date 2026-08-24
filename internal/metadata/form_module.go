@@ -65,6 +65,32 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
 }
 
+// formTablePartContextVars — имена, которые платформа инжектирует в обработчик
+// события табличной части (и её колонки). Единственный источник значений —
+// internal/ui/processor_form_event_context.go; здесь лежит только словарь имён,
+// потому что он нужен и проверке конфигураций: без него `onebase check` ругался
+// бы на документированный `ТекущаяСтрока` как на опечатку.
+//
+// Совпадение с рантаймом сторожит тест TestFormTablePartContextVars_СходитсяС
+// Рантаймом в internal/ui: разъехавшийся словарь даёт либо ложное
+// предупреждение, либо пропущенную опечатку.
+var formTablePartContextVars = []string{
+	"ИмяТабличнойЧасти", "ТекущаяТабличнаяЧасть", "TablePartName",
+	"ВыделенныеСтроки", "SelectedRows",
+	"ИндексСтроки", "НомерСтроки", "RowIndex", "RowNumber",
+	"ТекущаяСтрока", "CurrentRow",
+	"ТекущаяКолонка", "ИмяКолонки", "CurrentColumn", "ColumnName",
+	"ИндексКолонки", "ColumnIndex",
+}
+
+// FormTablePartContextVars возвращает копию словаря имён контекста события
+// табличной части.
+func FormTablePartContextVars() []string {
+	out := make([]string, len(formTablePartContextVars))
+	copy(out, formTablePartContextVars)
+	return out
+}
+
 // IsKnownFormEventType reports whether event is part of the platform event
 // vocabulary. Procedure names and YAML keys outside this allow-list remain
 // ordinary helpers and must never become remotely invokable form handlers.
