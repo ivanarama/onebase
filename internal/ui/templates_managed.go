@@ -253,6 +253,11 @@ const tplManagedForm = `
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $tpMeta}}
   {{$tpVirtualCols := managedTPVirtualColumns $tpMeta.Fields $el.VirtualColumns}}
+  {{/* Состав и порядок колонок задают дети kind: Колонка (план 154). Реквизит,
+       не попавший в выбор, остаётся в плане скрытым: убрать его из полезной
+       нагрузки значит затереть его в базе при следующей же записи. */}}
+  {{$tpPlan := managedTPColumnPlan $el $tpMeta.Fields}}
+  {{$tpColEvents := managedTPColumnEventsJSON $tpPlan $tpReadOnly}}
   {{if $tpCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $tpCmds}}
@@ -280,7 +285,8 @@ const tplManagedForm = `
 	   {{if and (not $tpReadOnly) (hasHandler $el "ПослеДобавленияСтроки")}}data-sg-rowafteradd="1"{{end}}
        {{/* id — имя реквизита (по нему идёт привязка данных и разбор tp.*),
             name — только подпись колонки: синоним реквизита, как в автоформе. */}}
-       data-sg-cols='{{managedTPColumnsJSON $tpMeta.Fields $tpVirtualCols (str $ctx.Lang)}}'
+       {{if $tpColEvents}}data-sg-colevents="{{$tpColEvents}}"{{end}}
+       data-sg-cols='{{managedTPColumnsJSON $tpPlan $tpVirtualCols (str $ctx.Lang)}}'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{managedTPRowsJSON $tpMeta.Fields $tpRows}}'
@@ -300,17 +306,18 @@ const tplManagedForm = `
     <thead>
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
-        {{range $tpMeta.Fields}}<th>{{.DisplayName (str $ctx.Lang)}}</th>{{end}}
+        {{range $c := $tpPlan}}<th{{if $c.Hidden}} style="display:none"{{end}}>{{$c.Field.DisplayName (str $ctx.Lang)}}</th>{{end}}
         {{range $tpVirtualCols}}<th>{{.ColumnTitle (str $ctx.Lang)}}</th>{{end}}
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{range $i, $f := $tpMeta.Fields}}{{if $i}},{{end}}{{$f.Name}}|{{$f.Type}}{{if $f.RefEntity}}:{{$f.RefEntity}}{{end}}{{end}}" data-tp-virtual-cols="{{managedTPVirtualNamesJSON $tpVirtualCols}}">
+    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-fields="{{managedTPFieldsAttr $tpPlan}}" data-tp-hidden-cols="{{managedTPHiddenColsJSON $tpPlan}}" data-tp-virtual-cols="{{managedTPVirtualNamesJSON $tpVirtualCols}}">
     {{range $i, $row := $tpRows}}
       <tr{{with formRowClass $row}} class="{{.}}"{{end}} tabindex="-1" aria-selected="false">
         {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"{{if $tpReadOnly}} disabled{{end}}></td>{{end}}
-        {{range $f := $tpMeta.Fields}}
-        <td{{with formCellClass $row $f.Name}} class="{{.}}"{{end}}>
+        {{range $c := $tpPlan}}
+        {{$f := $c.Field}}
+        <td{{with formCellClass $row $f.Name}} class="{{.}}"{{end}}{{if $c.Hidden}} style="display:none"{{end}}>
           {{$v := index $row $f.Name}}
           {{if isRef (str $f.Type)}}
             <div style="display:flex;gap:4px;align-items:center">
@@ -352,7 +359,7 @@ const tplManagedForm = `
     </tbody>
     <tfoot id="tp-foot-{{$tpName}}" class="tp-footer" style="display:none"><tr>
       {{if $tpCmds}}<td></td>{{end}}
-      {{range $f := $tpMeta.Fields}}{{if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}{{range $tpVirtualCols}}<td></td>{{end}}<td></td>
+      {{range $c := $tpPlan}}{{$f := $c.Field}}{{if $c.Hidden}}<td style="display:none"></td>{{else if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}{{range $tpVirtualCols}}<td></td>{{end}}<td></td>
     </tr></tfoot>
   </table>
   <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
