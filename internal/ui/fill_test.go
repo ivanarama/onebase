@@ -207,6 +207,124 @@ func TestFill_NoHook_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+// Ввод на основании из ДВУХ разных документов: хук обязан различить источник
+// по ТипЗнч и заполнить только свою ветку (#1137).
+//
+// До починки ТипЗнч(ДанныеЗаполнения) отдавал «*runtime.Object» для любого
+// источника, поэтому обе ветки были Ложь — документ открывался пустым, и
+// сообщения об ошибке при этом не было: не работал сам способ распознавания.
+// Тест идёт через Service.Fill — ту же точку, что дёргает кнопка «Ввести на
+// основании», а не через getTypeName напрямую.
+func TestFill_ТипИсточникаРазличим_1137(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	заказ := &metadata.Entity{
+		Name: "ЗаказПокупателя",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+		},
+	}
+	счёт := &metadata.Entity{
+		Name: "СчётНаОплату",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+		},
+	}
+	recv := &metadata.Entity{
+		Name:    "РеализацияТоваров",
+		Kind:    metadata.KindDocument,
+		BasedOn: []string{"ЗаказПокупателя", "СчётНаОплату"},
+		Fields: []metadata.Field{
+			{Name: "Основание", Type: metadata.FieldTypeString},
+			{Name: "ПоСсылке", Type: metadata.FieldTypeString},
+		},
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{заказ, счёт, recv}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Первая ветка — идиома «сравнить тип объекта»; вторая — «сравнить тип
+	// ссылки на источник» через псевдо-реквизит .Ссылка. Обе обязаны работать:
+	// перенесённый из 1С модуль пишет вторую.
+	prog := mustParse(t, `Процедура ОбработкаЗаполнения(ДанныеЗаполнения)
+  Если ТипЗнч(ДанныеЗаполнения) = Тип("Документ.ЗаказПокупателя") Тогда
+    this.Основание = "заказ " + ДанныеЗаполнения.Номер;
+  ИначеЕсли ТипЗнч(ДанныеЗаполнения) = Тип("Документ.СчётНаОплату") Тогда
+    this.Основание = "счёт " + ДанныеЗаполнения.Номер;
+  Иначе
+    this.Основание = "не распознан: " + ТипЗнч(ДанныеЗаполнения);
+  КонецЕсли;
+  Если ТипЗнч(ДанныеЗаполнения.Ссылка) = Тип("ДокументСсылка.ЗаказПокупателя") Тогда
+    this.ПоСсылке = "заказ";
+  ИначеЕсли ТипЗнч(ДанныеЗаполнения.Ссылка) = Тип("ДокументСсылка.СчётНаОплату") Тогда
+    this.ПоСсылке = "счёт";
+  Иначе
+    this.ПоСсылке = "не распознан: " + ТипЗнч(ДанныеЗаполнения.Ссылка);
+  КонецЕсли;
+КонецПроцедуры`)
+
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{заказ, счёт, recv},
+		Programs: map[string]*ast.Program{"РеализацияТоваров": prog},
+	})
+
+	заказID, счётID := uuid.New(), uuid.New()
+	if err := db.Upsert(ctx, заказ.Name, заказID, map[string]any{"Номер": "ЗП-7"}, заказ); err != nil {
+		t.Fatalf("Upsert заказа: %v", err)
+	}
+	if err := db.Upsert(ctx, счёт.Name, счётID, map[string]any{"Номер": "СЧ-9"}, счёт); err != nil {
+		t.Fatalf("Upsert счёта: %v", err)
+	}
+
+	interp := interpreter.New()
+	interp.LookupProc = registry.GetModuleProc
+	svc := &entityservice.Service{
+		Store: db, Reg: registry, Interp: interp,
+		MakeThis: func(ctx context.Context, _ interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			return &formObjectThis{obj: obj, entity: e}
+		},
+	}
+
+	cases := []struct {
+		sourceType   string
+		sourceID     uuid.UUID
+		wantBasis    string
+		wantByRefKey string
+	}{
+		{"ЗаказПокупателя", заказID, "заказ ЗП-7", "заказ"},
+		{"СчётНаОплату", счётID, "счёт СЧ-9", "счёт"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.sourceType, func(t *testing.T) {
+			result, err := svc.Fill(ctx, entityservice.FillRequest{
+				Receiver:   recv,
+				SourceType: tc.sourceType,
+				SourceID:   tc.sourceID,
+			})
+			if err != nil {
+				t.Fatalf("Fill вернул ошибку: %v", err)
+			}
+			if result.DSLError != "" {
+				t.Fatalf("DSLError: %s", result.DSLError)
+			}
+			if got := result.Fields["основание"]; got != tc.wantBasis {
+				t.Errorf("Основание = %v, want %q", got, tc.wantBasis)
+			}
+			if got := result.Fields["поссылке"]; got != tc.wantByRefKey {
+				t.Errorf("ПоСсылке = %v, want %q", got, tc.wantByRefKey)
+			}
+		})
+	}
+}
+
 func toFloat(v any) float64 {
 	switch x := v.(type) {
 	case decimal.Decimal:

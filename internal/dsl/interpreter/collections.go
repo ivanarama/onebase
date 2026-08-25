@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // ─── Ref (ссылка на объект метаданных) ───────────────────────────────────────
@@ -39,6 +41,11 @@ type Ref struct {
 	// Type — имя типа объекта (справочника/документа). Может быть пустым,
 	// если ссылка создана вне менеджера.
 	Type string
+	// Kind — вид объекта, на который ссылка указывает. Нужен, чтобы ТипЗнч()
+	// отличал ДокументСсылка.X от СправочникСсылка.X: одного Type для этого
+	// мало, а имена документа и справочника могут совпадать. Пустой Kind →
+	// TypeName() возвращает обобщённое «Ссылка», как и до issue #1137.
+	Kind metadata.Kind
 	// Manager — менеджер объекта; задаётся при создании ссылки и позволяет
 	// Ссылка.Удалить() работать. nil → метод поднимет понятную ошибку.
 	Manager RefManager
@@ -50,7 +57,19 @@ type Ref struct {
 
 func (r *Ref) String() string     { return r.Name }
 func (r *Ref) GetRefUUID() string { return r.UUID }
-func (r *Ref) TypeName() string   { return "Ссылка" }
+
+// TypeName — «ДокументСсылка.ЗаказПокупателя» / «СправочникСсылка.Номенклатура»
+// для ТипЗнч() и отладчика. Ссылка без вида объекта (создана вне менеджера)
+// остаётся обобщённой «Ссылка»: угадывать вид по имени нельзя.
+func (r *Ref) TypeName() string {
+	if r == nil {
+		return "Неопределено"
+	}
+	if name := metadata.RefTypeName(r.Kind, r.Type); name != "" {
+		return name
+	}
+	return "Ссылка"
+}
 
 // CallMethod реализует MethodCallable для ссылки. Без этого вызов любого
 // метода на ссылке молча возвращал nil.
