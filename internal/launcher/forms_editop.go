@@ -24,7 +24,7 @@ import (
 
 // editOpRequest — разобранная команда правки формы.
 type editOpRequest struct {
-	Op       string // render | setProp | delProp | insert | move | delete | setOptions
+	Op       string // render | setProp | delProp | insert | insertColumns | move | delete | setOptions
 	Node     string // node-id цели (setProp, move); "form" = корневые свойства формы
 	Key      string // setProp/delProp: имя свойства (может быть вложенным, "title.ru")
 	Value    string // setProp: значение (сырое; bool-свойства приводятся)
@@ -35,6 +35,14 @@ type editOpRequest struct {
 	DataPath string // insert: data_path нового элемента
 	TitleRU  string // insert: ru-заголовок нового элемента
 	Options  string // setOptions: JSON-массив [{value,label}] набора значений
+	Columns  string // insertColumns: JSON-массив [{name,title,data_path}] колонок ТЧ
+}
+
+// columnSpec — одна колонка табличной части в команде insertColumns.
+type columnSpec struct {
+	Name     string `json:"name"`
+	Title    string `json:"title"`
+	DataPath string `json:"data_path"`
 }
 
 // editOpResult — результат применения команды к YAML.
@@ -214,6 +222,42 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		}
 		selected = newID
 
+	case "insertColumns":
+		// Материализация состава колонок ТЧ одной командой (#1123).
+		//
+		// Нужна ровно там, где явного состава ещё нет: пустой список детей
+		// означает «показать все реквизиты», поэтому «спрятать одну колонку» —
+		// это не одна правка, а «объявить все остальные». Серией из N запросов
+		// с клиента это делать нельзя: обрыв на середине оставил бы ТЧ с ЯВНЫМ
+		// составом, урезанным до случайного места обрыва, — то есть тихо
+		// спрятал бы колонки, которых никто не снимал.
+		if strings.TrimSpace(req.Parent) == "" {
+			return editOpResult{}, fmt.Errorf("insertColumns: не указан parent")
+		}
+		var cols []columnSpec
+		if err := json.Unmarshal([]byte(req.Columns), &cols); err != nil {
+			return editOpResult{}, fmt.Errorf("insertColumns: разбор columns: %w", err)
+		}
+		if len(cols) == 0 {
+			return editOpResult{}, fmt.Errorf("insertColumns: пустой список колонок")
+		}
+		for _, c := range cols {
+			fields := map[string]any{"kind": string(metadata.FormElementColumn)}
+			if strings.TrimSpace(c.Name) != "" {
+				fields["name"] = c.Name
+			}
+			if strings.TrimSpace(c.DataPath) != "" {
+				fields["data_path"] = c.DataPath
+			}
+			if strings.TrimSpace(c.Title) != "" {
+				fields["title"] = map[string]string{"ru": c.Title}
+			}
+			if _, err := doc.InsertElement(req.Parent, 9999, fields); err != nil {
+				return editOpResult{}, err
+			}
+		}
+		selected = req.Parent
+
 	case "move":
 		if err := doc.Move(req.Node, req.Parent, req.Index); err != nil {
 			return editOpResult{}, err
@@ -298,6 +342,7 @@ func (h *handler) configuratorFormsEditOp(w http.ResponseWriter, r *http.Request
 		DataPath: r.FormValue("data_path"),
 		TitleRU:  r.FormValue("title_ru"),
 		Options:  r.FormValue("options"),
+		Columns:  r.FormValue("columns"),
 	}
 	res, err := applyEditOp([]byte(r.FormValue("yaml")), req)
 	if err != nil {

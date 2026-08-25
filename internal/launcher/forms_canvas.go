@@ -180,8 +180,15 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 		// редактировать состав (follow-up #164, слайсы D1/D2).
 		fmt.Fprintf(buf, `<div class="%s" data-node-id="%s" data-kind="%s"><div class="fc-tp fc-pick">▦ %s</div><div class="fc-cols">`,
 			elWrapClass("fc-table", id, selectedID), id, kind, title)
-		if len(en.Children) == 0 {
-			buf.WriteString(`<span class="fc-cols-empty">колонки не выбраны</span>`)
+		// Без явных колонок рантайм показывает ВСЕ реквизиты ТЧ
+		// (managedTPColumnPlan: «ничего не выбрано» = «показать всё»). Холст
+		// метаданных сущности не знает и перечислить их не может, но обязан
+		// назвать состояние верно: прежнее «колонки не выбраны» читалось как
+		// «ТЧ пустая» и толкало поставить галочку — а первая же галочка
+		// переключает смысл с «все» на «только отмеченные» и убирает
+		// остальные колонки (#1123).
+		if !hasColumnChild(en) {
+			buf.WriteString(`<span class="fc-cols-empty" title="Состав не задан: показываются все реквизиты табличной части. Задать состав явно можно галочками в свойствах.">все колонки (по умолчанию)</span>`)
 		}
 		for _, c := range en.Children {
 			if c == nil || c.El == nil {
@@ -198,15 +205,34 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 	}
 }
 
+// hasColumnChild — есть ли у элемента хоть один ребёнок kind: Колонка. Считаем
+// именно их, а не всех детей: рантайм (managedTPColumnPlan) переходит в режим
+// «показать выбранное» тоже только по ним, и холст обязан говорить о том же
+// признаке, иначе состояния разъезжаются на ТЧ с посторонним ребёнком.
+func hasColumnChild(en *formdoc.ElementNode) bool {
+	for _, c := range en.Children {
+		if c != nil && c.El != nil && c.El.Kind == metadata.FormElementColumn {
+			return true
+		}
+	}
+	return false
+}
+
 // canvasElementInfo — редактируемые поля элемента для панели свойств клиента.
 // Плоская карта node-id → info отдаётся вместе с холстом, чтобы клик по элементу
 // открывал панель без повторного парсинга YAML в браузере.
 type canvasElementInfo struct {
-	NodeID    string `json:"nodeId"`
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	TitleRU   string `json:"titleRu"`
-	DataPath  string `json:"dataPath"`
+	NodeID   string `json:"nodeId"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	TitleRU  string `json:"titleRu"`
+	DataPath string `json:"dataPath"`
+	// Field — ключ `field:` элемента. Рантайм сопоставляет колонку реквизиту по
+	// data_path, field ИЛИ имени (managedTPFieldIndexForColumn), а в модель
+	// холста поле не попадало вовсе — поэтому колонка, объявленная как
+	// `field: Цена`, в рантайме была видна, а в панели свойств стояла без
+	// галочки (#1123).
+	Field     string `json:"field"`
 	Required  bool   `json:"required"`
 	ReadOnly  bool   `json:"readonly"`
 	Hint      string `json:"hint"`
@@ -252,6 +278,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				Kind:        string(el.Kind),
 				Name:        el.Name,
 				DataPath:    el.DataPath,
+				Field:       el.FieldName,
 				Required:    el.Required,
 				ReadOnly:    el.ReadOnly,
 				Hint:        el.Hint,
