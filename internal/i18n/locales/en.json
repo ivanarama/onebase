@@ -1393,5 +1393,20 @@
   "необяз.": "optional",
   "ничего не найдено": "nothing found",
   "поиск": "search",
-  "сохранено": "saved"
+  "сохранено": "saved",
+  "Выберите файл Excel (.xlsx)": "Choose an Excel file (.xlsx)",
+  "Из Excel": "From Excel",
+  "Лист (необязательно)": "Sheet (optional)",
+  "Лист пуст — импортировать нечего.": "The sheet is empty — there is nothing to import.",
+  "Лист с таким именем не найден в книге.": "No sheet with that name was found in the workbook.",
+  "Нарисуйте бланк в Excel и впишите в ячейки теги полей. Строку таблицы пометьте тегом с именем табличной части — она размножится по строкам документа.": "Draw the form in Excel and put field tags into the cells. Mark the table row with a tag carrying the table part name — that row is repeated for every row of the document.",
+  "Не удалось прочитать файл Excel (возможно, он повреждён, защищён паролем или это не .xlsx).": "Could not read the Excel file (it may be corrupted, password-protected, or not an .xlsx).",
+  "Ошибка импорта Excel": "Excel import error",
+  "Перенесено не всё:": "Not everything was carried over:",
+  "Собрать макет из бланка Excel с тегами полей": "Build a layout from an Excel form with field tags",
+  "Создать макет из Excel": "Create layout from Excel",
+  "Файл Excel": "Excel file",
+  "Файл больше 5 МБ — слишком большой для импорта.": "The file is larger than 5 MB — too large to import.",
+  "первый лист книги": "first sheet of the workbook",
+  "создан из Excel — черновик открыт в редакторе. Перезапустите базу, чтобы форма появилась в списке печати.": "created from Excel — the draft is open in the editor. Restart the base for the form to appear in the print list."
 }

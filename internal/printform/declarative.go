@@ -249,6 +249,9 @@ func layoutCellToSheet(ld LayoutCell) *sheet.Cell {
 	if ld.Parameter != "" {
 		cell.ParameterName = ld.Parameter
 	}
+	if ld.Picture != "" {
+		cell.Picture = ld.Picture
+	}
 	// Границы: per-side приоритетнее legacy-пресета.
 	if !ld.Borders.IsZero() {
 		cell.Border = ""

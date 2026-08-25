@@ -71,6 +71,7 @@ docs/*
 !docs/reverse-proxy.md
 !docs/release-signing.md
 !docs/self-update.md
+!docs/maintenance-pipeline.md
 # Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
 # исключённый каталог git не заходит — правило вида `!docs/releases/*.md`
 # не сработало бы, и новые заметки молча не попадали бы в коммит (#988, А3).
