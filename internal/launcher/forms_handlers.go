@@ -743,6 +743,21 @@ func (h *handler) configuratorFormsPreview(w http.ResponseWriter, r *http.Reques
 		entity = "Объект"
 	}
 
+	// Состав табличных частей — чтобы ТЧ без явных колонок предпросмотр рисовал
+	// так же, как её покажет рантайм: всеми реквизитами (#1123). Метаданные
+	// необязательны: не открылась база — предпросмотр деградирует до подсказки,
+	// но не до ошибки, поэтому ошибку загрузки здесь глотаем намеренно.
+	var tps previewTableParts
+	if b, err := h.store.Get(chi.URLParam(r, "id")); err == nil {
+		if proj, perr := h.loadProjectFor(r.Context(), b); perr == nil {
+			tps = make(previewTableParts)
+			for _, tp := range objectScaffoldTableParts(proj, entity) {
+				tps[tp.Name] = tp.Columns
+			}
+			proj.Close()
+		}
+	}
+
 	tmpPath, cleanup, err := writeTempFile("obpreview-*.form.yaml", yamlBody)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -758,7 +773,7 @@ func (h *handler) configuratorFormsPreview(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	writeBody(w, []byte(renderManagedFormPreview(fm)))
+	writeBody(w, []byte(renderManagedFormPreview(fm, tps)))
 }
 
 // configuratorFormsImport1C — multipart-загрузка ZIP с Form.xml + Module.bsl

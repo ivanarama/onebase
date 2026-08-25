@@ -334,6 +334,33 @@ func TestTPКолонки_БезОбработчикаКартаНеРендер
 	}
 }
 
+// Колонку можно объявить ключом field, без data_path: managedTPFieldIndexForColumn
+// перебирает data_path → field → имя элемента. Форма её показывает — а панель
+// свойств конструктора такую колонку не признавала и рисовала галочку снятой,
+// потому что сопоставляла только по data_path (#1123). Раз конструктор теперь
+// повторяет ту же цепочку, рантайм обязан её поддерживать и дальше.
+func TestTPКолонки_ВыборПоКлючуField(t *testing.T) {
+	s, order, id := tpColumnsFixture(t, &metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "ТабСтроки", DataPath: "Объект.Строки",
+		Children: []*metadata.FormElement{
+			{Kind: metadata.FormElementColumn, Name: "КолЦена", FieldName: "Цена"},
+		},
+	})
+	cols := parseManagedTPColumns(t, tpColumnsFormHTML(t, s, order, id))
+
+	if len(cols) == 0 {
+		t.Fatalf("колонок нет вовсе: %+v", cols)
+	}
+	if cols[0].ID != "Цена" || cols[0].Hidden {
+		t.Errorf("колонка по ключу field не выбрана: %+v", cols[0])
+	}
+	for _, col := range cols[1:] {
+		if !col.Hidden {
+			t.Errorf("колонка %q показана, хотя состав выбрал только Цену", col.ID)
+		}
+	}
+}
+
 // tpTableFragment вырезает кусок разметки вокруг грида — чтобы падение теста
 // показывало разметку табличной части, а не всю страницу.
 func tpTableFragment(rendered string) string {

@@ -7,6 +7,7 @@ import (
 	"html"
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -1341,48 +1342,100 @@ function tablePartName() {
   var i = dp.lastIndexOf('.');
   return i >= 0 ? dp.slice(i + 1) : dp;
 }
-// Уже добавленные колонки ТЧ tpNodeId: поле (последний сегмент data_path) → node-id.
-function presentColumns(tpNodeId) {
-  var map = {}, prefix = tpNodeId + '.children.';
+// colKey — ключ сопоставления колонки реквизиту. Регистронезависимый, потому что
+// таков рантайм (managedTPFieldIndexForColumn сравнивает через strings.EqualFold).
+function colKey(s) { return (s || '').trim().toLowerCase(); }
+
+// columnChildren — прямые дети kind:Колонка табличной части, в порядке YAML.
+// Порядок восстанавливаем по числовому индексу в node-id, а не по обходу
+// Object.keys(_model): модель приходит из Go-map, порядок ключей в JSON случаен.
+function columnChildren(tpNodeId) {
+  var prefix = tpNodeId + '.children.', out = [];
   Object.keys(_model).forEach(function (id) {
     if (id.indexOf(prefix) !== 0) return;
-    var inf = _model[id];
-    if ((inf.kind || '') !== 'Колонка') return;
-    var dp = inf.dataPath || '', j = dp.lastIndexOf('.');
-    var seg = j >= 0 ? dp.slice(j + 1) : dp;
-    if (seg) map[seg] = id;
+    var rest = id.slice(prefix.length);
+    if (!/^[0-9]+$/.test(rest)) return;   // только прямые дети, не внуки
+    if ((_model[id].kind || '') !== 'Колонка') return;
+    out.push({ id: id, idx: parseInt(rest, 10), info: _model[id] });
   });
-  return map;
+  out.sort(function (a, b) { return a.idx - b.idx; });
+  return out;
+}
+
+// Уже объявленные колонки ТЧ: {map: реквизит → node-id, order: [реквизит]}.
+// Сопоставление повторяет managedTPFieldIndexForColumn — data_path, затем field,
+// затем имя элемента, первое совпадение с реальным реквизитом ТЧ. Раньше
+// смотрели только data_path, поэтому колонка, объявленная ключом field, в
+// рантайме была видна, а в панели стояла без галочки (#1123).
+function presentColumns(tpNodeId, cols) {
+  var known = {};
+  (cols || []).forEach(function (c) { known[colKey(c.name)] = c.name; });
+  var map = {}, order = [];
+  columnChildren(tpNodeId).forEach(function (ch) {
+    var dp = ch.info.dataPath || '', j = dp.lastIndexOf('.');
+    var cands = [j >= 0 ? dp.slice(j + 1) : dp, ch.info.field, ch.info.name];
+    for (var k = 0; k < cands.length; k++) {
+      var name = known[colKey(cands[k])];
+      if (!name) continue;
+      if (!map[name]) { map[name] = ch.id; order.push(name); }
+      return;
+    }
+  });
+  return { map: map, order: order };
 }
 function addColumnsEditor(panel) {
   var tp = tablePartName();
   var cols = _tableParts[tp] || [];
-  var present = presentColumns(_selected);
   var hd = document.createElement('div'); hd.className = 'prop-row';
   var l = document.createElement('label'); l.textContent = 'Колонки (показывать):';
   hd.appendChild(l); panel.appendChild(hd);
   if (!cols.length) {
-    var note = document.createElement('div'); note.className = 'prop-empty';
-    note.textContent = 'Состав колонок неизвестен (метаданные ТЧ не загружены).';
-    panel.appendChild(note); return;
+    var unknown = document.createElement('div'); unknown.className = 'prop-empty';
+    unknown.textContent = 'Состав колонок неизвестен (метаданные ТЧ не загружены).';
+    panel.appendChild(unknown); return;
   }
+  var st = presentColumns(_selected, cols);
+  // Явного состава нет — рантайм показывает ВСЕ реквизиты (managedTPColumnPlan:
+  // «ничего не выбрано» = «показать всё»). Галочки в этом состоянии обязаны
+  // стоять: снятые читались как «не показывается ничего», хотя пользователь
+  // видит полную таблицу, — и подталкивали поставить одну, что на самом деле
+  // убирает все остальные колонки (#1123).
+  var explicit = st.order.length > 0;
+  var note = document.createElement('div'); note.className = 'prop-empty';
+  note.textContent = explicit
+    ? 'Состав задан явно. Снимете все галочки — вернётся показ всех колонок.'
+    : 'Состав не задан — показываются все колонки. Снимите галочку, чтобы задать состав явно.';
+  panel.appendChild(note);
   cols.forEach(function (c) {
     var row = document.createElement('div'); row.className = 'prop-row prop-check';
-    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!present[c.name];
-    cb.addEventListener('change', function () { toggleColumn(tp, c, cb.checked, present[c.name]); });
+    var cb = document.createElement('input'); cb.type = 'checkbox';
+    cb.checked = explicit ? !!st.map[c.name] : true;
+    cb.addEventListener('change', function () { toggleColumn(tp, cols, c, cb.checked, st, explicit); });
     var lab = document.createElement('label'); lab.textContent = c.title || c.name;
     row.appendChild(cb); row.appendChild(lab); panel.appendChild(row);
   });
 }
 // Включение колонки → insert kind:Колонка в конец ТЧ; выключение → delete её узла.
 // Выделение удерживаем на ТЧ, чтобы можно было щёлкать чекбоксы подряд.
-function toggleColumn(tp, col, on, existingId) {
+//
+// Особый случай — снятие галочки, когда явного состава ещё нет: удалять нечего,
+// а один insert оставил бы ровно одну колонку вместо «всех минус снятая».
+// Поэтому здесь материализуем весь состав без снятой колонки, и одной командой
+// insertColumns: серия запросов при обрыве на середине тихо спрятала бы
+// колонки, которых никто не снимал (#1123).
+function toggleColumn(tp, cols, col, on, st, explicit) {
   var tpId = _selected, p;
-  if (on) {
+  if (!explicit && !on) {
+    var rest = cols.filter(function (c) { return c.name !== col.name; });
+    if (!rest.length) return;   // единственная колонка: «спрятать всё» состава не имеет
+    p = editOp({ op: 'insertColumns', parent: tpId, columns: JSON.stringify(rest.map(function (c) {
+      return { name: 'Кол' + c.name, title: c.title || '', data_path: 'Объект.' + tp + '.' + c.name };
+    })) }, true);
+  } else if (on) {
     p = editOp({ op: 'insert', parent: tpId, index: 9999, kind: 'Колонка',
       name: 'Кол' + col.name, data_path: 'Объект.' + tp + '.' + col.name, title_ru: col.title || '' }, true);
-  } else if (existingId) {
-    p = editOp({ op: 'delete', node: existingId }, true);
+  } else if (st.map[col.name]) {
+    p = editOp({ op: 'delete', node: st.map[col.name] }, true);
   } else { return; }
   p.then(function (resp) { if (resp && resp.ok) selectNode(tpId); });
 }
@@ -1466,14 +1519,21 @@ func previewErrorHTML(msg string) string {
 		html.EscapeString(msg))
 }
 
+// previewTableParts — состав табличных частей объекта (имя ТЧ → реквизиты) для
+// предпросмотра. Нужен ровно там, где колонки в форме явно не объявлены: рантайм
+// в этом случае показывает все реквизиты, и предпросмотр обязан показывать то же
+// (#1123). nil — метаданные недоступны, предпросмотр честно говорит об этом.
+type previewTableParts map[string][]formScaffoldAttr
+
 // renderManagedFormPreview генерирует упрощённый HTML-предпросмотр
-// дерева элементов формы. Не использует metadata.Entity — отрисовывает
-// абстрактные input/checkbox/group на основе FormModule.Elements.
+// дерева элементов формы. Отрисовывает абстрактные input/checkbox/group на
+// основе FormModule.Elements; из metadata.Entity берёт только состав табличных
+// частей (tps) — чтобы ТЧ без явных колонок выглядела как в рантайме.
 //
 // Этого достаточно для UI-редактора чтобы оценить структуру формы;
 // полноценный рендер с реальными данными доступен после сохранения
 // через рантайм-handler /ui/.../form (этап 3).
-func renderManagedFormPreview(fm *metadata.FormModule) string {
+func renderManagedFormPreview(fm *metadata.FormModule, tps previewTableParts) string {
 	var buf bytes.Buffer
 	buf.WriteString(`<!doctype html><html><head><meta charset="utf-8"><style>
 body{margin:0;padding:18px;font-family:-apple-system,sans-serif;background:#fff;color:#334;font-size:13px}
@@ -1516,7 +1576,7 @@ legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 
 	tabsCounter := 0
 	for _, el := range fm.Elements {
-		renderPreviewElement(&buf, el, &tabsCounter)
+		renderPreviewElement(&buf, el, &tabsCounter, tps)
 	}
 
 	// Inline-JS для переключения вкладок. Работает в iframe sandbox
@@ -1541,7 +1601,7 @@ legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 	return buf.String()
 }
 
-func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCounter *int) {
+func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCounter *int, tps previewTableParts) {
 	if el == nil {
 		return
 	}
@@ -1559,7 +1619,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		}
 		fmt.Fprintf(buf, `<fieldset%s><legend>%s</legend><div class="group-body">`, cls, html.EscapeString(title))
 		for _, c := range el.Children {
-			renderPreviewElement(buf, c, tabsCounter)
+			renderPreviewElement(buf, c, tabsCounter, tps)
 		}
 		buf.WriteString(`</div></fieldset>`)
 	case metadata.FormElementPages:
@@ -1600,7 +1660,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 			}
 			fmt.Fprintf(buf, `<div class="%s">`, cls)
 			for _, c := range p.Children {
-				renderPreviewElement(buf, c, tabsCounter)
+				renderPreviewElement(buf, c, tabsCounter, tps)
 			}
 			buf.WriteString(`</div>`)
 			pageIdx++
@@ -1611,7 +1671,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		// рисуем именованным блоком с детьми, а не «предпросмотр не реализован».
 		fmt.Fprintf(buf, `<fieldset><legend>%s</legend>`, html.EscapeString(title))
 		for _, c := range el.Children {
-			renderPreviewElement(buf, c, tabsCounter)
+			renderPreviewElement(buf, c, tabsCounter, tps)
 		}
 		buf.WriteString(`</fieldset>`)
 	case metadata.FormElementField:
@@ -1649,26 +1709,52 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		fmt.Fprintf(buf, `<div class="hint">[Картинка: %s]</div>`, html.EscapeString(el.Name))
 	case metadata.FormElementTable, metadata.FormElementTablePart:
 		// Колонки, выбранные в конструкторе (дочерние kind:Колонка), рисуем
-		// реальной таблицей-каркасом с парой пустых строк. Без явных колонок —
-		// подсказка (в рантайме они подставятся из метаданных автоматически).
+		// реальной таблицей-каркасом с парой пустых строк.
 		var cols []*metadata.FormElement
 		for _, c := range el.Children {
 			if c != nil && c.Kind == metadata.FormElementColumn {
 				cols = append(cols, c)
 			}
 		}
-		fmt.Fprintf(buf, `<div class="tp-prev"><div class="tp-prev-hd">▦ %s</div>`, html.EscapeString(title))
-		if len(cols) == 0 {
-			buf.WriteString(`<div class="hint">Колонки не выбраны — отметьте состав в свойствах табличной части (в рантайме иначе показываются все поля).</div>`)
-		} else {
-			buf.WriteString(`<table class="tp-prev-tbl"><thead><tr>`)
+		// Без явных колонок рантайм показывает ВСЕ реквизиты табличной части
+		// (managedTPColumnPlan). Раньше предпросмотр в этом месте рисовал
+		// подсказку вместо таблицы — то есть показывал пустоту там, где
+		// пользователь увидит полный набор колонок, и подталкивал «исправить»
+		// это галочкой, которая на самом деле убирает все колонки, кроме
+		// отмеченной (#1123). Заголовки берём из метаданных ТЧ.
+		headers := make([]string, 0, len(cols))
+		fallback := ""
+		if len(cols) > 0 {
 			for _, c := range cols {
-				fmt.Fprintf(buf, `<th>%s</th>`, html.EscapeString(columnLabel(c)))
+				headers = append(headers, columnLabel(c))
+			}
+		} else if attrs := tps[previewTablePartName(el)]; len(attrs) > 0 {
+			for _, a := range attrs {
+				name := a.Title
+				if strings.TrimSpace(name) == "" {
+					name = a.Name
+				}
+				headers = append(headers, name)
+			}
+			fallback = "Состав не задан — показываются все реквизиты табличной части."
+		}
+		fmt.Fprintf(buf, `<div class="tp-prev"><div class="tp-prev-hd">▦ %s</div>`, html.EscapeString(title))
+		if len(headers) == 0 {
+			// Метаданные ТЧ недоступны (предпросмотр без базы или ТЧ не найдена):
+			// перечислить нечего, но соглашение назвать обязаны.
+			buf.WriteString(`<div class="hint">Состав не задан — в рантайме показываются все реквизиты табличной части.</div>`)
+		} else {
+			if fallback != "" {
+				fmt.Fprintf(buf, `<div class="hint">%s</div>`, html.EscapeString(fallback))
+			}
+			buf.WriteString(`<table class="tp-prev-tbl"><thead><tr>`)
+			for _, h := range headers {
+				fmt.Fprintf(buf, `<th>%s</th>`, html.EscapeString(h))
 			}
 			buf.WriteString(`</tr></thead><tbody>`)
 			for r := 0; r < 2; r++ {
 				buf.WriteString(`<tr>`)
-				for range cols {
+				for range headers {
 					buf.WriteString(`<td></td>`)
 				}
 				buf.WriteString(`</tr>`)
@@ -1680,12 +1766,22 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		// командная панель — обычно рендерится в toolbar над формой;
 		// в preview просто рисуем кнопки в ряд.
 		for _, c := range el.Children {
-			renderPreviewElement(buf, c, tabsCounter)
+			renderPreviewElement(buf, c, tabsCounter, tps)
 		}
 	default:
 		fmt.Fprintf(buf, `<div class="unknown">Элемент «%s» типа «%s»: предпросмотр не реализован.</div>`,
 			html.EscapeString(el.Name), html.EscapeString(string(el.Kind)))
 	}
+}
+
+// previewTablePartName — имя табличной части элемента формы: последний сегмент
+// data_path ("Объект.Товары" → "Товары"), иначе имя элемента. Тот же вывод, что
+// у tablePartName() в клиенте конструктора, — ключ для previewTableParts.
+func previewTablePartName(el *metadata.FormElement) string {
+	if dp := strings.TrimSpace(el.DataPath); dp != "" {
+		return lastSegment(dp)
+	}
+	return strings.TrimSpace(el.Name)
 }
 
 // lastSegment — последний компонент пути "Объект.Контрагент" → "Контрагент".
