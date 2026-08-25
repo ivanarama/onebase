@@ -83,6 +83,13 @@ type LayoutCell struct {
 	Border      string       `yaml:"border,omitempty"`      // legacy-пресет: none/all/thin/thick
 	BorderColor string       `yaml:"borderColor,omitempty"` // CSS color, default #ccc
 	Borders     *CellBorders `yaml:"borders,omitempty"`     // per-side, приоритет над Border
+	// Picture — картинка ячейки: data-URI ("data:image/png;base64,…") либо
+	// http(s)-ссылка (см. classifyPicture в internal/sheet/picture.go).
+	// Рендерится и в HTML, и в PDF. Заведено под импорт бланка из Excel
+	// (план 155): Picture есть у sheet.Cell, а у LayoutCell не было — логотип
+	// в шапке накладной декларативный макет не мог показать ВООБЩЕ, ни
+	// импортом, ни правкой YAML руками.
+	Picture string `yaml:"picture,omitempty"`
 }
 
 // Binding описывает декларативную привязку данных к областям макета — печатная

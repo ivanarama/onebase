@@ -5,14 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ivantit66/onebase/internal/configdb"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/pdfimport"
 )
 
@@ -102,43 +98,10 @@ func (h *handler) configuratorImportPDFLayout(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	filename := layoutName + ".layout.yaml"
-	relPath := "printforms/" + filename
-
-	if b.ConfigSource == "database" {
-		db, derr := OpenDB(r.Context(), b)
-		if derr != nil {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+derr.Error())
-			return
-		}
-		defer db.Close()
-		repo := configdb.New(db)
-		if _, ok, _ := repo.ReadFile(r.Context(), relPath); ok {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
-			return
-		}
-		if werr := repo.SaveFile(r.Context(), relPath, src); werr != nil {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
-			return
-		}
-	} else {
-		fullPath, jerr := configdb.SafeJoin(b.Path, relPath)
-		if jerr != nil {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+jerr.Error())
-			return
-		}
-		if _, statErr := os.Stat(fullPath); statErr == nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
-			return
-		}
-		if merr := os.MkdirAll(filepath.Dir(fullPath), fsmode.Dir); merr != nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+merr.Error())
-			return
-		}
-		if werr := os.WriteFile(fullPath, src, fsmode.File); werr != nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
-			return
-		}
+	relPath := "printforms/" + layoutName + ".layout.yaml"
+	if werr := h.writeLayoutFile(r.Context(), b, relPath, src); werr != nil {
+		h.layoutCreateError(w, r, b, lang, layoutWriteMessage(lang, werr))
+		return
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")

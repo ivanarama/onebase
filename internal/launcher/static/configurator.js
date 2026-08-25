@@ -223,6 +223,78 @@ function cfgImportPdfLayout(action, entity) {
   };
 }
 
+// cfgImportXlsxLayout — «Создать макет из Excel» (план 155): модальный диалог
+// (имя + документ + файл + лист), затем multipart-POST на import-xlsx. Сервер
+// отвечает полной страницей конфигуратора с открытым редактором макета.
+// entity — документ/справочник, к которому привязывается форма: без привязки
+// форма не попадает в список печати, а импорту неизвестен состав табличных
+// частей, и строки таблицы не размножатся.
+function cfgImportXlsxLayout(action, entity) {
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:8px;padding:20px;min-width:380px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.3);font-size:13px';
+  var docBlock;
+  if (entity) {
+    docBlock = '<div style="margin-bottom:8px;color:#334155">'+T("Документ")+': <b>'+entity+'</b><input type="hidden" id="_xlsDoc" value="'+entity.replace(/"/g,'&quot;')+'"></div>';
+  } else {
+    var names = (window.__cfg && window.__cfg.entityNames) || [];
+    docBlock = '<label style="display:block;margin-bottom:8px">'+T("Документ")+'<br><select id="_xlsDoc" style="width:100%;padding:6px;border:1px solid #cbd5e1;border-radius:4px"><option value=""></option>' +
+      names.map(function(n){ return '<option>'+n+'</option>'; }).join('') + '</select></label>';
+  }
+  // Пример тегов — тот же язык выражений, что и в YAML-макете.
+  var sample = '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;padding:8px;font-size:11px;margin:0 0 12px;font-family:Consolas,monospace;overflow-x:auto;white-space:nowrap">' +
+    '<div>{{Номер}} &nbsp; {{Дата | date}} &nbsp; {{Контрагент.Наименование}}</div>' +
+    '<div>{{@row}} &nbsp; {{Товары.Номенклатура}} &nbsp; {{Товары.Цена | number:2}}</div>' +
+    '<div>{{Итог.Товары.Сумма | number:2}}</div></div>';
+  box.innerHTML =
+    '<div style="font-weight:600;font-size:15px;margin-bottom:12px">'+T("Создать макет из Excel")+'</div>' +
+    '<div style="color:#64748b;font-size:12px;margin-bottom:10px">'+T("Нарисуйте бланк в Excel и впишите в ячейки теги полей. Строку таблицы пометьте тегом с именем табличной части — она размножится по строкам документа.")+'</div>' +
+    sample +
+    '<label style="display:block;margin-bottom:8px">'+T("Имя макета")+'<br><input type="text" id="_xlsName" style="width:100%;padding:6px;border:1px solid #cbd5e1;border-radius:4px;box-sizing:border-box"></label>' +
+    docBlock +
+    '<label style="display:block;margin-bottom:8px">'+T("Файл Excel")+'<br><input type="file" id="_xlsFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="width:100%"></label>' +
+    '<label style="display:block;margin-bottom:14px">'+T("Лист (необязательно)")+'<br><input type="text" id="_xlsSheet" placeholder="'+T("первый лист книги")+'" style="width:100%;padding:6px;border:1px solid #cbd5e1;border-radius:4px;box-sizing:border-box"></label>' +
+    '<div id="_xlsErr" style="color:#dc2626;font-size:12px;margin-bottom:8px;display:none"></div>' +
+    '<div style="text-align:right">' +
+    '<button type="button" id="_xlsCancel" style="padding:6px 14px;margin-right:8px;background:#e2e8f0;border:none;border-radius:4px;cursor:pointer">'+T("Отмена")+'</button>' +
+    '<button type="button" id="_xlsOk" style="padding:6px 14px;background:#15803d;color:#fff;border:none;border-radius:4px;cursor:pointer">'+T("Импортировать")+'</button>' +
+    '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  function close() { document.body.removeChild(overlay); }
+  document.getElementById('_xlsCancel').onclick = close;
+  // Клик по фону окно не закрывает — см. комментарий в cfgImportPdfLayout.
+  var okBtn = document.getElementById('_xlsOk');
+  okBtn.onclick = function() {
+    var name = (document.getElementById('_xlsName').value || '').trim();
+    var docVal = (document.getElementById('_xlsDoc').value || '').trim();
+    var fileInp = document.getElementById('_xlsFile');
+    var err = document.getElementById('_xlsErr');
+    err.style.display = 'none';
+    if (!name) { err.textContent = T("Имя макета обязательно"); err.style.display = ''; return; }
+    if (!docVal) { err.textContent = T("Для макета выберите документ/справочник"); err.style.display = ''; return; }
+    if (!fileInp.files || !fileInp.files[0]) { err.textContent = T("Выберите файл Excel (.xlsx)"); err.style.display = ''; return; }
+    var fd = new FormData();
+    fd.append('file', fileInp.files[0]);
+    fd.append('name', name);
+    fd.append('document', docVal);
+    fd.append('sheet', (document.getElementById('_xlsSheet').value || '').trim());
+    okBtn.disabled = true; okBtn.textContent = T("Импорт...");
+    fetch(action, {method:'POST', body:fd})
+      .then(function(resp){ return resp.text().then(function(html){ return {ok:resp.ok, html:html}; }); })
+      .then(function(res){
+        // Сервер всегда возвращает полную страницу конфигуратора (успех — с
+        // открытым редактором, ошибка — с баннером). Заменяем документ целиком.
+        document.open(); document.write(res.html); document.close();
+      })
+      .catch(function(e){
+        okBtn.disabled = false; okBtn.textContent = T("Импортировать");
+        err.textContent = String(e); err.style.display = '';
+      });
+  };
+}
+
 // ── Folder picker ──────────────────────────────────────────────
 function pickDir(inputId, title) {
   var btn = event.target;

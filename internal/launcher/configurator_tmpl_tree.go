@@ -981,6 +981,7 @@ const cfgTabTree = `{{define "tab-tree"}}
         <button type="button" onclick="ldPreview('{{.Name}}','{{.Document}}','pdf')"  title="{{t $.Lang "Откроется во внешнем приложении (системный просмотрщик PDF)"}}" style="font-size:12px;padding:4px 10px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer">{{t $.Lang "Предпросмотр PDF"}}</button>
         <span style="width:1px;background:#d1d5db;align-self:stretch"></span>
         <button type="button" onclick="cfgImportPdfLayout('/bases/{{$.Base.ID}}/configurator/layout/import-pdf','{{.Document}}')" title="{{t $.Lang "Извлечь черновик макета из PDF (выгрузка 1С/Excel с текстовым слоем)"}}" style="font-size:12px;padding:4px 10px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer">&#x1F4C4; {{t $.Lang "Из PDF"}}</button>
+        <button type="button" onclick="cfgImportXlsxLayout('/bases/{{$.Base.ID}}/configurator/layout/import-xlsx','{{.Document}}')" title="{{t $.Lang "Собрать макет из бланка Excel с тегами полей"}}" style="font-size:12px;padding:4px 10px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer">&#x1F4D7; {{t $.Lang "Из Excel"}}</button>
       </div>
 
       {{/* Параметры листа: формат/ориентация/поля → печатная граница в конструкторе */}}
@@ -1885,6 +1886,11 @@ const cfgTabTree = `{{define "tab-tree"}}
               style="font-size:12px;padding:5px 12px;background:#0369a1;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:6px"
               title="{{t $.Lang "Извлечь черновик макета из PDF (выгрузка 1С/Excel с текстовым слоем)"}}">
         &#x1F4C4; {{t $.Lang "Создать макет из PDF"}}
+      </button>
+      <button type="button" onclick="cfgImportXlsxLayout('/bases/{{.BaseID}}/configurator/layout/import-xlsx','{{$e.Name}}')"
+              style="font-size:12px;padding:5px 12px;background:#15803d;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-left:6px"
+              title="{{t $.Lang "Собрать макет из бланка Excel с тегами полей"}}">
+        &#x1F4D7; {{t $.Lang "Создать макет из Excel"}}
       </button>
     </div>
   </div>{{/* end ot-print */}}

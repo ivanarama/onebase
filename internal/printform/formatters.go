@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // ApplyFormat formats value according to spec string (e.g. "date", "number:2").
@@ -88,6 +90,12 @@ func toTime(v any) (time.Time, bool) {
 
 func toFloat(v any) (float64, bool) {
 	switch t := v.(type) {
+	case decimal.Decimal:
+		// Числовые поля приходят из хранилища как decimal.Decimal
+		// (storage.normalizeNumber), и без этой ветки формат «number:2» молча
+		// не применялся, а Итог.<ТЧ>.<Поле> всегда давал 0 — включая
+		// поставляемые примеры («Итого: 0.00» в АктСписания).
+		return t.InexactFloat64(), true
 	case float64:
 		return t, true
 	case float32:
