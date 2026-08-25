@@ -152,3 +152,70 @@ func truncate(s string) string {
 	}
 	return s
 }
+
+// Картинку Excel привязывает к той ячейке, над которой оказался её левый верхний
+// угол, — а это запросто накрытая объединением позиция. Тогда рисовать её надо в
+// якоре объединения: у накрытой ячейки в макете своей ячейки нет вовсе, и
+// картинка потерялась бы. Логотип кладётся в C3 — НИЖНЮЮ строку объединения
+// B2:C3. Именно там прежний поиск якоря промахивался: он брал первую ненакрытую
+// ячейку слева в той же строке, а это A3 — соседняя ячейка, к объединению
+// отношения не имеющая. В верхней строке (C2) промаха не было, поэтому
+// проверять надо нижнюю.
+func TestImport_PictureOnMergedCellGoesToAnchor(t *testing.T) {
+	res, err := ImportBytes(blankLogoInsideMerge(t), Options{})
+	if err != nil {
+		t.Fatalf("ImportBytes: %v", err)
+	}
+
+	var withPic []printform.LayoutCell
+	for _, area := range res.Layout.Areas {
+		for _, row := range area.Rows {
+			for _, cell := range row.Cells {
+				if cell.Picture != "" {
+					withPic = append(withPic, cell)
+				}
+			}
+		}
+	}
+	if len(withPic) != 1 {
+		t.Fatalf("ячеек с картинкой: %d, ожидалась одна (якорь объединения)", len(withPic))
+	}
+	// Якорь B2:C3 — единственная ячейка макета со спаном 2×2. Ячейки A2/A3 спана
+	// не имеют, и картинка в любой из них означала бы прежний промах.
+	if got := withPic[0]; got.ColSpan != 2 || got.RowSpan != 2 {
+		t.Errorf("картинка попала в ячейку colspan=%d rowspan=%d (text=%q), а не в якорь объединения B2:C3",
+			got.ColSpan, got.RowSpan, got.Text)
+	}
+}
+
+// blankLogoInsideMerge — лист с объединением B2:C3, НЕ начинающимся с первой
+// колонки, и картинкой в его накрытой позиции C2.
+func blankLogoInsideMerge(t *testing.T) []byte {
+	t.Helper()
+	f := excelize.NewFile()
+	defer func() { _ = f.Close() }()
+	sh := f.GetSheetName(0)
+
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("подготовка бланка: %v", err)
+		}
+	}
+	must(f.SetCellValue(sh, "A1", "Накладная № {{Номер}}"))
+	must(f.SetCellValue(sh, "A2", "Слева сверху"))
+	must(f.SetCellValue(sh, "A3", "Слева снизу"))
+	must(f.SetCellValue(sh, "B2", "Логотип"))
+	must(f.MergeCell(sh, "B2", "C3"))
+	must(f.AddPictureFromBytes(sh, "C3", &excelize.Picture{
+		Extension: ".png",
+		File:      tinyPNG(t),
+		Format:    &excelize.GraphicOptions{},
+	}))
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		t.Fatalf("записать бланк: %v", err)
+	}
+	return buf.Bytes()
+}

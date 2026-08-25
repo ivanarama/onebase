@@ -236,7 +236,11 @@ func applyPictures(f *excelize.File, name string, g *grid, w *warnings) {
 		}
 		// Накрытую объединением позицию рисовать нельзя — у неё нет ячейки;
 		// картинка уезжает в якорь объединения.
-		ar, ac := anchorOf(g, r-1, c-1)
+		ar, ac, ok := anchorOf(g, r-1, c-1)
+		if !ok {
+			w.addf("Картинка в ячейке %s не перенесена: не нашлась ячейка, которой она принадлежит.", axis)
+			continue
+		}
 		g.Cells[ar][ac].Picture = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(pic.File)
 	}
 }
@@ -258,18 +262,27 @@ func pictureMIME(ext string) string {
 }
 
 // anchorOf находит якорную ячейку объединения, накрывшего позицию (r,c).
-func anchorOf(g *grid, r, c int) (int, int) {
+//
+// Проверять «не накрыта» мало: слева в той же строке легко оказывается ячейка
+// вне этого объединения, и картинка уезжала бы в неё. Например, при объединении
+// B2:C3 позиция C3 нашла бы A3 — соседнюю ячейку, к объединению не относящуюся.
+// Поэтому кандидат обязан ещё и накрывать (r,c) своим спаном.
+func anchorOf(g *grid, r, c int) (int, int, bool) {
 	if !g.Covered[r][c] {
-		return r, c
+		return r, c, true
 	}
 	for rr := r; rr >= 0; rr-- {
 		for cc := c; cc >= 0; cc-- {
-			if !g.Covered[rr][cc] {
-				return rr, cc
+			if g.Covered[rr][cc] {
+				continue
+			}
+			a := g.Cells[rr][cc]
+			if rr+max(a.RowSpan, 1)-1 >= r && cc+max(a.ColSpan, 1)-1 >= c {
+				return rr, cc, true
 			}
 		}
 	}
-	return 0, 0
+	return 0, 0, false
 }
 
 // trim срезает пустые хвостовые строки и колонки. Пустая — без текста,

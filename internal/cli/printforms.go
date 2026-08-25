@@ -134,7 +134,11 @@ func runPrintformsImport(cmd *cobra.Command, _ []string) error {
 	if _, err := os.Stat(dst); err == nil && !force {
 		return fmt.Errorf("printforms import: %s уже существует (перезаписать — флаг --force)", dst)
 	}
-	if err := os.WriteFile(dst, out, fsmode.File); err != nil {
+	// G703 (taint analysis) видит путь, собранный из флагов команды, но не видит
+	// guard-а: --name проверен выше на разделители и «..», так что имя остаётся
+	// одним сегментом внутри printforms/, а --project — это и есть каталог,
+	// который оператор назвал сам (та же логика, что у G304 на чтении бланка).
+	if err := os.WriteFile(dst, out, fsmode.File); err != nil { //nolint:gosec // G703: имя формы проверено выше, каталог задаёт оператор
 		return fmt.Errorf("printforms import: запись %s: %w", dst, err)
 	}
 
