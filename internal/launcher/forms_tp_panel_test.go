@@ -106,3 +106,55 @@ elements:
 		t.Fatalf("после перечитывания auto_sum не взведён: %+v", els[0].El)
 	}
 }
+
+// Панель свойств ТЧ рисовала все галочки состава снятыми, когда колонки не
+// объявлены, — хотя рантайм в этом случае показывает ВСЕ реквизиты. Подпись
+// «Колонки (показывать):» при снятых галочках читается как «не показывается
+// ничего», и пользователь ставил галочку, чтобы «вернуть» колонку; на деле
+// первая же галочка убирает все остальные (#1123).
+func TestПанельСвойствТЧ_БезСоставаГалочкиСтоят(t *testing.T) {
+	script := formsEditorScript(t)
+	if !strings.Contains(script, "cb.checked = explicit ? !!st.map[c.name] : true") {
+		t.Errorf("галочки состава не взводятся при незаданном составе:\n%s",
+			extractContext(script, "addColumnsEditor", 900))
+	}
+	for _, s := range []string{
+		"Состав не задан — показываются все колонки.",
+		"Состав задан явно.",
+	} {
+		if !strings.Contains(script, s) {
+			t.Errorf("панель не поясняет состояние состава колонок, нет %q", s)
+		}
+	}
+}
+
+// Снятие первой галочки — это не «убрать одну колонку», а «объявить все
+// остальные». Одной командой: серия запросов при обрыве на середине оставила бы
+// явный состав, урезанный до места обрыва.
+func TestПанельСвойствТЧ_СнятиеПервойГалочкиМатериализуетСостав(t *testing.T) {
+	script := formsEditorScript(t)
+	if !strings.Contains(script, "op: 'insertColumns'") {
+		t.Errorf("материализация состава идёт не одной командой:\n%s",
+			extractContext(script, "function toggleColumn", 900))
+	}
+	if !strings.Contains(script, "if (!explicit && !on)") {
+		t.Errorf("снятие галочки при незаданном составе не выделено в отдельный случай:\n%s",
+			extractContext(script, "function toggleColumn", 900))
+	}
+}
+
+// Сопоставление колонки реквизиту должно повторять рантайм
+// (managedTPFieldIndexForColumn): data_path → field → имя элемента.
+func TestПанельСвойствТЧ_КолонкаСопоставляетсяПоFieldИИмени(t *testing.T) {
+	script := formsEditorScript(t)
+	if !strings.Contains(script, "ch.info.field") {
+		t.Errorf("панель не смотрит ключ field при сопоставлении колонки:\n%s",
+			extractContext(script, "function presentColumns", 800))
+	}
+	// Порядок объявленных колонок берётся из node-id: модель приходит из
+	// Go-map, и порядок ключей в JSON случаен.
+	if !strings.Contains(script, "return a.idx - b.idx") {
+		t.Errorf("порядок колонок берётся из порядка ключей модели, а он случаен:\n%s",
+			extractContext(script, "function columnChildren", 800))
+	}
+}

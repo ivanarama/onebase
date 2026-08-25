@@ -307,7 +307,7 @@ func TestRenderManagedFormPreview(t *testing.T) {
 			},
 		},
 	}
-	html := renderManagedFormPreview(fm)
+	html := renderManagedFormPreview(fm, nil)
 	must := []string{
 		"Карточка контрагента",
 		"◇ managed",
@@ -346,7 +346,7 @@ func TestRenderManagedFormPreview_StandalonePage(t *testing.T) {
 			},
 		},
 	}
-	html := renderManagedFormPreview(fm)
+	html := renderManagedFormPreview(fm, nil)
 	if strings.Contains(html, "предпросмотр не реализован") {
 		t.Errorf("отдельная страница даёт «предпросмотр не реализован»:\n%s", html)
 	}
@@ -376,7 +376,7 @@ func TestRenderManagedFormPreview_TablePartColumns(t *testing.T) {
 			},
 		},
 	}
-	html := renderManagedFormPreview(fm)
+	html := renderManagedFormPreview(fm, nil)
 	if strings.Contains(html, "Предпросмотр упрощённый") {
 		t.Errorf("табличная часть осталась строкой-заглушкой:\n%s", html)
 	}
@@ -387,18 +387,71 @@ func TestRenderManagedFormPreview_TablePartColumns(t *testing.T) {
 	}
 }
 
-// Табличная часть без выбранных колонок — подсказка, не таблица и не заглушка.
-func TestRenderManagedFormPreview_TablePartNoColumns(t *testing.T) {
-	fm := &metadata.FormModule{
+// tpOnlyForm — форма из одной табличной части без явных колонок: так ТЧ
+// объявлены во всех примерах конфигураций (trade, tasks, crm, finance).
+func tpOnlyForm() *metadata.FormModule {
+	return &metadata.FormModule{
 		EntityName: "Заказ",
 		Elements: []*metadata.FormElement{
 			{Kind: metadata.FormElementTablePart, Name: "ТабТовары",
 				TitleMap: map[string]string{"ru": "Товары"}, DataPath: "Объект.Товары"},
 		},
 	}
-	html := renderManagedFormPreview(fm)
-	if !strings.Contains(html, "Колонки не выбраны") {
-		t.Errorf("нет подсказки про невыбранные колонки:\n%s", html)
+}
+
+// Табличная часть без явных колонок: рантайм показывает ВСЕ реквизиты
+// (managedTPColumnPlan), поэтому предпросмотр обязан рисовать их таблицей, а не
+// изображать пустоту. Раньше здесь была подсказка «Колонки не выбраны», и
+// пользователь видел в конструкторе пустую ТЧ при полной таблице в рантайме —
+// а «исправление» галочкой убирало все колонки, кроме отмеченной (#1123).
+func TestRenderManagedFormPreview_ТЧБезКолонокРисуетВсеРеквизиты(t *testing.T) {
+	html := renderManagedFormPreview(tpOnlyForm(), previewTableParts{
+		"Товары": {{Name: "Номенклатура"}, {Name: "Количество"}, {Name: "Цена", Title: "Цена, руб"}},
+	})
+	for _, s := range []string{"tp-prev-tbl", "<th>Номенклатура</th>", "<th>Количество</th>", "<th>Цена, руб</th>"} {
+		if !strings.Contains(html, s) {
+			t.Errorf("в предпросмотре ТЧ без явных колонок нет %q:\n%s", s, html)
+		}
+	}
+	if strings.Contains(html, "Колонки не выбраны") {
+		t.Errorf("предпросмотр всё ещё называет ТЧ пустой:\n%s", html)
+	}
+	if !strings.Contains(html, "Состав не задан") {
+		t.Errorf("предпросмотр не сообщает, что состав не задан явно:\n%s", html)
+	}
+}
+
+// Метаданные ТЧ недоступны (предпросмотр без открытой базы) — перечислить
+// нечего, но соглашение «пусто = показываются все» назвать обязаны.
+func TestRenderManagedFormPreview_ТЧБезМетаданныхНазываетСоглашение(t *testing.T) {
+	html := renderManagedFormPreview(tpOnlyForm(), nil)
+	if !strings.Contains(html, "показываются все реквизиты табличной части") {
+		t.Errorf("нет подсказки про показ всех реквизитов:\n%s", html)
+	}
+	// Именно тег таблицы, а не класс: класс .tp-prev-tbl есть и в блоке стилей.
+	if strings.Contains(html, `<table class="tp-prev-tbl">`) {
+		t.Errorf("без метаданных таблицу рисовать нечем, но она нарисована:\n%s", html)
+	}
+}
+
+// Явный состав колонок метаданные не перекрывают: выбрана одна — показана одна.
+func TestRenderManagedFormPreview_ЯвныйСоставСильнееМетаданных(t *testing.T) {
+	fm := tpOnlyForm()
+	fm.Elements[0].Children = []*metadata.FormElement{
+		{Kind: metadata.FormElementColumn, Name: "КолЦена",
+			TitleMap: map[string]string{"ru": "Цена"}, DataPath: "Объект.Товары.Цена"},
+	}
+	html := renderManagedFormPreview(fm, previewTableParts{
+		"Товары": {{Name: "Номенклатура"}, {Name: "Количество"}, {Name: "Цена"}},
+	})
+	if !strings.Contains(html, "<th>Цена</th>") {
+		t.Errorf("выбранной колонки нет в предпросмотре:\n%s", html)
+	}
+	if strings.Contains(html, "<th>Номенклатура</th>") {
+		t.Errorf("предпросмотр дорисовал колонку, которую состав не выбирал:\n%s", html)
+	}
+	if strings.Contains(html, "Состав не задан") {
+		t.Errorf("явный состав назван незаданным:\n%s", html)
 	}
 }
 
