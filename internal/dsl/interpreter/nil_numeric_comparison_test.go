@@ -21,6 +21,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 )
 
 // nilNumberVars — незаполненное число рядом с заполненным: правило обязано
@@ -228,5 +231,95 @@ func TestNilNumericComparison_НеНайденоБольшеНеОтличает
 ` + list + `  Возврат Строка(ТипЗнч(М.Найти("нет"))) + "/" + Строка(ТипЗнч(М.Найти("а")));
 КонецФункции`
 		assert.Equal(t, "Неопределено/Число", evalWithVars(t, src, nil))
+	})
+}
+
+// Утверждения сравнивают тем же правилом, что и оператор.
+//
+// equal() — путь объекта «Утверждать» (Равно/НеРавно, МаскаПоля), и он
+// намеренно зовёт equalOperator, а не equalSandboxed: самопроверка конфигурации
+// обязана видеть ровно то, что увидит модуль, иначе `Утверждать.Равно(Стр.Цена,
+// 0)` краснел бы там, где `Если Стр.Цена = 0` выбирает ветку. Решение держалось
+// на одном абзаце в описании PR: возврат equal() на equalSandboxed не ронял ни
+// одного теста во всём пакете — то есть следующий рефакторинг снял бы его молча.
+// Здесь оно сторожится.
+//
+// Путь публичный: объект кладётся в extraVars и зовётся из DSL — ровно так его
+// инжектирует раннер тестов (internal/ui/testrun.go), и записанный рекордером
+// исход — то самое, по чему раннер решает, прошёл тест или упал.
+type assertLog1136 struct{ outcomes []interpreter.AssertOutcome }
+
+func (r *assertLog1136) RecordAssert(o interpreter.AssertOutcome) {
+	r.outcomes = append(r.outcomes, o)
+}
+
+// assertPassed1136 исполняет тело DSL с ровно одним утверждением и отдаёт его
+// исход.
+func assertPassed1136(t *testing.T, body string, vars map[string]any) bool {
+	t.Helper()
+	rec := &assertLog1136{}
+	extra := map[string]any{"Утверждать": interpreter.NewAssertRoot(rec)}
+	for k, v := range vars {
+		extra[k] = v
+	}
+	evalWithVars(t, "Функция Т()\n"+body+"\n  Возврат 0;\nКонецФункции", extra)
+	require.Len(t, rec.outcomes, 1, "ожидалось ровно одно записанное утверждение")
+	return rec.outcomes[0].Passed
+}
+
+func TestNilNumericComparison_УтверждатьСогласованоСОператором_1136(t *testing.T) {
+	cases := []struct {
+		name   string
+		fact   string
+		expect string
+		want   bool // и у оператора, и у утверждения
+	}{
+		{"незаполненное против нуля", "Цена", "0", true},
+		{"ноль слева", "0", "Цена", true},
+		{"незаполненное против другого числа", "Цена", "5", false},
+		{"заполненное против нуля", "Количество", "0", false},
+		{"незаполненное против пустой строки", "Цена", `""`, false},
+		{"незаполненное против незаполненного", "Цена", "Цена", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pair := tc.fact + ", " + tc.expect
+			assert.Equal(t, tc.want, evalExpr1136(t, tc.fact+" = "+tc.expect, nilNumberVars()),
+				"оператор «=»")
+			assert.Equal(t, tc.want,
+				assertPassed1136(t, `  Утверждать.Равно(`+pair+`, "проверка");`, nilNumberVars()),
+				"Утверждать.Равно обязано отвечать так же, как оператор «=»")
+			assert.Equal(t, !tc.want,
+				assertPassed1136(t, `  Утверждать.НеРавно(`+pair+`, "проверка");`, nilNumberVars()),
+				"Утверждать.НеРавно — отрицание того же правила")
+		})
+	}
+}
+
+// Радиус решения, названный прямо: у прикладной конфигурации утверждения вокруг
+// нуля меняют исход после обновления. Тест закрепляет обе стороны цены — и
+// «начнёт падать», и «перестанет различать», — чтобы это читалось как выбор, а
+// не как недосмотр.
+func TestNilNumericComparison_УтверждатьБольшеНеОтличаетНольОтПустоты_1136(t *testing.T) {
+	const list = `  М = Новый Массив;
+  М.Добавить("а");
+`
+	t.Run("НеРавно(не найдено, 0) как проверка «нашлось» проваливается", func(t *testing.T) {
+		assert.False(t, assertPassed1136(t,
+			list+`  Утверждать.НеРавно(М.Найти("нет"), 0, "нашлось");`, nil))
+	})
+
+	t.Run("Равно(…, 0) проходит и на нуле, и на незаполненном", func(t *testing.T) {
+		vars := nilNumberVars()
+		assert.True(t, assertPassed1136(t, `  Утверждать.Равно(Цена, 0, "ноль");`, vars),
+			"незаполненное")
+		assert.True(t, assertPassed1136(t, `  Утверждать.Равно(0, 0, "ноль");`, vars),
+			"настоящий ноль")
+	})
+
+	// Рабочий признак «не найдено» для самопроверки — тот же, что и для модуля.
+	t.Run("ТипЗнч отличает и в утверждении", func(t *testing.T) {
+		assert.True(t, assertPassed1136(t,
+			list+`  Утверждать.Равно(Строка(ТипЗнч(М.Найти("нет"))), "Неопределено", "не найдено");`, nil))
 	})
 }
