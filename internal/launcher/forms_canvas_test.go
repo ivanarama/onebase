@@ -534,7 +534,7 @@ elements:
 				DataPath: "Объект.Номер",
 			}},
 		}},
-	})
+	}, nil)
 	if !strings.Contains(preview, "group-horizontal") {
 		t.Errorf("предпросмотр не получил класс горизонтальной группы:\n%s", preview)
 	}
