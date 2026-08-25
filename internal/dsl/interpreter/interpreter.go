@@ -1265,6 +1265,8 @@ func equalSandboxed(a, b any, ec *execCtx, line int) bool {
 			return at.Equal(bt)
 		}
 	}
+	// Незаполненное число — ноль, а не «нечто, не равное нулю» (#1136).
+	a, b = nilAsNumericZero(a, b)
 	// Числа сравниваем по значению (decimal.Equal), а не строково: иначе
 	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Строки/ссылки —
 	// по-прежнему через refKey.
@@ -1310,6 +1312,11 @@ func compareSandboxed(a, b any, ec *execCtx, line int) int {
 			}
 		}
 	}
+	// Тем же правилом, что и «=»: незаполненное число — ноль. Иначе починка
+	// равенства сама порождает противоречие — nil уходил в строковое сравнение,
+	// где «<nil>» больше любой цифры, и `Стр.Цена = 0` вместе с `Стр.Цена > 0`
+	// давали Истину одновременно (#1136).
+	a, b = nilAsNumericZero(a, b)
 	requireSafeSandboxDecimalOperand(ec, "comparison", a, line)
 	requireSafeSandboxDecimalOperand(ec, "comparison", b, line)
 	ad, aok := toDecimal(a)
