@@ -1,6 +1,17 @@
 # Binaries
 /onebase
 /onebase.exe
+# `go build ./tools/<имя>` кладёт бинарь в корень репозитория, и `git add -A`
+# заметает его в индекс — так в PR #1141 уехало 4 МБ ELF.
+/backlogsweep
+/benchgate
+/featureage
+/i18ncheck
+/issuetail
+/jsextract
+/plannum
+/relsign
+/dbquery
 onebase-gui.exe
 onebase-linux-arm64
 onebase-arm64
