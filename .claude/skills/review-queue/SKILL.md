@@ -1,5 +1,5 @@
 ---
-name: review-pr
+name: review-queue
 description: Ревью открытых PR ivanarama/onebase перед мержем — независимый разбор диффа с прогоном сборки и тестов, заключение комментарием, метки reviewed / changes-requested. Этап конвейера сопровождения, запускается по расписанию через PromptPilot.
 ---
 
