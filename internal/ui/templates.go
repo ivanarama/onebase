@@ -1231,10 +1231,18 @@ body{padding-bottom:32px}
    собственным <head> (админские). Здесь их не дублировать. */
 /* ===== Мобильная адаптация (этап 45). Правила в @media применяются только на
    узких экранах — десктопная вёрстка выше остаётся неизменной. ===== */
-.nav-toggle{display:none}
+/* Гамбургер виден на любой ширине (план 157): на узком экране он выдвигает
+   шторку, на широком — схлопывает панель объектов, отдавая её 210px форме. */
+.nav-toggle{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:#cbd5e1;font-size:20px;cursor:pointer;padding:4px 12px 4px 0;line-height:1}
+.nav-toggle:hover{color:#fff}
+/* Схлопывание — только широкий экран: на узком ширину панели забирает сама
+   шторка, и nav-collapsed не должен вмешиваться в nav-open. Разведение по
+   брейкпоинту делает классы независимыми — пересечься при ресайзе им негде.
+   Класс висит на <html>, а не на body: ставится синхронно в <head> (#1122). */
+@media (min-width:821px){
+  html.nav-collapsed #ob-nav{display:none}
+}
 @media (max-width:820px){
-  .nav-toggle{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:#cbd5e1;font-size:20px;cursor:pointer;padding:4px 12px 4px 0;line-height:1}
-  .nav-toggle:hover{color:#fff}
   .app-body{display:block;overflow:visible}
   aside{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
   body.nav-open aside{transform:translateX(0)}
@@ -1299,7 +1307,7 @@ body{padding-bottom:32px}
 const tplNav = `
 {{define "nav"}}
 <header class="topbar">
-  <button class="nav-toggle" type="button" aria-label="{{t $.Lang "Меню"}}" aria-controls="ob-nav" aria-expanded="false" data-ob-nav-toggle>&#9776;</button>
+  <button class="nav-toggle" type="button" aria-label="{{t $.Lang "Меню"}}" title="{{t $.Lang "Меню"}}" aria-controls="ob-nav" aria-expanded="false" data-ob-nav-toggle>&#9776;</button>
   <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{t $.Lang "Главная"}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
   <form class="topbar-search" method="get" action="/ui/search" role="search">
     <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">

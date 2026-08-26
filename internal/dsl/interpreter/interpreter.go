@@ -691,17 +691,17 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 	}
 	switch b.Op.Type {
 	case token.ASSIGN: // equality in conditions
-		return equalSandboxed(l, r, e.ec, b.Op.Line)
+		return equalOperator(l, r, e.ec, b.Op.Line)
 	case token.NEQ:
-		return !equalSandboxed(l, r, e.ec, b.Op.Line)
+		return !equalOperator(l, r, e.ec, b.Op.Line)
 	case token.LT:
-		return compareSandboxed(l, r, e.ec, b.Op.Line) < 0
+		return compareOperator(l, r, e.ec, b.Op.Line) < 0
 	case token.GT:
-		return compareSandboxed(l, r, e.ec, b.Op.Line) > 0
+		return compareOperator(l, r, e.ec, b.Op.Line) > 0
 	case token.LTE:
-		return compareSandboxed(l, r, e.ec, b.Op.Line) <= 0
+		return compareOperator(l, r, e.ec, b.Op.Line) <= 0
 	case token.GTE:
-		return compareSandboxed(l, r, e.ec, b.Op.Line) >= 0
+		return compareOperator(l, r, e.ec, b.Op.Line) >= 0
 	case token.PLUS:
 		// Дата + Число → сдвиг на N секунд (семантика 1С/OneScript).
 		if lt, ok := l.(time.Time); ok {
@@ -1249,8 +1249,34 @@ func truthy(v any) bool {
 	return true
 }
 
+// equalOperator и compareOperator — путь операторов «=», «<>», «<», «>», «<=»,
+// «>=». Подстановка нуля вместо незаполненного числа (#1136) живёт здесь, а не
+// внутри equalSandboxed/compareSandboxed, и это граница правки, а не деталь
+// оформления: тот же comparator обслуживает поиск и сортировку коллекций
+// (compareAny → Массив.Найти/Сортировать, ТаблицаЗначений.Найти/НайтиСтроки/
+// Сортировать). Просочись правило туда — ТЗ.НайтиСтроки(Новый Структура("Цена",
+// 0)) начал бы возвращать незаполненные строки, а отбор по Неопределено —
+// заполненные нули, то есть оба естественных способа разделить «пусто» и «ноль»
+// перестали бы работать разом. Соответствие при этом ищет своим путём (refKey) и
+// на подстановку не реагирует вовсе, так что платформа разошлась бы сама с собой:
+// Соответствие.Получить(0) пустой ключ не находит, а ТЗ.НайтиСтроки — находил бы.
+func equalOperator(a, b any, ec *execCtx, line int) bool {
+	a, b = nilAsNumericZero(a, b)
+	return equalSandboxed(a, b, ec, line)
+}
+
+func compareOperator(a, b any, ec *execCtx, line int) int {
+	a, b = nilAsNumericZero(a, b)
+	return compareSandboxed(a, b, ec, line)
+}
+
+// equal — равенство с семантикой оператора «=». Единственный вызывающий —
+// утверждения (Утверждать.Равно/НеРавно, МаскаПоля): проверка конфигурации
+// обязана видеть ровно то, что увидит модуль, иначе `Утверждать.Равно(Стр.Цена, 0)`
+// краснел бы там, где `Если Стр.Цена = 0` выбирает ветку. Поиск по коллекциям
+// сюда не ходит — он идёт через compare и refKey.
 func equal(a, b any) bool {
-	return equalSandboxed(a, b, nil, 0)
+	return equalOperator(a, b, nil, 0)
 }
 
 func equalSandboxed(a, b any, ec *execCtx, line int) bool {
@@ -1292,6 +1318,10 @@ func dateAddSeconds(t time.Time, sec float64) time.Time {
 	return safeDateResult(t.Add(time.Duration(sec * float64(time.Second))))
 }
 
+// compare — порядок БЕЗ подстановки нуля вместо незаполненного числа. Отсюда
+// работает compareAny, а через него поиск и сортировка коллекций: «нет значения»
+// остаётся значением, отличным от нуля, как и до #1136. Операторы ходят не сюда,
+// а через compareOperator.
 func compare(a, b any) int {
 	return compareSandboxed(a, b, nil, 0)
 }

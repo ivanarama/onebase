@@ -107,6 +107,10 @@ loadtest/reports/
 *.db-wal
 # Lifetime-lock базы (internal/dblock); остаётся после жёсткого kill сервера
 *.onebase.lock
+# Рабочие файлы самообновления (internal/selfupdate); заводятся рядом с бинарём
+.onebase-update.lock
+.onebase-update.intent.lock
+.onebase-update.pending.json
 
 # Бэкапы
 *.obz
