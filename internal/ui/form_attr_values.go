@@ -146,7 +146,7 @@ func setFormSelfRef(r *http.Request, entity *metadata.Entity, obj *runtime.Objec
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}
-	selfRef := &interpreter.Ref{UUID: obj.ID.String(), Type: entity.Name}
+	selfRef := &interpreter.Ref{UUID: obj.ID.String(), Type: entity.Name, Kind: entity.Kind}
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 }
@@ -174,6 +174,7 @@ func (s *Server) formAttrRef(ctx context.Context, refEntityName, idStr string) *
 		UUID:    idStr,
 		Name:    s.maskedRecordLabel(ctx, refEntity, refRow),
 		Type:    refEntity.Name,
+		Kind:    refEntity.Kind,
 		Manager: s.refManagerFor(refEntity, ctx),
 	}
 }

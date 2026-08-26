@@ -941,7 +941,7 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 					name = label
 				}
 				row[matchKey] = &interpreter.Ref{
-					UUID: ref.UUID, Name: name, Type: refEntity.Name, Manager: mgr,
+					UUID: ref.UUID, Name: name, Type: refEntity.Name, Kind: refEntity.Kind, Manager: mgr,
 				}
 				continue
 			}
@@ -950,7 +950,7 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 				continue
 			}
 			if name, ok := labels[idStr]; ok {
-				row[matchKey] = &interpreter.Ref{UUID: idStr, Name: name, Type: refEntity.Name, Manager: mgr}
+				row[matchKey] = &interpreter.Ref{UUID: idStr, Name: name, Type: refEntity.Name, Kind: refEntity.Kind, Manager: mgr}
 			}
 		}
 	}
@@ -993,6 +993,7 @@ func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, 
 					UUID:    ref.UUID,
 					Name:    ref.Name,
 					Type:    refEntity.Name,
+					Kind:    refEntity.Kind,
 					Manager: s.refManagerFor(refEntity, ctx),
 				}
 			}
@@ -1015,6 +1016,7 @@ func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, 
 			UUID:    idStr,
 			Name:    s.maskedRecordLabel(ctx, refEntity, refRow),
 			Type:    refEntity.Name,
+			Kind:    refEntity.Kind,
 			Manager: s.refManagerFor(refEntity, ctx),
 		}
 	}

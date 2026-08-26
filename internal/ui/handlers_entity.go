@@ -1548,7 +1548,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	// the document through ЭтотОбъект.Ссылка. Reassert both reserved aliases
 	// after copying metadata fields; legacy configurations may contain a field
 	// with the same spelling, and it must not replace the platform pseudo-field.
-	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name, Kind: entity.Kind}
 	obj.Set("Ссылка", selfRef)
 	obj.Set("reference", selfRef)
 	tpRows := make(map[string][]map[string]any)

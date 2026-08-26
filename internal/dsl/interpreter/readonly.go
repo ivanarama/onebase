@@ -204,7 +204,7 @@ func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, d
 		if value == nil {
 			return value
 		}
-		return &Ref{UUID: value.UUID, Name: value.Name, Type: value.Type}
+		return &Ref{UUID: value.UUID, Name: value.Name, Type: value.Type, Kind: value.Kind}
 	case *DSLError:
 		if value == nil {
 			return value

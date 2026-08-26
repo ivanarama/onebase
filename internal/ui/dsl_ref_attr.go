@@ -158,6 +158,9 @@ func (r *dslRefAttrResolver) attachRef(ref *interpreter.Ref, entityName string) 
 	if ref.Type == "" {
 		ref.Type = entityName
 	}
+	if ref.Kind == "" && r.s != nil {
+		ref.Kind = refKind(r.s.reg.GetEntity(ref.Type))
+	}
 	if ref.Manager == nil && r.s != nil {
 		ref.Manager = r.s.refManagerForSrc(r.s.reg.GetEntity(ref.Type), r, r.liveCtx())
 	}
@@ -178,6 +181,9 @@ func (r *dslRefAttrResolver) bindRefToContext(ref *interpreter.Ref, entityName s
 	bound := *ref
 	if bound.Type == "" {
 		bound.Type = entityName
+	}
+	if bound.Kind == "" && r.s != nil {
+		bound.Kind = refKind(r.s.reg.GetEntity(bound.Type))
 	}
 	if r.s != nil {
 		bound.Manager = r.s.refManagerForSrc(r.s.reg.GetEntity(bound.Type), r, r.liveCtx())
@@ -327,6 +333,7 @@ func (m *refAwareMapThis) wrapValue(name string, v any) any {
 		UUID:    idStr,
 		Name:    idStr,
 		Type:    fd.RefEntity,
+		Kind:    refKind(m.resolver.s.reg.GetEntity(fd.RefEntity)),
 		Manager: m.resolver.s.refManagerFor(m.resolver.s.reg.GetEntity(fd.RefEntity), m.resolver.ctx),
 	}, fd.RefEntity)
 }

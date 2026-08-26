@@ -322,6 +322,14 @@ func (w *catWriter) read() error {
 	return nil
 }
 
+// TypeName — «Справочник.X» для ТипЗнч(): симметрично docWriter (issue #1137).
+func (w *catWriter) TypeName() string {
+	if w == nil || w.entity == nil {
+		return "Неопределено"
+	}
+	return metadata.ObjectTypeName(w.entity.Kind, w.entity.Name)
+}
+
 // ref строит ссылку на записанный объект с менеджером-прокси, чтобы
 // Ссылка.ПолучитьОбъект()/Удалить() работали и возвращали catWriter.
 func (w *catWriter) ref() *interpreter.Ref {
@@ -329,6 +337,7 @@ func (w *catWriter) ref() *interpreter.Ref {
 		UUID:    w.obj.ID.String(),
 		Name:    w.displayName(),
 		Type:    w.entity.Name,
+		Kind:    w.entity.Kind,
 		Manager: w.s.refManagerFor(w.entity, w.ctx()),
 	}
 }
