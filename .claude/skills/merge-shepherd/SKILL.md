@@ -29,10 +29,18 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 | `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
 | `gh pr edit <N> --remove-label X` | `gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/X` |
 
-`gh pr list`, `gh pr diff`, `gh pr comment` проверены — работают. `gh pr merge`
-и `gh run` на этой ошибке не проверялись; упадёт с ней же — мержи через REST:
+`gh pr list`, `gh pr diff`, `gh pr comment`, `gh run view` проверены — работают,
+то есть шаг ожидания CI (п. 4) цел целиком. Не проверялись только `gh pr merge`
+и `gh run rerun` — проверка потребовала бы настоящего мержа и перезапуска.
+Упадут с той же ошибкой — мержи через REST:
 `gh api -X PUT repos/ivanarama/onebase/pulls/<N>/merge -f merge_method=merge`.
 Снятие `in-work` (п. 5) идёт через REST и потому не задето.
+
+**Метку после постановки сверь с ответом.** `gh pr edit` ругался на неизвестное
+имя метки, REST — нет: ответ POST содержит итоговый список меток объекта, и если
+твоей в нём не оказалось, значит имя набрано с опечаткой. Не проверишь — узнаешь
+об этом только тем, что следующий этап не увидит PR, а это ровно тот молчаливый
+отказ, против которого написан весь этот раздел.
 
 ## Процедура
 
