@@ -87,6 +87,16 @@ func (f *formObjectThis) String() string {
 	return f.obj.String()
 }
 
+// TypeName делегирует имя типа обёрнутому объекту, чтобы
+// ТипЗнч(ЭтотОбъект) в обработчике формы называл «Документ.X», а не
+// Go-имя обёртки (issue #1137).
+func (f *formObjectThis) TypeName() string {
+	if f == nil || f.obj == nil {
+		return "Неопределено"
+	}
+	return f.obj.TypeName()
+}
+
 // CallMethod делегирует объектные методы (например, МоментВремени) исходному
 // runtime.Object. Специальное поведение формовой обёртки относится к Get/Set и
 // табличным частям, остальные возможности объекта должны оставаться доступны.
@@ -158,7 +168,7 @@ func (f *formObjectThis) write() error {
 }
 
 func (f *formObjectThis) selfRef() *interpreter.Ref {
-	ref := &interpreter.Ref{UUID: f.obj.ID.String(), Type: f.entity.Name}
+	ref := &interpreter.Ref{UUID: f.obj.ID.String(), Type: f.entity.Name, Kind: f.entity.Kind}
 	if f.refResolver != nil {
 		return f.refResolver.bindRefToContext(ref, f.entity.Name)
 	}
