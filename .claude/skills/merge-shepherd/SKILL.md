@@ -16,6 +16,24 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 тебя информационные: если человек поставил `ship` на PR с `changes-requested`,
 значит он так решил — вливай и упомяни это в сводке.
 
+## Окружение: `gh` без `--json` не работает
+
+В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Команда,
+которая тянет объект целиком, падает с
+`GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
+Поля называй через `--json`, метки — через REST:
+
+| Не работает | Работает |
+|---|---|
+| `gh pr view <N>` | `gh pr view <N> --json mergeStateStatus,statusCheckRollup,…` |
+| `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
+| `gh pr edit <N> --remove-label X` | `gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/X` |
+
+`gh pr list`, `gh pr diff`, `gh pr comment` проверены — работают. `gh pr merge`
+и `gh run` на этой ошибке не проверялись; упадёт с ней же — мержи через REST:
+`gh api -X PUT repos/ivanarama/onebase/pulls/<N>/merge -f merge_method=merge`.
+Снятие `in-work` (п. 5) идёт через REST и потому не задето.
+
 ## Процедура
 
 1. Очередь: `gh pr list --state open --label ship --json number,title,labels` минус
