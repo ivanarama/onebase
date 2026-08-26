@@ -44,6 +44,10 @@ func TestStaticUIJS(t *testing.T) {
 		"data-ob-auto-submit",
 		"data-ob-nav-toggle",
 		"data-ob-toggle-target",
+		// #1122: схлопывание панели объектов на широком экране
+		"window.OB_NAV_COLLAPSED_KEY = 'obNavCollapsed'",
+		"function setNavCollapsed",
+		"function syncNavExpanded",
 		"function obInitFeed",
 		"function toggleTreeNode",
 		"obInitMappedCharts",

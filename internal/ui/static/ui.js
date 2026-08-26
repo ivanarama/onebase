@@ -1,3 +1,16 @@
+// Схлопнутая панель объектов на широком экране (#1122). Класс восстанавливаем
+// здесь, до первой отрисовки, а не по DOMContentLoaded: режим открытия форм по
+// умолчанию — «Страницы» (FormModePages), то есть каждый переход это полная
+// перезагрузка, и запоздалый класс давал бы мигание панелью на каждой странице.
+// Отсюда же и documentElement вместо body — в <head> body ещё null.
+// Во фрейме оболочки класс безвреден: там #ob-nav и так скрыт .ob-embedded.
+window.OB_NAV_COLLAPSED_KEY = 'obNavCollapsed';
+try {
+  if (localStorage.getItem(window.OB_NAV_COLLAPSED_KEY) === '1') {
+    document.documentElement.className += ' nav-collapsed';
+  }
+} catch (e) {}
+
 // Вкладочная оболочка (issue #129/#130): когда страница открыта во фрейме
 // оболочки /ui/app, прячем хром (топбар/подсистемы) — навигация идёт из оболочки.
 window.__obEmbedded = window.self !== window.top;
@@ -112,15 +125,54 @@ function obReadJSONScript(id, fallback) {
 (function () {
   if (window.__obNavInit) return;
   window.__obNavInit = true;
+  // Гамбургер значит разное по сторонам брейкпоинта: на узком экране он
+  // выдвигает шторку (класс `nav-open` на body, живёт только до перехода), на
+  // широком — схлопывает панель (`nav-collapsed` на <html>, помнится в
+  // localStorage). CSS обоих режимов разведён по @media, так что классы могут
+  // сосуществовать: после ресайза через границу каждый читается своим экраном.
+  var NAV_NARROW = '(max-width:820px)';
+  function navNarrow() {
+    try {
+      return window.matchMedia(NAV_NARROW).matches;
+    } catch (e) {
+      return false;
+    }
+  }
+  function navCollapsed() {
+    return document.documentElement.classList.contains('nav-collapsed');
+  }
+  // aria-expanded отвечает про панель, видимую на текущей ширине, поэтому
+  // пересчитывается и при переключении, и при переходе через брейкпоинт.
+  function syncNavExpanded() {
+    var btn = document.querySelector('.nav-toggle');
+    if (!btn) return;
+    var shown = navNarrow() ? document.body.classList.contains('nav-open') : !navCollapsed();
+    btn.setAttribute('aria-expanded', shown ? 'true' : 'false');
+  }
   function setNav(open) {
     document.body.classList.toggle('nav-open', open);
-    var btn = document.querySelector('.nav-toggle');
-    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    syncNavExpanded();
+  }
+  function setNavCollapsed(collapsed) {
+    document.documentElement.classList.toggle('nav-collapsed', collapsed);
+    try {
+      localStorage.setItem(window.OB_NAV_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch (e) {}
+    syncNavExpanded();
   }
   window.obNavToggle = function () {
-    setNav(!document.body.classList.contains('nav-open'));
+    if (navNarrow()) setNav(!document.body.classList.contains('nav-open'));
+    else setNavCollapsed(!navCollapsed());
   };
   obReady(function () {
+    // В разметке у кнопки aria-expanded="false", а на широком экране панель по
+    // умолчанию раскрыта — приводим атрибут к факту и следим за брейкпоинтом.
+    syncNavExpanded();
+    try {
+      var mq = window.matchMedia(NAV_NARROW);
+      if (mq.addEventListener) mq.addEventListener('change', syncNavExpanded);
+      else if (mq.addListener) mq.addListener(syncNavExpanded);
+    } catch (e) {}
     document.addEventListener('click', function (e) {
       if (!e.target.closest) return;
       var navToggle = e.target.closest('[data-ob-nav-toggle]');
