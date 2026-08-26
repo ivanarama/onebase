@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -153,7 +154,19 @@ func getTypeName(v any) string {
 		return "Соответствие"
 	case *Struct:
 		return "Структура"
-	default:
-		return fmt.Sprintf("%T", v)
 	}
+	// Объекты конфигурации, коллекции платформы и обёртки «этого объекта»
+	// называют себя сами (интерфейс typeNamer). Раньше сюда попадала только
+	// default-ветка, и ТипЗнч() отдавал в DSL Go-имя — «*runtime.Object»,
+	// «*interpreter.ValueTable», — сравнить которое было не с чем (issue #1137).
+	if tn, ok := v.(dslTypeNamer); ok {
+		if name := strings.TrimSpace(tn.TypeName()); name != "" {
+			return name
+		}
+	}
+	return fmt.Sprintf("%T", v)
 }
+
+// dslTypeNamer реализуют значения, знающие своё имя типа в терминах DSL.
+// Тот же контракт использует отладчик (internal/debugger/protocol.go).
+type dslTypeNamer interface{ TypeName() string }
