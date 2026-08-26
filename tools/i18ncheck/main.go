@@ -131,7 +131,7 @@ func reportCoverage(w io.Writer, keys []string, human, machine map[string]map[st
 	for l := range machine {
 		seen[l] = true
 	}
-	fmt.Fprintf(w, "i18ncheck: %d keys in templates, %d locales\n", len(keys), len(seen))
+	_, _ = fmt.Fprintf(w, "i18ncheck: %d keys in templates, %d locales\n", len(keys), len(seen))
 	var langs []string
 	for l := range seen {
 		if l != i18n.FallbackLang {
@@ -155,7 +155,7 @@ func reportCoverage(w io.Writer, keys []string, human, machine map[string]map[st
 		}
 		// Остаток после машинного яруса и есть то, что покажется
 		// по-английски; это норма, принятая по #960, а не долг.
-		fmt.Fprintf(w, "  %s: %d не переведено человеком (%d закрыто машинным ярусом, %d останется по-английски)\n",
+		_, _ = fmt.Fprintf(w, "  %s: %d не переведено человеком (%d закрыто машинным ярусом, %d останется по-английски)\n",
 			l, missing, byMachine, missing-byMachine)
 	}
 }
