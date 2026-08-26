@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // init wires the helpers and ext-functions declared in builtins_helpers.go
@@ -267,7 +269,8 @@ func templateFromArgs(args []any, _ string, _ int) (any, error) {
 // normalizeTypeName maps user-typed names ("число", "СТРОКА") to canonical form
 // returned by getTypeName ("Число", "Строка").
 func normalizeTypeName(s string) string {
-	low := strings.ToLower(strings.TrimSpace(s))
+	trimmed := strings.TrimSpace(s)
+	low := strings.ToLower(trimmed)
 	switch low {
 	case "число", "number":
 		return "Число"
@@ -286,5 +289,44 @@ func normalizeTypeName(s string) string {
 	case "неопределено", "undefined", "nil":
 		return "Неопределено"
 	}
+	if q, ok := normalizeQualifiedTypeName(trimmed); ok {
+		return q
+	}
 	return s
+}
+
+// normalizeQualifiedTypeName приводит имя типа объекта конфигурации к тому
+// виду, который возвращает ТипЗнч(): Тип("документссылка.ЗаказПокупателя") →
+// «ДокументСсылка.ЗаказПокупателя». Регистронезависим только префикс — имя
+// объекта остаётся как написал прикладной разработчик, потому что здесь нет
+// метаданных, по которым его можно было бы выправить: сравнение строк в DSL
+// регистрозависимо, поэтому имя пишется как в конфигурации.
+//
+// s — уже обрезанная по краям строка. Точку ищем в ней самой, а не в её
+// нижнем регистре: ToLower умеет менять длину строки в байтах, и индекс из
+// одной строки резал бы другую не по букве.
+func normalizeQualifiedTypeName(s string) (string, bool) {
+	dot := strings.IndexByte(s, '.')
+	if dot <= 0 || dot == len(s)-1 {
+		return "", false
+	}
+	name := strings.TrimSpace(s[dot+1:])
+	if name == "" {
+		return "", false
+	}
+	switch strings.ToLower(s[:dot]) {
+	// «ДокументОбъект.X»/«СправочникОбъект.X» — как объект называется в 1С.
+	// Своего имени у объекта в OneBase нет, тип один, поэтому 1С-написание
+	// принимается синонимом: перенесённый модуль сравнивается с тем же
+	// маркером, что и написанный здесь.
+	case "документ", "документобъект", "document":
+		return metadata.TypePrefixDocument + "." + name, true
+	case "документссылка", "documentref":
+		return metadata.TypePrefixDocumentRef + "." + name, true
+	case "справочник", "справочникобъект", "catalog":
+		return metadata.TypePrefixCatalog + "." + name, true
+	case "справочникссылка", "catalogref":
+		return metadata.TypePrefixCatalogRef + "." + name, true
+	}
+	return "", false
 }

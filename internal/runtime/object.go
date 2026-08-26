@@ -22,6 +22,21 @@ type Object struct {
 	TablePartRows map[string][]map[string]any
 }
 
+// TypeName — имя типа объекта для ТипЗнч() и отладчика: «Документ.Реализация»,
+// «Справочник.Номенклатура». Без него хук ввода на основании получал источник,
+// тип которого из DSL не определить никак: ТипЗнч() отдавал Go-имя
+// «*runtime.Object», и сравнение с Тип("ДокументСсылка.X") всегда было Ложь —
+// документы молча заполнялись пустыми (issue #1137).
+func (o *Object) TypeName() string {
+	if o == nil {
+		return "Неопределено"
+	}
+	if name := metadata.ObjectTypeName(o.Kind, o.Type); name != "" {
+		return name
+	}
+	return "Объект"
+}
+
 func NewObject(entityType string, kind metadata.Kind) *Object {
 	return &Object{
 		Type:          entityType,

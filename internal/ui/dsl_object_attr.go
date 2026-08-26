@@ -188,7 +188,7 @@ func (s *Server) collectBulkObjectRefs(ctx context.Context, raw any, entity *met
 		}
 		idStr = id.String()
 		refs = append(refs, bulkObjectRef{
-			key:   &interpreter.Ref{UUID: idStr, Name: name, Type: entity.Name, Manager: manager},
+			key:   &interpreter.Ref{UUID: idStr, Name: name, Type: entity.Name, Kind: entity.Kind, Manager: manager},
 			id:    id,
 			idStr: idStr,
 		})
@@ -368,6 +368,7 @@ func (s *Server) refFromValueCached(ctx context.Context, refEntityName string, r
 		UUID:    idStr,
 		Name:    name,
 		Type:    refEntityName,
+		Kind:    refKind(refEntity),
 		Manager: s.refManagerFor(refEntity, ctx),
 	}
 }
@@ -419,6 +420,7 @@ func (s *Server) refFromValue(ctx context.Context, refEntityName string, raw any
 		UUID:    idStr,
 		Name:    name,
 		Type:    refEntityName,
+		Kind:    refKind(refEntity),
 		Manager: s.refManagerFor(refEntity, ctx),
 	}
 }
