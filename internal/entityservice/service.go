@@ -426,7 +426,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}
-	selfRef := &interpreter.Ref{UUID: req.ID.String(), Type: req.Entity.Name}
+	selfRef := &interpreter.Ref{UUID: req.ID.String(), Type: req.Entity.Name, Kind: req.Entity.Kind}
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
@@ -703,7 +703,7 @@ func (s *Service) unpostInTx(
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}
-	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name, Kind: entity.Kind}
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 
@@ -949,7 +949,7 @@ func (s *Service) deleteHookObject(txCtx context.Context, entity *metadata.Entit
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}
-	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name}
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: entity.Name, Kind: entity.Kind}
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 	return obj, nil
@@ -1069,7 +1069,7 @@ func (s *Service) Fill(ctx context.Context, req FillRequest) (FillResult, error)
 	// Менеджер не привязан (Manager=nil) — для записи UUID в reference-
 	// колонку этого достаточно; полные операции через ссылку (Удалить,
 	// ПолучитьОбъект) из хука обычно не нужны.
-	srcObj.Fields["ссылка"] = &interpreter.Ref{UUID: req.SourceID.String(), Type: src.Name}
+	srcObj.Fields["ссылка"] = &interpreter.Ref{UUID: req.SourceID.String(), Type: src.Name, Kind: src.Kind}
 	srcObj.Fields["reference"] = srcObj.Fields["ссылка"]
 
 	// Обогащаем UUID-строки в ссылочных полях источника до *Ref{…,Manager} —
@@ -1243,7 +1243,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	if obj.Fields == nil {
 		obj.Fields = map[string]any{}
 	}
-	selfRef := &interpreter.Ref{UUID: id.String(), Type: ent.Name}
+	selfRef := &interpreter.Ref{UUID: id.String(), Type: ent.Name, Kind: ent.Kind}
 	obj.Fields["ссылка"] = selfRef
 	obj.Fields["reference"] = selfRef
 	if s.PrepareHook != nil {
