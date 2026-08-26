@@ -15,6 +15,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -100,9 +101,39 @@ func main() {
 	}
 	sort.Strings(missingEn)
 
-	fmt.Printf("i18ncheck: %d keys in templates, %d locales\n", len(keys), len(human))
-	var langs []string
+	reportCoverage(os.Stdout, keys, human, machine)
+
+	if len(missingEn) == 0 {
+		fmt.Printf("OK — все ключи есть в %s.json (запасной язык интерфейса)\n", i18n.FallbackLang)
+		return
+	}
+	fmt.Printf("\nFAIL — %d ключей нет в %s.json:\n", len(missingEn), i18n.FallbackLang)
+	for _, k := range missingEn {
+		fmt.Printf("  %q\n", k)
+	}
+	fmt.Printf("\nДобавьте переводы в internal/i18n/locales/%s.json — без них строка покажется по-русски во всех языках.\n", i18n.FallbackLang)
+	os.Exit(1)
+}
+
+// reportCoverage печатает, сколько ключей в каждом языке ещё не переведено
+// человеком и сколько из них закрывает машинный ярус.
+//
+// Язык считается заведённым, если есть хотя бы один его ярус. Список, собранный
+// по одному человеческому, скрывал бы язык целиком: новый перевод приезжает
+// машинным проходом (locales/machine/<lang>.json), а верхнего яруса до ревью
+// носителем у него нет вовсе — в отчёте он не значился бы ни строкой, как будто
+// его не добавляли.
+func reportCoverage(w io.Writer, keys []string, human, machine map[string]map[string]string) {
+	seen := map[string]bool{}
 	for l := range human {
+		seen[l] = true
+	}
+	for l := range machine {
+		seen[l] = true
+	}
+	fmt.Fprintf(w, "i18ncheck: %d keys in templates, %d locales\n", len(keys), len(seen))
+	var langs []string
+	for l := range seen {
 		if l != i18n.FallbackLang {
 			langs = append(langs, l)
 		}
@@ -124,19 +155,9 @@ func main() {
 		}
 		// Остаток после машинного яруса и есть то, что покажется
 		// по-английски; это норма, принятая по #960, а не долг.
-		fmt.Printf("  %s: %d не переведено человеком (%d закрыто машинным ярусом, %d останется по-английски)\n",
+		fmt.Fprintf(w, "  %s: %d не переведено человеком (%d закрыто машинным ярусом, %d останется по-английски)\n",
 			l, missing, byMachine, missing-byMachine)
 	}
-	if len(missingEn) == 0 {
-		fmt.Printf("OK — все ключи есть в %s.json (запасной язык интерфейса)\n", i18n.FallbackLang)
-		return
-	}
-	fmt.Printf("\nFAIL — %d ключей нет в %s.json:\n", len(missingEn), i18n.FallbackLang)
-	for _, k := range missingEn {
-		fmt.Printf("  %q\n", k)
-	}
-	fmt.Printf("\nДобавьте переводы в internal/i18n/locales/%s.json — без них строка покажется по-русски во всех языках.\n", i18n.FallbackLang)
-	os.Exit(1)
 }
 
 func repoRoot() (string, error) {
