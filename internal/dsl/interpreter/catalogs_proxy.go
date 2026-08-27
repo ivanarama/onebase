@@ -342,7 +342,7 @@ func (p *CatalogProxy) Get(itemName string) any {
 				}
 				RaiseUserError("Доступ к " + p.entity.Name + "." + item.Name + ": " + err.Error())
 			}
-			return &Ref{UUID: id, Name: item.Name, Type: p.entity.Name, Manager: p}
+			return &Ref{UUID: id, Name: item.Name, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 		}
 	}
 	return nil
@@ -369,7 +369,7 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 		if _, err := uuid.Parse(uuidStr); err != nil {
 			RaiseUserError("НайтиПоИдентификатору(" + p.entity.Name + "): неверный идентификатор ссылки: " + uuidStr)
 		}
-		return &Ref{UUID: uuidStr, Name: uuidStr, Type: p.entity.Name, Manager: p}
+		return &Ref{UUID: uuidStr, Name: uuidStr, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 	case "найтипореквизиту", "findbyattribute":
 		if len(args) < 2 {
 			RaiseUserError("НайтиПоРеквизиту(" + p.entity.Name + "): нужны имя реквизита и значение")
@@ -528,7 +528,7 @@ func (p *CatalogProxy) findByField(caller, field string, args []any) any {
 		if len(ids) == 0 {
 			return nil
 		}
-		return &Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Manager: p}
+		return &Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 	}
 	idStr, display, found, err := p.db.FindCatalogByField(p.ctx(), p.entity, field, value)
 	if err != nil {
@@ -547,7 +547,7 @@ func (p *CatalogProxy) findByField(caller, field string, args []any) any {
 		}
 		RaiseUserError(where + ": " + err.Error())
 	}
-	return &Ref{UUID: idStr, Name: display, Type: p.entity.Name, Manager: p}
+	return &Ref{UUID: idStr, Name: display, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 }
 
 // hasField — есть ли у справочника такой реквизит (без учёта регистра).
@@ -587,7 +587,7 @@ func (p *CatalogProxy) matchByField(field string, raw any) any {
 		}
 		var ref *Ref
 		if len(ids) == 1 {
-			ref = &Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Manager: p}
+			ref = &Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 		}
 		return NewMatchResultStruct(ref, len(ids))
 	}
@@ -607,7 +607,7 @@ func (p *CatalogProxy) matchByField(field string, raw any) any {
 			}
 			RaiseUserError("ПроверитьСовпадениеПоРеквизиту(" + p.entity.Name + "." + field + "): " + err.Error())
 		}
-		ref = &Ref{UUID: idStr, Name: display, Type: p.entity.Name, Manager: p}
+		ref = &Ref{UUID: idStr, Name: display, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 	}
 	return NewMatchResultStruct(ref, count)
 }
@@ -663,6 +663,15 @@ type CatalogRecordWriter struct {
 	deleter   CatalogDeleter // проносится в Manager возвращаемой ссылки
 	idStr     string
 	fields    map[string]any
+}
+
+// TypeName — «Справочник.X» для ТипЗнч(): пишущий объект справочника тоже
+// объект конфигурации, а не Go-структура (issue #1137).
+func (w *CatalogRecordWriter) TypeName() string {
+	if w == nil || w.entity == nil {
+		return "Неопределено"
+	}
+	return metadata.ObjectTypeName(w.entity.Kind, w.entity.Name)
 }
 
 func (w *CatalogRecordWriter) ctx() context.Context {
@@ -729,7 +738,7 @@ func (w *CatalogRecordWriter) CallMethod(method string, args []any) any {
 		w.idStr = id
 		name := w.displayName()
 		return &Ref{
-			UUID: id, Name: name, Type: w.entity.Name,
+			UUID: id, Name: name, Type: w.entity.Name, Kind: w.entity.Kind,
 			Manager: &CatalogProxy{entity: w.entity, db: w.db, ctxSrc: w.ctxSrc, access: w.access,
 				registrar: w.registrar, deleter: w.deleter},
 		}

@@ -94,6 +94,16 @@ func (s *Server) refManagerFor(entity *metadata.Entity, ctx context.Context) int
 	return s.refManagerForSrc(entity, interpreter.NewStaticCtx(ctx), ctx)
 }
 
+// refKind — вид сущности для Ref.Kind, устойчивый к отсутствию метаданных.
+// Ссылка на незнакомую сущность остаётся без вида: ТипЗнч() назовёт её
+// обобщённой «Ссылка», а не соврёт про документ (issue #1137).
+func refKind(entity *metadata.Entity) metadata.Kind {
+	if entity == nil {
+		return ""
+	}
+	return entity.Kind
+}
+
 // refManagerForSrc — та же сборка менеджера, но с ЖИВЫМ источником контекста.
 // Менеджер ссылки создаётся в момент первого чтения реквизита, то есть ДО того,
 // как модуль откроет НачатьТранзакцию. Со снимком контекста его ПолучитьОбъект()
@@ -229,7 +239,7 @@ func (p *docProxy) CallMethod(method string, args []any) any {
 		if _, err := uuid.Parse(uuidStr); err != nil {
 			interpreter.RaiseUserError("НайтиПоИдентификатору(" + p.entity.Name + "): неверный идентификатор ссылки: " + uuidStr)
 		}
-		return &interpreter.Ref{UUID: uuidStr, Name: uuidStr, Type: p.entity.Name, Manager: p}
+		return &interpreter.Ref{UUID: uuidStr, Name: uuidStr, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 	case "найтипореквизиту", "findbyattribute":
 		if len(args) < 2 {
 			interpreter.RaiseUserError("НайтиПоРеквизиту(" + p.entity.Name + "): нужны имя реквизита и значение")
@@ -326,7 +336,7 @@ func (p *docProxy) findByField(field, value string, raw any) any {
 		if len(ids) == 0 {
 			return nil
 		}
-		return &interpreter.Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Manager: p}
+		return &interpreter.Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 	}
 	idStr, display, found, err := p.s.store.FindCatalogByField(p.ctx(), p.entity, field, value)
 	if err != nil {
@@ -345,7 +355,7 @@ func (p *docProxy) findByField(field, value string, raw any) any {
 		}
 		interpreter.RaiseUserError("Найти(" + p.entity.Name + "." + field + "): " + err.Error())
 	}
-	return &interpreter.Ref{UUID: idStr, Name: display, Type: p.entity.Name, Manager: p}
+	return &interpreter.Ref{UUID: idStr, Name: display, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 }
 
 // matchByField — safe-match по реквизиту документа: Структура со Статусом,
@@ -362,7 +372,7 @@ func (p *docProxy) matchByField(field string, raw any) any {
 		}
 		var ref *interpreter.Ref
 		if len(ids) == 1 {
-			ref = &interpreter.Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Manager: p}
+			ref = &interpreter.Ref{UUID: ids[0], Name: displays[0], Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 		}
 		return interpreter.NewMatchResultStruct(ref, len(ids))
 	}
@@ -382,7 +392,7 @@ func (p *docProxy) matchByField(field string, raw any) any {
 			}
 			interpreter.RaiseUserError("ПроверитьСовпадениеПоРеквизиту(" + p.entity.Name + "." + field + "): " + err.Error())
 		}
-		ref = &interpreter.Ref{UUID: idStr, Name: display, Type: p.entity.Name, Manager: p}
+		ref = &interpreter.Ref{UUID: idStr, Name: display, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
 	}
 	return interpreter.NewMatchResultStruct(ref, count)
 }
@@ -1018,9 +1028,18 @@ func (w *docWriter) ensureSelfRef() {
 	if w.obj.Fields == nil {
 		w.obj.Fields = map[string]any{}
 	}
-	selfRef := &interpreter.Ref{UUID: w.obj.ID.String(), Name: w.displayName(), Type: w.entity.Name}
+	selfRef := &interpreter.Ref{UUID: w.obj.ID.String(), Name: w.displayName(), Type: w.entity.Name, Kind: w.entity.Kind}
 	w.obj.Fields["ссылка"] = selfRef
 	w.obj.Fields["reference"] = selfRef
+}
+
+// TypeName — «Документ.X» для ТипЗнч(Документы.X.Создать()). Без него из DSL
+// утекало Go-имя обёртки (issue #1137).
+func (w *docWriter) TypeName() string {
+	if w == nil || w.entity == nil {
+		return "Неопределено"
+	}
+	return metadata.ObjectTypeName(w.entity.Kind, w.entity.Name)
 }
 
 // ref строит ссылку на записанный документ с привязкой к менеджеру,
@@ -1030,6 +1049,7 @@ func (w *docWriter) ref() *interpreter.Ref {
 		UUID:    w.obj.ID.String(),
 		Name:    w.displayName(),
 		Type:    w.entity.Name,
+		Kind:    w.entity.Kind,
 		Manager: &docProxy{s: w.s, ctxSrc: w.ctxSrc, entity: w.entity, messages: w.messages},
 	}
 }

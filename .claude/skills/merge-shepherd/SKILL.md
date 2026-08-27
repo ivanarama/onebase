@@ -16,6 +16,32 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 тебя информационные: если человек поставил `ship` на PR с `changes-requested`,
 значит он так решил — вливай и упомяни это в сводке.
 
+## Окружение: `gh` без `--json` не работает
+
+В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Команда,
+которая тянет объект целиком, падает с
+`GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
+Поля называй через `--json`, метки — через REST:
+
+| Не работает | Работает |
+|---|---|
+| `gh pr view <N>` | `gh pr view <N> --json mergeStateStatus,statusCheckRollup,…` |
+| `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
+| `gh pr edit <N> --remove-label X` | `gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/X` |
+
+`gh pr list`, `gh pr diff`, `gh pr comment`, `gh run view` проверены — работают,
+то есть шаг ожидания CI (п. 4) цел целиком. Не проверялись только `gh pr merge`
+и `gh run rerun` — проверка потребовала бы настоящего мержа и перезапуска.
+Упадут с той же ошибкой — мержи через REST:
+`gh api -X PUT repos/ivanarama/onebase/pulls/<N>/merge -f merge_method=merge`.
+Снятие `in-work` (п. 5) идёт через REST и потому не задето.
+
+**Метку после постановки сверь с ответом.** `gh pr edit` ругался на неизвестное
+имя метки, REST — нет: ответ POST содержит итоговый список меток объекта, и если
+твоей в нём не оказалось, значит имя набрано с опечаткой. Не проверишь — узнаешь
+об этом только тем, что следующий этап не увидит PR, а это ровно тот молчаливый
+отказ, против которого написан весь этот раздел.
+
 ## Процедура
 
 1. Очередь: `gh pr list --state open --label ship --json number,title,labels` минус
@@ -25,7 +51,8 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
 2. Очередь при `strict: true` строго последовательна — работай с одним PR до
    конца, потом следующий. Состояние: `gh pr view <N> --json
-   mergeStateStatus,mergeable,statusCheckRollup`.
+   mergeStateStatus,mergeable,statusCheckRollup,body` (тело нужно в п. 5 —
+   по нему снимается `in-work`).
 
 3. По состоянию:
    - **BEHIND** → `gh api -X PUT repos/ivanarama/onebase/pulls/<N>/update-branch`,
@@ -56,6 +83,28 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 5. Мерж: `gh pr merge <N> --merge --delete-branch`. Отказался (статус успел
    измениться) — перечитай состояние и действуй по п. 3. Ишью закроется сам
    по `Fixes #N` из тела PR.
+
+   **Сразу после мержа сними `in-work` с закрытых заявок этого PR.** Метку
+   вешает фиксер, когда открывает PR, и снять её больше некому: он к заявке уже
+   не вернётся, а ты — последний, кто её касается. Иначе каждая проехавшая
+   заявка уносит `in-work` в закрытые навсегда, и метка перестаёт означать
+   «едет прямо сейчас» (так и случилось с #1136).
+
+   Номера бери из тела PR по **всем** написаниям, какие понимает GitHub, —
+   `Fixes`, `Closes`, `Resolves` (регистр не важен). Автоматика всегда пишет
+   `Fixes`, но PR, написанный человеком руками, может нести `Closes #N`, и это
+   ровно тот случай, ради которого шаг и вводится.
+
+   ```
+   gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/in-work
+   ```
+
+   Метки нет — ответ 404, это не ошибка: заявка её и не носила.
+
+   Отдельно поищи в теле русские «Закрывает/Исправляет/Решает #N»: GitHub их
+   ключевыми словами не считает, такая заявка останется открытой. `in-work` с
+   неё не снимай — она и правда ещё не доехала, — но назови её в сводке: закрыть
+   придётся руками (сверка — `go run ./tools/issuetail`).
 
 6. После каждого мержа остальные PR очереди становятся BEHIND — это норма,
    повторяй п. 3 для следующего. До первого мержа их `CLEAN` ничего не значит.

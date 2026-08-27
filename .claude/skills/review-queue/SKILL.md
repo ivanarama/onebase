@@ -23,6 +23,31 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
 `changes-requested`, `needs-decision`. Ты не мержишь, не пушишь в чужие ветки и
 не редактируешь чужие комментарии.
 
+## Окружение: `gh` без `--json` не работает
+
+В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Любая
+команда, которая тянет объект целиком, падает с
+`GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`
+— ошибка в stderr, код возврата ненулевой, вывода нет. Правило простое: **всегда
+называй поля через `--json`, а метки на PR ставь через REST.**
+
+| Не работает | Работает |
+|---|---|
+| `gh pr view <N>` | `gh pr view <N> --json labels,body,…` |
+| `gh issue view <N>`, `--comments` | `gh issue view <N> --json title,body,labels,comments` |
+| `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
+| `gh pr edit <N> --remove-label X` | `gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/X` |
+
+`gh issue edit`, `gh pr list`, `gh issue list`, `gh pr diff`, `gh pr comment`,
+`gh issue create` работают как есть. У REST-пути номер PR и номер ишью — одно
+пространство, поэтому метки PR ставятся через `/issues/<N>/labels`; это не
+опечатка.
+
+**Метку после постановки сверь с ответом:** ответ POST содержит итоговый список
+меток объекта. `gh pr edit` ругался на неизвестное имя, REST — нет, поэтому
+опечатку в имени метки иначе не заметишь: узнаешь о ней только тем, что
+следующий этап не увидит объект.
+
 ## Процедура
 
 1. Очередь: `gh pr list --state open --limit 50 --json number,title,labels,isDraft`.
@@ -34,7 +59,8 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
 
 2. Материал: `gh pr view <M> --json title,body,headRefName,files,statusCheckRollup`,
    `gh pr diff <M>`, и — если в теле есть `Fixes #N` — сама заявка с
-   триаж-комментарием (`gh issue view <N> --comments`). Без заявки ты не знаешь,
+   триаж-комментарием (`gh issue view <N> --json title,body,labels,comments`;
+   `--comments` в этом окружении падает). Без заявки ты не знаешь,
    что PR обязан был сделать.
 
 3. Прогон (если дифф трогает Go или прикладной слой) — читать дифф глазами мало:
@@ -86,13 +112,15 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    <!-- pp:review -->
    ```
 
-7. Метки по вердикту:
-   - блокирующего нет → `gh pr edit <M> --add-label reviewed`;
-   - есть → `gh pr edit <M> --add-label changes-requested` (фиксер подхватит его
+7. Метки по вердикту (ставятся через REST — см. «Окружение»;
+   `L(<номер>, <метка>)` ниже означает
+   `echo '{"labels":["<метка>"]}' | gh api -X POST repos/ivanarama/onebase/issues/<номер>/labels --input -`):
+   - блокирующего нет → `L(<M>, reviewed)`;
+   - есть → `L(<M>, changes-requested)` (фиксер подхватит его
      первым же прогоном);
    - **третий круг** (в PR уже два твоих заключения с вердиктом «есть
-     замечания») → `changes-requested` не ставь: `gh pr edit <M> --add-label
-     needs-decision` и в заключении одной строкой — что именно не сходится и
+     замечания») → `changes-requested` не ставь: `L(<M>, needs-decision)`
+     и в заключении одной строкой — что именно не сходится и
      какой выбор нужен от человека. Два круга машина закрывает сама, третий
      означает спор, а не недоделку.
 
