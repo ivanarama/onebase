@@ -89,6 +89,16 @@ func numbers(fs []finding) []int {
 	return out
 }
 
+// details — пояснения находок: там, где у одной заявки их несколько, номер
+// заявки в сообщении о падении уже ничего не различает.
+func details(fs []finding) []string {
+	out := make([]string, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, f.detail)
+	}
+	return out
+}
+
 func TestHoldWithoutPlanIsFlagged(t *testing.T) {
 	issues := []issue{
 		mk(1, "ivanarama", ago(3), []string{"hold"}), // пауза без плана
@@ -140,6 +150,109 @@ func TestPlanFromOpenPullRequestCounts(t *testing.T) {
 
 	if got := bucketByTitle(analyze(issues, cfg), "ссылка на план, которого нет"); len(got) != 0 {
 		t.Fatalf("план из открытого PR ложной находкой быть не должен, получено %v", numbers(got))
+	}
+}
+
+// Битых ссылок у заявки может быть несколько, и показать надо все: версия с
+// `break` отдавала одну находку на заявку, поэтому вторая ссылка всплывала
+// только после починки первой — неделей позже.
+func TestEveryBrokenPlanReferenceIsReported(t *testing.T) {
+	is := withBody(mk(1, "ivanarama", ago(1), []string{"hold"}),
+		"обещаны `Plans/900-первый.md` и `Plans/901-второй.md`, оба не написаны")
+
+	got := bucketByTitle(analyze([]issue{is}, testConfig()), "ссылка на план, которого нет")
+
+	if len(got) != 2 {
+		t.Fatalf("ожидались две находки, получено %d: %v", len(got), details(got))
+	}
+	if !strings.Contains(got[0].detail, "900-первый.md") || !strings.Contains(got[1].detail, "901-второй.md") {
+		t.Fatalf("ожидались обе ссылки по порядку номеров, получено %v", details(got))
+	}
+}
+
+// Живой случай #1134: имя плана названо неверно, а следующим комментарием
+// поправлено. Находка остаётся (скрытая неотличима от «инструмент не заметил»),
+// но помечается — иначе отчёт печатает знакомую строку каждую неделю, и глаз
+// перестаёт читать не только её.
+func TestPlanReferenceCorrectedLaterInThreadIsMarked(t *testing.T) {
+	cfg := testConfig()
+	cfg.plans = testPlans("158-open-form.md")
+	is := withBody(mk(1, "ivanarama", ago(1), []string{"hold"},
+		[2]string{"ivanarama", "поправка: план получил номер 158 — `Plans/158-open-form.md`"}),
+		"работа оформлена планом `Plans/157-open-form.md`")
+
+	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+
+	if len(got) != 1 {
+		t.Fatalf("ожидалась одна находка, получено %v", details(got))
+	}
+	if !strings.Contains(got[0].detail, "157-open-form.md") ||
+		!strings.Contains(got[0].detail, "ниже в треде уже поправлено на Plans/158-open-form.md") {
+		t.Fatalf("ожидалась пометка о поправке ниже, получено %q", got[0].detail)
+	}
+}
+
+// Порядок — часть смысла: та же пара ссылок, но верная названа ВЫШЕ, а
+// неверная дописана после неё. Это не поправка, а свежая опечатка.
+func TestCorrectionAboveTheBrokenReferenceIsNotAMark(t *testing.T) {
+	cfg := testConfig()
+	cfg.plans = testPlans("158-open-form.md")
+	is := withBody(mk(1, "ivanarama", ago(1), []string{"hold"},
+		[2]string{"ivanarama", "напоминаю: делаем по `Plans/157-open-form.md`"}),
+		"работа оформлена планом `Plans/158-open-form.md`")
+
+	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+
+	if len(got) != 1 || strings.Contains(got[0].detail, "поправлено") {
+		t.Fatalf("ожидалась непомеченная находка на 157, получено %v", details(got))
+	}
+}
+
+// Ссылка, повторённая НИЖЕ поправки, снова актуальна: считаем по последнему
+// упоминанию, а не по первому.
+func TestBrokenReferenceRepeatedAfterCorrectionStaysUnmarked(t *testing.T) {
+	cfg := testConfig()
+	cfg.plans = testPlans("158-open-form.md")
+	is := withBody(mk(1, "ivanarama", ago(1), []string{"hold"},
+		[2]string{"ivanarama", "поправка: `Plans/158-open-form.md`"},
+		[2]string{"ivanarama", "сводка: делаем по `Plans/157-open-form.md`"}),
+		"работа оформлена планом `Plans/157-open-form.md`")
+
+	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+
+	if len(got) != 1 || strings.Contains(got[0].detail, "поправлено") {
+		t.Fatalf("ожидалась непомеченная находка на 157, получено %v", details(got))
+	}
+}
+
+// Ссылка одним номером опознанию не поддаётся: «план 46» ниже «плана 900» не
+// значит, что это тот же план под новым номером.
+func TestNumberOnlyReferenceIsNeverConsideredCorrected(t *testing.T) {
+	is := withBody(mk(1, "ivanarama", ago(1), []string{"hold"},
+		[2]string{"ivanarama", "точнее, план 46"}), "оформлено планом 900")
+
+	got := bucketByTitle(analyze([]issue{is}, testConfig()), "ссылка на план, которого нет")
+
+	if len(got) != 1 || strings.Contains(got[0].detail, "поправлено") {
+		t.Fatalf("ожидалась непомеченная находка на план 900, получено %v", details(got))
+	}
+}
+
+// Отчёт — публичный вывод инструмента: обе находки одной заявки обязаны дойти
+// до строк, а не схлопнуться по номеру заявки.
+func TestReportPrintsBothBrokenReferencesOfOneIssue(t *testing.T) {
+	var buf bytes.Buffer
+	issues := []issue{withBody(mk(9, "ivanarama", ago(1), []string{"hold"}),
+		"обещаны `Plans/900-первый.md` и `Plans/901-второй.md`")}
+
+	report(&buf, analyze(issues, testConfig()), 1, false)
+
+	out := buf.String()
+	if strings.Count(out, "#9") != 2 {
+		t.Fatalf("ожидались две строки про #9:\n%s", out)
+	}
+	if !strings.Contains(out, "ссылка на план, которого нет — 2") {
+		t.Fatalf("счётчик корзины не сошёлся с числом строк:\n%s", out)
 	}
 }
 
