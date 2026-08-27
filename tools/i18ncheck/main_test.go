@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+)
 
 func TestExtractGoKeys_TemplateLanguageFormsAndTranslationExpressions(t *testing.T) {
 	source := []byte("package sample\n\nconst tmpl = `" +
@@ -31,6 +35,36 @@ func TestExtractGoKeys_TemplateLanguageFormsAndTranslationExpressions(t *testing
 	for _, key := range keys {
 		if !want[key] {
 			t.Errorf("unexpected key %q in %q", key, keys)
+		}
+	}
+}
+
+// Язык, у которого пока есть только машинный ярус, обязан попадать в отчёт:
+// именно так приезжает каждый новый перевод (человеческий ярус появляется
+// позже, при ревью носителем). Отчёт, собранный по одному человеческому ярусу,
+// молчал бы о нём вовсе — и «языка нет» было бы не отличить от «язык переведён».
+func TestReportCoverage_ListsMachineOnlyLanguage(t *testing.T) {
+	keys := []string{"Записать", "Удалить"}
+	human := map[string]map[string]string{
+		"en": {"Записать": "Save", "Удалить": "Delete"},
+		"de": {"Записать": "Speichern"},
+	}
+	machine := map[string]map[string]string{
+		"de": {"Удалить": "Löschen"},
+		"be": {"Записать": "Запісаць"},
+	}
+
+	var out bytes.Buffer
+	reportCoverage(&out, keys, human, machine)
+
+	got := out.String()
+	for _, want := range []string{
+		"3 locales",
+		"  be: 2 не переведено человеком (1 закрыто машинным ярусом, 1 останется по-английски)\n",
+		"  de: 1 не переведено человеком (1 закрыто машинным ярусом, 0 останется по-английски)\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("отчёт не содержит %q:\n%s", want, got)
 		}
 	}
 }
