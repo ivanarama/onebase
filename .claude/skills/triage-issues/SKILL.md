@@ -21,6 +21,28 @@ description: Триаж открытых ишью ivanarama/onebase — клас
 `bug`/`enhancement`/`question`/`documentation`, `ready-fix`, `needs-decision`.
 Всё.
 
+## Окружение: `gh` без `--json` не работает
+
+В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Команда,
+которая тянет объект целиком, падает с
+`GraphQL: Projects (classic) is being deprecated … (projectCards)` — ошибка в
+stderr, вывода нет. Пустой вывод при этом легко принять за «комментариев нет»,
+поэтому проверяй код возврата. Правило: **всегда называй поля через `--json`.**
+
+| Не работает | Работает |
+|---|---|
+| `gh issue view <N>`, `--comments` | `gh issue view <N> --json title,body,labels,comments` |
+| `gh pr view <N>` | `gh pr view <N> --json labels,body,…` |
+| `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
+
+`gh issue edit` (метки на **ишью**), `gh issue list`, `gh pr list`, `gh pr diff`,
+`gh issue comment` работают как есть.
+
+**Метку после постановки сверь с ответом:** ответ POST содержит итоговый список
+меток объекта. `gh pr edit` ругался на неизвестное имя, REST — нет, поэтому
+опечатку в имени метки иначе не заметишь: узнаешь о ней только тем, что
+следующий этап не увидит объект.
+
 ## Процедура
 
 1. Синхронизация: `git fetch origin main`; если текущая ветка — `main`,
@@ -29,10 +51,11 @@ description: Триаж открытых ишью ivanarama/onebase — клас
 2. Кандидаты: `gh issue list --state open --limit 100 --json number,title,labels`.
    Отбрось ишью с метками `needs-decision`, `approved`, `ready-fix`, `in-work`,
    `hold`, а также те, где в комментариях уже есть маркер `<!-- pp:triage -->`
-   (проверка: `gh issue view <N> --comments`). Возьми до **5** штук, старые вперёд.
+   (проверка: `gh issue view <N> --json comments`). Возьми до **5** штук,
+   старые вперёд.
 
 3. По каждому ишью:
-   - прочитай целиком (`gh issue view <N> --comments`);
+   - прочитай целиком (`gh issue view <N> --json title,body,labels,comments`);
    - найди код по симптомам (grep по репо, `git log` по затронутым файлам);
    - попробуй воспроизвести: `go build ./...`, `go test` подозреваемого пакета,
      `./onebase check --project examples/trade` — если жалоба на прикладной слой;
