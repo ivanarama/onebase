@@ -303,6 +303,8 @@ func langName(code string) string {
 		return "O'zbekcha"
 	case "uk":
 		return "Українська"
+	case "be":
+		return "Беларуская"
 	case "tr":
 		return "Türkçe"
 	case "ro":
