@@ -1,12 +1,28 @@
+<div align="center">
+
 # OneBase
 
-**An open-source business application platform in Go.** Metadata describes your
-domain objects, a built-in DSL describes the logic, and a single binary runs the
-result on SQLite or PostgreSQL.
+**An open-source business application platform in Go.**
 
-> **Heads up: this project is Russian-first.** The DSL keywords, the admin UI and
-> nearly all documentation are in Russian, on purpose. This page explains what
-> OneBase is and whether it is for you. [Русский README →](README.md)
+Metadata describes your domain objects, a built-in DSL describes the logic,
+and a single binary runs the result on SQLite or PostgreSQL.
+
+[Русский](README.md) · **English**
+
+[Project site](https://onebase.ivantitov.tech) · [Live demo](https://demo.ivantitov.tech) · [Telegram](https://t.me/IvanTitovTech) · [Docs](QUICKSTART.md)
+
+[![Latest release](https://img.shields.io/github/v/release/ivanarama/onebase?label=release)](https://github.com/ivanarama/onebase/releases/latest)
+[![License MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+
+![Trade configuration dashboard: KPI tiles, charts, recent documents](docs/images/dashboard.png)
+
+</div>
+
+> **Heads up: this project is Russian-first.** The documentation, the examples
+> and the runtime messages are in Russian, on purpose — though the DSL itself
+> reads in either language, see [below](#is-the-language-really-russian). This
+> page explains what OneBase is and whether it is for you.
 
 ---
 
@@ -43,34 +59,89 @@ DSL is a deliberate near-clone of the 1C language — that is the whole point:
 the several hundred thousand developers who know that language can write
 `Если … Тогда … КонецЕсли` on day one, with no translation layer in their heads.
 
-Renaming keywords to English would not make the platform international; it would
-just break the one group it is genuinely useful to today. So the DSL stays
-Russian, and this page exists so that everyone else can at least tell what is
-going on here.
+Renaming those keywords outright would not make the platform international; it
+would just break the one group it is genuinely useful to today. So the Russian
+spelling stays the default — and an English spelling was added next to it rather
+than instead of it.
 
-What that means in practice:
+### Is the language really Russian?
+
+Only by default. Every keyword has an English synonym, and a module can be
+written entirely in English:
+
+```bsl
+Var total; total = 0;
+For each row in rows Do
+    If row.Qty > 0 And Not row.Cancelled Then
+        total = total + row.Qty;
+    EndIf;
+EndDo;
+Return total;
+```
+
+The same holds for the access objects (`Documents`, `Catalogs`, `Query`) and the
+built-in functions (`Message`, `Str`, `StrReplace`): 370 names of the language
+carry an English synonym. Mixing both spellings in one file is allowed and case
+does not matter, because these are synonyms in the lexer's keyword table, not a
+separate "English mode".
+
+What stays Russian is the surroundings, and that is the real barrier:
 
 | | Language |
 |---|---|
+| DSL keywords, built-in functions, access objects | **Both** — `If`/`Если`, `StrReplace`/`СтрЗаменить`, `Documents`/`Документы` |
+| Runtime and syntax error messages | Russian |
+| Type names in output (`Неопределено`, `Массив`) | Russian |
+| Documentation, example configurations | Russian, except this page |
 | Source code, comments, commit messages | Russian |
-| DSL keywords and built-in function names | Russian (most have English aliases: `СтрЗаменить` / `StrReplace`) |
 | Admin/user interface | 16 languages, English included |
-| Documentation | Russian, except this page |
 | REST API | English field names |
 
 ## Screenshots
 
-The managed-form designer:
+The dashboard above is a configuration at work, in a native window: monthly KPI
+tiles, charts, recent documents.
 
-<img alt="Form designer" src="https://github.com/user-attachments/assets/a462d454-5859-4ea1-bb73-267623d2c73e" width="820">
+The launcher — the entry point: SQLite and PostgreSQL bases, start/stop, and the
+configurator:
 
-Report composition builder:
+![Database launcher](docs/images/launcher.png)
 
-<img alt="Report composition" src="https://github.com/user-attachments/assets/a18faf82-867c-446b-b604-e48c60679f9d" width="820">
+A document form — tabs, a SlickGrid table part with item picking and
+recalculation, posting buttons, register movements in the header, attachments:
 
-The built-in LLM assistant, working against live application data:
+![Sales document form with a table part](docs/images/document-form.png)
 
-<img alt="AI assistant" src="https://github.com/user-attachments/assets/cbfba341-2222-48f8-b80b-4b3de64971e4" width="820">
+The built-in LLM assistant, answering against live application data — here it
+reads stock levels and margins, ranks what to reorder, and offers to draft the
+purchase order:
+
+![LLM assistant inside the application](docs/images/ai-assistant.png)
+
+The managed-form designer — a live canvas, element properties and event bindings
+on the right, with the form's YAML and module a tab away:
+
+![Managed-form designer](docs/images/form-designer.png)
+
+A report with grouping and per-level totals:
+
+![Report with grouping and totals](docs/images/report-result.png)
+
+Reports are composed, not hard-coded: the end user ticks which fields group and
+which are measures, adds filters, changes the styling and saves it as a personal
+variant. The configuration is untouched — the settings live in the database, per
+user:
+
+![End-user report settings: groupings, measures, filters, saved variants](docs/images/report-settings.png)
+
+## Try it without installing anything
+
+**[demo.ivantitov.tech](https://demo.ivantitov.tech)** — a deployed trade
+configuration with demo data. The login page offers a list of users, each with a
+different role and a different set of sections; the password for all of them is
+`12345`. Pick the first one (Демонов) if you have no reason to prefer another.
+The base runs in demo mode and resets every night at 02:00, so feel free to
+break things.
 
 ## Try it in three commands
 
@@ -94,10 +165,45 @@ website and a minimal teaching template.
 
 On Windows, run `onebase-gui.exe` instead for a native launcher window.
 
+## Two ways to build a configuration
+
+**As files under git.** The configuration is a folder of YAML and `.os` files
+(`config_source: file`) — an ordinary repository with branches, diffs, review
+and history. `onebase dev` serves it with hot reload: save a file and the open
+page re-reads itself, no refresh.
+
+**In the database, through the configurator.** The configuration lives in the
+`_onebase_config` table of the base itself (`config_source: database`) and is
+edited by a metadata tree and visual editors inside the launcher. The user never
+needs to know where a folder is — the base is one self-contained SQLite file.
+
+You can move between the two: the configurator's *Выгрузить* (export) writes the
+configuration out to a working folder and *Загрузить* (import) puts the edits
+back, so even a base that lives on a user's machine can be kept in git.
+
+## Built to be driven by an AI agent
+
+This is deliberate, not a marketing line:
+
+- **`onebase init` writes an `AGENTS.md` into the project** — 800 lines
+  generated from the platform itself: configuration layout, the working loop,
+  every DSL built-in, the metadata schema, the security model. An agent reads
+  the language instead of guessing it from examples. Refresh it later with
+  `onebase ai-guide --output AGENTS.md`.
+- **`onebase check` is real feedback.** It compiles *and executes* the modules'
+  queries, so it catches `no such column` before the base is ever started — the
+  agent gets a concrete error with a location, not a plausible-looking guess.
+- **`onebase mcp` exposes the same commands over MCP:** `check`, `query`,
+  `describe`, `config_diff`, `config_versions`, `fmt`, `procrun`. Read-only by
+  default; mutating tools are enabled one explicit flag at a time.
+- **The in-app LLM assistant** answers against live data, honouring the current
+  user's permissions.
+
 ## Where to look next
 
 | | |
 |---|---|
+| [onebase.ivantitov.tech](https://onebase.ivantitov.tech/docs.html) | searchable catalogue of everything the platform does, with a "currently in testing" filter (Russian) |
 | [`docs/dsl-reference.md`](docs/dsl-reference.md) | **the whole language on one page** — every built-in function, object method, language construct and query-language element, with signatures and examples. The most useful page here if you do not read Russian: the code samples speak for themselves |
 | [`docs/rest-api-v2.md`](docs/rest-api-v2.md) | REST API — English field names |
 | [`examples/`](examples/) | nine working configurations to read |
