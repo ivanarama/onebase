@@ -6,9 +6,11 @@ package cli
 // месте» мало: устаревшая документация вреднее отсутствующей — её не
 // перепроверяют. Здесь имена из руководства сверяются с теми словарями
 // платформы, которые для них и заведены: набором событий форм
-// (metadata.IsKnownFormEventType) и словарём контекста события табличной части
-// (metadata.FormTablePartContextVars). Переименовали событие или переменную —
-// тест назовёт разъехавшееся имя, а не молча оставит руководство врать.
+// (metadata.IsKnownFormEventType), перечнем событий, реально отправляемых
+// браузером (metadata.BrowserFormEvents), и словарём контекста события
+// табличной части (metadata.FormTablePartContextVars). Переименовали событие
+// или переменную — тест назовёт разъехавшееся имя, а не молча оставит
+// руководство врать.
 
 import (
 	"strings"
@@ -53,19 +55,85 @@ func TestAIGuide_ИменаСобытийФормЖивые(t *testing.T) {
 		}
 	}
 	// И наоборот: события, которые браузер действительно отправляет, обязаны
-	// быть перечислены. Список закрытый — это те же пары, что разрешает
-	// resolveBrowserFormEvent; выпавшее из таблицы событие никто не найдёт.
-	for _, event := range []metadata.FormEventType{
-		metadata.FormEventOnOpen, metadata.FormEventOnClick, metadata.FormEventOnChange,
-		metadata.FormEventStartChoice, metadata.FormEventOnChoice,
-		metadata.FormEventOnRowAdded, metadata.FormEventAfterRowAdd,
-		metadata.FormEventOnRowDeleted, metadata.FormEventOnRowChanged,
-		metadata.FormEventOnRowActivated,
-	} {
+	// быть перечислены. Перечень берётся из самой таблицы платформы
+	// (metadata.BrowserFormEvents — её же читает маршрутизатор событий), а не
+	// из рукописной копии: копия отставала бы молча, ради этого #1151 и заведена.
+	events := metadata.BrowserFormEvents()
+	if len(events) == 0 {
+		t.Fatal("metadata.BrowserFormEvents пуст — сторож руководства сверяет пустоту")
+	}
+	for _, event := range events {
 		if !strings.Contains(section, "`"+string(event)+"`") {
 			t.Errorf("раздел о событиях не упоминает %q, а браузер его отправляет", event)
 		}
 	}
+}
+
+// TestAIGuide_ТаблицаСобытийПоВидамЭлементов — таблица «Элемент | События»
+// сверяется с платформенной попарно, а не по общему набору имён. Проверка
+// набора ловит только выпавшее событие; пара «вид элемента → событие» врёт
+// иначе: событие названо в чужой строке, и на своём элементе читатель его не
+// ищет. Комментарий, который заявка #1151 признала обещающим больше проверки,
+// обещал именно пары.
+func TestAIGuide_ТаблицаСобытийПоВидамЭлементов(t *testing.T) {
+	section := guideSection(t, generateAIGuide(""), "## События управляемых форм")
+	documented := make(map[metadata.FormElementType]map[metadata.FormEventType]bool)
+	for _, line := range strings.Split(section, "\n") {
+		cells := markdownRowCells(line)
+		if len(cells) != 2 {
+			continue
+		}
+		var kinds []metadata.FormElementType
+		for _, name := range backquoted(cells[0]) {
+			if kind := metadata.FormElementType(name); metadata.IsKnownFormElementType(kind) {
+				kinds = append(kinds, kind)
+			}
+		}
+		if len(kinds) == 0 {
+			continue // заголовок таблицы, разделитель, строка не про элемент
+		}
+		for _, kind := range kinds {
+			if documented[kind] == nil {
+				documented[kind] = make(map[metadata.FormEventType]bool)
+			}
+			for _, name := range backquoted(cells[1]) {
+				if event := metadata.FormEventType(name); metadata.IsKnownFormEventType(event) {
+					documented[kind][event] = true
+				}
+			}
+		}
+	}
+
+	for _, kind := range metadata.KnownFormElementTypes() {
+		allowed := metadata.BrowserFormEventsFor(kind)
+		if len(allowed) == 0 {
+			continue // вид ничего не отправляет — в таблице руководства ему не место
+		}
+		if documented[kind] == nil {
+			t.Errorf("в таблице руководства нет строки про %q, а элемент отправляет %v", kind, allowed)
+			continue
+		}
+		for _, event := range allowed {
+			if !documented[kind][event] {
+				t.Errorf("таблица руководства не приписывает %q событие %q, а платформа его разрешает", kind, event)
+			}
+		}
+		for event := range documented[kind] {
+			if !metadata.BrowserFormEventAllowed(kind, event) {
+				t.Errorf("таблица руководства приписывает %q событие %q, которого платформа не разрешает", kind, event)
+			}
+		}
+	}
+}
+
+// markdownRowCells разбирает строку markdown-таблицы на ячейки; не-строка
+// таблицы даёт nil.
+func markdownRowCells(line string) []string {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+		return nil
+	}
+	return strings.Split(strings.Trim(line, "|"), "|")
 }
 
 // TestAIGuide_ПеременныеКонтекстаТЧИзСловаря — таблица переменных обработчика
