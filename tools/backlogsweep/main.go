@@ -220,6 +220,10 @@ func analyze(issues []issue, cfg config) []bucket {
 		title:  "заявки об одной работе, плана нет",
 		advice: "фиксер берёт заявку по одной и связи между ними не видит: написать план и оставить ведущую, остальным — hold со ссылкой",
 	}
+	holdPlanReady := bucket{
+		title:  "hold, а план уже влит",
+		advice: "работа разблокирована, метку никто не снял: вернуть approved ведущей заявке или закрыть, если передумали",
+	}
 	holdNoPlan := bucket{
 		title:  "hold без ссылки на план",
 		advice: "решение не оформлено: дописать ссылку на план или закрыть — иначе через месяц не отличить решённое от забытого",
@@ -265,6 +269,21 @@ func analyze(issues []issue, cfg config) []bucket {
 				holdStale.findings = append(holdStale.findings, finding{is,
 					fmt.Sprintf("без движения %d дн.", quiet)})
 			}
+			// Пауза «делаем планом» кончается в момент мержа плана — и ничем
+			// себя не проявляет: снять `hold` и вернуть `approved` может только
+			// человек, а ни один этап этого не делает и делать не должен
+			// (`approved` — его гейт). До этой проверки такая заявка выглядела
+			// образцовой: пауза оформлена, ссылка живая, — и молчала до порога
+			// «hold без движения», то есть восемь недель.
+			if cfg.plans.ok {
+				for _, ref := range refs {
+					if cfg.plans.inMain(ref) {
+						holdPlanReady.findings = append(holdPlanReady.findings, finding{is,
+							fmt.Sprintf("%s влит, а заявка всё ещё на паузе", ref)})
+						break
+					}
+				}
+			}
 		}
 
 		// Ссылку на несуществующий план проверяем у любой заявки, не только у
@@ -304,7 +323,7 @@ func analyze(issues []issue, cfg config) []bucket {
 	// Вторая по счёту, а не последняя: остальные корзины — про застой, где цена
 	// промедления это ещё неделя ожидания. Здесь автоматика не стоит, а активно
 	// делает не то — фиксер возьмёт обе заявки и заведёт две реализации одного.
-	return []bucket{unanswered, clusterNoPlan, holdNoPlan, planMissing, holdStale, decisionStale}
+	return []bucket{unanswered, clusterNoPlan, holdPlanReady, holdNoPlan, planMissing, holdStale, decisionStale}
 }
 
 // clusters — группы заявок об одной работе, на которую не написан план.
@@ -564,7 +583,22 @@ type plans struct {
 	files map[string]bool
 	nums  map[int]bool
 	slugs map[string]string // «nav-collapse» → «157-nav-collapse.md»
-	ok    bool
+	// mainFiles/mainNums — планы, уже лежащие в каталоге, то есть влитые.
+	// Планы из открытых PR сюда не попадают намеренно: заявка, ждущая
+	// ненаписанного или непринятого плана, ждёт законно, а вот заявка, ждущая
+	// плана, который уже в `main`, стоит зря.
+	mainFiles map[string]bool
+	mainNums  map[int]bool
+	ok        bool
+}
+
+// inMain — план назван и уже влит. Ссылка одним номером сверяется по номеру:
+// точнее сказать нечего, а промолчать здесь хуже, чем показать лишнее.
+func (p plans) inMain(ref planRef) bool {
+	if ref.File != "" {
+		return p.mainFiles[ref.File]
+	}
+	return p.mainNums[ref.Num]
 }
 
 func (p plans) has(ref planRef) bool {
@@ -605,9 +639,10 @@ func knownPlans(dir string, prFiles []string) plans {
 	if err != nil {
 		return plans{}
 	}
-	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{}, ok: true}
+	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{},
+		mainFiles: map[string]bool{}, mainNums: map[int]bool{}, ok: true}
 	for _, e := range entries {
-		p.remember(filepath.Base(e.Name()))
+		p.rememberMain(filepath.Base(e.Name()))
 	}
 	for _, path := range prFiles {
 		if dir, name := filepath.Split(path); strings.EqualFold(filepath.Clean(dir), "Plans") {
@@ -615,6 +650,20 @@ func knownPlans(dir string, prFiles []string) plans {
 		}
 	}
 	return p
+}
+
+// rememberMain — план из каталога: он и известен, и влит.
+func (p plans) rememberMain(name string) {
+	p.remember(name)
+	if !strings.HasSuffix(strings.ToLower(name), ".md") {
+		return
+	}
+	p.mainFiles[name] = true
+	if i := strings.IndexByte(name, '-'); i > 0 {
+		if n, err := strconv.Atoi(name[:i]); err == nil {
+			p.mainNums[n] = true
+		}
+	}
 }
 
 func (p plans) remember(name string) {

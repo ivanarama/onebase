@@ -14,9 +14,10 @@ func ago(d int) time.Time { return now.AddDate(0, 0, -d) }
 // testPlans — каталог из двух планов: 46 и 155 (155 занят «чужим» файлом,
 // ровно как в жизни — на этом ловится сверка по номеру вместо имени).
 func testPlans(prFiles ...string) plans {
-	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{}, ok: true}
+	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{},
+		mainFiles: map[string]bool{}, mainNums: map[int]bool{}, ok: true}
 	for _, name := range []string{"46-tablepart-commands-and-picker.md", "155-excel-print-template.md"} {
-		p.remember(name)
+		p.rememberMain(name) // каталог = влитые планы
 	}
 	for _, f := range prFiles {
 		p.remember(f)
@@ -515,5 +516,47 @@ func TestClusterReadsFullUrlReference(t *testing.T) {
 
 	if got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket)); len(got) != 1 {
 		t.Fatalf("ссылка полным адресом должна читаться так же, как #N, получено %v", got)
+	}
+}
+
+// Корзина «hold, а план уже влит» (#1181). Пауза «делаем планом» кончается в
+// момент мержа плана и ничем себя не проявляет: снять hold и вернуть approved
+// может только человек.
+
+const holdReadyBucket = "hold, а план уже влит"
+
+func TestHoldWithMergedPlanIsReported(t *testing.T) {
+	is := withBody(mk(1167, "scadapy", ago(1), []string{"question", "hold"}),
+		"делается Plans/46-tablepart-commands-and-picker.md")
+
+	fs := bucketByTitle(analyze([]issue{is}, testConfig()), holdReadyBucket)
+	if got := numbers(fs); len(got) != 1 || got[0] != 1167 {
+		t.Fatalf("ожидалась находка на #1167, получено %v", got)
+	}
+	if !strings.Contains(fs[0].detail, "влит") {
+		t.Fatalf("в находке должно быть сказано, что план влит: %q", fs[0].detail)
+	}
+}
+
+// План лежит в открытом PR — заявка ждёт законно, находки нет. Это и есть
+// граница между двумя случаями: «работа разблокирована» и «план ещё обсуждают».
+func TestHoldWithPlanOnlyInOpenPRIsNotReported(t *testing.T) {
+	cfg := testConfig()
+	cfg.plans = testPlans("159-wall-clock-date.md") // как из открытого PR
+	is := withBody(mk(1167, "scadapy", ago(1), []string{"question", "hold"}),
+		"делается Plans/159-wall-clock-date.md")
+
+	if got := numbers(bucketByTitle(analyze([]issue{is}, cfg), holdReadyBucket)); len(got) != 0 {
+		t.Fatalf("план из открытого PR не должен давать находку, получено %v", got)
+	}
+}
+
+// Заявка без hold к этой корзине отношения не имеет, даже если план назван.
+func TestMergedPlanWithoutHoldIsNotReported(t *testing.T) {
+	is := withBody(mk(1167, "scadapy", ago(1), []string{"question", "approved"}),
+		"делается Plans/46-tablepart-commands-and-picker.md")
+
+	if got := numbers(bucketByTitle(analyze([]issue{is}, testConfig()), holdReadyBucket)); len(got) != 0 {
+		t.Fatalf("заявка без hold не должна давать находку, получено %v", got)
 	}
 }
