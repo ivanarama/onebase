@@ -42,6 +42,75 @@ tableparts:
 	t.Fatalf("не найдено сообщение про pii в табличной части: %+v", res.Issues)
 }
 
+// Второе место, где признак не исполняется, — ресурсы и субконто регистра
+// БУХГАЛТЕРИИ. Предикатную сущность бухрегистра FieldDecisions видит, поэтому
+// умолчание fail-closed само по себе туда дотянулось бы; но списки проводок и
+// остатков (/ui/accountreg/*) не маскируют полей вовсе, и значение, закрытое в
+// отчёте, осталось бы открытым на соседней странице. Признак, защищающий через
+// раз, — не защита, а её видимость, поэтому отказ, а не тишина.
+//
+// Точка входа та же — RunFull: отказ обязан приходить из голого `onebase check`.
+func TestRunFull_RejectsPIIOnAccountRegisterField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "ресурс",
+			body: `name: БухУчёт
+accounts: Основной
+resources:
+  - name: Сумма
+    type: number
+    pii: true
+subconto:
+  - name: Контрагент
+    type: string
+`,
+			want: "ресурс Сумма",
+		},
+		{
+			name: "субконто",
+			body: `name: БухУчёт
+accounts: Основной
+resources:
+  - name: Сумма
+    type: number
+subconto:
+  - name: Контрагент
+    type: string
+    pii: true
+`,
+			want: "субконто Контрагент",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mkFile(t, filepath.Join(dir, "accounts", "основной.yaml"), `name: Основной
+accounts:
+  - code: "51"
+    name: Расчётные счета
+    kind: active
+`)
+			mkFile(t, filepath.Join(dir, "accountregs", "бухучёт.yaml"), tc.body)
+
+			res := RunFull(dir)
+
+			if res.OK {
+				t.Fatalf("RunFull вернул OK: pii на поле бухрегистра принят молча, %+v", res.Issues)
+			}
+			for _, is := range res.Issues {
+				if strings.Contains(is.Message, "списки проводок и остатков бухрегистра поля не маскируют") &&
+					strings.Contains(is.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("не найдено сообщение про pii у поля бухрегистра (%s): %+v", tc.want, res.Issues)
+		})
+	}
+}
+
 // Обратная сторона запрета: там, где маскирование признак исполняет, он обязан
 // проходить проверку без единого слова — иначе гейт превратится в запрет на сам
 // признак. Шапка объекта и измерение регистра накопления в одной конфигурации.
@@ -63,6 +132,23 @@ dimensions:
 resources:
   - name: Длительность
     type: number
+`)
+	// Бухрегистр без признака — рядом и в той же конфигурации: запрет обязан
+	// целиться в ключ `pii`, а не в сам бухрегистр.
+	mkFile(t, filepath.Join(dir, "accounts", "основной.yaml"), `name: Основной
+accounts:
+  - code: "51"
+    name: Расчётные счета
+    kind: active
+`)
+	mkFile(t, filepath.Join(dir, "accountregs", "бухучёт.yaml"), `name: БухУчёт
+accounts: Основной
+resources:
+  - name: Сумма
+    type: number
+subconto:
+  - name: Контрагент
+    type: string
 `)
 
 	res := RunFull(dir)
