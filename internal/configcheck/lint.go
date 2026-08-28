@@ -476,8 +476,10 @@ func reportYAMLSchema() *yamlLintSchema {
 		"titles": freeMap(),
 		// У отчёта «required» НЕТ намеренно: report.Param такого поля не знает,
 		// и разрешённый линтом ключ молча ничего бы не делал. Обязательность
-		// параметра пока только у обработок (processor.Param).
-		"params":      seq(with(obj("name", "type", "label", "options"), map[string]*yamlLintSchema{"labels": freeMap()})),
+		// параметра пока только у обработок (processor.Param). А вот «default»
+		// модель знает — параметр без значения получает умолчание, — поэтому
+		// ключ разрешён: иначе линт ругался бы на работающую возможность.
+		"params":      seq(with(obj("name", "type", "label", "options", "default"), map[string]*yamlLintSchema{"labels": freeMap()})),
 		"composition": composition,
 		"variants":    seq(with(obj("name"), map[string]*yamlLintSchema{"composition": composition})),
 	})

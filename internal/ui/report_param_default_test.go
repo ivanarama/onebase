@@ -1,17 +1,28 @@
 package ui
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	reportpkg "github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // Значение параметра отчёта по умолчанию. Раньше линтер ключ `default` принимал,
 // а модель отчёта его не знала: отчёт с необязательной датой молча приходил
 // пустым — «Срок < NULL» не выбирает ничего, и пользователь видел пустую таблицу
 // вместо просроченных задач.
+//
+// Правило одно на все точки сбора значений: умолчание подставляется, только
+// когда параметра в запросе НЕТ. Пустое значение — это выбор пользователя,
+// умолчание его не перебивает.
 
 func TestУмолчаниеПараметраОтчёта_ПодставляетсяКогдаЗначенияНет(t *testing.T) {
 	rep := &reportpkg.Report{Name: "ПросроченныеЗадачи", Params: []reportpkg.Param{
@@ -43,6 +54,43 @@ func TestУмолчаниеПараметраОтчёта_ЗначениеПол
 	}
 }
 
+// Очищенное поле — тоже выбор: пользователь снял отбор и ждёт отчёт без него.
+// Умолчание здесь не подставляется, иначе поле нельзя очистить вовсе.
+func TestУмолчаниеПараметраОтчёта_ОчищенноеПолеНеВозвращается(t *testing.T) {
+	rep := &reportpkg.Report{Name: "R", Params: []reportpkg.Param{
+		{Name: "НаДату", Type: "date", Default: "{{today}}"},
+	}}
+	form := url.Values{"НаДату": {""}}
+	r := reqWithChi("POST", "/ui/report/R", form, map[string]string{"name": "R"})
+
+	if got := reportParamValuesFromRequest(r, rep)["НаДату"]; got != nil {
+		t.Errorf("НаДату = %#v: умолчание вернулось в очищенное поле", got)
+	}
+}
+
+// Снятый флажок браузер не отправляет вовсе, поэтому по одному отсутствию ключа
+// «снял галку» неотличимо от «не задавал» — и умолчание true возвращало галку на
+// место сразу после того, как её сняли. Форма шлёт рядом с флажком скрытый
+// маркер __has.<имя>; по нему снятая галка остаётся снятой.
+func TestУмолчаниеПараметраОтчёта_СнятыйФлажокНеВозвращается(t *testing.T) {
+	rep := &reportpkg.Report{Name: "R", Params: []reportpkg.Param{
+		{Name: "ТолькоМои", Type: "bool", Default: "true"},
+	}}
+	form := url.Values{"__has.ТолькоМои": {"1"}}
+	r := reqWithChi("POST", "/ui/report/R", form, map[string]string{"name": "R"})
+
+	if got := reportParamValuesFromRequest(r, rep)["ТолькоМои"]; got != nil {
+		t.Errorf("ТолькоМои = %#v: умолчание вернуло снятую галку", got)
+	}
+
+	// Поставленная галка приходит как обычно.
+	form2 := url.Values{"__has.ТолькоМои": {"1"}, "ТолькоМои": {"true"}}
+	r2 := reqWithChi("POST", "/ui/report/R", form2, map[string]string{"name": "R"})
+	if got := reportParamValuesFromRequest(r2, rep)["ТолькоМои"]; got != "true" {
+		t.Errorf("ТолькоМои = %#v, ожидалось \"true\"", got)
+	}
+}
+
 func TestУмолчаниеПараметраОтчёта_ОбычнаяСтрокаНеРазворачивается(t *testing.T) {
 	// Умолчание без подстановки — просто значение.
 	p := reportpkg.Param{Name: "Состояние", Type: "string", Default: "ВРаботе"}
@@ -51,5 +99,83 @@ func TestУмолчаниеПараметраОтчёта_ОбычнаяСтро
 	}
 	if got := reportParamDefault(reportpkg.Param{Name: "X"}); got != "" {
 		t.Errorf("= %q, у параметра без умолчания ожидалось пусто", got)
+	}
+}
+
+// Умолчание видно ДО первого построения: страница параметров рендерится с ним, и
+// пользователь понимает, с чем поедет отчёт, и может это изменить.
+func TestУмолчаниеПараметраОтчёта_ВидноПриПервомОткрытииФормы(t *testing.T) {
+	rep := &reportpkg.Report{Name: "ПросроченныеЗадачи", Params: []reportpkg.Param{
+		{Name: "НаДату", Type: "date", Default: "{{today}}"},
+		{Name: "ТолькоМои", Type: "bool", Default: "true"},
+		{Name: "Снятый", Type: "bool", Default: "false"},
+	}}
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "report-default.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
+	s := &Server{store: db, reg: registry}
+
+	r := reqWithChi("GET", "/ui/report/ПросроченныеЗадачи", nil,
+		map[string]string{"name": "ПросроченныеЗадачи"})
+	w := httptest.NewRecorder()
+	s.reportForm(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("форма отчёта: код %d, тело %s", w.Code, w.Body.String())
+	}
+	out := w.Body.String()
+	сегодня := time.Now().Format("2006-01-02")
+	if !strings.Contains(out, `name="НаДату" value="`+сегодня+`"`) {
+		t.Errorf("поле «НаДату» открылось пустым, умолчание %q в форму не попало", сегодня)
+	}
+	if !strings.Contains(out, `name="ТолькоМои" value="true" checked`) {
+		t.Errorf("флажок с умолчанием true не отмечен при открытии формы")
+	}
+	// "false" — непустая строка, и без приведения к bool шаблон отметил бы галку.
+	if strings.Contains(out, `name="Снятый" value="true" checked`) {
+		t.Errorf("флажок с умолчанием false отмечен")
+	}
+	// Маркер-спутник обязателен у каждого флажка, иначе снятую галку не отличить
+	// от «параметр не задавали».
+	for _, want := range []string{`name="__has.ТолькоМои"`, `name="__has.Снятый"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в форме нет маркера %s", want)
+		}
+	}
+}
+
+// Ссылка выгрузки — снимок формы: в неё попадают все объявленные параметры,
+// включая пустые. Иначе выгрузка подставит умолчание туда, где на экране пусто,
+// и Excel разойдётся с таблицей.
+func TestУмолчаниеПараметраОтчёта_СсылкаВыгрузкиНесётПустыеПараметры(t *testing.T) {
+	rep := &reportpkg.Report{Name: "ПросроченныеЗадачи", Params: []reportpkg.Param{
+		{Name: "НаДату", Type: "date", Default: "{{today}}"},
+		{Name: "ТолькоМои", Type: "bool", Default: "true"},
+	}}
+	data := map[string]any{
+		"Report": rep,
+		// Пользователь очистил дату и снял галку.
+		"ParamValues":  map[string]any{"НаДату": nil, "ТолькоМои": nil},
+		"ReportParams": []reportParamUI{},
+		"Cfg":          Config{},
+		"Lang":         "ru",
+	}
+	var buf strings.Builder
+	if err := tmpl.ExecuteTemplate(&buf, "report-export-buttons", data); err != nil {
+		t.Fatalf("execute report-export-buttons: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		url.QueryEscape("НаДату") + "=&",
+		url.QueryEscape("ТолькоМои") + "=",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в ссылке выгрузки нет пустого параметра %q: %s", want, out)
+		}
 	}
 }
