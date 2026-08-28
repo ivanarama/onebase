@@ -14,9 +14,15 @@ type browserFormEventTarget struct {
 }
 
 type browserFormElementVisit struct {
-	element           *metadata.FormElement
-	parentTablePart   *metadata.FormElement
+	element         *metadata.FormElement
+	parentTablePart *metadata.FormElement
+	// effectiveReadOnly — нередактируемость по МЕТАДАННЫМ (своя и унаследованная).
+	// conditional — на отрисовку элемента влияет условие readonly_when/hidden_when
+	// своё или родительское. Для такого элемента метаданные больше не говорят,
+	// что увидел браузер: условие могло не отрисовать его вовсе либо отрисовать
+	// нередактируемым, а по метаданным он остаётся размещённым и editable.
 	effectiveReadOnly bool
+	conditional       bool
 }
 
 // resolveBrowserFormEvent is the single fail-closed server-side model of what
@@ -118,24 +124,28 @@ func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormEl
 	if form == nil || visit == nil {
 		return
 	}
-	var walk func([]*metadata.FormElement, *metadata.FormElement, bool)
-	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly bool) {
+	var walk func([]*metadata.FormElement, *metadata.FormElement, bool, bool)
+	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly, parentConditional bool) {
 		for _, element := range elements {
 			if element == nil {
 				continue
 			}
 			effectiveReadOnly := parentReadOnly || element.ReadOnly
+			conditional := parentConditional ||
+				strings.TrimSpace(element.HiddenWhen) != "" ||
+				strings.TrimSpace(element.ReadOnlyWhen) != ""
 			visit(browserFormElementVisit{
-				element: element, parentTablePart: parentTable, effectiveReadOnly: effectiveReadOnly,
+				element: element, parentTablePart: parentTable,
+				effectiveReadOnly: effectiveReadOnly, conditional: conditional,
 			})
 			nextTable := parentTable
 			if element.Kind == metadata.FormElementTablePart {
 				nextTable = element
 			}
-			walk(element.Children, nextTable, effectiveReadOnly)
+			walk(element.Children, nextTable, effectiveReadOnly, conditional)
 		}
 	}
-	walk(form.Elements, nil, false)
+	walk(form.Elements, nil, false, false)
 }
 
 func effectiveFormElementReadOnly(form *metadata.FormModule, target *metadata.FormElement) bool {

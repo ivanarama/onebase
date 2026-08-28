@@ -504,6 +504,31 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			set, _ := ctx["ElHidden"].(map[string]bool)
 			return set[el.Name]
 		},
+		// visibleFormPages — страницы набора СтраницыФормы, которые надо
+		// отрисовать. Отбор вынесен сюда, а не сделан внутри range, потому что
+		// заголовок вкладки и её содержимое связаны одним индексом
+		// (data-tab-idx ↔ data-tab-content), а активна всегда нулевая: пропуск
+		// внутри range разошёл бы нумерацию, а скрытая первая страница оставила
+		// бы форму вовсе без активной вкладки.
+		//
+		// Ветка СтраницыФормы обходит детей сама и шаблон managed-element для
+		// самой страницы не зовёт — значит и hidden_when для неё никто не
+		// спросит. Без этого условие на вкладке молча не работало: страница
+		// показывалась вместе с кнопкой и всем содержимым.
+		"visibleFormPages": func(ctx map[string]any, el *metadata.FormElement) []*metadata.FormElement {
+			if el == nil {
+				return nil
+			}
+			hidden, _ := ctx["ElHidden"].(map[string]bool)
+			var out []*metadata.FormElement
+			for _, page := range el.Children {
+				if page == nil || string(page.Kind) != "Страница" || hidden[page.Name] {
+					continue
+				}
+				out = append(out, page)
+			}
+			return out
+		},
 		// hasFormHandler — есть ли у формы (а не элемента) обработчик события.
 		// Используется в managed-шаблоне для авто-вызова ПриОткрытииФормы при
 		// загрузке страницы.

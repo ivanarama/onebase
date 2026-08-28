@@ -359,12 +359,26 @@ func formKeySubmitted(keys map[string]bool, name string) bool {
 	return keys[name] || keys[strings.ToLower(name)]
 }
 
+// managedFormCheckboxPresenceKey — префикс маркера присутствия редактируемого
+// Флажка. Скрытое поле рядом с флажком шаблон рисует давно (оно же служит
+// признаком присутствия булева параметра обработки), здесь оно читается как
+// ответ на вопрос «был ли этот флажок на отрисованной форме».
+const managedFormCheckboxPresenceKey = processorParamPresencePrefix
+
 // checkboxOmittedFields собирает поля сущности типа bool, отрисованные этой
 // формой как не-ReadOnly kind: Флажок. Только для них отсутствие ключа значит
 // «снято» — у ReadOnly-флажка контрол disabled, пользователь его не менял, и
 // восстановление обязано сработать. Обход рекурсивный: ГруппаФормы,
 // СтраницыФормы и Страница держат элементы в Children.
-func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) map[string]bool {
+//
+// У флажка, на который влияет условие (readonly_when/hidden_when своё или
+// родительское), метаданные больше не описывают отрисованную форму: скрытого
+// флажка в разметке нет вовсе, а нередактируемый отрисован disabled — браузер в
+// обоих случаях не шлёт ни значения, ни маркера. Считать это «снято» — молча
+// затирать реквизит ложью при каждой записи, поэтому для таких флажков решает
+// факт отправки маркера, а не размещение на форме. Это то же правило, по
+// которому managedFormTableSubmitted судит о табличных частях.
+func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity, submitted map[string]bool) map[string]bool {
 	out := make(map[string]bool)
 	if form == nil || entity == nil {
 		return out
@@ -378,6 +392,9 @@ func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) m
 			if strings.Count(el.DataPath, ".") <= 1 {
 				name := dpFieldName(el.DataPath)
 				if f, ok := entityFieldByName(entity, name); ok && f.Type == metadata.FieldTypeBool {
+					if visit.conditional && !formKeySubmitted(submitted, managedFormCheckboxPresenceKey+name) {
+						return
+					}
 					out[strings.ToLower(name)] = true
 				}
 			}
@@ -531,7 +548,7 @@ func (s *Server) restoreUnsubmittedFields(
 		return nil
 	}
 	submitted := submittedFormKeys(r)
-	checkboxes := checkboxOmittedFields(form, entity)
+	checkboxes := checkboxOmittedFields(form, entity, submitted)
 
 	// Есть ли вообще что восстанавливать — чтобы не ходить в БД зря.
 	need := false

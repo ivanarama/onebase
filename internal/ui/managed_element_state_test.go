@@ -314,3 +314,161 @@ func TestПростаяТаблица_МаркерОтличаетУдалени
 		t.Fatalf("строки скрытой простой таблицы потеряны при записи: %#v", rows)
 	}
 }
+
+// --- Флажок под условием ---------------------------------------------------
+// Тот же класс, что и у скрытой табличной части, только цена ошибки другая:
+// таблица теряла строки, а флажок молча переписывает реквизит в ложь. Браузер
+// не шлёт ключ ни когда галка снята, ни когда флажка на форме не было вовсе, —
+// значит по одному лишь размещению на форме эти случаи неразличимы.
+
+func заявкаСФлажком(скрытие, запрет string) *metadata.Entity {
+	флажок := &metadata.FormElement{
+		Kind: metadata.FormElementCheckbox, Name: "ФлагСогласовано",
+		DataPath: "Объект.Согласовано", HiddenWhen: скрытие, ReadOnlyWhen: запрет,
+	}
+	ent := &metadata.Entity{
+		Name: "ЗаявкаСФлажком", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "СтадияОформления", Type: metadata.FieldTypeString},
+			{Name: "Согласовано", Type: metadata.FieldTypeBool},
+		},
+	}
+	ent.Forms = []*metadata.FormModule{managedObjectForm(
+		fieldEl("ПолеСтадии", "Объект.СтадияОформления"), флажок)}
+	return ent
+}
+
+func заявкаСВзведённымФлажком(t *testing.T, ent *metadata.Entity, стадия string) (*Server, uuid.UUID) {
+	t.Helper()
+	srv, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"СтадияОформления": стадия, "Согласовано": true}, ent); err != nil {
+		t.Fatal(err)
+	}
+	return srv, id
+}
+
+func флажокЗаявки(t *testing.T, srv *Server, ent *metadata.Entity, id uuid.UUID) any {
+	t.Helper()
+	row, err := srv.store.GetByID(t.Context(), ent.Name, id, ent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row["Согласовано"]
+}
+
+func отрисоватьЗаявкуСФлажком(t *testing.T, ent *metadata.Entity, стадия string) string {
+	t.Helper()
+	return отрисоватьСУсловиями(t, ent, ent.Forms[0], map[string]string{
+		"СтадияОформления": стадия, "Согласовано": "true"})
+}
+
+func TestСкрытыйФлажок_ЗначениеПереживаетЗапись(t *testing.T) {
+	ent := заявкаСФлажком(`СтадияОформления = "Принята"`, "")
+	srv, id := заявкаСВзведённымФлажком(t, ent, "Принята")
+
+	html := отрисоватьЗаявкуСФлажком(t, ent, "Принята")
+	if strings.Contains(html, `name="_ob_present_Согласовано"`) {
+		t.Fatalf("скрытый флажок не должен отрисовывать маркер присутствия:\n%s", html)
+	}
+
+	// Ровно то, что уходит с этой формы: ни значения флажка, ни маркера.
+	записатьЗаявку(t, srv, ent, id, url.Values{"СтадияОформления": {"Принята"}})
+
+	if got := флажокЗаявки(t, srv, ent, id); !isTruthyStored(got) {
+		t.Fatalf("значение скрытого флажка затёрто записью: %#v", got)
+	}
+}
+
+func TestФлажокПодЗапретом_ЗначениеПереживаетЗапись(t *testing.T) {
+	// readonly_when — та же механика: контрол disabled, браузер молчит.
+	ent := заявкаСФлажком("", `СтадияОформления = "Принята"`)
+	srv, id := заявкаСВзведённымФлажком(t, ent, "Принята")
+
+	html := отрисоватьЗаявкуСФлажком(t, ent, "Принята")
+	if strings.Contains(html, `name="_ob_present_Согласовано"`) {
+		t.Fatalf("нередактируемый флажок не должен отрисовывать маркер:\n%s", html)
+	}
+
+	записатьЗаявку(t, srv, ent, id, url.Values{"СтадияОформления": {"Принята"}})
+
+	if got := флажокЗаявки(t, srv, ent, id); !isTruthyStored(got) {
+		t.Fatalf("значение запертого флажка затёрто записью: %#v", got)
+	}
+}
+
+func TestВидимыйФлажок_СнятиеГалкиВсёЖеРаботает(t *testing.T) {
+	// Обратная сторона: пока флажок на форме есть, отсутствие ключа значит
+	// «пользователь снял галку», и снятие обязано работать.
+	ent := заявкаСФлажком(`СтадияОформления = "Принята"`, "")
+	srv, id := заявкаСВзведённымФлажком(t, ent, "НаОформлении")
+
+	html := отрисоватьЗаявкуСФлажком(t, ent, "НаОформлении")
+	if !strings.Contains(html, `name="_ob_present_Согласовано"`) {
+		t.Fatalf("видимый флажок должен отрисовать маркер присутствия:\n%s", html)
+	}
+
+	записатьЗаявку(t, srv, ent, id, url.Values{
+		"СтадияОформления": {"НаОформлении"}, "_ob_present_Согласовано": {"1"}})
+
+	if got := флажокЗаявки(t, srv, ent, id); isTruthyStored(got) {
+		t.Fatalf("снятие галки не сработало: %#v", got)
+	}
+}
+
+// --- Страница внутри СтраницыФормы -----------------------------------------
+
+func заявкаСВкладками(скрытие string) *metadata.Entity {
+	ent := заявкаСоСтадией()
+	формаСУсловиями(ent, &metadata.FormElement{
+		Kind: metadata.FormElementPages, Name: "Ветки",
+		Children: []*metadata.FormElement{
+			{
+				Kind: metadata.FormElementPage, Name: "СтраницаОбзвона",
+				TitleMap: map[string]string{"ru": "Обзвон"}, HiddenWhen: скрытие,
+				Children: []*metadata.FormElement{fieldEl("ПолеУлица", "Объект.Улица")},
+			},
+			{
+				Kind: metadata.FormElementPage, Name: "СтраницаСогласования",
+				TitleMap: map[string]string{"ru": "Согласование"},
+				Children: []*metadata.FormElement{fieldEl("ПолеСтадии", "Объект.СтадияОформления")},
+			},
+		},
+	})
+	return ent
+}
+
+func TestСкрытаяСтраница_НиКнопкиВкладкиНиСодержимого(t *testing.T) {
+	// Самый естественный способ собрать сценарий «у задачи видна только своя
+	// ветка» — вкладки. Ветка СтраницыФормы обходит детей сама, поэтому шаблон
+	// элемента для самой страницы не вызывается и hidden_when для неё никто не
+	// спрашивал: страница показывалась целиком, вместе с кнопкой вкладки.
+	ent := заявкаСВкладками(`СтадияОформления = "Принята"`)
+
+	черновик := отрисоватьСУсловиями(t, ent, ent.Forms[0],
+		map[string]string{"СтадияОформления": "НаОформлении"})
+	if !strings.Contains(черновик, "Обзвон") || !strings.Contains(черновик, `data-tab-idx="1"`) {
+		t.Fatalf("черновик: обе вкладки должны быть видны\n%s", черновик)
+	}
+
+	принята := отрисоватьСУсловиями(t, ent, ent.Forms[0],
+		map[string]string{"СтадияОформления": "Принята"})
+	if strings.Contains(принята, "Обзвон") {
+		t.Errorf("принятая заявка: кнопка скрытой вкладки не должна отрисовываться\n%s", принята)
+	}
+	if strings.Contains(принята, `data-ob-el="ПолеУлица"`) {
+		t.Errorf("принятая заявка: содержимое скрытой вкладки не должно отрисовываться\n%s", принята)
+	}
+	// Нумерация оставшихся вкладок обязана остаться сплошной: кнопка и
+	// содержимое связаны индексом, а активна и раскрыта всегда нулевая.
+	if strings.Contains(принята, `data-tab-idx="1"`) || strings.Contains(принята, `data-tab-content="1"`) {
+		t.Errorf("после скрытия первой вкладки нумерация разошлась\n%s", принята)
+	}
+	if !strings.Contains(принята, `class="managed-tab-btn active" data-tab-idx="0"`) {
+		t.Errorf("оставшаяся вкладка должна быть активной\n%s", принята)
+	}
+	if !strings.Contains(принята, `data-tab-content="0" style="display:block"`) {
+		t.Errorf("содержимое оставшейся вкладки должно быть раскрыто\n%s", принята)
+	}
+}

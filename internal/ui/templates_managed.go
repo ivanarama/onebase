@@ -32,22 +32,22 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "СтраницыФормы"}}
   {{/* CSS активной вкладки вынесен в стиль managed-форм (см. в конце шаблона)
        чтобы inline-style не побеждал .active по приоритету. */}}
+  {{/* Страницы отбираются заранее: скрытая hidden_when вкладка не даёт ни
+       кнопки, ни содержимого, а нумерация оставшихся обязана быть сплошной —
+       кнопка и содержимое связаны индексом, и активна всегда нулевая. */}}
+  {{$pages := visibleFormPages $ctx $el}}
   <div class="managed-tabs" data-tabs="{{$el.Name}}">
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
-      {{range $i, $page := $el.Children}}
-        {{if eq (str $page.Kind) "Страница"}}
+      {{range $i, $page := $pages}}
         <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}">
           {{fieldTitleRU $page.TitleMap $page.Name}}
         </button>
-        {{end}}
       {{end}}
     </div>
-    {{range $i, $page := $el.Children}}
-      {{if eq (str $page.Kind) "Страница"}}
+    {{range $i, $page := $pages}}
       <div class="managed-tab-content" data-tab-content="{{$i}}" style="display:{{if eq $i 0}}block{{else}}none{{end}}">
         {{range $page.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
       </div>
-      {{end}}
     {{end}}
   </div>
 {{else if eq (str $el.Kind) "Страница"}}
