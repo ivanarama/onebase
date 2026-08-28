@@ -386,14 +386,55 @@ func checkboxOmittedFields(form *metadata.FormModule, entity *metadata.Entity) m
 	return out
 }
 
+// managedFormTableSubmitted — прислал ли браузер табличную часть в этом POST.
+// Смотрит на ПРИСУТСТВИЕ ключа, а не на его содержимое: пустой `tp_json.X`
+// значит «строк не осталось», а отсутствие ключа — «таблицы на отрисованной
+// форме не было» (скрыта hidden_when либо не размещена вовсе). Разница
+// существенная: в первом случае строки надо стереть, во втором — сохранить.
+//
+// Это то же правило, по которому restoreUnsubmittedFields решает судьбу
+// реквизита шапки. Табличные части шли по другому — по метаданным формы, — и
+// скрытая условием таблица затиралась пустым срезом при первой же записи.
+func managedFormTableSubmitted(keys map[string]bool, name string, source managedFormTablePayloadSource) bool {
+	switch source {
+	case managedFormTableJSONPayload:
+		// Скрытое поле tp_json.X шаблон рисует рядом с гридом всегда, когда
+		// таблица доступна на запись, — оно и есть признак присутствия.
+		return formKeySubmitted(keys, "tp_json."+name)
+	case managedFormTableNamedPayload:
+		// У простой таблицы (no_grid) строки и есть ключи tp.X.<i>.<колонка>,
+		// поэтому «строк не осталось» от «таблицы не было» отличает только
+		// маркер, который шаблон рисует рядом с таблицей.
+		if formKeySubmitted(keys, managedFormTablePresenceKey+name) {
+			return true
+		}
+		prefix := strings.ToLower("tp." + name + ".")
+		for key := range keys {
+			if strings.HasPrefix(strings.ToLower(key), prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// managedFormTablePresenceKey — префикс маркера присутствия простой (no_grid)
+// таблицы. Значение не используется, важен сам факт ключа в теле запроса.
+const managedFormTablePresenceKey = "tp_present."
+
 // restoreUneditableTableParts protects table parts which a managed form does
 // not allow the user to edit. For an existing object their persisted rows are
 // restored (partial-write preservation); for a new object forged rows are
 // removed. In both cases incomplete/forged browser state cannot reach form
 // hooks, Объект.Записать(), or the ordinary Save path. Server-side hooks remain
 // free to populate those tables after this boundary.
+//
+// «Не даёт править» — это не только readonly в метаданных, но и таблица,
+// которой на отрисованной форме не было: элемент, скрытый hidden_when, не
+// рендерится вовсе, и его строки в теле запроса не приходят.
 func (s *Server) restoreUneditableTableParts(
 	ctx context.Context,
+	r *http.Request,
 	entity *metadata.Entity,
 	form *metadata.FormModule,
 	id uuid.UUID,
@@ -408,8 +449,18 @@ func (s *Server) restoreUneditableTableParts(
 	if err != nil {
 		return err
 	}
+	var submitted map[string]bool
+	if r != nil {
+		submitted = submittedFormKeys(r)
+	}
 	for _, tablePart := range entity.TableParts {
-		editable[tablePart.Name] = authorities[tablePart.Name].source != 0
+		// Браузеру верим, только когда форма разрешает править таблицу И она
+		// действительно пришла в теле запроса. Результат hidden_when виден
+		// здесь именно фактом отправки: пересчитывать условие заново нельзя —
+		// пользователь мог тем же POST изменить поле, от которого оно зависит.
+		source := authorities[tablePart.Name].source
+		editable[tablePart.Name] = source != 0 &&
+			(submitted == nil || managedFormTableSubmitted(submitted, tablePart.Name, source))
 	}
 	for _, tablePart := range entity.TableParts {
 		if editable[tablePart.Name] {

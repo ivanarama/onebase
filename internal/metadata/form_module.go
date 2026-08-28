@@ -207,11 +207,11 @@ type FormElement struct {
 	// прилетает исключением уже при записи.
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
-	UseGrid         bool              `yaml:"use_grid,omitempty"`       // (устар.) SlickGrid теперь включён по умолчанию
-	NoGrid          bool              `yaml:"no_grid,omitempty"`        // отключить SlickGrid у ТЧ (вернуть простую таблицу)
-	AutoSum         bool              `yaml:"auto_sum,omitempty"`       // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
-	Hint            string            `yaml:"hint,omitempty"`           // всплывающая подсказка
-	Mask            string            `yaml:"mask,omitempty"`           // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
+	UseGrid      bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
+	NoGrid       bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
+	AutoSum      bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
+	Hint         string `yaml:"hint,omitempty"`     // всплывающая подсказка
+	Mask         string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
 	// InputMask — настоящая маска ввода: заполнители подставляются по мере
 	// набора, разделители ставятся сами (#763, п. 3). Отдельный ключ, потому что
 	// `mask` — это regexp, и переиспользовать его под шаблон значило бы сломать

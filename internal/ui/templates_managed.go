@@ -305,6 +305,10 @@ const tplManagedForm = `
       data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete"{{end}}>− Удалить строку</button>
   </div>
 {{else}}
+{{/* Маркер присутствия простой таблицы: строки — это ключи tp.X.<i>.<колонка>,
+     и удалив их все, браузер шлёт то же самое, что и форма, где таблицы вовсе
+     не было (скрыта hidden_when). Различает эти случаи только маркер. */}}
+{{if not $tpReadOnly}}<input type="hidden" name="tp_present.{{$tpName}}" value="1">{{end}}
 <table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
   data-ob-element="{{$el.Name}}"{{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}} data-ob-rowadd="1"{{end}}{{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}} data-ob-rowdel="1"{{end}}
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>

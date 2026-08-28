@@ -51,8 +51,8 @@ type formEventResponse struct {
 	// страницы: команда «Принять» замораживает реквизиты сразу, а форма
 	// продолжала показывать их редактируемыми.
 	ElementStates *elementStates `json:"elementStates,omitempty"`
-	Messages       []string                    `json:"messages,omitempty"`
-	Error          string                      `json:"error,omitempty"`
+	Messages      []string       `json:"messages,omitempty"`
+	Error         string         `json:"error,omitempty"`
 	// PickerData != nil — обработчик фазы 1 вызвал ПоказатьПодбор: клиент
 	// открывает модальный диалог мультивыбора вместо применения ТЧ (план 46).
 	PickerData *pickerPayload `json:"pickerData,omitempty"`
@@ -286,7 +286,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	if existingFormID != "" {
 		persistedID = obj.ID
 	}
-	if err := s.restoreUneditableTableParts(dslCtx, entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
+	if err := s.restoreUneditableTableParts(dslCtx, r, entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
 		opStatus = operationStatus(opCtx, err)
 		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
@@ -496,6 +496,10 @@ func (st formEventState) response(ok bool) formEventResponse {
 // В картах присутствует каждый элемент, у которого условие ОБЪЯВЛЕНО, — со
 // значением true или false: клиент должен уметь и снять запрет, а не только
 // поставить.
+//
+// Снять получается не всё: элемент, скрытый на момент отрисовки, в разметку не
+// попал, и показать его обратно клиенту нечем — hidden=false для него ничего не
+// изменит до перезагрузки страницы. Для readonly обе стороны рабочие.
 type elementStates struct {
 	ReadOnly map[string]bool `json:"readonly,omitempty"`
 	Hidden   map[string]bool `json:"hidden,omitempty"`
