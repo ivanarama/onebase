@@ -120,6 +120,12 @@ var (
 	// («оформлено планом 157», «по плану 46»), и без них проверка молчала бы
 	// ровно там, где она нужна.
 	planNumRe = regexp.MustCompile(`(?i)план(?:а|у|ом|е|ы|ов|ам|ами)?\s+(\d{1,3})`)
+
+	// issueRefRe — ссылка на соседнюю заявку: `#1167` или полным адресом.
+	// Второе написание не для полноты: GitHub сам разворачивает вставленную
+	// ссылку в текст комментария, и разбор, написанный по шаблону, чаще несёт
+	// именно её.
+	issueRefRe = regexp.MustCompile(`(?:#|/issues/)(\d{1,6})\b`)
 )
 
 // planRef — упоминание плана в тексте заявки. File пуст, если план назван
@@ -210,6 +216,10 @@ func analyze(issues []issue, cfg config) []bucket {
 		title:  "внешняя заявка без ответа",
 		advice: "автор ждёт: ответить по существу или закрыть с причиной — молчание дороже отказа",
 	}
+	clusterNoPlan := bucket{
+		title:  "заявки об одной работе, плана нет",
+		advice: "фиксер берёт заявку по одной и связи между ними не видит: написать план и оставить ведущую, остальным — hold со ссылкой",
+	}
 	holdNoPlan := bucket{
 		title:  "hold без ссылки на план",
 		advice: "решение не оформлено: дописать ссылку на план или закрыть — иначе через месяц не отличить решённое от забытого",
@@ -289,7 +299,103 @@ func analyze(issues []issue, cfg config) []bucket {
 		}
 	}
 
-	return []bucket{unanswered, holdNoPlan, planMissing, holdStale, decisionStale}
+	clusterNoPlan.findings = append(clusterNoPlan.findings, clusters(issues)...)
+
+	// Вторая по счёту, а не последняя: остальные корзины — про застой, где цена
+	// промедления это ещё неделя ожидания. Здесь автоматика не стоит, а активно
+	// делает не то — фиксер возьмёт обе заявки и заведёт две реализации одного.
+	return []bucket{unanswered, clusterNoPlan, holdNoPlan, planMissing, holdStale, decisionStale}
+}
+
+// clusters — группы заявок об одной работе, на которую не написан план.
+//
+// Признак — ВЗАИМНАЯ ссылка: заявки называют друг друга. Односторонних
+// упоминаний в живом треде полно («дубль #123», «см. #456», «как в #789»), и
+// корзина по ним состояла бы из шума. Взаимная ссылка почти всегда означает,
+// что разбор увидел общий корень и сказал это в обеих заявках, — как в #1167 и
+// #1169, откуда корзина и появилась.
+//
+// Берём только заявки из очереди фиксера (`approved` либо `ready-fix`, без
+// `hold` и `manual`): пара, где одна уже на паузе, автоматике не грозит. Пара,
+// где хоть одна ссылается на план, тоже не находка — работа уже оформлена.
+func clusters(issues []issue) []finding {
+	queue := make([]issue, 0, len(issues))
+	for _, is := range issues {
+		labels := labelSet(is)
+		if !labels["approved"] && !labels["ready-fix"] {
+			continue
+		}
+		if labels["hold"] || labels["manual"] || len(planRefs(is)) > 0 {
+			continue
+		}
+		queue = append(queue, is)
+	}
+
+	refs := make(map[int]map[int]bool, len(queue))
+	inQueue := make(map[int]bool, len(queue))
+	for _, is := range queue {
+		refs[is.Number] = issueRefs(is)
+		inQueue[is.Number] = true
+	}
+
+	// Связные компоненты по взаимным рёбрам: тройка заявок об одной работе —
+	// одна находка, а не три пары. Обход по возрастанию номера, чтобы отчёт не
+	// менял порядок от прогона к прогону.
+	sort.Slice(queue, func(i, j int) bool { return queue[i].Number < queue[j].Number })
+	seen := map[int]bool{}
+	var out []finding
+	for _, is := range queue {
+		if seen[is.Number] {
+			continue
+		}
+		group := []issue{is}
+		seen[is.Number] = true
+		for i := 0; i < len(group); i++ {
+			for _, other := range queue {
+				if seen[other.Number] || !inQueue[other.Number] {
+					continue
+				}
+				a, b := group[i].Number, other.Number
+				if refs[a][b] && refs[b][a] {
+					group = append(group, other)
+					seen[other.Number] = true
+				}
+			}
+		}
+		if len(group) < 2 {
+			continue
+		}
+		others := make([]string, 0, len(group)-1)
+		for _, g := range group[1:] {
+			others = append(others, "#"+strconv.Itoa(g.Number))
+		}
+		out = append(out, finding{group[0], fmt.Sprintf(
+			"ссылается на %s, и они на неё; все в очереди фиксера, плана нет",
+			strings.Join(others, ", "))})
+	}
+	return out
+}
+
+// issueRefs — номера заявок, названные в заголовке, теле и комментариях.
+// Собственный номер отбрасывается: заявка, цитирующая саму себя, встречается
+// в любом разборе и рёбер не образует.
+func issueRefs(is issue) map[int]bool {
+	out := map[int]bool{}
+	parts := make([]string, 0, len(is.Comments)+2)
+	parts = append(parts, is.Title, is.Body)
+	for _, c := range is.Comments {
+		parts = append(parts, c.Body)
+	}
+	for _, text := range parts {
+		for _, m := range issueRefRe.FindAllStringSubmatch(text, -1) {
+			n, err := strconv.Atoi(m[1])
+			if err != nil || n == is.Number {
+				continue
+			}
+			out[n] = true
+		}
+	}
+	return out
 }
 
 func report(w io.Writer, buckets []bucket, total int, truncated bool) {
