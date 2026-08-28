@@ -2826,7 +2826,7 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 		tr.emit("CAST(" + col + " AS NUMERIC)")
 		return
 	}
-	if tr.needsEmptyTextCoalesce(lower) {
+	if tr.needsEmptyTextCoalesce(lower, false) {
 		tr.emit("COALESCE(" + col + ", '')")
 		return
 	}
@@ -2839,8 +2839,13 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 // Незаполненный реквизит в прикладной модели — пустое значение, а не «неизвестно»:
 // `Состояние <> "Завершено"` для записи без состояния истинно. В SQL же
 // NULL <> 'Завершено' даёт NULL, и такие записи молча выпадали из отбора — ровно
-// те, ради которых пишут отчёты «что висит». COALESCE(поле,'') возвращает
-// сравнению ожидаемый смысл; заодно `Поле = ""` начинает находить незаполненные.
+// те, ради которых пишут отчёты «что висит». Обёртка возвращает сравнению
+// ожидаемый смысл; заодно `Поле = ""` начинает находить незаполненные:
+//
+//	COALESCE(состояние, '') <> 'Завершено'
+//
+// (Литерал пустой строки стоит блоком кода намеренно: в обычной строке
+// док-комментария gofmt заменяет две одиночные кавычки одной типографской.)
 //
 // Границы намеренные:
 //   - только строка и перечисление. У числа пустое значение — 0, и текущее
@@ -2849,8 +2854,18 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 //   - только рядом с «=», «<>», «!=»: колонка в списке выборки, в ГРУППИРОВАТЬ и
 //     в УПОРЯДОЧИТЬ остаётся собой, и NULL в выводе не подменяется пустой строкой.
 //   - алиас вывода (КАК ...) не колонка, его не трогаем.
-func (tr *translator) needsEmptyTextCoalesce(lower string) bool {
+//   - секцию ИЗ не трогаем: единственное сравнение там — условие соединения
+//     (ПО), а обёртка склеила бы в нём все незаполненные строки друг с другом.
+//     Неквалифицированная колонка в этой секции и так уходит в SQL как есть,
+//     так что правило одинаково для обеих записей.
+//
+// qualified — колонка записана через квалификатор (алиас.поле). Такая запись
+// занимает три токена, поэтому оператор слева стоит не вплотную к имени поля.
+func (tr *translator) needsEmptyTextCoalesce(lower string, qualified bool) bool {
 	if _, isAlias := tr.aliases[lower]; isAlias {
+		return false
+	}
+	if tr.section == sectionFrom {
 		return false
 	}
 	t, known := tr.colTypes[lower]
@@ -2858,7 +2873,11 @@ func (tr *translator) needsEmptyTextCoalesce(lower string) bool {
 		return false
 	}
 	idx := tr.pos - 1
-	return tr.equalityOpAt(idx+1) || tr.equalityOpAt(idx-1)
+	left := idx - 1
+	if qualified {
+		left = idx - 3 // <оператор> алиас . поле
+	}
+	return tr.equalityOpAt(idx+1) || tr.equalityOpAt(left)
 }
 
 func (tr *translator) equalityOpAt(idx int) bool {
@@ -2874,16 +2893,34 @@ func (tr *translator) equalityOpAt(idx int) bool {
 }
 
 // emitQualifiedColumn эмитит колонку после точки (алиас.поле). Для number на
-// SQLite оборачивает весь `алиас.поле` в CAST, забирая уже эмитнутые алиас и "."
-// из tr.parts (build() не ставит пробелов вокруг точки).
+// SQLite оборачивает весь `алиас.поле` в CAST, для текстового поля в сравнении —
+// в COALESCE; в обоих случаях забирает уже эмитнутые алиас и "." из tr.parts
+// (build() не ставит пробелов вокруг точки).
+//
+// Обёртки обязаны совпадать с теми, что ставит emitOwnColumn: один и тот же
+// отбор, записанный с алиасом источника и без него, обязан возвращать один и тот
+// же набор строк. Разойдись они — к потере записей добавилась бы
+// непоследовательность, а алиас в запросе с соединением обязателен.
 func (tr *translator) emitQualifiedColumn(col, lower string) {
-	if tr.needsNumberCast(lower) && len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
-		alias := tr.parts[len(tr.parts)-2]
-		tr.parts = tr.parts[:len(tr.parts)-2]
-		tr.emit("CAST(" + alias + "." + col + " AS NUMERIC)")
-		return
+	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
+		if tr.needsNumberCast(lower) {
+			tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
+			return
+		}
+		if tr.needsEmptyTextCoalesce(lower, true) {
+			tr.emit("COALESCE(" + tr.takeQualifier() + col + ", '')")
+			return
+		}
 	}
 	tr.emit(col)
+}
+
+// takeQualifier снимает с вывода уже эмитнутые «алиас .» и возвращает их текстом:
+// обёртка ставится вокруг всего `алиас.поле`, а не вокруг одного имени поля.
+func (tr *translator) takeQualifier() string {
+	alias := tr.parts[len(tr.parts)-2]
+	tr.parts = tr.parts[:len(tr.parts)-2]
+	return alias + "."
 }
 
 // preScanMainTable заранее (до основного прохода) находит имя основной таблицы
