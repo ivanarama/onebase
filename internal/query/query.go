@@ -2859,20 +2859,27 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 //     Неквалифицированная колонка в этой секции и так уходит в SQL как есть,
 //     так что правило одинаково для обеих записей.
 //
+// Секция берётся из пред-скана (sourceCtx), а не из бегущей tr.section. Бегущая —
+// одно поле на весь запрос: подзапрос в ИЗ переключает её своим ГДЕ и обратно уже
+// не возвращает, поэтому все последующие ПО оказывались под обёрткой — ровно тот
+// склеенный JOIN, ради которого секция ИЗ и выведена из-под правила. Пред-скан
+// ведёт секцию отдельно для каждого SELECT-кадра и снимает кадр на закрывающей
+// скобке, так что после подзапроса секция снова ИЗ.
+//
 // qualified — колонка записана через квалификатор (алиас.поле). Такая запись
 // занимает три токена, поэтому оператор слева стоит не вплотную к имени поля.
 func (tr *translator) needsEmptyTextCoalesce(lower string, qualified bool) bool {
 	if _, isAlias := tr.aliases[lower]; isAlias {
 		return false
 	}
-	if tr.section == sectionFrom {
+	idx := tr.pos - 1
+	if tr.sourceCtx.sectionAt(idx) == sectionFrom {
 		return false
 	}
 	t, known := tr.colTypes[lower]
 	if !known || (t != metadata.FieldTypeString && !metadata.IsEnum(t)) {
 		return false
 	}
-	idx := tr.pos - 1
 	left := idx - 1
 	if qualified {
 		left = idx - 3 // <оператор> алиас . поле
