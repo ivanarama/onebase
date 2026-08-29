@@ -13,6 +13,7 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
@@ -814,11 +815,25 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.HTML(b.String()) //nolint:gosec // G203: имена и значения пропущены через HTMLEscapeString
 		},
 		"reportParamQuery": func(params any, values map[string]any) string {
-			// Use reflection-free approach: just iterate over values map
 			parts := []string{}
-			for k, v := range values {
-				if v != nil && fmt.Sprintf("%v", v) != "" {
-					parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
+			if declared, ok := params.([]reportpkg.Param); ok {
+				// Ссылка выгрузки — снимок формы, поэтому в неё попадают ВСЕ
+				// объявленные параметры в порядке объявления, включая пустые.
+				// Пропустить пустой нельзя: «параметра в ссылке нет» означает
+				// «пользователь его не задавал», и выгрузка подставила бы туда
+				// значение по умолчанию — там, где на экране пусто.
+				for _, p := range declared {
+					val := ""
+					if v := values[p.Name]; v != nil {
+						val = fmt.Sprintf("%v", v)
+					}
+					parts = append(parts, url.QueryEscape(p.Name)+"="+url.QueryEscape(val))
+				}
+			} else {
+				for k, v := range values {
+					if v != nil && fmt.Sprintf("%v", v) != "" {
+						parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
+					}
 				}
 			}
 			if len(parts) == 0 {
@@ -2399,6 +2414,10 @@ const tplReport = `
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
     <div class="form-group" style="margin-bottom:0">
+      {{/* Снятый checkbox браузер не отправляет вовсе — маркер __has. говорит
+           серверу, что флажок на форме был, и снятую галку не заменят
+           значением по умолчанию. */}}
+      <input type="hidden" name="__has.{{$pname}}" value="1">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
         <span>{{$p.Label}}</span>
