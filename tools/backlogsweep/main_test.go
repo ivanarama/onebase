@@ -14,10 +14,9 @@ func ago(d int) time.Time { return now.AddDate(0, 0, -d) }
 // testPlans — каталог из двух планов: 46 и 155 (155 занят «чужим» файлом,
 // ровно как в жизни — на этом ловится сверка по номеру вместо имени).
 func testPlans(prFiles ...string) plans {
-	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{},
-		mainFiles: map[string]bool{}, mainNums: map[int]bool{}, ok: true}
+	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{}, ok: true}
 	for _, name := range []string{"46-tablepart-commands-and-picker.md", "155-excel-print-template.md"} {
-		p.rememberMain(name) // каталог = влитые планы
+		p.remember(name)
 	}
 	for _, f := range prFiles {
 		p.remember(f)
@@ -425,138 +424,5 @@ func TestRenamedPlanIsReportedAsMovedNotMissing(t *testing.T) {
 	}
 	if !strings.Contains(got[0].detail, "устарела") || !strings.Contains(got[0].detail, "157-nav-collapse.md") {
 		t.Fatalf("ожидалось «номер переехал», получено %q", got[0].detail)
-	}
-}
-
-// Дальше — корзина «заявки об одной работе, плана нет» (#1181). Фикстуры
-// повторяют настоящий случай: #1167 и #1169 назвали друг друга в разборе, обе
-// уехали в очередь фиксера, плана на них не было.
-
-const clusterBucket = "заявки об одной работе, плана нет"
-
-func TestClusterFoundWhenIssuesNameEachOther(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"question", "approved"}),
-		"сдвиг даты; точность «день» закрывает и #1169 — делать одной работой")
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"enhancement", "approved"}),
-		"время не нужно у даты рождения; та же дырка, что в #1167")
-
-	got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket))
-	if len(got) != 1 || got[0] != 1167 {
-		t.Fatalf("ожидалась одна находка на младшей заявке #1167, получено %v", got)
-	}
-}
-
-// Ссылка в одну сторону — самый частый вид упоминания («дубль #123», «см. #456»).
-// Если бы корзина считала находкой её, отчёт состоял бы из шума.
-func TestOneWayReferenceIsNotACluster(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"bug", "approved"}), "похоже на #1169")
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"bug", "approved"}), "время не нужно")
-
-	if got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket)); len(got) != 0 {
-		t.Fatalf("односторонняя ссылка не должна быть находкой, получено %v", got)
-	}
-}
-
-// Пара, где одна заявка уже на паузе, автоматике не грозит: фиксер отбрасывает
-// hold до выбора заявки.
-func TestClusterIgnoredWhenOneIsParked(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"question", "approved"}), "см. #1169")
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"enhancement", "hold"}), "см. #1167")
-
-	if got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket)); len(got) != 0 {
-		t.Fatalf("пара с hold не должна быть находкой, получено %v", got)
-	}
-}
-
-// Работа уже оформлена планом — находки нет. Ссылка живёт в комментарии, как в
-// жизни: план дописывают после разбора.
-func TestClusterIgnoredWhenPlanNamed(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"question", "approved"}), "см. #1169")
-	a.Comments = append(a.Comments, comment{Author: user{Login: "ivanarama"},
-		Body: "делается Plans/46-tablepart-commands-and-picker.md", CreatedAt: ago(1)})
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"enhancement", "approved"}), "см. #1167")
-
-	if got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket)); len(got) != 0 {
-		t.Fatalf("пара со ссылкой на план не должна быть находкой, получено %v", got)
-	}
-}
-
-// Заявка вне очереди фиксера (ни approved, ни ready-fix) рёбер не образует:
-// брать её никто не собирается.
-func TestClusterNeedsBothInFixerQueue(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"question", "approved"}), "см. #1169")
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"enhancement", "needs-decision"}), "см. #1167")
-
-	if got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket)); len(got) != 0 {
-		t.Fatalf("заявка вне очереди фиксера не должна давать находку, получено %v", got)
-	}
-}
-
-// Тройка — одна находка, а не три пары.
-func TestClusterOfThreeIsOneFinding(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"bug", "approved"}), "см. #1169 и #1170")
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"bug", "approved"}), "см. #1167")
-	c := withBody(mk(1170, "ivantit66", ago(1), []string{"bug", "ready-fix"}), "см. #1167")
-
-	fs := bucketByTitle(analyze([]issue{c, a, b}, testConfig()), clusterBucket)
-	if got := numbers(fs); len(got) != 1 || got[0] != 1167 {
-		t.Fatalf("ожидалась одна находка на #1167, получено %v", got)
-	}
-	if !strings.Contains(fs[0].detail, "#1169") || !strings.Contains(fs[0].detail, "#1170") {
-		t.Fatalf("в находке должны быть названы обе соседние заявки: %q", fs[0].detail)
-	}
-}
-
-// Ссылка полным адресом — то, во что GitHub разворачивает вставленную ссылку.
-func TestClusterReadsFullUrlReference(t *testing.T) {
-	a := withBody(mk(1167, "scadapy", ago(1), []string{"bug", "approved"}),
-		"см. https://github.com/ivanarama/onebase/issues/1169")
-	b := withBody(mk(1169, "ivantit66", ago(1), []string{"bug", "approved"}),
-		"см. https://github.com/ivanarama/onebase/issues/1167")
-
-	if got := numbers(bucketByTitle(analyze([]issue{a, b}, testConfig()), clusterBucket)); len(got) != 1 {
-		t.Fatalf("ссылка полным адресом должна читаться так же, как #N, получено %v", got)
-	}
-}
-
-// Корзина «hold, а план уже влит» (#1181). Пауза «делаем планом» кончается в
-// момент мержа плана и ничем себя не проявляет: снять hold и вернуть approved
-// может только человек.
-
-const holdReadyBucket = "hold, а план уже влит"
-
-func TestHoldWithMergedPlanIsReported(t *testing.T) {
-	is := withBody(mk(1167, "scadapy", ago(1), []string{"question", "hold"}),
-		"делается Plans/46-tablepart-commands-and-picker.md")
-
-	fs := bucketByTitle(analyze([]issue{is}, testConfig()), holdReadyBucket)
-	if got := numbers(fs); len(got) != 1 || got[0] != 1167 {
-		t.Fatalf("ожидалась находка на #1167, получено %v", got)
-	}
-	if !strings.Contains(fs[0].detail, "влит") {
-		t.Fatalf("в находке должно быть сказано, что план влит: %q", fs[0].detail)
-	}
-}
-
-// План лежит в открытом PR — заявка ждёт законно, находки нет. Это и есть
-// граница между двумя случаями: «работа разблокирована» и «план ещё обсуждают».
-func TestHoldWithPlanOnlyInOpenPRIsNotReported(t *testing.T) {
-	cfg := testConfig()
-	cfg.plans = testPlans("159-wall-clock-date.md") // как из открытого PR
-	is := withBody(mk(1167, "scadapy", ago(1), []string{"question", "hold"}),
-		"делается Plans/159-wall-clock-date.md")
-
-	if got := numbers(bucketByTitle(analyze([]issue{is}, cfg), holdReadyBucket)); len(got) != 0 {
-		t.Fatalf("план из открытого PR не должен давать находку, получено %v", got)
-	}
-}
-
-// Заявка без hold к этой корзине отношения не имеет, даже если план назван.
-func TestMergedPlanWithoutHoldIsNotReported(t *testing.T) {
-	is := withBody(mk(1167, "scadapy", ago(1), []string{"question", "approved"}),
-		"делается Plans/46-tablepart-commands-and-picker.md")
-
-	if got := numbers(bucketByTitle(analyze([]issue{is}, testConfig()), holdReadyBucket)); len(got) != 0 {
-		t.Fatalf("заявка без hold не должна давать находку, получено %v", got)
 	}
 }

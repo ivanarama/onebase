@@ -120,12 +120,6 @@ var (
 	// («оформлено планом 157», «по плану 46»), и без них проверка молчала бы
 	// ровно там, где она нужна.
 	planNumRe = regexp.MustCompile(`(?i)план(?:а|у|ом|е|ы|ов|ам|ами)?\s+(\d{1,3})`)
-
-	// issueRefRe — ссылка на соседнюю заявку: `#1167` или полным адресом.
-	// Второе написание не для полноты: GitHub сам разворачивает вставленную
-	// ссылку в текст комментария, и разбор, написанный по шаблону, чаще несёт
-	// именно её.
-	issueRefRe = regexp.MustCompile(`(?:#|/issues/)(\d{1,6})\b`)
 )
 
 // planRef — упоминание плана в тексте заявки. File пуст, если план назван
@@ -216,14 +210,6 @@ func analyze(issues []issue, cfg config) []bucket {
 		title:  "внешняя заявка без ответа",
 		advice: "автор ждёт: ответить по существу или закрыть с причиной — молчание дороже отказа",
 	}
-	clusterNoPlan := bucket{
-		title:  "заявки об одной работе, плана нет",
-		advice: "фиксер берёт заявку по одной и связи между ними не видит: написать план и оставить ведущую, остальным — hold со ссылкой",
-	}
-	holdPlanReady := bucket{
-		title:  "hold, а план уже влит",
-		advice: "работа разблокирована, метку никто не снял: вернуть approved ведущей заявке или закрыть, если передумали",
-	}
 	holdNoPlan := bucket{
 		title:  "hold без ссылки на план",
 		advice: "решение не оформлено: дописать ссылку на план или закрыть — иначе через месяц не отличить решённое от забытого",
@@ -269,21 +255,6 @@ func analyze(issues []issue, cfg config) []bucket {
 				holdStale.findings = append(holdStale.findings, finding{is,
 					fmt.Sprintf("без движения %d дн.", quiet)})
 			}
-			// Пауза «делаем планом» кончается в момент мержа плана — и ничем
-			// себя не проявляет: снять `hold` и вернуть `approved` может только
-			// человек, а ни один этап этого не делает и делать не должен
-			// (`approved` — его гейт). До этой проверки такая заявка выглядела
-			// образцовой: пауза оформлена, ссылка живая, — и молчала до порога
-			// «hold без движения», то есть восемь недель.
-			if cfg.plans.ok {
-				for _, ref := range refs {
-					if cfg.plans.inMain(ref) {
-						holdPlanReady.findings = append(holdPlanReady.findings, finding{is,
-							fmt.Sprintf("%s влит, а заявка всё ещё на паузе", ref)})
-						break
-					}
-				}
-			}
 		}
 
 		// Ссылку на несуществующий план проверяем у любой заявки, не только у
@@ -318,103 +289,7 @@ func analyze(issues []issue, cfg config) []bucket {
 		}
 	}
 
-	clusterNoPlan.findings = append(clusterNoPlan.findings, clusters(issues)...)
-
-	// Вторая по счёту, а не последняя: остальные корзины — про застой, где цена
-	// промедления это ещё неделя ожидания. Здесь автоматика не стоит, а активно
-	// делает не то — фиксер возьмёт обе заявки и заведёт две реализации одного.
-	return []bucket{unanswered, clusterNoPlan, holdPlanReady, holdNoPlan, planMissing, holdStale, decisionStale}
-}
-
-// clusters — группы заявок об одной работе, на которую не написан план.
-//
-// Признак — ВЗАИМНАЯ ссылка: заявки называют друг друга. Односторонних
-// упоминаний в живом треде полно («дубль #123», «см. #456», «как в #789»), и
-// корзина по ним состояла бы из шума. Взаимная ссылка почти всегда означает,
-// что разбор увидел общий корень и сказал это в обеих заявках, — как в #1167 и
-// #1169, откуда корзина и появилась.
-//
-// Берём только заявки из очереди фиксера (`approved` либо `ready-fix`, без
-// `hold` и `manual`): пара, где одна уже на паузе, автоматике не грозит. Пара,
-// где хоть одна ссылается на план, тоже не находка — работа уже оформлена.
-func clusters(issues []issue) []finding {
-	queue := make([]issue, 0, len(issues))
-	for _, is := range issues {
-		labels := labelSet(is)
-		if !labels["approved"] && !labels["ready-fix"] {
-			continue
-		}
-		if labels["hold"] || labels["manual"] || len(planRefs(is)) > 0 {
-			continue
-		}
-		queue = append(queue, is)
-	}
-
-	refs := make(map[int]map[int]bool, len(queue))
-	inQueue := make(map[int]bool, len(queue))
-	for _, is := range queue {
-		refs[is.Number] = issueRefs(is)
-		inQueue[is.Number] = true
-	}
-
-	// Связные компоненты по взаимным рёбрам: тройка заявок об одной работе —
-	// одна находка, а не три пары. Обход по возрастанию номера, чтобы отчёт не
-	// менял порядок от прогона к прогону.
-	sort.Slice(queue, func(i, j int) bool { return queue[i].Number < queue[j].Number })
-	seen := map[int]bool{}
-	var out []finding
-	for _, is := range queue {
-		if seen[is.Number] {
-			continue
-		}
-		group := []issue{is}
-		seen[is.Number] = true
-		for i := 0; i < len(group); i++ {
-			for _, other := range queue {
-				if seen[other.Number] || !inQueue[other.Number] {
-					continue
-				}
-				a, b := group[i].Number, other.Number
-				if refs[a][b] && refs[b][a] {
-					group = append(group, other)
-					seen[other.Number] = true
-				}
-			}
-		}
-		if len(group) < 2 {
-			continue
-		}
-		others := make([]string, 0, len(group)-1)
-		for _, g := range group[1:] {
-			others = append(others, "#"+strconv.Itoa(g.Number))
-		}
-		out = append(out, finding{group[0], fmt.Sprintf(
-			"ссылается на %s, и они на неё; все в очереди фиксера, плана нет",
-			strings.Join(others, ", "))})
-	}
-	return out
-}
-
-// issueRefs — номера заявок, названные в заголовке, теле и комментариях.
-// Собственный номер отбрасывается: заявка, цитирующая саму себя, встречается
-// в любом разборе и рёбер не образует.
-func issueRefs(is issue) map[int]bool {
-	out := map[int]bool{}
-	parts := make([]string, 0, len(is.Comments)+2)
-	parts = append(parts, is.Title, is.Body)
-	for _, c := range is.Comments {
-		parts = append(parts, c.Body)
-	}
-	for _, text := range parts {
-		for _, m := range issueRefRe.FindAllStringSubmatch(text, -1) {
-			n, err := strconv.Atoi(m[1])
-			if err != nil || n == is.Number {
-				continue
-			}
-			out[n] = true
-		}
-	}
-	return out
+	return []bucket{unanswered, holdNoPlan, planMissing, holdStale, decisionStale}
 }
 
 func report(w io.Writer, buckets []bucket, total int, truncated bool) {
@@ -583,22 +458,7 @@ type plans struct {
 	files map[string]bool
 	nums  map[int]bool
 	slugs map[string]string // «nav-collapse» → «157-nav-collapse.md»
-	// mainFiles/mainNums — планы, уже лежащие в каталоге, то есть влитые.
-	// Планы из открытых PR сюда не попадают намеренно: заявка, ждущая
-	// ненаписанного или непринятого плана, ждёт законно, а вот заявка, ждущая
-	// плана, который уже в `main`, стоит зря.
-	mainFiles map[string]bool
-	mainNums  map[int]bool
-	ok        bool
-}
-
-// inMain — план назван и уже влит. Ссылка одним номером сверяется по номеру:
-// точнее сказать нечего, а промолчать здесь хуже, чем показать лишнее.
-func (p plans) inMain(ref planRef) bool {
-	if ref.File != "" {
-		return p.mainFiles[ref.File]
-	}
-	return p.mainNums[ref.Num]
+	ok    bool
 }
 
 func (p plans) has(ref planRef) bool {
@@ -639,10 +499,9 @@ func knownPlans(dir string, prFiles []string) plans {
 	if err != nil {
 		return plans{}
 	}
-	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{},
-		mainFiles: map[string]bool{}, mainNums: map[int]bool{}, ok: true}
+	p := plans{files: map[string]bool{}, nums: map[int]bool{}, slugs: map[string]string{}, ok: true}
 	for _, e := range entries {
-		p.rememberMain(filepath.Base(e.Name()))
+		p.remember(filepath.Base(e.Name()))
 	}
 	for _, path := range prFiles {
 		if dir, name := filepath.Split(path); strings.EqualFold(filepath.Clean(dir), "Plans") {
@@ -650,20 +509,6 @@ func knownPlans(dir string, prFiles []string) plans {
 		}
 	}
 	return p
-}
-
-// rememberMain — план из каталога: он и известен, и влит.
-func (p plans) rememberMain(name string) {
-	p.remember(name)
-	if !strings.HasSuffix(strings.ToLower(name), ".md") {
-		return
-	}
-	p.mainFiles[name] = true
-	if i := strings.IndexByte(name, '-'); i > 0 {
-		if n, err := strconv.Atoi(name[:i]); err == nil {
-			p.mainNums[n] = true
-		}
-	}
 }
 
 func (p plans) remember(name string) {
