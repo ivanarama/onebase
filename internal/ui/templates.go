@@ -13,6 +13,7 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
@@ -483,6 +484,52 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			handler, ok := el.Handlers[metadata.FormEventType(eventName)]
 			return ok && strings.TrimSpace(handler) != ""
 		},
+		// elReadOnly / elHidden — итоговое состояние элемента управляемой формы
+		// с учётом условий readonly_when/hidden_when по полям записи. Условия
+		// вычисляются на сервере при отрисовке (и заново после каждого события
+		// формы), а шаблон только читает результат по имени элемента.
+		"elReadOnly": func(ctx map[string]any, el *metadata.FormElement) bool {
+			if el == nil {
+				return false
+			}
+			if el.ReadOnly {
+				return true
+			}
+			set, _ := ctx["ElReadOnly"].(map[string]bool)
+			return set[el.Name]
+		},
+		"elHidden": func(ctx map[string]any, el *metadata.FormElement) bool {
+			if el == nil {
+				return false
+			}
+			set, _ := ctx["ElHidden"].(map[string]bool)
+			return set[el.Name]
+		},
+		// visibleFormPages — страницы набора СтраницыФормы, которые надо
+		// отрисовать. Отбор вынесен сюда, а не сделан внутри range, потому что
+		// заголовок вкладки и её содержимое связаны одним индексом
+		// (data-tab-idx ↔ data-tab-content), а активна всегда нулевая: пропуск
+		// внутри range разошёл бы нумерацию, а скрытая первая страница оставила
+		// бы форму вовсе без активной вкладки.
+		//
+		// Ветка СтраницыФормы обходит детей сама и шаблон managed-element для
+		// самой страницы не зовёт — значит и hidden_when для неё никто не
+		// спросит. Без этого условие на вкладке молча не работало: страница
+		// показывалась вместе с кнопкой и всем содержимым.
+		"visibleFormPages": func(ctx map[string]any, el *metadata.FormElement) []*metadata.FormElement {
+			if el == nil {
+				return nil
+			}
+			hidden, _ := ctx["ElHidden"].(map[string]bool)
+			var out []*metadata.FormElement
+			for _, page := range el.Children {
+				if page == nil || string(page.Kind) != "Страница" || hidden[page.Name] {
+					continue
+				}
+				out = append(out, page)
+			}
+			return out
+		},
 		// hasFormHandler — есть ли у формы (а не элемента) обработчик события.
 		// Используется в managed-шаблоне для авто-вызова ПриОткрытииФормы при
 		// загрузке страницы.
@@ -768,11 +815,25 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.HTML(b.String()) //nolint:gosec // G203: имена и значения пропущены через HTMLEscapeString
 		},
 		"reportParamQuery": func(params any, values map[string]any) string {
-			// Use reflection-free approach: just iterate over values map
 			parts := []string{}
-			for k, v := range values {
-				if v != nil && fmt.Sprintf("%v", v) != "" {
-					parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
+			if declared, ok := params.([]reportpkg.Param); ok {
+				// Ссылка выгрузки — снимок формы, поэтому в неё попадают ВСЕ
+				// объявленные параметры в порядке объявления, включая пустые.
+				// Пропустить пустой нельзя: «параметра в ссылке нет» означает
+				// «пользователь его не задавал», и выгрузка подставила бы туда
+				// значение по умолчанию — там, где на экране пусто.
+				for _, p := range declared {
+					val := ""
+					if v := values[p.Name]; v != nil {
+						val = fmt.Sprintf("%v", v)
+					}
+					parts = append(parts, url.QueryEscape(p.Name)+"="+url.QueryEscape(val))
+				}
+			} else {
+				for k, v := range values {
+					if v != nil && fmt.Sprintf("%v", v) != "" {
+						parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
+					}
 				}
 			}
 			if len(parts) == 0 {
@@ -1455,6 +1516,11 @@ const tplIndex = `
 .w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:8px}
 .w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
 .w-kpi-sub{font-size:12px;color:#94a3b8;margin-top:6px}
+/* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
+   как ссылка — подчёркивание только при наведении, чтобы карточка не выглядела
+   пестрее соседних. */
+a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
+a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
 .w-list th{padding:6px 8px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;text-align:left;background:transparent}
@@ -1519,7 +1585,13 @@ const tplIndex = `
 {{end}}
 
 {{define "widget-kpi-body"}}
-  {{if .KPI}}<div class="w-kpi-value">{{.KPI.Display}}</div>{{else}}<div class="w-empty">нет данных</div>{{end}}
+  {{/* Со ссылкой (link:) значение становится переходом к списку/отчёту:
+       счётчик «в карантине: 3» должен открывать эту очередь, а не заставлять
+       искать её руками. Без link — прежняя некликабельная карточка. */}}
+  {{if .KPI}}
+    {{if .Link}}<a class="w-kpi-value w-kpi-link" href="{{.Link}}">{{.KPI.Display}}</a>
+    {{else}}<div class="w-kpi-value">{{.KPI.Display}}</div>{{end}}
+  {{else}}<div class="w-empty">нет данных</div>{{end}}
 {{end}}
 
 {{define "widget-list-body"}}
@@ -2342,6 +2414,10 @@ const tplReport = `
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
     <div class="form-group" style="margin-bottom:0">
+      {{/* Снятый checkbox браузер не отправляет вовсе — маркер __has. говорит
+           серверу, что флажок на форме был, и снятую галку не заменят
+           значением по умолчанию. */}}
+      <input type="hidden" name="__has.{{$pname}}" value="1">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
         <span>{{$p.Label}}</span>

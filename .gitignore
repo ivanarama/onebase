@@ -88,6 +88,9 @@ docs/*
 # не сработало бы, и новые заметки молча не попадали бы в коммит (#988, А3).
 !docs/releases/
 !docs/history/
+# Скриншоты для README. Каталог, а не маска — по той же причине, что выше:
+# правило `!docs/images/*.png` не сработает, git в исключённый каталог не зайдёт.
+!docs/images/
 
 # Генерируется `onebase langref`; сверяется тестом TestDSLReferenceUpToDate.
 !docs/dsl-reference.md

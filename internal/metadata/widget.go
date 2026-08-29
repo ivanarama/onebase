@@ -85,6 +85,11 @@ type Widget struct {
 	Items     []WidgetAction    `yaml:"items"`      // actions
 	Entities  []string          `yaml:"entities"`   // recent — filter to these entity names
 	Scope     string            `yaml:"scope"`      // recent: current_user | all
+	// Link — куда ведёт клик по карточке (kpi). Счётчик «в карантине: 3» без
+	// ссылки заставляет искать эту очередь руками; со ссылкой карточка сама
+	// открывает список с нужным отбором. Значение — внутренний путь приложения
+	// (начинается с «/»), внешние адреса не принимаются.
+	Link string `yaml:"link"`
 }
 
 // DisplayTitle возвращает заголовок виджета с учётом языка.

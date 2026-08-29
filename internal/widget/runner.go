@@ -46,6 +46,10 @@ type Result struct {
 
 	// actions
 	Actions []ActionLink
+
+	// Link — внутренний адрес, на который ведёт клик по карточке (см.
+	// metadata.Widget.Link). Пусто — карточка не кликабельна, как раньше.
+	Link string
 }
 
 // KPIResult holds the single numeric value rendered by a KPI widget.
@@ -178,7 +182,7 @@ func (r *Runner) Run(ctx context.Context, w *metadata.Widget) Result {
 }
 
 func (r *Runner) runOnce(ctx context.Context, w *metadata.Widget) Result {
-	res := Result{Name: w.Name, Type: string(w.Type), Title: w.Title}
+	res := Result{Name: w.Name, Type: string(w.Type), Title: w.Title, Link: safeWidgetLink(w.Link)}
 	switch w.Type {
 	case metadata.WidgetTypeKPI:
 		r.runKPI(ctx, w, &res)
@@ -634,6 +638,22 @@ func toFloat(v any) float64 {
 		return 0
 	}
 	return 0
+}
+
+// safeWidgetLink пропускает только ВНУТРЕННИЙ путь приложения. Карточку
+// дашборда настраивает конфигуратор, но пускать оттуда произвольный адрес
+// (внешний хост, javascript:, protocol-relative «//host») незачем: это ссылка
+// на свой же список или отчёт. Всё остальное отбрасывается — карточка просто
+// остаётся некликабельной.
+func safeWidgetLink(link string) string {
+	link = strings.TrimSpace(link)
+	if link == "" {
+		return ""
+	}
+	if !strings.HasPrefix(link, "/") || strings.HasPrefix(link, "//") {
+		return ""
+	}
+	return link
 }
 
 func formatKPI(v any, format string) string {

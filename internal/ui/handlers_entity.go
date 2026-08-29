@@ -753,7 +753,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			if err := s.restoreUneditableTableParts(r.Context(), entity, form, uuid.Nil, obj.TablePartRows, true); err != nil {
+			if err := s.restoreUneditableTableParts(r.Context(), r, entity, form, uuid.Nil, obj.TablePartRows, true); err != nil {
 				s.serverError(w, r, err)
 				return
 			}
@@ -1404,7 +1404,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		if err := s.restoreUneditableTableParts(r.Context(), entity, form, id, obj.TablePartRows, true); err != nil {
+		if err := s.restoreUneditableTableParts(r.Context(), r, entity, form, id, obj.TablePartRows, true); err != nil {
 			s.serverError(w, r, err)
 			return
 		}

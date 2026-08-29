@@ -2,12 +2,14 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/report/compose"
 )
 
 // pickManagedForm возвращает первую managed-форму нужного Kind из Entity.Forms
@@ -128,8 +130,26 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	if css := formConditionalCSS(form); css != "" {
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 	}
-	rows, _ := data["TablePartRows"].(map[string][]map[string]any)
 	entity, _ := data["Entity"].(*metadata.Entity)
+	header := managedFormHeaderValues(entity, data["Values"])
+
+	// Условная доступность элементов (readonly_when/hidden_when) — по полям
+	// ЗАПИСИ, поэтому считается здесь же, где известны Values, и заново после
+	// каждого события формы.
+	if s.interp != nil {
+		ro, hidden, warns := managedFormElementStates(form, header, newInterpEvaluator(s.interp))
+		if len(ro) > 0 {
+			data["ElReadOnly"] = ro
+		}
+		if len(hidden) > 0 {
+			data["ElHidden"] = hidden
+		}
+		if len(warns) > 0 {
+			data["FormWarnings"] = appendManagedFormWarnings(data["FormWarnings"], warns)
+		}
+	}
+
+	rows, _ := data["TablePartRows"].(map[string][]map[string]any)
 	// Виртуальные колонки заполняются здесь — в единственной точке подготовки
 	// данных управляемой формы. Любой путь рендера (новая запись, правка,
 	// повторный показ с ошибкой, событие формы) проходит через неё, поэтому
@@ -138,10 +158,71 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	if len(rows) == 0 || len(form.Conditional) == 0 || s.interp == nil {
 		return
 	}
-	warnings := applyManagedFormConditionalStyles(form, rows, managedFormHeaderValues(entity, data["Values"]), newInterpEvaluator(s.interp))
+	warnings := applyManagedFormConditionalStyles(form, rows, header, newInterpEvaluator(s.interp))
 	if len(warnings) > 0 {
 		data["FormWarnings"] = appendManagedFormWarnings(data["FormWarnings"], warnings)
 	}
+}
+
+// managedFormElementStates вычисляет состояние readonly/hidden каждого элемента
+// формы по полям записи. Возвращает множества имён элементов, которые должны
+// быть нередактируемы и скрыты, и предупреждения по нерабочим условиям.
+//
+// В карту readonly кладётся ИТОГОВОЕ состояние элемента — «условие ИЛИ
+// эффективный статический readonly», — а не одно условие. Карту применяет
+// клиент после каждого события формы, причём в обе стороны: значение false
+// снимает запрет. Пока в ней лежало голое условие, эти два ответа противоречили
+// друг другу у элемента, у которого есть и постоянный запрет (свой или
+// унаследованный от группы), и условие: сервер рисовал его нередактируемым, а
+// первое же событие формы его отпирало — постоянный запрет конфигурации
+// снимался одним нажатием кнопки. Эффективный статический readonly считает
+// walkBrowserFormElements — тот же обход, которым его берёт серверная отрисовка
+// ($ro в шаблоне managed-element).
+//
+// Ошибка вычисления НЕ скрывает и НЕ блокирует элемент: неверное условие — это
+// ошибка конфигурации, и молча запертое поле объяснить пользователю нечем.
+// Вместо этого условие игнорируется, а конфигуратор получает предупреждение на
+// форме — тем же способом, что и у условного оформления.
+func managedFormElementStates(form *metadata.FormModule, header map[string]any, ev compose.Evaluator) (map[string]bool, map[string]bool, []string) {
+	if form == nil || ev == nil {
+		return nil, nil, nil
+	}
+	ro := map[string]bool{}
+	hidden := map[string]bool{}
+	wc := &formWarnCollector{}
+	row := compose.Row(header)
+	eval := func(expr, kind, elName string) bool {
+		if strings.TrimSpace(expr) == "" {
+			return false
+		}
+		ok, err := ev.EvalBool(expr, row)
+		if err != nil {
+			wc.add(fmt.Sprintf("%s элемента «%s» («%s»): %v", kind, elName, expr, err))
+			return false
+		}
+		return ok
+	}
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if el == nil {
+			return
+		}
+		// В карту попадает КАЖДЫЙ элемент с условием — в том числе с ложным.
+		// Ответ события формы переносит эти карты на клиент, и без явного
+		// «false» он не смог бы снять запрет, когда условие перестало
+		// выполняться (отличить «условия нет» от «условие ложно» было бы нечем).
+		if strings.TrimSpace(el.ReadOnlyWhen) != "" {
+			// Условие считается всегда, даже под постоянным запретом: иначе
+			// сломанное выражение под readonly-группой молчало бы вместо
+			// предупреждения конфигуратору.
+			cond := eval(el.ReadOnlyWhen, "условие readonly_when", el.Name)
+			ro[el.Name] = cond || visit.effectiveReadOnly
+		}
+		if strings.TrimSpace(el.HiddenWhen) != "" {
+			hidden[el.Name] = eval(el.HiddenWhen, "условие hidden_when", el.Name)
+		}
+	})
+	return ro, hidden, wc.msgs
 }
 
 // unplacedCommands возвращает команды формы, НЕ размещённые вручную элементом
