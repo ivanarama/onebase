@@ -709,14 +709,14 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 			if _, isEntityField := entityFieldByName(entity, attr.Name); isEntityField {
 				continue
 			}
-			values[attr.Name] = r.FormValue(attr.Name)
+			values[attr.Name] = r.FormValue(attr.Name) //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 		}
 	}
 	if !isNew {
 		// A failed edit remains the same edit. Preserve the optimistic-lock
 		// token and object identity so a retry cannot silently degrade to an
 		// unversioned write and managed events keep their document context.
-		values["_version"] = r.FormValue("_version")
+		values["_version"] = r.FormValue("_version") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
 	}
 	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, managedForm)
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)

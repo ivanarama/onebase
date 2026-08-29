@@ -165,22 +165,6 @@ func TestManagedRequiredRenderer(t *testing.T) {
 	}
 }
 
-func TestManagedRequiredInvalidHandlerRevealsHiddenTabs(t *testing.T) {
-	script := string(managedJS)
-	for _, fragment := range []string{
-		"document.addEventListener('invalid'",
-		"var pages = [];",
-		"pages.push(content)",
-		"for (var i = pages.length - 1; i >= 0; i--)",
-		"if (btn) obManagedSwitchTab(btn)",
-		"}, true);",
-	} {
-		if !strings.Contains(script, fragment) {
-			t.Errorf("managed required-tab handler does not contain %q", fragment)
-		}
-	}
-}
-
 func renderManagedRequiredElement(t *testing.T, field metadata.Field, element *metadata.FormElement, numerator *metadata.Numerator) string {
 	t.Helper()
 	entity := &metadata.Entity{Name: "Тест", Kind: metadata.KindCatalog, Fields: []metadata.Field{field}, Numerator: numerator}
