@@ -708,6 +708,134 @@ func TestФлажокДинамическиЗапертСобытием_НеСб
 	}
 }
 
+// --- Постоянный запрет вместе с условием -----------------------------------
+// Карта состояний применяется клиентом в ОБЕ стороны, поэтому нести она обязана
+// итоговое состояние элемента, а не одно условие. У поля, на которое действуют
+// сразу постоянный readonly (свой или унаследованный от группы) и readonly_when,
+// эти два ответа расходятся ровно тогда, когда условие ложно: сервер рисует поле
+// нередактируемым, а голая ложь в карте первым же событием формы его отпирает.
+// Постоянный запрет конфигурации снимался бы одним нажатием кнопки на форме,
+// причём незаметно — на отрисовке всё правильно, ломается после события.
+
+func заявкаСГруппойПодЗапретом(t *testing.T) *metadata.Entity {
+	t.Helper()
+	ent := &metadata.Entity{
+		Name: "ЗаявкаСГруппой", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Улица", Type: metadata.FieldTypeString},
+			{Name: "СтадияОформления", Type: metadata.FieldTypeString},
+			{Name: "Комментарий", Type: metadata.FieldTypeString},
+		},
+	}
+	поле := &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеУлица",
+		DataPath: "Объект.Улица", ReadOnlyWhen: `СтадияОформления = "Принята"`,
+	}
+	// Условие на самой группе линт отклоняет (CheckFormReadOnlyWhen), а вот
+	// постоянный readonly у неё законен и наследуется детьми — сюда запрет и
+	// приходит.
+	группа := &metadata.FormElement{
+		Kind: metadata.FormElementGroupBox, Name: "ГруппаРеквизитов",
+		ReadOnly: true, Children: []*metadata.FormElement{поле},
+	}
+	form := managedObjectForm(группа,
+		fieldEl("ПолеСтадии", "Объект.СтадияОформления"),
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "КнопкаОтметить",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Отметить"},
+		})
+	form.EntityName = ent.Name
+	// Обработчик намеренно НЕ трогает стадию: условие остаётся ложным, и запрет
+	// на поле держится только постоянным readonly группы. Событие, меняющее
+	// стадию, дефект бы спрятало — условие стало бы истинным само по себе.
+	form.ProgramAST = mustParse(t, `
+Процедура Отметить()
+	Объект.Комментарий = "Отмечено";
+КонецПроцедуры
+`)
+	ent.Forms = []*metadata.FormModule{form}
+	return ent
+}
+
+// заявкаПодЗапретомПослеСобытия прогоняет публичную цепочку до карты состояний:
+// отрисовка карточки → нажатие кнопки. Возвращает контролы поля «Улица» ровно в
+// том виде, в каком их отдал шаблон, и ответ события.
+//
+// Стадия записи — «НаОформлении», то есть условие ЛОЖНО и запрет держится только
+// постоянным readonly группы: именно здесь два ответа и расходились.
+func заявкаПодЗапретомПослеСобытия(t *testing.T) ([]managedBrowserControl, formEventResponse) {
+	t.Helper()
+	ent := заявкаСГруппойПодЗапретом(t)
+	srv, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{
+		"Улица": "Ленина 1", "СтадияОформления": "НаОформлении"}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	formRequest := reqWithChi(http.MethodGet, "/ui/catalog/"+ent.Name+"/"+id.String(), nil,
+		map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+	formResponse := httptest.NewRecorder()
+	srv.formEdit(formResponse, formRequest)
+	if formResponse.Code != http.StatusOK {
+		t.Fatalf("публичная отрисовка формы: статус=%d body=%s", formResponse.Code, formResponse.Body.String())
+	}
+	controls := managedCheckboxControls(t, formResponse.Body.String(), "ПолеУлица")
+	if улица := managedControlByName(t, controls, "Улица"); !улица.ReadOnly {
+		t.Fatalf("сервер обязан отрисовать поле под readonly-группой нередактируемым: %#v", улица)
+	}
+
+	eventBody := successfulManagedControls(controls)
+	eventBody.Set("_id", id.String())
+	eventBody.Set("_element", "КнопкаОтметить")
+	eventBody.Set("_event", string(metadata.FormEventOnClick))
+	eventBody.Set("_kind", "object")
+	eventBody.Set("СтадияОформления", "НаОформлении")
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, eventBody).Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("событие формы завершилось ошибкой: %q", resp.Error)
+	}
+	if stage, _ := resp.Values["СтадияОформления"].(string); stage != "НаОформлении" {
+		t.Fatalf("обработчик не должен менять стадию — иначе условие станет истинным само: %#v", resp.Values)
+	}
+	return controls, resp
+}
+
+func TestПостоянныйЗапрет_НеСнимаетсяСобытиемФормы(t *testing.T) {
+	_, resp := заявкаПодЗапретомПослеСобытия(t)
+	if resp.ElementStates == nil || !resp.ElementStates.ReadOnly["ПолеУлица"] {
+		t.Fatalf("карта состояний обязана нести итоговый запрет, а не ложное условие: %#v", resp.ElementStates)
+	}
+}
+
+// Тот же запрет, но проверенный настоящим клиентским кодом. Вынесен отдельным
+// тестом намеренно: applyManagedElementStatesInNode без node уходит в t.Skip, а
+// он утащил бы за собой и серверную проверку выше — регрессия перестала бы
+// сторожиться там, где node нет.
+func TestПостоянныйЗапрет_КлиентНеОтпираетПоле(t *testing.T) {
+	controls, resp := заявкаПодЗапретомПослеСобытия(t)
+	applied := applyManagedElementStatesInNode(t, controls, resp.ElementStates)
+	if улица := managedControlByName(t, applied.Controls, "Улица"); !улица.ReadOnly {
+		t.Fatalf("applyElementStates снял постоянный запрет с поля: %#v", улица)
+	}
+}
+
+func TestУсловныйЗапретБезПостоянного_ВсёЕщёСнимается(t *testing.T) {
+	// Обратная сторона: там, где постоянного запрета нет, ложное условие обязано
+	// по-прежнему отпирать поле, иначе починка выше просто заперла бы всё.
+	ent := заявкаСГруппойПодЗапретом(t)
+	ent.Forms[0].Elements[0].ReadOnly = false
+
+	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
+	st := s.formElementStates(ent.Forms[0], ent, map[string]any{"СтадияОформления": "НаОформлении"})
+	if st == nil {
+		t.Fatal("состояния не рассчитаны, ожидалась карта с ложным условием")
+	}
+	if v, есть := st.ReadOnly["ПолеУлица"]; !есть || v {
+		t.Errorf("ReadOnly[ПолеУлица] = (%v, есть=%v), ожидалось (false, есть=true)", v, есть)
+	}
+}
+
 // --- Страница внутри СтраницыФормы -----------------------------------------
 
 func заявкаСВкладками(скрытие string) *metadata.Entity {

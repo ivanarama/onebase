@@ -164,9 +164,20 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	}
 }
 
-// managedFormElementStates вычисляет условия readonly_when/hidden_when каждого
-// элемента формы по полям записи. Возвращает множества имён элементов, которые
-// должны быть нередактируемы и скрыты, и предупреждения по нерабочим условиям.
+// managedFormElementStates вычисляет состояние readonly/hidden каждого элемента
+// формы по полям записи. Возвращает множества имён элементов, которые должны
+// быть нередактируемы и скрыты, и предупреждения по нерабочим условиям.
+//
+// В карту readonly кладётся ИТОГОВОЕ состояние элемента — «условие ИЛИ
+// эффективный статический readonly», — а не одно условие. Карту применяет
+// клиент после каждого события формы, причём в обе стороны: значение false
+// снимает запрет. Пока в ней лежало голое условие, эти два ответа противоречили
+// друг другу у элемента, у которого есть и постоянный запрет (свой или
+// унаследованный от группы), и условие: сервер рисовал его нередактируемым, а
+// первое же событие формы его отпирало — постоянный запрет конфигурации
+// снимался одним нажатием кнопки. Эффективный статический readonly считает
+// walkBrowserFormElements — тот же обход, которым его берёт серверная отрисовка
+// ($ro в шаблоне managed-element).
 //
 // Ошибка вычисления НЕ скрывает и НЕ блокирует элемент: неверное условие — это
 // ошибка конфигурации, и молча запертое поле объяснить пользователю нечем.
@@ -191,21 +202,25 @@ func managedFormElementStates(form *metadata.FormModule, header map[string]any, 
 		}
 		return ok
 	}
-	form.Walk(func(el *metadata.FormElement) bool {
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
 		if el == nil {
-			return true
+			return
 		}
 		// В карту попадает КАЖДЫЙ элемент с условием — в том числе с ложным.
 		// Ответ события формы переносит эти карты на клиент, и без явного
 		// «false» он не смог бы снять запрет, когда условие перестало
 		// выполняться (отличить «условия нет» от «условие ложно» было бы нечем).
 		if strings.TrimSpace(el.ReadOnlyWhen) != "" {
-			ro[el.Name] = eval(el.ReadOnlyWhen, "условие readonly_when", el.Name)
+			// Условие считается всегда, даже под постоянным запретом: иначе
+			// сломанное выражение под readonly-группой молчало бы вместо
+			// предупреждения конфигуратору.
+			cond := eval(el.ReadOnlyWhen, "условие readonly_when", el.Name)
+			ro[el.Name] = cond || visit.effectiveReadOnly
 		}
 		if strings.TrimSpace(el.HiddenWhen) != "" {
 			hidden[el.Name] = eval(el.HiddenWhen, "условие hidden_when", el.Name)
 		}
-		return true
 	})
 	return ro, hidden, wc.msgs
 }
