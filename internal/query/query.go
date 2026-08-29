@@ -2826,7 +2826,7 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 		tr.emit("CAST(" + col + " AS NUMERIC)")
 		return
 	}
-	if tr.needsEmptyTextCoalesce(lower, false) {
+	if tr.needsEmptyTextCoalesce(lower, "") {
 		tr.emit("COALESCE(" + col + ", '')")
 		return
 	}
@@ -2858,6 +2858,8 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 //     (ПО), а обёртка склеила бы в нём все незаполненные строки друг с другом.
 //     Неквалифицированная колонка в этой секции и так уходит в SQL как есть,
 //     так что правило одинаково для обеих записей.
+//   - только ОСНОВНОЙ источник запроса (см. isMainSourceColumn). Поле
+//     присоединённой таблицы обёртки не получает.
 //
 // Секция берётся из пред-скана (sourceCtx), а не из бегущей tr.section. Бегущая —
 // одно поле на весь запрос: подзапрос в ИЗ переключает её своим ГДЕ и обратно уже
@@ -2866,9 +2868,10 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 // ведёт секцию отдельно для каждого SELECT-кадра и снимает кадр на закрывающей
 // скобке, так что после подзапроса секция снова ИЗ.
 //
-// qualified — колонка записана через квалификатор (алиас.поле). Такая запись
-// занимает три токена, поэтому оператор слева стоит не вплотную к имени поля.
-func (tr *translator) needsEmptyTextCoalesce(lower string, qualified bool) bool {
+// qualifier — квалификатор колонки (алиас.поле), пустая строка для колонки без
+// него. Запись с квалификатором занимает три токена, поэтому оператор слева
+// стоит не вплотную к имени поля.
+func (tr *translator) needsEmptyTextCoalesce(lower, qualifier string) bool {
 	if _, isAlias := tr.aliases[lower]; isAlias {
 		return false
 	}
@@ -2876,15 +2879,56 @@ func (tr *translator) needsEmptyTextCoalesce(lower string, qualified bool) bool 
 	if tr.sourceCtx.sectionAt(idx) == sectionFrom {
 		return false
 	}
+	if !tr.isMainSourceColumn(idx, qualifier) {
+		return false
+	}
 	t, known := tr.colTypes[lower]
 	if !known || (t != metadata.FieldTypeString && !metadata.IsEnum(t)) {
 		return false
 	}
 	left := idx - 1
-	if qualified {
+	if qualifier != "" {
 		left = idx - 3 // <оператор> алиас . поле
 	}
 	return tr.equalityOpAt(idx+1) || tr.equalityOpAt(left)
+}
+
+// isMainSourceColumn — принадлежит ли колонка ОСНОВНОМУ источнику своего
+// SELECT-scope.
+//
+// Граница нужна потому, что tr.colTypes знает типы полей только первого
+// источника запроса: buildColTypes добавляет его поля и сразу выходит. Тип для
+// колонки присоединённой таблицы там либо не находится вовсе, либо — при
+// совпадении имён — находится ЧУЖОЙ. Второе хуже первого: `Заявка.Код` строка,
+// `Клиент.Код` число, и отбор `ГДЕ К.Код <> 0` уезжал в
+//
+//	COALESCE(к.код, '') <> 0
+//
+// На SQLite это безвредно (number хранится как TEXT), а на PostgreSQL number —
+// NUMERIC, нетипизированный литерал пустой строки приводится к нему, и запрос
+// падает на этапе плана: работавший до правила отбор переставал работать совсем.
+//
+// (Литерал пустой строки стоит блоком кода намеренно: в обычной строке
+// док-комментария gofmt заменяет две одиночные кавычки одной типографской.)
+//
+// Тем же ограничением снимается склейка в соединении, записанном запятой
+// (ИЗ A КАК Т, B КАК К ГДЕ Т.Поле = К.Поле): секция там ГДЕ, а не ИЗ, поэтому
+// по секции такое условие не отсекалось, и обёртка с обеих сторон приравнивала
+// незаполненное к незаполненному.
+//
+// Цена границы названа честно: отбор по текстовому полю ПРИСОЕДИНЁННОЙ таблицы
+// незаполненные значения по-прежнему теряет (#1183). Закрыть это можно только
+// типизацией колонок по алиасу источника — отдельная работа по компилятору,
+// которая заодно чинит ту же дырку в needsNumberCast.
+func (tr *translator) isMainSourceColumn(idx int, qualifier string) bool {
+	if qualifier == "" {
+		return true // колонка без квалификатора относится к основному источнику
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	if !ok || scope.mainTable == "" {
+		return false
+	}
+	return strings.EqualFold(qualifier, scope.mainTable)
 }
 
 func (tr *translator) equalityOpAt(idx int) bool {
@@ -2904,17 +2948,18 @@ func (tr *translator) equalityOpAt(idx int) bool {
 // в COALESCE; в обоих случаях забирает уже эмитнутые алиас и "." из tr.parts
 // (build() не ставит пробелов вокруг точки).
 //
-// Обёртки обязаны совпадать с теми, что ставит emitOwnColumn: один и тот же
-// отбор, записанный с алиасом источника и без него, обязан возвращать один и тот
-// же набор строк. Разойдись они — к потере записей добавилась бы
-// непоследовательность, а алиас в запросе с соединением обязателен.
+// Обёртки обязаны совпадать с теми, что ставит emitOwnColumn для колонки ТОГО ЖЕ
+// источника: один и тот же отбор, записанный с алиасом основного источника и без
+// него, обязан возвращать один и тот же набор строк. Разойдись они — к потере
+// записей добавилась бы непоследовательность, а алиас в запросе с соединением
+// обязателен.
 func (tr *translator) emitQualifiedColumn(col, lower string) {
 	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
 		if tr.needsNumberCast(lower) {
 			tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
 			return
 		}
-		if tr.needsEmptyTextCoalesce(lower, true) {
+		if tr.needsEmptyTextCoalesce(lower, tr.parts[len(tr.parts)-2]) {
 			tr.emit("COALESCE(" + tr.takeQualifier() + col + ", '')")
 			return
 		}
