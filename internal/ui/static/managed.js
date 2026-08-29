@@ -370,7 +370,12 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
       // input/textarea оставляем видимыми и выделяемыми (readonly), select и
       // кнопку подбора гасим (disabled) — как это делает серверный рендер.
       el.querySelectorAll('input, textarea').forEach(function (inp) {
-        if (inp.type === 'checkbox' || inp.type === 'radio') inp.disabled = on;
+        // Hidden presence-marker distinguishes an unchecked checkbox from a
+        // checkbox absent from the submitted form. It must be successful only
+        // while the checkbox itself is editable; otherwise marker-without-value
+        // would silently clear a checked value on the next submit.
+        var checkboxPresence = inp.dataset && inp.dataset.obCheckboxPresence === '1';
+        if (inp.type === 'checkbox' || inp.type === 'radio' || checkboxPresence) inp.disabled = on;
         else inp.readOnly = on;
       });
       el.querySelectorAll('select, button').forEach(function (n) { n.disabled = on; });

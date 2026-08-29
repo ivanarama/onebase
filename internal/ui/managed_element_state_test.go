@@ -3,9 +3,11 @@ package ui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"golang.org/x/net/html"
 )
 
 // Условная доступность элементов управляемой формы (readonly_when / hidden_when).
@@ -364,6 +367,199 @@ func отрисоватьЗаявкуСФлажком(t *testing.T, ent *metadat
 		"СтадияОформления": стадия, "Согласовано": "true"})
 }
 
+type managedBrowserControl struct {
+	Name             string `json:"name"`
+	Type             string `json:"type"`
+	Value            string `json:"value"`
+	Checked          bool   `json:"checked"`
+	Disabled         bool   `json:"disabled"`
+	ReadOnly         bool   `json:"readOnly"`
+	CheckboxPresence bool   `json:"checkboxPresence"`
+}
+
+type managedBrowserResult struct {
+	Controls []managedBrowserControl `json:"controls"`
+	Values   url.Values              `json:"values"`
+}
+
+func managedHTMLAttr(n *html.Node, name string) (string, bool) {
+	for _, attr := range n.Attr {
+		if attr.Key == name {
+			return attr.Val, true
+		}
+	}
+	return "", false
+}
+
+// managedCheckboxControls parses the real managed-form markup, so the JS
+// harness below starts with exactly the controls emitted by the template.
+func managedCheckboxControls(t *testing.T, rendered, elementName string) []managedBrowserControl {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(rendered))
+	if err != nil {
+		t.Fatalf("parse managed form HTML: %v", err)
+	}
+
+	var wrapper *html.Node
+	var findWrapper func(*html.Node)
+	findWrapper = func(n *html.Node) {
+		if wrapper != nil {
+			return
+		}
+		if n.Type == html.ElementNode {
+			if value, ok := managedHTMLAttr(n, "data-ob-el"); ok && value == elementName {
+				wrapper = n
+				return
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			findWrapper(child)
+		}
+	}
+	findWrapper(doc)
+	if wrapper == nil {
+		t.Fatalf("managed form has no data-ob-el=%q", elementName)
+	}
+
+	var controls []managedBrowserControl
+	var collect func(*html.Node)
+	collect = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "input" {
+			name, _ := managedHTMLAttr(n, "name")
+			typeName, _ := managedHTMLAttr(n, "type")
+			value, _ := managedHTMLAttr(n, "value")
+			_, checked := managedHTMLAttr(n, "checked")
+			_, disabled := managedHTMLAttr(n, "disabled")
+			_, readOnly := managedHTMLAttr(n, "readonly")
+			presence, _ := managedHTMLAttr(n, "data-ob-checkbox-presence")
+			controls = append(controls, managedBrowserControl{
+				Name: name, Type: typeName, Value: value,
+				Checked: checked, Disabled: disabled, ReadOnly: readOnly,
+				CheckboxPresence: presence == "1",
+			})
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			collect(child)
+		}
+	}
+	collect(wrapper)
+	return controls
+}
+
+func managedControlByName(t *testing.T, controls []managedBrowserControl, name string) managedBrowserControl {
+	t.Helper()
+	for _, control := range controls {
+		if control.Name == name {
+			return control
+		}
+	}
+	t.Fatalf("managed form has no control %q: %#v", name, controls)
+	return managedBrowserControl{}
+}
+
+func successfulManagedControls(controls []managedBrowserControl) url.Values {
+	values := make(url.Values)
+	for _, control := range controls {
+		if control.Name == "" || control.Disabled {
+			continue
+		}
+		if (control.Type == "checkbox" || control.Type == "radio") && !control.Checked {
+			continue
+		}
+		values.Add(control.Name, control.Value)
+	}
+	return values
+}
+
+// applyManagedElementStatesInNode executes applyElementStates extracted from
+// the production managed.js. The returned values follow browser successful-
+// control rules and can be sent straight to submitEdit.
+func applyManagedElementStatesInNode(t *testing.T, controls []managedBrowserControl, states *elementStates) managedBrowserResult {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for managed checkbox state integration test")
+	}
+	payload, err := json.Marshal(struct {
+		Controls []managedBrowserControl `json:"controls"`
+		States   *elementStates          `json:"states"`
+	}{Controls: controls, States: states})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const script = `
+const fs = require('node:fs');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+function extract(name) {
+  const start = source.indexOf('function ' + name);
+  if (start < 0) throw new Error('managed.js has no function ' + name);
+  let depth = 0;
+  for (let i = source.indexOf('{', start); i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}') {
+      depth--;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error('unterminated function ' + name);
+}
+const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
+const controls = payload.controls.map((control) => ({
+  tagName: 'INPUT',
+  name: control.name,
+  type: control.type,
+  value: control.value,
+  checked: control.checked,
+  disabled: control.disabled,
+  readOnly: control.readOnly,
+  dataset: control.checkboxPresence ? {obCheckboxPresence: '1'} : {},
+}));
+const wrapper = {
+  tagName: 'DIV',
+  style: {},
+  querySelectorAll(selector) {
+    return selector === 'input, textarea' ? controls : [];
+  },
+};
+global.window = {CSS: null};
+global.document = {querySelector() { return wrapper; }};
+const applyElementStates = new Function(
+  extract('applyElementStates') + '\nreturn applyElementStates;'
+)();
+applyElementStates(payload.states);
+const values = {};
+for (const control of controls) {
+  if (!control.name || control.disabled) continue;
+  if ((control.type === 'checkbox' || control.type === 'radio') && !control.checked) continue;
+  (values[control.name] ||= []).push(control.value);
+}
+process.stdout.write(JSON.stringify({
+  controls: controls.map((control) => ({
+    name: control.name,
+    type: control.type,
+    value: control.value,
+    checked: control.checked,
+    disabled: control.disabled,
+    readOnly: control.readOnly,
+    checkboxPresence: control.dataset.obCheckboxPresence === '1',
+  })),
+  values,
+}));
+`
+	cmd := exec.CommandContext(t.Context(), node, "-e", script, "static/managed.js") //nolint:gosec // test-only executable resolved by exec.LookPath
+	cmd.Stdin = bytes.NewReader(payload)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute managed.js applyElementStates: %v\n%s", err, output)
+	}
+	var result managedBrowserResult
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode managed.js result: %v; output=%s", err, output)
+	}
+	return result
+}
+
 func TestСкрытыйФлажок_ЗначениеПереживаетЗапись(t *testing.T) {
 	ent := заявкаСФлажком(`СтадияОформления = "Принята"`, "")
 	srv, id := заявкаСВзведённымФлажком(t, ent, "Принята")
@@ -386,9 +582,14 @@ func TestФлажокПодЗапретом_ЗначениеПереживает
 	ent := заявкаСФлажком("", `СтадияОформления = "Принята"`)
 	srv, id := заявкаСВзведённымФлажком(t, ent, "Принята")
 
-	html := отрисоватьЗаявкуСФлажком(t, ent, "Принята")
-	if strings.Contains(html, `name="_ob_present_Согласовано"`) {
-		t.Fatalf("нередактируемый флажок не должен отрисовывать маркер:\n%s", html)
+	rendered := отрисоватьЗаявкуСФлажком(t, ent, "Принята")
+	controls := managedCheckboxControls(t, rendered, "ФлагСогласовано")
+	marker := managedControlByName(t, controls, "_ob_present_Согласовано")
+	if !marker.CheckboxPresence || !marker.Disabled {
+		t.Fatalf("маркер нередактируемого флажка должен быть помечен и disabled: %#v", marker)
+	}
+	if checkbox := managedControlByName(t, controls, "Согласовано"); !checkbox.Disabled {
+		t.Fatalf("нередактируемый флажок должен быть disabled: %#v", checkbox)
 	}
 
 	записатьЗаявку(t, srv, ent, id, url.Values{"СтадияОформления": {"Принята"}})
@@ -414,6 +615,96 @@ func TestВидимыйФлажок_СнятиеГалкиВсёЖеРабота
 
 	if got := флажокЗаявки(t, srv, ent, id); isTruthyStored(got) {
 		t.Fatalf("снятие галки не сработало: %#v", got)
+	}
+}
+
+func TestФлажокДинамическиЗапертСобытием_НеСбрасываетсяПриЗаписи(t *testing.T) {
+	// Начальный server render даёт редактируемый и взведённый флажок. Обработчик
+	// переводит запись в принятую стадию, а ответ события включает readonly=true.
+	// После реального applyElementStates браузер не должен отправить ни disabled
+	// checkbox, ни его presence-marker: marker без checkbox означает «снять галку».
+	ent := заявкаСФлажком("", `СтадияОформления = "Принята"`)
+	form := ent.Forms[0]
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "КнопкаПринять",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Принять"},
+	})
+	form.ProgramAST = mustParse(t, `
+Процедура Принять()
+	Объект.СтадияОформления = "Принята";
+КонецПроцедуры
+`)
+	srv, id := заявкаСВзведённымФлажком(t, ent, "НаОформлении")
+
+	formRequest := reqWithChi(http.MethodGet, "/ui/catalog/"+ent.Name+"/"+id.String(), nil,
+		map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+	formResponse := httptest.NewRecorder()
+	srv.formEdit(formResponse, formRequest)
+	if formResponse.Code != http.StatusOK {
+		t.Fatalf("публичная отрисовка формы: статус=%d body=%s", formResponse.Code, formResponse.Body.String())
+	}
+	rendered := formResponse.Body.String()
+	controls := managedCheckboxControls(t, rendered, "ФлагСогласовано")
+	marker := managedControlByName(t, controls, "_ob_present_Согласовано")
+	checkbox := managedControlByName(t, controls, "Согласовано")
+	if marker.Disabled || checkbox.Disabled || !checkbox.Checked {
+		t.Fatalf("начальная отрисовка должна дать редактируемый взведённый флажок: marker=%#v checkbox=%#v", marker, checkbox)
+	}
+	if !marker.CheckboxPresence {
+		t.Fatalf("presence-marker не помечен для синхронизации с checkbox: %#v", marker)
+	}
+
+	eventBody := successfulManagedControls(controls)
+	eventBody.Set("_id", id.String())
+	eventBody.Set("_element", "КнопкаПринять")
+	eventBody.Set("_event", string(metadata.FormEventOnClick))
+	eventBody.Set("_kind", "object")
+	eventBody.Set("СтадияОформления", "НаОформлении")
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, eventBody).Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("событие формы завершилось ошибкой: %q", resp.Error)
+	}
+	if resp.ElementStates == nil || !resp.ElementStates.ReadOnly["ФлагСогласовано"] {
+		t.Fatalf("событие не заперло флажок: %#v", resp.ElementStates)
+	}
+	stage, ok := resp.Values["СтадияОформления"].(string)
+	if !ok || stage != "Принята" {
+		t.Fatalf("обработчик не изменил стадию: %#v", resp.Values)
+	}
+
+	locked := applyManagedElementStatesInNode(t, controls, resp.ElementStates)
+	if marker := managedControlByName(t, locked.Controls, "_ob_present_Согласовано"); !marker.Disabled {
+		t.Fatalf("applyElementStates не отключил presence-marker: %#v", marker)
+	}
+	if checkbox := managedControlByName(t, locked.Controls, "Согласовано"); !checkbox.Disabled {
+		t.Fatalf("applyElementStates не отключил checkbox: %#v", checkbox)
+	}
+	if _, present := locked.Values["_ob_present_Согласовано"]; present {
+		t.Fatalf("disabled presence-marker попал в browser submit: %#v", locked.Values)
+	}
+	if _, present := locked.Values["Согласовано"]; present {
+		t.Fatalf("disabled checkbox попал в browser submit: %#v", locked.Values)
+	}
+
+	// Карта содержит и false: обратный переход обязан вернуть в отправку оба
+	// контрола, иначе после динамического unlock снять галку было бы невозможно.
+	unlocked := applyManagedElementStatesInNode(t, locked.Controls, &elementStates{
+		ReadOnly: map[string]bool{"ФлагСогласовано": false},
+	})
+	if marker := managedControlByName(t, unlocked.Controls, "_ob_present_Согласовано"); marker.Disabled {
+		t.Fatalf("обратный applyElementStates не включил presence-marker: %#v", marker)
+	}
+	if checkbox := managedControlByName(t, unlocked.Controls, "Согласовано"); checkbox.Disabled {
+		t.Fatalf("обратный applyElementStates не включил checkbox: %#v", checkbox)
+	}
+	if unlocked.Values.Get("_ob_present_Согласовано") != "1" || unlocked.Values.Get("Согласовано") != "true" {
+		t.Fatalf("после unlock оба контрола должны снова отправляться: %#v", unlocked.Values)
+	}
+
+	locked.Values.Set("СтадияОформления", stage)
+	записатьЗаявку(t, srv, ent, id, locked.Values)
+	if got := флажокЗаявки(t, srv, ent, id); !isTruthyStored(got) {
+		t.Fatalf("динамически запертый флажок затёрт публичной записью: %#v", got)
 	}
 }
 
