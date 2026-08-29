@@ -194,8 +194,10 @@ This is deliberate, not a marketing line:
   queries, so it catches `no such column` before the base is ever started — the
   agent gets a concrete error with a location, not a plausible-looking guess.
 - **`onebase mcp` exposes the same commands over MCP:** `check`, `query`,
-  `describe`, `config_diff`, `config_versions`, `fmt`, `procrun`. Read-only by
-  default; mutating tools are enabled one explicit flag at a time.
+  `describe`, `config_diff`, `config_versions`, `fmt_check`, `procrun`.
+  Read-only by default; mutating tools are enabled per tool
+  (`--allow-fmt-write`, `--allow-refactor-write`, `--allow-config-rollback`,
+  `--allow-procrun`) or all at once with `--allow-write`.
 - **The in-app LLM assistant** answers against live data, honouring the current
   user's permissions.
 

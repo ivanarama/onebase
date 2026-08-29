@@ -183,10 +183,10 @@ onebase dev --project ./склад --sqlite ./склад.db --open
   до запуска базы. Агент получает конкретную ошибку с местом, а не «выглядит
   правдоподобно».
 - **`onebase mcp` — MCP-сервер поверх тех же команд:** `check`, `query`,
-  `describe`, `config_diff`, `config_versions`, `fmt`, `procrun`. По умолчанию
-  только чтение; изменяющие инструменты включаются явными флагами
-  (`--allow-fmt-write`, `--allow-procrun`, `--allow-config-rollback`), а не
-  оптом.
+  `describe`, `config_diff`, `config_versions`, `fmt_check`, `procrun`. По
+  умолчанию только чтение; изменяющие инструменты включаются точечными флагами
+  (`--allow-fmt-write`, `--allow-refactor-write`, `--allow-config-rollback`,
+  `--allow-procrun`) или общим `--allow-write`.
 - **ИИ-помощник внутри базы** отвечает по живым данным с учётом прав
   пользователя — см. кадр выше.
 
