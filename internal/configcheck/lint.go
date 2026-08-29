@@ -447,7 +447,7 @@ func constantsYAMLSchema() *yamlLintSchema {
 }
 
 func widgetYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope"), map[string]*yamlLintSchema{
+	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope", "link"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		"params": freeMap(),
 		"columns": seq(with(obj("field", "label", "format", "align"), map[string]*yamlLintSchema{
@@ -598,7 +598,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	for _, k := range []string{
 		"id", "name", "kind", "field", "table_part", "visible", "enabled", "required",
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
-		"halign", "valign", "readonly", "use_grid", "no_grid", "auto_sum", "hint", "mask",
+		"halign", "valign", "readonly", "readonly_when", "hidden_when", "use_grid", "no_grid", "auto_sum", "hint", "mask",
 		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
 		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
