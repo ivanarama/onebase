@@ -292,6 +292,17 @@ func analyze(issues []issue, cfg config) []bucket {
 	return []bucket{unanswered, holdNoPlan, planMissing, holdStale, decisionStale}
 }
 
+// maxPerIssue — сколько строк одна заявка занимает в одной корзине. Потолок
+// нужен корзине битых ссылок: остальные дают по строке на заявку, а эта — по
+// строке на ссылку, и заявка с десятком планов заняла бы экран в отчёте,
+// который чинили ровно ради того, чтобы его продолжали читать.
+//
+// Обрезка названа вслух строкой «и ещё N»: счётчик корзины считает ВСЕ находки,
+// поэтому молчаливый потолок сделал бы его неправдой — та же ошибка, от которой
+// защищает предупреждение про -limit. Остальные покажутся следующим прогоном,
+// когда первые три починены.
+const maxPerIssue = 3
+
 func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 	// Ошибку записи глотаем осознанно: это отчёт в stdout, и падать из-за
 	// закрытого пайпа (`| head`) ему незачем.
@@ -317,8 +328,25 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 			sort.SliceStable(b.findings, func(i, j int) bool {
 				return b.findings[i].issue.Number < b.findings[j].issue.Number
 			})
-			for _, f := range b.findings {
-				say("  #%-5d %-52.52s  %s\n", f.issue.Number, f.issue.Title, f.detail)
+			for i := 0; i < len(b.findings); {
+				j := i
+				for j < len(b.findings) && b.findings[j].issue.Number == b.findings[i].issue.Number {
+					j++
+				}
+				group := b.findings[i:j]
+				i = j
+
+				shown := group
+				if len(shown) > maxPerIssue {
+					shown = shown[:maxPerIssue]
+				}
+				for _, f := range shown {
+					say("  #%-5d %-52.52s  %s\n", f.issue.Number, f.issue.Title, f.detail)
+				}
+				if rest := len(group) - len(shown); rest > 0 {
+					say("  #%-5d %-52.52s  и ещё %d — покажутся после починки первых %d\n",
+						group[0].issue.Number, group[0].issue.Title, rest, maxPerIssue)
+				}
 			}
 		}
 	}
@@ -371,10 +399,22 @@ func waitingSince(is issue, cfg config) (silence int, answered, waiting bool) {
 //
 // Текст разбирается по кускам, а не склеенным в один: кусок — это место в
 // треде, и оно попадает в planRef.At.
+//
+// Порядок комментариев задаём сами. `gh issue list --json comments` отдаёт их
+// по возрастанию createdAt, но нигде этого не обещает, а здесь порядок несёт
+// смысл: «поправлено ниже в треде» держится ровно на нём. Молчаливая смена
+// выдачи не сломала бы отчёт заметно — он просто перестал бы гасить шум.
+// Стабильная сортировка: у комментариев одной секунды порядок выдачи и есть
+// порядок написания. Копия — потому что is делит массив с вызывающим.
 func planRefs(is issue) []planRef {
-	parts := make([]string, 0, len(is.Comments)+2)
+	comments := append([]comment(nil), is.Comments...)
+	sort.SliceStable(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+	})
+
+	parts := make([]string, 0, len(comments)+2)
 	parts = append(parts, is.Title, is.Body)
-	for _, c := range is.Comments {
+	for _, c := range comments {
 		parts = append(parts, c.Body)
 	}
 
