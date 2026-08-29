@@ -510,6 +510,20 @@ func TestResolveTemplate_NoTemplate(t *testing.T) {
 	assert.Equal(t, "просто строка", result)
 }
 
+// ResolveParamTemplateText — вход для значений, которые хранятся текстом
+// (умолчание параметра отчёта). Дата обязана приходить в формате поля формы и
+// query-строки, иначе умолчание {{today}} попадёт в HTML как «2026-05-05
+// 00:00:00 +0000 UTC» и браузер покажет пустое поле даты.
+func TestResolveParamTemplateText(t *testing.T) {
+	now := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, "2026-05-05", resolveParamTemplateTextAt("{{today}}", now))
+	assert.Equal(t, "2026-04-28", resolveParamTemplateTextAt("{{today | minus_days:7}}", now))
+	assert.Equal(t, "ВРаботе", resolveParamTemplateTextAt("ВРаботе", now))
+	assert.Equal(t, "", resolveParamTemplateTextAt("   ", now))
+	// Нераспознанная подстановка остаётся текстом — прежний контракт грамматики.
+	assert.Equal(t, "{{неизвестно}}", resolveParamTemplateTextAt("{{неизвестно}}", now))
+}
+
 func TestResolveParamTemplates_Mixed(t *testing.T) {
 	now := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
 	params := map[string]any{
