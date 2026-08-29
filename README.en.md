@@ -185,7 +185,7 @@ back, so even a base that lives on a user's machine can be kept in git.
 
 This is deliberate, not a marketing line:
 
-- **`onebase init` writes an `AGENTS.md` into the project** — 800 lines
+- **`onebase init` writes an `AGENTS.md` into the project** — 990 lines
   generated from the platform itself: configuration layout, the working loop,
   every DSL built-in, the metadata schema, the security model. An agent reads
   the language instead of guessing it from examples. Refresh it later with
