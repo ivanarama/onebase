@@ -318,6 +318,71 @@ func TestSilenceCountsFromTheUnansweredQuestion(t *testing.T) {
 	}
 }
 
+// Разбор триажа и заключение ревью пишутся от логина из -team, но адресованы
+// конвейеру, а не автору. Живой случай #1161: единственный комментарий —
+// разбор с маркером, автор ответа не получил, а сверка считала заявку
+// отвеченной. Маркер ревью проверяем в его настоящем виде — с хвостом внутри:
+// сверка с точной строкой `<!-- pp:review -->` пропускала бы все свежие.
+func TestPipelineNoteIsNotAnAnswerToTheAuthor(t *testing.T) {
+	triaged := mk(1, "rusist32-netizen", ago(30), []string{"ready-fix"},
+		[2]string{"ivanarama", "**Триаж.** Воспроизводится: да, корень доказан по коду.\n<!-- pp:triage -->"})
+	reviewed := mk(2, "boffik", ago(30), nil,
+		[2]string{"ivanarama", "**Ревью.** Блокирующих нет.\n<!-- pp:review pp:tail=2 -->"})
+
+	got := bucketByTitle(analyze([]issue{triaged, reviewed}, testConfig()), "внешняя заявка без ответа")
+
+	if want := []int{1, 2}; len(got) != len(want) || numbers(got)[0] != want[0] || numbers(got)[1] != want[1] {
+		t.Fatalf("ожидались %v, получено %v", want, numbers(got))
+	}
+	for _, f := range got {
+		if !strings.Contains(f.detail, "ждёт 30 дн.") || !strings.Contains(f.detail, "ответа не было ни разу") {
+			t.Fatalf("#%d: разбор засчитан за ответ автору: %q", f.issue.Number, f.detail)
+		}
+	}
+}
+
+// Ответ автору находку гасит — и машинный с маркером `pp:reply` (автоответ
+// триажа при ready-fix), и обычный комментарий человека без маркеров.
+func TestAnswerToTheAuthorClearsTheFinding(t *testing.T) {
+	auto := mk(1, "rusist32-netizen", ago(30), []string{"ready-fix"},
+		[2]string{"ivanarama", "разбор\n<!-- pp:triage -->"},
+		[2]string{"ivanarama", "Спасибо — воспроизвели. Обхода нет.\n<!-- pp:reply -->"})
+	auto = commentAt(auto, 0, ago(20))
+	auto = commentAt(auto, 1, ago(19))
+
+	byHand := mk(2, "boffik", ago(30), nil,
+		[2]string{"ivanarama", "разбор\n<!-- pp:triage -->"},
+		[2]string{"ivanarama", "Спасибо, поправим на неделе."})
+	byHand = commentAt(byHand, 0, ago(20))
+	byHand = commentAt(byHand, 1, ago(19))
+
+	if got := bucketByTitle(analyze([]issue{auto, byHand}, testConfig()), "внешняя заявка без ответа"); len(got) != 0 {
+		t.Fatalf("ответ автору обязан гасить находку, получено %v", details(got))
+	}
+}
+
+// Граница «последнего нашего ответа» тоже не должна уезжать на разбор: вопрос
+// автора, заданный ДО него, остаётся неотвеченным, и ждёт автор с этого
+// вопроса. Прежняя версия объявляла, что мяч у автора, и молчала вовсе.
+func TestPipelineNoteDoesNotSwallowTheQuestionBeforeIt(t *testing.T) {
+	is := mk(1, "boffik", ago(90), nil,
+		[2]string{"ivanarama", "разбираемся"},
+		[2]string{"boffik", "а теперь как?"},
+		[2]string{"ivanarama", "**Триаж.** Корень по коду.\n<!-- pp:triage -->"})
+	is = commentAt(is, 0, ago(60))
+	is = commentAt(is, 1, ago(30))
+	is = commentAt(is, 2, ago(5))
+
+	got := bucketByTitle(analyze([]issue{is}, testConfig()), "внешняя заявка без ответа")
+
+	if len(got) != 1 {
+		t.Fatalf("ожидалась одна находка, получено %v", numbers(got))
+	}
+	if !strings.Contains(got[0].detail, "ждёт 30 дн.") || !strings.Contains(got[0].detail, "с последнего вопроса") {
+		t.Fatalf("разбор сдвинул границу ответа: %q", got[0].detail)
+	}
+}
+
 func TestStaleDecisionIgnoresApprovedAndHold(t *testing.T) {
 	issues := []issue{
 		mk(1, "ivanarama", ago(30), []string{"needs-decision"}),
