@@ -27,6 +27,8 @@ type rawField struct {
 	// Читается строкой: и `сейчас`, и `12`, и `Истина` попадают сюда как есть,
 	// разбирает их metadata.ParseDefault.
 	Default defaultScalar `yaml:"default"`
+	// PII — реквизит содержит персональные данные (Field.PII).
+	PII bool `yaml:"pii"`
 }
 
 type rawTablePart struct {
@@ -635,7 +637,7 @@ func parseField(rf rawField) Field {
 		title = rf.Label
 	}
 	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
-		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default)}
+		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

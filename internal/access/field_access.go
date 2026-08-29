@@ -98,6 +98,25 @@ func FieldDecisions(u *auth.User, kind, entity string, meta *metadata.Entity) ma
 			}
 		}
 	}
+	// Реквизит с признаком ПДн (pii: true) — кандидат ВСЕГДА, даже если ни одна
+	// роль про него ничего не сказала. Признак ставит конфигуратор у самого поля,
+	// и роль, которая промолчала, должна получить маску, а не полное значение:
+	// иначе новый реквизит с телефоном открыт всем, пока про него не вспомнили в
+	// каждой роли по отдельности. Явный `read: full` в роли по-прежнему открывает
+	// значение — это осознанное решение, а не умолчание.
+	pii := map[string]bool{}
+	if meta != nil {
+		for _, f := range meta.Fields {
+			if !f.PII {
+				continue
+			}
+			k := fieldKey(f.Name)
+			pii[k] = true
+			if _, ok := candidates[k]; !ok {
+				candidates[k] = f.Name
+			}
+		}
+	}
 	out := map[string]FieldDecision{}
 	for k, name := range candidates {
 		var best *FieldDecision
@@ -105,6 +124,17 @@ func FieldDecisions(u *auth.User, kind, entity string, meta *metadata.Entity) ma
 		for _, role := range readingRoles {
 			pol, ok := lookupFieldPolicy(role.Permissions.FieldAccess.Policies(kind, entity), k)
 			if !ok {
+				if pii[k] {
+					// Роль читает объект и НЕ высказалась о ПДн-поле: маска по
+					// умолчанию (mask_all — не раскрывает ни значения, ни длины).
+					// Роль голосует «маскировать», а не «показать целиком».
+					dec := FieldDecision{Strategy: FieldMaskAll}
+					if best == nil || lessRestrictive(dec, *best) {
+						d := dec
+						best = &d
+					}
+					continue
+				}
 				full = true
 				break
 			}

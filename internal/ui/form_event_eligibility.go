@@ -14,14 +14,25 @@ type browserFormEventTarget struct {
 }
 
 type browserFormElementVisit struct {
-	element           *metadata.FormElement
-	parentTablePart   *metadata.FormElement
+	element         *metadata.FormElement
+	parentTablePart *metadata.FormElement
+	// effectiveReadOnly — нередактируемость по МЕТАДАННЫМ (своя и унаследованная).
+	// conditional — на отрисовку элемента влияет собственное
+	// readonly_when/hidden_when либо hidden_when контейнера-предка. Для такого
+	// элемента метаданные больше не говорят, что увидел браузер: условие могло не
+	// отрисовать его вовсе либо отрисовать нередактируемым, а по метаданным он
+	// остаётся размещённым и editable. readonly_when контейнеров раскладки
+	// запрещает configcheck и на дочерние элементы он не распространяется.
 	effectiveReadOnly bool
+	conditional       bool
 }
 
 // resolveBrowserFormEvent is the single fail-closed server-side model of what
 // managed.js/templates can emit. Metadata may describe additional server-side
 // lifecycle events, but they cannot be invoked through the browser endpoint.
+// Сам перечень пар «вид элемента → событие» лежит в metadata
+// (BrowserFormEventsFor): его читает ещё и сторож руководства в internal/cli,
+// а из неэкспортированной таблицы он был вынужден держать копию (#1151).
 func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName string, processor bool) (string, browserFormEventTarget, bool, error) {
 	var target browserFormEventTarget
 	if form == nil {
@@ -34,7 +45,7 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 
 	elementName = strings.TrimSpace(elementName)
 	if elementName == "" {
-		if event != metadata.FormEventOnOpen {
+		if !browserEventAllowedForForm(event) {
 			return "", target, false, fmt.Errorf("событие %q нельзя вызвать на уровне формы", eventName)
 		}
 		proc := form.Handlers[event]
@@ -80,7 +91,7 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 	}
 
 	if len(commands) == 1 {
-		if event != metadata.FormEventOnClick && event != metadata.FormEventOnChoice {
+		if !browserEventAllowedForCommand(event) {
 			return "", target, false, fmt.Errorf("команда формы %q не отправляет событие %q", elementName, eventName)
 		}
 		target.command = commands[0]
@@ -90,52 +101,52 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 }
 
 func browserEventAllowedForElement(kind metadata.FormElementType, event metadata.FormEventType) bool {
-	switch kind {
-	case metadata.FormElementButton:
-		return event == metadata.FormEventOnClick || event == metadata.FormEventOnChoice
-	case metadata.FormElementField, metadata.FormElementCodeField,
-		metadata.FormElementCheckbox, metadata.FormElementDatePicker,
-		metadata.FormElementSwitch:
-		return event == metadata.FormEventOnChange || event == metadata.FormEventOnChoice
-	case metadata.FormElementInputList:
-		return event == metadata.FormEventOnChange || event == metadata.FormEventStartChoice || event == metadata.FormEventOnChoice
-	case metadata.FormElementTablePart:
-		return event == metadata.FormEventOnChange || event == metadata.FormEventOnRowAdded ||
-			event == metadata.FormEventOnRowDeleted || event == metadata.FormEventOnChoice ||
-			event == metadata.FormEventOnRowActivated || event == metadata.FormEventOnRowChanged ||
-			event == metadata.FormEventAfterRowAdd
-	case metadata.FormElementColumn:
-		// Колонка табличной части шлёт только правку своей ячейки (план 154).
-		// Остальные события строки принадлежат таблице целиком: строка
-		// добавляется и удаляется не «в колонке».
-		return event == metadata.FormEventOnChange
-	default:
-		return false
+	return metadata.BrowserFormEventAllowed(kind, event)
+}
+
+func browserEventAllowedForCommand(event metadata.FormEventType) bool {
+	return containsFormEvent(metadata.BrowserFormCommandEvents(), event)
+}
+
+func browserEventAllowedForForm(event metadata.FormEventType) bool {
+	return containsFormEvent(metadata.BrowserFormLevelEvents(), event)
+}
+
+func containsFormEvent(events []metadata.FormEventType, event metadata.FormEventType) bool {
+	for _, candidate := range events {
+		if candidate == event {
+			return true
+		}
 	}
+	return false
 }
 
 func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormElementVisit)) {
 	if form == nil || visit == nil {
 		return
 	}
-	var walk func([]*metadata.FormElement, *metadata.FormElement, bool)
-	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly bool) {
+	var walk func([]*metadata.FormElement, *metadata.FormElement, bool, bool)
+	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly, parentConditional bool) {
 		for _, element := range elements {
 			if element == nil {
 				continue
 			}
 			effectiveReadOnly := parentReadOnly || element.ReadOnly
+			conditional := parentConditional ||
+				strings.TrimSpace(element.HiddenWhen) != "" ||
+				strings.TrimSpace(element.ReadOnlyWhen) != ""
 			visit(browserFormElementVisit{
-				element: element, parentTablePart: parentTable, effectiveReadOnly: effectiveReadOnly,
+				element: element, parentTablePart: parentTable,
+				effectiveReadOnly: effectiveReadOnly, conditional: conditional,
 			})
 			nextTable := parentTable
 			if element.Kind == metadata.FormElementTablePart {
 				nextTable = element
 			}
-			walk(element.Children, nextTable, effectiveReadOnly)
+			walk(element.Children, nextTable, effectiveReadOnly, conditional)
 		}
 	}
-	walk(form.Elements, nil, false)
+	walk(form.Elements, nil, false, false)
 }
 
 func effectiveFormElementReadOnly(form *metadata.FormModule, target *metadata.FormElement) bool {

@@ -124,9 +124,16 @@ var (
 
 // planRef — упоминание плана в тексте заявки. File пуст, если план назван
 // только номером: тогда и проверять можно только номер.
+//
+// At — место в треде: 0 заголовок, 1 тело, дальше комментарии сверху вниз. По
+// нему отличается «ссылка битая» от «ссылка битая, но ниже её уже поправили»;
+// без порядка все упоминания сваливались в один мешок, и момент правки терялся.
+// Считается по ПОСЛЕДНЕМУ упоминанию: ссылка, повторённая ниже поправки, снова
+// актуальна.
 type planRef struct {
 	File string
 	Num  int
+	At   int
 }
 
 // String — как показать ссылку в отчёте.
@@ -254,19 +261,24 @@ func analyze(issues []issue, cfg config) []bucket {
 		// hold: «сделаем планом» пишут и в разборе, и в ответе автору. Каталог
 		// планов не прочитан (запуск не из корня) — проверка выключена целиком,
 		// иначе отчёт объявил бы несуществующими все планы разом.
-		for _, ref := range refs {
-			if !cfg.plans.ok {
-				break
+		//
+		// Печатаем ВСЕ битые ссылки заявки. Прежняя версия обрывалась на первой,
+		// поэтому вторая всплывала только после починки первой — то есть
+		// неделей позже, и так по одной.
+		if cfg.plans.ok {
+			for _, ref := range refs {
+				if cfg.plans.has(ref) {
+					continue
+				}
+				detail := fmt.Sprintf("ссылка на %s — такого плана нет ни в каталоге, ни в открытых PR", ref)
+				if actual, ok := cfg.plans.renamed(ref); ok {
+					detail = fmt.Sprintf("ссылка на %s устарела — план лежит как Plans/%s", ref, actual)
+				}
+				if fixed, ok := correctedBelow(refs, ref, cfg.plans); ok {
+					detail = fmt.Sprintf("ссылка на %s устарела — ниже в треде уже поправлено на %s", ref, fixed)
+				}
+				planMissing.findings = append(planMissing.findings, finding{is, detail})
 			}
-			if cfg.plans.has(ref) {
-				continue
-			}
-			detail := fmt.Sprintf("ссылка на %s — такого плана нет ни в каталоге, ни в открытых PR", ref)
-			if actual, ok := cfg.plans.renamed(ref); ok {
-				detail = fmt.Sprintf("ссылка на %s устарела — план лежит как Plans/%s", ref, actual)
-			}
-			planMissing.findings = append(planMissing.findings, finding{is, detail})
-			break
 		}
 
 		// approved старше needs-decision: человек уже сходил, метку он снимать
@@ -298,7 +310,11 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 				continue
 			}
 			say("\n%s — %d\n%s\n", b.title, len(b.findings), b.advice)
-			sort.Slice(b.findings, func(i, j int) bool {
+			// Стабильная: у одной заявки может быть несколько находок в корзине
+			// (две битые ссылки), и порядок между ними задан порядком ссылок.
+			// Обычная Slice переставляла бы их от прогона к прогону, и отчёт
+			// шевелился бы там, где ничего не изменилось.
+			sort.SliceStable(b.findings, func(i, j int) bool {
 				return b.findings[i].issue.Number < b.findings[j].issue.Number
 			})
 			for _, f := range b.findings {
@@ -352,38 +368,51 @@ func waitingSince(is issue, cfg config) (silence int, answered, waiting bool) {
 // читать обязательно: в #1122 ссылка на план стоит именно там, и первая версия
 // сверки, смотревшая только заголовок с комментариями, объявляла такую заявку
 // «без плана».
+//
+// Текст разбирается по кускам, а не склеенным в один: кусок — это место в
+// треде, и оно попадает в planRef.At.
 func planRefs(is issue) []planRef {
-	text := is.Title + "\n" + is.Body + "\n"
+	parts := make([]string, 0, len(is.Comments)+2)
+	parts = append(parts, is.Title, is.Body)
 	for _, c := range is.Comments {
-		text += c.Body + "\n"
+		parts = append(parts, c.Body)
 	}
 
 	var out []planRef
-	seen := map[string]bool{}
+	seen := map[string]int{} // ключ ссылки → её место в out
 	add := func(ref planRef) {
 		key := ref.File + "#" + strconv.Itoa(ref.Num)
-		if seen[key] {
+		if i, ok := seen[key]; ok {
+			if ref.At > out[i].At {
+				out[i].At = ref.At
+			}
 			return
 		}
-		seen[key] = true
+		seen[key] = len(out)
 		out = append(out, ref)
 	}
 
+	// Два прохода, а не один: ссылка файлом отменяет ссылку тем же номером, где
+	// бы в треде она ни стояла, поэтому сначала собираем все файлы.
 	byNum := map[int]bool{} // номера, у которых уже есть ссылка файлом
-	for _, m := range planFileRe.FindAllStringSubmatch(text, -1) {
-		n, err := strconv.Atoi(m[2])
-		if err != nil {
-			continue
+	for at, text := range parts {
+		for _, m := range planFileRe.FindAllStringSubmatch(text, -1) {
+			n, err := strconv.Atoi(m[2])
+			if err != nil {
+				continue
+			}
+			byNum[n] = true
+			add(planRef{File: m[1], Num: n, At: at})
 		}
-		byNum[n] = true
-		add(planRef{File: m[1], Num: n})
 	}
-	for _, m := range planNumRe.FindAllStringSubmatch(text, -1) {
-		n, err := strconv.Atoi(m[1])
-		if err != nil || byNum[n] {
-			continue // тот же план уже назван файлом — точная ссылка старше
+	for at, text := range parts {
+		for _, m := range planNumRe.FindAllStringSubmatch(text, -1) {
+			n, err := strconv.Atoi(m[1])
+			if err != nil || byNum[n] {
+				continue // тот же план уже назван файлом — точная ссылка старше
+			}
+			add(planRef{Num: n, At: at})
 		}
-		add(planRef{Num: n})
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -393,6 +422,33 @@ func planRefs(is issue) []planRef {
 		return out[i].File < out[j].File
 	})
 	return out
+}
+
+// correctedBelow — живая ссылка на тот же план ниже по треду. Так выглядит
+// обычная человеческая поправка: план перенумеровали, верное имя дописали
+// комментарием, а старый текст не тронули — ровно это в #1134 («план получил
+// номер 158, а не 157»).
+//
+// Находку это не отменяет: скрытая неотличима от «инструмент не заметил», а
+// отчёт читают ради полноты. Но помеченную строку глаз отличает от новой, и
+// знакомая строка не уносит с собой соседние.
+//
+// Сравниваем по slug: переехал как раз номер. Ссылку, названную одним номером,
+// поправленной не считаем никогда — «план 158» ниже «плана 157» не значит, что
+// это тот же план.
+func correctedBelow(refs []planRef, broken planRef, p plans) (planRef, bool) {
+	if broken.File == "" {
+		return planRef{}, false
+	}
+	for _, ref := range refs {
+		if ref.File == "" || ref.At <= broken.At || slug(ref.File) != slug(broken.File) {
+			continue
+		}
+		if p.has(ref) {
+			return ref, true
+		}
+	}
+	return planRef{}, false
 }
 
 // plans — что считается существующим планом: имена файлов и занятые номера.
