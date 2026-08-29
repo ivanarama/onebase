@@ -91,6 +91,99 @@ func TestУмолчаниеПараметраОтчёта_СнятыйФлажо
 	}
 }
 
+// Четвёртая точка запуска — сохранение настроек отчёта. Форма настроек несёт все
+// параметры скрытыми полями, а редирект после сохранения ведёт на `?__run=1`,
+// откуда отчёт строится заново. Пока ссылка редиректа выбрасывала пустые
+// значения, ключа в ней не оказывалось — и правило «нет ключа → умолчание»
+// возвращало очищенное поле и снятую галку сразу после «Сохранить».
+func TestУмолчаниеПараметраОтчёта_НастройкиНеВозвращаютОчищенное(t *testing.T) {
+	rep := &reportpkg.Report{
+		Name: "ПросроченныеЗадачи",
+		Params: []reportpkg.Param{
+			{Name: "НаДату", Type: "date", Default: "{{today}}"},
+			{Name: "ТолькоМои", Type: "bool", Default: "true"},
+			{Name: "Исполнитель", Type: "string"},
+		},
+		// Настройки и пресеты есть только у отчётов с composition — ровно у тех,
+		// кого задевает дефект.
+		Composition: &reportpkg.Composition{Groupings: []string{"Товар"}},
+	}
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "report-default-settings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Reports: []*reportpkg.Report{rep}})
+	s := &Server{store: db, reg: registry}
+
+	// Пользователь очистил дату, снял галку и оставил заполненным «Исполнитель».
+	// Форма настроек шлёт все три скрытыми полями.
+	form := url.Values{
+		"__settings":  {`{"variant":""}`},
+		"НаДату":      {""},
+		"ТолькоМои":   {""},
+		"Исполнитель": {"Петров"},
+	}
+	// Обе точки сохранения зовут одну сборку ссылки: обычное сохранение настроек
+	// и сохранение именованного варианта.
+	for _, tc := range []struct {
+		имя    string
+		extra  url.Values
+		assert func(t *testing.T, loc string)
+	}{
+		{имя: "настройки"},
+		{
+			имя: "вариант",
+			extra: url.Values{
+				"__preset_action": {"save_as"},
+				"__preset_name":   {"Мой вариант"},
+			},
+			assert: func(t *testing.T, loc string) {
+				if !strings.Contains(loc, "__preset=") {
+					t.Errorf("в ссылке редиректа потерян выбранный вариант: %s", loc)
+				}
+			},
+		},
+	} {
+		t.Run(tc.имя, func(t *testing.T) {
+			f := url.Values{}
+			for k, v := range form {
+				f[k] = v
+			}
+			for k, v := range tc.extra {
+				f[k] = v
+			}
+			r := reqWithChi("POST", "/ui/report/ПросроченныеЗадачи/settings/save", f,
+				map[string]string{"name": "ПросроченныеЗадачи"})
+			w := httptest.NewRecorder()
+			s.reportSettingsSave(w, r)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("сохранение настроек: код %d, тело %s", w.Code, w.Body.String())
+			}
+			loc := w.Header().Get("Location")
+			if tc.assert != nil {
+				tc.assert(t, loc)
+			}
+
+			// Дальше браузер идёт по редиректу, и reportForm при __run=1 собирает
+			// значения тем же путём.
+			values := reportParamValuesFromRequest(httptest.NewRequest("GET", loc, nil), rep)
+			if got := values["НаДату"]; got != nil {
+				t.Errorf("НаДату = %#v: умолчание вернулось в очищенное поле после сохранения (%s)", got, loc)
+			}
+			if got := values["ТолькоМои"]; got != nil {
+				t.Errorf("ТолькоМои = %#v: умолчание вернуло снятую галку после сохранения (%s)", got, loc)
+			}
+			// Заданное значение переживает сохранение как прежде.
+			if got := values["Исполнитель"]; got != "Петров" {
+				t.Errorf("Исполнитель = %#v, ожидалось «Петров»: сохранение настроек потеряло значение", got)
+			}
+		})
+	}
+}
+
 func TestУмолчаниеПараметраОтчёта_ОбычнаяСтрокаНеРазворачивается(t *testing.T) {
 	// Умолчание без подстановки — просто значение.
 	p := reportpkg.Param{Name: "Состояние", Type: "string", Default: "ВРаботе"}
