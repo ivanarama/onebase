@@ -349,7 +349,7 @@ func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 	// который его честно читает, и DEVELOPER.md, где id описан как
 	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
 	// страховку от потери данных (#873, дефект Д11 из #668).
-	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create"}
+	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create", "pii"}
 	if allowRequired {
 		// Required is currently a write invariant for entity headers and table
 		// parts. Register recorders have a different persistence path and must

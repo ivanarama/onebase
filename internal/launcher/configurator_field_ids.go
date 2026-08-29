@@ -24,15 +24,23 @@ import (
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по
 // имени реквизита либо сгенерированными. Заодно переносит ключи, которых
 // редактор не знает и потому не прислал бы обратно, — сейчас это `default`
-// (план 153).
+// (план 153) и `pii` (признак ПДн, Field.PII).
 func ensureFieldIDs(prev, next []saveField) []saveField {
 	byName := make(map[string]string, len(prev))
 	defaults := make(map[string]string, len(prev))
+	pii := make(map[string]bool, len(prev))
 	used := make(map[string]bool, len(prev))
 	for _, f := range prev {
 		key := strings.ToLower(strings.TrimSpace(f.Name))
 		if f.Default != "" {
 			defaults[key] = f.Default
+		}
+		// Перенос односторонний: pii из файла сохраняется, но снять признак
+		// через этот редактор нельзя — он его и не показывает. Двусторонний
+		// перенос потребовал бы отличать «редактор не прислал ключ» от
+		// «пользователь снял галочку», а сейчас это одно и то же значение.
+		if f.PII {
+			pii[key] = true
 		}
 		if f.ID == "" {
 			continue
@@ -46,6 +54,9 @@ func ensureFieldIDs(prev, next []saveField) []saveField {
 		key := strings.ToLower(strings.TrimSpace(out[i].Name))
 		if out[i].Default == "" {
 			out[i].Default = defaults[key]
+		}
+		if !out[i].PII {
+			out[i].PII = pii[key]
 		}
 		if out[i].ID != "" {
 			used[out[i].ID] = true
