@@ -339,6 +339,49 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
     el.textContent = css || '';
   }
   window.applyFormConditionalCSS = applyFormConditionalCSS;
+  // applyElementStates — доступность элементов по условиям readonly_when /
+  // hidden_when, пересчитанным сервером ПОСЛЕ обработчика. Без этого запрет,
+  // зависящий от состояния объекта, появлялся бы только после перезагрузки:
+  // команда «Принять» замораживает реквизиты сразу, а форма продолжала бы
+  // показывать их редактируемыми. В картах приходит и false — условие могло
+  // перестать выполняться, и запрет нужно снять.
+  //
+  // Обратный ход есть не у всего: элемент, скрытый ещё серверной отрисовкой, в
+  // DOM отсутствует, якорь data-ob-el не находится, и hidden=false для него —
+  // пустая операция. Снова показать такой элемент может только перезагрузка
+  // страницы; скрыть уже отрисованный — можно.
+  function applyElementStates(st) {
+    if (!st) return;
+    var byName = function (name) {
+      return document.querySelector('[data-ob-el="' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
+    };
+    var hidden = st.hidden || {};
+    Object.keys(hidden).forEach(function (name) {
+      var el = byName(name);
+      if (el) el.style.display = hidden[name] ? 'none' : '';
+    });
+    var ro = st.readonly || {};
+    Object.keys(ro).forEach(function (name) {
+      var el = byName(name);
+      if (!el) return;
+      var on = !!ro[name];
+      // Сам элемент может быть кнопкой (kind: Кнопка) — тогда управляем им же.
+      if (el.tagName === 'BUTTON') { el.disabled = on; return; }
+      // input/textarea оставляем видимыми и выделяемыми (readonly), select и
+      // кнопку подбора гасим (disabled) — как это делает серверный рендер.
+      el.querySelectorAll('input, textarea').forEach(function (inp) {
+        // Hidden presence-marker distinguishes an unchecked checkbox from a
+        // checkbox absent from the submitted form. It must be successful only
+        // while the checkbox itself is editable; otherwise marker-without-value
+        // would silently clear a checked value on the next submit.
+        var checkboxPresence = inp.dataset && inp.dataset.obCheckboxPresence === '1';
+        if (inp.type === 'checkbox' || inp.type === 'radio' || checkboxPresence) inp.disabled = on;
+        else inp.readOnly = on;
+      });
+      el.querySelectorAll('select, button').forEach(function (n) { n.disabled = on; });
+    });
+  }
+  window.applyElementStates = applyElementStates;
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -815,6 +858,7 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
         return;
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
+      applyElementStates(data.elementStates);
       window.applyTableParts(data.tableparts);
       applyValues(data.values, data.refOptions);
       applyChoiceList(elementName, data.choiceList);
@@ -2851,6 +2895,39 @@ function obManagedSwitchTab(btn) {
 }
 
 obManagedReady(function () {
+  // Native constraint validation fires `invalid` before it tries to focus the
+  // first bad control. Open that control's managed tab synchronously; otherwise
+  // a required field on an inactive (display:none) page cannot be focused and
+  // the browser leaves the user with no visible explanation. Only the first
+  // invalid event in one validation pass may switch a tab: later invalid fields
+  // on other pages must not hide the first field again before focus is applied.
+  var validationPassStarted = false;
+  document.addEventListener('invalid', function (e) {
+    if (validationPassStarted) return;
+    validationPassStarted = true;
+    setTimeout(function () { validationPassStarted = false; }, 0);
+    var control = e.target;
+    if (!control || !control.closest) return;
+    var pages = [];
+    var content = control.closest('.managed-tab-content');
+    while (content) {
+      pages.push(content);
+      var parent = content.parentElement;
+      content = parent && parent.closest ? parent.closest('.managed-tab-content') : null;
+    }
+    // For nested tab groups, select every ancestor page from outer to inner.
+    // Switching an outer group currently hides descendant pages too, so the
+    // inner selection must be restored even when it was active beforehand.
+    for (var i = pages.length - 1; i >= 0; i--) {
+      var page = pages[i];
+      var tabs = page.closest('.managed-tabs');
+      if (!tabs) continue;
+      var idx = page.getAttribute('data-tab-content');
+      var btn = tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
+      if (btn) obManagedSwitchTab(btn);
+    }
+  }, true);
+
   document.addEventListener('click', function (e) {
     var btn = e.target && e.target.closest ? e.target.closest('.managed-tab-btn') : null;
     if (!btn) return;
