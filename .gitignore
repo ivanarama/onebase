@@ -58,8 +58,7 @@ Thumbs.db
 .codex/
 .superpowers/
 
-# Local agent instructions
-AGENTS.md
+# Shared agent instructions are tracked in AGENTS.md.
 
 # IDE
 .idea/
