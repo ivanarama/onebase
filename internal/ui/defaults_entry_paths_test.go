@@ -2,7 +2,10 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // Значения по умолчанию (план 153) обязаны работать одинаково на ВСЕХ путях
@@ -147,6 +151,163 @@ func TestDefaults_ХукВызываетсяНаDSLПути(t *testing.T) {
 	if got := w.Get("Номер"); got != "из хука" {
 		t.Errorf("Номер = %v, ожидалось значение из ПриСозданииНового", got)
 	}
+}
+
+// Четвёртый путь создания — управляемая форма. Она рисует только размещённые
+// элементы, поэтому неразмещённый реквизит в POST не приходит вовсе и до #1189
+// записывался пустым: дефолт и ПриСозданииНового считались на GET и терялись по
+// дороге. Через DSL и REST тот же реквизит заполнялся — пути расходились, хотя
+// entityservice/defaults.go обещает обратное.
+//
+// Ровно этот реквизит и есть самый естественный кандидат на дефолт: он
+// заполняется сам, поэтому его и не выносят на форму.
+func TestDefaults_УправляемаяФормаЗаполняетНеразмещённый(t *testing.T) {
+	ents := defaultsEntities()
+	doc := ents[1]
+	doc.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНомер", "Объект.Номер"))}
+	s, ctx := newSubmitTestServer(t, ents)
+	orgID := seedSingleOrg(t, s, ctx, ents[0])
+
+	// Сначала GET — как в браузере. Он же доказывает, почему POST неполон:
+	// значения посчитаны, но в разметку не попали.
+	rec := httptest.NewRecorder()
+	s.form(rec, reqWithChi("GET", "/ui/document/реализация/new", nil, map[string]string{"entity": "реализация"}))
+	if rec.Code != 200 {
+		t.Fatalf("форма не открылась: %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "по умолчанию") {
+		t.Fatal("управляемая форма отрисовала неразмещённый реквизит — тест проверяет не тот случай")
+	}
+
+	// Браузер шлёт ровно то, что было на форме.
+	row := submitNewManagedDoc(t, s, ctx, doc, url.Values{"Номер": {"0001"}})
+
+	if got := refString(row["Организация"]); got != orgID.String() {
+		t.Errorf("Организация = %v, ожидался %s — дефолт «единственный» не доехал", row["Организация"], orgID)
+	}
+	if got := row["Комментарий"]; got != "по умолчанию" {
+		t.Errorf("Комментарий = %v, ожидался литеральный дефолт", got)
+	}
+}
+
+// Хук ПриСозданииНового на том же пути. Проверяется отдельно от декларативного
+// дефолта: посчитанное хуком пропадало так же молча, а порядок «хук после
+// дефолта» виден по тому, что литерал «по умолчанию» перекрыт.
+func TestDefaults_УправляемаяФормаЗоветХукПриСозданииНового(t *testing.T) {
+	ents := defaultsEntities()
+	doc := ents[1]
+	doc.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНомер", "Объект.Номер"))}
+	src := `Процедура ПриСозданииНового(Объект)
+  Объект.Комментарий = "из хука";
+КонецПроцедуры`
+	s, ctx := newSubmitTestServerWithPrograms(t, ents, map[string]string{"Реализация": src})
+	seedSingleOrg(t, s, ctx, ents[0])
+
+	row := submitNewManagedDoc(t, s, ctx, doc, url.Values{"Номер": {"0001"}})
+
+	if got := row["Комментарий"]; got != "из хука" {
+		t.Errorf("Комментарий = %v, ожидалось значение из ПриСозданииНового", got)
+	}
+}
+
+// Парный случай: реквизит на форме есть, и пользователь его очистил — дефолт не
+// имеет права зарасти обратно. Различает «поле не прислали» и «прислали пустым»
+// то же правило присутствия ключа, что и при записи существующего объекта.
+func TestDefaults_УправляемаяФормаНеЗатираетОчищенноеПоле(t *testing.T) {
+	ents := defaultsEntities()
+	doc := ents[1]
+	doc.Forms = []*metadata.FormModule{managedObjectForm(
+		fieldEl("ПолеНомер", "Объект.Номер"),
+		fieldEl("ПолеКомм", "Объект.Комментарий"),
+	)}
+	s, ctx := newSubmitTestServer(t, ents)
+	seedSingleOrg(t, s, ctx, ents[0])
+
+	row := submitNewManagedDoc(t, s, ctx, doc, url.Values{"Номер": {"0001"}, "Комментарий": {""}})
+
+	if row["Комментарий"] != nil {
+		t.Errorf("Комментарий = %v, очищенное пользователем поле заросло дефолтом", row["Комментарий"])
+	}
+}
+
+// Снятый флажок браузер не шлёт вовсе, и отличить его от неразмещённого поля по
+// одному лишь отсутствию ключа нельзя. Дефолт `истина` не имеет права поставить
+// галочку обратно — иначе снять её было бы невозможно.
+func TestDefaults_УправляемаяФормаНеВозвращаетСнятыйФлажок(t *testing.T) {
+	ents := defaultsEntities()
+	doc := ents[1]
+	doc.Fields = append(doc.Fields, metadata.Field{Name: "Согласован", Type: metadata.FieldTypeBool, Default: "истина"})
+	doc.Forms = []*metadata.FormModule{managedObjectForm(
+		fieldEl("ПолеНомер", "Объект.Номер"),
+		&metadata.FormElement{Kind: metadata.FormElementCheckbox, Name: "ФлагСогл", DataPath: "Объект.Согласован"},
+	)}
+	s, ctx := newSubmitTestServer(t, ents)
+	seedSingleOrg(t, s, ctx, ents[0])
+
+	row := submitNewManagedDoc(t, s, ctx, doc, url.Values{"Номер": {"0001"}})
+
+	if isTruthyStored(row["Согласован"]) {
+		t.Errorf("Согласован = %v, снятый флажок вернулся дефолтом", row["Согласован"])
+	}
+}
+
+// Действие ИИ-чата — ещё один путь создания: он строил объект напрямую
+// (runtime.NewObject + Save) и не видел ни дефолтов, ни хука. Заявка #1189
+// назвала это заодно, решение человека — чинить (вариант 2 разбора).
+func TestDefaults_ДействиеИИЧата(t *testing.T) {
+	ents := defaultsEntities()
+	s, ctx := newSubmitTestServer(t, ents)
+	orgID := seedSingleOrg(t, s, ctx, ents[0])
+
+	rec := httptest.NewRecorder()
+	s.aiActionRun(rec, httptest.NewRequest("POST", "/ui/ai/action", strings.NewReader(
+		`{"тип":"создать","вид":"document","сущность":"Реализация","поля":{"Номер":"0001"}}`)))
+	var out struct {
+		OK    bool   `json:"ok"`
+		ID    string `json:"id"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("разбор ответа: %v (%s)", err, rec.Body.String())
+	}
+	if !out.OK {
+		t.Fatalf("действие не выполнено: %s", out.Error)
+	}
+	id, err := uuid.Parse(out.ID)
+	if err != nil {
+		t.Fatalf("нет корректного id в ответе: %q", out.ID)
+	}
+	row, err := s.store.GetByID(ctx, ents[1].Name, id, ents[1])
+	if err != nil || row == nil {
+		t.Fatalf("документ не найден: %v", err)
+	}
+	if got := refString(row["Организация"]); got != orgID.String() {
+		t.Errorf("Организация = %v, ожидался %s", row["Организация"], orgID)
+	}
+	if got := row["Комментарий"]; got != "по умолчанию" {
+		t.Errorf("Комментарий = %v, ожидался литеральный дефолт", got)
+	}
+}
+
+// submitNewManagedDoc проводит запись через публичный вход submit и возвращает
+// единственную сохранённую строку. Приватный parseSubmitForm не зовём: тест
+// обязан идти тем же путём, что и пользователь (повод — #611).
+func submitNewManagedDoc(t *testing.T, s *Server, ctx context.Context, doc *metadata.Entity, form url.Values) map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.submit(rec, reqWithChi("POST", "/ui/document/реализация/new", form,
+		map[string]string{"entity": "реализация"}))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("запись не прошла: %d %s", rec.Code, rec.Body.String())
+	}
+	rows, err := s.store.List(ctx, doc.Name, doc, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ожидалась одна запись, получено %d", len(rows))
+	}
+	return rows[0]
 }
 
 // newSubmitTestServerWithPrograms — тот же сервер, что newSubmitTestServer, но

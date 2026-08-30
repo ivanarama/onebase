@@ -12,7 +12,9 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 )
 
 type managedFormTablePayloadSource uint8
@@ -608,4 +610,76 @@ func (s *Server) restoreUnsubmittedFields(
 		}
 	}
 	return nil
+}
+
+// applyDefaultsToUnsubmittedFields — то же для НОВОГО объекта управляемой формы.
+// У существующего объекта неприсланный реквизит перечитывается из БД; у нового
+// читать неоткуда — строки ещё нет, и его значением обязано быть ровно то, что
+// вычислил бы GET формы: декларативный дефолт (план 153) плюс ПриСозданииНового.
+//
+// Без этого дефолт и хук доезжали до базы только через автоформу — она рисует
+// все реквизиты, и они возвращаются в POST. Управляемая форма рисует
+// размещённые, остальные до сервера не доходили и записывались пустыми — при
+// том что тот же реквизит через DSL и REST заполнялся, а
+// entityservice/defaults.go обещает единую реализацию на все пути создания
+// (#1189). Отказа не было, в логе тишина: расхождение находилось отчётами.
+//
+// Правило присутствия ключа общее с restoreUnsubmittedFields, включая
+// исключение для редактируемого Флажка: снятый пользователем флажок браузер не
+// шлёт, и дефолт `истина` не имеет права поставить его обратно.
+//
+// Ошибку вычисления не поднимаем: она уже показана баннером при открытии формы
+// (s.form зовёт тот же NewObject), а отказ в записи сделал бы карточку
+// непригодной, пока прикладной хук сломан. Поля, до которых расчёт не дошёл,
+// остаются пустыми — как до этой правки.
+//
+// Табличные части сюда не переносятся намеренно: строки, созданные хуком, всё
+// равно снял бы restoreUneditableTableParts — он для нового объекта чистит
+// таблицы, которых на форме не было, защищаясь от подделанных строк. Хук
+// заполняет такие таблицы после этой границы, в ПередЗаписью/ПриЗаписи.
+func (s *Server) applyDefaultsToUnsubmittedFields(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	obj *runtime.Object,
+) {
+	if entity == nil || form == nil || obj == nil || s.entitySvc == nil {
+		return
+	}
+	submitted := submittedFormKeys(r)
+	checkboxes := checkboxOmittedFields(form, entity, submitted)
+
+	// Есть ли вообще что заполнять — чтобы не гонять хук и чтение справочников
+	// зря на форме, показывающей все реквизиты.
+	need := false
+	for _, f := range entity.Fields {
+		if !formKeySubmitted(submitted, f.Name) && !checkboxes[strings.ToLower(f.Name)] {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return
+	}
+
+	// Без Fields: GET считал дефолты и звал хук ДО того, как пользователь что-то
+	// ввёл, и восстановить надо именно то состояние. Присланное накладывается
+	// сверху ниже — ввод пользователя главнее и дефолта, и хука.
+	newRes, _ := s.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
+		Entity:    entity,
+		FormEntry: true,
+	})
+	if newRes.Object == nil {
+		return
+	}
+	for _, f := range entity.Fields {
+		if formKeySubmitted(submitted, f.Name) || checkboxes[strings.ToLower(f.Name)] {
+			continue
+		}
+		value, ok := maskCIKeyValue(newRes.Object.Fields, f.Name)
+		if !ok || value == nil {
+			continue
+		}
+		obj.Set(f.Name, value)
+	}
 }

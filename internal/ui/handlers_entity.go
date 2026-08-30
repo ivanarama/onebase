@@ -672,6 +672,9 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 			obj.Set(k, v)
 		}
 		obj.TablePartRows = tpRows
+		// Реквизиты, которых на управляемой форме не было, до сюда не доходят
+		// вовсе — их значением обязано стать то, что вычислил GET (#1189).
+		s.applyDefaultsToUnsubmittedFields(r, entity, form, obj)
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,
