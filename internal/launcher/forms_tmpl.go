@@ -276,6 +276,11 @@ const tplFormsEditor = `
 .fc-tab{font-size:11px;color:#1a4a80;font-weight:600;margin-bottom:3px}
 .fc-field label{display:block;color:#475569;font-size:12px;margin-bottom:2px}
 .fc-field input{width:100%;padding:5px 8px;border:1px solid #d0d7e3;border-radius:5px;background:#f8fafc;pointer-events:none}
+/* Заданная высота (#1185): холст растягивает сам ввод — как рантайм и как
+   предпросмотр, иначе конструктор показывал бы другую форму, чем пользователь. */
+.fc-el.ob-el-fill{display:flex;flex-direction:column}
+.fc-el.ob-el-fill>label{flex:0 0 auto}
+.fc-el.ob-el-fill>input{flex:1 1 auto;min-height:0}
 .fc-req{color:#dc2626}
 .fc-check{display:flex;align-items:center;gap:6px}
 .fc-label{color:#475569}
@@ -1101,8 +1106,11 @@ function renderProps() {
   addTextProp(panel, 'Имя', 'name', info.name || '');
   if (info.kind === 'ПолеКартинки') {
     addTextProp(panel, 'Картинка (путь)', 'picture', info.picture || '');
-    addNumProp(panel, 'Ширина, px', 'width', info.width);
-    addNumProp(panel, 'Высота, px', 'height', info.height);
+    // У картинки width/height ограничивают её саму, а не блок вокруг (так было
+    // до общего контракта раскладки, #1185) — подписаны отдельно, чтобы это не
+    // читалось как «размер элемента».
+    addNumProp(panel, 'Ширина картинки, px', 'width', info.width);
+    addNumProp(panel, 'Высота картинки, px', 'height', info.height);
   } else if (!info.container) {
     addTextProp(panel, 'Поле данных (data_path)', 'data_path', info.dataPath || '');
     addTextProp(panel, 'Подсказка', 'hint', info.hint || '');
@@ -1134,8 +1142,47 @@ function renderProps() {
     addColumnsEditor(panel);
   }
   if (info.kind === 'Переключатель') { addOptionsEditor(panel, info); }
+  addLayoutSection(panel, info);
   addEventsSection(panel, info);
   addElementActions(panel, info);
+}
+
+// addLayoutSection — размеры и выравнивание элемента (#1185). До него эти ключи
+// правились только руками в YAML, а действовали и вовсе нигде; теперь контракт
+// один на рантайм, предпросмотр и холст, поэтому и в панели они общие для всех
+// видов. Пустое значение выравнивания = ключа нет (delProp), а не halign: "".
+function addLayoutSection(panel, info) {
+  // Виды без собственного блока в форме: колонка описывает колонку таблицы,
+  // командная панель разворачивается в тулбар. Предлагать им размер значило бы
+  // звать написать ключ, который снова ничего не делает.
+  if (info.kind === 'Колонка' || info.kind === 'КоманднаяПанель' || info.kind === 'КнопкаКП') return;
+  var hd = document.createElement('div'); hd.className = 'prop-row prop-section'; hd.textContent = 'Раскладка';
+  panel.appendChild(hd);
+  if (info.kind !== 'ПолеКартинки') {
+    addNumProp(panel, 'Ширина, px', 'width', info.width);
+    addNumProp(panel, 'Высота, px', 'height', info.height);
+  }
+  addAlignProp(panel, 'По горизонтали', 'halign', info.halign, [
+    { value: '', label: '— по умолчанию —' },
+    { value: 'left', label: 'Слева' },
+    { value: 'center', label: 'По центру' },
+    { value: 'right', label: 'Справа' },
+    { value: 'stretch', label: 'Растянуть' }
+  ]);
+  addAlignProp(panel, 'По вертикали', 'valign', info.valign, [
+    { value: '', label: '— по умолчанию —' },
+    { value: 'top', label: 'Сверху' },
+    { value: 'center', label: 'По центру' },
+    { value: 'bottom', label: 'Снизу' }
+  ]);
+}
+function addAlignProp(panel, label, key, value, options) {
+  var cur = (value || '').toLowerCase();
+  if (cur === 'middle') cur = 'center'; // синоним из макетов печатных форм
+  addSelectRaw(panel, label, cur, options, function (v) {
+    if (v) setProp(key, v);
+    else editOp({ op: 'delProp', node: _selected, key: key }, true);
+  });
 }
 
 // ── Свойства формы (batch B2/B3) ────────────────────────────────────────────
@@ -1552,6 +1599,11 @@ legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 .tab-page.active{display:block}
 .fg{margin-bottom:10px}
 .fg label{display:block;color:#475569;margin-bottom:4px;font-size:12px}
+/* Заданная высота (#1185) растягивает сам ввод, а не пустое место под ним —
+   зеркало правила рантайма для .form-group.ob-el-fill. */
+.fg.ob-el-fill{display:flex;flex-direction:column}
+.fg.ob-el-fill>label{flex:0 0 auto}
+.fg.ob-el-fill>input,.fg.ob-el-fill>select,.fg.ob-el-fill>textarea{flex:1 1 auto;min-height:0}
 .fg input,.fg select{width:100%;padding:6px 10px;border:1px solid #d0d7e3;border-radius:5px;font-size:13px;background:#fff}
 .req{color:#dc2626}
 .hint{display:block;color:#94a3b8;font-size:11px;margin-top:3px}
@@ -1617,7 +1669,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		if el.Orientation == "horizontal" {
 			cls = ` class="group-horizontal"`
 		}
-		fmt.Fprintf(buf, `<fieldset%s><legend>%s</legend><div class="group-body">`, cls, html.EscapeString(title))
+		fmt.Fprintf(buf, `<fieldset%s%s><legend>%s</legend><div class="group-body">`, cls, layoutStyleAttr(el), html.EscapeString(title))
 		for _, c := range el.Children {
 			renderPreviewElement(buf, c, tabsCounter, tps)
 		}
@@ -1683,7 +1735,8 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		if field == "" {
 			field = el.Name
 		}
-		fmt.Fprintf(buf, `<div class="fg"><label>%s%s</label><input type="text" placeholder="%s"`, html.EscapeString(title), req, html.EscapeString(field))
+		fmt.Fprintf(buf, `<div class="fg%s"%s><label>%s%s</label><input type="text" placeholder="%s"`,
+			layoutFillClass(el), layoutStyleAttr(el), html.EscapeString(title), req, html.EscapeString(field))
 		if el.ReadOnly {
 			buf.WriteString(` readonly`)
 		}
@@ -1696,17 +1749,20 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		if field == "" {
 			field = el.Name
 		}
-		fmt.Fprintf(buf, `<div class="fg" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="cb-%s"`, html.EscapeString(field))
+		fmt.Fprintf(buf, `<div class="fg" style="display:flex;align-items:center;gap:8px;%s"><input type="checkbox" id="cb-%s"`,
+			html.EscapeString(metadata.FormElementLayoutCSS(el)), html.EscapeString(field))
 		if el.ReadOnly {
 			buf.WriteString(` disabled`)
 		}
 		fmt.Fprintf(buf, `><label for="cb-%s" style="margin-bottom:0">%s</label></div>`, html.EscapeString(field), html.EscapeString(title))
 	case metadata.FormElementLabel:
-		fmt.Fprintf(buf, `<div class="deco">%s</div>`, html.EscapeString(title))
+		fmt.Fprintf(buf, `<div class="deco"%s>%s</div>`, layoutStyleAttr(el), html.EscapeString(title))
 	case metadata.FormElementButton:
-		fmt.Fprintf(buf, `<button type="button" class="btn">%s</button>`, html.EscapeString(title))
+		fmt.Fprintf(buf, `<button type="button" class="btn"%s>%s</button>`, layoutStyleAttr(el), html.EscapeString(title))
 	case metadata.FormElementPicture:
-		fmt.Fprintf(buf, `<div class="hint">[Картинка: %s]</div>`, html.EscapeString(el.Name))
+		// width/height у картинки — размер самой картинки (см. рантайм), поэтому
+		// предпросмотр берёт от раскладки только выравнивание.
+		fmt.Fprintf(buf, `<div class="hint"%s>[Картинка: %s]</div>`, alignStyleAttr(el), html.EscapeString(el.Name))
 	case metadata.FormElementTable, metadata.FormElementTablePart:
 		// Колонки, выбранные в конструкторе (дочерние kind:Колонка), рисуем
 		// реальной таблицей-каркасом с парой пустых строк.
@@ -1738,7 +1794,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 			}
 			fallback = "Состав не задан — показываются все реквизиты табличной части."
 		}
-		fmt.Fprintf(buf, `<div class="tp-prev"><div class="tp-prev-hd">▦ %s</div>`, html.EscapeString(title))
+		fmt.Fprintf(buf, `<div class="tp-prev"%s><div class="tp-prev-hd">▦ %s</div>`, layoutStyleAttr(el), html.EscapeString(title))
 		if len(headers) == 0 {
 			// Метаданные ТЧ недоступны (предпросмотр без базы или ТЧ не найдена):
 			// перечислить нечего, но соглашение назвать обязаны.
