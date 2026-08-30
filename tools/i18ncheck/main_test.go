@@ -97,7 +97,7 @@ func TestReportCoverage_ListsMachineOnlyLanguage(t *testing.T) {
 // переменной окружения отдаёт управление main() вместо прогона тестов. Так
 // проверяется та самая функция, а не её копия.
 func TestMain_PrintsCoverageReport(t *testing.T) {
-	cmd := exec.Command(os.Args[0])
+	cmd := exec.Command(os.Args[0]) //nolint:gosec // G204: запускается сам тестовый бинарь без аргументов, режим задаётся переменной окружения; ни shell, ни пользовательский ввод не участвуют
 	cmd.Env = append(os.Environ(), runMainEnv+"=1")
 	out, err := cmd.CombinedOutput()
 	got := string(out)
