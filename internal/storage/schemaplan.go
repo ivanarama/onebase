@@ -446,8 +446,8 @@ func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metad
 		if fieldName, taken := wanted[st.Column]; taken {
 			return nil, fmt.Errorf(
 				"%s: колонка %s числится за убранным полем (id %s), но её же занимает поле %s — "+
-					"уберите одно из них или задайте разные имена; разберите вручную",
-				table, st.Column, id, fieldName)
+					"уберите одно из них или задайте разные имена; разберите вручную%s",
+				table, st.Column, id, fieldName, standardFieldIDHint(id, fieldName))
 		}
 		changes = append(changes, SchemaChange{
 			Table: table, FieldID: id, Kind: ChangeDrop, From: st.Column,
@@ -457,6 +457,30 @@ func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metad
 
 	sort.SliceStable(changes, func(i, j int) bool { return changeOrder(changes[i]) < changeOrder(changes[j]) })
 	return changes, nil
+}
+
+// standardFieldIDHint — уточнение к отказу сторожа для одного частого случая:
+// стандартное поле («Код» справочника, «Номер» документа) лежит в fields с
+// собственным id, хотя колонка числится за устойчивым std_code / std_number.
+// Так делал конфигуратор, пока не научился засевать эти id при сохранении
+// (#1161).
+//
+// Подсказка нужна и после того фикса: уже сохранённые YAML он не чинит, и
+// человек остаётся с базой, которая не мигрирует. Общее «разберите вручную» тут
+// не помогает — правка ровно одна и её лучше назвать. Пустая строка, если
+// случай другой: гадать про чужие коллизии сторож не должен.
+func standardFieldIDHint(storedID, fieldName string) string {
+	standard := map[string]string{
+		metadata.StandardCodeFieldID:   metadata.StandardCodeField,
+		metadata.StandardNumberFieldID: metadata.StandardNumberField,
+	}
+	if name, ok := standard[storedID]; ok && strings.EqualFold(name, fieldName) {
+		return fmt.Sprintf(
+			". Поле «%s» платформа заводит сама: пропишите ему в YAML `id: %s` "+
+				"или уберите его строку из fields целиком (блок numerator не трогайте)",
+			fieldName, storedID)
+	}
+	return ""
 }
 
 // changeOrder задаёт порядок применения: сначала переименования (иначе
