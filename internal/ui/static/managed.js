@@ -378,7 +378,14 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
         if (inp.type === 'checkbox' || inp.type === 'radio' || checkboxPresence) inp.disabled = on;
         else inp.readOnly = on;
       });
-      el.querySelectorAll('select, button').forEach(function (n) { n.disabled = on; });
+      // Кнопка «Открыть карточку» из гашения исключена: сервер под $ro рисует её
+      // БЕЗ disabled намеренно (templates_managed.go:94) — посмотреть связанный
+      // объект не значит его править, и на нередактируемом поле переход нужен
+      // чаще всего. Гася её скопом, клиент расходился с той же страницей,
+      // отрисованной сервером. Предел тот же, что у скрытых элементов выше:
+      // при $ro и пустом значении сервер кнопку не рисует вовсе, и показать её
+      // клиент не может — вернуть её способна только перезагрузка страницы.
+      el.querySelectorAll('select, button:not([data-ob-ref-current])').forEach(function (n) { n.disabled = on; });
     });
   }
   window.applyElementStates = applyElementStates;
