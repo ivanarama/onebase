@@ -514,6 +514,11 @@ const controls = payload.controls.map((control) => ({
   disabled: control.disabled,
   readOnly: control.readOnly,
   dataset: control.checkboxPresence ? {obCheckboxPresence: '1'} : {},
+  // Все контролы принадлежат одному элементу формы: applyElementStates правит
+  // только свои и не лезет в чужие (#1184).
+  closest(selector) {
+    return selector === '[data-ob-el]' ? wrapper : null;
+  },
 }));
 const wrapper = {
   tagName: 'DIV',
