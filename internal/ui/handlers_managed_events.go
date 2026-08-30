@@ -45,8 +45,14 @@ type formEventResponse struct {
 	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
 	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
 	ConditionalCSS string                      `json:"conditionalCss"`
-	Messages       []string                    `json:"messages,omitempty"`
-	Error          string                      `json:"error,omitempty"`
+	// ElementStates — состояние элементов с условиями readonly_when/hidden_when,
+	// пересчитанное по полям записи ПОСЛЕ обработчика. Без него запрет,
+	// зависящий от состояния объекта, появлялся бы только после перезагрузки
+	// страницы: команда «Принять» замораживает реквизиты сразу, а форма
+	// продолжала показывать их редактируемыми.
+	ElementStates *elementStates `json:"elementStates,omitempty"`
+	Messages      []string       `json:"messages,omitempty"`
+	Error         string         `json:"error,omitempty"`
 	// PickerData != nil — обработчик фазы 1 вызвал ПоказатьПодбор: клиент
 	// открывает модальный диалог мультивыбора вместо применения ТЧ (план 46).
 	PickerData *pickerPayload `json:"pickerData,omitempty"`
@@ -280,7 +286,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	if existingFormID != "" {
 		persistedID = obj.ID
 	}
-	if err := s.restoreUneditableTableParts(dslCtx, entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
+	if err := s.restoreUneditableTableParts(dslCtx, r, entity, form, persistedID, obj.TablePartRows, canWrite); err != nil {
 		opStatus = operationStatus(opCtx, err)
 		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
@@ -469,6 +475,7 @@ type formEventState struct {
 	RefOptions     map[string][]map[string]any
 	ConditionalCSS string
 	Messages       []string
+	ElementStates  *elementStates
 }
 
 // response — единственное место, где состояние переносится в ответ.
@@ -481,7 +488,36 @@ func (st formEventState) response(ok bool) formEventResponse {
 		RefOptions:     st.RefOptions,
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
+		ElementStates:  st.ElementStates,
 	}
+}
+
+// elementStates — состояние элементов формы, зависящее от полей записи.
+// В картах присутствует каждый элемент, у которого условие ОБЪЯВЛЕНО, — со
+// значением true или false: клиент должен уметь и снять запрет, а не только
+// поставить.
+//
+// Снять получается не всё: элемент, скрытый на момент отрисовки, в разметку не
+// попал, и показать его обратно клиенту нечем — hidden=false для него ничего не
+// изменит до перезагрузки страницы. Для readonly обе стороны рабочие.
+type elementStates struct {
+	ReadOnly map[string]bool `json:"readonly,omitempty"`
+	Hidden   map[string]bool `json:"hidden,omitempty"`
+}
+
+// formElementStates пересчитывает readonly_when/hidden_when по значениям формы
+// ПОСЛЕ обработчика: команда меняет состояние объекта, и доступность полей
+// должна измениться сразу, а не после перезагрузки страницы. nil, если условий
+// в форме нет — клиенту нечего применять.
+func (s *Server) formElementStates(form *metadata.FormModule, entity *metadata.Entity, values map[string]any) *elementStates {
+	if form == nil || s.interp == nil {
+		return nil
+	}
+	ro, hidden, _ := managedFormElementStates(form, managedFormHeaderValues(entity, values), newInterpEvaluator(s.interp))
+	if len(ro) == 0 && len(hidden) == 0 {
+		return nil
+	}
+	return &elementStates{ReadOnly: ro, Hidden: hidden}
 }
 
 func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) formEventState {
@@ -528,6 +564,10 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		RefOptions:     s.eventRefOptions(ctx, form, entity, values),
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
+		// Условия readonly_when/hidden_when считаются здесь же, где известны
+		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
+		// сразу меняет доступность полей.
+		ElementStates: s.formElementStates(form, entity, values),
 	}
 }
 

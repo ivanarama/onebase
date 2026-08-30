@@ -696,7 +696,29 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 // ВызватьИсключение. Контекст совпадает с веткой DSLError в submit/submitEdit.
 func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, errMsg string, msgs []string, tpRows map[string][]map[string]any) {
 	values := formValues(r, entity)
-	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
+	managedForm := pickManagedForm(entity, "object")
+	// Form attributes are not entity fields, so formValues deliberately omits
+	// them. On a validation error keep every posted scalar attribute for the
+	// retry instead of clearing unrelated user input from the rendered form.
+	submitted := submittedFormKeys(r)
+	if managedForm != nil {
+		for _, attr := range managedForm.Attributes {
+			if !formAttrIsScalar(attr) || !formKeySubmitted(submitted, attr.Name) {
+				continue
+			}
+			if _, isEntityField := entityFieldByName(entity, attr.Name); isEntityField {
+				continue
+			}
+			values[attr.Name] = r.FormValue(attr.Name) //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
+		}
+	}
+	if !isNew {
+		// A failed edit remains the same edit. Preserve the optimistic-lock
+		// token and object identity so a retry cannot silently degrade to an
+		// unversioned write and managed events keep their document context.
+		values["_version"] = r.FormValue("_version") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
+	}
+	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, managedForm)
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
 	lang := s.resolveLang(r)
@@ -720,6 +742,8 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 	}
 	if isNew {
 		data["IsPopup"] = r.FormValue("_popup") == "1" //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
+	} else {
+		data["ID"] = chi.URLParam(r, "id")
 	}
 	s.renderEntityForm(w, r, "object", data)
 }
@@ -745,19 +769,24 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if form := pickManagedForm(entity, "object"); form != nil {
+	managedForm := pickManagedForm(entity, "object")
+	if managedForm != nil {
 		if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" {
 			if failed := s.restoreManagedCopyState(
-				w, r, entity, form, fields, obj.Fields, obj.TablePartRows,
+				w, r, entity, managedForm, fields, obj.Fields, obj.TablePartRows,
 			); failed {
 				return
 			}
 		} else {
-			if err := s.restoreUneditableTableParts(r.Context(), entity, form, uuid.Nil, obj.TablePartRows, true); err != nil {
+			if err := s.restoreUneditableTableParts(r.Context(), r, entity, managedForm, uuid.Nil, obj.TablePartRows, true); err != nil {
 				s.serverError(w, r, err)
 				return
 			}
 		}
+	}
+	if err := s.validateManagedFormRequired(r, entity, managedForm, obj.Fields); err != nil {
+		s.renderObjectFormBadRequest(w, r, entity, true, err.Error(), obj.TablePartRows)
+		return
 	}
 	var hookMsgs []string
 	var formHookErr error
@@ -1399,12 +1428,13 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// Строго до маскирования, проверок построчного доступа и хуков формы: и
 	// предикаты, и DSL должны видеть реальные данные, а ПередЗаписью — иметь
 	// возможность перекрыть восстановленное значение.
-	if form := pickManagedForm(entity, "object"); form != nil {
-		if err := s.restoreUnsubmittedFields(r.Context(), r, entity, form, id, obj.Fields); err != nil {
+	managedForm := pickManagedForm(entity, "object")
+	if managedForm != nil {
+		if err := s.restoreUnsubmittedFields(r.Context(), r, entity, managedForm, id, obj.Fields); err != nil {
 			s.serverError(w, r, err)
 			return
 		}
-		if err := s.restoreUneditableTableParts(r.Context(), entity, form, id, obj.TablePartRows, true); err != nil {
+		if err := s.restoreUneditableTableParts(r.Context(), r, entity, managedForm, id, obj.TablePartRows, true); err != nil {
 			s.serverError(w, r, err)
 			return
 		}
@@ -1421,6 +1451,10 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if entity.Posting && (action == "post" || action == "post_and_close") && !s.rowAllowedUpdate(w, r, entity, "post", id, obj.Fields) {
+		return
+	}
+	if err := s.validateManagedFormRequired(r, entity, managedForm, obj.Fields); err != nil {
+		s.renderObjectFormBadRequest(w, r, entity, false, err.Error(), obj.TablePartRows)
 		return
 	}
 
@@ -1466,6 +1500,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+		values["_version"] = r.FormValue("_version")
 		langSubmit := s.resolveLang(r)
 		var fOpts []map[string]any
 		if entity.Hierarchical {
@@ -1473,6 +1508,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		s.renderEntityForm(w, r, "object", map[string]any{
 			"Entity":       entity,
+			"ID":           id.String(),
 			"IsNew":        false,
 			"Error":        result.DSLError,
 			"Values":       values,
