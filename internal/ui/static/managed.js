@@ -2895,6 +2895,39 @@ function obManagedSwitchTab(btn) {
 }
 
 obManagedReady(function () {
+  // Native constraint validation fires `invalid` before it tries to focus the
+  // first bad control. Open that control's managed tab synchronously; otherwise
+  // a required field on an inactive (display:none) page cannot be focused and
+  // the browser leaves the user with no visible explanation. Only the first
+  // invalid event in one validation pass may switch a tab: later invalid fields
+  // on other pages must not hide the first field again before focus is applied.
+  var validationPassStarted = false;
+  document.addEventListener('invalid', function (e) {
+    if (validationPassStarted) return;
+    validationPassStarted = true;
+    setTimeout(function () { validationPassStarted = false; }, 0);
+    var control = e.target;
+    if (!control || !control.closest) return;
+    var pages = [];
+    var content = control.closest('.managed-tab-content');
+    while (content) {
+      pages.push(content);
+      var parent = content.parentElement;
+      content = parent && parent.closest ? parent.closest('.managed-tab-content') : null;
+    }
+    // For nested tab groups, select every ancestor page from outer to inner.
+    // Switching an outer group currently hides descendant pages too, so the
+    // inner selection must be restored even when it was active beforehand.
+    for (var i = pages.length - 1; i >= 0; i--) {
+      var page = pages[i];
+      var tabs = page.closest('.managed-tabs');
+      if (!tabs) continue;
+      var idx = page.getAttribute('data-tab-content');
+      var btn = tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
+      if (btn) obManagedSwitchTab(btn);
+    }
+  }, true);
+
   document.addEventListener('click', function (e) {
     var btn = e.target && e.target.closest ? e.target.closest('.managed-tab-btn') : null;
     if (!btn) return;
