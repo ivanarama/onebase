@@ -506,9 +506,13 @@ func reportRunURLAfterSettingsSave(name string, params []reportpkg.Param, r *htt
 	if presetID != "" {
 		q.Set("__preset", presetID)
 	}
+	// Ссылка редиректа — снимок формы, как и ссылка выгрузки: параметр, который
+	// на форме БЫЛ, уезжает в неё даже пустым. Пропустить пустой нельзя —
+	// «ключа в ссылке нет» означает «пользователь не задавал», и после редиректа
+	// reportParamValuesFromRequest подставил бы туда умолчание: очищенное поле и
+	// снятая галка возвращались бы сразу после сохранения настроек.
 	for _, p := range params {
-		val, ok := requestFormValue(r, p.Name)
-		if ok && val != "" {
+		if val, ok := reportParamRequestValue(r, p); ok {
 			q.Set(p.Name, val)
 		}
 	}
