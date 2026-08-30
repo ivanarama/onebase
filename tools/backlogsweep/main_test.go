@@ -35,6 +35,21 @@ func testConfig() config {
 	}
 }
 
+// testObjects собирает известные номера тем же путём, что и рабочий прогон:
+// открытые заявки и открытые PR лежат в одной нумерации, и предшественником
+// бывает как та, так и другой (повод заявки — план 160 в PR #1218).
+func testObjects(openIssues, openPRs []int) objects {
+	var issues []issue
+	for _, n := range openIssues {
+		issues = append(issues, issue{Number: n})
+	}
+	var prs []pull
+	for _, n := range openPRs {
+		prs = append(prs, pull{Number: n})
+	}
+	return knownObjects(issues, prs)
+}
+
 // mk собирает заявку: автор, дата последнего движения, метки, комментарии.
 // Тело задаётся отдельно — через withBody, чтобы не плодить параметры.
 func mk(number int, author string, updated time.Time, labels []string, comments ...[2]string) issue {
@@ -406,6 +421,183 @@ func TestPlanRefsReadTitleBodyAndComments(t *testing.T) {
 func TestDaysNeverGoesNegative(t *testing.T) {
 	if got := days(now, now.AddDate(0, 0, 3)); got != 0 {
 		t.Fatalf("время в будущем должно давать 0, получено %d", got)
+	}
+}
+
+// Повод заявки #1219: план 160 идёт двумя шагами, второй начинается после
+// мержа первого. Пока PR предшественника открыт, пауза не залежалась — работа
+// идёт, просто не здесь, и напоминать не о чем.
+func TestOpenPredecessorKeepsHoldOutOfStale(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1, 2}, []int{1218})
+	plan := "`Plans/46-tablepart-commands-and-picker.md`"
+	issues := []issue{
+		withBody(mk(1, "ivanarama", ago(60), []string{"hold"}), plan+"\n\nBlocked-by: #1218"),
+		withBody(mk(2, "ivanarama", ago(60), []string{"hold"}), plan),
+	}
+
+	buckets := analyze(issues, cfg)
+
+	if got := numbers(bucketByTitle(buckets, "hold без движения")); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("залежавшейся обязана считаться только #2, получено %v", got)
+	}
+	if got := bucketByTitle(buckets, "предшественник закрыт, а hold остался"); len(got) != 0 {
+		t.Fatalf("предшественник ещё открыт — разблокировки нет, получено %v", details(got))
+	}
+}
+
+// Предшественник закрыт (или PR влит), а пауза держится — это и есть «пора
+// снимать hold»: единственная строка отчёта, которая раньше не появлялась
+// никогда, потому что понятия зависимости в инструменте не было.
+func TestClosedPredecessorUnblocksThePause(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1}, []int{1218})
+	is := withBody(mk(1, "ivanarama", ago(10), []string{"hold"}),
+		"второй шаг плана 46\n\nBlocked-by: #1204")
+
+	got := bucketByTitle(analyze([]issue{is}, cfg), "предшественник закрыт, а hold остался")
+
+	if len(got) != 1 {
+		t.Fatalf("ожидалась одна находка, получено %v", details(got))
+	}
+	if !strings.Contains(got[0].detail, "предшественник #1204 закрыт") {
+		t.Fatalf("в пояснении нет номера предшественника: %q", got[0].detail)
+	}
+}
+
+// Опечатка в номере не должна выглядеть разблокировкой: «нет среди открытых»
+// значит «закрыт» только до последнего выданного номера, выше — не существует.
+func TestPredecessorAboveTheLastNumberIsNotAnUnblock(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1}, []int{1218})
+	is := withBody(mk(1, "ivanarama", ago(10), []string{"hold"}),
+		"план 46\n\nBlocked-by: #9999")
+
+	buckets := analyze([]issue{is}, cfg)
+
+	if got := bucketByTitle(buckets, "предшественник закрыт, а hold остался"); len(got) != 0 {
+		t.Fatalf("опечатка в номере — не разблокировка, получено %v", details(got))
+	}
+	got := bucketByTitle(buckets, "Blocked-by на номер, которого нет")
+	if len(got) != 1 || !strings.Contains(got[0].detail, "#9999") {
+		t.Fatalf("ожидалась отдельная находка про #9999, получено %v", details(got))
+	}
+}
+
+// Предшественников бывает несколько, и «один из двух готов» — это по-прежнему
+// ожидание. У разблокированной #2 остаётся и строка «без движения»: оба факта
+// верны, а прятать находку в отчёте, который читают ради полноты, дороже, чем
+// напечатать вторую строку.
+func TestUnblockNeedsEveryPredecessorClosed(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1, 2, 1220}, nil)
+	issues := []issue{
+		withBody(mk(1, "ivanarama", ago(60), []string{"hold"}), "план 46\n\nBlocked-by: #1204, #1220"),
+		withBody(mk(2, "ivanarama", ago(60), []string{"hold"}), "план 46\n\nBlocked-by: #1204\nBlocked-by: #1210"),
+	}
+
+	buckets := analyze(issues, cfg)
+
+	got := bucketByTitle(buckets, "предшественник закрыт, а hold остался")
+	if len(got) != 1 || got[0].issue.Number != 2 {
+		t.Fatalf("разблокирована только #2, получено %v", numbers(got))
+	}
+	if !strings.Contains(got[0].detail, "предшественники #1204, #1210 закрыты") {
+		t.Fatalf("ожидалось перечисление обоих предшественников, получено %q", got[0].detail)
+	}
+	if stale := numbers(bucketByTitle(buckets, "hold без движения")); len(stale) != 1 || stale[0] != 2 {
+		t.Fatalf("честное ожидание #1 залежавшимся не считается, получено %v", stale)
+	}
+}
+
+// Паузы нет — снимать нечего. Закрытый предшественник у работающей заявки это
+// нормальный ход дел, а не находка.
+func TestClosedPredecessorWithoutHoldIsNotAFinding(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1, 50}, nil)
+	is := withBody(mk(1, "ivanarama", ago(10), []string{"approved"}), "Blocked-by: #2")
+
+	if got := bucketByTitle(analyze([]issue{is}, cfg), "предшественник закрыт, а hold остался"); len(got) != 0 {
+		t.Fatalf("паузы нет — разблокировать нечего, получено %v", details(got))
+	}
+}
+
+// «Ждём #50» объясняет паузу не хуже ссылки на план. Без этой оговорки корзина
+// «решение не оформлено» писала бы неправду про заявку, оформленную лучше всех.
+func TestBlockedByCountsAsAFormalizedPause(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1, 2, 50}, nil)
+	issues := []issue{
+		withBody(mk(1, "ivanarama", ago(3), []string{"hold"}), "Blocked-by: #50"),
+		mk(2, "ivanarama", ago(3), []string{"hold"}), // ни плана, ни зависимости
+	}
+
+	got := numbers(bucketByTitle(analyze(issues, cfg), "hold без ссылки на план"))
+
+	if len(got) != 1 || got[0] != 2 {
+		t.Fatalf("ожидалась только #2, получено %v", got)
+	}
+}
+
+// Зависимость читается только объявленной строкой. Голый `#N` зависимостью не
+// считается: живой текст заявки полон ссылок на соседние обсуждения, и по ним
+// зависимостью оказалась бы каждая вторая. Ссылка на себя отбрасывается —
+// иначе всегда открытый собственный номер навсегда выключил бы «без движения».
+func TestBlockedByReadsDeclaredLinesOnly(t *testing.T) {
+	is := withBody(mk(7, "ivanarama", ago(1), nil,
+		[2]string{"ivanarama", "- Blocked-by: #12"},
+		[2]string{"ivanarama", "> Blocked-by: #13, #14"}),
+		"дубль по #99 обсуждается отдельно\n\nBlocked-by: #10 #11\nBlocked-by: #7")
+	is.Title = "Blocked-by: #9"
+
+	got := blockedBy(is)
+
+	want := []int{9, 10, 11, 12, 13, 14}
+	if len(got) != len(want) {
+		t.Fatalf("ожидались %v, получено %v", want, got)
+	}
+	for i, n := range want {
+		if got[i] != n {
+			t.Fatalf("ожидались %v, получено %v", want, got)
+		}
+	}
+}
+
+// Пример синтаксиса в блоке кода зависимостью не считается. Случай живой:
+// первый прогон инструмента нашёл ровно одну находку, и ею оказалась заявка
+// #1219, где `Blocked-by: #1234` стоит примером в блоке кода.
+func TestBlockedByIgnoresFencedExamples(t *testing.T) {
+	is := withBody(mk(1, "ivanarama", ago(1), nil),
+		"Предлагается строка:\n\n```\nBlocked-by: #1234\n```\n\nа ждём мы на самом деле\nBlocked-by: #77")
+
+	got := blockedBy(is)
+
+	if len(got) != 1 || got[0] != 77 {
+		t.Fatalf("ожидался только #77, получено %v", got)
+	}
+}
+
+// Отчёт — публичный вывод инструмента: обе новые корзины обязаны доходить до
+// строк вместе с советом, что с ними делать.
+func TestReportPrintsUnblockedAndBrokenBlocker(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{8, 9}, nil)
+	issues := []issue{
+		withBody(mk(8, "ivanarama", ago(3), []string{"hold"}), "план 46\n\nBlocked-by: #5"),
+		withBody(mk(9, "ivanarama", ago(3), []string{"hold"}), "план 46\n\nBlocked-by: #500"),
+	}
+
+	var buf bytes.Buffer
+	report(&buf, analyze(issues, cfg), 2, false)
+
+	out := buf.String()
+	for _, want := range []string{
+		"предшественник закрыт, а hold остался", "предшественник #5 закрыт", "снять hold",
+		"Blocked-by на номер, которого нет", "#500", "похоже на опечатку",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в отчёте нет %q:\n%s", want, out)
+		}
 	}
 }
 

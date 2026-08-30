@@ -22,6 +22,17 @@
 //	needs-decision без движения  — ход человека завис
 //	внешняя заявка без ответа    — самое дорогое молчание: автор ждёт
 //	ссылка на план, которого нет — план обещан и не написан либо номер переехал
+//	предшественник закрыт        — то, чего ждала пауза, уже сделано
+//	Blocked-by в никуда          — номер, которого нет: опечатка похожа на разблокировку
+//
+// Зависимость между заявками объявляется строкой в теле (или комментарии):
+//
+//	Blocked-by: #1204
+//
+// Понятие нужно ровно затем, чтобы отличить «ждём предшественника» от «просто
+// лежит»: без него пауза, которая идёт по плану, и пауза, о которой забыли,
+// выглядят одинаково, и снятие первой держится на памяти человека — то самое,
+// против чего написаны issuetail и featureage.
 //
 // Запуск:
 //
@@ -120,6 +131,26 @@ var (
 	// («оформлено планом 157», «по плану 46»), и без них проверка молчала бы
 	// ровно там, где она нужна.
 	planNumRe = regexp.MustCompile(`(?i)план(?:а|у|ом|е|ы|ов|ам|ами)?\s+(\d{1,3})`)
+
+	// blockedByRe — объявленная зависимость: строка `Blocked-by: #1204`.
+	// Требуется и маркер, и начало строки, в отличие от ссылок на планы: живой
+	// текст заявки полон `#N` (соседние обсуждения, номера PR из разбора), и
+	// сверка по голому номеру объявила бы зависимостью каждую вторую ссылку.
+	// Слева допускаются оформление списком и цитирование — `- Blocked-by: #1204`
+	// в перечне условий и `> Blocked-by: #1204` в ответе значат ровно то же.
+	blockedByRe = regexp.MustCompile(`(?im)^[ \t>*+-]*blocked-by\s*:\s*(.*)$`)
+
+	// fenceRe — блок кода. Внутри него `Blocked-by:` не объявление, а показ
+	// синтаксиса: маркер тем и определяется, что строка ЗАЯВЛЯЕТ зависимость, а
+	// строка в блоке кода её цитирует. Случай не выдуманный — первый же живой
+	// прогон нашёл ровно одну находку, и ею оказалась заявка #1219, где пример
+	// `Blocked-by: #1234` стоит в блоке кода. Ссылок на планы это не касается:
+	// план, названный в примере, остаётся тем же планом.
+	fenceRe = regexp.MustCompile("(?s)```.*?```")
+
+	// blockerNumRe — номера в хвосте такой строки: предшественников бывает
+	// несколько, и перечислять их одной строкой естественнее, чем плодить их.
+	blockerNumRe = regexp.MustCompile(`#(\d+)`)
 )
 
 // planRef — упоминание плана в тексте заявки. File пуст, если план назван
@@ -188,6 +219,7 @@ func main() {
 		replyDays:  *replyDays,
 		team:       split(*team),
 		plans:      knownPlans(*plansDir, prFiles),
+		objects:    knownObjects(issues, prs),
 	}
 
 	buckets := analyze(issues, cfg)
@@ -201,6 +233,7 @@ type config struct {
 	replyDays  int
 	team       map[string]bool
 	plans      plans
+	objects    objects
 }
 
 // analyze раскладывает заявки по корзинам. Порядок корзин в выводе — по
@@ -218,6 +251,10 @@ func analyze(issues []issue, cfg config) []bucket {
 		title:  "ссылка на план, которого нет",
 		advice: "план обещан и не написан либо номер переехал: написать план или поправить ссылку",
 	}
+	blockerMissing := bucket{
+		title:  "Blocked-by на номер, которого нет",
+		advice: "номер выше всех открытых заявок и PR: поправить его — иначе пауза так и не разблокируется",
+	}
 	holdStale := bucket{
 		title:  "hold без движения",
 		advice: "«потом» без срока это «никогда»: вернуть в работу (approved) или закрыть",
@@ -225,6 +262,10 @@ func analyze(issues []issue, cfg config) []bucket {
 	decisionStale := bucket{
 		title:  "needs-decision без движения",
 		advice: "ход человека завис: ответить меткой approved / decision:N либо закрыть",
+	}
+	unblocked := bucket{
+		title:  "предшественник закрыт, а hold остался",
+		advice: "пауза кончилась: снять hold и поставить approved — или дописать, чего ещё ждём",
 	}
 
 	for _, is := range issues {
@@ -246,15 +287,43 @@ func analyze(issues []issue, cfg config) []bucket {
 		}
 
 		refs := planRefs(is)
+		blockers := blockedBy(is)
+		waiting, done, unknown := cfg.objects.classify(blockers)
+
 		if labels["hold"] {
-			if len(refs) == 0 {
+			// Объявленный предшественник — тоже оформленное решение: «ждём #N»
+			// говорит, почему пауза, ровно как ссылка на план. Без этой оговорки
+			// корзина писала бы про такую заявку «решение не оформлено» — то есть
+			// неправду, причём ровно о той заявке, которая оформлена лучше всех.
+			if len(refs) == 0 && len(blockers) == 0 {
 				holdNoPlan.findings = append(holdNoPlan.findings, finding{is,
 					fmt.Sprintf("заявке %d дн., плана не назначено", days(cfg.now, is.CreatedAt))})
 			}
-			if quiet >= cfg.holdDays {
+			// Пауза, у которой предшественник ещё открыт, не залежалась: работа
+			// идёт, просто не здесь. Иначе новая корзина принесла бы шум ровно
+			// там, где всё по плану, — а шум съедает и соседние строки.
+			if quiet >= cfg.holdDays && len(waiting) == 0 {
 				holdStale.findings = append(holdStale.findings, finding{is,
 					fmt.Sprintf("без движения %d дн.", quiet)})
 			}
+			// Ждать больше нечего только когда закрыты ВСЕ предшественники:
+			// «один из двух готов» — это по-прежнему ожидание.
+			if len(done) > 0 && len(waiting) == 0 {
+				subject, verb := "предшественник", "закрыт"
+				if len(done) > 1 {
+					subject, verb = "предшественники", "закрыты"
+				}
+				unblocked.findings = append(unblocked.findings, finding{is,
+					fmt.Sprintf("%s %s %s, а пауза держится %d дн.", subject, hashes(done), verb, quiet)})
+			}
+		}
+
+		// Номер, которого нет, показываем у любой заявки, а не только у hold:
+		// врёт он одинаково, а на снятой паузе его вдобавок некому заметить.
+		for _, n := range unknown {
+			blockerMissing.findings = append(blockerMissing.findings, finding{is,
+				fmt.Sprintf("Blocked-by: #%d — номер больше любого открытого (последний #%d), похоже на опечатку",
+					n, cfg.objects.top)})
 		}
 
 		// Ссылку на несуществующий план проверяем у любой заявки, не только у
@@ -289,7 +358,9 @@ func analyze(issues []issue, cfg config) []bucket {
 		}
 	}
 
-	return []bucket{unanswered, holdNoPlan, planMissing, holdStale, decisionStale}
+	// Порядок — по убыванию цены молчания. «Разблокировано» сразу за живым
+	// человеком: там не молчание, а простой готовой к работе заявки.
+	return []bucket{unanswered, unblocked, holdNoPlan, planMissing, blockerMissing, holdStale, decisionStale}
 }
 
 func report(w io.Writer, buckets []bucket, total int, truncated bool) {
@@ -522,6 +593,105 @@ func (p plans) remember(name string) {
 			p.nums[n] = true
 		}
 	}
+}
+
+// blockedBy — номера, названные строкой `Blocked-by: #N` в заголовке, теле или
+// комментариях. Места те же, что у planRefs: зависимость чаще всего пишут в
+// тело при парковке, но обнаруживается она и позже — тогда её дописывают
+// комментарием, и не прочитать его значило бы не увидеть свежую зависимость.
+//
+// Ссылка заявки на саму себя отбрасывается. Это не выдуманный случай, а
+// ловушка: своя же заявка всегда открыта, поэтому такая строка навсегда
+// объявила бы паузу честным ожиданием и убрала заявку из «hold без движения» —
+// то есть опечатка выключала бы ровно ту проверку, ради которой всё писалось.
+func blockedBy(is issue) []int {
+	parts := make([]string, 0, len(is.Comments)+2)
+	parts = append(parts, is.Title, is.Body)
+	for _, c := range is.Comments {
+		parts = append(parts, c.Body)
+	}
+
+	var out []int
+	seen := map[int]bool{}
+	for _, text := range parts {
+		for _, line := range blockedByRe.FindAllStringSubmatch(fenceRe.ReplaceAllString(text, ""), -1) {
+			for _, m := range blockerNumRe.FindAllStringSubmatch(line[1], -1) {
+				n, err := strconv.Atoi(m[1])
+				if err != nil || n <= 0 || n == is.Number || seen[n] {
+					continue
+				}
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// objects — номера, которые инструмент видел своими глазами: открытые заявки и
+// открытые PR. Больше он о состоянии соседнего номера ничего не знает, и это
+// осознанно: отдельный запрос к API на каждую зависимость стоит дороже, чем
+// строка отчёта, который и так не гейт.
+//
+// Отсюда top — самый большой открытый номер. Без него «нет среди открытых»
+// означало бы сразу и «закрыт», и «не существует», а это разные вещи: опечатка
+// в номере выглядела бы разблокировкой, то есть приглашением снять паузу,
+// которая на самом деле держится.
+//
+// Что список открытых полон, инструмент проверить не может: -limit обрезает и
+// заявки, и PR. Про обрезку заявок отчёт предупреждает отдельной строкой —
+// в такой прогон «предшественник закрыт» стоит перечитать глазами.
+type objects struct {
+	open map[int]bool
+	top  int
+}
+
+// classify раскладывает предшественников по состоянию: ещё открыт, уже закрыт,
+// номера не видели вовсе.
+//
+// «Не видели» — это строго больше top. Ниже него закрытый и несуществующий
+// неразличимы, и выдавать одно за другое инструмент не станет: заявка с
+// опечаткой в пределах выданных номеров попадёт в «разблокировано», а там
+// человек сверит номер сам — строка отчёта его называет.
+func (o objects) classify(nums []int) (waiting, done, unknown []int) {
+	for _, n := range nums {
+		switch {
+		case o.open[n]:
+			waiting = append(waiting, n)
+		case n > o.top:
+			unknown = append(unknown, n)
+		default:
+			done = append(done, n)
+		}
+	}
+	return waiting, done, unknown
+}
+
+func knownObjects(issues []issue, prs []pull) objects {
+	o := objects{open: map[int]bool{}}
+	mark := func(n int) {
+		o.open[n] = true
+		if n > o.top {
+			o.top = n
+		}
+	}
+	for _, is := range issues {
+		mark(is.Number)
+	}
+	for _, pr := range prs {
+		mark(pr.Number)
+	}
+	return o
+}
+
+// hashes — «#1204, #1218».
+func hashes(nums []int) string {
+	parts := make([]string, 0, len(nums))
+	for _, n := range nums {
+		parts = append(parts, "#"+strconv.Itoa(n))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func labelSet(is issue) map[string]bool {
