@@ -341,6 +341,28 @@ func TestPipelineNoteIsNotAnAnswerToTheAuthor(t *testing.T) {
 	}
 }
 
+// Отметка «взято в работу» — тоже запись для конвейера, и на автоходе она
+// приходит РАНЬШЕ, чем истекут -reply-days: на #1161 разбор и отметка разошлись
+// на двое суток из семи. Не будь у неё маркера, находка не появилась бы вовсе,
+// а не «появилась и погасла». Тело здесь — дословно то, что пишет
+// `/fix-approved` (п. 7 его SKILL.md).
+func TestInWorkNoteIsNotAnAnswerToTheAuthor(t *testing.T) {
+	is := mk(1, "rusist32-netizen", ago(30), []string{"ready-fix", "in-work"},
+		[2]string{"ivanarama", "**Триаж.** Корень доказан по коду.\n<!-- pp:triage -->"},
+		[2]string{"ivanarama", "Взято в работу: #1215. <!-- pp:in-work -->"})
+	is = commentAt(is, 0, ago(3))
+	is = commentAt(is, 1, ago(1))
+
+	got := bucketByTitle(analyze([]issue{is}, testConfig()), "внешняя заявка без ответа")
+
+	if len(got) != 1 {
+		t.Fatalf("отметка «взято в работу» засчитана за ответ автору, получено %v", numbers(got))
+	}
+	if !strings.Contains(got[0].detail, "ждёт 30 дн.") || !strings.Contains(got[0].detail, "ответа не было ни разу") {
+		t.Fatalf("отметка сдвинула границу ответа: %q", got[0].detail)
+	}
+}
+
 // Ответ автору находку гасит — и машинный с маркером `pp:reply` (автоответ
 // триажа при ready-fix), и обычный комментарий человека без маркеров.
 func TestAnswerToTheAuthorClearsTheFinding(t *testing.T) {
