@@ -286,8 +286,8 @@ worktree** и пишет заключение:
   `internal/i18n/locales/*.json`, `Plans/README.md`) разрешает сам;
   содержательный конфликт не трогает — комментарий и эскалация.
 - Ждёт обязательные проверки: `build`, `lint`, `postgres-integration`, `vuln`,
-  `smoke`, `e2e`, `test-windows` — до 35 минут на PR. `bench` и
-  `launcher-webview-build` мёрж не блокируют.
+  `smoke`, `e2e`, `test-windows`, `launcher-webview-build` — до 35 минут на PR.
+  Не блокирует мёрж только `bench`.
 - Флейк (таймаут, обрыв раннера, сеть; `test-windows` мигает примерно раз на
   тридцать прогонов) → один перезапуск. Настоящий провал → комментарий с
   выдержкой лога и эскалация.

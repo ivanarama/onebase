@@ -196,6 +196,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
+		"effectiveFormElementRequired":   effectiveFormElementRequired,
+		"nativeFormElementRequired":      nativeFormElementRequired,
 		"normalizedFormHotkey":           normalizedFormHotkey,
 		"str": func(v any) string {
 			if v == nil {
