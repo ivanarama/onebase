@@ -79,7 +79,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    ```
    gh api repos/ivanarama/onebase/pulls/<N> --jq .head.sha
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/comments?per_page=100" \
-     --jq '.[] | {id,node_id,created_at,author:.user.login,body}'
+     --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/timeline?per_page=100" \
      --jq '.[] | {id,created_at,event,actor:(.actor.login // .user.login),label:(.label.name // null),body}'
    ```
@@ -105,12 +105,15 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    безопасное состояние уже достигнуто: PR не сольётся и REVIEW подхватит SHA.
    Никакие update/push/merge до успешного SHA-гейта недопустимы.
 
-   Текущее наличие `ship` недостаточно: в полной timeline должен быть доверенный
-   event `labeled` для `ship`, расположенный **после** каноничного completion-
-   комментария текущего SHA. Это доказывает, что человек одобрил именно готовое
-   заключение, а не оставил старую метку до аудита. При одинаковом `created_at`
-   используй порядок элементов timeline; если API не даёт доказать порядок —
-   stale `ship`, метку нужно снять и поставить заново.
+   Текущее наличие `ship` недостаточно. В полной пагинированной timeline выбери
+   **последний переход именно метки `ship`** (`labeled` или `unlabeled`) по
+   `created_at`, затем числовому `id`; учитывай события всех actors. Он обязан
+   быть `labeled` от `ivanarama` и располагаться после создания и последнего edit
+   review-комментария и completion текущего SHA. Старый trusted `labeled`, после
+   которого человек снял метку, не оживает от повторной постановки другим actor
+   или app. При одинаковом `created_at` используй числовой REST `id`; если API не
+   даёт доказать порядок или переход отсутствует — stale `ship`, метку нужно
+   снять и поставить заново.
 
 2. Очередь при `strict: true` строго последовательна — работай с одним PR до
    конца, потом следующий. Состояние: `gh pr view <N> --json
@@ -205,14 +208,18 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
    В одном серверном снимке должны одновременно выполняться условия: HEAD равен
    проверенному SHA; есть `ship`; нет `hold` и актуального `needs-decision`;
-   адресованные review/completion не удалены и их `fullDatabaseId`, автор, SHA,
+   `labels.pageInfo.hasNextPage == false`; адресованные review/completion не
+   удалены и их `fullDatabaseId`, автор, SHA,
    Outcome-Label, tail/body и ссылка `review-comment=<id>` всё ещё образуют ту же
-   каноничную пару; trusted `labeled ship` расположен после `createdAt` и
-   `lastEditedAt` обоих комментариев (если edit был); после
+   каноничную пару; **последний** ship-transition среди возвращённых
+   `LabeledEvent`/`UnlabeledEvent` — `LabeledEvent` от `ivanarama`, расположен
+   после `createdAt` и `lastEditedAt` обоих комментариев (если edit был); после
    completion нет `pp:review-again`. Предыдущий comment-watermark обязан
    присутствовать среди `comments(last:100)`: если его вытеснили 100+ новых
    комментариев, snapshot не доказывает отсутствие override — требуется новый
-   аудит/completion. Только отсутствие свежего `labeled ship` лечится снятием и
+   аудит/completion. Если ни одного ship-transition нет в `timelineItems(last:100)`,
+   snapshot не доказывает владельца текущей метки и закрывается. Только
+   отсутствие свежего trusted последнего `labeled ship` лечится снятием и
    повторной постановкой `ship` после актуального заключения.
 
    Используй raw GraphQL, а не `gh pr view`, чтобы labels, HEAD и окно timeline
@@ -226,7 +233,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
      review:node(id:$reviewNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      completion:node(id:$completionNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      repository(owner:$owner,name:$name){pullRequest(number:$number){
-       headRefOid labels(first:100){nodes{name}}
+       headRefOid labels(first:100){nodes{name} pageInfo{hasNextPage}}
        comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
        timelineItems(last:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT]){
          nodes{__typename

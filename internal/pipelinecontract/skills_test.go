@@ -157,8 +157,10 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"Незавершённую транзакцию восстанавливай до обычного фильтра",
 		"если для текущего SHA в этой эпохе уже есть committed-пара",
 		"не ставь по ним метку и completion",
-		"выбери самый ранний подходящий orphan текущей эпохи",
-		"Поставить/подтвердить ожидаемую метку может только orphan, чей claim оказался самым ранним",
+		"Если хотя бы один claim уже есть, восстанавливай **только orphan, на который он ссылается**",
+		"Только при полном отсутствии валидных claims выбери самый ранний подходящий orphan",
+		"может только orphan-владелец самого раннего claim",
+		"порядок навсегда оставляет recovery без владельца",
 		"это **первая** ссылка completion на данный `review-comment id`",
 		"между review-комментарием и completion нет доверенной строки `pp:review-again`",
 		"Для одного SHA без разделяющего override канонична только самая ранняя валидная пара",
@@ -191,8 +193,8 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"припаркованные PR не должны навсегда скрывать более поздний crash-handoff",
 		"уже полученного в п. 1 **полного пагинированного списка**",
 		"перед **каждым\n   внешним изменением**",
-		"`changes-requested` присутствует, а `ship`,\n   `hold`, `needs-decision` отсутствуют",
-		"Сразу после push проверь\n   гейт снова",
+		"HEAD, **все комментарии** и labels через REST",
+		"эта же completion/decision остаётся последним валидным переходом с владельцем\n   FIX",
 		"Исключения — только две восстанавливаемые передачи из п. 8",
 		"устаревшего `changes-requested` обратно в REVIEW",
 		"поставь и\n   сверь `needs-decision`, сними `changes-requested`",
@@ -203,11 +205,21 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 	)
 	requireAllCompact(t, fixer,
 		"Затем исключи `ship` и `hold`",
+		"Успешный собственный push потребляет старое владение FIX",
+		"HEAD == отправленному SHA",
 		"После push и непосредственно перед `gh pr create` повтори полную проверку ещё раз",
+		"ветка строго детерминирована: `fix/<N>`",
+		"gh api -X POST repos/ivanarama/onebase/git/refs --input -",
+		"Только ответ `201 Created` делает worker владельцем branch-claim",
+		"Любой иной HTTP-статус / ненулевой exit `gh` останавливает запуск",
+		"`409`/`422`",
+		"нет ложного успеха `Everything up-to-date`",
+		"два worker могут одновременно увидеть отсутствие PR, но второй не получит branch-claim",
 		"Незавершённый tail-комментарий без валидного completion",
 		"сравни с текущим `.head.sha` через REST **до создания worktree**",
 		"HEAD изменился после ревью; требуется новое заключение",
-		"Непосредственно перед push ещё раз сравни удалённый `.head.sha` с SHA завершённого review",
+		"Непосредственно перед push перечитай HEAD, все comments и labels, пересчитай владельца",
+		"При `pp:review-again`, новой completion или чужом push ничего не",
 		"Для устаревшего ревью сними `changes-requested`, сверь удаление и только затем оставь диагностический комментарий",
 	)
 	rejectAll(t, fixer,
@@ -277,7 +289,10 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"непосредственно перед мутацией ещё раз выполни полный label+SHA-гейт",
 		"последний полный гейт",
 		"timeline?per_page=100",
-		"event `labeled` для `ship`, расположенный **после** каноничного",
+		"{id,node_id,created_at,updated_at,author:.user.login,body}",
+		"**последний переход именно метки `ship`**",
+		"Он обязан быть `labeled` от `ivanarama`",
+		"не оживает от повторной постановки другим actor",
 		"одним raw GraphQL-запросом",
 		"точка невозврата",
 		"`node_id` конкретных review-комментария и completion",
@@ -285,6 +300,9 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"32-битный диапазон GraphQL `databaseId`",
 		"`fullDatabaseId: BigInt`",
 		"сравнивай его строковое значение с REST id",
+		"`labels.pageInfo.hasNextPage == false`",
+		"**последний** ship-transition",
+		"Если ни одного ship-transition нет в `timelineItems(last:100)`",
 		"`lastEditedAt` обоих комментариев",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
 		"требуется новый аудит/completion",
@@ -354,15 +372,26 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"gh api --paginate",
 		"comments?per_page=100",
 		"gh api repos/ivanarama/onebase/pulls/1261 --jq .merged_at",
-		"PR, влитые строго раньше неё",
-		"последнее доверенное legacy-заключение",
-		"PR, влитый в момент границы или позже, без каноничной пары всегда отбрасывается",
+		"именно это выбранное заключение создано строго раньше",
+		"Время мержа самого исходного PR границей не является",
+		"последнее заключение создано в момент границы или позже",
 		"нет каноничной committed-пары для merged HEAD и не сработал описанный выше",
 		"Для нового протокола возьми только заключение, чей числовой `id` указан",
 		"Для legacy-drain возьми выбранное в п. 2 последнее доверенное legacy-заключение",
 		"Более поздний orphan `pp:review` без валидной ссылки не является аудитом",
 		"после выбранной committed-пары есть более поздняя доверенная отдельная",
 		"Если после выбранного заключения остался непоглощённый `pp:review-again`, PR уже отброшен",
+		"<!-- pp:tail-claim review-comment=<id> item=<N> -->",
+		"<!-- pp:tail-source pr=<M> review-comment=<id> item=<N> -->",
+		"<!-- pp:tail-item-done review-comment=<id> item=<N> issue=<номер|none> -->",
+		"Перед **каждым внешним изменением**",
+		"Не используй GitHub Search",
+		"issues?state=all&since=<claim-created-at>&per_page=100",
+		"автора issue `ivanarama`",
+		"{number,author:.user.login,body}",
+		"Создание exact-source issue — точка невозврата",
+		"не запрещает **только** восстановительный item-done",
+		"параллельный worker проигрывает claim",
 	)
 	rejectAll(t, tail, "--json number,title,mergedAt,labels,url,comments")
 }
@@ -392,24 +421,31 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"последняя каноничная committed-пара merged HEAD после последнего поглощённого\noverride",
 		"Открытые PR для обычной доработки и восстановления handoff FIX получает одним\nпагинированным REST-списком",
 		"Начальный список MERGE также читается целиком пагинированным REST",
-		"маркер. Восстановление orphan тоже сначала создаёт/проверяет claim. Если в той\nже эпохе после последнего override уже есть каноничная",
+		"Если валидный claim уже есть, recovery восстанавливает orphan, на который\nссылается **самый ранний claim**",
 		"На PR это стоп по умолчанию, но есть два точных автоматических handoff:",
 		"Успешный snapshot — точка невозврата",
 		"Новый каноничный `pp:head-reviewed` после override поглощает его",
-		"повторяется перед push и непосредственно перед `gh pr create`",
+		"remote-ветка строго детерминирована как `fix/<N>`",
+		"GitHub `POST /git/refs`",
+		"`201` даёт branch-claim",
+		"ложный успех `Everything up-to-date`",
 		"Один raw GraphQL snapshot адресует оба комментария по\nnode ID",
 		"`fullDatabaseId: BigInt`",
 		"строка с REST comment id",
+		"`hasNextPage` обязан быть false",
 		"Watermark обязан оставаться в окне",
-		"Ship-event должен быть позже создания и\nпоследнего edit обоих адресованных комментариев",
+		"Последний переход `ship` среди событий\nвсех actors обязан быть `labeled` от `ivanarama`",
 		"**PR, нужна доработка** → в комментарии с решением добавить отдельную",
 		"строку `pp:fix-decision <текущий SHA>`",
 		"**сначала поставить и проверить**\n     `changes-requested` и только после этого снять `needs-decision`",
 		"**PR, код оставляем / повторяем аудит текущего SHA** → добавить отдельной",
 		"`approved` на PR не ставьте",
 		"Время мержа PR #1261 — точная\nграница включения committed-протокола",
-		"влитых строго раньше этой границы",
-		"момент границы или позже, fallback запрещён",
+		"само заключение**\nсоздано строго раньше границы",
+		"Время мержа\nисходного PR не используется",
+		"earliest trusted\n`pp:tail-claim`",
+		"детерминированный `pp:tail-source`",
+		"без eventually-consistent Search API",
 	)
 	rejectAll(t, docs,
 		"без `ship`, `reviewed`, `changes-requested`, `hold`",
@@ -440,9 +476,10 @@ func TestTopLevelInstructionsDoNotBypassPRStops(t *testing.T) {
 		"`hold` и `needs-decision` — стопы даже при `ship`",
 		"перед мержем они проверяются в одном согласованном GraphQL snapshot",
 		"Этот snapshot — точка невозврата",
-		"timeline обязана доказывать, что человек поставил `ship` после этого completion",
-		"FIX перепроверяет `ship` перед каждым внешним изменением",
-		"ветку больше не меняет",
+		"последний переход метки `ship` среди событий всех actors обязан быть trusted `labeled`",
+		"FIX до CAS-push перед каждым внешним изменением перечитывает HEAD, все comments и labels",
+		"пересчитывает владельца",
+		"детерминированную remote-ветку `fix/<N>` через GitHub `POST /git/refs`",
 		"Узкое окно, где push уже завершился перед появлением `ship`, закрывает SHA-гейт MERGE",
 		"REVIEW получает полный пагинированный список PR",
 		"FIX применяет замечания только к SHA из завершённой пары",
@@ -471,4 +508,168 @@ func TestMergeEnvironmentMatchesCommandsUsedByProcedure(t *testing.T) {
 		"`gh run rerun <id>`",
 		"`--failed` в `gh` 2.4.0 ещё не поддерживается",
 	)
+}
+
+type orderedClaim struct {
+	sequence int
+	orphan   string
+}
+
+func recoveryTarget(orphans []orderedClaim, claims []orderedClaim) string {
+	if len(claims) > 0 {
+		winner := claims[0]
+		for _, claim := range claims[1:] {
+			if claim.sequence < winner.sequence {
+				winner = claim
+			}
+		}
+		return winner.orphan
+	}
+	winner := orphans[0]
+	for _, orphan := range orphans[1:] {
+		if orphan.sequence < winner.sequence {
+			winner = orphan
+		}
+	}
+	return winner.orphan
+}
+
+func TestReviewRecoveryInterleavingsFollowClaimOwner(t *testing.T) {
+	tests := []struct {
+		name    string
+		orphans []orderedClaim
+		claims  []orderedClaim
+		want    string
+	}{
+		{name: "no claims chooses earliest orphan", orphans: []orderedClaim{{1, "R1"}, {2, "R2"}}, want: "R1"},
+		{name: "later orphan with earlier claim owns recovery", orphans: []orderedClaim{{1, "R1"}, {2, "R2"}}, claims: []orderedClaim{{3, "R2"}, {4, "R1"}}, want: "R2"},
+		{name: "claim order wins over orphan order", orphans: []orderedClaim{{1, "R1"}, {2, "R2"}}, claims: []orderedClaim{{5, "R1"}, {4, "R2"}}, want: "R2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := recoveryTarget(tt.orphans, tt.claims); got != tt.want {
+				t.Fatalf("recoveryTarget() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type shipTransition struct {
+	sequence int
+	actor    string
+	labeled  bool
+}
+
+func shipGate(transitions []shipTransition, proofAfter int) bool {
+	if len(transitions) == 0 {
+		return false
+	}
+	last := transitions[0]
+	for _, transition := range transitions[1:] {
+		if transition.sequence > last.sequence {
+			last = transition
+		}
+	}
+	return last.labeled && last.actor == "ivanarama" && last.sequence > proofAfter
+}
+
+func TestMergeShipTransitionInterleavings(t *testing.T) {
+	tests := []struct {
+		name        string
+		transitions []shipTransition
+		want        bool
+	}{
+		{name: "trusted current approval", transitions: []shipTransition{{20, "ivanarama", true}}, want: true},
+		{name: "trusted removal cancels approval", transitions: []shipTransition{{20, "ivanarama", true}, {21, "ivanarama", false}}},
+		{name: "untrusted re-add cannot revive approval", transitions: []shipTransition{{20, "ivanarama", true}, {21, "ivanarama", false}, {22, "app", true}}},
+		{name: "approval before edited proof is stale", transitions: []shipTransition{{9, "ivanarama", true}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shipGate(tt.transitions, 10); got != tt.want {
+				t.Fatalf("shipGate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func latestOwner(transitions []string) string {
+	if len(transitions) == 0 {
+		return ""
+	}
+	return transitions[len(transitions)-1]
+}
+
+func TestFixMustStillOwnHeadImmediatelyBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name        string
+		transitions []string
+		mayPush     bool
+	}{
+		{name: "unchanged completion remains FIX", transitions: []string{"FIX"}, mayPush: true},
+		{name: "review-again transfers to REVIEW", transitions: []string{"FIX", "REVIEW"}},
+		{name: "new positive completion transfers away", transitions: []string{"FIX", "WAIT_SHIP"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := latestOwner(tt.transitions) == "FIX"; got != tt.mayPush {
+				t.Fatalf("mayPush = %v, want %v", got, tt.mayPush)
+			}
+		})
+	}
+}
+
+func TestLegacyTailCutoffUsesReviewTimeNotMergeTime(t *testing.T) {
+	const cutoff = 100
+	tests := []struct {
+		name          string
+		reviewCreated int
+		prMerged      int
+		want          bool
+	}{
+		{name: "in-flight legacy merged after cutover survives", reviewCreated: 99, prMerged: 101, want: true},
+		{name: "new review at cutover has no fallback", reviewCreated: 100, prMerged: 101},
+		{name: "new review after cutover has no fallback", reviewCreated: 101, prMerged: 102},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.reviewCreated < cutoff
+			if got != tt.want {
+				t.Fatalf("legacy fallback = %v, want %v (merged=%d)", got, tt.want, tt.prMerged)
+			}
+		})
+	}
+}
+
+func acquireCreateOnlyBranch(remoteExists *bool) bool {
+	if *remoteExists {
+		return false
+	}
+	*remoteExists = true
+	return true
+}
+
+func TestTwoFixWorkersCannotBothAcquireIssueBranch(t *testing.T) {
+	remoteExists := false
+	first := acquireCreateOnlyBranch(&remoteExists)
+	second := acquireCreateOnlyBranch(&remoteExists)
+	if !first || second {
+		t.Fatalf("create-only CAS winners = first:%v second:%v, want true/false", first, second)
+	}
+}
+
+func tailNeedsCreate(exactSourceIssueExists, itemDone bool) bool {
+	return !exactSourceIssueExists && !itemDone
+}
+
+func TestTailCrashAfterIssueCreateDoesNotCreateDuplicate(t *testing.T) {
+	if tailNeedsCreate(true, false) {
+		t.Fatal("exact source issue must be recovered into item-done, not created again")
+	}
+	if tailNeedsCreate(false, true) {
+		t.Fatal("completed item must not be created again")
+	}
+	if !tailNeedsCreate(false, false) {
+		t.Fatal("unclaimed source without completion still needs create")
+	}
 }
