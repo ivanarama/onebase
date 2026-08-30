@@ -281,7 +281,10 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"одним raw GraphQL-запросом",
 		"точка невозврата",
 		"`node_id` конкретных review-комментария и completion",
-		"`databaseId`, автор, SHA, Outcome-Label",
+		"`fullDatabaseId`, автор, SHA, Outcome-Label",
+		"32-битный диапазон GraphQL `databaseId`",
+		"`fullDatabaseId: BigInt`",
+		"сравнивай его строковое значение с REST id",
 		"`lastEditedAt` обоих комментариев",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
 		"требуется новый аудит/completion",
@@ -297,9 +300,14 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"**точка невозврата**",
 		"compare-and-merge REST",
 	)
+	if got := strings.Count(merge, "fullDatabaseId"); got < 4 {
+		t.Fatalf("merge snapshot must use fullDatabaseId in the rule and all three GraphQL nodes, got %d mentions", got)
+	}
 	rejectAll(t, merge,
 		"gh pr merge <N> --merge --delete-branch",
 		"gh pr list --state open --label ship",
+		"IssueComment{databaseId",
+		"nodes{databaseId",
 	)
 }
 
@@ -345,11 +353,16 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 	requireAllCompact(t, tail,
 		"gh api --paginate",
 		"comments?per_page=100",
-		"нет каноничной committed-пары для merged HEAD",
-		"Возьми только заключение, чей числовой `id` указан последней каноничной committed-парой merged HEAD",
+		"gh api repos/ivanarama/onebase/pulls/1261 --jq .merged_at",
+		"PR, влитые строго раньше неё",
+		"последнее доверенное legacy-заключение",
+		"PR, влитый в момент границы или позже, без каноничной пары всегда отбрасывается",
+		"нет каноничной committed-пары для merged HEAD и не сработал описанный выше",
+		"Для нового протокола возьми только заключение, чей числовой `id` указан",
+		"Для legacy-drain возьми выбранное в п. 2 последнее доверенное legacy-заключение",
 		"Более поздний orphan `pp:review` без валидной ссылки не является аудитом",
 		"после выбранной committed-пары есть более поздняя доверенная отдельная",
-		"Если после неё остался непоглощённый `pp:review-again`, PR уже отброшен",
+		"Если после выбранного заключения остался непоглощённый `pp:review-again`, PR уже отброшен",
 	)
 	rejectAll(t, tail, "--json number,title,mergedAt,labels,url,comments")
 }
@@ -385,6 +398,8 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"Новый каноничный `pp:head-reviewed` после override поглощает его",
 		"повторяется перед push и непосредственно перед `gh pr create`",
 		"Один raw GraphQL snapshot адресует оба комментария по\nnode ID",
+		"`fullDatabaseId: BigInt`",
+		"строка с REST comment id",
 		"Watermark обязан оставаться в окне",
 		"Ship-event должен быть позже создания и\nпоследнего edit обоих адресованных комментариев",
 		"**PR, нужна доработка** → в комментарии с решением добавить отдельную",
@@ -392,6 +407,9 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"**сначала поставить и проверить**\n     `changes-requested` и только после этого снять `needs-decision`",
 		"**PR, код оставляем / повторяем аудит текущего SHA** → добавить отдельной",
 		"`approved` на PR не ставьте",
+		"Время мержа PR #1261 — точная\nграница включения committed-протокола",
+		"влитых строго раньше этой границы",
+		"момент границы или позже, fallback запрещён",
 	)
 	rejectAll(t, docs,
 		"без `ship`, `reviewed`, `changes-requested`, `hold`",

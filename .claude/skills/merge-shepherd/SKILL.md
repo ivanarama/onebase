@@ -205,7 +205,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
    В одном серверном снимке должны одновременно выполняться условия: HEAD равен
    проверенному SHA; есть `ship`; нет `hold` и актуального `needs-decision`;
-   адресованные review/completion не удалены и их `databaseId`, автор, SHA,
+   адресованные review/completion не удалены и их `fullDatabaseId`, автор, SHA,
    Outcome-Label, tail/body и ссылка `review-comment=<id>` всё ещё образуют ту же
    каноничную пару; trusted `labeled ship` расположен после `createdAt` и
    `lastEditedAt` обоих комментариев (если edit был); после
@@ -217,15 +217,17 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
    Используй raw GraphQL, а не `gh pr view`, чтобы labels, HEAD и окно timeline
    принадлежали одному snapshot (глобальные `node_id` review/completion и прочие
-   переменные передай через `-F`):
+   переменные передай через `-F`). Числовые REST comment ids уже превышают
+   32-битный диапазон GraphQL `databaseId`, поэтому во всех трёх местах используй
+   только `fullDatabaseId: BigInt` и сравнивай его строковое значение с REST id:
 
    ```graphql
    query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$completionNode:ID!){
-     review:node(id:$reviewNode){... on IssueComment{databaseId createdAt lastEditedAt author{login} body}}
-     completion:node(id:$completionNode){... on IssueComment{databaseId createdAt lastEditedAt author{login} body}}
+     review:node(id:$reviewNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
+     completion:node(id:$completionNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid labels(first:100){nodes{name}}
-       comments(last:100){nodes{databaseId createdAt lastEditedAt author{login} body}}
+       comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
        timelineItems(last:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT]){
          nodes{__typename
            ... on LabeledEvent{createdAt actor{login} label{name}}
