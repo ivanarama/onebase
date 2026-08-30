@@ -615,6 +615,12 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 		return i.evalBinary(v, e)
 	case *ast.CallExpr:
 		return i.evalCall(v, e)
+	case *ast.MissingArg:
+		// Страховка инварианта. Пропуск разбирается в evalArgsKeepMissing, до
+		// общего вычисления выражений, и сюда попасть не должен; если всё же
+		// попал — это Неопределено, а не внутренний sentinel: наружу тип
+		// интерпретатора не выходит ни по какому пути.
+		return nil
 	}
 	return nil
 }
@@ -853,7 +859,13 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 }
 
 func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
-	args := i.evalArgs(c.Args, e)
+	// Два списка на один вызов: пользовательская процедура получает пропуски
+	// (userArgs) и подставляет по ним значения по умолчанию параметров, все
+	// остальные приёмники — уже нормализованные в Неопределено (args). Куда
+	// именно уйдёт вызов, выясняется ниже, а вычислять аргументы дважды нельзя:
+	// у них бывают побочные эффекты.
+	userArgs := i.evalArgsKeepMissing(c.Args, e)
+	args := clearMissingArgs(userArgs)
 	switch callee := c.Callee.(type) {
 	case *ast.Ident:
 		fnName := callee.Tok.Literal
@@ -908,7 +920,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		if fpAny, ok2 := e.rawFormProcs(); ok2 {
 			if fp, ok3 := fpAny.(map[string]*ast.ProcedureDecl); ok3 {
 				if proc, ok4 := fp[strings.ToLower(fnName)]; ok4 && sourceFile != "" && proc.Name.File == sourceFile {
-					return i.callUserProc(proc, e, args)
+					return i.callUserProc(proc, e, userArgs)
 				}
 			}
 		}
@@ -927,12 +939,12 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		//
 		if i.LookupSiblingProc != nil && sourceFile != "" {
 			if proc := i.LookupSiblingProc(sourceFile, fnName); proc != nil {
-				return i.callUserProc(proc, e, args)
+				return i.callUserProc(proc, e, userArgs)
 			}
 		}
 		if i.LookupProc != nil {
 			if proc := i.LookupProc(fnName); proc != nil {
-				return i.callUserProc(proc, e, args)
+				return i.callUserProc(proc, e, userArgs)
 			}
 		}
 		if fallback != nil {
@@ -1006,7 +1018,7 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		if recv == nil && i.LookupModuleProc != nil {
 			if objIdent, ok := callee.Object.(*ast.Ident); ok {
 				if proc := i.LookupModuleProc(objIdent.Tok.Literal, callee.Field.Literal); proc != nil {
-					return i.callUserProc(proc, e, args)
+					return i.callUserProc(proc, e, userArgs)
 				}
 			}
 		}
@@ -1221,12 +1233,54 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 	return nil
 }
 
+// evalArgs — аргументы для всех, кроме пользовательской процедуры: пропуск
+// («Метод(А,,Б)») здесь уже нормализован в nil, то есть Неопределено.
 func (i *Interpreter) evalArgs(exprs []ast.Expr, e *env) []any {
+	return clearMissingArgs(i.evalArgsKeepMissing(exprs, e))
+}
+
+// evalArgsKeepMissing вычисляет аргументы, сохраняя пропуски как внутренний
+// sentinel missingNamedArg. Такой список принимает ТОЛЬКО callUserProc: он
+// отличает «значение не передали» от «передали Неопределено» и в первом случае
+// вычисляет Defaults[idx] — ровно то различие, ради которого пропуск и пишут
+// (issue #1160). Механизм не новый: тем же sentinel помечает дыры BindNamedArgs.
+func (i *Interpreter) evalArgsKeepMissing(exprs []ast.Expr, e *env) []any {
 	args := make([]any, len(exprs))
 	for idx, a := range exprs {
+		if _, skipped := a.(*ast.MissingArg); skipped {
+			args[idx] = missingNamedArg{}
+			continue
+		}
 		args[idx] = i.evalExpr(a, e)
 	}
 	return args
+}
+
+// clearMissingArgs заменяет sentinel пропуска на nil. Инвариант: за пределы
+// callUserProc sentinel не выходит — встроенная функция, метод объекта или
+// фабрика увидели бы вместо Неопределено внутренний тип интерпретатора и
+// свалились бы на нём непонятной ошибкой. Копия делается только когда пропуск
+// действительно есть: обычный вызов идёт прежним путём, без лишней аллокации,
+// и без риска, что нормализация отзеркалится в список для callUserProc.
+func clearMissingArgs(args []any) []any {
+	skipped := false
+	for _, a := range args {
+		if _, ok := a.(missingNamedArg); ok {
+			skipped = true
+			break
+		}
+	}
+	if !skipped {
+		return args
+	}
+	out := make([]any, len(args))
+	copy(out, args)
+	for idx, a := range out {
+		if _, ok := a.(missingNamedArg); ok {
+			out[idx] = nil
+		}
+	}
+	return out
 }
 
 func truthy(v any) bool {

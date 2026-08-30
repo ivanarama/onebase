@@ -72,8 +72,9 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
 4. Ожидание CI: цикл «`sleep 120` → перечитать статус», не дольше **35 минут**
    на PR. Требуемые проверки: `build`, `lint`, `postgres-integration`, `vuln`,
-   `smoke`, `e2e`, `test-windows`. `bench` и `launcher-webview-build` мёрж не
-   блокируют — их красноту не ждать, только упомянуть в сводке.
+   `smoke`, `e2e`, `test-windows`, `launcher-webview-build` — список тот же, что
+   в `.github/branch-protection.json`, и сверяться надо с ним. Мёрж не блокирует
+   только `bench` — его красноту не ждать, лишь упомянуть в сводке.
    Красная требуемая проверка → `gh run view <id> --log-failed`, диагноз:
    - флейк-профиль (таймаут, обрыв раннера, сеть; `test-windows` мигает ~1/30) →
      `gh run rerun <id> --failed`, ждать заново — но только **один** повтор;
