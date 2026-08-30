@@ -18,29 +18,45 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
 ## Окружение: `gh` без `--json` не работает
 
-В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Команда,
-которая тянет объект целиком, падает с
-`GraphQL: Projects (classic) is being deprecated … (repository.pullRequest.projectCards)`.
-Поля называй через `--json`, метки — через REST:
+> **Этот раздел дословно продублирован в пяти скилах конвейера** —
+> `triage-issues`, `fix-approved`, `review-queue`, `merge-shepherd`,
+> `tail-issues`. Правишь его — правь все пять копий; найти их:
+> `grep -rln "## Окружение" .claude/skills/`. Дублирование намеренное: скил
+> грузится в контекст целиком, и по ссылке на общий файл агент не пойдёт, если
+> ему явно не сказано. Когда `gh` в рабочей копии обновят, раздел удаляется из
+> всех пяти одним коммитом.
+
+В рабочей копии стоит `gh` 2.4.0 (сборка Ubuntu от 2022 года), а GitHub отключил
+Projects (classic). Любая команда, которая тянет объект целиком, падает с
+`GraphQL: Projects (classic) is being deprecated … (projectCards)`: сообщение
+уходит в stderr, stdout пуст, код возврата 1. Пустой вывод легко принять за
+«данных нет» («комментариев нет», «меток нет»), поэтому проверяй код возврата, а
+не длину вывода. Правило: **всегда называй поля через `--json`, а метки на PR
+ставь через REST.**
 
 | Не работает | Работает |
 |---|---|
-| `gh pr view <N>` | `gh pr view <N> --json mergeStateStatus,statusCheckRollup,…` |
+| `gh issue view <N>`, `--comments` | `gh issue view <N> --json title,body,labels,comments,author` |
+| `gh pr view <N>` | `gh pr view <N> --json labels,body,mergeStateStatus,statusCheckRollup,…` |
 | `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
 | `gh pr edit <N> --remove-label X` | `gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/X` |
 
-`gh pr list`, `gh pr diff`, `gh pr comment`, `gh run view` проверены — работают,
-то есть шаг ожидания CI (п. 4) цел целиком. Не проверялись только `gh pr merge`
-и `gh run rerun` — проверка потребовала бы настоящего мержа и перезапуска.
-Упадут с той же ошибкой — мержи через REST:
-`gh api -X PUT repos/ivanarama/onebase/pulls/<N>/merge -f merge_method=merge`.
-Снятие `in-work` (п. 5) идёт через REST и потому не задето.
+Работают как есть: `gh issue edit` (метки на **ишью**), `gh issue list`,
+`gh issue create`, `gh issue comment`, `gh pr list`, `gh pr diff`,
+`gh pr create`, `gh pr comment`, `gh run list`, `gh run view` и весь `gh api`.
+Не проверялись `gh pr merge` и `gh run rerun` — проверка потребовала бы
+настоящего мержа и перезапуска; если упрутся в тот же запрет, мержить через
+REST: `gh api -X PUT repos/ivanarama/onebase/pulls/<N>/merge -f merge_method=merge`.
 
-**Метку после постановки сверь с ответом.** `gh pr edit` ругался на неизвестное
-имя метки, REST — нет: ответ POST содержит итоговый список меток объекта, и если
-твоей в нём не оказалось, значит имя набрано с опечаткой. Не проверишь — узнаешь
-об этом только тем, что следующий этап не увидит PR, а это ровно тот молчаливый
-отказ, против которого написан весь этот раздел.
+У REST-пути номер PR и номер ишью — одно пространство, поэтому метка PR ставится
+через `/issues/<N>/labels`; это не опечатка. В таблице выше `<N>` — номер того
+объекта, о котором идёт речь в строке.
+
+**Метку после постановки сверь с ответом:** ответ POST содержит итоговый список
+меток объекта. `gh pr edit` ругался на неизвестное имя, REST — нет, поэтому
+опечатку в имени метки иначе не заметишь: узнаешь о ней только тем, что
+следующий этап не увидит объект, — ровно тот молчаливый отказ, против которого
+написан весь этот раздел.
 
 ## Процедура
 

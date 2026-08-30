@@ -49,10 +49,14 @@ echo '{"labels":["ship"]}' | gh api -X POST repos/ivanarama/onebase/issues/1131/
 > `GraphQL: Projects (classic) is being deprecated … (projectCards)`:
 > `gh pr edit` (любой), `gh pr view` и `gh issue view` без `--json`. Работают
 > те же команды с явным `--json`, весь `gh api`, а также `gh issue edit`,
-> `gh pr list`, `gh issue list`, `gh pr diff`, `gh pr comment`.
+> `gh issue list`, `gh issue create`, `gh issue comment`, `gh pr list`,
+> `gh pr diff`, `gh pr create`, `gh pr comment`, `gh run list`, `gh run view`.
 > Настоящая починка — обновить `gh`; до тех пор скилы этапов ходят по REST.
 > У REST номера PR и ишью — одно пространство, поэтому метка PR ставится
 > через `/issues/<N>/labels`; это не опечатка.
+> Здесь список короткий, для человека у консоли; полный перечень с готовыми
+> заменами — раздел «Окружение» в любом из пяти скилов конвейера, текст там
+> дословно одинаковый.
 
 ## Как заявка проходит конвейер
 
