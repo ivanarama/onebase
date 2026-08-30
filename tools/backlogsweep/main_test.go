@@ -256,6 +256,80 @@ func TestReportPrintsBothBrokenReferencesOfOneIssue(t *testing.T) {
 	}
 }
 
+// Порядок комментариев в выдаче gh нигде не обещан, а «поправлено ниже в треде»
+// держится ровно на нём: те же два комментария, поданные в обратном порядке,
+// обязаны читаться как переписка, а не как есть.
+func TestCommentsAreOrderedByCreationNotByDelivery(t *testing.T) {
+	cfg := testConfig()
+	cfg.plans = testPlans("158-open-form.md")
+	// В слайсе — новый комментарий первым, старый вторым.
+	is := mk(1, "ivanarama", ago(1), []string{"hold"},
+		[2]string{"ivanarama", "поправка: план получил номер 158 — `Plans/158-open-form.md`"},
+		[2]string{"ivanarama", "работа оформлена планом `Plans/157-open-form.md`"})
+	is = commentAt(is, 0, ago(1))
+	is = commentAt(is, 1, ago(5))
+
+	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+
+	if len(got) != 1 {
+		t.Fatalf("ожидалась одна находка, получено %v", details(got))
+	}
+	if !strings.Contains(got[0].detail, "ниже в треде уже поправлено на Plans/158-open-form.md") {
+		t.Fatalf("порядок комментариев взят из выдачи, а не по createdAt: %q", got[0].detail)
+	}
+}
+
+// Потолок строк на заявку: десяток планов в одной заявке иначе занимает экран
+// отчёта, который чинили ради читаемости. Обрезка обязана называться вслух —
+// счётчик корзины при этом считает все находки, а не показанные.
+func TestReportCapsLinesPerIssueAndSaysHowManyAreHidden(t *testing.T) {
+	var buf bytes.Buffer
+	issues := []issue{withBody(mk(9, "ivanarama", ago(1), []string{"hold"}),
+		"обещаны `Plans/900-первый.md`, `Plans/901-второй.md`, `Plans/902-третий.md`, "+
+			"`Plans/903-четвёртый.md` и `Plans/904-пятый.md`")}
+
+	report(&buf, analyze(issues, testConfig()), 1, false)
+
+	out := buf.String()
+	if !strings.Contains(out, "ссылка на план, которого нет — 5") {
+		t.Fatalf("счётчик корзины обязан считать все находки, а не показанные:\n%s", out)
+	}
+	for _, want := range []string{"900-первый.md", "901-второй.md", "902-третий.md"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("первые %d находок обязаны печататься, нет %q:\n%s", maxPerIssue, want, out)
+		}
+	}
+	for _, hidden := range []string{"903-четвёртый.md", "904-пятый.md"} {
+		if strings.Contains(out, hidden) {
+			t.Fatalf("сверх потолка ожидалась сводка, а не строка %q:\n%s", hidden, out)
+		}
+	}
+	if !strings.Contains(out, "и ещё 2 — покажутся после починки первых 3") {
+		t.Fatalf("обрезка не названа вслух:\n%s", out)
+	}
+}
+
+// Потолок считается по заявке, а не по корзине: соседняя заявка своё получает
+// целиком, иначе одна многословная вытесняла бы из отчёта остальные.
+func TestPerIssueCapDoesNotEatNeighbouringIssues(t *testing.T) {
+	var buf bytes.Buffer
+	issues := []issue{
+		withBody(mk(9, "ivanarama", ago(1), []string{"hold"}),
+			"обещаны `Plans/900-первый.md`, `Plans/901-второй.md`, `Plans/902-третий.md`, `Plans/903-четвёртый.md`"),
+		withBody(mk(10, "ivanarama", ago(1), []string{"hold"}), "обещан `Plans/905-шестой.md`"),
+	}
+
+	report(&buf, analyze(issues, testConfig()), 2, false)
+
+	out := buf.String()
+	if !strings.Contains(out, "905-шестой.md") {
+		t.Fatalf("находка соседней заявки съедена потолком:\n%s", out)
+	}
+	if !strings.Contains(out, "и ещё 1 — покажутся после починки первых 3") {
+		t.Fatalf("обрезка первой заявки не названа вслух:\n%s", out)
+	}
+}
+
 func TestPlanCheckIsOffWithoutPlansDirectory(t *testing.T) {
 	cfg := testConfig()
 	cfg.plans = plans{} // каталог не прочитан: запуск не из корня репозитория
