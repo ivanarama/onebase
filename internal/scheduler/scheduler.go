@@ -1015,6 +1015,13 @@ func (s *Scheduler) updateRun(ctx context.Context, runID uuid.UUID, status, outp
 }
 
 func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob) (output string, runErr error) {
+	// Без Registry искать обработку негде: методы на нулевом приёмнике
+	// разыменовывают мьютекс и паникуют (#1202). Прогон должен получить
+	// честную ошибку, а не панику в журнале.
+	if s.reg == nil {
+		return "", fmt.Errorf("processor not found: %s", job.Processor)
+	}
+
 	proc := s.reg.GetProcessor(job.Processor)
 	if proc == nil {
 		return "", fmt.Errorf("processor not found: %s", job.Processor)
