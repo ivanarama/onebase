@@ -493,10 +493,10 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// elAlign — вариант без размеров, для ПолеКартинки: там width/height
 		// ограничивают саму картинку и были такими до #1185.
 		"elLayout": func(el *metadata.FormElement) template.CSS {
-			return template.CSS(metadata.FormElementLayoutCSS(el))
+			return template.CSS(metadata.FormElementLayoutCSS(el)) //nolint:gosec // G203: стиль собран из словаря выравнивания и целых размеров 1…4000 px
 		},
 		"elAlign": func(el *metadata.FormElement) template.CSS {
-			return template.CSS(metadata.FormElementAlignCSS(el))
+			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
 		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
@@ -504,7 +504,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
 		// ключу height, ширина и выравнивание — по общему контракту раскладки.
 		"tpGridCSS": func(el *metadata.FormElement, rows int) template.CSS {
-			return template.CSS(metadata.FormTablePartGridCSS(el, rows))
+			return template.CSS(metadata.FormTablePartGridCSS(el, rows)) //nolint:gosec // G203: стиль собран из словаря выравнивания, числа строк и целых размеров 1…4000 px
 		},
 		// elReadOnly / elHidden — итоговое состояние элемента управляемой формы
 		// с учётом условий readonly_when/hidden_when по полям записи. Условия
