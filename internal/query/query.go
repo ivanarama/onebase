@@ -665,6 +665,7 @@ type sourceScope struct {
 	sourceCount    int
 	qualifiers     map[string]sourceClass
 	derivedAliases map[string]int
+	outputAliases  map[string]struct{}
 	refAliases     map[string]struct{}
 }
 
@@ -704,6 +705,24 @@ func (ctx sourceContext) isReferenceAliasAt(tokenPos int, lower string) bool {
 		return false
 	}
 	_, ok = scope.refAliases[lower]
+	return ok
+}
+
+// isOutputAliasAt reports an actual reference to an alias of the current
+// SELECT projection. An alias is visible only in the alias-aware clauses of
+// the same SELECT scope. In particular, WHERE resolves an identically named
+// identifier as an input column, and an alias from a nested or sibling SELECT
+// must not affect it.
+func (ctx sourceContext) isOutputAliasAt(tokenPos int, lower string) bool {
+	section := ctx.sectionAt(tokenPos)
+	if section != sectionGroupBy && section != sectionOrderBy && section != sectionHaving {
+		return false
+	}
+	scope, ok := ctx.scopeAt(tokenPos)
+	if !ok {
+		return false
+	}
+	_, ok = scope.outputAliases[lower]
 	return ok
 }
 
@@ -2880,10 +2899,10 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 // него. Запись с квалификатором занимает три токена, поэтому оператор слева
 // стоит не вплотную к имени поля.
 func (tr *translator) needsEmptyTextCoalesce(lower, qualifier string) bool {
-	if _, isAlias := tr.aliases[lower]; isAlias {
+	idx := tr.pos - 1
+	if tr.sourceCtx.isOutputAliasAt(idx, lower) {
 		return false
 	}
-	idx := tr.pos - 1
 	if tr.sourceCtx.sectionAt(idx) == sectionFrom {
 		return false
 	}
@@ -3060,6 +3079,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				ctx.scopes = append(ctx.scopes, sourceScope{
 					qualifiers:     map[string]sourceClass{},
 					derivedAliases: map[string]int{},
+					outputAliases:  map[string]struct{}{},
 					refAliases:     map[string]struct{}{},
 				})
 				sections = append(sections, sectionSelect)
@@ -3095,6 +3115,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				if up := upperFast(t.val); (up == "КАК" || up == "AS") &&
 					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
 					alias := lowerFast(tokens[i+1].val)
+					ctx.scopes[scopeID].outputAliases[alias] = struct{}{}
 					if isReferenceName(alias) {
 						ctx.scopes[scopeID].refAliases[alias] = struct{}{}
 					}
