@@ -221,9 +221,13 @@ FIX также просматривает сочетание `changes-requested`
 а не просто старый недостающий шаг.
 
 Новая заявка = `ready-fix` **или** `approved`, без `hold`, без уже открытого PR.
-FIX сохраняет fingerprint issue и выбранного решения (state/title/body,
-релевантные labels, human/decision/triage comment version) и перечитывает его
-перед branch-claim, final push, созданием PR, `in-work` и комментарием. Поздний
+FIX сохраняет fingerprint issue и выбранного решения: state/title/body,
+релевантные labels, обязательную версию triage-комментария
+`id+updated_at+SHA-256(body)` и отдельно точный источник выбора
+(human-comment / `decision:N` / `pp:recommend`). Версия triage обязательна и
+для `ready-fix`, и для голой `decision:N`: именно triage определяет план и смысл
+номера. Fingerprint перечитывается перед branch-claim, final push, созданием PR,
+`in-work` и комментарием. Поздний
 `hold`, закрытие, снятие eligibility, edit решения или смена `decision:N`
 останавливают все следующие мутации; уже созданный branch/PR не удаляется
 автоматически и явно передаётся человеку для recovery.
@@ -377,7 +381,7 @@ override: REVIEW распознает явный handoff, снимет парк�
 |---|---|
 | Заводим всё, что предложило ревью | просто `ship` |
 | Не заводить ничего | `ship` + метка `no-tail` |
-| Не заводить конкретные пункты | `ship` + комментарий строкой `pp:tail-drop 1,3` — номера пунктов хвоста **как они напечатаны** в заключении, сквозные по всему списку вперемешку с `[выброс]` |
+| Не заводить конкретные пункты | `ship` + по одной строке `pp:tail-drop review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex>` на пункт. Все четыре значения должны относиться к текущей версии заключения; после edit/reorder старый drop не действует. Короткая форма `pp:tail-drop 1,3` оставлена только для legacy-заключений до cutover |
 
 Это та же грамматика, что у `approved` / `approved + decision:N` на заявках:
 согласие — одна метка, несогласие — метка плюс уточнение.
@@ -504,7 +508,10 @@ cutover. Последнее заключение в момент границы 
 
 Каждый пункт хвоста имеет version-key из `review comment id+updated_at`, номера и
 SHA-256 нормализованного текста. Поэтому edit/reorder не позволяет старому
-item-done закрыть новый текст; общий `pp:tail-done` тоже привязан к версии.
+item-done или человеческому `pp:tail-drop` закрыть новый текст; общий
+`pp:tail-done` тоже привязан к версии. Для committed-протокола drop содержит все
+четыре поля version-key; короткие номера допустимы только для выбранного
+legacy-заключения до cutover.
 Initial `pp:tail-claim` с уникальным UUID воркера, 30-минутная цепочка
 `pp:tail-lease previous=<comment id>`, детерминированный `pp:tail-source` в теле
 issue, постоянный `pp:tail-create-intent` перед неидемпотентным вызовом и
@@ -527,10 +534,12 @@ Ref без issue — human-recovery, не повторный create. Прове�
 issue create — точка невозврата конкретного пункта.
 После неё поздний стоп не может удалить issue и разрешает только дописать
 восстановительный item-done с уже существующим номером; до неё стоп старше TAIL.
-Если процесс исчез после global ref/create-intent, а dedupe/source issue так и не появилась,
-автоматика не повторяет неидемпотентный вызов: это единственный human-recovery
-TAIL. После ручной проверки GitHub человек может удалить ошибочный intent-
-комментарий и orphan `pp-tail-dedupe/<hash>` ref; такой редкий стоп честнее
+Если процесс исчез после создания global ref (до или после create-intent), а
+dedupe/source issue так и не появилась, автоматика не повторяет
+неидемпотентный вызов: любой такой unresolved permanent create-fence —
+единственный класс human-recovery TAIL. После ручной проверки GitHub человек
+может удалить ошибочный intent-комментарий, если он есть, и orphan
+`pp-tail-dedupe/<hash>` ref; такой редкий стоп честнее
 потенциального дубля.
 
 Расписания у этапа пока нет — зовите руками (`/tail-issues`). Окно в две недели

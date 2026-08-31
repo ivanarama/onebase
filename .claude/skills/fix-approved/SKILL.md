@@ -177,10 +177,19 @@ description: Реализация заявок ivanarama/onebase с меткой
    Сохрани исходный issue-contract: `state`, точные `title`/`body`, релевантные
    labels (`ready-fix`, `approved`, `hold`, `manual`, `needs-decision`, все
    `decision:N`) и **все** комментарии с `id`, `updated_at`, автором и body.
-   Зафиксируй, почему заявка eligible (`ready-fix` либо `approved`) и точную
-   версию выбранного решения: human comment `id+updated_at+SHA-256(body)`, либо
-   конкретную `decision:N`, либо `id+updated_at+SHA-256(body)` triage с
-   `pp:recommend`. Это `issue-decision fingerprint` текущего прогона.
+   Зафиксируй, почему заявка eligible (`ready-fix` либо `approved`). В
+   `issue-decision fingerprint` **всегда** входят две независимые части:
+
+   - точная версия каноничного triage-комментария, задающего план работы:
+     `id+updated_at+SHA-256(body)` — даже для `ready-fix`, даже если в нём нет
+     `pp:recommend` и даже если вариант выбран человеком или `decision:N`;
+   - точный источник выбора: human comment `id+updated_at+SHA-256(body)`, либо
+     конкретная `decision:N`, либо `pp:recommend=<N>` из уже зафиксированной
+     версии triage.
+
+   Отсутствующий, заменённый или отредактированный triage закрывает гейт. Голая
+   метка `decision:N` не фиксирует смысл номера: этот смысл определяет только
+   версия triage, поэтому обе части обязательны.
 
    **Заявка сделана планом, а плана нет — не бери её.** Если разбор или
    комментарий человека называют работу планом (`Plans/NNN-*.md` или «планом N»),
@@ -263,10 +272,10 @@ description: Реализация заявок ivanarama/onebase с меткой
 
    и пересчитывай `issue-decision fingerprint`. До final CAS-push и
    `gh pr create` обязательны `state=open`, прежние title/body, то же основание
-   eligibility, отсутствие `hold`/`manual` и та же версия human/label/triage-
-   решения. Снятый `ready-fix`/`approved`, новый `hold`, закрытие issue, смена
-   `decision:N`, edit решения или новое старшее решение немедленно закрывают
-   гейт. После `gh pr create` те же проверки выполняй отдельно перед добавлением
+   eligibility, отсутствие `hold`/`manual`, та же обязательная версия triage и
+   тот же точный источник выбора. Снятый `ready-fix`/`approved`, новый `hold`,
+   закрытие issue, смена `decision:N`, edit triage/решения или новое старшее
+   решение немедленно закрывают гейт. После `gh pr create` те же проверки выполняй отдельно перед добавлением
    `in-work` и перед `pp:in-work`-комментарием; единственное ожидаемое собственное
    изменение labels между ними — уже подтверждённая `in-work`. Гейт закрылся —
    больше ничего не меняй, не удаляй branch/PR и закончи `НУЖЕН ЧЕЛОВЕК` с точным

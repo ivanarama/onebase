@@ -230,6 +230,9 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"**не** возвращай PR в REVIEW",
 		"Для устаревшего ревью сними `changes-requested`, сверь удаление и только затем оставь диагностический комментарий",
 		"issue-decision fingerprint",
+		"**всегда** входят две независимые части",
+		"точная версия каноничного triage-комментария",
+		"Голая\n   метка `decision:N` не фиксирует смысл номера",
 		"перед **каждым внешним изменением** после branch-claim",
 		"Снятый `ready-fix`/`approved`, новый `hold`, закрытие issue, смена",
 		"перед добавлением `in-work` и перед `pp:in-work`-комментарием",
@@ -403,6 +406,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"<!-- pp:tail-item-done review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> issue=<номер|none> -->",
 		"<!-- pp:tail-dedupe sha256=<64hex> -->",
 		"<!-- pp:tail-done review-comment=<id> review-updated=<RFC3339> -->",
+		"pp:tail-drop review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex>",
+		"Короткая legacy-форма `pp:tail-drop 1,3` разрешена только",
 		"updated_at",
 		"item-sha256",
 		"dedupe-sha256",
@@ -411,6 +416,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"issues?state=all&since=<root-claim-created-at>&per_page=100",
 		"автора issue `ivanarama`",
 		"{number,author:.user.login,body}",
+		"если winner упал сразу после успешного создания ref, но\n   **до** публикации create-intent",
+		"orphan `pp-tail-dedupe/<hash>` ref без найденной issue",
 		"Создание exact-source issue — точка невозврата",
 		"не запрещает **только** восстановительный item-done",
 		"**никогда не\n   повторяй create автоматически**",
@@ -853,6 +860,7 @@ type modeledIssueDecision struct {
 	open        bool
 	titleBody   string
 	eligibleBy  string
+	triage      string
 	decision    string
 	hold        bool
 	manual      bool
@@ -863,6 +871,7 @@ func modeledIssueGate(expected, current modeledIssueDecision) bool {
 	return current.open && !current.hold && !current.manual &&
 		expected.titleBody == current.titleBody &&
 		expected.eligibleBy == current.eligibleBy &&
+		expected.triage == current.triage &&
 		expected.decision == current.decision &&
 		expected.allowInWork == current.allowInWork
 }
@@ -870,6 +879,7 @@ func modeledIssueGate(expected, current modeledIssueDecision) bool {
 func TestNewIssueMutationsRevalidateDecisionFingerprint(t *testing.T) {
 	expected := modeledIssueDecision{
 		open: true, titleBody: "title\x00body", eligibleBy: "approved",
+		triage:   "triage:17@v1:sha256-plan-a",
 		decision: "comment:42@v1:sha256-a",
 	}
 	if !modeledIssueGate(expected, expected) {
@@ -883,6 +893,7 @@ func TestNewIssueMutationsRevalidateDecisionFingerprint(t *testing.T) {
 		{name: "late hold", mutate: func(state *modeledIssueDecision) { state.hold = true }},
 		{name: "closed issue", mutate: func(state *modeledIssueDecision) { state.open = false }},
 		{name: "eligibility removed", mutate: func(state *modeledIssueDecision) { state.eligibleBy = "" }},
+		{name: "triage edited with same decision label", mutate: func(state *modeledIssueDecision) { state.triage = "triage:17@v2:sha256-plan-b" }},
 		{name: "decision edited", mutate: func(state *modeledIssueDecision) { state.decision = "comment:42@v2:sha256-b" }},
 		{name: "decision label changed", mutate: func(state *modeledIssueDecision) { state.decision = "decision:3" }},
 	}
@@ -894,6 +905,55 @@ func TestNewIssueMutationsRevalidateDecisionFingerprint(t *testing.T) {
 				t.Fatal("late issue change must close every subsequent mutation gate")
 			}
 		})
+	}
+}
+
+func modeledTailDropApplies(current, dropped modeledTailVersionKey) bool {
+	return current.reviewID == dropped.reviewID &&
+		current.reviewUpdated == dropped.reviewUpdated &&
+		current.item == dropped.item &&
+		current.itemSHA256 == dropped.itemSHA256
+}
+
+func TestTailDropIsBoundToEditableCommentAndItemVersion(t *testing.T) {
+	dropped := modeledTailVersionKey{
+		reviewID: 42, reviewUpdated: "2026-08-30T10:00:00Z", item: 1,
+		itemSHA256: "item-a", dedupeSHA256: "task-a",
+	}
+	if !modeledTailDropApplies(dropped, dropped) {
+		t.Fatal("exact versioned drop must apply")
+	}
+
+	for name, current := range map[string]modeledTailVersionKey{
+		"edited review":  {reviewID: 42, reviewUpdated: "2026-08-30T10:01:00Z", item: 1, itemSHA256: "item-a"},
+		"reordered item": {reviewID: 42, reviewUpdated: "2026-08-30T10:00:00Z", item: 2, itemSHA256: "item-a"},
+		"rewritten item": {reviewID: 42, reviewUpdated: "2026-08-30T10:00:00Z", item: 1, itemSHA256: "item-b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if modeledTailDropApplies(current, dropped) {
+				t.Fatal("stale drop must not apply to a different review/item version")
+			}
+		})
+	}
+}
+
+func modeledTailCreateFenceNeedsHuman(globalRef, createIntent, issueFound bool) bool {
+	_ = createIntent // both sides of the ref->intent crash window are fenced
+	return globalRef && !issueFound
+}
+
+func TestTailOrphanGlobalRefNeedsHumanBeforeOrAfterIntent(t *testing.T) {
+	if !modeledTailCreateFenceNeedsHuman(true, false, false) {
+		t.Fatal("orphan global ref must stop for human recovery even before create-intent")
+	}
+	if !modeledTailCreateFenceNeedsHuman(true, true, false) {
+		t.Fatal("orphan global ref must stop for human recovery after create-intent")
+	}
+	if modeledTailCreateFenceNeedsHuman(true, true, true) {
+		t.Fatal("an issue found behind the permanent fence is recoverable automatically")
+	}
+	if modeledTailCreateFenceNeedsHuman(false, false, false) {
+		t.Fatal("absence of both ref and issue is not an orphan-fence recovery case")
 	}
 }
 

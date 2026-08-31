@@ -173,10 +173,12 @@ onebase describe --project <dir>                # вся структура ко
   перебить `needs-decision`. На PR это стоп по умолчанию: без точного handoff
   его снимает человек, но `pp:review-again` разрешает REVIEW снять парковку, а
   `pp:fix-decision <SHA>` возвращает PR в FIX crash-safe порядком.
-  Для новой заявки FIX сохраняет issue-decision fingerprint и перевалидирует
-  open-state/title/body/eligibility/hold/manual и точную версию решения перед
-  branch-claim, push, PR create, `in-work` и комментарием; позднее решение
-  человека всегда старше уже выполненной локальной работы.
+  Для новой заявки FIX сохраняет issue-decision fingerprint: обязательную
+  версию triage `id+updated_at+SHA-256(body)` плюс отдельный точный источник
+  выбора (human comment / `decision:N` / `pp:recommend`). Он перевалидирует
+  open-state/title/body/eligibility/hold/manual и обе части решения перед
+  branch-claim, push, PR create, `in-work` и комментарием; edit triage или
+  позднее решение человека всегда старше уже выполненной локальной работы.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
@@ -188,7 +190,9 @@ onebase describe --project <dir>                # вся структура ко
     `[заявка]` (с готовым заголовком) или `[выброс]` — и после мержа
     `/tail-issues` заводит по первым настоящие заявки. Согласие человека с
     разбором — то же движение `ship`; отказ — `no-tail` или строка
-    `pp:tail-drop N`. Переход на committed-протокол не теряет старый хвост:
+    versioned `pp:tail-drop review-comment=… review-updated=… item=…
+    item-sha256=…`. Короткий `pp:tail-drop N` действует только на legacy-хвост.
+    Переход на committed-протокол не теряет старый хвост:
     fallback разрешён, только если последнее доверенное legacy-заключение создано
     строго до мержа #1261; дата мержа исходного PR не важна. Per-item
     `updated_at` review и SHA-256 пункта входят во все versioned markers;
@@ -199,8 +203,9 @@ onebase describe --project <dir>                # вся структура ко
     REST-lookup от времени корневого claim
     (не задержанный Search API) не дают параллельному или
     восстановленному после crash прогону создать второй issue. Неоднозначный
-    crash после intent без найденного issue — единственный human-recovery TAIL:
-    автоматика не повторяет неидемпотентный create. Та же грамматика,
+    orphan global ref без найденного issue — с intent или после crash до него —
+    единственный класс human-recovery TAIL: автоматика не повторяет
+    неидемпотентный create. Та же грамматика,
     что `approved` / `approved + decision:N`.
     Отсюда же ужесточение блокирующего: **неверное по факту утверждение в
     тексте, который поставляет PR** (документация, `ai-guide`, текст скила) — не
