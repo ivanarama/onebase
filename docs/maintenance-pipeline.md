@@ -127,7 +127,11 @@ TRIAGE ищет такой маркер пагинированным REST; чу�
 только от `ivanarama`; repository Issues REST явно исключает PR. Все
 class/route/manual labels добавляются одним REST-вызовом и проверяются повторным
 чтением. FIX не берёт label раньше matching `pp:triage-route-done`, поэтому
-незавершённый TRIAGE не успевает создать постоянную ветку `fix/<N>`.
+незавершённый TRIAGE не успевает создать постоянную ветку `fix/<N>`. Два
+одновременных roots одного snapshot не взаимно блокируются: earliest — winner,
+остальные exact-equivalent roots — diagnostic losers, разрешённые post-root
+gate. Любой lease renewal/takeover сначала повторяет полный human/state gate;
+stopped roots не получают новые комментарии и не съедают рабочую квоту.
 
 Дальше он решает маршрут.
 
@@ -273,6 +277,10 @@ Root также хранит digest всех pre-root comments и immutable issu
 watermark. Edit/delete старого комментария меняет digest; post-root label events
 показывают remove→re-add, поэтому recovery не удалит новое человеческое
 `approved` и не вернёт снятый человеком `needs-decision`.
+Параллельные FIX handoff-roots с точно одинаковыми record/fingerprint/reason
+канонизируются до проверки comments digest: поздние equivalent roots считаются
+диагностикой, а не посторонним комментарием, поэтому canonical winner может
+завершить handoff. Lease POST сам проходит полный late-human gate.
 Её remote-ветка строго детерминирована как `fix/<N>` и атомарно создаётся через
 GitHub `POST /git/refs`: только ответ `201` даёт branch-claim, а любой другой
 статус останавливает запуск (`409`/`422` включены) даже при том же SHA. Обычный

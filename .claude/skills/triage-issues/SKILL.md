@@ -80,7 +80,9 @@ stderr, вывода нет. Пустой вывод при этом легко 
    разбора автоматически не переинтерпретируй.
 
    Возьми до **5** штук: recovery всегда раньше новых, внутри группы старые
-   вперёд.
+   вперёд. Root, для которого полный human/state gate уже закрыт, только покажи
+   в `ИТОГ` как `НУЖЕН ЧЕЛОВЕК`: он не получает lease, не считается одним из
+   пяти рабочих slots и не вытесняет новые issues.
 
 3. По каждому ишью:
    - прочитай issue (`gh issue view <N> --json title,body,labels,author`) и все
@@ -147,19 +149,33 @@ stderr, вывода нет. Пустой вывод при этом легко 
    `pp-triage-route-v1` с финальным LF; JSON/BOM/CRLF запрещены. Owner — случайный
    128-bit UUID.
 
+   Сначала найди self-contained root candidates, у которых record и claim-marker
+   синтаксически полны и собственный fingerprint пересчитывается, ещё не
+   используя comments после их исходного snapshot. Сгруппируй roots по **точно
+   одинаковым record + fingerprint**. В группе каноничен самый ранний по
+   `created_at`, затем id; только для него перепроверь pre-root comments/labels/
+   events snapshot. Более поздние roots той же группы — допустимые
+   `equivalent diagnostic losers`: они исключаются из post-root comment gate и
+   не мешают winner. Root с другим record/fingerprint остаётся human/concurrent
+   change и закрывает gate. Так два worker, одновременно прочитавшие один
+   snapshot, не блокируют друг друга собственными root-комментариями.
+
    **Единый trust predicate применяется ко всем protocol markers:** комментарий
    обязан иметь `author.login == ivanarama`, marker — быть точной отдельной
    строкой, ссылка `claim` — указывать canonical root, а где предусмотрен
    fingerprint — точно совпадать с пересчитанным root fingerprint. Чужие,
    встроенные в текст и неполные markers игнорируй и сообщай о них. Route-claim
    дополнительно доверен, только если record и marker находятся в одном
-   комментарии. Если из-за параллельного запуска появилось несколько
-   валидных roots, каноничен самый ранний по GitHub `created_at`, затем по числовому
-   `id`; FIX всегда читает именно его. После POST перечитай все комментарии: если
+   комментарии. FIX всегда читает canonical root по правилу выше. После POST
+   перечитай все комментарии: если
    собственный возвращённый id не каноничен, не ставь маршрутные метки и закончи item как
    проигравший гонку.
 
-   Root — начальная 30-минутная lease. После timeout recovery публикует точный
+   Root — начальная 30-минутная lease. **До каждого** renewal/takeover POST
+   выполни полный gate ниже (включая state/open, `hold`, title/body, labels,
+   comments/events и equivalent-root rule), требуя лишь, что прежняя active
+   lease действительно истекла или подходит к порогу renew. Если gate закрыт,
+   не публикуй lease. После timeout recovery публикует точный
    `<!-- pp:triage-route-lease claim=<root-id> fingerprint-sha256=<64hex> previous=<active-id> owner=<uuid> -->`.
    Из одновременно опубликованных детей одного `previous` активен самый ранний
    по `created_at`, затем id; только процесс, чей **собственный возвращённый id**
@@ -171,8 +187,8 @@ stderr, вывода нет. Пустой вывод при этом легко 
    comments и все issue events пагинированным REST. Требуй: issue открыт; `hold` отсутствует;
    canonical root и active lease не изменились; title/body и все pre-root
    comments совпадают с record; видимый analysis и route-record canonical root
-   не редактировались; после root нет комментариев, кроме валидных
-   markers/ответа этой транзакции; состояние labels/events соответствует точной
+   не редактировались; после root нет комментариев, кроме equivalent diagnostic
+   roots, валидных markers/ответа этой транзакции; состояние labels/events соответствует точной
    label-фазе ниже. Любой новый/отредактированный/удалённый
    комментарий, late `hold`, закрытие, `approved`/`in-work`/`manual` не из
    record, конфликтующий route или иной label означает стоп без мутации.
@@ -366,7 +382,10 @@ stderr, вывода нет. Пустой вывод при этом легко 
 будет нечем. Ответ — **отдельный** комментарий после разбора, не строка внутри
 него: разбор читает машина, ответ читает человек. Отправляется обычным
 `gh issue comment <N> --body "…"` (он здесь работает). Маркер `<!-- pp:reply -->`;
-он же признак, что отвечать второй раз не надо.
+он сохраняется для `backlogsweep`. В транзакционном route этот же комментарий
+обязан содержать и точную строку
+`<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->`;
+только trusted пара markers является признаком, что отвечать второй раз не надо.
 
 Отвечать на языке заявки. Форма:
 
@@ -382,6 +401,7 @@ stderr, вывода нет. Пустой вывод при этом легко 
 Заявка ушла в автоматическую починку: PR будет привязан к ней, и заявка
 закроется вместе с ним, когда его вольют.
 <!-- pp:reply -->
+<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->
 ```
 
 Начала ровно два, и третьего быть не может: ответ пишется только вместе с

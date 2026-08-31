@@ -143,7 +143,10 @@ onebase describe --project <dir>                # вся структура ко
   прекращает маршрут. REST-очередь явно исключает PR, а все protocol markers
   доверены только от `ivanarama`. FIX не создаёт `fix/<N>`, пока для нового
   route-claim нет matching trusted route-done; старый triage остаётся отдельным
-  legacy fallback.
+  legacy fallback. Одновременные roots с точно тем же snapshot/fingerprint
+  канонизируются до comment-gate: поздние считаются equivalent diagnostics и не
+  блокируют winner. Перед каждым lease POST выполняется тот же human/state gate,
+  поэтому stopped recovery не пишет комментарии и не вытесняет новую работу.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR

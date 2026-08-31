@@ -197,6 +197,9 @@ description: Реализация заявок ivanarama/onebase с меткой
    `pp:fix-issue-handoff-claim` из п. 9 и в recovery-очереди, и на eligible
    issue. Такой issue — recovery той же транзакции, а не новый handoff: не
    публикуй второй root и не начинай код.
+   Recovery-root с закрытым human/state gate (`hold`, closed, edit/comment или
+   новое решение) не получает lease и не блокирует обычную FIX-очередь: покажи
+   его в `ИТОГ` как `НУЖЕН ЧЕЛОВЕК` и продолжи выбор следующей работы.
 
 3. Прочитай заявку и каноничный триаж-комментарий — план фикса там. Триажем
    считается только комментарий автора `ivanarama` с точной отдельной строкой
@@ -541,14 +544,21 @@ description: Реализация заявок ivanarama/onebase с меткой
    <!-- pp:fix-issue-handoff-claim fingerprint-sha256=<64hex> reason=<code> owner=<uuid> -->
    ```
 
-   Root доверен только если record и marker находятся в одном комментарии,
-   author `ivanarama`, hash пересчитан и совпал, а поля record описывают исходный
-   issue-handoff fingerprint. При recovery заново построй comments-record из
-   всех комментариев с numeric id меньше root id: edit/delete любого старого
-   комментария или concurrent comment перед root меняет digest и останавливает
-   handoff. Комментарии с id больше root допустимы только если это валидные
+   Сначала найди self-contained root candidates, где record и marker находятся
+   в одном комментарии автора `ivanarama`, hash record пересчитан и совпал, не
+   пытаясь пока включить соседние root comments в их comments digest. Сгруппируй
+   candidates по **точно одинаковым record + fingerprint + reason**; в группе
+   каноничен самый ранний по `created_at`, затем numeric id. Только для canonical
+   root заново построй comments-record из всех комментариев с numeric id меньше
+   его id: edit/delete любого старого комментария или настоящий concurrent human
+   comment меняет digest и останавливает handoff. Более поздние roots той же
+   группы — `equivalent diagnostic losers`: исключи их из post-root gate и не
+   включай в digest, они ничего человеку не спрашивают и не блокируют winner.
+   Другой root record/fingerprint/reason — непротокольное изменение и стоп.
+   Остальные comments с id больше canonical root допустимы только как валидные
    markers этой транзакции; любой иной comment останавливает её. Так recovery
-   видит не только opaque hash, но и проверяемый snapshot до первой мутации.
+   видит snapshot и одновременно не deadlock'ится на собственной concurrent
+   попытке.
 
    Перед созданием root прочитай все comments: если уже есть незавершённый
    доверенный root для того же canonical triage/reason и после него нет
@@ -558,7 +568,12 @@ description: Реализация заявок ivanarama/onebase с меткой
    только процесс, чей **собственный возвращённый id** каноничен. Остальные root
    остаются диагностикой и ничего человеку не спрашивают.
 
-   Root — начальная 30-минутная lease. До expiry её продлевает только тот же
+   Root — начальная 30-минутная lease. **Непосредственно перед каждым** renewal
+   или takeover POST выполни тот же полный state/title/body/comments/labels/
+   events gate, что перед фазами ниже, с учётом equivalent diagnostic roots;
+   отдельно докажи, что прежняя active lease истекла или подходит к renew.
+   `hold`, close, edit или непротокольный comment запрещает даже lease-comment.
+   До expiry её продлевает только тот же
    owner, после expiry любой новый UUID может сделать takeover. Renewal/takeover
    имеет точную форму:
 

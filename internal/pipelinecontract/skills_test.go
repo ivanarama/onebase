@@ -272,6 +272,9 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"pp:triage-route-done claim=<canonical-root-id>",
 		"Done обязан существовать **до**\n   создания persistent branch `fix/<N>`",
 		"Canonical triage без route-claim — отдельный legacy fallback",
+		"`equivalent diagnostic losers`",
+		"Непосредственно перед каждым** renewal",
+		"не блокирует обычную FIX-очередь",
 	)
 	rejectAll(t, fixer,
 		"ищи его по **префиксу**",
@@ -314,6 +317,10 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"human pre-add",
 		"recovery никогда не возвращает снятую человеком `ready-fix`",
 		"**одним** REST POST",
+		"`equivalent diagnostic losers`",
+		"**До каждого** renewal/takeover POST",
+		"не считается одним из\n   пяти рабочих slots",
+		"<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->",
 	)
 }
 
@@ -1125,6 +1132,69 @@ func TestEveryTriageProtocolMarkerUsesTheSameTrustPredicate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if trusted {
 				t.Fatal("untrusted TRIAGE protocol marker must be ignored")
+			}
+		})
+	}
+}
+
+type modeledConcurrentRoot struct {
+	id          int
+	fingerprint string
+	record      string
+	reason      string
+}
+
+func modeledCanonicalEquivalentRoots(roots []modeledConcurrentRoot) (modeledConcurrentRoot, bool) {
+	if len(roots) == 0 {
+		return modeledConcurrentRoot{}, false
+	}
+	canonical := roots[0]
+	for _, root := range roots[1:] {
+		if root.id < canonical.id {
+			canonical = root
+		}
+	}
+	for _, root := range roots {
+		if root.fingerprint != canonical.fingerprint || root.record != canonical.record || root.reason != canonical.reason {
+			return modeledConcurrentRoot{}, false
+		}
+	}
+	return canonical, true
+}
+
+func modeledMayPostRecoveryLease(open, hold, inputUnchanged, onlyProtocolComments bool) bool {
+	return open && !hold && inputUnchanged && onlyProtocolComments
+}
+
+func TestEquivalentConcurrentRootsDoNotDeadlockWinner(t *testing.T) {
+	roots := []modeledConcurrentRoot{
+		{id: 101, fingerprint: "same", record: "same-record", reason: "same-reason"},
+		{id: 100, fingerprint: "same", record: "same-record", reason: "same-reason"},
+	}
+	canonical, ok := modeledCanonicalEquivalentRoots(roots)
+	if !ok || canonical.id != 100 {
+		t.Fatalf("equivalent roots = %+v/%v, want earliest root 100 and a live winner", canonical, ok)
+	}
+	changed := append([]modeledConcurrentRoot(nil), roots...)
+	changed[0].fingerprint = "different"
+	if _, ok := modeledCanonicalEquivalentRoots(changed); ok {
+		t.Fatal("a genuinely different concurrent root must remain a human-change stop")
+	}
+}
+
+func TestRecoveryLeaseRunsLateHumanGateBeforePosting(t *testing.T) {
+	if !modeledMayPostRecoveryLease(true, false, true, true) {
+		t.Fatal("unchanged expired transaction must allow a recovery lease")
+	}
+	for name, allowed := range map[string]bool{
+		"late close":    modeledMayPostRecoveryLease(false, false, true, true),
+		"late hold":     modeledMayPostRecoveryLease(true, true, true, true),
+		"edited input":  modeledMayPostRecoveryLease(true, false, false, true),
+		"human comment": modeledMayPostRecoveryLease(true, false, true, false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if allowed {
+				t.Fatal("late human change must block lease POST itself")
 			}
 		})
 	}
