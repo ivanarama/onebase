@@ -295,6 +295,16 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"`updated_at` входит в FIX-fingerprint",
 		"пагинированным REST",
 		"чужое или встроенное в текст упоминание не\n   блокирует triage",
+		"**recovery-очередь**",
+		"crash между\n   root-комментарием и labels обязан продолжить ту же транзакцию",
+		"pp-triage-route-v1",
+		"<!-- pp:triage-route-claim fingerprint-sha256=<64hex> owner=<uuid> -->",
+		"<!-- pp:triage-route-lease claim=<root-id> previous=<active-id> owner=<uuid> -->",
+		"<!-- pp:triage-route-done claim=<root-id> fingerprint-sha256=<64hex> -->",
+		"Перед **каждым внешним изменением** после root",
+		"issue открыт; `hold` отсутствует",
+		"Все labels точного маршрута",
+		"**одним** REST POST",
 	)
 }
 
@@ -963,6 +973,66 @@ func TestConcurrentTriageHasOneDeterministicCanonicalComment(t *testing.T) {
 		if !ok || canonical.id != first.id {
 			t.Fatalf("canonical triage = %+v, %v; want trusted earliest id %d", canonical, ok, first.id)
 		}
+	}
+}
+
+type modeledTriageRoute struct {
+	canonicalRoot  int
+	open           bool
+	hold           bool
+	inputUnchanged bool
+	labelsApplied  bool
+	replyApplied   bool
+	done           bool
+}
+
+func modeledTriageRecoveryCandidate(state modeledTriageRoute) bool {
+	return state.canonicalRoot != 0 && !state.done
+}
+
+func modeledAdvanceTriageRoute(state modeledTriageRoute, ownedRoot, phases int) modeledTriageRoute {
+	if state.canonicalRoot != ownedRoot || state.done || !state.open || state.hold || !state.inputUnchanged {
+		return state
+	}
+	if phases > 0 {
+		state.labelsApplied = true
+	}
+	if phases > 1 {
+		state.replyApplied = true
+	}
+	if phases > 2 && state.labelsApplied && state.replyApplied {
+		state.done = true
+	}
+	return state
+}
+
+func TestTriageRouteRecoversAfterCommentAndStopsForLateHumanGate(t *testing.T) {
+	rootOnly := modeledTriageRoute{canonicalRoot: 10, open: true, inputUnchanged: true}
+	if !modeledTriageRecoveryCandidate(rootOnly) {
+		t.Fatal("a canonical root without done must remain in the TRIAGE recovery queue")
+	}
+	recovered := modeledAdvanceTriageRoute(rootOnly, 10, 3)
+	if !recovered.labelsApplied || !recovered.replyApplied || !recovered.done {
+		t.Fatalf("recovered TRIAGE route = %+v, want all idempotent phases complete", recovered)
+	}
+
+	lateHold := rootOnly
+	lateHold.hold = true
+	if got := modeledAdvanceTriageRoute(lateHold, 10, 3); got != lateHold {
+		t.Fatal("late hold must stop TRIAGE before every route mutation")
+	}
+	lateClose := rootOnly
+	lateClose.open = false
+	if got := modeledAdvanceTriageRoute(lateClose, 10, 3); got != lateClose {
+		t.Fatal("late close must stop TRIAGE before every route mutation")
+	}
+	edited := rootOnly
+	edited.inputUnchanged = false
+	if got := modeledAdvanceTriageRoute(edited, 10, 3); got != edited {
+		t.Fatal("edited issue input must invalidate unfinished TRIAGE routing")
+	}
+	if got := modeledAdvanceTriageRoute(rootOnly, 11, 3); got != rootOnly {
+		t.Fatal("a non-canonical concurrent root must not apply route labels")
 	}
 }
 
