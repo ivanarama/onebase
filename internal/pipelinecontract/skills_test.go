@@ -233,7 +233,13 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"**всегда** входят две независимые части",
 		"точная версия каноничного triage-комментария",
 		"Голая\n   метка `decision:N` не фиксирует смысл номера",
-		"перед **каждым внешним изменением** после branch-claim",
+		"каноничен самый ранний по `created_at`,\n   затем по числовому `id`",
+		"комментарий автора `ivanarama` с точной отдельной строкой",
+		"перед **любой**\n   внешней мутацией issue",
+		"при раннем переходе в п. 9",
+		"`issue-handoff fingerprint`",
+		"точный код причины\n   handoff",
+		"перед **каждым внешним изменением** — как\n   до, так и после branch-claim",
 		"Снятый `ready-fix`/`approved`, новый `hold`, закрытие issue, смена",
 		"перед добавлением `in-work` и перед `pp:in-work`-комментарием",
 	)
@@ -241,6 +247,28 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"ищи его по **префиксу**",
 		"gh pr list --state open\n   --label <метка>",
 		"gh pr list --state open --json number,title,body",
+	)
+}
+
+func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	fixer := skill(t, "fix-approved")
+	for name, text := range map[string]string{"triage": triage, "fix": fixer} {
+		t.Run(name, func(t *testing.T) {
+			requireAllCompact(t, text,
+				"точной отдельной строкой",
+				"`ivanarama`",
+				"самый ранний по",
+				"`created_at`",
+				"числовому `id`",
+			)
+		})
+	}
+	requireAllCompact(t, triage,
+		"если\n   собственный возвращённый id не каноничен, не ставь маршрутные метки",
+		"`updated_at` входит в FIX-fingerprint",
+		"пагинированным REST",
+		"чужое или встроенное в текст упоминание не\n   блокирует triage",
 	)
 }
 
@@ -387,7 +415,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"gh api --paginate",
 		"comments?per_page=100",
 		"gh api repos/ivanarama/onebase/pulls/1261 --jq .merged_at",
-		"именно это выбранное заключение создано строго раньше",
+		"именно это выбранное заключение и создано, и последний раз\n   обновлено строго раньше",
+		"`created_at < cutover` и `updated_at < cutover`",
 		"Время мержа самого исходного PR границей не является",
 		"последнее заключение создано в момент границы или позже",
 		"нет каноничной committed-пары для merged HEAD и не сработал описанный выше",
@@ -403,6 +432,7 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"**собственный возвращённый id intent**",
 		"Lease действует 30 минут",
 		"<!-- pp:tail-source pr=<M> review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> -->",
+		"<!-- pp:tail-task-v1 title-sha256=<64hex> task-sha256=<64hex> dedupe-sha256=<64hex> -->",
 		"<!-- pp:tail-item-done review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> issue=<номер|none> -->",
 		"<!-- pp:tail-dedupe sha256=<64hex> -->",
 		"<!-- pp:tail-done review-comment=<id> review-updated=<RFC3339> -->",
@@ -411,11 +441,14 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"updated_at",
 		"item-sha256",
 		"dedupe-sha256",
+		"каноничную task identity без source-specific полей",
+		"одинаковые общие заголовки у\n   разных подсистем — разные задачи",
+		"одного\n     совпавшего title недостаточно",
 		"Перед **каждым внешним изменением**",
 		"Не используй GitHub Search",
 		"issues?state=all&since=<root-claim-created-at>&per_page=100",
 		"автора issue `ivanarama`",
-		"{number,author:.user.login,body}",
+		"{number,title,author:.user.login,body}",
 		"если winner упал сразу после успешного создания ref, но\n   **до** публикации create-intent",
 		"orphan `pp-tail-dedupe/<hash>` ref без найденной issue",
 		"Создание exact-source issue — точка невозврата",
@@ -474,13 +507,14 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"**PR, код оставляем / повторяем аудит текущего SHA** → добавить отдельной",
 		"`approved` на PR не ставьте",
 		"Время мержа PR #1261 — точная\nграница включения committed-протокола",
-		"само заключение**\nсоздано строго раньше границы",
+		"само заключение** и\nсоздано, и последний раз обновлено строго раньше границы",
 		"Время мержа\nисходного PR не используется",
 		"Initial `pp:tail-claim` с уникальным UUID воркера",
 		"30-минутная цепочка\n`pp:tail-lease previous=<comment id>`",
 		"постоянный `pp:tail-create-intent`",
 		"version-key из `review comment id+updated_at`",
 		"create-only\nref `pp-tail-dedupe/<sha256>`",
+		"Один title без task-текста никогда не\nсчитается ключом",
 		"детерминированный `pp:tail-source`",
 		"без eventually-consistent Search API",
 	)
@@ -856,6 +890,45 @@ func TestFixPostPushTransitionSerializesReviewHandoff(t *testing.T) {
 	}
 }
 
+type modeledTriageComment struct {
+	id        int
+	createdAt string
+	trusted   bool
+	exactMark bool
+}
+
+func modeledCanonicalTriage(comments []modeledTriageComment) (modeledTriageComment, bool) {
+	var best modeledTriageComment
+	found := false
+	for _, comment := range comments {
+		if !comment.trusted || !comment.exactMark {
+			continue
+		}
+		if !found || comment.createdAt < best.createdAt ||
+			(comment.createdAt == best.createdAt && comment.id < best.id) {
+			best = comment
+			found = true
+		}
+	}
+	return best, found
+}
+
+func TestConcurrentTriageHasOneDeterministicCanonicalComment(t *testing.T) {
+	first := modeledTriageComment{id: 10, createdAt: "2026-08-30T10:00:00Z", trusted: true, exactMark: true}
+	second := modeledTriageComment{id: 11, createdAt: "2026-08-30T10:00:00Z", trusted: true, exactMark: true}
+	untrusted := modeledTriageComment{id: 1, createdAt: "2026-08-29T10:00:00Z", exactMark: true}
+
+	for _, comments := range [][]modeledTriageComment{
+		{second, untrusted, first},
+		{first, second, untrusted},
+	} {
+		canonical, ok := modeledCanonicalTriage(comments)
+		if !ok || canonical.id != first.id {
+			t.Fatalf("canonical triage = %+v, %v; want trusted earliest id %d", canonical, ok, first.id)
+		}
+	}
+}
+
 type modeledIssueDecision struct {
 	open        bool
 	titleBody   string
@@ -908,6 +981,18 @@ func TestNewIssueMutationsRevalidateDecisionFingerprint(t *testing.T) {
 	}
 }
 
+func TestEarlyIssueHandoffUsesDecisionGateBeforeBranchClaim(t *testing.T) {
+	expected := modeledIssueDecision{
+		open: true, titleBody: "title\x00body", eligibleBy: "approved",
+		triage: "triage:17@v1:sha256-plan-a", decision: "decision:2",
+	}
+	lateEdit := expected
+	lateEdit.triage = "triage:17@v2:sha256-plan-b"
+	if modeledIssueGate(expected, lateEdit) {
+		t.Fatal("early needs-decision handoff must not mutate after a late triage edit")
+	}
+}
+
 func modeledTailDropApplies(current, dropped modeledTailVersionKey) bool {
 	return current.reviewID == dropped.reviewID &&
 		current.reviewUpdated == dropped.reviewUpdated &&
@@ -934,6 +1019,22 @@ func TestTailDropIsBoundToEditableCommentAndItemVersion(t *testing.T) {
 				t.Fatal("stale drop must not apply to a different review/item version")
 			}
 		})
+	}
+}
+
+func modeledLegacyTailEligible(createdAt, updatedAt, cutover int) bool {
+	return createdAt < cutover && updatedAt < cutover
+}
+
+func TestLegacyTailFreezesCreatedAndUpdatedAtBeforeCutover(t *testing.T) {
+	if !modeledLegacyTailEligible(10, 11, 20) {
+		t.Fatal("unchanged pre-cutover legacy review must remain drainable")
+	}
+	if modeledLegacyTailEligible(10, 20, 20) {
+		t.Fatal("review edited at cutover must not use legacy short drop")
+	}
+	if modeledLegacyTailEligible(10, 21, 20) {
+		t.Fatal("post-cutover edit must invalidate legacy fallback")
 	}
 }
 
@@ -997,11 +1098,21 @@ func TestTailCompletionIsBoundToEditableCommentVersion(t *testing.T) {
 	}
 }
 
-func TestSemanticTailSourcesShareOneGlobalCreateClaim(t *testing.T) {
-	globalRefExists := false
-	firstSource := acquireCreateOnlyBranch(&globalRefExists)
-	secondSource := acquireCreateOnlyBranch(&globalRefExists)
-	if !firstSource || secondSource {
-		t.Fatalf("global semantic claim winners = first:%v second:%v, want true/false", firstSource, secondSource)
+func modeledAcquireCanonicalTaskClaim(claims map[string]bool, title, task string) bool {
+	key := title + "\x00" + task
+	if claims[key] {
+		return false
+	}
+	claims[key] = true
+	return true
+}
+
+func TestCanonicalTailTaskClaimUsesTitleAndTaskContent(t *testing.T) {
+	claims := map[string]bool{}
+	firstSource := modeledAcquireCanonicalTaskClaim(claims, "add error check", "subsystem a must reject malformed input")
+	sameTaskOtherSource := modeledAcquireCanonicalTaskClaim(claims, "add error check", "subsystem a must reject malformed input")
+	differentTaskSameTitle := modeledAcquireCanonicalTaskClaim(claims, "add error check", "subsystem b must retry network timeout")
+	if !firstSource || sameTaskOtherSource || !differentTaskSameTitle {
+		t.Fatalf("canonical task claims = first:%v same:%v different:%v, want true/false/true", firstSource, sameTaskOtherSource, differentTaskSameTitle)
 	}
 }

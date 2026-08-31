@@ -179,6 +179,10 @@ onebase describe --project <dir>                # вся структура ко
   open-state/title/body/eligibility/hold/manual и обе части решения перед
   branch-claim, push, PR create, `in-work` и комментарием; edit triage или
   позднее решение человека всегда старше уже выполненной локальной работы.
+  Каноничный triage — самый ранний по `created_at`, затем `id` комментарий
+  `ivanarama` с точной отдельной строкой `<!-- pp:triage -->`; перед любой
+  мутацией issue, включая ранний handoff до branch-claim, FIX заново проверяет
+  его и весь fingerprint.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
@@ -193,10 +197,12 @@ onebase describe --project <dir>                # вся структура ко
     versioned `pp:tail-drop review-comment=… review-updated=… item=…
     item-sha256=…`. Короткий `pp:tail-drop N` действует только на legacy-хвост.
     Переход на committed-протокол не теряет старый хвост:
-    fallback разрешён, только если последнее доверенное legacy-заключение создано
-    строго до мержа #1261; дата мержа исходного PR не важна. Per-item
+    fallback разрешён, только если последнее доверенное legacy-заключение и
+    создано, и обновлено строго до мержа #1261; дата мержа исходного PR не важна. Per-item
     `updated_at` review и SHA-256 пункта входят во все versioned markers;
-    одинаковые semantic titles между разными PR сериализует постоянный
+    одинаковую canonical task identity (нормализованные title + содержательная
+    суть пункта без номера/source metadata), но не просто одинаковые заголовки,
+    между разными PR сериализует постоянный
     create-only ref `pp-tail-dedupe/<sha256>`. Уникальный owner в `tail-claim`,
     30-минутная `tail-lease` с takeover, постоянный `tail-create-intent`,
     `tail-source`/`tail-item-done` и прямой

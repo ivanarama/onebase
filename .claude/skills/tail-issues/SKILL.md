@@ -110,8 +110,11 @@ stderr, вывода нет, код возврата ненулевой. Все 
    для ограниченного legacy-drain. Для PR без каноничной пары выбери последнее
    по `created_at`, затем `id` доверенное заключение `ivanarama` с точным
    отдельным tail-маркером `<!-- pp:review pp:tail=N -->`. Fallback допустим,
-   только если **именно это выбранное заключение создано строго раньше**
-   `merged_at` #1261. Время мержа самого исходного PR границей не является: его
+   только если **именно это выбранное заключение и создано, и последний раз
+   обновлено строго раньше** `merged_at` #1261: одновременно
+   `created_at < cutover` и `updated_at < cutover`. Отсутствующий `updated_at`
+   либо edit в момент cutover/после него запрещает legacy-fallback. Время мержа
+   самого исходного PR границей не является: его
    мог уже вести старый MERGE, и он законно влился после cutover. Если последнее
    заключение создано в момент границы или позже, либо после выбранного legacy-
    заключения есть доверенная отдельная строка `pp:review-again`, fallback
@@ -160,9 +163,23 @@ stderr, вывода нет, код возврата ненулевой. Все 
    Для выбранного заключения сохрани `updated_at`. Для каждого `[заявка]`
    вычисли `item-sha256` от UTF-8 NFKC-нормализованного полного текста пункта
    (LF, trailing whitespace каждой строки удалён, внешние пустые строки
-   удалены). Отдельно вычисли глобальный `dedupe-sha256` от заголовка будущей
-   issue: Unicode NFKC, `casefold`, любая последовательность whitespace заменена
-   одним ASCII-пробелом, края удалены, затем SHA-256 UTF-8 lowercase hex. Эти
+   удалены). Отдельно собери каноничную task identity без source-specific полей.
+   `task` — вся содержательная часть `<суть>` между `[заявка]` и
+   `→ заголовок:`, но без номера списка, class-token, заголовка, PR/review/item
+   metadata и машинных markers; repository-relative `файл:строка`, подсистема,
+   риск и ожидаемый результат остаются, потому что различают задачи. Если
+   обязательную границу `→ заголовок:` однозначно разобрать нельзя, fail closed
+   в `НУЖЕН ЧЕЛОВЕК`, а не строй ключ только из title. Затем создай
+   фиксированный JSON
+   `{"v":1,"title":"<нормализованный заголовок>","task":"<нормализованная суть пункта>"}`.
+   Для обоих текстов: Unicode NFKC, `casefold`, CRLF -> LF, trailing whitespace
+   строк удалён, любая оставшаяся последовательность whitespace заменена одним
+   ASCII-пробелом, края удалены; JSON сериализуется в UTF-8 ровно с порядком
+   ключей `v,title,task` без необязательных пробелов. `dedupe-sha256` — SHA-256
+   этих байтов lowercase hex; `title-sha256` и `task-sha256` — SHA-256 UTF-8
+   соответствующих нормализованных строк. Заголовок без task-текста ключом быть не может:
+   одинаковые общие заголовки у разных подсистем — разные задачи, а edit тела
+   при прежнем title создаёт новую identity. Эти
    значения и точный `review-updated` входят во **все** per-item markers.
    Повторно вычисляй их после каждого чтения comments; edit/reorder меняет
    version-key и старые claim/completion к новому тексту не относятся.
@@ -271,6 +288,7 @@ stderr, вывода нет, код возврата ненулевой. Все 
 
    ```
    <!-- pp:tail-source pr=<M> review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> -->
+   <!-- pp:tail-task-v1 title-sha256=<64hex> task-sha256=<64hex> dedupe-sha256=<64hex> -->
    <!-- pp:tail-dedupe sha256=<64hex> -->
    ```
 
@@ -288,16 +306,18 @@ stderr, вывода нет, код возврата ненулевой. Все 
 
    ```
    gh api --paginate "repos/ivanarama/onebase/issues?state=all&since=<root-claim-created-at>&per_page=100" \
-     --jq '.[] | select(.pull_request == null) | {number,author:.user.login,body}'
+     --jq '.[] | select(.pull_request == null) | {number,title,author:.user.login,body}'
    gh api --paginate "repos/ivanarama/onebase/issues?state=all&per_page=100" \
-     --jq '.[] | select(.pull_request == null) | {number,author:.user.login,body}'
+     --jq '.[] | select(.pull_request == null) | {number,title,author:.user.login,body}'
    ```
 
    Затем проверь, что заводить есть смысл:
 
-   - **дубль по смыслу:** точный global dedupe marker из полного REST-списка —
-     найденный номер запиши в versioned item-done как `issue=<номер>`; Search по
-     ключевым словам можно использовать лишь как подсказку человеку, не как гейт;
+   - **точный дубль каноничной задачи:** exact global dedupe marker, чей issue
+     содержит тот же нормализованный title и task payload, из полного REST-списка
+     — найденный номер запиши в versioned item-done как `issue=<номер>`; одного
+     совпавшего title недостаточно. Search по ключевым словам можно использовать
+     лишь как подсказку человеку, не как гейт;
    - **уже неправда:** проверь по коду на свежем `main`; если находка не
      подтвердилась, запиши item-done с `issue=none` и причиной.
 
@@ -328,7 +348,8 @@ stderr, вывода нет, код возврата ненулевой. Все 
    **до** публикации create-intent: ref уже является постоянным fence, а
    автоматически доказать, был ли начат следующий неидемпотентный переход,
    нельзя. Постоянные
-   `pp-tail-dedupe/*` refs — реестр уже начатых semantic tasks; автоматика их не
+   `pp-tail-dedupe/*` refs — реестр уже начатых canonical task identities;
+   автоматика их не
    удаляет. После ручной проверки GitHub человек может удалить orphan ref.
    Обычный `git push`/Search здесь запрещён: первый даёт ложный success при том
    же SHA, второй индексируется с задержкой.
@@ -350,10 +371,13 @@ stderr, вывода нет, код возврата ненулевой. Все 
    ```
    Найдено при ревью PR #<M> (<заголовок PR>), в хвост попало как отдельная работа.
 
-   <суть пункта своими словами: что не так, где — файл:строка, чем это грозит>
+   Каноничная суть: <точный нормализованный task-текст, вошедший в identity>
+
+   <самодостаточное пояснение: что не так, где — файл:строка, чем это грозит>
 
    Источник: <ссылка на комментарий-заключение>
    <!-- pp:tail-source pr=<M> review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> -->
+   <!-- pp:tail-task-v1 title-sha256=<64hex> task-sha256=<64hex> dedupe-sha256=<64hex> -->
    <!-- pp:tail-dedupe sha256=<64hex> -->
    ```
 
