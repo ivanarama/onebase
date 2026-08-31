@@ -210,6 +210,53 @@ func TestDefaults_УправляемаяФормаЗоветХукПриСозд
 	}
 }
 
+// POST обязан самостоятельно проверить результат ПриСозданииНового. Баннер на
+// предшествующем GET не является доказательством: прямой POST и ошибка, возникшая
+// между GET и POST, иначе записывали частично инициализированный объект.
+func TestDefaults_УправляемаяФормаНеПишетПослеОшибкиПриСозданииНового(t *testing.T) {
+	ents := defaultsEntities()
+	doc := ents[1]
+	doc.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНомер", "Объект.Номер"))}
+	src := `Процедура ПриСозданииНового(Объект)
+  ВызватьИсключение("инициализация не выполнена");
+КонецПроцедуры`
+	s, ctx := newSubmitTestServerWithPrograms(t, ents, map[string]string{"Реализация": src})
+
+	rec := httptest.NewRecorder()
+	s.submit(rec, reqWithChi("POST", "/ui/document/реализация/new", url.Values{"Номер": {"0001"}},
+		map[string]string{"entity": "реализация"}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ошибка хука не перерисовала форму: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "инициализация не выполнена") {
+		t.Fatalf("форма не показала ошибку ПриСозданииНового: %s", rec.Body.String())
+	}
+	assertNoManagedDocs(t, s, ctx, doc)
+}
+
+// Технический сбой вычисления дефолта — отдельный канал NewObject. Он так же
+// должен остановить публичный POST до Save, а не превратиться в пустое значение.
+func TestDefaults_УправляемаяФормаНеПишетПослеТехническойОшибкиДефолта(t *testing.T) {
+	ents := defaultsEntities()
+	doc := ents[1]
+	doc.Fields[2].Default = "константа." // конфигурация загружена в тесте в обход check
+	doc.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНомер", "Объект.Номер"))}
+	s, ctx := newSubmitTestServer(t, ents)
+
+	rec := httptest.NewRecorder()
+	s.submit(rec, reqWithChi("POST", "/ui/document/реализация/new", url.Values{"Номер": {"0001"}},
+		map[string]string{"entity": "реализация"}))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("техническая ошибка не перерисовала форму: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Реализация.Комментарий") {
+		t.Fatalf("форма не показала источник технической ошибки: %s", rec.Body.String())
+	}
+	assertNoManagedDocs(t, s, ctx, doc)
+}
+
 // Парный случай: реквизит на форме есть, и пользователь его очистил — дефолт не
 // имеет права зарасти обратно. Различает «поле не прислали» и «прислали пустым»
 // то же правило присутствия ключа, что и при записи существующего объекта.
@@ -308,6 +355,17 @@ func submitNewManagedDoc(t *testing.T, s *Server, ctx context.Context, doc *meta
 		t.Fatalf("ожидалась одна запись, получено %d", len(rows))
 	}
 	return rows[0]
+}
+
+func assertNoManagedDocs(t *testing.T, s *Server, ctx context.Context, doc *metadata.Entity) {
+	t.Helper()
+	rows, err := s.store.List(ctx, doc.Name, doc, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("после отказа сохранено записей: %d", len(rows))
+	}
 }
 
 // newSubmitTestServerWithPrograms — тот же сервер, что newSubmitTestServer, но

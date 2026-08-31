@@ -674,7 +674,15 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		obj.TablePartRows = tpRows
 		// Реквизиты, которых на управляемой форме не было, до сюда не доходят
 		// вовсе — их значением обязано стать то, что вычислил GET (#1189).
-		s.applyDefaultsToUnsubmittedFields(r, entity, form, obj)
+		newRes, err := s.applyDefaultsToUnsubmittedFields(r, entity, form, obj)
+		if err != nil {
+			s.renderObjectFormError(w, r, entity, true, err.Error(), newRes.DSLMessages, tpRows)
+			return
+		}
+		if newRes.DSLError != "" {
+			s.renderObjectFormError(w, r, entity, true, newRes.DSLError, newRes.DSLMessages, tpRows)
+			return
+		}
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,

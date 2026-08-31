@@ -628,10 +628,10 @@ func (s *Server) restoreUnsubmittedFields(
 // исключение для редактируемого Флажка: снятый пользователем флажок браузер не
 // шлёт, и дефолт `истина` не имеет права поставить его обратно.
 //
-// Ошибку вычисления не поднимаем: она уже показана баннером при открытии формы
-// (s.form зовёт тот же NewObject), а отказ в записи сделал бы карточку
-// непригодной, пока прикладной хук сломан. Поля, до которых расчёт не дошёл,
-// остаются пустыми — как до этой правки.
+// Ошибка вычисления или ПриСозданииНового останавливает POST: баннер на GET не
+// доказывает, что пользователь его видел, а продолжение записи сохранило бы
+// частично инициализированный объект. Результат возвращается вызывающему, чтобы
+// тот перерисовал форму с ошибкой и сообщениями хука до Save.
 //
 // Табличные части сюда не переносятся намеренно: строки, созданные хуком, всё
 // равно снял бы restoreUneditableTableParts — он для нового объекта чистит
@@ -642,9 +642,9 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 	entity *metadata.Entity,
 	form *metadata.FormModule,
 	obj *runtime.Object,
-) {
+) (entityservice.NewObjectResult, error) {
 	if entity == nil || form == nil || obj == nil || s.entitySvc == nil {
-		return
+		return entityservice.NewObjectResult{}, nil
 	}
 	submitted := submittedFormKeys(r)
 	checkboxes := checkboxOmittedFields(form, entity, submitted)
@@ -659,18 +659,21 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 		}
 	}
 	if !need {
-		return
+		return entityservice.NewObjectResult{}, nil
 	}
 
 	// Без Fields: GET считал дефолты и звал хук ДО того, как пользователь что-то
 	// ввёл, и восстановить надо именно то состояние. Присланное накладывается
 	// сверху ниже — ввод пользователя главнее и дефолта, и хука.
-	newRes, _ := s.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
+	newRes, err := s.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
 		Entity:    entity,
 		FormEntry: true,
 	})
+	if err != nil || newRes.DSLError != "" {
+		return newRes, err
+	}
 	if newRes.Object == nil {
-		return
+		return newRes, fmt.Errorf("создание объекта %s не вернуло объект", entity.Name)
 	}
 	for _, f := range entity.Fields {
 		if formKeySubmitted(submitted, f.Name) || checkboxes[strings.ToLower(f.Name)] {
@@ -682,4 +685,5 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 		}
 		obj.Set(f.Name, value)
 	}
+	return newRes, nil
 }
