@@ -1609,6 +1609,8 @@ legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 .hint{display:block;color:#94a3b8;font-size:11px;margin-top:3px}
 .deco{padding:6px 0;color:#475569;font-size:13px}
 .btn{padding:6px 12px;border:1px solid #d0d7e3;background:#f8fafc;border-radius:5px;cursor:pointer;margin-right:4px;font-size:12px}
+.btn-layout{width:max-content;max-width:100%;margin-right:4px}
+.btn-layout>.btn{width:100%;height:100%;margin:0}
 .tp-prev{margin:8px 0}
 .tp-prev-hd{font-size:12px;font-weight:600;color:#475569;margin-bottom:4px}
 .tp-prev-tbl{width:100%;border-collapse:collapse;font-size:12px}
@@ -1758,7 +1760,13 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 	case metadata.FormElementLabel:
 		fmt.Fprintf(buf, `<div class="deco"%s>%s</div>`, layoutStyleAttr(el), html.EscapeString(title))
 	case metadata.FormElementButton:
-		fmt.Fprintf(buf, `<button type="button" class="btn"%s>%s</button>`, layoutStyleAttr(el), html.EscapeString(title))
+		layout := metadata.FormElementLayoutCSS(el)
+		if layout == "" {
+			fmt.Fprintf(buf, `<button type="button" class="btn">%s</button>`, html.EscapeString(title))
+			break
+		}
+		fmt.Fprintf(buf, `<div class="btn-layout"%s><button type="button" class="btn">%s</button></div>`,
+			styleAttr(layout), html.EscapeString(title))
 	case metadata.FormElementPicture:
 		// width/height у картинки — размер самой картинки (см. рантайм), поэтому
 		// предпросмотр берёт от раскладки только выравнивание.

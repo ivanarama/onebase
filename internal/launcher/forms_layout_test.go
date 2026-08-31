@@ -98,7 +98,7 @@ func TestRenderManagedFormPreview_AppliesLayout(t *testing.T) {
 		Elements: []*metadata.FormElement{
 			{Kind: metadata.FormElementField, Name: "ПолеНаименование", DataPath: "Объект.Наименование", Width: 220, HorizontalAlign: "right"},
 			{Kind: metadata.FormElementField, Name: "ПолеКомментарий", DataPath: "Объект.Комментарий", Height: 160},
-			{Kind: metadata.FormElementButton, Name: "Кнопка", Width: 150},
+			{Kind: metadata.FormElementButton, Name: "Кнопка", Width: 150, HorizontalAlign: "right"},
 			{Kind: metadata.FormElementGroupBox, Name: "Группа", Width: 600},
 			{Kind: metadata.FormElementPicture, Name: "Логотип", Width: 64, Height: 64, HorizontalAlign: "center"},
 			{Kind: metadata.FormElementPages, Name: "Страницы", Width: 500, Children: []*metadata.FormElement{
@@ -112,7 +112,7 @@ func TestRenderManagedFormPreview_AppliesLayout(t *testing.T) {
 		`class="fg" style="width:220px;max-width:100%;flex:0 0 auto;min-width:0;margin-left:auto;"`,
 		`height:160px`,
 		metadata.FormLayoutFillClass,
-		`<button type="button" class="btn" style="width:150px`,
+		`<div class="btn-layout" style="width:150px;max-width:100%;flex:0 0 auto;min-width:0;margin-left:auto;"><button type="button" class="btn">`,
 		`<fieldset style="width:600px`,
 		`<div class="tabs" style="width:500px`,
 		`<div class="tab-page active" style="width:310px`,

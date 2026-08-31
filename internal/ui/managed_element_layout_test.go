@@ -146,6 +146,78 @@ func TestManagedLayout_HeightStretchesControl(t *testing.T) {
 	}
 }
 
+// Составное поле растягивается в два шага: сначала строка select/input + кнопки,
+// затем сам управляющий элемент внутри строки. Одного flex на непосредственном
+// div недостаточно: align-items:center оставлял select/input однострочным.
+func TestManagedLayout_HeightReachesCompositeControls(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Клиент",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Контрагент", Type: "reference:Контрагент", RefEntity: "Контрагент"},
+			{Name: "Файл", Type: metadata.FieldTypeString},
+		},
+	}
+	ent.Forms = []*metadata.FormModule{{
+		Name:       "Форма",
+		EntityName: ent.Name,
+		Kind:       "object",
+		LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{
+			{Kind: metadata.FormElementField, Name: "Ссылка", DataPath: "Объект.Контрагент", Height: 180},
+			{Kind: metadata.FormElementField, Name: "Путь", DataPath: "Объект.Файл", Type: "file", Height: 180},
+		},
+	}}
+	ctx := map[string]any{
+		"Entity":     ent,
+		"Form":       ent.Forms[0],
+		"Values":     map[string]string{},
+		"RefOptions": map[string]any{},
+	}
+
+	for _, el := range ent.Forms[0].Elements {
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, "managed-element", map[string]any{"El": el, "Ctx": ctx}); err != nil {
+			t.Fatalf("execute managed-element %s: %v", el.Name, err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `class="managed-control-row"`) || !strings.Contains(out, `class="managed-fill-control"`) {
+			t.Errorf("%s: составной control не помечен для растяжки:\n%s", el.Name, out)
+		}
+	}
+	if !strings.Contains(managedFormStyles(t), ".managed-control-row>.managed-fill-control{height:100%;min-height:0}") {
+		t.Error("стиль managed-формы не доводит высоту составной строки до select/input")
+	}
+}
+
+// Auto-margin выравнивает блочный контейнер, но не inline-button. Layout живёт
+// на обёртке с intrinsic width, а data-ob-* остаются на рабочей кнопке.
+func TestManagedLayout_ButtonAlignmentUsesBlockWrapper(t *testing.T) {
+	out := renderLayoutElement(t, &metadata.FormElement{
+		Kind:            metadata.FormElementButton,
+		Name:            "КнопкаСправа",
+		HorizontalAlign: "right",
+		Handlers: map[metadata.FormEventType]string{
+			metadata.FormEventOnClick: "КнопкаСправаНажатие",
+		},
+	})
+	if !strings.Contains(out, `class="managed-btn-layout" data-ob-el="КнопкаСправа" style="margin-left:auto;"`) {
+		t.Fatalf("halign применён не к блочной обёртке кнопки:\n%s", out)
+	}
+	if !strings.Contains(out, `class="btn btn-secondary managed-btn"`) ||
+		!strings.Contains(out, `data-ob-fire-click="КнопкаСправа"`) {
+		t.Fatalf("рабочие атрибуты потеряны при добавлении обёртки:\n%s", out)
+	}
+	if strings.Count(out, `data-ob-el="КнопкаСправа"`) != 1 {
+		t.Fatalf("у кнопки должен быть один state-якорь на внешнем блоке:\n%s", out)
+	}
+
+	withoutLayout := renderLayoutElement(t, &metadata.FormElement{Kind: metadata.FormElementButton, Name: "Обычная"})
+	if strings.Contains(withoutLayout, "managed-btn-layout") || !strings.Contains(withoutLayout, `managed-btn" data-ob-el="Обычная"`) {
+		t.Fatalf("кнопка без layout получила новую обёртку:\n%s", withoutLayout)
+	}
+}
+
 // Ширина обязана действовать и в горизонтальной группе: там flex-basis
 // перебивает width, если рядом нет flex:0 0 auto.
 func TestManagedLayout_WidthSurvivesHorizontalGroup(t *testing.T) {
