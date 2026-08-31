@@ -106,10 +106,13 @@ echo '{"labels":["ship"]}' | gh api -X POST repos/ivanarama/onebase/issues/1131/
 Воспроизводится / Корень / План фикса / Сложность / Риски» с маркером
 `<!-- pp:triage -->`. Один этот комментарий ещё не означает завершение маршрута:
 в нём хранится проверяемый `pp:triage-route-claim` с точными class/route,
-fingerprint исходных title/body/comments/labels и UUID владельца. После единого
-label POST этап пишет `pp:triage-route-done`; только done исключает заявку из
+fingerprint исходных title/body/comments/labels, event watermark и UUID
+владельца. После единого label POST этап коммитит точные labels/events отдельным
+marker и пишет `pp:triage-route-done`; только trusted done автора `ivanarama`
+исключает заявку из
 recovery-очереди. Поэтому crash после комментария или labels продолжает тот же
-маршрут, а не теряет заявку.
+маршрут, если label-фаза уже имеет commit-marker. Узкое падение после label POST,
+но до marker, намеренно уходит человеку: ownership таких events доказать нельзя.
 Маркер считается только точной отдельной строкой автора `ivanarama`. При гонке
 двух TRIAGE-прогонов каноничен самый ранний комментарий по `created_at`, затем
 по числовому `id`; проигравший после повторного чтения не ставит маршрутные
@@ -119,9 +122,12 @@ TRIAGE ищет такой маркер пагинированным REST; чу�
 текст упоминание очередь не блокирует. Root даёт 30-минутную lease с
 детерминированным takeover. Перед label POST, ответом автору и done TRIAGE заново
 читает state, title/body, все comments и labels: закрытие, late `hold`, изменение
-исходного текста или чужая/conflicting label останавливают транзакцию без новой
-мутации. Все class/route/manual labels добавляются одним REST-вызовом и
-проверяются повторным чтением.
+исходного текста, чужая/conflicting label или post-root human remove/re-add
+останавливают транзакцию без новой мутации. Все protocol markers доверяются
+только от `ivanarama`; repository Issues REST явно исключает PR. Все
+class/route/manual labels добавляются одним REST-вызовом и проверяются повторным
+чтением. FIX не берёт label раньше matching `pp:triage-route-done`, поэтому
+незавершённый TRIAGE не успевает создать постоянную ветку `fix/<N>`.
 
 Дальше он решает маршрут.
 

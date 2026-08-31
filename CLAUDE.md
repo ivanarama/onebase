@@ -134,10 +134,16 @@ onebase describe --project <dir>                # вся структура ко
   `approved` + `decision:N`.
   TRIAGE фиксирует выбранный class/route в persistent
   `pp:triage-route-claim`, а не считает один комментарий завершением. UUID,
-  30-минутная lease, единый label POST и `pp:triage-route-done` позволяют
-  восстановить crash после разбора или labels. Перед каждой мутацией он заново
+  30-минутная lease, event watermark, committed label-фаза и
+  `pp:triage-route-done` позволяют
+  восстановить crash после разбора или committed labels-marker. Неоднозначный
+  crash между label POST и его marker закрывается человеку. Перед каждой мутацией он заново
   проверяет open-state, отсутствие `hold`, неизменность title/body/comments и
-  отсутствие чужих labels; late hold/close прекращает маршрут.
+  отсутствие чужих labels/events; late hold/close или human label removal
+  прекращает маршрут. REST-очередь явно исключает PR, а все protocol markers
+  доверены только от `ivanarama`. FIX не создаёт `fix/<N>`, пока для нового
+  route-claim нет matching trusted route-done; старый triage остаётся отдельным
+  legacy fallback.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR

@@ -163,6 +163,25 @@ description: Реализация заявок ivanarama/onebase с меткой
    обрезанный `gh pr list`. Возьми **одно**:
    `bug` раньше `enhancement`, при равенстве — меньший номер.
 
+   До сортировки каждого обычного кандидата прочитай все comments
+   пагинированным REST и проверь TRIAGE handoff. Если canonical triage содержит
+   новый валидный `pp:triage-route-claim`, issue допускается в FIX **только** при
+   более позднем trusted комментарии `author.login == ivanarama` с точной
+   отдельной строкой
+   `<!-- pp:triage-route-done claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->`.
+   Done валиден только после matching trusted `pp:triage-route-labels` и, когда
+   root требует reply, matching trusted `pp:triage-author-reply`; для каждого
+   marker проверь автора `ivanarama`, exact line, claim и fingerprint.
+   Пересчитай root fingerprint, проверь class/manual из record и согласованность
+   текущего eligibility: `ready-fix` допустим для завершённого route
+   `ready-fix`, а `approved` — последующий человеческий ход после любого
+   завершённого route. Незавершённый/повреждённый claim, чужой done или done с
+   другой ссылкой/fingerprint исключает issue из FIX без branch-claim и любой
+   мутации. Canonical triage без route-claim — отдельный legacy fallback: точная
+   строка `<!-- pp:triage -->` и существующий eligibility label остаются
+   достаточны. Наличие похожей, но невалидной route-claim строки не превращай в
+   legacy.
+
    `manual` — правка вне репозитория (настройки GitHub, внешний сервис): в
    дифф её не положить, делает человек руками. Такую заявку не бери даже с
    `approved`.
@@ -187,6 +206,13 @@ description: Реализация заявок ivanarama/onebase с меткой
    закрывает гонку двух параллельных TRIAGE-прогонов. Неполная выдача, отсутствие
    полей `id/created_at/updated_at/body`, отсутствие каноничного triage или
    невозможность однозначно отсортировать — fail closed, ничего не меняй.
+   Для нового route protocol повтори проверку trusted matching
+   `pp:triage-route-done` из п. 2 и включи точные root id/fingerprint и done id,
+   `updated_at`, SHA-256(body) в issue-contract. Done обязан существовать **до**
+   создания persistent branch `fix/<N>`; его появление после сохранения
+   fingerprint считается изменением comments, а не разрешением продолжить
+   старую работу. Legacy fallback разрешён только при полном отсутствии
+   route-claim в canonical triage.
    Если план разошёлся с кодом — действуй по коду, расхождение опиши в PR.
    Если у заявки есть комментарий человека с решением, он старше плана триажа.
 

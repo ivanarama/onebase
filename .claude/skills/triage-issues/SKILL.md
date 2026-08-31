@@ -49,7 +49,14 @@ stderr, вывода нет. Пустой вывод при этом легко 
    то `git merge --ff-only origin/main`. Иначе работай на том, что есть.
 
 2. Кандидаты получай прямым пагинированным REST, а не ограниченным первым
-   экраном `gh issue list`. Сначала собери **recovery-очередь**: открытые issues,
+   экраном `gh issue list`. Repository Issues API возвращает также PR, поэтому
+   исключай каждый объект с `.pull_request != null`, например точной командой:
+
+   ```bash
+   gh api --paginate "repos/ivanarama/onebase/issues?state=open&per_page=100" --jq '.[] | select(.pull_request == null)'
+   ```
+
+   Сначала собери **recovery-очередь**: открытые issues,
    где есть доверенный каноничный `pp:triage-route-claim` из п. 4, но нет
    валидного `pp:triage-route-done` для него. Такой issue не исключается из-за
    уже появившегося `<!-- pp:triage -->` или части маршрутных labels: crash между
@@ -64,7 +71,11 @@ stderr, вывода нет. Пустой вывод при этом легко 
    `needs-decision`. Если route label нет, это возможный старый crash: перечитай
    state/title/body/all labels/comments непосредственно перед одним REST POST,
    потребуй open, отсутствие `hold` и неизменность точного legacy-комментария,
-   поставь только консервативный `needs-decision`, сверь его и оставь точный
+   поставь только консервативный `needs-decision`, сверь его. Непосредственно
+   перед следующим POST ещё раз выполни полный
+   state/title/body/labels/comments gate, разрешив относительно исходного
+   snapshot только уже подтверждённое добавление `needs-decision`; только затем
+   оставь от `ivanarama` точный
    `<!-- pp:triage-legacy-recovery triage-comment=<id> -->`; содержание старого
    разбора автоматически не переинтерпретируй.
 
@@ -101,6 +112,7 @@ stderr, вывода нет. Пустой вывод при этом легко 
    analysis-sha256=<64 lowercase hex>
    comments-sha256=<64 lowercase hex>
    labels-sha256=<64 lowercase hex>
+   events-watermark=<decimal|none>
    class=<bug|enhancement|question|documentation>
    route=<ready-fix|needs-decision>
    manual=<true|false>
@@ -109,13 +121,14 @@ stderr, вывода нет. Пустой вывод при этом легко 
    ```
 
    Непосредственно перед root POST заново прочитай state/title/body/all
-   labels/comments: issue обязан быть открыт, без `hold` и route labels, а все
-   данные — совпасть со snapshot, на котором построен анализ. Иначе не публикуй
-   даже root.
+   labels/comments/events: issue обязан быть открыт, без `hold` и route labels,
+   а все данные и event watermark — совпасть со snapshot, на котором построен
+   анализ. Иначе не публикуй даже root.
 
    До root вычисли SHA-256 raw UTF-8 точных title/body и точного видимого текста
    анализа до строки `<!-- pp:triage -->`; последний hash запиши как
-   `analysis-sha256`. Для comments и labels
+   `analysis-sha256`. Пагинированным REST прочитай все issue events и сохрани
+   максимальный numeric id как `events-watermark` либо `none`. Для comments и labels
    используй переносимые ASCII/LF records с финальным LF. Comments отсортируй по
    `created_at`, затем по числовому `id`; строка содержит id, created_at, updated_at и
    SHA-256 author/body. Для удалённого автора hash literal `deleted`. Labels
@@ -134,44 +147,60 @@ stderr, вывода нет. Пустой вывод при этом легко 
    `pp-triage-route-v1` с финальным LF; JSON/BOM/CRLF запрещены. Owner — случайный
    128-bit UUID.
 
-   Все markers обязаны быть точными отдельными строками. Route-claim доверен,
-   только если record и marker в одном комментарии `ivanarama`, fingerprint
-   пересчитан и совпал. Если из-за параллельного запуска появилось несколько
+   **Единый trust predicate применяется ко всем protocol markers:** комментарий
+   обязан иметь `author.login == ivanarama`, marker — быть точной отдельной
+   строкой, ссылка `claim` — указывать canonical root, а где предусмотрен
+   fingerprint — точно совпадать с пересчитанным root fingerprint. Чужие,
+   встроенные в текст и неполные markers игнорируй и сообщай о них. Route-claim
+   дополнительно доверен, только если record и marker находятся в одном
+   комментарии. Если из-за параллельного запуска появилось несколько
    валидных roots, каноничен самый ранний по GitHub `created_at`, затем по числовому
    `id`; FIX всегда читает именно его. После POST перечитай все комментарии: если
    собственный возвращённый id не каноничен, не ставь маршрутные метки и закончи item как
    проигравший гонку.
 
    Root — начальная 30-минутная lease. После timeout recovery публикует точный
-   `<!-- pp:triage-route-lease claim=<root-id> previous=<active-id> owner=<uuid> -->`.
+   `<!-- pp:triage-route-lease claim=<root-id> fingerprint-sha256=<64hex> previous=<active-id> owner=<uuid> -->`.
    Из одновременно опубликованных детей одного `previous` активен самый ранний
    по `created_at`, затем id; только процесс, чей **собственный возвращённый id**
    каноничен, продолжает. Не повторяй POST после timeout вслепую: сначала ищи
    собственный marker прямым REST.
 
-   Перед **каждым внешним изменением** после root — label POST, ответом автору и
-   done — одним циклом заново прочитай issue state, title/body, все labels и все
-   comments пагинированным REST. Требуй: issue открыт; `hold` отсутствует;
+   Перед **каждым внешним изменением** после root — label POST, labels-marker,
+   ответом автору и done — одним циклом заново прочитай issue state, title/body, все labels и все
+   comments и все issue events пагинированным REST. Требуй: issue открыт; `hold` отсутствует;
    canonical root и active lease не изменились; title/body и все pre-root
    comments совпадают с record; видимый analysis и route-record canonical root
    не редактировались; после root нет комментариев, кроме валидных
-   markers/ответа этой транзакции; текущие labels равны исходному snapshot плюс
-   подмножество labels точного маршрута. Любой новый/отредактированный/удалённый
+   markers/ответа этой транзакции; состояние labels/events соответствует точной
+   label-фазе ниже. Любой новый/отредактированный/удалённый
    комментарий, late `hold`, закрытие, `approved`/`in-work`/`manual` не из
-   record, конфликтующий route или иной label означает стоп без мутации. Для
-   сравнения labels удали из текущего набора только точные ожидаемые labels,
-   которые отсутствовали до root, заново построй `pp-triage-labels-v1` и сравни
-   hash: так исходные произвольные Unicode label names тоже проверяются.
+   record, конфликтующий route или иной label означает стоп без мутации.
 
-   Все labels точного маршрута (`class`, route и при необходимости `manual`)
-   добавь **одним** REST POST, если их ещё нет; ответ сверь и сразу повтори весь
-   gate. Crash после root или после label POST восстанавливается: уже
-   присутствующие ожидаемые labels — выполненная фаза, повторный POST не нужен.
+   Label-фаза имеет отдельный trusted commit-marker:
+   `<!-- pp:triage-route-labels claim=<root-id> fingerprint-sha256=<64hex> events-through=<decimal> labels-sha256=<64hex> -->`.
+   До него допустим **только точный исходный** labels snapshot и отсутствие любых
+   post-watermark `labeled`/`unlabeled` events. Тогда все отсутствующие labels
+   точного маршрута (`class`, route и при необходимости `manual`) добавь
+   **одним** REST POST. После ответа перечитай labels/events, проверь итоговый
+   hash и для каждой ранее отсутствовавшей ожидаемой label ровно один новый
+   `labeled` event без посторонних label events, затем опубликуй labels-marker с
+   максимальным проверенным event id. Marker является commit только при точном
+   результате **собственного только что завершившегося** POST; recovery не может
+   вывести ownership только из текущих labels/events. Если процесс упал после label POST, но до
+   trusted labels-marker, появившиеся labels/events неотличимы от человеческих:
+   **не** повторяй и не считай фазу выполненной, закончи `НУЖЕН ЧЕЛОВЕК`.
+
+   После trusted labels-marker требуй точный committed labels hash и отсутствие
+   любых более поздних `labeled`/`unlabeled` events. Поэтому human pre-add,
+   remove/re-add ожидаемой label или любая другая поздняя label mutation всегда
+   закрывает gate; recovery никогда не возвращает снятую человеком `ready-fix`.
    Если `reply=required`, отдельный ответ обязан содержать точную строку
-   `<!-- pp:triage-author-reply claim=<root-id> -->`; найденный валидный marker
+   `<!-- pp:triage-author-reply claim=<root-id> fingerprint-sha256=<64hex> -->`;
+   найденный trusted marker
    запрещает повторный ответ.
 
-   Только после подтверждения labels и обязательного ответа, снова выполнив
+   Только после trusted labels-marker и обязательного trusted ответа, снова выполнив
    gate, опубликуй
    `<!-- pp:triage-route-done claim=<root-id> fingerprint-sha256=<64hex> -->`.
    Лишь этот marker завершает triage и исключает issue из recovery. Более поздний

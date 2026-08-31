@@ -268,6 +268,10 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"перед **каждым внешним изменением** — как\n   до, так и после branch-claim",
 		"Снятый `ready-fix`/`approved`, новый `hold`, закрытие issue, смена",
 		"перед добавлением `in-work` и перед `pp:in-work`-комментарием",
+		"issue допускается в FIX **только** при",
+		"pp:triage-route-done claim=<canonical-root-id>",
+		"Done обязан существовать **до**\n   создания persistent branch `fix/<N>`",
+		"Canonical triage без route-claim — отдельный legacy fallback",
 	)
 	rejectAll(t, fixer,
 		"ищи его по **префиксу**",
@@ -299,11 +303,16 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"crash между\n   root-комментарием и labels обязан продолжить ту же транзакцию",
 		"pp-triage-route-v1",
 		"<!-- pp:triage-route-claim fingerprint-sha256=<64hex> owner=<uuid> -->",
-		"<!-- pp:triage-route-lease claim=<root-id> previous=<active-id> owner=<uuid> -->",
+		"<!-- pp:triage-route-lease claim=<root-id> fingerprint-sha256=<64hex> previous=<active-id> owner=<uuid> -->",
+		"events-watermark=<decimal|none>",
+		"<!-- pp:triage-route-labels claim=<root-id> fingerprint-sha256=<64hex> events-through=<decimal> labels-sha256=<64hex> -->",
 		"<!-- pp:triage-route-done claim=<root-id> fingerprint-sha256=<64hex> -->",
+		"author.login == ivanarama",
+		"select(.pull_request == null)",
 		"Перед **каждым внешним изменением** после root",
 		"issue открыт; `hold` отсутствует",
-		"Все labels точного маршрута",
+		"human pre-add",
+		"recovery никогда не возвращает снятую человеком `ready-fix`",
 		"**одним** REST POST",
 	)
 }
@@ -1033,6 +1042,91 @@ func TestTriageRouteRecoversAfterCommentAndStopsForLateHumanGate(t *testing.T) {
 	}
 	if got := modeledAdvanceTriageRoute(rootOnly, 11, 3); got != rootOnly {
 		t.Fatal("a non-canonical concurrent root must not apply route labels")
+	}
+}
+
+func modeledTriageLabelGate(initialSnapshotExact, labelCommitTrusted, committedSnapshotExact, postWatermarkEvent, postCommitEvent bool) bool {
+	if !labelCommitTrusted {
+		return initialSnapshotExact && !postWatermarkEvent
+	}
+	return committedSnapshotExact && !postCommitEvent
+}
+
+func modeledTrustedTriageMarker(authorTrusted, exactLine, canonicalClaim, fingerprintMatches bool) bool {
+	return authorTrusted && exactLine && canonicalClaim && fingerprintMatches
+}
+
+func modeledFixAcceptsTriage(hasRouteClaim, trustedDone, routeConsistent, legacyTriage bool) bool {
+	if hasRouteClaim {
+		return trustedDone && routeConsistent
+	}
+	return legacyTriage
+}
+
+func modeledTriageRepositoryItemCandidate(isPullRequest bool) bool {
+	return !isPullRequest
+}
+
+func modeledLegacyTriageMayPostRecoveryMarker(open, hold, inputUnchanged, needsDecisionPresent bool) bool {
+	return open && !hold && inputUnchanged && needsDecisionPresent
+}
+
+func TestTriageLabelEventsAndFixHandoffFailClosed(t *testing.T) {
+	if !modeledTriageLabelGate(true, false, false, false, false) {
+		t.Fatal("unchanged pre-root labels with no events must allow the first atomic label POST")
+	}
+	if modeledTriageLabelGate(false, false, false, true, false) {
+		t.Fatal("labels visible after a crash without a commit marker are ambiguous and must fail closed")
+	}
+	if modeledTriageLabelGate(false, false, false, true, false) {
+		t.Fatal("a human pre-add of an expected label must not impersonate the TRIAGE label phase")
+	}
+	if modeledTriageLabelGate(false, true, false, true, true) {
+		t.Fatal("a human removal after the committed label phase must stop recovery")
+	}
+	if !modeledTriageLabelGate(false, true, true, true, false) {
+		t.Fatal("an exact trusted label commit without later events must allow reply/done")
+	}
+
+	if modeledFixAcceptsTriage(true, false, true, false) {
+		t.Fatal("FIX must not claim ready-fix before the new TRIAGE route-done")
+	}
+	if !modeledFixAcceptsTriage(true, true, true, false) {
+		t.Fatal("matching trusted route-done must hand the issue to FIX")
+	}
+	if !modeledFixAcceptsTriage(false, false, false, true) {
+		t.Fatal("a genuine legacy triage without route-claim must remain supported")
+	}
+	if modeledFixAcceptsTriage(true, false, false, true) {
+		t.Fatal("a malformed new route-claim must never fall back to legacy")
+	}
+	if modeledTriageRepositoryItemCandidate(true) || !modeledTriageRepositoryItemCandidate(false) {
+		t.Fatal("repository Issues REST must exclude pull requests from TRIAGE")
+	}
+	if !modeledLegacyTriageMayPostRecoveryMarker(true, false, true, true) {
+		t.Fatal("legacy recovery marker may follow a fresh full gate")
+	}
+	if modeledLegacyTriageMayPostRecoveryMarker(false, false, true, true) ||
+		modeledLegacyTriageMayPostRecoveryMarker(true, true, true, true) {
+		t.Fatal("late close or hold must stop the legacy recovery marker POST")
+	}
+}
+
+func TestEveryTriageProtocolMarkerUsesTheSameTrustPredicate(t *testing.T) {
+	if !modeledTrustedTriageMarker(true, true, true, true) {
+		t.Fatal("a trusted exact marker bound to the canonical root must be accepted")
+	}
+	for name, trusted := range map[string]bool{
+		"foreign author":    modeledTrustedTriageMarker(false, true, true, true),
+		"embedded marker":   modeledTrustedTriageMarker(true, false, true, true),
+		"wrong claim":       modeledTrustedTriageMarker(true, true, false, true),
+		"wrong fingerprint": modeledTrustedTriageMarker(true, true, true, false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if trusted {
+				t.Fatal("untrusted TRIAGE protocol marker must be ignored")
+			}
+		})
 	}
 }
 
