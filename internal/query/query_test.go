@@ -606,8 +606,8 @@ func TestCompile_Balances_OuterWhereOnAttribute(t *testing.T) {
 	if !strings.Contains(r.SQL, "MIN(типконтрагента)") {
 		t.Errorf("атрибут не агрегирован в inner SELECT: %s", r.SQL)
 	}
-	if !strings.Contains(r.SQL, "WHERE типконтрагента") {
-		t.Errorf("outer WHERE на атрибут не сгенерирован: %s", r.SQL)
+	if !strings.Contains(r.SQL, "WHERE COALESCE(типконтрагента, '')") {
+		t.Errorf("outer WHERE на строковый атрибут VT не учитывает пустое значение: %s", r.SQL)
 	}
 }
 

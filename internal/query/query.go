@@ -638,7 +638,7 @@ type translator struct {
 	rowGroupOpen bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
 	rowApplied   []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
 	parenDepth   int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
-	sourceCtx    sourceContext                 // scoped-типы источников для системных колонок регистра
+	sourceCtx    sourceContext                 // scoped-типы/классы источников для SELECT-кадров
 	unionDepths  map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
 	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 }
@@ -661,6 +661,7 @@ type sourceContext struct {
 type sourceScope struct {
 	main           sourceClass
 	mainTable      string
+	mainColTypes   map[string]metadata.FieldType
 	sourceCount    int
 	qualifiers     map[string]sourceClass
 	derivedAliases map[string]int
@@ -2620,12 +2621,6 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 //   - п.49: на SQLite оборачивать number-колонки в CAST(... AS NUMERIC) в
 //     сравнениях/сортировке (number хранится как TEXT → иначе строковое сравнение).
 func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType {
-	m := map[string]metadata.FieldType{}
-	add := func(fields []metadata.Field) {
-		for _, f := range fields {
-			m[lowerFast(f.Name)] = f.Type
-		}
-	}
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
 		if t.kind != tIdent {
@@ -2636,36 +2631,49 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
-			return m // VT-источник: внешний запрос работает по логическим алиасам
+			return map[string]metadata.FieldType{} // VT: глобальные правила работают по логическим алиасам
 		}
-		name := tokens[i+2].val
-		switch {
-		case isAccumRegType(upper):
-			for _, reg := range opts.Registers {
-				if strings.EqualFold(reg.Name, name) {
-					add(reg.Dimensions)
-					add(reg.Resources)
-					add(reg.Attributes)
-					return m
-				}
-			}
-		case isInfoRegType(upper):
-			for _, ir := range opts.InfoRegs {
-				if strings.EqualFold(ir.Name, name) {
-					add(ir.Dimensions)
-					add(ir.Resources)
-					return m
-				}
-			}
-		default: // справочник / документ
-			for _, e := range opts.Entities {
-				if strings.EqualFold(e.Name, name) {
-					add(e.Fields)
-					return m
-				}
+		return sourceColumnTypes(upper, tokens[i+2].val, opts)
+	}
+	return map[string]metadata.FieldType{}
+}
+
+// sourceColumnTypes возвращает логические типы полей одного источника. В
+// отличие от buildColTypes, этот помощник применим и к виртуальной таблице:
+// имена её измерений и атрибутов сохраняются в сгенерированном подзапросе.
+// Производные имена ресурсов (например, СуммаОстаток) здесь не синтезируются.
+func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
+	m := map[string]metadata.FieldType{}
+	add := func(fields []metadata.Field) {
+		for _, f := range fields {
+			m[lowerFast(f.Name)] = f.Type
+		}
+	}
+	switch {
+	case isAccumRegType(typeUpper):
+		for _, reg := range opts.Registers {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				add(reg.Attributes)
+				return m
 			}
 		}
-		return m
+	case isInfoRegType(typeUpper):
+		for _, ir := range opts.InfoRegs {
+			if strings.EqualFold(ir.Name, name) {
+				add(ir.Dimensions)
+				add(ir.Resources)
+				return m
+			}
+		}
+	default: // справочник / документ
+		for _, e := range opts.Entities {
+			if strings.EqualFold(e.Name, name) {
+				add(e.Fields)
+				return m
+			}
+		}
 	}
 	return m
 }
@@ -2882,7 +2890,11 @@ func (tr *translator) needsEmptyTextCoalesce(lower, qualifier string) bool {
 	if !tr.isMainSourceColumn(idx, qualifier) {
 		return false
 	}
-	t, known := tr.colTypes[lower]
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	if !ok {
+		return false
+	}
+	t, known := scope.mainColTypes[lower]
 	if !known || (t != metadata.FieldTypeString && !metadata.IsEnum(t)) {
 		return false
 	}
@@ -2896,11 +2908,11 @@ func (tr *translator) needsEmptyTextCoalesce(lower, qualifier string) bool {
 // isMainSourceColumn — принадлежит ли колонка ОСНОВНОМУ источнику своего
 // SELECT-scope.
 //
-// Граница нужна потому, что tr.colTypes знает типы полей только первого
-// источника запроса: buildColTypes добавляет его поля и сразу выходит. Тип для
-// колонки присоединённой таблицы там либо не находится вовсе, либо — при
-// совпадении имён — находится ЧУЖОЙ. Второе хуже первого: `Заявка.Код` строка,
-// `Клиент.Код` число, и отбор `ГДЕ К.Код <> 0` уезжал в
+// Граница нужна потому, что sourceScope.mainColTypes намеренно знает типы только
+// основного источника своего SELECT. Для колонки присоединённой таблицы поиск по
+// одному имени мог бы вернуть тип одноимённой колонки основного источника.
+// Второе хуже отсутствующего типа: `Заявка.Код` строка, `Клиент.Код` число, и
+// отбор `ГДЕ К.Код <> 0` уезжал бы в
 //
 //	COALESCE(к.код, '') <> 0
 //
@@ -3013,6 +3025,10 @@ func preScanMainTable(tokens []tok) string {
 // только к глубине скобок: Период внутри Год(Период) остаётся в родительском
 // SELECT, а SELECT-подзапрос получает собственный main/aliases.
 func preScanSourceContext(tokens []tok) sourceContext {
+	return preScanSourceContextWithOpts(tokens, CompileOpts{})
+}
+
+func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext {
 	ctx := sourceContext{
 		tokenScope:   make([]int, len(tokens)),
 		tokenSection: make([]querySection, len(tokens)),
@@ -3166,6 +3182,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			scope.main = class
 		}
 		if isMain {
+			scope.mainColTypes = sourceColumnTypes(typeUpper, tokens[i+2].val, opts)
 			// Виртуальная таблица эмитится как подзапрос со специальным алиасом,
 			// который здесь не вычисляем. Для обычного источника сохраняем имя,
 			// чтобы bare-Ссылка квалифицировалась в своём SELECT-scope.
@@ -3716,7 +3733,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		colTypes:    buildColTypes(tokens, opts),
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
-		sourceCtx:   preScanSourceContext(tokens),
+		sourceCtx:   preScanSourceContextWithOpts(tokens, opts),
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
 		unionOrders: map[int]bool{},
