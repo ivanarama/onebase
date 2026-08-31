@@ -147,6 +147,9 @@ onebase describe --project <dir>                # вся структура ко
   канонизируются до comment-gate: поздние считаются equivalent diagnostics и не
   блокируют winner. Перед каждым lease POST выполняется тот же human/state gate,
   поэтому stopped recovery не пишет комментарии и не вытесняет новую работу.
+  Active lease — детерминированная chain: same-owner renewal только перед
+  expiry, takeover новым UUID только после expiry; каждая фаза требует
+  собственные returned active id, matching UUID и неистёкшее время.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR

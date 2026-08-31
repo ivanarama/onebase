@@ -171,21 +171,35 @@ stderr, вывода нет. Пустой вывод при этом легко 
    собственный возвращённый id не каноничен, не ставь маршрутные метки и закончи item как
    проигравший гонку.
 
-   Root — начальная 30-минутная lease. **До каждого** renewal/takeover POST
+   Root — начальная 30-минутная lease: active id — собственный возвращённый id
+   canonical root, active owner — UUID из его marker, время — GitHub
+   `created_at`. Для каждого active id допустимы children с `previous=<active-id>`:
+   до expiry и только при остатке менее пяти минут renewal может опубликовать
+   лишь процесс с тем же owner UUID; после expiry takeover обязан использовать
+   новый случайный UUID. Среди одновременно допустимых children одного
+   `previous` каноничен earliest по `created_at`, затем numeric id. Итеративно
+   пройди единственную цепочку от root; child обязан быть позже parent по
+   `created_at`, затем id, а children stale/non-active ветвей никогда
+   не возвращаются в цепочку.
+
+   **До каждого** renewal/takeover POST
    выполни полный gate ниже (включая state/open, `hold`, title/body, labels,
    comments/events и equivalent-root rule), требуя лишь, что прежняя active
    lease действительно истекла или подходит к порогу renew. Если gate закрыт,
    не публикуй lease. После timeout recovery публикует точный
    `<!-- pp:triage-route-lease claim=<root-id> fingerprint-sha256=<64hex> previous=<active-id> owner=<uuid> -->`.
-   Из одновременно опубликованных детей одного `previous` активен самый ранний
-   по `created_at`, затем id; только процесс, чей **собственный возвращённый id**
-   каноничен, продолжает. Не повторяй POST после timeout вслепую: сначала ищи
-   собственный marker прямым REST.
+   После POST перечитай chain. Только процесс, чей **собственный возвращённый
+   root/lease id** равен active id, чей локальный UUID равен active owner и чья
+   lease ещё не истекла, вправе продолжать. Foreign live root/lease нельзя
+   использовать как своё владение. При остатке менее пяти минут сначала сделай
+   same-owner renewal и снова докажи active ownership. Не повторяй POST после
+   timeout вслепую: сначала ищи собственный marker прямым REST.
 
    Перед **каждым внешним изменением** после root — label POST, labels-marker,
    ответом автору и done — одним циклом заново прочитай issue state, title/body, все labels и все
    comments и все issue events пагинированным REST. Требуй: issue открыт; `hold` отсутствует;
-   canonical root и active lease не изменились; title/body и все pre-root
+   canonical root не изменился; собственные returned active id + UUID совпадают
+   с вершиной chain и lease не истекла; title/body и все pre-root
    comments совпадают с record; видимый analysis и route-record canonical root
    не редактировались; после root нет комментариев, кроме equivalent diagnostic
    roots, валидных markers/ответа этой транзакции; состояние labels/events соответствует точной

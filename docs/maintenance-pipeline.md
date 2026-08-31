@@ -131,7 +131,11 @@ class/route/manual labels добавляются одним REST-вызовом 
 одновременных roots одного snapshot не взаимно блокируются: earliest — winner,
 остальные exact-equivalent roots — diagnostic losers, разрешённые post-root
 gate. Любой lease renewal/takeover сначала повторяет полный human/state gate;
-stopped roots не получают новые комментарии и не съедают рабочую квоту.
+stopped roots не получают новые комментарии и не съедают рабочую квоту. До
+expiry renewal доступен только тому же owner UUID, после expiry takeover создаёт
+новый UUID; earliest child образует единственную active chain. Перед каждой
+фазой worker доказывает собственный returned active id, matching UUID и
+неистёкшую lease — чужой live root не даёт владения.
 
 Дальше он решает маршрут.
 

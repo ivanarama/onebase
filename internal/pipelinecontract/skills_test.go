@@ -322,6 +322,10 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"**одним** REST POST",
 		"`equivalent diagnostic losers`",
 		"**До каждого** renewal/takeover POST",
+		"same-owner renewal",
+		"takeover обязан использовать\n   новый случайный UUID",
+		"**собственный возвращённый\n   root/lease id** равен active id",
+		"локальный UUID равен active owner",
 		"не считается одним из\n   пяти рабочих slots",
 		"<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->",
 	)
@@ -1169,6 +1173,47 @@ func modeledMayPostRecoveryLease(open, hold, inputUnchanged, onlyProtocolComment
 	return open && !hold && inputUnchanged && onlyProtocolComments
 }
 
+type modeledTriageLease struct {
+	id       int
+	previous int
+	owner    string
+	created  int
+}
+
+func modeledActiveTriageLease(root modeledTriageLease, children []modeledTriageLease) modeledTriageLease {
+	active := root
+	for {
+		var winner modeledTriageLease
+		found := false
+		for _, child := range children {
+			if child.previous != active.id {
+				continue
+			}
+			if child.created < active.created || (child.created == active.created && child.id <= active.id) {
+				continue
+			}
+			remaining := active.created + 30 - child.created
+			renewal := remaining > 0 && remaining <= 5 && child.owner == active.owner
+			takeover := remaining <= 0 && child.owner != active.owner
+			if !renewal && !takeover {
+				continue
+			}
+			if !found || child.created < winner.created ||
+				(child.created == winner.created && child.id < winner.id) {
+				winner, found = child, true
+			}
+		}
+		if !found {
+			return active
+		}
+		active = winner
+	}
+}
+
+func modeledOwnsTriageLease(active modeledTriageLease, returnedID int, localOwner string, now int) bool {
+	return active.id == returnedID && active.owner == localOwner && now < active.created+30
+}
+
 func TestEquivalentConcurrentRootsDoNotDeadlockWinner(t *testing.T) {
 	roots := []modeledConcurrentRoot{
 		{id: 101, fingerprint: "same", record: "same-record", reason: "same-reason"},
@@ -1200,6 +1245,41 @@ func TestRecoveryLeaseRunsLateHumanGateBeforePosting(t *testing.T) {
 				t.Fatal("late human change must block lease POST itself")
 			}
 		})
+	}
+}
+
+func TestTriageLeaseRequiresOwnActiveIDOwnerAndExpiry(t *testing.T) {
+	root := modeledTriageLease{id: 10, owner: "owner-a", created: 0}
+	if modeledOwnsTriageLease(root, 10, "owner-b", 10) {
+		t.Fatal("a recovery worker must not mutate under a foreign live root")
+	}
+	if !modeledOwnsTriageLease(root, 10, "owner-a", 10) {
+		t.Fatal("the canonical root owner must own its unexpired initial lease")
+	}
+
+	invalidForeignRenewal := modeledTriageLease{id: 11, previous: 10, owner: "owner-b", created: 26}
+	if got := modeledActiveTriageLease(root, []modeledTriageLease{invalidForeignRenewal}); got.id != root.id {
+		t.Fatal("a foreign owner cannot renew before expiry")
+	}
+	validRenewal := modeledTriageLease{id: 12, previous: 10, owner: "owner-a", created: 26}
+	if got := modeledActiveTriageLease(root, []modeledTriageLease{validRenewal}); got.id != validRenewal.id {
+		t.Fatal("same owner must be able to renew within the five-minute threshold")
+	}
+
+	takeovers := []modeledTriageLease{
+		{id: 21, previous: 10, owner: "owner-c", created: 31},
+		{id: 20, previous: 10, owner: "owner-b", created: 31},
+		{id: 19, previous: 10, owner: "owner-a", created: 31},
+	}
+	active := modeledActiveTriageLease(root, takeovers)
+	if active.id != 20 || active.owner != "owner-b" {
+		t.Fatalf("competing takeover winner = %+v, want earliest valid new-owner child", active)
+	}
+	if modeledOwnsTriageLease(active, 21, "owner-c", 32) {
+		t.Fatal("a losing takeover cannot mutate under the winner's lease")
+	}
+	if modeledOwnsTriageLease(active, active.id, active.owner, 61) {
+		t.Fatal("an expired active lease must not authorize a phase")
 	}
 }
 
