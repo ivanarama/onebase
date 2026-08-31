@@ -75,6 +75,43 @@ func TestManagedLayout_FormHandlerAppliesSizeAndAlign(t *testing.T) {
 	}
 }
 
+// Страница внутри СтраницыФормы имеет собственный внешний блок. Раньше ветка
+// вкладок рендерила только её детей, поэтому layout страницы терялся, хотя
+// onebase check и конструктор принимали ключи.
+func TestManagedLayout_FormHandlerAppliesNestedPageLayout(t *testing.T) {
+	ent := layoutTestEntity(&metadata.FormElement{
+		Kind:  metadata.FormElementPages,
+		Name:  "Страницы",
+		Width: 500,
+		Children: []*metadata.FormElement{{
+			Kind:  metadata.FormElementPage,
+			Name:  "Основное",
+			Width: 310,
+			Children: []*metadata.FormElement{{
+				Kind:     metadata.FormElementField,
+				Name:     "ПолеНаименование",
+				DataPath: "Объект.Наименование",
+			}},
+		}},
+	})
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	req := httptest.NewRequest("GET", "/ui/catalog/клиент/new", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("entity", "клиент")
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	s.form(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("форма не открылась: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-tab-content="0" style="display:block;width:310px;max-width:100%;flex:0 0 auto;min-width:0;"`) {
+		t.Errorf("layout вложенной страницы не применён к контейнеру вкладки:\n%s", body)
+	}
+}
+
 // Обратная совместимость дороже удобства: форма без новых ключей обязана
 // рендериться ровно как раньше — без атрибута style на блоке поля.
 func TestManagedLayout_NoKeysNoStyle(t *testing.T) {
@@ -123,8 +160,25 @@ func TestManagedLayout_WidthSurvivesHorizontalGroup(t *testing.T) {
 			Width:    120,
 		}},
 	})
-	if !strings.Contains(out, "width:120px;max-width:100%;flex:0 0 auto") {
+	if !strings.Contains(out, "width:120px;max-width:100%;flex:0 0 auto;min-width:0") {
 		t.Errorf("в горизонтальной группе ширину съест flex-basis:\n%s", out)
+	}
+}
+
+func TestManagedLayout_StretchSurvivesHorizontalGroup(t *testing.T) {
+	out := renderLayoutElement(t, &metadata.FormElement{
+		Kind:        metadata.FormElementGroupBox,
+		Name:        "Группа",
+		Orientation: "horizontal",
+		Children: []*metadata.FormElement{{
+			Kind:            metadata.FormElementField,
+			Name:            "ПолеНаименование",
+			DataPath:        "Объект.Наименование",
+			HorizontalAlign: "stretch",
+		}},
+	})
+	if !strings.Contains(out, "width:100%;flex:1 1 100%;min-width:0") {
+		t.Errorf("stretch не перебил flex-basis горизонтальной группы:\n%s", out)
 	}
 }
 

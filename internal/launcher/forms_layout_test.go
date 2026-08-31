@@ -31,6 +31,16 @@ elements:
   - kind: ПолеВвода
     name: ПолеБезРаскладки
     data_path: Объект.Дата
+  - kind: СтраницыФормы
+    name: Страницы
+    width: 500
+    children:
+      - kind: Страница
+        name: Основное
+        width: 310
+  - kind: Страница
+    name: ОтдельнаяСтраница
+    width: 320
 `
 
 func TestRenderFormCanvas_AppliesLayout(t *testing.T) {
@@ -48,8 +58,13 @@ func TestRenderFormCanvas_AppliesLayout(t *testing.T) {
 	if !strings.Contains(out, metadata.FormLayoutFillClass) {
 		t.Errorf("холст не помечает блок с заданной высотой классом растяжки:\n%s", out)
 	}
+	for _, want := range []string{"width:500px", "width:310px", "width:320px"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("холст потерял layout контейнера страниц (%s):\n%s", want, out)
+		}
+	}
 	// Элемент без ключей раскладки рисуется прежней разметкой — без style.
-	if strings.Contains(out, `data-kind="ПолеВвода" style`) && strings.Count(out, "style=") > 2 {
+	if !strings.Contains(out, `data-node-id="elements.2" data-kind="ПолеВвода"><label>`) {
 		t.Errorf("style появился у элемента без раскладки:\n%s", out)
 	}
 }
@@ -86,15 +101,22 @@ func TestRenderManagedFormPreview_AppliesLayout(t *testing.T) {
 			{Kind: metadata.FormElementButton, Name: "Кнопка", Width: 150},
 			{Kind: metadata.FormElementGroupBox, Name: "Группа", Width: 600},
 			{Kind: metadata.FormElementPicture, Name: "Логотип", Width: 64, Height: 64, HorizontalAlign: "center"},
+			{Kind: metadata.FormElementPages, Name: "Страницы", Width: 500, Children: []*metadata.FormElement{
+				{Kind: metadata.FormElementPage, Name: "Основное", Width: 310},
+			}},
+			{Kind: metadata.FormElementPage, Name: "ОтдельнаяСтраница", Width: 320},
 		},
 	}
 	out := renderManagedFormPreview(fm, nil)
 	for _, want := range []string{
-		`class="fg" style="width:220px;max-width:100%;flex:0 0 auto;margin-left:auto;"`,
+		`class="fg" style="width:220px;max-width:100%;flex:0 0 auto;min-width:0;margin-left:auto;"`,
 		`height:160px`,
 		metadata.FormLayoutFillClass,
 		`<button type="button" class="btn" style="width:150px`,
 		`<fieldset style="width:600px`,
+		`<div class="tabs" style="width:500px`,
+		`<div class="tab-page active" style="width:310px`,
+		`<fieldset style="width:320px`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("предпросмотр не применил раскладку (%s):\n%s", want, out)

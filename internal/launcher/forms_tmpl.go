@@ -1680,7 +1680,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 		setID := *tabsCounter
 		*tabsCounter++
 		// Заголовки вкладок.
-		fmt.Fprintf(buf, `<div class="tabs"><div class="tabs-hd" data-tabset-hdr="%d">`, setID)
+		fmt.Fprintf(buf, `<div class="tabs"%s><div class="tabs-hd" data-tabset-hdr="%d">`, layoutStyleAttr(el), setID)
 		pageIdx := 0
 		for _, p := range el.Children {
 			if p.Kind != metadata.FormElementPage {
@@ -1710,7 +1710,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 			if pageIdx == 0 {
 				cls += " active"
 			}
-			fmt.Fprintf(buf, `<div class="%s">`, cls)
+			fmt.Fprintf(buf, `<div class="%s"%s>`, cls, layoutStyleAttr(p))
 			for _, c := range p.Children {
 				renderPreviewElement(buf, c, tabsCounter, tps)
 			}
@@ -1721,7 +1721,7 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 	case metadata.FormElementPage:
 		// Отдельная страница вне набора СтраницыФормы (её можно бросить на холст) —
 		// рисуем именованным блоком с детьми, а не «предпросмотр не реализован».
-		fmt.Fprintf(buf, `<fieldset><legend>%s</legend>`, html.EscapeString(title))
+		fmt.Fprintf(buf, `<fieldset%s><legend>%s</legend>`, layoutStyleAttr(el), html.EscapeString(title))
 		for _, c := range el.Children {
 			renderPreviewElement(buf, c, tabsCounter, tps)
 		}

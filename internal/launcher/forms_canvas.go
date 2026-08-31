@@ -114,8 +114,8 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 				continue
 			}
 			ptitle := html.EscapeString(canvasTitle(p.El.Name, p.El.TitleMap, p.El.Title))
-			fmt.Fprintf(buf, `<div class="%s" data-node-id="%s" data-kind="%s"><div class="fc-tab fc-pick">%s</div>`,
-				elWrapClass("fc-page", p.NodeID, selectedID), p.NodeID, html.EscapeString(string(p.El.Kind)), ptitle)
+			fmt.Fprintf(buf, `<div class="%s" data-node-id="%s" data-kind="%s"%s><div class="fc-tab fc-pick">%s</div>`,
+				elWrapClass("fc-page", p.NodeID, selectedID), p.NodeID, html.EscapeString(string(p.El.Kind)), layoutStyleAttr(p.El), ptitle)
 			renderCanvasChildren(buf, p.NodeID, p.Children, selectedID)
 			buf.WriteString(`</div>`)
 		}

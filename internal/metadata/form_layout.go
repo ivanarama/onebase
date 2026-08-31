@@ -112,14 +112,21 @@ func formLayoutCSS(el *FormElement, withSize bool) string {
 		// width:100%;width:200px значило бы отдать выбор порядку объявлений.
 		switch {
 		case h == "stretch":
-			b.WriteString("width:100%;")
+			// В горизонтальной группе родитель задаёт дочерним блокам
+			// flex-basis и min-width. Одного width:100% недостаточно: basis
+			// продолжает держать прежние 260px, а minimum не даёт сжаться на
+			// узком экране. Полная flex-запись делает stretch отдельной строкой
+			// группы и одинаково работает в рантайме, preview и на холсте.
+			b.WriteString("width:100%;flex:1 1 100%;min-width:0;")
 		case formLayoutSize(el.Width) > 0:
 			fmt.Fprintf(&b, "width:%dpx;max-width:100%%;", formLayoutSize(el.Width))
 			// flex-basis элемента в горизонтальной группе перебивает width
 			// (.managed-group-horizontal задаёт flex:0 1 260px), поэтому
 			// ширина без этого объявления действовала бы только в
 			// вертикальной раскладке — то есть через раз.
-			b.WriteString("flex:0 0 auto;")
+			// min-width родительской горизонтальной группы не должен
+			// переписывать явно заданную меньшую ширину.
+			b.WriteString("flex:0 0 auto;min-width:0;")
 		}
 		if hh := formLayoutSize(el.Height); hh > 0 {
 			fmt.Fprintf(&b, "height:%dpx;", hh)

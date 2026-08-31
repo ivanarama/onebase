@@ -24,7 +24,7 @@ func TestFormElementLayoutCSS_EmptyWithoutKeys(t *testing.T) {
 
 func TestFormElementLayoutCSS_SizeInPixels(t *testing.T) {
 	css := FormElementLayoutCSS(&FormElement{Kind: FormElementField, Width: 200, Height: 120})
-	for _, want := range []string{"width:200px", "max-width:100%", "height:120px"} {
+	for _, want := range []string{"width:200px", "max-width:100%", "height:120px", "min-width:0"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в стиле нет %q: %s", want, css)
 		}
@@ -91,6 +91,11 @@ func TestFormElementLayoutCSS_StretchBeatsWidth(t *testing.T) {
 	css := FormElementLayoutCSS(&FormElement{Width: 200, HorizontalAlign: "stretch"})
 	if !strings.Contains(css, "width:100%") || strings.Contains(css, "200px") {
 		t.Errorf("stretch обязан перебивать ширину: %q", css)
+	}
+	for _, want := range []string{"flex:1 1 100%", "min-width:0"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("stretch не перебил flex-контракт горизонтальной группы (%s): %q", want, css)
+		}
 	}
 }
 
