@@ -247,7 +247,10 @@ FIX также просматривает сочетание `changes-requested`
 оборвался между двумя изменениями меток, следующий прогон продолжает актуальный,
 а не просто старый недостающий шаг.
 
-Новая заявка = `ready-fix` **или** `approved`, без `hold`, без уже открытого PR.
+Новая заявка = `approved` **или** (`ready-fix` без `needs-decision`), без `hold`,
+без уже открытого PR. Только `approved` перебивает `needs-decision`; сочетание
+`ready-fix + needs-decision` без `approved` остаётся ходом человека. Тот же
+predicate повторяется перед branch-claim и каждой внешней мутацией.
 FIX сохраняет fingerprint issue и выбранного решения: state/title/body,
 релевантные labels, обязательную версию triage-комментария
 `id+updated_at+SHA-256(body)` и отдельно точный источник выбора

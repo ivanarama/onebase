@@ -204,6 +204,9 @@ onebase describe --project <dir>                # вся структура ко
   или бросить `approved` после crash. Root коммитит digest всех исходных
   comments и event watermark; label timeline не позволяет recovery удалить
   человеческий re-add.
+  Обычная issue входит в FIX только по predicate `approved OR (ready-fix AND
+  NOT needs-decision)`: только `approved` перебивает активный ход человека; это
+  условие повторяется перед branch-claim и каждой внешней мутацией.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет

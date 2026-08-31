@@ -272,6 +272,9 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"pp:triage-route-done claim=<canonical-root-id>",
 		"Done обязан существовать **до**\n   создания persistent branch `fix/<N>`",
 		"Canonical triage без route-claim — отдельный legacy fallback",
+		"`approved` OR (`ready-fix` AND NOT `needs-decision`)",
+		"`ready-fix + needs-decision` без `approved` — ход человека",
+		"повторное выполнение predicate",
 		"`equivalent diagnostic losers`",
 		"Непосредственно перед каждым** renewal",
 		"не блокирует обычную FIX-очередь",
@@ -1209,6 +1212,26 @@ type modeledIssueDecision struct {
 	hold        bool
 	manual      bool
 	allowInWork bool
+}
+
+func modeledNewIssueEligible(approved, readyFix, needsDecision, hold, manual bool) bool {
+	return !hold && !manual && (approved || (readyFix && !needsDecision))
+}
+
+func TestFixEligibilityPreservesNeedsDecisionAsHumanTurn(t *testing.T) {
+	if !modeledNewIssueEligible(false, true, false, false, false) {
+		t.Fatal("ready-fix without a human stop must remain automatic")
+	}
+	if modeledNewIssueEligible(false, true, true, false, false) {
+		t.Fatal("ready-fix plus needs-decision without approved must remain the human turn")
+	}
+	if !modeledNewIssueEligible(true, true, true, false, false) {
+		t.Fatal("approved must explicitly override needs-decision")
+	}
+	if modeledNewIssueEligible(true, true, true, true, false) ||
+		modeledNewIssueEligible(true, true, true, false, true) {
+		t.Fatal("hold and manual remain hard stops even with approved")
+	}
 }
 
 func modeledIssueGate(expected, current modeledIssueDecision) bool {

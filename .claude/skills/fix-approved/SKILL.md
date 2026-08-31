@@ -157,7 +157,10 @@ description: Реализация заявок ivanarama/onebase с меткой
    `pp:fix-issue-handoff-claim` из п. 9 — получай её пагинированным REST, PR
    исключай. Она нужна для crash после снятия `approved`/`ready-fix`, когда issue
    уже не входит в обычную FIX-очередь, но ещё не имеет handoff-done. Затем
-   открытые ишью с меткой `ready-fix` **или** `approved`, минус `hold`, минус `manual`;
+   открытые issues по точному predicate
+   **`approved` OR (`ready-fix` AND NOT `needs-decision`)**, затем минус `hold`,
+   минус `manual`. `ready-fix + needs-decision` без `approved` — ход человека,
+   не FIX;
    исключи ишью, на которые уже есть открытый PR: ищи `#N` в `title`/`body`
    уже полученного в п. 1 **полного пагинированного списка**, не запускай новый
    обрезанный `gh pr list`. Возьми **одно**:
@@ -173,8 +176,8 @@ description: Реализация заявок ivanarama/onebase с меткой
    root требует reply, matching trusted `pp:triage-author-reply`; для каждого
    marker проверь автора `ivanarama`, exact line, claim и fingerprint.
    Пересчитай root fingerprint, проверь class/manual из record и согласованность
-   текущего eligibility: `ready-fix` допустим для завершённого route
-   `ready-fix`, а `approved` — последующий человеческий ход после любого
+   текущего eligibility: `ready-fix` без `needs-decision` допустим для
+   завершённого route `ready-fix`, а `approved` — последующий человеческий ход после любого
    завершённого route. Незавершённый/повреждённый claim, чужой done или done с
    другой ссылкой/fingerprint исключает issue из FIX без branch-claim и любой
    мутации. Canonical triage без route-claim — отдельный legacy fallback: точная
@@ -186,7 +189,7 @@ description: Реализация заявок ivanarama/onebase с меткой
    дифф её не положить, делает человек руками. Такую заявку не бери даже с
    `approved`.
 
-   `approved` перебивает `needs-decision`: это последний ход человека, он и есть
+   Только `approved` перебивает `needs-decision`: это последний ход человека, он и есть
    решение, а снимать вторую метку руками он не обязан. Обратный порядок держится
    п. 9 — заходя в тупик, ты сам снимаешь `approved`, поэтому заявка не вернётся
    к тебе по кругу.
@@ -222,7 +225,8 @@ description: Реализация заявок ivanarama/onebase с меткой
    Сохрани исходный issue-contract: `state`, точные `title`/`body`, релевантные
    labels (`ready-fix`, `approved`, `hold`, `manual`, `needs-decision`, все
    `decision:N`) и **все** комментарии с `id`, `updated_at`, автором и body.
-   Зафиксируй, почему заявка eligible (`ready-fix` либо `approved`). В
+   Зафиксируй точное основание eligibility: `approved` либо
+   `ready-fix-without-needs-decision`. В
    `issue-decision fingerprint` **всегда** входят две независимые части:
 
    - точная версия каноничного triage-комментария, задающего план работы:
@@ -281,7 +285,9 @@ description: Реализация заявок ivanarama/onebase с меткой
    заявки ветка строго детерминирована: `fix/<N>`, без заголовка и случайного
    суффикса. Непосредственно перед branch-claim заново прочитай issue и все
    comments и потребуй неизменный `issue-decision fingerprint`, `state=open`,
-   прежнее основание eligibility и отсутствие `hold`/`manual`; расхождение —
+   прежнее точное основание eligibility, повторное выполнение predicate
+   `approved OR (ready-fix AND NOT needs-decision)` и отсутствие `hold`/`manual`;
+   расхождение —
    ничего не создавай. Затем сохрани SHA `origin/main` и **до начала работы** атомарно создай
    отсутствующий remote ref через GitHub Create a reference API:
 
@@ -332,10 +338,14 @@ description: Реализация заявок ivanarama/onebase с меткой
 
    и пересчитывай `issue-decision fingerprint`. До final CAS-push и
    `gh pr create` обязательны `state=open`, прежние title/body, то же основание
-   eligibility, отсутствие `hold`/`manual`, та же обязательная версия triage и
+   eligibility, повторное выполнение predicate
+   `approved OR (ready-fix AND NOT needs-decision)`, отсутствие `hold`/`manual`,
+   та же обязательная версия triage и
    тот же точный источник выбора. Снятый `ready-fix`/`approved`, новый `hold`,
    закрытие issue, смена `decision:N`, edit triage/решения или новое старшее
-   решение немедленно закрывают гейт. После `gh pr create` те же проверки выполняй отдельно перед добавлением
+   решение или новый `needs-decision` при основании
+   `ready-fix-without-needs-decision` немедленно закрывают гейт. После
+   `gh pr create` те же проверки выполняй отдельно перед добавлением
    `in-work` и перед `pp:in-work`-комментарием; единственное ожидаемое собственное
    изменение labels между ними — уже подтверждённая `in-work`. Гейт закрылся —
    больше ничего не меняй, не удаляй branch/PR и закончи `НУЖЕН ЧЕЛОВЕК` с точным
