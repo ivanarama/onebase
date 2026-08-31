@@ -11,13 +11,20 @@ import (
 )
 
 func TestAdminAuthTemplate_PolicyAndProviders(t *testing.T) {
-	policy := auth.Policy{SSOOnly: true, Require2FAAdmins: true, Require2FARoles: []string{"Бухгалтерия"}}
+	policy := auth.Policy{
+		SSOOnly: true, Require2FAAdmins: true, Require2FARoles: []string{"Бухгалтерия"},
+		PasswordMinLength: 10, AllowEmptyPasswords: true,
+	}
 	var buf bytes.Buffer
 	err := adminTmpl.ExecuteTemplate(&buf, "admin-auth", map[string]any{
-		"Policy":         policy,
-		"Roles":          []*auth.Role{{Name: "Бухгалтерия"}, {Name: "Кладовщик"}},
-		"RoleSelected":   map[string]bool{"Бухгалтерия": true},
-		"RoleSelectSize": 3,
+		"Policy":                   policy,
+		"Roles":                    []*auth.Role{{Name: "Бухгалтерия"}, {Name: "Кладовщик"}},
+		"RoleSelected":             map[string]bool{"Бухгалтерия": true},
+		"RoleSelectSize":           3,
+		"PasswordMinLength":        10,
+		"DefaultPasswordMinLength": auth.DefaultMinPasswordLength,
+		"MaxPasswordLength":        auth.MaxPasswordLength,
+		"EmptyPasswordsByEnv":      false,
 		"Providers": []*auth.OIDCProvider{
 			{ID: "keycloak", Name: "Корпоративный вход", Issuer: "https://id.example.com", Enabled: true},
 		},
@@ -33,6 +40,9 @@ func TestAdminAuthTemplate_PolicyAndProviders(t *testing.T) {
 		`<option value="Бухгалтерия" selected>`,
 		`/ui/admin/auth/providers/keycloak`,
 		"ONEBASE_ALLOW_PASSWORD_LOGIN",
+		`action="/ui/admin/auth/password-policy"`,
+		`name="password_min_length" min="1" max="72" value="10"`,
+		`name="allow_empty_passwords" value="1" checked`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в HTML нет %q", want)

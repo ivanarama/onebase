@@ -6,6 +6,7 @@ package ui
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -48,6 +49,24 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
       <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ При неработающем провайдере в базу нельзя будет войти. Аварийный вход по паролю включается переменной окружения <b>ONEBASE_ALLOW_PASSWORD_LOGIN=1</b> у процесса базы. API-токены (REST v2) политике не подчиняются.</div>
     </div>
     <button class="btn btn-primary" type="submit">Сохранить политики</button>
+  </form>
+</div>
+
+<div class="card" style="max-width:820px;margin-bottom:16px">
+  <h3 style="margin-bottom:14px">Политика паролей</h3>
+  <form method="POST" action="/ui/admin/auth/password-policy">
+    <div class="form-group">
+      <label>Минимальная длина пароля</label>
+      <input type="number" name="password_min_length" min="1" max="{{.MaxPasswordLength}}" value="{{.PasswordMinLength}}" style="width:120px">
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">От 1 до {{.MaxPasswordLength}} символов. Проверяется при установке пароля; уже заданные пароли остаются рабочими. Умолчание — {{.DefaultPasswordMinLength}}.</div>
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
+        <input type="checkbox" name="allow_empty_passwords" value="1" {{if .Policy.AllowEmptyPasswords}}checked{{end}}> Разрешить пустые пароли
+      </label>
+      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ Учётная запись с пустым паролем защищена только логином. Режим стенда и киоска, не рабочей базы.{{if .EmptyPasswordsByEnv}} Сейчас пустые пароли разрешены переменной окружения <b>ONEBASE_ALLOW_EMPTY_PASSWORDS</b> — снятая галка их не запретит, уберите переменную у процесса базы.{{end}}</div>
+    </div>
+    <button class="btn btn-primary" type="submit">Сохранить политику паролей</button>
   </form>
 </div>
 
@@ -162,6 +181,8 @@ func successFromQuery(saved string) string {
 	switch saved {
 	case "policy":
 		return "Политики сохранены"
+	case "password-policy":
+		return "Политика паролей сохранена"
 	case "provider":
 		return "Провайдер сохранён"
 	case "deleted":
@@ -187,10 +208,18 @@ func (s *Server) renderAdminAuth(w http.ResponseWriter, r *http.Request, data ma
 	if size > 10 {
 		size = 10
 	}
+	effective := s.authRepo.EffectivePasswordPolicy(r.Context())
 	data["Policy"] = policy
 	data["Roles"] = roles
 	data["RoleSelected"] = selected
 	data["RoleSelectSize"] = size
+	// В поле длины показываем действующее значение, а не только сохранённое:
+	// иначе база, где минимум задан переменной окружения, показывает пустое
+	// поле и первое же сохранение формы молча меняет политику.
+	data["PasswordMinLength"] = effective.MinLength
+	data["DefaultPasswordMinLength"] = auth.DefaultMinPasswordLength
+	data["MaxPasswordLength"] = auth.MaxPasswordLength
+	data["EmptyPasswordsByEnv"] = effective.AllowEmpty && !policy.AllowEmptyPasswords
 	data["Providers"] = s.authRepo.AuthProviders(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	renderAdminTemplate(w, "admin-auth", data)
@@ -208,12 +237,14 @@ func (s *Server) adminAuthPolicySave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
-	policy := auth.Policy{
-		SSOOnly:          r.FormValue("sso_only") == "1",
-		Require2FAAdmins: r.FormValue("require_2fa_admins") == "1",
-		Require2FARoles:  r.Form["require_2fa_roles"],
-		SelfEnroll2FA:    r.FormValue("allow_self_enroll_2fa") == "1",
-	}
+	// Политика паролей правится соседней формой и той же записью _settings:
+	// собирать Policy с нуля значило бы обнулять её при каждом сохранении
+	// политик входа.
+	policy := s.authRepo.AuthPolicy(r.Context())
+	policy.SSOOnly = r.FormValue("sso_only") == "1"
+	policy.Require2FAAdmins = r.FormValue("require_2fa_admins") == "1"
+	policy.Require2FARoles = r.Form["require_2fa_roles"]
+	policy.SelfEnroll2FA = r.FormValue("allow_self_enroll_2fa") == "1"
 	// Запрет паролей без единственного работающего способа войти — верный
 	// способ запереть базу. Провайдеров должно быть хотя бы одно включённое.
 	if policy.SSOOnly && len(s.authRepo.EnabledAuthProviders(r.Context())) == 0 {
@@ -242,6 +273,42 @@ func (s *Server) adminAuthPolicySave(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logSessionAudit(r, "auth_policy_saved", "", "")
 	http.Redirect(w, r, "/ui/admin/auth?saved=policy", http.StatusFound)
+}
+
+// adminAuthPasswordPolicySave сохраняет политику паролей базы.
+//
+// Отдельной формой, а не полями «Политик входа»: та форма собирает политику с
+// нуля из своих полей, и добавление к ней чужих полей означало бы, что каждое
+// сохранение любой из двух форм переписывает обе. Здесь читаем текущую политику
+// и меняем только пароли.
+func (s *Server) adminAuthPasswordPolicySave(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	s.limitMultipartRequest(w, r)
+	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
+		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+		return
+	}
+	policy := s.authRepo.AuthPolicy(r.Context())
+	raw := strings.TrimSpace(r.FormValue("password_min_length"))
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > auth.MaxPasswordLength {
+		s.renderAdminAuth(w, r, map[string]any{
+			"Error": fmt.Sprintf("Минимальная длина пароля должна быть числом от 1 до %d", auth.MaxPasswordLength),
+		})
+		return
+	}
+	policy.PasswordMinLength = n
+	policy.AllowEmptyPasswords = r.FormValue("allow_empty_passwords") == "1"
+	if err := s.authRepo.SaveAuthPolicy(r.Context(), policy); err != nil {
+		s.renderAdminAuth(w, r, map[string]any{"Error": s.errText(r, err)})
+		return
+	}
+	s.logSessionAudit(r, "password_policy_saved", "", "")
+	http.Redirect(w, r, "/ui/admin/auth?saved=password-policy", http.StatusFound)
 }
 
 // adminAuthProvider — карточка провайдера (GET — форма, POST — сохранение).
