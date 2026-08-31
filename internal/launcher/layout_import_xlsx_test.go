@@ -85,7 +85,8 @@ func postImportXLSX(t *testing.T, h *handler, b *Base, name, doc, sheetName stri
 
 func TestImportXLSX_HappyPath(t *testing.T) {
 	h, b, dir := newLayoutTestBase(t)
-	rec := postImportXLSX(t, h, b, "ИзExcelНакладная", "Реализация", "", blankXLSX(t))
+	original := blankXLSX(t)
+	rec := postImportXLSX(t, h, b, "ИзExcelНакладная", "Реализация", "", original)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код %d, тело %s", rec.Code, truncate(rec.Body.String(), 400))
 	}
@@ -100,6 +101,13 @@ func TestImportXLSX_HappyPath(t *testing.T) {
 	}
 	if parsed.Document != "Реализация" {
 		t.Errorf("document = %q, ожидалось «Реализация»", parsed.Document)
+	}
+	template, err := os.ReadFile(filepath.Join(dir, "printforms", "ИзExcelНакладная.template.xlsx"))
+	if err != nil {
+		t.Fatalf("исходный Excel-шаблон не сохранён: %v", err)
+	}
+	if !bytes.Equal(template, original) {
+		t.Error("сохранённый Excel-шаблон отличается от загруженного")
 	}
 
 	// Главное в этом тесте — что состав табличных частей действительно доехал
@@ -214,11 +222,19 @@ func TestImportXLSX_DuplicateRefused(t *testing.T) {
 // Конфигурация в БД: макет пишется в _onebase_config тем же путём.
 func TestImportXLSX_ConfigDB(t *testing.T) {
 	h, b := newLayoutTestBaseDB(t)
-	rec := postImportXLSX(t, h, b, "ИзExcelБД", "Реализация", "", blankXLSX(t))
+	original := blankXLSX(t)
+	rec := postImportXLSX(t, h, b, "ИзExcelБД", "Реализация", "", original)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код %d, тело %s", rec.Code, truncate(rec.Body.String(), 400))
 	}
 	if !strings.Contains(rec.Body.String(), "ИзExcelБД") {
 		t.Errorf("макет не появился в конфигураторе, тело:\n%s", truncate(rec.Body.String(), 400))
+	}
+	template, ok := configReadLayout(t, b, "printforms/ИзExcelБД.template.xlsx")
+	if !ok {
+		t.Fatal("исходный Excel-шаблон не записан в _onebase_config")
+	}
+	if !bytes.Equal(template, original) {
+		t.Error("Excel-шаблон в _onebase_config отличается от загруженного")
 	}
 }

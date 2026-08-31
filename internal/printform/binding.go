@@ -52,6 +52,15 @@ func ResolveExpr(expr string, ctx *RenderContext, row map[string]any, rowNum int
 	if i := strings.Index(expr, "."); i != -1 {
 		fieldName := expr[:i]
 		subField := expr[i+1:]
+		// В Excel-шаблонах пользователи естественно пишут полное имя
+		// {{Контрагент.Наименование}}, даже когда печатается сам Контрагент.
+		// Такой корневой квалификатор означает поле текущей записи, а не ссылку.
+		if ctx != nil && strings.EqualFold(fieldName, ctx.EntityName) {
+			if v, ok := lookupMapFold(ctx.Document, subField); ok {
+				return resolveRefDisplay(v, ctx)
+			}
+			return nil
+		}
 		// сначала ищем в текущей строке.
 		if row != nil {
 			if refVal, ok := row[fieldName]; ok {
@@ -83,6 +92,18 @@ func ResolveExpr(expr string, ctx *RenderContext, row map[string]any, rowNum int
 		}
 	}
 	return nil
+}
+
+func lookupMapFold(values map[string]any, key string) (any, bool) {
+	if v, ok := values[key]; ok {
+		return v, true
+	}
+	for name, v := range values {
+		if strings.EqualFold(name, key) {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // ResolveValue вычисляет «выражение | формат» и применяет форматтер, возвращая

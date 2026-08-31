@@ -1,11 +1,18 @@
 package ui
 
 import (
+	"bytes"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/printform"
+	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/xuri/excelize/v2"
 )
 
 // newRedirectReq собирает запрос с chi-route-параметрами для redirectDSLPrint
@@ -58,5 +65,65 @@ func TestRedirectDSLPrintPDFKeepsQuery(t *testing.T) {
 	want := "/ui/documents/sale/00000000-0000-0000-0000-000000000001/print/upd/pdf?form=upd"
 	if loc != want {
 		t.Fatalf("Location = %q\nwant     %q", loc, want)
+	}
+}
+
+func TestPrintDocumentXLSXThroughHTTPHandler(t *testing.T) {
+	entity := &metadata.Entity{
+		Name: "Контрагент",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Номер", Type: metadata.FieldTypeString},
+		},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{entity}})
+
+	f := excelize.NewFile()
+	if err := f.SetCellStr("Sheet1", "A1", "{{Контрагент.Наименование}}"); err != nil {
+		t.Fatal(err)
+	}
+	var template bytes.Buffer
+	if err := f.Write(&template); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	s.reg.LoadLayoutForms([]*printform.LayoutForm{{
+		Name:         "Карточка",
+		Document:     entity.Name,
+		Layout:       &printform.LayoutTemplate{},
+		XLSXTemplate: template.Bytes(),
+	}})
+
+	id := uuid.New()
+	if err := s.store.Upsert(ctx, entity.Name, id, map[string]any{
+		"Наименование": "ООО Ромашка",
+		"Номер":        "К-7",
+	}, entity); err != nil {
+		t.Fatal(err)
+	}
+	target := "/ui/catalog/Контрагент/" + id.String() + "/print/Карточка/xlsx"
+	req := reqWithChi(http.MethodGet, target, nil, map[string]string{
+		"kind": "catalog", "entity": entity.Name, "id": id.String(), "form": "Карточка",
+	})
+	rec := httptest.NewRecorder()
+	s.printDocumentXLSX(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+		t.Errorf("Content-Type = %q", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !bytes.Contains([]byte(got), []byte(".xlsx")) {
+		t.Errorf("Content-Disposition = %q", got)
+	}
+	out, err := excelize.OpenReader(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	if got, err := out.GetCellValue("Sheet1", "A1"); err != nil || got != "ООО Ромашка" {
+		t.Errorf("A1 = %q, %v", got, err)
 	}
 }

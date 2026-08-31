@@ -104,6 +104,14 @@ func (h *handler) configuratorImportXLSXLayout(w http.ResponseWriter, r *http.Re
 		h.layoutCreateError(w, r, b, lang, layoutWriteMessage(lang, werr))
 		return
 	}
+	templatePath := "printforms/" + layoutName + ".template.xlsx"
+	if werr := h.writeLayoutFile(r.Context(), b, templatePath, buf.Bytes()); werr != nil {
+		// Макет и исходная книга образуют одну печатную форму. Если второй файл
+		// записать не удалось, не оставляем половину импорта.
+		_ = h.removeLayoutFile(r.Context(), b, relPath)
+		h.layoutCreateError(w, r, b, lang, layoutWriteMessage(lang, werr))
+		return
+	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")
 	data.FieldsSaved = true
@@ -189,4 +197,20 @@ func (h *handler) writeLayoutFile(ctx context.Context, b *Base, relPath string, 
 		return merr
 	}
 	return os.WriteFile(fullPath, src, fsmode.File) //nolint:gosec // G703: fullPath построен configdb.SafeJoin
+}
+
+func (h *handler) removeLayoutFile(ctx context.Context, b *Base, relPath string) error {
+	if b.ConfigSource == "database" {
+		db, err := OpenDB(ctx, b)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		return configdb.New(db).DeleteFile(ctx, relPath)
+	}
+	fullPath, err := configdb.SafeJoin(b.Path, relPath)
+	if err != nil {
+		return err
+	}
+	return os.Remove(fullPath) //nolint:gosec // G703: fullPath построен configdb.SafeJoin
 }
