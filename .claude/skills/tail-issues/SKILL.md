@@ -133,6 +133,14 @@ stderr, вывода нет, код возврата ненулевой. Все 
      completion совпадают по SHA/review-comment/epoch, после anchor нет
      `COMMENT_DELETED_EVENT`, между ними нет `pp:review-again`, ссылка на id
      первая, а для SHA без разделяющего override каноничен earliest claim;
+     в timeline ровно один `MergedEvent`, а edge-order строго равен
+     `anchor < review < earliest claim < completion < MergedEvent`. Между anchor
+     и merge нет `PullRequestCommit`/`HeadRefForcePushedEvent`/
+     `HeadRefDeletedEvent`/`HeadRefRestoredEvent`. После merge допустим только
+     ноль событий lifecycle либо один **конечный** `HeadRefDeletedEvent` без
+     последующего restore; любой `HeadRefRestoredEvent`, в том числе post-merge,
+     закрывает gate. Общий порядок берётся только из GraphQL edges, поэтому
+     same-second merge/delete однозначен, а post-merge synthetic proof не проходит;
      claim-less completion допустим только в уже описанном legacy-fallback до
      cutover и никогда не считается новым протоколом;
    - после выбранной committed-пары есть более поздняя доверенная отдельная
@@ -248,8 +256,11 @@ stderr, вывода нет, код возврата ненулевой. Все 
    server-ordered GraphQL REVIEW epoch из п. 2 двумя полными идентичными
    проходами по ordered edges и node payload**. Текущий merged HEAD и anchor,
    `epoch-sha256`, review/earliest-claim/completion, `lastEditedAt == null`,
-   отсутствие `COMMENT_DELETED_EVENT`, нового HEAD-anchor и непоглощённого
-   `pp:review-again` должны по-прежнему образовывать тот же claim-bound proof.
+   отсутствие `COMMENT_DELETED_EVENT`, нового HEAD/lifecycle-anchor **до
+   `MergedEvent`** и непоглощённого `pp:review-again` должны по-прежнему
+   образовывать тот же claim-bound proof. После merge-edge разрешён только
+   необязательный конечный head delete; restore или новый commit/force-push
+   закрывают TAIL.
    До issue create `hold`, `no-tail`, новый
    применимый `pp:tail-drop`, уже существующий versioned `pp:tail-done`, edit
    (`updated_at`/`item-sha256` изменились) или сменившееся выбранное заключение

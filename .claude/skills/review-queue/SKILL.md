@@ -100,7 +100,7 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    Все protocol events REVIEW версионированы серверным GraphQL. Одним
    пагинированным `timelineItems(first:100,after:$cursor,itemTypes:
    [PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,
-   HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,
+   HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,
    COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])` получи **edges с
    cursor**; этот точный набор `itemTypes` используют и потребители proof, чтобы
    сохранённый cursor всегда относился к той же connection. Для `IssueComment` читай
@@ -121,13 +121,14 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    query($owner:String!,$name:String!,$number:Int!,$cursor:String){
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid
-       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
          updatedAt pageInfo{hasNextPage endCursor}
          edges{cursor node{__typename
            ... on PullRequestCommit{id commit{oid}}
            ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
            ... on HeadRefDeletedEvent{id createdAt}
            ... on HeadRefRestoredEvent{id createdAt}
+           ... on MergedEvent{id createdAt commit{oid}}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{id createdAt}
            ... on LabeledEvent{id createdAt actor{login} label{name}}

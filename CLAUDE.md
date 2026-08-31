@@ -164,8 +164,11 @@ onebase describe --project <dir>                # вся структура ко
   future Git dates не влияют на anchor. MERGE тем же timeline snapshot отвергает
   сохранённый epoch anchor и любой новый HEAD/lifecycle-anchor после proof,
   поэтому edit override-anchor, ABA `H → X → H` и
-  `H → deleted → restored H` не возвращают старому proof силу. TAIL повторяет этот proof-гейт перед каждой pre-create
-  мутацией, а не полагается только на REST comments/labels.
+  `H → deleted → restored H` не возвращают старому proof силу. TAIL повторяет
+  этот proof-гейт перед каждой pre-create мутацией, а не полагается только на
+  REST comments/labels; proof целиком предшествует `MergedEvent`, lifecycle edge
+  до merge запрещён, а после merge безопасен только необязательный конечный
+  delete без restore.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR

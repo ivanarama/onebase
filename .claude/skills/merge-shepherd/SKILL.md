@@ -260,7 +260,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid labels(first:100){nodes{name} pageInfo{hasNextPage}}
        comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
-       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
          updatedAt
          pageInfo{hasNextPage}
          edges{cursor node{__typename
@@ -268,6 +268,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
            ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
            ... on HeadRefDeletedEvent{id createdAt}
            ... on HeadRefRestoredEvent{id createdAt}
+           ... on MergedEvent{id createdAt commit{oid}}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{createdAt}
            ... on LabeledEvent{createdAt actor{login} label{name}}

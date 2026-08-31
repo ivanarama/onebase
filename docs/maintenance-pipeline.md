@@ -375,7 +375,7 @@ epoch-sha256=<64hex> -->`. Он связывает SHA с конкретными
 server epoch. Все три комментария должны существовать и иметь
 `lastEditedAt == null`, а после anchor не должно быть deletion event. REVIEW и
 потребители используют один и тот же набор timeline `itemTypes`, включающий
-HEAD anchors/lifecycle delete+restore, comments, deletion и label events. Delete
+HEAD anchors/lifecycle delete+restore, merge, comments, deletion и label events. Delete
 без restore закрывает gate, а restore начинает новую epoch даже для того же SHA.
 Поэтому
 edit/delete после последнего pre-POST gate делает completion непригодным для
@@ -517,6 +517,11 @@ completion и убеждается, что это первая completion-ссы
 комментарий — явное исключение из обычного re-gate после снятия `ship`.
 TAIL аналогично реконструирует полный стабильный GraphQL proof перед каждой
 pre-create мутацией; одной повторной проверки REST comments/labels недостаточно.
+На merged PR ровно один `MergedEvent` задаёт границу и proof обязан идти строго
+`anchor < review < claim < completion < merge`. Head lifecycle между anchor и
+merge запрещён; после merge допустим только необязательный конечный delete без
+restore. Edge order устраняет same-second неоднозначность и не принимает proof,
+синтетически созданный уже после мержа.
 Перед финальным PUT MERGE сохраняет `node_id` review/claim/completion, epoch
 anchor node/cursor и watermark последнего комментария. Два последовательных
 побайтово одинаковых raw GraphQL snapshot

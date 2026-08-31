@@ -184,7 +184,7 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"активные блокирующие `changes-requested` + `needs-decision`",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
 		"timelineItems(first:100,after:$cursor,itemTypes:",
-		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,\n   HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
+		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,\n   HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
 		"этот точный набор `itemTypes` используют и потребители proof",
 		"`lastEditedAt != null`",
 		"`timelineItems.updatedAt`",
@@ -467,11 +467,12 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"Если ни одного ship-transition нет в epoch timeline",
 		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`",
 		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
-		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
+		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
 		"... on PullRequestCommit{id commit{oid}}",
 		"... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}",
 		"... on HeadRefDeletedEvent{id createdAt}",
 		"... on HeadRefRestoredEvent{id createdAt}",
+		"... on MergedEvent{id createdAt commit{oid}}",
 		"`lastEditedAt == null`",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
 		"требуется новый аудит/completion",
@@ -552,6 +553,12 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"`pp:head-reviewed <SHA> review-comment=<id> claim=<id>\n     epoch-sha256=<64hex>`",
 		"`lastEditedAt == null`",
 		"после anchor нет\n     `COMMENT_DELETED_EVENT`",
+		"в timeline ровно один `MergedEvent`",
+		"`anchor < review < earliest claim < completion < MergedEvent`",
+		"После merge допустим только\n     ноль событий lifecycle либо один **конечный** `HeadRefDeletedEvent`",
+		"любой `HeadRefRestoredEvent`, в том числе post-merge",
+		"same-second merge/delete однозначен",
+		"post-merge synthetic proof не проходит",
 		"claim-less completion допустим только",
 		"Для нового протокола возьми только заключение, чей числовой `id` указан",
 		"Для legacy-drain возьми выбранное в п. 2 последнее доверенное legacy-заключение",
@@ -587,6 +594,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"заново реконструируй полный стабильный\n   server-ordered GraphQL REVIEW epoch из п. 2",
 		"Edit/delete proof между выбором пункта\n   и любой pre-create мутацией означает ноль новых issue",
 		"стабильный GraphQL proof-гейт из п. 5",
+		"нового HEAD/lifecycle-anchor **до\n   `MergedEvent`**",
+		"После merge-edge разрешён только\n   необязательный конечный head delete",
 		"Не используй GitHub Search",
 		"issues?state=all&since=<root-claim-created-at>&per_page=100",
 		"автора `ivanarama`, точный `pp:tail-source`",
@@ -963,6 +972,59 @@ func TestHeadDeleteRestoreStartsNewReviewEpoch(t *testing.T) {
 	}
 	if mergeFinalEpochStillCurrent(10, []int{11, 12}) {
 		t.Fatal("MERGE must reject the old proof after H -> deleted -> restored H")
+	}
+}
+
+func tailProofCompatibleWithMerge(anchor, review, claim, completion int, mergedEdges, commitOrForce, deleted, restored []int) bool {
+	if len(mergedEdges) != 1 {
+		return false
+	}
+	mergedEdge := mergedEdges[0]
+	if !(anchor < review && review < claim && claim < completion && completion < mergedEdge) {
+		return false
+	}
+	for _, edge := range commitOrForce {
+		if edge > anchor {
+			return false
+		}
+	}
+	for _, edge := range restored {
+		if edge > anchor {
+			return false
+		}
+	}
+	postAnchorDeletes := 0
+	for _, edge := range deleted {
+		if edge <= anchor {
+			continue
+		}
+		postAnchorDeletes++
+		if edge <= mergedEdge {
+			return false
+		}
+	}
+	if postAnchorDeletes > 1 {
+		return false
+	}
+	return true
+}
+
+func TestTailAllowsRoutineHeadDeleteOnlyAfterMergedEdge(t *testing.T) {
+	if !tailProofCompatibleWithMerge(10, 11, 12, 13, []int{20}, nil, []int{21}, nil) {
+		t.Fatal("routine branch deletion strictly after merge must not permanently disable TAIL")
+	}
+	if tailProofCompatibleWithMerge(10, 11, 12, 13, []int{20}, nil, []int{19}, nil) {
+		t.Fatal("a HEAD lifecycle transition between review proof and merge must invalidate TAIL")
+	}
+	if tailProofCompatibleWithMerge(10, 11, 12, 13, []int{20}, nil, []int{21}, []int{22}) {
+		t.Fatal("restoring HEAD after merge must remain fail-closed")
+	}
+	if tailProofCompatibleWithMerge(10, 11, 12, 21, []int{20}, nil, nil, nil) {
+		t.Fatal("a synthetic proof completed after merge must not be accepted")
+	}
+	if tailProofCompatibleWithMerge(10, 11, 12, 13, nil, nil, []int{21}, nil) ||
+		tailProofCompatibleWithMerge(10, 11, 12, 13, []int{20, 22}, nil, []int{23}, nil) {
+		t.Fatal("TAIL must require exactly one canonical MergedEvent boundary")
 	}
 }
 
