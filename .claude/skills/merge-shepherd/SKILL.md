@@ -225,7 +225,8 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    не удалены, имеют `lastEditedAt == null`, а их `fullDatabaseId`, автор, SHA,
    Outcome-Label, tail/body, claim и epoch-sha256 всё ещё образуют тот же
    claim-bound proof; после сохранённого anchor нет ни одного нового
-   `PullRequestCommit`/`HeadRefForcePushedEvent` (даже если после ABA-перехода
+   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/
+   `HeadRefRestoredEvent` (даже если после ABA-перехода
    `H → X → H` текущий `headRefOid` снова равен проверенному SHA), нет
    `CommentDeletedEvent`, а claim остаётся earliest; **последний** ship-transition среди возвращённых
    `LabeledEvent`/`UnlabeledEvent` — `LabeledEvent` от `ivanarama`, а его edge
@@ -253,17 +254,20 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
      epochAnchor:node(id:$epochAnchorNode){__typename
        ... on PullRequestCommit{id commit{oid}}
        ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
+       ... on HeadRefRestoredEvent{id createdAt}
        ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
      }
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid labels(first:100){nodes{name} pageInfo{hasNextPage}}
        comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
-       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
          updatedAt
          pageInfo{hasNextPage}
          edges{cursor node{__typename
            ... on PullRequestCommit{id commit{oid}}
            ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
+           ... on HeadRefDeletedEvent{id createdAt}
+           ... on HeadRefRestoredEvent{id createdAt}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{createdAt}
            ... on LabeledEvent{createdAt actor{login} label{name}}

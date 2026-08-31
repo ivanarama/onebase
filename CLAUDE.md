@@ -162,8 +162,9 @@ onebase describe --project <dir>                # вся структура ко
   epoch hash; FIX/MERGE/TAIL реконструируют тот же proof. Поэтому same-second
   edit/delete и окно после pre-POST gate не дают stale claim сменить outcome, а
   future Git dates не влияют на anchor. MERGE тем же timeline snapshot отвергает
-  сохранённый epoch anchor и любой новый HEAD-anchor после proof, поэтому edit
-  override-anchor и ABA `H → X → H` не возвращают старому proof силу. TAIL повторяет этот proof-гейт перед каждой pre-create
+  сохранённый epoch anchor и любой новый HEAD/lifecycle-anchor после proof,
+  поэтому edit override-anchor, ABA `H → X → H` и
+  `H → deleted → restored H` не возвращают старому proof силу. TAIL повторяет этот proof-гейт перед каждой pre-create
   мутацией, а не полагается только на REST comments/labels.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор

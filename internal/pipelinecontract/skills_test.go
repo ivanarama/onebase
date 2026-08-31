@@ -184,7 +184,7 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"активные блокирующие `changes-requested` + `needs-decision`",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
 		"timelineItems(first:100,after:$cursor,itemTypes:",
-		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
+		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,\n   HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
 		"этот точный набор `itemTypes` используют и потребители proof",
 		"`lastEditedAt != null`",
 		"`timelineItems.updatedAt`",
@@ -192,6 +192,7 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"всей упорядоченной\n   последовательности `(edge cursor, __typename, все выбранные поля node)`",
 		"`updatedAt` имеет секундную точность",
 		"Epoch — edges **строго после** выбранного anchor",
+		"`H → deleted → restored H` не оживляет старый proof",
 		"Git author/committer dates\n   вообще не участвуют",
 		"`epoch-sha256` — SHA-256 ASCII/LF записи",
 		"same-second edit/delete earliest claim не воскрешает\n   stale sibling",
@@ -464,11 +465,13 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"**последний** ship-transition",
 		"его edge\n   расположен после edges всех трёх адресованных комментариев",
 		"Если ни одного ship-transition нет в epoch timeline",
-		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`",
+		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`",
 		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
-		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
+		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
 		"... on PullRequestCommit{id commit{oid}}",
 		"... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}",
+		"... on HeadRefDeletedEvent{id createdAt}",
+		"... on HeadRefRestoredEvent{id createdAt}",
 		"`lastEditedAt == null`",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
 		"требуется новый аудит/completion",
@@ -791,6 +794,16 @@ func modeledReviewEpochAnchor(headEdge, overrideEdge, untrustedGitCommitTime int
 	return headEdge
 }
 
+func modeledHeadLifecycleAnchor(lastCommitAnchor, lastDelete, lastRestore int, headPresent bool) (int, bool) {
+	if !headPresent || lastDelete > lastRestore {
+		return 0, false
+	}
+	if lastRestore > lastCommitAnchor {
+		return lastRestore, true
+	}
+	return lastCommitAnchor, lastCommitAnchor != 0
+}
+
 type modeledReviewProof struct {
 	reviewPresent     bool
 	claimPresent      bool
@@ -937,6 +950,19 @@ func TestMergeFinalSnapshotRejectsHeadABA(t *testing.T) {
 	// server-ordered HEAD anchors after the proof's saved anchor.
 	if mergeFinalEpochStillCurrent(savedHeadAnchor, []int{11, 12}) {
 		t.Fatal("a final MERGE snapshot must reject an ABA HEAD transition even when headRefOid is H again")
+	}
+}
+
+func TestHeadDeleteRestoreStartsNewReviewEpoch(t *testing.T) {
+	if _, ok := modeledHeadLifecycleAnchor(10, 11, 0, false); ok {
+		t.Fatal("a deleted HEAD without a later restore must close the review gate")
+	}
+	anchor, ok := modeledHeadLifecycleAnchor(10, 11, 12, true)
+	if !ok || anchor != 12 {
+		t.Fatalf("restoring the same HEAD must start a new server epoch at edge 12, got anchor=%d ok=%v", anchor, ok)
+	}
+	if mergeFinalEpochStillCurrent(10, []int{11, 12}) {
+		t.Fatal("MERGE must reject the old proof after H -> deleted -> restored H")
 	}
 }
 

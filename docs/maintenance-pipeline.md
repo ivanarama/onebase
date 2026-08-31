@@ -375,7 +375,9 @@ epoch-sha256=<64hex> -->`. Он связывает SHA с конкретными
 server epoch. Все три комментария должны существовать и иметь
 `lastEditedAt == null`, а после anchor не должно быть deletion event. REVIEW и
 потребители используют один и тот же набор timeline `itemTypes`, включающий
-HEAD anchors, comments, deletion и label events. Поэтому
+HEAD anchors/lifecycle delete+restore, comments, deletion и label events. Delete
+без restore закрывает gate, а restore начинает новую epoch даже для того же SHA.
+Поэтому
 edit/delete после последнего pre-POST gate делает completion непригодным для
 REVIEW/FIX/MERGE/TAIL. Claim-less marker остаётся только историей старого
 протокола и не разрешает мутации. Валидна только первая completion-ссылка на
@@ -504,8 +506,9 @@ epoch-sha256=<hash>` → существующие не редактирован�
 completion и убеждается, что это первая completion-ссылка на id,
 `Reviewed-SHA`/epoch совпадают, сам адресованный epoch anchor существует и не
 редактировался, после anchor нет deletion event и нового
-`PullRequestCommit`/`HeadRefForcePushedEvent`. Последнее закрывает ABA
-`H → X → H`: равный прежнему `headRefOid` не оживляет старый proof,
+`PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/
+`HeadRefRestoredEvent`. Последнее закрывает ABA `H → X → H` и
+`H → deleted → restored H`: равный прежнему `headRefOid` не оживляет старый proof,
 между парой и после completion нет непоглощённого `pp:review-again`, а связанное
 заключение содержит точную `Outcome-Label`. Если
 `ship` относится к старому HEAD или аудит не завершён, пастух снимает устаревший
