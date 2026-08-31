@@ -172,6 +172,9 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"Более поздний непоглощённый override отменяет маршрутный стоп `changes-requested` / `needs-decision`",
 		"<!-- pp:review-claim <40-символьный SHA> review-comment=<числовой id> -->",
 		"Stale `reviewed` от прошлой эпохи или старого HEAD конфликтом не считается",
+		"PP-Fix-Transition: from=<SHA> review-comment=<id>",
+		"мяч у FIX/recovery",
+		"также всегда запрещает REVIEW-мутацию",
 		"Опасный необъяснимый конфликт — `needs-decision`",
 		"активные блокирующие `changes-requested` + `needs-decision`",
 	)
@@ -206,6 +209,9 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 	requireAllCompact(t, fixer,
 		"Затем исключи `ship` и `hold`",
 		"Успешный собственный push потребляет старое владение FIX",
+		"PP-Fix-Transition: from=<SHA canonical completion> review-comment=<id заключения>",
+		"review-комментария/`pp:review-claim` этого HEAD",
+		"CAS-loser не вправе снимать её маршрутную метку",
 		"HEAD == отправленному SHA",
 		"После push и непосредственно перед `gh pr create` повтори полную проверку ещё раз",
 		"ветка строго детерминирована: `fix/<N>`",
@@ -220,6 +226,8 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"HEAD изменился после ревью; требуется новое заключение",
 		"Непосредственно перед push перечитай HEAD, все comments и labels, пересчитай владельца",
 		"При `pp:review-again`, новой completion или чужом push ничего не",
+		"Lease failure означает чужой push",
+		"**не** возвращай PR в REVIEW",
 		"Для устаревшего ревью сними `changes-requested`, сверь удаление и только затем оставь диагностический комментарий",
 	)
 	rejectAll(t, fixer,
@@ -381,17 +389,23 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"Более поздний orphan `pp:review` без валидной ссылки не является аудитом",
 		"после выбранной committed-пары есть более поздняя доверенная отдельная",
 		"Если после выбранного заключения остался непоглощённый `pp:review-again`, PR уже отброшен",
-		"<!-- pp:tail-claim review-comment=<id> item=<N> -->",
+		"<!-- pp:tail-claim review-comment=<id> item=<N> owner=<uuid> -->",
+		"<!-- pp:tail-lease review-comment=<id> item=<N> previous=<id активной lease> owner=<uuid> -->",
+		"<!-- pp:tail-create-intent review-comment=<id> item=<N> lease=<id активной lease> owner=<uuid> -->",
+		"**собственный возвращённый comment id**",
+		"**собственный возвращённый id intent**",
+		"Lease действует 30 минут",
 		"<!-- pp:tail-source pr=<M> review-comment=<id> item=<N> -->",
 		"<!-- pp:tail-item-done review-comment=<id> item=<N> issue=<номер|none> -->",
 		"Перед **каждым внешним изменением**",
 		"Не используй GitHub Search",
-		"issues?state=all&since=<claim-created-at>&per_page=100",
+		"issues?state=all&since=<root-claim-created-at>&per_page=100",
 		"автора issue `ivanarama`",
 		"{number,author:.user.login,body}",
 		"Создание exact-source issue — точка невозврата",
 		"не запрещает **только** восстановительный item-done",
-		"параллельный worker проигрывает claim",
+		"**никогда не\n   повторяй create автоматически**",
+		"параллельный worker не\n   может выдать чужой claim за собственное владение",
 	)
 	rejectAll(t, tail, "--json number,title,mergedAt,labels,url,comments")
 }
@@ -443,7 +457,9 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"Время мержа PR #1261 — точная\nграница включения committed-протокола",
 		"само заключение**\nсоздано строго раньше границы",
 		"Время мержа\nисходного PR не используется",
-		"earliest trusted\n`pp:tail-claim`",
+		"initial\n`pp:tail-claim` с уникальным UUID воркера",
+		"30-минутную цепочку\n`pp:tail-lease previous=<comment id>`",
+		"постоянный `pp:tail-create-intent`",
 		"детерминированный `pp:tail-source`",
 		"без eventually-consistent Search API",
 	)
@@ -671,5 +687,150 @@ func TestTailCrashAfterIssueCreateDoesNotCreateDuplicate(t *testing.T) {
 	}
 	if !tailNeedsCreate(false, false) {
 		t.Fatal("unclaimed source without completion still needs create")
+	}
+}
+
+type modeledTailLease struct {
+	id       int
+	previous int
+	owner    string
+	created  int
+}
+
+func activeModeledTailLease(transitions []modeledTailLease) (modeledTailLease, bool) {
+	var active modeledTailLease
+	found := false
+	for _, transition := range transitions {
+		if transition.previous != 0 {
+			continue
+		}
+		if !found || transition.created < active.created ||
+			(transition.created == active.created && transition.id < active.id) {
+			active, found = transition, true
+		}
+	}
+	if !found {
+		return modeledTailLease{}, false
+	}
+
+	for {
+		var child modeledTailLease
+		childFound := false
+		for _, transition := range transitions {
+			if transition.previous != active.id {
+				continue
+			}
+			isRenewal := transition.owner == active.owner
+			isTakeover := transition.created >= active.created+30
+			if !isRenewal && !isTakeover {
+				continue
+			}
+			if !childFound || transition.created < child.created ||
+				(transition.created == child.created && transition.id < child.id) {
+				child, childFound = transition, true
+			}
+		}
+		if !childFound {
+			return active, true
+		}
+		active = child
+	}
+}
+
+func modeledTailWorkerOwns(active modeledTailLease, ownID int, ownOwner string, now int) bool {
+	return active.id == ownID && active.owner == ownOwner && now < active.created+30
+}
+
+func TestTailLeaseInterleavingsHaveOneCreateOwner(t *testing.T) {
+	t.Run("simultaneous initial claims", func(t *testing.T) {
+		active, ok := activeModeledTailLease([]modeledTailLease{
+			{id: 11, owner: "worker-a", created: 1},
+			{id: 12, owner: "worker-b", created: 1},
+		})
+		if !ok || !modeledTailWorkerOwns(active, 11, "worker-a", 2) {
+			t.Fatalf("first returned comment must own lease: %#v", active)
+		}
+		if modeledTailWorkerOwns(active, 12, "worker-b", 2) {
+			t.Fatal("loser must not turn the observed earliest claim into its ownership")
+		}
+	})
+
+	t.Run("earliest takeover after expiry", func(t *testing.T) {
+		active, _ := activeModeledTailLease([]modeledTailLease{
+			{id: 20, owner: "crashed", created: 0},
+			{id: 21, previous: 20, owner: "worker-b", created: 31},
+			{id: 22, previous: 20, owner: "worker-c", created: 31},
+		})
+		if !modeledTailWorkerOwns(active, 21, "worker-b", 32) {
+			t.Fatalf("earliest takeover must be sole owner: %#v", active)
+		}
+		if modeledTailWorkerOwns(active, 22, "worker-c", 32) {
+			t.Fatal("competing takeover must lose")
+		}
+	})
+
+	t.Run("renewal fences stale takeover", func(t *testing.T) {
+		active, _ := activeModeledTailLease([]modeledTailLease{
+			{id: 30, owner: "worker-a", created: 0},
+			{id: 31, previous: 30, owner: "worker-a", created: 25},
+			{id: 32, previous: 30, owner: "worker-b", created: 31},
+		})
+		if !modeledTailWorkerOwns(active, 31, "worker-a", 32) {
+			t.Fatalf("renewal must move active lineage and fence stale child: %#v", active)
+		}
+	})
+}
+
+func modeledTailMayCreate(active modeledTailLease, ownLeaseID int, ownOwner string, canonicalIntentID, ownIntentID int, now int) bool {
+	return modeledTailWorkerOwns(active, ownLeaseID, ownOwner, now) &&
+		canonicalIntentID == ownIntentID && ownIntentID != 0
+}
+
+func TestTailCreateIntentIsPermanentFence(t *testing.T) {
+	active := modeledTailLease{id: 41, owner: "worker-a", created: 10}
+	if !modeledTailMayCreate(active, 41, "worker-a", 50, 50, 11) {
+		t.Fatal("the process owning both active lease and returned canonical intent may create once")
+	}
+	if modeledTailMayCreate(active, 41, "worker-a", 50, 51, 11) {
+		t.Fatal("a process must not reuse an observed intent that was not returned by its POST")
+	}
+	if modeledTailMayCreate(active, 42, "worker-b", 50, 0, 45) {
+		t.Fatal("a later worker must not create after unresolved intent, even after the old lease expired")
+	}
+}
+
+type modeledFixPostPush struct {
+	transitionValid bool
+	routeLabel      bool
+	currentReview   bool
+}
+
+func (state modeledFixPostPush) reviewMayStart() bool {
+	return !(state.transitionValid && state.routeLabel && !state.currentReview)
+}
+
+func (state modeledFixPostPush) fixerMayDeleteRoute() bool {
+	return state.transitionValid && state.routeLabel && !state.currentReview
+}
+
+func TestFixPostPushTransitionSerializesReviewHandoff(t *testing.T) {
+	pushed := modeledFixPostPush{transitionValid: true, routeLabel: true}
+	if pushed.reviewMayStart() {
+		t.Fatal("REVIEW must not enter while the atomic FIX post-push phase is open")
+	}
+	if !pushed.fixerMayDeleteRoute() {
+		t.Fatal("winner or recovery must be able to finalize the pushed transition")
+	}
+
+	withInFlightReview := pushed
+	withInFlightReview.currentReview = true
+	if withInFlightReview.fixerMayDeleteRoute() {
+		t.Fatal("FIX must not delete a route label after a current-HEAD review transition appears")
+	}
+
+	finalized := pushed
+	finalized.routeLabel = false
+	if !finalized.reviewMayStart() {
+		t.Fatal("confirmed label removal must hand the new HEAD to REVIEW")
 	}
 }

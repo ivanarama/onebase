@@ -159,9 +159,12 @@ onebase describe --project <dir>                # вся структура ко
   merge выполняется REST compare-and-merge с тем же SHA: атомарно защищён HEAD,
   а labels защищены предшествующей точкой невозврата; гонка HEAD даёт `409`.
   FIX до CAS-push перед каждым внешним изменением перечитывает HEAD, все comments
-  и labels, пересчитывает владельца; после собственного push допускает только
-  финализацию, привязанную к отправленному SHA. `ship`, `pp:review-again` или новая completion
-  останавливают его даже при старой `changes-requested`. Новая заявка сначала
+  и labels, пересчитывает владельца; новый HEAD от FIX атомарно несёт
+  `PP-Fix-Transition` от canonical completion. Пока trailer валиден и
+  `changes-requested` не снята, REVIEW пропускает незавершённую post-push фазу,
+  CAS-loser её не переоткрывает, а FIX/recovery допускает только финализацию,
+  привязанную к отправленному SHA. `ship`, `pp:review-again`, новое заключение,
+  claim или completion текущего HEAD останавливают DELETE общей метки. Новая заявка сначала
   атомарно создаёт детерминированную remote-ветку `fix/<N>` через GitHub
   `POST /git/refs` (`201` — победитель, любой иной статус — стоп), поэтому два worker не
   создают два PR. Узкое окно, где push уже
@@ -184,9 +187,13 @@ onebase describe --project <dir>                # вся структура ко
     `pp:tail-drop N`. Переход на committed-протокол не теряет старый хвост:
     fallback разрешён, только если последнее доверенное legacy-заключение создано
     строго до мержа #1261; дата мержа исходного PR не важна. Per-item
-    `tail-claim`/`tail-source`/`tail-item-done` и прямой REST-lookup (не
-    задержанный Search API) не дают параллельному или
-    восстановленному после crash прогону создать второй issue. Та же грамматика,
+    уникальный owner в `tail-claim`, 30-минутная `tail-lease` с takeover,
+    постоянный `tail-create-intent`, `tail-source`/`tail-item-done` и прямой
+    REST-lookup от времени корневого claim
+    (не задержанный Search API) не дают параллельному или
+    восстановленному после crash прогону создать второй issue. Неоднозначный
+    crash после intent без найденного issue — единственный human-recovery TAIL:
+    автоматика не повторяет неидемпотентный create. Та же грамматика,
     что `approved` / `approved + decision:N`.
     Отсюда же ужесточение блокирующего: **неверное по факту утверждение в
     тексте, который поставляет PR** (документация, `ai-guide`, текст скила) — не

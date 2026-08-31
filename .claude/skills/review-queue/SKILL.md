@@ -127,6 +127,18 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    снять результат параллельного аудитора. Новый committed-маркер является
    источником истины, а FIX/MERGE проверяют именно его.
 
+   Перед тем как считать `changes-requested` без committed-пары текущего SHA
+   осиротевшей меткой, прочитай сообщение текущего HEAD через
+   `gh api repos/ivanarama/onebase/commits/<HEAD> --jq .commit.message`. Точный
+   trailer `PP-Fix-Transition: from=<SHA> review-comment=<id>` открывает
+   post-push фазу, только если `from` — предок HEAD, а `review-comment` входит в
+   каноничную committed-пару `changes-requested` для `from`. Пока trailer
+   валиден, метка `changes-requested` ещё присутствует и после push нет
+   доверенного `pp:review-again`, review-комментария/claim/completion текущего
+   HEAD, PR пропусти: мяч у FIX/recovery. Это атомарно видно вместе с новым HEAD
+   и не даёт REVIEW вклиниться между CAS-push, итоговым комментарием и снятием
+   метки.
+
    Контрольная таблица — применяй её буквально:
 
    | Состояние | Действие |
@@ -134,6 +146,7 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    | есть `ship` или `hold` | пропустить |
    | есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить: мяч у FIX / человека |
    | после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает; старая маршрутная метка не является стопом |
+   | есть валидный `PP-Fix-Transition` нового HEAD и незавершённая post-push фаза | пропустить: мяч у финализации FIX |
    | есть `changes-requested` без committed-маркера текущего SHA | FIX безопасно снимет осиротевшую метку и вернёт PR |
    | текущий SHA уже отмечен, более позднего override нет | пропустить; лимит 2 не расходовать |
    | текущий SHA отмечен, позже есть доверенный override | ревьюить один раз |
@@ -274,6 +287,9 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    всегда запрещают изменение. Для обычного заключения `changes-requested` и
    `needs-decision` остаются маршрутными стопами, но не когда после каноничной
    пары есть более поздний непоглощённый override; stale `reviewed` не мешает.
+   Валидная незавершённая post-push фаза `PP-Fix-Transition` из контрольной
+   таблицы также всегда запрещает REVIEW-мутацию: заново прочитай commit message
+   текущего HEAD и проверь её перед каждым комментарием/label POST.
    Перед committed-маркером комментарий должен оставаться каноничным и после
    него не должно появиться `pp:review-again`. Если SHA отличается от проверенного, не ставь итоговых меток и не публикуй
    обычное заключение: напиши коротко, что аудит старого SHA отменён из-за нового
