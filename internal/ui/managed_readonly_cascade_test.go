@@ -42,10 +42,13 @@ func заявкаСУсловнойГруппой(t *testing.T, статичес
 		Kind: metadata.FormElementField, Name: "ПолеУлица",
 		DataPath: "Объект.Улица", ReadOnly: статическийЗапретПоля,
 	}
+	кнопкаВГруппе := &metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "КнопкаВГруппе",
+	}
 	группа := &metadata.FormElement{
 		Kind: metadata.FormElementGroupBox, Name: "ГруппаРеквизитов",
 		ReadOnlyWhen: `СтадияОформления = "Принята"`,
-		Children:     []*metadata.FormElement{поле},
+		Children:     []*metadata.FormElement{поле, кнопкаВГруппе},
 	}
 	form := managedObjectForm(группа,
 		fieldEl("ПолеКомментария", "Объект.Комментарий"),
@@ -135,6 +138,37 @@ func TestКаскадУсловногоЗапрета_КартаСостояни
 	if v, есть := черновик.ElementStates.ReadOnly["ПолеУлица"]; !есть || v {
 		t.Fatalf("ReadOnly[ПолеУлица] = (%v, есть=%v), ожидалось (false, есть=true): "+
 			"без явного «ложно» клиенту нечем снять запрет", v, есть)
+	}
+}
+
+// kind: Кнопка сама является data-ob-el-якорем: querySelectorAll не включает
+// корневой узел. Поэтому проверяем не только одинаковое состояние до/после
+// события, но и настоящий переход в обе стороны на боевом applyElementStates.
+func TestКаскадУсловногоЗапрета_КнопкаВГруппеМеняетСостояниеНаКлиенте(t *testing.T) {
+	ent := заявкаСУсловнойГруппой(t, false)
+	черновикHTML, черновикResp := каскадДоИПосле(t, ent, "НаОформлении")
+	принятаHTML, принятаResp := каскадДоИПосле(t, ent, "Принята")
+
+	черновик := managedFormDOM(t, черновикHTML)
+	if кнопка := черновик.button(t, "КнопкаВГруппе"); кнопка.Disabled {
+		t.Fatalf("кнопка в доступной группе отрисована неактивной: %#v", кнопка)
+	}
+	if принятаResp.ElementStates == nil || !принятаResp.ElementStates.ReadOnly["КнопкаВГруппе"] {
+		t.Fatalf("карта обязана нести запрет кнопки-потомка: %#v", принятаResp.ElementStates)
+	}
+
+	заморожено := применитьСостоянияВБраузере(t, черновик, принятаResp.ElementStates)
+	if кнопка := заморожено.button(t, "КнопкаВГруппе"); !кнопка.Disabled {
+		t.Fatalf("applyElementStates не отключил корневую кнопку: %#v", кнопка)
+	}
+	сверитьДоступность(t, managedFormDOM(t, принятаHTML), заморожено)
+
+	if черновикResp.ElementStates == nil {
+		t.Fatal("карта состояний доступной группы не рассчитана")
+	}
+	разморожено := применитьСостоянияВБраузере(t, заморожено, черновикResp.ElementStates)
+	if кнопка := разморожено.button(t, "КнопкаВГруппе"); кнопка.Disabled {
+		t.Fatalf("applyElementStates не включил корневую кнопку обратно: %#v", кнопка)
 	}
 }
 
@@ -310,6 +344,17 @@ func (m managedFormDOMModel) control(t *testing.T, name string) managedControlNo
 		}
 	}
 	t.Fatalf("в разметке формы нет контрола %q: %#v", name, m.Controls)
+	return managedControlNode{}
+}
+
+func (m managedFormDOMModel) button(t *testing.T, elementName string) managedControlNode {
+	t.Helper()
+	for _, c := range m.Controls {
+		if c.Tag == "BUTTON" && len(c.Anchors) > 0 && c.Anchors[len(c.Anchors)-1] == elementName {
+			return c
+		}
+	}
+	t.Fatalf("в разметке формы нет кнопки элемента %q: %#v", elementName, m.Controls)
 	return managedControlNode{}
 }
 
