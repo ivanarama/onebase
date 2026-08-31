@@ -84,13 +84,13 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
      --jq '.[] | {id,created_at,event,actor:(.actor.login // .user.login),label:(.label.name // null),body}'
    ```
 
-   Среди событий `ivanarama`, упорядоченных по `created_at`, затем `id`, должен
-   быть валидный
+   Среди server-ordered GraphQL timeline edges должен быть валидный
    `<!-- pp:head-reviewed <текущий SHA> review-comment=<числовой id>
    claim=<числовой id> epoch-sha256=<64hex> -->`, который ссылается на
    существующие более ранние доверенные не редактированные review и
    earliest-claim комментарии server-ordered REVIEW epoch. Перед каждым
-   MERGE-гейтом реконструируй тот же стабильный пагинированный GraphQL epoch;
+   MERGE-гейтом реконструируй тот же стабильный пагинированный GraphQL epoch
+   двумя полными идентичными проходами по ordered edges и node payload;
    любой `COMMENT_DELETED_EVENT`, `lastEditedAt != null`, несовпадение
    claim/epoch или claim-less legacy completion запрещает update/push/merge.
    Валидна только первая completion-ссылка
@@ -110,15 +110,18 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    безопасное состояние уже достигнуто: PR не сольётся и REVIEW подхватит SHA.
    Никакие update/push/merge до успешного SHA-гейта недопустимы.
 
-   Текущее наличие `ship` недостаточно. В полной пагинированной timeline выбери
-   **последний переход именно метки `ship`** (`labeled` или `unlabeled`) по
-   `created_at`, затем числовому `id`; учитывай события всех actors. Он обязан
-   быть `labeled` от `ivanarama` и располагаться после создания и последнего edit
-   review-комментария, claim и completion текущего SHA. Старый trusted `labeled`, после
+   Текущее наличие `ship` недостаточно. В полном стабильном GraphQL epoch выбери
+   **последний переход именно метки `ship`** (`LabeledEvent` или
+   `UnlabeledEvent`) строго по позиции server-ordered edge/cursor; учитывай
+   события всех actors. Он обязан быть `LabeledEvent` от `ivanarama` и его edge
+   обязан располагаться после edges review-комментария, claim и completion
+   текущего SHA. Все три proof-комментария не редактированы, поэтому отдельного
+   межтипового сравнения с edit timestamp нет. Старый trusted `LabeledEvent`, после
    которого человек снял метку, не оживает от повторной постановки другим actor
-   или app. При одинаковом `created_at` используй числовой REST `id`; если API не
-   даёт доказать порядок или переход отсутствует — stale `ship`, метку нужно
-   снять и поставить заново.
+   или app. Никогда не сравнивай числовые REST ids комментариев и label events:
+   они принадлежат разным таблицам и не задают общий порядок. Если edge-order
+   недоступен или переход отсутствует — stale `ship`, метку нужно снять и
+   поставить заново.
 
 2. Очередь при `strict: true` строго последовательна — работай с одним PR до
    конца, потом следующий. Состояние: `gh pr view <N> --json
@@ -207,19 +210,27 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 5. Мерж: выполни последний полный гейт из п. 1 и сохрани GraphQL `node_id`
    конкретных review, claim и completion, а также epoch anchor node/cursor и
    числовой `id` последнего комментария как watermark. Непосредственно перед PUT
-   получи **одним raw GraphQL-запросом** согласованный снимок: `headRefOid`, все
-   текущие labels, три адресованных `node(id: ...)` и все epoch events после
-   anchor (не более 100; иначе fail closed).
+   выполни **два последовательных одинаковых raw GraphQL-запроса**: каждый
+   получает `headRefOid`, все текущие labels, три адресованных `node(id: ...)`,
+   адресованный epoch anchor и все epoch events после anchor (не более 100;
+   иначе fail closed). Принимай только побайтово одинаковые выбранные значения
+   обоих полных ответов; любое отличие требует начать пару заново.
 
    В одном серверном снимке должны одновременно выполняться условия: HEAD равен
    проверенному SHA; есть `ship`; нет `hold` и актуального `needs-decision`;
-   `labels.pageInfo.hasNextPage == false`; адресованные review/claim/completion
+   `labels.pageInfo.hasNextPage == false`; адресованный epoch anchor существует
+   и точно совпадает с сохранёнными node id/type/payload (для override-
+   `IssueComment` также `lastEditedAt == null`, автор `ivanarama` и отдельная
+   строка `pp:review-again`); адресованные review/claim/completion
    не удалены, имеют `lastEditedAt == null`, а их `fullDatabaseId`, автор, SHA,
    Outcome-Label, tail/body, claim и epoch-sha256 всё ещё образуют тот же
-   claim-bound proof; после anchor нет `CommentDeletedEvent`, а claim остаётся
-   earliest; **последний** ship-transition среди возвращённых
-   `LabeledEvent`/`UnlabeledEvent` — `LabeledEvent` от `ivanarama`, расположен
-   после `createdAt` всех трёх комментариев; после
+   claim-bound proof; после сохранённого anchor нет ни одного нового
+   `PullRequestCommit`/`HeadRefForcePushedEvent` (даже если после ABA-перехода
+   `H → X → H` текущий `headRefOid` снова равен проверенному SHA), нет
+   `CommentDeletedEvent`, а claim остаётся earliest; **последний** ship-transition среди возвращённых
+   `LabeledEvent`/`UnlabeledEvent` — `LabeledEvent` от `ivanarama`, а его edge
+   расположен после edges всех трёх адресованных комментариев в том же
+   server-ordered timeline; после
    completion нет `pp:review-again`. Предыдущий comment-watermark обязан
    присутствовать среди `comments(last:100)`: если его вытеснили 100+ новых
    комментариев, snapshot не доказывает отсутствие override — требуется новый
@@ -235,16 +246,24 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    только `fullDatabaseId: BigInt` и сравнивай его строковое значение с REST id:
 
    ```graphql
-   query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$claimNode:ID!,$completionNode:ID!,$epochCursor:String!){
+   query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$claimNode:ID!,$completionNode:ID!,$epochAnchorNode:ID!,$epochCursor:String!){
      review:node(id:$reviewNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      claim:node(id:$claimNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      completion:node(id:$completionNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
+     epochAnchor:node(id:$epochAnchorNode){__typename
+       ... on PullRequestCommit{id commit{oid}}
+       ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
+       ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
+     }
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid labels(first:100){nodes{name} pageInfo{hasNextPage}}
        comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
-       timelineItems(first:100,after:$epochCursor,itemTypes:[ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+         updatedAt
          pageInfo{hasNextPage}
          edges{cursor node{__typename
+           ... on PullRequestCommit{id commit{oid}}
+           ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{createdAt}
            ... on LabeledEvent{createdAt actor{login} label{name}}
@@ -255,7 +274,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    }
    ```
 
-   Этот успешный GraphQL-снимок — **точка невозврата** операции merge. GitHub не
+   Вторая идентичная проверка этой пары — **точка невозврата** операции merge. GitHub не
    предоставляет транзакцию, одновременно условную по labels и выполняющую
    merge: `sha` защищает только HEAD. Поэтому `hold`/`needs-decision`, поставленные
    уже после снимка и после отправки PUT, не могут отменить запрос в полёте;

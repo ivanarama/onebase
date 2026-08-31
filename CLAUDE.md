@@ -155,11 +155,16 @@ onebase describe --project <dir>                # вся структура ко
   lease-ветка не может воскреснуть после удаления winner.
   REVIEW строит epoch по server-ordered GraphQL timeline edges: HEAD-anchor или
   более поздний unedited `pp:review-again`; `lastEditedAt == null`, отсутствие
-  `COMMENT_DELETED_EVENT`, node/fullDatabaseId и edge cursor проверяются до
-  election и каждой мутации. Completion хранит review id, earliest claim id и
+  `COMMENT_DELETED_EVENT`, node/fullDatabaseId и edge cursor проверяются двумя
+  полными идентичными проходами до election и каждой мутации: секундный
+  `timelineItems.updatedAt` не используется как единственное доказательство
+  стабильности. Completion хранит review id, earliest claim id и
   epoch hash; FIX/MERGE/TAIL реконструируют тот же proof. Поэтому same-second
   edit/delete и окно после pre-POST gate не дают stale claim сменить outcome, а
-  future Git dates не влияют на anchor.
+  future Git dates не влияют на anchor. MERGE тем же timeline snapshot отвергает
+  сохранённый epoch anchor и любой новый HEAD-anchor после proof, поэтому edit
+  override-anchor и ABA `H → X → H` не возвращают старому proof силу. TAIL повторяет этот proof-гейт перед каждой pre-create
+  мутацией, а не полагается только на REST comments/labels.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR
@@ -172,8 +177,9 @@ onebase describe --project <dir>                # вся структура ко
   ровно для текущего SHA со ссылками `review-comment=<id> claim=<id>
   epoch-sha256=<hash>` и снимает устаревший
   `ship`, если после аудита был push или `pp:review-again`; последний переход
-  метки `ship` среди событий всех actors обязан быть trusted `labeled` после
-  creation всех трёх unedited комментариев. Старый label после trusted unlabel не
+  метки `ship` среди событий всех actors обязан быть trusted `labeled` и идти
+  после всех трёх unedited комментариев по GraphQL edge order. Числовые REST ids
+  разных event types для порядка не сравниваются. Старый label после trusted unlabel не
   воскресает от чужого re-label. ID комментариев
   в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
   `databaseId`, и строкой сравниваются с REST id.

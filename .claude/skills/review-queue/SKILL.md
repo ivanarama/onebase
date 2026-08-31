@@ -100,11 +100,19 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    Все protocol events REVIEW версионированы серверным GraphQL. Одним
    пагинированным `timelineItems(first:100,after:$cursor,itemTypes:
    [PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,
-   COMMENT_DELETED_EVENT])` получи **edges с cursor**; для `IssueComment` читай
+   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])` получи **edges с
+   cursor**; этот точный набор `itemTypes` используют и потребители proof, чтобы
+   сохранённый cursor всегда относился к той же connection. Для `IssueComment` читай
    `id`, `fullDatabaseId`, `createdAt`, `lastEditedAt`, author и body, для
-   commit/force-push — `commit.oid`/`afterCommit.oid`. Перезапускай чтение,
-   пока `.headRefOid` и `timelineItems.updatedAt` до и после всех страниц не
-   совпадут; `pageInfo.hasNextPage` последней страницы обязан быть false. REST
+   commit/force-push — `commit.oid`/`afterCommit.oid`. Один проход недостаточен:
+   выполни **два полных последовательных прохода** от `cursor=null` до
+   `hasNextPage=false` и принимай snapshot только при побайтовом совпадении
+   `headRefOid`, `timelineItems.updatedAt` и всей упорядоченной
+   последовательности `(edge cursor, __typename, все выбранные поля node)`.
+   Если любой cursor/node/payload отличается, отбрось оба прохода и начни пару
+   заново. Это обязательный gate: `updatedAt` имеет секундную точность и один
+   watermark не обнаруживает edit/delete между страницами в ту же секунду.
+   `pageInfo.hasNextPage` последней страницы обоих проходов обязан быть false. REST
    `node_id` каждого используемого комментария обязан точно совпасть с GraphQL
    `IssueComment.id`, а decimal REST id — со строковым `fullDatabaseId`.
 
@@ -112,13 +120,15 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    query($owner:String!,$name:String!,$number:Int!,$cursor:String){
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid
-       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT]){
+       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
          updatedAt pageInfo{hasNextPage endCursor}
          edges{cursor node{__typename
            ... on PullRequestCommit{id commit{oid}}
            ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{id createdAt}
+           ... on LabeledEvent{id createdAt actor{login} label{name}}
+           ... on UnlabeledEvent{id createdAt actor{login} label{name}}
          }}
        }
      }}

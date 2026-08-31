@@ -83,8 +83,9 @@ description: Реализация заявок ivanarama/onebase с меткой
    claim-bound proof:
    `<!-- pp:head-reviewed <SHA> review-comment=<id> claim=<id>
    epoch-sha256=<64hex> -->`. Перед выбором владельца и перед каждой мутацией
-   реконструируй тот же server-ordered GraphQL epoch, что REVIEW: стабильный
-   пагинированный timeline с HEAD anchors, `IssueComment.lastEditedAt` и
+   реконструируй тот же server-ordered GraphQL epoch, что REVIEW: два полных
+   идентичных прохода пагинированного timeline с HEAD anchors,
+   `IssueComment.lastEditedAt` и
    `COMMENT_DELETED_EVENT`; review, earliest claim и completion должны
    существовать, быть от `ivanarama`, не редактироваться, совпадать по
    SHA/review-comment/claim/epoch и не иметь deletion edge после anchor.

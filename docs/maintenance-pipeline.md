@@ -358,8 +358,11 @@ REVIEW строит server-ordered epoch по полностью пагинир�
 edges. Anchor — последний `PullRequestCommit`/`HeadRefForcePushedEvent` текущего
 HEAD либо более поздний не редактированный `pp:review-again`; Git commit dates
 не используются. `IssueComment.lastEditedAt`, `COMMENT_DELETED_EVENT`, edge
-cursor и node id устраняют секундные гонки REST. Snapshot перечитывается до
-стабильных `headRefOid`/`timelineItems.updatedAt` и перед каждой мутацией.
+cursor и node id устраняют секундные гонки REST. Snapshot принимается только
+после двух полных последовательных проходов с одинаковыми `headRefOid`,
+`timelineItems.updatedAt` и ordered `(cursor,type,node payload)`; один timestamp
+watermark недостаточен из-за секундной точности. Та же пара повторяется перед
+каждой мутацией.
 
 После заключения ревью публикует claim
 `<!-- pp:review-claim <SHA> review-comment=<id заключения>
@@ -370,7 +373,9 @@ epoch-sha256=<64hex> -->` и перечитывает события. Тольк
 `<!-- pp:head-reviewed <SHA> review-comment=<id заключения> claim=<id claim>
 epoch-sha256=<64hex> -->`. Он связывает SHA с конкретными review, claim и
 server epoch. Все три комментария должны существовать и иметь
-`lastEditedAt == null`, а после anchor не должно быть deletion event. Поэтому
+`lastEditedAt == null`, а после anchor не должно быть deletion event. REVIEW и
+потребители используют один и тот же набор timeline `itemTypes`, включающий
+HEAD anchors, comments, deletion и label events. Поэтому
 edit/delete после последнего pre-POST gate делает completion непригодным для
 REVIEW/FIX/MERGE/TAIL. Claim-less marker остаётся только историей старого
 протокола и не разрешает мутации. Валидна только первая completion-ссылка на
@@ -485,9 +490,11 @@ override: REVIEW распознает явный handoff, снимет парк�
 Начальный список MERGE также читается целиком пагинированным REST: 30 первых
 припаркованных `ship`-PR не скрывают следующий допустимый PR.
 Метка `ship` должна быть поставлена после каноничного completion текущего SHA;
-порядок доказывается полной timeline PR. Последний переход `ship` среди событий
-всех actors обязан быть `labeled` от `ivanarama` и позже creation/edit обоих
-комментариев. Старый trusted label, затем trusted unlabel и чужой re-label не
+порядок доказывается полной GraphQL timeline PR. Последний переход `ship` среди
+событий всех actors обязан быть `labeled` от `ivanarama` и идти после edges
+review/claim/completion. Числовые REST ids комментариев и label events не
+сравниваются: это разные таблицы, а общий порядок задаёт только edge cursor.
+Старый trusted label, затем trusted unlabel и чужой re-label не
 возвращают разрешение. Поэтому старый `ship`, оставшийся до нового заключения,
 не считается согласием человека с этим заключением.
 
@@ -495,16 +502,22 @@ override: REVIEW распознает явный handoff, снимет парк�
 claim-bound proof `pp:head-reviewed … review-comment=<id> claim=<id>
 epoch-sha256=<hash>` → существующие не редактированные review/earliest-claim/
 completion и убеждается, что это первая completion-ссылка на id,
-`Reviewed-SHA`/epoch совпадают, после anchor нет deletion event,
+`Reviewed-SHA`/epoch совпадают, сам адресованный epoch anchor существует и не
+редактировался, после anchor нет deletion event и нового
+`PullRequestCommit`/`HeadRefForcePushedEvent`. Последнее закрывает ABA
+`H → X → H`: равный прежнему `headRefOid` не оживляет старый proof,
 между парой и после completion нет непоглощённого `pp:review-again`, а связанное
 заключение содержит точную `Outcome-Label`. Если
 `ship` относится к старому HEAD или аудит не завершён, пастух снимает устаревший
 `ship`, сверяет удаление, пишет причину в рамках той же атомарной передачи и
 возвращает PR в REVIEW; новый код без ревью не вливается. Этот завершающий
 комментарий — явное исключение из обычного re-gate после снятия `ship`.
+TAIL аналогично реконструирует полный стабильный GraphQL proof перед каждой
+pre-create мутацией; одной повторной проверки REST comments/labels недостаточно.
 Перед финальным PUT MERGE сохраняет `node_id` review/claim/completion, epoch
-anchor cursor и watermark последнего комментария. Один raw GraphQL snapshot
-адресует три комментария по node ID, возвращает их
+anchor node/cursor и watermark последнего комментария. Два последовательных
+побайтово одинаковых raw GraphQL snapshot
+адресуют три комментария по node ID, возвращают их
 `fullDatabaseId`/body/`lastEditedAt` вместе с HEAD, labels и всеми epoch events
 после anchor; `labels.pageInfo.hasNextPage` и epoch `hasNextPage` обязаны быть
 false.

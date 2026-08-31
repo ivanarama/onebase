@@ -184,9 +184,13 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"активные блокирующие `changes-requested` + `needs-decision`",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
 		"timelineItems(first:100,after:$cursor,itemTypes:",
-		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT]",
+		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
+		"этот точный набор `itemTypes` используют и потребители proof",
 		"`lastEditedAt != null`",
 		"`timelineItems.updatedAt`",
+		"**два полных последовательных прохода**",
+		"всей упорядоченной\n   последовательности `(edge cursor, __typename, все выбранные поля node)`",
+		"`updatedAt` имеет секундную точность",
 		"Epoch — edges **строго после** выбранного anchor",
 		"Git author/committer dates\n   вообще не участвуют",
 		"`epoch-sha256` — SHA-256 ASCII/LF записи",
@@ -214,6 +218,7 @@ func TestReviewProofIsClaimBoundAndRevalidatedByEveryConsumer(t *testing.T) {
 	)
 	requireAllCompact(t, fixer,
 		"claim-bound proof",
+		"два полных\n   идентичных прохода пагинированного timeline",
 		"`IssueComment.lastEditedAt`",
 		"`COMMENT_DELETED_EVENT`",
 		"Claim-less legacy completion",
@@ -223,12 +228,14 @@ func TestReviewProofIsClaimBoundAndRevalidatedByEveryConsumer(t *testing.T) {
 		"`lastEditedAt != null`",
 		"claim-less legacy completion",
 		"claim:node(id:$claimNode)",
+		"двумя полными идентичными проходами по ordered edges и node payload",
 	)
 	requireAllCompact(t, tail,
 		"claim=<id>\n     epoch-sha256=<64hex>",
 		"`lastEditedAt == null`",
 		"`COMMENT_DELETED_EVENT`",
 		"claim-less completion",
+		"двумя полными идентичными\n   проходами по ordered edges и node payload",
 	)
 }
 
@@ -440,10 +447,14 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"timeline?per_page=100",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
 		"**последний переход именно метки `ship`**",
-		"Он обязан быть `labeled` от `ivanarama`",
+		"строго по позиции server-ordered edge/cursor",
+		"Он обязан быть `LabeledEvent` от `ivanarama`",
+		"Никогда не сравнивай числовые REST ids комментариев и label events",
 		"не оживает от повторной постановки другим actor",
-		"одним raw GraphQL-запросом",
-		"точка невозврата",
+		"**два последовательных одинаковых raw GraphQL-запроса**",
+		"Принимай только побайтово одинаковые выбранные значения",
+		"адресованный epoch anchor",
+		"Вторая идентичная проверка этой пары — **точка невозврата**",
 		"`node_id` review/claim/completion",
 		"`fullDatabaseId`, автор, SHA, Outcome-Label",
 		"32-битный диапазон GraphQL `databaseId`",
@@ -451,20 +462,28 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"сравнивай его строковое значение с REST id",
 		"`labels.pageInfo.hasNextPage == false`",
 		"**последний** ship-transition",
+		"его edge\n   расположен после edges всех трёх адресованных комментариев",
 		"Если ни одного ship-transition нет в epoch timeline",
+		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`",
+		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
+		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
+		"... on PullRequestCommit{id commit{oid}}",
+		"... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}",
 		"`lastEditedAt == null`",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
 		"требуется новый аудит/completion",
 		"review:node(id:$reviewNode)",
 		"claim:node(id:$claimNode)",
 		"completion:node(id:$completionNode)",
+		"epochAnchor:node(id:$epochAnchorNode)",
+		"для override-\n   `IssueComment` также `lastEditedAt == null`",
 		`{"merge_method":"merge","sha":"<проверенный SHA>"}`,
 		"Успех — только ответ с `merged: true`",
 		"`409` означает, что HEAD успел измениться",
 	)
 	requireCompactInOrder(t, merge,
 		"5. Мерж:",
-		"одним raw GraphQL-запросом",
+		"два последовательных одинаковых raw GraphQL-запроса",
 		"**точка невозврата**",
 		"compare-and-merge REST",
 	)
@@ -561,6 +580,10 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"одинаковые общие заголовки у\n   разных подсистем — разные задачи",
 		"одного\n     совпавшего title недостаточно",
 		"Перед **каждым внешним изменением**",
+		"initial claim, renewal/takeover lease, create-intent,\n   создание dedupe-ref, issue create, item-done, общий tail-done",
+		"заново реконструируй полный стабильный\n   server-ordered GraphQL REVIEW epoch из п. 2",
+		"Edit/delete proof между выбором пункта\n   и любой pre-create мутацией означает ноль новых issue",
+		"стабильный GraphQL proof-гейт из п. 5",
 		"Не используй GitHub Search",
 		"issues?state=all&since=<root-claim-created-at>&per_page=100",
 		"автора `ivanarama`, точный `pp:tail-source`",
@@ -571,6 +594,7 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"orphan `pp-tail-dedupe/<hash>` ref без найденной issue",
 		"Создание exact-source issue — точка невозврата",
 		"не запрещает **только** восстановительный item-done",
+		"единственное исключение из повторного proof-гейта после точки невозврата",
 		"**никогда не\n   повторяй create автоматически**",
 		"параллельный worker не\n   может выдать чужой claim за собственное владение",
 		"refs/heads/pp-tail-dedupe/<dedupe-sha256>",
@@ -616,12 +640,14 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"GitHub `POST /git/refs`",
 		"`201` даёт branch-claim",
 		"ложный успех `Everything up-to-date`",
-		"Один raw GraphQL snapshot\nадресует три комментария по node ID",
+		"Два последовательных\nпобайтово одинаковых raw GraphQL snapshot",
+		"адресуют три комментария по node ID",
 		"`fullDatabaseId: BigInt`",
 		"строка с REST comment id",
 		"`hasNextPage` обязан быть false",
 		"Watermark обязан оставаться в окне",
-		"Последний переход `ship` среди событий\nвсех actors обязан быть `labeled` от `ivanarama`",
+		"Последний переход `ship` среди\nсобытий всех actors обязан быть `labeled` от `ivanarama` и идти после edges",
+		"Числовые REST ids комментариев и label events не\nсравниваются",
 		"**PR, нужна доработка** → в комментарии с решением добавить отдельную",
 		"строку `pp:fix-decision <текущий SHA>`",
 		"**сначала поставить и проверить**\n     `changes-requested` и только после этого снять `needs-decision`",
@@ -775,12 +801,14 @@ type modeledReviewProof struct {
 	deletionAfter     bool
 	fieldsMatch       bool
 	claimIsEarliest   bool
+	anchorInvalid     bool
 }
 
 func reviewProofAcceptedByConsumer(proof modeledReviewProof) bool {
 	return proof.reviewPresent && proof.claimPresent && proof.completionPresent &&
 		!proof.reviewEdited && !proof.claimEdited && !proof.completionEdited &&
-		!proof.deletionAfter && proof.fieldsMatch && proof.claimIsEarliest
+		!proof.deletionAfter && proof.fieldsMatch && proof.claimIsEarliest &&
+		!proof.anchorInvalid
 }
 
 func TestReviewRecoveryInterleavingsFollowClaimOwner(t *testing.T) {
@@ -840,6 +868,28 @@ func TestReviewDeletedOrEditedWinnerCannotResurrectStaleClaim(t *testing.T) {
 	}
 }
 
+type modeledTimelinePass struct {
+	headRefOid string
+	updatedAt  string
+	edgeDigest string
+}
+
+func stableReviewTimelineSnapshot(first, second modeledTimelinePass) bool {
+	return first == second
+}
+
+func TestReviewPaginationRejectsSameSecondMixedSnapshot(t *testing.T) {
+	first := modeledTimelinePass{headRefOid: "H", updatedAt: "2026-08-31T07:56:51Z", edgeDigest: "page-set-before-edit"}
+	second := modeledTimelinePass{headRefOid: "H", updatedAt: "2026-08-31T07:56:51Z", edgeDigest: "page-set-after-edit"}
+	if stableReviewTimelineSnapshot(first, second) {
+		t.Fatal("equal HEAD and second-resolution updatedAt must not hide a changed ordered edge/node payload")
+	}
+	second.edgeDigest = first.edgeDigest
+	if !stableReviewTimelineSnapshot(first, second) {
+		t.Fatal("two complete identical ordered passes should form a stable snapshot")
+	}
+}
+
 func TestReviewConsumersRejectInvalidatedClaimBoundProof(t *testing.T) {
 	valid := modeledReviewProof{
 		reviewPresent: true, claimPresent: true, completionPresent: true,
@@ -856,6 +906,7 @@ func TestReviewConsumersRejectInvalidatedClaimBoundProof(t *testing.T) {
 		"deletion after anchor":          func(p *modeledReviewProof) { p.deletionAfter = true },
 		"stale sibling claim":            func(p *modeledReviewProof) { p.claimIsEarliest = false },
 		"epoch mismatch":                 func(p *modeledReviewProof) { p.fieldsMatch = false },
+		"override anchor edited":         func(p *modeledReviewProof) { p.anchorInvalid = true },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -865,6 +916,52 @@ func TestReviewConsumersRejectInvalidatedClaimBoundProof(t *testing.T) {
 				t.Fatal("FIX/MERGE/TAIL must reject an invalidated review proof")
 			}
 		})
+	}
+}
+
+func mergeFinalEpochStillCurrent(savedAnchor int, laterHeadAnchors []int) bool {
+	for _, anchor := range laterHeadAnchors {
+		if anchor > savedAnchor {
+			return false
+		}
+	}
+	return true
+}
+
+func TestMergeFinalSnapshotRejectsHeadABA(t *testing.T) {
+	const savedHeadAnchor = 10
+	if !mergeFinalEpochStillCurrent(savedHeadAnchor, nil) {
+		t.Fatal("an unchanged server HEAD epoch must remain valid")
+	}
+	// The SHA can be H again after H -> X -> H, but both transitions create
+	// server-ordered HEAD anchors after the proof's saved anchor.
+	if mergeFinalEpochStillCurrent(savedHeadAnchor, []int{11, 12}) {
+		t.Fatal("a final MERGE snapshot must reject an ABA HEAD transition even when headRefOid is H again")
+	}
+}
+
+func tailPreCreateMutationAllowed(proof modeledReviewProof) bool {
+	return reviewProofAcceptedByConsumer(proof)
+}
+
+func TestTailRechecksReviewProofImmediatelyBeforeCreate(t *testing.T) {
+	proof := modeledReviewProof{
+		reviewPresent: true, claimPresent: true, completionPresent: true,
+		fieldsMatch: true, claimIsEarliest: true,
+	}
+	if !tailPreCreateMutationAllowed(proof) {
+		t.Fatal("an intact proof should allow the pre-create transaction to continue")
+	}
+
+	proof.deletionAfter = true
+	if tailPreCreateMutationAllowed(proof) {
+		t.Fatal("deleting proof after selection but before issue create must stop TAIL with zero new issues")
+	}
+
+	proof.deletionAfter = false
+	proof.claimEdited = true
+	if tailPreCreateMutationAllowed(proof) {
+		t.Fatal("editing proof after selection but before issue create must stop TAIL with zero new issues")
 	}
 }
 
@@ -916,6 +1013,24 @@ func TestMergeShipTransitionInterleavings(t *testing.T) {
 				t.Fatalf("shipGate() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func shipAfterCompletionByServerEdges(shipEdge, completionEdge, shipRESTID, completionRESTID int) bool {
+	_ = shipRESTID
+	_ = completionRESTID
+	return shipEdge > completionEdge
+}
+
+func TestMergeDoesNotOrderCrossTypeEventsByRESTID(t *testing.T) {
+	// GitHub REST ids for label events and comments come from different tables.
+	// The numerically larger label id must not make an earlier same-second label
+	// appear after the completion edge.
+	if shipAfterCompletionByServerEdges(9, 10, 30_249_148_727, 5_471_832_206) {
+		t.Fatal("a ship edge before completion must remain stale regardless of its larger cross-table REST id")
+	}
+	if !shipAfterCompletionByServerEdges(11, 10, 1, 9_999_999_999) {
+		t.Fatal("server edge order must accept a later ship even when its REST id is numerically smaller")
 	}
 }
 
