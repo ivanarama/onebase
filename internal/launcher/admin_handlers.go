@@ -136,13 +136,36 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 <script>
 function cfgUserNew(){document.getElementById('cfg-user-new').style.display='block';document.getElementById('cfg-un').focus()}
 function cfgUserRoles(id){cfgAdmin('users/roles?uid='+encodeURIComponent(id))}
+// cfgPost — POST в админку с честным разбором ответа. Ответ обработчика — JSON,
+// но при завершённой сессии до обработчика дело не доходит: middleware отдаёт
+// редирект на форму входа, fetch его проходит и приносит HTML. Раньше r.json()
+// на этом HTML бросал исключение, которое никто не ловил, — кнопка выглядела
+// мёртвой («нажимаю Сохранить, ничего не происходит»). Ошибку обработчика
+// (поле error) тоже превращаем в отказ, чтобы вызывающий не забыл её показать.
+function cfgPost(path, body){
+  return fetch('/bases/` + b.ID + `/configurator/admin/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){
+      var ct=r.headers.get('content-type')||'';
+      if(ct.indexOf('json')<0){
+        throw new Error(r.redirected||(r.url||'').indexOf('/configurator/login')>=0
+          ? 'Сессия конфигуратора завершена — войдите заново'
+          : 'Неожиданный ответ сервера (HTTP '+r.status+')');
+      }
+      return r.json();
+    })
+    .then(function(d){
+      if(d&&d.error){throw new Error(d.error)}
+      return d;
+    });
+}
 function cfgUserCreate(){
   var d={login:document.getElementById('cfg-un').value,password:document.getElementById('cfg-up').value,fullName:document.getElementById('cfg-ufn').value,isAdmin:document.getElementById('cfg-ua').checked};
-  fetch('/bases/` + b.ID + `/configurator/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){document.getElementById('cfg-user-err').textContent=r.error;document.getElementById('cfg-user-err').style.display='block';return}
-      cfgAdmin('users')
-    })
+  cfgPost('users/create',d)
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){
+      var box=document.getElementById('cfg-user-err');
+      box.textContent=e.message;box.style.display='block';
+    });
 }
 // cfgConfirm — кастомный модал-подтверждение (WebView2 блокирует window.confirm).
 function cfgConfirm(text, onOk){
@@ -171,8 +194,12 @@ function cfgInfo(text){
 }
 function cfgUserDel(id){
   cfgConfirm('Удалить пользователя?', function(){
-    fetch('/bases/` + b.ID + `/configurator/admin/users/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+    // Отказ здесь штатный (последний админ, последний пользователь), а раньше
+    // ответ вообще не читался: панель обновлялась и пользователь оставался на
+    // месте без единого слова о причине.
+    cfgPost('users/delete',{id:id})
       .then(function(){cfgAdmin('users')})
+      .catch(function(e){cfgInfo('Ошибка: '+e.message)});
   });
 }
 function cfgUserPasswd(id){
@@ -193,35 +220,35 @@ function cfgUserPasswd(id){
   ok.onclick=function(){
     var pw=i1.value, pw2=i2.value;
     if(pw!==pw2){err.textContent='Пароли не совпадают';return}
-    fetch('/bases/` + b.ID + `/configurator/admin/users/passwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,password:pw})})
-      .then(function(r){return r.json()}).then(function(r){
-        if(r.error){err.textContent=r.error;return}
+    err.textContent='';
+    cfgPost('users/passwd',{id:id,password:pw})
+      .then(function(){
         document.body.removeChild(ov);
         cfgInfo('Пароль изменён');
       })
+      .catch(function(e){err.textContent=e.message});
   };
   row.appendChild(ok);row.appendChild(cancel);
   box.appendChild(i1);box.appendChild(i2);box.appendChild(err);box.appendChild(row);
   ov.appendChild(box);document.body.appendChild(ov);
   setTimeout(function(){i1.focus()},50);
 }
+// Переключатели ниже сообщали об ошибке через window.alert, который WebView2
+// не показывает: под лаунчером отказ был не виден вовсе.
 function cfgUserDenyPasswd(id,current){
-  fetch('/bases/` + b.ID + `/configurator/admin/users/deny-passwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,deny:!current})})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){alert('Ошибка: '+r.error)}else{cfgAdmin('users')}
-    })
+  cfgPost('users/deny-passwd',{id:id,deny:!current})
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){cfgInfo('Ошибка: '+e.message)});
 }
 function cfgUserShowInList(id,current){
-  fetch('/bases/` + b.ID + `/configurator/admin/users/show-in-list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,show:!current})})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){alert('Ошибка: '+r.error)}else{cfgAdmin('users')}
-    })
+  cfgPost('users/show-in-list',{id:id,show:!current})
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){cfgInfo('Ошибка: '+e.message)});
 }
 function cfgUserAIData(id,current){
-  fetch('/bases/` + b.ID + `/configurator/admin/users/ai-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,allow:!current})})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){alert('Ошибка: '+r.error)}else{cfgAdmin('users')}
-    })
+  cfgPost('users/ai-data',{id:id,allow:!current})
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){cfgInfo('Ошибка: '+e.message)});
 }
 function cfgUserLang(id,current){
   var sel=document.createElement('select');
@@ -242,10 +269,9 @@ function cfgUserLang(id,current){
   btnCancel.onclick=close;bg.onclick=close;
   btnOK.onclick=function(){
     var lang=sel.value;close();
-    fetch('/bases/` + b.ID + `/configurator/admin/users/lang',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,lang:lang})})
-      .then(function(r){return r.json()}).then(function(r){
-        if(r.error){alert('Error: '+r.error)}else{cfgAdmin('users')}
-      })
+    cfgPost('users/lang',{id:id,lang:lang})
+      .then(function(){cfgAdmin('users')})
+      .catch(function(e){cfgInfo('Ошибка: '+e.message)});
   }
 }
 </script>`
@@ -297,7 +323,7 @@ func (h *handler) cfgAdminUserCreate(w http.ResponseWriter, r *http.Request) {
 		if isPasswordPolicyError(err) {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, status, map[string]any{"error": passwordPolicyMessage(lang, err)})
 		return
 	}
 	// До создания первого пользователя текущая страница была открыта без
@@ -376,7 +402,7 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		if isPasswordPolicyError(err) {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, status, map[string]any{"error": passwordPolicyMessage(lang, err)})
 		return
 	}
 	// Политика плана 78: смена пароля из конфигуратора — админское действие,
@@ -388,7 +414,7 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 	// этом администратору и НЕ писать в аудит запись «сессии отозваны»: ложная
 	// запись в журнале хуже отсутствия записи, по ней инцидент закроют как
 	// отработанный.
-	if err := repo.KickUserSessions(r.Context(), req.ID); err != nil {
+	if err := kickSessionsAfterPasswdChange(r, repo, req.ID); err != nil {
 		writeJSON(w, 500, map[string]any{
 			"error": tr(resolveLang(r), "Пароль изменён, но сессии пользователя не завершены") + ": " + err.Error(),
 		})
@@ -402,10 +428,44 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// kickSessionsAfterPasswdChange завершает сессии пользователя, которому только
+// что сменили пароль, — но не ту сессию конфигуратора, из которой админ это
+// делает.
+//
+// Отзыв «всех сессий» при смене пароля себе сносил и текущую: следующее
+// действие в панели администрирования уходило редиректом на форму входа,
+// AJAX-обработчик разбирал HTML формы как JSON и молча падал — кнопка
+// «Сохранить» выглядела мёртвой, хотя первая смена пароля прошла. Гарантия
+// плана 78 при этом не страдает: украденная сессия — это любая другая, и все
+// они по-прежнему завершаются, включая собственные сессии админа на других
+// машинах и в режиме Предприятия.
+func kickSessionsAfterPasswdChange(r *http.Request, repo *auth.Repo, targetID string) error {
+	actor := cfgUserFromContext(r.Context())
+	credential, ok := cfgAuthCredentialFromContext(r.Context())
+	if actor != nil && actor.ID == targetID && ok && credential.token != "" {
+		return repo.KickOtherSessions(r.Context(), targetID, credential.token)
+	}
+	return repo.KickUserSessions(r.Context(), targetID)
+}
+
 func isPasswordPolicyError(err error) bool {
 	return errors.Is(err, auth.ErrPasswordRequired) ||
 		errors.Is(err, auth.ErrPasswordTooShort) ||
 		errors.Is(err, auth.ErrPasswordTooLong)
+}
+
+// passwordPolicyMessage добавляет к отказу политики паролей способ её смягчить.
+// Сам текст ошибки говорит только «пароль не может быть пустым» — из
+// конфигуратора не видно, что пустые пароли вообще включаются, и на тестовом
+// стенде это тупик: админ упирается в запрет, о котором знает лишь исходный код.
+func passwordPolicyMessage(lang string, err error) string {
+	switch {
+	case errors.Is(err, auth.ErrPasswordRequired):
+		return err.Error() + ". " + tr(lang, "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.")
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		return err.Error() + ". " + tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+	}
+	return err.Error()
 }
 
 // logCfgSessionAudit пишет событие сессионного аудита от имени администратора
