@@ -136,15 +136,15 @@ expiry renewal доступен только тому же owner UUID, посл�
 новый UUID; earliest child образует единственную active chain. Перед каждой
 фазой worker доказывает собственный returned active id, matching UUID и
 неистёкшую lease — чужой live root не даёт владения. Каждый lease/phase gate
-пагинированно проверяет `COMMENT_DELETED_EVENT`: любое удаление комментария
-после canonical root закрывает транзакцию человеку, поэтому удалённый winner не
+пагинированно проверяет `COMMENT_DELETED_EVENT`: событие с
+`createdAt >= canonical-root.created_at` закрывает транзакцию человеку, поэтому удалённый winner не
 может воскресить stale sibling.
 
 REVIEW применяет тот же durable fence к выбору claim: в текущей эпохе protocol-
-комментарии принимаются только при `updated_at == created_at`, а пагинированный
-`COMMENT_DELETED_EVENT` проверяется до election и каждой мутации. После edit или
-delete транзакция останавливается; только новый человеческий `pp:review-again`
-после события открывает чистую эпоху, где старые проигравшие claims не участвуют.
+комментарии проверяются по GraphQL `lastEditedAt`, а server timeline edge-order
+различает события даже в одну секунду. После edit/delete транзакция
+останавливается; только новый человеческий `pp:review-again` после опасного edge
+открывает чистую эпоху, где старые проигравшие claims не участвуют.
 
 Дальше он решает маршрут.
 
@@ -236,7 +236,8 @@ About: заявка одобрена, а чинить в репозитории 
 потока владелец перечитываются непосредственно перед каждым push, комментарием
 и изменением меток. До CAS-push нужен прежний HEAD и владелец FIX. После
 успешного собственного push новый HEAD атомарно несёт commit trailer
-`PP-Fix-Transition: from=<SHA> review-comment=<id>`. Пока валидный trailer и
+`PP-Fix-Transition: from=<SHA> review-comment=<id> claim=<id>
+epoch-sha256=<64hex>`. Пока валидный trailer и
 `changes-requested` вместе обозначают незавершённую post-push фазу, REVIEW её
 пропускает, CAS-loser не снимает метку, а победитель или recovery может оставить
 идемпотентный `pp:fix-pushed`-комментарий и завершить handoff снятием метки.
@@ -353,18 +354,28 @@ push не наследует старый вердикт. Перед любым 
 > **Вердикт: годится к мержу / есть замечания.**
 > `<!-- pp:review pp:tail=N -->`
 
-После заключения ревью сначала публикует claim
-`<!-- pp:review-claim <SHA> review-comment=<id заключения> -->` и перечитывает
-события. Только самый ранний валидный claim текущей override-эпохи вправе
-ставить outcome-метку; остальные параллельные попытки заканчиваются до мутации.
-Победитель ставит и подтверждает `Outcome-Label`, затем публикует
-отдельный committed-комментарий
-`<!-- pp:head-reviewed <SHA> review-comment=<id заключения> -->`. Он явно
-связывает SHA с конкретным более ранним review-комментарием. Валидна только
-первая completion-ссылка на этот id; между заключением и completion не должно
-быть `pp:review-again`, а `Reviewed-SHA` обязан совпадать. Маркер долговечно
-доказывает, что соответствующая `Outcome-Label` была подтверждена; её
-последующее снятие FIX не стирает круг. Для одного
+REVIEW строит server-ordered epoch по полностью пагинированным GraphQL timeline
+edges. Anchor — последний `PullRequestCommit`/`HeadRefForcePushedEvent` текущего
+HEAD либо более поздний не редактированный `pp:review-again`; Git commit dates
+не используются. `IssueComment.lastEditedAt`, `COMMENT_DELETED_EVENT`, edge
+cursor и node id устраняют секундные гонки REST. Snapshot перечитывается до
+стабильных `headRefOid`/`timelineItems.updatedAt` и перед каждой мутацией.
+
+После заключения ревью публикует claim
+`<!-- pp:review-claim <SHA> review-comment=<id заключения>
+epoch-sha256=<64hex> -->` и перечитывает события. Только earliest не
+редактированный claim текущей epoch вправе ставить outcome-метку; остальные
+параллельные попытки заканчиваются до мутации. Победитель ставит и подтверждает
+`Outcome-Label`, затем публикует отдельный committed-комментарий
+`<!-- pp:head-reviewed <SHA> review-comment=<id заключения> claim=<id claim>
+epoch-sha256=<64hex> -->`. Он связывает SHA с конкретными review, claim и
+server epoch. Все три комментария должны существовать и иметь
+`lastEditedAt == null`, а после anchor не должно быть deletion event. Поэтому
+edit/delete после последнего pre-POST gate делает completion непригодным для
+REVIEW/FIX/MERGE/TAIL. Claim-less marker остаётся только историей старого
+протокола и не разрешает мутации. Валидна только первая completion-ссылка на
+этот id; между заключением и completion не должно быть `pp:review-again`, а
+`Reviewed-SHA` обязан совпадать. Для одного
 SHA без разделяющего override канонична только первая валидная пара, поэтому
 параллельный дубль аудита круг не увеличивает. Если сбой случился до committed-
 маркера, сорванная попытка круг не увеличивает.
@@ -480,22 +491,26 @@ override: REVIEW распознает явный handoff, снимет парк�
 возвращают разрешение. Поэтому старый `ship`, оставшийся до нового заключения,
 не считается согласием человека с этим заключением.
 
-На каждой такой проверке MERGE также сравнивает текущий SHA с доверенной парой
-`pp:head-reviewed … review-comment=<id>` → существующий review-комментарий и
-убеждается, что это первая completion-ссылка на id, `Reviewed-SHA` совпадает,
+На каждой такой проверке MERGE также сравнивает текущий SHA с доверенным
+claim-bound proof `pp:head-reviewed … review-comment=<id> claim=<id>
+epoch-sha256=<hash>` → существующие не редактированные review/earliest-claim/
+completion и убеждается, что это первая completion-ссылка на id,
+`Reviewed-SHA`/epoch совпадают, после anchor нет deletion event,
 между парой и после completion нет непоглощённого `pp:review-again`, а связанное
 заключение содержит точную `Outcome-Label`. Если
 `ship` относится к старому HEAD или аудит не завершён, пастух снимает устаревший
 `ship`, сверяет удаление, пишет причину в рамках той же атомарной передачи и
 возвращает PR в REVIEW; новый код без ревью не вливается. Этот завершающий
 комментарий — явное исключение из обычного re-gate после снятия `ship`.
-Перед финальным PUT MERGE сохраняет `node_id` review и completion и watermark
-последнего комментария. Один raw GraphQL snapshot адресует оба комментария по
-node ID, возвращает их `fullDatabaseId`/body/`lastEditedAt` вместе с HEAD, labels
-и `labels.pageInfo.hasNextPage`, последними 100 comments и label-events.
+Перед финальным PUT MERGE сохраняет `node_id` review/claim/completion, epoch
+anchor cursor и watermark последнего комментария. Один raw GraphQL snapshot
+адресует три комментария по node ID, возвращает их
+`fullDatabaseId`/body/`lastEditedAt` вместе с HEAD, labels и всеми epoch events
+после anchor; `labels.pageInfo.hasNextPage` и epoch `hasNextPage` обязаны быть
+false.
 `hasNextPage` обязан быть false, иначе стоп-метка могла остаться за пределом
-снимка. Последний ship-transition должен быть trusted labeled позже создания и
-последнего edit обоих адресованных комментариев. Watermark обязан оставаться в окне: если появилось
+снимка. Последний ship-transition должен быть trusted labeled позже создания
+всех трёх не редактированных комментариев. Watermark обязан оставаться в окне: если появилось
 100+ новых комментариев, нужен новый аудит/completion; перестановка `ship` лечит
 только отсутствие свежего ship-event, а не потерю доказательства комментариев.
 Именно `fullDatabaseId: BigInt`, а не старый `databaseId: Int`, сравнивается как

@@ -83,7 +83,7 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 		"gh api --paginate",
 		"comments?per_page=100",
 	)
-	rejectAll(t, review, "headRefOid", "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
+	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
 }
 
 func TestReviewMarkersCannotCollideWithTailMarker(t *testing.T) {
@@ -95,7 +95,7 @@ func TestReviewMarkersCannotCollideWithTailMarker(t *testing.T) {
 	}
 	requireAll(t, review,
 		"^<!-- pp:review pp:tail=[0-9]+ -->$",
-		headMarker+" <полный проверенный SHA> review-comment=<id заключения> -->",
+		headMarker+" <полный проверенный SHA> review-comment=<id заключения> claim=<id claim-комментария> epoch-sha256=<64hex> -->",
 	)
 	rejectAll(t, review, "pp:review-head")
 }
@@ -146,7 +146,7 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"Круги считай только по таким committed-парам",
 		"каждый уникальный `review-comment id` учитывай не больше одного раза",
 		"Незавершённый review-комментарий\n   остаётся диагностикой попытки, но круг не увеличивает",
-		"review-comment` указывает на существующий\n   более ранний доверенный комментарий",
+		"`review-comment` и `claim` указывают\n   на существующие более ранние не редактированные доверенные комментарии",
 	)
 	rejectAll(t, review,
 		"немедленно сними только свою метку",
@@ -175,19 +175,23 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"после любой каноничной committed-пары человек опубликовал доверенный `pp:review-again`",
 		"это явный recoverable handoff обратно в REVIEW",
 		"Более поздний непоглощённый override отменяет маршрутный стоп `changes-requested` / `needs-decision`",
-		"<!-- pp:review-claim <40-символьный SHA> review-comment=<числовой id> -->",
+		"<!-- pp:review-claim <40-символьный SHA> review-comment=<числовой id> epoch-sha256=<64hex> -->",
 		"Stale `reviewed` от прошлой эпохи или старого HEAD конфликтом не считается",
-		"PP-Fix-Transition: from=<SHA> review-comment=<id>",
+		"PP-Fix-Transition: from=<SHA> review-comment=<id> claim=<id>\n   epoch-sha256=<64hex>",
 		"мяч у FIX/recovery",
 		"также всегда запрещает REVIEW-мутацию",
 		"Опасный необъяснимый конфликт — `needs-decision`",
 		"активные блокирующие `changes-requested` + `needs-decision`",
-		"{id,created_at,updated_at,author:.user.login,body}",
-		"`updated_at == created_at`",
-		"timelineItems(itemTypes:[COMMENT_DELETED_EVENT])",
-		"Любой `CommentDeletedEvent.createdAt` позже\n   начала текущей эпохи",
-		"удаление/редактирование earliest claim не должно воскрешать stale\n   sibling",
-		"только новый\n   не редактированный `pp:review-again`",
+		"{id,node_id,created_at,updated_at,author:.user.login,body}",
+		"timelineItems(first:100,after:$cursor,itemTypes:",
+		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT]",
+		"`lastEditedAt != null`",
+		"`timelineItems.updatedAt`",
+		"Epoch — edges **строго после** выбранного anchor",
+		"Git author/committer dates\n   вообще не участвуют",
+		"`epoch-sha256` — SHA-256 ASCII/LF записи",
+		"same-second edit/delete earliest claim не воскрешает\n   stale sibling",
+		"Edit/delete в окне после последнего pre-POST gate",
 	)
 	requireCompactInOrder(t, review,
 		"После публикации заключения перечитай HEAD",
@@ -195,6 +199,36 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"только самый ранний валидный claim текущей эпохи вправе поставить",
 		"ожидаемую `Outcome-Label`",
 		"опубликуй **отдельный committed-комментарий**",
+	)
+}
+
+func TestReviewProofIsClaimBoundAndRevalidatedByEveryConsumer(t *testing.T) {
+	review := skill(t, "review-queue")
+	fixer := skill(t, "fix-approved")
+	merge := skill(t, "merge-shepherd")
+	tail := skill(t, "tail-issues")
+	requireAllCompact(t, review,
+		"claim=<id claim-комментария> epoch-sha256=<64hex>",
+		"`lastEditedAt == null`",
+		"не принимается ни REVIEW, ни\n   FIX/MERGE/TAIL",
+	)
+	requireAllCompact(t, fixer,
+		"claim-bound proof",
+		"`IssueComment.lastEditedAt`",
+		"`COMMENT_DELETED_EVENT`",
+		"Claim-less legacy completion",
+	)
+	requireAllCompact(t, merge,
+		"claim=<числовой id> epoch-sha256=<64hex>",
+		"`lastEditedAt != null`",
+		"claim-less legacy completion",
+		"claim:node(id:$claimNode)",
+	)
+	requireAllCompact(t, tail,
+		"claim=<id>\n     epoch-sha256=<64hex>",
+		"`lastEditedAt == null`",
+		"`COMMENT_DELETED_EVENT`",
+		"claim-less completion",
 	)
 }
 
@@ -215,12 +249,16 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"В финале обязаны остаться\n   `needs-decision` и отсутствовать `changes-requested`",
 		"^<!-- pp:review pp:tail=[0-9]+ -->$",
 		"gh api --paginate",
-		"`<!-- pp:head-reviewed <SHA> review-comment=<id> -->`",
+		"`<!-- pp:head-reviewed <SHA> review-comment=<id> claim=<id>\n     epoch-sha256=<64hex> -->`",
 	)
 	requireAllCompact(t, fixer,
 		"Затем исключи `ship` и `hold`",
 		"Успешный собственный push потребляет старое владение FIX",
-		"PP-Fix-Transition: from=<SHA canonical completion> review-comment=<id заключения>",
+		"PP-Fix-Transition: from=<SHA canonical completion> review-comment=<id заключения> claim=<id> epoch-sha256=<64hex>",
+		"Claim-less legacy completion",
+		"server-ordered GraphQL epoch",
+		"`IssueComment.lastEditedAt`",
+		"`COMMENT_DELETED_EVENT`",
 		"review-комментария/`pp:review-claim` этого HEAD",
 		"CAS-loser не вправе снимать её маршрутную метку",
 		"HEAD == отправленному SHA",
@@ -388,8 +426,8 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"issues/<N> --jq '[.labels[].name]'",
 		"`ship` присутствует",
 		"`hold` и\n   `needs-decision` отсутствуют",
-		"`<!-- pp:head-reviewed <текущий SHA> review-comment=<числовой id> -->`",
-		"ссылается на существующий более ранний доверенный review-комментарий",
+		"`<!-- pp:head-reviewed <текущий SHA> review-comment=<числовой id>\n   claim=<числовой id> epoch-sha256=<64hex> -->`",
+		"earliest-claim комментарии server-ordered REVIEW epoch",
 		"После completion не должно быть отдельной строки `pp:review-again`",
 		"сними `ship` через REST",
 		"комментарий является разрешённым завершающим шагом **этой же\n   транзакции**",
@@ -406,18 +444,19 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"не оживает от повторной постановки другим actor",
 		"одним raw GraphQL-запросом",
 		"точка невозврата",
-		"`node_id` конкретных review-комментария и completion",
+		"`node_id` review/claim/completion",
 		"`fullDatabaseId`, автор, SHA, Outcome-Label",
 		"32-битный диапазон GraphQL `databaseId`",
 		"`fullDatabaseId: BigInt`",
 		"сравнивай его строковое значение с REST id",
 		"`labels.pageInfo.hasNextPage == false`",
 		"**последний** ship-transition",
-		"Если ни одного ship-transition нет в `timelineItems(last:100)`",
-		"`lastEditedAt` обоих комментариев",
+		"Если ни одного ship-transition нет в epoch timeline",
+		"`lastEditedAt == null`",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
 		"требуется новый аудит/completion",
 		"review:node(id:$reviewNode)",
+		"claim:node(id:$claimNode)",
 		"completion:node(id:$completionNode)",
 		`{"merge_method":"merge","sha":"<проверенный SHA>"}`,
 		"Успех — только ответ с `merged: true`",
@@ -488,6 +527,10 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"Время мержа самого исходного PR границей не является",
 		"последнее заключение создано в момент границы или позже",
 		"нет каноничной committed-пары для merged HEAD и не сработал описанный выше",
+		"`pp:head-reviewed <SHA> review-comment=<id> claim=<id>\n     epoch-sha256=<64hex>`",
+		"`lastEditedAt == null`",
+		"после anchor нет\n     `COMMENT_DELETED_EVENT`",
+		"claim-less completion допустим только",
 		"Для нового протокола возьми только заключение, чей числовой `id` указан",
 		"Для legacy-drain возьми выбранное в п. 2 последнее доверенное legacy-заключение",
 		"Более поздний orphan `pp:review` без валидной ссылки не является аудитом",
@@ -548,13 +591,13 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"без `hold`/`needs-decision`",
 		"непосредственно перед merge",
 		"push разрешённого конфликта",
-		"`<!-- pp:head-reviewed <SHA> review-comment=<id заключения> -->`",
+		"`<!-- pp:head-reviewed <SHA> review-comment=<id заключения> claim=<id claim>\nepoch-sha256=<64hex> -->`",
 		"Если сбой случился до committed-\nмаркера, сорванная попытка круг не увеличивает",
 		"пастух снимает устаревший\n`ship`",
 		"`BEHIND` → `update-branch` вызывается с `expected_head_sha` проверенного HEAD",
 		"После `422` HEAD перечитывается",
 		"полный label+SHA-гейт непосредственно перед единственным\n  перезапуском",
-		"Валидна только\nпервая completion-ссылка на этот id",
+		"Валидна только первая completion-ссылка на\nэтот id",
 		"SHA с удалённым HEAD до создания worktree и ещё раз непосредственно перед push",
 		"REST-запросом compare-and-merge с полем\n`sha=<проверенный HEAD>`",
 		"Оба этапа отправляют изменения атомарным CAS-push",
@@ -573,7 +616,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"GitHub `POST /git/refs`",
 		"`201` даёт branch-claim",
 		"ложный успех `Everything up-to-date`",
-		"Один raw GraphQL snapshot адресует оба комментария по\nnode ID",
+		"Один raw GraphQL snapshot\nадресует три комментария по node ID",
 		"`fullDatabaseId: BigInt`",
 		"строка с REST comment id",
 		"`hasNextPage` обязан быть false",
@@ -684,19 +727,20 @@ func recoveryTarget(orphans []orderedClaim, claims []orderedClaim) string {
 	return winner.orphan
 }
 
-type reviewEpochComment struct {
-	created int
-	updated int
+type reviewEpochEvent struct {
+	sequence   int
+	wallSecond int
+	deleted    bool
+	trusted    bool
+	edited     bool
 }
 
-func reviewEpochGate(epochStart int, comments []reviewEpochComment, deletionEvents []int) bool {
-	for _, deletedAt := range deletionEvents {
-		if deletedAt > epochStart {
-			return false
+func reviewEpochGate(anchorSequence int, events []reviewEpochEvent) bool {
+	for _, event := range events {
+		if event.sequence <= anchorSequence {
+			continue
 		}
-	}
-	for _, comment := range comments {
-		if comment.created > epochStart && comment.updated != comment.created {
+		if event.deleted || (event.trusted && event.edited) {
 			return false
 		}
 	}
@@ -711,6 +755,32 @@ func reviewClaimsAfter(claims []orderedClaim, epochStart int) []orderedClaim {
 		}
 	}
 	return current
+}
+
+func modeledReviewEpochAnchor(headEdge, overrideEdge, untrustedGitCommitTime int) int {
+	_ = untrustedGitCommitTime
+	if overrideEdge > headEdge {
+		return overrideEdge
+	}
+	return headEdge
+}
+
+type modeledReviewProof struct {
+	reviewPresent     bool
+	claimPresent      bool
+	completionPresent bool
+	reviewEdited      bool
+	claimEdited       bool
+	completionEdited  bool
+	deletionAfter     bool
+	fieldsMatch       bool
+	claimIsEarliest   bool
+}
+
+func reviewProofAcceptedByConsumer(proof modeledReviewProof) bool {
+	return proof.reviewPresent && proof.claimPresent && proof.completionPresent &&
+		!proof.reviewEdited && !proof.claimEdited && !proof.completionEdited &&
+		!proof.deletionAfter && proof.fieldsMatch && proof.claimIsEarliest
 }
 
 func TestReviewRecoveryInterleavingsFollowClaimOwner(t *testing.T) {
@@ -744,19 +814,69 @@ func TestReviewDeletedOrEditedWinnerCannotResurrectStaleClaim(t *testing.T) {
 	if got := recoveryTarget(orphans, visibleAfterWinnerRemoval); got != "R2-reviewed" {
 		t.Fatalf("current bodies alone should expose stale resurrection, got %q", got)
 	}
-	if reviewEpochGate(0, nil, []int{12}) {
+	if reviewEpochGate(0, []reviewEpochEvent{{sequence: 12, deleted: true}}) {
 		t.Fatal("deleting the winning claim in the current epoch must fail closed")
 	}
-	if reviewEpochGate(0, []reviewEpochComment{{created: 10, updated: 12}}, nil) {
+	if reviewEpochGate(0, []reviewEpochEvent{{sequence: 10, trusted: true, edited: true}}) {
 		t.Fatal("editing the winning claim marker away in the current epoch must fail closed")
+	}
+	if reviewEpochGate(9, []reviewEpochEvent{{sequence: 10, wallSecond: 5, trusted: true, edited: true}}) {
+		t.Fatal("GraphQL lastEditedAt must catch an edit in the same wall-clock second")
+	}
+	if reviewEpochGate(9, []reviewEpochEvent{{sequence: 10, wallSecond: 5, deleted: true}}) {
+		t.Fatal("server edge order must catch a deletion in the same wall-clock second")
 	}
 
 	const freshOverride = 13
-	if !reviewEpochGate(freshOverride, []reviewEpochComment{{created: 10, updated: 12}}, []int{12}) {
+	oldMutationEvents := []reviewEpochEvent{
+		{sequence: 10, trusted: true, edited: true},
+		{sequence: 12, deleted: true},
+	}
+	if !reviewEpochGate(freshOverride, oldMutationEvents) {
 		t.Fatal("a fresh human override after the mutation must start a clean epoch")
 	}
 	if current := reviewClaimsAfter(claims, freshOverride); len(current) != 0 {
 		t.Fatalf("stale sibling claims before the fresh epoch must be excluded, got %+v", current)
+	}
+}
+
+func TestReviewConsumersRejectInvalidatedClaimBoundProof(t *testing.T) {
+	valid := modeledReviewProof{
+		reviewPresent: true, claimPresent: true, completionPresent: true,
+		fieldsMatch: true, claimIsEarliest: true,
+	}
+	if !reviewProofAcceptedByConsumer(valid) {
+		t.Fatal("an intact claim-bound proof must be consumable")
+	}
+	tests := map[string]func(*modeledReviewProof){
+		"review edited after completion": func(p *modeledReviewProof) { p.reviewEdited = true },
+		"claim edited after completion":  func(p *modeledReviewProof) { p.claimEdited = true },
+		"completion edited":              func(p *modeledReviewProof) { p.completionEdited = true },
+		"claim deleted in TOCTOU window": func(p *modeledReviewProof) { p.claimPresent = false },
+		"deletion after anchor":          func(p *modeledReviewProof) { p.deletionAfter = true },
+		"stale sibling claim":            func(p *modeledReviewProof) { p.claimIsEarliest = false },
+		"epoch mismatch":                 func(p *modeledReviewProof) { p.fieldsMatch = false },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			proof := valid
+			mutate(&proof)
+			if reviewProofAcceptedByConsumer(proof) {
+				t.Fatal("FIX/MERGE/TAIL must reject an invalidated review proof")
+			}
+		})
+	}
+}
+
+func TestReviewEpochUsesServerAnchorNotFutureGitDate(t *testing.T) {
+	const serverHeadAnchor = 10
+	const forgedFutureGitTime = 2_114_380_800 // 2037-01-01.
+	if got := modeledReviewEpochAnchor(serverHeadAnchor, 0, forgedFutureGitTime); got != serverHeadAnchor {
+		t.Fatalf("epoch anchor = %d, want server timeline edge %d", got, serverHeadAnchor)
+	}
+	claims := []orderedClaim{{sequence: 11, orphan: "current"}}
+	if current := reviewClaimsAfter(claims, serverHeadAnchor); len(current) != 1 {
+		t.Fatalf("server-ordered claim after HEAD anchor must remain eligible, got %+v", current)
 	}
 }
 
@@ -1286,6 +1406,10 @@ func modeledRecoverActiveTriageLease(root modeledTriageLease, visibleChildren []
 	return modeledActiveTriageLease(root, visibleChildren), true
 }
 
+func modeledTriageDeletionFence(rootCreated, deletionCreated int) bool {
+	return deletionCreated < rootCreated
+}
+
 func TestEquivalentConcurrentRootsDoNotDeadlockWinner(t *testing.T) {
 	roots := []modeledConcurrentRoot{
 		{id: 101, fingerprint: "same", record: "same-record", reason: "same-reason"},
@@ -1367,6 +1491,9 @@ func TestDeletedTriageLeaseWinnerCannotResurrectStaleSibling(t *testing.T) {
 	}
 	if _, ok := modeledRecoverActiveTriageLease(root, []modeledTriageLease{staleSibling}, true); ok {
 		t.Fatal("a paginated post-root comment deletion event must fail closed before stale election")
+	}
+	if modeledTriageDeletionFence(31, 31) {
+		t.Fatal("a same-second deletion at the canonical root boundary must fail closed")
 	}
 }
 

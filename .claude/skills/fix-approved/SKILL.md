@@ -79,6 +79,18 @@ description: Реализация заявок ivanarama/onebase с меткой
    `needs-decision`); `review-again` передаёт REVIEW, поэтому FIX не меняет ни
    метки, ни код. Маркеры другого SHA игнорируй.
 
+   Любая committed-пара, способная передать владение FIX, обязана быть новым
+   claim-bound proof:
+   `<!-- pp:head-reviewed <SHA> review-comment=<id> claim=<id>
+   epoch-sha256=<64hex> -->`. Перед выбором владельца и перед каждой мутацией
+   реконструируй тот же server-ordered GraphQL epoch, что REVIEW: стабильный
+   пагинированный timeline с HEAD anchors, `IssueComment.lastEditedAt` и
+   `COMMENT_DELETED_EVENT`; review, earliest claim и completion должны
+   существовать, быть от `ivanarama`, не редактироваться, совпадать по
+   SHA/review-comment/claim/epoch и не иметь deletion edge после anchor.
+   Claim-less legacy completion можно учитывать только как историю кругов: он
+   **не** передаёт владение FIX и не разрешает код/labels/comments.
+
    Непосредственно перед **каждой** мутацией recovery заново прочитай одним
    циклом HEAD, все комментарии и labels и пересчитай последний валидный переход.
    Если HEAD или владелец изменились, остановись без мутации. Так старый
@@ -89,18 +101,18 @@ description: Реализация заявок ivanarama/onebase с меткой
    который станет новым HEAD PR, обязан иметь в сообщении точный trailer
 
    ```
-   PP-Fix-Transition: from=<SHA canonical completion> review-comment=<id заключения>
+   PP-Fix-Transition: from=<SHA canonical completion> review-comment=<id заключения> claim=<id> epoch-sha256=<64hex>
    ```
 
-   Trailer валиден, только если `from` — предок текущего HEAD, а указанный
-   review-комментарий образует каноничную committed-пару `changes-requested` для
-   этого `from`. Прочитай сообщение текущего HEAD через
+   Trailer валиден, только если `from` — предок текущего HEAD, а указанные
+   review/claim/epoch точно образуют каноничный claim-bound proof
+   `changes-requested` для этого `from`. Прочитай сообщение текущего HEAD через
    `gh api repos/ivanarama/onebase/commits/<HEAD> --jq .commit.message`. Пока на
    новом HEAD есть валидный trailer, всё ещё висит `changes-requested` и после
    push нет `pp:review-again`, review-комментария/`pp:review-claim` этого HEAD или
    его completion, мяч остаётся у **финализации FIX**. Добавь, если отсутствует,
    итоговый комментарий с точным маркером
-   `<!-- pp:fix-pushed from=<старый SHA> head=<новый SHA> review-comment=<id> -->`,
+   `<!-- pp:fix-pushed from=<старый SHA> head=<новый SHA> review-comment=<id> claim=<id> epoch-sha256=<64hex> -->`,
    затем на новой полной сверке сними `changes-requested`. Оба шага идемпотентны;
    recovery может закончить их после crash. REVIEW обязан пропустить такую
    незавершённую фазу, а CAS-loser не вправе снимать её маршрутную метку.
@@ -113,7 +125,7 @@ description: Реализация заявок ivanarama/onebase с меткой
    ```
    gh api repos/ivanarama/onebase/pulls/<M> --jq .head.sha
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
-     --jq '.[] | {id,created_at,author:.user.login,body}'
+     --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api repos/ivanarama/onebase/issues/<M> --jq '[.labels[].name]'
    ```
 
@@ -333,7 +345,7 @@ description: Реализация заявок ivanarama/onebase с меткой
    gh api repos/ivanarama/onebase/issues/<N> \
      --jq '{state,title,body,updated_at,labels:[.labels[].name]}'
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/comments?per_page=100" \
-     --jq '.[] | {id,created_at,updated_at,author:.user.login,body}'
+     --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    ```
 
    и пересчитывай `issue-decision fingerprint`. До final CAS-push и
@@ -400,15 +412,16 @@ description: Реализация заявок ivanarama/onebase с меткой
      `pp:review-again`; для одного SHA без разделяющего override канонична только
      самая ранняя такая пара. Выбери самое позднее **завершённое** заключение:
      доверенный completion-маркер `ivanarama`
-     `<!-- pp:head-reviewed <SHA> review-comment=<id> -->` должен ссылаться на
-     существующий более ранний доверенный комментарий с отдельной строкой
+     `<!-- pp:head-reviewed <SHA> review-comment=<id> claim=<id>
+     epoch-sha256=<64hex> -->` должен ссылаться на существующие более ранние
+     доверенные review и earliest-claim комментарии с отдельной строкой
      `^<!-- pp:review pp:tail=[0-9]+ -->$`, совпадающим `Reviewed-SHA` и
      `Outcome-Label`. Сортируй события по `created_at`,
      затем по числовому `id`:
 
      ```
      gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
-       --jq '.[] | {id,created_at,author:.user.login,body}'
+       --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
      ```
 
      Для обычной доработки нужен committed-маркер текущего SHA, каноничная пара,

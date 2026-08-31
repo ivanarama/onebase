@@ -150,13 +150,16 @@ onebase describe --project <dir>                # вся структура ко
   Active lease — детерминированная chain: same-owner renewal только перед
   expiry, takeover новым UUID только после expiry; каждая фаза требует
   собственные returned active id, matching UUID и неистёкшее время. Удаление
-  любого комментария после canonical TRIAGE root обнаруживается пагинированным
-  `COMMENT_DELETED_EVENT` gate и навсегда закрывает транзакцию человеку: stale
+  любого комментария с `CommentDeletedEvent.createdAt >= canonical-root.created_at`
+  обнаруживается пагинированным gate и навсегда закрывает транзакцию человеку: stale
   lease-ветка не может воскреснуть после удаления winner.
-  REVIEW аналогично считает claim/completion только в неизменяемой эпохе:
-  `updated_at == created_at`, пагинированный `COMMENT_DELETED_EVENT` fence до
-  election и каждой мутации; новый человеческий `pp:review-again` после
-  edit/delete начинает чистую эпоху и не даёт stale claim сменить outcome.
+  REVIEW строит epoch по server-ordered GraphQL timeline edges: HEAD-anchor или
+  более поздний unedited `pp:review-again`; `lastEditedAt == null`, отсутствие
+  `COMMENT_DELETED_EVENT`, node/fullDatabaseId и edge cursor проверяются до
+  election и каждой мутации. Completion хранит review id, earliest claim id и
+  epoch hash; FIX/MERGE/TAIL реконструируют тот же proof. Поэтому same-second
+  edit/delete и окно после pre-POST gate не дают stale claim сменить outcome, а
+  future Git dates не влияют на anchor.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR
@@ -165,18 +168,20 @@ onebase describe --project <dir>                # вся структура ко
   `needs-decision` — стопы даже при `ship`; перед мержем они проверяются в одном
   согласованном GraphQL snapshot с HEAD и timeline. Этот snapshot — точка
   невозврата: метка, поставленная уже после отправки merge PUT, не может отменить
-  запрос в полёте. MERGE дополнительно требует `pp:head-reviewed` ровно для текущего SHA со
-  ссылкой `review-comment=<id>` на завершённое заключение и снимает устаревший
+  запрос в полёте. MERGE дополнительно требует claim-bound `pp:head-reviewed`
+  ровно для текущего SHA со ссылками `review-comment=<id> claim=<id>
+  epoch-sha256=<hash>` и снимает устаревший
   `ship`, если после аудита был push или `pp:review-again`; последний переход
   метки `ship` среди событий всех actors обязан быть trusted `labeled` после
-  creation/edit обоих комментариев. Старый label после trusted unlabel не
+  creation всех трёх unedited комментариев. Старый label после trusted unlabel не
   воскресает от чужого re-label. ID комментариев
   в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
   `databaseId`, и строкой сравниваются с REST id.
   REVIEW получает полный пагинированный список PR и считает каждый завершённый
   `review-comment=<id>` только один раз; override между заключением и committed-
   маркером делает пару невалидной. Транзакция `заключение → review-claim →
-  итоговая метка → pp:head-reviewed` восстанавливается по `Reviewed-SHA`: при
+  итоговая метка → claim-bound pp:head-reviewed` восстанавливается по
+  `Reviewed-SHA`: при
   существующих claims recovery берёт orphan самого раннего claim, а самый ранний
   orphan получает claim только при полном отсутствии claims. Committed-маркер хранит
   историю кругов после снятия метки FIX.

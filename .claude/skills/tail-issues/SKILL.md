@@ -125,10 +125,16 @@ stderr, вывода нет, код возврата ненулевой. Все 
 
    - нет каноничной committed-пары для merged HEAD и не сработал описанный выше
      ограниченный legacy-fallback: доверенный
-     `pp:head-reviewed <SHA> review-comment=<id>` должен ссылаться на более
-     ранний комментарий `ivanarama` с тем же `Reviewed-SHA`, точным
-     `Outcome-Label` и tail-маркером; между ними нет `pp:review-again`, ссылка на
-     id первая, а для SHA без разделяющего override канонична самая ранняя пара;
+     `pp:head-reviewed <SHA> review-comment=<id> claim=<id>
+     epoch-sha256=<64hex>` должен ссылаться на более ранние не редактированные
+     review и earliest-claim комментарии `ivanarama` server-ordered REVIEW
+     epoch. TAIL пагинированно реконструирует тот же HEAD-anchor/override epoch:
+     все три комментария существуют и имеют `lastEditedAt == null`, claim и
+     completion совпадают по SHA/review-comment/epoch, после anchor нет
+     `COMMENT_DELETED_EVENT`, между ними нет `pp:review-again`, ссылка на id
+     первая, а для SHA без разделяющего override каноничен earliest claim;
+     claim-less completion допустим только в уже описанном legacy-fallback до
+     cutover и никогда не считается новым протоколом;
    - после выбранной committed-пары есть более поздняя доверенная отдельная
      строка `pp:review-again`, которую не поглотила следующая каноничная пара
      merged HEAD: старый аудит отменён, даже если PR затем влили вручную;

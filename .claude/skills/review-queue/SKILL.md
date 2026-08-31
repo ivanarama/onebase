@@ -85,39 +85,69 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
 
    ```
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
-     --jq '.[] | {id,created_at,updated_at,author:.user.login,body}'
+     --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    ```
 
    Доверяй только `author == "ivanarama"`. В теле доверенного комментария
    событиями считаются только отдельные строки точного формата:
 
    ```
-   <!-- pp:head-reviewed <40-символьный SHA> review-comment=<числовой id> -->
-   <!-- pp:review-claim <40-символьный SHA> review-comment=<числовой id> -->
+   <!-- pp:head-reviewed <40-символьный SHA> review-comment=<числовой id> claim=<числовой id> epoch-sha256=<64hex> -->
+   <!-- pp:review-claim <40-символьный SHA> review-comment=<числовой id> epoch-sha256=<64hex> -->
    pp:review-again
    ```
 
-   Все protocol events REVIEW версионированы: доверенный комментарий текущей
-   review-эпохи допустим лишь при `updated_at == created_at`. Начало эпохи —
-   более позднее из времени commit текущего HEAD и `created_at` последнего
-   доверенного **не редактированного** разделяющего `pp:review-again`,
-   применимого к этому HEAD. До election и перед **каждой** внешней мутацией
-   пагинированным GraphQL прочитай
-   `timelineItems(itemTypes:[COMMENT_DELETED_EVENT])` до
-   `pageInfo.hasNextPage == false`. Любой `CommentDeletedEvent.createdAt` позже
-   начала текущей эпохи либо любой комментарий `ivanarama`, созданный в этой
-   эпохе и имеющий `updated_at != created_at`, закрывает gate: ничего не меняй,
-   закончи `НУЖЕН ЧЕЛОВЕК`. Список сохранившихся bodies не доказывает прошлый
-   election: удаление/редактирование earliest claim не должно воскрешать stale
-   sibling с другим `Outcome-Label`. Возобновить работу может только новый
+   Все protocol events REVIEW версионированы серверным GraphQL. Одним
+   пагинированным `timelineItems(first:100,after:$cursor,itemTypes:
+   [PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,
+   COMMENT_DELETED_EVENT])` получи **edges с cursor**; для `IssueComment` читай
+   `id`, `fullDatabaseId`, `createdAt`, `lastEditedAt`, author и body, для
+   commit/force-push — `commit.oid`/`afterCommit.oid`. Перезапускай чтение,
+   пока `.headRefOid` и `timelineItems.updatedAt` до и после всех страниц не
+   совпадут; `pageInfo.hasNextPage` последней страницы обязан быть false. REST
+   `node_id` каждого используемого комментария обязан точно совпасть с GraphQL
+   `IssueComment.id`, а decimal REST id — со строковым `fullDatabaseId`.
+
+   ```graphql
+   query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+     repository(owner:$owner,name:$name){pullRequest(number:$number){
+       headRefOid
+       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT]){
+         updatedAt pageInfo{hasNextPage endCursor}
+         edges{cursor node{__typename
+           ... on PullRequestCommit{id commit{oid}}
+           ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
+           ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
+           ... on CommentDeletedEvent{id createdAt}
+         }}
+       }
+     }}
+   }
+   ```
+
+   Server epoch anchor — последний по порядку edges `PullRequestCommit` с
+   `commit.oid == headRefOid` либо `HeadRefForcePushedEvent` с
+   `afterCommit.oid == headRefOid`; неоднозначность/отсутствие anchor закрывает
+   gate. Более поздний доверенный не редактированный `pp:review-again` может
+   стать новым anchor. Epoch — edges **строго после** выбранного anchor, поэтому
+   одинаковая секунда не создаёт неоднозначности, а Git author/committer dates
+   вообще не участвуют. `epoch-sha256` — SHA-256 ASCII/LF записи
+   `pp-review-epoch-v1\nhead=<SHA>\nanchor-node=<GraphQL node id>\n`.
+
+   В текущей epoch любой `COMMENT_DELETED_EVENT` либо любой комментарий
+   `ivanarama` с `lastEditedAt != null` закрывает gate: ничего не меняй, закончи
+   `НУЖЕН ЧЕЛОВЕК`. Так same-second edit/delete earliest claim не воскрешает
+   stale sibling с другим `Outcome-Label`. Возобновить работу может только новый
    не редактированный `pp:review-again`, опубликованный человеком **после**
-   удаления/редактирования; он начинает чистую эпоху, а старые siblings до него
+   опасного edge; он становится anchor чистой epoch, а старые siblings до него
    в election не участвуют.
 
    Снова примени жёсткие стопы `ship`/`hold` уже к свежим REST-меткам; итоговые
    метки разбери по таблице ниже. Упорядочь события по
    `created_at`, при равенстве — по числовому `id`. Завершённая пара валидна,
-   только если completion идёт после указанного review-комментария, это **первая**
+   только если claim-bound completion идёт после указанных не редактированных
+   review и earliest-claim той же server epoch, все SHA/id/epoch-sha256
+   совпадают, completion сам не редактирован, это **первая**
    ссылка completion на данный `review-comment id`, а между review-комментарием
    и completion нет доверенной строки `pp:review-again`. Все последующие ссылки
    на тот же id и пары, пересекающие override, игнорируй как retry/устаревшие.
@@ -125,6 +155,8 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    валидная пара; параллельное второе заключение того же аудита не создаёт ещё
    один круг. Следующая пара того же SHA допустима лишь когда её review-комментарий
    опубликован после `pp:review-again`.
+   Claim-less legacy completion не является текущим proof и не маршрутизирует
+   FIX/MERGE/TAIL; его можно учитывать лишь как исторический круг.
    Если после любой каноничной committed-пары человек опубликовал доверенный
    `pp:review-again`, это явный recoverable handoff обратно в REVIEW независимо
    от прежнего Outcome-Label. Более поздний непоглощённый override отменяет
@@ -147,9 +179,11 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    Перед тем как считать `changes-requested` без committed-пары текущего SHA
    осиротевшей меткой, прочитай сообщение текущего HEAD через
    `gh api repos/ivanarama/onebase/commits/<HEAD> --jq .commit.message`. Точный
-   trailer `PP-Fix-Transition: from=<SHA> review-comment=<id>` открывает
-   post-push фазу, только если `from` — предок HEAD, а `review-comment` входит в
-   каноничную committed-пару `changes-requested` для `from`. Пока trailer
+   trailer `PP-Fix-Transition: from=<SHA> review-comment=<id> claim=<id>
+   epoch-sha256=<64hex>` открывает
+   post-push фазу, только если `from` — предок HEAD, а
+   `review-comment`/`claim`/`epoch-sha256` точно входят в каноничный claim-bound
+   proof `changes-requested` для `from`. Пока trailer
    валиден, метка `changes-requested` ещё присутствует и после push нет
    доверенного `pp:review-again`, review-комментария/claim/completion текущего
    HEAD, PR пропусти: мяч у FIX/recovery. Это атомарно видно вместе с новым HEAD
@@ -260,7 +294,8 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    Транзакция REVIEW состоит из четырёх шагов: review-комментарий → claim →
    подтверждённая итоговая метка → committed-маркер `pp:head-reviewed`.
    Claim имеет точный вид
-   `<!-- pp:review-claim <SHA> review-comment=<id> -->`. После его публикации
+   `<!-- pp:review-claim <SHA> review-comment=<id> epoch-sha256=<64hex> -->`.
+   После его публикации
    перечитай события и повтори edit/deletion fence: продолжать к метке вправе
    только самый ранний не редактированный валидный
    claim текущей эпохи по `created_at`, затем `id`. Увидел более ранний claim —
@@ -301,8 +336,8 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    `НУЖЕН ЧЕЛОВЕК`.
 
    Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`,
-   актуальные метки и **все** комментарии пагинированным REST, повтори
-   пагинированный `COMMENT_DELETED_EVENT` fence и проверку `updated_at`.
+   актуальные метки и **все** комментарии пагинированным REST, повтори полный
+   server-ordered GraphQL epoch snapshot, deletion fence и `lastEditedAt` gate.
    `ship`/`hold`
    всегда запрещают изменение. Для обычного заключения `changes-requested` и
    `needs-decision` остаются маршрутными стопами, но не когда после каноничной
@@ -349,14 +384,20 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    только теперь опубликуй **отдельный committed-комментарий**:
 
    ```
-   <!-- pp:head-reviewed <полный проверенный SHA> review-comment=<id заключения> -->
+   <!-- pp:head-reviewed <полный проверенный SHA> review-comment=<id заключения> claim=<id claim-комментария> epoch-sha256=<64hex> -->
    ```
 
-   Committed-маркер принимается только если `review-comment` указывает на существующий
-   более ранний доверенный комментарий с точным tail-маркером и тем же
-   `Reviewed-SHA`, это первая completion-ссылка на данный id, а между ними нет
+   Committed-маркер принимается только если `review-comment` и `claim` указывают
+   на существующие более ранние не редактированные доверенные комментарии той
+   же epoch; claim содержит те же SHA/review-comment/epoch-sha256 и остаётся
+   earliest valid claim; review содержит точный tail-маркер и тот же
+   `Reviewed-SHA`; это первая completion-ссылка на данный id, а между ними нет
    `pp:review-again`; перед публикацией указанная `Outcome-Label` была
-   подтверждена REST-ответом. После публикации ещё раз перечитай всё состояние.
+   подтверждена REST-ответом. Сам completion также обязан иметь
+   `lastEditedAt == null`. После публикации ещё раз перечитай весь server-ordered
+   epoch. Edit/delete в окне после последнего pre-POST gate оставляет completion
+   без валидных review/claim/epoch и потому не принимается ни REVIEW, ни
+   FIX/MERGE/TAIL.
    При любой гонке
    **не удаляй общую метку**: у GitHub-метки нет владельца, и DELETE может снять
    результат более нового аудитора. Оставь транзакцию для безопасного

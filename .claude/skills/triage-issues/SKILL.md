@@ -186,7 +186,7 @@ stderr, вывода нет. Пустой вывод при этом легко 
    вычислением chain и при **каждом** последующем lease/phase gate пагинированным
    GraphQL прочитай `timelineItems(itemTypes:[COMMENT_DELETED_EVENT])` до
    `pageInfo.hasNextPage == false`. Если существует хотя бы один
-   `CommentDeletedEvent.createdAt` позже `canonical-root.created_at`, закончи
+   `CommentDeletedEvent.createdAt >= canonical-root.created_at`, закончи
    транзакцию `НУЖЕН ЧЕЛОВЕК` без каких-либо мутаций. Текущий список comments не
    доказывает, какой child выиграл раньше: после удаления winner проигравший
    sibling не должен воскреснуть и стать active. Проверка обязательна и до

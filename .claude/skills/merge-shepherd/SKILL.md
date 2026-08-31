@@ -86,9 +86,14 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
    Среди событий `ivanarama`, упорядоченных по `created_at`, затем `id`, должен
    быть валидный
-   `<!-- pp:head-reviewed <текущий SHA> review-comment=<числовой id> -->`, который
-   ссылается на существующий более ранний доверенный review-комментарий с точным
-   tail-маркером и тем же `Reviewed-SHA`. Валидна только первая completion-ссылка
+   `<!-- pp:head-reviewed <текущий SHA> review-comment=<числовой id>
+   claim=<числовой id> epoch-sha256=<64hex> -->`, который ссылается на
+   существующие более ранние доверенные не редактированные review и
+   earliest-claim комментарии server-ordered REVIEW epoch. Перед каждым
+   MERGE-гейтом реконструируй тот же стабильный пагинированный GraphQL epoch;
+   любой `COMMENT_DELETED_EVENT`, `lastEditedAt != null`, несовпадение
+   claim/epoch или claim-less legacy completion запрещает update/push/merge.
+   Валидна только первая completion-ссылка
    на данный review-comment, и между ними не должно быть `pp:review-again`.
    Для одного SHA без разделяющего override канонична только самая ранняя
    валидная пара; параллельные дубликаты игнорируются.
@@ -109,7 +114,7 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    **последний переход именно метки `ship`** (`labeled` или `unlabeled`) по
    `created_at`, затем числовому `id`; учитывай события всех actors. Он обязан
    быть `labeled` от `ivanarama` и располагаться после создания и последнего edit
-   review-комментария и completion текущего SHA. Старый trusted `labeled`, после
+   review-комментария, claim и completion текущего SHA. Старый trusted `labeled`, после
    которого человек снял метку, не оживает от повторной постановки другим actor
    или app. При одинаковом `created_at` используй числовой REST `id`; если API не
    даёт доказать порядок или переход отсутствует — stale `ship`, метку нужно
@@ -200,45 +205,53 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    PR в очередь без повторного одобрения мержа.
 
 5. Мерж: выполни последний полный гейт из п. 1 и сохрани GraphQL `node_id`
-   конкретных review-комментария и completion, а также числовой `id` последнего
-   комментария как watermark. Непосредственно перед PUT получи **одним raw
-   GraphQL-запросом** согласованный снимок: `headRefOid`, все текущие labels,
-   оба адресованных `node(id: ...)`, последние 100 PR comments и последние 100
-   label-events.
+   конкретных review, claim и completion, а также epoch anchor node/cursor и
+   числовой `id` последнего комментария как watermark. Непосредственно перед PUT
+   получи **одним raw GraphQL-запросом** согласованный снимок: `headRefOid`, все
+   текущие labels, три адресованных `node(id: ...)` и все epoch events после
+   anchor (не более 100; иначе fail closed).
 
    В одном серверном снимке должны одновременно выполняться условия: HEAD равен
    проверенному SHA; есть `ship`; нет `hold` и актуального `needs-decision`;
-   `labels.pageInfo.hasNextPage == false`; адресованные review/completion не
-   удалены и их `fullDatabaseId`, автор, SHA,
-   Outcome-Label, tail/body и ссылка `review-comment=<id>` всё ещё образуют ту же
-   каноничную пару; **последний** ship-transition среди возвращённых
+   `labels.pageInfo.hasNextPage == false`; адресованные review/claim/completion
+   не удалены, имеют `lastEditedAt == null`, а их `fullDatabaseId`, автор, SHA,
+   Outcome-Label, tail/body, claim и epoch-sha256 всё ещё образуют тот же
+   claim-bound proof; после anchor нет `CommentDeletedEvent`, а claim остаётся
+   earliest; **последний** ship-transition среди возвращённых
    `LabeledEvent`/`UnlabeledEvent` — `LabeledEvent` от `ivanarama`, расположен
-   после `createdAt` и `lastEditedAt` обоих комментариев (если edit был); после
+   после `createdAt` всех трёх комментариев; после
    completion нет `pp:review-again`. Предыдущий comment-watermark обязан
    присутствовать среди `comments(last:100)`: если его вытеснили 100+ новых
    комментариев, snapshot не доказывает отсутствие override — требуется новый
-   аудит/completion. Если ни одного ship-transition нет в `timelineItems(last:100)`,
+   аудит/completion. Если ни одного ship-transition нет в epoch timeline,
    snapshot не доказывает владельца текущей метки и закрывается. Только
    отсутствие свежего trusted последнего `labeled ship` лечится снятием и
    повторной постановкой `ship` после актуального заключения.
 
    Используй raw GraphQL, а не `gh pr view`, чтобы labels, HEAD и окно timeline
-   принадлежали одному snapshot (глобальные `node_id` review/completion и прочие
+   принадлежали одному snapshot (глобальные `node_id` review/claim/completion и прочие
    переменные передай через `-F`). Числовые REST comment ids уже превышают
    32-битный диапазон GraphQL `databaseId`, поэтому во всех трёх местах используй
    только `fullDatabaseId: BigInt` и сравнивай его строковое значение с REST id:
 
    ```graphql
-   query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$completionNode:ID!){
+   query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$claimNode:ID!,$completionNode:ID!,$epochCursor:String!){
      review:node(id:$reviewNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
+     claim:node(id:$claimNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      completion:node(id:$completionNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      repository(owner:$owner,name:$name){pullRequest(number:$number){
        headRefOid labels(first:100){nodes{name} pageInfo{hasNextPage}}
        comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
-       timelineItems(last:100,itemTypes:[LABELED_EVENT,UNLABELED_EVENT]){
-         nodes{__typename
+       timelineItems(first:100,after:$epochCursor,itemTypes:[ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+         pageInfo{hasNextPage}
+         edges{cursor node{__typename
+           ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
+           ... on CommentDeletedEvent{createdAt}
            ... on LabeledEvent{createdAt actor{login} label{name}}
-           ... on UnlabeledEvent{createdAt actor{login} label{name}}}}}}
+           ... on UnlabeledEvent{createdAt actor{login} label{name}}
+         }}
+       }
+     }}
    }
    ```
 
