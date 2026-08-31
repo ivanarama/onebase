@@ -1945,7 +1945,7 @@ func TestIssueHandoffRejectsDeletionBeforeVisibleReplacementRootAndMarkerAwayEdi
 		deletionEvent   = 21
 		replacementRoot = 22
 	)
-	if !(canonicalTriage < deletedRoot && deletedRoot < deletionEvent && deletionEvent < replacementRoot) {
+	if canonicalTriage >= deletedRoot || deletedRoot >= deletionEvent || deletionEvent >= replacementRoot {
 		t.Fatal("invalid modeled triage < R1 < delete < R2 ordering")
 	}
 	if modeledIssueHandoffPostTriageFence(canonicalTriage, []int{deletionEvent}, nil) {
