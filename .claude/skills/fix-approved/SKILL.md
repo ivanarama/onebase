@@ -152,8 +152,12 @@ description: Реализация заявок ivanarama/onebase с меткой
    комментарий; если комментарий не удался, безопасное состояние уже достигнуто
    и новый HEAD всё равно подхватит REVIEW.
 
-2. Кандидаты (если номер не задан и доработок нет): открытые ишью с меткой
-   `ready-fix` **или** `approved`, минус `hold`, минус `manual`;
+2. Кандидаты (если номер не задан и доработок нет): сначала отдельная recovery-
+   очередь открытых issues с `needs-decision` и незавершённым доверенным
+   `pp:fix-issue-handoff-claim` из п. 9 — получай её пагинированным REST, PR
+   исключай. Она нужна для crash после снятия `approved`/`ready-fix`, когда issue
+   уже не входит в обычную FIX-очередь, но ещё не имеет handoff-done. Затем
+   открытые ишью с меткой `ready-fix` **или** `approved`, минус `hold`, минус `manual`;
    исключи ишью, на которые уже есть открытый PR: ищи `#N` в `title`/`body`
    уже полученного в п. 1 **полного пагинированного списка**, не запускай новый
    обрезанный `gh pr list`. Возьми **одно**:
@@ -169,6 +173,11 @@ description: Реализация заявок ivanarama/onebase с меткой
    к тебе по кругу.
    Кандидатов нет → `ИТОГ: ПУСТО (очередь пуста)` и стоп
    (ПУСТО — тихий итог «делать нечего», уведомление не шлётся).
+
+   До обычного выбора работы ищи незавершённый доверенный
+   `pp:fix-issue-handoff-claim` из п. 9 и в recovery-очереди, и на eligible
+   issue. Такой issue — recovery той же транзакции, а не новый handoff: не
+   публикуй второй root и не начинай код.
 
 3. Прочитай заявку и каноничный триаж-комментарий — план фикса там. Триажем
    считается только комментарий автора `ivanarama` с точной отдельной строкой
@@ -449,14 +458,94 @@ description: Реализация заявок ivanarama/onebase с меткой
    решает человек.
 
 9. Не получилось (не воспроизводится, нужен выбор, фикс выходит за рамки) —
-   перед каждым следующим действием выполни общий issue-decision gate из п. 3/6,
-   даже если перешёл сюда до branch-claim. После первого собственного изменения
-   учитывай только его как ожидаемую часть той же handoff-транзакции; любое
-   остальное расхождение останавливает продолжение. Затем комментарий в заявку с
-   конкретным вопросом, метка `needs-decision`, снять
-   `in-work`, если ставил, **и снять `approved`/`ready-fix`**: очередь ведётся по
-   ним, и заявка с вопросом к человеку не должна снова попасть к тебе в п. 2.
-   Worktree убрать, недоделанное не пушить.
+   выполни durable issue-handoff. Это отдельная crash-safe транзакция, а не серия
+   независимых comment/label mutations.
+
+   Сначала выбери точный ASCII `reason` из закрытого списка: `missing-plan`,
+   `invalid-decision`, `not-reproducible`, `scope` или `needs-choice`. Сохрани
+   `issue-handoff fingerprint` из п. 3 и создай случайный 128-bit UUID `owner`.
+   Для переносимого fingerprint сначала вычисли SHA-256 raw UTF-8 исходных
+   `title`, `body` и body canonical triage (lowercase hex). Затем собери точную
+   ASCII/LF запись с финальным LF; `labels` — отсортированный ASCII-список только
+   релевантных labels из п. 3 через запятую либо `none`, `choice` — точный
+   `human:<id>@<updated_at>:<body-sha256>`, `decision:<N>`, `recommend:<N>` либо
+   `invalid`:
+
+   ```text
+   pp-fix-issue-handoff-v1
+   issue=<decimal>
+   issue-updated=<RFC3339>
+   title-sha256=<64 lowercase hex>
+   body-sha256=<64 lowercase hex>
+   triage-comment=<decimal>
+   triage-updated=<RFC3339>
+   triage-sha256=<64 lowercase hex>
+   labels=<sorted comma-list|none>
+   choice=<canonical ASCII choice>
+   reason=<code>
+   ```
+
+   `fingerprint-sha256` — SHA-256 ровно этой ASCII-записи. JSON, CRLF, BOM,
+   uppercase hex, необязательные пробелы и отсутствие последнего LF запрещены.
+   После полного pre-mutation gate опубликуй машинный root отдельным комментарием:
+   сначала fenced `text` block с этой записью, затем точный marker ниже. Сохрани
+   **собственный id из REST POST**:
+
+   ```
+   <!-- pp:fix-issue-handoff-claim fingerprint-sha256=<64hex> reason=<code> owner=<uuid> -->
+   ```
+
+   Root доверен только если record и marker находятся в одном комментарии,
+   author `ivanarama`, hash пересчитан и совпал, а поля record описывают исходный
+   issue-handoff fingerprint. Так recovery видит не только opaque hash, но и
+   проверяемый snapshot до первой мутации.
+
+   Перед созданием root прочитай все comments: если уже есть незавершённый
+   доверенный root для того же canonical triage/reason и после него нет
+   непротокольных human changes, восстанавливай его, а второй root не публикуй.
+   Если два первых worker всё же одновременно прошли pre-POST read, каноничен
+   самый ранний root по GitHub `created_at`, затем числовому `id`; продолжает
+   только процесс, чей **собственный возвращённый id** каноничен. Остальные root
+   остаются диагностикой и ничего человеку не спрашивают.
+
+   Root — начальная 30-минутная lease. До expiry её продлевает только тот же
+   owner, после expiry любой новый UUID может сделать takeover. Renewal/takeover
+   имеет точную форму:
+
+   ```
+   <!-- pp:fix-issue-handoff-lease claim=<root-id> previous=<active-id> owner=<uuid> -->
+   ```
+
+   Для каждого `previous` каноничен самый ранний допустимый child по
+   `created_at`, затем `id`; до expiry допустим только тот же owner, после —
+   любой. Итеративно построй единственную активную вершину. Мутировать может
+   только процесс, чей собственный возвращённый id — эта вершина, UUID совпадает
+   и lease не истекла. При остатке менее пяти минут сначала renew и заново
+   докажи владение. Crash восстанавливается takeover, два живых worker не ведут
+   handoff одновременно.
+
+   Затем под одной lease выполни четыре восстанавливаемые фазы. Перед **каждой**
+   фазой перечитай issue/comments/labels, перепроверь canonical triage,
+   fingerprint и lease. Допустимы только уже зафиксированные protocol markers и
+   ожидаемые label-изменения этой транзакции; новый `hold`, закрытие, edit triage,
+   новое решение или любой непротокольный комментарий после root останавливает
+   handoff без новых мутаций.
+
+   1. Если ещё нет доверенного вопроса этого root, опубликуй один комментарий с
+      конкретным вопросом и точной отдельной строкой
+      `<!-- pp:fix-issue-handoff-question claim=<root-id> reason=<code> -->`.
+      После timeout ищи marker прямым REST и не повторяй POST вслепую.
+   2. Идемпотентно добавь и сверь `needs-decision`.
+   3. Идемпотентно сними и сверь отсутствие `in-work`, `approved` и `ready-fix`.
+      `404` допустим только после REST-сверки, что конкретной метки уже нет.
+   4. Только при `needs-decision` и отсутствии трёх route labels опубликуй
+      `<!-- pp:fix-issue-handoff-done claim=<root-id> -->`. Найденный done делает
+      recovery завершённым и запрещает новые question/label mutations.
+
+   Все markers считаются только точными отдельными строками автора `ivanarama`.
+   Комментарий-вопрос восстанавливается по root marker, label-фазы — по текущему
+   состоянию, поэтому crash после любой точки не дублирует вопрос и не оставляет
+   `approved`/`ready-fix` навсегда. Worktree убрать, недоделанное не пушить.
 
 10. Финал: `ИТОГ: ГОТОВО (PR #<M> → ишью #<N>)` /
     `ИТОГ: ГОТОВО (доработан PR #<M> по ревью)` /

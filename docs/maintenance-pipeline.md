@@ -244,6 +244,15 @@ FIX сохраняет fingerprint issue и выбранного решения:
 handoff-fingerprint: тот же issue-contract и canonical triage плюс точный набор
 decision/route labels и причина остановки; она также проверяется перед каждой
 мутацией.
+Сам handoff имеет persistent root
+`pp:fix-issue-handoff-claim` с fingerprint/reason/UUID owner. Root служит
+30-минутной lease, renewal/takeover сериализуют recovery. Вопрос содержит
+`pp:fix-issue-handoff-question`, затем идемпотентно ставится `needs-decision`,
+снимаются `in-work`/`approved`/`ready-fix`, и только подтверждённый финал получает
+`pp:fix-issue-handoff-done`. Поэтому параллельные FIX не задают вопрос дважды, а
+crash между comment/labels продолжает тот же root вместо новой транзакции.
+FIX отдельно сканирует `needs-decision` issues с незавершённым root: crash после
+снятия route labels не выталкивает транзакцию из recovery-очереди до done.
 Её remote-ветка строго детерминирована как `fix/<N>` и атомарно создаётся через
 GitHub `POST /git/refs`: только ответ `201` даёт branch-claim, а любой другой
 статус останавливает запуск (`409`/`422` включены) даже при том же SHA. Обычный
@@ -539,14 +548,18 @@ Exact-source ищется до create и повторно прямо перед 
 `/issues?since=<root claim time>`;
 exact-source считается своим только у issue автора `ivanarama`. Между разными
 PR/items одинаковую canonical task identity сериализует постоянный create-only
-ref `pp-tail-dedupe/<sha256>`: identity — фиксированный JSON из нормализованных
-полного title и содержательной части `<суть>` между `[заявка]` и
+ref `pp-tail-dedupe/<sha256>`: identity строится из нормализованных полного title
+и содержательной части `<суть>` между `[заявка]` и
 `→ заголовок:`; номер списка и source metadata исключаются, а файлы/подсистема,
 риск и ожидаемый результат сохраняются. Один title без task-текста никогда не
 считается ключом. Поэтому одинаковые общие заголовки разных подсистем и edit
 тела при прежнем title не склеиваются. Лишь worker, получивший `201`, вправе
 создать
 issue, а полный прямой REST-список ищет `pp:tail-dedupe` без задержанного Search.
+Для одинакового результата между Python/Go/JS dedupe-hash считается не от JSON,
+а от точной ASCII-записи `pp-tail-task-v1\ntitle-sha256=<hex>\ntask-sha256=<hex>\n`:
+компонентные hashes берутся от raw UTF-8 нормализованных строк, hex lowercase,
+LF и последний LF обязательны.
 Ref без issue — human-recovery, не повторный create. Проверка идёт
 напрямую, без eventually-consistent Search API. Поэтому два живых worker не
 могут одновременно пройти create-gate, а crash

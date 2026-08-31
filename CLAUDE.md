@@ -182,7 +182,10 @@ onebase describe --project <dir>                # вся структура ко
   Каноничный triage — самый ранний по `created_at`, затем `id` комментарий
   `ivanarama` с точной отдельной строкой `<!-- pp:triage -->`; перед любой
   мутацией issue, включая ранний handoff до branch-claim, FIX заново проверяет
-  его и весь fingerprint.
+  его и весь fingerprint. Ранний handoff сериализован persistent
+  `pp:fix-issue-handoff-claim`: UUID owner, 30-минутная lease/takeover и
+  recoverable question/label/done phases не дают двум FIX задать вопрос дважды
+  или бросить `approved` после crash.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
@@ -202,8 +205,9 @@ onebase describe --project <dir>                # вся структура ко
     `updated_at` review и SHA-256 пункта входят во все versioned markers;
     одинаковую canonical task identity (нормализованные title + содержательная
     суть пункта без номера/source metadata), но не просто одинаковые заголовки,
-    между разными PR сериализует постоянный
-    create-only ref `pp-tail-dedupe/<sha256>`. Уникальный owner в `tail-claim`,
+    между разными PR сериализует постоянный create-only ref. Dedupe-вход — не JSON, а точная
+    ASCII/LF запись из `title-sha256` и `task-sha256` с финальным LF, поэтому
+    escaping разных языков не меняет ключ. Уникальный owner в `tail-claim`,
     30-минутная `tail-lease` с takeover, постоянный `tail-create-intent`,
     `tail-source`/`tail-item-done` и прямой
     REST-lookup от времени корневого claim

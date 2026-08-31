@@ -1,6 +1,8 @@
 package pipelinecontract
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -239,6 +241,21 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"при раннем переходе в п. 9",
 		"`issue-handoff fingerprint`",
 		"точный код причины\n   handoff",
+		"pp-fix-issue-handoff-v1\n   issue=<decimal>\n   issue-updated=<RFC3339>",
+		"triage-sha256=<64 lowercase hex>",
+		"labels=<sorted comma-list|none>",
+		"choice=<canonical ASCII choice>",
+		"<!-- pp:fix-issue-handoff-claim fingerprint-sha256=<64hex> reason=<code> owner=<uuid> -->",
+		"JSON, CRLF, BOM",
+		"record и marker находятся в одном комментарии",
+		"<!-- pp:fix-issue-handoff-lease claim=<root-id> previous=<active-id> owner=<uuid> -->",
+		"<!-- pp:fix-issue-handoff-question claim=<root-id> reason=<code> -->",
+		"<!-- pp:fix-issue-handoff-done claim=<root-id> -->",
+		"Root — начальная 30-минутная lease",
+		"только процесс, чей **собственный возвращённый id** каноничен",
+		"Crash восстанавливается takeover, два живых worker не ведут\n   handoff одновременно",
+		"recovery-\n   очередь открытых issues с `needs-decision`",
+		"crash после снятия `approved`/`ready-fix`",
 		"перед **каждым внешним изменением** — как\n   до, так и после branch-claim",
 		"Снятый `ready-fix`/`approved`, новый `hold`, закрытие issue, смена",
 		"перед добавлением `in-work` и перед `pp:in-work`-комментарием",
@@ -442,6 +459,9 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"item-sha256",
 		"dedupe-sha256",
 		"каноничную task identity без source-specific полей",
+		"Никакого JSON и Unicode escaping в dedupe-входе нет",
+		"pp-tail-task-v1\n   title-sha256=<64 lowercase hex>\n   task-sha256=<64 lowercase hex>",
+		"включая последний LF",
 		"одинаковые общие заголовки у\n   разных подсистем — разные задачи",
 		"одного\n     совпавшего title недостаточно",
 		"Перед **каждым внешним изменением**",
@@ -492,6 +512,9 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"Успешный snapshot — точка невозврата",
 		"Новый каноничный `pp:head-reviewed` после override поглощает его",
 		"remote-ветка строго детерминирована как `fix/<N>`",
+		"persistent root\n`pp:fix-issue-handoff-claim`",
+		"30-минутной lease, renewal/takeover сериализуют recovery",
+		"`pp:fix-issue-handoff-done`",
 		"GitHub `POST /git/refs`",
 		"`201` даёт branch-claim",
 		"ложный успех `Everything up-to-date`",
@@ -515,6 +538,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"version-key из `review comment id+updated_at`",
 		"create-only\nref `pp-tail-dedupe/<sha256>`",
 		"Один title без task-текста никогда не\nсчитается ключом",
+		"не от JSON,\nа от точной ASCII-записи",
 		"детерминированный `pp:tail-source`",
 		"без eventually-consistent Search API",
 	)
@@ -993,6 +1017,75 @@ func TestEarlyIssueHandoffUsesDecisionGateBeforeBranchClaim(t *testing.T) {
 	}
 }
 
+type modeledIssueHandoff struct {
+	canonicalRoot int
+	questionCount int
+	needsDecision bool
+	routeLabels   bool
+	done          bool
+}
+
+func modeledAdvanceIssueHandoff(state modeledIssueHandoff, ownedRoot, phases int) modeledIssueHandoff {
+	if ownedRoot != state.canonicalRoot || state.done {
+		return state
+	}
+	if phases > 0 && state.questionCount == 0 {
+		state.questionCount++
+	}
+	if phases > 1 {
+		state.needsDecision = true
+	}
+	if phases > 2 {
+		state.routeLabels = false
+	}
+	if phases > 3 && state.needsDecision && !state.routeLabels {
+		state.done = true
+	}
+	return state
+}
+
+func modeledIssueHandoffRecoveryCandidate(state modeledIssueHandoff) bool {
+	return !state.done && (state.routeLabels || state.needsDecision)
+}
+
+func TestIssueHandoffSerializesWorkersAndRecoversPhases(t *testing.T) {
+	record := "pp-fix-issue-handoff-v1\n" +
+		"issue=42\n" +
+		"issue-updated=2026-08-30T10:00:00Z\n" +
+		"title-sha256=" + strings.Repeat("a", 64) + "\n" +
+		"body-sha256=" + strings.Repeat("b", 64) + "\n" +
+		"triage-comment=17\n" +
+		"triage-updated=2026-08-30T09:00:00Z\n" +
+		"triage-sha256=" + strings.Repeat("c", 64) + "\n" +
+		"labels=approved,decision:2\n" +
+		"choice=decision:2\n" +
+		"reason=missing-plan\n"
+	recordSum := sha256.Sum256([]byte(record))
+	if got := hex.EncodeToString(recordSum[:]); got != "2c525e3a364d43beba9d954e6beccbbaf89c97dced54e5836475a4c3afdc20ef" {
+		t.Fatalf("canonical issue handoff hash vector = %s", got)
+	}
+
+	initial := modeledIssueHandoff{canonicalRoot: 10, routeLabels: true}
+	loser := modeledAdvanceIssueHandoff(initial, 11, 4)
+	if loser != initial {
+		t.Fatal("non-canonical root must not mutate issue handoff state")
+	}
+
+	crashedAfterQuestion := modeledAdvanceIssueHandoff(initial, 10, 1)
+	if crashedAfterQuestion.questionCount != 1 || crashedAfterQuestion.done {
+		t.Fatal("first owner must persist exactly one recoverable question before crash")
+	}
+	crashedAfterRouteRemoval := modeledAdvanceIssueHandoff(initial, 10, 3)
+	if crashedAfterRouteRemoval.routeLabels || !crashedAfterRouteRemoval.needsDecision ||
+		!modeledIssueHandoffRecoveryCandidate(crashedAfterRouteRemoval) {
+		t.Fatal("needs-decision recovery queue must retain a handoff after route labels are removed")
+	}
+	recovered := modeledAdvanceIssueHandoff(crashedAfterQuestion, 10, 4)
+	if recovered.questionCount != 1 || !recovered.needsDecision || recovered.routeLabels || !recovered.done {
+		t.Fatalf("recovered handoff = %+v, want one question and completed label transition", recovered)
+	}
+}
+
 func modeledTailDropApplies(current, dropped modeledTailVersionKey) bool {
 	return current.reviewID == dropped.reviewID &&
 		current.reviewUpdated == dropped.reviewUpdated &&
@@ -1098,8 +1191,20 @@ func TestTailCompletionIsBoundToEditableCommentVersion(t *testing.T) {
 	}
 }
 
+func modeledTailTaskDedupe(title, task string) (string, string, string) {
+	titleSum := sha256.Sum256([]byte(title))
+	taskSum := sha256.Sum256([]byte(task))
+	titleHash := hex.EncodeToString(titleSum[:])
+	taskHash := hex.EncodeToString(taskSum[:])
+	record := "pp-tail-task-v1\n" +
+		"title-sha256=" + titleHash + "\n" +
+		"task-sha256=" + taskHash + "\n"
+	dedupeSum := sha256.Sum256([]byte(record))
+	return titleHash, taskHash, hex.EncodeToString(dedupeSum[:])
+}
+
 func modeledAcquireCanonicalTaskClaim(claims map[string]bool, title, task string) bool {
-	key := title + "\x00" + task
+	_, _, key := modeledTailTaskDedupe(title, task)
 	if claims[key] {
 		return false
 	}
@@ -1108,6 +1213,13 @@ func modeledAcquireCanonicalTaskClaim(claims map[string]bool, title, task string
 }
 
 func TestCanonicalTailTaskClaimUsesTitleAndTaskContent(t *testing.T) {
+	titleHash, taskHash, dedupeHash := modeledTailTaskDedupe("проверка", "ошибка")
+	if titleHash != "dbdd1f31e722086974ba86e32d48bea04cc01601a390091c51d76efe1d590eb2" ||
+		taskHash != "44d4090ae9e4fae861c4ed1418d3557dc340d0afe55e6744ae4155412b88425a" ||
+		dedupeHash != "e8881813f61fdbb58d3b00eb1e7a9c8e5006a1fae2aaebe114d963da05f03e3d" {
+		t.Fatalf("canonical Cyrillic hash vector = %s/%s/%s", titleHash, taskHash, dedupeHash)
+	}
+
 	claims := map[string]bool{}
 	firstSource := modeledAcquireCanonicalTaskClaim(claims, "add error check", "subsystem a must reject malformed input")
 	sameTaskOtherSource := modeledAcquireCanonicalTaskClaim(claims, "add error check", "subsystem a must reject malformed input")
