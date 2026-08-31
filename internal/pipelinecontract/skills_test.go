@@ -229,6 +229,10 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"Lease failure означает чужой push",
 		"**не** возвращай PR в REVIEW",
 		"Для устаревшего ревью сними `changes-requested`, сверь удаление и только затем оставь диагностический комментарий",
+		"issue-decision fingerprint",
+		"перед **каждым внешним изменением** после branch-claim",
+		"Снятый `ready-fix`/`approved`, новый `hold`, закрытие issue, смена",
+		"перед добавлением `in-work` и перед `pp:in-work`-комментарием",
 	)
 	rejectAll(t, fixer,
 		"ищи его по **префиксу**",
@@ -389,14 +393,19 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"Более поздний orphan `pp:review` без валидной ссылки не является аудитом",
 		"после выбранной committed-пары есть более поздняя доверенная отдельная",
 		"Если после выбранного заключения остался непоглощённый `pp:review-again`, PR уже отброшен",
-		"<!-- pp:tail-claim review-comment=<id> item=<N> owner=<uuid> -->",
-		"<!-- pp:tail-lease review-comment=<id> item=<N> previous=<id активной lease> owner=<uuid> -->",
-		"<!-- pp:tail-create-intent review-comment=<id> item=<N> lease=<id активной lease> owner=<uuid> -->",
+		"<!-- pp:tail-claim review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> owner=<uuid> -->",
+		"<!-- pp:tail-lease review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> previous=<id активной lease> owner=<uuid> -->",
+		"<!-- pp:tail-create-intent review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> lease=<id активной lease> owner=<uuid> -->",
 		"**собственный возвращённый comment id**",
 		"**собственный возвращённый id intent**",
 		"Lease действует 30 минут",
-		"<!-- pp:tail-source pr=<M> review-comment=<id> item=<N> -->",
-		"<!-- pp:tail-item-done review-comment=<id> item=<N> issue=<номер|none> -->",
+		"<!-- pp:tail-source pr=<M> review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> -->",
+		"<!-- pp:tail-item-done review-comment=<id> review-updated=<RFC3339> item=<N> item-sha256=<64hex> dedupe-sha256=<64hex> issue=<номер|none> -->",
+		"<!-- pp:tail-dedupe sha256=<64hex> -->",
+		"<!-- pp:tail-done review-comment=<id> review-updated=<RFC3339> -->",
+		"updated_at",
+		"item-sha256",
+		"dedupe-sha256",
 		"Перед **каждым внешним изменением**",
 		"Не используй GitHub Search",
 		"issues?state=all&since=<root-claim-created-at>&per_page=100",
@@ -406,6 +415,9 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"не запрещает **только** восстановительный item-done",
 		"**никогда не\n   повторяй create автоматически**",
 		"параллельный worker не\n   может выдать чужой claim за собственное владение",
+		"refs/heads/pp-tail-dedupe/<dedupe-sha256>",
+		"Только фактический `201 Created` этого **собственного вызова**",
+		"**все** repository issues прямым пагинированным REST без\n   `since`",
 	)
 	rejectAll(t, tail, "--json number,title,mergedAt,labels,url,comments")
 }
@@ -457,9 +469,11 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"Время мержа PR #1261 — точная\nграница включения committed-протокола",
 		"само заключение**\nсоздано строго раньше границы",
 		"Время мержа\nисходного PR не используется",
-		"initial\n`pp:tail-claim` с уникальным UUID воркера",
-		"30-минутную цепочку\n`pp:tail-lease previous=<comment id>`",
+		"Initial `pp:tail-claim` с уникальным UUID воркера",
+		"30-минутная цепочка\n`pp:tail-lease previous=<comment id>`",
 		"постоянный `pp:tail-create-intent`",
+		"version-key из `review comment id+updated_at`",
+		"create-only\nref `pp-tail-dedupe/<sha256>`",
 		"детерминированный `pp:tail-source`",
 		"без eventually-consistent Search API",
 	)
@@ -832,5 +846,102 @@ func TestFixPostPushTransitionSerializesReviewHandoff(t *testing.T) {
 	finalized.routeLabel = false
 	if !finalized.reviewMayStart() {
 		t.Fatal("confirmed label removal must hand the new HEAD to REVIEW")
+	}
+}
+
+type modeledIssueDecision struct {
+	open        bool
+	titleBody   string
+	eligibleBy  string
+	decision    string
+	hold        bool
+	manual      bool
+	allowInWork bool
+}
+
+func modeledIssueGate(expected, current modeledIssueDecision) bool {
+	return current.open && !current.hold && !current.manual &&
+		expected.titleBody == current.titleBody &&
+		expected.eligibleBy == current.eligibleBy &&
+		expected.decision == current.decision &&
+		expected.allowInWork == current.allowInWork
+}
+
+func TestNewIssueMutationsRevalidateDecisionFingerprint(t *testing.T) {
+	expected := modeledIssueDecision{
+		open: true, titleBody: "title\x00body", eligibleBy: "approved",
+		decision: "comment:42@v1:sha256-a",
+	}
+	if !modeledIssueGate(expected, expected) {
+		t.Fatal("unchanged issue decision must remain eligible")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*modeledIssueDecision)
+	}{
+		{name: "late hold", mutate: func(state *modeledIssueDecision) { state.hold = true }},
+		{name: "closed issue", mutate: func(state *modeledIssueDecision) { state.open = false }},
+		{name: "eligibility removed", mutate: func(state *modeledIssueDecision) { state.eligibleBy = "" }},
+		{name: "decision edited", mutate: func(state *modeledIssueDecision) { state.decision = "comment:42@v2:sha256-b" }},
+		{name: "decision label changed", mutate: func(state *modeledIssueDecision) { state.decision = "decision:3" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			current := expected
+			tt.mutate(&current)
+			if modeledIssueGate(expected, current) {
+				t.Fatal("late issue change must close every subsequent mutation gate")
+			}
+		})
+	}
+}
+
+type modeledTailVersionKey struct {
+	reviewID      int
+	reviewUpdated string
+	item          int
+	itemSHA256    string
+	dedupeSHA256  string
+}
+
+func modeledTailCompletionApplies(current, completed modeledTailVersionKey) bool {
+	return current == completed
+}
+
+func TestTailCompletionIsBoundToEditableCommentVersion(t *testing.T) {
+	completed := modeledTailVersionKey{
+		reviewID: 42, reviewUpdated: "2026-08-30T10:00:00Z", item: 1,
+		itemSHA256: "item-a", dedupeSHA256: "task-a",
+	}
+	if !modeledTailCompletionApplies(completed, completed) {
+		t.Fatal("exact versioned completion must apply")
+	}
+
+	edited := completed
+	edited.reviewUpdated = "2026-08-30T10:01:00Z"
+	if modeledTailCompletionApplies(edited, completed) {
+		t.Fatal("edited review comment must invalidate old completion")
+	}
+
+	reordered := completed
+	reordered.item = 2
+	if modeledTailCompletionApplies(reordered, completed) {
+		t.Fatal("reordered item must not be closed by its old item number")
+	}
+
+	rewritten := completed
+	rewritten.itemSHA256 = "item-b"
+	if modeledTailCompletionApplies(rewritten, completed) {
+		t.Fatal("rewritten item text must not reuse old completion")
+	}
+}
+
+func TestSemanticTailSourcesShareOneGlobalCreateClaim(t *testing.T) {
+	globalRefExists := false
+	firstSource := acquireCreateOnlyBranch(&globalRefExists)
+	secondSource := acquireCreateOnlyBranch(&globalRefExists)
+	if !firstSource || secondSource {
+		t.Fatalf("global semantic claim winners = first:%v second:%v, want true/false", firstSource, secondSource)
 	}
 }

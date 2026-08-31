@@ -173,6 +173,10 @@ onebase describe --project <dir>                # вся структура ко
   перебить `needs-decision`. На PR это стоп по умолчанию: без точного handoff
   его снимает человек, но `pp:review-again` разрешает REVIEW снять парковку, а
   `pp:fix-decision <SHA>` возвращает PR в FIX crash-safe порядком.
+  Для новой заявки FIX сохраняет issue-decision fingerprint и перевалидирует
+  open-state/title/body/eligibility/hold/manual и точную версию решения перед
+  branch-claim, push, PR create, `in-work` и комментарием; позднее решение
+  человека всегда старше уже выполненной локальной работы.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
@@ -187,8 +191,11 @@ onebase describe --project <dir>                # вся структура ко
     `pp:tail-drop N`. Переход на committed-протокол не теряет старый хвост:
     fallback разрешён, только если последнее доверенное legacy-заключение создано
     строго до мержа #1261; дата мержа исходного PR не важна. Per-item
-    уникальный owner в `tail-claim`, 30-минутная `tail-lease` с takeover,
-    постоянный `tail-create-intent`, `tail-source`/`tail-item-done` и прямой
+    `updated_at` review и SHA-256 пункта входят во все versioned markers;
+    одинаковые semantic titles между разными PR сериализует постоянный
+    create-only ref `pp-tail-dedupe/<sha256>`. Уникальный owner в `tail-claim`,
+    30-минутная `tail-lease` с takeover, постоянный `tail-create-intent`,
+    `tail-source`/`tail-item-done` и прямой
     REST-lookup от времени корневого claim
     (не задержанный Search API) не дают параллельному или
     восстановленному после crash прогону создать второй issue. Неоднозначный
