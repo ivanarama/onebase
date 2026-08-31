@@ -131,12 +131,109 @@ onebase describe --project <dir>                # вся структура ко
   `needs-decision`, дальше человек ставит `approved`. Развилку триаж выкладывает
   пронумерованными вариантами и **обязан назвать рекомендуемый**: тогда согласие
   стоит одной метки `approved` («делай рекомендованный»), а несогласие —
-  `approved` + `decision:N`. Перед мержем обязательное
+  `approved` + `decision:N`.
+  TRIAGE фиксирует выбранный class/route в persistent
+  `pp:triage-route-claim`, а не считает один комментарий завершением. UUID,
+  30-минутная lease, event watermark, committed label-фаза и
+  `pp:triage-route-done` позволяют
+  восстановить crash после разбора или committed labels-marker. Неоднозначный
+  crash между label POST и его marker закрывается человеку. Перед каждой мутацией он заново
+  проверяет open-state, отсутствие `hold`, неизменность title/body/comments и
+  отсутствие чужих labels/events; late hold/close или human label removal
+  прекращает маршрут. REST-очередь явно исключает PR, а все protocol markers
+  доверены только от `ivanarama`. FIX не создаёт `fix/<N>`, пока для нового
+  route-claim нет matching trusted route-done; старый triage остаётся отдельным
+  legacy fallback. Одновременные roots с точно тем же snapshot/fingerprint
+  канонизируются до comment-gate: поздние считаются equivalent diagnostics и не
+  блокируют winner. Перед каждым lease POST выполняется тот же human/state gate,
+  поэтому stopped recovery не пишет комментарии и не вытесняет новую работу.
+  Active lease — детерминированная chain: same-owner renewal только перед
+  expiry, takeover новым UUID только после expiry; каждая фаза требует
+  собственные returned active id, matching UUID и неистёкшее время. Удаление
+  любого комментария с `CommentDeletedEvent.createdAt >= canonical-root.created_at`
+  обнаруживается пагинированным gate и навсегда закрывает транзакцию человеку: stale
+  lease-ветка не может воскреснуть после удаления winner.
+  REVIEW строит epoch по server-ordered GraphQL timeline edges: HEAD-anchor или
+  более поздний unedited `pp:review-again`; `lastEditedAt == null`, отсутствие
+  `COMMENT_DELETED_EVENT`, node/fullDatabaseId и edge cursor проверяются двумя
+  полными идентичными проходами до election и каждой мутации: секундный
+  `timelineItems.updatedAt` не используется как единственное доказательство
+  стабильности. Completion хранит review id, earliest claim id и
+  epoch hash; FIX/MERGE/TAIL реконструируют тот же proof. Поэтому same-second
+  edit/delete и окно после pre-POST gate не дают stale claim сменить outcome, а
+  future Git dates не влияют на anchor. MERGE тем же timeline snapshot отвергает
+  сохранённый epoch anchor и любой новый HEAD/lifecycle-anchor после proof,
+  поэтому edit override-anchor, ABA `H → X → H` и
+  `H → deleted → restored H` не возвращают старому proof силу. TAIL повторяет
+  этот proof-гейт перед каждой pre-create мутацией, а не полагается только на
+  REST comments/labels; proof целиком предшествует `MergedEvent`, lifecycle edge
+  до merge запрещён, а после merge безопасен только необязательный конечный
+  delete без restore.
+  Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
-  к человеку). Гейт мержа один: `ship` на **PR**, ставит только человек; PR без
-  `ship` не вливается никогда и не трогается вовсе. `hold` останавливает
-  автоматику; `needs-decision` снимает человек, иначе заявка молча выпадает из
-  конвейера. Отдельно стоит `manual` — «правка вне репозитория» (настройки
+  к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR
+  без `ship` не вливается никогда; ограничение «не трогать» относится к MERGE,
+  тогда как REVIEW и FIX готовят PR до человеческого одобрения. `hold` и
+  `needs-decision` — стопы даже при `ship`; перед мержем они проверяются в одном
+  согласованном GraphQL snapshot с HEAD и timeline. Этот snapshot — точка
+  невозврата: метка, поставленная уже после отправки merge PUT, не может отменить
+  запрос в полёте. MERGE дополнительно требует claim-bound `pp:head-reviewed`
+  ровно для текущего SHA со ссылками `review-comment=<id> claim=<id>
+  epoch-sha256=<hash>` и снимает устаревший
+  `ship`, если после аудита был push или `pp:review-again`; последний переход
+  метки `ship` среди событий всех actors обязан быть trusted `labeled` и идти
+  после всех трёх unedited комментариев по GraphQL edge order. Числовые REST ids
+  разных event types для порядка не сравниваются. Старый label после trusted unlabel не
+  воскресает от чужого re-label. ID комментариев
+  в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
+  `databaseId`, и строкой сравниваются с REST id.
+  REVIEW получает полный пагинированный список PR и считает каждый завершённый
+  `review-comment=<id>` только один раз; override между заключением и committed-
+  маркером делает пару невалидной. Транзакция `заключение → review-claim →
+  итоговая метка → claim-bound pp:head-reviewed` восстанавливается по
+  `Reviewed-SHA`: при
+  существующих claims recovery берёт orphan самого раннего claim, а самый ранний
+  orphan получает claim только при полном отсутствии claims. Committed-маркер хранит
+  историю кругов после снятия метки FIX.
+  FIX применяет замечания только к SHA из
+  завершённой пары, сверяя удалённый HEAD до worktree и перед push. Финальный
+  merge выполняется REST compare-and-merge с тем же SHA: атомарно защищён HEAD,
+  а labels защищены предшествующей точкой невозврата; гонка HEAD даёт `409`.
+  FIX до CAS-push перед каждым внешним изменением перечитывает HEAD, все comments
+  и labels, пересчитывает владельца; новый HEAD от FIX атомарно несёт
+  `PP-Fix-Transition` от canonical completion. Пока trailer валиден и
+  `changes-requested` не снята, REVIEW пропускает незавершённую post-push фазу,
+  CAS-loser её не переоткрывает, а FIX/recovery допускает только финализацию,
+  привязанную к отправленному SHA. `ship`, `pp:review-again`, новое заключение,
+  claim или completion текущего HEAD останавливают DELETE общей метки. Новая заявка сначала
+  атомарно создаёт детерминированную remote-ветку `fix/<N>` через GitHub
+  `POST /git/refs` (`201` — победитель, любой иной статус — стоп), поэтому два worker не
+  создают два PR. Узкое окно, где push уже
+  завершился перед появлением `ship`, закрывает SHA-гейт MERGE: устаревший `ship`
+  снимается, новый HEAD возвращается в REVIEW. На заявке `approved` может
+  перебить `needs-decision`. На PR это стоп по умолчанию: без точного handoff
+  его снимает человек, но `pp:review-again` разрешает REVIEW снять парковку, а
+  `pp:fix-decision <SHA>` возвращает PR в FIX crash-safe порядком.
+  Для новой заявки FIX сохраняет issue-decision fingerprint: обязательную
+  версию triage `id+updated_at+SHA-256(body)` плюс отдельный точный источник
+  выбора (human comment / `decision:N` / `pp:recommend`). Он перевалидирует
+  open-state/title/body/eligibility/hold/manual и обе части решения перед
+  branch-claim, push, PR create, `in-work` и комментарием; edit triage или
+  позднее решение человека всегда старше уже выполненной локальной работы.
+  Каноничный triage — самый ранний по `created_at`, затем `id` комментарий
+  `ivanarama` с точной отдельной строкой `<!-- pp:triage -->`; перед любой
+  мутацией issue, включая ранний handoff до branch-claim, FIX заново проверяет
+  его и весь fingerprint. Ранний handoff сериализован persistent
+  `pp:fix-issue-handoff-claim`: UUID owner, 30-минутная lease/takeover и
+  recoverable question/label/done phases не дают двум FIX задать вопрос дважды
+  или бросить `approved` после crash. Root коммитит digest всех исходных
+  comments и event watermark; label timeline не позволяет recovery удалить
+  человеческий re-add.
+  Обычная issue входит в FIX только по predicate `approved OR (ready-fix AND
+  NOT needs-decision)`: только `approved` перебивает активный ход человека; это
+  условие повторяется перед branch-claim и каждой внешней мутацией.
+  Отдельно стоит `manual` — «правка вне
+  репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
   правку и закрывает заявку сам, `approved` на ней ничего не запускает. Памятка
   — `docs/maintenance-pipeline.md`, точная процедура этапов — в самих скилах.
@@ -146,7 +243,29 @@ onebase describe --project <dir>                # вся структура ко
     `[заявка]` (с готовым заголовком) или `[выброс]` — и после мержа
     `/tail-issues` заводит по первым настоящие заявки. Согласие человека с
     разбором — то же движение `ship`; отказ — `no-tail` или строка
-    `pp:tail-drop N`. Та же грамматика, что `approved` / `approved + decision:N`.
+    versioned `pp:tail-drop review-comment=… review-updated=… item=…
+    item-sha256=…`. Короткий `pp:tail-drop N` действует только на legacy-хвост.
+    Переход на committed-протокол не теряет старый хвост:
+    fallback разрешён, только если последнее доверенное legacy-заключение и
+    создано, и обновлено строго до мержа #1261; дата мержа исходного PR не важна. Per-item
+    `updated_at` review и SHA-256 пункта входят во все versioned markers;
+    одинаковую canonical task identity (нормализованные title + содержательная
+    суть пункта без номера/source metadata), но не просто одинаковые заголовки,
+    между разными PR сериализует постоянный create-only ref. Dedupe-вход — не JSON, а точная
+    ASCII/LF запись из `title-sha256` и `task-sha256` с финальным LF, поэтому
+    escaping разных языков не меняет ключ. Text normalization затрагивает только
+    ASCII whitespace; Unicode code points/case сохраняются, без runtime-зависимых
+    NFKC/casefold. Exact-source recovery принимает issue только при совпадении
+    source + title/task payload и всех hashes. Уникальный owner в `tail-claim`,
+    30-минутная `tail-lease` с takeover, постоянный `tail-create-intent`,
+    `tail-source`/`tail-item-done` и прямой
+    REST-lookup от времени корневого claim
+    (не задержанный Search API) не дают параллельному или
+    восстановленному после crash прогону создать второй issue. Неоднозначный
+    orphan global ref без найденного issue — с intent или после crash до него —
+    единственный класс human-recovery TAIL: автоматика не повторяет
+    неидемпотентный create. Та же грамматика,
+    что `approved` / `approved + decision:N`.
     Отсюда же ужесточение блокирующего: **неверное по факту утверждение в
     тексте, который поставляет PR** (документация, `ai-guide`, текст скила) — не
     стилистика, а блокирующее: влитый текст становится источником правды и его
