@@ -853,7 +853,7 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 		pwEmptyChecked = "checked"
 	}
 	if pwPolicy.AllowEmpty && !stored.AllowEmptyPasswords {
-		pwEmptyHint = ` Сейчас пустые пароли разрешены переменной окружения <code>ONEBASE_ALLOW_EMPTY_PASSWORDS</code>: снятая галка их не запретит, уберите переменную у процесса лаунчера.`
+		pwEmptyHint = ` Сейчас пустые пароли разрешены переменной окружения <code>ONEBASE_ALLOW_EMPTY_PASSWORDS</code>: снятая галка их не запретит, уберите переменную у процесса лаунчера.` //nolint:gosec // G101: это подсказка администратору с именем переменной окружения, а не учётные данные
 	}
 	formMode := db.GetFormOpenMode(r.Context())
 	pagesSel, tabsSel := "", ""
