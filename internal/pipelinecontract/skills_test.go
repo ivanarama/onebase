@@ -80,12 +80,27 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 		"repos/ivanarama/onebase/pulls?state=open&per_page=100&sort=created&direction=asc",
 		"baseRefName:.base.ref",
 		"baseRefName == \"main\"",
-		"Объедини все страницы, оставь только `state == \"open\"` и\n   `baseRefName == \"main\"`, отсортируй по",
+		"Объедини все страницы, оставь только `state == \"open\"` и\n   `baseRefName == \"main\"`",
 		"--jq '{sha:.head.sha,state,baseRefName:.base.ref,labels:[.labels[].name]}'",
 		"gh api --paginate",
 		"comments?per_page=100",
 	)
 	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
+}
+
+func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Не сортируй очередь только по номеру PR",
+		"планировочный `review-depth`",
+		"число уникальных числовых `review-comment`",
+		"updated_at == created_at",
+		"claim-less legacy markers не считай",
+		"Это только безопасный приоритет планирования, а не proof для мутации",
+		"(review-depth ASC, number ASC)",
+		"свежий PR с глубиной 0 будет проверен раньше старого PR с глубиной 1+",
+	)
+	rejectAll(t, review, "Просматривай PR по возрастанию номера")
 }
 
 func TestReviewMarkersCannotCollideWithTailMarker(t *testing.T) {
