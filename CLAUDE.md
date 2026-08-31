@@ -185,7 +185,9 @@ onebase describe --project <dir>                # вся структура ко
   его и весь fingerprint. Ранний handoff сериализован persistent
   `pp:fix-issue-handoff-claim`: UUID owner, 30-минутная lease/takeover и
   recoverable question/label/done phases не дают двум FIX задать вопрос дважды
-  или бросить `approved` после crash.
+  или бросить `approved` после crash. Root коммитит digest всех исходных
+  comments и event watermark; label timeline не позволяет recovery удалить
+  человеческий re-add.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
@@ -207,7 +209,10 @@ onebase describe --project <dir>                # вся структура ко
     суть пункта без номера/source metadata), но не просто одинаковые заголовки,
     между разными PR сериализует постоянный create-only ref. Dedupe-вход — не JSON, а точная
     ASCII/LF запись из `title-sha256` и `task-sha256` с финальным LF, поэтому
-    escaping разных языков не меняет ключ. Уникальный owner в `tail-claim`,
+    escaping разных языков не меняет ключ. Text normalization затрагивает только
+    ASCII whitespace; Unicode code points/case сохраняются, без runtime-зависимых
+    NFKC/casefold. Exact-source recovery принимает issue только при совпадении
+    source + title/task payload и всех hashes. Уникальный owner в `tail-claim`,
     30-минутная `tail-lease` с takeover, постоянный `tail-create-intent`,
     `tail-source`/`tail-item-done` и прямой
     REST-lookup от времени корневого claim

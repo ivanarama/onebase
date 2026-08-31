@@ -3,11 +3,14 @@ package pipelinecontract
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func repositoryFile(t *testing.T, parts ...string) string {
@@ -243,11 +246,17 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"точный код причины\n   handoff",
 		"pp-fix-issue-handoff-v1\n   issue=<decimal>\n   issue-updated=<RFC3339>",
 		"triage-sha256=<64 lowercase hex>",
+		"comments-sha256=<64 lowercase hex>",
+		"events-watermark=<decimal|none>",
 		"labels=<sorted comma-list|none>",
 		"choice=<canonical ASCII choice>",
 		"<!-- pp:fix-issue-handoff-claim fingerprint-sha256=<64hex> reason=<code> owner=<uuid> -->",
 		"JSON, CRLF, BOM",
 		"record и marker находятся в одном комментарии",
+		"pp-fix-comments-v1",
+		"edit/delete любого старого комментария",
+		"post-root `unlabeled` event",
+		"поставлен заново: это новое решение человека",
 		"<!-- pp:fix-issue-handoff-lease claim=<root-id> previous=<active-id> owner=<uuid> -->",
 		"<!-- pp:fix-issue-handoff-question claim=<root-id> reason=<code> -->",
 		"<!-- pp:fix-issue-handoff-done claim=<root-id> -->",
@@ -459,6 +468,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"item-sha256",
 		"dedupe-sha256",
 		"каноничную task identity без source-specific полей",
+		"byte-portable нормализацию `pp-text-v1`",
+		"никаких\n   NFKC/NFC, casefold, locale lower-case или Unicode whitespace tables",
 		"Никакого JSON и Unicode escaping в dedupe-входе нет",
 		"pp-tail-task-v1\n   title-sha256=<64 lowercase hex>\n   task-sha256=<64 lowercase hex>",
 		"включая последний LF",
@@ -467,7 +478,9 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"Перед **каждым внешним изменением**",
 		"Не используй GitHub Search",
 		"issues?state=all&since=<root-claim-created-at>&per_page=100",
-		"автора issue `ivanarama`",
+		"автора `ivanarama`, точный `pp:tail-source`",
+		"Source marker без полного согласованного\n   payload",
+		"совпадение обоих component hashes",
 		"{number,title,author:.user.login,body}",
 		"если winner упал сразу после успешного создания ref, но\n   **до** публикации create-intent",
 		"orphan `pp-tail-dedupe/<hash>` ref без найденной issue",
@@ -1048,6 +1061,43 @@ func modeledIssueHandoffRecoveryCandidate(state modeledIssueHandoff) bool {
 	return !state.done && (state.routeLabels || state.needsDecision)
 }
 
+type modeledIssueComment struct {
+	id        int
+	createdAt string
+	updatedAt string
+	author    string
+	body      string
+}
+
+func modeledIssueCommentsDigest(comments []modeledIssueComment) string {
+	snapshot := append([]modeledIssueComment(nil), comments...)
+	sort.Slice(snapshot, func(i, j int) bool {
+		if snapshot[i].createdAt == snapshot[j].createdAt {
+			return snapshot[i].id < snapshot[j].id
+		}
+		return snapshot[i].createdAt < snapshot[j].createdAt
+	})
+	var record strings.Builder
+	record.WriteString("pp-fix-comments-v1\n")
+	for _, comment := range snapshot {
+		authorSum := sha256.Sum256([]byte(comment.author))
+		bodySum := sha256.Sum256([]byte(comment.body))
+		fmt.Fprintf(&record, "comment=%d@%s@%s@author-sha256=%s@body-sha256=%s\n",
+			comment.id, comment.createdAt, comment.updatedAt,
+			hex.EncodeToString(authorSum[:]), hex.EncodeToString(bodySum[:]))
+	}
+	digest := sha256.Sum256([]byte(record.String()))
+	return hex.EncodeToString(digest[:])
+}
+
+func modeledCanRemoveRouteLabel(initialPresent, currentPresent, postRootUnlabeled bool) bool {
+	return initialPresent && currentPresent && !postRootUnlabeled
+}
+
+func modeledCanRestoreNeedsDecision(currentPresent, postRootHumanRemoval bool) bool {
+	return !currentPresent && !postRootHumanRemoval
+}
+
 func TestIssueHandoffSerializesWorkersAndRecoversPhases(t *testing.T) {
 	record := "pp-fix-issue-handoff-v1\n" +
 		"issue=42\n" +
@@ -1057,11 +1107,13 @@ func TestIssueHandoffSerializesWorkersAndRecoversPhases(t *testing.T) {
 		"triage-comment=17\n" +
 		"triage-updated=2026-08-30T09:00:00Z\n" +
 		"triage-sha256=" + strings.Repeat("c", 64) + "\n" +
+		"comments-sha256=" + strings.Repeat("d", 64) + "\n" +
+		"events-watermark=900\n" +
 		"labels=approved,decision:2\n" +
 		"choice=decision:2\n" +
 		"reason=missing-plan\n"
 	recordSum := sha256.Sum256([]byte(record))
-	if got := hex.EncodeToString(recordSum[:]); got != "2c525e3a364d43beba9d954e6beccbbaf89c97dced54e5836475a4c3afdc20ef" {
+	if got := hex.EncodeToString(recordSum[:]); got != "b62eae410f86dc086883fa83c88f6108eb26ae82573fb267feaea9747e17bb22" {
 		t.Fatalf("canonical issue handoff hash vector = %s", got)
 	}
 
@@ -1083,6 +1135,35 @@ func TestIssueHandoffSerializesWorkersAndRecoversPhases(t *testing.T) {
 	recovered := modeledAdvanceIssueHandoff(crashedAfterQuestion, 10, 4)
 	if recovered.questionCount != 1 || !recovered.needsDecision || recovered.routeLabels || !recovered.done {
 		t.Fatalf("recovered handoff = %+v, want one question and completed label transition", recovered)
+	}
+}
+
+func TestIssueHandoffRejectsEditedCommentsAndHumanLabelReadd(t *testing.T) {
+	original := []modeledIssueComment{
+		{id: 8, createdAt: "2026-08-30T08:00:00Z", updatedAt: "2026-08-30T08:00:00Z", author: "ivanarama", body: "context"},
+		{id: 9, createdAt: "2026-08-30T09:00:00Z", updatedAt: "2026-08-30T09:00:00Z", author: "ivanarama", body: "decision"},
+	}
+	originalDigest := modeledIssueCommentsDigest(original)
+	edited := append([]modeledIssueComment(nil), original...)
+	edited[0].body = "edited context"
+	if modeledIssueCommentsDigest(edited) == originalDigest {
+		t.Fatal("editing a pre-root comment must invalidate handoff recovery")
+	}
+	if modeledIssueCommentsDigest(original[1:]) == originalDigest {
+		t.Fatal("deleting a pre-root comment must invalidate handoff recovery")
+	}
+
+	if modeledCanRemoveRouteLabel(true, true, true) {
+		t.Fatal("recovery must not remove approved after worker removal and human re-add")
+	}
+	if !modeledCanRemoveRouteLabel(true, true, false) {
+		t.Fatal("the original approved may be removed before any post-root unlabeled event")
+	}
+	if modeledCanRemoveRouteLabel(false, true, false) {
+		t.Fatal("a route label absent from the root snapshot is a later human change")
+	}
+	if modeledCanRestoreNeedsDecision(false, true) {
+		t.Fatal("recovery must not restore needs-decision after a human removed it")
 	}
 }
 
@@ -1191,7 +1272,45 @@ func TestTailCompletionIsBoundToEditableCommentVersion(t *testing.T) {
 	}
 }
 
+func modeledPortableTailText(value string) (string, bool) {
+	if !utf8.ValidString(value) {
+		return "", false
+	}
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	var normalized strings.Builder
+	pendingSpace := false
+	for i := 0; i < len(value); {
+		b := value[i]
+		if b == 0x20 || (b >= 0x09 && b <= 0x0d) {
+			if normalized.Len() > 0 {
+				pendingSpace = true
+			}
+			i++
+			continue
+		}
+		if pendingSpace {
+			normalized.WriteByte(' ')
+			pendingSpace = false
+		}
+		if b < utf8.RuneSelf {
+			normalized.WriteByte(b)
+			i++
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(value[i:])
+		normalized.WriteString(value[i : i+size])
+		i += size
+	}
+	return normalized.String(), true
+}
+
 func modeledTailTaskDedupe(title, task string) (string, string, string) {
+	title, titleOK := modeledPortableTailText(title)
+	task, taskOK := modeledPortableTailText(task)
+	if !titleOK || !taskOK {
+		return "", "", ""
+	}
 	titleSum := sha256.Sum256([]byte(title))
 	taskSum := sha256.Sum256([]byte(task))
 	titleHash := hex.EncodeToString(titleSum[:])
@@ -1205,11 +1324,47 @@ func modeledTailTaskDedupe(title, task string) (string, string, string) {
 
 func modeledAcquireCanonicalTaskClaim(claims map[string]bool, title, task string) bool {
 	_, _, key := modeledTailTaskDedupe(title, task)
+	if key == "" {
+		return false
+	}
 	if claims[key] {
 		return false
 	}
 	claims[key] = true
 	return true
+}
+
+func modeledTailExactSourceRecoverable(author, source, title, canonicalTask, taskMarker, dedupeMarker, hashes bool) bool {
+	return author && source && title && canonicalTask && taskMarker && dedupeMarker && hashes
+}
+
+func TestPortableTailTextAvoidsRuntimeDependentUnicodeFolding(t *testing.T) {
+	got, ok := modeledPortableTailText(" \tStraße\r\nreview\u00a0text  ")
+	if !ok || got != "Straße review\u00a0text" {
+		t.Fatalf("portable normalization = %q/%v", got, ok)
+	}
+	street, _, streetKey := modeledTailTaskDedupe("Straße", "task")
+	upper, _, upperKey := modeledTailTaskDedupe("STRASSE", "task")
+	if street == upper || streetKey == upperKey {
+		t.Fatal("pp-text-v1 must preserve Unicode case instead of runtime-dependent casefold")
+	}
+	composed, _, composedKey := modeledTailTaskDedupe("é", "task")
+	decomposed, _, decomposedKey := modeledTailTaskDedupe("e\u0301", "task")
+	if composed == decomposed || composedKey == decomposedKey {
+		t.Fatal("pp-text-v1 must not depend on runtime Unicode normalization tables")
+	}
+	if _, ok := modeledPortableTailText(string([]byte{0xff})); ok {
+		t.Fatal("invalid UTF-8 must fail closed")
+	}
+}
+
+func TestTailExactSourceRecoveryRequiresCompleteImmutablePayload(t *testing.T) {
+	if modeledTailExactSourceRecoverable(true, true, false, false, false, false, false) {
+		t.Fatal("a source marker alone must not complete a TAIL item")
+	}
+	if !modeledTailExactSourceRecoverable(true, true, true, true, true, true, true) {
+		t.Fatal("a fully consistent exact-source issue must remain recoverable")
+	}
 }
 
 func TestCanonicalTailTaskClaimUsesTitleAndTaskContent(t *testing.T) {

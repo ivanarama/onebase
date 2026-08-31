@@ -160,19 +160,27 @@ stderr, вывода нет, код возврата ненулевой. Все 
    `[заявка]` с их заголовками. Пункты `[выброс]` не трогай никогда.
 
    `id` комментария недостаточен: GitHub позволяет редактировать body на месте.
-   Для выбранного заключения сохрани `updated_at`. Для каждого `[заявка]`
-   вычисли `item-sha256` от UTF-8 NFKC-нормализованного полного текста пункта
-   (LF, trailing whitespace каждой строки удалён, внешние пустые строки
-   удалены). Отдельно собери каноничную task identity без source-specific полей.
+   Для выбранного заключения сохрани `updated_at`. Все текстовые hashes TAIL
+   используют одну byte-portable нормализацию `pp-text-v1`. Вход обязан быть
+   валидной последовательностью Unicode scalar values; unpaired surrogate или
+   иной invalid Unicode означает fail closed. Замени CRLF и одиночный CR на LF,
+   затем каждую максимальную последовательность **только ASCII whitespace bytes**
+   `09..0D` или `20` замени одним ASCII space `20` и удали ASCII space по краям.
+   Все остальные Unicode code points и их case сохрани byte-for-byte: **никаких
+   NFKC/NFC, casefold, locale lower-case или Unicode whitespace tables**. Поэтому
+   результат не зависит от Unicode version/runtime; визуально похожий, но
+   byte-другой текст безопасно получает другой key.
+
+   Для каждого `[заявка]` вычисли `item-sha256` от raw UTF-8 полного текста
+   пункта после `pp-text-v1`. Отдельно собери каноничную task identity без source-specific полей.
    `task` — вся содержательная часть `<суть>` между `[заявка]` и
    `→ заголовок:`, но без номера списка, class-token, заголовка, PR/review/item
    metadata и машинных markers; repository-relative `файл:строка`, подсистема,
    риск и ожидаемый результат остаются, потому что различают задачи. Если
    обязательную границу `→ заголовок:` однозначно разобрать нельзя, fail closed
    в `НУЖЕН ЧЕЛОВЕК`, а не строй ключ только из title.
-   Для обоих текстов: Unicode NFKC, `casefold`, CRLF -> LF, trailing whitespace
-   строк удалён, любая оставшаяся последовательность whitespace заменена одним
-   ASCII-пробелом, края удалены. `title-sha256` и `task-sha256` — SHA-256
+   Title и task пропусти через тот же `pp-text-v1`. `title-sha256` и
+   `task-sha256` — SHA-256
    **raw UTF-8 bytes** соответствующих нормализованных строк, lowercase hex.
    Никакого JSON и Unicode escaping в dedupe-входе нет. Собери точную ASCII
    запись с LF, включая последний LF:
@@ -302,8 +310,15 @@ stderr, вывода нет, код возврата ненулевой. Все 
 
    До проверки по смыслу и ещё раз непосредственно перед `gh issue create`
    прочитай прямым пагинированным REST все repository issues, обновлённые не
-   раньше `created_at` **корневого initial claim**, исключи PR и сравни полное тело с точным
-   `pp:tail-source` и автора issue `ivanarama`. Для меж-source дедупликации
+   раньше `created_at` **корневого initial claim**, исключи PR. Exact-source
+   recovery требует одновременно: автора `ivanarama`, точный `pp:tail-source`,
+   текущий title после `pp-text-v1`, строку `Каноничная суть:`, точные
+   `pp:tail-task-v1` и `pp:tail-dedupe`, совпадение обоих component hashes и
+   пересчитанного `dedupe-sha256`. Source marker без полного согласованного
+   payload — повреждённая/отредактированная транзакция: не создавай item-done и
+   не создавай второй issue, закончи `НУЖЕН ЧЕЛОВЕК` с номером issue.
+
+   Для меж-source дедупликации
    отдельно прочитай **все** repository issues прямым пагинированным REST без
    `since` и найди точный `pp:tail-dedupe sha256=<dedupe-sha256>` у автора
    `ivanarama`; Search API доказательством отсутствия не является. Чужой issue с копией source-

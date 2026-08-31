@@ -466,6 +466,24 @@ description: Реализация заявок ivanarama/onebase с меткой
    `issue-handoff fingerprint` из п. 3 и создай случайный 128-bit UUID `owner`.
    Для переносимого fingerprint сначала вычисли SHA-256 raw UTF-8 исходных
    `title`, `body` и body canonical triage (lowercase hex). Затем собери точную
+   snapshot всех комментариев, существовавших до root. Для каждого comment
+   вычисли raw UTF-8 SHA-256 точных author login (для удалённого автора literal
+   `deleted`) и body; отсортируй по `created_at`, затем числовому `id`, и собери
+   ASCII/LF record с финальным LF:
+
+   ```text
+   pp-fix-comments-v1
+   comment=<id>@<created_at>@<updated_at>@author-sha256=<64hex>@body-sha256=<64hex>
+   ...
+   ```
+
+   Для пустого списка record состоит только из header + LF. `comments-sha256` —
+   SHA-256 ровно этого record. Получи также **все** issue events пагинированным
+   REST и сохрани максимальный числовой event id как `events-watermark` либо
+   `none`. Events GitHub неизменяемы; watermark нужен, чтобы отличить собственное
+   удаление route label от более позднего человеческого re-add.
+
+   Затем собери точную
    ASCII/LF запись с финальным LF; `labels` — отсортированный ASCII-список только
    релевантных labels из п. 3 через запятую либо `none`, `choice` — точный
    `human:<id>@<updated_at>:<body-sha256>`, `decision:<N>`, `recommend:<N>` либо
@@ -480,6 +498,8 @@ description: Реализация заявок ivanarama/onebase с меткой
    triage-comment=<decimal>
    triage-updated=<RFC3339>
    triage-sha256=<64 lowercase hex>
+   comments-sha256=<64 lowercase hex>
+   events-watermark=<decimal|none>
    labels=<sorted comma-list|none>
    choice=<canonical ASCII choice>
    reason=<code>
@@ -497,8 +517,12 @@ description: Реализация заявок ivanarama/onebase с меткой
 
    Root доверен только если record и marker находятся в одном комментарии,
    author `ivanarama`, hash пересчитан и совпал, а поля record описывают исходный
-   issue-handoff fingerprint. Так recovery видит не только opaque hash, но и
-   проверяемый snapshot до первой мутации.
+   issue-handoff fingerprint. При recovery заново построй comments-record из
+   всех комментариев с numeric id меньше root id: edit/delete любого старого
+   комментария или concurrent comment перед root меняет digest и останавливает
+   handoff. Комментарии с id больше root допустимы только если это валидные
+   markers этой транзакции; любой иной comment останавливает её. Так recovery
+   видит не только opaque hash, но и проверяемый snapshot до первой мутации.
 
    Перед созданием root прочитай все comments: если уже есть незавершённый
    доверенный root для того же canonical triage/reason и после него нет
@@ -535,9 +559,21 @@ description: Реализация заявок ivanarama/onebase с меткой
       конкретным вопросом и точной отдельной строкой
       `<!-- pp:fix-issue-handoff-question claim=<root-id> reason=<code> -->`.
       После timeout ищи marker прямым REST и не повторяй POST вслепую.
-   2. Идемпотентно добавь и сверь `needs-decision`.
+   2. Идемпотентно добавь и сверь `needs-decision`. Перед recovery прочитай все
+      paginated issue events после `events-watermark`: если после появления
+      `needs-decision` есть более поздний `unlabeled` этого label, человек его
+      снял — не добавляй повторно, остановись.
    3. Идемпотентно сними и сверь отсутствие `in-work`, `approved` и `ready-fix`.
+      Для каждого label исходный record доказывает, был ли он до root. Если label
+      изначально отсутствовал, его позднее появление — human change, не удаляй.
+      Если он сейчас присутствует, но после root уже есть `unlabeled` event для
+      него, значит label был снят и затем поставлен заново: это новое решение
+      человека, не удаляй и остановись. Удалять можно только исходно
+      присутствующий label без предшествующего post-root `unlabeled` event.
+      Если label отсутствует, фаза уже выполнена и recovery её не повторяет.
       `404` допустим только после REST-сверки, что конкретной метки уже нет.
+      Все events получай пагинированно и сортируй по `created_at`, затем id;
+      неполная/неоднозначная timeline закрывает gate.
    4. Только при `needs-decision` и отсутствии трёх route labels опубликуй
       `<!-- pp:fix-issue-handoff-done claim=<root-id> -->`. Найденный done делает
       recovery завершённым и запрещает новые question/label mutations.

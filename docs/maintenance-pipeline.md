@@ -253,6 +253,10 @@ decision/route labels и причина остановки; она также п
 crash между comment/labels продолжает тот же root вместо новой транзакции.
 FIX отдельно сканирует `needs-decision` issues с незавершённым root: crash после
 снятия route labels не выталкивает транзакцию из recovery-очереди до done.
+Root также хранит digest всех pre-root comments и immutable issue-event
+watermark. Edit/delete старого комментария меняет digest; post-root label events
+показывают remove→re-add, поэтому recovery не удалит новое человеческое
+`approved` и не вернёт снятый человеком `needs-decision`.
 Её remote-ветка строго детерминирована как `fix/<N>` и атомарно создаётся через
 GitHub `POST /git/refs`: только ответ `201` даёт branch-claim, а любой другой
 статус останавливает запуск (`409`/`422` включены) даже при том же SHA. Обычный
@@ -560,6 +564,12 @@ issue, а полный прямой REST-список ищет `pp:tail-dedupe` 
 а от точной ASCII-записи `pp-tail-task-v1\ntitle-sha256=<hex>\ntask-sha256=<hex>\n`:
 компонентные hashes берутся от raw UTF-8 нормализованных строк, hex lowercase,
 LF и последний LF обязательны.
+Нормализация `pp-text-v1` меняет только CR/LF и ASCII whitespace bytes; все
+остальные Unicode code points и case сохраняются без NFKC/casefold, поэтому
+Unicode version Python/Go/JS на ключ не влияет. Exact-source issue считается
+результатом только при согласованных source/dedupe/task markers, title,
+`Каноничная суть:` и пересчитанных hashes; marker с испорченным payload ведёт к
+human recovery, а не к item-done.
 Ref без issue — human-recovery, не повторный create. Проверка идёт
 напрямую, без eventually-consistent Search API. Поэтому два живых worker не
 могут одновременно пройти create-gate, а crash
