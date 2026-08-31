@@ -182,6 +182,12 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"также всегда запрещает REVIEW-мутацию",
 		"Опасный необъяснимый конфликт — `needs-decision`",
 		"активные блокирующие `changes-requested` + `needs-decision`",
+		"{id,created_at,updated_at,author:.user.login,body}",
+		"`updated_at == created_at`",
+		"timelineItems(itemTypes:[COMMENT_DELETED_EVENT])",
+		"Любой `CommentDeletedEvent.createdAt` позже\n   начала текущей эпохи",
+		"удаление/редактирование earliest claim не должно воскрешать stale\n   sibling",
+		"только новый\n   не редактированный `pp:review-again`",
 	)
 	requireCompactInOrder(t, review,
 		"После публикации заключения перечитай HEAD",
@@ -678,6 +684,35 @@ func recoveryTarget(orphans []orderedClaim, claims []orderedClaim) string {
 	return winner.orphan
 }
 
+type reviewEpochComment struct {
+	created int
+	updated int
+}
+
+func reviewEpochGate(epochStart int, comments []reviewEpochComment, deletionEvents []int) bool {
+	for _, deletedAt := range deletionEvents {
+		if deletedAt > epochStart {
+			return false
+		}
+	}
+	for _, comment := range comments {
+		if comment.created > epochStart && comment.updated != comment.created {
+			return false
+		}
+	}
+	return true
+}
+
+func reviewClaimsAfter(claims []orderedClaim, epochStart int) []orderedClaim {
+	var current []orderedClaim
+	for _, claim := range claims {
+		if claim.sequence > epochStart {
+			current = append(current, claim)
+		}
+	}
+	return current
+}
+
 func TestReviewRecoveryInterleavingsFollowClaimOwner(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -695,6 +730,33 @@ func TestReviewRecoveryInterleavingsFollowClaimOwner(t *testing.T) {
 				t.Fatalf("recoveryTarget() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReviewDeletedOrEditedWinnerCannotResurrectStaleClaim(t *testing.T) {
+	orphans := []orderedClaim{{1, "R1-changes"}, {2, "R2-reviewed"}}
+	claims := []orderedClaim{{10, "R1-changes"}, {11, "R2-reviewed"}}
+	if got := recoveryTarget(orphans, claims); got != "R1-changes" {
+		t.Fatalf("initial claim winner = %q, want R1-changes", got)
+	}
+
+	visibleAfterWinnerRemoval := []orderedClaim{{11, "R2-reviewed"}}
+	if got := recoveryTarget(orphans, visibleAfterWinnerRemoval); got != "R2-reviewed" {
+		t.Fatalf("current bodies alone should expose stale resurrection, got %q", got)
+	}
+	if reviewEpochGate(0, nil, []int{12}) {
+		t.Fatal("deleting the winning claim in the current epoch must fail closed")
+	}
+	if reviewEpochGate(0, []reviewEpochComment{{created: 10, updated: 12}}, nil) {
+		t.Fatal("editing the winning claim marker away in the current epoch must fail closed")
+	}
+
+	const freshOverride = 13
+	if !reviewEpochGate(freshOverride, []reviewEpochComment{{created: 10, updated: 12}}, []int{12}) {
+		t.Fatal("a fresh human override after the mutation must start a clean epoch")
+	}
+	if current := reviewClaimsAfter(claims, freshOverride); len(current) != 0 {
+		t.Fatalf("stale sibling claims before the fresh epoch must be excluded, got %+v", current)
 	}
 }
 

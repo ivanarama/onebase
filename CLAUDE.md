@@ -153,6 +153,10 @@ onebase describe --project <dir>                # вся структура ко
   любого комментария после canonical TRIAGE root обнаруживается пагинированным
   `COMMENT_DELETED_EVENT` gate и навсегда закрывает транзакцию человеку: stale
   lease-ветка не может воскреснуть после удаления winner.
+  REVIEW аналогично считает claim/completion только в неизменяемой эпохе:
+  `updated_at == created_at`, пагинированный `COMMENT_DELETED_EVENT` fence до
+  election и каждой мутации; новый человеческий `pp:review-again` после
+  edit/delete начинает чистую эпоху и не даёт stale claim сменить outcome.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR
