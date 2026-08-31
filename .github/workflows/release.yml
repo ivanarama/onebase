@@ -316,11 +316,11 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-          # Открытый ключ передаётся не для подписи, а для сверки половин пары:
-          # приватный живёт в секретах, открытый в переменных, и перепутать их
-          # при ротации ничего не мешало. Рассинхрон давал зелёный релиз,
-          # который не принимает ни один установленный бинарь (#967).
-          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
+          # Обычно подпись сверяется с тем же ключом, который вшит в бинарь.
+          # При плановой ротации переходный бинарь уже несёт новый ключ, но его
+          # архив обязан быть подписан старым: временная переменная отвязывает
+          # pair-check от ключа сборки без поддержки двух ключей в runtime.
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY || vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
@@ -333,7 +333,7 @@ jobs:
             echo "::error::в dist нет ни одного файла .sha256 — подписывать нечего"
             exit 1
           fi
-          go run ./tools/relsign sign "${sums[@]}"
+          go run ./tools/relsign sign -pub "$RELEASE_SIGNING_PUBLIC_KEY" "${sums[@]}"
           ls -1 dist/*.sig
 
       - name: Compute commit subject
@@ -488,11 +488,11 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-          # Открытый ключ передаётся не для подписи, а для сверки половин пары:
-          # приватный живёт в секретах, открытый в переменных, и перепутать их
-          # при ротации ничего не мешало. Рассинхрон давал зелёный релиз,
-          # который не принимает ни один установленный бинарь (#967).
-          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
+          # Обычно подпись сверяется с тем же ключом, который вшит в бинарь.
+          # При плановой ротации переходный бинарь уже несёт новый ключ, но его
+          # архив обязан быть подписан старым: временная переменная отвязывает
+          # pair-check от ключа сборки без поддержки двух ключей в runtime.
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY || vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
@@ -505,7 +505,7 @@ jobs:
             echo "::error::в dist нет ни одного файла .sha256 — подписывать нечего"
             exit 1
           fi
-          go run ./tools/relsign sign "${sums[@]}"
+          go run ./tools/relsign sign -pub "$RELEASE_SIGNING_PUBLIC_KEY" "${sums[@]}"
           ls -1 dist/*.sig
 
       - name: Create Release

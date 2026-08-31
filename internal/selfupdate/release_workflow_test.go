@@ -48,11 +48,10 @@ type workflowStep struct {
 
 var reStepName = regexp.MustCompile(`^\s*-\s+name:\s*(.+?)\s*$`)
 
-// releaseBuildSteps возвращает шаги релизного workflow, которые собирают бинарь
-// с вшитым открытым ключом. YAML здесь не разбирается: нужен не смысл файла, а
-// соседство двух ldflags в одном шаге, и деление по `- name:` для этого точнее
-// — оно ловит и случай «флаг есть, но в другом шаге».
-func releaseBuildSteps(t *testing.T) []workflowStep {
+// releaseWorkflowSteps делит настоящий workflow по `- name:`. YAML здесь не
+// разбирается: тестам нужно соседство строк в одном шаге, а не модель всего
+// документа.
+func releaseWorkflowSteps(t *testing.T) []workflowStep {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.FromSlash(releaseWorkflowPath))
 	if err != nil {
@@ -76,9 +75,16 @@ func releaseBuildSteps(t *testing.T) []workflowStep {
 		cur.lines = append(cur.lines, line)
 	}
 	steps = append(steps, cur)
+	return steps
+}
 
+// releaseBuildSteps возвращает шаги релизного workflow, которые собирают бинарь
+// с вшитым открытым ключом. Деление по шагам ловит и случай «флаг есть, но в
+// другом шаге».
+func releaseBuildSteps(t *testing.T) []workflowStep {
+	t.Helper()
 	var build []workflowStep
-	for _, s := range steps {
+	for _, s := range releaseWorkflowSteps(t) {
 		if rePublicKeyFlag.MatchString(strings.Join(s.lines, "\n")) {
 			build = append(build, s)
 		}
@@ -133,6 +139,39 @@ func TestРелизныйWorkflow_ОткрытыйКлючПриходитИзП
 		body := strings.Join(s.lines, "\n")
 		if !strings.Contains(body, "RELEASE_PUBLIC_KEY") {
 			t.Errorf("шаг %q вшивает ключ мимо переменной RELEASE_PUBLIC_KEY", s.name)
+		}
+	}
+}
+
+// Переходный релиз при плановой ротации вшивает новый открытый ключ, но сам
+// подписывается старым приватным. Pair-check обязан принимать отдельную
+// публичную половину старого ключа; иначе workflow ошибочно требует сменить обе
+// половины одновременно и обрывает автообновление всего парка.
+func TestРелизныйWorkflow_КлючПроверкиПодписиОтделёнОтКлючаСборки(t *testing.T) {
+	var signSteps []workflowStep
+	for _, s := range releaseWorkflowSteps(t) {
+		body := strings.Join(s.lines, "\n")
+		if strings.Contains(body, "RELEASE_SIGNING_KEY:") &&
+			strings.Contains(body, "go run ./tools/relsign sign") {
+			signSteps = append(signSteps, s)
+		}
+	}
+	if len(signSteps) < 2 {
+		t.Fatalf("в %s найдено %d шагов подписи, ожидалось не меньше 2 (build и stable)",
+			releaseWorkflowPath, len(signSteps))
+	}
+
+	const (
+		keyEnv  = `RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY || vars.RELEASE_PUBLIC_KEY }}`
+		command = `go run ./tools/relsign sign -pub "$RELEASE_SIGNING_PUBLIC_KEY"`
+	)
+	for _, s := range signSteps {
+		body := strings.Join(s.lines, "\n")
+		if !strings.Contains(body, keyEnv) {
+			t.Errorf("шаг %q не отделяет публичную половину ключа подписи от ключа сборки", s.name)
+		}
+		if !strings.Contains(body, command) {
+			t.Errorf("шаг %q не передаёт отдельную публичную половину в relsign -pub", s.name)
 		}
 	}
 }
