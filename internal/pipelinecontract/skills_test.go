@@ -980,7 +980,7 @@ func tailProofCompatibleWithMerge(anchor, review, claim, completion int, mergedE
 		return false
 	}
 	mergedEdge := mergedEdges[0]
-	if !(anchor < review && review < claim && claim < completion && completion < mergedEdge) {
+	if anchor >= review || review >= claim || claim >= completion || completion >= mergedEdge {
 		return false
 	}
 	for _, edge := range commitOrForce {
@@ -1003,10 +1003,7 @@ func tailProofCompatibleWithMerge(anchor, review, claim, completion int, mergedE
 			return false
 		}
 	}
-	if postAnchorDeletes > 1 {
-		return false
-	}
-	return true
+	return postAnchorDeletes <= 1
 }
 
 func TestTailAllowsRoutineHeadDeleteOnlyAfterMergedEdge(t *testing.T) {
