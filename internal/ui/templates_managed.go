@@ -511,7 +511,11 @@ const tplManagedForm = `
 .managed-group-horizontal>.managed-group-body>.form-group>label{line-height:18px}
 .managed-group-horizontal>.managed-group-body>.managed-btn{align-self:flex-start;margin:27px 0 0 0}
 /* Флажок без метки сверху выравниваем по той же линии, что и поля рядом. */
-.managed-group-horizontal>.managed-group-body>.form-group.managed-checkbox{align-self:flex-start;margin-top:27px}
+/* Флажок в горизонтальной группе занимает ширину СВОЕЙ подписи, а не общую
+   колонку 260px: с ней «Причина обращения ☐СПАМ» уже не помещались в строку
+   (260+12+260 против 482 доступных) и флажок переносился под поле — ровно там,
+   где в 1С он стоит справа от поля. */
+.managed-group-horizontal>.managed-group-body>.form-group.managed-checkbox{align-self:flex-start;margin-top:27px;flex:0 0 auto;min-width:0}
 /* Нередактируемое поле — это ЗНАЧЕНИЕ, а не ввод: убираем стрелку списка и
    гасим рамку, чтобы результат команды не читался как незаполненное поле.
    Флажок и переключатель исключены: appearance:none стирает сам квадратик,
