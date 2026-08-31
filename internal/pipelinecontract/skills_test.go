@@ -806,7 +806,7 @@ type modeledFixPostPush struct {
 }
 
 func (state modeledFixPostPush) reviewMayStart() bool {
-	return !(state.transitionValid && state.routeLabel && !state.currentReview)
+	return !state.transitionValid || !state.routeLabel || state.currentReview
 }
 
 func (state modeledFixPostPush) fixerMayDeleteRoute() bool {
