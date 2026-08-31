@@ -507,7 +507,13 @@ completion и убеждается, что это первая completion-ссы
 `Reviewed-SHA`/epoch совпадают, сам адресованный epoch anchor существует и не
 редактировался, после anchor нет deletion event и нового
 `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/
-`HeadRefRestoredEvent`. Последнее закрывает ABA `H → X → H` и
+`HeadRefRestoredEvent` либо base lifecycle event. REVIEW, FIX, MERGE и TAIL на
+каждой контрольной точке требуют `baseRefName == main`; до merge PR также обязан
+оставаться `OPEN`, а TAIL принимает только `MERGED` с непустым `mergedAt`.
+`BaseRefChangedEvent`,
+`BaseRefForcePushedEvent` и `BaseRefDeletedEvent` закрывают proof даже после ABA
+`main → другая → main`. Это не даёт согласованному для production PR незаметно
+уехать в другую целевую ветку. HEAD-fence закрывает ABA `H → X → H` и
 `H → deleted → restored H`: равный прежнему `headRefOid` не оживляет старый proof,
 между парой и после completion нет непоглощённого `pp:review-again`, а связанное
 заключение содержит точную `Outcome-Label`. Если
@@ -571,7 +577,8 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
   перезапуском. Настоящий провал → комментарий с выдержкой лога и эскалация.
 
 Финальный merge выполняется REST-запросом compare-and-merge с полем
-`sha=<проверенный HEAD>`. Непосредственно перед ним один raw GraphQL snapshot
+`sha=<проверенный HEAD>`. Непосредственно перед ним два последовательных
+побайтово одинаковых raw GraphQL snapshot
 содержит одновременно HEAD, текущие labels и последние timeline events; это
 последняя проверка `ship`/`hold`/`needs-decision`, completion и override.
 Успешный snapshot — точка невозврата: GitHub не умеет сделать merge условным по

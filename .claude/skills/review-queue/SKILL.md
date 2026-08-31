@@ -56,11 +56,14 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    ```
    gh api --paginate \
      "repos/ivanarama/onebase/pulls?state=open&per_page=100&sort=created&direction=asc" \
-     --jq '.[] | {number,title,labels:[.labels[].name],isDraft:.draft}'
+     --jq '.[] | {number,title,state,baseRefName:.base.ref,labels:[.labels[].name],isDraft:.draft}'
    ```
 
-   Объедини все страницы, отсортируй по числовому `number`. Просматривай PR по
-   возрастанию номера и сначала отбрасывай только `ship`, `hold` и черновики.
+   Объедини все страницы, оставь только `state == "open"` и
+   `baseRefName == "main"`, отсортируй по
+   числовому `number`. Просматривай PR по возрастанию номера и сначала
+   отбрасывай только `ship`, `hold` и черновики. PR в другую целевую ветку не
+   является работой этого production-конвейера.
    `changes-requested`/`needs-decision` проверяются после чтения событий: обычно
    это маршруты FIX/человека, но незавершённую транзакцию REVIEW надо уметь
    восстановить. Затем выполняй SHA-дедупликацию ниже и продолжай
@@ -77,7 +80,7 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
 
    ```
    gh api repos/ivanarama/onebase/pulls/<M> \
-     --jq '{sha:.head.sha,labels:[.labels[].name]}'
+     --jq '{sha:.head.sha,state,baseRefName:.base.ref,labels:[.labels[].name]}'
    ```
 
    Все комментарии читай через пагинированный REST, а не поле `comments`
@@ -100,7 +103,8 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    Все protocol events REVIEW версионированы серверным GraphQL. Одним
    пагинированным `timelineItems(first:100,after:$cursor,itemTypes:
    [PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,
-   HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,
+   HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,
+   BASE_REF_DELETED_EVENT,MERGED_EVENT,ISSUE_COMMENT,
    COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])` получи **edges с
    cursor**; этот точный набор `itemTypes` используют и потребители proof, чтобы
    сохранённый cursor всегда относился к той же connection. Для `IssueComment` читай
@@ -120,14 +124,17 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    ```graphql
    query($owner:String!,$name:String!,$number:Int!,$cursor:String){
      repository(owner:$owner,name:$name){pullRequest(number:$number){
-       headRefOid
-       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+       headRefOid baseRefName state
+       timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,BASE_REF_DELETED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
          updatedAt pageInfo{hasNextPage endCursor}
          edges{cursor node{__typename
            ... on PullRequestCommit{id commit{oid}}
            ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
            ... on HeadRefDeletedEvent{id createdAt}
            ... on HeadRefRestoredEvent{id createdAt}
+           ... on BaseRefChangedEvent{id createdAt previousRefName currentRefName}
+           ... on BaseRefForcePushedEvent{id createdAt beforeCommit{oid} afterCommit{oid}}
+           ... on BaseRefDeletedEvent{id createdAt baseRefName}
            ... on MergedEvent{id createdAt commit{oid}}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{id createdAt}
@@ -138,6 +145,14 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
      }}
    }
    ```
+
+   Оба прохода обязаны также вернуть `state == OPEN` и `baseRefName == "main"`.
+   Close/merge между первичным списком и gate останавливает REVIEW. Любой
+   `BaseRefChangedEvent`/`BaseRefForcePushedEvent`/`BaseRefDeletedEvent` после
+   выбранного epoch anchor закрывает текущую эпоху: даже переход
+   `main → release → main` или force-push `main` не оживляет старый proof. Новый
+   аудит допустим только после нового human override при текущем
+   `baseRefName == "main"`.
 
    Server epoch anchor — последний по порядку edges `PullRequestCommit` с
    `commit.oid == headRefOid`, `HeadRefForcePushedEvent` с
@@ -354,9 +369,10 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
    `НУЖЕН ЧЕЛОВЕК`.
 
    Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`,
+   `.state`, `.base.ref`,
    актуальные метки и **все** комментарии пагинированным REST, повтори полный
    server-ordered GraphQL epoch snapshot, deletion fence и `lastEditedAt` gate.
-   `ship`/`hold`
+   PR обязан оставаться `open`, а `base.ref` — точным `main`; `ship`/`hold`
    всегда запрещают изменение. Для обычного заключения `changes-requested` и
    `needs-decision` остаются маршрутными стопами, но не когда после каноничной
    пары есть более поздний непоглощённый override; stale `reviewed` не мешает.

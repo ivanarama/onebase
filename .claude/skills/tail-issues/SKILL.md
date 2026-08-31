@@ -71,8 +71,9 @@ stderr, вывода нет, код возврата ненулевой. Все 
 2. Очередь: PR, влитые за последние 14 дней. Окно задаётся **в самом запросе**:
 
    ```
-   gh pr list --state merged --search "merged:>=$(date -d '14 days ago' +%F)" \
-     --limit 300 --json number,title,mergedAt,labels,url
+   gh pr list --state merged --base main \
+     --search "merged:>=$(date -d '14 days ago' +%F)" \
+     --limit 300 --json number,title,baseRefName,mergedAt,labels,url
    ```
 
    Три вещи здесь неочевидны, и каждая стоила бы потерянных хвостов:
@@ -86,12 +87,13 @@ stderr, вывода нет, код возврата ненулевой. Все 
      Вернулось ровно `--limit` элементов — значит выдача обрезана: подними лимит
      (поиск отдаёт до 1000) и скажи об этом в сводке. Молча продолжать нельзя:
      обрезанная выдача выглядит точно так же, как «хвостов больше нет».
-   Для каждого кандидата получи merged HEAD и **все** комментарии пагинированным
+   Даже после `--base main` локально требуй `baseRefName == "main"`. Для каждого
+   кандидата получи merged HEAD, state, текущий base и **все** комментарии пагинированным
    REST. Поле GraphQL `comments` ограничено первыми 100 и для нового
    многокомментарийного протокола непригодно:
 
    ```
-   gh api repos/ivanarama/onebase/pulls/<M> --jq .head.sha
+   gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,mergedAt:.merged_at,baseRefName:.base.ref}'
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
      --jq '.[] | {id,created_at,updated_at,author:.user.login,body}'
    ```
@@ -136,7 +138,12 @@ stderr, вывода нет, код возврата ненулевой. Все 
      в timeline ровно один `MergedEvent`, а edge-order строго равен
      `anchor < review < earliest claim < completion < MergedEvent`. Между anchor
      и merge нет `PullRequestCommit`/`HeadRefForcePushedEvent`/
-     `HeadRefDeletedEvent`/`HeadRefRestoredEvent`. После merge допустим только
+      `HeadRefDeletedEvent`/`HeadRefRestoredEvent`/`BaseRefChangedEvent`/
+      `BaseRefForcePushedEvent`/`BaseRefDeletedEvent`. Текущий `baseRefName`
+      обязан быть `main`, REST state — `closed`, `mergedAt` — непустым, а два
+      GraphQL-прохода обязаны возвращать `state == MERGED`. Смена base
+      `main → другая → main` и force-push base не
+      оживляют старый proof. После merge допустим только
      ноль событий lifecycle либо один **конечный** `HeadRefDeletedEvent` без
      последующего restore; любой `HeadRefRestoredEvent`, в том числе post-merge,
      закрывает gate. Общий порядок берётся только из GraphQL edges, поэтому

@@ -49,10 +49,13 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
    ```
    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
-     --jq '.[] | {number,title,labels:[.labels[].name]}'
+     --jq '.[] | {number,title,state,baseRefName:.base.ref,labels:[.labels[].name]}'
    ```
 
-   `gh pr list` без явного лимита здесь запрещён: 30 припаркованных PR не должны
+   Локально оставь только `state == "open"` и `baseRefName == "main"`: MERGE
+   этого конвейера никогда
+   не вливает PR в другую целевую ветку. `gh pr list` без явного лимита здесь
+   запрещён: 30 припаркованных PR не должны
    скрыть 31-й допустимый и дать ложный `ПУСТО`. Пусто →
    `ИТОГ: ПУСТО (очередь пуста)` и стоп (ПУСТО — тихий итог «делать нечего»,
    уведомление не шлётся).
@@ -77,14 +80,20 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    отревьюенному HEAD:
 
    ```
-   gh api repos/ivanarama/onebase/pulls/<N> --jq .head.sha
+     gh api repos/ivanarama/onebase/pulls/<N> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/comments?per_page=100" \
      --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/timeline?per_page=100" \
      --jq '.[] | {id,created_at,event,actor:(.actor.login // .user.login),label:(.label.name // null),body}'
    ```
 
-   Среди server-ordered GraphQL timeline edges должен быть валидный
+   На каждой контрольной точке PR обязан оставаться `open`, а `baseRefName` —
+   точным `main`. Close/merge или текущий иной base между выбором и мутацией
+   закрывает gate без изменения PR. Любой `BaseRefChangedEvent`/
+   `BaseRefForcePushedEvent`/`BaseRefDeletedEvent` после proof anchor инвалидирует
+   аудит, включая ABA `main → другая → main`; если PR снова открыт в `main`,
+   сними stale `ship` безопасной передачей в REVIEW. Среди server-ordered GraphQL
+   timeline edges должен быть валидный
    `<!-- pp:head-reviewed <текущий SHA> review-comment=<числовой id>
    claim=<числовой id> epoch-sha256=<64hex> -->`, который ссылается на
    существующие более ранние доверенные не редактированные review и
@@ -217,7 +226,8 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    обоих полных ответов; любое отличие требует начать пару заново.
 
    В одном серверном снимке должны одновременно выполняться условия: HEAD равен
-   проверенному SHA; есть `ship`; нет `hold` и актуального `needs-decision`;
+   проверенному SHA; `state == OPEN`; `baseRefName == "main"`;
+   есть `ship`; нет `hold` и актуального `needs-decision`;
    `labels.pageInfo.hasNextPage == false`; адресованный epoch anchor существует
    и точно совпадает с сохранёнными node id/type/payload (для override-
    `IssueComment` также `lastEditedAt == null`, автор `ivanarama` и отдельная
@@ -226,7 +236,8 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
    Outcome-Label, tail/body, claim и epoch-sha256 всё ещё образуют тот же
    claim-bound proof; после сохранённого anchor нет ни одного нового
    `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/
-   `HeadRefRestoredEvent` (даже если после ABA-перехода
+   `HeadRefRestoredEvent`/`BaseRefChangedEvent`/`BaseRefForcePushedEvent`/
+   `BaseRefDeletedEvent` (даже если после ABA-перехода
    `H → X → H` текущий `headRefOid` снова равен проверенному SHA), нет
    `CommentDeletedEvent`, а claim остаётся earliest; **последний** ship-transition среди возвращённых
    `LabeledEvent`/`UnlabeledEvent` — `LabeledEvent` от `ivanarama`, а его edge
@@ -258,9 +269,9 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
        ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
      }
      repository(owner:$owner,name:$name){pullRequest(number:$number){
-       headRefOid labels(first:100){nodes{name} pageInfo{hasNextPage}}
+       headRefOid baseRefName state labels(first:100){nodes{name} pageInfo{hasNextPage}}
        comments(last:100){nodes{fullDatabaseId createdAt lastEditedAt author{login} body}}
-       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+       timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,BASE_REF_DELETED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
          updatedAt
          pageInfo{hasNextPage}
          edges{cursor node{__typename
@@ -268,6 +279,9 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
            ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
            ... on HeadRefDeletedEvent{id createdAt}
            ... on HeadRefRestoredEvent{id createdAt}
+           ... on BaseRefChangedEvent{id createdAt previousRefName currentRefName}
+           ... on BaseRefForcePushedEvent{id createdAt beforeCommit{oid} afterCommit{oid}}
+           ... on BaseRefDeletedEvent{id createdAt baseRefName}
            ... on MergedEvent{id createdAt commit{oid}}
            ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
            ... on CommentDeletedEvent{createdAt}

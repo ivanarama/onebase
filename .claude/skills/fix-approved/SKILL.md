@@ -53,10 +53,13 @@ description: Реализация заявок ivanarama/onebase с меткой
 
    ```
    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
-     --jq '.[] | {number,title,body,headRefName:.head.ref,headSha:.head.sha,labels:[.labels[].name]}'
+     --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRefName:.head.ref,headSha:.head.sha,labels:[.labels[].name]}'
    ```
 
-   Затем исключи `ship` и `hold`. Пагинация обязательна и для восстановления:
+   Затем оставь только `state == "open"`, `baseRefName == "main"` и исключи
+   `ship` и `hold`.
+   FIX production-конвейера не изменяет PR в другую целевую ветку. Пагинация
+   обязательна и для восстановления:
    припаркованные PR не должны навсегда скрывать более поздний crash-handoff.
    `ship` — уже
    принятое человеком решение о слиянии; FIX не должен пушить в эту ветку
@@ -86,7 +89,11 @@ description: Реализация заявок ivanarama/onebase с меткой
    реконструируй тот же server-ordered GraphQL epoch, что REVIEW: два полных
    идентичных прохода пагинированного timeline с HEAD anchors,
    `IssueComment.lastEditedAt` и
-   `COMMENT_DELETED_EVENT`; review, earliest claim и completion должны
+   `COMMENT_DELETED_EVENT`, base lifecycle events, `state` и `baseRefName`; оба
+   прохода обязаны вернуть `state == OPEN` и точный `baseRefName == "main"`, а любой
+   `BaseRefChangedEvent`/`BaseRefForcePushedEvent`/`BaseRefDeletedEvent` после
+   anchor закрывает gate даже при ABA `main → другая → main`. Review, earliest
+   claim и completion должны
    существовать, быть от `ivanarama`, не редактироваться, совпадать по
    SHA/review-comment/claim/epoch и не иметь deletion edge после anchor.
    Claim-less legacy completion можно учитывать только как историю кругов: он
@@ -124,13 +131,14 @@ description: Реализация заявок ivanarama/onebase с меткой
    построй тот же единый поток переходов владельца:
 
    ```
-   gh api repos/ivanarama/onebase/pulls/<M> --jq .head.sha
+     gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
      --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api repos/ivanarama/onebase/issues/<M> --jq '[.labels[].name]'
    ```
 
    **До CAS-push** продолжать можно, только пока HEAD совпадает с исходной canonical completion,
+   PR всё ещё `open`, `baseRefName == "main"`,
    эта же completion/decision остаётся последним валидным переходом с владельцем
    FIX, `changes-requested` присутствует, а `ship`, `hold`, `needs-decision`
    отсутствуют. Более поздний `pp:review-again` немедленно передаёт владельца
@@ -144,8 +152,9 @@ description: Реализация заявок ivanarama/onebase с меткой
    владение FIX, но атомарно открывает доказуемую post-push фазу: для разрешённых
    шагов (комментарий `pp:fix-pushed`, затем снятие `changes-requested`) уже не
    требуй равенства старому HEAD. Перед каждым из них перечитай
-   HEAD/comments/labels и требуй HEAD == отправленному SHA, тот же валидный
-   trailer, отсутствие `ship`/`hold`/`needs-decision` и отсутствие **любого**
+   HEAD/comments/labels и требуй PR `open`, `baseRefName == "main"`, HEAD ==
+   отправленному SHA, тот же валидный trailer, отсутствие
+   `ship`/`hold`/`needs-decision` и отсутствие **любого**
    нового перехода REVIEW этого HEAD после push: `pp:review-again`, заключения с
    `Reviewed-SHA`, `pp:review-claim` или completion. Иное состояние останавливает
    финализацию без DELETE общей метки. После подтверждённого снятия метки
@@ -568,11 +577,51 @@ description: Реализация заявок ivanarama/onebase с меткой
    <!-- pp:fix-issue-handoff-claim fingerprint-sha256=<64hex> reason=<code> owner=<uuid> -->
    ```
 
+   Handoff читается не только из текущего REST-списка. Перед созданием root,
+   выборами canonical root/active lease, каждым renewal/takeover и **каждой** из
+   четырёх фаз выполни два полных последовательных прохода server-ordered
+   GraphQL timeline от `cursor=null` до `hasNextPage=false` и принимай их только
+   при побайтовом совпадении `state`, `updatedAt`, `title`, `body`, всех labels и
+   всей последовательности `(edge cursor, __typename, все поля node)`. Любое
+   отличие начинает пару заново; `labels.pageInfo.hasNextPage` обязан быть
+   false. Точный запрос:
+
+   ```graphql
+   query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+     repository(owner:$owner,name:$name){issue(number:$number){
+       state updatedAt title body
+       labels(first:100){nodes{name} pageInfo{hasNextPage}}
+       timelineItems(first:100,after:$cursor,itemTypes:[ISSUE_COMMENT,COMMENT_DELETED_EVENT]){
+         updatedAt pageInfo{hasNextPage endCursor}
+         edges{cursor node{__typename
+           ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
+           ... on CommentDeletedEvent{id createdAt}
+         }}
+       }
+     }}
+   }
+   ```
+
+   Сопоставь каждый REST `node_id` с GraphQL `IssueComment.id`, а decimal REST
+   id — со строковым `fullDatabaseId`. Root, lease, question и done обязаны
+   существовать в GraphQL, иметь автора `ivanarama`, точный marker и
+   `lastEditedAt == null`; edit любого protocol comment закрывает gate. Если
+   root ещё не виден, но после edge canonical triage уже есть
+   `CommentDeletedEvent`, новый root не создавай: удалённый комментарий мог быть
+   root незавершённой транзакции. Если root виден, любой `CommentDeletedEvent`
+   после его edge делает транзакцию навсегда fail-closed: удаление root/active
+   lease/winner не может
+   переизбрать stale sibling из урезанного REST-списка. Нельзя публиковать новый
+   root той же транзакции, renew, takeover, question, менять labels или ставить
+   done; выведи `НУЖЕН ЧЕЛОВЕК`. Same-second delete также закрывает gate, потому
+   что сравнивается позиция edge, а не timestamp.
+
    Сначала найди self-contained root candidates, где record и marker находятся
-   в одном комментарии автора `ivanarama`, hash record пересчитан и совпал, не
-   пытаясь пока включить соседние root comments в их comments digest. Сгруппируй
+   в одном не редактированном комментарии автора `ivanarama`, hash record
+   пересчитан и совпал, не пытаясь пока включить соседние root comments в их
+   comments digest. Сгруппируй
    candidates по **точно одинаковым record + fingerprint + reason**; в группе
-   каноничен самый ранний по `created_at`, затем numeric id. Только для canonical
+   каноничен самый ранний по позиции GraphQL edge. Только для canonical
    root заново построй comments-record из всех комментариев с numeric id меньше
    его id: edit/delete любого старого комментария или настоящий concurrent human
    comment меняет digest и останавливает handoff. Более поздние roots той же
@@ -588,7 +637,7 @@ description: Реализация заявок ivanarama/onebase с меткой
    доверенный root для того же canonical triage/reason и после него нет
    непротокольных human changes, восстанавливай его, а второй root не публикуй.
    Если два первых worker всё же одновременно прошли pre-POST read, каноничен
-   самый ранний root по GitHub `created_at`, затем числовому `id`; продолжает
+   самый ранний root по позиции server-ordered GraphQL edge; продолжает
    только процесс, чей **собственный возвращённый id** каноничен. Остальные root
    остаются диагностикой и ничего человеку не спрашивают.
 
@@ -605,8 +654,8 @@ description: Реализация заявок ivanarama/onebase с меткой
    <!-- pp:fix-issue-handoff-lease claim=<root-id> previous=<active-id> owner=<uuid> -->
    ```
 
-   Для каждого `previous` каноничен самый ранний допустимый child по
-   `created_at`, затем `id`; до expiry допустим только тот же owner, после —
+   Для каждого `previous` каноничен самый ранний допустимый child по позиции
+   GraphQL edge; до expiry допустим только тот же owner, после —
    любой. Итеративно построй единственную активную вершину. Мутировать может
    только процесс, чей собственный возвращённый id — эта вершина, UUID совпадает
    и lease не истекла. При остатке менее пяти минут сначала renew и заново
@@ -614,8 +663,9 @@ description: Реализация заявок ivanarama/onebase с меткой
    handoff одновременно.
 
    Затем под одной lease выполни четыре восстанавливаемые фазы. Перед **каждой**
-   фазой перечитай issue/comments/labels, перепроверь canonical triage,
-   fingerprint и lease. Допустимы только уже зафиксированные protocol markers и
+   фазой повтори два полных GraphQL-прохода, перечитай REST issue/comments/labels,
+   перепроверь canonical triage, fingerprint, deletion/edit fence и lease.
+   Допустимы только уже зафиксированные protocol markers и
    ожидаемые label-изменения этой транзакции; новый `hold`, закрытие, edit triage,
    новое решение или любой непротокольный комментарий после root останавливает
    handoff без новых мутаций.

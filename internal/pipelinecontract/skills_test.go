@@ -78,8 +78,10 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAll(t, review,
 		"repos/ivanarama/onebase/pulls?state=open&per_page=100&sort=created&direction=asc",
-		"Объедини все страницы, отсортируй по числовому `number`",
-		"--jq '{sha:.head.sha,labels:[.labels[].name]}'",
+		"baseRefName:.base.ref",
+		"baseRefName == \"main\"",
+		"Объедини все страницы, оставь только `state == \"open\"` и\n   `baseRefName == \"main\"`, отсортируй по",
+		"--jq '{sha:.head.sha,state,baseRefName:.base.ref,labels:[.labels[].name]}'",
 		"gh api --paginate",
 		"comments?per_page=100",
 	)
@@ -98,6 +100,47 @@ func TestReviewMarkersCannotCollideWithTailMarker(t *testing.T) {
 		headMarker+" <полный проверенный SHA> review-comment=<id заключения> claim=<id claim-комментария> epoch-sha256=<64hex> -->",
 	)
 	rejectAll(t, review, "pp:review-head")
+}
+
+func TestPRPipelineBindsEveryStageToMainBaseAndFencesBaseABA(t *testing.T) {
+	for name, text := range map[string]string{
+		"review": skill(t, "review-queue"),
+		"fix":    skill(t, "fix-approved"),
+		"merge":  skill(t, "merge-shepherd"),
+		"tail":   skill(t, "tail-issues"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireAllCompact(t, text,
+				"baseRefName",
+				"main",
+				"state",
+				"BaseRefChangedEvent",
+				"BaseRefForcePushedEvent",
+				"BaseRefDeletedEvent",
+			)
+		})
+	}
+	review := skill(t, "review-queue")
+	requireAll(t, review,
+		"BASE_REF_CHANGED_EVENT",
+		"BASE_REF_FORCE_PUSHED_EVENT",
+		"BASE_REF_DELETED_EVENT",
+		"main → release → main",
+		"state == OPEN",
+	)
+	merge := skill(t, "merge-shepherd")
+	requireAll(t, merge,
+		"headRefOid baseRefName state labels(first:100)",
+		"`baseRefName == \"main\"`",
+		"`state == OPEN`",
+	)
+	tail := skill(t, "tail-issues")
+	requireAll(t, tail,
+		"gh pr list --state merged --base main",
+		"--json number,title,baseRefName,mergedAt,labels,url",
+		"`state == MERGED`",
+		"mergedAt",
+	)
 }
 
 func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
@@ -135,7 +178,7 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 	requireAllCompact(t, review,
 		"git fetch origin pull/<M>/head",
 		"<сохранённый SHA>",
-		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, актуальные метки и **все** комментарии",
+		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, `.state`, `.base.ref`, актуальные метки и **все** комментарии",
 		"`ship`/`hold` всегда запрещают изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
 		"после постановки",
@@ -184,7 +227,7 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"активные блокирующие `changes-requested` + `needs-decision`",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
 		"timelineItems(first:100,after:$cursor,itemTypes:",
-		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,\n   HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
+		"[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,\n   HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,\n   BASE_REF_DELETED_EVENT,MERGED_EVENT,ISSUE_COMMENT,\n   COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]",
 		"этот точный набор `itemTypes` используют и потребители proof",
 		"`lastEditedAt != null`",
 		"`timelineItems.updatedAt`",
@@ -232,6 +275,11 @@ func TestReviewProofIsClaimBoundAndRevalidatedByEveryConsumer(t *testing.T) {
 		"двумя полными идентичными проходами по ordered edges и node payload",
 	)
 	requireAllCompact(t, tail,
+		"gh pr list --state merged --base main",
+		"--json number,title,baseRefName,mergedAt,labels,url",
+		"локально требуй `baseRefName == \"main\"`",
+		"REST state — `closed`, `mergedAt` — непустым",
+		"GraphQL-прохода обязаны возвращать `state == MERGED`",
 		"claim=<id>\n     epoch-sha256=<64hex>",
 		"`lastEditedAt == null`",
 		"`COMMENT_DELETED_EVENT`",
@@ -246,6 +294,7 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"FIX не должен пушить в эту ветку\n   одновременно с MERGE",
 		"получи **все** открытые PR пагинированным REST",
 		"gh api --paginate \"repos/ivanarama/onebase/pulls?state=open&per_page=100\"",
+		"baseRefName:.base.ref",
 		"припаркованные PR не должны навсегда скрывать более поздний crash-handoff",
 		"уже полученного в п. 1 **полного пагинированного списка**",
 		"перед **каждым\n   внешним изменением**",
@@ -260,7 +309,7 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"`<!-- pp:head-reviewed <SHA> review-comment=<id> claim=<id>\n     epoch-sha256=<64hex> -->`",
 	)
 	requireAllCompact(t, fixer,
-		"Затем исключи `ship` и `hold`",
+		"Затем оставь только `state == \"open\"`, `baseRefName == \"main\"` и исключи `ship` и `hold`",
 		"Успешный собственный push потребляет старое владение FIX",
 		"PP-Fix-Transition: from=<SHA canonical completion> review-comment=<id заключения> claim=<id> epoch-sha256=<64hex>",
 		"Claim-less legacy completion",
@@ -304,7 +353,7 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"choice=<canonical ASCII choice>",
 		"<!-- pp:fix-issue-handoff-claim fingerprint-sha256=<64hex> reason=<code> owner=<uuid> -->",
 		"JSON, CRLF, BOM",
-		"record и marker находятся в одном комментарии",
+		"record и marker находятся в одном не редактированном комментарии",
 		"pp-fix-comments-v1",
 		"edit/delete любого старого комментария",
 		"post-root `unlabeled` event",
@@ -330,6 +379,14 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"`equivalent diagnostic losers`",
 		"Непосредственно перед каждым** renewal",
 		"не блокирует обычную FIX-очередь",
+		"два полных последовательных прохода server-ordered\n   GraphQL timeline",
+		"timelineItems(first:100,after:$cursor,itemTypes:[ISSUE_COMMENT,COMMENT_DELETED_EVENT])",
+		"Root, lease, question и done обязаны\n   существовать в GraphQL",
+		"`lastEditedAt == null`",
+		"делает транзакцию навсегда fail-closed",
+		"не может\n   переизбрать stale sibling",
+		"новый root не создавай",
+		"Same-second delete также закрывает gate",
 	)
 	rejectAll(t, fixer,
 		"ищи его по **префиксу**",
@@ -425,6 +482,8 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 	requireAllCompact(t, merge,
 		"получи **все** открытые PR пагинированным REST",
 		"gh api --paginate \"repos/ivanarama/onebase/pulls?state=open&per_page=100\"",
+		"baseRefName:.base.ref",
+		"Локально оставь только `state == \"open\"` и `baseRefName == \"main\"`",
 		"30 припаркованных PR не должны скрыть 31-й допустимый",
 		"исключи `hold` и `needs-decision`",
 		"Перед **каждым внешним изменением PR**",
@@ -465,13 +524,16 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"**последний** ship-transition",
 		"его edge\n   расположен после edges всех трёх адресованных комментариев",
 		"Если ни одного ship-transition нет в epoch timeline",
-		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`",
+		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`/`BaseRefChangedEvent`/`BaseRefForcePushedEvent`/\n   `BaseRefDeletedEvent`",
 		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
-		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
+		"timelineItems(first:100,after:$epochCursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,BASE_REF_DELETED_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
 		"... on PullRequestCommit{id commit{oid}}",
 		"... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}",
 		"... on HeadRefDeletedEvent{id createdAt}",
 		"... on HeadRefRestoredEvent{id createdAt}",
+		"... on BaseRefChangedEvent{id createdAt previousRefName currentRefName}",
+		"... on BaseRefForcePushedEvent{id createdAt beforeCommit{oid} afterCommit{oid}}",
+		"... on BaseRefDeletedEvent{id createdAt baseRefName}",
 		"... on MergedEvent{id createdAt commit{oid}}",
 		"`lastEditedAt == null`",
 		"Предыдущий comment-watermark обязан присутствовать среди `comments(last:100)`",
@@ -484,6 +546,8 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		`{"merge_method":"merge","sha":"<проверенный SHA>"}`,
 		"Успех — только ответ с `merged: true`",
 		"`409` означает, что HEAD успел измениться",
+		"`baseRefName == \"main\"`",
+		"`state == OPEN`",
 	)
 	requireCompactInOrder(t, merge,
 		"5. Мерж:",
@@ -555,6 +619,7 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"после anchor нет\n     `COMMENT_DELETED_EVENT`",
 		"в timeline ровно один `MergedEvent`",
 		"`anchor < review < earliest claim < completion < MergedEvent`",
+		"`BaseRefChangedEvent`/\n     `BaseRefForcePushedEvent`/`BaseRefDeletedEvent`",
 		"После merge допустим только\n     ноль событий lifecycle либо один **конечный** `HeadRefDeletedEvent`",
 		"любой `HeadRefRestoredEvent`, в том числе post-merge",
 		"same-second merge/delete однозначен",
@@ -678,6 +743,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"детерминированный `pp:tail-source`",
 		"без eventually-consistent Search API",
 	)
+	rejectAll(t, docs, "Непосредственно перед ним один raw GraphQL snapshot")
 	rejectAll(t, docs,
 		"без `ship`, `reviewed`, `changes-requested`, `hold`",
 		"Вливает только PR с `ship` и без `hold`,",
@@ -814,23 +880,27 @@ func modeledHeadLifecycleAnchor(lastCommitAnchor, lastDelete, lastRestore int, h
 }
 
 type modeledReviewProof struct {
-	reviewPresent     bool
-	claimPresent      bool
-	completionPresent bool
-	reviewEdited      bool
-	claimEdited       bool
-	completionEdited  bool
-	deletionAfter     bool
-	fieldsMatch       bool
-	claimIsEarliest   bool
-	anchorInvalid     bool
+	reviewPresent       bool
+	claimPresent        bool
+	completionPresent   bool
+	reviewEdited        bool
+	claimEdited         bool
+	completionEdited    bool
+	deletionAfter       bool
+	fieldsMatch         bool
+	claimIsEarliest     bool
+	anchorInvalid       bool
+	baseRefMain         bool
+	baseLifecycleAfter  bool
+	lifecycleStateValid bool
 }
 
 func reviewProofAcceptedByConsumer(proof modeledReviewProof) bool {
 	return proof.reviewPresent && proof.claimPresent && proof.completionPresent &&
 		!proof.reviewEdited && !proof.claimEdited && !proof.completionEdited &&
 		!proof.deletionAfter && proof.fieldsMatch && proof.claimIsEarliest &&
-		!proof.anchorInvalid
+		!proof.anchorInvalid && proof.baseRefMain && !proof.baseLifecycleAfter &&
+		proof.lifecycleStateValid
 }
 
 func TestReviewRecoveryInterleavingsFollowClaimOwner(t *testing.T) {
@@ -891,9 +961,11 @@ func TestReviewDeletedOrEditedWinnerCannotResurrectStaleClaim(t *testing.T) {
 }
 
 type modeledTimelinePass struct {
-	headRefOid string
-	updatedAt  string
-	edgeDigest string
+	headRefOid  string
+	baseRefName string
+	state       string
+	updatedAt   string
+	edgeDigest  string
 }
 
 func stableReviewTimelineSnapshot(first, second modeledTimelinePass) bool {
@@ -901,8 +973,8 @@ func stableReviewTimelineSnapshot(first, second modeledTimelinePass) bool {
 }
 
 func TestReviewPaginationRejectsSameSecondMixedSnapshot(t *testing.T) {
-	first := modeledTimelinePass{headRefOid: "H", updatedAt: "2026-08-31T07:56:51Z", edgeDigest: "page-set-before-edit"}
-	second := modeledTimelinePass{headRefOid: "H", updatedAt: "2026-08-31T07:56:51Z", edgeDigest: "page-set-after-edit"}
+	first := modeledTimelinePass{headRefOid: "H", baseRefName: "main", state: "OPEN", updatedAt: "2026-08-31T07:56:51Z", edgeDigest: "page-set-before-edit"}
+	second := modeledTimelinePass{headRefOid: "H", baseRefName: "main", state: "OPEN", updatedAt: "2026-08-31T07:56:51Z", edgeDigest: "page-set-after-edit"}
 	if stableReviewTimelineSnapshot(first, second) {
 		t.Fatal("equal HEAD and second-resolution updatedAt must not hide a changed ordered edge/node payload")
 	}
@@ -910,12 +982,21 @@ func TestReviewPaginationRejectsSameSecondMixedSnapshot(t *testing.T) {
 	if !stableReviewTimelineSnapshot(first, second) {
 		t.Fatal("two complete identical ordered passes should form a stable snapshot")
 	}
+	second.baseRefName = "release"
+	if stableReviewTimelineSnapshot(first, second) {
+		t.Fatal("a target-branch change must invalidate otherwise identical review snapshots")
+	}
+	second.baseRefName = first.baseRefName
+	second.state = "CLOSED"
+	if stableReviewTimelineSnapshot(first, second) {
+		t.Fatal("closing a PR must invalidate otherwise identical review snapshots")
+	}
 }
 
 func TestReviewConsumersRejectInvalidatedClaimBoundProof(t *testing.T) {
 	valid := modeledReviewProof{
 		reviewPresent: true, claimPresent: true, completionPresent: true,
-		fieldsMatch: true, claimIsEarliest: true,
+		fieldsMatch: true, claimIsEarliest: true, baseRefMain: true, lifecycleStateValid: true,
 	}
 	if !reviewProofAcceptedByConsumer(valid) {
 		t.Fatal("an intact claim-bound proof must be consumable")
@@ -929,6 +1010,9 @@ func TestReviewConsumersRejectInvalidatedClaimBoundProof(t *testing.T) {
 		"stale sibling claim":            func(p *modeledReviewProof) { p.claimIsEarliest = false },
 		"epoch mismatch":                 func(p *modeledReviewProof) { p.fieldsMatch = false },
 		"override anchor edited":         func(p *modeledReviewProof) { p.anchorInvalid = true },
+		"target branch is not main":      func(p *modeledReviewProof) { p.baseRefMain = false },
+		"base changed after proof":       func(p *modeledReviewProof) { p.baseLifecycleAfter = true },
+		"PR lifecycle state changed":     func(p *modeledReviewProof) { p.lifecycleStateValid = false },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -1032,7 +1116,7 @@ func tailPreCreateMutationAllowed(proof modeledReviewProof) bool {
 func TestTailRechecksReviewProofImmediatelyBeforeCreate(t *testing.T) {
 	proof := modeledReviewProof{
 		reviewPresent: true, claimPresent: true, completionPresent: true,
-		fieldsMatch: true, claimIsEarliest: true,
+		fieldsMatch: true, claimIsEarliest: true, baseRefMain: true, lifecycleStateValid: true,
 	}
 	if !tailPreCreateMutationAllowed(proof) {
 		t.Fatal("an intact proof should allow the pre-create transaction to continue")
@@ -1810,6 +1894,38 @@ func modeledAdvanceIssueHandoff(state modeledIssueHandoff, ownedRoot, phases int
 
 func modeledIssueHandoffRecoveryCandidate(state modeledIssueHandoff) bool {
 	return !state.done && (state.routeLabels || state.needsDecision)
+}
+
+func modeledRecoverIssueHandoffLease(root modeledTriageLease, visibleChildren []modeledTriageLease, deletionAfterRoot, protocolCommentEdited bool) (modeledTriageLease, bool) {
+	if deletionAfterRoot || protocolCommentEdited {
+		return modeledTriageLease{}, false
+	}
+	return modeledActiveTriageLease(root, visibleChildren), true
+}
+
+func modeledCanCreateIssueHandoffRoot(deletionAfterCanonicalTriage bool) bool {
+	return !deletionAfterCanonicalTriage
+}
+
+func TestIssueHandoffDeletedWinnerCannotReelectStaleSibling(t *testing.T) {
+	root := modeledTriageLease{id: 100, owner: "root-owner", created: 0}
+	winner := modeledTriageLease{id: 110, previous: 100, owner: "owner-a", created: 31}
+	staleSibling := modeledTriageLease{id: 111, previous: 100, owner: "owner-b", created: 31}
+	if active, ok := modeledRecoverIssueHandoffLease(root, []modeledTriageLease{winner, staleSibling}, false, false); !ok || active.id != winner.id {
+		t.Fatalf("initial FIX handoff lease = %+v, ok=%v; want earliest child", active, ok)
+	}
+	if active := modeledActiveTriageLease(root, []modeledTriageLease{staleSibling}); active.id != staleSibling.id {
+		t.Fatalf("REST-only election should expose stale resurrection, got %+v", active)
+	}
+	if _, ok := modeledRecoverIssueHandoffLease(root, []modeledTriageLease{staleSibling}, true, false); ok {
+		t.Fatal("a GraphQL deletion edge after the root must permanently close FIX handoff recovery")
+	}
+	if _, ok := modeledRecoverIssueHandoffLease(root, []modeledTriageLease{winner}, false, true); ok {
+		t.Fatal("editing a protocol root or lease must close FIX handoff recovery")
+	}
+	if modeledCanCreateIssueHandoffRoot(true) {
+		t.Fatal("a deletion after canonical triage must prevent recreating a missing/deleted handoff root")
+	}
 }
 
 type modeledIssueComment struct {
