@@ -383,9 +383,10 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"timelineItems(first:100,after:$cursor,itemTypes:[ISSUE_COMMENT,COMMENT_DELETED_EVENT])",
 		"Root, lease, question и done обязаны\n   существовать в GraphQL",
 		"`lastEditedAt == null`",
-		"делает транзакцию навсегда fail-closed",
+		"навсегда закрывает handoff",
 		"не может\n   переизбрать stale sibling",
-		"новый root не создавай",
+		"Новый root не создавай",
+		"даже если после edit в его body больше нет protocol marker",
 		"Same-second delete также закрывает gate",
 	)
 	rejectAll(t, fixer,
@@ -1896,8 +1897,8 @@ func modeledIssueHandoffRecoveryCandidate(state modeledIssueHandoff) bool {
 	return !state.done && (state.routeLabels || state.needsDecision)
 }
 
-func modeledRecoverIssueHandoffLease(root modeledTriageLease, visibleChildren []modeledTriageLease, deletionAfterRoot, protocolCommentEdited bool) (modeledTriageLease, bool) {
-	if deletionAfterRoot || protocolCommentEdited {
+func modeledRecoverIssueHandoffLease(root modeledTriageLease, visibleChildren []modeledTriageLease, deletionAfterCanonicalTriage, trustedCommentEditedAfterTriage bool) (modeledTriageLease, bool) {
+	if deletionAfterCanonicalTriage || trustedCommentEditedAfterTriage {
 		return modeledTriageLease{}, false
 	}
 	return modeledActiveTriageLease(root, visibleChildren), true
@@ -1905,6 +1906,15 @@ func modeledRecoverIssueHandoffLease(root modeledTriageLease, visibleChildren []
 
 func modeledCanCreateIssueHandoffRoot(deletionAfterCanonicalTriage bool) bool {
 	return !deletionAfterCanonicalTriage
+}
+
+func modeledIssueHandoffPostTriageFence(canonicalTriage int, deletionEdges, editedTrustedCommentEdges []int) bool {
+	for _, edge := range append(append([]int(nil), deletionEdges...), editedTrustedCommentEdges...) {
+		if edge > canonicalTriage {
+			return false
+		}
+	}
+	return true
 }
 
 func TestIssueHandoffDeletedWinnerCannotReelectStaleSibling(t *testing.T) {
@@ -1918,13 +1928,34 @@ func TestIssueHandoffDeletedWinnerCannotReelectStaleSibling(t *testing.T) {
 		t.Fatalf("REST-only election should expose stale resurrection, got %+v", active)
 	}
 	if _, ok := modeledRecoverIssueHandoffLease(root, []modeledTriageLease{staleSibling}, true, false); ok {
-		t.Fatal("a GraphQL deletion edge after the root must permanently close FIX handoff recovery")
+		t.Fatal("a GraphQL deletion edge after canonical triage must close recovery even when a later root is visible")
 	}
 	if _, ok := modeledRecoverIssueHandoffLease(root, []modeledTriageLease{winner}, false, true); ok {
-		t.Fatal("editing a protocol root or lease must close FIX handoff recovery")
+		t.Fatal("editing a trusted post-triage comment must close recovery even if its protocol marker disappears")
 	}
 	if modeledCanCreateIssueHandoffRoot(true) {
 		t.Fatal("a deletion after canonical triage must prevent recreating a missing/deleted handoff root")
+	}
+}
+
+func TestIssueHandoffRejectsDeletionBeforeVisibleReplacementRootAndMarkerAwayEdit(t *testing.T) {
+	const (
+		canonicalTriage = 10
+		deletedRoot     = 20
+		deletionEvent   = 21
+		replacementRoot = 22
+	)
+	if !(canonicalTriage < deletedRoot && deletedRoot < deletionEvent && deletionEvent < replacementRoot) {
+		t.Fatal("invalid modeled triage < R1 < delete < R2 ordering")
+	}
+	if modeledIssueHandoffPostTriageFence(canonicalTriage, []int{deletionEvent}, nil) {
+		t.Fatal("a visible R2 must not hide deletion of R1 between triage and R2")
+	}
+	if modeledIssueHandoffPostTriageFence(canonicalTriage, nil, []int{deletedRoot}) {
+		t.Fatal("editing R1 marker away must remain a trusted post-triage edit fence")
+	}
+	if !modeledIssueHandoffPostTriageFence(canonicalTriage, []int{9}, []int{8}) {
+		t.Fatal("events entirely before canonical triage do not belong to this handoff epoch")
 	}
 }
 

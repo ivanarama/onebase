@@ -605,12 +605,14 @@ description: Реализация заявок ivanarama/onebase с меткой
    Сопоставь каждый REST `node_id` с GraphQL `IssueComment.id`, а decimal REST
    id — со строковым `fullDatabaseId`. Root, lease, question и done обязаны
    существовать в GraphQL, иметь автора `ivanarama`, точный marker и
-   `lastEditedAt == null`; edit любого protocol comment закрывает gate. Если
-   root ещё не виден, но после edge canonical triage уже есть
-   `CommentDeletedEvent`, новый root не создавай: удалённый комментарий мог быть
-   root незавершённой транзакции. Если root виден, любой `CommentDeletedEvent`
-   после его edge делает транзакцию навсегда fail-closed: удаление root/active
-   lease/winner не может
+   `lastEditedAt == null`; edit любого protocol comment закрывает gate.
+   Независимо от того, виден ли сейчас root, любой `CommentDeletedEvent` после
+   edge canonical triage навсегда закрывает handoff: удалённый комментарий мог
+   быть root/lease незавершённой транзакции, а stale worker мог опубликовать
+   replacement-root уже после удаления. По той же причине любой комментарий
+   `ivanarama` после canonical triage с `lastEditedAt != null` закрывает gate,
+   даже если после edit в его body больше нет protocol marker. Новый root не
+   создавай. Удаление root/active lease/winner не может
    переизбрать stale sibling из урезанного REST-списка. Нельзя публиковать новый
    root той же транзакции, renew, takeover, question, менять labels или ставить
    done; выведи `НУЖЕН ЧЕЛОВЕК`. Same-second delete также закрывает gate, потому
