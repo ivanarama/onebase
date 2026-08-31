@@ -178,6 +178,8 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 }
 
 func ghJSONLines(gh string, destination any, args ...string) error {
+	// GH_EXE is an explicit operator setting, and arguments are passed without a shell.
+	//nolint:gosec // The executable path is trusted configuration, not GitHub data.
 	cmd := exec.Command(gh, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
