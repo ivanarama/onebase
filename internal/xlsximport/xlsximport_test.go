@@ -317,8 +317,15 @@ func TestImportWideScaledSheetAndIgnoresNamedCells(t *testing.T) {
 	if err := f.SetPageLayout(sh, &excelize.PageLayoutOptions{AdjustTo: ptr(uint(60))}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.SetDefinedName(&excelize.DefinedName{Name: "ПРОДАВЕЦ_НАИМ", RefersTo: sh + "!$A$1"}); err != nil {
-		t.Fatal(err)
+	for name, ref := range map[string]string{
+		"ПРОДАВЕЦ_НАИМ": "$A$1",
+		"ПРОДАВЕЦ_ИНН":  "$B$1",
+		"ПОКУПАТЕЛЬ":    "$C$1",
+		"TABLE":         "$A$1:$F$1",
+	} {
+		if err := f.SetDefinedName(&excelize.DefinedName{Name: name, RefersTo: sh + "!" + ref}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	buf, err := f.WriteToBuffer()
 	if err != nil {
@@ -335,11 +342,11 @@ func TestImportWideScaledSheetAndIgnoresNamedCells(t *testing.T) {
 		t.Errorf("scaled width = %q, want 45px", got)
 	}
 	for _, area := range res.Layout.Areas {
-		if area.Name == "ПРОДАВЕЦ_НАИМ" {
-			t.Error("single-cell workbook field became a layout area")
+		if area.Name == "ПРОДАВЕЦ_НАИМ" || area.Name == "TABLE" {
+			t.Errorf("workbook field %q became a layout area", area.Name)
 		}
 	}
-	if !strings.Contains(strings.Join(res.Warnings, " "), "одноклеточные") {
+	if !strings.Contains(strings.Join(res.Warnings, " "), "пользовательские именованные") {
 		t.Errorf("missing named-cell warning: %v", res.Warnings)
 	}
 }

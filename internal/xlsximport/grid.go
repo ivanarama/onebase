@@ -416,6 +416,7 @@ func paperFormat(size int) string {
 // и означают повтор шапки на каждой странице.
 func readDefinedNames(f *excelize.File, name string, rows int, w *warnings) (named, titles []namedRange) {
 	ignored := 0
+	fieldNameWorkbook := hasWorkbookFieldNames(f, name)
 	for _, dn := range f.GetDefinedName() {
 		// В одном имени может быть несколько диапазонов через запятую
 		// (у «сквозных строк» это строки плюс колонки — колонки нас не касаются).
@@ -439,9 +440,10 @@ func readDefinedNames(f *excelize.File, name string, rows int, w *warnings) (nam
 				if areaName, ok := layoutAreaName(dn.Name); ok {
 					nr.Name = areaName
 					named = append(named, nr)
-				} else if !singleCellRef(ref) {
+				} else if !fieldNameWorkbook && !singleCellRef(ref) {
 					// Исторически произвольное имя многоклеточного диапазона —
-					// явная область макета. Сохраняем совместимость.
+					// явная область макета. Сохраняем совместимость, если книга
+					// не использует имена главным образом как карту полей.
 					named = append(named, nr)
 				} else {
 					ignored++
@@ -450,9 +452,31 @@ func readDefinedNames(f *excelize.File, name string, rows int, w *warnings) (nam
 		}
 	}
 	if ignored > 0 {
-		w.addf("Пропущены одноклеточные пользовательские именованные диапазоны (%d): это поля Excel, а не области макета. Для явной области используйте Шапка, Строка, ШапкаТаблицы, Подвал или префикс OB_/ONEBASE_.", ignored)
+		w.addf("Пропущены пользовательские именованные диапазоны (%d): книга использует их как поля Excel, а не области макета. Для явной области используйте Шапка, Строка, ШапкаТаблицы, Подвал или префикс OB_/ONEBASE_.", ignored)
 	}
 	return named, titles
+}
+
+func hasWorkbookFieldNames(f *excelize.File, sheet string) bool {
+	count := 0
+	for _, dn := range f.GetDefinedName() {
+		if strings.HasPrefix(dn.Name, "_xlnm.") {
+			continue
+		}
+		if _, explicitArea := layoutAreaName(dn.Name); explicitArea {
+			continue
+		}
+		for _, part := range strings.Split(dn.RefersTo, ",") {
+			name, ref, ok := splitRef(part)
+			if ok && strings.EqualFold(name, sheet) && singleCellRef(ref) {
+				count++
+				if count >= 3 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func singleCellRef(ref string) bool {
