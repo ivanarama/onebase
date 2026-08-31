@@ -135,7 +135,10 @@ stopped roots не получают новые комментарии и не с
 expiry renewal доступен только тому же owner UUID, после expiry takeover создаёт
 новый UUID; earliest child образует единственную active chain. Перед каждой
 фазой worker доказывает собственный returned active id, matching UUID и
-неистёкшую lease — чужой live root не даёт владения.
+неистёкшую lease — чужой live root не даёт владения. Каждый lease/phase gate
+пагинированно проверяет `COMMENT_DELETED_EVENT`: любое удаление комментария
+после canonical root закрывает транзакцию человеку, поэтому удалённый winner не
+может воскресить stale sibling.
 
 Дальше он решает маршрут.
 

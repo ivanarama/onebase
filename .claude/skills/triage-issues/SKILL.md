@@ -182,9 +182,20 @@ stderr, вывода нет. Пустой вывод при этом легко 
    `created_at`, затем id, а children stale/non-active ветвей никогда
    не возвращаются в цепочку.
 
+   Election допустима только при доказанном отсутствии удалений. Перед первым
+   вычислением chain и при **каждом** последующем lease/phase gate пагинированным
+   GraphQL прочитай `timelineItems(itemTypes:[COMMENT_DELETED_EVENT])` до
+   `pageInfo.hasNextPage == false`. Если существует хотя бы один
+   `CommentDeletedEvent.createdAt` позже `canonical-root.created_at`, закончи
+   транзакцию `НУЖЕН ЧЕЛОВЕК` без каких-либо мутаций. Текущий список comments не
+   доказывает, какой child выиграл раньше: после удаления winner проигравший
+   sibling не должен воскреснуть и стать active. Проверка обязательна и до
+   renewal/takeover POST, и перед label POST, labels-marker, ответом и done.
+
    **До каждого** renewal/takeover POST
    выполни полный gate ниже (включая state/open, `hold`, title/body, labels,
-   comments/events и equivalent-root rule), требуя лишь, что прежняя active
+   comments/events, отсутствие `COMMENT_DELETED_EVENT` после root и
+   equivalent-root rule), требуя лишь, что прежняя active
    lease действительно истекла или подходит к порогу renew. Если gate закрыт,
    не публикуй lease. После timeout recovery публикует точный
    `<!-- pp:triage-route-lease claim=<root-id> fingerprint-sha256=<64hex> previous=<active-id> owner=<uuid> -->`.

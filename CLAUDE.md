@@ -149,7 +149,10 @@ onebase describe --project <dir>                # вся структура ко
   поэтому stopped recovery не пишет комментарии и не вытесняет новую работу.
   Active lease — детерминированная chain: same-owner renewal только перед
   expiry, takeover новым UUID только после expiry; каждая фаза требует
-  собственные returned active id, matching UUID и неистёкшее время.
+  собственные returned active id, matching UUID и неистёкшее время. Удаление
+  любого комментария после canonical TRIAGE root обнаруживается пагинированным
+  `COMMENT_DELETED_EVENT` gate и навсегда закрывает транзакцию человеку: stale
+  lease-ветка не может воскреснуть после удаления winner.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR

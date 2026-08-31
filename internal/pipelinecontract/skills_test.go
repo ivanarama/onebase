@@ -326,6 +326,9 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"takeover обязан использовать\n   новый случайный UUID",
 		"**собственный возвращённый\n   root/lease id** равен active id",
 		"локальный UUID равен active owner",
+		"timelineItems(itemTypes:[COMMENT_DELETED_EVENT])",
+		"pageInfo.hasNextPage == false",
+		"после удаления winner проигравший\n   sibling не должен воскреснуть",
 		"не считается одним из\n   пяти рабочих slots",
 		"<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->",
 	)
@@ -1214,6 +1217,13 @@ func modeledOwnsTriageLease(active modeledTriageLease, returnedID int, localOwne
 	return active.id == returnedID && active.owner == localOwner && now < active.created+30
 }
 
+func modeledRecoverActiveTriageLease(root modeledTriageLease, visibleChildren []modeledTriageLease, commentDeletedAfterRoot bool) (modeledTriageLease, bool) {
+	if commentDeletedAfterRoot {
+		return modeledTriageLease{}, false
+	}
+	return modeledActiveTriageLease(root, visibleChildren), true
+}
+
 func TestEquivalentConcurrentRootsDoNotDeadlockWinner(t *testing.T) {
 	roots := []modeledConcurrentRoot{
 		{id: 101, fingerprint: "same", record: "same-record", reason: "same-reason"},
@@ -1280,6 +1290,21 @@ func TestTriageLeaseRequiresOwnActiveIDOwnerAndExpiry(t *testing.T) {
 	}
 	if modeledOwnsTriageLease(active, active.id, active.owner, 61) {
 		t.Fatal("an expired active lease must not authorize a phase")
+	}
+}
+
+func TestDeletedTriageLeaseWinnerCannotResurrectStaleSibling(t *testing.T) {
+	root := modeledTriageLease{id: 10, owner: "owner-a", created: 0}
+	winner := modeledTriageLease{id: 20, previous: 10, owner: "owner-b", created: 31}
+	staleSibling := modeledTriageLease{id: 21, previous: 10, owner: "owner-c", created: 31}
+	if active := modeledActiveTriageLease(root, []modeledTriageLease{winner, staleSibling}); active.id != winner.id {
+		t.Fatalf("initial takeover winner = %+v, want earliest child", active)
+	}
+	if resurrected := modeledActiveTriageLease(root, []modeledTriageLease{staleSibling}); resurrected.id != staleSibling.id {
+		t.Fatalf("the current comment list alone should expose the resurrection hazard, got %+v", resurrected)
+	}
+	if _, ok := modeledRecoverActiveTriageLease(root, []modeledTriageLease{staleSibling}, true); ok {
+		t.Fatal("a paginated post-root comment deletion event must fail closed before stale election")
 	}
 }
 
