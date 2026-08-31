@@ -450,6 +450,14 @@ type FormModule struct {
 	AutoCommandBar         *FormCommandBar   `yaml:"auto_command_bar,omitempty"` // авто-командная панель
 	AutoSaveDataInSettings bool              `yaml:"auto_save_data_in_settings,omitempty"`
 	VerticalScroll         string            `yaml:"vertical_scroll,omitempty"` // auto|never|always
+	// RefCardButton — показывать ли у ссылочного ПОЛЯ ФОРМЫ кнопку «Открыть
+	// карточку» (🔍). Ячейки табличных частей ключ не затрагивает: их рисует
+	// SlickGrid в браузере, и серверной разметки кнопок там нет.
+	// Указатель, потому что умолчание — ПОКАЗЫВАТЬ: nil (ключа нет) и true
+	// неразличимы по значению, а различать их нужно. Плотная форма, повторяющая
+	// раскладку 1С, из-за этой кнопки у каждой заполненной ссылки становится втрое
+	// шире и перестаёт быть узнаваемой — там её выключают одним ключом на форму.
+	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`

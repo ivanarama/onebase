@@ -83,6 +83,14 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
+		// Кнопка «Открыть карточку» (🔍) у заполненного ссылочного поля рисуется по
+		// умолчанию; форма может её выключить (ref_card_button: false). Признак
+		// кладём ОТРИЦАТЕЛЬНЫЙ: managed-шаблон рендерит и формы обработок
+		// (handlers_processors.go), где этого ключа в данных нет вовсе, — при
+		// положительном признаке кнопка бы там молча исчезла.
+		if managed.RefCardButton != nil && !*managed.RefCardButton {
+			data["HideRefCard"] = true
+		}
 		// Фикс A: команды формы, не размещённые вручную элементом kind: Кнопка,
 		// рисуются автоматической командной панелью (иначе объявленная в commands:
 		// команда в UI не видна — её кнопку рисует только kind: Кнопка). Fire-click
