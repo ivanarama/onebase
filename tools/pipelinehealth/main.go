@@ -356,6 +356,13 @@ func analyze(prs []apiPull, owner string) report {
 			case carryIntentOpen:
 				result.add("yellow", "base_sync_recovery", pr.Number,
 					"есть pp:base-sync-intent без done; MERGE должен восстановить транзакцию")
+			case currentCompletions == 0 && depth > 0:
+				// REST cannot prove legacy merge parents or timeline edge order. Expose
+				// this as a priority candidate; REVIEW still performs the full GraphQL gate.
+				item.Stage = "legacy-integration-review"
+				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.add("yellow", "legacy_ship_waiting_review_validation", pr.Number,
+					"повторный ship после старого base-sync: REVIEW должен проверить GraphQL lineage")
 			}
 			continue
 		}
@@ -657,8 +664,16 @@ func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
 
 func sortCandidates(items []candidate) {
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].Stage != items[j].Stage {
-			return items[i].Stage == "integration-review"
+		priority := func(stage string) int {
+			switch stage {
+			case "integration-review", "legacy-integration-review":
+				return 0
+			default:
+				return 1
+			}
+		}
+		if priority(items[i].Stage) != priority(items[j].Stage) {
+			return priority(items[i].Stage) < priority(items[j].Stage)
 		}
 		if items[i].Depth == items[j].Depth {
 			return items[i].Number < items[j].Number

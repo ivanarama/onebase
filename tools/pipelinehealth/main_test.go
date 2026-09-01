@@ -137,6 +137,27 @@ func TestBaseSyncIntentWithoutDoneIsMergeRecoveryNotReview(t *testing.T) {
 	}
 }
 
+func TestLegacyReShipIsVisibleAsPriorityValidationCandidate(t *testing.T) {
+	ordinary := testPR(1, headA)
+	legacy := addComment(testPR(99, headB, "ship"), 30, completion(headA, 20, 25))
+
+	got := analyze([]apiPull{ordinary, legacy}, "ivanarama")
+	if len(got.ReviewCandidates) != 2 || got.ReviewCandidates[0].Number != 99 ||
+		got.ReviewCandidates[0].Stage != "legacy-integration-review" {
+		t.Fatalf("legacy re-ship validation did not get priority: %+v", got.ReviewCandidates)
+	}
+	if !hasFinding(got, "legacy_ship_waiting_review_validation") {
+		t.Fatalf("legacy re-ship is invisible: %+v", got)
+	}
+}
+
+func TestShipWithoutReviewHistoryIsNotLegacyCandidate(t *testing.T) {
+	got := analyze([]apiPull{testPR(99, headB, "ship")}, "ivanarama")
+	if len(got.ReviewCandidates) != 0 || hasFinding(got, "legacy_ship_waiting_review_validation") {
+		t.Fatalf("ordinary ship was treated as legacy reauthorization: %+v", got)
+	}
+}
+
 func TestShipOnUnmarkedAuthorPushIsNotCarriedIntoReview(t *testing.T) {
 	item := addComment(testPR(99, headB, "ship"), 30, syncIntent(headA, 10, 20, 25))
 	item = addComment(item, 31, syncDone(30, headA, headA))
