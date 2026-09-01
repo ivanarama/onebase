@@ -27,6 +27,8 @@ var (
 	claimLine      = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	reviewAgain    = regexp.MustCompile(`(?m)^pp:review-again$`)
 	displayRepair  = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
+	baseSyncIntent = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
+	baseSyncDone   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
 )
 
 type apiUser struct {
@@ -77,6 +79,7 @@ type candidate struct {
 	URL    string `json:"url"`
 	Head   string `json:"head"`
 	Depth  int    `json:"review_depth"`
+	Stage  string `json:"stage"`
 }
 
 type finding struct {
@@ -317,16 +320,17 @@ func analyze(prs []apiPull, owner string) report {
 		})
 		labels := labelSet(pr.Labels)
 		depth := reviewDepth(pr.Comments, owner)
-		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth}
+		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review"}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
+		carryDone, carryIntentOpen := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
 
 		if labels["changes-requested"] && labels["needs-decision"] {
 			result.add("yellow", "route_transition_open", pr.Number,
 				"одновременно стоят changes-requested и needs-decision; допустимо только во время handoff")
 		}
-		if labels["ship"] && (labels["changes-requested"] || labels["needs-decision"]) {
+		if labels["ship"] && labels["changes-requested"] {
 			result.add("red", "ship_with_blocking_route", pr.Number,
-				"ship конфликтует с блокирующим маршрутом")
+				"ship конфликтует с changes-requested; интеграционный REVIEW должен был снять разрешение")
 		}
 		if duplicateCompletionEpoch(pr.Comments, owner, pr.Head.SHA) {
 			result.add("red", "same_head_reviewed_twice", pr.Number,
@@ -337,7 +341,22 @@ func analyze(prs []apiPull, owner string) report {
 				"на текущем HEAD есть claim без committed completion; нужен recovery")
 		}
 
-		if pr.Draft || labels["ship"] || labels["hold"] {
+		if pr.Draft || labels["hold"] {
+			continue
+		}
+		if labels["ship"] {
+			switch {
+			case labels["needs-decision"]:
+				result.HumanWaiting = append(result.HumanWaiting, item)
+			case carryDone && currentCompletions == 0:
+				item.Stage = "integration-review"
+				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.add("yellow", "base_sync_waiting_review", pr.Number,
+					"ship сохранён; текущий HEAD ожидает интеграционное REVIEW")
+			case carryIntentOpen:
+				result.add("yellow", "base_sync_recovery", pr.Number,
+					"есть pp:base-sync-intent без done; MERGE должен восстановить транзакцию")
+			}
 			continue
 		}
 		overrideOpen := latestOverride > latestCompletion
@@ -443,6 +462,14 @@ func checkContract(result *report, path string) {
 		}
 	}
 	skillsRoot := filepath.Dir(filepath.Dir(path))
+	mergeData, err := os.ReadFile(filepath.Join(skillsRoot, "merge-shepherd", "SKILL.md"))
+	if err != nil || !strings.Contains(text, "pp:base-sync-done") ||
+		!strings.Contains(string(mergeData), "pp:base-sync-intent") ||
+		!strings.Contains(string(mergeData), "повторный человеческий `ship` при валидной") {
+		result.add("red", "unsafe_base_sync_contract", 0,
+			"активные REVIEW/MERGE contracts не гарантируют перенос ship через доказанный base-sync")
+		return
+	}
 	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
 		data, err := os.ReadFile(filepath.Join(skillsRoot, name, "SKILL.md"))
 		if err != nil {
@@ -563,6 +590,45 @@ func currentClaimCount(comments []apiComment, owner, head string) int {
 	return count
 }
 
+type baseSyncIntentShape struct {
+	from, previous, shipEvent string
+}
+
+// baseSyncRESTState is deliberately only an operational hint. The mutation
+// contracts still prove comment nodes, timeline edges and commit parents with
+// two stable GraphQL snapshots before changing GitHub state.
+func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, intentOpen bool) {
+	intents := map[int64]baseSyncIntentShape{}
+	doneIntents := map[int64]bool{}
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		if match := baseSyncIntent.FindStringSubmatch(comment.Body); match != nil {
+			intents[comment.ID] = baseSyncIntentShape{from: match[1], previous: match[7], shipEvent: match[6]}
+		}
+		if match := baseSyncDone.FindStringSubmatch(comment.Body); match != nil {
+			intentID, err := strconv.ParseInt(match[1], 10, 64)
+			intent, ok := intents[intentID]
+			if err != nil || !ok || intentID >= comment.ID || intent.from != match[2] ||
+				intent.previous != match[5] || intent.shipEvent != match[6] {
+				continue
+			}
+			doneIntents[intentID] = true
+			if match[3] == head {
+				doneCurrent = true
+			}
+		}
+	}
+	for id := range intents {
+		if !doneIntents[id] {
+			intentOpen = true
+			break
+		}
+	}
+	return doneCurrent, intentOpen
+}
+
 func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
 	ids := map[int64]bool{}
 	for _, comment := range comments {
@@ -591,6 +657,9 @@ func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
 
 func sortCandidates(items []candidate) {
 	sort.Slice(items, func(i, j int) bool {
+		if items[i].Stage != items[j].Stage {
+			return items[i].Stage == "integration-review"
+		}
 		if items[i].Depth == items[j].Depth {
 			return items[i].Number < items[j].Number
 		}

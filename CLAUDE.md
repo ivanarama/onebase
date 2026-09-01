@@ -173,16 +173,25 @@ onebase describe --project <dir>                # вся структура ко
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR
   без `ship` не вливается никогда; ограничение «не трогать» относится к MERGE,
-  тогда как REVIEW и FIX готовят PR до человеческого одобрения. `hold` и
+  тогда как REVIEW и FIX готовят PR до человеческого одобрения. Единственное
+  исключение для REVIEW после одобрения — точный HEAD доказанного автоматического
+  base-sync: он интеграционно перепроверяется с сохранённым `ship`. `hold` и
   `needs-decision` — стопы даже при `ship`; перед мержем они проверяются в одном
   согласованном GraphQL snapshot с HEAD и timeline. Этот snapshot — точка
   невозврата: метка, поставленная уже после отправки merge PUT, не может отменить
   запрос в полёте. MERGE дополнительно требует claim-bound `pp:head-reviewed`
   ровно для текущего SHA со ссылками `review-comment=<id> claim=<id>
   epoch-sha256=<hash>` и снимает устаревший
-  `ship`, если после аудита был push или `pp:review-again`; последний переход
-  метки `ship` среди событий всех actors обязан быть trusted `labeled` и идти
-  после всех трёх unedited комментариев по GraphQL edge order. Числовые REST ids
+  `ship`, если после аудита был произвольный push или `pp:review-again`.
+  Автоматический merge с `main` переносит разрешение через неизменяемую пару
+  `pp:base-sync-intent`/`pp:base-sync-done`: новый commit обязан иметь parents
+  `[старый HEAD, base]`, REVIEW проверяет его приоритетно, а после зелёного
+  completion MERGE продолжает без второго человеческого `ship`. Intent
+  earliest-wins и восстанавливается после crash; edit/delete, разрыв `previous`,
+  снятие метки либо посторонний HEAD event отменяют carry. Последний переход
+  метки `ship` среди событий всех actors обязан быть trusted `labeled`: для
+  обычного пути он идёт после текущих трёх unedited комментариев, для carry —
+  после исходного proof и непрерывно связан со всей base-sync цепочкой. Числовые REST ids
   разных event types для порядка не сравниваются. Старый label после trusted unlabel не
   воскресает от чужого re-label. ID комментариев
   в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
