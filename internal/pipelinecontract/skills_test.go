@@ -65,6 +65,56 @@ func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
 	}
 }
 
+func modeledTriageRepositoryGate(_ string, _ bool, frozenMain, analysisHead string, analysisDirty bool) bool {
+	return frozenMain != "" && analysisHead == frozenMain && !analysisDirty
+}
+
+func TestTriageUsesFrozenMainInsteadOfTheCurrentCheckout(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	requireAllCompact(t, triage,
+		"Текущий checkout считай недоверенным: он может отставать от `main`, содержать чужой код или незакоммиченные изменения",
+		"git fetch origin main",
+		"$triageBase = (git rev-parse FETCH_HEAD).Trim()",
+		"[guid]::NewGuid().ToString(\"N\")",
+		"git worktree add --detach $triageWorktree $triageBase",
+		"git -C $triageWorktree rev-parse HEAD",
+		"git -C $triageWorktree status --porcelain=v1 --untracked-files=all",
+		"обе команды обязаны завершиться с кодом 0",
+		"повторно полностью прочитай `CLAUDE.md` и `.claude/skills/triage-issues/SKILL.md`",
+		"Все поиски по репозиторию, чтение кода, сборки и тесты выполняй только с рабочим каталогом `$triageWorktree`",
+		"Непосредственно перед **каждой GitHub-мутацией**",
+		"остановись без comments/labels",
+		"git worktree remove $triageWorktree",
+		"не удаляй каталог рекурсивно",
+	)
+	rejectAll(t, triage,
+		"git merge --ff-only origin/main",
+		"Иначе работай на том, что есть",
+	)
+
+	const frozenMain = "fresh-main"
+	for _, tc := range []struct {
+		name         string
+		currentHead  string
+		currentDirty bool
+	}{
+		{name: "current branch is behind", currentHead: "old-main"},
+		{name: "current checkout contains foreign code", currentHead: "foreign-branch", currentDirty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !modeledTriageRepositoryGate(tc.currentHead, tc.currentDirty, frozenMain, frozenMain, false) {
+				t.Fatal("a verified detached worktree must make the current checkout irrelevant")
+			}
+		})
+	}
+	if modeledTriageRepositoryGate("fresh-main", false, frozenMain, "foreign-code", false) {
+		t.Fatal("TRIAGE must not mutate when the analyzed HEAD differs from frozen main")
+	}
+	if modeledTriageRepositoryGate("fresh-main", false, frozenMain, frozenMain, true) {
+		t.Fatal("TRIAGE must not mutate from a dirty analysis worktree")
+	}
+}
+
 func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
