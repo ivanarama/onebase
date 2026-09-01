@@ -119,7 +119,7 @@ func TestCompletedBaseSyncWithShipIsFirstReviewCandidate(t *testing.T) {
 	carried = addComment(carried, 31, syncDone(30, headA, headB))
 
 	got := analyze([]apiPull{ordinary, carried}, "ivanarama")
-	if len(got.ReviewCandidates) != 2 || got.ReviewCandidates[0].Number != 99 ||
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 99 ||
 		got.ReviewCandidates[0].Stage != "integration-review" {
 		t.Fatalf("base-sync review did not get priority: %+v", got.ReviewCandidates)
 	}
@@ -142,12 +142,37 @@ func TestLegacyReShipIsVisibleAsPriorityValidationCandidate(t *testing.T) {
 	legacy := addComment(testPR(99, headB, "ship"), 30, completion(headA, 20, 25))
 
 	got := analyze([]apiPull{ordinary, legacy}, "ivanarama")
-	if len(got.ReviewCandidates) != 2 || got.ReviewCandidates[0].Number != 99 ||
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 99 ||
 		got.ReviewCandidates[0].Stage != "legacy-integration-review" {
 		t.Fatalf("legacy re-ship validation did not get priority: %+v", got.ReviewCandidates)
 	}
 	if !hasFinding(got, "legacy_ship_waiting_review_validation") {
 		t.Fatalf("legacy re-ship is invisible: %+v", got)
+	}
+}
+
+func TestSingleFlightExposesOnlyFirstIntegrationReview(t *testing.T) {
+	first := addComment(testPR(20, headB, "ship"), 30, completion(headA, 20, 25))
+	second := addComment(testPR(30, headB, "ship"), 31, completion(headA, 21, 26))
+	ordinary := testPR(1, headA)
+
+	got := analyze([]apiPull{second, ordinary, first}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 20 {
+		t.Fatalf("single-flight owner is not exclusive: %+v", got.ReviewCandidates)
+	}
+	if !hasFinding(got, "single_flight_barrier") {
+		t.Fatalf("single-flight barrier is invisible: %+v", got)
+	}
+}
+
+func TestSingleFlightOwnerUsesNumberInsteadOfReviewDepth(t *testing.T) {
+	items := []candidate{
+		{Number: 30, Depth: 0, Stage: "integration-review"},
+		{Number: 20, Depth: 9, Stage: "legacy-integration-review"},
+	}
+	sortCandidates(items)
+	if items[0].Number != 20 {
+		t.Fatalf("single-flight owner must be the earliest PR number: %+v", items)
 	}
 }
 

@@ -178,7 +178,7 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	cases := []string{
 		"есть `hold` | пропустить",
 		"есть `ship`, но нет валидного незавершённого `pp:base-sync-done` и нет legacy re-ship для текущего HEAD | пропустить",
-		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | интеграционное REVIEW; поставить перед обычной очередью",
+		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап",
 		"есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить",
 		"после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает",
 		"есть `changes-requested` без committed-маркера текущего SHA | FIX безопасно снимет",
@@ -188,7 +188,7 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 		"override требует повтор, при этом осталась `reviewed` | не удалять общую метку; ревьюить",
 		"marker/override написал не `ivanarama` | игнорировать событие",
 		"комментариев больше 100 | прочитать все страницы REST",
-		"первые PR пропущены по маркеру | продолжать список до 2 реальных аудитов",
+		"первые обычные PR пропущены по маркеру | продолжать обычный список до 2 реальных аудитов",
 	}
 	for _, scenario := range cases {
 		t.Run(scenario, func(t *testing.T) {
@@ -629,6 +629,8 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 	)
 	requireAllCompact(t, review,
 		"Кандидатов с незавершённым доказанным base-sync или legacy re-ship ставь **перед** обычной очередью",
+		"его интеграционное REVIEW — единственный аудит этого запуска",
+		"пока MERGE не вольёт владельца барьера, нельзя заранее ревьюить следующий PR",
 		"Intent без done — незавершённая транзакция MERGE, её REVIEW не захватывает",
 		"commit `to` имеет ровно двух родителей в порядке `[from, base]`",
 		"outcome `reviewed` сохраняет `ship`",
@@ -655,11 +657,16 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"последний ship-transition — новый trusted `LabeledEvent` от `ivanarama` после anchor `to`",
 		"Новый push после re-ship отменяет разрешение",
 		"либо является доказанным legacy reauthorization после anchor `from`",
+		"Перед обычной сортировкой примени глобальный single-flight-барьер",
+		"Если он ждёт REVIEW, не меняй **ни один** PR и закончи весь MERGE",
+		"Нельзя заранее обновлять или мержить следующий PR",
 	)
 	requireAllCompact(t, docs,
 		"Для PR, которые пастух обновил до внедрения intent/done, есть переходный путь",
 		"любой новый push отменяет re-ship",
 		"следующий base-sync уже записывается новым протоколом",
+		"Одновременно активен только один такой handoff",
+		"следующий MERGE сначала доводит владельца барьера до слияния",
 	)
 }
 

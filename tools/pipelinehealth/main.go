@@ -383,6 +383,7 @@ func analyze(prs []apiPull, owner string) report {
 		}
 	}
 	sortCandidates(result.ReviewCandidates)
+	applySingleFlight(&result)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
 	return result
@@ -471,10 +472,12 @@ func checkContract(result *report, path string) {
 	skillsRoot := filepath.Dir(filepath.Dir(path))
 	mergeData, err := os.ReadFile(filepath.Join(skillsRoot, "merge-shepherd", "SKILL.md"))
 	if err != nil || !strings.Contains(text, "pp:base-sync-done") ||
+		!strings.Contains(text, "single-flight-барьер") ||
 		!strings.Contains(string(mergeData), "pp:base-sync-intent") ||
-		!strings.Contains(string(mergeData), "повторный человеческий `ship` при валидной") {
+		!strings.Contains(string(mergeData), "повторный человеческий `ship` при валидной") ||
+		!strings.Contains(string(mergeData), "single-flight-барьер") {
 		result.add("red", "unsafe_base_sync_contract", 0,
-			"активные REVIEW/MERGE contracts не гарантируют перенос ship через доказанный base-sync")
+			"активные REVIEW/MERGE contracts не гарантируют перенос ship и single-flight через доказанный base-sync")
 		return
 	}
 	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
@@ -664,22 +667,37 @@ func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
 
 func sortCandidates(items []candidate) {
 	sort.Slice(items, func(i, j int) bool {
-		priority := func(stage string) int {
-			switch stage {
-			case "integration-review", "legacy-integration-review":
-				return 0
-			default:
-				return 1
-			}
+		if candidatePriority(items[i].Stage) != candidatePriority(items[j].Stage) {
+			return candidatePriority(items[i].Stage) < candidatePriority(items[j].Stage)
 		}
-		if priority(items[i].Stage) != priority(items[j].Stage) {
-			return priority(items[i].Stage) < priority(items[j].Stage)
+		if candidatePriority(items[i].Stage) == 0 {
+			return items[i].Number < items[j].Number
 		}
 		if items[i].Depth == items[j].Depth {
 			return items[i].Number < items[j].Number
 		}
 		return items[i].Depth < items[j].Depth
 	})
+}
+
+func candidatePriority(stage string) int {
+	switch stage {
+	case "integration-review", "legacy-integration-review":
+		return 0
+	default:
+		return 1
+	}
+}
+
+func applySingleFlight(result *report) {
+	if len(result.ReviewCandidates) == 0 || candidatePriority(result.ReviewCandidates[0].Stage) != 0 {
+		return
+	}
+	owner := result.ReviewCandidates[0]
+	deferred := len(result.ReviewCandidates) - 1
+	result.ReviewCandidates = []candidate{owner}
+	result.add("yellow", "single_flight_barrier", owner.Number,
+		fmt.Sprintf("владелец base-sync барьера; REVIEW запускает только его, отложено кандидатов: %d", deferred))
 }
 
 func printReport(writer io.Writer, result report) {
