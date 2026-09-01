@@ -50,6 +50,21 @@ func rejectAll(t *testing.T, text string, fragments ...string) {
 	}
 }
 
+func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
+	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+		t.Run(name, func(t *testing.T) {
+			requireAll(t, skill(t, name),
+				"**до чтения любого файла**",
+				"$OutputEncoding = $utf8",
+				"Get-Content -LiteralPath <path> -Encoding UTF8 -Raw",
+				"остановись **до любой GitHub-мутации**",
+				"jq `@base64`",
+				"сравни байт-в-байт с отправленным телом",
+			)
+		})
+	}
+}
+
 func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
@@ -80,12 +95,42 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 		"repos/ivanarama/onebase/pulls?state=open&per_page=100&sort=created&direction=asc",
 		"baseRefName:.base.ref",
 		"baseRefName == \"main\"",
-		"Объедини все страницы, оставь только `state == \"open\"` и\n   `baseRefName == \"main\"`, отсортируй по",
+		"Объедини все страницы, оставь только `state == \"open\"` и\n   `baseRefName == \"main\"`",
 		"--jq '{sha:.head.sha,state,baseRefName:.base.ref,labels:[.labels[].name]}'",
 		"gh api --paginate",
 		"comments?per_page=100",
 	)
 	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
+}
+
+func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Исполняемый preflight — единственный источник списка кандидатов",
+		"go run ./tools/pipelinehealth -json",
+		"`review_candidates` — **исключительный allowlist этого запуска**",
+		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",
+		"не ревьюй обычные PR",
+		"**не переходи к обычной очереди**",
+		"первые два PR из `review_candidates`",
+		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
+		"Расхождение означает стоп без подстановки следующего PR",
+	)
+}
+
+func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Не сортируй очередь только по номеру PR",
+		"планировочный `review-depth`",
+		"число уникальных числовых `review-comment`",
+		"updated_at == created_at",
+		"claim-less legacy markers не считай",
+		"Это только безопасный приоритет планирования, а не proof для мутации",
+		"(review-depth ASC, number ASC)",
+		"свежий PR с глубиной 0 будет проверен раньше старого PR с глубиной 1+",
+	)
+	rejectAll(t, review, "Просматривай PR по возрастанию номера")
 }
 
 func TestReviewMarkersCannotCollideWithTailMarker(t *testing.T) {
@@ -130,7 +175,7 @@ func TestPRPipelineBindsEveryStageToMainBaseAndFencesBaseABA(t *testing.T) {
 	)
 	merge := skill(t, "merge-shepherd")
 	requireAll(t, merge,
-		"headRefOid baseRefName state labels(first:100)",
+		"headRefOid baseRefOid baseRefName state labels(first:100)",
 		"`baseRefName == \"main\"`",
 		"`state == OPEN`",
 	)
@@ -146,7 +191,9 @@ func TestPRPipelineBindsEveryStageToMainBaseAndFencesBaseABA(t *testing.T) {
 func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	review := skill(t, "review-queue")
 	cases := []string{
-		"есть `ship` или `hold` | пропустить",
+		"есть `hold` | пропустить",
+		"есть `ship`, но нет валидного незавершённого `pp:base-sync-done` и нет legacy re-ship для текущего HEAD | пропустить",
+		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап",
 		"есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить",
 		"после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает",
 		"есть `changes-requested` без committed-маркера текущего SHA | FIX безопасно снимет",
@@ -156,7 +203,7 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 		"override требует повтор, при этом осталась `reviewed` | не удалять общую метку; ревьюить",
 		"marker/override написал не `ivanarama` | игнорировать событие",
 		"комментариев больше 100 | прочитать все страницы REST",
-		"первые PR пропущены по маркеру | продолжать список до 2 реальных аудитов",
+		"первые обычные PR пропущены по маркеру | продолжать обычный список до 2 реальных аудитов",
 	}
 	for _, scenario := range cases {
 		t.Run(scenario, func(t *testing.T) {
@@ -179,7 +226,8 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"git fetch origin pull/<M>/head",
 		"<сохранённый SHA>",
 		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, `.state`, `.base.ref`, актуальные метки и **все** комментарии",
-		"`ship`/`hold` всегда запрещают изменение",
+		"`ship` запрещает изменение, кроме интеграционного REVIEW",
+		"`hold` всегда запрещает изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
 		"после постановки",
 		"**не удаляй общую метку**",
@@ -499,10 +547,10 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"После completion не должно быть отдельной строки `pp:review-again`",
 		"сними `ship` через REST",
 		"комментарий является разрешённым завершающим шагом **этой же\n   транзакции**",
-		"Никакие update/push/merge до успешного SHA-гейта недопустимы",
-		"Успешная команда\n     меняет HEAD, поэтому старое ревью больше недействительно",
+		"Никакие update/push/merge до\n   успешного SHA+authorization-гейта недопустимы",
+		"После подтверждённого done метку `ship` **не\n     снимай**",
 		"Подтверждённый push меняет HEAD",
-		"Ждать CI и мержить новый SHA без повторного REVIEW нельзя",
+		"Ждать CI и мержить новый SHA без\n     интеграционного REVIEW нельзя",
 		"непосредственно перед мутацией ещё раз выполни полный label+SHA-гейт",
 		"последний полный гейт",
 		"timeline?per_page=100",
@@ -573,10 +621,68 @@ func TestMergeUsesCompareAndUpdateForReviewedHead(t *testing.T) {
 		`{"expected_head_sha":"<проверенный SHA>"}`,
 		"pulls/<N>/update-branch --input -",
 		"При `422` сначала снова прочитай HEAD",
-		"Только несовпадение с сохранённым SHA означает гонку",
+		"Если он равен `from`, это\n     validation/rate-limit отказ",
+		"Если HEAD уже\n     другой, не объявляй гонку вслепую",
 		"Валидна только первая completion-ссылка на данный review-comment",
 		"между ними не должно быть `pp:review-again`",
 		"Для одного SHA без разделяющего override канонична только самая ранняя валидная пара",
+	)
+}
+
+func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	requireAllCompact(t, merge,
+		"<!-- pp:base-sync-intent from=<40hex> base=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> previous=<done id|none> -->",
+		"<!-- pp:base-sync-done intent=<id> from=<40hex> to=<40hex> base=<40hex> previous=<done id|none> ship-event=<GraphQL node id> -->",
+		"самый ранний валидный intent",
+		"ровно двух родителей в порядке `[from, base]`",
+		"при `HEAD == from` повторяет CAS update",
+		"метку `ship` **не снимай**",
+		"без второго клика человека",
+		"обычная stale-ship передача",
+	)
+	requireAllCompact(t, review,
+		"До обычной очереди восстанови глобального single-flight-владельца",
+		"Если владелец ещё ждёт интеграционное REVIEW, выбери только его: это единственный аудит запуска",
+		"Пока MERGE не вольёт владельца, нельзя заранее ревьюить следующий интеграционный PR",
+		"Наличие proof не освобождает барьер",
+		"Intent без done — незавершённая транзакция MERGE, её REVIEW не захватывает",
+		"commit `to` имеет ровно двух родителей в порядке `[from, base]`",
+		"outcome `reviewed` сохраняет `ship`",
+		"`changes-requested` требует снять `ship`",
+		"второй клик не нужен",
+	)
+}
+
+func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, review,
+		"Legacy re-ship нужен только для веток, которые MERGE обновил до внедрения intent/done",
+		"merge-коммит ровно с двумя parents `[from, base]`",
+		"**последний** ship-transition — новый trusted `LabeledEvent` от `ivanarama`, расположенный уже после anchor `to`",
+		"похожий merge message доказательством не считается",
+		"Новый label является явным разрешением проверить и затем влить точный уже существующий `to`, но не наследуется следующим push",
+	)
+	requireAllCompact(t, merge,
+		"Разрешены ровно три способа связать этот ship-transition с текущим proof",
+		"legacy reauthorized",
+		"текущий HEAD `to` — merge-коммит ровно с двумя parents `[from, base]`",
+		"последний ship-transition — новый trusted `LabeledEvent` от `ivanarama` после anchor `to`",
+		"Новый push после re-ship отменяет разрешение",
+		"либо является доказанным legacy reauthorization после anchor `from`",
+		"Перед обычной сортировкой примени глобальный single-flight-барьер",
+		"Если он ждёт REVIEW, не меняй **ни один** PR и закончи весь MERGE",
+		"Нельзя заранее обновлять или мержить следующий PR",
+	)
+	requireAllCompact(t, docs,
+		"Для PR, которые пастух обновил до внедрения intent/done, есть переходный путь",
+		"любой новый push отменяет re-ship",
+		"следующий base-sync уже записывается новым протоколом",
+		"Одновременно активен только один такой handoff",
+		"следующий MERGE сначала доводит владельца барьера до слияния",
 	)
 }
 
@@ -686,7 +792,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAll(t, docs,
 		"`changes-requested`, но без `ship`/`hold`/`needs-decision`",
-		"без `ship`/`hold` и не черновики",
+		"Обычный PR с\n`ship` пропускается, но доказанный автоматический base-sync и узкий legacy\nre-ship после синхронизации старым протоколом — исключения",
 		"`changes-requested`/`needs-decision` обычно передают мяч дальше",
 		"маркером `pp:head-reviewed`",
 		"отдельная строка\nкоторого равна `pp:review-again`",
@@ -695,8 +801,8 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"push разрешённого конфликта",
 		"`<!-- pp:head-reviewed <SHA> review-comment=<id заключения> claim=<id claim>\nepoch-sha256=<64hex> -->`",
 		"Если сбой случился до committed-\nмаркера, сорванная попытка круг не увеличивает",
-		"пастух снимает устаревший\n`ship`",
-		"`BEHIND` → `update-branch` вызывается с `expected_head_sha` проверенного HEAD",
+		"пастух обычно снимает\nустаревший `ship`",
+		"`BEHIND` → перед `update-branch` создаётся неизменяемый\n  `pp:base-sync-intent`",
 		"После `422` HEAD перечитывается",
 		"полный label+SHA-гейт непосредственно перед единственным\n  перезапуском",
 		"Валидна только первая completion-ссылка на\nэтот id",
@@ -724,7 +830,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"строка с REST comment id",
 		"`hasNextPage` обязан быть false",
 		"Watermark обязан оставаться в окне",
-		"Последний переход `ship` среди\nсобытий всех actors обязан быть `labeled` от `ivanarama` и идти после edges",
+		"Последний переход `ship` среди\nсобытий всех actors обязан быть `labeled` от `ivanarama`",
 		"Числовые REST ids комментариев и label events не\nсравниваются",
 		"**PR, нужна доработка** → в комментарии с решением добавить отдельную",
 		"строку `pp:fix-decision <текущий SHA>`",
@@ -774,7 +880,8 @@ func TestTopLevelInstructionsDoNotBypassPRStops(t *testing.T) {
 		"`hold` и `needs-decision` — стопы даже при `ship`",
 		"перед мержем они проверяются в одном согласованном GraphQL snapshot",
 		"Этот snapshot — точка невозврата",
-		"последний переход метки `ship` среди событий всех actors обязан быть trusted `labeled`",
+		"Последний переход метки `ship` среди событий всех actors обязан быть trusted `labeled`",
+		"Автоматический merge с `main` переносит разрешение через неизменяемую пару",
 		"FIX до CAS-push перед каждым внешним изменением перечитывает HEAD, все comments и labels",
 		"пересчитывает владельца",
 		"детерминированную remote-ветку `fix/<N>` через GitHub `POST /git/refs`",
@@ -1181,6 +1288,130 @@ func TestMergeShipTransitionInterleavings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shipGate(tt.transitions, 10); got != tt.want {
 				t.Fatalf("shipGate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type baseSyncLink struct {
+	id, from, to, base, previous string
+	intentValid, doneValid       bool
+	parents                      []string
+	singleHeadEvent              bool
+}
+
+func carriedShipGate(current string, rootProofAfter, rootShipSequence int, transitions []shipTransition, links []baseSyncLink, currentProof bool) bool {
+	if !currentProof || !shipGate(transitions, rootProofAfter) || len(transitions) == 0 || len(links) == 0 {
+		return false
+	}
+	lastShip := transitions[0]
+	for _, transition := range transitions[1:] {
+		if transition.sequence > lastShip.sequence {
+			lastShip = transition
+		}
+	}
+	if lastShip.sequence != rootShipSequence {
+		return false
+	}
+	previous, expectedFrom := "none", links[0].from
+	for _, link := range links {
+		if !link.intentValid || !link.doneValid || !link.singleHeadEvent || link.previous != previous ||
+			link.from != expectedFrom || len(link.parents) != 2 || link.parents[0] != link.from || link.parents[1] != link.base {
+			return false
+		}
+		previous, expectedFrom = link.id, link.to
+	}
+	return current == expectedFrom
+}
+
+func legacyReShipGate(current, to string, currentAnchor int, transitions []shipTransition, parents []string,
+	oldProofAndShip, singleHeadEvent, baseAncestor, currentProof bool) bool {
+	if current != to || !oldProofAndShip || !singleHeadEvent || !baseAncestor || !currentProof || len(parents) != 2 {
+		return false
+	}
+	if len(transitions) == 0 {
+		return false
+	}
+	latest := transitions[0]
+	for _, transition := range transitions[1:] {
+		if transition.sequence > latest.sequence {
+			latest = transition
+		}
+	}
+	return latest.sequence > currentAnchor && latest.actor == "ivanarama" && latest.labeled
+}
+
+func TestLegacyReShipRequiresExactMergeLineageAndNewHumanLabel(t *testing.T) {
+	validTransitions := []shipTransition{{20, "ivanarama", true}, {40, "ivanarama", false}, {50, "ivanarama", true}}
+	if !legacyReShipGate("H1", "H1", 45, validTransitions, []string{"H0", "B1"}, true, true, true, true) {
+		t.Fatal("an exact legacy base-sync with a new human ship must be reauthorized")
+	}
+
+	tests := []struct {
+		name                            string
+		current, to                     string
+		anchor                          int
+		transitions                     []shipTransition
+		parents                         []string
+		oldProof, single, ancestor, now bool
+	}{
+		{name: "author push", current: "AUTHOR", to: "H1", anchor: 45, transitions: validTransitions, parents: []string{"H0", "B1"}, oldProof: true, single: true, ancestor: true, now: true},
+		{name: "ship before current head", current: "H1", to: "H1", anchor: 55, transitions: validTransitions, parents: []string{"H0", "B1"}, oldProof: true, single: true, ancestor: true, now: true},
+		{name: "one parent", current: "H1", to: "H1", anchor: 45, transitions: validTransitions, parents: []string{"H0"}, oldProof: true, single: true, ancestor: true, now: true},
+		{name: "old head unreviewed", current: "H1", to: "H1", anchor: 45, transitions: validTransitions, parents: []string{"H0", "B1"}, single: true, ancestor: true, now: true},
+		{name: "base outside main", current: "H1", to: "H1", anchor: 45, transitions: validTransitions, parents: []string{"H0", "B1"}, oldProof: true, single: true, now: true},
+		{name: "extra head event", current: "H1", to: "H1", anchor: 45, transitions: validTransitions, parents: []string{"H0", "B1"}, oldProof: true, ancestor: true, now: true},
+		{name: "latest transition removes ship", current: "H1", to: "H1", anchor: 45, transitions: append(validTransitions, shipTransition{60, "ivanarama", false}), parents: []string{"H0", "B1"}, oldProof: true, single: true, ancestor: true, now: true},
+		{name: "foreign relabel", current: "H1", to: "H1", anchor: 45, transitions: []shipTransition{{50, "bot", true}}, parents: []string{"H0", "B1"}, oldProof: true, single: true, ancestor: true, now: true},
+		{name: "integration review incomplete", current: "H1", to: "H1", anchor: 45, transitions: validTransitions, parents: []string{"H0", "B1"}, oldProof: true, single: true, ancestor: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if legacyReShipGate(tt.current, tt.to, tt.anchor, tt.transitions, tt.parents,
+				tt.oldProof, tt.single, tt.ancestor, tt.now) {
+				t.Fatal("unproven legacy head inherited ship")
+			}
+		})
+	}
+}
+
+func TestCarriedShipAcceptsOnlyVerifiedBaseSyncChain(t *testing.T) {
+	transitions := []shipTransition{{20, "ivanarama", true}}
+	links := []baseSyncLink{
+		{id: "31", from: "H0", to: "H1", base: "B1", previous: "none", intentValid: true, doneValid: true, parents: []string{"H0", "B1"}, singleHeadEvent: true},
+		{id: "41", from: "H1", to: "H2", base: "B2", previous: "31", intentValid: true, doneValid: true, parents: []string{"H1", "B2"}, singleHeadEvent: true},
+	}
+	if !carriedShipGate("H2", 10, 20, transitions, links, true) {
+		t.Fatal("a continuous reviewed base-sync chain must preserve the human ship")
+	}
+
+	tests := []struct {
+		name        string
+		current     string
+		transitions []shipTransition
+		mutate      func([]baseSyncLink)
+		proof       bool
+	}{
+		{name: "author push after sync", current: "AUTHOR", transitions: transitions, proof: true},
+		{name: "integration review not complete", current: "H2", transitions: transitions},
+		{name: "ship was removed", current: "H2", transitions: []shipTransition{{20, "ivanarama", true}, {50, "ivanarama", false}}, proof: true},
+		{name: "ship was re-added", current: "H2", transitions: []shipTransition{{20, "ivanarama", true}, {50, "ivanarama", false}, {51, "ivanarama", true}}, proof: true},
+		{name: "wrong merge parent", current: "H2", transitions: transitions, proof: true, mutate: func(items []baseSyncLink) { items[1].parents[1] = "EVIL" }},
+		{name: "broken previous link", current: "H2", transitions: transitions, proof: true, mutate: func(items []baseSyncLink) { items[1].previous = "other" }},
+		{name: "extra head event", current: "H2", transitions: transitions, proof: true, mutate: func(items []baseSyncLink) { items[1].singleHeadEvent = false }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			copyLinks := make([]baseSyncLink, len(links))
+			copy(copyLinks, links)
+			for i := range copyLinks {
+				copyLinks[i].parents = append([]string(nil), links[i].parents...)
+			}
+			if tt.mutate != nil {
+				tt.mutate(copyLinks)
+			}
+			if carriedShipGate(tt.current, 10, 20, tt.transitions, copyLinks, tt.proof) {
+				t.Fatal("unverified head inherited human ship")
 			}
 		})
 	}
