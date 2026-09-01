@@ -825,18 +825,34 @@ func (p *Parser) parseArgs() ([]ast.Expr, error) {
 	if p.cur.Type == token.RPAREN {
 		return args, nil
 	}
-	arg, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	args = append(args, arg)
-	for p.cur.Type == token.COMMA {
-		p.advance()
-		arg, err = p.parseExpr()
+	for {
+		arg, err := p.parseArg()
 		if err != nil {
 			return nil, err
 		}
 		args = append(args, arg)
+		if p.cur.Type != token.COMMA {
+			return args, nil
+		}
+		p.advance()
 	}
-	return args, nil
+}
+
+// parseArg разбирает один фактический аргумент, допуская пропуск — форму 1С
+// «Метод(А,,Б)», «Метод(А, , Б)», «Метод(,А)», «Метод(А,)».
+//
+// Раньше после каждой запятой безусловно требовалось выражение, и пропуск падал
+// с «unexpected "," in expression» — на выгрузках БСП, где такая запись обычна,
+// конвертация обрывалась на первом же модуле (issue #1160). Пустой слот
+// возвращается узлом ast.MissingArg, а не литералом Неопределено: разницу между
+// «не передали» и «передали Неопределено» решает интерпретатор.
+//
+// Ошибки синтаксиса это не маскирует: пропуском считается только запятая или
+// закрывающая скобка НА МЕСТЕ НАЧАЛА аргумента; всё остальное по-прежнему идёт
+// в parseExpr, а незакрытую скобку ловит expect(RPAREN) у вызывающего.
+func (p *Parser) parseArg() (ast.Expr, error) {
+	if p.cur.Type == token.COMMA || p.cur.Type == token.RPAREN {
+		return &ast.MissingArg{Tok: p.cur}, nil
+	}
+	return p.parseExpr()
 }
