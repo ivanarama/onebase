@@ -2605,6 +2605,12 @@ require(['vs/editor/editor.main'], function() {
   // (Страница.График., Движения.ИмяРегистра.). Неизвестное выражение перед
   // точкой отмечается как receiver без типа — по нему нельзя выбирать первый
   // одноимённый метод из справочника.
+  var _lrDynamicObjects={
+    'движения':true,
+    'справочники':true,
+    'документы':true,
+    'регистрынакопления':true
+  };
   function _lrReceiverContext(text,data){
     var present = /\.\s*$/.test(text);
     if (!present) return {present:false,object:null};
@@ -2615,7 +2621,8 @@ require(['vs/editor/editor.main'], function() {
     data.forEach(function(d){
       if (d.kind!=='method' || !d.object) return;
       var obj=d.object.toLowerCase();
-      if (chain===obj || chain.indexOf(obj+'.')===0 || chain.slice(-(obj.length+1))==='.'+obj){
+      var dynamic=!!_lrDynamicObjects[obj] && chain.indexOf(obj+'.')===0 && chain.indexOf('.',obj.length+1)<0;
+      if (chain===obj || dynamic){
         if (!found || obj.length>found.length) found=obj;
       }
     });
@@ -2641,7 +2648,6 @@ require(['vs/editor/editor.main'], function() {
     for(var i=0;i<text.length;i++){
       var ch=text[i];
       if(quoted){
-        if(ch==='\\'){i++;continue;}
         if(ch==='"' && text[i+1]==='"'){i++;continue;}
         if(ch==='"')quoted=false;
         continue;
@@ -2657,7 +2663,6 @@ require(['vs/editor/editor.main'], function() {
     for(var i=0;i<args.length;i++){
       var ch=args[i];
       if(quoted){
-        if(ch==='\\'){i++;continue;}
         if(ch==='"' && args[i+1]==='"'){i++;continue;}
         if(ch==='"')quoted=false;
         continue;

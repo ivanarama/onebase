@@ -45,6 +45,7 @@ const data = [
   method('ТаблицаЗначений', 'Количество', 'Count'),
   method('ТаблицаЗначений', 'Найти', 'Find', [{name: 'Значение'}, {name: 'Колонка'}]),
   method('Страница.График', 'ДобавитьСерию', 'AddSeries', [{name: 'Имя'}, {name: 'Цвет'}]),
+  method('Движения', 'Добавить', 'Add'),
   {kind: 'func', name: 'сообщить', display: 'Сообщить', aliases: ['Message'], signature: 'Сообщить(Текст)', params: [{name: 'Текст'}], doc: 'Пишет сообщение.'},
 ];
 
@@ -114,7 +115,9 @@ test('hover resolves canonical names and aliases against the receiver', () => {
   assert.match(hover('ТаблицаЗначений.Add', 'Add').contents[0].value, /ТаблицаЗначений\.Добавить/);
   assert.match(hover('Массив.Удалить', 'Удалить').contents[0].value, /Массив\.Удалить/);
   assert.match(hover('ТаблицаЗначений.Количество', 'Количество').contents[0].value, /ТаблицаЗначений\.Количество/);
+  assert.match(hover('Движения.ОстаткиТоваров.Добавить', 'Добавить').contents[0].value, /Движения\.Добавить/);
   assert.equal(hover('НеизвестныйОбъект.Найти', 'Найти'), null);
+  assert.equal(hover('Массив.Неизвестное.Найти', 'Найти'), null);
   assert.match(hover('Сообщить', 'Сообщить').contents[0].value, /Сообщить\(Текст\)/);
 });
 
@@ -129,6 +132,12 @@ test('signature handles aliases, compound objects and nested arguments', () => {
   const compound = signature('Страница . График . ДобавитьСерию("A, B", ');
   assert.equal(compound.value.signatures[0].label, 'Страница.График.ДобавитьСерию(Имя, Цвет)');
   assert.equal(compound.value.activeParameter, 1);
+
+  const rawBackslash = signature('ТаблицаЗначений.Найти("C:\\", ');
+  assert.equal(rawBackslash.value.signatures[0].label, 'ТаблицаЗначений.Найти(Значение, Колонка)');
+  assert.equal(rawBackslash.value.activeParameter, 1);
+
+  assert.equal(signature('Массив.Неизвестное.Найти('), null);
 
   assert.equal(signature('НеизвестныйОбъект.Найти('), null);
 });
