@@ -673,7 +673,7 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"Новый label является явным разрешением проверить и затем влить точный уже существующий `to`, но не наследуется следующим push",
 	)
 	requireAllCompact(t, merge,
-		"Разрешены ровно три способа связать этот ship-transition с текущим proof",
+		"Разрешены ровно четыре способа связать этот ship-transition с текущим proof",
 		"legacy reauthorized",
 		"текущий HEAD `to` — merge-коммит ровно с двумя parents `[from, base]`",
 		"последний ship-transition — новый trusted `LabeledEvent` от `ivanarama` после anchor `to`",
@@ -689,6 +689,30 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"следующий base-sync уже записывается новым протоколом",
 		"Одновременно активен только один такой handoff",
 		"следующий MERGE сначала доводит владельца барьера до слияния",
+	)
+}
+
+func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, review,
+		"Protocol-recovery re-ship — отдельный узкий путь",
+		"исходный carry оказался невалиден",
+		"после edge самого done",
+		"не делает старый carry валидным",
+		"начинает новую carry-цепочку с `previous=none`",
+	)
+	requireAllCompact(t, merge,
+		"Разрешены ровно четыре способа",
+		"**protocol-recovery reauthorized:**",
+		"последний trusted `ship` от `ivanarama` после edge done",
+		"Для protocol-recovery всегда начни новую исправленную цепочку с `previous=none`",
+	)
+	requireAllCompact(t, docs,
+		"malformed handoff не чинится притворным продолжением цепочки",
+		"protocol-recovery reauthorization точного текущего HEAD",
+		"следующий base-sync начинает новую цепочку с `previous=none`",
 	)
 }
 

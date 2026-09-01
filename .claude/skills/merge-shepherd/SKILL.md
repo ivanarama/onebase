@@ -157,7 +157,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    ids комментариев и label events: они принадлежат разным таблицам и не задают
    общий порядок.
 
-   Разрешены ровно три способа связать этот ship-transition с текущим proof:
+   Разрешены ровно четыре способа связать этот ship-transition с текущим proof:
 
    - **обычный:** edge `ship` расположен после edges review-комментария, claim и
      completion текущего SHA;
@@ -169,6 +169,10 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      до intent/done-протокола, а человек заново поставил `ship` после anchor
      этого HEAD и интеграционное REVIEW уже создало для него каноничный proof с
      outcome `reviewed`.
+   - **protocol-recovery reauthorized:** текущий HEAD — точный `to` trusted
+     intent/done handoff, исходный carry которого невалиден; человек заново
+     поставил `ship` после edge самого done, а интеграционное REVIEW уже создало
+     каноничный proof текущего HEAD с outcome `reviewed`.
 
    Legacy reauthorization валидна только если текущий HEAD `to` — merge-коммит
    ровно с двумя parents `[from, base]`; `from` имеет каноничный proof `reviewed`
@@ -179,6 +183,15 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    label допустимо. Докажи условия двумя стабильными полными GraphQL snapshot и
    REST parents; похожий merge message доказательством не считается. Новый push
    после re-ship отменяет разрешение.
+
+   Protocol-recovery reauthorization требует trusted не редактированные
+   intent/done, exact parents `[from, base]`, каноничный source proof `from`,
+   ровно один `PullRequestCommit` между intent и done, `base` как предка
+   текущего `main` и последний trusted `ship` от `ivanarama` после edge done.
+   После done не допускаются HEAD/base lifecycle events. Исходный stale
+   `ship-event` не оживает: новый label разрешает только точный текущий HEAD и
+   отменяется следующим push. Условия доказываются двумя стабильными GraphQL
+   snapshot и REST parents.
 
    Base-sync carry состоит из точных отдельных строк:
 
@@ -204,12 +217,13 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    оставаться исходным trusted `LabeledEvent`: снятие/повторная постановка,
    edit/delete marker, чужой head event или разрыв `previous` отменяют carry.
 
-   Если текущий HEAD равен `to` валидного последнего done либо является точным
-   legacy base-sync с re-ship после его anchor, но каноничного proof текущего
+   Если текущий HEAD равен `to` валидного последнего done, является точным
+   legacy base-sync с re-ship после его anchor либо имеет доказанный
+   protocol-recovery re-ship после своего done, но каноничного proof текущего
    HEAD ещё нет, это **не stale ship**: ничего не меняй, зафиксируй
    «ожидает интеграционное REVIEW» и переходи к следующему PR. Во всех остальных
    случаях отсутствие актуальной завершённой пары, более поздний override либо
-   отсутствие обычного/carried/legacy-reauthorized разрешения — stale `ship`. Выполни атомарную
+   отсутствие обычного/carried/legacy/protocol-recovery разрешения — stale `ship`. Выполни атомарную
    передачу в REVIEW: сними `ship` через REST → сверь удаление → оставь
    комментарий «ship снят: текущий HEAD ещё не прошёл ревью» → прекрати обработку
    PR. После снятия `ship` комментарий является разрешённым завершающим шагом
@@ -224,9 +238,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
 3. По состоянию:
    - **BEHIND** → после полного label+SHA+authorization-гейта (включая допустимое
-     legacy reauthorization) сохрани проверенный
+     legacy либо protocol-recovery reauthorization) сохрани проверенный
      SHA, текущий `baseRefOid`, ids proof, node id исходного ship-transition и id
-     предыдущего done (`none` для первого sync). Сначала опубликуй exact intent:
+     предыдущего done (`none` для первого sync). Для protocol-recovery всегда
+     начни новую исправленную цепочку с `previous=none`; malformed historical
+     done остаётся только доказанным anchor reauthorization. Сначала опубликуй exact intent:
 
      ```
      <!-- pp:base-sync-intent from=<SHA> base=<baseRefOid> review-comment=<id> claim=<id> completion=<id> ship-event=<node id> previous=<done id|none> -->
