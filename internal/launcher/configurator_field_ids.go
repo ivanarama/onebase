@@ -18,7 +18,10 @@ package launcher
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"path/filepath"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по
@@ -69,6 +72,66 @@ func ensureFieldIDs(prev, next []saveField) []saveField {
 		out[i].ID = newFieldID(used)
 	}
 	return out
+}
+
+// withStandardFieldSeed дополняет прежнее состояние файла записью о стандартном
+// поле — «Код» справочника, «Номер» документа (#1161).
+//
+// Такого поля в YAML нет: платформа синтезирует его при загрузке объекта с
+// блоком numerator (metadata/yaml.go) и держит за ним устойчивый std_code /
+// std_number. Редактор реквизитов рисует загруженную метаданную, поэтому
+// синтезированная строка приходит обратно наравне с обычными, а совпадения по
+// имени в файле для неё нет — и ensureFieldIDs выдавал ей свежий f_xxxx. При
+// следующем старте колонка числилась за std_code, а занимало её поле с чужим
+// id: сторож коллизии в schemaplan останавливал миграцию.
+//
+// Запись идёт ПЕРЕД реальными: ensureFieldIDs заполняет карту имён по порядку,
+// поэтому одноимённый реквизит из файла перекроет засев, а не наоборот.
+func withStandardFieldSeed(prev []saveField, name, id string) []saveField {
+	if name == "" || id == "" {
+		return prev
+	}
+	return append([]saveField{{ID: id, Name: name}}, prev...)
+}
+
+// standardFieldSeed возвращает имя и устойчивый id стандартного поля объекта.
+// Пустые строки — засев не нужен.
+//
+// Засев привязан и к виду объекта, и к наличию нумерации: у документа
+// стандартное поле зовётся «Номер», поэтому пользовательский реквизит «Код»
+// обязан получить собственный id, иначе фикс сам привязал бы его к чужой
+// колонке.
+//
+// hasNumerator означает «блок numerator есть сейчас ИЛИ появится этим
+// сохранением»: при снятии нумерации поле остаётся в fields обычным реквизитом,
+// но колонка в базе по-прежнему числится за служебным id — свежий f_xxxx дал бы
+// ту же коллизию, от которой чинимся.
+func standardFieldSeed(kind metadata.Kind, hasNumerator bool) (name, id string) {
+	if !hasNumerator {
+		return "", ""
+	}
+	switch kind {
+	case metadata.KindCatalog:
+		return metadata.StandardCodeField, metadata.StandardCodeFieldID
+	case metadata.KindDocument:
+		return metadata.StandardNumberField, metadata.StandardNumberFieldID
+	}
+	return "", ""
+}
+
+// entityKindFromPath определяет вид объекта по каталогу, в котором лежит его
+// YAML. Вид приходит и с формы (entity_kind), но брать его оттуда для засева
+// нельзя: значение из запроса решало бы, какому реквизиту достанется служебный
+// id, то есть за какой колонкой он закрепится. Путь берётся из перечня файлов
+// конфигурации и такого выбора пользователю не оставляет.
+func entityKindFromPath(p string) metadata.Kind {
+	switch strings.ToLower(filepath.Base(filepath.Dir(filepath.ToSlash(p)))) {
+	case "catalogs":
+		return metadata.KindCatalog
+	case "documents":
+		return metadata.KindDocument
+	}
+	return ""
 }
 
 // newFieldID выдаёт идентификатор, которого ещё нет в объекте.

@@ -292,6 +292,17 @@ func analyze(issues []issue, cfg config) []bucket {
 	return []bucket{unanswered, holdNoPlan, planMissing, holdStale, decisionStale}
 }
 
+// maxPerIssue — сколько строк одна заявка занимает в одной корзине. Потолок
+// нужен корзине битых ссылок: остальные дают по строке на заявку, а эта — по
+// строке на ссылку, и заявка с десятком планов заняла бы экран в отчёте,
+// который чинили ровно ради того, чтобы его продолжали читать.
+//
+// Обрезка названа вслух строкой «и ещё N»: счётчик корзины считает ВСЕ находки,
+// поэтому молчаливый потолок сделал бы его неправдой — та же ошибка, от которой
+// защищает предупреждение про -limit. Остальные покажутся следующим прогоном,
+// когда первые три починены.
+const maxPerIssue = 3
+
 func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 	// Ошибку записи глотаем осознанно: это отчёт в stdout, и падать из-за
 	// закрытого пайпа (`| head`) ему незачем.
@@ -317,8 +328,25 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 			sort.SliceStable(b.findings, func(i, j int) bool {
 				return b.findings[i].issue.Number < b.findings[j].issue.Number
 			})
-			for _, f := range b.findings {
-				say("  #%-5d %-52.52s  %s\n", f.issue.Number, f.issue.Title, f.detail)
+			for i := 0; i < len(b.findings); {
+				j := i
+				for j < len(b.findings) && b.findings[j].issue.Number == b.findings[i].issue.Number {
+					j++
+				}
+				group := b.findings[i:j]
+				i = j
+
+				shown := group
+				if len(shown) > maxPerIssue {
+					shown = shown[:maxPerIssue]
+				}
+				for _, f := range shown {
+					say("  #%-5d %-52.52s  %s\n", f.issue.Number, f.issue.Title, f.detail)
+				}
+				if rest := len(group) - len(shown); rest > 0 {
+					say("  #%-5d %-52.52s  и ещё %d — покажутся после починки первых %d\n",
+						group[0].issue.Number, group[0].issue.Title, rest, maxPerIssue)
+				}
 			}
 		}
 	}
@@ -326,6 +354,40 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 		// Молчаливая обрезка превращает «из N открытых» в неправду.
 		say("\nвнимание: заявок ровно столько, сколько разрешает -limit (%d) — часть могла не попасть в просмотр\n", total)
 	}
+}
+
+// Маркеры конвейера в теле комментария. Список держим в одном месте: он растёт
+// вместе с этапами, а забытый маркер тихо возвращает ту самую слепоту, ради
+// которой список заведён.
+const (
+	// pipelineMarker — любой машинный маркер: `<!-- pp:triage -->`,
+	// `<!-- pp:review pp:tail=2 -->`, `<!-- pp:tail-done … -->`. Ищем по
+	// ПРЕФИКСУ: маркеры несут параметры прямо внутри, и сверка с точной строкой
+	// пропустила бы как раз новые.
+	pipelineMarker = "<!-- pp:"
+	// replyMarker — единственный маркер, которым конвейер помечает разговор с
+	// автором, а не запись для себя (`/triage-issues`, автоответ при
+	// `ready-fix`).
+	replyMarker = "<!-- pp:reply"
+)
+
+// answersAuthor — можно ли считать комментарий «своего» логина ответом автору.
+//
+// Разбор триажа и заключение ревью пишутся от логина из `-team`, но адресованы
+// они конвейеру: `файл:строка`, критерии автохода, план фикса. Засчитывать их
+// за ответ — значит гасить находку «внешняя заявка без ответа» первым же
+// проходом `/triage-issues` (#1166): корзина ловила только те заявки, до
+// которых триаж ещё НЕ дошёл, то есть ровно не тот случай, ради которого
+// заведена. Молчание после разбора дороже молчания до него — по разобранной
+// заявке уже всё понятно, и не сказать об этом автору не мешает ничего.
+//
+// Неизвестный маркер считаем машинным: маркер в тексте и ставят затем, чтобы
+// комментарий читала машина, а живой ответ человека маркеров не носит вовсе.
+func answersAuthor(body string) bool {
+	if !strings.Contains(body, pipelineMarker) {
+		return true
+	}
+	return strings.Contains(body, replyMarker)
 }
 
 // waitingSince — с какого момента автор ждёт нашего ответа.
@@ -336,11 +398,15 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 // последнего: автор, который напоминает о себе, иначе выглядел бы свежим
 // (`UpdatedAt` его напоминанием и обновляется) — а ждёт он дольше всех.
 //
+// Ответом считается только то, что адресовано автору (`answersAuthor`), —
+// иначе граница `lastTeam` уезжает на разбор триажа и вопрос автора, заданный
+// РАНЬШЕ разбора, перестаёт быть неотвеченным.
+//
 // waiting=false означает «мяч не у нас».
 func waitingSince(is issue, cfg config) (silence int, answered, waiting bool) {
 	var lastTeam time.Time
 	for _, c := range is.Comments {
-		if cfg.team[c.Author.Login] && c.CreatedAt.After(lastTeam) {
+		if cfg.team[c.Author.Login] && answersAuthor(c.Body) && c.CreatedAt.After(lastTeam) {
 			lastTeam = c.CreatedAt
 			answered = true
 		}
@@ -371,10 +437,22 @@ func waitingSince(is issue, cfg config) (silence int, answered, waiting bool) {
 //
 // Текст разбирается по кускам, а не склеенным в один: кусок — это место в
 // треде, и оно попадает в planRef.At.
+//
+// Порядок комментариев задаём сами. `gh issue list --json comments` отдаёт их
+// по возрастанию createdAt, но нигде этого не обещает, а здесь порядок несёт
+// смысл: «поправлено ниже в треде» держится ровно на нём. Молчаливая смена
+// выдачи не сломала бы отчёт заметно — он просто перестал бы гасить шум.
+// Стабильная сортировка: у комментариев одной секунды порядок выдачи и есть
+// порядок написания. Копия — потому что is делит массив с вызывающим.
 func planRefs(is issue) []planRef {
-	parts := make([]string, 0, len(is.Comments)+2)
+	comments := append([]comment(nil), is.Comments...)
+	sort.SliceStable(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+	})
+
+	parts := make([]string, 0, len(comments)+2)
 	parts = append(parts, is.Title, is.Body)
-	for _, c := range is.Comments {
+	for _, c := range comments {
 		parts = append(parts, c.Body)
 	}
 
