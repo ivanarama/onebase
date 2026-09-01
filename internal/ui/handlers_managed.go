@@ -261,6 +261,22 @@ func unplacedCommands(form *metadata.FormModule) []*metadata.FormCommand {
 	return out
 }
 
+// managedCommandBarElement связывает фактическую автоматическую панель команд
+// из обвязки page-managed-form с декларативным элементом КоманднаяПанель.
+// Сам элемент в дереве намеренно не рисует вторую панель: кнопки уже собраны из
+// form.Commands выше дерева. Без этой связи readonly_when/hidden_when попадали
+// в карту состояний, но применить их было не к чему — у настоящего DOM панели
+// не было data-ob-el.
+func managedCommandBarElement(form *metadata.FormModule) *metadata.FormElement {
+	var found *metadata.FormElement
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if found == nil && visit.element != nil && visit.element.Kind == metadata.FormElementCommandBar {
+			found = visit.element
+		}
+	})
+	return found
+}
+
 // attrRefEntityName извлекает имя сущности-справочника/документа из типа реквизита
 // формы ("CatalogRef.X" / "DocumentRef.X" → "X"). Пусто, если тип не ссылочный.
 func attrRefEntityName(typeRef string) string {
