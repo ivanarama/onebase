@@ -38,7 +38,7 @@ func testConfig() config {
 // testObjects собирает известные номера тем же путём, что и рабочий прогон:
 // открытые заявки и открытые PR лежат в одной нумерации, и предшественником
 // бывает как та, так и другой (повод заявки — план 160 в PR #1218).
-func testObjects(openIssues, openPRs []int) objects {
+func testObjects(openIssues, openPRs []int, issuedThrough ...int) objects {
 	var issues []issue
 	for _, n := range openIssues {
 		issues = append(issues, issue{Number: n})
@@ -47,7 +47,11 @@ func testObjects(openIssues, openPRs []int) objects {
 	for _, n := range openPRs {
 		prs = append(prs, pull{Number: n})
 	}
-	return knownObjects(issues, prs)
+	last := 0
+	if len(issuedThrough) > 0 {
+		last = issuedThrough[0]
+	}
+	return knownObjects(issues, prs, last)
 }
 
 // mk собирает заявку: автор, дата последнего движения, метки, комментарии.
@@ -467,7 +471,7 @@ func TestClosedPredecessorUnblocksThePause(t *testing.T) {
 
 // Опечатка в номере не должна выглядеть разблокировкой: «нет среди открытых»
 // значит «закрыт» только до последнего выданного номера, выше — не существует.
-func TestPredecessorAboveTheLastNumberIsNotAnUnblock(t *testing.T) {
+func TestPredecessorAboveTheLastIssuedNumberIsNotAnUnblock(t *testing.T) {
 	cfg := testConfig()
 	cfg.objects = testObjects([]int{1}, []int{1218})
 	is := withBody(mk(1, "ivanarama", ago(10), []string{"hold"}),
@@ -477,6 +481,43 @@ func TestPredecessorAboveTheLastNumberIsNotAnUnblock(t *testing.T) {
 
 	if got := bucketByTitle(buckets, "предшественник закрыт, а hold остался"); len(got) != 0 {
 		t.Fatalf("опечатка в номере — не разблокировка, получено %v", details(got))
+	}
+	got := bucketByTitle(buckets, "Blocked-by на номер, которого нет")
+	if len(got) != 1 || !strings.Contains(got[0].detail, "#9999") {
+		t.Fatalf("ожидалась отдельная находка про #9999, получено %v", details(got))
+	}
+}
+
+// Закрытый объект может быть новее всех оставшихся открытых. Потолок открытого
+// списка объявлял бы его несуществующим и навсегда оставлял честную паузу.
+func TestClosedPredecessorAboveEveryOpenNumberUnblocksThePause(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1}, []int{1218}, 1300)
+	is := withBody(mk(1, "ivanarama", ago(10), []string{"hold"}),
+		"план 46\n\nBlocked-by: #1250")
+
+	buckets := analyze([]issue{is}, cfg)
+
+	if got := bucketByTitle(buckets, "предшественник закрыт, а hold остался"); len(got) != 1 {
+		t.Fatalf("закрытый #1250 обязан разблокировать паузу, получено %v", details(got))
+	}
+	if got := bucketByTitle(buckets, "Blocked-by на номер, которого нет"); len(got) != 0 {
+		t.Fatalf("выданный номер нельзя объявлять несуществующим, получено %v", details(got))
+	}
+}
+
+// Один подтверждённо закрытый предшественник не разрешает снять hold, если
+// второй номер ещё не выдавался: состояние всех зависимостей должно быть ясно.
+func TestUnknownPredecessorPreventsUnblock(t *testing.T) {
+	cfg := testConfig()
+	cfg.objects = testObjects([]int{1}, []int{1218})
+	is := withBody(mk(1, "ivanarama", ago(10), []string{"hold"}),
+		"план 46\n\nBlocked-by: #1204, #9999")
+
+	buckets := analyze([]issue{is}, cfg)
+
+	if got := bucketByTitle(buckets, "предшественник закрыт, а hold остался"); len(got) != 0 {
+		t.Fatalf("неизвестный #9999 запрещает разблокировку, получено %v", details(got))
 	}
 	got := bucketByTitle(buckets, "Blocked-by на номер, которого нет")
 	if len(got) != 1 || !strings.Contains(got[0].detail, "#9999") {

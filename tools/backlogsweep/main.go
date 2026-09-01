@@ -199,7 +199,7 @@ func main() {
 		now = parsed.UTC()
 	}
 
-	issues, prs, err := load(*issuesPath, *prsPath, *limit)
+	issues, prs, issuedThrough, err := load(*issuesPath, *prsPath, *limit)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "backlogsweep: %v\n", err)
 		os.Exit(2)
@@ -219,7 +219,7 @@ func main() {
 		replyDays:  *replyDays,
 		team:       split(*team),
 		plans:      knownPlans(*plansDir, prFiles),
-		objects:    knownObjects(issues, prs),
+		objects:    knownObjects(issues, prs, issuedThrough),
 	}
 
 	buckets := analyze(issues, cfg)
@@ -253,7 +253,7 @@ func analyze(issues []issue, cfg config) []bucket {
 	}
 	blockerMissing := bucket{
 		title:  "Blocked-by на номер, которого нет",
-		advice: "номер выше всех открытых заявок и PR: поправить его — иначе пауза так и не разблокируется",
+		advice: "номер выше последнего выданного в репозитории: поправить его — иначе пауза так и не разблокируется",
 	}
 	holdStale := bucket{
 		title:  "hold без движения",
@@ -308,7 +308,7 @@ func analyze(issues []issue, cfg config) []bucket {
 			}
 			// Ждать больше нечего только когда закрыты ВСЕ предшественники:
 			// «один из двух готов» — это по-прежнему ожидание.
-			if len(done) > 0 && len(waiting) == 0 {
+			if len(done) > 0 && len(waiting) == 0 && len(unknown) == 0 {
 				subject, verb := "предшественник", "закрыт"
 				if len(done) > 1 {
 					subject, verb = "предшественники", "закрыты"
@@ -322,8 +322,8 @@ func analyze(issues []issue, cfg config) []bucket {
 		// врёт он одинаково, а на снятой паузе его вдобавок некому заметить.
 		for _, n := range unknown {
 			blockerMissing.findings = append(blockerMissing.findings, finding{is,
-				fmt.Sprintf("Blocked-by: #%d — номер больше любого открытого (последний #%d), похоже на опечатку",
-					n, cfg.objects.top)})
+				fmt.Sprintf("Blocked-by: #%d — номер ещё не выдавался (последний #%d), похоже на опечатку",
+					n, cfg.objects.issuedThrough)})
 		}
 
 		// Ссылку на несуществующий план проверяем у любой заявки, не только у
@@ -629,37 +629,35 @@ func blockedBy(is issue) []int {
 	return out
 }
 
-// objects — номера, которые инструмент видел своими глазами: открытые заявки и
-// открытые PR. Больше он о состоянии соседнего номера ничего не знает, и это
-// осознанно: отдельный запрос к API на каждую зависимость стоит дороже, чем
-// строка отчёта, который и так не гейт.
+// objects — открытые заявки и PR плюс достоверный потолок общей нумерации
+// issue/PR. Потолок требует одного запроса за последним объектом любого
+// состояния, а не отдельного запроса к API на каждую зависимость.
 //
-// Отсюда top — самый большой открытый номер. Без него «нет среди открытых»
-// означало бы сразу и «закрыт», и «не существует», а это разные вещи: опечатка
-// в номере выглядела бы разблокировкой, то есть приглашением снять паузу,
-// которая на самом деле держится.
+// Без issuedThrough «нет среди открытых» означало бы сразу и «закрыт», и «не
+// существует», а это разные вещи: закрытый объект может быть новее всех ещё
+// открытых, а опечатка не должна выглядеть разблокировкой.
 //
 // Что список открытых полон, инструмент проверить не может: -limit обрезает и
 // заявки, и PR. Про обрезку заявок отчёт предупреждает отдельной строкой —
 // в такой прогон «предшественник закрыт» стоит перечитать глазами.
 type objects struct {
-	open map[int]bool
-	top  int
+	open          map[int]bool
+	issuedThrough int
 }
 
 // classify раскладывает предшественников по состоянию: ещё открыт, уже закрыт,
 // номера не видели вовсе.
 //
-// «Не видели» — это строго больше top. Ниже него закрытый и несуществующий
-// неразличимы, и выдавать одно за другое инструмент не станет: заявка с
-// опечаткой в пределах выданных номеров попадёт в «разблокировано», а там
-// человек сверит номер сам — строка отчёта его называет.
+// «Не видели» — это строго больше issuedThrough. Ниже него номер точно был
+// выдан; если его нет среди открытых, зависимость больше не ждёт живой объект.
+// Закрытие от удаления тут неотличимо, поэтому строка разблокировки всегда
+// называет номер — человек сверит необычный случай глазами.
 func (o objects) classify(nums []int) (waiting, done, unknown []int) {
 	for _, n := range nums {
 		switch {
 		case o.open[n]:
 			waiting = append(waiting, n)
-		case n > o.top:
+		case n > o.issuedThrough:
 			unknown = append(unknown, n)
 		default:
 			done = append(done, n)
@@ -668,12 +666,12 @@ func (o objects) classify(nums []int) (waiting, done, unknown []int) {
 	return waiting, done, unknown
 }
 
-func knownObjects(issues []issue, prs []pull) objects {
-	o := objects{open: map[int]bool{}}
+func knownObjects(issues []issue, prs []pull, issuedThrough int) objects {
+	o := objects{open: map[int]bool{}, issuedThrough: issuedThrough}
 	mark := func(n int) {
 		o.open[n] = true
-		if n > o.top {
-			o.top = n
+		if n > o.issuedThrough {
+			o.issuedThrough = n
 		}
 	}
 	for _, is := range issues {
@@ -723,30 +721,51 @@ func split(s string) map[string]bool {
 	return out
 }
 
-func load(issuesPath, prsPath string, limit int) ([]issue, []pull, error) {
+func load(issuesPath, prsPath string, limit int) ([]issue, []pull, int, error) {
 	// body обязателен: ссылка на план чаще стоит в теле заявки, чем в
 	// комментариях, и без него сверка объявляла такие заявки «без плана».
 	raw, err := source(issuesPath, "issue", "list", "--state", "open", "--limit", strconv.Itoa(limit),
 		"--json", "number,title,body,url,createdAt,updatedAt,author,labels,comments")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	var issues []issue
 	if err := json.Unmarshal(raw, &issues); err != nil {
-		return nil, nil, fmt.Errorf("разбор списка заявок: %w", err)
+		return nil, nil, 0, fmt.Errorf("разбор списка заявок: %w", err)
 	}
 
 	prsRaw, err := source(prsPath, "pr", "list", "--state", "open", "--limit", strconv.Itoa(limit),
 		"--json", "number,files")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	var prs []pull
 	if err := json.Unmarshal(prsRaw, &prs); err != nil {
-		return nil, nil, fmt.Errorf("разбор списка PR: %w", err)
+		return nil, nil, 0, fmt.Errorf("разбор списка PR: %w", err)
 	}
 
-	return issues, prs, nil
+	issuedThrough := knownObjects(issues, prs, 0).issuedThrough
+	// Явные файлы — автономный тестовый вход: в нём потолок равен наибольшему
+	// номеру фикстуры и gh больше не вызывается. Живой прогон отдельно читает
+	// самый новый issue/PR любого состояния: их нумерация общая и монотонная.
+	if issuesPath == "" && prsPath == "" {
+		latestRaw, err := source("", "api", "repos/{owner}/{repo}/issues?state=all&sort=created&direction=desc&per_page=1")
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		var latest []struct {
+			Number int `json:"number"`
+		}
+		if err := json.Unmarshal(latestRaw, &latest); err != nil {
+			return nil, nil, 0, fmt.Errorf("разбор последнего номера issue/PR: %w", err)
+		}
+		if len(latest) != 1 || latest[0].Number < issuedThrough {
+			return nil, nil, 0, fmt.Errorf("последний номер issue/PR не согласован со списками открытых объектов")
+		}
+		issuedThrough = latest[0].Number
+	}
+
+	return issues, prs, issuedThrough, nil
 }
 
 // source отдаёт содержимое файла, если путь задан, иначе спрашивает gh.
