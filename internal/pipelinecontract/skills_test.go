@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -1795,6 +1796,279 @@ func TestDeletedTriageLeaseWinnerCannotResurrectStaleSibling(t *testing.T) {
 	if modeledTriageDeletionFence(31, 31) {
 		t.Fatal("a same-second deletion at the canonical root boundary must fail closed")
 	}
+}
+
+type modeledPlanOption struct {
+	option     int
+	lead       int
+	dependents []int
+}
+
+func parsePlanPositiveDecimal(value string) (int, bool) {
+	if value == "" || (len(value) > 1 && value[0] == '0') {
+		return 0, false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return 0, false
+		}
+	}
+	number, err := strconv.Atoi(value)
+	return number, err == nil && number > 0
+}
+
+func parseModeledPlanOptionMarker(line string) (modeledPlanOption, bool) {
+	const prefix = "<!-- pp:plan-option "
+	const suffix = " -->"
+	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, suffix) {
+		return modeledPlanOption{}, false
+	}
+	payload := strings.TrimSuffix(strings.TrimPrefix(line, prefix), suffix)
+	fields := strings.Split(payload, " ")
+	if len(fields) != 3 || strings.Join(fields, " ") != payload {
+		return modeledPlanOption{}, false
+	}
+	if !strings.HasPrefix(fields[0], "option=") ||
+		!strings.HasPrefix(fields[1], "lead=") ||
+		!strings.HasPrefix(fields[2], "dependents=") {
+		return modeledPlanOption{}, false
+	}
+	option, ok := parsePlanPositiveDecimal(strings.TrimPrefix(fields[0], "option="))
+	if !ok || option > 3 {
+		return modeledPlanOption{}, false
+	}
+	lead, ok := parsePlanPositiveDecimal(strings.TrimPrefix(fields[1], "lead="))
+	if !ok {
+		return modeledPlanOption{}, false
+	}
+	result := modeledPlanOption{option: option, lead: lead}
+	rawDependents := strings.TrimPrefix(fields[2], "dependents=")
+	if rawDependents == "none" {
+		return result, true
+	}
+	previous := 0
+	for _, raw := range strings.Split(rawDependents, ",") {
+		dependent, valid := parsePlanPositiveDecimal(raw)
+		if !valid || dependent == lead || dependent <= previous {
+			return modeledPlanOption{}, false
+		}
+		result.dependents = append(result.dependents, dependent)
+		previous = dependent
+	}
+	return result, len(result.dependents) > 0
+}
+
+func modeledSelectedPlan(currentIssue, selectedOption int, marker modeledPlanOption, trusted bool) bool {
+	return trusted && marker.lead == currentIssue && marker.option == selectedOption
+}
+
+func modeledPlanRolesDisjoint(plans []modeledPlanOption) bool {
+	seen := make(map[int]bool)
+	for _, plan := range plans {
+		for _, issue := range append([]int{plan.lead}, plan.dependents...) {
+			if seen[issue] {
+				return false
+			}
+			seen[issue] = true
+		}
+	}
+	return true
+}
+
+type modeledPlanTransition struct {
+	decisionCurrent bool
+	rootTrusted     bool
+	leaseOwned      bool
+	reservationDone bool
+	planPRCreated   bool
+	allLinked       bool
+	allHeld         bool
+	handoffDone     bool
+	merged          bool
+	readyMarker     bool
+	planHashCurrent bool
+	leadHold        bool
+	dependentsHeld  bool
+}
+
+func modeledPlanMayRemoveLeadHold(state modeledPlanTransition) bool {
+	return state.decisionCurrent && state.rootTrusted && state.leaseOwned &&
+		state.reservationDone && state.planPRCreated && state.allLinked && state.allHeld &&
+		state.handoffDone && state.merged && state.readyMarker && state.planHashCurrent &&
+		state.leadHold && state.dependentsHeld
+}
+
+func modeledPlanMayImplement(state modeledPlanTransition) bool {
+	return state.decisionCurrent && state.rootTrusted &&
+		state.reservationDone && state.planPRCreated && state.allLinked && state.allHeld &&
+		state.handoffDone && state.merged && state.readyMarker && state.planHashCurrent &&
+		!state.leadHold && state.dependentsHeld
+}
+
+func TestPlanOptionMarkerHasStrictUnambiguousRoles(t *testing.T) {
+	marker := "<!-- pp:plan-option option=1 lead=1167 dependents=1169,1170 -->"
+	parsed, ok := parseModeledPlanOptionMarker(marker)
+	if !ok || parsed.option != 1 || parsed.lead != 1167 || !sort.IntsAreSorted(parsed.dependents) ||
+		len(parsed.dependents) != 2 {
+		t.Fatalf("parsed plan option = %+v/%v, want strict lead and sorted dependents", parsed, ok)
+	}
+	if !modeledSelectedPlan(1167, 1, parsed, true) {
+		t.Fatal("the selected trusted marker must switch only its lead to planning mode")
+	}
+	if modeledSelectedPlan(1169, 1, parsed, true) || modeledSelectedPlan(1167, 2, parsed, true) ||
+		modeledSelectedPlan(1167, 1, parsed, false) {
+		t.Fatal("a dependent, another selected option, or an untrusted marker must not create a plan PR")
+	}
+	withoutDependents, ok := parseModeledPlanOptionMarker("<!-- pp:plan-option option=2 lead=1200 dependents=none -->")
+	if !ok || len(withoutDependents.dependents) != 0 {
+		t.Fatalf("dependents=none parsed as %+v/%v", withoutDependents, ok)
+	}
+	if !modeledPlanRolesDisjoint([]modeledPlanOption{parsed, withoutDependents}) {
+		t.Fatal("independent selected plan contracts must be allowed")
+	}
+	overlap := modeledPlanOption{option: 1, lead: 1170, dependents: []int{1201}}
+	if modeledPlanRolesDisjoint([]modeledPlanOption{parsed, overlap}) {
+		t.Fatal("an issue shared by two selected plan contracts must stop both before branch claim")
+	}
+
+	invalid := []string{
+		"<!-- pp:plan-option option=4 lead=1167 dependents=none -->",
+		"<!-- pp:plan-option option=1 lead=01167 dependents=none -->",
+		"<!-- pp:plan-option option=1 lead=1167 dependents=1170,1169 -->",
+		"<!-- pp:plan-option option=1 lead=1167 dependents=1169,1169 -->",
+		"<!-- pp:plan-option option=1 lead=1167 dependents=1167 -->",
+		"<!-- pp:plan-option  option=1 lead=1167 dependents=none -->",
+		"<!-- pp:plan-option option=1 lead=1167 dependents=none extra=x -->",
+		"text <!-- pp:plan-option option=1 lead=1167 dependents=none -->",
+	}
+	for _, line := range invalid {
+		if got, valid := parseModeledPlanOptionMarker(line); valid {
+			t.Errorf("invalid plan marker %q parsed as %+v", line, got)
+		}
+	}
+}
+
+func TestPlanTransitionReturnsOnlyLeadAfterMergedPlan(t *testing.T) {
+	state := modeledPlanTransition{
+		decisionCurrent: true,
+		rootTrusted:     true,
+		leaseOwned:      true,
+		reservationDone: true,
+		planPRCreated:   true,
+		allLinked:       true,
+		allHeld:         true,
+		handoffDone:     true,
+		planHashCurrent: true,
+		leadHold:        true,
+		dependentsHeld:  true,
+	}
+	if modeledPlanMayImplement(state) || modeledPlanMayRemoveLeadHold(state) {
+		t.Fatal("an open plan PR must keep implementation and lead unhold stopped")
+	}
+	withoutLease := state
+	withoutLease.leaseOwned = false
+	withoutLease.merged = true
+	withoutLease.readyMarker = true
+	if modeledPlanMayRemoveLeadHold(withoutLease) {
+		t.Fatal("a recovery worker without the active plan lease must not mutate the lead label")
+	}
+	state.merged = true
+	if modeledPlanMayImplement(state) || modeledPlanMayRemoveLeadHold(state) {
+		t.Fatal("merge without the durable ready marker must not expose the lead")
+	}
+	state.readyMarker = true
+	if !modeledPlanMayRemoveLeadHold(state) || modeledPlanMayImplement(state) {
+		t.Fatal("ready must authorize only removal of the owned lead hold")
+	}
+	state.leadHold = false
+	if !modeledPlanMayImplement(state) {
+		t.Fatal("merged plan plus ready and confirmed lead unhold must return the lead to FIX")
+	}
+	stalePlan := state
+	stalePlan.planHashCurrent = false
+	if modeledPlanMayImplement(stalePlan) {
+		t.Fatal("a changed plan file must invalidate the saved ready marker before implementation")
+	}
+	state.dependentsHeld = false
+	if modeledPlanMayImplement(state) {
+		t.Fatal("a concurrent dependent unhold must close the related-issues gate")
+	}
+}
+
+func TestPlanFirstContractsAreSynchronized(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	fixer := skill(t, "fix-approved")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	guide := repositoryFile(t, "CLAUDE.md")
+
+	for name, text := range map[string]string{"triage": triage, "fix": fixer, "docs": docs} {
+		t.Run(name, func(t *testing.T) {
+			requireAllCompact(t, text,
+				"<!-- pp:plan-option option=<N> lead=<issue> dependents=<sorted-comma-list|none> -->",
+				"ведущ",
+				"ведом",
+			)
+		})
+	}
+	requireAllCompact(t, triage,
+		"до `<!-- pp:triage -->`",
+		"`lead` — номер текущей заявки",
+		"Человеческий ход делается **только на ведущей заявке**",
+	)
+	requireAllCompact(t, fixer,
+		"**плановую очередь**",
+		"`refs/heads/plan/<P>`",
+		"все remote `refs/heads/plan/<decimal>`",
+		"Только `201 Created` даёт plan-claim",
+		"pp-fix-plan-related-v1",
+		"pp-fix-plan-v1",
+		"events-watermark=<decimal|none>",
+		"Два полных одинаковых GraphQL timeline-прохода выполни для **каждой** related issue",
+		"<!-- pp:plan-claim fingerprint-sha256=<64hex> owner=<uuid> -->",
+		"<!-- pp:plan-lease claim=<root-id> previous=<active-id> owner=<uuid> -->",
+		"<!-- pp:plan-reserved claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> plan=<P> role=<lead|dependent> -->",
+		"<!-- pp:plan-reservation-done claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> plan=<P> -->",
+		"В этом worktree разрешены ровно два пути",
+		"PP-Plan-Transition: claim=<root-id> fingerprint-sha256=<64hex> base=<40hex>",
+		"точный `<base SHA>` (план можно собрать заново)",
+		"descendant с валидным trailer и diff ровно двух разрешённых paths",
+		"Плановый PR идёт в `main`, но **не закрывает ни одну заявку**",
+		"<!-- pp:plan-pr-v1 claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> plan=<P> commit=<40hex> path=Plans/<P>-<slug>.md dependents=<sorted-comma-list|none> -->",
+		"commit обязан иметь валидный `PP-Plan-Transition` и быть предком текущего PR HEAD",
+		"<!-- pp:plan-linked claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> pr=<M> plan=<P> role=<lead|dependent> -->",
+		"<!-- pp:plan-handoff-done claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> pr=<M> plan=<P> -->",
+		"<!-- pp:plan-ready claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> pr=<M> plan=<P> merge=<SHA> plan-sha256=<64hex> -->",
+		"сними и сверь **только собственный** `hold` ведущей issue",
+		"Версию `pp:plan-ready` и plan-sha256 включи в обычный issue-decision fingerprint",
+		"Dependents остаются на `hold`",
+		"реализацию в том же прогоне не начинай",
+		"overlap или цикл между leads останавливает обе транзакции",
+		"общий п. 9 здесь закрыт уже существующим `hold`",
+	)
+	requireCompactInOrder(t, fixer,
+		"опубликуй на lead и перечитай точный marker",
+		"pp:plan-ready",
+		"и только после подтверждения этого POST сними",
+	)
+	requireAllCompact(t, docs,
+		"**«Сначала план» — отдельный двухфазный вариант.**",
+		"только на ведущей",
+		"максимума планов в `main`, files открытых PR и уже существующих remote `plan/<номер>`",
+		"сохраняет exact contracts всех связанных заявок в persistent `pp:plan-claim`",
+		"30-минутная цепочка `pp:plan-lease` сериализует recovery",
+		"без реализации и без `Fixes`/`Closes`/`Resolves`",
+		"планового коммита несёт `PP-Plan-Transition`",
+		"Ready-marker фиксирует SHA-256 plan-файла",
+		"сначала `pp:plan-ready`, затем снять доказанно собственный `hold`",
+		"Ни на одной фазе FIX не ставит `approved`, `decision:*` или `ship`",
+	)
+	requireAllCompact(t, guide,
+		"Выбранный trusted `pp:plan-option` — отдельный двухфазный ход",
+		"сохраняет related-issues snapshot в `pp:plan-claim` с lease",
+		"после trusted `pp:plan-ready` merged-плана снимает только собственный `hold` ведущей",
+		"marker фиксирует SHA-256 plan-файла для следующей реализации",
+		"`approved`, `decision:*` и `ship` FIX в этой фазе не ставит",
+	)
 }
 
 type modeledIssueDecision struct {

@@ -1,6 +1,6 @@
 ---
 name: fix-approved
-description: Реализация заявок ivanarama/onebase с меткой ready-fix (очевидные дефекты, автоход) или approved (решение человека) и доработка своих PR по замечаниям ревью — фикс в отдельном worktree, тесты, PR с Fixes #N. Этап конвейера сопровождения, запускается по расписанию через PromptPilot; можно вызвать с номером ишью.
+description: Реализация заявок ivanarama/onebase с меткой ready-fix (очевидные дефекты, автоход) или approved (решение человека), двухфазный вариант «сначала план» и доработка своих PR по замечаниям ревью — отдельный worktree, тесты и PR. Этап конвейера сопровождения, запускается по расписанию через PromptPilot; можно вызвать с номером ишью.
 ---
 
 # Фикс заявок
@@ -178,15 +178,55 @@ description: Реализация заявок ivanarama/onebase с меткой
    очередь открытых issues с `needs-decision` и незавершённым доверенным
    `pp:fix-issue-handoff-claim` из п. 9 — получай её пагинированным REST, PR
    исключай. Она нужна для crash после снятия `approved`/`ready-fix`, когда issue
-   уже не входит в обычную FIX-очередь, но ещё не имеет handoff-done. Затем
-   открытые issues по точному predicate
+   уже не входит в обычную FIX-очередь, но ещё не имеет handoff-done.
+
+   После неё, но до обычных заявок, собери **плановую очередь**. Прочитай все
+   открытые issues, включая `hold`, все их comments и все PR пагинированным REST
+   с `state=all`: merged плановый PR обязан восстанавливаться, даже когда уже
+   исчез из списка open. Плановый кандидат существует только на ведущей заявке,
+   если выбранный по п. 3 вариант совпадает с одной точной строкой каноничного
+   triage:
+
+   ```
+   <!-- pp:plan-option option=<N> lead=<issue> dependents=<sorted-comma-list|none> -->
+   ```
+
+   Требуй: `option` существует в `pp:options`; `lead` равен номеру текущей
+   открытой issue; dependents — возрастающие уникальные номера других открытых
+   issues, не PR; marker один, отдельной строкой, а canonical triage и matching
+   route-done проходят обычный trust gate. Маркер другого автора, второй marker,
+   лишнее поле, повтор/неверный порядок dependents или `lead` среди dependents —
+   не плановый контракт, а `invalid-decision` по п. 9. Точная версия triage и
+   contracts всех связанных issues входят в plan-fingerprint и перечитываются
+   перед каждой мутацией. Один открытый issue не может быть lead/dependent в двух
+   одновременно выбранных plan-contracts; overlap или цикл между leads
+   останавливает обе транзакции человеку до любого branch-claim.
+
+   Сначала восстанавливай незавершённую reservation/link-фазу уже созданного
+   plan-claim/PR по п. 4,
+   затем финализируй merged план: trusted `pp:plan-ready` и снятие собственного
+   `hold` с ведущей. После этого бери новую выбранную плановую заявку без PR;
+   она раньше любого обычного bug, чтобы FIX успел поставить `hold` ведомым до
+   того, как другой прогон возьмёт их отдельно. Полностью связанный **открытый**
+   плановый PR лишь ждёт REVIEW/MERGE, рабочий слот не занимает и обычную очередь
+   не блокирует. Closed-unmerged PR, orphan `plan/<P>` без trusted root,
+   изменённый marker/список или новый human comment закрывает автоматический
+   gate и требует человека.
+   Recovery принимает только self-contained trusted `pp:plan-claim` с
+   пересчитанными records/fingerprint и владеет фазой лишь через active
+   `pp:plan-lease`; текущие `hold` или ветка сами по себе ownership не доказывают.
+
+   Только затем рассматривай открытые issues по точному predicate
    **`approved` OR (`ready-fix` AND NOT `needs-decision`)**, затем минус `hold`,
    минус `manual`. `ready-fix + needs-decision` без `approved` — ход человека,
    не FIX;
    исключи ишью, на которые уже есть открытый PR: ищи `#N` в `title`/`body`
    уже полученного в п. 1 **полного пагинированного списка**, не запускай новый
    обрезанный `gh pr list`. Возьми **одно**:
-   `bug` раньше `enhancement`, при равенстве — меньший номер.
+   `bug` раньше `enhancement`, при равенстве — меньший номер. Заявку с выбранным
+   валидным `pp:plan-option` пускай в обычную реализацию, только когда одновременно
+   есть trusted `pp:plan-ready` merged PR, SHA-256 plan-файла в свежем
+   `origin/main` совпадает с marker и `hold` подтверждённо отсутствует.
 
    До сортировки каждого обычного кандидата прочитай все comments
    пагинированным REST и проверь TRIAGE handoff. Если canonical triage содержит
@@ -277,11 +317,20 @@ description: Реализация заявок ivanarama/onebase с меткой
    совпадение исходного issue-contract. Новый `hold`, закрытие, edit triage,
    смена решения или причины handoff закрывают гейт без единой мутации.
 
-   **Заявка сделана планом, а плана нет — не бери её.** Если разбор или
+   **Выбранный машинный вариант «сначала план» — не missing-plan.** Если номер
+   выбранного решения совпадает с валидным
+   `<!-- pp:plan-option option=<N> lead=<issue> dependents=<...> -->`, а trusted
+   `pp:plan-ready` ещё нет, переходи в плановую ветку п. 4: сначала создай и
+   проведи отдельный PR только с планом. Это единственный случай, когда FIX сам
+   создаёт отсутствующий plan-файл.
+
+   Во всех остальных случаях правило остаётся fail-closed. Если разбор или
    комментарий человека называют работу планом (`Plans/NNN-*.md` или «планом N»),
-   а такого файла в `Plans/` не лежит, план ещё не написан: срезов нет, границы
-   не проведены, и твой PR ляжет мимо будущего плана. Это случай п. 9 — вопрос в
-   заявку, `needs-decision`, снять `approved`/`ready-fix`.
+   но точного выбранного `pp:plan-option` нет, либо `pp:plan-ready` ссылается на
+   файл, отсутствующий в свежем `origin/main` или не совпадающий с сохранённым
+   plan-sha256, не выдумывай срезы. Это п. 9 с
+   `reason=missing-plan`: вопрос в заявку, `needs-decision`, снять
+   `approved`/`ready-fix`.
 
    Причина — не формальность. Работа, оформляемая планом, обычно задевает
    несколько заявок сразу (#1167 и #1169 — общий тип даты), а ты берёшь одну
@@ -298,14 +347,220 @@ description: Реализация заявок ivanarama/onebase с меткой
    Метка ссылается на номер, которого в разборе нет, или их висит несколько —
    не угадывай: п. 9.
 
+   После выбора отдельно проверь `pp:plan-option`. Невыбранный плановый вариант
+   ничего не переключает: реализуй выбранный обычный вариант. Совпавший marker
+   переключает только ведущую issue в плановый автомат; одобрение ведомой не
+   разрешает ей создать второй плановый PR.
+
    Выбранный вариант назови в теле PR отдельной строкой — `Вариант: 2 (метка
    decision:2)` или `Вариант: 2 (рекомендация триажа)`. Без неё через месяц не
    отличить твой выбор от решения человека, а ревью не сможет проверить, тот ли
    вариант реализован.
 
-4. Рабочее место (main занят другим worktree — локально его не трогать). Для
-   заявки ветка строго детерминирована: `fix/<N>`, без заголовка и случайного
-   суффикса. Непосредственно перед branch-claim заново прочитай issue и все
+4. Рабочее место (main занят другим worktree — локально его не трогать).
+
+   **Плановый режим.** Он включается только для ведущей issue, когда выбранный
+   номер решения точно совпал с валидным `pp:plan-option` из п. 3 и ещё нет
+   завершённого `pp:plan-ready`. Сначала сохрани contracts ведущей и всех
+   dependents: state/title/body, релевантные labels, все comments/events и
+   canonical triage. Каждый следующий POST/DELETE, push и `gh pr create`
+   предваряй полным reread всех связанных issues; разрешены только собственные
+   уже подтверждённые `pp:plan-*` comments и label events текущей транзакции.
+   Close, edit triage/решения, новый human comment, `manual`, чужой `hold` на
+   ведущей или remove/re-add собственного `hold` закрывает gate.
+
+   До branch-claim собери переносимый plan-fingerprint. Для каждой related issue
+   по возрастанию номера вычисли title/body SHA-256 raw UTF-8, comments-sha256 по
+   точному `pp-fix-comments-v1` из п. 9 и сохрани только релевантные labels как
+   отсортированный comma-list либо `none`. Точная ASCII/LF запись с финальным LF:
+
+   ```text
+   pp-fix-plan-related-v1
+   issue=<decimal>@updated=<RFC3339>@title-sha256=<64hex>@body-sha256=<64hex>@comments-sha256=<64hex>@events-watermark=<decimal|none>@labels=<comma-list|none>
+   ...
+   ```
+
+   `related-sha256` — hash этой записи. После выбора `<P>` собери вторую точную
+   ASCII/LF запись с финальным LF:
+
+   ```text
+   pp-fix-plan-v1
+   lead=<decimal>
+   option=<1|2|3>
+   triage-comment=<decimal>
+   triage-updated=<RFC3339>
+   triage-sha256=<64hex>
+   plan=<decimal>
+   base=<40hex>
+   dependents=<sorted-comma-list|none>
+   related-sha256=<64hex>
+   ```
+
+   `fingerprint-sha256` — hash второй записи. CRLF/BOM/JSON, uppercase hex и
+   отсутствие последнего LF запрещены. Обе записи должны быть сохранены в одном
+   root-комментарии вместе с точным marker; создай случайный 128-bit UUID owner:
+
+   ```
+   <!-- pp:plan-claim fingerprint-sha256=<64hex> owner=<uuid> -->
+   ```
+
+   Номер плана `<P>` резервируется branch-claim, а не договорённостью. На свежем
+   `origin/main` найди максимальный `Plans/<decimal>-*.md`, затем прочитай files
+   **всех открытых PR** пагинированным REST: план из ещё не влитого PR тоже
+   занимает номер. Также получи все remote `refs/heads/plan/<decimal>`: orphan
+   или ещё не дошедший до PR claim навсегда занимает свой slot до человеческой
+   уборки. Возьми следующий номер после максимума этих трёх источников и атомарно создай ровно
+   `refs/heads/plan/<P>` от сохранённого `<base SHA>` через GitHub Create a
+   reference API. Только `201 Created` даёт plan-claim; любой другой статус,
+   включая concurrent `422`, прекращает этот прогон. Так два разных lead не
+   создадут два `Plans/<P>-*.md`, а два worker одного lead не создадут два PR.
+
+   ```
+   git fetch origin main
+   git rev-parse origin/main # <base SHA>
+   echo '{"ref":"refs/heads/plan/<P>","sha":"<base SHA>"}' | \
+     gh api -X POST repos/ivanarama/onebase/git/refs --input -
+   git worktree add -B plan/<P> ../pp-plan-<lead> <base SHA>
+   ```
+
+   Сразу после `201`, **до первой правки plan-worktree**, опубликуй root с обеими
+   records и сохрани собственный returned comment id. После timeout сначала ищи
+   точный собственный marker прямым REST, не повторяй POST вслепую. Ветка без
+   trusted root — orphan и требует человека; существующий root обязан заново
+   пересчитать обе records и точно совпасть с branch/base/triage.
+
+   Root — начальная 30-минутная lease. Renewal/takeover и ownership применяют те
+   же правила времени, active-chain, полного REST+двойного GraphQL gate и
+   deletion/edit fence, что issue-handoff в п. 9. Точная строка child:
+
+   ```
+   <!-- pp:plan-lease claim=<root-id> previous=<active-id> owner=<uuid> -->
+   ```
+
+   До expiry продлевает только тот же owner при остатке менее пяти минут, после
+   expiry takeover делает новый UUID; для одного previous каноничен earliest
+   child по server-ordered GraphQL edge. Каждая reservation/link/ready/label-
+   фаза и каждый push/PR create требуют собственные returned active id + UUID и
+   неистёкшую lease. Edit/delete protocol comment, любой deletion event после
+   canonical root или непротокольный post-root comment закрывает транзакцию.
+   Root сначала проверяй как self-contained record+marker с собственным hash;
+   затем для canonical root реконструируй pre-root comments каждого related
+   issue (пара `created_at`, затем numeric id строго раньше пары root), events до
+   его per-issue watermark и исходные labels. Два полных одинаковых GraphQL
+   timeline-прохода выполни для
+   **каждой** related issue, а не только lead. После root допускаются лишь
+   trusted markers этой claim и ожидаемые label events текущей фазы; так
+   собственные reservation/link не меняют исходный digest, а concurrent human
+   comment или remove/re-add `hold` всегда закрывает recovery.
+
+   Затем зафиксируй reservation
+   на всех related issues. На lead и каждом dependent опубликуй комментарий с
+   будущими branch/path и точной строкой
+
+   ```
+   <!-- pp:plan-reserved claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> plan=<P> role=<lead|dependent> -->
+   ```
+
+   затем поставь и сверь `hold`, если его не было в исходном contract. После
+   каждого POST снова выполни общий gate и проверь label events; человеческое
+   снятие/re-add не исправляй. Только когда trusted reservation и `hold`
+   подтверждены на каждом участнике, опубликуй на lead
+   `<!-- pp:plan-reservation-done claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> plan=<P> -->`.
+   Эта фаза
+   сужает гонку с обычным FIX: worker dependent, уже создавший свой branch, на
+   обязательном pre-push reread увидит `hold` и ничего не отправит. Orphan до
+   root не восстанавливается; crash после trusted root/reservation продолжает
+   только владелец active lease, а все holds до восстановления остаются.
+
+   В этом worktree разрешены ровно два пути: новый
+   `Plans/<P>-<ascii-slug>.md` со срезами, границами, проверками и явным
+   соответствием lead/dependents и обновление `Plans/README.md`. Код,
+   `docs/features.md`, changelog и реализацию первого среза не добавляй. Коммит
+   `docs(plans): план <P> — <тема>` обязан содержать `Generated-with: Claude Code`
+   и trailer
+
+   ```
+   PP-Plan-Transition: claim=<root-id> fingerprint-sha256=<64hex> base=<40hex>
+   ```
+
+   Отправь его CAS-push с lease на `<base SHA>`. Перед push и PR create повтори
+   related-issues gate, active ownership и полный поиск plan PR/обычного PR по
+   каждому номеру. Recovery после takeover принимает remote `plan/<P>` только в
+   двух состояниях: точный `<base SHA>` (план можно собрать заново) либо один
+   descendant с валидным trailer и diff ровно двух разрешённых paths (можно
+   продолжить только PR-create/link). Иной commit или несколько несвязанных
+   plan PR — orphan человеку; force-push догадкой запрещён.
+
+   Плановый PR идёт в `main`, но **не закрывает ни одну заявку**: в body нет
+   `Fixes`/`Closes`/`Resolves`, только ссылки `Related to #...`, выбранный вариант
+   и точная отдельная строка:
+
+   ```
+   <!-- pp:plan-pr-v1 claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> plan=<P> commit=<40hex> path=Plans/<P>-<slug>.md dependents=<sorted-comma-list|none> -->
+   ```
+
+   Доверяй этому marker только в PR автора `ivanarama` с base `main`, head
+   `plan/<P>`, точным набором двух разрешённых paths и значениями из сохранённого
+   plan-fingerprint/root; записанный commit обязан иметь валидный
+   `PP-Plan-Transition` и быть предком текущего PR HEAD (merge свежего main сверху
+   допустим). Изменённый marker, второй PR или orphan remote
+   branch без однозначного PR не восстанавливай догадкой. `ship` не ставь:
+   плановый PR
+   проходит обычные REVIEW и MERGE.
+
+   После создания PR выполни восстанавливаемую link-фазу. На lead и каждом
+   dependent опубликуй отдельный человеческий комментарий со ссылками на
+   PR и `Plans/<P>-...md`, содержащий точную строку
+
+   ```
+   <!-- pp:plan-linked claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> pr=<M> plan=<P> role=<lead|dependent> -->
+   ```
+
+   Reservation-marker и `hold` каждого участника обязаны оставаться точными;
+   existing `hold` dependent из исходного contract сохраняется, но не становится
+   «собственным» FIX. После каждого комментария снова перечитай все related
+   issues и events; human removal собственного `hold` запрещает re-add. Когда
+   trusted reservation/link и `hold` подтверждены на всех issues, оставь на lead
+   `<!-- pp:plan-handoff-done claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> pr=<M> plan=<P> -->`.
+   `approved`, `needs-decision` и `decision:*` не меняй, `in-work` не ставь.
+   Все issue-маркеры плановой транзакции доверены только при
+   `author.login == ivanarama`, точной отдельной строке, неизменном body и полном
+   совпадении claim/fingerprint/lead/option/PR/plan с trusted root и PR-marker;
+   чужие или встроенные строки
+   игнорируются и не разрешают следующую фазу.
+   Убери plan-worktree и закончи текущий прогон результатом про плановый PR: это
+   одна взятая работа. В следующих прогонах полностью связанный open PR лишь
+   ждёт REVIEW/MERGE, рабочего slot не занимает и обычную очередь не блокирует.
+
+   Merged-план восстанавливается plan-очередью п. 2. Потребуй: PR действительно
+   merged в `main`; его merge commit — предок свежего `origin/main`; commit из
+   точного plan-marker — предок merged HEAD, а итоговые files всё ещё ограничены
+   двумя разрешёнными paths; plan-файл существует в `origin/main`; вычисли
+   его SHA-256 raw UTF-8; trusted
+   `pp:plan-handoff-done` существует; все related issues и собственные `hold`
+   неизменны. Затем опубликуй на lead и перечитай точный marker
+
+   ```
+   <!-- pp:plan-ready claim=<root-id> fingerprint-sha256=<64hex> lead=<N> option=<K> pr=<M> plan=<P> merge=<SHA> plan-sha256=<64hex> -->
+   ```
+
+   и только после подтверждения этого POST сними и сверь **только собственный**
+   `hold` ведущей issue. Это узкое исключение из общего stop-правила `hold`.
+   `approved` остаётся человеческим решением, поэтому ведущая автоматически
+   возвращается в обычную очередь следующего FIX-прогона; реализацию в том же
+   прогоне не начинай. Версию `pp:plan-ready` и plan-sha256 включи в обычный
+   issue-decision fingerprint и перевалидируй против свежего `origin/main` до
+   branch-claim и каждого push. Dependents остаются на `hold` со ссылкой на план: их
+   закрывает названный в плане срез либо человек явно снимает `hold` и делает
+   следующую issue ведущей. FIX никогда не снимает их все по факту одного мержа.
+   Crash после `pp:plan-ready`, но до DELETE восстанавливается только снятием
+   доказанно собственного lead-hold. Closed-unmerged plan PR оставляет все
+   holds на месте: новых comments/labels не делай, закончи `НУЖЕН ЧЕЛОВЕК` с
+   номером PR (общий п. 9 здесь закрыт уже существующим `hold`).
+
+   **Обычная реализация** (включая ведущую после trusted `pp:plan-ready`): ветка
+   строго детерминирована: `fix/<N>`, без заголовка и случайного суффикса.
+   Непосредственно перед branch-claim заново прочитай issue и все
    comments и потребуй неизменный `issue-decision fingerprint`, `state=open`,
    прежнее точное основание eligibility, повторное выполнение predicate
    `approved OR (ready-fix AND NOT needs-decision)` и отсутствие `hold`/`manual`;
@@ -348,6 +603,12 @@ description: Реализация заявок ivanarama/onebase с меткой
 6. Перед пушем: `go build ./...`, `go test` затронутых пакетов (полный
    `go test ./...` — если время позволяет).
 
+   Для планового PR действуют те же build/test требования к изменённым файлам и
+   отдельный related-issues gate из п. 4. Ожидаемые `pp:plan-*` comments и
+   собственные `hold` разрешены только внутри той плановой транзакции; они не
+   ослабляют обычный gate ниже и не разрешают implementation push до
+   `pp:plan-ready`.
+
    Для новой заявки непосредственно перед **каждым внешним изменением** — как
    до, так и после branch-claim — заново читай
 
@@ -384,7 +645,8 @@ description: Реализация заявок ivanarama/onebase с меткой
    отчёте для последующей уборки). CAS-push из п. 4 также обязан пройти; lease
    failure прекращает запуск до `gh pr create`.
 
-7. Коммит `тип(scope): описание` по-русски с трейлером
+7. Для обычной реализации (плановый PR уже исчерпывающе описан в п. 4) коммит
+   `тип(scope): описание` по-русски с трейлером
    `Generated-with: Claude Code`, пуш ветки в origin, PR на `main`: заголовок =
    заголовок коммита; в теле — что сделано, почему так, спорные решения, строка
    `Вариант: …` из п. 3, если была развилка, и **обязательно** английское
@@ -701,6 +963,7 @@ description: Реализация заявок ivanarama/onebase с меткой
    `approved`/`ready-fix` навсегда. Worktree убрать, недоделанное не пушить.
 
 10. Финал: `ИТОГ: ГОТОВО (PR #<M> → ишью #<N>)` /
+    `ИТОГ: ГОТОВО (плановый PR #<M> → ведущая ишью #<N>)` /
     `ИТОГ: ГОТОВО (доработан PR #<M> по ревью)` /
     `ИТОГ: НУЖЕН ЧЕЛОВЕК (#<N> — <вопрос в одну строку>)` /
     `ИТОГ: НЕ СМОГ (<причина>)`.

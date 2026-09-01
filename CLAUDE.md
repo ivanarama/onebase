@@ -232,6 +232,13 @@ onebase describe --project <dir>                # вся структура ко
   Обычная issue входит в FIX только по predicate `approved OR (ready-fix AND
   NOT needs-decision)`: только `approved` перебивает активный ход человека; это
   условие повторяется перед branch-claim и каждой внешней мутацией.
+  Выбранный trusted `pp:plan-option` — отдельный двухфазный ход: FIX резервирует
+  `plan/<N>`, сохраняет related-issues snapshot в `pp:plan-claim` с lease,
+  ставит `hold` ведущей и ведомым, открывает PR только с планом без closing
+  keyword, а после trusted `pp:plan-ready` merged-плана снимает только
+  собственный `hold` ведущей; marker фиксирует SHA-256 plan-файла для следующей
+  реализации. Ведомые остаются привязаны к плану; `approved`,
+  `decision:*` и `ship` FIX в этой фазе не ставит.
   Отдельно стоит `manual` — «правка вне
   репозитория» (настройки
   GitHub, внешний сервис): её конвейер не берёт по устройству, человек применяет
