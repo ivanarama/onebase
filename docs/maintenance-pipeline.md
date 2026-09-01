@@ -576,6 +576,11 @@ ship-event. Следующие звенья ссылаются через `previ
 новый proof его `to`. Intent выбирается по правилу earliest-wins, поэтому два
 параллельных пастуха не обновляют ветку дважды. Crash до update безопасно
 повторяет CAS, crash после update проверяет parents/timeline и дописывает done.
+Tip `main` для intent читается напрямую из `git/ref/heads/main`, а не из
+`PullRequest.baseRefOid`. Поле `done.base` берётся из фактического второго
+parent. Если base сдвинулся между intent и update, различие допустимо только при
+доказанной ancestry `intent.base → done.base → current main` и показывается
+диагностикой `base_sync_base_advanced`.
 Edit/delete, разрыв цепочки, снятие `ship` или любой недоказанный push закрывают
 carry и требуют нового решения человека.
 

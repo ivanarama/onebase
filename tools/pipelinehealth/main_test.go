@@ -165,6 +165,17 @@ func TestLegacyReShipIsVisibleAsPriorityValidationCandidate(t *testing.T) {
 	}
 }
 
+func TestBaseAdvanceBetweenIntentAndDoneIsVisible(t *testing.T) {
+	item := addComment(testPR(77, headB, "ship"), 30,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=20 claim=25 completion=29 ship-event=LE_test previous=none -->", headA, headA))
+	item = addComment(item, 31,
+		fmt.Sprintf("<!-- pp:base-sync-done intent=30 from=%s to=%s base=%s previous=none ship-event=LE_test -->", headA, headB, headB))
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "base_sync_base_advanced") {
+		t.Fatalf("base advance between intent and done is invisible: %+v", got)
+	}
+}
+
 func TestSingleFlightExposesOnlyFirstIntegrationReview(t *testing.T) {
 	first := addComment(testPR(20, headB, "ship"), 30, completion(headA, 20, 25))
 	second := addComment(testPR(30, headB, "ship"), 31, completion(headA, 21, 26))

@@ -358,6 +358,14 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    marker или сам merge-коммит: нужна вся непрерывная цепочка. Intent без done —
    незавершённая транзакция MERGE, её REVIEW не захватывает.
 
+   `intent.base` — наблюдавшийся tip `refs/heads/main` перед update, а
+   `done.base` — фактический второй parent созданного merge-коммита. Обычно они
+   равны. Если base успел сдвинуться между intent и update, принимай различие
+   только когда `intent.base` является предком `done.base`, `done.base` равен
+   второму parent и является предком текущего `main`; все остальные
+   timeline/HEAD fences остаются обязательными. Такой случай должен быть виден
+   в health как `base_sync_base_advanced`.
+
    Legacy re-ship нужен только для веток, которые MERGE обновил до внедрения
    intent/done. Он валиден, когда текущий HEAD `to` — merge-коммит ровно с двумя
    parents `[from, base]`; `from` имеет каноничный proof `reviewed` и trusted
