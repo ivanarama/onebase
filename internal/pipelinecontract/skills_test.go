@@ -107,6 +107,9 @@ func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testin
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Исполняемый preflight — единственный источник списка кандидатов",
+		"Get-Command gh -ErrorAction SilentlyContinue",
+		"C:\\Program Files\\GitHub CLI\\gh.exe",
+		"GitHub CLI not found in PATH or the standard Windows location",
 		"go run ./tools/pipelinehealth -json",
 		"`review_candidates` — **исключительный allowlist этого запуска**",
 		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",

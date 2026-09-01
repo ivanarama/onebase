@@ -78,7 +78,14 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    этой рабочей копии:
 
    ```powershell
-   $env:GH_EXE = (Get-Command gh -ErrorAction Stop).Source
+   $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
+   if ($ghCommand) {
+     $env:GH_EXE = $ghCommand.Source
+   } elseif (Test-Path -LiteralPath 'C:\Program Files\GitHub CLI\gh.exe') {
+     $env:GH_EXE = 'C:\Program Files\GitHub CLI\gh.exe'
+   } else {
+     throw 'GitHub CLI not found in PATH or the standard Windows location'
+   }
    go run ./tools/pipelinehealth -json
    ```
 
