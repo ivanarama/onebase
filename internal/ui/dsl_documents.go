@@ -270,6 +270,26 @@ func (p *docProxy) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError("Удалить(" + p.entity.Name + "): " + err.Error())
 		}
 		return nil
+	case "провести", "post":
+		// Прикладная процедура «Провести» в модуле менеджера СТАРШЕ встроенного
+		// метода: пока метода не было, одноимённая процедура была единственным
+		// способом провести документ по ссылке (#1168), и встроенный case
+		// перекрыл бы её молча — ровно та беда, которую заявка и чинит. break
+		// уводит на откат к модулю менеджера в конце функции.
+		if p.s.reg.GetManagerProc(p.entity.Name, method) != nil {
+			break
+		}
+		if len(args) == 0 {
+			interpreter.RaiseUserError("Провести(" + p.entity.Name + "): не передана ссылка")
+		}
+		ref, ok := args[0].(*interpreter.Ref)
+		if !ok {
+			interpreter.RaiseUserError(fmt.Sprintf("Провести(%s): ожидается ссылка, получено %T", p.entity.Name, args[0]))
+		}
+		if err := p.postRef(ref.UUID); err != nil {
+			interpreter.RaiseUserError("Провести(" + p.entity.Name + "): " + err.Error())
+		}
+		return nil
 	case "отменитьпроведение", "unpost":
 		if len(args) == 0 {
 			interpreter.RaiseUserError("ОтменитьПроведение(" + p.entity.Name + "): не передана ссылка")
@@ -461,6 +481,27 @@ func (p *docProxy) DeleteRef(uuidStr string) error {
 	// удаления. Пометка на удаление обратима и событием не считается (markRef).
 	p.s.dispatchDocWebhook(ctx, string(p.entity.Kind)+".delete", p.entity, id, nil)
 	return nil
+}
+
+// postRef проводит уже записанный документ по ссылке — с теми же наблюдаемыми
+// последствиями, что кнопка «Провести» в списке: грузит объект целиком (шапка +
+// ТЧ), проверяет построчное право post, запускает ОбработкаПроведения, пишет
+// движения, признак проведения и веб-хук document.post в одной транзакции.
+// Паритет зафиксирован тестом TestПроведение_ПаритетПутей.
+//
+// ОбработкаЗаписи при этом НЕ запускается: метод парный к ОтменитьПроведение и
+// меняет только состояние проведения уже записанного документа. Нужна запись
+// вместе с проведением — это объектный путь, Ссылка.ПолучитьОбъект().Провести().
+func (p *docProxy) postRef(uuidStr string) error {
+	obj, err := p.LoadObject(uuidStr)
+	if err != nil {
+		return err
+	}
+	w, ok := obj.(*docWriter)
+	if !ok {
+		return fmt.Errorf("неожиданный тип объекта документа: %T", obj)
+	}
+	return w.post()
 }
 
 // unpostRef отменяет проведение документа через entityservice.Unpost — тем же
