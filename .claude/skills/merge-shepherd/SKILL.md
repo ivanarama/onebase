@@ -143,14 +143,28 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    ids комментариев и label events: они принадлежат разным таблицам и не задают
    общий порядок.
 
-   Разрешены ровно два способа связать этот ship-transition с текущим proof:
+   Разрешены ровно три способа связать этот ship-transition с текущим proof:
 
    - **обычный:** edge `ship` расположен после edges review-комментария, claim и
      completion текущего SHA;
    - **carried:** тот же непрерывно присутствующий `ship` был поставлен после
      proof исходного SHA, а текущий HEAD достигнут только валидной цепочкой
      автоматических base-sync и после последнего звена уже получил новый
-     каноничный proof с outcome `reviewed`.
+     каноничный proof с outcome `reviewed`;
+   - **legacy reauthorized:** текущий HEAD — точный legacy base-sync, сделанный
+     до intent/done-протокола, а человек заново поставил `ship` после anchor
+     этого HEAD и интеграционное REVIEW уже создало для него каноничный proof с
+     outcome `reviewed`.
+
+   Legacy reauthorization валидна только если текущий HEAD `to` — merge-коммит
+   ровно с двумя parents `[from, base]`; `from` имеет каноничный proof `reviewed`
+   и trusted `ship` после него; между этим ship и `to` есть ровно один
+   `PullRequestCommit` и нет иных HEAD/base lifecycle events; `base` — предок
+   текущего `main`; а последний ship-transition — новый trusted `LabeledEvent`
+   от `ivanarama` после anchor `to`. Старое снятие `ship` между `to` и новым
+   label допустимо. Докажи условия двумя стабильными полными GraphQL snapshot и
+   REST parents; похожий merge message доказательством не считается. Новый push
+   после re-ship отменяет разрешение.
 
    Base-sync carry состоит из точных отдельных строк:
 
@@ -163,7 +177,9 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    в указанном порядке. `done` ссылается на самый ранний валидный intent для
    данного `from`; их `from`, `previous` и `ship-event` совпадают. Для первого
    звена `previous=none`, intent адресует каноничные review/claim/completion
-   `from`, а `ship-event` идёт после них. Для следующего `previous` указывает на
+   `from`, а `ship-event` либо идёт после них обычным способом, либо является
+   доказанным legacy reauthorization после anchor `from`. Для следующего
+   `previous` указывает на
    предыдущий done, его `to` равен новому `from`, а новый intent адресует
    каноничный proof этого `from`. Каждый переход после intent — ровно один
    `PullRequestCommit` без force-push/delete/restore/base-change; commit `to`
@@ -174,11 +190,12 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    оставаться исходным trusted `LabeledEvent`: снятие/повторная постановка,
    edit/delete marker, чужой head event или разрыв `previous` отменяют carry.
 
-   Если текущий HEAD равен `to` валидного последнего done, но каноничного proof
-   текущего HEAD ещё нет, это **не stale ship**: ничего не меняй, зафиксируй
+   Если текущий HEAD равен `to` валидного последнего done либо является точным
+   legacy base-sync с re-ship после его anchor, но каноничного proof текущего
+   HEAD ещё нет, это **не stale ship**: ничего не меняй, зафиксируй
    «ожидает интеграционное REVIEW» и переходи к следующему PR. Во всех остальных
    случаях отсутствие актуальной завершённой пары, более поздний override либо
-   отсутствие обычного/carried разрешения — stale `ship`. Выполни атомарную
+   отсутствие обычного/carried/legacy-reauthorized разрешения — stale `ship`. Выполни атомарную
    передачу в REVIEW: сними `ship` через REST → сверь удаление → оставь
    комментарий «ship снят: текущий HEAD ещё не прошёл ревью» → прекрати обработку
    PR. После снятия `ship` комментарий является разрешённым завершающим шагом
@@ -192,7 +209,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    по нему снимается `in-work`).
 
 3. По состоянию:
-   - **BEHIND** → после полного label+SHA+authorization-гейта сохрани проверенный
+   - **BEHIND** → после полного label+SHA+authorization-гейта (включая допустимое
+     legacy reauthorization) сохрани проверенный
      SHA, текущий `baseRefOid`, ids proof, node id исходного ship-transition и id
      предыдущего done (`none` для первого sync). Сначала опубликуй exact intent:
 
