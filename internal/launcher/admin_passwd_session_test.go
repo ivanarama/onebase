@@ -69,31 +69,29 @@ func passwdFixture(t *testing.T, baseID string) (admin, other *auth.User, token 
 	return admin, other, token, post, reopen
 }
 
-// Смена пароля себе не должна выбивать администратора из конфигуратора.
-// Отзыв «всех сессий» сносил и ту, из которой админ работает: панель оставалась
-// открытой, но каждое следующее действие уходило редиректом на форму входа —
-// снаружи это выглядело как мёртвая кнопка «Сохранить» у следующего
-// пользователя.
-func TestUserPasswdKeepsOwnConfiguratorSession(t *testing.T) {
+// Административная смена пароля отзывает и текущую сессию конфигуратора: она
+// тоже может быть украденной. Первый POST успевает завершиться, а следующий
+// запрос тем же публичным путём обязан уйти на повторный вход.
+func TestUserPasswdRevokesOwnConfiguratorSession(t *testing.T) {
 	admin, other, _, post, _ := passwdFixture(t, "self-passwd")
 
 	if rec := post(admin.ID, "An0ther-Str0ng!"); rec.Code != http.StatusOK {
 		t.Fatalf("смена своего пароля: код=%d тело=%q", rec.Code, rec.Body.String())
 	}
 	rec := post(other.ID, "An0ther-Str0ng!")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("после смены своего пароля сессия конфигуратора потеряна: код=%d location=%q",
+	if rec.Code != http.StatusFound {
+		t.Fatalf("отозванная сессия не отправлена на повторный вход: код=%d location=%q",
 			rec.Code, rec.Header().Get("Location"))
 	}
-	if out := jsonBody(t, rec); out["ok"] != true {
-		t.Errorf("вторая смена пароля не выполнена: %v", out)
+	if location := rec.Header().Get("Location"); !strings.Contains(location, "/configurator/login") {
+		t.Errorf("redirect=%q, ожидался вход конфигуратора", location)
 	}
 }
 
-// Сохранение текущей сессии не должно превращаться в «сессии не отзываются»:
-// все остальные сессии того же администратора (другая машина, Предприятие)
-// обязаны завершиться — ради этого отзыв и делается (план 78).
-func TestUserPasswdRevokesOtherSessionsOfSelf(t *testing.T) {
+// При смене своего пароля завершаются все сессии администратора: текущий
+// configurator token, другая машина и Предприятие. Исключение для текущего
+// токена оставляло украденной сессии способ пережить собственный reset.
+func TestUserPasswdRevokesAllSessionsOfSelf(t *testing.T) {
 	admin, _, token, post, reopen := passwdFixture(t, "self-passwd-others")
 
 	repo := reopen()
@@ -117,8 +115,8 @@ func TestUserPasswdRevokesOtherSessionsOfSelf(t *testing.T) {
 	if _, err := repo.LookupSessionKind(ctx, enterprise, auth.SessionKindEnterprise); err == nil {
 		t.Error("сессия Предприятия того же админа пережила смену пароля")
 	}
-	if _, err := repo.LookupSessionKind(ctx, token, auth.SessionKindConfigurator); err != nil {
-		t.Errorf("текущая сессия конфигуратора должна была уцелеть: %v", err)
+	if _, err := repo.LookupSessionKind(ctx, token, auth.SessionKindConfigurator); err == nil {
+		t.Error("текущая сессия конфигуратора пережила смену пароля")
 	}
 }
 

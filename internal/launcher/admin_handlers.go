@@ -42,6 +42,11 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 		httpErrorDiv(w, "Не удалось прочитать список пользователей", err)
 		return
 	}
+	lang := resolveLang(r)
+	// JSON-литералы безопасно переживают кавычки, переводы строк и </script> в
+	// переводе; строковая конкатенация с одинарными кавычками этого не гарантирует.
+	sessionEndedJS, _ := json.Marshal(tr(lang, "Сессия конфигуратора завершена — войдите заново"))
+	unexpectedResponseJS, _ := json.Marshal(tr(lang, "Неожиданный ответ сервера"))
 
 	// Build language options for the user lang selector
 	langOpts := `<option value="">—</option>`
@@ -148,8 +153,8 @@ function cfgPost(path, body){
       var ct=r.headers.get('content-type')||'';
       if(ct.indexOf('json')<0){
         throw new Error(r.redirected||(r.url||'').indexOf('/configurator/login')>=0
-          ? 'Сессия конфигуратора завершена — войдите заново'
-          : 'Неожиданный ответ сервера (HTTP '+r.status+')');
+          ? ` + string(sessionEndedJS) + `
+          : ` + string(unexpectedResponseJS) + `+' (HTTP '+r.status+')');
       }
       return r.json();
     })
@@ -414,7 +419,7 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 	// этом администратору и НЕ писать в аудит запись «сессии отозваны»: ложная
 	// запись в журнале хуже отсутствия записи, по ней инцидент закроют как
 	// отработанный.
-	if err := kickSessionsAfterPasswdChange(r, repo, req.ID); err != nil {
+	if err := repo.KickUserSessions(r.Context(), req.ID); err != nil {
 		writeJSON(w, 500, map[string]any{
 			"error": tr(resolveLang(r), "Пароль изменён, но сессии пользователя не завершены") + ": " + err.Error(),
 		})
@@ -426,26 +431,6 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 	}
 	logCfgSessionAudit(r, db, "password_change_sessions_revoked", targetLogin, req.ID)
 	writeJSON(w, 200, map[string]any{"ok": true})
-}
-
-// kickSessionsAfterPasswdChange завершает сессии пользователя, которому только
-// что сменили пароль, — но не ту сессию конфигуратора, из которой админ это
-// делает.
-//
-// Отзыв «всех сессий» при смене пароля себе сносил и текущую: следующее
-// действие в панели администрирования уходило редиректом на форму входа,
-// AJAX-обработчик разбирал HTML формы как JSON и молча падал — кнопка
-// «Сохранить» выглядела мёртвой, хотя первая смена пароля прошла. Гарантия
-// плана 78 при этом не страдает: украденная сессия — это любая другая, и все
-// они по-прежнему завершаются, включая собственные сессии админа на других
-// машинах и в режиме Предприятия.
-func kickSessionsAfterPasswdChange(r *http.Request, repo *auth.Repo, targetID string) error {
-	actor := cfgUserFromContext(r.Context())
-	credential, ok := cfgAuthCredentialFromContext(r.Context())
-	if actor != nil && actor.ID == targetID && ok && credential.token != "" {
-		return repo.KickOtherSessions(r.Context(), targetID, credential.token)
-	}
-	return repo.KickUserSessions(r.Context(), targetID)
 }
 
 func isPasswordPolicyError(err error) bool {
