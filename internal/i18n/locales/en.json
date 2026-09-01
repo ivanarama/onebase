@@ -428,6 +428,7 @@
   "Не удалось создать БД": "Could not create database",
   "Не удалось создать папку": "Could not create folder",
   "Не удалось создать резервную копию перед изменением версии": "Could not create a backup before changing versions",
+  "Не удалось удалить незавершённый макет": "Could not remove the incomplete layout",
   "Неверное имя пользователя или пароль": "Wrong username or password",
   "Неверный код подтверждения": "Invalid verification code",
   "Неверный текущий пароль": "Wrong current password",

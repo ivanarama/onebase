@@ -122,7 +122,11 @@ func TestPrintDocumentXLSXThroughHTTPHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer out.Close()
+	defer func() {
+		if err := out.Close(); err != nil {
+			t.Errorf("Close XLSX: %v", err)
+		}
+	}()
 	if got, err := out.GetCellValue("Sheet1", "A1"); err != nil || got != "ООО Ромашка" {
 		t.Errorf("A1 = %q, %v", got, err)
 	}

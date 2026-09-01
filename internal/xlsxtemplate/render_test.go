@@ -57,7 +57,11 @@ func TestRenderBytesPreservesWorkbookAndRepeatsRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer out.Close()
+	defer func() {
+		if err := out.Close(); err != nil {
+			t.Errorf("Close XLSX: %v", err)
+		}
+	}()
 	assertCell(t, out, sheet, "A1", "ООО Ромашка")
 	assertCell(t, out, sheet, "B1", "ИНН 7701000000")
 	assertCell(t, out, sheet, "C1", "1250.5")
@@ -118,6 +122,10 @@ func TestRenderBytesEmptyTablePartLeavesBlankTemplateRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer out.Close()
+	defer func() {
+		if err := out.Close(); err != nil {
+			t.Errorf("Close XLSX: %v", err)
+		}
+	}()
 	assertCell(t, out, "Sheet1", "A1", "")
 }

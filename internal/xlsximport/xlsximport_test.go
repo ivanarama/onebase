@@ -303,7 +303,11 @@ func TestImportBlank_Page(t *testing.T) {
 
 func TestImportWideScaledSheetAndIgnoresNamedCells(t *testing.T) {
 	f := excelize.NewFile()
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("Close XLSX: %v", err)
+		}
+	}()
 	sh := f.GetSheetName(0)
 	if err := f.SetCellValue(sh, "A1", "{{Номер}}"); err != nil {
 		t.Fatal(err)

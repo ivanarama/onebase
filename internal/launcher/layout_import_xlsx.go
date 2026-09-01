@@ -108,8 +108,11 @@ func (h *handler) configuratorImportXLSXLayout(w http.ResponseWriter, r *http.Re
 	if werr := h.writeLayoutFile(r.Context(), b, templatePath, buf.Bytes()); werr != nil {
 		// Макет и исходная книга образуют одну печатную форму. Если второй файл
 		// записать не удалось, не оставляем половину импорта.
-		_ = h.removeLayoutFile(r.Context(), b, relPath)
-		h.layoutCreateError(w, r, b, lang, layoutWriteMessage(lang, werr))
+		msg := layoutWriteMessage(lang, werr)
+		if rerr := h.removeLayoutFile(r.Context(), b, relPath); rerr != nil {
+			msg += ". " + tr(lang, "Не удалось удалить незавершённый макет") + ": " + rerr.Error()
+		}
+		h.layoutCreateError(w, r, b, lang, msg)
 		return
 	}
 

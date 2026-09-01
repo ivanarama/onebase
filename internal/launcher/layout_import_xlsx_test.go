@@ -15,6 +15,7 @@ import (
 	"github.com/xuri/excelize/v2"
 
 	"github.com/ivantit66/onebase/internal/printform"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // План 155: эндпоинт импорта макета из бланка Excel.
@@ -216,6 +217,49 @@ func TestImportXLSX_DuplicateRefused(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Error("существующий макет был перезаписан")
+	}
+}
+
+// Если запись исходной книги и последующее удаление уже созданного YAML оба
+// упали, публичный импорт обязан сообщить обе ошибки: половина печатной формы
+// осталась и следующий импорт с тем же именем потребует ручной очистки.
+func TestImportXLSX_ReportsRollbackFailure(t *testing.T) {
+	h, b := newLayoutTestBaseDB(t)
+	ctx := context.Background()
+	func() {
+		db, err := storage.ConnectSQLite(ctx, b.DBPath)
+		if err != nil {
+			t.Fatalf("ConnectSQLite: %v", err)
+		}
+		defer db.Close()
+
+		for _, stmt := range []string{
+			`CREATE TRIGGER fail_xlsx_template_write
+			 BEFORE INSERT ON _onebase_config
+			 WHEN NEW.path = 'printforms/СбойОтката.template.xlsx'
+			 BEGIN SELECT RAISE(ABORT, 'forced template write failure'); END`,
+			`CREATE TRIGGER fail_xlsx_layout_rollback
+			 BEFORE DELETE ON _onebase_config
+			 WHEN OLD.path = 'printforms/СбойОтката.layout.yaml'
+			 BEGIN SELECT RAISE(ABORT, 'forced layout rollback failure'); END`,
+		} {
+			if _, err := db.Exec(ctx, stmt); err != nil {
+				t.Fatalf("create failure trigger: %v", err)
+			}
+		}
+	}()
+
+	rec := postImportXLSX(t, h, b, "СбойОтката", "Реализация", "", blankXLSX(t))
+	for _, want := range []string{"forced template write failure", "forced layout rollback failure"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("ответ не содержит %q, тело:\n%s", want, truncate(rec.Body.String(), 600))
+		}
+	}
+	if _, ok := configReadLayout(t, b, "printforms/СбойОтката.layout.yaml"); !ok {
+		t.Fatal("тест не воспроизвёл отказ rollback: YAML-макет был удалён")
+	}
+	if _, ok := configReadLayout(t, b, "printforms/СбойОтката.template.xlsx"); ok {
+		t.Fatal("XLSX-шаблон записан вопреки failure-trigger")
 	}
 }
 
