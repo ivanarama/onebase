@@ -11,17 +11,22 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 var (
 	completionLine = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	claimLine      = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	reviewAgain    = regexp.MustCompile(`(?m)^pp:review-again$`)
+	displayRepair  = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
 )
 
 type apiUser struct {
@@ -56,6 +61,16 @@ type apiPull struct {
 	Comments []apiComment `json:"-"`
 }
 
+type apiIssue struct {
+	Number       int          `json:"number"`
+	Title        string       `json:"title"`
+	HTMLURL      string       `json:"html_url"`
+	State        string       `json:"state"`
+	PullRequest  any          `json:"pull_request"`
+	CommentCount int          `json:"comments"`
+	Thread       []apiComment `json:"thread,omitempty"`
+}
+
 type candidate struct {
 	Number int    `json:"number"`
 	Title  string `json:"title"`
@@ -68,6 +83,7 @@ type finding struct {
 	Severity string `json:"severity"`
 	Code     string `json:"code"`
 	PR       int    `json:"pr,omitempty"`
+	Issue    int    `json:"issue,omitempty"`
 	Message  string `json:"message"`
 }
 
@@ -77,6 +93,7 @@ type report struct {
 	Scope            string      `json:"scope"`
 	Scheduler        string      `json:"scheduler"`
 	Checked          int         `json:"checked"`
+	IssuesChecked    int         `json:"issues_checked"`
 	ReviewCandidates []candidate `json:"review_candidates"`
 	FixCandidates    []candidate `json:"fix_candidates"`
 	HumanWaiting     []candidate `json:"human_waiting"`
@@ -88,6 +105,7 @@ func main() {
 	owner := flag.String("owner", "ivanarama", "trusted pipeline account")
 	contract := flag.String("contract", ".claude/skills/review-queue/SKILL.md", "active REVIEW contract")
 	fixture := flag.String("prs", "", "read a JSON fixture instead of GitHub")
+	issueFixture := flag.String("issues", "", "read an issue JSON fixture instead of GitHub")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
 	flag.Parse()
 
@@ -95,7 +113,12 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	issues, err := loadIssues(*repo, *issueFixture, *fixture != "")
+	if err != nil {
+		fail(err)
+	}
 	result := analyze(prs, *owner)
+	analyzeIssues(&result, issues, *owner)
 	checkContract(&result, *contract)
 	result.finish()
 
@@ -175,6 +198,74 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 		}
 	}
 	return prs, nil
+}
+
+func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
+	if fixture != "" {
+		data, err := os.ReadFile(fixture)
+		if err != nil {
+			return nil, err
+		}
+		var issues []apiIssue
+		if err := json.Unmarshal(data, &issues); err != nil {
+			return nil, fmt.Errorf("decode issue fixture: %w", err)
+		}
+		return issues, nil
+	}
+	// A PR fixture must remain a fully offline diagnostic input. Callers that
+	// want both fixture kinds pass -prs and -issues together.
+	if skipLive {
+		return []apiIssue{}, nil
+	}
+
+	gh := os.Getenv("GH_EXE")
+	if gh == "" {
+		gh = "gh"
+	}
+	var all []apiIssue
+	if err := ghJSONLines(gh, &all, "api", "--paginate",
+		"repos/"+repo+"/issues?state=open&per_page=100&sort=created&direction=asc",
+		"--jq", ".[]"); err != nil {
+		return nil, fmt.Errorf("list issues: %w", err)
+	}
+	issues := make([]apiIssue, 0, len(all))
+	for _, issue := range all {
+		if issue.PullRequest == nil && issue.CommentCount > 0 {
+			issues = append(issues, issue)
+		}
+	}
+
+	jobs := make(chan int)
+	errs := make(chan error, len(issues))
+	var wg sync.WaitGroup
+	workers := 6
+	if len(issues) < workers {
+		workers = len(issues)
+	}
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, issues[index].Number)
+				if err := ghJSONLines(gh, &issues[index].Thread, "api", "--paginate", path, "--jq", ".[]"); err != nil {
+					errs <- fmt.Errorf("comments for issue #%d: %w", issues[index].Number, err)
+				}
+			}
+		}()
+	}
+	for index := range issues {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return issues, nil
 }
 
 func ghJSONLines(gh string, destination any, args ...string) error {
@@ -271,6 +362,72 @@ func analyze(prs []apiPull, owner string) report {
 	return result
 }
 
+func analyzeIssues(result *report, issues []apiIssue, owner string) {
+	result.IssuesChecked = len(issues)
+	for _, issue := range issues {
+		if issue.State != "open" {
+			continue
+		}
+		repaired := map[int64]bool{}
+		for _, comment := range issue.Thread {
+			if !trustedUnedited(comment, owner) {
+				continue
+			}
+			for _, match := range displayRepair.FindAllStringSubmatch(comment.Body, -1) {
+				id, err := strconv.ParseInt(match[1], 10, 64)
+				if err == nil && id < comment.ID {
+					repaired[id] = true
+				}
+			}
+		}
+		for _, comment := range issue.Thread {
+			if !trustedUnedited(comment, owner) || repaired[comment.ID] {
+				continue
+			}
+			visible, ok := triageVisibleText(comment.Body)
+			if ok && looksLikeUTF8DecodedAsWindows1251(visible) {
+				result.addIssue("red", "triage_text_mojibake", issue.Number,
+					fmt.Sprintf("TRIAGE comment %d повреждён кодировкой и не имеет pp:display-repair", comment.ID))
+			}
+		}
+	}
+}
+
+func triageVisibleText(body string) (string, bool) {
+	const marker = "<!-- pp:triage -->"
+	for offset := 0; offset <= len(body); {
+		next := strings.Index(body[offset:], marker)
+		if next < 0 {
+			return "", false
+		}
+		index := offset + next
+		lineStart := index == 0 || body[index-1] == '\n'
+		lineEnd := index+len(marker) == len(body) || body[index+len(marker)] == '\n'
+		if lineStart && lineEnd {
+			return strings.TrimSuffix(body[:index], "\n"), true
+		}
+		offset = index + len(marker)
+	}
+	return "", false
+}
+
+func looksLikeUTF8DecodedAsWindows1251(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		encoded, err := charmap.Windows1251.NewEncoder().Bytes([]byte(line))
+		if err != nil || !utf8.Valid(encoded) || string(encoded) == line {
+			continue
+		}
+		// Reversible conversion alone can match a short, unusual but legitimate
+		// string. These artifacts are characteristic of UTF-8 Russian decoded as
+		// Windows-1251 and keep the health check conservative.
+		if strings.Contains(line, "вЂ") || strings.Contains(line, "В«") ||
+			strings.Contains(line, "В»") || strings.Count(line, "Р")+strings.Count(line, "С") >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
 func checkContract(result *report, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -283,6 +440,22 @@ func checkContract(result *report, path string) {
 			result.add("red", "unfair_review_contract", 0,
 				"активный REVIEW contract не гарантирует breadth-first порядок")
 			return
+		}
+	}
+	skillsRoot := filepath.Dir(filepath.Dir(path))
+	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+		data, err := os.ReadFile(filepath.Join(skillsRoot, name, "SKILL.md"))
+		if err != nil {
+			result.add("red", "utf8_contract_unreadable", 0,
+				fmt.Sprintf("не удалось прочитать %s contract: %v", name, err))
+			return
+		}
+		for _, required := range []string{"$OutputEncoding = $utf8", "-Encoding UTF8 -Raw", "`@base64`", "байт-в-байт"} {
+			if !strings.Contains(string(data), required) {
+				result.add("red", "unsafe_utf8_contract", 0,
+					fmt.Sprintf("активный %s contract не гарантирует UTF-8 до GitHub-мутаций", name))
+				return
+			}
 		}
 	}
 }
@@ -315,13 +488,17 @@ func (result *report) finish() {
 		next = strings.Join(parts, ", ")
 	}
 	result.Summary = fmt.Sprintf(
-		"PR: %d; REVIEW: %d (следующие %s); FIX: %d; человек: %d; сигналов: %d",
-		result.Checked, len(result.ReviewCandidates), next, len(result.FixCandidates),
+		"PR: %d; issues: %d; REVIEW: %d (следующие %s); FIX: %d; человек: %d; сигналов: %d",
+		result.Checked, result.IssuesChecked, len(result.ReviewCandidates), next, len(result.FixCandidates),
 		len(result.HumanWaiting), len(result.Findings))
 }
 
 func (result *report) add(severity, code string, pr int, message string) {
 	result.Findings = append(result.Findings, finding{Severity: severity, Code: code, PR: pr, Message: message})
+}
+
+func (result *report) addIssue(severity, code string, issue int, message string) {
+	result.Findings = append(result.Findings, finding{Severity: severity, Code: code, Issue: issue, Message: message})
 }
 
 func labelSet(labels []apiLabel) map[string]bool {
@@ -424,10 +601,12 @@ func sortCandidates(items []candidate) {
 func printReport(writer io.Writer, result report) {
 	_, _ = fmt.Fprintf(writer, "pipeline: %s — %s\n", result.State, result.Summary)
 	for _, item := range result.Findings {
-		pr := ""
+		target := ""
 		if item.PR != 0 {
-			pr = fmt.Sprintf(" PR #%d", item.PR)
+			target = fmt.Sprintf(" PR #%d", item.PR)
+		} else if item.Issue != 0 {
+			target = fmt.Sprintf(" issue #%d", item.Issue)
 		}
-		_, _ = fmt.Fprintf(writer, "- %s %s:%s %s\n", item.Severity, item.Code, pr, item.Message)
+		_, _ = fmt.Fprintf(writer, "- %s %s:%s %s\n", item.Severity, item.Code, target, item.Message)
 	}
 }

@@ -50,6 +50,21 @@ func rejectAll(t *testing.T, text string, fragments ...string) {
 	}
 }
 
+func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
+	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+		t.Run(name, func(t *testing.T) {
+			requireAll(t, skill(t, name),
+				"**до чтения любого файла**",
+				"$OutputEncoding = $utf8",
+				"Get-Content -LiteralPath <path> -Encoding UTF8 -Raw",
+				"остановись **до любой GitHub-мутации**",
+				"jq `@base64`",
+				"сравни байт-в-байт с отправленным телом",
+			)
+		})
+	}
+}
+
 func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
