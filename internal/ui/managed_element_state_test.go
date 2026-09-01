@@ -923,8 +923,6 @@ type managedAnchorNode struct {
 	ReadOnly bool              `json:"readOnly"`
 }
 
-func (n managedAnchorNode) attr(name string) string { return n.Attrs[name] }
-
 func managedAnchorNodes(t *testing.T, rendered, elementName string) []managedAnchorNode {
 	t.Helper()
 	var nodes []managedAnchorNode
