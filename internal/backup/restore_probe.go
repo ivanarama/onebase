@@ -13,10 +13,13 @@ import (
 )
 
 // HasPendingRestoreSQLite inspects the durable restore marker without opening
-// OneBase storage. In particular it never creates the database, changes its
-// journal mode, runs write probes, or applies connection setup pragmas. The
-// caller must hold the database lifetime lease so the result stays valid until
-// it either opens as a consumer or switches to the exclusive recovery path.
+// OneBase storage. It never creates the database, changes its journal mode,
+// runs application writes, or applies connection setup pragmas. The existing
+// file is opened read/write intentionally: after an abrupt stop SQLite must be
+// allowed to recover and checkpoint a hot WAL before the following independent
+// read-only schema-revision probe. The caller must hold the database lifetime
+// lease so the result stays valid until it either opens as a consumer or
+// switches to the exclusive recovery path.
 func HasPendingRestoreSQLite(ctx context.Context, path string) (pending bool, resultErr error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -38,9 +41,9 @@ func HasPendingRestoreSQLite(ctx context.Context, path string) (pending bool, re
 		return false, fmt.Errorf("restore probe: SQLite target is not a regular file")
 	}
 
-	db, err := sql.Open("sqlite", sqliteFileURI(path, "mode=ro"))
+	db, err := sql.Open("sqlite", sqliteFileURI(path, "mode=rw"))
 	if err != nil {
-		return false, fmt.Errorf("restore probe: open SQLite read-only: %w", err)
+		return false, sqliteRestoreProbeError("open existing SQLite database for WAL recovery", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -52,7 +55,7 @@ func HasPendingRestoreSQLite(ctx context.Context, path string) (pending bool, re
 	if err := db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='_settings')`,
 	).Scan(&tableExists); err != nil {
-		return false, fmt.Errorf("restore probe: inspect SQLite settings table: %w", err)
+		return false, sqliteRestoreProbeError("inspect SQLite settings table", err)
 	}
 	if !tableExists {
 		return false, nil
@@ -60,9 +63,16 @@ func HasPendingRestoreSQLite(ctx context.Context, path string) (pending bool, re
 	if err := db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM _settings WHERE key=?)`, restoreIntentKey,
 	).Scan(&pending); err != nil {
-		return false, fmt.Errorf("restore probe: inspect SQLite marker: %w", err)
+		return false, sqliteRestoreProbeError("inspect SQLite marker", err)
 	}
 	return pending, nil
+}
+
+func sqliteRestoreProbeError(action string, err error) error {
+	return fmt.Errorf("restore probe: %s: %w\n"+
+		"SQLite startup recovery failed: keep the database, -wal and -shm files together, "+
+		"stop other OneBase processes, ensure write access, and retry; do not delete -wal by hand",
+		action, err)
 }
 
 // HasPendingRestorePostgres uses one plain pgx connection and read-only SELECTs
