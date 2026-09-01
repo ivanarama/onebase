@@ -577,10 +577,11 @@ carry и требуют нового решения человека.
 merge запрещён; после merge допустим только необязательный конечный delete без
 restore. Edge order устраняет same-second неоднозначность и не принимает proof,
 синтетически созданный уже после мержа.
-Перед финальным PUT MERGE сохраняет `node_id` review/claim/completion, epoch
-anchor node/cursor и watermark последнего комментария. Два последовательных
+Перед финальным PUT MERGE сохраняет `node_id` review/claim/completion и
+cleanup-intent, epoch anchor node/cursor и watermark intent-комментария.
+Два последовательных
 побайтово одинаковых raw GraphQL snapshot
-адресуют три комментария по node ID, возвращают их
+адресуют четыре комментария по node ID, возвращают их
 `fullDatabaseId`/body/`lastEditedAt` вместе с HEAD, labels и всеми epoch events
 после anchor; `labels.pageInfo.hasNextPage` и epoch `hasNextPage` обязаны быть
 false.
@@ -633,24 +634,52 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
   перезапуском. Настоящий провал → комментарий с выдержкой лога и эскалация.
 
 Финальный merge выполняется REST-запросом compare-and-merge с полем
-`sha=<проверенный HEAD>`. Непосредственно перед ним два последовательных
-побайтово одинаковых raw GraphQL snapshot
-содержит одновременно HEAD, текущие labels и последние timeline events; это
-последняя проверка `ship`/`hold`/`needs-decision`, completion и override.
+`sha=<проверенный HEAD>`. Это ровно один merge path; отдельного CLI fallback,
+способного послать второй merge без того же SHA-гейта, нет. До PUT пастух сохраняет точный body hash,
+closing issues и proof в неизменяемом комментарии:
+
+```text
+<!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique decimal csv|none> -->
+```
+
+Самый ранний валидный intent входит четвёртым адресованным comment node в два
+последовательных побайтово одинаковых raw GraphQL snapshot вместе с HEAD,
+текущими labels и timeline. Это последняя проверка
+`ship`/`hold`/`needs-decision`, completion, override и точного cleanup payload.
 Успешный snapshot — точка невозврата: GitHub не умеет сделать merge условным по
 labels, поэтому стоп-метка, поставленная уже после отправки PUT, не отменяет
-запрос в полёте. До этой точки она останавливает MERGE. Push нового HEAD в
-последнем окне безопасно даёт `409`: пастух сначала пытается восстановить
-доказанный base-sync intent и только для произвольного нового HEAD снимает
-устаревший `ship`.
+запрос в полёте. До этой точки она останавливает MERGE.
+
+При `409`, timeout или потерянном ответе пастух сначала перечитывает REST state и
+полный GraphQL timeline. Если PR уже `MERGED`, а единственный `MergedEvent`
+расположен после intent и совпадает с `merge_commit_sha`, второй merge запрещён:
+запуск продолжает только cleanup. Доказанный открытый PR с прежним HEAD означает,
+что merge не произошёл. Однако после timeout/обрыва ответа повторный PUT в том же
+запуске запрещён: новый запуск сначала получает два стабильных снимка и только
+потом решает, восстанавливать merge или cleanup. Произвольный новый HEAD закрывает
+старое разрешение, а доказанный base-sync intent восстанавливается своим протоколом.
 
 После мержа остальные PR очереди становятся `BEHIND` — это норма. Их `MERGEABLE`
 до первого мержа ничего не значит.
 
-Там же снимается `in-work` с заявок, закрытых этим PR: вешает метку фиксер при
-открытии PR, а снять её больше некому — он к заявке не возвращается. Без этого
-шага каждая проехавшая заявка уносит `in-work` в закрытые, и метка перестаёт
-означать «едет прямо сейчас».
+Post-merge cleanup — отдельная crash-safe транзакция. До обычной очереди MERGE
+пагинированно читает полный repository issue-comments REST (не Search API),
+находит intent даже после исчезновения PR из открытого списка и двумя полными
+GraphQL-проходами доказывает `state == MERGED`, exact head, base `main`, intent,
+merge commit и отсутствие edit/delete/restore. Затем для каждого номера из
+сохранённого `issues` идемпотентно снимает `in-work` только с закрытой заявки и
+публикует:
+
+```text
+<!-- pp:merge-cleanup-done intent=<id> head=<40hex> merge=<40hex> -->
+```
+
+Тело marker после POST сверяется побайтово через `@base64`. Только после done
+снимается `ship` с merged PR. Crash между merge, удалениями labels, done и
+финальным DELETE в следующем запуске продолжает ровно недостающую фазу; `404`
+принимается только после GET, подтвердившего отсутствие метки. Поэтому сценарий
+«merge успешен, cleanup упал» не посылает второй merge и не оставляет закрытые
+заявки навсегда с `in-work`.
 
 ### 6. Хвост — `/tail-issues`
 

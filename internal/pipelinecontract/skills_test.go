@@ -594,7 +594,7 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"для override-\n   `IssueComment` также `lastEditedAt == null`",
 		`{"merge_method":"merge","sha":"<проверенный SHA>"}`,
 		"Успех — только ответ с `merged: true`",
-		"`409` означает, что HEAD успел измениться",
+		"При `409`, timeout, обрыве ответа или любом другом отказе **сначала** перечитай REST PR и полный GraphQL timeline",
 		"`baseRefName == \"main\"`",
 		"`state == OPEN`",
 	)
@@ -613,6 +613,98 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"IssueComment{databaseId",
 		"nodes{databaseId",
 	)
+}
+
+func TestMergePostMergeCleanupIsCrashRecoverable(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, merge,
+		"**Сначала восстановление post-merge cleanup, затем обычная очередь.**",
+		"repos/ivanarama/onebase/issues/comments?per_page=100&sort=created&direction=asc",
+		"<!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique decimal csv|none> -->",
+		"<!-- pp:merge-cleanup-done intent=<id> head=<40hex> merge=<40hex> -->",
+		"merged PR уже исчез из очереди открытых `ship`-PR",
+		"Search API eventually consistent и доказательством отсутствия intent не считается",
+		"Перед **каждой** cleanup-мутацией выполни два полных последовательных GraphQL-прохода",
+		"REST `state == \"closed\"`, `.merged == true`, непустые `merged_at` и `merge_commit_sha`",
+		"Уже merged PR **никогда не отправляй в merge API повторно**",
+		"`404` допустим только после повторного GET",
+		"Только после валидного done идемпотентно сними `ship`",
+		"получи `.body` через jq `@base64`, декодируй UTF-8 и сравни байт-в-байт",
+		"четыре адресованных `node(id: ...)`",
+		"cleanupIntent:node(id:$cleanupIntentNode)",
+		"При `409`, timeout, обрыве ответа или любом другом отказе **сначала** перечитай REST PR и полный GraphQL timeline",
+		"второй PUT запрещён",
+		"после timeout/обрыва ответа даже такой GET не разрешает повторный PUT в этом запуске",
+	)
+	mergeStepStart := strings.Index(merge, "5. Мерж:")
+	if mergeStepStart < 0 {
+		t.Fatal("merge procedure has no final merge step")
+	}
+	mergeStep := merge[mergeStepStart:]
+	requireCompactInOrder(t, mergeStep,
+		"собери exact `pp:merge-cleanup-intent`",
+		"два последовательных одинаковых raw GraphQL-запроса",
+		"используй атомарный compare-and-merge REST",
+		"Если PR уже `merged`",
+		"`pp:merge-cleanup-done`",
+	)
+	requireAllCompact(t, docs,
+		"Это ровно один merge path",
+		"отдельного CLI fallback, способного послать второй merge без того же SHA-гейта, нет",
+		"Post-merge cleanup — отдельная crash-safe транзакция",
+		"merge успешен, cleanup упал",
+		"не посылает второй merge",
+	)
+}
+
+type modeledMergeCleanup struct {
+	hasIntent bool
+	merged    bool
+	inWork    bool
+	done      bool
+	ship      bool
+}
+
+func nextModeledMergeCleanupAction(state modeledMergeCleanup) string {
+	switch {
+	case !state.hasIntent:
+		return "post-intent"
+	case !state.merged:
+		return "merge"
+	case state.inWork:
+		return "delete-in-work"
+	case !state.done:
+		return "post-done"
+	case state.ship:
+		return "delete-ship"
+	default:
+		return "complete"
+	}
+}
+
+func TestMergeCrashAfterSuccessResumesCleanupWithoutMerge(t *testing.T) {
+	state := modeledMergeCleanup{
+		hasIntent: true,
+		merged:    true,
+		inWork:    true,
+		ship:      true,
+	}
+	if got := nextModeledMergeCleanupAction(state); got != "delete-in-work" {
+		t.Fatalf("post-merge recovery action = %q, want delete-in-work", got)
+	}
+	state.inWork = false
+	if got := nextModeledMergeCleanupAction(state); got != "post-done" {
+		t.Fatalf("after label cleanup action = %q, want post-done", got)
+	}
+	state.done = true
+	if got := nextModeledMergeCleanupAction(state); got != "delete-ship" {
+		t.Fatalf("after done action = %q, want delete-ship", got)
+	}
+	state.ship = false
+	if got := nextModeledMergeCleanupAction(state); got != "complete" {
+		t.Fatalf("finished cleanup action = %q, want complete", got)
+	}
 }
 
 func TestMergeUsesCompareAndUpdateForReviewedHead(t *testing.T) {
@@ -825,7 +917,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"`201` даёт branch-claim",
 		"ложный успех `Everything up-to-date`",
 		"Два последовательных\nпобайтово одинаковых raw GraphQL snapshot",
-		"адресуют три комментария по node ID",
+		"адресуют четыре комментария по node ID",
 		"`fullDatabaseId: BigInt`",
 		"строка с REST comment id",
 		"`hasNextPage` обязан быть false",

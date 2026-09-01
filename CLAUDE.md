@@ -223,6 +223,11 @@ onebase describe --project <dir>                # вся структура ко
   завершённой пары, сверяя удалённый HEAD до worktree и перед push. Финальный
   merge выполняется REST compare-and-merge с тем же SHA: атомарно защищён HEAD,
   а labels защищены предшествующей точкой невозврата; гонка HEAD даёт `409`.
+  До PUT MERGE публикует неизменяемый `pp:merge-cleanup-intent`, связанный с
+  proof, body hash и closing issues. Следующий запуск до открытой очереди
+  восстанавливает merged intent из полного repository comments REST: повторный
+  merge запрещён, `in-work` снимается идемпотентно, а завершение фиксирует
+  `pp:merge-cleanup-done` и только затем снимает `ship` с merged PR.
   FIX до CAS-push перед каждым внешним изменением перечитывает HEAD, все comments
   и labels, пересчитывает владельца; новый HEAD от FIX атомарно несёт
   `PP-Fix-Transition` от canonical completion. Пока trailer валиден и

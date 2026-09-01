@@ -11,6 +11,10 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 Железное правило: обрабатываются **только** PR с меткой `ship` (её ставит
 человек, прочитав заключение ревью) и без `hold`/`needs-decision`. PR без `ship`
 или с любым стопом не трогать вообще — ни обновлять, ни комментировать.
+Единственное расширение по state — уже merged PR с незавершённым валидным
+`pp:merge-cleanup-intent`: на нём разрешены только идемпотентные cleanup-фазы из
+п. 1, а не update, push или повторный merge; до done те же `ship`/stop-метки
+обязаны сохраняться.
 
 `ship` — разрешение человека, но `hold` и `needs-decision` старше него. Метки
 ревью (`reviewed`, `changes-requested`) для тебя информационные: если человек
@@ -67,7 +71,79 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
 ## Процедура
 
-1. Очередь: получи **все** открытые PR пагинированным REST, затем локально
+1. **Сначала восстановление post-merge cleanup, затем обычная очередь.** Merge
+   необратим, а снятие `in-work` и служебных меток — отдельные запросы. Поэтому
+   до списка открытых PR получи **все** repository issue comments пагинированным
+   REST и локально найди точные отдельные строки доверенного автора
+   `ivanarama`:
+
+   ```
+   gh api --paginate "repos/ivanarama/onebase/issues/comments?per_page=100&sort=created&direction=asc" \
+     --jq '.[] | {id,node_id,issue_url,created_at,updated_at,author:.user.login,body}'
+   ```
+
+   Транзакция cleanup хранится двумя неизменяемыми комментариями на PR:
+
+   ```
+   <!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique decimal csv|none> -->
+   <!-- pp:merge-cleanup-done intent=<id> head=<40hex> merge=<40hex> -->
+   ```
+
+   `body-sha256` — lowercase SHA-256 raw UTF-8 точного тела PR в момент intent.
+   `issues` — отсортированный уникальный список только из английских closing
+   keywords `Fixes`/`Closes`/`Resolves`, либо `none`. Свободный русский текст и
+   похожие строки в чужих комментариях не входят в список. Полный глобальный
+   поток comments нужен именно для recovery: merged PR уже исчез из очереди
+   открытых `ship`-PR, а Search API eventually consistent и доказательством
+   отсутствия intent не считается.
+
+   Для каждого найденного intent получи родительский PR, все его комментарии и
+   полный server-ordered GraphQL timeline. Сопоставь REST `node_id` с GraphQL
+   `IssueComment.id`, decimal REST id — со строковым `fullDatabaseId`. Intent
+   валиден только если он от `ivanarama`, является точной отдельной строкой,
+   `lastEditedAt == null`, адресует существующую каноничную claim-bound пару и
+   точный trusted `ship-event`, а record `head`/proof/body/issues пересчитан и
+   совпал. Для одинакового record каноничен самый ранний intent по GraphQL edge;
+   более поздние точные копии — equivalent diagnostics. Другой intent-record
+   для того же merged HEAD, edit или `CommentDeletedEvent` после каноничного
+   intent закрывает recovery человеку. Done валиден только после своего intent,
+   с теми же `head` и фактическим merge commit; при дублях каноничен самый ранний.
+
+   Перед **каждой** cleanup-мутацией выполни два полных последовательных
+   GraphQL-прохода от `cursor=null` до `hasNextPage=false` и принимай их только
+   при побайтовом совпадении state, base, merge fields и всей последовательности
+   `(edge cursor, __typename, payload)`. Одновременно потребуй REST
+   `state == "closed"`, `.merged == true`, непустые `merged_at` и
+   `merge_commit_sha`, GraphQL `state == MERGED`, `baseRefName == "main"`,
+   наличие `ship` и отсутствие `hold`/`needs-decision` до done,
+   точный intent `head == .head.sha`, ровно один `MergedEvent` после intent и
+   совпадение его commit OID с `merge_commit_sha`. После merge допустим только
+   обычный конечный `HeadRefDeletedEvent`; restore, новый commit/force-push,
+   edit/delete protocol comment или неоднозначная timeline закрывают gate.
+   Уже merged PR **никогда не отправляй в merge API повторно**: любой ответ
+   прошлого PUT восстанавливается только по server state и intent.
+
+   Незавершённый валидный intent доведи идемпотентными фазами:
+
+   1. Для каждого номера из `issues` перечитай issue. Продолжай только если она
+      закрыта. Если `in-work` есть — удали через REST и сверь отсутствие; `404`
+      допустим только после повторного GET, доказавшего, что метки уже нет.
+      Открытая заново issue — человеческий ход: метку не снимай и остановись.
+   2. Когда все связанные issues закрыты и уже без `in-work`, опубликуй exact
+      `pp:merge-cleanup-done`, сохрани возвращённый id, затем получи `.body`
+      через jq `@base64`, декодируй UTF-8 и сравни байт-в-байт. До доказанного
+      совпадения следующей мутации нет.
+   3. Только после валидного done идемпотентно сними `ship` с уже merged PR и
+      сверь отсутствие. Crash после done, но до DELETE, восстанавливает только
+      эту фазу; отсутствие `ship` уже считается завершением.
+
+   Сначала заверши **все** найденные незавершённые cleanup-транзакции по номеру
+   PR. Пока хотя бы одна закрыта human/state gate, не мержи новый PR и закончи
+   `НУЖЕН ЧЕЛОВЕК`. Recovery с валидным done и уже отсутствующим `ship` действий
+   не требует. Если `ship` исчез до done или появился stop, это человеческий
+   ход: не восстанавливай метку и останови cleanup.
+
+   Затем очередь: получи **все** открытые PR пагинированным REST, затем локально
    оставь метку `ship`, исключи `hold` и `needs-decision`, отсортируй по номеру:
 
    ```
@@ -331,13 +407,26 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    PR в очередь без повторного одобрения мержа.
 
 5. Мерж: выполни последний полный гейт из п. 1 и сохрани GraphQL `node_id`
-   конкретных review, claim и completion, а также epoch anchor node/cursor и
-   числовой `id` последнего комментария как watermark. Непосредственно перед PUT
-   выполни **два последовательных одинаковых raw GraphQL-запроса**: каждый
-   получает `headRefOid`, все текущие labels, три адресованных `node(id: ...)`,
-   адресованный epoch anchor и все epoch events после anchor (не более 100;
-   иначе fail closed). Принимай только побайтово одинаковые выбранные значения
-   обоих полных ответов; любое отличие требует начать пару заново.
+   конкретных review, claim и completion, а также epoch anchor node/cursor.
+   Из точного тела PR вычисли raw UTF-8 `body-sha256`, извлеки
+   `Fixes`/`Closes`/`Resolves`, нормализуй номера в sorted unique `issues` и
+   собери exact `pp:merge-cleanup-intent` из п. 1. Непосредственно перед его
+   POST снова выполни полный label+SHA+authorization-гейт. После POST сохрани
+   **собственный возвращённый id**, получи `.body` через jq `@base64`, декодируй
+   UTF-8 и сравни байт-в-байт. Затем перечитай полный timeline: продолжает только
+   самый ранний валидный intent для точного head/proof/ship-event/body/issues.
+   Если собственный id проиграл более раннему concurrent intent, этот worker
+   останавливается; recovery использует каноничный intent. Timeout POST не
+   повторяй вслепую — сначала найди exact marker прямым REST.
+
+   Сохрани `node_id` каноничного cleanup-intent и его числовой `id` как новый
+   comment watermark. Непосредственно перед PUT выполни **два последовательных
+   одинаковых raw GraphQL-запроса**: каждый получает `headRefOid`, все текущие
+   labels, четыре адресованных `node(id: ...)` (review, claim, completion и
+   cleanup-intent), адресованный epoch anchor и все epoch events после anchor
+   (не более 100; иначе fail closed). Принимай только побайтово одинаковые
+   выбранные значения обоих полных ответов; любое отличие требует начать пару
+   заново.
 
    В одном серверном снимке должны одновременно выполняться условия: HEAD равен
    проверенному SHA; `state == OPEN`; `baseRefName == "main"`; сохранённый
@@ -346,10 +435,13 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    `labels.pageInfo.hasNextPage == false`; адресованный epoch anchor существует
    и точно совпадает с сохранёнными node id/type/payload (для override-
    `IssueComment` также `lastEditedAt == null`, автор `ivanarama` и отдельная
-   строка `pp:review-again`); адресованные review/claim/completion
+   строка `pp:review-again`); адресованные review/claim/completion и
+   cleanup-intent
    не удалены, имеют `lastEditedAt == null`, а их `fullDatabaseId`, автор, SHA,
    Outcome-Label, tail/body, claim и epoch-sha256 всё ещё образуют тот же
-   claim-bound proof; после сохранённого anchor нет ни одного нового
+   claim-bound proof; cleanup-intent точной отдельной строкой адресует эти ids,
+   текущий body hash, closing issues и ship-event и остаётся самым ранним
+   валидным intent этого record; после сохранённого anchor нет ни одного нового
    `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/
    `HeadRefRestoredEvent`/`BaseRefChangedEvent`/`BaseRefForcePushedEvent`/
    `BaseRefDeletedEvent` (даже если после ABA-перехода
@@ -370,16 +462,18 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    повторной постановкой `ship` после актуального заключения.
 
    Используй raw GraphQL, а не `gh pr view`, чтобы labels, HEAD и окно timeline
-   принадлежали одному snapshot (глобальные `node_id` review/claim/completion и прочие
+   принадлежали одному snapshot (глобальные `node_id`
+   review/claim/completion/cleanup-intent и прочие
    переменные передай через `-F`). Числовые REST comment ids уже превышают
-   32-битный диапазон GraphQL `databaseId`, поэтому во всех трёх местах используй
+   32-битный диапазон GraphQL `databaseId`, поэтому во всех четырёх местах используй
    только `fullDatabaseId: BigInt` и сравнивай его строковое значение с REST id:
 
    ```graphql
-   query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$claimNode:ID!,$completionNode:ID!,$epochAnchorNode:ID!,$epochCursor:String!){
+   query($owner:String!,$name:String!,$number:Int!,$reviewNode:ID!,$claimNode:ID!,$completionNode:ID!,$cleanupIntentNode:ID!,$epochAnchorNode:ID!,$epochCursor:String!){
      review:node(id:$reviewNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      claim:node(id:$claimNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      completion:node(id:$completionNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
+     cleanupIntent:node(id:$cleanupIntentNode){... on IssueComment{fullDatabaseId createdAt lastEditedAt author{login} body}}
      epochAnchor:node(id:$epochAnchorNode){__typename
        ... on PullRequestCommit{id commit{oid}}
        ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
@@ -430,15 +524,23 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      gh api -X PUT repos/ivanarama/onebase/pulls/<N>/merge --input -
    ```
 
-   Успех — только ответ с `merged: true`. `409` означает, что HEAD успел
-   измениться между гейтом и merge: ничего не влилось, перечитай состояние.
-   Сначала проверь recovery самого раннего валидного `pp:base-sync-intent`;
-   только недоказанный новый HEAD требует stale-ship передачи из п. 1. Другой отказ — перечитай
-   состояние и действуй по п. 3. Ветка после безопасного REST-мержа может
-   остаться в origin; удаление ветки не важнее атомарной привязки SHA. Ишью
-   закроется сам по `Fixes #N` из тела PR.
+   Успех — только ответ с `merged: true`. При `409`, timeout, обрыве ответа или
+   любом другом отказе **сначала** перечитай REST PR и полный GraphQL timeline.
+   Если PR уже `merged`, `MergedEvent` расположен после каноничного intent и его
+   commit совпадает с `merge_commit_sha`, merge состоялся: второй PUT запрещён,
+   переходи прямо к recovery cleanup из п. 1. Только доказанный `open` с тем же
+   HEAD означает, что merge не произошёл и ошибку надо разбирать по п. 3. Но
+   после timeout/обрыва ответа даже такой GET не разрешает повторный PUT в этом
+   запуске: закончи `НЕ СМОГ`, а следующий запуск заново выполнит два стабильных
+   прохода и восстановит каноничный intent. Новый
+   произвольный HEAD требует stale-ship передачи, а валидный base-sync intent —
+   его recovery. Так CLI/REST не образуют два конкурирующих merge path, а
+   потерянный успешный ответ не превращается во второй merge. Ветка после
+   безопасного REST-мержа может остаться в origin; удаление ветки не важнее
+   атомарной привязки SHA. Ишью закроется сам по `Fixes #N` из тела PR.
 
-   **Сразу после мержа сними `in-work` с закрытых заявок этого PR.** Метку
+   **Сразу после мержа восстанови транзакцию cleanup из п. 1 и сними `in-work`
+   с закрытых заявок этого PR.** Метку
    вешает фиксер, когда открывает PR, и снять её больше некому: он к заявке уже
    не вернётся, а ты — последний, кто её касается. Иначе каждая проехавшая
    заявка уносит `in-work` в закрытые навсегда, и метка перестаёт означать
@@ -453,7 +555,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/in-work
    ```
 
-   Метки нет — ответ 404, это не ошибка: заявка её и не носила.
+   Метки нет — ответ 404 допустим только после повторного GET, подтвердившего её
+   отсутствие. После всех номеров опубликуй и побайтово сверь
+   `pp:merge-cleanup-done`, затем сними и сверь `ship` на merged PR. До done
+   `ship` остаётся видимым recovery-сигналом; новый запуск всё равно находит
+   intent глобальным пагинированным REST и никогда не повторяет merge.
 
    Отдельно поищи в теле русские «Закрывает/Исправляет/Решает #N»: GitHub их
    ключевыми словами не считает, такая заявка останется открытой. `in-work` с
