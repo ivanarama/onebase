@@ -35,6 +35,12 @@ func TestManagedRequiredRenderer(t *testing.T) {
 			wantControls: 1, wantRequiredUI: true,
 		},
 		{
+			name:         "metadata-only text is indicated but not browser-blocked",
+			field:        metadata.Field{Name: "Наименование", Type: metadata.FieldTypeString, Required: true},
+			element:      fieldEl("ПолеНаименование", "Объект.Наименование"),
+			wantControls: 1, wantRequiredUI: true,
+		},
+		{
 			name: "metadata-only reference",
 			field: metadata.Field{
 				Name: "Контрагент", Type: metadata.FieldType("reference:Контрагенты"), RefEntity: "Контрагенты", Required: true,
@@ -42,7 +48,7 @@ func TestManagedRequiredRenderer(t *testing.T) {
 			element: &metadata.FormElement{
 				Kind: metadata.FormElementField, Name: "Контрагент", DataPath: "Объект.Контрагент",
 			},
-			wantControls: 1, wantRequired: true, wantRequiredUI: true,
+			wantControls: 1, wantRequiredUI: true,
 		},
 		{
 			name:  "date picker",
@@ -59,7 +65,7 @@ func TestManagedRequiredRenderer(t *testing.T) {
 				Kind: metadata.FormElementInputList, Name: "Статус", DataPath: "Объект.Статус",
 				Choices: []metadata.FormChoice{{Value: "новый", Title: map[string]string{"ru": "Новый"}}},
 			},
-			wantControls: 1, wantRequired: true, wantRequiredUI: true,
+			wantControls: 1, wantRequiredUI: true,
 		},
 		{
 			name:  "switch select",
