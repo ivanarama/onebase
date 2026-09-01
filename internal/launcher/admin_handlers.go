@@ -901,7 +901,7 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	    Минимальная длина пароля:
 	    <input type="number" id="st-pwlen" min="1" max="%d" value="%d" style="width:90px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:3px;font-size:12px">
 	  </label>
-	  <div style="font-size:11px;color:#666;margin-top:6px">От 1 до %d символов. Проверяется при установке пароля; уже заданные пароли остаются рабочими. Умолчание — %d.</div>
+	  <div style="font-size:11px;color:#666;margin-top:6px">Минимум — от 1 до %d символов. Сам пароль — не более %d байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше. Проверяется при установке пароля; уже заданные пароли остаются рабочими. Умолчание — %d.</div>
 	  <label style="font-size:12px;display:flex;align-items:center;gap:8px;margin-top:12px">
 	    <input type="checkbox" id="st-pwempty" %s>
 	    Разрешить пустые пароли
@@ -930,7 +930,7 @@ function cfgSettingsSave(){
     .catch(function(){var m=document.getElementById('st-msg');m.textContent='Ошибка сети';m.style.color='#c00';});
 }
 </script>`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked,
-		auth.MaxPasswordLength, pwPolicy.MinLength, auth.MaxPasswordLength, auth.DefaultMinPasswordLength,
+		auth.MaxPasswordLength, pwPolicy.MinLength, auth.MaxPasswordLength, auth.MaxPasswordLength, auth.DefaultMinPasswordLength,
 		pwEmptyChecked, pwEmptyHint, b.ID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writeBody(w, []byte(html))
@@ -946,16 +946,25 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ListPageSize        int    `json:"list_page_size"`
-		CollapsibleNav      *bool  `json:"collapsible_nav"`
-		NetworkEnabled      *bool  `json:"network_enabled"`
-		ExecEnabled         *bool  `json:"exec_enabled"`
-		FormOpenMode        string `json:"form_open_mode"`
-		PasswordMinLength   *int   `json:"password_min_length"`
-		AllowEmptyPasswords *bool  `json:"allow_empty_passwords"`
+		ListPageSize        int             `json:"list_page_size"`
+		CollapsibleNav      *bool           `json:"collapsible_nav"`
+		NetworkEnabled      *bool           `json:"network_enabled"`
+		ExecEnabled         *bool           `json:"exec_enabled"`
+		FormOpenMode        string          `json:"form_open_mode"`
+		PasswordMinLength   json.RawMessage `json:"password_min_length"`
+		AllowEmptyPasswords *bool           `json:"allow_empty_passwords"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	// Валидация всего запроса обязана закончиться до первой записи. RawMessage
+	// отличает отсутствующее поле старого клиента от явного JSON null: null
+	// появляется, когда пустой input превращается в NaN и JSON.stringify пишет
+	// его как null, и не должен разрешать частичное сохранение соседних настроек.
+	passwordMinLength, err := parsePasswordMinLength(req.PasswordMinLength)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 	db, err := getAuthDB(r.Context(), b)
@@ -995,11 +1004,8 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// аутентификации базы (_settings, план 84) — там же, где её правит
 	// Предприятие. Читаем и меняем только свои поля, чтобы не затереть
 	// требование второго фактора и sso_only.
-	if req.PasswordMinLength != nil || req.AllowEmptyPasswords != nil {
-		if err := savePasswordPolicy(r, db, req.PasswordMinLength, req.AllowEmptyPasswords); err != nil {
-			// Неверная длина — ошибка ввода, а не сбой базы: остальные
-			// параметры к этому моменту уже сохранены, и об этом честнее
-			// сказать отдельным кодом, чем 500-ым.
+	if passwordMinLength != nil || req.AllowEmptyPasswords != nil {
+		if err := savePasswordPolicy(r, db, passwordMinLength, req.AllowEmptyPasswords); err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, errPasswordMinLengthRange) {
 				status = http.StatusBadRequest
@@ -1014,6 +1020,20 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 // errPasswordMinLengthRange — длина вне допустимого диапазона. Отдельной
 // ошибкой, чтобы обработчик отличил ввод администратора от сбоя базы.
 var errPasswordMinLengthRange = errors.New("минимальная длина пароля вне допустимого диапазона")
+
+// parsePasswordMinLength проверяет присутствующее JSON-поле до любых записей.
+// Отсутствие поля сохраняет совместимость со старыми клиентами экрана настроек;
+// null, дробь, строка и число вне диапазона являются ошибкой ввода.
+func parsePasswordMinLength(raw json.RawMessage) (*int, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err != nil || n < 1 || n > auth.MaxPasswordLength {
+		return nil, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+	}
+	return &n, nil
+}
 
 // savePasswordPolicy обновляет в политике аутентификации базы только поля
 // паролей, оставляя остальные (второй фактор, sso_only) как есть.

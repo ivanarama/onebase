@@ -43,6 +43,7 @@ func TestAdminAuthTemplate_PolicyAndProviders(t *testing.T) {
 		`action="/ui/admin/auth/password-policy"`,
 		`name="password_min_length" min="1" max="72" value="10"`,
 		`name="allow_empty_passwords" value="1" checked`,
+		"72 байт UTF-8",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в HTML нет %q", want)

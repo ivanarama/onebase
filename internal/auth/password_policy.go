@@ -12,8 +12,9 @@ import (
 const (
 	DefaultMinPasswordLength = 8
 	maxBcryptPasswordBytes   = 72
-	// MaxPasswordLength — верхняя граница для редакторов политики: пароль
-	// длиннее bcrypt всё равно не примет.
+	// MaxPasswordLength — верхняя граница числового минимума в редакторах
+	// политики. Минимум считается в Unicode-символах, а сам пароль отдельно
+	// ограничен maxBcryptPasswordBytes байтами UTF-8.
 	MaxPasswordLength = maxBcryptPasswordBytes
 
 	allowEmptyPasswordsEnv = "ONEBASE_ALLOW_EMPTY_PASSWORDS" //nolint:gosec // G101: это не секрет — имя переменной окружения либо строка-плейсхолдер, которую пользователь заменяет своим ключом
@@ -59,8 +60,9 @@ func envBool(raw string) bool {
 // (см. комментарий у Policy.AllowEmptyPasswords).
 //
 // Значение длины вне допустимого диапазона игнорируется: политика базы не
-// должна уметь запретить вообще любой пароль (MinLength больше 72 байт —
-// предела bcrypt) или отменить проверку целиком.
+// должна уметь запретить вообще любой пароль (даже ASCII-пароль не бывает
+// длиннее 72 символов из-за байтового предела bcrypt) или отменить проверку
+// целиком.
 func (p PasswordPolicy) applyStored(stored Policy) PasswordPolicy {
 	if n := stored.PasswordMinLength; n >= 1 && n <= maxBcryptPasswordBytes {
 		p.MinLength = n

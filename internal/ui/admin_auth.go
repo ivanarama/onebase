@@ -58,7 +58,7 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
     <div class="form-group">
       <label>Минимальная длина пароля</label>
       <input type="number" name="password_min_length" min="1" max="{{.MaxPasswordLength}}" value="{{.PasswordMinLength}}" style="width:120px">
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">От 1 до {{.MaxPasswordLength}} символов. Проверяется при установке пароля; уже заданные пароли остаются рабочими. Умолчание — {{.DefaultPasswordMinLength}}.</div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Минимум — от 1 до {{.MaxPasswordLength}} символов. Сам пароль — не более {{.MaxPasswordLength}} байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше. Проверяется при установке пароля; уже заданные пароли остаются рабочими. Умолчание — {{.DefaultPasswordMinLength}}.</div>
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
