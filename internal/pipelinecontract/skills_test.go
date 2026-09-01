@@ -103,6 +103,21 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
 }
 
+func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Исполняемый preflight — единственный источник списка кандидатов",
+		"go run ./tools/pipelinehealth -json",
+		"`review_candidates` — **исключительный allowlist этого запуска**",
+		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",
+		"не ревьюй обычные PR",
+		"**не переходи к обычной очереди**",
+		"первые два PR из `review_candidates`",
+		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
+		"Расхождение означает стоп без подстановки следующего PR",
+	)
+}
+
 func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
