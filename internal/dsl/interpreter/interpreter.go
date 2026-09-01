@@ -559,6 +559,8 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 	switch v := expr.(type) {
 	case *ast.StringLit:
 		return v.Value
+	case *ast.DateLit:
+		return v.Value
 	case *ast.NumberLit:
 		d, err := decimal.NewFromString(v.Value)
 		if err != nil {
