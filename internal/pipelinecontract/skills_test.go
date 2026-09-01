@@ -205,6 +205,97 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	)
 }
 
+type modeledEscalatedReview struct {
+	head                 string
+	needsDecision        bool
+	changesRequested     bool
+	fixDecisionHead      string
+	fixTransitionFrom    string
+	committedReviewHeads map[string]bool
+}
+
+func (state modeledEscalatedReview) reviewMayAudit() bool {
+	return !state.needsDecision && !state.changesRequested &&
+		!state.committedReviewHeads[state.head]
+}
+
+func (state modeledEscalatedReview) fixerMayRework() bool {
+	return state.fixDecisionHead == state.head && state.changesRequested &&
+		!state.needsDecision
+}
+
+func (state modeledEscalatedReview) fixerMayFinalizePush() bool {
+	return state.fixTransitionFrom == state.fixDecisionHead &&
+		state.head != state.fixTransitionFrom && state.changesRequested &&
+		!state.needsDecision
+}
+
+func TestEscalatedThirdRoundResumesWithOneReworkAndOneReview(t *testing.T) {
+	review := skill(t, "review-queue")
+	fixer := skill(t, "fix-approved")
+	requireAllCompact(t, review,
+		"committed-третий круг с `Outcome-Label: needs-decision` не порождает ни нового review-комментария, ни claim, ни completion",
+		"промежуточное состояние с обеими метками остаётся припаркованным",
+		"первая committed-пара этого HEAD снова закрывает его для повторов",
+	)
+	requireAllCompact(t, fixer,
+		"`fix-decision` одноразово привязан к названному SHA",
+		"После успешного CAS-push он уже не разрешает вторую доработку нового HEAD",
+	)
+
+	state := modeledEscalatedReview{
+		head:                 "reviewed-head",
+		needsDecision:        true,
+		committedReviewHeads: map[string]bool{"reviewed-head": true},
+	}
+	for run := 0; run < 2; run++ {
+		if state.reviewMayAudit() {
+			t.Fatalf("scheduled REVIEW run %d must leave the third-round escalation parked", run+1)
+		}
+	}
+
+	state.fixDecisionHead = state.head
+	if state.fixerMayRework() || state.reviewMayAudit() {
+		t.Fatal("the decision comment alone must not open either worker before the label handoff")
+	}
+	state.changesRequested = true
+	if state.fixerMayRework() || state.reviewMayAudit() {
+		t.Fatal("the intermediate two-label state must keep FIX and REVIEW parked")
+	}
+	state.needsDecision = false
+	fixRuns := 0
+	if !state.fixerMayRework() {
+		t.Fatal("removing needs-decision after confirming changes-requested must hand the reviewed HEAD to FIX")
+	}
+	fixRuns++
+
+	state.fixTransitionFrom = state.head
+	state.head = "fixed-head"
+	if state.reviewMayAudit() {
+		t.Fatal("REVIEW must wait while FIX finalizes the post-push route label")
+	}
+	if state.fixerMayRework() {
+		t.Fatal("the old SHA-bound fix-decision must not authorize a second rework of the new HEAD")
+	}
+	if !state.fixerMayFinalizePush() {
+		t.Fatal("the SHA-bound winner must be able to finalize its one post-push transition")
+	}
+	state.changesRequested = false
+	reviewRuns := 0
+	if !state.reviewMayAudit() {
+		t.Fatal("the new unreviewed HEAD must enter REVIEW after FIX completes its handoff")
+	}
+	reviewRuns++
+
+	state.committedReviewHeads[state.head] = true
+	if state.reviewMayAudit() {
+		t.Fatal("the first committed review of the new HEAD must prevent another scheduled review")
+	}
+	if fixRuns != 1 || reviewRuns != 1 {
+		t.Fatalf("resumed route ran FIX %d times and REVIEW %d times; want exactly once each", fixRuns, reviewRuns)
+	}
+}
+
 func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
