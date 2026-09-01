@@ -50,6 +50,21 @@ func rejectAll(t *testing.T, text string, fragments ...string) {
 	}
 }
 
+func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
+	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+		t.Run(name, func(t *testing.T) {
+			requireAll(t, skill(t, name),
+				"**до чтения любого файла**",
+				"$OutputEncoding = $utf8",
+				"Get-Content -LiteralPath <path> -Encoding UTF8 -Raw",
+				"остановись **до любой GitHub-мутации**",
+				"jq `@base64`",
+				"сравни байт-в-байт с отправленным телом",
+			)
+		})
+	}
+}
+
 func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
@@ -145,7 +160,7 @@ func TestPRPipelineBindsEveryStageToMainBaseAndFencesBaseABA(t *testing.T) {
 	)
 	merge := skill(t, "merge-shepherd")
 	requireAll(t, merge,
-		"headRefOid baseRefName state labels(first:100)",
+		"headRefOid baseRefOid baseRefName state labels(first:100)",
 		"`baseRefName == \"main\"`",
 		"`state == OPEN`",
 	)
@@ -161,7 +176,9 @@ func TestPRPipelineBindsEveryStageToMainBaseAndFencesBaseABA(t *testing.T) {
 func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	review := skill(t, "review-queue")
 	cases := []string{
-		"есть `ship` или `hold` | пропустить",
+		"есть `hold` | пропустить",
+		"есть `ship`, но нет валидного незавершённого `pp:base-sync-done` для текущего HEAD | пропустить",
+		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | интеграционное REVIEW; поставить перед обычной очередью",
 		"есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить",
 		"после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает",
 		"есть `changes-requested` без committed-маркера текущего SHA | FIX безопасно снимет",
@@ -194,7 +211,8 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"git fetch origin pull/<M>/head",
 		"<сохранённый SHA>",
 		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, `.state`, `.base.ref`, актуальные метки и **все** комментарии",
-		"`ship`/`hold` всегда запрещают изменение",
+		"`ship` запрещает изменение, кроме интеграционного REVIEW",
+		"`hold` всегда запрещает изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
 		"после постановки",
 		"**не удаляй общую метку**",
@@ -514,10 +532,10 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"После completion не должно быть отдельной строки `pp:review-again`",
 		"сними `ship` через REST",
 		"комментарий является разрешённым завершающим шагом **этой же\n   транзакции**",
-		"Никакие update/push/merge до успешного SHA-гейта недопустимы",
-		"Успешная команда\n     меняет HEAD, поэтому старое ревью больше недействительно",
+		"Никакие update/push/merge до\n   успешного SHA+authorization-гейта недопустимы",
+		"После подтверждённого done метку `ship` **не\n     снимай**",
 		"Подтверждённый push меняет HEAD",
-		"Ждать CI и мержить новый SHA без повторного REVIEW нельзя",
+		"Ждать CI и мержить новый SHA без\n     интеграционного REVIEW нельзя",
 		"непосредственно перед мутацией ещё раз выполни полный label+SHA-гейт",
 		"последний полный гейт",
 		"timeline?per_page=100",
@@ -588,10 +606,34 @@ func TestMergeUsesCompareAndUpdateForReviewedHead(t *testing.T) {
 		`{"expected_head_sha":"<проверенный SHA>"}`,
 		"pulls/<N>/update-branch --input -",
 		"При `422` сначала снова прочитай HEAD",
-		"Только несовпадение с сохранённым SHA означает гонку",
+		"Если он равен `from`, это\n     validation/rate-limit отказ",
+		"Если HEAD уже\n     другой, не объявляй гонку вслепую",
 		"Валидна только первая completion-ссылка на данный review-comment",
 		"между ними не должно быть `pp:review-again`",
 		"Для одного SHA без разделяющего override канонична только самая ранняя валидная пара",
+	)
+}
+
+func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	requireAllCompact(t, merge,
+		"<!-- pp:base-sync-intent from=<40hex> base=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> previous=<done id|none> -->",
+		"<!-- pp:base-sync-done intent=<id> from=<40hex> to=<40hex> base=<40hex> previous=<done id|none> ship-event=<GraphQL node id> -->",
+		"самый ранний валидный intent",
+		"ровно двух родителей в порядке `[from, base]`",
+		"при `HEAD == from` повторяет CAS update",
+		"метку `ship` **не снимай**",
+		"без второго клика человека",
+		"обычная stale-ship передача",
+	)
+	requireAllCompact(t, review,
+		"Кандидатов с незавершённым доказанным base-sync ставь **перед** обычной очередью",
+		"Intent без done — незавершённая транзакция MERGE, её REVIEW не захватывает",
+		"commit `to` имеет ровно двух родителей в порядке `[from, base]`",
+		"outcome `reviewed` сохраняет `ship`",
+		"`changes-requested` требует снять `ship`",
+		"второй клик не нужен",
 	)
 }
 
@@ -701,7 +743,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAll(t, docs,
 		"`changes-requested`, но без `ship`/`hold`/`needs-decision`",
-		"без `ship`/`hold` и не черновики",
+		"Обычный PR с\n`ship` пропускается, но доказанный автоматический base-sync — исключение",
 		"`changes-requested`/`needs-decision` обычно передают мяч дальше",
 		"маркером `pp:head-reviewed`",
 		"отдельная строка\nкоторого равна `pp:review-again`",
@@ -710,8 +752,8 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"push разрешённого конфликта",
 		"`<!-- pp:head-reviewed <SHA> review-comment=<id заключения> claim=<id claim>\nepoch-sha256=<64hex> -->`",
 		"Если сбой случился до committed-\nмаркера, сорванная попытка круг не увеличивает",
-		"пастух снимает устаревший\n`ship`",
-		"`BEHIND` → `update-branch` вызывается с `expected_head_sha` проверенного HEAD",
+		"пастух обычно снимает\nустаревший `ship`",
+		"`BEHIND` → перед `update-branch` создаётся неизменяемый\n  `pp:base-sync-intent`",
 		"После `422` HEAD перечитывается",
 		"полный label+SHA-гейт непосредственно перед единственным\n  перезапуском",
 		"Валидна только первая completion-ссылка на\nэтот id",
@@ -739,7 +781,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"строка с REST comment id",
 		"`hasNextPage` обязан быть false",
 		"Watermark обязан оставаться в окне",
-		"Последний переход `ship` среди\nсобытий всех actors обязан быть `labeled` от `ivanarama` и идти после edges",
+		"Последний переход `ship` среди\nсобытий всех actors обязан быть `labeled` от `ivanarama`",
 		"Числовые REST ids комментариев и label events не\nсравниваются",
 		"**PR, нужна доработка** → в комментарии с решением добавить отдельную",
 		"строку `pp:fix-decision <текущий SHA>`",
@@ -789,7 +831,8 @@ func TestTopLevelInstructionsDoNotBypassPRStops(t *testing.T) {
 		"`hold` и `needs-decision` — стопы даже при `ship`",
 		"перед мержем они проверяются в одном согласованном GraphQL snapshot",
 		"Этот snapshot — точка невозврата",
-		"последний переход метки `ship` среди событий всех actors обязан быть trusted `labeled`",
+		"Последний переход метки `ship` среди событий всех actors обязан быть trusted `labeled`",
+		"Автоматический merge с `main` переносит разрешение через неизменяемую пару",
 		"FIX до CAS-push перед каждым внешним изменением перечитывает HEAD, все comments и labels",
 		"пересчитывает владельца",
 		"детерминированную remote-ветку `fix/<N>` через GitHub `POST /git/refs`",
@@ -1196,6 +1239,79 @@ func TestMergeShipTransitionInterleavings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shipGate(tt.transitions, 10); got != tt.want {
 				t.Fatalf("shipGate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type baseSyncLink struct {
+	id, from, to, base, previous string
+	intentValid, doneValid       bool
+	parents                      []string
+	singleHeadEvent              bool
+}
+
+func carriedShipGate(current string, rootProofAfter, rootShipSequence int, transitions []shipTransition, links []baseSyncLink, currentProof bool) bool {
+	if !currentProof || !shipGate(transitions, rootProofAfter) || len(transitions) == 0 || len(links) == 0 {
+		return false
+	}
+	lastShip := transitions[0]
+	for _, transition := range transitions[1:] {
+		if transition.sequence > lastShip.sequence {
+			lastShip = transition
+		}
+	}
+	if lastShip.sequence != rootShipSequence {
+		return false
+	}
+	previous, expectedFrom := "none", links[0].from
+	for _, link := range links {
+		if !link.intentValid || !link.doneValid || !link.singleHeadEvent || link.previous != previous ||
+			link.from != expectedFrom || len(link.parents) != 2 || link.parents[0] != link.from || link.parents[1] != link.base {
+			return false
+		}
+		previous, expectedFrom = link.id, link.to
+	}
+	return current == expectedFrom
+}
+
+func TestCarriedShipAcceptsOnlyVerifiedBaseSyncChain(t *testing.T) {
+	transitions := []shipTransition{{20, "ivanarama", true}}
+	links := []baseSyncLink{
+		{id: "31", from: "H0", to: "H1", base: "B1", previous: "none", intentValid: true, doneValid: true, parents: []string{"H0", "B1"}, singleHeadEvent: true},
+		{id: "41", from: "H1", to: "H2", base: "B2", previous: "31", intentValid: true, doneValid: true, parents: []string{"H1", "B2"}, singleHeadEvent: true},
+	}
+	if !carriedShipGate("H2", 10, 20, transitions, links, true) {
+		t.Fatal("a continuous reviewed base-sync chain must preserve the human ship")
+	}
+
+	tests := []struct {
+		name        string
+		current     string
+		transitions []shipTransition
+		mutate      func([]baseSyncLink)
+		proof       bool
+	}{
+		{name: "author push after sync", current: "AUTHOR", transitions: transitions, proof: true},
+		{name: "integration review not complete", current: "H2", transitions: transitions},
+		{name: "ship was removed", current: "H2", transitions: []shipTransition{{20, "ivanarama", true}, {50, "ivanarama", false}}, proof: true},
+		{name: "ship was re-added", current: "H2", transitions: []shipTransition{{20, "ivanarama", true}, {50, "ivanarama", false}, {51, "ivanarama", true}}, proof: true},
+		{name: "wrong merge parent", current: "H2", transitions: transitions, proof: true, mutate: func(items []baseSyncLink) { items[1].parents[1] = "EVIL" }},
+		{name: "broken previous link", current: "H2", transitions: transitions, proof: true, mutate: func(items []baseSyncLink) { items[1].previous = "other" }},
+		{name: "extra head event", current: "H2", transitions: transitions, proof: true, mutate: func(items []baseSyncLink) { items[1].singleHeadEvent = false }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			copyLinks := make([]baseSyncLink, len(links))
+			copy(copyLinks, links)
+			for i := range copyLinks {
+				copyLinks[i].parents = append([]string(nil), links[i].parents...)
+			}
+			if tt.mutate != nil {
+				tt.mutate(copyLinks)
+			}
+			if carriedShipGate(tt.current, 10, 20, tt.transitions, copyLinks, tt.proof) {
+				t.Fatal("unverified head inherited human ship")
 			}
 		})
 	}
