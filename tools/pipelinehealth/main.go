@@ -348,14 +348,26 @@ func analyze(prs []apiPull, owner string) report {
 			switch {
 			case labels["needs-decision"]:
 				result.HumanWaiting = append(result.HumanWaiting, item)
+			case carryIntentOpen:
+				item.Stage = "integration-merge-recovery"
+				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.add("yellow", "base_sync_recovery", pr.Number,
+					"есть pp:base-sync-intent без done; MERGE должен восстановить транзакцию")
+			case carryDone && currentCompletions > 0:
+				item.Stage = "integration-merge-ready"
+				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.add("yellow", "base_sync_waiting_merge", pr.Number,
+					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
+			case currentCompletions > 0 && depth > currentCompletions:
+				item.Stage = "legacy-integration-merge-ready"
+				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.add("yellow", "legacy_ship_waiting_merge", pr.Number,
+					"legacy-интеграционное REVIEW готово; следующий ход принадлежит MERGE")
 			case carryDone && currentCompletions == 0:
 				item.Stage = "integration-review"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "base_sync_waiting_review", pr.Number,
 					"ship сохранён; текущий HEAD ожидает интеграционное REVIEW")
-			case carryIntentOpen:
-				result.add("yellow", "base_sync_recovery", pr.Number,
-					"есть pp:base-sync-intent без done; MERGE должен восстановить транзакцию")
 			case currentCompletions == 0 && depth > 0:
 				// REST cannot prove legacy merge parents or timeline edge order. Expose
 				// this as a priority candidate; REVIEW still performs the full GraphQL gate.
@@ -670,7 +682,7 @@ func sortCandidates(items []candidate) {
 		if candidatePriority(items[i].Stage) != candidatePriority(items[j].Stage) {
 			return candidatePriority(items[i].Stage) < candidatePriority(items[j].Stage)
 		}
-		if candidatePriority(items[i].Stage) == 0 {
+		if candidatePriority(items[i].Stage) <= 1 {
 			return items[i].Number < items[j].Number
 		}
 		if items[i].Depth == items[j].Depth {
@@ -682,19 +694,27 @@ func sortCandidates(items []candidate) {
 
 func candidatePriority(stage string) int {
 	switch stage {
-	case "integration-review", "legacy-integration-review":
+	case "integration-merge-recovery", "integration-merge-ready", "legacy-integration-merge-ready":
 		return 0
-	default:
+	case "integration-review", "legacy-integration-review":
 		return 1
+	default:
+		return 2
 	}
 }
 
 func applySingleFlight(result *report) {
-	if len(result.ReviewCandidates) == 0 || candidatePriority(result.ReviewCandidates[0].Stage) != 0 {
+	if len(result.ReviewCandidates) == 0 || candidatePriority(result.ReviewCandidates[0].Stage) > 1 {
 		return
 	}
 	owner := result.ReviewCandidates[0]
 	deferred := len(result.ReviewCandidates) - 1
+	if candidatePriority(owner.Stage) == 0 {
+		result.ReviewCandidates = []candidate{}
+		result.add("yellow", "single_flight_barrier", owner.Number,
+			fmt.Sprintf("владелец base-sync барьера ждёт MERGE; REVIEW не запускается, отложено кандидатов: %d", deferred))
+		return
+	}
 	result.ReviewCandidates = []candidate{owner}
 	result.add("yellow", "single_flight_barrier", owner.Number,
 		fmt.Sprintf("владелец base-sync барьера; REVIEW запускает только его, отложено кандидатов: %d", deferred))

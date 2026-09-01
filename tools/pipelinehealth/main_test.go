@@ -131,9 +131,23 @@ func TestCompletedBaseSyncWithShipIsFirstReviewCandidate(t *testing.T) {
 func TestBaseSyncIntentWithoutDoneIsMergeRecoveryNotReview(t *testing.T) {
 	item := addComment(testPR(99, headA, "ship"), 30, syncIntent(headA, 10, 20, 25))
 
-	got := analyze([]apiPull{item}, "ivanarama")
-	if len(got.ReviewCandidates) != 0 || !hasFinding(got, "base_sync_recovery") {
+	got := analyze([]apiPull{testPR(1, headB), item}, "ivanarama")
+	if len(got.ReviewCandidates) != 0 || !hasFinding(got, "base_sync_recovery") ||
+		!hasFinding(got, "single_flight_barrier") {
 		t.Fatalf("unfinished base-sync was not routed to MERGE recovery: %+v", got)
+	}
+}
+
+func TestCompletedIntegrationReviewKeepsBarrierUntilMerge(t *testing.T) {
+	owner := addComment(testPR(20, headB, "ship", "reviewed"), 30, syncIntent(headA, 10, 20, 25))
+	owner = addComment(owner, 31, syncDone(30, headA, headB))
+	owner = addComment(owner, 40, completion(headB, 35, 36))
+	wouldBeNext := addComment(testPR(30, headB, "ship"), 41, completion(headA, 37, 38))
+
+	got := analyze([]apiPull{wouldBeNext, owner}, "ivanarama")
+	if len(got.ReviewCandidates) != 0 || !hasFinding(got, "base_sync_waiting_merge") ||
+		!hasFinding(got, "single_flight_barrier") {
+		t.Fatalf("reviewed owner released the barrier before merge: %+v", got)
 	}
 }
 
