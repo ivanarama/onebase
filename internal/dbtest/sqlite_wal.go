@@ -32,7 +32,7 @@ func CreateSQLiteHotWALCrash(t *testing.T, path string) {
 		os.Exit(0)
 	}
 
-	command := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$")
+	command := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(t.Name())+"$") //nolint:gosec // G204: повторно запускается текущий тестовый бинарь без shell; имя теста экранировано и зажато якорями
 	command.Env = append(os.Environ(), sqliteHotWALChildEnv+"="+path)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("create SQLite hot-WAL crash image: %v\n%s", err, output)
@@ -47,7 +47,7 @@ func CreateSQLiteHotWALCrash(t *testing.T, path string) {
 }
 
 func writeSQLiteHotWAL(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { //nolint:gosec // G703: путь передан родительским тестом из его t.TempDir через служебную переменную окружения
 		return fmt.Errorf("create hot-WAL directory: %w", err)
 	}
 	db, err := sql.Open("sqlite", filepath.ToSlash(path))
@@ -76,7 +76,7 @@ func writeSQLiteHotWAL(path string) error {
 	if _, err := db.Exec("INSERT INTO hot_wal_values(value) VALUES (?)", SQLiteHotWALValue); err != nil {
 		return fmt.Errorf("commit value to hot WAL: %w", err)
 	}
-	info, err := os.Stat(path + "-wal")
+	info, err := os.Stat(path + "-wal") //nolint:gosec // G703: тот же принадлежащий тесту временный путь; суффикс фиксирован
 	if err != nil {
 		return fmt.Errorf("stat child WAL: %w", err)
 	}

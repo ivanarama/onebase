@@ -142,8 +142,11 @@ func TestHasPendingRestoreSQLiteMalformedSettingsFailsClosed(t *testing.T) {
 	}
 	if pending, err := HasPendingRestoreSQLite(t.Context(), path); err == nil {
 		t.Fatalf("malformed settings probe = %v, nil; want fail-closed error", pending)
-	} else if message := err.Error(); !strings.Contains(message, "keep the database, -wal and -shm files together") ||
+	} else if message := err.Error(); !strings.Contains(message, "SQLite startup safety check did not complete") ||
+		!strings.Contains(message, "keep the database, -wal and -shm files together") ||
 		!strings.Contains(message, "do not delete -wal by hand") {
-		t.Fatalf("probe error does not explain safe WAL recovery: %v", err)
+		t.Fatalf("probe error does not explain the failed safety check: %v", err)
+	} else if strings.Contains(message, "SQLite startup recovery failed") {
+		t.Fatalf("schema error incorrectly claims that WAL recovery failed: %v", err)
 	}
 }

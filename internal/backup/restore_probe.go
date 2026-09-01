@@ -70,7 +70,7 @@ func HasPendingRestoreSQLite(ctx context.Context, path string) (pending bool, re
 
 func sqliteRestoreProbeError(action string, err error) error {
 	return fmt.Errorf("restore probe: %s: %w\n"+
-		"SQLite startup recovery failed: keep the database, -wal and -shm files together, "+
+		"SQLite startup safety check did not complete: keep the database, -wal and -shm files together, "+
 		"stop other OneBase processes, ensure write access, and retry; do not delete -wal by hand",
 		action, err)
 }
