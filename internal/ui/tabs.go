@@ -137,6 +137,18 @@ const tplAppShell = `{{define "page-app-shell"}}
     document.body.appendChild(m);
     setTimeout(function(){ document.addEventListener('click',function rm(){ m.remove(); document.removeEventListener('click',rm); }); },0);
   }
+  function syncFrameURL(t){
+    var next='';
+    try{
+      var current=new URL(String(t.frame.contentWindow.location.href||''),location.origin);
+      if(current.origin!==location.origin)return;
+      next=current.pathname+current.search+current.hash;
+    }catch(e){return;}
+    if(!openable(next)||next===t.url)return;
+    t.url=next;
+    persist();
+    if(active===t)persistActive(t);
+  }
   function openTab(url,title,opts){
     opts=opts||{};
     if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===url){ if(!opts.restoring)setActive(tabs[i]); return tabs[i]; } } }
@@ -146,6 +158,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     var cl=document.createElement('span'); cl.className='ob-tab-close'; cl.textContent='✕'; cl.title='Закрыть'; btn.appendChild(cl);
     var frame=document.createElement('iframe'); frame.src=url;
     var t={id:uniqueTabID(opts.id),url:url,title:title,btn:btn,frame:frame,label:lab};
+    frame.addEventListener('load',function(){ syncFrameURL(t); });
     btn.addEventListener('click',function(e){ if(e.target===cl||e.target===dup)return; setActive(t); });
     btn.addEventListener('mousedown',function(e){ if(e.button===1){ e.preventDefault(); closeTab(t); } });
     cl.addEventListener('click',function(e){ e.stopPropagation(); closeTab(t); });
