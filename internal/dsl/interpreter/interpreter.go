@@ -577,7 +577,13 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 		case This:
 			return protectReadOnly(e.ec, o.Get(field))
 		case *Ref:
-			return protectReadOnly(e.ec, o.Get(field))
+			value, ok := o.Lookup(field)
+			if !ok {
+				RaiseUserError("Реквизит ссылки «" + v.Field.Literal +
+					"» недоступен через точку — используйте ЗначениеРеквизитаОбъекта(Ссылка, \"" +
+					v.Field.Literal + "\")")
+			}
+			return protectReadOnly(e.ec, value)
 		case *Map:
 			// Соответствие не поддерживает чтение по точке (как в 1С) — частая
 			// ошибка с результатом ПрочитатьJSON. Раньше тихо возвращали
