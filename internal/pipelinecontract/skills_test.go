@@ -118,7 +118,7 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
 }
 
-func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testing.T) {
+func TestReviewQueueUsesTwoLaneExecutableAllowlist(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Исполняемый preflight — единственный источник списка кандидатов",
@@ -130,12 +130,24 @@ func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testin
 		"Go not found in PATH or the standard Windows location",
 		"& $goExe run ./tools/pipelinehealth -json",
 		"`review_candidates` — **исключительный allowlist этого запуска**",
-		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",
-		"не ревьюй обычные PR",
-		"**не переходи к обычной очереди**",
-		"первые два PR из `review_candidates`",
+		"`single_flight_barrier` защищает только интеграционную полосу, а не всю очередь",
+		"обычное содержательное REVIEW не блокируется",
+		"Следующий интеграционный PR при этом брать нельзя",
+		"бери до двух элементов stage `review` из `review_candidates`",
 		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
 		"Расхождение означает стоп без подстановки следующего PR",
+	)
+}
+
+func TestIntegrationReviewReusesContentProofAndChecksOnlyBaseSyncDelta(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Интеграционное REVIEW не повторяет содержательный аудит",
+		"Валидный исходный committed-proof уже доказывает содержимое `from`",
+		"Проверь только точную дельту перехода `from → to`",
+		"разрешение конфликтов",
+		"обязательные проверки CI",
+		"Если между доказанным `from` и `to` есть что-либо кроме валидного base-sync либо собственный код PR изменён, carry недействителен",
 	)
 }
 
@@ -666,10 +678,10 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"обычная stale-ship передача",
 	)
 	requireAllCompact(t, review,
-		"До обычной очереди восстанови глобального single-flight-владельца",
+		"До выбора восстанови single-flight-владельца **интеграционной полосы**",
 		"Если владелец ещё ждёт интеграционное REVIEW, выбери только его: это единственный аудит запуска",
-		"Пока MERGE не вольёт владельца, нельзя заранее ревьюить следующий интеграционный PR",
-		"Наличие proof не освобождает барьер",
+		"Пока MERGE не вольёт владельца, нельзя заранее проверять следующий интеграционный PR",
+		"Содержательное REVIEW других PR в это время безопасно",
 		"Intent без done — незавершённая транзакция MERGE, её REVIEW не захватывает",
 		"commit `to` имеет ровно двух родителей в порядке `[from, base]`",
 		"outcome `reviewed` сохраняет `ship`",

@@ -134,9 +134,11 @@ func TestBaseSyncIntentWithoutDoneIsMergeRecoveryNotReview(t *testing.T) {
 	item := addComment(testPR(99, headA, "ship"), 30, syncIntent(headA, 10, 20, 25))
 
 	got := analyze([]apiPull{testPR(1, headB), item}, "ivanarama")
-	if len(got.ReviewCandidates) != 0 || !hasFinding(got, "base_sync_recovery") ||
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1 ||
+		got.IntegrationOwner == nil || got.IntegrationOwner.Number != 99 ||
+		!hasFinding(got, "base_sync_recovery") ||
 		!hasFinding(got, "single_flight_barrier") {
-		t.Fatalf("unfinished base-sync was not routed to MERGE recovery: %+v", got)
+		t.Fatalf("MERGE recovery incorrectly blocked content review: %+v", got)
 	}
 }
 
@@ -145,11 +147,14 @@ func TestCompletedIntegrationReviewKeepsBarrierUntilMerge(t *testing.T) {
 	owner = addComment(owner, 31, syncDone(30, headA, headB))
 	owner = addComment(owner, 40, completion(headB, 35, 36))
 	wouldBeNext := addComment(testPR(30, headB, "ship"), 41, completion(headA, 37, 38))
+	ordinary := testPR(40, headA)
 
-	got := analyze([]apiPull{wouldBeNext, owner}, "ivanarama")
-	if len(got.ReviewCandidates) != 0 || !hasFinding(got, "base_sync_waiting_merge") ||
+	got := analyze([]apiPull{wouldBeNext, ordinary, owner}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 40 ||
+		got.IntegrationOwner == nil || got.IntegrationOwner.Number != 20 ||
+		!hasFinding(got, "base_sync_waiting_merge") ||
 		!hasFinding(got, "single_flight_barrier") {
-		t.Fatalf("reviewed owner released the barrier before merge: %+v", got)
+		t.Fatalf("merge-ready owner incorrectly blocked content review: %+v", got)
 	}
 }
 
@@ -187,8 +192,49 @@ func TestSingleFlightExposesOnlyFirstIntegrationReview(t *testing.T) {
 	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 20 {
 		t.Fatalf("single-flight owner is not exclusive: %+v", got.ReviewCandidates)
 	}
+	if len(got.ContentReviewCandidates) != 1 || got.ContentReviewCandidates[0].Number != 1 {
+		t.Fatalf("content backlog disappeared behind the integration owner: %+v", got)
+	}
+	if len(got.ReviewBacklog) != 2 {
+		t.Fatalf("total review backlog hid deferred content: %+v", got)
+	}
 	if !hasFinding(got, "single_flight_barrier") {
 		t.Fatalf("single-flight barrier is invisible: %+v", got)
+	}
+}
+
+func TestWithoutIntegrationOwnerContentCandidatesAreExecutable(t *testing.T) {
+	got := analyze([]apiPull{testPR(20, headA), testPR(10, headB)}, "ivanarama")
+	if got.IntegrationOwner != nil || len(got.ReviewCandidates) != 2 ||
+		got.ReviewCandidates[0].Number != 10 || len(got.ContentReviewCandidates) != 2 {
+		t.Fatalf("content lane was not exposed as executable: %+v", got)
+	}
+}
+
+func TestCurrentReviewedHeadIsVisibleAsWaitingShip(t *testing.T) {
+	item := addComment(testPR(10, headA, "reviewed"), 30, completion(headA, 20, 25))
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewedWaitingShip) != 1 || got.ReviewedWaitingShip[0].Number != 10 ||
+		len(got.ReviewCandidates) != 0 {
+		t.Fatalf("accepted current HEAD was not shown as waiting for ship: %+v", got)
+	}
+}
+
+func TestTrustedShipWithCurrentProofIsVisibleToMerge(t *testing.T) {
+	item := addComment(testPR(10, headA, "reviewed", "ship"), 30, completion(headA, 20, 25))
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.MergeCandidates) != 1 || got.MergeCandidates[0].Number != 10 ||
+		got.MergeCandidates[0].Stage != "merge" {
+		t.Fatalf("ordinary merge candidate was hidden: %+v", got)
+	}
+}
+
+func TestStaleReviewedLabelDoesNotHideNewHead(t *testing.T) {
+	item := addComment(testPR(10, headB, "reviewed"), 30, completion(headA, 20, 25))
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 10 ||
+		len(got.ReviewedWaitingShip) != 0 {
+		t.Fatalf("stale reviewed label hid a new HEAD: %+v", got)
 	}
 }
 

@@ -95,16 +95,21 @@ type finding struct {
 }
 
 type report struct {
-	State            string      `json:"state"`
-	Summary          string      `json:"summary"`
-	Scope            string      `json:"scope"`
-	Scheduler        string      `json:"scheduler"`
-	Checked          int         `json:"checked"`
-	IssuesChecked    int         `json:"issues_checked"`
-	ReviewCandidates []candidate `json:"review_candidates"`
-	FixCandidates    []candidate `json:"fix_candidates"`
-	HumanWaiting     []candidate `json:"human_waiting"`
-	Findings         []finding   `json:"findings"`
+	State                   string      `json:"state"`
+	Summary                 string      `json:"summary"`
+	Scope                   string      `json:"scope"`
+	Scheduler               string      `json:"scheduler"`
+	Checked                 int         `json:"checked"`
+	IssuesChecked           int         `json:"issues_checked"`
+	ReviewCandidates        []candidate `json:"review_candidates"`
+	ReviewBacklog           []candidate `json:"review_backlog"`
+	ContentReviewCandidates []candidate `json:"content_review_candidates"`
+	ReviewedWaitingShip     []candidate `json:"reviewed_waiting_ship"`
+	IntegrationOwner        *candidate  `json:"integration_owner,omitempty"`
+	MergeCandidates         []candidate `json:"merge_candidates"`
+	FixCandidates           []candidate `json:"fix_candidates"`
+	HumanWaiting            []candidate `json:"human_waiting"`
+	Findings                []finding   `json:"findings"`
 }
 
 func main() {
@@ -308,8 +313,9 @@ func ghJSONLines(gh string, destination any, args ...string) error {
 func analyze(prs []apiPull, owner string) report {
 	result := report{
 		State: "green", Scope: "fast REST snapshot; mutation gates remain GraphQL",
-		Scheduler: "safety-priority-aging-depth-number", Checked: len(prs),
-		ReviewCandidates: []candidate{}, FixCandidates: []candidate{},
+		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
+		ReviewCandidates: []candidate{}, ContentReviewCandidates: []candidate{},
+		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, FixCandidates: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
 	}
 	now := time.Now().UTC()
@@ -361,16 +367,19 @@ func analyze(prs []apiPull, owner string) report {
 			case carryIntentOpen:
 				item.Stage = "integration-merge-recovery"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_recovery", pr.Number,
 					"есть pp:base-sync-intent без done; MERGE должен восстановить транзакцию")
 			case carryDone && currentCompletions > 0:
 				item.Stage = "integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
 			case currentCompletions > 0 && depth > currentCompletions:
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "legacy_ship_waiting_merge", pr.Number,
 					"legacy-интеграционное REVIEW готово; следующий ход принадлежит MERGE")
 			case carryDone && currentCompletions == 0:
@@ -385,6 +394,9 @@ func analyze(prs []apiPull, owner string) report {
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "legacy_ship_waiting_review_validation", pr.Number,
 					"повторный ship после старого base-sync: REVIEW должен проверить GraphQL lineage")
+			case currentCompletions > 0:
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
 			}
 			continue
 		}
@@ -396,16 +408,25 @@ func analyze(prs []apiPull, owner string) report {
 			result.FixCandidates = append(result.FixCandidates, item)
 		case labels["reviewed"] && currentCompletions > 0 && !overrideOpen:
 			// Valid-looking current review is waiting for the human ship decision.
+			result.ReviewedWaitingShip = append(result.ReviewedWaitingShip, item)
 		case currentCompletions > 0 && !overrideOpen:
 			result.add("yellow", "review_without_route", pr.Number,
 				"committed-review текущего HEAD есть, но маршрутная метка отсутствует")
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		default:
-			result.ReviewCandidates = append(result.ReviewCandidates, item)
+			result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 		}
 	}
+	sortCandidates(result.ContentReviewCandidates)
 	sortCandidates(result.ReviewCandidates)
 	applySingleFlight(&result)
+	result.ReviewBacklog = append(result.ReviewBacklog, result.ContentReviewCandidates...)
+	if result.IntegrationOwner != nil && candidatePriority(result.IntegrationOwner.Stage) == 1 {
+		result.ReviewBacklog = append(result.ReviewBacklog, *result.IntegrationOwner)
+	}
+	sortCandidates(result.ReviewBacklog)
+	sortCandidates(result.ReviewedWaitingShip)
+	sortCandidates(result.MergeCandidates)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
 	return result
@@ -484,7 +505,12 @@ func checkContract(result *report, path string) {
 		return
 	}
 	text := string(data)
-	for _, required := range []string{"(priority ASC, review-depth ASC, number ASC)", "Не сортируй очередь только по номеру PR"} {
+	for _, required := range []string{
+		"(priority ASC, review-depth ASC, number ASC)",
+		"Не сортируй очередь только по номеру PR",
+		"single_flight_barrier` защищает только интеграционную полосу",
+		"Интеграционное REVIEW не повторяет содержательный аудит",
+	} {
 		if !strings.Contains(text, required) {
 			result.add("red", "unfair_review_contract", 0,
 				"активный REVIEW contract не гарантирует breadth-first порядок")
@@ -562,9 +588,14 @@ func (result *report) finish() {
 		}
 		next = strings.Join(parts, ", ")
 	}
+	owner := "нет"
+	if result.IntegrationOwner != nil {
+		owner = fmt.Sprintf("#%d(%s)", result.IntegrationOwner.Number, result.IntegrationOwner.Stage)
+	}
 	result.Summary = fmt.Sprintf(
-		"PR: %d; issues: %d; REVIEW: %d (следующие %s); FIX: %d; человек: %d; сигналов: %d",
-		result.Checked, result.IssuesChecked, len(result.ReviewCandidates), next, len(result.FixCandidates),
+		"PR: %d; issues: %d; REVIEW исполняемо: %d (следующие %s); всего ждут REVIEW: %d; содержательное: %d; интеграционный владелец: %s; ждут ship: %d; MERGE: %d; FIX: %d; человек: %d; сигналов: %d",
+		result.Checked, result.IssuesChecked, len(result.ReviewCandidates), next,
+		len(result.ReviewBacklog), len(result.ContentReviewCandidates), owner, len(result.ReviewedWaitingShip), len(result.MergeCandidates), len(result.FixCandidates),
 		len(result.HumanWaiting), len(result.Findings))
 }
 
@@ -777,20 +808,22 @@ func candidatePriority(stage string) int {
 }
 
 func applySingleFlight(result *report) {
-	if len(result.ReviewCandidates) == 0 || candidatePriority(result.ReviewCandidates[0].Stage) > 1 {
+	if len(result.ReviewCandidates) == 0 {
+		result.ReviewCandidates = append([]candidate{}, result.ContentReviewCandidates...)
 		return
 	}
 	owner := result.ReviewCandidates[0]
-	deferred := len(result.ReviewCandidates) - 1
+	result.IntegrationOwner = &owner
+	deferredIntegration := len(result.ReviewCandidates) - 1
 	if candidatePriority(owner.Stage) == 0 {
-		result.ReviewCandidates = []candidate{}
+		result.ReviewCandidates = append([]candidate{}, result.ContentReviewCandidates...)
 		result.add("yellow", "single_flight_barrier", owner.Number,
-			fmt.Sprintf("владелец base-sync барьера ждёт MERGE; REVIEW не запускается, отложено кандидатов: %d", deferred))
+			fmt.Sprintf("владелец интеграционной полосы ждёт MERGE; содержательное REVIEW остаётся открытым (%d кандидатов), следующих интеграционных отложено: %d", len(result.ContentReviewCandidates), deferredIntegration))
 		return
 	}
 	result.ReviewCandidates = []candidate{owner}
 	result.add("yellow", "single_flight_barrier", owner.Number,
-		fmt.Sprintf("владелец base-sync барьера; REVIEW запускает только его, отложено кандидатов: %d", deferred))
+		fmt.Sprintf("владелец интеграционной полосы; REVIEW проверяет только интеграционную дельту этого PR, содержательных кандидатов отложено: %d, следующих интеграционных: %d", len(result.ContentReviewCandidates), deferredIntegration))
 }
 
 func printReport(writer io.Writer, result report) {
