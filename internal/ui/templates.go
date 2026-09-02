@@ -1783,6 +1783,7 @@ const tplList = `
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
   data-tree-parent="{{index $row "parent_id"}}"
@@ -1840,6 +1841,7 @@ const tplList = `
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
@@ -1898,6 +1900,7 @@ const tplList = `
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
@@ -1967,6 +1970,7 @@ const tplList = `
   "canWrite" .CanWrite
   "canDelete" .CanDelete
   "canUnpost" .CanUnpost
+  "basedOn" .BasedOnActions
   "treeEntity" .Entity.Name
   "subsystem" (str $.CurrentSubsystem)
   "labels" (dict
@@ -1974,6 +1978,7 @@ const tplList = `
     "edit" (t $.Lang "Редактировать")
     "open" (t $.Lang "Открыть")
     "copy" (t $.Lang "Скопировать")
+    "basedOn" (t $.Lang "Ввести на основании")
     "enter" (t $.Lang "▶ Войти")
     "activityShow" (t $.Lang "Вернуть в выбор")
     "activityShowConfirm" (t $.Lang "Вернуть в выбор?")
@@ -2067,13 +2072,13 @@ const tplForm = `
       </div>
     </div>
     {{end}}
-    {{if .Receivers}}
+    {{if .BasedOnActions}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Ввести на основании"}} ▾</button>
       <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
-        {{range .Receivers}}
-        <a href="/ui/{{lower (str .Kind)}}/{{.Name}}/new?based_on={{$.Entity.Name}}&based_on_id={{$.ID}}"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.DisplayName $.Lang}}</a>
+        {{range .BasedOnActions}}
+        <a href="{{.URL}}&based_on_id={{$.ID}}"
+           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.Label}}</a>
         {{end}}
       </div>
     </div>

@@ -27,6 +27,37 @@ import (
 	"github.com/ivantit66/onebase/internal/webhook"
 )
 
+type basedOnAction struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+// basedOnActions returns only receivers the current user may create. The
+// browser gets ready-to-use relative URLs, but the selected source ID stays in
+// the row and is appended only when the user invokes the command.
+func (s *Server) basedOnActions(r *http.Request, source *metadata.Entity, lang string) []basedOnAction {
+	if source == nil {
+		return nil
+	}
+	receivers := s.reg.ReceiversOf(source.Name)
+	actions := make([]basedOnAction, 0, len(receivers))
+	for _, receiver := range receivers {
+		if receiver == nil || !s.can(r, string(receiver.Kind), receiver.Name, "write") {
+			continue
+		}
+		actions = append(actions, basedOnAction{
+			Label: receiver.DisplayName(lang),
+			URL: fmt.Sprintf(
+				"/ui/%s/%s/new?based_on=%s",
+				strings.ToLower(string(receiver.Kind)),
+				url.PathEscape(strings.ToLower(receiver.Name)),
+				url.QueryEscape(source.Name),
+			),
+		})
+	}
+	return actions
+}
+
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
 	if entity == nil {
@@ -139,6 +170,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"PrevPage":         page - 1,
 		"NextPage":         page + 1,
 		"EnumLabels":       s.buildEnumLabels(entity, lang),
+		"BasedOnActions":   s.basedOnActions(r, entity, lang),
 	})
 }
 
@@ -1379,10 +1411,9 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		// nil, если этапы не объявлены или поле-этап под маской ПДн.
 		"StageRoute": s.buildStageRoute(r, entity, stageCurrentValue(entity, vals)),
 		"Error":      buildEditError(r),
-		// Receivers — список сущностей, у которых в based_on указан текущий
-		// объект. Шаблон рисует выпадающую кнопку «Ввести на основании ▾» —
-		// аналог одноимённой команды в 1С:Предприятие.
-		"Receivers": s.reg.ReceiversOf(entity.Name),
+		// BasedOnActions — только доступные по write сущности-приёмники.
+		// Тот же серверный фильтр используется списком источника.
+		"BasedOnActions": s.basedOnActions(r, entity, langEdit),
 	})
 }
 
