@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,12 +33,12 @@ func TestGenerateAIGuide_HasSignaturesAndSections(t *testing.T) {
 	}
 }
 
-// TestGenerateAIGuide_HasIndexesUniqueness — в руководстве есть механизм
+// TestAIGuideCommand_HasIndexesUniqueness — публичная команда печатает механизм
 // уникальности по произвольному реквизиту (#1177). Без этого абзаца агент,
 // пишущий конфигурацию, про `indexes:` не знает и предлагает проверку дубля в
 // модуле, которая при одновременной записи двумя пользователями не срабатывает.
-func TestGenerateAIGuide_HasIndexesUniqueness(t *testing.T) {
-	g := generateAIGuide("")
+func TestAIGuideCommand_HasIndexesUniqueness(t *testing.T) {
+	g := runAIGuideCommand(t)
 	for _, want := range []string{
 		"indexes:",             // сам ключ
 		"unique: true",         // как включается уникальность
@@ -48,6 +50,35 @@ func TestGenerateAIGuide_HasIndexesUniqueness(t *testing.T) {
 			t.Errorf("в guide нет ожидаемого фрагмента про indexes: %q", want)
 		}
 	}
+}
+
+// runAIGuideCommand проходит настоящий пользовательский путь: argv → cobra →
+// runAIGuide → файл, созданный публичным флагом --output.
+func runAIGuideCommand(t *testing.T) string {
+	t.Helper()
+	outPath := filepath.Join(t.TempDir(), "AGENTS.md")
+	rootCmd.SetArgs([]string{"ai-guide", "--output", outPath})
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		for _, name := range []string{"output", "project", "claude"} {
+			flag := aiguideCmd.Flags().Lookup(name)
+			if flag == nil {
+				t.Fatalf("флаг ai-guide --%s не зарегистрирован", name)
+			}
+			if err := flag.Value.Set(flag.DefValue); err != nil {
+				t.Fatalf("сбросить флаг ai-guide --%s: %v", name, err)
+			}
+			flag.Changed = false
+		}
+	})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("`onebase ai-guide --output`: %v", err)
+	}
+	raw, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("прочитать вывод `onebase ai-guide`: %v", err)
+	}
+	return string(raw)
 }
 
 // TestEnvironmentNote — discovered-блок «Окружение» (план 91): пуст без проекта
