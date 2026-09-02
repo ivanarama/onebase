@@ -127,6 +127,59 @@ function obManagedSetTablePartJSON(tpName, rows) {
 }
 window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
 
+// Keeps the object and per-field arrays stable because SlickGrid formatters and
+// editors retain them in closures. Replacing either would leave the visible
+// grid on the options embedded at initial render.
+function obManagedSyncRefOptionMap(target, source) {
+  if (!target || typeof target !== 'object') return target;
+  source = source && typeof source === 'object' ? source : {};
+  Object.keys(target).forEach(function(field) {
+    if (Object.prototype.hasOwnProperty.call(source, field)) return;
+    if (Array.isArray(target[field])) target[field].splice(0, target[field].length);
+    else delete target[field];
+  });
+  Object.keys(source).forEach(function(field) {
+    var rows = Array.isArray(source[field]) ? source[field] : [];
+    if (!Array.isArray(target[field])) {
+      target[field] = rows.slice();
+      return;
+    }
+    target[field].splice(0, target[field].length);
+    for (var i = 0; i < rows.length; i++) target[field].push(rows[i]);
+  });
+  return target;
+}
+
+// The event response contains a complete option map for every returned table
+// part. Apply it before rows: formatters must know a newly assigned UUID when
+// SlickGrid invalidates and renders the updated DataView.
+function obManagedApplyTablePartRefOptions(next) {
+  if (!next || typeof next !== 'object') return;
+  window._tpRefOpts = window._tpRefOpts || {};
+  Object.keys(next).forEach(function(tpName) {
+    var current = window._tpRefOpts[tpName];
+    if (!current || typeof current !== 'object') {
+      current = {};
+      window._tpRefOpts[tpName] = current;
+    }
+    obManagedSyncRefOptionMap(current, next[tpName]);
+
+    // Compatibility with grids initialized by an older/custom host that did
+    // not take its option object from window._tpRefOpts.
+    var views = window._obGridViews || [];
+    for (var i = 0; i < views.length; i++) {
+      if (views[i] && views[i].tpName === tpName && views[i].refOpts && views[i].refOpts !== current) {
+        obManagedSyncRefOptionMap(views[i].refOpts, next[tpName]);
+      }
+    }
+    var registered = window._obGrids && window._obGrids[tpName];
+    if (registered && registered.refOpts && registered.refOpts !== current) {
+      obManagedSyncRefOptionMap(registered.refOpts, next[tpName]);
+    }
+  });
+}
+window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
+
 // Отправляет текущие form-values + имя элемента/события в /ui/.../form-event,
 // получает JSON с новыми значениями и сообщениями от Сообщить(), применяет их.
 (function(){
@@ -859,6 +912,7 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       applyElementStates(data.elementStates);
+      window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
       window.applyTableParts(data.tableparts);
       applyValues(data.values, data.refOptions);
       applyChoiceList(elementName, data.choiceList);
@@ -2028,9 +2082,14 @@ obManagedReady(obManagedInitDelegates);
         // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
         // его в data-sg-cols только когда создание разрешено).
         col.allowCreate = !!c.allowCreate;
+        var refOptsList = refOpts[c.id];
+        if (!Array.isArray(refOptsList)) {
+          refOptsList = [];
+          refOpts[c.id] = refOptsList;
+        }
         col.editor = (function(refField, refOptsList) {
           return ObRefEditor.bind(null, refField, refOptsList);
-        })(c.id, refOpts[c.id] || []);
+        })(c.id, refOptsList);
         col.formatter = (function(refField) {
           return function(row, cell, value, colDef, dataCtx) {
             if (!value) return "";
@@ -2581,7 +2640,13 @@ obManagedReady(obManagedInitDelegates);
     colsRaw = colsRaw.filter(function(c) {
       return !(c && c.virtual && obManagedIsReservedVirtualColumnName(c.id));
     });
-    var refOpts = JSON.parse(div.getAttribute("data-sg-ref") || "null") || {};
+    var embeddedRefOpts = JSON.parse(div.getAttribute("data-sg-ref") || "null") || {};
+    window._tpRefOpts = window._tpRefOpts || {};
+    var refOpts = window._tpRefOpts[tpName];
+    if (!refOpts || typeof refOpts !== "object") {
+      refOpts = embeddedRefOpts;
+      window._tpRefOpts[tpName] = refOpts;
+    }
     var enumLabels = JSON.parse(div.getAttribute("data-sg-enum") || "null") || {};
     var rowsRaw = JSON.parse(div.getAttribute("data-sg-rows") || "[]") || [];
 
