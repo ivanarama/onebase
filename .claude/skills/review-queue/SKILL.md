@@ -32,6 +32,10 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next review
 команду с неизменённым `lease` и файлом отчёта. Только `action=completed`
 доказывает завершённое ревью.
 
+Для `target.stage=review` выполняй полное содержательное ревью текущего HEAD.
+Для `integration-review` / `legacy-integration-review` не повторяй его: проверь
+только доказанную base-sync дельту, разрешение конфликтов и актуальные CI.
+
 Не публикуй комментарии и не меняй метки вручную: обычную транзакцию
 review → claim → label → completion выполняет инструмент с повторной проверкой
 HEAD и server-ordered timeline. Если он откажет после частичной транзакции,
