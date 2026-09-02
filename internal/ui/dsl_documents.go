@@ -632,6 +632,21 @@ func (w *docWriter) Set(name string, v any) {
 	w.obj.Set(name, v)
 }
 
+func (w *docWriter) GetDynamicField(name string) (any, bool) {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return nil, false
+	}
+	return w.Get(name), true
+}
+
+func (w *docWriter) SetDynamicField(name string, value any) bool {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return false
+	}
+	w.Set(name, value)
+	return true
+}
+
 func (w *docWriter) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "записать", "write":
