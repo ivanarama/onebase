@@ -139,6 +139,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"PrevPage":         page - 1,
 		"NextPage":         page + 1,
 		"EnumLabels":       s.buildEnumLabels(entity, lang),
+		"RequestURI":       r.URL.RequestURI(),
 	})
 }
 

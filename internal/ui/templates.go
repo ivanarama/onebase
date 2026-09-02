@@ -1665,12 +1665,17 @@ const tplList = `
 </div>
 {{end}}
 
+{{define "list-refresh"}}
+<a class="btn btn-secondary btn-sm" data-ob-list-refresh href="{{.URL}}" title="{{t .Lang "Обновить"}}">🔄 {{t .Lang "Обновить"}}</a>
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <div class="view-switch">
       {{/* Переключение вида меняет только вид: поиск, отбор и сортировка
            остаются — их сбрасывает лишь явная очистка. */}}
@@ -3105,7 +3110,10 @@ const tplInfoReg = `
 <main>
 <div class="row-top">
   <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
-  {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
+    {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
+  </div>
 </div>
 {{template "reg-filter-form" (dict "Fields" .InfoReg.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/inforeg/%s" (lower .InfoReg.Name)) "Lang" $.Lang)}}
 <div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
@@ -3247,6 +3255,7 @@ const tplJournal = `
 <div class="row-top">
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Всего:"}} {{.Total}}</span>
     {{/* listQuerySuffix, а не filterQuery: тут строка запроса начинается, а не
          продолжается — с «&» отбор уезжал в путь и ссылка давала 404. */}}
