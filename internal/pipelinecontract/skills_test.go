@@ -139,7 +139,7 @@ func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testin
 	)
 }
 
-func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
+func TestReviewQueueUsesPriorityThenBreadthFirstAndAging(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Не сортируй очередь только по номеру PR",
@@ -148,8 +148,10 @@ func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
 		"updated_at == created_at",
 		"claim-less legacy markers не считай",
 		"Это только безопасный приоритет планирования, а не proof для мутации",
-		"(review-depth ASC, number ASC)",
-		"свежий PR с глубиной 0 будет проверен раньше старого PR с глубиной 1+",
+		"manual `queue:p0`…`queue:p3` старше",
+		"За каждые полные 168 часов с `created_at` подними на один уровень вплоть до P1",
+		"(priority ASC, review-depth ASC, number ASC)",
+		"Single-flight/recovery всё равно старше priority",
 	)
 	rejectAll(t, review, "Просматривай PR по возрастанию номера")
 }

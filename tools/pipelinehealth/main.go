@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/charmap"
@@ -48,12 +49,13 @@ type apiComment struct {
 }
 
 type apiPull struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	HTMLURL string `json:"html_url"`
-	State   string `json:"state"`
-	Draft   bool   `json:"draft"`
-	Head    struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	HTMLURL   string `json:"html_url"`
+	CreatedAt string `json:"created_at"`
+	State     string `json:"state"`
+	Draft     bool   `json:"draft"`
+	Head      struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
@@ -74,12 +76,14 @@ type apiIssue struct {
 }
 
 type candidate struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	URL    string `json:"url"`
-	Head   string `json:"head"`
-	Depth  int    `json:"review_depth"`
-	Stage  string `json:"stage"`
+	Number         int    `json:"number"`
+	Title          string `json:"title"`
+	URL            string `json:"url"`
+	Head           string `json:"head"`
+	Depth          int    `json:"review_depth"`
+	Stage          string `json:"stage"`
+	Priority       int    `json:"priority"`
+	PrioritySource string `json:"priority_source"`
 }
 
 type finding struct {
@@ -304,10 +308,11 @@ func ghJSONLines(gh string, destination any, args ...string) error {
 func analyze(prs []apiPull, owner string) report {
 	result := report{
 		State: "green", Scope: "fast REST snapshot; mutation gates remain GraphQL",
-		Scheduler: "review-depth-then-number", Checked: len(prs),
+		Scheduler: "safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, FixCandidates: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
 	}
+	now := time.Now().UTC()
 	for _, pr := range prs {
 		if pr.State != "open" || pr.Base.Ref != "main" {
 			continue
@@ -320,7 +325,8 @@ func analyze(prs []apiPull, owner string) report {
 		})
 		labels := labelSet(pr.Labels)
 		depth := reviewDepth(pr.Comments, owner)
-		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review"}
+		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
+		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		carryDone, carryIntentOpen, baseAdvanced := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
 		if baseAdvanced {
@@ -478,7 +484,7 @@ func checkContract(result *report, path string) {
 		return
 	}
 	text := string(data)
-	for _, required := range []string{"(review-depth ASC, number ASC)", "Не сортируй очередь только по номеру PR"} {
+	for _, required := range []string{"(priority ASC, review-depth ASC, number ASC)", "Не сортируй очередь только по номеру PR"} {
 		if !strings.Contains(text, required) {
 			result.add("red", "unfair_review_contract", 0,
 				"активный REVIEW contract не гарантирует breadth-first порядок")
@@ -706,11 +712,57 @@ func sortCandidates(items []candidate) {
 		if candidatePriority(items[i].Stage) <= 1 {
 			return items[i].Number < items[j].Number
 		}
+		if items[i].Priority != items[j].Priority {
+			return items[i].Priority < items[j].Priority
+		}
 		if items[i].Depth == items[j].Depth {
 			return items[i].Number < items[j].Number
 		}
 		return items[i].Depth < items[j].Depth
 	})
+}
+
+func queuePriority(labels map[string]bool, createdAt string, now time.Time) (int, string) {
+	base, source := 2, "auto:default"
+	for priority := 0; priority <= 3; priority++ {
+		if labels[fmt.Sprintf("queue:p%d", priority)] {
+			base, source = priority, fmt.Sprintf("manual:queue:p%d", priority)
+			goto aging
+		}
+	}
+	for priority := 0; priority <= 3; priority++ {
+		if labels[fmt.Sprintf("queue:auto:p%d", priority)] {
+			base, source = priority, fmt.Sprintf("auto:queue:auto:p%d", priority)
+			goto aging
+		}
+	}
+	switch {
+	case labels["security"] || labels["severity:critical"] || labels["blocker"] || labels["data-loss"]:
+		base, source = 0, "auto:critical-label"
+	case labels["bug"]:
+		base, source = 1, "auto:bug"
+	case labels["enhancement"] || labels["documentation"]:
+		base, source = 2, "auto:planned-change"
+	case labels["question"]:
+		base, source = 3, "auto:question"
+	}
+
+aging:
+	if created, err := time.Parse(time.RFC3339, createdAt); err == nil && now.After(created) {
+		boost := int(now.Sub(created) / (7 * 24 * time.Hour))
+		maxBoost := base - 1
+		if maxBoost < 0 {
+			maxBoost = 0
+		}
+		if boost > maxBoost {
+			boost = maxBoost
+		}
+		if boost > 0 {
+			source += fmt.Sprintf("+aging:%d", boost)
+			base -= boost
+		}
+	}
+	return base, source
 }
 
 func candidatePriority(stage string) int {
