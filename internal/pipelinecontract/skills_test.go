@@ -29,7 +29,22 @@ func repositoryFile(t *testing.T, parts ...string) string {
 
 func skill(t *testing.T, name string) string {
 	t.Helper()
-	return repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+	entry := repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+	legacyPath := filepath.Join(".claude", "skills", name, "references", "legacy-protocol.md")
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	if data, err := os.ReadFile(filepath.Join(root, legacyPath)); err == nil {
+		return entry + "\n" + string(data)
+	}
+	return entry
+}
+
+func TestReviewAndMergeRouteThroughPipelinectlWithDiscoverableFallback(t *testing.T) {
+	for _, name := range []string{"review-queue", "merge-shepherd"} {
+		entry := repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+		requireAll(t, entry, "promptpilot.project_pipeline", "pipelinectl.json",
+			"references/legacy-protocol.md", "action", "fallback")
+	}
 }
 
 func requireAll(t *testing.T, text string, fragments ...string) {
@@ -124,7 +139,7 @@ func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testin
 	)
 }
 
-func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
+func TestReviewQueueUsesPriorityThenBreadthFirstAndAging(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Не сортируй очередь только по номеру PR",
@@ -133,8 +148,10 @@ func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
 		"updated_at == created_at",
 		"claim-less legacy markers не считай",
 		"Это только безопасный приоритет планирования, а не proof для мутации",
-		"(review-depth ASC, number ASC)",
-		"свежий PR с глубиной 0 будет проверен раньше старого PR с глубиной 1+",
+		"manual `queue:p0`…`queue:p3` старше",
+		"За каждые полные 168 часов с `created_at` подними на один уровень вплоть до P1",
+		"(priority ASC, review-depth ASC, number ASC)",
+		"Single-flight/recovery всё равно старше priority",
 	)
 	rejectAll(t, review, "Просматривай PR по возрастанию номера")
 }

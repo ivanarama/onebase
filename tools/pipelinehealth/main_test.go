@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -198,6 +200,30 @@ func TestSingleFlightOwnerUsesNumberInsteadOfReviewDepth(t *testing.T) {
 	sortCandidates(items)
 	if items[0].Number != 20 {
 		t.Fatalf("single-flight owner must be the earliest PR number: %+v", items)
+	}
+}
+
+func TestOrdinaryCandidatesUsePriorityBeforeReviewDepth(t *testing.T) {
+	items := []candidate{
+		{Number: 10, Depth: 0, Stage: "review", Priority: 2},
+		{Number: 30, Depth: 8, Stage: "review", Priority: 0},
+		{Number: 20, Depth: 1, Stage: "integration-review", Priority: 3},
+	}
+	sortCandidates(items)
+	if items[0].Number != 20 || items[1].Number != 30 {
+		t.Fatalf("safety must win, then queue priority: %+v", items)
+	}
+}
+
+func TestQueuePriorityUsesManualLabelAndAging(t *testing.T) {
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	priority, source := queuePriority(map[string]bool{"bug": true, "queue:p3": true}, "2026-09-02T00:00:00Z", now)
+	if priority != 3 || !strings.HasPrefix(source, "manual:") {
+		t.Fatalf("manual priority did not override classification: %d %s", priority, source)
+	}
+	priority, _ = queuePriority(map[string]bool{"enhancement": true}, "2026-08-19T00:00:00Z", now)
+	if priority != 1 {
+		t.Fatalf("aging did not prevent starvation: %d", priority)
 	}
 }
 

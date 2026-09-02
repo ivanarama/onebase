@@ -896,6 +896,33 @@ UTF-8 и сравнивает с исходным телом байт-в-бай�
 go run ./tools/pipelinehealth -json
 ```
 
+### Экономичный путь `pipelinectl`
+
+Обычные REVIEW и уже готовые CLEAN MERGE запускаются через общий CLI
+PromptPilot:
+
+```powershell
+python -m promptpilot.project_pipeline --config pipelinectl.json next review
+python -m promptpilot.project_pipeline --config pipelinectl.json next merge
+```
+
+Конфигурация репозитория находится в `pipelinectl.json`. CLI не зависит от
+исполнителя: Claude и Codex получают одинаковый JSON. Он выбирает один объект,
+выдаёт lease на точный HEAD и переносит повторяемые REST/GraphQL-проверки из
+контекста модели в код. Для REVIEW модель читает только целевой дифф, заявку и
+нужные файлы, после чего передаёт структурированный отчёт в `complete review`;
+комментарий, claim, label и completion публикует CLI. Для MERGE `complete
+merge` ещё раз проверяет стабильный timeline, proof, labels, CI и выполняет
+compare-and-merge по точному SHA.
+
+Быстрый путь намеренно не угадывает сложную lineage. Base-sync, single-flight
+carry, legacy/protocol-recovery re-ship, конфликт, третий круг или
+незавершённая транзакция возвращают `action=fallback`. Только тогда агент читает
+полную процедуру из `references/legacy-protocol.md`. Режим `auto` экономит
+токены на обычном случае, не отменяя старые защитные правила; `skill`
+принудительно оставляет прежний маршрут, а `tool` запрещает запуск LLM, если CLI
+недоступен.
+
 Для REVIEW это не только операторский отчёт. Этап обязан выполнить ту же
 команду перед выбором работы и использовать `review_candidates` как закрытый
 allowlist. Сигнал `single_flight_barrier` разрешает либо единственного указанного
@@ -917,8 +944,8 @@ allowlist. Сигнал `single_flight_barrier` разрешает либо ед
 Проверка активного текста скилов входит в тот же запуск: если automation-копия
 снова окажется на старом контракте с сортировкой только по номеру либо без
 UTF-8 guard, состояние станет `red`. Это оперативный индикатор, а не замена
-двойному GraphQL snapshot: перед мутацией каждый этап всё равно выполняет полный
-race-safe gate из своего контракта.
+двойному GraphQL snapshot: на быстром пути snapshot выполняет `pipelinectl`, на
+fallback-пути — полная процедура.
 
 Руками любой этап запускается из Claude Code в этом репозитории:
 `/triage-issues`, `/fix-approved [номер]`, `/review-queue`, `/merge-shepherd`,
