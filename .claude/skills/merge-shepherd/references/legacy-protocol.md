@@ -68,7 +68,12 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 ## Процедура
 
 1. Очередь: получи **все** открытые PR пагинированным REST, затем локально
-   оставь метку `ship`, исключи `hold` и `needs-decision`, отсортируй по номеру:
+   оставь метку `ship`, исключи `hold` и `needs-decision`. После
+   single-flight/recovery упорядочь обычные PR по effective priority, затем
+   номеру: manual `queue:p0`…`queue:p3` старше `queue:auto:p0`…`queue:auto:p3`;
+   без них critical/security → P0, `bug` → P1,
+   `enhancement`/`documentation`/default → P2, `question` → P3; каждые полные
+   168 часов ожидания поднимают на уровень вплоть до P1; P0 остаётся полосой срочной работы:
 
    ```
    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
