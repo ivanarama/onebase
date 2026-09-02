@@ -239,18 +239,22 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 3. По состоянию:
    - **BEHIND** → после полного label+SHA+authorization-гейта (включая допустимое
      legacy либо protocol-recovery reauthorization) сохрани проверенный
-     SHA, текущий `baseRefOid`, ids proof, node id исходного ship-transition и id
+     SHA, ids proof, node id исходного ship-transition и id
      предыдущего done (`none` для первого sync). Для protocol-recovery всегда
      начни новую исправленную цепочку с `previous=none`; malformed historical
-     done остаётся только доказанным anchor reauthorization. Сначала опубликуй exact intent:
+     done остаётся только доказанным anchor reauthorization. Authoritative tip
+     целевой ветки получи только прямым REST-чтением
+     `gh api repos/ivanarama/onebase/git/ref/heads/main --jq .object.sha`;
+     `PullRequest.baseRefOid` не используй как tip `main`. Сначала опубликуй exact intent:
 
      ```
-     <!-- pp:base-sync-intent from=<SHA> base=<baseRefOid> review-comment=<id> claim=<id> completion=<id> ship-event=<node id> previous=<done id|none> -->
+     <!-- pp:base-sync-intent from=<SHA> base=<authoritative main ref SHA> review-comment=<id> claim=<id> completion=<id> ship-event=<node id> previous=<done id|none> -->
      ```
 
      Перечитай полный timeline. Продолжает только самый ранний валидный intent
      для этой пары `from` + authorization; параллельный worker, создавший более
-     поздний intent, останавливается. Затем ещё раз выполни полный гейт и вызови
+     поздний intent, останавливается. Непосредственно перед update ещё раз
+     прочитай `refs/heads/main`; затем ещё раз выполни полный гейт и вызови
      compare-and-update:
 
      ```
@@ -267,7 +271,12 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      stale-ship передача.
 
      После успешного update или доказанного recovery прочитай новый HEAD и его
-     parents, повтори стабильный timeline gate и опубликуй exact done:
+     parents. `done.base` всегда равен фактическому второму parent, а не слепой
+     копии `intent.base`. Если `main` сдвинулся между intent и update, расхождение
+     допустимо только когда `intent.base` — предок фактического parent,
+     фактический parent — предок текущего `main`, а остальные timeline/HEAD
+     условия сохранились; диагностика обязана показать
+     `base_sync_base_advanced`. Повтори стабильный timeline gate и опубликуй exact done:
 
      ```
      <!-- pp:base-sync-done intent=<id> from=<SHA> to=<новый SHA> base=<второй parent> previous=<done id|none> ship-event=<node id> -->

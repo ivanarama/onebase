@@ -716,6 +716,27 @@ func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
 	)
 }
 
+func TestBaseTipComesFromAuthoritativeRefAndDriftIsVisible(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, merge,
+		"gh api repos/ivanarama/onebase/git/ref/heads/main --jq .object.sha",
+		"`PullRequest.baseRefOid` не используй как tip `main`",
+		"`done.base` всегда равен фактическому второму parent",
+		"`base_sync_base_advanced`",
+	)
+	requireAllCompact(t, review,
+		"`intent.base` — наблюдавшийся tip `refs/heads/main` перед update",
+		"`done.base` — фактический второй parent",
+		"`intent.base` является предком `done.base`",
+	)
+	requireAllCompact(t, docs,
+		"Tip `main` для intent читается напрямую из `git/ref/heads/main`",
+		"ancestry `intent.base → done.base → current main`",
+	)
+}
+
 func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 	fixer := skill(t, "fix-approved")
 	merge := skill(t, "merge-shepherd")
