@@ -472,7 +472,7 @@ func looksLikeUTF8DecodedAsWindows1251(text string) bool {
 }
 
 func checkContract(result *report, path string) {
-	data, err := os.ReadFile(path)
+	data, err := readContract(path)
 	if err != nil {
 		result.add("red", "contract_unreadable", 0, fmt.Sprintf("не удалось прочитать активный REVIEW contract: %v", err))
 		return
@@ -486,7 +486,7 @@ func checkContract(result *report, path string) {
 		}
 	}
 	skillsRoot := filepath.Dir(filepath.Dir(path))
-	mergeData, err := os.ReadFile(filepath.Join(skillsRoot, "merge-shepherd", "SKILL.md"))
+	mergeData, err := readContract(filepath.Join(skillsRoot, "merge-shepherd", "SKILL.md"))
 	if err != nil || !strings.Contains(text, "pp:base-sync-done") ||
 		!strings.Contains(text, "single-flight-барьер") ||
 		!strings.Contains(string(mergeData), "pp:base-sync-intent") ||
@@ -497,7 +497,7 @@ func checkContract(result *report, path string) {
 		return
 	}
 	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
-		data, err := os.ReadFile(filepath.Join(skillsRoot, name, "SKILL.md"))
+		data, err := readContract(filepath.Join(skillsRoot, name, "SKILL.md"))
 		if err != nil {
 			result.add("red", "utf8_contract_unreadable", 0,
 				fmt.Sprintf("не удалось прочитать %s contract: %v", name, err))
@@ -511,6 +511,22 @@ func checkContract(result *report, path string) {
 			}
 		}
 	}
+}
+
+func readContract(path string) ([]byte, error) {
+	entry, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	legacyPath := filepath.Join(filepath.Dir(path), "references", "legacy-protocol.md")
+	legacy, legacyErr := os.ReadFile(legacyPath)
+	if legacyErr == nil {
+		return append(append(entry, '\n'), legacy...), nil
+	}
+	if !os.IsNotExist(legacyErr) {
+		return nil, legacyErr
+	}
+	return entry, nil
 }
 
 func (result *report) finish() {
