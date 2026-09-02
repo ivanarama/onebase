@@ -371,6 +371,24 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    GraphQL snapshot и REST parents; похожий merge message доказательством не
    считается.
 
+   Protocol-recovery re-ship — отдельный узкий путь для исторического handoff,
+   у которого уже есть trusted не редактированные `pp:base-sync-intent` и
+   `pp:base-sync-done`, но исходный carry оказался невалиден (например,
+   адресованный `ship-event` расположен до completion). Он валиден, только если
+   текущий HEAD в точности равен `to` этого done; commit имеет parents
+   `[from, base]`; адресованный source proof `from` каноничен; между intent и
+   done был ровно один `PullRequestCommit`; `base` — предок текущего `main`; а
+   **последний** ship-transition — новый trusted `LabeledEvent` от `ivanarama`
+   уже после edge самого done. После done и до нового label/current snapshot не
+   должно быть HEAD/base lifecycle events. Снятие старой метки непосредственно
+   перед новым trusted label допустимо. Докажи это двумя стабильными полными
+   GraphQL snapshot и REST parents. Новый label явно разрешает проверить точный
+   текущий `to`, но не делает старый carry валидным и не наследуется следующим
+   push. После успешного интеграционного REVIEW MERGE принимает это разрешение
+   без ещё одного клика; если нужен следующий base-sync, он начинает новую
+   carry-цепочку с `previous=none`, используя этот recovery re-ship как
+   authorization исходного `from`.
+
    Контрольная таблица — применяй её буквально:
 
    | Состояние | Действие |
@@ -379,6 +397,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    | есть `ship`, но нет валидного незавершённого `pp:base-sync-done` и нет legacy re-ship для текущего HEAD | пропустить |
    | есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап |
    | есть `ship`, текущий HEAD ещё без committed-пары и валиден legacy re-ship после его anchor | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап |
+   | есть `ship`, текущий HEAD ещё без committed-пары и валиден protocol-recovery re-ship после его `pp:base-sync-done` | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап |
    | есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить: мяч у FIX / человека |
    | после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает; старая маршрутная метка не является стопом |
    | есть валидный `PP-Fix-Transition` нового HEAD и незавершённая post-push фаза | пропустить: мяч у финализации FIX |

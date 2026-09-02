@@ -515,6 +515,13 @@ HEAD — ровно двухродительский merge `[ранее пров
 REVIEW сначала доказывает эту lineage полным GraphQL timeline и REST parents;
 любой новый push отменяет re-ship. После успешного интеграционного REVIEW второй
 клик не требуется, а следующий base-sync уже записывается новым протоколом.
+Если старый воркер уже записал intent/done, но связал carry с `ship-event` до
+source completion, этот malformed handoff не чинится притворным продолжением
+цепочки. Человек повторно ставит `ship` после edge done; REVIEW доказывает exact
+`to`, parents `[from, base]`, source proof, единственный commit event и отсутствие
+последующих HEAD/base events. Это protocol-recovery reauthorization точного
+текущего HEAD. Следующий push его отменяет, а следующий base-sync начинает новую
+цепочку с `previous=none`.
 Одновременно активен только один такой handoff. MERGE обновляет первый PR и
 останавливает весь запуск; REVIEW делает единственный интеграционный аудит этого
 PR и тоже останавливается; следующий MERGE сначала доводит владельца барьера до
