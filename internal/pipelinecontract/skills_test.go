@@ -107,7 +107,13 @@ func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testin
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Исполняемый preflight — единственный источник списка кандидатов",
-		"go run ./tools/pipelinehealth -json",
+		"Get-Command gh -ErrorAction SilentlyContinue",
+		"C:\\Program Files\\GitHub CLI\\gh.exe",
+		"GitHub CLI not found in PATH or the standard Windows location",
+		"Get-Command go -ErrorAction SilentlyContinue",
+		"C:\\Program Files\\Go\\bin\\go.exe",
+		"Go not found in PATH or the standard Windows location",
+		"& $goExe run ./tools/pipelinehealth -json",
 		"`review_candidates` — **исключительный allowlist этого запуска**",
 		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",
 		"не ревьюй обычные PR",
@@ -759,7 +765,7 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"Новый label является явным разрешением проверить и затем влить точный уже существующий `to`, но не наследуется следующим push",
 	)
 	requireAllCompact(t, merge,
-		"Разрешены ровно три способа связать этот ship-transition с текущим proof",
+		"Разрешены ровно четыре способа связать этот ship-transition с текущим proof",
 		"legacy reauthorized",
 		"текущий HEAD `to` — merge-коммит ровно с двумя parents `[from, base]`",
 		"последний ship-transition — новый trusted `LabeledEvent` от `ivanarama` после anchor `to`",
@@ -775,6 +781,51 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"следующий base-sync уже записывается новым протоколом",
 		"Одновременно активен только один такой handoff",
 		"следующий MERGE сначала доводит владельца барьера до слияния",
+	)
+}
+
+func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, review,
+		"Protocol-recovery re-ship — отдельный узкий путь",
+		"исходный carry оказался невалиден",
+		"после edge самого done",
+		"не делает старый carry валидным",
+		"начинает новую carry-цепочку с `previous=none`",
+	)
+	requireAllCompact(t, merge,
+		"Разрешены ровно четыре способа",
+		"**protocol-recovery reauthorized:**",
+		"последний trusted `ship` от `ivanarama` после edge done",
+		"Для protocol-recovery всегда начни новую исправленную цепочку с `previous=none`",
+	)
+	requireAllCompact(t, docs,
+		"malformed handoff не чинится притворным продолжением цепочки",
+		"protocol-recovery reauthorization точного текущего HEAD",
+		"следующий base-sync начинает новую цепочку с `previous=none`",
+	)
+}
+
+func TestBaseTipComesFromAuthoritativeRefAndDriftIsVisible(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, merge,
+		"gh api repos/ivanarama/onebase/git/ref/heads/main --jq .object.sha",
+		"`PullRequest.baseRefOid` не используй как tip `main`",
+		"`done.base` всегда равен фактическому второму parent",
+		"`base_sync_base_advanced`",
+	)
+	requireAllCompact(t, review,
+		"`intent.base` — наблюдавшийся tip `refs/heads/main` перед update",
+		"`done.base` — фактический второй parent",
+		"`intent.base` является предком `done.base`",
+	)
+	requireAllCompact(t, docs,
+		"Tip `main` для intent читается напрямую из `git/ref/heads/main`",
+		"ancestry `intent.base → done.base → current main`",
 	)
 }
 

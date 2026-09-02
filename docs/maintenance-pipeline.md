@@ -515,6 +515,13 @@ HEAD — ровно двухродительский merge `[ранее пров
 REVIEW сначала доказывает эту lineage полным GraphQL timeline и REST parents;
 любой новый push отменяет re-ship. После успешного интеграционного REVIEW второй
 клик не требуется, а следующий base-sync уже записывается новым протоколом.
+Если старый воркер уже записал intent/done, но связал carry с `ship-event` до
+source completion, этот malformed handoff не чинится притворным продолжением
+цепочки. Человек повторно ставит `ship` после edge done; REVIEW доказывает exact
+`to`, parents `[from, base]`, source proof, единственный commit event и отсутствие
+последующих HEAD/base events. Это protocol-recovery reauthorization точного
+текущего HEAD. Следующий push его отменяет, а следующий base-sync начинает новую
+цепочку с `previous=none`.
 Одновременно активен только один такой handoff. MERGE обновляет первый PR и
 останавливает весь запуск; REVIEW делает единственный интеграционный аудит этого
 PR и тоже останавливается; следующий MERGE сначала доводит владельца барьера до
@@ -569,6 +576,11 @@ ship-event. Следующие звенья ссылаются через `previ
 новый proof его `to`. Intent выбирается по правилу earliest-wins, поэтому два
 параллельных пастуха не обновляют ветку дважды. Crash до update безопасно
 повторяет CAS, crash после update проверяет parents/timeline и дописывает done.
+Tip `main` для intent читается напрямую из `git/ref/heads/main`, а не из
+`PullRequest.baseRefOid`. Поле `done.base` берётся из фактического второго
+parent. Если base сдвинулся между intent и update, различие допустимо только при
+доказанной ancestry `intent.base → done.base → current main` и показывается
+диагностикой `base_sync_base_advanced`.
 Edit/delete, разрыв цепочки, снятие `ship` или любой недоказанный push закрывают
 carry и требуют нового решения человека.
 
@@ -921,6 +933,11 @@ allowlist. Сигнал `single_flight_barrier` разрешает либо ед
 к обычным PR. Перед первой мутацией allowlist читается повторно — поэтому
 расхождение между дашбордом и фактическим выбором агента видно в том же прогоне,
 а не через несколько часов.
+На Windows preflight сначала ищет `gh` и `go` в `PATH`, затем проверяет
+стандартные `C:\Program Files\GitHub CLI\gh.exe` и
+`C:\Program Files\Go\bin\go.exe`. Путь к GitHub CLI передаётся через `GH_EXE`,
+а найденный Go вызывается по абсолютному пути. Отсутствие любого обязательного
+инструмента — немедленный `НЕ СМОГ` без GitHub-мутаций.
 
 Он без LLM и без расхода токенов читает открытые PR, маршрутные issues и их
 комментарии через GitHub REST, проверяет очевидные конфликтующие маршруты,
