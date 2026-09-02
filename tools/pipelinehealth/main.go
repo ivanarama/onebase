@@ -322,7 +322,11 @@ func analyze(prs []apiPull, owner string) report {
 		depth := reviewDepth(pr.Comments, owner)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review"}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		carryDone, carryIntentOpen := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
+		carryDone, carryIntentOpen, baseAdvanced := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
+		if baseAdvanced {
+			result.add("yellow", "base_sync_base_advanced", pr.Number,
+				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
+		}
 
 		if labels["changes-requested"] && labels["needs-decision"] {
 			result.add("yellow", "route_transition_open", pr.Number,
@@ -613,13 +617,13 @@ func currentClaimCount(comments []apiComment, owner, head string) int {
 }
 
 type baseSyncIntentShape struct {
-	from, previous, shipEvent string
+	from, base, previous, shipEvent string
 }
 
 // baseSyncRESTState is deliberately only an operational hint. The mutation
 // contracts still prove comment nodes, timeline edges and commit parents with
 // two stable GraphQL snapshots before changing GitHub state.
-func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, intentOpen bool) {
+func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, intentOpen, baseAdvanced bool) {
 	intents := map[int64]baseSyncIntentShape{}
 	doneIntents := map[int64]bool{}
 	for _, comment := range comments {
@@ -627,7 +631,7 @@ func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, 
 			continue
 		}
 		if match := baseSyncIntent.FindStringSubmatch(comment.Body); match != nil {
-			intents[comment.ID] = baseSyncIntentShape{from: match[1], previous: match[7], shipEvent: match[6]}
+			intents[comment.ID] = baseSyncIntentShape{from: match[1], base: match[2], previous: match[7], shipEvent: match[6]}
 		}
 		if match := baseSyncDone.FindStringSubmatch(comment.Body); match != nil {
 			intentID, err := strconv.ParseInt(match[1], 10, 64)
@@ -639,6 +643,7 @@ func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, 
 			doneIntents[intentID] = true
 			if match[3] == head {
 				doneCurrent = true
+				baseAdvanced = intent.base != match[4]
 			}
 		}
 	}
@@ -648,7 +653,7 @@ func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, 
 			break
 		}
 	}
-	return doneCurrent, intentOpen
+	return doneCurrent, intentOpen, baseAdvanced
 }
 
 func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
