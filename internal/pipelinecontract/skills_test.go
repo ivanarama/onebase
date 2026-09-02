@@ -1012,6 +1012,15 @@ func TestTopLevelNeedsDecisionMatchesAutomaticHandoffs(t *testing.T) {
 	rejectAll(t, guide, "без `ship` не вливается никогда и не трогается вовсе")
 }
 
+func TestMergeDoesNotReportWaitingAsProductive(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	requireAllCompact(t, merge,
+		"`ГОТОВО` означает, что запуск совершил хотя бы одну durable-мутацию",
+		"Если запуск только обнаружил, что владелец single-flight ждёт REVIEW",
+		"это `ПУСТО`, а не `ГОТОВО`",
+	)
+}
+
 func TestTopLevelInstructionsDoNotBypassPRStops(t *testing.T) {
 	merge := skill(t, "merge-shepherd")
 	guide := repositoryFile(t, "CLAUDE.md")
