@@ -25,6 +25,54 @@ type managedTPColumn struct {
 	Element *metadata.FormElement // элемент kind: Колонка, если объявлен
 }
 
+// managedColumnField переносит явный заголовок элемента формы в копию
+// реквизита. Идентификатор и остальные свойства реквизита не меняются, поэтому
+// один и тот же результат безопасно используют и таблица формы объекта, и
+// список сущности.
+//
+// Порядок выбора совпадает с остальными managed-элементами: перевод для языка
+// интерфейса, ru-fallback, legacy Title элемента, затем DisplayName реквизита.
+func managedColumnField(field metadata.Field, element *metadata.FormElement) metadata.Field {
+	if element == nil {
+		return field
+	}
+
+	elementTitles := make(map[string]string, len(element.TitleMap))
+	for lang, title := range element.TitleMap {
+		if title != "" {
+			elementTitles[lang] = title
+		}
+	}
+	fallback := elementTitles["ru"]
+	if fallback == "" {
+		fallback = element.Title
+	}
+	if len(elementTitles) == 0 && fallback == "" {
+		return field
+	}
+
+	result := field
+	if fallback != "" {
+		// Не оставляем локали реквизита: при явном ru/legacy-заголовке они не
+		// должны оказаться старше fallback элемента.
+		result.Titles = elementTitles
+		result.Title = fallback
+		return result
+	}
+
+	// У элемента есть только отдельные переводы без ru/legacy fallback.
+	// Для остальных языков сохраняем обычный DisplayName реквизита.
+	merged := make(map[string]string, len(field.Titles)+len(elementTitles))
+	for lang, title := range field.Titles {
+		merged[lang] = title
+	}
+	for lang, title := range elementTitles {
+		merged[lang] = title
+	}
+	result.Titles = merged
+	return result
+}
+
 // managedTPColumnPlan раскладывает реквизиты табличной части в порядок показа,
 // заданный детьми kind: Колонка у элемента формы. Дети задают и состав, и
 // порядок; невыбранные реквизиты уходят в конец плана скрытыми.
@@ -70,7 +118,12 @@ func managedTPColumnPlan(el *metadata.FormElement, fields []metadata.Field) []ma
 
 	plan := make([]managedTPColumn, 0, len(fields))
 	for _, index := range order {
-		plan = append(plan, managedTPColumn{Field: fields[index], Index: index, Element: chosen[index]})
+		element := chosen[index]
+		plan = append(plan, managedTPColumn{
+			Field:   managedColumnField(fields[index], element),
+			Index:   index,
+			Element: element,
+		})
 	}
 	for index, field := range fields {
 		if _, shown := chosen[index]; shown {
