@@ -67,6 +67,19 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
 ## Процедура
 
+Перед ручной очередью проверь, не вернул ли `pipelinectl next merge`
+`action=cleanup`: такой lease всегда заверши через `complete merge-cleanup`, не
+вызывая merge API повторно. Если быстрый путь вернул `fallback`, отдельно найди
+доверенные неизменённые пары
+`pp:merge-cleanup-intent`/`pp:merge-cleanup-done` во всём пагинированном потоке
+repository issue comments. Незавершённый intent старше обычной очереди: уже
+merged PR можно только передать обратно в `complete merge-cleanup`, а открытый
+PR с изменившимся HEAD/body/proof/ship или неоднозначной timeline требует
+человека. Не обходи такой intent выбором следующего PR. Intent содержит exact
+HEAD, SHA-256 review-proof и raw UTF-8 body, а также sorted same-repository
+closing issues; qualified-ссылка на другой repository локальной issue не
+считается. Done адресует exact intent, HEAD и подтверждённый merge commit.
+
 1. Очередь: получи **все** открытые PR пагинированным REST, затем локально
    оставь метку `ship`, исключи `hold` и `needs-decision`. После
    single-flight/recovery упорядочь обычные PR по effective priority, затем
