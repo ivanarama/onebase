@@ -14,7 +14,7 @@ const (
 )
 
 func testPR(number int, head string, labels ...string) apiPull {
-	item := apiPull{Number: number, Title: "PR", HTMLURL: "https://example.test/pr", State: "open"}
+	item := apiPull{Number: number, Title: "PR", HTMLURL: "https://example.test/pr", UpdatedAt: "2026-09-01T00:00:00Z", State: "open"}
 	item.Head.SHA = head
 	item.Base.Ref = "main"
 	for _, name := range labels {
@@ -152,6 +152,7 @@ func TestCompletedIntegrationReviewKeepsBarrierUntilMerge(t *testing.T) {
 	got := analyze([]apiPull{wouldBeNext, ordinary, owner}, "ivanarama")
 	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 40 ||
 		got.IntegrationOwner == nil || got.IntegrationOwner.Number != 20 ||
+		len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Number != 20 ||
 		!hasFinding(got, "base_sync_waiting_merge") ||
 		!hasFinding(got, "single_flight_barrier") {
 		t.Fatalf("merge-ready owner incorrectly blocked content review: %+v", got)
@@ -224,8 +225,23 @@ func TestTrustedShipWithCurrentProofIsVisibleToMerge(t *testing.T) {
 	item := addComment(testPR(10, headA, "reviewed", "ship"), 30, completion(headA, 20, 25))
 	got := analyze([]apiPull{item}, "ivanarama")
 	if len(got.MergeCandidates) != 1 || got.MergeCandidates[0].Number != 10 ||
-		got.MergeCandidates[0].Stage != "merge" {
+		got.MergeCandidates[0].Stage != "merge" ||
+		len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Number != 10 ||
+		got.MergeExecutable[0].UpdatedAt != "2026-09-01T00:00:00Z" {
 		t.Fatalf("ordinary merge candidate was hidden: %+v", got)
+	}
+}
+
+func TestIntegrationReviewBlocksUnrelatedMergeWake(t *testing.T) {
+	owner := addComment(testPR(20, headB, "ship", "reviewed"), 30, syncIntent(headA, 10, 20, 25))
+	owner = addComment(owner, 31, syncDone(30, headA, headB))
+	ordinary := addComment(testPR(40, headA, "reviewed", "ship"), 50, completion(headA, 45, 46))
+
+	got := analyze([]apiPull{ordinary, owner}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Number != 20 ||
+		len(got.MergeCandidates) != 1 || got.MergeCandidates[0].Number != 40 ||
+		len(got.MergeExecutable) != 0 {
+		t.Fatalf("MERGE wake ignored the integration-review barrier: %+v", got)
 	}
 }
 
