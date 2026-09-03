@@ -26,52 +26,62 @@ import (
 
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по
 // имени реквизита либо сгенерированными. Заодно переносит ключи, которых
-// редактор не знает и потому не прислал бы обратно, — сейчас это `default`
-// (план 153) и `pii` (признак ПДн, Field.PII).
+// редактор не знает и потому не прислал бы обратно, — их список в
+// carryFieldKeys.
 func ensureFieldIDs(prev, next []saveField) []saveField {
-	byName := make(map[string]string, len(prev))
-	defaults := make(map[string]string, len(prev))
-	pii := make(map[string]bool, len(prev))
+	byName := make(map[string]saveField, len(prev))
 	used := make(map[string]bool, len(prev))
 	for _, f := range prev {
 		key := strings.ToLower(strings.TrimSpace(f.Name))
-		if f.Default != "" {
-			defaults[key] = f.Default
+		byName[key] = carryFieldKeys(f, byName[key])
+		if f.ID != "" {
+			used[f.ID] = true
 		}
-		// Перенос односторонний: pii из файла сохраняется, но снять признак
-		// через этот редактор нельзя — он его и не показывает. Двусторонний
-		// перенос потребовал бы отличать «редактор не прислал ключ» от
-		// «пользователь снял галочку», а сейчас это одно и то же значение.
-		if f.PII {
-			pii[key] = true
-		}
-		if f.ID == "" {
-			continue
-		}
-		byName[key] = f.ID
-		used[f.ID] = true
 	}
 	out := make([]saveField, len(next))
 	copy(out, next)
 	for i := range out {
 		key := strings.ToLower(strings.TrimSpace(out[i].Name))
-		if out[i].Default == "" {
-			out[i].Default = defaults[key]
+		out[i] = carryFieldKeys(out[i], byName[key])
+		if out[i].ID == "" {
+			out[i].ID = newFieldID(used)
 		}
-		if !out[i].PII {
-			out[i].PII = pii[key]
-		}
-		if out[i].ID != "" {
-			used[out[i].ID] = true
-			continue
-		}
-		if id, ok := byName[key]; ok {
-			out[i].ID = id
-			continue
-		}
-		out[i].ID = newFieldID(used)
+		used[out[i].ID] = true
 	}
 	return out
+}
+
+// carryFieldKeys дополняет f незаполненными ключами из прежнего состояния
+// файла old. Значение из формы главнее: иначе редактор, когда научится править
+// эти ключи, не смог бы их изменить.
+//
+// Перенос односторонний, и это осознанная граница. Снять через конфигуратор
+// `required`, `pii` или подпись нельзя — он их не показывает, а значит
+// «редактор не прислал ключ» и «пользователь снял галочку» приходят одним и тем
+// же пустым значением. Регрессом односторонность не является: до переноса эти
+// ключи нельзя было ни снять осознанно, ни сохранить — они пропадали при любом
+// сохранении объекта. Полноценное редактирование (чекбокс обязательности, поле
+// подписи) — отдельная возможность, а не эта починка.
+func carryFieldKeys(f, old saveField) saveField {
+	if f.ID == "" {
+		f.ID = old.ID
+	}
+	if f.Title == "" {
+		f.Title = old.Title
+	}
+	if f.Label == "" {
+		f.Label = old.Label
+	}
+	if f.Default == "" {
+		f.Default = old.Default
+	}
+	if !f.Required {
+		f.Required = old.Required
+	}
+	if !f.PII {
+		f.PII = old.PII
+	}
+	return f
 }
 
 // withStandardFieldSeed дополняет прежнее состояние файла записью о стандартном
