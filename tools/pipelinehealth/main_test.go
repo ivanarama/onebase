@@ -232,6 +232,16 @@ func TestTrustedShipWithCurrentProofIsVisibleToMerge(t *testing.T) {
 	}
 }
 
+func TestStickyShipDoesNotHideInitialReview(t *testing.T) {
+	item := testPR(10, headA, "ship")
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 10 ||
+		got.ReviewCandidates[0].Stage != "review" ||
+		!hasFinding(got, "ship_waiting_initial_review") {
+		t.Fatalf("sticky ship hid first-time review: %+v", got)
+	}
+}
+
 func TestIntegrationReviewBlocksUnrelatedMergeWake(t *testing.T) {
 	owner := addComment(testPR(20, headB, "ship", "reviewed"), 30, syncIntent(headA, 10, 20, 25))
 	owner = addComment(owner, 31, syncDone(30, headA, headB))
@@ -289,10 +299,12 @@ func TestQueuePriorityUsesManualLabelAndAging(t *testing.T) {
 	}
 }
 
-func TestShipWithoutReviewHistoryIsNotLegacyCandidate(t *testing.T) {
+func TestShipWithoutReviewHistoryRemainsInitialReviewCandidate(t *testing.T) {
 	got := analyze([]apiPull{testPR(99, headB, "ship")}, "ivanarama")
-	if len(got.ReviewCandidates) != 0 || hasFinding(got, "legacy_ship_waiting_review_validation") {
-		t.Fatalf("ordinary ship was treated as legacy reauthorization: %+v", got)
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 99 ||
+		hasFinding(got, "legacy_ship_waiting_review_validation") ||
+		!hasFinding(got, "ship_waiting_initial_review") {
+		t.Fatalf("sticky ship did not remain reviewable: %+v", got)
 	}
 }
 

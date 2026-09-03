@@ -227,7 +227,8 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	review := skill(t, "review-queue")
 	cases := []string{
 		"есть `hold` | пропустить",
-		"есть `ship`, но нет валидного незавершённого `pp:base-sync-done` и нет legacy re-ship для текущего HEAD | пропустить",
+		"есть `ship`, текущий HEAD ещё ни разу не проходил REVIEW | обычное содержательное REVIEW; при успехе `ship` сохраняется и второй клик не нужен",
+		"есть `ship`, HEAD сменился после прежнего proof, но нет валидного carry/re-ship | пропустить как stale authorization",
 		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап",
 		"есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить",
 		"после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает",
@@ -261,7 +262,7 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"git fetch origin pull/<M>/head",
 		"<сохранённый SHA>",
 		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, `.state`, `.base.ref`, актуальные метки и **все** комментарии",
-		"`ship` запрещает изменение, кроме интеграционного REVIEW",
+		"`ship` не запрещает REVIEW того же HEAD",
 		"`hold` всегда запрещает изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
 		"после постановки",
@@ -606,7 +607,7 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"сравнивай его строковое значение с REST id",
 		"`labels.pageInfo.hasNextPage == false`",
 		"**последний** ship-transition",
-		"его edge\n   расположен после edges всех трёх адресованных комментариев",
+		"его edge расположен после anchor текущего HEAD",
 		"Если ни одного ship-transition нет в epoch timeline",
 		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`/`BaseRefChangedEvent`/`BaseRefForcePushedEvent`/\n   `BaseRefDeletedEvent`",
 		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
@@ -739,7 +740,7 @@ func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
 		"Для protocol-recovery всегда начни новую исправленную цепочку с `previous=none`",
 	)
 	requireAllCompact(t, docs,
-		"malformed handoff не чинится притворным продолжением цепочки",
+		"действительно испорченной цепочки человек ставит `ship` после edge done",
 		"protocol-recovery reauthorization точного текущего HEAD",
 		"следующий base-sync начинает новую цепочку с `previous=none`",
 	)
