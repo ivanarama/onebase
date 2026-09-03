@@ -319,7 +319,15 @@ func TestShipOnUnmarkedAuthorPushIsNotCarriedIntoReview(t *testing.T) {
 }
 
 func testIssue(number int, comments ...apiComment) apiIssue {
-	return apiIssue{Number: number, Title: "Issue", HTMLURL: "https://example.test/issue", State: "open", Thread: comments}
+	return apiIssue{Number: number, Title: "Issue", HTMLURL: "https://example.test/issue", CreatedAt: "2026-09-01T00:00:00Z", UpdatedAt: "2026-09-02T00:00:00Z", State: "open", Thread: comments}
+}
+
+func issueWithLabels(number int, labels ...string) apiIssue {
+	item := testIssue(number, issueComment(10, "<!-- pp:triage -->"))
+	for _, label := range labels {
+		item.Labels = append(item.Labels, apiLabel{Name: label})
+	}
+	return item
 }
 
 func issueComment(id int64, body string) apiComment {
@@ -358,5 +366,26 @@ func TestCorrectRussianTriageIsNotMojibake(t *testing.T) {
 
 	if hasFinding(result, "triage_text_mojibake") {
 		t.Fatalf("valid Russian was rejected: %+v", result)
+	}
+}
+
+func TestIssueQueuesSeparatePlanFixAndHumanWork(t *testing.T) {
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{
+		issueWithLabels(10, "plan-needed", "approved", "queue:p0"),
+		issueWithLabels(11, "approved"),
+		issueWithLabels(12, "ready-fix"),
+		issueWithLabels(13, "needs-decision"),
+		issueWithLabels(14, "plan-needed", "needs-decision"),
+	}, "ivanarama")
+
+	if len(result.PlanCandidates) != 1 || result.PlanCandidates[0].Number != 10 || result.PlanCandidates[0].Priority != 0 {
+		t.Fatalf("plan candidate not exposed with priority: %+v", result.PlanCandidates)
+	}
+	if len(result.FixCandidates) != 2 || result.FixCandidates[0].Number != 11 || result.FixCandidates[1].Number != 12 {
+		t.Fatalf("fix issues not exposed: %+v", result.FixCandidates)
+	}
+	if len(result.HumanWaiting) != 2 {
+		t.Fatalf("human issues not separated: %+v", result.HumanWaiting)
 	}
 }
