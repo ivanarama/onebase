@@ -380,7 +380,7 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"`ship` не запрещает REVIEW того же HEAD",
 		"`hold` всегда запрещает изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
-		"после постановки",
+		"После изменения метки всегда сверь ответ API или повторный GET",
 		"**не удаляй общую метку**",
 		"у GitHub-метки нет владельца",
 		"review-комментарий → claim → подтверждённая итоговая метка → committed-маркер",
@@ -1166,18 +1166,34 @@ func TestTopLevelInstructionsDoNotBypassPRStops(t *testing.T) {
 func TestMergeEnvironmentMatchesCommandsUsedByProcedure(t *testing.T) {
 	merge := skill(t, "merge-shepherd")
 	requireAllCompact(t, merge,
-		"`gh run view` и `gh run rerun`",
-		"используют явные поля либо REST",
+		"GitHub CLI: проверяй возможность, а не номер версии",
+		"`gh --version` и `gh api user`",
+		"ненулевой exit code — ошибка, а не «пустой ответ»",
+		"После изменения метки всегда сверь ответ API или повторный GET",
 	)
 	rejectAll(t, merge,
+		"В рабочей копии стоит `gh` 2.4.0",
+		"Projects (classic)",
+		"projectCards",
 		"Не проверялись только `gh pr merge`",
 		"Упадут с той же ошибкой",
-		"gh run rerun <id> --failed",
 	)
-	requireAllCompact(t, merge,
-		"`gh run rerun <id>`",
-		"`--failed` в `gh` 2.4.0 ещё не поддерживается",
-	)
+}
+
+func TestAllMutatingSkillsUseTheSameCapabilityBasedGitHubContract(t *testing.T) {
+	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+		contract := skill(t, name)
+		requireAllCompact(t, contract,
+			"GitHub CLI: проверяй возможность, а не номер версии",
+			"`gh --version` и `gh api user`",
+			"не переключайся молча на непроверенный обход",
+		)
+		rejectAll(t, contract,
+			"В рабочей копии стоит `gh` 2.4.0",
+			"Projects (classic)",
+			"projectCards",
+		)
+	}
 }
 
 type orderedClaim struct {

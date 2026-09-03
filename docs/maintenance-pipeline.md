@@ -51,19 +51,15 @@
 ```bash
 gh issue edit 1130 --remove-label needs-decision --add-label approved
 
-# на PR метка ставится через REST: gh pr edit в этом окружении не работает
+# на PR метку можно детерминированно поставить через REST
 echo '{"labels":["ship"]}' | gh api -X POST repos/ivanarama/onebase/issues/1131/labels --input -
 ```
 
-> **Почему так.** В рабочей копии `gh` 2.4.0, а GitHub отключил Projects
-> (classic). Команды, которые тянут объект целиком, падают с
-> `GraphQL: Projects (classic) is being deprecated … (projectCards)`:
-> `gh pr edit` (любой), `gh pr view` и `gh issue view` без `--json`. Работают
-> те же команды с явным `--json`, весь `gh api`, а также `gh issue edit`,
-> `gh pr list`, `gh issue list`, `gh pr diff`, `gh pr comment`.
-> Настоящая починка — обновить `gh`; до тех пор скилы этапов ходят по REST.
-> У REST номера PR и ишью — одно пространство, поэтому метка PR ставится
-> через `/issues/<N>/labels`; это не опечатка.
+> Версия `gh` — свойство машины, а не репозитория. Скиллы проверяют фактические
+> `gh --version` и `gh api user`, называют нужные `--json`-поля и используют
+> REST там, где важен точный ответ. У REST номера PR и ишью — одно пространство,
+> поэтому метка PR ставится через `/issues/<N>/labels`; это не опечатка.
+> Ненулевой exit code нельзя трактовать как пустой список.
 
 ## Как заявка проходит конвейер
 
