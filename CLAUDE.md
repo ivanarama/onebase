@@ -192,8 +192,9 @@ onebase describe --project <dir>                # вся структура ко
   earliest-wins и восстанавливается после crash; edit/delete, разрыв `previous`,
   снятие метки либо посторонний HEAD event отменяют carry. Последний переход
   метки `ship` среди событий всех actors обязан быть trusted `labeled`: для
-  обычного пути он идёт после текущих трёх unedited комментариев, для carry —
-  после исходного proof и непрерывно связан со всей base-sync цепочкой, а для
+  обычного пути он идёт после anchor текущего HEAD и может предшествовать
+  completion успешного REVIEW того же HEAD; для carry — после anchor исходного
+  HEAD и непрерывно связан со всей base-sync цепочкой, а для
   legacy reauthorization — после anchor точного merge-коммита `[старый HEAD,
   base]`. Числовые REST ids
   разных event types для порядка не сравниваются. Старый label после trusted unlabel не
