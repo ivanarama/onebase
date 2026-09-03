@@ -1163,6 +1163,26 @@ func TestTopLevelInstructionsDoNotBypassPRStops(t *testing.T) {
 	)
 }
 
+func TestShipIsDocumentedAsPipelineGateNotBranchProtection(t *testing.T) {
+	guide := repositoryFile(t, "CLAUDE.md")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	protection := repositoryFile(t, ".github", "branch-protection.json")
+	requireAllCompact(t, guide,
+		"автоматика MERGE без `ship` не вливает",
+		"Это гейт конвейера, а не правило GitHub branch protection",
+		"ручной admin-merge технически может обойти метку",
+	)
+	requireAllCompact(t, docs,
+		"`ship` — обязательный гейт **автоматического MERGE**",
+		"`required_pull_request_reviews`",
+		"равен `null`",
+		"её не обходит пастух",
+	)
+	requireAll(t, protection, `"required_pull_request_reviews": null`)
+	rejectAll(t, guide, "PR без `ship` не вливается никогда")
+	rejectAll(t, docs, "И ничто не вливается в `main` без метки")
+}
+
 func TestMergeEnvironmentMatchesCommandsUsedByProcedure(t *testing.T) {
 	merge := skill(t, "merge-shepherd")
 	requireAllCompact(t, merge,
