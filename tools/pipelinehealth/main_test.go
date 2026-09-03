@@ -339,7 +339,7 @@ func issueComment(id int64, body string) apiComment {
 func TestMojibakeInTriageVisibleTextIsRed(t *testing.T) {
 	broken := issueComment(10, "**РўСЂРёР°Р¶.**\nРљРѕСЂРµРЅСЊ РЅР°Р№РґРµРЅ.\n<!-- pp:triage -->\npp-triage-route-v1")
 	result := analyze(nil, "ivanarama")
-	analyzeIssues(&result, []apiIssue{testIssue(1281, broken)}, "ivanarama")
+	analyzeIssues(&result, []apiIssue{testIssue(1281, broken)}, nil, "ivanarama")
 	result.finish()
 
 	if result.State != "red" || !hasFinding(result, "triage_text_mojibake") {
@@ -351,7 +351,7 @@ func TestDisplayRepairMarkerResolvesMojibakeFinding(t *testing.T) {
 	broken := issueComment(10, "**РўСЂРёР°Р¶.**\nРљРѕСЂРµРЅСЊ РЅР°Р№РґРµРЅ.\n<!-- pp:triage -->")
 	repair := issueComment(20, "Исправление опубликовано выше.\n<!-- pp:display-repair comment=10 -->")
 	result := analyze(nil, "ivanarama")
-	analyzeIssues(&result, []apiIssue{testIssue(1281, broken, repair)}, "ivanarama")
+	analyzeIssues(&result, []apiIssue{testIssue(1281, broken, repair)}, nil, "ivanarama")
 	result.finish()
 
 	if hasFinding(result, "triage_text_mojibake") {
@@ -362,7 +362,7 @@ func TestDisplayRepairMarkerResolvesMojibakeFinding(t *testing.T) {
 func TestCorrectRussianTriageIsNotMojibake(t *testing.T) {
 	good := issueComment(10, "**Триаж.**\nКорень найден, решение проверено.\n<!-- pp:triage -->")
 	result := analyze(nil, "ivanarama")
-	analyzeIssues(&result, []apiIssue{testIssue(1289, good)}, "ivanarama")
+	analyzeIssues(&result, []apiIssue{testIssue(1289, good)}, nil, "ivanarama")
 
 	if hasFinding(result, "triage_text_mojibake") {
 		t.Fatalf("valid Russian was rejected: %+v", result)
@@ -377,7 +377,7 @@ func TestIssueQueuesSeparatePlanFixAndHumanWork(t *testing.T) {
 		issueWithLabels(12, "ready-fix"),
 		issueWithLabels(13, "needs-decision"),
 		issueWithLabels(14, "plan-needed", "needs-decision"),
-	}, "ivanarama")
+	}, nil, "ivanarama")
 
 	if len(result.PlanCandidates) != 1 || result.PlanCandidates[0].Number != 10 || result.PlanCandidates[0].Priority != 0 {
 		t.Fatalf("plan candidate not exposed with priority: %+v", result.PlanCandidates)
@@ -387,5 +387,40 @@ func TestIssueQueuesSeparatePlanFixAndHumanWork(t *testing.T) {
 	}
 	if len(result.HumanWaiting) != 2 {
 		t.Fatalf("human issues not separated: %+v", result.HumanWaiting)
+	}
+}
+
+func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
+	result := analyze(nil, "ivanarama")
+	issues := []apiIssue{
+		issueWithLabels(20, "approved", "in-work"),
+		issueWithLabels(21, "approved"),
+		issueWithLabels(22, "approved"),
+	}
+	prs := []apiPull{{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"}}
+	analyzeIssues(&result, issues, prs, "ivanarama")
+
+	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 22 {
+		t.Fatalf("FIX queue included work already owned by a PR: %+v", result.FixCandidates)
+	}
+}
+
+func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
+	fingerprint := strings.Repeat("a", 64)
+	root := issueComment(10, "<!-- pp:triage -->\nreply=none\n<!-- pp:triage-route-claim fingerprint-sha256="+fingerprint+" owner=11111111-1111-1111-1111-111111111111 -->")
+	unfinished := testIssue(30, root)
+	unfinished.Labels = []apiLabel{{Name: "approved"}}
+	complete := testIssue(31, root,
+		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+fingerprint+" events-through=1 labels-sha256="+fingerprint+" -->"),
+		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+fingerprint+" -->"))
+	complete.Labels = []apiLabel{{Name: "approved"}}
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{unfinished, complete}, nil, "ivanarama")
+
+	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 31 {
+		t.Fatalf("FIX queue accepted an unfinished TRIAGE handoff: %+v", result.FixCandidates)
+	}
+	if !hasFinding(result, "fix_issue_not_executable") {
+		t.Fatalf("unfinished TRIAGE handoff was not diagnosed: %+v", result.Findings)
 	}
 }

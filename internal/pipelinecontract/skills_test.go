@@ -129,13 +129,14 @@ func TestReviewQueueUsesTwoLaneExecutableAllowlist(t *testing.T) {
 		"C:\\Program Files\\Go\\bin\\go.exe",
 		"Go not found in PATH or the standard Windows location",
 		"& $goExe run ./tools/pipelinehealth -json",
-		"`review_candidates` — **исключительный allowlist этого запуска**",
+		"`review_candidates` — **исключительный allowlist для выбора новой цели**",
 		"`single_flight_barrier` защищает только интеграционную полосу, а не всю очередь",
 		"обычное содержательное REVIEW не блокируется",
 		"Следующий интеграционный PR при этом брать нельзя",
 		"бери до двух элементов stage `review` из `review_candidates`",
 		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
-		"Расхождение означает стоп без подстановки следующего PR",
+		"Для обычного аудита он обязан входить в `content_review_candidates`",
+		"Изменились только чужие PR, приоритеты, `main` или интеграционная полоса",
 	)
 }
 
