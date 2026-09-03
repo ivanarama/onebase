@@ -11,10 +11,11 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 Железное правило: обрабатываются **только** PR с меткой `ship` (её ставит
 человек, прочитав заключение ревью) и без `hold`/`needs-decision`. PR без `ship`
 или с любым стопом не трогать вообще — ни обновлять, ни комментировать.
-Единственное расширение по state — уже merged PR с незавершённым валидным
-`pp:merge-cleanup-intent`: на нём разрешены только идемпотентные cleanup-фазы из
-п. 1, а не update, push или повторный merge; до done те же `ship`/stop-метки
-обязаны сохраняться.
+Единственное расширение обычной очереди — PR с незавершённым валидным
+`pp:merge-cleanup-intent`: открытый PR с тем же HEAD сначала восстанавливает
+ровно один compare-and-merge по каноничному intent, а уже merged PR — только
+идемпотентные cleanup-фазы из п. 1, без update, push или повторного merge. До
+done те же `ship`/stop-метки обязаны сохраняться.
 
 `ship` — разрешение человека, но `hold` и `needs-decision` старше него. Метки
 ревью (`reviewed`, `changes-requested`) для тебя информационные: если человек
@@ -71,11 +72,12 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
 ## Процедура
 
-1. **Сначала восстановление post-merge cleanup, затем обычная очередь.** Merge
-   необратим, а снятие `in-work` и служебных меток — отдельные запросы. Поэтому
-   до списка открытых PR получи **все** repository issue comments пагинированным
-   REST и локально найди точные отдельные строки доверенного автора
-   `ivanarama`:
+1. **Сначала восстановление канонического pre-merge intent и post-merge
+   cleanup, затем обычная очередь.** Merge необратим, а окно после intent до
+   PUT и снятие `in-work`/служебных меток восстанавливаются разными фазами одной
+   транзакции. Поэтому до списка открытых PR получи **все** repository issue
+   comments пагинированным REST и локально найди точные отдельные строки
+   доверенного автора `ivanarama`:
 
    ```
    gh api --paginate "repos/ivanarama/onebase/issues/comments?per_page=100&sort=created&direction=asc" \
@@ -85,17 +87,23 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    Транзакция cleanup хранится двумя неизменяемыми комментариями на PR:
 
    ```
-   <!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique decimal csv|none> -->
+   <!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique same-repo decimal csv|none> -->
    <!-- pp:merge-cleanup-done intent=<id> head=<40hex> merge=<40hex> -->
    ```
 
    `body-sha256` — lowercase SHA-256 raw UTF-8 точного тела PR в момент intent.
-   `issues` — отсортированный уникальный список только из английских closing
-   keywords `Fixes`/`Closes`/`Resolves`, либо `none`. Свободный русский текст и
-   похожие строки в чужих комментариях не входят в список. Полный глобальный
-   поток comments нужен именно для recovery: merged PR уже исчез из очереди
-   открытых `ship`-PR, а Search API eventually consistent и доказательством
-   отсутствия intent не считается.
+   `issues` — отсортированный уникальный decimal-список только ссылок на
+   `ivanarama/onebase`, либо `none`. Грамматика закрыта: ASCII case-insensitive
+   keyword `close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved`,
+   необязательное `:` после keyword и затем либо локальная ссылка `#<N>`, либо
+   qualified-ссылка `ivanarama/onebase#<N>` с ASCII case-insensitive сравнением
+   owner/repository. Qualified-ссылку на другой репозиторий разбирай целиком и
+   исключай: её хвост `#<N>` **никогда** не переинтерпретируй как локальную
+   ссылку и не обращайся с ним к `repos/ivanarama/onebase/issues/<N>`.
+   Свободный русский текст и похожие строки в чужих комментариях не входят в
+   список. Полный глобальный поток comments нужен именно для recovery: merged
+   PR уже исчез из очереди открытых `ship`-PR, а Search API eventually
+   consistent и доказательством отсутствия intent не считается.
 
    Для каждого найденного intent получи родительский PR, все его комментарии и
    полный server-ordered GraphQL timeline. Сопоставь REST `node_id` с GraphQL
@@ -105,9 +113,29 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    точный trusted `ship-event`, а record `head`/proof/body/issues пересчитан и
    совпал. Для одинакового record каноничен самый ранний intent по GraphQL edge;
    более поздние точные копии — equivalent diagnostics. Другой intent-record
-   для того же merged HEAD, edit или `CommentDeletedEvent` после каноничного
-   intent закрывает recovery человеку. Done валиден только после своего intent,
-   с теми же `head` и фактическим merge commit; при дублях каноничен самый ранний.
+   для того же PR и HEAD, edit или `CommentDeletedEvent` после каноничного intent
+   закрывает recovery человеку. Done валиден только после своего intent, с теми
+   же `head` и фактическим merge commit; при дублях каноничен самый ранний.
+
+   Незавершённый каноничный intent на **открытом** PR восстанавливай до обычной
+   очереди. Заново докажи полный label+SHA+authorization-гейт, точные body/issues
+   и отсутствие более позднего HEAD/base/review transition. Если текущий HEAD
+   равен `intent.head`, не публикуй новый intent: перечитай
+   `mergeStateStatus`/`mergeable` и обязательные проверки по пп. 3–4. Для
+   `CLEAN` с зелёными проверками выполни два финальных стабильных raw GraphQL-
+   snapshot из п. 5, адресуя уже существующий каноничный intent, и отправь один
+   compare-and-merge PUT с `sha=intent.head`. Ответ и потерю ответа разбирай
+   ровно по п. 5, затем переходи к cleanup. `BEHIND`/`DIRTY` и незавершённые
+   проверки продолжай для этого же PR по пп. 3–4; старый intent не разрешает
+   merge до нового стабильного гейта и не разрешает второй intent для
+   неизменившегося HEAD.
+
+   Условие «продолжает только собственный возвращённый id» действует только в
+   запуске, который только что сделал POST: worker с более поздней
+   equivalent-копией останавливается. Новый recovery-worker, который ничего не POST-ил,
+   обязан выбрать уже существующий earliest intent и может продолжить его после
+   всех гейтов. Иначе crash после успешного POST до PUT навсегда оставлял бы
+   транзакцию без владельца.
 
    Перед **каждой** cleanup-мутацией выполни два полных последовательных
    GraphQL-прохода от `cursor=null` до `hasNextPage=false` и принимай их только
@@ -137,11 +165,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
       сверь отсутствие. Crash после done, но до DELETE, восстанавливает только
       эту фазу; отсутствие `ship` уже считается завершением.
 
-   Сначала заверши **все** найденные незавершённые cleanup-транзакции по номеру
-   PR. Пока хотя бы одна закрыта human/state gate, не мержи новый PR и закончи
-   `НУЖЕН ЧЕЛОВЕК`. Recovery с валидным done и уже отсутствующим `ship` действий
-   не требует. Если `ship` исчез до done или появился stop, это человеческий
-   ход: не восстанавливай метку и останови cleanup.
+   Сначала по номеру PR заверши найденные незавершённые pre-merge/cleanup-
+   транзакции. Пока хотя бы одна закрыта human/state gate, не мержи новый PR и
+   закончи `НУЖЕН ЧЕЛОВЕК`. Recovery с валидным done и уже отсутствующим `ship`
+   действий не требует. Если `ship` исчез до done или появился stop, это
+   человеческий ход: не восстанавливай метку и останови транзакцию.
 
    Затем очередь: получи **все** открытые PR пагинированным REST, затем локально
    оставь метку `ship`, исключи `hold` и `needs-decision`, отсортируй по номеру:
@@ -162,13 +190,17 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
    Перед обычной сортировкой примени глобальный single-flight-барьер. Среди всех
    `ship`-PR найди самый ранний по номеру доказанный незавершённый handoff:
-   открытый `pp:base-sync-intent`, текущий `to` валидного done либо legacy
-   re-ship текущего HEAD — как без нового proof, так и с уже готовым
-   интеграционным proof. Только этот PR является
+   каноничный открытый `pp:merge-cleanup-intent`, открытый
+   `pp:base-sync-intent`, текущий `to` валидного done либо legacy re-ship
+   текущего HEAD — как без нового proof, так и с уже готовым интеграционным
+   proof. Только этот PR является
    владельцем барьера. Если он ждёт REVIEW, не меняй **ни один** PR и закончи
    весь MERGE. Если его текущий `to` уже получил каноничный proof `reviewed`,
    обрабатывай владельца раньше всей обычной очереди: proof передаёт ход MERGE,
    но не освобождает барьер; его освобождает только merge/закрытие владельца.
+   Если у владельца есть каноничный cleanup-intent текущего HEAD, сначала
+   выполни его pre-merge recovery из этого пункта и до исхода не касайся других
+   PR.
    При нескольких legacy
    re-ship выбери только минимальный номер; остальные сохраняют `ship`, но ждут
    своей очереди. Нельзя заранее обновлять или мержить следующий PR: это изменит
@@ -433,16 +465,21 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
 5. Мерж: выполни последний полный гейт из п. 1 и сохрани GraphQL `node_id`
    конкретных review, claim и completion, а также epoch anchor node/cursor.
-   Из точного тела PR вычисли raw UTF-8 `body-sha256`, извлеки
-   `Fixes`/`Closes`/`Resolves`, нормализуй номера в sorted unique `issues` и
-   собери exact `pp:merge-cleanup-intent` из п. 1. Непосредственно перед его
-   POST снова выполни полный label+SHA+authorization-гейт. После POST сохрани
-   **собственный возвращённый id**, получи `.body` через jq `@base64`, декодируй
-   UTF-8 и сравни байт-в-байт. Затем перечитай полный timeline: продолжает только
-   самый ранний валидный intent для точного head/proof/ship-event/body/issues.
-   Если собственный id проиграл более раннему concurrent intent, этот worker
-   останавливается; recovery использует каноничный intent. Timeout POST не
-   повторяй вслепую — сначала найди exact marker прямым REST.
+   Из точного тела PR вычисли raw UTF-8 `body-sha256`, примени закрытую
+   same-repo грамматику из п. 1, сохрани repository identity до окончания
+   разбора и только затем нормализуй допустимые номера в sorted unique `issues`.
+   Собери exact `pp:merge-cleanup-intent` из п. 1 и сначала перечитай полный
+   timeline. Если exact valid intent уже существует, выбери самый ранний по
+   GraphQL edge и **не делай POST** — это pre-merge recovery. Только при полном
+   отсутствии такого intent непосредственно перед POST снова выполни полный
+   label+SHA+authorization-гейт. После POST сохрани **собственный возвращённый
+   id**, получи `.body` через jq `@base64`, декодируй UTF-8 и сравни
+   байт-в-байт. Затем перечитай полный timeline: продолжает только самый ранний
+   валидный intent для точного head/proof/ship-event/body/issues. Если
+   собственный id проиграл более раннему concurrent intent, этот worker
+   останавливается; следующий recovery использует каноничный intent без нового
+   POST. Timeout POST не повторяй вслепую — сначала найди exact marker прямым
+   REST.
 
    Сохрани `node_id` каноничного cleanup-intent и его числовой `id` как новый
    comment watermark. Непосредственно перед PUT выполни **два последовательных
@@ -571,10 +608,15 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    заявка уносит `in-work` в закрытые навсегда, и метка перестаёт означать
    «едет прямо сейчас» (так и случилось с #1136).
 
-   Номера бери из тела PR по **всем** написаниям, какие понимает GitHub, —
-   `Fixes`, `Closes`, `Resolves` (регистр не важен). Автоматика всегда пишет
-   `Fixes`, но PR, написанный человеком руками, может нести `Closes #N`, и это
-   ровно тот случай, ради которого шаг и вводится.
+   Номера бери из тела PR по точной грамматике GitHub: keywords `close`,
+   `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`,
+   `resolved` без учёта ASCII-регистра и с необязательным `:`, но в cleanup
+   включай только локальную форму `#N` и qualified-форму
+   `ivanarama/onebase#N`. Автоматика обычно пишет `Fixes #N`, но PR человека
+   может нести `Closes: IVANARAMA/ONEBASE#N`. Qualified-ссылка
+   `other/repository#N` может быть обработана самим GitHub, однако MERGE не
+   читает и не мутирует одноимённую заявку OneBase: такую ссылку исключи целиком,
+   не выделяя из неё хвост `#N`.
 
    ```
    gh api -X DELETE repos/ivanarama/onebase/issues/<N>/labels/in-work

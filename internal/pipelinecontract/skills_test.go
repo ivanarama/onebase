@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -625,12 +627,16 @@ func TestMergePostMergeCleanupIsCrashRecoverable(t *testing.T) {
 	merge := skill(t, "merge-shepherd")
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAllCompact(t, merge,
-		"**Сначала восстановление post-merge cleanup, затем обычная очередь.**",
+		"**Сначала восстановление канонического pre-merge intent и post-merge cleanup, затем обычная очередь.**",
 		"repos/ivanarama/onebase/issues/comments?per_page=100&sort=created&direction=asc",
-		"<!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique decimal csv|none> -->",
+		"<!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique same-repo decimal csv|none> -->",
 		"<!-- pp:merge-cleanup-done intent=<id> head=<40hex> merge=<40hex> -->",
 		"merged PR уже исчез из очереди открытых `ship`-PR",
 		"Search API eventually consistent и доказательством отсутствия intent не считается",
+		"Незавершённый каноничный intent на **открытом** PR восстанавливай до обычной очереди",
+		"Если текущий HEAD равен `intent.head`, не публикуй новый intent",
+		"worker с более поздней equivalent-копией останавливается",
+		"recovery-worker, который ничего не POST-ил, обязан выбрать уже существующий earliest intent",
 		"Перед **каждой** cleanup-мутацией выполни два полных последовательных GraphQL-прохода",
 		"REST `state == \"closed\"`, `.merged == true`, непустые `merged_at` и `merge_commit_sha`",
 		"Уже merged PR **никогда не отправляй в merge API повторно**",
@@ -649,7 +655,7 @@ func TestMergePostMergeCleanupIsCrashRecoverable(t *testing.T) {
 	}
 	mergeStep := merge[mergeStepStart:]
 	requireCompactInOrder(t, mergeStep,
-		"собери exact `pp:merge-cleanup-intent`",
+		"Собери exact `pp:merge-cleanup-intent`",
 		"два последовательных одинаковых raw GraphQL-запроса",
 		"используй атомарный compare-and-merge REST",
 		"Если PR уже `merged`",
@@ -658,6 +664,9 @@ func TestMergePostMergeCleanupIsCrashRecoverable(t *testing.T) {
 	requireAllCompact(t, docs,
 		"Это ровно один merge path",
 		"отдельного CLI fallback, способного послать второй merge без того же SHA-гейта, нет",
+		"Crash после POST intent, но до PUT, тоже восстанавливается до обычной очереди",
+		"Новый intent он не публикует",
+		"новый recovery-worker без собственного POST подхватывает канонический marker",
 		"Post-merge cleanup — отдельная crash-safe транзакция",
 		"merge успешен, cleanup упал",
 		"не посылает второй merge",
@@ -665,17 +674,20 @@ func TestMergePostMergeCleanupIsCrashRecoverable(t *testing.T) {
 }
 
 type modeledMergeCleanup struct {
-	hasIntent bool
-	merged    bool
-	inWork    bool
-	done      bool
-	ship      bool
+	canonicalIntent int64
+	ownIntent       int64
+	merged          bool
+	inWork          bool
+	done            bool
+	ship            bool
 }
 
 func nextModeledMergeCleanupAction(state modeledMergeCleanup) string {
 	switch {
-	case !state.hasIntent:
+	case state.canonicalIntent == 0:
 		return "post-intent"
+	case state.ownIntent != 0 && state.ownIntent != state.canonicalIntent:
+		return "stop-lost-intent"
 	case !state.merged:
 		return "merge"
 	case state.inWork:
@@ -691,10 +703,10 @@ func nextModeledMergeCleanupAction(state modeledMergeCleanup) string {
 
 func TestMergeCrashAfterSuccessResumesCleanupWithoutMerge(t *testing.T) {
 	state := modeledMergeCleanup{
-		hasIntent: true,
-		merged:    true,
-		inWork:    true,
-		ship:      true,
+		canonicalIntent: 101,
+		merged:          true,
+		inWork:          true,
+		ship:            true,
 	}
 	if got := nextModeledMergeCleanupAction(state); got != "delete-in-work" {
 		t.Fatalf("post-merge recovery action = %q, want delete-in-work", got)
@@ -710,6 +722,89 @@ func TestMergeCrashAfterSuccessResumesCleanupWithoutMerge(t *testing.T) {
 	state.ship = false
 	if got := nextModeledMergeCleanupAction(state); got != "complete" {
 		t.Fatalf("finished cleanup action = %q, want complete", got)
+	}
+}
+
+func TestMergeCrashBeforePUTReusesCanonicalIntent(t *testing.T) {
+	state := modeledMergeCleanup{
+		canonicalIntent: 101,
+		ship:            true,
+	}
+	if got := nextModeledMergeCleanupAction(state); got != "merge" {
+		t.Fatalf("pre-PUT recovery action = %q, want merge", got)
+	}
+}
+
+func TestMergeConcurrentIntentOwnerElection(t *testing.T) {
+	state := modeledMergeCleanup{
+		canonicalIntent: 101,
+		ownIntent:       102,
+		ship:            true,
+	}
+	if got := nextModeledMergeCleanupAction(state); got != "stop-lost-intent" {
+		t.Fatalf("concurrent loser action = %q, want stop-lost-intent", got)
+	}
+	state.ownIntent = 101
+	if got := nextModeledMergeCleanupAction(state); got != "merge" {
+		t.Fatalf("canonical owner action = %q, want merge", got)
+	}
+	state.ownIntent = 0
+	if got := nextModeledMergeCleanupAction(state); got != "merge" {
+		t.Fatalf("fresh recovery worker action = %q, want merge", got)
+	}
+}
+
+var modeledClosingReference = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s*:?\s+(?:([a-z0-9_.-]+)/([a-z0-9_.-]+))?#([1-9][0-9]*)\b`)
+
+func modeledSameRepoClosingIssues(body string) []int {
+	unique := make(map[int]struct{})
+	for _, match := range modeledClosingReference.FindAllStringSubmatch(body, -1) {
+		if match[1] != "" && (!strings.EqualFold(match[1], "ivanarama") || !strings.EqualFold(match[2], "onebase")) {
+			continue
+		}
+		number, err := strconv.Atoi(match[3])
+		if err != nil {
+			continue
+		}
+		unique[number] = struct{}{}
+	}
+	issues := make([]int, 0, len(unique))
+	for number := range unique {
+		issues = append(issues, number)
+	}
+	sort.Ints(issues)
+	return issues
+}
+
+func TestMergeCleanupClosingReferencesKeepRepositoryIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []int
+	}{
+		{name: "local", body: "Closes #42", want: []int{42}},
+		{name: "same-repo-qualified", body: "FIXED: IVANARAMA/ONEBASE#17", want: []int{17}},
+		{name: "foreign-repository", body: "Resolves other/project#42", want: nil},
+		{name: "mixed-and-deduplicated", body: "Fix #9\nclosed ivanarama/onebase#9\nresolves other/project#7", want: []int{9}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := modeledSameRepoClosingIssues(tt.body); fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Fatalf("same-repo closing issues = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	for _, text := range []string{merge, docs} {
+		requireAllCompact(t, text,
+			"close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved",
+			"локальную форму `#N`",
+			"`ivanarama/onebase#N`",
+			"Qualified-ссылка `other/repository#N`",
+			"не выделяя из неё хвост `#N`",
+		)
 	}
 }
 

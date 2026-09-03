@@ -648,10 +648,10 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
 Финальный merge выполняется REST-запросом compare-and-merge с полем
 `sha=<проверенный HEAD>`. Это ровно один merge path; отдельного CLI fallback,
 способного послать второй merge без того же SHA-гейта, нет. До PUT пастух сохраняет точный body hash,
-closing issues и proof в неизменяемом комментарии:
+только same-repo closing issues и proof в неизменяемом комментарии:
 
 ```text
-<!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique decimal csv|none> -->
+<!-- pp:merge-cleanup-intent head=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> body-sha256=<64hex> issues=<sorted unique same-repo decimal csv|none> -->
 ```
 
 Самый ранний валидный intent входит четвёртым адресованным comment node в два
@@ -661,6 +661,21 @@ closing issues и proof в неизменяемом комментарии:
 Успешный snapshot — точка невозврата: GitHub не умеет сделать merge условным по
 labels, поэтому стоп-метка, поставленная уже после отправки PUT, не отменяет
 запрос в полёте. До этой точки она останавливает MERGE.
+
+Crash после POST intent, но до PUT, тоже восстанавливается до обычной очереди.
+Для открытого PR с тем же HEAD следующий MERGE выбирает earliest intent,
+перепроверяет merge state, обязательные CI и те же два стабильных snapshot, а
+затем отправляет compare-and-merge с сохранённым SHA. Новый intent он не
+публикует. Если два worker одновременно создали одинаковые markers, продолжает
+только owner самого раннего id; проигравший останавливается, а новый
+recovery-worker без собственного POST подхватывает канонический marker.
+
+Closing grammar хранит repository identity до фильтрации. Принимаются девять
+GitHub keywords (`close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved`),
+необязательное двоеточие и локальную форму `#N` либо qualified-форму
+`ivanarama/onebase#N` без учёта ASCII-регистра. Qualified-ссылка
+`other/repository#N` исключается целиком, не выделяя из неё хвост `#N`: она не
+считается локальной заявкой и не ведёт к мутации OneBase.
 
 При `409`, timeout или потерянном ответе пастух сначала перечитывает REST state и
 полный GraphQL timeline. Если PR уже `MERGED`, а единственный `MergedEvent`
