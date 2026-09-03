@@ -57,9 +57,13 @@ func (db *DB) renameSnakeCols(ctx context.Context, table string, fields []metada
 			// Раньше обе ошибки игнорировались: неудачный UPDATE с последующим
 			// успешным DROP COLUMN уничтожал единственную копию данных молча.
 			// Теперь сбой переноса прерывает миграцию до удаления.
+			expr := oldCol
+			if f.RefEntity != "" {
+				expr = fmt.Sprintf("CASE WHEN %s::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN %s::uuid ELSE NULL END", oldCol, oldCol)
+			}
 			if _, err := db.Exec(ctx, fmt.Sprintf(
 				"UPDATE %s SET %s = %s WHERE %s IS NOT NULL AND %s IS NULL",
-				table, newCol, oldCol, oldCol, newCol)); err != nil {
+				table, newCol, expr, oldCol, newCol)); err != nil {
 				return fmt.Errorf("перенос данных %s.%s → %s: %w", table, oldCol, newCol, err)
 			}
 			if _, err := db.Exec(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, oldCol)); err != nil {

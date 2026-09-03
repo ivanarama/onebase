@@ -211,6 +211,11 @@ func defaultFilesDir(dsn string) string {
 		dbName = cfg.ConnConfig.Database
 	}
 	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = os.TempDir()
+	} else if _, statErr := os.Stat(home); os.IsNotExist(statErr) {
+		home = os.TempDir()
+	}
 	return filepath.Join(home, ".onebase", "files", dbName)
 }
 
