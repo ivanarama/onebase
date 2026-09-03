@@ -1464,6 +1464,7 @@ function makeTreeRow(row) {
     tr.style.textDecoration = 'line-through';
   }
   tr.dataset.treeId = row.id || '';
+  tr.dataset.obEntityId = row.id || '';
   tr.dataset.treeDepth = String(row.depth || 0);
   tr.dataset.treeParent = row.parent_id || '';
   tr.dataset.predefined = row.predefined ? '1' : '';
@@ -1537,6 +1538,22 @@ function makeTreeRow(row) {
   return tr;
 }
 
+function listBasedOnItems(tr, cfg) {
+  var sourceID = tr && tr.dataset ? (tr.dataset.obEntityId || '') : '';
+  var actions = cfg && Array.isArray(cfg.basedOn) ? cfg.basedOn : [];
+  if (!sourceID || !actions.length) return [];
+  return actions.reduce(function (items, action) {
+    var label = action && typeof action.label === 'string' ? action.label : '';
+    var baseURL = action && typeof action.url === 'string' ? action.url : '';
+    // The server emits same-origin create URLs. Keep the client fail-closed if
+    // malformed config somehow reaches the page.
+    if (!label || !/^\/ui\/[^/?#]+\/[^/?#]+\/new\?/.test(baseURL)) return items;
+    var url = baseURL + '&based_on_id=' + encodeURIComponent(sourceID);
+    items.push({ label: label, fn: function () { listOpen(url, label); } });
+    return items;
+  }, []);
+}
+
 function listMenuItems(tr) {
   var cfg = obListConfig();
   var labels = cfg.labels || {};
@@ -1553,6 +1570,10 @@ function listMenuItems(tr) {
   // Пустой data-copy-url = нет права записи, пункт не показываем.
   if (tr.dataset.copyUrl) {
     items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(tr.dataset.copyUrl); } });
+  }
+  var basedOnItems = listBasedOnItems(tr, cfg);
+  if (basedOnItems.length) {
+    items.push({ label: labels.basedOn || 'Ввести на основании', items: basedOnItems });
   }
   if (cfg.canWrite && tr.dataset.activityEnabled === '1') {
     if (tr.dataset.activityInactive === '1') {
@@ -1595,6 +1616,27 @@ function showListMenu(items, x, y) {
       mi.style.cssText = 'padding:7px 14px;margin-bottom:4px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:12px;cursor:default';
     } else if (item.disabled) {
       mi.style.cssText = 'padding:8px 14px;color:#94a3b8;cursor:default;font-style:italic';
+    } else if (item.items && item.items.length) {
+      mi.style.cssText = 'padding:8px 28px 8px 14px;cursor:pointer;position:relative;white-space:nowrap';
+      mi.textContent = item.label + ' ▸';
+      var sub = document.createElement('div');
+      sub.style.cssText = 'display:none;position:absolute;left:100%;top:-4px;background:#fff;border:1px solid #c8d0de;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:190px';
+      item.items.forEach(function (child) {
+        var childEl = document.createElement('div');
+        childEl.textContent = child.label;
+        childEl.style.cssText = 'padding:8px 14px;cursor:pointer;white-space:nowrap';
+        childEl.onmouseenter = function () { childEl.style.background = '#f8fafc'; };
+        childEl.onmouseleave = function () { childEl.style.background = ''; };
+        childEl.onclick = function (event) {
+          event.preventDefault();
+          m.remove();
+          child.fn();
+        };
+        sub.appendChild(childEl);
+      });
+      mi.onmouseenter = function () { mi.style.background = '#f8fafc'; sub.style.display = 'block'; };
+      mi.onmouseleave = function () { mi.style.background = ''; sub.style.display = 'none'; };
+      mi.appendChild(sub);
     } else {
       mi.style.cssText = 'padding:8px 14px;cursor:pointer' + (item.danger ? ';color:#dc2626' : '');
       mi.onmouseenter = function () { mi.style.background = '#f8fafc'; };
@@ -1627,6 +1669,9 @@ function listMenuNoSel() {
   var labels = cfg.labels || {};
   var items = [{ label: labels.selectRowFirst || 'Сначала выберите строку списка', hint: true }];
   items.push({ label: labels.open || 'Открыть', disabled: true });
+  if (Array.isArray(cfg.basedOn) && cfg.basedOn.length) {
+    items.push({ label: labels.basedOn || 'Ввести на основании', disabled: true });
+  }
   if (cfg.canDelete) items.push({ label: labels.markDelete || 'Пометить на удаление', disabled: true });
   if (cfg.canUnpost) items.push({ label: labels.unpost || 'Отменить проведение', disabled: true });
   return items;
