@@ -38,16 +38,18 @@ func processorTPRefOptionsFixture(t *testing.T) (*Server, *processor.Processor, 
 	Строка.Товар = Справочники.Товары.НайтиПоНаименованию("`+processorTPRefTargetName+`");
 КонецПроцедуры
 `)
-	proc := &processor.Processor{
-		Name: "ПодборТоваров",
-		TableParts: []metadata.TablePart{{
-			Name: "Строки",
-			Fields: []metadata.Field{{
-				Name: "Товар", Type: metadata.FieldType("reference:Товары"), RefEntity: "Товары",
-			}},
-		}},
-		Forms: []*metadata.FormModule{form},
+	proc, err := processor.ParseBytes([]byte(`
+name: ПодборТоваров
+table_parts:
+  - name: Строки
+    fields:
+      - name: Товар
+        type: reference:Товары
+`))
+	if err != nil {
+		t.Fatalf("parse processor YAML: %v", err)
 	}
+	proc.Forms = []*metadata.FormModule{form}
 	srv, db := newProcessorFormEventExecutionServer(t, proc, nil)
 	refEntity := &metadata.Entity{
 		Name: "Товары", Kind: metadata.KindCatalog,
