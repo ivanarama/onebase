@@ -47,6 +47,29 @@ func TestReviewAndMergeRouteThroughPipelinectlWithDiscoverableFallback(t *testin
 	}
 }
 
+func TestMergeFastPathRecoversPostMergeCleanup(t *testing.T) {
+	entry := repositoryFile(t, ".claude", "skills", "merge-shepherd", "SKILL.md")
+	legacy := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, entry,
+		"`cleanup` — merge уже подтверждён GitHub",
+		"`complete merge-cleanup`",
+		"`pp:merge-cleanup-intent`",
+		"`pp:merge-cleanup-done`",
+		"не второй merge",
+	)
+	requireAllCompact(t, legacy,
+		"Незавершённый intent старше обычной очереди",
+		"Не обходи такой intent выбором следующего PR",
+		"qualified-ссылка на другой repository локальной issue не считается",
+	)
+	requireAllCompact(t, docs,
+		"уже влитый PR получает `action=cleanup`",
+		"**никогда** не отправляется в merge API повторно",
+		"падение между merge и label cleanup видно сразу",
+	)
+}
+
 func requireAll(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	for _, fragment := range fragments {
