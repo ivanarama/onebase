@@ -212,7 +212,12 @@ onebase describe --project <dir>                # вся структура ко
   ревью других HEAD в это время продолжаются и не считаются доказательством
   совместимости с текущим `main`.
   REVIEW обязан начинать с `go run ./tools/pipelinehealth -json` и считать
-  `review_candidates` исключительным allowlist запуска. При
+  `review_candidates` исключительным allowlist **выбора новой цели**. После
+  выбора обычного PR его HEAD/epoch snapshot становится lease запуска:
+  перестановка чужих PR, новый приоритет или появление интеграционного владельца
+  не отменяют уже выполненный аудит. Перед мутацией обычная цель должна
+  оставаться в `content_review_candidates`, а её собственные HEAD/open/base,
+  routing labels и server epoch обязаны быть неизменны. При
   `single_flight_barrier` следующий интеграционный PR запрещён, но stage
   `review` остаётся исполняемым, когда владелец ждёт MERGE/recovery. Отказ
   полного GraphQL gate интеграционного владельца не разрешает fallback к
