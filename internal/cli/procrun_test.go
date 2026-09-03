@@ -127,6 +127,72 @@ fields:
 	}
 }
 
+func TestRunProcrunDynamicObjectFieldsInDocumentHooks(t *testing.T) {
+	projectDir := t.TempDir()
+	writeProcrunFixture(t, projectDir, "config/app.yaml", "name: dynamic-hook-fields-test\nversion: \"1.0\"\n")
+	writeProcrunFixture(t, projectDir, "documents/Заказ.yaml", `name: Заказ
+posting: true
+fields:
+  - name: Комментарий
+    type: string
+`)
+	writeProcrunFixture(t, projectDir, "processors/ДинамическиеПоляХуков.yaml", "name: ДинамическиеПоляХуков\n")
+	writeProcrunFixture(t, projectDir, "src/Заказ.os", `Процедура ПриЗаписи()
+    Поле = "кОмМеНтАрИй";
+    this[Поле] = this[Поле] + "|ПриЗаписи";
+    Сообщить("hook-write=" + this[Поле]);
+КонецПроцедуры
+`)
+	writeProcrunFixture(t, projectDir, "src/Заказ.posting.os", `Процедура ОбработкаПроведения()
+    Поле = "КОММЕНТАРИЙ";
+    ЭтотОбъект[Поле] = ЭтотОбъект[Поле] + "|Проведение";
+    Сообщить("hook-post=" + ЭтотОбъект[Поле]);
+КонецПроцедуры
+`)
+	writeProcrunFixture(t, projectDir, "src/ДинамическиеПоляХуков.proc.os", `Процедура Выполнить()
+    Док = Документы.Заказ.Создать();
+    Док.Комментарий = "Старт";
+    Док.Провести();
+КонецПроцедуры
+`)
+
+	dbPath := filepath.Join(t.TempDir(), "dynamic-hook-fields.db")
+	if _, err := captureStdout(t, func() error {
+		return runMigrate(migrateCmdFor(t, projectDir, dbPath, nil), nil)
+	}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return runProcrun(procrunCommandFor(t, projectDir, dbPath, "ДинамическиеПоляХуков"), nil)
+	})
+	if err != nil {
+		t.Fatalf("runProcrun: %v", err)
+	}
+	for _, want := range []string{
+		"hook-write=Старт|ПриЗаписи",
+		"hook-post=Старт|ПриЗаписи|Проведение",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout не содержит %q: %q", want, out)
+		}
+	}
+
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var comment string
+	if err := db.QueryRow(ctx, `SELECT комментарий FROM заказ LIMIT 1`).Scan(&comment); err != nil {
+		t.Fatalf("чтение сохранённого реквизита: %v", err)
+	}
+	if comment != "Старт|ПриЗаписи|Проведение" {
+		t.Fatalf("Комментарий = %q, ожидалось %q", comment, "Старт|ПриЗаписи|Проведение")
+	}
+}
+
 func TestRunProcrunDynamicFieldsRejectInvalidAccess(t *testing.T) {
 	projectDir := t.TempDir()
 	writeProcrunFixture(t, projectDir, "config/app.yaml", "name: dynamic-fields-errors\nversion: \"1.0\"\n")
