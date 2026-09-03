@@ -18,8 +18,11 @@ const tplManagedForm = `
 {{define "managed-element"}}
 {{$el := .El}}{{$ctx := .Ctx}}
 {{/* $ro — нередактируемость элемента: собственный readonly (и item_form) ИЛИ
-     истинное условие readonly_when по полям записи. Скрытые по hidden_when не
-     отрисовываются вовсе — первой веткой цепочки. */}}
+     истинное условие readonly_when по полям записи. И то и другое приходит
+     унаследованным от контейнеров-предков: наследование статического считает
+     effectiveFormElementReadOnly, условного — карта ElReadOnly, которую строит
+     managedFormElementStates. Скрытые по hidden_when не отрисовываются вовсе —
+     первой веткой цепочки. */}}
 {{$ro := or (effectiveFormElementReadOnly $ctx.Form $el) (elReadOnly $ctx $el)}}
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{if elHidden $ctx $el}}
@@ -261,6 +264,14 @@ const tplManagedForm = `
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
   {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
+  {{/* data-ob-tp — граница табличной части для клиентского пересчёта условий:
+       её содержимое (грид, кнопки строк, командные кнопки) applyElementStates
+       не трогает. Состояние тут складывается не только из условий, но и из
+       права на запись, а его в карте состояний нет — сняв запрет «заодно» с
+       родительской группой, клиент включил бы добавление строк там, где сервер
+       его запретил. Каскад от группы табличную часть достаёт, но на отрисовке:
+       $ro уже содержит условие предка (#1184). */}}
+  <div class="managed-tp" data-ob-tp="{{$el.Name}}">
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $tpMeta}}
   {{$tpVirtualCols := managedTPVirtualColumns $tpMeta.Fields $el.VirtualColumns}}
@@ -439,6 +450,7 @@ const tplManagedForm = `
   </div>
   {{end}}
   {{end}}
+  </div>
 {{else if eq (str $el.Kind) "ПолеДаты"}}
   {{/* Нативный выбор ДАТЫ без времени (issue #150). Браузер показывает дату
        по локали (в ru — дд.ММ.гггг). Значение круглим до YYYY-MM-DD, что
