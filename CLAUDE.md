@@ -123,7 +123,7 @@ onebase describe --project <dir>                # вся структура ко
     не в ту ветку, и это разные починки. Прогонять раз в неделю. Не гейт:
     «заявка забыта открытой» — не дефект кода, а повод посмотреть.
 - **Конвейер сопровождения — метки, а не договорённости.** Заявки и PR ведутся
-  полуавтоматически скилами `.claude/skills/` (`/triage-issues`, `/fix-approved`,
+  полуавтоматически скилами `.claude/skills/` (`/triage-issues`, `/plan-approved`, `/fix-approved`,
   `/review-queue`, `/merge-shepherd`, `/tail-issues`). Разделение простое:
   **починка — не решение, новая возможность — решение.**
   Очевидный дефект триаж помечает `ready-fix` и
@@ -132,6 +132,11 @@ onebase describe --project <dir>                # вся структура ко
   пронумерованными вариантами и **обязан назвать рекомендуемый**: тогда согласие
   стоит одной метки `approved` («делай рекомендованный»), а несогласие —
   `approved` + `decision:N`.
+  Если выбранный вариант требует сначала отдельный план, FIX не возвращает
+  заявку человеку по кругу: ставит `plan-needed`, а PLAN создаёт отдельный PR
+  только с `Plans/`. До его merge issue носит `plan-in-review`; MERGE снимает
+  эту метку и возвращает одобренную issue в FIX. Plan-PR проходит обычные
+  REVIEW и человеческий `ship`.
   TRIAGE фиксирует выбранный class/route в persistent
   `pp:triage-route-claim`, а не считает один комментарий завершением. UUID,
   30-минутная lease, event watermark, committed label-фаза и
@@ -173,20 +178,46 @@ onebase describe --project <dir>                # вся структура ко
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж разрешает `ship` на **PR**, ставит его только человек; PR
   без `ship` не вливается никогда; ограничение «не трогать» относится к MERGE,
-  тогда как REVIEW и FIX готовят PR до человеческого одобрения. `hold` и
+  тогда как REVIEW и FIX готовят PR до человеческого одобрения. Исключения для
+  REVIEW после одобрения — точный HEAD доказанного автоматического base-sync и
+  legacy base-sync до появления intent/done, который человек явно подтвердил
+  повторным `ship` уже после нового HEAD. Оба интеграционно перепроверяются с
+  сохранённым `ship`. `hold` и
   `needs-decision` — стопы даже при `ship`; перед мержем они проверяются в одном
   согласованном GraphQL snapshot с HEAD и timeline. Этот snapshot — точка
   невозврата: метка, поставленная уже после отправки merge PUT, не может отменить
   запрос в полёте. MERGE дополнительно требует claim-bound `pp:head-reviewed`
   ровно для текущего SHA со ссылками `review-comment=<id> claim=<id>
   epoch-sha256=<hash>` и снимает устаревший
-  `ship`, если после аудита был push или `pp:review-again`; последний переход
-  метки `ship` среди событий всех actors обязан быть trusted `labeled` и идти
-  после всех трёх unedited комментариев по GraphQL edge order. Числовые REST ids
+  `ship`, если после аудита был произвольный push или `pp:review-again`.
+  Автоматический merge с `main` переносит разрешение через неизменяемую пару
+  `pp:base-sync-intent`/`pp:base-sync-done`: новый commit обязан иметь parents
+  `[старый HEAD, base]`, REVIEW проверяет его приоритетно, а после зелёного
+  completion MERGE продолжает без второго человеческого `ship`. Intent
+  earliest-wins и восстанавливается после crash; edit/delete, разрыв `previous`,
+  снятие метки либо посторонний HEAD event отменяют carry. Последний переход
+  метки `ship` среди событий всех actors обязан быть trusted `labeled`: для
+  обычного пути он идёт после anchor текущего HEAD и может предшествовать
+  completion успешного REVIEW того же HEAD; для carry — после anchor исходного
+  HEAD и непрерывно связан со всей base-sync цепочкой, а для
+  legacy reauthorization — после anchor точного merge-коммита `[старый HEAD,
+  base]`. Числовые REST ids
   разных event types для порядка не сравниваются. Старый label после trusted unlabel не
   воскресает от чужого re-label. ID комментариев
   в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
   `databaseId`, и строкой сравниваются с REST id.
+  Base-sync работает single-flight только в интеграционной полосе: MERGE
+  обновляет один первый PR, REVIEW проверяет его интеграционную дельту, затем
+  MERGE обязан влить владельца до следующего base-sync. Обычные содержательные
+  ревью других HEAD в это время продолжаются и не считаются доказательством
+  совместимости с текущим `main`.
+  REVIEW обязан начинать с `go run ./tools/pipelinehealth -json` и считать
+  `review_candidates` исключительным allowlist запуска. При
+  `single_flight_barrier` следующий интеграционный PR запрещён, но stage
+  `review` остаётся исполняемым, когда владелец ждёт MERGE/recovery. Отказ
+  полного GraphQL gate интеграционного владельца не разрешает fallback к
+  обычной очереди в том же запуске; перед первой мутацией allowlist проверяется
+  повторно.
   REVIEW получает полный пагинированный список PR и считает каждый завершённый
   `review-comment=<id>` только один раз; override между заключением и committed-
   маркером делает пару невалидной. Транзакция `заключение → review-claim →
