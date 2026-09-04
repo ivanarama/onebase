@@ -43,7 +43,7 @@ const tplManagedForm = `
   <div class="managed-tabs" data-tabs="{{$el.Name}}">
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
       {{range $i, $page := $pages}}
-        <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}">
+        <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-ob-readonly-navigation="1">
           {{fieldTitleRU $page.TitleMap $page.Name}}
         </button>
       {{end}}
@@ -101,7 +101,7 @@ const tplManagedForm = `
           <button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{end}}
           {{if or (not $ro) (index $ctx.Values $fn)}}
-          <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          <button type="button" data-ob-ref-current="ref-{{$fn}}" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
       {{else if isEnum (str $f.Type)}}
@@ -189,7 +189,7 @@ const tplManagedForm = `
           </select>
           <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{if or (not $ro) (index $ctx.Values $fn)}}
-          <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          <button type="button" data-ob-ref-current="ref-{{$fn}}" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
       {{else if $attr}}
@@ -354,7 +354,7 @@ const tplManagedForm = `
                 {{end}}
               </select>
               <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
-              <button type="button" data-ob-ref-current="closest" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>
+              <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>
             </div>
           {{else if eq (str $f.Type) "number"}}
             <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>

@@ -69,6 +69,28 @@ func заявкаСУсловнойГруппой(t *testing.T, статичес
 	return ent
 }
 
+func заявкаСНавигациейВУсловнойГруппе(t *testing.T) *metadata.Entity {
+	t.Helper()
+	ent := заявкаСУсловнойГруппой(t, false)
+	ent.Fields = append(ent.Fields, metadata.Field{
+		Name: "Клиент", Type: metadata.FieldType("reference:" + ent.Name), RefEntity: ent.Name,
+	})
+	группа := ent.Forms[0].Elements[0]
+	группа.Children = []*metadata.FormElement{
+		группа.Children[0],
+		fieldEl("ПолеКлиента", "Объект.Клиент"),
+		{
+			Kind: metadata.FormElementPages, Name: "ВкладкиВГруппе",
+			Children: []*metadata.FormElement{
+				{Kind: metadata.FormElementPage, Name: "ОсновнаяСтраница", TitleMap: map[string]string{"ru": "Основное"}},
+				{Kind: metadata.FormElementPage, Name: "ДополнительнаяСтраница", TitleMap: map[string]string{"ru": "Дополнительно"}},
+			},
+		},
+		группа.Children[1],
+	}
+	return ent
+}
+
 // каскадДоИПосле прогоняет цепочку «отрисовка карточки → нажатие кнопки» и
 // возвращает разметку формы и ответ события — то есть оба ответа на вопрос
 // «редактируемо ли поле», которые обязаны совпадать.
@@ -76,8 +98,13 @@ func каскадДоИПосле(t *testing.T, ent *metadata.Entity, стади
 	t.Helper()
 	srv, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
 	id := uuid.New()
-	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{
-		"Улица": "Ленина 1", "СтадияОформления": стадия}, ent); err != nil {
+	values := map[string]any{"Улица": "Ленина 1", "СтадияОформления": стадия}
+	for _, field := range ent.Fields {
+		if field.Name == "Клиент" {
+			values[field.Name] = id.String()
+		}
+	}
+	if err := srv.store.Upsert(ctx, ent.Name, id, values, ent); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,6 +197,43 @@ func TestКаскадУсловногоЗапрета_КнопкаВГруппе
 	if кнопка := разморожено.button(t, "КнопкаВГруппе"); кнопка.Disabled {
 		t.Fatalf("applyElementStates не включил корневую кнопку обратно: %#v", кнопка)
 	}
+}
+
+// Кнопка перехода к выбранной ссылке и заголовки вкладок — навигация, а не
+// редактирование. Сервер оставляет их активными даже внутри readonly-группы;
+// обработка первого события обязана сохранить ту же классификацию.
+func TestКаскадУсловногоЗапрета_НавигацияОстаётсяДоступнойПослеСобытия(t *testing.T) {
+	ent := заявкаСНавигациейВУсловнойГруппе(t)
+	rendered, resp := каскадДоИПосле(t, ent, "Принята")
+
+	до := managedFormDOM(t, rendered)
+	var ссылки, вкладки int
+	for _, control := range до.Controls {
+		if control.RefCurrent {
+			ссылки++
+			if control.Disabled {
+				t.Fatalf("сервер отключил навигацию к выбранной ссылке: %#v", control)
+			}
+		}
+		if control.TabButton {
+			вкладки++
+			if control.Disabled {
+				t.Fatalf("сервер отключил заголовок вкладки: %#v", control)
+			}
+		}
+	}
+	if ссылки != 1 || вкладки != 2 {
+		t.Fatalf("ожидались одна кнопка ссылки и две вкладки, получено ссылки=%d вкладки=%d: %#v",
+			ссылки, вкладки, до.Controls)
+	}
+
+	после := применитьСостоянияВБраузере(t, до, resp.ElementStates)
+	for _, control := range после.Controls {
+		if (control.RefCurrent || control.TabButton) && control.Disabled {
+			t.Errorf("applyElementStates отключил навигационный контрол: %#v", control)
+		}
+	}
+	сверитьДоступность(t, до, после)
 }
 
 // Ключевое требование заявки: до и после первого события формы результат
@@ -317,16 +381,19 @@ func отрисоватьФормуСТЧ(t *testing.T, ent *metadata.Entity, fo
 // части». Больше про DOM applyElementStates ничего и не спрашивает: он ищет
 // элемент по якорю и отличает свой контрол от контрола вложенного элемента.
 type managedControlNode struct {
-	Tag              string   `json:"tagName"`
-	Name             string   `json:"name"`
-	Type             string   `json:"type"`
-	Value            string   `json:"value"`
-	Checked          bool     `json:"checked"`
-	Disabled         bool     `json:"disabled"`
-	ReadOnly         bool     `json:"readOnly"`
-	CheckboxPresence bool     `json:"checkboxPresence"`
-	Anchors          []string `json:"anchors"`
-	InTablePart      bool     `json:"inTablePart"`
+	Tag                string   `json:"tagName"`
+	Name               string   `json:"name"`
+	Type               string   `json:"type"`
+	Value              string   `json:"value"`
+	Checked            bool     `json:"checked"`
+	Disabled           bool     `json:"disabled"`
+	ReadOnly           bool     `json:"readOnly"`
+	CheckboxPresence   bool     `json:"checkboxPresence"`
+	ReadOnlyNavigation bool     `json:"readOnlyNavigation"`
+	RefCurrent         bool     `json:"refCurrent"`
+	TabButton          bool     `json:"tabButton"`
+	Anchors            []string `json:"anchors"`
+	InTablePart        bool     `json:"inTablePart"`
 }
 
 type managedFormDOMModel struct {
@@ -387,10 +454,14 @@ func managedFormDOM(t *testing.T, rendered string) managedFormDOMModel {
 				_, disabled := managedHTMLAttr(n, "disabled")
 				_, readOnly := managedHTMLAttr(n, "readonly")
 				presence, _ := managedHTMLAttr(n, "data-ob-checkbox-presence")
+				_, readOnlyNavigation := managedHTMLAttr(n, "data-ob-readonly-navigation")
+				_, refCurrent := managedHTMLAttr(n, "data-ob-ref-current")
+				_, tabButton := managedHTMLAttr(n, "data-tab-idx")
 				model.Controls = append(model.Controls, managedControlNode{
 					Tag: strings.ToUpper(n.Data), Name: name, Type: typeName, Value: value,
 					Checked: checked, Disabled: disabled, ReadOnly: readOnly,
-					CheckboxPresence: presence == "1", Anchors: anchors, InTablePart: inTP,
+					CheckboxPresence: presence == "1", ReadOnlyNavigation: readOnlyNavigation,
+					RefCurrent: refCurrent, TabButton: tabButton, Anchors: anchors, InTablePart: inTP,
 				})
 			}
 		}
@@ -477,7 +548,12 @@ const controls = payload.dom.controls.map((c) => ({
   checked: c.checked,
   disabled: c.disabled,
   readOnly: c.readOnly,
-  dataset: c.checkboxPresence ? {obCheckboxPresence: '1'} : {},
+  dataset: Object.assign(
+    c.checkboxPresence ? {obCheckboxPresence: '1'} : {},
+    c.readOnlyNavigation ? {obReadonlyNavigation: '1'} : {}
+  ),
+  _refCurrent: c.refCurrent,
+  _tabButton: c.tabButton,
   _anchors: c.anchors || [],
   _inTablePart: c.inTablePart,
   // Ровно два селектора, которые спрашивает applyElementStates.
@@ -526,6 +602,9 @@ process.stdout.write(JSON.stringify({
     disabled: c.disabled,
     readOnly: c.readOnly,
     checkboxPresence: c.dataset.obCheckboxPresence === '1',
+    readOnlyNavigation: c.dataset.obReadonlyNavigation === '1',
+    refCurrent: c._refCurrent,
+    tabButton: c._tabButton,
     anchors: c._anchors,
     inTablePart: c._inTablePart,
   })),
