@@ -727,6 +727,37 @@ function obListConfig() {
   return obReadJSONScript('ob-list-config', { labels: {} }) || { labels: {} };
 }
 
+// Ссылки строк списка собираются из шаблонов, объявленных один раз на контейнер
+// (data-ob-row-*-tpl), а не повторяются в каждой строке: на списке из 100 строк
+// это экономит около 1,5 КБ на строку. Строки, приходящие из JSON при подгрузке,
+// по-прежнему могут нести готовые ссылки — они имеют приоритет.
+var OB_ROW_OWN = {
+  open: 'openUrl', folder: 'folderUrl', mark: 'markUrl', unmark: 'unmarkUrl',
+  del: 'delUrl', unpost: 'unpostUrl', activityShow: 'activityShowUrl',
+  activityHide: 'activityHideUrl', detail: 'obDetailUrl', copy: 'copyUrl'
+};
+var OB_ROW_TPL = {
+  open: 'obRowOpenTpl', folder: 'obRowFolderTpl', mark: 'obRowMarkTpl',
+  unmark: 'obRowUnmarkTpl', del: 'obRowDelTpl', unpost: 'obRowUnpostTpl',
+  activityShow: 'obRowActivityShowTpl', activityHide: 'obRowActivityHideTpl',
+  detail: 'obRowDetailTpl', copy: 'obRowCopyTpl'
+};
+function obRowUrl(row, kind) {
+  if (!row) return '';
+  var own = row.dataset[OB_ROW_OWN[kind]];
+  if (own) return own;
+  var box = row.closest('[data-ob-row-base]');
+  if (!box) return '';
+  var tpl = box.dataset[OB_ROW_TPL[kind]] || '';
+  if (!tpl) return '';
+  return tpl.split('__ID__').join(encodeURIComponent(row.dataset.obId || ''));
+}
+function obRowActivityEnabled(row) {
+  if (!row) return false;
+  if (row.dataset.activityEnabled) return obRowActivityEnabled(row);
+  var box = row.closest('[data-ob-row-base]');
+  return !!box && box.dataset.obRowActivityEnabled === '1';
+}
 function obListLabel(key, fallback) {
   var labels = obListConfig().labels || {};
   return labels[key] || fallback;
@@ -867,8 +898,8 @@ function listRowDblClick(e, tr) {
 
 function listActivateRow(tr) {
   if (!tr) return;
-  if (tr.dataset.isFolder === '1') window.location.href = tr.dataset.folderUrl;
-  else listOpen(tr.dataset.openUrl);
+  if (tr.dataset.isFolder === '1') window.location.href = obRowUrl(tr, 'folder');
+  else listOpen(obRowUrl(tr, 'open'));
 }
 
 // Встроенные горячие клавиши — привычные по 1С. Живут в ui.js, потому что нужны
@@ -992,7 +1023,7 @@ function obListCurrentRow() {
 function obListCanMarkDelete(row) {
   var cfg = obListConfig();
   return !!(row && row.dataset && cfg.canDelete === true &&
-    row.dataset.predefined !== '1' && String(row.dataset.markUrl || '').trim());
+    row.dataset.predefined !== '1' && String(obRowUrl(row, 'mark') || '').trim());
 }
 
 function obHandleListDeleteShortcut(e) {
@@ -1004,7 +1035,7 @@ function obHandleListDeleteShortcut(e) {
   if (!obListCanMarkDelete(sel)) return;
   e.preventDefault();
   if (listSel() !== sel) listSetSel(sel);
-  listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+  listSubmit(obRowUrl(sel, 'mark'), obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
 }
 
 function obInitListFocusSelection() {
@@ -1368,17 +1399,17 @@ function obInitKeyboardShortcuts() {
     if ((e.key === 'Enter' || e.key === 'F2') && sel) {
       e.preventDefault();
       if (listSel() !== sel) listSetSel(sel);
-      if (e.key === 'F2') listOpen(sel.dataset.openUrl);
+      if (e.key === 'F2') listOpen(obRowUrl(sel, 'open'));
       else listActivateRow(sel);
       return;
     }
     // F9 в списке — «Создать копированием», как в 1С. В форме та же клавиша
     // копирует строку ТЧ, но туда обработчик не доходит: obHandleDOMTableShortcut
     // выше забирает F9 себе, когда активна таблица ТЧ.
-    if (e.key === 'F9' && sel && sel.dataset.copyUrl) {
+    if (e.key === 'F9' && sel && obRowUrl(sel, 'copy')) {
       e.preventDefault();
       if (listSel() !== sel) listSetSel(sel);
-      listOpen(sel.dataset.copyUrl);
+      listOpen(obRowUrl(sel, 'copy'));
     }
   });
   document.addEventListener('keydown', obHandleListDeleteShortcut);
@@ -1544,38 +1575,38 @@ function listMenuItems(tr) {
   var isFolder = tr.dataset.isFolder === '1';
   var items = [];
   if (isFolder) {
-    items.push({ label: labels.enterGroup || '▶ Войти в группу', fn: function () { window.location.href = tr.dataset.folderUrl; } });
-    items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(tr.dataset.openUrl); } });
+    items.push({ label: labels.enterGroup || '▶ Войти в группу', fn: function () { window.location.href = obRowUrl(tr, 'folder'); } });
+    items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(obRowUrl(tr, 'open')); } });
   } else {
-    items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(tr.dataset.openUrl); } });
+    items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(obRowUrl(tr, 'open')); } });
   }
   // «Скопировать» (F9): открывает форму создания, заполненную значениями строки.
   // Пустой data-copy-url = нет права записи, пункт не показываем.
-  if (tr.dataset.copyUrl) {
-    items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(tr.dataset.copyUrl); } });
+  if (obRowUrl(tr, 'copy')) {
+    items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(obRowUrl(tr, 'copy')); } });
   }
-  if (cfg.canWrite && tr.dataset.activityEnabled === '1') {
+  if (cfg.canWrite && obRowActivityEnabled(tr)) {
     if (tr.dataset.activityInactive === '1') {
-      items.push({ label: labels.activityShow || 'Вернуть в выбор', fn: function () { listSubmit(tr.dataset.activityShowUrl, labels.activityShowConfirm || 'Вернуть в выбор?'); } });
+      items.push({ label: labels.activityShow || 'Вернуть в выбор', fn: function () { listSubmit(obRowUrl(tr, 'activityShow'), labels.activityShowConfirm || 'Вернуть в выбор?'); } });
     } else {
-      items.push({ label: labels.activityHide || 'Скрыть из выбора', fn: function () { listSubmit(tr.dataset.activityHideUrl, labels.activityHideConfirm || 'Скрыть из выбора?'); } });
+      items.push({ label: labels.activityHide || 'Скрыть из выбора', fn: function () { listSubmit(obRowUrl(tr, 'activityHide'), labels.activityHideConfirm || 'Скрыть из выбора?'); } });
     }
   }
   if (cfg.canDelete) {
     if (!isPredefined) {
-      items.push({ label: labels.markDelete || 'Пометить на удаление', danger: true, fn: function () { listSubmit(tr.dataset.markUrl, labels.markDeleteConfirm || 'Пометить на удаление?'); } });
+      items.push({ label: labels.markDelete || 'Пометить на удаление', danger: true, fn: function () { listSubmit(obRowUrl(tr, 'mark'), labels.markDeleteConfirm || 'Пометить на удаление?'); } });
     } else {
       items.push({ label: labels.predefinedNoDelete || 'Предопределённый — нельзя удалить', disabled: true });
     }
   }
   if (cfg.canUnpost && tr.dataset.posted === '1') {
-    items.push({ label: labels.unpost || 'Отменить проведение', fn: function () { listSubmit(tr.dataset.unpostUrl, labels.unpostConfirm || 'Отменить проведение?'); } });
+    items.push({ label: labels.unpost || 'Отменить проведение', fn: function () { listSubmit(obRowUrl(tr, 'unpost'), labels.unpostConfirm || 'Отменить проведение?'); } });
   }
   if (cfg.canDelete && tr.dataset.marked === '1' && !isPredefined) {
-    items.push({ label: labels.unmarkDelete || 'Снять пометку на удаление', fn: function () { listSubmit(tr.dataset.unmarkUrl, labels.unmarkDeleteConfirm || 'Снять пометку на удаление?'); } });
+    items.push({ label: labels.unmarkDelete || 'Снять пометку на удаление', fn: function () { listSubmit(obRowUrl(tr, 'unmark'), labels.unmarkDeleteConfirm || 'Снять пометку на удаление?'); } });
   }
   if (cfg.isAdmin && !isPredefined) {
-    items.push({ label: labels.deleteForever || 'Удалить навсегда', danger: true, fn: function () { listSubmit(tr.dataset.delUrl, labels.deleteForeverConfirm || 'Удалить запись навсегда?'); } });
+    items.push({ label: labels.deleteForever || 'Удалить навсегда', danger: true, fn: function () { listSubmit(obRowUrl(tr, 'del'), labels.deleteForeverConfirm || 'Удалить запись навсегда?'); } });
   }
   return items;
 }

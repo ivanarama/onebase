@@ -1777,7 +1777,19 @@ const tplList = `
 {{if .TreeRows}}
 {{$treeCols := listColumns .Entity}}
 <div style="overflow-x:auto">
-<table><thead><tr>
+<table
+  data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
+  data-ob-row-open-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-mark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=1"
+  data-ob-row-unmark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=0"
+  data-ob-row-del-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete"
+  data-ob-row-unpost-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/unpost"
+  data-ob-row-activity-show-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=1"
+  data-ob-row-activity-hide-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=0"
+  data-ob-row-detail-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/detail-panel"
+  data-ob-row-copy-tpl="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
+  data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+  data-ob-row-folder-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody>
@@ -1787,22 +1799,13 @@ const tplList = `
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
   data-tree-parent="{{index $row "parent_id"}}"
+  data-ob-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
-  data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
-  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-posted="{{if index $row "posted"}}1{{end}}"
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
-  data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
-  data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
-  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
-  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
-  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
+>
   {{range $i, $col := $treeCols}}
     {{if treeColumn $treeCols $i}}
       <td>
@@ -1837,26 +1840,29 @@ const tplList = `
 {{/* ===== TILES VIEW (плитка) ===== */}}
 {{if .Rows}}
 {{$tile := tileView .Entity}}
-<div class="tile-grid" role="listbox">
+<div class="tile-grid" role="listbox"
+  data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
+  data-ob-row-open-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-mark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=1"
+  data-ob-row-unmark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=0"
+  data-ob-row-del-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete"
+  data-ob-row-unpost-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/unpost"
+  data-ob-row-activity-show-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=1"
+  data-ob-row-activity-hide-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=0"
+  data-ob-row-detail-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/detail-panel"
+  data-ob-row-copy-tpl="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
+  data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+  data-ob-row-folder-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" "__ID__"}}">
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
-  data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
-  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
-  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-posted="{{if index $row "posted"}}1{{end}}"
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
-  data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
-  data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
-  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
-  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
-  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
+>
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}
@@ -1895,26 +1901,29 @@ const tplList = `
   </th>
   {{end}}
   <th style="width:90px"></th>
-</tr></thead><tbody id="list-body">
+</tr></thead><tbody id="list-body"
+  data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
+  data-ob-row-open-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-mark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=1"
+  data-ob-row-unmark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=0"
+  data-ob-row-del-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete"
+  data-ob-row-unpost-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/unpost"
+  data-ob-row-activity-show-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=1"
+  data-ob-row-activity-hide-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=0"
+  data-ob-row-detail-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/detail-panel"
+  data-ob-row-copy-tpl="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
+  data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+  data-ob-row-folder-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" "__ID__"}}">
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
-  data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
-  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
-  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-posted="{{if index $row "posted"}}1{{end}}"
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
-  data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
-  data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
-  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
-  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
-  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
+>
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
