@@ -316,7 +316,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// Сброс кэша ответов HTTP-сервисов (план 126) — зовётся из ПриЗаписи
 	// контентных справочников, иначе правка не видна до истечения TTL.
 	s.registerServiceCacheBuiltins(vars)
-	queryFactory := interpreter.NewQueryFactoryGuarded(txState.Ctx(), s.store, s.reg, s.compileDSLQueryWithRowAccess, s.dslQueryGuard)
+	queryFactory := interpreter.NewQueryFactoryGuardedSource(txState, s.store, s.reg, s.compileDSLQueryWithRowAccess, s.dslQueryGuard)
 	vars["__factory_Запрос"] = queryFactory
 	vars["__factory_Query"] = queryFactory
 

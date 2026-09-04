@@ -17,18 +17,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/charmap"
 )
 
 var (
-	completionLine = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
-	claimLine      = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
-	reviewAgain    = regexp.MustCompile(`(?m)^pp:review-again$`)
-	displayRepair  = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
-	baseSyncIntent = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
-	baseSyncDone   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	completionLine    = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
+	claimLine         = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
+	reviewAgain       = regexp.MustCompile(`(?m)^pp:review-again$`)
+	displayRepair     = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
+	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
+	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
+	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
+	triageAuthorReply = regexp.MustCompile(`(?m)^<!-- pp:triage-author-reply claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
+	triageRouteDone   = regexp.MustCompile(`(?m)^<!-- pp:triage-route-done claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
 )
 
 type apiUser struct {
@@ -48,12 +53,15 @@ type apiComment struct {
 }
 
 type apiPull struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	HTMLURL string `json:"html_url"`
-	State   string `json:"state"`
-	Draft   bool   `json:"draft"`
-	Head    struct {
+	Number    int    `json:"number"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	HTMLURL   string `json:"html_url"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	State     string `json:"state"`
+	Draft     bool   `json:"draft"`
+	Head      struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
@@ -67,19 +75,25 @@ type apiIssue struct {
 	Number       int          `json:"number"`
 	Title        string       `json:"title"`
 	HTMLURL      string       `json:"html_url"`
+	CreatedAt    string       `json:"created_at"`
+	UpdatedAt    string       `json:"updated_at"`
 	State        string       `json:"state"`
 	PullRequest  any          `json:"pull_request"`
 	CommentCount int          `json:"comments"`
+	Labels       []apiLabel   `json:"labels"`
 	Thread       []apiComment `json:"thread,omitempty"`
 }
 
 type candidate struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	URL    string `json:"url"`
-	Head   string `json:"head"`
-	Depth  int    `json:"review_depth"`
-	Stage  string `json:"stage"`
+	Number         int    `json:"number"`
+	Title          string `json:"title"`
+	URL            string `json:"url"`
+	Head           string `json:"head"`
+	Depth          int    `json:"review_depth"`
+	Stage          string `json:"stage"`
+	Priority       int    `json:"priority"`
+	PrioritySource string `json:"priority_source"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 type finding struct {
@@ -91,16 +105,23 @@ type finding struct {
 }
 
 type report struct {
-	State            string      `json:"state"`
-	Summary          string      `json:"summary"`
-	Scope            string      `json:"scope"`
-	Scheduler        string      `json:"scheduler"`
-	Checked          int         `json:"checked"`
-	IssuesChecked    int         `json:"issues_checked"`
-	ReviewCandidates []candidate `json:"review_candidates"`
-	FixCandidates    []candidate `json:"fix_candidates"`
-	HumanWaiting     []candidate `json:"human_waiting"`
-	Findings         []finding   `json:"findings"`
+	State                   string      `json:"state"`
+	Summary                 string      `json:"summary"`
+	Scope                   string      `json:"scope"`
+	Scheduler               string      `json:"scheduler"`
+	Checked                 int         `json:"checked"`
+	IssuesChecked           int         `json:"issues_checked"`
+	ReviewCandidates        []candidate `json:"review_candidates"`
+	ReviewBacklog           []candidate `json:"review_backlog"`
+	ContentReviewCandidates []candidate `json:"content_review_candidates"`
+	ReviewedWaitingShip     []candidate `json:"reviewed_waiting_ship"`
+	IntegrationOwner        *candidate  `json:"integration_owner,omitempty"`
+	MergeCandidates         []candidate `json:"merge_candidates"`
+	MergeExecutable         []candidate `json:"merge_executable"`
+	PlanCandidates          []candidate `json:"plan_candidates"`
+	FixCandidates           []candidate `json:"fix_candidates"`
+	HumanWaiting            []candidate `json:"human_waiting"`
+	Findings                []finding   `json:"findings"`
 }
 
 func main() {
@@ -121,7 +142,7 @@ func main() {
 		fail(err)
 	}
 	result := analyze(prs, *owner)
-	analyzeIssues(&result, issues, *owner)
+	analyzeIssues(&result, issues, prs, *owner)
 	checkContract(&result, *contract)
 	result.finish()
 
@@ -304,10 +325,12 @@ func ghJSONLines(gh string, destination any, args ...string) error {
 func analyze(prs []apiPull, owner string) report {
 	result := report{
 		State: "green", Scope: "fast REST snapshot; mutation gates remain GraphQL",
-		Scheduler: "review-depth-then-number", Checked: len(prs),
-		ReviewCandidates: []candidate{}, FixCandidates: []candidate{},
+		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
+		ReviewCandidates: []candidate{}, ContentReviewCandidates: []candidate{},
+		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
 	}
+	now := time.Now().UTC()
 	for _, pr := range prs {
 		if pr.State != "open" || pr.Base.Ref != "main" {
 			continue
@@ -320,9 +343,10 @@ func analyze(prs []apiPull, owner string) report {
 		})
 		labels := labelSet(pr.Labels)
 		depth := reviewDepth(pr.Comments, owner)
-		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review"}
+		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
+		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		carryDone, carryIntentOpen, baseAdvanced := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
+		carryDone, carryIntentOpen, baseAdvanced, protocolHistory := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
@@ -355,16 +379,19 @@ func analyze(prs []apiPull, owner string) report {
 			case carryIntentOpen:
 				item.Stage = "integration-merge-recovery"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_recovery", pr.Number,
 					"есть pp:base-sync-intent без done; MERGE должен восстановить транзакцию")
 			case carryDone && currentCompletions > 0:
 				item.Stage = "integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
 			case currentCompletions > 0 && depth > currentCompletions:
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
+				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "legacy_ship_waiting_merge", pr.Number,
 					"legacy-интеграционное REVIEW готово; следующий ход принадлежит MERGE")
 			case carryDone && currentCompletions == 0:
@@ -379,6 +406,15 @@ func analyze(prs []apiPull, owner string) report {
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "legacy_ship_waiting_review_validation", pr.Number,
 					"повторный ship после старого base-sync: REVIEW должен проверить GraphQL lineage")
+			case currentCompletions == 0 && depth == 0 && !protocolHistory:
+				// ship is sticky intent for this exact HEAD, not proof that review has
+				// already happened. Keep a first-time PR executable in the content lane.
+				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+				result.add("yellow", "ship_waiting_initial_review", pr.Number,
+					"ship сохранён как разрешение слить этот HEAD после успешного REVIEW")
+			case currentCompletions > 0:
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
 			}
 			continue
 		}
@@ -390,23 +426,35 @@ func analyze(prs []apiPull, owner string) report {
 			result.FixCandidates = append(result.FixCandidates, item)
 		case labels["reviewed"] && currentCompletions > 0 && !overrideOpen:
 			// Valid-looking current review is waiting for the human ship decision.
+			result.ReviewedWaitingShip = append(result.ReviewedWaitingShip, item)
 		case currentCompletions > 0 && !overrideOpen:
 			result.add("yellow", "review_without_route", pr.Number,
 				"committed-review текущего HEAD есть, но маршрутная метка отсутствует")
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		default:
-			result.ReviewCandidates = append(result.ReviewCandidates, item)
+			result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 		}
 	}
+	sortCandidates(result.ContentReviewCandidates)
 	sortCandidates(result.ReviewCandidates)
 	applySingleFlight(&result)
+	setMergeExecutable(&result)
+	result.ReviewBacklog = append(result.ReviewBacklog, result.ContentReviewCandidates...)
+	if result.IntegrationOwner != nil && candidatePriority(result.IntegrationOwner.Stage) == 1 {
+		result.ReviewBacklog = append(result.ReviewBacklog, *result.IntegrationOwner)
+	}
+	sortCandidates(result.ReviewBacklog)
+	sortCandidates(result.ReviewedWaitingShip)
+	sortCandidates(result.MergeCandidates)
+	sortCandidates(result.MergeExecutable)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
 	return result
 }
 
-func analyzeIssues(result *report, issues []apiIssue, owner string) {
+func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner string) {
 	result.IssuesChecked = len(issues)
+	now := time.Now().UTC()
 	for _, issue := range issues {
 		if issue.State != "open" {
 			continue
@@ -433,7 +481,116 @@ func analyzeIssues(result *report, issues []apiIssue, owner string) {
 					fmt.Sprintf("TRIAGE comment %d повреждён кодировкой и не имеет pp:display-repair", comment.ID))
 			}
 		}
+
+		labels := labelSet(issue.Labels)
+		priority, prioritySource := queuePriority(labels, issue.CreatedAt, now)
+		item := candidate{
+			Number: issue.Number, Title: issue.Title, URL: issue.HTMLURL,
+			Stage: "fix-issue", Priority: priority, PrioritySource: prioritySource,
+			UpdatedAt: issue.UpdatedAt,
+		}
+		if labels["hold"] || labels["manual"] {
+			continue
+		}
+		switch {
+		case labels["plan-needed"] && labels["approved"]:
+			item.Stage = "plan"
+			result.PlanCandidates = append(result.PlanCandidates, item)
+		case labels["plan-needed"]:
+			item.Stage = "plan-needs-approval"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+		case labels["plan-in-review"]:
+			// The plan PR is visible in REVIEW; product FIX must wait for its merge.
+		case labels["approved"] || labels["ready-fix"] && !labels["needs-decision"]:
+			if labels["in-work"] || issueReferencedByOpenPull(issue.Number, prs) {
+				continue
+			}
+			ready, reason := triageHandoffReady(issue, owner)
+			if !ready {
+				result.addIssue("yellow", "fix_issue_not_executable", issue.Number, reason)
+				continue
+			}
+			result.FixCandidates = append(result.FixCandidates, item)
+		case labels["needs-decision"]:
+			item.Stage = "human-decision"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+		}
 	}
+	sortCandidates(result.PlanCandidates)
+	sortCandidates(result.FixCandidates)
+	sortCandidates(result.HumanWaiting)
+}
+
+func issueReferencedByOpenPull(number int, prs []apiPull) bool {
+	pattern := regexp.MustCompile(fmt.Sprintf(`(^|[^0-9])#%d([^0-9]|$)`, number))
+	for _, pr := range prs {
+		if pr.State == "open" && pattern.MatchString(pr.Title+"\n"+pr.Body) {
+			return true
+		}
+	}
+	return false
+}
+
+func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
+	var root *apiComment
+	for index := range issue.Thread {
+		comment := &issue.Thread[index]
+		if !trustedUnedited(*comment, owner) || !hasExactLine(comment.Body, "<!-- pp:triage -->") {
+			continue
+		}
+		if root == nil || comment.CreatedAt < root.CreatedAt ||
+			(comment.CreatedAt == root.CreatedAt && comment.ID < root.ID) {
+			root = comment
+		}
+	}
+	if root == nil {
+		return false, "eligible FIX issue has no canonical trusted triage"
+	}
+	if !strings.Contains(root.Body, "pp:triage-route-claim") {
+		return true, ""
+	}
+	claims := triageRouteClaim.FindAllStringSubmatch(root.Body, -1)
+	if len(claims) != 1 {
+		return false, "canonical triage has a malformed route claim"
+	}
+	fingerprint := claims[0][1]
+	claimID := strconv.FormatInt(root.ID, 10)
+	labelsCommitted, replyCommitted, done := false, false, false
+	replyRequired := hasExactLine(root.Body, "reply=required")
+	for _, comment := range issue.Thread {
+		if !trustedUnedited(comment, owner) || comment.CreatedAt < root.CreatedAt ||
+			(comment.CreatedAt == root.CreatedAt && comment.ID <= root.ID) {
+			continue
+		}
+		for _, match := range triageRouteLabels.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID && match[2] == fingerprint {
+				labelsCommitted = true
+			}
+		}
+		for _, match := range triageAuthorReply.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID && match[2] == fingerprint {
+				replyCommitted = true
+			}
+		}
+		for _, match := range triageRouteDone.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID && match[2] == fingerprint && labelsCommitted && (!replyRequired || replyCommitted) {
+				done = true
+			}
+		}
+	}
+	if !done {
+		return false, "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"
+	}
+	return true, ""
+}
+
+func hasExactLine(body, line string) bool {
+	for _, value := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		if value == line {
+			return true
+		}
+	}
+	return false
 }
 
 func triageVisibleText(body string) (string, bool) {
@@ -472,13 +629,19 @@ func looksLikeUTF8DecodedAsWindows1251(text string) bool {
 }
 
 func checkContract(result *report, path string) {
-	data, err := os.ReadFile(path)
+	data, err := readContract(path)
 	if err != nil {
 		result.add("red", "contract_unreadable", 0, fmt.Sprintf("не удалось прочитать активный REVIEW contract: %v", err))
 		return
 	}
 	text := string(data)
-	for _, required := range []string{"(review-depth ASC, number ASC)", "Не сортируй очередь только по номеру PR"} {
+	for _, required := range []string{
+		"(priority ASC, review-depth ASC, number ASC)",
+		"Не сортируй очередь только по номеру PR",
+		"single_flight_barrier` защищает только интеграционную полосу",
+		"Интеграционное REVIEW не повторяет содержательный аудит",
+		"Для обычного аудита он обязан входить в `content_review_candidates`",
+	} {
 		if !strings.Contains(text, required) {
 			result.add("red", "unfair_review_contract", 0,
 				"активный REVIEW contract не гарантирует breadth-first порядок")
@@ -486,7 +649,7 @@ func checkContract(result *report, path string) {
 		}
 	}
 	skillsRoot := filepath.Dir(filepath.Dir(path))
-	mergeData, err := os.ReadFile(filepath.Join(skillsRoot, "merge-shepherd", "SKILL.md"))
+	mergeData, err := readContract(filepath.Join(skillsRoot, "merge-shepherd", "SKILL.md"))
 	if err != nil || !strings.Contains(text, "pp:base-sync-done") ||
 		!strings.Contains(text, "single-flight-барьер") ||
 		!strings.Contains(string(mergeData), "pp:base-sync-intent") ||
@@ -496,8 +659,8 @@ func checkContract(result *report, path string) {
 			"активные REVIEW/MERGE contracts не гарантируют перенос ship и single-flight через доказанный base-sync")
 		return
 	}
-	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
-		data, err := os.ReadFile(filepath.Join(skillsRoot, name, "SKILL.md"))
+	for _, name := range []string{"triage-issues", "plan-approved", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+		data, err := readContract(filepath.Join(skillsRoot, name, "SKILL.md"))
 		if err != nil {
 			result.add("red", "utf8_contract_unreadable", 0,
 				fmt.Sprintf("не удалось прочитать %s contract: %v", name, err))
@@ -511,6 +674,22 @@ func checkContract(result *report, path string) {
 			}
 		}
 	}
+}
+
+func readContract(path string) ([]byte, error) {
+	entry, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	legacyPath := filepath.Join(filepath.Dir(path), "references", "legacy-protocol.md")
+	legacy, legacyErr := os.ReadFile(legacyPath)
+	if legacyErr == nil {
+		return append(append(entry, '\n'), legacy...), nil
+	}
+	if !os.IsNotExist(legacyErr) {
+		return nil, legacyErr
+	}
+	return entry, nil
 }
 
 func (result *report) finish() {
@@ -540,9 +719,14 @@ func (result *report) finish() {
 		}
 		next = strings.Join(parts, ", ")
 	}
+	owner := "нет"
+	if result.IntegrationOwner != nil {
+		owner = fmt.Sprintf("#%d(%s)", result.IntegrationOwner.Number, result.IntegrationOwner.Stage)
+	}
 	result.Summary = fmt.Sprintf(
-		"PR: %d; issues: %d; REVIEW: %d (следующие %s); FIX: %d; человек: %d; сигналов: %d",
-		result.Checked, result.IssuesChecked, len(result.ReviewCandidates), next, len(result.FixCandidates),
+		"PR: %d; issues: %d; REVIEW исполняемо: %d (следующие %s); всего ждут REVIEW: %d; содержательное: %d; интеграционный владелец: %s; ждут ship: %d; MERGE исполняемо: %d; всего MERGE: %d; PLAN: %d; FIX: %d; человек: %d; сигналов: %d",
+		result.Checked, result.IssuesChecked, len(result.ReviewCandidates), next,
+		len(result.ReviewBacklog), len(result.ContentReviewCandidates), owner, len(result.ReviewedWaitingShip), len(result.MergeExecutable), len(result.MergeCandidates), len(result.PlanCandidates), len(result.FixCandidates),
 		len(result.HumanWaiting), len(result.Findings))
 }
 
@@ -623,7 +807,7 @@ type baseSyncIntentShape struct {
 // baseSyncRESTState is deliberately only an operational hint. The mutation
 // contracts still prove comment nodes, timeline edges and commit parents with
 // two stable GraphQL snapshots before changing GitHub state.
-func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, intentOpen, baseAdvanced bool) {
+func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, intentOpen, baseAdvanced, protocolHistory bool) {
 	intents := map[int64]baseSyncIntentShape{}
 	doneIntents := map[int64]bool{}
 	for _, comment := range comments {
@@ -631,9 +815,11 @@ func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, 
 			continue
 		}
 		if match := baseSyncIntent.FindStringSubmatch(comment.Body); match != nil {
+			protocolHistory = true
 			intents[comment.ID] = baseSyncIntentShape{from: match[1], base: match[2], previous: match[7], shipEvent: match[6]}
 		}
 		if match := baseSyncDone.FindStringSubmatch(comment.Body); match != nil {
+			protocolHistory = true
 			intentID, err := strconv.ParseInt(match[1], 10, 64)
 			intent, ok := intents[intentID]
 			if err != nil || !ok || intentID >= comment.ID || intent.from != match[2] ||
@@ -653,7 +839,7 @@ func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, 
 			break
 		}
 	}
-	return doneCurrent, intentOpen, baseAdvanced
+	return doneCurrent, intentOpen, baseAdvanced, protocolHistory
 }
 
 func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
@@ -690,11 +876,57 @@ func sortCandidates(items []candidate) {
 		if candidatePriority(items[i].Stage) <= 1 {
 			return items[i].Number < items[j].Number
 		}
+		if items[i].Priority != items[j].Priority {
+			return items[i].Priority < items[j].Priority
+		}
 		if items[i].Depth == items[j].Depth {
 			return items[i].Number < items[j].Number
 		}
 		return items[i].Depth < items[j].Depth
 	})
+}
+
+func queuePriority(labels map[string]bool, createdAt string, now time.Time) (int, string) {
+	base, source := 2, "auto:default"
+	for priority := 0; priority <= 3; priority++ {
+		if labels[fmt.Sprintf("queue:p%d", priority)] {
+			base, source = priority, fmt.Sprintf("manual:queue:p%d", priority)
+			goto aging
+		}
+	}
+	for priority := 0; priority <= 3; priority++ {
+		if labels[fmt.Sprintf("queue:auto:p%d", priority)] {
+			base, source = priority, fmt.Sprintf("auto:queue:auto:p%d", priority)
+			goto aging
+		}
+	}
+	switch {
+	case labels["security"] || labels["severity:critical"] || labels["blocker"] || labels["data-loss"]:
+		base, source = 0, "auto:critical-label"
+	case labels["bug"]:
+		base, source = 1, "auto:bug"
+	case labels["enhancement"] || labels["documentation"]:
+		base, source = 2, "auto:planned-change"
+	case labels["question"]:
+		base, source = 3, "auto:question"
+	}
+
+aging:
+	if created, err := time.Parse(time.RFC3339, createdAt); err == nil && now.After(created) {
+		boost := int(now.Sub(created) / (7 * 24 * time.Hour))
+		maxBoost := base - 1
+		if maxBoost < 0 {
+			maxBoost = 0
+		}
+		if boost > maxBoost {
+			boost = maxBoost
+		}
+		if boost > 0 {
+			source += fmt.Sprintf("+aging:%d", boost)
+			base -= boost
+		}
+	}
+	return base, source
 }
 
 func candidatePriority(stage string) int {
@@ -709,20 +941,38 @@ func candidatePriority(stage string) int {
 }
 
 func applySingleFlight(result *report) {
-	if len(result.ReviewCandidates) == 0 || candidatePriority(result.ReviewCandidates[0].Stage) > 1 {
+	if len(result.ReviewCandidates) == 0 {
+		result.ReviewCandidates = append([]candidate{}, result.ContentReviewCandidates...)
 		return
 	}
 	owner := result.ReviewCandidates[0]
-	deferred := len(result.ReviewCandidates) - 1
+	result.IntegrationOwner = &owner
+	deferredIntegration := len(result.ReviewCandidates) - 1
 	if candidatePriority(owner.Stage) == 0 {
-		result.ReviewCandidates = []candidate{}
+		result.ReviewCandidates = append([]candidate{}, result.ContentReviewCandidates...)
 		result.add("yellow", "single_flight_barrier", owner.Number,
-			fmt.Sprintf("владелец base-sync барьера ждёт MERGE; REVIEW не запускается, отложено кандидатов: %d", deferred))
+			fmt.Sprintf("владелец интеграционной полосы ждёт MERGE; содержательное REVIEW остаётся открытым (%d кандидатов), следующих интеграционных отложено: %d", len(result.ContentReviewCandidates), deferredIntegration))
 		return
 	}
 	result.ReviewCandidates = []candidate{owner}
 	result.add("yellow", "single_flight_barrier", owner.Number,
-		fmt.Sprintf("владелец base-sync барьера; REVIEW запускает только его, отложено кандидатов: %d", deferred))
+		fmt.Sprintf("владелец интеграционной полосы; REVIEW проверяет только интеграционную дельту этого PR, содержательных кандидатов отложено: %d, следующих интеграционных: %d", len(result.ContentReviewCandidates), deferredIntegration))
+}
+
+func setMergeExecutable(result *report) {
+	if result.IntegrationOwner == nil {
+		result.MergeExecutable = append([]candidate{}, result.MergeCandidates...)
+		return
+	}
+	if candidatePriority(result.IntegrationOwner.Stage) != 0 {
+		return
+	}
+	for _, item := range result.MergeCandidates {
+		if item.Number == result.IntegrationOwner.Number {
+			result.MergeExecutable = []candidate{item}
+			return
+		}
+	}
 }
 
 func printReport(writer io.Writer, result report) {

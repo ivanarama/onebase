@@ -2,6 +2,7 @@ package configdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,6 +17,10 @@ import (
 type Repo struct {
 	db *storage.DB
 }
+
+// ErrFileExists сообщает, что CreateFile не создал запись, потому что путь уже
+// занят. Единый sentinel скрывает различия unique-conflict SQLite/PostgreSQL.
+var ErrFileExists = errors.New("configdb: file already exists")
 
 func New(db *storage.DB) *Repo {
 	return &Repo{db: db}
@@ -86,6 +91,23 @@ func (r *Repo) SaveFile(ctx context.Context, path string, content []byte) error 
 		return save(ctx)
 	}
 	return r.db.WithTx(ctx, save)
+}
+
+// CreateFile атомарно создаёт одну запись конфигурации и версию. Существующая
+// запись не изменяется; в этом случае возвращается ErrFileExists и новая версия
+// не создаётся.
+func (r *Repo) CreateFile(ctx context.Context, path string, content []byte) error {
+	create := func(txCtx context.Context) error {
+		if err := r.createFileNoVersion(txCtx, path, content); err != nil {
+			return err
+		}
+		_, err := r.CreateVersion(txCtx, VersionOptions{Message: "create " + path})
+		return err
+	}
+	if storage.HasTx(ctx) {
+		return create(ctx)
+	}
+	return r.db.WithTx(ctx, create)
 }
 
 // SaveFiles upserts several config files and creates one configuration version
@@ -162,6 +184,26 @@ func (r *Repo) saveFileNoVersion(ctx context.Context, path string, content []byt
 		d.Placeholder(1), d.Placeholder(2), d.Now(), d.Now()),
 		path, content); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (r *Repo) createFileNoVersion(ctx context.Context, path string, content []byte) error {
+	if err := ValidatePath(path); err != nil {
+		return fmt.Errorf("configdb: unsafe path %q: %w", path, err)
+	}
+	d := r.db.Dialect()
+	tag, err := r.db.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO _onebase_config (path, content, updated_at)
+			VALUES (%s, %s, %s)
+			ON CONFLICT (path) DO NOTHING`,
+		d.Placeholder(1), d.Placeholder(2), d.Now()),
+		path, content)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected != 1 {
+		return ErrFileExists
 	}
 	return nil
 }

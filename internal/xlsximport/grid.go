@@ -38,14 +38,13 @@ type grid struct {
 // readGrid разбирает лист в матрицу ячеек: тексты, оформление, объединения,
 // картинки, размеры колонок/строк и параметры страницы.
 func readGrid(f *excelize.File, name string, w *warnings) (*grid, error) {
-	rows, cols := usedRange(f, name, w)
+	texts, textRows, textCols, err := readRows(f, name)
+	if err != nil {
+		return nil, err
+	}
+	rows, cols := usedRange(f, name, textRows, textCols, w)
 	if rows == 0 || cols == 0 {
 		return nil, ErrEmptySheet
-	}
-
-	texts, err := f.GetRows(name)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrParse, err)
 	}
 
 	g := &grid{Rows: rows, Cols: cols}
@@ -97,6 +96,54 @@ func readGrid(f *excelize.File, name string, w *warnings) (*grid, error) {
 	return g, nil
 }
 
+// readRows читает значения листа одним потоковым проходом. Rows.Next()
+// возвращает в том числе пропуски перед sparse-строкой, поэтому MaxRows+1
+// достаточно, чтобы предупредить об обрезке, не доходя до содержимого, например,
+// строки 1 048 576. В texts никогда не копится больше MaxRows x MaxCols значений.
+func readRows(f *excelize.File, name string) (texts [][]string, rows, cols int, err error) {
+	it, openErr := f.Rows(name)
+	if openErr != nil {
+		return nil, 0, 0, fmt.Errorf("%w: %v", ErrParse, openErr)
+	}
+	defer func() {
+		if closeErr := it.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("%w: %v", ErrParse, closeErr)
+		}
+	}()
+
+	scannedRows := 0
+	for it.Next() {
+		scannedRows++
+		if scannedRows > MaxRows {
+			// Точного номера дальней sparse-строки узнавать не нужно: для
+			// прежнего предупреждения достаточно sentinel за границей.
+			rows = MaxRows + 1
+			break
+		}
+
+		row, rowErr := it.Columns()
+		if rowErr != nil {
+			return nil, 0, 0, fmt.Errorf("%w: %v", ErrParse, rowErr)
+		}
+		// GetRows, который был здесь раньше, не включал в результат хвостовые
+		// явно пустые строки. Сохраняем этот контракт used range.
+		if len(row) > 0 {
+			rows = scannedRows
+		}
+		cols = max(cols, len(row))
+		if len(row) > MaxCols {
+			row = row[:MaxCols]
+		}
+		// Копия с ограниченной capacity не удерживает целиком широкий backing
+		// array, который Columns был вынужден собрать для текущей строки.
+		texts = append(texts, append([]string(nil), row...))
+	}
+	if iterErr := it.Error(); iterErr != nil {
+		return nil, 0, 0, fmt.Errorf("%w: %v", ErrParse, iterErr)
+	}
+	return texts, rows, cols, nil
+}
+
 // usedRange определяет размеры разбираемой области.
 //
 // Границы берутся по максимуму из четырёх источников: заполненные строки,
@@ -104,20 +151,15 @@ func readGrid(f *excelize.File, name string, w *warnings) (*grid, error) {
 // диапазон». Одного диапазона мало — книга, записанная программно, объявляет
 // «A1», и импорт увидел бы одну ячейку; одних заполненных строк тоже мало —
 // пустая ячейка с рамкой (клетка под подпись) текста не имеет, но в бланке
-// нужна. Хвост лишнего потом срезает trim.
-func usedRange(f *excelize.File, name string, w *warnings) (rows, cols int) {
+// нужна. Хвост лишнего потом срезает trim. Заполненные строки уже измерены
+// потоковым readRows, повторно лист здесь не читается.
+func usedRange(f *excelize.File, name string, textRows, textCols int, w *warnings) (rows, cols int) {
+	rows, cols = textRows, textCols
 	grow := func(r, c int) {
 		rows = max(rows, r)
 		cols = max(cols, c)
 	}
 
-	if data, err := f.GetRows(name); err == nil {
-		for i, row := range data {
-			if len(row) > 0 {
-				grow(i+1, len(row))
-			}
-		}
-	}
 	if merges, err := f.GetMergeCells(name); err == nil {
 		for _, m := range merges {
 			if c, r, cerr := excelize.CellNameToCoordinates(m.GetEndAxis()); cerr == nil {
@@ -154,8 +196,8 @@ func usedRange(f *excelize.File, name string, w *warnings) (rows, cols int) {
 	return min(rows, MaxRows), min(cols, MaxCols)
 }
 
-// cellText достаёт текст ячейки из результата GetRows (там строки короче на
-// хвост пустых ячеек, а сами строки могут отсутствовать).
+// cellText достаёт текст ячейки из результата потокового чтения (там строки
+// короче на хвост пустых ячеек).
 func cellText(texts [][]string, r, c int) string {
 	if r >= len(texts) || c >= len(texts[r]) {
 		return ""
