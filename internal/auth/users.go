@@ -810,7 +810,10 @@ func (r *Repo) KickOtherSessions(ctx context.Context, userID, currentToken strin
 // пароля и отрисовка подсказки в форме.
 func (r *Repo) EffectivePasswordPolicy(ctx context.Context) PasswordPolicy {
 	if r == nil {
-		return PasswordPolicy{MinLength: DefaultMinPasswordLength}
+		return PasswordPolicy{
+			MinLength:       DefaultMinPasswordLength,
+			MinLengthSource: PasswordMinLengthSourceDefault,
+		}
 	}
 	return r.passwordPolicy.applyStored(r.AuthPolicy(ctx))
 }

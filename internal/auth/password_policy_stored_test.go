@@ -96,3 +96,28 @@ func TestStoredPolicyDoesNotOverrideEnvAllowEmpty(t *testing.T) {
 		t.Errorf("пустой пароль отвергнут вопреки переменной окружения: %v", err)
 	}
 }
+
+func TestEffectivePasswordPolicyReportsMinLengthSource(t *testing.T) {
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "12")
+	repo, ctx := policyRepo(t)
+
+	effective := repo.EffectivePasswordPolicy(ctx)
+	if effective.MinLength != 12 || effective.MinLengthSource != auth.PasswordMinLengthSourceEnvironment {
+		t.Fatalf("политика из env: %+v", effective)
+	}
+
+	if err := repo.SaveAuthPolicy(ctx, auth.Policy{PasswordMinLength: 10}); err != nil {
+		t.Fatal(err)
+	}
+	effective = repo.EffectivePasswordPolicy(ctx)
+	if effective.MinLength != 10 || effective.MinLengthSource != auth.PasswordMinLengthSourceDatabase {
+		t.Fatalf("политика из базы: %+v", effective)
+	}
+
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "")
+	defaultRepo, defaultCtx := policyRepo(t)
+	effective = defaultRepo.EffectivePasswordPolicy(defaultCtx)
+	if effective.MinLength != auth.DefaultMinPasswordLength || effective.MinLengthSource != auth.PasswordMinLengthSourceDefault {
+		t.Fatalf("встроенное умолчание: %+v", effective)
+	}
+}

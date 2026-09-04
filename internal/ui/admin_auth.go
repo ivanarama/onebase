@@ -53,20 +53,20 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
 </div>
 
 <div class="card" style="max-width:820px;margin-bottom:16px">
-  <h3 style="margin-bottom:14px">Политика паролей</h3>
+  <h3 style="margin-bottom:14px">{{.PasswordPolicyTitle}}</h3>
   <form method="POST" action="/ui/admin/auth/password-policy">
     <div class="form-group">
-      <label>Минимальная длина пароля</label>
-      <input type="number" name="password_min_length" min="1" max="{{.MaxPasswordLength}}" value="{{.PasswordMinLength}}" style="width:120px">
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Минимум — от 1 до {{.MaxPasswordLength}} символов. Сам пароль — не более {{.MaxPasswordLength}} байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше. Проверяется при установке пароля; уже заданные пароли остаются рабочими. Умолчание — {{.DefaultPasswordMinLength}}.</div>
+      <label>{{.PasswordMinLengthLabel}}</label>
+      <input type="number" name="password_min_length" min="1" max="{{.MaxPasswordLength}}" value="{{.PasswordMinLength}}" placeholder="{{.EffectivePasswordMinLength}}" style="width:120px">
+      <div style="font-size:12px;color:#94a3b8;margin-top:4px">{{.PasswordMinLengthRangeHint}} {{.EffectivePasswordMinLengthLabel}} <strong>{{.EffectivePasswordMinLength}}</strong> ({{.PasswordMinLengthSource}}). {{.PasswordMinLengthInheritHint}}</div>
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
-        <input type="checkbox" name="allow_empty_passwords" value="1" {{if .Policy.AllowEmptyPasswords}}checked{{end}}> Разрешить пустые пароли
+        <input type="checkbox" name="allow_empty_passwords" value="1" {{if .Policy.AllowEmptyPasswords}}checked{{end}}> {{.AllowEmptyPasswordsLabel}}
       </label>
-      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ Учётная запись с пустым паролем защищена только логином. Режим стенда и киоска, не рабочей базы.{{if .EmptyPasswordsByEnv}} Сейчас пустые пароли разрешены переменной окружения <b>ONEBASE_ALLOW_EMPTY_PASSWORDS</b> — снятая галка их не запретит, уберите переменную у процесса базы.{{end}}</div>
+      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ {{.EmptyPasswordWarning}}{{if .EmptyPasswordsByEnv}} {{.EmptyPasswordEnvHint}}{{end}}</div>
     </div>
-    <button class="btn btn-primary" type="submit">Сохранить политику паролей</button>
+    <button class="btn btn-primary" type="submit">{{.SavePasswordPolicyLabel}}</button>
   </form>
 </div>
 
@@ -171,9 +171,11 @@ func (s *Server) adminAuth(w http.ResponseWriter, r *http.Request) {
 		s.renderForbidden(w, r)
 		return
 	}
-	s.renderAdminAuth(w, r, map[string]any{
-		"Success": successFromQuery(r.URL.Query().Get("saved")),
-	})
+	success := successFromQuery(r.URL.Query().Get("saved"))
+	if success != "" {
+		success = s.tr(s.resolveLang(r), success)
+	}
+	s.renderAdminAuth(w, r, map[string]any{"Success": success})
 }
 
 // successFromQuery превращает метку редиректа в текст подтверждения.
@@ -209,17 +211,30 @@ func (s *Server) renderAdminAuth(w http.ResponseWriter, r *http.Request, data ma
 		size = 10
 	}
 	effective := s.authRepo.EffectivePasswordPolicy(r.Context())
+	lang := s.resolveLang(r)
+	storedMinLength := ""
+	if policy.PasswordMinLength != 0 {
+		storedMinLength = strconv.Itoa(policy.PasswordMinLength)
+	}
 	data["Policy"] = policy
 	data["Roles"] = roles
 	data["RoleSelected"] = selected
 	data["RoleSelectSize"] = size
-	// В поле длины показываем действующее значение, а не только сохранённое:
-	// иначе база, где минимум задан переменной окружения, показывает пустое
-	// поле и первое же сохранение формы молча меняет политику.
-	data["PasswordMinLength"] = effective.MinLength
+	data["PasswordPolicyTitle"] = s.tr(lang, "Политика паролей")
+	data["PasswordMinLengthLabel"] = s.tr(lang, "Минимальная длина пароля")
+	data["PasswordMinLength"] = storedMinLength
+	data["EffectivePasswordMinLength"] = effective.MinLength
+	data["EffectivePasswordMinLengthLabel"] = s.tr(lang, "Действующее значение:")
+	data["PasswordMinLengthSource"] = s.passwordMinLengthSourceText(lang, effective.MinLengthSource)
+	data["PasswordMinLengthRangeHint"] = fmt.Sprintf(s.tr(lang, "Минимум — от 1 до %d символов. Сам пароль — не более %d байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше."), auth.MaxPasswordLength, auth.MaxPasswordLength)
+	data["PasswordMinLengthInheritHint"] = s.tr(lang, "Оставьте поле пустым, чтобы наследовать умолчание процесса и удалить сохранённое переопределение.")
 	data["DefaultPasswordMinLength"] = auth.DefaultMinPasswordLength
 	data["MaxPasswordLength"] = auth.MaxPasswordLength
+	data["AllowEmptyPasswordsLabel"] = s.tr(lang, "Разрешить пустые пароли")
+	data["EmptyPasswordWarning"] = s.tr(lang, "Учётная запись с пустым паролем защищена только логином. Режим стенда и киоска, не рабочей базы.")
+	data["EmptyPasswordEnvHint"] = s.tr(lang, "Сейчас пустые пароли разрешены переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS: снятая галка их не запретит, уберите переменную у процесса базы.")
 	data["EmptyPasswordsByEnv"] = effective.AllowEmpty && !policy.AllowEmptyPasswords
+	data["SavePasswordPolicyLabel"] = s.tr(lang, "Сохранить политику паролей")
 	data["Providers"] = s.authRepo.AuthProviders(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	renderAdminTemplate(w, "admin-auth", data)
@@ -294,10 +309,14 @@ func (s *Server) adminAuthPasswordPolicySave(w http.ResponseWriter, r *http.Requ
 	}
 	policy := s.authRepo.AuthPolicy(r.Context())
 	raw := strings.TrimSpace(r.FormValue("password_min_length"))
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > auth.MaxPasswordLength {
+	n := 0
+	var err error
+	if raw != "" {
+		n, err = strconv.Atoi(raw)
+	}
+	if err != nil || (raw != "" && (n < 1 || n > auth.MaxPasswordLength)) {
 		s.renderAdminAuth(w, r, map[string]any{
-			"Error": fmt.Sprintf("Минимальная длина пароля должна быть числом от 1 до %d", auth.MaxPasswordLength),
+			"Error": fmt.Sprintf(s.tr(s.resolveLang(r), "Минимальная длина пароля должна быть целым числом от 1 до %d или пустой для наследования"), auth.MaxPasswordLength),
 		})
 		return
 	}
@@ -309,6 +328,17 @@ func (s *Server) adminAuthPasswordPolicySave(w http.ResponseWriter, r *http.Requ
 	}
 	s.logSessionAudit(r, "password_policy_saved", "", "")
 	http.Redirect(w, r, "/ui/admin/auth?saved=password-policy", http.StatusFound)
+}
+
+func (s *Server) passwordMinLengthSourceText(lang string, source auth.PasswordMinLengthSource) string {
+	switch source {
+	case auth.PasswordMinLengthSourceDatabase:
+		return s.tr(lang, "настройка базы")
+	case auth.PasswordMinLengthSourceEnvironment:
+		return s.tr(lang, "переменная ONEBASE_MIN_PASSWORD_LENGTH")
+	default:
+		return s.tr(lang, "умолчание процесса")
+	}
 }
 
 // adminAuthProvider — карточка провайдера (GET — форма, POST — сохранение).

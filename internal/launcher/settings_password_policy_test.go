@@ -9,12 +9,13 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // policyBase готовит базу с администратором и возвращает вызовы двух публичных
 // точек входа конфигуратора: сохранение «Параметров базы» и смена пароля.
-func policyBase(t *testing.T, baseID string) (userID string, saveSettings func(string) *httptest.ResponseRecorder, passwd func(string) *httptest.ResponseRecorder, settingsHTML func() string, dbPath string) {
+func policyBase(t *testing.T, baseID string) (userID string, saveSettings func(string) *httptest.ResponseRecorder, passwd func(string) *httptest.ResponseRecorder, settingsHTML func(...string) string, dbPath string) {
 	t.Helper()
 	ctx := context.Background()
 	dbPath = filepath.Join(t.TempDir(), baseID+".db")
@@ -53,8 +54,11 @@ func policyBase(t *testing.T, baseID string) (userID string, saveSettings func(s
 		h.cfgAdminUserPasswd(rec, req)
 		return rec
 	}
-	settingsHTML = func() string {
+	settingsHTML = func(langs ...string) string {
 		req := httptest.NewRequest(http.MethodGet, "/bases/"+baseID+"/configurator/admin/settings", nil)
+		if len(langs) > 0 {
+			req.Header.Set("Accept-Language", langs[0])
+		}
 		req = requestWithBaseID(req, baseID)
 		rec := httptest.NewRecorder()
 		h.cfgAdminSettings(rec, req)
@@ -123,6 +127,9 @@ func TestSettingsPasswordPolicyValidatesBeforeAnyWrite(t *testing.T) {
 		{name: "ноль", value: "0"},
 		{name: "больше предела", value: "500"},
 		{name: "null из пустого поля", value: "null"},
+		{name: "дробь строкой", value: `"8.5"`},
+		{name: "дробь у верхней границы", value: `"72.9"`},
+		{name: "экспонента строкой", value: `"1e2"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, saveSettings, _, _, dbPath := policyBase(t, "pw-policy-atomic")
@@ -218,22 +225,89 @@ func TestSettingsPasswordPolicyKeepsAuthPolicy(t *testing.T) {
 	}
 }
 
-// Форма показывает действующее значение, а не только сохранённое: на базе, где
-// минимум задан переменной окружения, пустое поле означало бы, что первое же
-// сохранение молча заменит его умолчанием.
+// Форма отдельно показывает сохранённое и действующее значения: пустое поле
+// оставляет наследование, а placeholder и подпись объясняют текущий источник.
 func TestSettingsPasswordPolicyShowsEffectiveValues(t *testing.T) {
 	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "12")
 	t.Setenv("ONEBASE_ALLOW_EMPTY_PASSWORDS", "true")
 	_, _, _, settingsHTML, _ := policyBase(t, "pw-policy-env")
 
 	html := settingsHTML()
-	if !strings.Contains(html, `id="st-pwlen" min="1" max="72" value="12"`) {
-		t.Errorf("в форме нет действующего минимума из переменной окружения")
+	if !strings.Contains(html, `id="st-pwlen" min="1" max="72" value="" placeholder="12"`) {
+		t.Errorf("форма не различает пустое сохранённое значение и действующий минимум из env")
+	}
+	if !strings.Contains(html, `id="st-pwsource">переменная ONEBASE_MIN_PASSWORD_LENGTH</span>`) {
+		t.Error("форма не показывает источник действующего минимума")
 	}
 	if !strings.Contains(html, "ONEBASE_ALLOW_EMPTY_PASSWORDS") {
 		t.Error("форма не предупреждает, что пустые пароли разрешены переменной окружения")
 	}
 	if !strings.Contains(html, "72 байт UTF-8") {
 		t.Error("форма не объясняет байтовый предел bcrypt")
+	}
+	if strings.Contains(html, `var pwlen=parseInt(document.getElementById('st-pwlen').value`) {
+		t.Error("отрендерованная панель обрезает исходное значение через parseInt")
+	}
+	if !strings.Contains(html, `var pwlen=document.getElementById('st-pwlen').value;`) {
+		t.Error("отрендерованная панель не отправляет исходное значение поля")
+	}
+}
+
+func TestSettingsPasswordPolicyResetRestoresEnvironmentDefault(t *testing.T) {
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "12")
+	_, saveSettings, passwd, settingsHTML, dbPath := policyBase(t, "pw-policy-reset")
+
+	if rec := saveSettings(`{"list_page_size":50,"password_min_length":10}`); rec.Code != http.StatusOK {
+		t.Fatalf("сохранение override: код=%d тело=%q", rec.Code, rec.Body.String())
+	}
+	rec := saveSettings(`{"list_page_size":50,"password_min_length":""}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("сброс override: код=%d тело=%q", rec.Code, rec.Body.String())
+	}
+	body := jsonBody(t, rec)
+	if body["password_min_length_stored"] != float64(0) || body["password_min_length_effective"] != float64(12) {
+		t.Fatalf("ответ не разделяет сохранённое и действующее значения: %#v", body)
+	}
+	if body["password_min_length_source"] != string(auth.PasswordMinLengthSourceEnvironment) {
+		t.Fatalf("источник после сброса = %#v", body["password_min_length_source"])
+	}
+
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := auth.NewRepo(db).AuthPolicy(ctx).PasswordMinLength; got != 0 {
+		db.Close()
+		t.Fatalf("сброс оставил override %d", got)
+	}
+	db.Close()
+
+	// Переменная остаётся умолчанием процесса: после условного рестарта новый
+	// Repo видит её новое значение, потому что форма не материализовала старое.
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "14")
+	if html := settingsHTML(); !strings.Contains(html, `value="" placeholder="14"`) {
+		t.Fatalf("после смены env форма не показывает новый унаследованный минимум")
+	}
+	if rec := passwd("abcdefghijklm"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("13 символов приняты при новом минимуме 14: код=%d", rec.Code)
+	}
+}
+
+func TestSettingsPasswordPolicyLocalizesNewControls(t *testing.T) {
+	saved := launcherBundle
+	t.Cleanup(func() { launcherBundle = saved })
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcherBundle = bundle
+	_, _, _, settingsHTML, _ := policyBase(t, "pw-policy-en")
+
+	html := settingsHTML("en")
+	for _, want := range []string{"Passwords", "Minimum password length", "Effective value:", "Save password policy"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("в английской панели нет %q", want)
+		}
 	}
 }

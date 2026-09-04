@@ -9,6 +9,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/httpservice"
+	"github.com/ivantit66/onebase/internal/i18n"
 )
 
 func passwordPolicyServer(t *testing.T) (*Server, *auth.User, context.Context) {
@@ -99,16 +100,67 @@ func TestAdminPolicyFormsDoNotOverwriteEachOther(t *testing.T) {
 func TestAdminPasswordPolicyRejectsOutOfRange(t *testing.T) {
 	s, admin, ctx := passwordPolicyServer(t)
 
-	for _, form := range []string{"password_min_length=0", "password_min_length=500", "password_min_length="} {
+	for _, form := range []string{"password_min_length=0", "password_min_length=500", "password_min_length=8.5", "password_min_length=1e2"} {
 		w := postPasswordPolicy(t, s, admin, form)
 		if w.Code != http.StatusOK {
 			t.Errorf("%q: ожидалась форма с ошибкой, получен код %d", form, w.Code)
 		}
-		if !strings.Contains(w.Body.String(), "Минимальная длина пароля должна быть числом") {
+		if !strings.Contains(w.Body.String(), "Минимальная длина пароля должна быть целым числом") {
 			t.Errorf("%q: в ответе нет объяснения отказа", form)
 		}
 	}
 	if got := s.authRepo.AuthPolicy(ctx).PasswordMinLength; got != 0 {
 		t.Errorf("невалидное значение сохранено: %d", got)
+	}
+}
+
+func TestAdminPasswordPolicyResetRestoresEnvironmentDefault(t *testing.T) {
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "12")
+	s, admin, ctx := passwordPolicyServer(t)
+
+	if w := postPasswordPolicy(t, s, admin, "password_min_length=10"); w.Code != http.StatusFound {
+		t.Fatalf("сохранение override: код=%d тело=%q", w.Code, w.Body.String())
+	}
+	if w := postPasswordPolicy(t, s, admin, "password_min_length="); w.Code != http.StatusFound {
+		t.Fatalf("сброс override: код=%d тело=%q", w.Code, w.Body.String())
+	}
+	if got := s.authRepo.AuthPolicy(ctx).PasswordMinLength; got != 0 {
+		t.Fatalf("сброс оставил override %d", got)
+	}
+
+	// Имитируем новый процесс: env читается при создании Repo. Если форма
+	// материализовала бы прежние 12 в БД, новое значение 14 сюда не дошло бы.
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "14")
+	fresh := auth.NewRepo(s.store).EffectivePasswordPolicy(ctx)
+	if fresh.MinLength != 14 || fresh.MinLengthSource != auth.PasswordMinLengthSourceEnvironment {
+		t.Fatalf("после смены env действует %+v", fresh)
+	}
+}
+
+func TestAdminPasswordPolicyRendersInheritedValueAndEnglishText(t *testing.T) {
+	t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "12")
+	s, admin, _ := passwordPolicyServer(t)
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.Bundle = bundle
+
+	r := httptest.NewRequest(http.MethodGet, "/ui/admin/auth", nil)
+	r.Header.Set("Accept-Language", "en")
+	r = r.WithContext(auth.ContextWithUser(context.Background(), admin))
+	w := httptest.NewRecorder()
+	s.adminAuth(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("рендер: код=%d тело=%q", w.Code, w.Body.String())
+	}
+	html := w.Body.String()
+	if !strings.Contains(html, `name="password_min_length" min="1" max="72" value="" placeholder="12"`) {
+		t.Error("форма не разделяет сохранённое и действующее значения")
+	}
+	for _, want := range []string{"Password policy", "Minimum password length", "Effective value:", "ONEBASE_MIN_PASSWORD_LENGTH", "Save password policy"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("в английской форме нет %q", want)
+		}
 	}
 }
