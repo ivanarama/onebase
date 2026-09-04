@@ -92,8 +92,8 @@ func TestPageList_ActivityControlsAndActions(t *testing.T) {
 		`name="activity" value="inactive"`,
 		`data-ob-row-activity-enabled="1"`,
 		`data-activity-inactive="1"`,
-		`data-ob-row-activity-hide-tpl=`,
-		`/__ID__/activity?active=0`,
+		`data-ob-row-base=`,
+		`data-ob-id="11111111-1111-1111-1111-111111111111"`,
 		"Скрыть из выбора",
 		"Вернуть в выбор",
 	} {

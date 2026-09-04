@@ -237,15 +237,15 @@ func TestPageList_EmbeddedOpenUsesShell(t *testing.T) {
 
 	for _, want := range []string{
 		`id="ob-list-config"`,
-		`data-ob-row-open-tpl="/ui/document/`,
+		`data-ob-row-base="/ui/document/`,
 		`data-ob-id="11111111-1111-1111-1111-111111111111"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("список не содержит embedded-open фрагмент %q", want)
 		}
 	}
-	if !strings.Contains(html, `data-ob-row-folder-tpl="/ui/document/`) || !strings.Contains(html, `parent=__ID__`) {
-		t.Error("контейнер списка не содержит шаблон data-ob-row-folder-tpl для навигации по папкам")
+	if !strings.Contains(html, `data-ob-row-list-url="/ui/document/`) {
+		t.Error("контейнер списка не содержит опорный адрес для навигации по папкам")
 	}
 	js := string(uiJS)
 	for _, want := range []string{
@@ -299,7 +299,7 @@ func TestPageList_TilesView(t *testing.T) {
 	}
 	html := buf.String()
 
-	for _, want := range []string{"tile-grid", "tile-card", "Болт М6", "view-switch", "data-ob-row-open-tpl=", "data-ob-id=", "data-ob-list-row"} {
+	for _, want := range []string{"tile-grid", "tile-card", "Болт М6", "view-switch", "data-ob-row-base=", "data-ob-id=", "data-ob-list-row"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("плиточный режим: в выводе нет ожидаемого фрагмента %q", want)
 		}

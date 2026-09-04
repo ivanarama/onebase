@@ -736,27 +736,63 @@ var OB_ROW_OWN = {
   del: 'delUrl', unpost: 'unpostUrl', activityShow: 'activityShowUrl',
   activityHide: 'activityHideUrl', detail: 'obDetailUrl', copy: 'copyUrl'
 };
-var OB_ROW_TPL = {
-  open: 'obRowOpenTpl', folder: 'obRowFolderTpl', mark: 'obRowMarkTpl',
-  unmark: 'obRowUnmarkTpl', del: 'obRowDelTpl', unpost: 'obRowUnpostTpl',
-  activityShow: 'obRowActivityShowTpl', activityHide: 'obRowActivityHideTpl',
-  detail: 'obRowDetailTpl', copy: 'obRowCopyTpl'
-};
+// Ссылка действия строки собирается из опорных адресов контейнера и
+// идентификатора строки: раньше каждая строка несла десять готовых URL, и на
+// списке из 100 строк это давало больше половины веса страницы. Параметр
+// подставляется штатным URL API, а не заменой в строке, — иначе пользовательский
+// ввод, сохранённый в query списка, мог бы подменить слот.
+function obRowParamURL(base, name, value) {
+  // Через new URL() нельзя: он percent-кодирует кириллицу в пути, и адрес
+  // перестаёт совпадать с тем, что отдаёт сервер. Трогаем только строку запроса.
+  var hash = '';
+  var h = base.indexOf('#');
+  if (h >= 0) { hash = base.slice(h); base = base.slice(0, h); }
+  var q = base.indexOf('?');
+  var path = q >= 0 ? base.slice(0, q) : base;
+  var params = new URLSearchParams(q >= 0 ? base.slice(q + 1) : '');
+  params.set(name, value);
+  var query = params.toString();
+  return path + (query ? '?' + query : '') + hash;
+}
 function obRowUrl(row, kind) {
   if (!row) return '';
   var own = row.dataset[OB_ROW_OWN[kind]];
-  if (own) return own;
+  if (own) return own;                     // строка из JSON-подгрузки несёт свои ссылки
   var box = row.closest('[data-ob-row-base]');
   if (!box) return '';
-  var tpl = box.dataset[OB_ROW_TPL[kind]] || '';
-  if (!tpl) return '';
-  return tpl.split('__ID__').join(encodeURIComponent(row.dataset.obId || ''));
+  var id = row.dataset.obId || '';
+  if (!id) return '';
+  var base = box.dataset.obRowBase || '';
+  var sub = box.dataset.obRowSubsystem || '';
+  var item = base + '/' + encodeURIComponent(id);
+  switch (kind) {
+    case 'open': return item + (sub ? '?subsystem=' + encodeURIComponent(sub) : '');
+    case 'mark': return item + '/delete?mark=1';
+    case 'unmark': return item + '/delete?mark=0';
+    case 'del': return item + '/delete';
+    case 'unpost': return item + '/unpost';
+    case 'activityShow': return item + '/activity?active=1';
+    case 'activityHide': return item + '/activity?active=0';
+    case 'detail': return item + '/detail-panel';
+    case 'folder': return obRowParamURL(box.dataset.obRowListUrl || base, 'parent', id);
+    case 'copy':
+      if (box.dataset.obRowCanCopy !== '1') return '';
+      return obRowParamURL(box.dataset.obRowCopyUrl || (base + '/new'), 'copy', id);
+  }
+  return '';
 }
 function obRowActivityEnabled(row) {
   if (!row) return false;
-  if (row.dataset.activityEnabled) return obRowActivityEnabled(row);
+  var own = row.dataset.activityEnabled;
+  if (own) return own === '1';
   var box = row.closest('[data-ob-row-base]');
   return !!box && box.dataset.obRowActivityEnabled === '1';
+}
+// Ключ выделенной строки: идентификатор устойчив к перерисовке списка, тогда как
+// прежний data-open-url на строках больше не выводится.
+function obRowKey(row) {
+  if (!row) return '';
+  return row.dataset.obId || row.getAttribute('data-open-url') || '';
 }
 function obListLabel(key, fallback) {
   var labels = obListConfig().labels || {};
@@ -860,7 +896,7 @@ function listRestoreSel(key, root, options) {
   if (key) {
     var rows = (root || document).querySelectorAll('[data-ob-list-row]');
     for (var i = 0; i < rows.length; i++) {
-      if (rows[i].getAttribute('data-open-url') === key) { next = rows[i]; break; }
+      if (obRowKey(rows[i]) === key) { next = rows[i]; break; }
     }
   }
   listSetSel(next, { focus: !!(options && options.focus), root: root || document });
@@ -883,7 +919,7 @@ function obReplaceLiveListContents(cur, fresh) {
 
 function listSelKey() {
   var sel = listSel();
-  return sel ? (sel.getAttribute('data-open-url') || '') : '';
+  return obRowKey(sel);
 }
 
 function listRowClick(e, tr) {
@@ -3770,7 +3806,7 @@ function obDetailFetch(row, url) {
       // Строка могла смениться, пока ответ шёл. Старый ответ не должен даже
       // попадать в общий кэш, иначе следующий render покажет чужую версию.
       var current = (typeof listSel === 'function') ? listSel() : null;
-      if (!current || current.getAttribute('data-ob-detail-url') !== url) return;
+      if (!current || obRowUrl(current, 'detail') !== url) return;
       obDetailCache = { url: url, body: body };
       obDetailRender();
     })
@@ -3779,7 +3815,7 @@ function obDetailFetch(row, url) {
       obDetailPending = { url: '', controller: null };
       if (err && err.name === 'AbortError') return;
       var current = (typeof listSel === 'function') ? listSel() : null;
-      if (!current || current.getAttribute('data-ob-detail-url') !== url) return;
+      if (!current || obRowUrl(current, 'detail') !== url) return;
       obDetailCache = { url: '', body: '' };
       if (fieldsEl) fieldsEl.textContent = 'Не удалось загрузить детали: ' + err.message;
     });
@@ -3803,7 +3839,7 @@ function obDetailRender() {
   // #860). Ответ кэшируется на строку: переключение закладок не должно
   // дёргать сервер.
   var raw = row ? row.getAttribute('data-ob-detail') : '';
-  var lazyURL = row ? row.getAttribute('data-ob-detail-url') : '';
+  var lazyURL = row ? obRowUrl(row, 'detail') : '';
   if (!raw && lazyURL) {
     if (obDetailCache.url === lazyURL) {
       raw = obDetailCache.body;

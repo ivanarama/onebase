@@ -1779,17 +1779,12 @@ const tplList = `
 <div style="overflow-x:auto">
 <table
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
-  data-ob-row-open-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-row-mark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=1"
-  data-ob-row-unmark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=0"
-  data-ob-row-del-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete"
-  data-ob-row-unpost-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/unpost"
-  data-ob-row-activity-show-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=1"
-  data-ob-row-activity-hide-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=0"
-  data-ob-row-detail-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/detail-panel"
-  data-ob-row-copy-tpl="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
+  data-ob-row-subsystem="{{$.CurrentSubsystem}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
-  data-ob-row-folder-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"><thead><tr>
+><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody>
@@ -1842,17 +1837,12 @@ const tplList = `
 {{$tile := tileView .Entity}}
 <div class="tile-grid" role="listbox"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
-  data-ob-row-open-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-row-mark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=1"
-  data-ob-row-unmark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=0"
-  data-ob-row-del-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete"
-  data-ob-row-unpost-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/unpost"
-  data-ob-row-activity-show-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=1"
-  data-ob-row-activity-hide-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=0"
-  data-ob-row-detail-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/detail-panel"
-  data-ob-row-copy-tpl="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
+  data-ob-row-subsystem="{{$.CurrentSubsystem}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
+  data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
+  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
-  data-ob-row-folder-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" "__ID__"}}">
+>
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
@@ -1903,17 +1893,12 @@ const tplList = `
   <th style="width:90px"></th>
 </tr></thead><tbody id="list-body"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
-  data-ob-row-open-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-row-mark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=1"
-  data-ob-row-unmark-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete?mark=0"
-  data-ob-row-del-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/delete"
-  data-ob-row-unpost-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/unpost"
-  data-ob-row-activity-show-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=1"
-  data-ob-row-activity-hide-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/activity?active=0"
-  data-ob-row-detail-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/__ID__/detail-panel"
-  data-ob-row-copy-tpl="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy=__ID__{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
+  data-ob-row-subsystem="{{$.CurrentSubsystem}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
+  data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
+  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
-  data-ob-row-folder-tpl="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" "__ID__"}}">
+>
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"

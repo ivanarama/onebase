@@ -424,13 +424,19 @@ func TestGroupNavigationKeepsListState(t *testing.T) {
 		"Breadcrumbs": []map[string]string{{"ID": "33333333-3333-3333-3333-333333333333", "Label": "Метизы"}},
 	})
 
-	// Ссылка входа в группу собирается клиентом из шаблона контейнера: в разметке
-	// лежит один data-ob-row-folder-tpl с плейсхолдером вместо идентификатора.
-	folderMatch := regexp.MustCompile(`data-ob-row-folder-tpl="([^"]*)"`).FindStringSubmatch(page)
+	// Вход в группу клиент собирает сам: контейнер несёт адрес списка с текущим
+	// состоянием (без parent), а идентификатор группы добавляется параметром.
+	folderMatch := regexp.MustCompile(`data-ob-row-list-url="([^"]*)"`).FindStringSubmatch(page)
 	if folderMatch == nil {
-		t.Fatal("у списка нет шаблона data-ob-row-folder-tpl")
+		t.Fatal("у списка нет опорного адреса data-ob-row-list-url")
 	}
-	folder := linkQuery(t, strings.ReplaceAll(folderMatch[1], "__ID__", nextParent))
+	folderURL := html.UnescapeString(folderMatch[1])
+	if strings.Contains(folderURL, "?") {
+		folderURL += "&parent=" + nextParent
+	} else {
+		folderURL += "?parent=" + nextParent
+	}
+	folder := linkQuery(t, folderURL)
 	wantParams(t, folder, "вход в группу", map[string]string{
 		"parent": nextParent, "q": "Болт", "sort": "Цена", "dir": "desc",
 		"f.Цена": "10", "view": "tiles", "lm": "feed", "subsystem": "Склад", "page": "",

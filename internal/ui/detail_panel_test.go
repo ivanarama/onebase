@@ -190,7 +190,7 @@ func TestDetailPanel_RenderedOutsideLiveContainer(t *testing.T) {
 	if strings.Contains(html, "data-ob-detail='") {
 		t.Error("payload панели снова уехал в разметку строки")
 	}
-	if !strings.Contains(html, "data-ob-row-detail-tpl=") {
+	if !strings.Contains(html, "data-ob-id=") {
 		t.Error("в строке списка нет адреса ленивой загрузки панели")
 	}
 	if !strings.Contains(html, "data-ob-detail-toggle") {
@@ -259,7 +259,7 @@ func TestDetailPanel_AllEntityListModesCarryLazyURL(t *testing.T) {
 			}
 			tc.set(data)
 			page := renderPageList(t, data)
-			if !strings.Contains(page, "data-ob-row-detail-tpl=") {
+			if !strings.Contains(page, "data-ob-id=") {
 				t.Fatalf("в %s-виде у строки нет адреса панели", tc.name)
 			}
 
