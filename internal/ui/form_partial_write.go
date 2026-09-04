@@ -649,22 +649,11 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 	submitted := submittedFormKeys(r)
 	checkboxes := checkboxOmittedFields(form, entity, submitted)
 
-	// Есть ли вообще что заполнять — чтобы не гонять хук и чтение справочников
-	// зря на форме, показывающей все реквизиты.
-	need := false
-	for _, f := range entity.Fields {
-		if !formKeySubmitted(submitted, f.Name) && !checkboxes[strings.ToLower(f.Name)] {
-			need = true
-			break
-		}
-	}
-	if !need {
-		return entityservice.NewObjectResult{}, nil
-	}
-
-	// Без Fields: GET считал дефолты и звал хук ДО того, как пользователь что-то
-	// ввёл, и восстановить надо именно то состояние. Присланное накладывается
-	// сверху ниже — ввод пользователя главнее и дефолта, и хука.
+	// NewObject вызывается и когда форма прислала все реквизиты: на POST хук
+	// ПриСозданииНового служит самостоятельной серверной проверкой и его ошибка
+	// обязана остановить Save. Фильтр присутствия нужен только при переносе
+	// вычисленных значений ниже — ввод пользователя главнее и дефолта, и хука.
+	// Без Fields GET и POST вычисляют то же начальное состояние объекта.
 	newRes, err := s.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
 		Entity:    entity,
 		FormEntry: true,

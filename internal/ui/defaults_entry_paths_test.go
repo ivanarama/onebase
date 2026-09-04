@@ -210,20 +210,30 @@ func TestDefaults_УправляемаяФормаЗоветХукПриСозд
 	}
 }
 
-// POST обязан самостоятельно проверить результат ПриСозданииНового. Баннер на
-// предшествующем GET не является доказательством: прямой POST и ошибка, возникшая
-// между GET и POST, иначе записывали частично инициализированный объект.
+// POST обязан самостоятельно проверить результат ПриСозданииНового, даже когда
+// управляемая форма прислала все реквизиты. Баннер на предшествующем GET не
+// является доказательством: прямой POST и ошибка, возникшая между GET и POST,
+// иначе записывали частично инициализированный объект.
 func TestDefaults_УправляемаяФормаНеПишетПослеОшибкиПриСозданииНового(t *testing.T) {
 	ents := defaultsEntities()
 	doc := ents[1]
-	doc.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеНомер", "Объект.Номер"))}
+	doc.Forms = []*metadata.FormModule{managedObjectForm(
+		fieldEl("ПолеНомер", "Объект.Номер"),
+		fieldEl("ПолеОрганизация", "Объект.Организация"),
+		fieldEl("ПолеКомментарий", "Объект.Комментарий"),
+	)}
 	src := `Процедура ПриСозданииНового(Объект)
   ВызватьИсключение("инициализация не выполнена");
 КонецПроцедуры`
 	s, ctx := newSubmitTestServerWithPrograms(t, ents, map[string]string{"Реализация": src})
+	orgID := seedSingleOrg(t, s, ctx, ents[0])
 
 	rec := httptest.NewRecorder()
-	s.submit(rec, reqWithChi("POST", "/ui/document/реализация/new", url.Values{"Номер": {"0001"}},
+	s.submit(rec, reqWithChi("POST", "/ui/document/реализация/new", url.Values{
+		"Номер":       {"0001"},
+		"Организация": {orgID.String()},
+		"Комментарий": {"введено пользователем"},
+	},
 		map[string]string{"entity": "реализация"}))
 
 	if rec.Code != http.StatusOK {
