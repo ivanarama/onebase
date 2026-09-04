@@ -26,12 +26,12 @@ import (
 )
 
 var (
-	mergePullRequestRe  = regexp.MustCompile(`^Merge pull request #([1-9][0-9]*)\b`)
-	squashPullRequestRe = regexp.MustCompile(`\(#([1-9][0-9]*)\)\s*$`)
-	referenceRe         = regexp.MustCompile(`#([1-9][0-9]*)\b`)
-	omissionRe          = regexp.MustCompile(`^<!-- release-check: omit #([1-9][0-9]*) reason=(\S(?:.*\S)?) -->$`)
-	htmlCommentRe       = regexp.MustCompile(`(?s)<!--.*?-->`)
-	commitSHARe         = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
+	mergePullRequestRe    = regexp.MustCompile(`^Merge pull request #([1-9][0-9]*)\b`)
+	squashPullRequestRe   = regexp.MustCompile(`\(#([1-9][0-9]*)\)\s*$`)
+	referenceRe           = regexp.MustCompile(`#([1-9][0-9]*)\b`)
+	omissionRe            = regexp.MustCompile(`^<!-- release-check: omit #([1-9][0-9]*) reason=(\S(?:.*\S)?) -->$`)
+	referenceDefinitionRe = regexp.MustCompile(`^[ \t]{0,3}\[[^\]\r\n]+\]:`)
+	commitSHARe           = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 )
 
 type pullRequest struct {
@@ -324,7 +324,7 @@ func parseNoteCoverage(note string) (noteCoverage, error) {
 			continue
 		}
 	}
-	visibleText := htmlCommentRe.ReplaceAllString(strings.Join(visibleLines, "\n"), "")
+	visibleText := markdownVisibleText(strings.Join(visibleLines, "\n"))
 	for _, match := range referenceRe.FindAllStringSubmatch(visibleText, -1) {
 		number, err := strconv.Atoi(match[1])
 		if err == nil {
@@ -332,4 +332,130 @@ func parseNoteCoverage(note string) (noteCoverage, error) {
 		}
 	}
 	return result, nil
+}
+
+// markdownVisibleText conservatively keeps only text rendered by Markdown.
+// False negatives make the release gate ask for an explicit visible mention;
+// false positives could silently publish incomplete release notes.
+func markdownVisibleText(markdown string) string {
+	withoutComments := stripHTMLComments(markdown)
+	lines := strings.Split(withoutComments, "\n")
+	for index, line := range lines {
+		if referenceDefinitionRe.MatchString(strings.TrimSuffix(line, "\r")) {
+			lines[index] = ""
+		}
+	}
+
+	text := strings.Join(lines, "\n")
+	var visible strings.Builder
+	visible.Grow(len(text))
+	for index := 0; index < len(text); {
+		switch {
+		case text[index] == ']' && index+1 < len(text) && text[index+1] == '(':
+			visible.WriteByte(']')
+			index = skipBalancedMarkdown(text, index+1, '(', ')')
+		case text[index] == ']' && index+1 < len(text) && text[index+1] == '[':
+			visible.WriteByte(']')
+			index = skipBalancedMarkdown(text, index+1, '[', ']')
+		case text[index] == '<':
+			end, isTag := markdownHTMLTagEnd(text, index)
+			if !isTag {
+				visible.WriteByte(text[index])
+				index++
+				continue
+			}
+			index = end
+		default:
+			visible.WriteByte(text[index])
+			index++
+		}
+	}
+	return visible.String()
+}
+
+func stripHTMLComments(markdown string) string {
+	var visible strings.Builder
+	visible.Grow(len(markdown))
+	for {
+		start := strings.Index(markdown, "<!--")
+		if start < 0 {
+			visible.WriteString(markdown)
+			return visible.String()
+		}
+		visible.WriteString(markdown[:start])
+		markdown = markdown[start+len("<!--"):]
+		end := strings.Index(markdown, "-->")
+		if end < 0 {
+			return visible.String()
+		}
+		markdown = markdown[end+len("-->"):]
+	}
+}
+
+func skipBalancedMarkdown(text string, start int, open, close byte) int {
+	depth := 0
+	for index := start; index < len(text); index++ {
+		if text[index] == '\\' && index+1 < len(text) {
+			index++
+			continue
+		}
+		switch text[index] {
+		case open:
+			depth++
+		case close:
+			depth--
+			if depth == 0 {
+				return index + 1
+			}
+		}
+	}
+	return len(text)
+}
+
+func markdownHTMLTagEnd(text string, start int) (int, bool) {
+	index := start + 1
+	if index >= len(text) {
+		return start, false
+	}
+	if text[index] == '!' || text[index] == '?' {
+		return scanHTMLTagEnd(text, index+1), true
+	}
+	if text[index] == '/' {
+		index++
+	}
+	nameStart := index
+	for index < len(text) && isHTMLNameByte(text[index]) {
+		index++
+	}
+	if index == nameStart || index >= len(text) {
+		return start, false
+	}
+	if text[index] != '>' && text[index] != '/' && text[index] != ' ' && text[index] != '\t' && text[index] != '\r' && text[index] != '\n' {
+		return start, false
+	}
+	return scanHTMLTagEnd(text, index), true
+}
+
+func scanHTMLTagEnd(text string, start int) int {
+	var quote byte
+	for index := start; index < len(text); index++ {
+		if quote != 0 {
+			if text[index] == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch text[index] {
+		case '\'', '"':
+			quote = text[index]
+		case '>':
+			return index + 1
+		}
+	}
+	return len(text)
+}
+
+func isHTMLNameByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9' || value == '-'
 }

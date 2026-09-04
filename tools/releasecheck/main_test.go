@@ -85,6 +85,58 @@ func TestRunReportsMissingFirstPRFromRealGitRange(t *testing.T) {
 	}
 }
 
+func TestRunDoesNotCountHiddenMarkdownReferences(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.email", "releasecheck@example.test")
+	runGit(t, repo, "config", "user.name", "Release Check")
+	runGit(t, repo, "config", "commit.gpgsign", "false")
+	runGit(t, repo, "config", "tag.gpgSign", "false")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "initial")
+	runGit(t, repo, "tag", "v0.1.0")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "fix(public-files): one (#1091)")
+	runGit(t, repo, "tag", "v0.2.0")
+
+	previousDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousDirectory); err != nil {
+			t.Errorf("возврат в исходный каталог: %v", err)
+		}
+	})
+
+	tests := map[string]string{
+		"link destination":          "[Текст без номера](https://example.invalid/release-notes#1091)\n",
+		"unterminated HTML comment": "Видимый текст без номера.\n<!-- скрытая ссылка #1091\n",
+	}
+	for name, note := range tests {
+		t.Run(name, func(t *testing.T) {
+			notesPath := filepath.Join(repo, strings.ReplaceAll(name, " ", "-")+".md")
+			if err := os.WriteFile(notesPath, []byte(note), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			var stdout, stderr bytes.Buffer
+			code := run([]string{
+				"-from", "v0.1.0",
+				"-to", "v0.2.0",
+				"-notes", notesPath,
+			}, &stdout, &stderr)
+			if code != 1 {
+				t.Fatalf("exit code = %d, ожидался 1; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "#1091") {
+				t.Fatalf("stderr не называет пропущенный PR #1091: %q", stderr.String())
+			}
+		})
+	}
+}
+
 func runGit(t *testing.T, directory string, args ...string) {
 	t.Helper()
 	//nolint:gosec // G204: фиксированный git и полностью заданные тестом аргументы, shell не используется.
