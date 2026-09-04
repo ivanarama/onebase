@@ -58,6 +58,19 @@ func TestCMSCartCleanupProcessor(t *testing.T) {
 
 		fixedNow := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 		cutoff := fixedNow.AddDate(0, 0, -45)
+		raceCandidate := uuid.New()
+		if err := db.Upsert(ctx, carts.Name, raceCandidate, map[string]any{
+			"Наименование": "Корзина, изменённая во время очистки",
+			"Дата":         cutoff.Add(-time.Hour),
+			"Оформлена":    false,
+		}, carts); err != nil {
+			t.Fatalf("запись корзины для гонки: %v", err)
+		}
+		if err := db.UpsertTablePartRows(ctx, carts.Name, cartRows.Name, raceCandidate, []map[string]any{{
+			"Количество": 1,
+		}}, *cartRows); err != nil {
+			t.Fatalf("запись строки корзины для гонки: %v", err)
+		}
 		expired := make([]uuid.UUID, 101)
 		for i := range expired {
 			expired[i] = uuid.New()
@@ -121,6 +134,31 @@ func TestCMSCartCleanupProcessor(t *testing.T) {
 		}
 		clock.CallMethod("Установить", []any{fixedNow})
 
+		// Подменяем только корень Справочники: production-процессор и его
+		// entityservice delete-path остаются настоящими. Фабрика обновляет одну
+		// корзину после того, как ПолучитьОбъект() уже сохранил её _version, но
+		// до вызова УдалитьЕслиНеИзменен(). Это детерминированная интерливинг-
+		// регрессия той же гонки, которая в production возникает между двумя
+		// соседними строками DSL.
+		ctxSrc := interpreter.NewStaticCtx(ctx)
+		raceInjected := false
+		raceFactory := &cmsCleanupRaceFactory{
+			base: server.catObjectFactory(ctxSrc),
+			afterLoad: func(entity *metadata.Entity, uuidStr string) error {
+				if raceInjected || entity.Name != carts.Name || uuidStr != raceCandidate.String() {
+					return nil
+				}
+				raceInjected = true
+				return db.Upsert(ctx, carts.Name, raceCandidate, map[string]any{
+					"Дата":      fixedNow,
+					"Оформлена": true,
+				}, carts)
+			},
+		}
+		vars["Справочники"] = interpreter.NewCatalogsRoot(ctxSrc, db, reg).
+			WithObjectFactory(raceFactory).
+			WithDeleter(dslCatalogDeleter{s: server})
+
 		run := func() []string {
 			t.Helper()
 			messages, runErr, setupErr := server.RunProcessor(ctx, reg, "ОчисткаКорзин", nil, nil, vars)
@@ -133,23 +171,59 @@ func TestCMSCartCleanupProcessor(t *testing.T) {
 		if got := run(); len(got) != 1 || got[0] != "Очистка корзин: удалено 101." {
 			t.Fatalf("сообщения первого запуска = %#v", got)
 		}
-		assertCMSCleanupTableCount(t, ctx, db, metadata.TableName(carts.Name), 3)
+		if !raceInjected {
+			t.Fatal("обновление между проверкой корзины и удалением не было внедрено")
+		}
+		assertCMSCleanupTableCount(t, ctx, db, metadata.TableName(carts.Name), 4)
+		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", raceCandidate, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", expired[0], 0)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", atBoundary, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", fresh, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", completed, 1)
+		assertCMSCleanupRowCount(t, ctx, db, metadata.TablePartTableName(carts.Name, cartRows.Name), "parent_id", raceCandidate, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TablePartTableName(carts.Name, cartRows.Name), "parent_id", expired[0], 0)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(orders.Name), "id", orderID, 1)
+		racedRow, err := db.GetByID(ctx, carts.Name, raceCandidate, carts)
+		if err != nil {
+			t.Fatalf("чтение изменённой корзины: %v", err)
+		}
+		if !cmsCleanupTrue(racedRow["Оформлена"]) || racedRow["_version"] != int64(2) {
+			t.Fatalf("изменённая корзина удалена или перезаписана: %#v", racedRow)
+		}
 
 		if got := run(); len(got) != 1 || got[0] != "Очистка корзин: удалено 0." {
 			t.Fatalf("сообщения повторного запуска = %#v", got)
 		}
-		assertCMSCleanupTableCount(t, ctx, db, metadata.TableName(carts.Name), 3)
+		assertCMSCleanupTableCount(t, ctx, db, metadata.TableName(carts.Name), 4)
+		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", raceCandidate, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", atBoundary, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", fresh, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", completed, 1)
+		assertCMSCleanupRowCount(t, ctx, db, metadata.TablePartTableName(carts.Name, cartRows.Name), "parent_id", raceCandidate, 1)
 		assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(orders.Name), "id", orderID, 1)
 	})
+}
+
+type cmsCleanupRaceFactory struct {
+	base      interpreter.CatalogObjectFactory
+	afterLoad func(entity *metadata.Entity, uuidStr string) error
+}
+
+func (f *cmsCleanupRaceFactory) NewCatalogObject(entity *metadata.Entity) any {
+	return f.base.NewCatalogObject(entity)
+}
+
+func (f *cmsCleanupRaceFactory) LoadCatalogObject(entity *metadata.Entity, uuidStr string) (any, error) {
+	obj, err := f.base.LoadCatalogObject(entity, uuidStr)
+	if err != nil {
+		return nil, err
+	}
+	if f.afterLoad != nil {
+		if err := f.afterLoad(entity, uuidStr); err != nil {
+			return nil, err
+		}
+	}
+	return obj, nil
 }
 
 func cmsCleanupEntity(t *testing.T, proj *project.Project, name string) *metadata.Entity {
@@ -161,6 +235,21 @@ func cmsCleanupEntity(t *testing.T, proj *project.Project, name string) *metadat
 	}
 	t.Fatalf("объект %s не найден", name)
 	return nil
+}
+
+func cmsCleanupTrue(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case int64:
+		return v == 1
+	case int:
+		return v == 1
+	case string:
+		return v == "1" || v == "true"
+	default:
+		return false
+	}
 }
 
 func assertCMSCleanupTableCount(t *testing.T, ctx context.Context, db *storage.DB, table string, want int) {
@@ -177,7 +266,8 @@ func assertCMSCleanupTableCount(t *testing.T, ctx context.Context, db *storage.D
 func assertCMSCleanupRowCount(t *testing.T, ctx context.Context, db *storage.DB, table, column string, id uuid.UUID, want int) {
 	t.Helper()
 	var got int
-	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+column+" = ?", id.String()).Scan(&got); err != nil {
+	placeholder := db.Dialect().Placeholder(1)
+	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+column+" = "+placeholder, id.String()).Scan(&got); err != nil {
 		t.Fatalf("подсчёт %s для %s: %v", table, id, err)
 	}
 	if got != want {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -225,7 +226,43 @@ func (w *catWriter) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError("Прочитать(" + w.entity.Name + "): " + err.Error())
 		}
 		return nil
+	case "удалитьеслинеизменен", "удалитьеслинеизменён", "deleteifunchanged":
+		if err := w.deleteIfUnchanged(); err != nil {
+			if errors.Is(err, storage.ErrVersionConflict) {
+				return false
+			}
+			interpreter.RaiseUserError("УдалитьЕслиНеИзменен(" + w.entity.Name + "): " + err.Error())
+		}
+		return true
 	}
+	return nil
+}
+
+// deleteIfUnchanged binds physical deletion to the revision captured by
+// ПолучитьОбъект(). It is intended for background cleanup code that first
+// checks fields and must not delete a state written after that check.
+func (w *catWriter) deleteIfUnchanged() error {
+	if (!w.loaded && !w.saved) || w.expectedVersion == nil {
+		return fmt.Errorf("объект ещё не прочитан или не записан")
+	}
+	ctx := w.ctx()
+	id := w.accessID()
+	if err := w.s.checkDSLRowAccess(ctx, w.entity, "delete", id, w.obj.Fields); err != nil {
+		return err
+	}
+	if err := (dslCatalogDeleter{s: w.s}).DeleteCatalogRefVersioned(ctx, w.entity, id, *w.expectedVersion); err != nil {
+		return err
+	}
+
+	wasLoaded, wasSaved, previousVersion := w.loaded, w.saved, w.expectedVersion
+	w.loaded = false
+	w.saved = false
+	w.expectedVersion = nil
+	storage.DeferUntilTxRollback(ctx, func() {
+		w.loaded = wasLoaded
+		w.saved = wasSaved
+		w.expectedVersion = previousVersion
+	})
 	return nil
 }
 
