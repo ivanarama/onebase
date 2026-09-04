@@ -78,7 +78,14 @@ func yamlTagsOfStruct(t *testing.T, file, typeName string) []string {
 // `onebase schema` без аргумента, и разбирает напечатанный JSON.
 func publishedSchema(t *testing.T) map[string]any {
 	t.Helper()
-	out, err := captureStdout(t, func() error { return runSchema(schemaCmd, nil) })
+	found, args, err := rootCmd.Find([]string{"schema"})
+	if err != nil || found != schemaCmd || len(args) != 0 {
+		t.Fatalf("команда schema не зарегистрирована в rootCmd: cmd=%v args=%v err=%v", found, args, err)
+	}
+	out, err := captureStdout(t, func() error {
+		_, err := executeRootArgs(t, "schema")
+		return err
+	})
 	if err != nil {
 		t.Fatalf("onebase schema: %v", err)
 	}
