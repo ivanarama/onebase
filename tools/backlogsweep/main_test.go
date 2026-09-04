@@ -607,14 +607,38 @@ func TestBlockedByReadsDeclaredLinesOnly(t *testing.T) {
 // Пример синтаксиса в блоке кода зависимостью не считается. Случай живой:
 // первый прогон инструмента нашёл ровно одну находку, и ею оказалась заявка
 // #1219, где `Blocked-by: #1234` стоит примером в блоке кода.
-func TestBlockedByIgnoresFencedExamples(t *testing.T) {
-	is := withBody(mk(1, "ivanarama", ago(1), nil),
-		"Предлагается строка:\n\n```\nBlocked-by: #1234\n```\n\nа ждём мы на самом деле\nBlocked-by: #77")
+func TestBlockedByIgnoresMarkdownCodeBlocks(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+	}{
+		{name: "backtick fence", code: "```text\nBlocked-by: #1234\n```"},
+		{name: "tilde fence", code: "~~~text\nBlocked-by: #1235\n~~~"},
+		{name: "long fence", code: "````markdown\n```\nBlocked-by: #1236\n```\n````"},
+		{name: "indented with spaces", code: "    Blocked-by: #1237"},
+		{name: "indented with tab", code: "\tBlocked-by: #1238"},
+		{name: "quoted fence", code: "> ~~~\n> Blocked-by: #1239\n> ~~~"},
+	}
 
-	got := blockedBy(is)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := withBody(mk(1, "ivanarama", ago(1), nil),
+				"Предлагается строка:\n\n"+tt.code+"\n\nа ждём мы на самом деле\nBlocked-by: #77")
 
-	if len(got) != 1 || got[0] != 77 {
-		t.Fatalf("ожидался только #77, получено %v", got)
+			got := blockedBy(is)
+
+			if len(got) != 1 || got[0] != 77 {
+				t.Fatalf("ожидался только #77, получено %v", got)
+			}
+		})
+	}
+}
+
+func TestBlockedByTreatsUnclosedFenceAsCodeUntilEOF(t *testing.T) {
+	is := withBody(mk(1, "ivanarama", ago(1), nil), "```\nBlocked-by: #1240")
+
+	if got := blockedBy(is); len(got) != 0 {
+		t.Fatalf("незакрытый блок продолжается до конца Markdown, получено %v", got)
 	}
 }
 

@@ -140,14 +140,6 @@ var (
 	// в перечне условий и `> Blocked-by: #1204` в ответе значат ровно то же.
 	blockedByRe = regexp.MustCompile(`(?im)^[ \t>*+-]*blocked-by\s*:\s*(.*)$`)
 
-	// fenceRe — блок кода. Внутри него `Blocked-by:` не объявление, а показ
-	// синтаксиса: маркер тем и определяется, что строка ЗАЯВЛЯЕТ зависимость, а
-	// строка в блоке кода её цитирует. Случай не выдуманный — первый же живой
-	// прогон нашёл ровно одну находку, и ею оказалась заявка #1219, где пример
-	// `Blocked-by: #1234` стоит в блоке кода. Ссылок на планы это не касается:
-	// план, названный в примере, остаётся тем же планом.
-	fenceRe = regexp.MustCompile("(?s)```.*?```")
-
 	// blockerNumRe — номера в хвосте такой строки: предшественников бывает
 	// несколько, и перечислять их одной строкой естественнее, чем плодить их.
 	blockerNumRe = regexp.MustCompile(`#(\d+)`)
@@ -614,7 +606,7 @@ func blockedBy(is issue) []int {
 	var out []int
 	seen := map[int]bool{}
 	for _, text := range parts {
-		for _, line := range blockedByRe.FindAllStringSubmatch(fenceRe.ReplaceAllString(text, ""), -1) {
+		for _, line := range blockedByRe.FindAllStringSubmatch(withoutMarkdownCodeBlocks(text), -1) {
 			for _, m := range blockerNumRe.FindAllStringSubmatch(line[1], -1) {
 				n, err := strconv.Atoi(m[1])
 				if err != nil || n <= 0 || n == is.Number || seen[n] {
@@ -627,6 +619,143 @@ func blockedBy(is issue) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+// withoutMarkdownCodeBlocks удаляет содержимое fenced- и отступных блоков
+// кода. Внутри них `Blocked-by:` показывает синтаксис, а не объявляет
+// зависимость. Fenced-блоки могут быть открыты тремя и более ` или ~; закрывающая
+// граница использует тот же символ и не короче открывающей. Незакрытая граница
+// по правилам Markdown продолжается до конца текста.
+func withoutMarkdownCodeBlocks(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+
+	var out strings.Builder
+	out.Grow(len(text))
+	var fence byte
+	var fenceLen int
+	inIndented := false
+	previousBlank := true
+
+	for i, line := range lines {
+		omit := false
+		if fence != 0 {
+			omit = true
+			if isMarkdownFenceClose(line, fence, fenceLen) {
+				fence = 0
+				fenceLen = 0
+				previousBlank = true
+			}
+		} else if marker, width, ok := markdownFenceOpen(line); ok {
+			omit = true
+			fence = marker
+			fenceLen = width
+			inIndented = false
+			previousBlank = true
+		} else {
+			blank := strings.TrimSpace(line) == ""
+			indented := isMarkdownIndentedCode(line)
+			if inIndented {
+				if blank || indented {
+					omit = true
+				} else {
+					inIndented = false
+				}
+			} else if previousBlank && indented {
+				omit = true
+				inIndented = true
+			}
+			if !omit {
+				previousBlank = blank
+			}
+		}
+
+		if !omit {
+			out.WriteString(line)
+		}
+		if i+1 < len(lines) {
+			out.WriteByte('\n')
+		}
+	}
+	return out.String()
+}
+
+func markdownFenceOpen(line string) (byte, int, bool) {
+	line = markdownBlockQuoteContent(line)
+	indent := 0
+	for indent < len(line) && indent < 4 && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent == len(line) {
+		return 0, 0, false
+	}
+	line = line[indent:]
+
+	// Fenced-блок может начинаться непосредственно в элементе списка.
+	if len(line) >= 2 && strings.ContainsRune("-*+", rune(line[0])) && (line[1] == ' ' || line[1] == '\t') {
+		line = strings.TrimLeft(line[2:], " \t")
+	}
+	if len(line) < 3 || (line[0] != '`' && line[0] != '~') {
+		return 0, 0, false
+	}
+	marker := line[0]
+	width := 0
+	for width < len(line) && line[width] == marker {
+		width++
+	}
+	if width < 3 {
+		return 0, 0, false
+	}
+	// В info string backtick-fence обратная кавычка запрещена Markdown.
+	if marker == '`' && strings.ContainsRune(line[width:], '`') {
+		return 0, 0, false
+	}
+	return marker, width, true
+}
+
+func isMarkdownFenceClose(line string, marker byte, minimum int) bool {
+	line = strings.TrimLeft(markdownBlockQuoteContent(line), " \t")
+	width := 0
+	for width < len(line) && line[width] == marker {
+		width++
+	}
+	return width >= minimum && strings.Trim(line[width:], " \t") == ""
+}
+
+func markdownBlockQuoteContent(line string) string {
+	for {
+		indent := 0
+		for indent < len(line) && indent < 4 && line[indent] == ' ' {
+			indent++
+		}
+		if indent > 3 || indent == len(line) || line[indent] != '>' {
+			return line
+		}
+		line = line[indent+1:]
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+			line = line[1:]
+		}
+	}
+}
+
+func isMarkdownIndentedCode(line string) bool {
+	line = markdownBlockQuoteContent(line)
+	columns := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case ' ':
+			columns++
+		case '\t':
+			columns += 4 - columns%4
+		default:
+			return columns >= 4
+		}
+		if columns >= 4 {
+			return true
+		}
+	}
+	return false
 }
 
 // objects — открытые заявки и PR плюс достоверный потолок общей нумерации
