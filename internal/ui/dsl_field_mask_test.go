@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/dsl/lexer"
+	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -129,11 +131,20 @@ func TestDSL_RefAttrDereferenceIsMasked(t *testing.T) {
 	user := uiMaskUser([]string{"read"}, auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}})
 	uctx := auth.ContextWithUser(ctx, user)
 
-	resolver := s.newDSLRefAttrResolver(uctx)
-	ref := &interpreter.Ref{UUID: id.String(), Type: "Клиент"}
-	v, ok := resolver.ResolveRefAttr(ref, "Телефон")
-	if !ok {
-		t.Fatal("реквизит по ссылке не разрешён")
+	ref := &interpreter.Ref{
+		UUID:         id.String(),
+		Type:         "Клиент",
+		AttrResolver: s.newDSLRefAttrResolver(uctx),
+	}
+	prog, err := parser.New(lexer.New(`Функция Проверка()
+    Возврат Клиент.Телефон;
+КонецФункции`, "masked-ref.os")).ParseProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if err := interpreter.New().RunWithResult(prog.Procedures[0], nil, &v, map[string]any{"Клиент": ref}); err != nil {
+		t.Fatalf("публичное чтение реквизита ссылки: %v", err)
 	}
 	if v != "••••••••4455" {
 		t.Fatalf("разыменование отдало реальное значение: %v", v)
