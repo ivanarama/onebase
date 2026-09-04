@@ -424,11 +424,13 @@ func TestGroupNavigationKeepsListState(t *testing.T) {
 		"Breadcrumbs": []map[string]string{{"ID": "33333333-3333-3333-3333-333333333333", "Label": "Метизы"}},
 	})
 
-	folderMatch := regexp.MustCompile(`data-folder-url="([^"]*)"`).FindStringSubmatch(page)
+	// Ссылка входа в группу собирается клиентом из шаблона контейнера: в разметке
+	// лежит один data-ob-row-folder-tpl с плейсхолдером вместо идентификатора.
+	folderMatch := regexp.MustCompile(`data-ob-row-folder-tpl="([^"]*)"`).FindStringSubmatch(page)
 	if folderMatch == nil {
-		t.Fatal("у группы нет data-folder-url")
+		t.Fatal("у списка нет шаблона data-ob-row-folder-tpl")
 	}
-	folder := linkQuery(t, folderMatch[1])
+	folder := linkQuery(t, strings.ReplaceAll(folderMatch[1], "__ID__", nextParent))
 	wantParams(t, folder, "вход в группу", map[string]string{
 		"parent": nextParent, "q": "Болт", "sort": "Цена", "dir": "desc",
 		"f.Цена": "10", "view": "tiles", "lm": "feed", "subsystem": "Склад", "page": "",
