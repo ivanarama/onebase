@@ -69,6 +69,11 @@ type apiPull struct {
 	} `json:"base"`
 	Labels   []apiLabel   `json:"labels"`
 	Comments []apiComment `json:"-"`
+	// HeadParents holds the parent SHAs of the head commit. An automatic
+	// base-sync always leaves a merge commit; an ordinary FIX push leaves a
+	// single-parent commit. Without this the integration lane cannot be told
+	// apart from a normal review round.
+	HeadParents []string `json:"head_parents,omitempty"`
 }
 
 type apiIssue struct {
@@ -206,6 +211,21 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, prs[index].Number)
 				if err := ghJSONLines(gh, &prs[index].Comments, "api", "--paginate", path, "--jq", ".[]"); err != nil {
 					errs <- fmt.Errorf("comments for PR #%d: %w", prs[index].Number, err)
+					continue
+				}
+				if !needsHeadParents(prs[index]) {
+					continue
+				}
+				var parents []struct {
+					SHA string `json:"sha"`
+				}
+				commit := fmt.Sprintf("repos/%s/commits/%s", repo, prs[index].Head.SHA)
+				if err := ghJSONLines(gh, &parents, "api", commit, "--jq", ".parents[]"); err != nil {
+					errs <- fmt.Errorf("head parents for PR #%d: %w", prs[index].Number, err)
+					continue
+				}
+				for _, parent := range parents {
+					prs[index].HeadParents = append(prs[index].HeadParents, parent.SHA)
 				}
 			}
 		}()
@@ -388,7 +408,7 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
-			case currentCompletions > 0 && depth > currentCompletions:
+			case currentCompletions > 0 && depth > currentCompletions && headIsBaseSyncMerge(pr):
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.MergeCandidates = append(result.MergeCandidates, item)
@@ -399,9 +419,10 @@ func analyze(prs []apiPull, owner string) report {
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "base_sync_waiting_review", pr.Number,
 					"ship сохранён; текущий HEAD ожидает интеграционное REVIEW")
-			case currentCompletions == 0 && depth > 0:
-				// REST cannot prove legacy merge parents or timeline edge order. Expose
-				// this as a priority candidate; REVIEW still performs the full GraphQL gate.
+			case currentCompletions == 0 && depth > 0 && headIsBaseSyncMerge(pr):
+				// REST cannot prove legacy timeline edge order, but the merge shape of
+				// the head commit is a fact. Expose this as a priority candidate;
+				// REVIEW still performs the full GraphQL gate.
 				item.Stage = "legacy-integration-review"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "legacy_ship_waiting_review_validation", pr.Number,
@@ -412,6 +433,12 @@ func analyze(prs []apiPull, owner string) report {
 				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 				result.add("yellow", "ship_waiting_initial_review", pr.Number,
 					"ship сохранён как разрешение слить этот HEAD после успешного REVIEW")
+			case currentCompletions == 0 && !protocolHistory:
+				// Ordinary next FIX round: earlier HEADs were reviewed, this one is a
+				// plain push. It belongs to the content lane, not the integration lane.
+				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+				result.add("yellow", "ship_waiting_next_round_review", pr.Number,
+					"ship сохранён; новый HEAD после доработки ожидает обычное REVIEW")
 			case currentCompletions > 0:
 				item.Stage = "merge"
 				result.MergeCandidates = append(result.MergeCandidates, item)
@@ -736,6 +763,26 @@ func (result *report) add(severity, code string, pr int, message string) {
 
 func (result *report) addIssue(severity, code string, issue int, message string) {
 	result.Findings = append(result.Findings, finding{Severity: severity, Code: code, Issue: issue, Message: message})
+}
+
+// needsHeadParents limits the extra commit read to pull requests whose stage
+// can depend on it: an open ship candidate targeting main.
+func needsHeadParents(pr apiPull) bool {
+	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
+		return false
+	}
+	return labelSet(pr.Labels)["ship"]
+}
+
+// headIsBaseSyncMerge reports whether the head commit has the shape every
+// base-sync leaves behind: a merge of the reviewed head with the base branch.
+// Review history alone never proves this, and an ordinary FIX round —
+// changes-requested, push, green review — produces exactly the same comment
+// trail as a legacy base-sync. Unknown parents count as "not a merge": a false
+// integration owner hides the real one from REVIEW and deadlocks the lane,
+// while a missed one only falls back to the full GraphQL gate in MERGE.
+func headIsBaseSyncMerge(pr apiPull) bool {
+	return len(pr.HeadParents) == 2
 }
 
 func labelSet(labels []apiLabel) map[string]bool {
