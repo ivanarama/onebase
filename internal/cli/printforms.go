@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,7 +45,8 @@ var printformsMigrateCmd = &cobra.Command{
 var printformsImportCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Собрать макет печатной формы из бланка Excel (.xlsx)",
-	Long: `Импортирует бланк .xlsx с тегами полей в макет printforms/<имя>.layout.yaml.
+	Long: `Импортирует бланк .xlsx с тегами полей в макет printforms/<имя>.layout.yaml
+и сохраняет исходную книгу рядом как printforms/<имя>.template.xlsx.
 
 Бланк рисуется в Excel как обычно (объединения, ширины колонок, границы, поля
 листа), в ячейки пишутся те же теги, что понимает макет:
@@ -131,18 +133,17 @@ func runPrintformsImport(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("printforms import: %w", err)
 	}
 	dst := filepath.Join(dstDir, name+".layout.yaml")
-	if _, err := os.Stat(dst); err == nil && !force {
-		return fmt.Errorf("printforms import: %s уже существует (перезаписать — флаг --force)", dst)
-	}
+	templateDst := filepath.Join(dstDir, name+".template.xlsx")
 	// G703 (taint analysis) видит путь, собранный из флагов команды, но не видит
 	// guard-а: --name проверен выше на разделители и «..», так что имя остаётся
 	// одним сегментом внутри printforms/, а --project — это и есть каталог,
 	// который оператор назвал сам (та же логика, что у G304 на чтении бланка).
-	if err := os.WriteFile(dst, out, fsmode.File); err != nil { //nolint:gosec // G703: имя формы проверено выше, каталог задаёт оператор
-		return fmt.Errorf("printforms import: запись %s: %w", dst, err)
+	if err := writeImportedPrintformPair(dst, out, templateDst, data, force); err != nil {
+		return fmt.Errorf("printforms import: %w", err)
 	}
 
 	outf("Макет создан: %s\n", dst)
+	outf("Исходный Excel-шаблон сохранён: %s\n", templateDst)
 	outf("  областей: %d", len(res.Layout.Areas))
 	if b := res.Layout.Binding; b != nil && len(b.Repeat) > 0 {
 		outf(", строк табличной части: %s", b.Repeat[0].Source)
@@ -155,6 +156,96 @@ func runPrintformsImport(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return nil
+}
+
+type importFileSnapshot struct {
+	exists  bool
+	regular bool
+	mode    os.FileMode
+	data    []byte
+}
+
+// writeImportedPrintformPair сохраняет декларацию и исходную книгу как одну
+// логическую печатную форму. При отказе любой записи восстанавливает оба пути,
+// включая прежнее содержимое при --force.
+func writeImportedPrintformPair(layoutPath string, layout []byte, templatePath string, template []byte, force bool) error {
+	targets := []struct {
+		path string
+		data []byte
+	}{
+		{path: layoutPath, data: layout},
+		{path: templatePath, data: template},
+	}
+	snapshots := make([]importFileSnapshot, len(targets))
+	for i, target := range targets {
+		snapshot, err := snapshotImportFile(target.path)
+		if err != nil {
+			return fmt.Errorf("проверка %s: %w", target.path, err)
+		}
+		snapshots[i] = snapshot
+		if snapshot.exists && !force {
+			return fmt.Errorf("%s уже существует (перезаписать — флаг --force)", target.path)
+		}
+	}
+
+	for i, target := range targets {
+		if err := os.WriteFile(target.path, target.data, fsmode.File); err != nil { //nolint:gosec // G703: оба пути построены из проверенного имени внутри каталога проекта
+			writeErr := fmt.Errorf("запись %s: %w", target.path, err)
+			rollbackErrs := make([]error, 0, i+1)
+			for j := i; j >= 0; j-- {
+				if rollbackErr := restoreImportFile(targets[j].path, snapshots[j]); rollbackErr != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("%s: %w", targets[j].path, rollbackErr))
+				}
+			}
+			if rollbackErr := errors.Join(rollbackErrs...); rollbackErr != nil {
+				return errors.Join(writeErr, fmt.Errorf("откат парной записи: %w", rollbackErr))
+			}
+			return writeErr
+		}
+	}
+	return nil
+}
+
+func snapshotImportFile(path string) (importFileSnapshot, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return importFileSnapshot{}, nil
+	}
+	if err != nil {
+		return importFileSnapshot{}, err
+	}
+	snapshot := importFileSnapshot{exists: true, regular: info.Mode().IsRegular(), mode: info.Mode()}
+	if !snapshot.regular {
+		return snapshot, nil
+	}
+	snapshot.data, err = os.ReadFile(path) //nolint:gosec // G304: путь ограничен проверенным именем внутри каталога проекта
+	if err != nil {
+		return importFileSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func restoreImportFile(path string, snapshot importFileSnapshot) error {
+	if !snapshot.exists {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: откат ровно проверенного пути назначения
+			return err
+		}
+		return nil
+	}
+	if !snapshot.regular {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode().Type() != snapshot.mode.Type() {
+			return fmt.Errorf("тип пути изменился с %s на %s", snapshot.mode.Type(), info.Mode().Type())
+		}
+		return nil
+	}
+	if err := os.WriteFile(path, snapshot.data, snapshot.mode.Perm()); err != nil { //nolint:gosec // G703: восстановление ранее прочитанного проверенного пути
+		return err
+	}
+	return os.Chmod(path, snapshot.mode.Perm())
 }
 
 // documentTableParts возвращает имена табличных частей документа конфигурации.

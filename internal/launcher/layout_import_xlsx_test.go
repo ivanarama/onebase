@@ -3,9 +3,11 @@ package launcher
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -280,5 +282,68 @@ func TestImportXLSX_ConfigDB(t *testing.T) {
 	}
 	if !bytes.Equal(template, original) {
 		t.Error("Excel-шаблон в _onebase_config отличается от загруженного")
+	}
+}
+
+func deleteImportedPrintform(t *testing.T, h *handler, b *Base, name string) {
+	t.Helper()
+	rec := postCfgRv(
+		t,
+		b.ID,
+		"/bases/"+b.ID+"/configurator/entity-delete",
+		url.Values{"entity": {name}, "kind": {"printform"}},
+		h.configuratorDeleteEntity,
+	)
+	var response struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("ответ удаления не JSON: %v (%s)", err, rec.Body.String())
+	}
+	if !response.OK {
+		t.Fatalf("удаление печатной формы не выполнено: %s", response.Error)
+	}
+}
+
+// Файловый конфигуратор удаляет оба файла формы, после чего публичный импорт
+// того же имени снова проходит вместо отказа на осиротевшем XLSX.
+func TestImportXLSX_DeleteAndReimport_FileMode(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	original := blankXLSX(t)
+	if rec := postImportXLSX(t, h, b, "Повтор", "Реализация", "", original); rec.Code != http.StatusOK {
+		t.Fatalf("первый импорт: код %d, тело %s", rec.Code, truncate(rec.Body.String(), 400))
+	}
+	deleteImportedPrintform(t, h, b, "Повтор")
+	for _, suffix := range []string{".layout.yaml", ".template.xlsx"} {
+		path := filepath.Join(dir, "printforms", "Повтор"+suffix)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s остался после удаления (err=%v)", path, err)
+		}
+	}
+	if rec := postImportXLSX(t, h, b, "Повтор", "Реализация", "", original); rec.Code != http.StatusOK {
+		t.Fatalf("повторный импорт: код %d, тело %s", rec.Code, truncate(rec.Body.String(), 400))
+	}
+}
+
+// В configdb оба файла входят в одну DeleteFiles-транзакцию и имя тоже можно
+// сразу импортировать повторно.
+func TestImportXLSX_DeleteAndReimport_DBMode(t *testing.T) {
+	h, b := newLayoutTestBaseDB(t)
+	original := blankXLSX(t)
+	if rec := postImportXLSX(t, h, b, "ПовторБД", "Реализация", "", original); rec.Code != http.StatusOK {
+		t.Fatalf("первый импорт: код %d, тело %s", rec.Code, truncate(rec.Body.String(), 400))
+	}
+	deleteImportedPrintform(t, h, b, "ПовторБД")
+	for _, path := range []string{
+		"printforms/ПовторБД.layout.yaml",
+		"printforms/ПовторБД.template.xlsx",
+	} {
+		if _, ok := configReadLayout(t, b, path); ok {
+			t.Fatalf("%s остался в configdb после удаления", path)
+		}
+	}
+	if rec := postImportXLSX(t, h, b, "ПовторБД", "Реализация", "", original); rec.Code != http.StatusOK {
+		t.Fatalf("повторный импорт: код %d, тело %s", rec.Code, truncate(rec.Body.String(), 400))
 	}
 }
