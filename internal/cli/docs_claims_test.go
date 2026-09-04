@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -56,7 +57,7 @@ func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
 	}
 }
 
-func TestReadmeAIGuideLineCountUpToDate(t *testing.T) {
+func TestReadmeInitAIGuideLineCountUpToDate(t *testing.T) {
 	readme := readDocForClaimTest(t, "../../README.md")
 	claims := aiGuideLinesPattern.FindAllStringSubmatch(readme, -1)
 	if len(claims) != 1 {
@@ -67,9 +68,12 @@ func TestReadmeAIGuideLineCountUpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("разобрать число строк AGENTS.md %q: %v", claims[0][1], err)
 	}
-	want := lineCount(generateAIGuide(""))
+
+	projectDir := filepath.Join(t.TempDir(), "проект")
+	runInitInto(t, projectDir, "")
+	want := lineCount(readDocForClaimTest(t, filepath.Join(projectDir, "AGENTS.md")))
 	if got != want {
-		t.Errorf("README.md обещает %d строк в AGENTS.md, генератор выдаёт %d", got, want)
+		t.Errorf("README.md обещает %d строк в AGENTS.md, onebase init создаёт %d", got, want)
 	}
 }
 
