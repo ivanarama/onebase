@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 )
 
 const sampleLegacyForm = `name: Накладная
@@ -31,6 +34,128 @@ footer: |
 
   **Всего**: {{Сумма | money}} руб.
 `
+
+func printformsImportCLIFixture(t *testing.T) (projectDir, sourcePath string, source []byte) {
+	t.Helper()
+	projectDir = t.TempDir()
+	writeProcrunFixture(t, projectDir, "config/app.yaml", "name: printforms-import-test\nversion: \"1.0\"\n")
+	writeProcrunFixture(t, projectDir, "documents/реализация.yaml", "name: Реализация\nfields:\n  - name: Номер\n    type: string\n")
+
+	book := excelize.NewFile()
+	sheet := book.GetSheetName(0)
+	if err := book.SetCellValue(sheet, "A1", "Накладная № {{Номер}}"); err != nil {
+		t.Fatalf("SetCellValue: %v", err)
+	}
+	buf, writeErr := book.WriteToBuffer()
+	closeErr := book.Close()
+	if writeErr != nil {
+		t.Fatalf("WriteToBuffer: %v", writeErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("Close: %v", closeErr)
+	}
+	source = buf.Bytes()
+	sourcePath = filepath.Join(t.TempDir(), "бланк.xlsx")
+	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
+		t.Fatalf("запись XLSX-фикстуры: %v", err)
+	}
+	return projectDir, sourcePath, source
+}
+
+func runPrintformsImportCLI(t *testing.T, projectDir, sourcePath, name string, force bool) (string, error) {
+	t.Helper()
+	args := []string{
+		"printforms", "import",
+		"--project", projectDir,
+		"--file", sourcePath,
+		"--name", name,
+		"--document", "Реализация",
+	}
+	if force {
+		args = append(args, "--force")
+	}
+	rootCmd.SetArgs(args)
+	return captureStdout(t, rootCmd.Execute)
+}
+
+func resetPrintformsImportFlags(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		for name, value := range map[string]string{
+			"project":  ".",
+			"file":     "",
+			"name":     "",
+			"document": "",
+			"sheet":    "",
+			"force":    "false",
+		} {
+			flag := printformsImportCmd.Flags().Lookup(name)
+			if flag == nil {
+				t.Fatalf("флаг --%s не найден", name)
+			}
+			if err := flag.Value.Set(value); err != nil {
+				t.Fatalf("сброс --%s: %v", name, err)
+			}
+			flag.Changed = false
+		}
+	})
+}
+
+// Публичный путь argv → cobra → RunE обязан сохранить не только YAML-макет,
+// но и исходную книгу, из которой UI затем формирует Excel.
+func TestPrintformsImportThroughRootCommandSavesLayoutAndTemplate(t *testing.T) {
+	resetPrintformsImportFlags(t)
+	projectDir, sourcePath, source := printformsImportCLIFixture(t)
+	out, err := runPrintformsImportCLI(t, projectDir, sourcePath, "Накладная", false)
+	if err != nil {
+		t.Fatalf("onebase printforms import: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "printforms", "Накладная.layout.yaml")); err != nil {
+		t.Fatalf("YAML-макет не создан: %v", err)
+	}
+	template, err := os.ReadFile(filepath.Join(projectDir, "printforms", "Накладная.template.xlsx"))
+	if err != nil {
+		t.Fatalf("исходный XLSX не сохранён: %v", err)
+	}
+	if !bytes.Equal(template, source) {
+		t.Fatal("сохранённый XLSX отличается от импортированного бланка")
+	}
+}
+
+// При --force отказ второго файла не должен уничтожить прежний YAML: парная
+// запись откатывается к состоянию до запуска команды.
+func TestPrintformsImportThroughRootCommandRollsBackPair(t *testing.T) {
+	resetPrintformsImportFlags(t)
+	projectDir, sourcePath, _ := printformsImportCLIFixture(t)
+	printformsDir := filepath.Join(projectDir, "printforms")
+	if err := os.MkdirAll(printformsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	layoutPath := filepath.Join(printformsDir, "Накладная.layout.yaml")
+	oldLayout := []byte("name: прежний макет\n")
+	if err := os.WriteFile(layoutPath, oldLayout, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Каталог на месте второго файла даёт одинаково надёжный отказ записи на
+	// Windows и Unix, не полагаясь на права chmod текущего пользователя.
+	templatePath := filepath.Join(printformsDir, "Накладная.template.xlsx")
+	if err := os.Mkdir(templatePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runPrintformsImportCLI(t, projectDir, sourcePath, "Накладная", true)
+	if err == nil {
+		t.Fatal("ожидался отказ записи XLSX поверх каталога")
+	}
+	got, readErr := os.ReadFile(layoutPath)
+	if readErr != nil {
+		t.Fatalf("чтение восстановленного YAML: %v", readErr)
+	}
+	if !bytes.Equal(got, oldLayout) {
+		t.Fatalf("прежний YAML не восстановлен:\n%s", got)
+	}
+}
 
 func TestMigrateLegacyPrintForms_ConvertsAndDeletes(t *testing.T) {
 	dir := t.TempDir()
