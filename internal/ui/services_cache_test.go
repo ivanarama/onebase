@@ -4,6 +4,8 @@ package ui
 // тем же путём, каким приходит реальный запрос.
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -463,6 +465,26 @@ func TestServiceCache_SensitiveRequestHeadersKeepClientsIsolated(t *testing.T) {
 				t.Fatalf("персонализированный ответ попал в общий кэш: size=%d", size)
 			}
 		})
+	}
+}
+
+func TestServiceCache_CookieBypassWarnsOnceWithoutLeakingValue(t *testing.T) {
+	c := newCacheTestServer(t)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	for range 2 {
+		c.get(t, "/hs/pub/personal", "Cookie", "customer=private-value")
+	}
+
+	const message = "кэш ответов обойдён: запрос содержит Cookie"
+	if got := strings.Count(logs.String(), message); got != 1 {
+		t.Fatalf("предупреждение об обходе кэша записано %d раз, ожидался один раз:\n%s", got, logs.String())
+	}
+	if strings.Contains(logs.String(), "private-value") {
+		t.Fatalf("значение Cookie попало в журнал:\n%s", logs.String())
 	}
 }
 

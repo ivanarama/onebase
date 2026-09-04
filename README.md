@@ -189,6 +189,10 @@ onebase dev --project ./склад --sqlite ./склад.db --open
   `--allow-procrun`) или общим `--allow-write`.
 - **ИИ-помощник внутри базы** отвечает по живым данным с учётом прав
   пользователя — см. кадр выше.
+- **Конвейер сопровождения Claude/Codex** использует общий детерминированный
+  `pipelinectl` для обычных REVIEW/MERGE и сохраняет полный skill-fallback для
+  base-sync и recovery. Настройка и диагностика описаны в
+  [docs/maintenance-pipeline.md](docs/maintenance-pipeline.md#экономичный-путь-pipelinectl).
 
 Как это выглядит на практике — статья [«От ТЗ до работающей базы за 37 минут:
 ИИ-агент сам пишет, проверяет и чинит
