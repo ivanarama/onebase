@@ -18,7 +18,7 @@ import (
 // renderCfgAdminUsersBrowserHTML проходит через production middleware и
 // обработчик панели: Node ниже исполняет ровно тот cfgPost, который получает
 // браузер, а не копию функции из теста.
-func renderCfgAdminUsersBrowserHTML(t *testing.T, acceptLanguage string) string {
+func renderCfgAdminUsersBrowserHTML(t *testing.T, acceptLanguage string) (string, string) {
 	t.Helper()
 	ctx := context.Background()
 	baseID := "cfg-users-browser"
@@ -63,11 +63,23 @@ func renderCfgAdminUsersBrowserHTML(t *testing.T, acceptLanguage string) string 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("render users panel: status=%d body=%q", rec.Code, rec.Body.String())
 	}
-	return rec.Body.String()
+	html := rec.Body.String()
+
+	body := strings.NewReader(`{"id":"` + admin.ID + `","password":"An0ther-Str0ng!"}`)
+	req = httptest.NewRequest(http.MethodPost, "/bases/"+baseID+"/configurator/admin/users/passwd", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: configuratorSessionCookieName, Value: token})
+	req = requestWithBaseID(req, baseID)
+	rec = httptest.NewRecorder()
+	h.cfgAuthMiddleware(http.HandlerFunc(h.cfgAdminUserPasswd)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change own password: status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	return html, rec.Body.String()
 }
 
 func TestCfgAdminUsersPostBehaviorInNode(t *testing.T) {
-	html := renderCfgAdminUsersBrowserHTML(t, "en")
+	html, selfPasswordResponse := renderCfgAdminUsersBrowserHTML(t, "en")
 	for _, want := range []string{
 		"The Configurator session has ended — sign in again",
 		"Unexpected server response",
@@ -86,7 +98,10 @@ func TestCfgAdminUsersPostBehaviorInNode(t *testing.T) {
 		t.Fatalf("write rendered users panel: %v", err)
 	}
 	cmd := exec.Command(node, "--test", "admin_users_behavior_test.js") //nolint:gosec // test-only executable resolved by exec.LookPath
-	cmd.Env = append(os.Environ(), "ONEBASE_ADMIN_USERS_HTML="+htmlPath)
+	cmd.Env = append(os.Environ(),
+		"ONEBASE_ADMIN_USERS_HTML="+htmlPath,
+		"ONEBASE_SELF_PASSWORD_RESPONSE="+selfPasswordResponse,
+	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node admin users behavior test: %v\n%s", err, output)

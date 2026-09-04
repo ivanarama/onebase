@@ -47,6 +47,7 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 	// переводе; строковая конкатенация с одинарными кавычками этого не гарантирует.
 	sessionEndedJS, _ := json.Marshal(tr(lang, "Сессия конфигуратора завершена — войдите заново"))
 	unexpectedResponseJS, _ := json.Marshal(tr(lang, "Неожиданный ответ сервера"))
+	configuratorLoginURLJS, _ := json.Marshal("/bases/" + b.ID + "/configurator/login")
 
 	// Build language options for the user lang selector
 	langOpts := `<option value="">—</option>`
@@ -186,15 +187,16 @@ function cfgConfirm(text, onOk){
   cancel.onclick=function(){document.body.removeChild(ov)};
   row.appendChild(ok);row.appendChild(cancel);box.appendChild(row);ov.appendChild(box);document.body.appendChild(ov);
 }
-// cfgInfo — кастомный alert (WebView2 блокирует window.alert).
-function cfgInfo(text){
+// cfgInfo — кастомный alert (WebView2 блокирует window.alert). onClose нужен
+// после отзыва текущей сессии: сначала объясняем переход, затем открываем вход.
+function cfgInfo(text,onClose){
   var ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10001;display:flex;align-items:center;justify-content:center';
   var box=document.createElement('div');
   box.style.cssText='background:#fff;padding:18px 22px;border-radius:8px;box-shadow:0 6px 28px rgba(0,0,0,.2);min-width:240px;font-size:13px';
   box.innerHTML='<div style="margin-bottom:12px">'+text+'</div>';
   var ok=document.createElement('button');ok.textContent='OK';ok.style.cssText='background:#1a4a80;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;float:right';
-  ok.onclick=function(){document.body.removeChild(ov)};
+  ok.onclick=function(){document.body.removeChild(ov);if(onClose){onClose()}};
   box.appendChild(ok);ov.appendChild(box);document.body.appendChild(ov);
 }
 function cfgUserDel(id){
@@ -227,8 +229,12 @@ function cfgUserPasswd(id){
     if(pw!==pw2){err.textContent='Пароли не совпадают';return}
     err.textContent='';
     cfgPost('users/passwd',{id:id,password:pw})
-      .then(function(){
+      .then(function(d){
         document.body.removeChild(ov);
+        if(d.currentSessionEnded){
+          cfgInfo(` + string(sessionEndedJS) + `,function(){window.location.assign(` + string(configuratorLoginURLJS) + `)});
+          return;
+        }
         cfgInfo('Пароль изменён');
       })
       .catch(function(e){err.textContent=e.message});
@@ -402,6 +408,8 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
+	currentUser := cfgUserFromContext(r.Context())
+	currentSessionEnded := currentUser != nil && currentUser.ID == req.ID
 	if err := repo.UpdatePassword(r.Context(), req.ID, req.Password); err != nil {
 		status := http.StatusInternalServerError
 		if isPasswordPolicyError(err) {
@@ -430,7 +438,7 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		targetLogin = u.Login
 	}
 	logCfgSessionAudit(r, db, "password_change_sessions_revoked", targetLogin, req.ID)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "currentSessionEnded": currentSessionEnded})
 }
 
 func isPasswordPolicyError(err error) bool {

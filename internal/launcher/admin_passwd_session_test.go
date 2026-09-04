@@ -77,6 +77,8 @@ func TestUserPasswdRevokesOwnConfiguratorSession(t *testing.T) {
 
 	if rec := post(admin.ID, "An0ther-Str0ng!"); rec.Code != http.StatusOK {
 		t.Fatalf("смена своего пароля: код=%d тело=%q", rec.Code, rec.Body.String())
+	} else if ended, _ := jsonBody(t, rec)["currentSessionEnded"].(bool); !ended {
+		t.Fatalf("смена своего пароля не сообщила об отзыве текущей сессии: тело=%q", rec.Body.String())
 	}
 	rec := post(other.ID, "An0ther-Str0ng!")
 	if rec.Code != http.StatusFound {
@@ -132,6 +134,8 @@ func TestUserPasswdRevokesTargetSessions(t *testing.T) {
 	}
 	if rec := post(other.ID, "An0ther-Str0ng!"); rec.Code != http.StatusOK {
 		t.Fatalf("смена чужого пароля: код=%d тело=%q", rec.Code, rec.Body.String())
+	} else if ended, _ := jsonBody(t, rec)["currentSessionEnded"].(bool); ended {
+		t.Fatalf("смена чужого пароля ошибочно сообщила об отзыве текущей сессии: тело=%q", rec.Body.String())
 	}
 	if _, err := repo.LookupSessionKind(ctx, victim, auth.SessionKindEnterprise); err == nil {
 		t.Error("сессия пользователя пережила смену его пароля администратором")
