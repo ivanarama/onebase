@@ -56,10 +56,12 @@ func (db *DB) renameSnakeCols(ctx context.Context, table string, fields []metada
 			// Перенос данных и удаление старой колонки — одна операция по смыслу.
 			// Раньше обе ошибки игнорировались: неудачный UPDATE с последующим
 			// успешным DROP COLUMN уничтожал единственную копию данных молча.
-			// Теперь сбой переноса прерывает миграцию до удаления.
+			// Теперь сбой переноса прерывает миграцию до удаления. Ссылку приводим
+			// прямым cast: пустое или повреждённое значение обязано остановить
+			// миграцию, а не превратиться в NULL перед удалением исходной колонки.
 			expr := oldCol
 			if f.RefEntity != "" {
-				expr = fmt.Sprintf("CASE WHEN %s::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN %s::uuid ELSE NULL END", oldCol, oldCol)
+				expr = fmt.Sprintf("btrim(%s::text)::uuid", oldCol)
 			}
 			if _, err := db.Exec(ctx, fmt.Sprintf(
 				"UPDATE %s SET %s = %s WHERE %s IS NOT NULL AND %s IS NULL",
