@@ -177,6 +177,16 @@ func valueToJSONSeen(v any, stack map[jsonValueVisit]bool, depth int) any {
 			return &readOnlyOpaque{ec: x.ec}
 		}
 		return nil
+	case *Ref:
+		// Ссылка в JSON — её идентификатор, а не разложенная по полям структура.
+		// Без этой ветки json.Marshal вываливал наружу устройство *Ref
+		// (`{"UUID":…,"Name":…,"Manager":null}`), включая поля, которых в DSL нет
+		// вовсе. Заодно это делает обёртку ссылочных колонок запроса (#1150)
+		// незаметной для интеграций: колонка отдавала UUID строкой и отдаёт её же.
+		if x == nil {
+			return nil
+		}
+		return x.UUID
 	case decimal.Decimal:
 		// json.Number маршалится как число без кавычек. По умолчанию shopspring
 		// сериализует decimal строкой ("30"), что ломает совместимость с JSON-числами.

@@ -187,6 +187,21 @@ func (w *catWriter) Set(name string, v any) {
 	w.obj.Set(name, v)
 }
 
+func (w *catWriter) GetDynamicField(name string) (any, bool) {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return nil, false
+	}
+	return w.Get(name), true
+}
+
+func (w *catWriter) SetDynamicField(name string, value any) bool {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return false
+	}
+	w.Set(name, value)
+	return true
+}
+
 // Fields — имена заполненных полей объекта: позволяет использовать объект как
 // источник в ЗаполнитьЗначенияСвойств (совместимо с CatalogRecordWriter).
 // forgetAssigned снимает признак «присвоено модулем» с перечисленных реквизитов:
