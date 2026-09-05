@@ -29,7 +29,22 @@ func repositoryFile(t *testing.T, parts ...string) string {
 
 func skill(t *testing.T, name string) string {
 	t.Helper()
-	return repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+	entry := repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+	legacyPath := filepath.Join(".claude", "skills", name, "references", "legacy-protocol.md")
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	if data, err := os.ReadFile(filepath.Join(root, legacyPath)); err == nil {
+		return entry + "\n" + string(data)
+	}
+	return entry
+}
+
+func TestReviewAndMergeRouteThroughPipelinectlWithDiscoverableFallback(t *testing.T) {
+	for _, name := range []string{"review-queue", "merge-shepherd"} {
+		entry := repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+		requireAll(t, entry, "promptpilot.project_pipeline", "pipelinectl.json",
+			"references/legacy-protocol.md", "action", "fallback")
+	}
 }
 
 func requireAll(t *testing.T, text string, fragments ...string) {
@@ -103,25 +118,41 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
 }
 
-func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testing.T) {
+func TestReviewQueueUsesTwoLaneExecutableAllowlist(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Исполняемый preflight — единственный источник списка кандидатов",
 		"Get-Command gh -ErrorAction SilentlyContinue",
 		"C:\\Program Files\\GitHub CLI\\gh.exe",
 		"GitHub CLI not found in PATH or the standard Windows location",
-		"go run ./tools/pipelinehealth -json",
-		"`review_candidates` — **исключительный allowlist этого запуска**",
-		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",
-		"не ревьюй обычные PR",
-		"**не переходи к обычной очереди**",
-		"первые два PR из `review_candidates`",
+		"Get-Command go -ErrorAction SilentlyContinue",
+		"C:\\Program Files\\Go\\bin\\go.exe",
+		"Go not found in PATH or the standard Windows location",
+		"& $goExe run ./tools/pipelinehealth -json",
+		"`review_candidates` — **исключительный allowlist для выбора новой цели**",
+		"`single_flight_barrier` защищает только интеграционную полосу, а не всю очередь",
+		"обычное содержательное REVIEW не блокируется",
+		"Следующий интеграционный PR при этом брать нельзя",
+		"бери до двух элементов stage `review` из `review_candidates`",
 		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
-		"Расхождение означает стоп без подстановки следующего PR",
+		"Для обычного аудита он обязан входить в `content_review_candidates`",
+		"Изменились только чужие PR, приоритеты, `main` или интеграционная полоса",
 	)
 }
 
-func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
+func TestIntegrationReviewReusesContentProofAndChecksOnlyBaseSyncDelta(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Интеграционное REVIEW не повторяет содержательный аудит",
+		"Валидный исходный committed-proof уже доказывает содержимое `from`",
+		"Проверь только точную дельту перехода `from → to`",
+		"разрешение конфликтов",
+		"обязательные проверки CI",
+		"Если между доказанным `from` и `to` есть что-либо кроме валидного base-sync либо собственный код PR изменён, carry недействителен",
+	)
+}
+
+func TestReviewQueueUsesPriorityThenBreadthFirstAndAging(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Не сортируй очередь только по номеру PR",
@@ -130,8 +161,10 @@ func TestReviewQueueIsBreadthFirstAndCannotStarveFreshPRs(t *testing.T) {
 		"updated_at == created_at",
 		"claim-less legacy markers не считай",
 		"Это только безопасный приоритет планирования, а не proof для мутации",
-		"(review-depth ASC, number ASC)",
-		"свежий PR с глубиной 0 будет проверен раньше старого PR с глубиной 1+",
+		"manual `queue:p0`…`queue:p3` старше",
+		"За каждые полные 168 часов с `created_at` подними на один уровень вплоть до P1",
+		"(priority ASC, review-depth ASC, number ASC)",
+		"Single-flight/recovery всё равно старше priority",
 	)
 	rejectAll(t, review, "Просматривай PR по возрастанию номера")
 }
@@ -195,7 +228,8 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	review := skill(t, "review-queue")
 	cases := []string{
 		"есть `hold` | пропустить",
-		"есть `ship`, но нет валидного незавершённого `pp:base-sync-done` и нет legacy re-ship для текущего HEAD | пропустить",
+		"есть `ship`, текущий HEAD ещё ни разу не проходил REVIEW | обычное содержательное REVIEW; при успехе `ship` сохраняется и второй клик не нужен",
+		"есть `ship`, HEAD сменился после прежнего proof, но нет валидного carry/re-ship | пропустить как stale authorization",
 		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап",
 		"есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить",
 		"после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает",
@@ -229,7 +263,7 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"git fetch origin pull/<M>/head",
 		"<сохранённый SHA>",
 		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, `.state`, `.base.ref`, актуальные метки и **все** комментарии",
-		"`ship` запрещает изменение, кроме интеграционного REVIEW",
+		"`ship` не запрещает REVIEW того же HEAD",
 		"`hold` всегда запрещает изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
 		"после постановки",
@@ -574,7 +608,7 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"сравнивай его строковое значение с REST id",
 		"`labels.pageInfo.hasNextPage == false`",
 		"**последний** ship-transition",
-		"его edge\n   расположен после edges всех трёх адресованных комментариев",
+		"его edge расположен после anchor текущего HEAD",
 		"Если ни одного ship-transition нет в epoch timeline",
 		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`/`BaseRefChangedEvent`/`BaseRefForcePushedEvent`/\n   `BaseRefDeletedEvent`",
 		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
@@ -646,10 +680,10 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"обычная stale-ship передача",
 	)
 	requireAllCompact(t, review,
-		"До обычной очереди восстанови глобального single-flight-владельца",
+		"До выбора восстанови single-flight-владельца **интеграционной полосы**",
 		"Если владелец ещё ждёт интеграционное REVIEW, выбери только его: это единственный аудит запуска",
-		"Пока MERGE не вольёт владельца, нельзя заранее ревьюить следующий интеграционный PR",
-		"Наличие proof не освобождает барьер",
+		"Пока MERGE не вольёт владельца, нельзя заранее проверять следующий интеграционный PR",
+		"Содержательное REVIEW других PR в это время безопасно",
 		"Intent без done — незавершённая транзакция MERGE, её REVIEW не захватывает",
 		"commit `to` имеет ровно двух родителей в порядке `[from, base]`",
 		"outcome `reviewed` сохраняет `ship`",
@@ -670,7 +704,7 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"Новый label является явным разрешением проверить и затем влить точный уже существующий `to`, но не наследуется следующим push",
 	)
 	requireAllCompact(t, merge,
-		"Разрешены ровно три способа связать этот ship-transition с текущим proof",
+		"Разрешены ровно четыре способа связать этот ship-transition с текущим proof",
 		"legacy reauthorized",
 		"текущий HEAD `to` — merge-коммит ровно с двумя parents `[from, base]`",
 		"последний ship-transition — новый trusted `LabeledEvent` от `ivanarama` после anchor `to`",
@@ -686,6 +720,51 @@ func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) 
 		"следующий base-sync уже записывается новым протоколом",
 		"Одновременно активен только один такой handoff",
 		"следующий MERGE сначала доводит владельца барьера до слияния",
+	)
+}
+
+func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, review,
+		"Protocol-recovery re-ship — отдельный узкий путь",
+		"исходный carry оказался невалиден",
+		"после edge самого done",
+		"не делает старый carry валидным",
+		"начинает новую carry-цепочку с `previous=none`",
+	)
+	requireAllCompact(t, merge,
+		"Разрешены ровно четыре способа",
+		"**protocol-recovery reauthorized:**",
+		"последний trusted `ship` от `ivanarama` после edge done",
+		"Для protocol-recovery всегда начни новую исправленную цепочку с `previous=none`",
+	)
+	requireAllCompact(t, docs,
+		"действительно испорченной цепочки человек ставит `ship` после edge done",
+		"protocol-recovery reauthorization точного текущего HEAD",
+		"следующий base-sync начинает новую цепочку с `previous=none`",
+	)
+}
+
+func TestBaseTipComesFromAuthoritativeRefAndDriftIsVisible(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, merge,
+		"gh api repos/ivanarama/onebase/git/ref/heads/main --jq .object.sha",
+		"`PullRequest.baseRefOid` не используй как tip `main`",
+		"`done.base` всегда равен фактическому второму parent",
+		"`base_sync_base_advanced`",
+	)
+	requireAllCompact(t, review,
+		"`intent.base` — наблюдавшийся tip `refs/heads/main` перед update",
+		"`done.base` — фактический второй parent",
+		"`intent.base` является предком `done.base`",
+	)
+	requireAllCompact(t, docs,
+		"Tip `main` для intent читается напрямую из `git/ref/heads/main`",
+		"ancestry `intent.base → done.base → current main`",
 	)
 }
 
