@@ -24,12 +24,16 @@ import (
 )
 
 var (
-	completionLine = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
-	claimLine      = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
-	reviewAgain    = regexp.MustCompile(`(?m)^pp:review-again$`)
-	displayRepair  = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
-	baseSyncIntent = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
-	baseSyncDone   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	completionLine    = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
+	claimLine         = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
+	reviewAgain       = regexp.MustCompile(`(?m)^pp:review-again$`)
+	displayRepair     = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
+	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
+	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
+	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
+	triageAuthorReply = regexp.MustCompile(`(?m)^<!-- pp:triage-author-reply claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
+	triageRouteDone   = regexp.MustCompile(`(?m)^<!-- pp:triage-route-done claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
 )
 
 type apiUser struct {
@@ -51,6 +55,7 @@ type apiComment struct {
 type apiPull struct {
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
+	Body      string `json:"body"`
 	HTMLURL   string `json:"html_url"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -64,6 +69,11 @@ type apiPull struct {
 	} `json:"base"`
 	Labels   []apiLabel   `json:"labels"`
 	Comments []apiComment `json:"-"`
+	// HeadParents holds the parent SHAs of the head commit. An automatic
+	// base-sync always leaves a merge commit; an ordinary FIX push leaves a
+	// single-parent commit. Without this the integration lane cannot be told
+	// apart from a normal review round.
+	HeadParents []string `json:"head_parents,omitempty"`
 }
 
 type apiIssue struct {
@@ -137,7 +147,7 @@ func main() {
 		fail(err)
 	}
 	result := analyze(prs, *owner)
-	analyzeIssues(&result, issues, *owner)
+	analyzeIssues(&result, issues, prs, *owner)
 	checkContract(&result, *contract)
 	result.finish()
 
@@ -201,6 +211,21 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, prs[index].Number)
 				if err := ghJSONLines(gh, &prs[index].Comments, "api", "--paginate", path, "--jq", ".[]"); err != nil {
 					errs <- fmt.Errorf("comments for PR #%d: %w", prs[index].Number, err)
+					continue
+				}
+				if !needsHeadParents(prs[index]) {
+					continue
+				}
+				var parents []struct {
+					SHA string `json:"sha"`
+				}
+				commit := fmt.Sprintf("repos/%s/commits/%s", repo, prs[index].Head.SHA)
+				if err := ghJSONLines(gh, &parents, "api", commit, "--jq", ".parents[]"); err != nil {
+					errs <- fmt.Errorf("head parents for PR #%d: %w", prs[index].Number, err)
+					continue
+				}
+				for _, parent := range parents {
+					prs[index].HeadParents = append(prs[index].HeadParents, parent.SHA)
 				}
 			}
 		}()
@@ -383,7 +408,7 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
-			case currentCompletions > 0 && depth > currentCompletions:
+			case currentCompletions > 0 && depth > currentCompletions && headIsBaseSyncMerge(pr):
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.MergeCandidates = append(result.MergeCandidates, item)
@@ -394,9 +419,10 @@ func analyze(prs []apiPull, owner string) report {
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "base_sync_waiting_review", pr.Number,
 					"ship сохранён; текущий HEAD ожидает интеграционное REVIEW")
-			case currentCompletions == 0 && depth > 0:
-				// REST cannot prove legacy merge parents or timeline edge order. Expose
-				// this as a priority candidate; REVIEW still performs the full GraphQL gate.
+			case currentCompletions == 0 && depth > 0 && headIsBaseSyncMerge(pr):
+				// REST cannot prove legacy timeline edge order, but the merge shape of
+				// the head commit is a fact. Expose this as a priority candidate;
+				// REVIEW still performs the full GraphQL gate.
 				item.Stage = "legacy-integration-review"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
 				result.add("yellow", "legacy_ship_waiting_review_validation", pr.Number,
@@ -407,6 +433,12 @@ func analyze(prs []apiPull, owner string) report {
 				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 				result.add("yellow", "ship_waiting_initial_review", pr.Number,
 					"ship сохранён как разрешение слить этот HEAD после успешного REVIEW")
+			case currentCompletions == 0 && !protocolHistory:
+				// Ordinary next FIX round: earlier HEADs were reviewed, this one is a
+				// plain push. It belongs to the content lane, not the integration lane.
+				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+				result.add("yellow", "ship_waiting_next_round_review", pr.Number,
+					"ship сохранён; новый HEAD после доработки ожидает обычное REVIEW")
 			case currentCompletions > 0:
 				item.Stage = "merge"
 				result.MergeCandidates = append(result.MergeCandidates, item)
@@ -447,7 +479,7 @@ func analyze(prs []apiPull, owner string) report {
 	return result
 }
 
-func analyzeIssues(result *report, issues []apiIssue, owner string) {
+func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner string) {
 	result.IssuesChecked = len(issues)
 	now := time.Now().UTC()
 	for _, issue := range issues {
@@ -497,6 +529,14 @@ func analyzeIssues(result *report, issues []apiIssue, owner string) {
 		case labels["plan-in-review"]:
 			// The plan PR is visible in REVIEW; product FIX must wait for its merge.
 		case labels["approved"] || labels["ready-fix"] && !labels["needs-decision"]:
+			if labels["in-work"] || issueReferencedByOpenPull(issue.Number, prs) {
+				continue
+			}
+			ready, reason := triageHandoffReady(issue, owner)
+			if !ready {
+				result.addIssue("yellow", "fix_issue_not_executable", issue.Number, reason)
+				continue
+			}
 			result.FixCandidates = append(result.FixCandidates, item)
 		case labels["needs-decision"]:
 			item.Stage = "human-decision"
@@ -506,6 +546,78 @@ func analyzeIssues(result *report, issues []apiIssue, owner string) {
 	sortCandidates(result.PlanCandidates)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
+}
+
+func issueReferencedByOpenPull(number int, prs []apiPull) bool {
+	pattern := regexp.MustCompile(fmt.Sprintf(`(^|[^0-9])#%d([^0-9]|$)`, number))
+	for _, pr := range prs {
+		if pr.State == "open" && pattern.MatchString(pr.Title+"\n"+pr.Body) {
+			return true
+		}
+	}
+	return false
+}
+
+func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
+	var root *apiComment
+	for index := range issue.Thread {
+		comment := &issue.Thread[index]
+		if !trustedUnedited(*comment, owner) || !hasExactLine(comment.Body, "<!-- pp:triage -->") {
+			continue
+		}
+		if root == nil || comment.CreatedAt < root.CreatedAt ||
+			(comment.CreatedAt == root.CreatedAt && comment.ID < root.ID) {
+			root = comment
+		}
+	}
+	if root == nil {
+		return false, "eligible FIX issue has no canonical trusted triage"
+	}
+	if !strings.Contains(root.Body, "pp:triage-route-claim") {
+		return true, ""
+	}
+	claims := triageRouteClaim.FindAllStringSubmatch(root.Body, -1)
+	if len(claims) != 1 {
+		return false, "canonical triage has a malformed route claim"
+	}
+	fingerprint := claims[0][1]
+	claimID := strconv.FormatInt(root.ID, 10)
+	labelsCommitted, replyCommitted, done := false, false, false
+	replyRequired := hasExactLine(root.Body, "reply=required")
+	for _, comment := range issue.Thread {
+		if !trustedUnedited(comment, owner) || comment.CreatedAt < root.CreatedAt ||
+			(comment.CreatedAt == root.CreatedAt && comment.ID <= root.ID) {
+			continue
+		}
+		for _, match := range triageRouteLabels.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID && match[2] == fingerprint {
+				labelsCommitted = true
+			}
+		}
+		for _, match := range triageAuthorReply.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID && match[2] == fingerprint {
+				replyCommitted = true
+			}
+		}
+		for _, match := range triageRouteDone.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID && match[2] == fingerprint && labelsCommitted && (!replyRequired || replyCommitted) {
+				done = true
+			}
+		}
+	}
+	if !done {
+		return false, "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"
+	}
+	return true, ""
+}
+
+func hasExactLine(body, line string) bool {
+	for _, value := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		if value == line {
+			return true
+		}
+	}
+	return false
 }
 
 func triageVisibleText(body string) (string, bool) {
@@ -555,6 +667,7 @@ func checkContract(result *report, path string) {
 		"Не сортируй очередь только по номеру PR",
 		"single_flight_barrier` защищает только интеграционную полосу",
 		"Интеграционное REVIEW не повторяет содержательный аудит",
+		"Для обычного аудита он обязан входить в `content_review_candidates`",
 	} {
 		if !strings.Contains(text, required) {
 			result.add("red", "unfair_review_contract", 0,
@@ -650,6 +763,26 @@ func (result *report) add(severity, code string, pr int, message string) {
 
 func (result *report) addIssue(severity, code string, issue int, message string) {
 	result.Findings = append(result.Findings, finding{Severity: severity, Code: code, Issue: issue, Message: message})
+}
+
+// needsHeadParents limits the extra commit read to pull requests whose stage
+// can depend on it: an open ship candidate targeting main.
+func needsHeadParents(pr apiPull) bool {
+	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
+		return false
+	}
+	return labelSet(pr.Labels)["ship"]
+}
+
+// headIsBaseSyncMerge reports whether the head commit has the shape every
+// base-sync leaves behind: a merge of the reviewed head with the base branch.
+// Review history alone never proves this, and an ordinary FIX round —
+// changes-requested, push, green review — produces exactly the same comment
+// trail as a legacy base-sync. Unknown parents count as "not a merge": a false
+// integration owner hides the real one from REVIEW and deadlocks the lane,
+// while a missed one only falls back to the full GraphQL gate in MERGE.
+func headIsBaseSyncMerge(pr apiPull) bool {
+	return len(pr.HeadParents) == 2
 }
 
 func labelSet(labels []apiLabel) map[string]bool {

@@ -26,19 +26,11 @@ func effectiveFormElementRequired(entity *metadata.Entity, element *metadata.For
 	return ok && field.Required
 }
 
-// nativeFormElementRequired reports whether the browser may require input
-// before submit. An explicit form rule always may. A metadata rule is also
-// reflected in ordinary editable controls, except when the platform itself
-// fills an auto-numbered Code/Number during Save.
-func nativeFormElementRequired(entity *metadata.Entity, element *metadata.FormElement) bool {
-	if element == nil {
-		return false
-	}
-	if element.Required {
-		return true
-	}
-	field, ok := managedFormElementEntityField(entity, element)
-	return ok && field.Required && !isAutoNumberedField(entity, field)
+// nativeFormElementRequired reports whether the browser may reject the form
+// before submit. Only an explicit form-local rule may do that: a metadata rule
+// is a final-state invariant and write hooks may satisfy it during Save.
+func nativeFormElementRequired(_ *metadata.Entity, element *metadata.FormElement) bool {
+	return element != nil && element.Required
 }
 
 // managedFormElementEntityField resolves only a header field of Объект. A
