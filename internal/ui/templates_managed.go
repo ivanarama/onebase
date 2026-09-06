@@ -234,7 +234,7 @@ const tplManagedForm = `
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
   </div>
 {{else if eq (str $el.Kind) "Надпись"}}
-  <div class="form-decoration" style="padding:6px 0;color:#475569;font-size:13px">
+  <div class="form-decoration" data-ob-el="{{$el.Name}}" style="padding:6px 0;color:#475569;font-size:13px">
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
@@ -245,9 +245,9 @@ const tplManagedForm = `
   </button>
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
   {{if $el.Picture}}
-    <img src="/static/forms/{{$el.Picture}}" alt="{{$el.Name}}" style="max-width:{{if $el.Width}}{{$el.Width}}px{{else}}100px{{end}};max-height:{{if $el.Height}}{{$el.Height}}px{{else}}100px{{end}}">
+    <img src="/static/forms/{{$el.Picture}}" alt="{{$el.Name}}" data-ob-el="{{$el.Name}}" style="max-width:{{if $el.Width}}{{$el.Width}}px{{else}}100px{{end}};max-height:{{if $el.Height}}{{$el.Height}}px{{else}}100px{{end}}">
   {{else}}
-    <span style="color:#cbd5e1">[Картинка: {{$el.Name}}]</span>
+    <span data-ob-el="{{$el.Name}}" style="color:#cbd5e1">[Картинка: {{$el.Name}}]</span>
   {{end}}
 {{else if eq (str $el.Kind) "ТабличнаяЧасть"}}
   {{/* Табличная часть в managed-форме (план 37, этап 8). Имена name= совпадают
@@ -687,10 +687,14 @@ const tplManagedForm = `
 {{if .NewParentID}}<input type="hidden" name="parent_id" value="{{.NewParentID}}">{{end}}
 
 {{$ctx := .}}
-{{if .FormCommands}}
-<div class="managed-command-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
+{{$commandBarElement := managedCommandBarElement .Form}}
+{{$commandBarHidden := elHidden $ctx $commandBarElement}}
+{{$commandBarReadOnly := elReadOnly $ctx $commandBarElement}}
+{{if $commandBarElement}}{{$commandBarReadOnly = or $commandBarReadOnly (effectiveFormElementReadOnly .Form $commandBarElement)}}{{end}}
+{{if and .FormCommands (not $commandBarHidden)}}
+<div class="managed-command-bar"{{if $commandBarElement}} data-ob-el="{{$commandBarElement.Name}}"{{end}} style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
   {{range .FormCommands}}
-  <button type="button" class="btn btn-secondary" style="margin:0" data-ob-fire-click="{{.Name}}">{{fieldTitleRU .Title .Name}}</button>
+  <button type="button" class="btn btn-secondary" style="margin:0" data-ob-fire-click="{{.Name}}"{{if $commandBarReadOnly}} disabled{{end}}>{{fieldTitleRU .Title .Name}}</button>
   {{end}}
 </div>
 {{end}}
