@@ -21,6 +21,29 @@ description: Триаж открытых ишью ivanarama/onebase — клас
 `bug`/`enhancement`/`question`/`documentation`, `ready-fix`, `needs-decision`,
 `manual`. Всё.
 
+## UTF-8 — инвариант до первой мутации
+
+На Windows **до чтения любого файла** настрой PowerShell и только затем читай
+`CLAUDE.md`, этот скил и данные, из которых строится человекочитаемый текст:
+
+```powershell
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+Get-Content -LiteralPath <path> -Encoding UTF8 -Raw
+```
+
+Голый `Get-Content` запрещён: Windows PowerShell может принять UTF-8 без BOM за
+Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. Перед POST проверь видимый
+текст обратным строгим преобразованием Windows-1251 → UTF-8; если оно даёт
+другой валидный текст, это mojibake — остановись **до любой GitHub-мутации**.
+
+После POST человекочитаемого комментария запроси его `.body` через jq `@base64`,
+декодируй байты как UTF-8 и сравни байт-в-байт с отправленным телом. Пока точное
+совпадение не доказано, не меняй метки и не публикуй следующий protocol marker.
+Консольное отображение само по себе не считается проверкой.
+
 ## Окружение: `gh` без `--json` не работает
 
 В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Команда,
@@ -48,21 +71,55 @@ stderr, вывода нет. Пустой вывод при этом легко 
 1. Синхронизация: `git fetch origin main`; если текущая ветка — `main`,
    то `git merge --ff-only origin/main`. Иначе работай на том, что есть.
 
-2. Кандидаты: `gh issue list --state open --limit 100 --json number,title,labels`.
-   Отбрось ишью с метками `needs-decision`, `approved`, `ready-fix`, `in-work`,
-   `hold`, `manual`, а также те, где в комментариях уже есть маркер
-   `<!-- pp:triage -->` (проверка: `gh issue view <N> --json comments`).
-   Возьми до **5** штук, старые вперёд.
+2. Кандидаты получай прямым пагинированным REST, а не ограниченным первым
+   экраном `gh issue list`. Repository Issues API возвращает также PR, поэтому
+   исключай каждый объект с `.pull_request != null`, например точной командой:
+
+   ```bash
+   gh api --paginate "repos/ivanarama/onebase/issues?state=open&per_page=100" --jq '.[] | select(.pull_request == null)'
+   ```
+
+   Сначала собери **recovery-очередь**: открытые issues,
+   где есть доверенный каноничный `pp:triage-route-claim` из п. 4, но нет
+   валидного `pp:triage-route-done` для него. Такой issue не исключается из-за
+   уже появившегося `<!-- pp:triage -->` или части маршрутных labels: crash между
+   root-комментарием и labels обязан продолжить ту же транзакцию.
+
+   Затем собери новые issues без route-claim. Отбрось у них метки
+   `needs-decision`, `approved`, `ready-fix`, `in-work`, `hold`, `manual`, а
+   также завершённый triage. Комментарии получай пагинированным REST; чужое или
+   встроенное в текст упоминание не блокирует triage. Legacy-комментарий
+   `ivanarama` с точной отдельной строкой `<!-- pp:triage -->`, но без нового
+   route-claim, считается завершённым только при наличии `ready-fix` либо
+   `needs-decision`. Если route label нет, это возможный старый crash: перечитай
+   state/title/body/all labels/comments непосредственно перед одним REST POST,
+   потребуй open, отсутствие `hold` и неизменность точного legacy-комментария,
+   поставь только консервативный `needs-decision`, сверь его. Непосредственно
+   перед следующим POST ещё раз выполни полный
+   state/title/body/labels/comments gate, разрешив относительно исходного
+   snapshot только уже подтверждённое добавление `needs-decision`; только затем
+   оставь от `ivanarama` точный
+   `<!-- pp:triage-legacy-recovery triage-comment=<id> -->`; содержание старого
+   разбора автоматически не переинтерпретируй.
+
+   Возьми до **5** штук: recovery всегда раньше новых, внутри группы старые
+   вперёд. Root, для которого полный human/state gate уже закрыт, только покажи
+   в `ИТОГ` как `НУЖЕН ЧЕЛОВЕК`: он не получает lease, не считается одним из
+   пяти рабочих slots и не вытесняет новые issues.
 
 3. По каждому ишью:
-   - прочитай целиком (`gh issue view <N> --json title,body,labels,comments,author`);
+   - прочитай issue (`gh issue view <N> --json title,body,labels,author`) и все
+     comments отдельным пагинированным REST;
      `author.login` понадобится в п. 5, чтобы понять, свой автор или сторонний;
    - найди код по симптомам (grep по репо, `git log` по затронутым файлам);
    - попробуй воспроизвести: `go build ./...`, `go test` подозреваемого пакета,
      `./onebase check --project examples/trade` — если жалоба на прикладной слой;
    - классифицируй: `bug` / `enhancement` / `question` / `documentation`.
 
-4. Оставь комментарий-разбор (в конце — обязательный маркер):
+4. Сначала по правилам пп. 5–8 вычисли **точный будущий маршрут**: class,
+   `ready-fix` либо `needs-decision`, необходимость `manual` и ответа внешнему
+   автору. Затем оставь один root-комментарий-разбор. В конце обязательны
+   маркер и проверяемая запись маршрута:
 
    ```
    **Триаж.**
@@ -71,7 +128,149 @@ stderr, вывода нет. Пустой вывод при этом легко 
    План фикса: <шаги, что менять, какие тесты>.
    Сложность: мелкий / средний / крупный. Риски: <...>.
    <!-- pp:triage -->
+
+   pp-triage-route-v1
+   issue=<decimal>
+   issue-updated=<RFC3339 до root>
+   title-sha256=<64 lowercase hex>
+   body-sha256=<64 lowercase hex>
+   analysis-sha256=<64 lowercase hex>
+   comments-sha256=<64 lowercase hex>
+   labels-sha256=<64 lowercase hex>
+   events-watermark=<decimal|none>
+   class=<bug|enhancement|question|documentation>
+   route=<ready-fix|needs-decision>
+   manual=<true|false>
+   reply=<required|none>
+   <!-- pp:triage-route-claim fingerprint-sha256=<64hex> owner=<uuid> -->
    ```
+
+   Непосредственно перед root POST заново прочитай state/title/body/all
+   labels/comments/events: issue обязан быть открыт, без `hold` и route labels,
+   а все данные и event watermark — совпасть со snapshot, на котором построен
+   анализ. Иначе не публикуй даже root.
+
+   До root вычисли SHA-256 raw UTF-8 точных title/body и точного видимого текста
+   анализа до строки `<!-- pp:triage -->`; последний hash запиши как
+   `analysis-sha256`. Пагинированным REST прочитай все issue events и сохрани
+   максимальный numeric id как `events-watermark` либо `none`. Для comments и labels
+   используй переносимые ASCII/LF records с финальным LF. Comments отсортируй по
+   `created_at`, затем по числовому `id`; строка содержит id, created_at, updated_at и
+   SHA-256 author/body. Для удалённого автора hash literal `deleted`. Labels
+   представь отсортированными SHA-256 raw UTF-8 каждого точного имени:
+
+   ```text
+   pp-triage-comments-v1
+   comment=<id>@<created_at>@<updated_at>@author-sha256=<64hex>@body-sha256=<64hex>
+
+   pp-triage-labels-v1
+   label-sha256=<64hex>
+   ```
+
+   Пустой record — header + LF. `comments-sha256`/`labels-sha256` — hash ровно
+   соответствующего record. Fingerprint — SHA-256 точной ASCII/LF записи
+   `pp-triage-route-v1` с финальным LF; JSON/BOM/CRLF запрещены. Owner — случайный
+   128-bit UUID.
+
+   Сначала найди self-contained root candidates, у которых record и claim-marker
+   синтаксически полны и собственный fingerprint пересчитывается, ещё не
+   используя comments после их исходного snapshot. Сгруппируй roots по **точно
+   одинаковым record + fingerprint**. В группе каноничен самый ранний по
+   `created_at`, затем id; только для него перепроверь pre-root comments/labels/
+   events snapshot. Более поздние roots той же группы — допустимые
+   `equivalent diagnostic losers`: они исключаются из post-root comment gate и
+   не мешают winner. Root с другим record/fingerprint остаётся human/concurrent
+   change и закрывает gate. Так два worker, одновременно прочитавшие один
+   snapshot, не блокируют друг друга собственными root-комментариями.
+
+   **Единый trust predicate применяется ко всем protocol markers:** комментарий
+   обязан иметь `author.login == ivanarama`, marker — быть точной отдельной
+   строкой, ссылка `claim` — указывать canonical root, а где предусмотрен
+   fingerprint — точно совпадать с пересчитанным root fingerprint. Чужие,
+   встроенные в текст и неполные markers игнорируй и сообщай о них. Route-claim
+   дополнительно доверен, только если record и marker находятся в одном
+   комментарии. FIX всегда читает canonical root по правилу выше. После POST
+   перечитай все комментарии: если
+   собственный возвращённый id не каноничен, не ставь маршрутные метки и закончи item как
+   проигравший гонку.
+
+   Root — начальная 30-минутная lease: active id — собственный возвращённый id
+   canonical root, active owner — UUID из его marker, время — GitHub
+   `created_at`. Для каждого active id допустимы children с `previous=<active-id>`:
+   до expiry и только при остатке менее пяти минут renewal может опубликовать
+   лишь процесс с тем же owner UUID; после expiry takeover обязан использовать
+   новый случайный UUID. Среди одновременно допустимых children одного
+   `previous` каноничен earliest по `created_at`, затем numeric id. Итеративно
+   пройди единственную цепочку от root; child обязан быть позже parent по
+   `created_at`, затем id, а children stale/non-active ветвей никогда
+   не возвращаются в цепочку.
+
+   Election допустима только при доказанном отсутствии удалений. Перед первым
+   вычислением chain и при **каждом** последующем lease/phase gate пагинированным
+   GraphQL прочитай `timelineItems(itemTypes:[COMMENT_DELETED_EVENT])` до
+   `pageInfo.hasNextPage == false`. Если существует хотя бы один
+   `CommentDeletedEvent.createdAt >= canonical-root.created_at`, закончи
+   транзакцию `НУЖЕН ЧЕЛОВЕК` без каких-либо мутаций. Текущий список comments не
+   доказывает, какой child выиграл раньше: после удаления winner проигравший
+   sibling не должен воскреснуть и стать active. Проверка обязательна и до
+   renewal/takeover POST, и перед label POST, labels-marker, ответом и done.
+
+   **До каждого** renewal/takeover POST
+   выполни полный gate ниже (включая state/open, `hold`, title/body, labels,
+   comments/events, отсутствие `COMMENT_DELETED_EVENT` после root и
+   equivalent-root rule), требуя лишь, что прежняя active
+   lease действительно истекла или подходит к порогу renew. Если gate закрыт,
+   не публикуй lease. После timeout recovery публикует точный
+   `<!-- pp:triage-route-lease claim=<root-id> fingerprint-sha256=<64hex> previous=<active-id> owner=<uuid> -->`.
+   После POST перечитай chain. Только процесс, чей **собственный возвращённый
+   root/lease id** равен active id, чей локальный UUID равен active owner и чья
+   lease ещё не истекла, вправе продолжать. Foreign live root/lease нельзя
+   использовать как своё владение. При остатке менее пяти минут сначала сделай
+   same-owner renewal и снова докажи active ownership. Не повторяй POST после
+   timeout вслепую: сначала ищи собственный marker прямым REST.
+
+   Перед **каждым внешним изменением** после root — label POST, labels-marker,
+   ответом автору и done — одним циклом заново прочитай issue state, title/body, все labels и все
+   comments и все issue events пагинированным REST. Требуй: issue открыт; `hold` отсутствует;
+   canonical root не изменился; собственные returned active id + UUID совпадают
+   с вершиной chain и lease не истекла; title/body и все pre-root
+   comments совпадают с record; видимый analysis и route-record canonical root
+   не редактировались; после root нет комментариев, кроме equivalent diagnostic
+   roots, валидных markers/ответа этой транзакции; состояние labels/events соответствует точной
+   label-фазе ниже. Любой новый/отредактированный/удалённый
+   комментарий, late `hold`, закрытие, `approved`/`in-work`/`manual` не из
+   record, конфликтующий route или иной label означает стоп без мутации.
+
+   Label-фаза имеет отдельный trusted commit-marker:
+   `<!-- pp:triage-route-labels claim=<root-id> fingerprint-sha256=<64hex> events-through=<decimal> labels-sha256=<64hex> -->`.
+   До него допустим **только точный исходный** labels snapshot и отсутствие любых
+   post-watermark `labeled`/`unlabeled` events. Тогда все отсутствующие labels
+   точного маршрута (`class`, route и при необходимости `manual`) добавь
+   **одним** REST POST. После ответа перечитай labels/events, проверь итоговый
+   hash и для каждой ранее отсутствовавшей ожидаемой label ровно один новый
+   `labeled` event без посторонних label events, затем опубликуй labels-marker с
+   максимальным проверенным event id. Marker является commit только при точном
+   результате **собственного только что завершившегося** POST; recovery не может
+   вывести ownership только из текущих labels/events. Если процесс упал после label POST, но до
+   trusted labels-marker, появившиеся labels/events неотличимы от человеческих:
+   **не** повторяй и не считай фазу выполненной, закончи `НУЖЕН ЧЕЛОВЕК`.
+
+   После trusted labels-marker требуй точный committed labels hash и отсутствие
+   любых более поздних `labeled`/`unlabeled` events. Поэтому human pre-add,
+   remove/re-add ожидаемой label или любая другая поздняя label mutation всегда
+   закрывает gate; recovery никогда не возвращает снятую человеком `ready-fix`.
+   Если `reply=required`, отдельный ответ обязан содержать точную строку
+   `<!-- pp:triage-author-reply claim=<root-id> fingerprint-sha256=<64hex> -->`;
+   найденный trusted marker
+   запрещает повторный ответ.
+
+   Только после trusted labels-marker и обязательного trusted ответа, снова выполнив
+   gate, опубликуй
+   `<!-- pp:triage-route-done claim=<root-id> fingerprint-sha256=<64hex> -->`.
+   Лишь этот marker завершает triage и исключает issue из recovery. Более поздний
+   triage не заменяет план молча — для изменения плана человек редактирует
+   каноничный комментарий; edit инвалидирует незавершённую транзакцию, а
+   `updated_at` входит в FIX-fingerprint завершённого triage.
 
 5. **Дефект → критерии автофикса.** Метку `ready-fix` ставь, только если сошлись
    **все четыре** условия:
@@ -82,11 +281,11 @@ stderr, вывода нет. Пустой вывод при этом легко 
    - поведение существующих конфигураций не меняется (если меняется — это уже
      продуктовое решение, не починка).
 
-   ```
-   gh issue edit <N> --add-label bug --add-label ready-fix
-   ```
+   Запиши этот исход в root как `class=bug`, `route=ready-fix` и добавь обе
+   метки только общей транзакционной label-фазой п. 4 — не отдельными
+   `gh issue edit`, иначе crash снова разорвёт маршрут.
 
-   Не сошёлся хоть один — `bug` + `needs-decision`, и в комментарии отдельной
+   Не сошёлся хоть один — запиши `bug` + `needs-decision`, и в комментарии отдельной
    строкой: какой критерий не сошёлся и что нужно от человека. Крупная правка
    (миграция схемы, смена семантики DSL/SQL, архитектурный сдвиг) уходит человеку
    всегда, даже если это стопроцентный дефект.
@@ -96,7 +295,8 @@ stderr, вывода нет. Пустой вывод при этом легко 
 
 6. **Чинится не коммитом → метка `manual`.** Если правка вообще не в
    репозитории — настройки GitHub (описание, topics, защита ветки), внешний
-   сервис, инфраструктура, — ставь `manual` вместе с `needs-decision` и пиши в
+   сервис, инфраструктура, — включи `manual` вместе с `needs-decision` в точный
+   маршрут root и пиши в
    плане фикса конкретную команду или последовательность действий.
 
    Конвейер двигает код: у фиксера нет способа положить такую правку в дифф, и
@@ -139,7 +339,7 @@ stderr, вывода нет. Пустой вывод при этом легко 
    будет разобрана заново с нуля. Если внутри «делать» есть развилка по способу —
    оформи её по п. 8.
 
-   Поставь `needs-decision` — оценка написана, ход человека. Он снимет её вместе
+   Включи `needs-decision` в транзакционный маршрут — оценка написана, ход человека. Он снимет её вместе
    с решением: `approved` (делаем), закрытие (не делаем) или `hold` (потом).
    У заявки с `manual` (п. 6) `approved` из этого списка выпадает: конвейер её не
    возьмёт, и «делаем» здесь означает, что человек применяет правку и закрывает
@@ -216,11 +416,12 @@ stderr, вывода нет. Пустой вывод при этом легко 
 конвейеру: `файл:строка`, критерии автохода, план фикса. Автор из него не узнаёт
 ни того, что ему поверили, ни того, что делать сегодня.
 
-Пропущенный ответ не заметит никто. Корзина «внешняя заявка без ответа» в
-`tools/backlogsweep` засчитывает за ответ любой комментарий «своего» логина —
-твой разбор в том числе, — поэтому после разбора заявка молчит для сверки
-навсегда; ловит она только те заявки, до которых ты ещё не дошёл (#1166).
-Страховки здесь нет: не ответил ты — не ответил никто.
+Пропущенный ответ замечает сверка — но только она. Корзина «внешняя заявка без
+ответа» в `tools/backlogsweep` перестала засчитывать за ответ машинную запись:
+твой разбор помечен маркером `<!-- pp:triage -->` и за разговор с автором не
+идёт (#1166), поэтому неотвеченная заявка всплывёт в отчёте. Отчёт этот не гейт
+и читается раз в неделю: он показывает, что ответа не было, но за тебя его не
+пишет.
 
 **Когда отвечать:** поставил `ready-fix` **и** автор заявки не `ivanarama` и не
 `ivantit66` (тот же список «своих», что у `backlogsweep`). Автора берёшь из
@@ -229,7 +430,10 @@ stderr, вывода нет. Пустой вывод при этом легко 
 будет нечем. Ответ — **отдельный** комментарий после разбора, не строка внутри
 него: разбор читает машина, ответ читает человек. Отправляется обычным
 `gh issue comment <N> --body "…"` (он здесь работает). Маркер `<!-- pp:reply -->`;
-он же признак, что отвечать второй раз не надо.
+он сохраняется для `backlogsweep`. В транзакционном route этот же комментарий
+обязан содержать и точную строку
+`<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->`;
+только trusted пара markers является признаком, что отвечать второй раз не надо.
 
 Отвечать на языке заявки. Форма:
 
@@ -245,6 +449,7 @@ stderr, вывода нет. Пустой вывод при этом легко 
 Заявка ушла в автоматическую починку: PR будет привязан к ней, и заявка
 закроется вместе с ним, когда его вольют.
 <!-- pp:reply -->
+<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->
 ```
 
 Начала ровно два, и третьего быть не может: ответ пишется только вместе с

@@ -256,6 +256,80 @@ func TestReportPrintsBothBrokenReferencesOfOneIssue(t *testing.T) {
 	}
 }
 
+// Порядок комментариев в выдаче gh нигде не обещан, а «поправлено ниже в треде»
+// держится ровно на нём: те же два комментария, поданные в обратном порядке,
+// обязаны читаться как переписка, а не как есть.
+func TestCommentsAreOrderedByCreationNotByDelivery(t *testing.T) {
+	cfg := testConfig()
+	cfg.plans = testPlans("158-open-form.md")
+	// В слайсе — новый комментарий первым, старый вторым.
+	is := mk(1, "ivanarama", ago(1), []string{"hold"},
+		[2]string{"ivanarama", "поправка: план получил номер 158 — `Plans/158-open-form.md`"},
+		[2]string{"ivanarama", "работа оформлена планом `Plans/157-open-form.md`"})
+	is = commentAt(is, 0, ago(1))
+	is = commentAt(is, 1, ago(5))
+
+	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+
+	if len(got) != 1 {
+		t.Fatalf("ожидалась одна находка, получено %v", details(got))
+	}
+	if !strings.Contains(got[0].detail, "ниже в треде уже поправлено на Plans/158-open-form.md") {
+		t.Fatalf("порядок комментариев взят из выдачи, а не по createdAt: %q", got[0].detail)
+	}
+}
+
+// Потолок строк на заявку: десяток планов в одной заявке иначе занимает экран
+// отчёта, который чинили ради читаемости. Обрезка обязана называться вслух —
+// счётчик корзины при этом считает все находки, а не показанные.
+func TestReportCapsLinesPerIssueAndSaysHowManyAreHidden(t *testing.T) {
+	var buf bytes.Buffer
+	issues := []issue{withBody(mk(9, "ivanarama", ago(1), []string{"hold"}),
+		"обещаны `Plans/900-первый.md`, `Plans/901-второй.md`, `Plans/902-третий.md`, "+
+			"`Plans/903-четвёртый.md` и `Plans/904-пятый.md`")}
+
+	report(&buf, analyze(issues, testConfig()), 1, false)
+
+	out := buf.String()
+	if !strings.Contains(out, "ссылка на план, которого нет — 5") {
+		t.Fatalf("счётчик корзины обязан считать все находки, а не показанные:\n%s", out)
+	}
+	for _, want := range []string{"900-первый.md", "901-второй.md", "902-третий.md"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("первые %d находок обязаны печататься, нет %q:\n%s", maxPerIssue, want, out)
+		}
+	}
+	for _, hidden := range []string{"903-четвёртый.md", "904-пятый.md"} {
+		if strings.Contains(out, hidden) {
+			t.Fatalf("сверх потолка ожидалась сводка, а не строка %q:\n%s", hidden, out)
+		}
+	}
+	if !strings.Contains(out, "и ещё 2 — покажутся после починки первых 3") {
+		t.Fatalf("обрезка не названа вслух:\n%s", out)
+	}
+}
+
+// Потолок считается по заявке, а не по корзине: соседняя заявка своё получает
+// целиком, иначе одна многословная вытесняла бы из отчёта остальные.
+func TestPerIssueCapDoesNotEatNeighbouringIssues(t *testing.T) {
+	var buf bytes.Buffer
+	issues := []issue{
+		withBody(mk(9, "ivanarama", ago(1), []string{"hold"}),
+			"обещаны `Plans/900-первый.md`, `Plans/901-второй.md`, `Plans/902-третий.md`, `Plans/903-четвёртый.md`"),
+		withBody(mk(10, "ivanarama", ago(1), []string{"hold"}), "обещан `Plans/905-шестой.md`"),
+	}
+
+	report(&buf, analyze(issues, testConfig()), 2, false)
+
+	out := buf.String()
+	if !strings.Contains(out, "905-шестой.md") {
+		t.Fatalf("находка соседней заявки съедена потолком:\n%s", out)
+	}
+	if !strings.Contains(out, "и ещё 1 — покажутся после починки первых 3") {
+		t.Fatalf("обрезка первой заявки не названа вслух:\n%s", out)
+	}
+}
+
 func TestPlanCheckIsOffWithoutPlansDirectory(t *testing.T) {
 	cfg := testConfig()
 	cfg.plans = plans{} // каталог не прочитан: запуск не из корня репозитория
@@ -318,6 +392,93 @@ func TestSilenceCountsFromTheUnansweredQuestion(t *testing.T) {
 	}
 }
 
+// Разбор триажа и заключение ревью пишутся от логина из -team, но адресованы
+// конвейеру, а не автору. Живой случай #1161: единственный комментарий —
+// разбор с маркером, автор ответа не получил, а сверка считала заявку
+// отвеченной. Маркер ревью проверяем в его настоящем виде — с хвостом внутри:
+// сверка с точной строкой `<!-- pp:review -->` пропускала бы все свежие.
+func TestPipelineNoteIsNotAnAnswerToTheAuthor(t *testing.T) {
+	triaged := mk(1, "rusist32-netizen", ago(30), []string{"ready-fix"},
+		[2]string{"ivanarama", "**Триаж.** Воспроизводится: да, корень доказан по коду.\n<!-- pp:triage -->"})
+	reviewed := mk(2, "boffik", ago(30), nil,
+		[2]string{"ivanarama", "**Ревью.** Блокирующих нет.\n<!-- pp:review pp:tail=2 -->"})
+
+	got := bucketByTitle(analyze([]issue{triaged, reviewed}, testConfig()), "внешняя заявка без ответа")
+
+	if want := []int{1, 2}; len(got) != len(want) || numbers(got)[0] != want[0] || numbers(got)[1] != want[1] {
+		t.Fatalf("ожидались %v, получено %v", want, numbers(got))
+	}
+	for _, f := range got {
+		if !strings.Contains(f.detail, "ждёт 30 дн.") || !strings.Contains(f.detail, "ответа не было ни разу") {
+			t.Fatalf("#%d: разбор засчитан за ответ автору: %q", f.issue.Number, f.detail)
+		}
+	}
+}
+
+// Отметка «взято в работу» — тоже запись для конвейера, и на автоходе она
+// приходит РАНЬШЕ, чем истекут -reply-days: на #1161 разбор и отметка разошлись
+// на двое суток из семи. Не будь у неё маркера, находка не появилась бы вовсе,
+// а не «появилась и погасла». Тело здесь — дословно то, что пишет
+// `/fix-approved` (п. 7 его SKILL.md).
+func TestInWorkNoteIsNotAnAnswerToTheAuthor(t *testing.T) {
+	is := mk(1, "rusist32-netizen", ago(30), []string{"ready-fix", "in-work"},
+		[2]string{"ivanarama", "**Триаж.** Корень доказан по коду.\n<!-- pp:triage -->"},
+		[2]string{"ivanarama", "Взято в работу: #1215. <!-- pp:in-work -->"})
+	is = commentAt(is, 0, ago(3))
+	is = commentAt(is, 1, ago(1))
+
+	got := bucketByTitle(analyze([]issue{is}, testConfig()), "внешняя заявка без ответа")
+
+	if len(got) != 1 {
+		t.Fatalf("отметка «взято в работу» засчитана за ответ автору, получено %v", numbers(got))
+	}
+	if !strings.Contains(got[0].detail, "ждёт 30 дн.") || !strings.Contains(got[0].detail, "ответа не было ни разу") {
+		t.Fatalf("отметка сдвинула границу ответа: %q", got[0].detail)
+	}
+}
+
+// Ответ автору находку гасит — и машинный с маркером `pp:reply` (автоответ
+// триажа при ready-fix), и обычный комментарий человека без маркеров.
+func TestAnswerToTheAuthorClearsTheFinding(t *testing.T) {
+	auto := mk(1, "rusist32-netizen", ago(30), []string{"ready-fix"},
+		[2]string{"ivanarama", "разбор\n<!-- pp:triage -->"},
+		[2]string{"ivanarama", "Спасибо — воспроизвели. Обхода нет.\n<!-- pp:reply -->"})
+	auto = commentAt(auto, 0, ago(20))
+	auto = commentAt(auto, 1, ago(19))
+
+	byHand := mk(2, "boffik", ago(30), nil,
+		[2]string{"ivanarama", "разбор\n<!-- pp:triage -->"},
+		[2]string{"ivanarama", "Спасибо, поправим на неделе."})
+	byHand = commentAt(byHand, 0, ago(20))
+	byHand = commentAt(byHand, 1, ago(19))
+
+	if got := bucketByTitle(analyze([]issue{auto, byHand}, testConfig()), "внешняя заявка без ответа"); len(got) != 0 {
+		t.Fatalf("ответ автору обязан гасить находку, получено %v", details(got))
+	}
+}
+
+// Граница «последнего нашего ответа» тоже не должна уезжать на разбор: вопрос
+// автора, заданный ДО него, остаётся неотвеченным, и ждёт автор с этого
+// вопроса. Прежняя версия объявляла, что мяч у автора, и молчала вовсе.
+func TestPipelineNoteDoesNotSwallowTheQuestionBeforeIt(t *testing.T) {
+	is := mk(1, "boffik", ago(90), nil,
+		[2]string{"ivanarama", "разбираемся"},
+		[2]string{"boffik", "а теперь как?"},
+		[2]string{"ivanarama", "**Триаж.** Корень по коду.\n<!-- pp:triage -->"})
+	is = commentAt(is, 0, ago(60))
+	is = commentAt(is, 1, ago(30))
+	is = commentAt(is, 2, ago(5))
+
+	got := bucketByTitle(analyze([]issue{is}, testConfig()), "внешняя заявка без ответа")
+
+	if len(got) != 1 {
+		t.Fatalf("ожидалась одна находка, получено %v", numbers(got))
+	}
+	if !strings.Contains(got[0].detail, "ждёт 30 дн.") || !strings.Contains(got[0].detail, "с последнего вопроса") {
+		t.Fatalf("разбор сдвинул границу ответа: %q", got[0].detail)
+	}
+}
+
 func TestStaleDecisionIgnoresApprovedAndHold(t *testing.T) {
 	issues := []issue{
 		mk(1, "ivanarama", ago(30), []string{"needs-decision"}),
@@ -365,6 +526,9 @@ func TestReportPrintsAdviceWithFindings(t *testing.T) {
 	report(&buf, analyze(issues, testConfig()), 1, false)
 
 	out := buf.String()
+	if !strings.Contains(out, "застрявших заявок — 1 (из 1 открытых)") {
+		t.Fatalf("одна заявка в двух корзинах посчитана в заголовке дважды:\n%s", out)
+	}
 	for _, want := range []string{"#7", "внешняя заявка без ответа", "hold без ссылки на план", "автор ждёт"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в отчёте нет %q:\n%s", want, out)
