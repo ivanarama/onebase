@@ -128,6 +128,64 @@ func TestНезаполненноеСостояниеПопадаетВОтбо�
 // нетипизированный литерал пустой строки приводится к нему, и запрос падает на
 // этапе плана независимо от числа строк: работавший до правила отбор переставал
 // работать совсем. Одного диалекта тут мало ровно поэтому.
+// Бухгалтерский регистр тоже должен применить правило пустого текста к своим
+// строковым полям основного источника, включая SubcontoN.
+func TestБухгалтерскийРегистрПустойТекстВОстатках(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ar := &metadata.AccountRegister{
+			Name:      "ОстаткиПустоСубконто",
+			Accounts:  "Основной",
+			Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}},
+			Subconto:  []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
+		}
+		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
+			t.Fatalf("миграция: %v", err)
+		}
+		if err := db.EnsureAccountsTable(ctx); err != nil {
+			t.Fatalf("синхронизация справочника счетов: %v", err)
+		}
+		if err := db.SyncAccounts(ctx, []*metadata.ChartOfAccounts{{
+			Name: "Основной",
+			Accounts: []metadata.Account{
+				{Code: "41", Kind: "active"},
+				{Code: "60", Kind: "passive"},
+			},
+		}}); err != nil {
+			t.Fatalf("перенос счетов: %v", err)
+		}
+		if err := db.WriteAccountMovements(ctx, ar.Name, "Док", uuid.New(), []map[string]any{
+			{"счётдт": "60", "счёткт": "41", "сумма": float64(5)},
+			{"счётдт": "60", "счёткт": "60", "субконто1": "Контрагент", "сумма": float64(7)},
+		}, ar, nil); err != nil {
+			t.Fatalf("запись движений: %v", err)
+		}
+
+		run := func(t *testing.T, текст string) []string {
+			t.Helper()
+			res, err := query.Compile(текст, query.CompileOpts{
+				Dialect:     db.Dialect(),
+				AccountRegs: []*metadata.AccountRegister{ar},
+			})
+			if err != nil {
+				t.Fatalf("компиляция %q: %v", текст, err)
+			}
+			rows, cols, err := db.RunQuery(ctx, res.SQL, res.Args)
+			if err != nil {
+				t.Fatalf("выполнение %s: %v", res.SQL, err)
+			}
+			var out []string
+			for _, r := range rows {
+				out = append(out, fmt.Sprint(r[cols[0]]))
+			}
+			return out
+		}
+
+		сверитьМетки(t, run(t, `ВЫБРАТЬ Счет ИЗ РегистрБухгалтерии.ОстаткиПустоСубконто.Остатки()
+			ГДЕ Счет = "41" И Субконто1 <> "Завершено"`), []string{"41"})
+	})
+}
+
 func TestОдноимённыеПоляРазногоТипаНеЛомаютОтбор(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()

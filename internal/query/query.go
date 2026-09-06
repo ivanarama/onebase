@@ -2678,6 +2678,14 @@ func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]meta
 				return m
 			}
 		}
+	case isAccountRegType(typeUpper):
+		for _, reg := range opts.AccountRegs {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Resources)
+				add(reg.Subconto)
+				return m
+			}
+		}
 	case isInfoRegType(typeUpper):
 		for _, ir := range opts.InfoRegs {
 			if strings.EqualFold(ir.Name, name) {
