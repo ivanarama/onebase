@@ -36,10 +36,15 @@ func формаСУсловиями(ent *metadata.Entity, els ...*metadata.FormE
 
 func отрисоватьСУсловиями(t *testing.T, ent *metadata.Entity, form *metadata.FormModule, values map[string]string) string {
 	t.Helper()
+	return отрисоватьСВариантами(t, ent, form, values, map[string]any{})
+}
+
+func отрисоватьСВариантами(t *testing.T, ent *metadata.Entity, form *metadata.FormModule, values map[string]string, refOptions map[string]any) string {
+	t.Helper()
 	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
 	data := map[string]any{
 		"Entity": ent, "Form": form, "IsNew": false,
-		"Values": values, "RefOptions": map[string]any{},
+		"Values": values, "RefOptions": refOptions,
 		"EnumOptions": map[string][]EnumOption{}, "TPRefOptions": map[string]any{},
 		"User": nil, "Lang": "ru",
 	}
@@ -391,9 +396,9 @@ func managedHTMLAttr(n *html.Node, name string) (string, bool) {
 	return "", false
 }
 
-// managedCheckboxControls parses the real managed-form markup, so the JS
-// harness below starts with exactly the controls emitted by the template.
-func managedCheckboxControls(t *testing.T, rendered, elementName string) []managedBrowserControl {
+// managedElementAnchor находит якорь data-ob-el элемента формы — ровно тот узел,
+// внутри которого applyElementStates ищет контролы.
+func managedElementAnchor(t *testing.T, rendered, elementName string) *html.Node {
 	t.Helper()
 	doc, err := html.Parse(strings.NewReader(rendered))
 	if err != nil {
@@ -420,6 +425,14 @@ func managedCheckboxControls(t *testing.T, rendered, elementName string) []manag
 	if wrapper == nil {
 		t.Fatalf("managed form has no data-ob-el=%q", elementName)
 	}
+	return wrapper
+}
+
+// managedCheckboxControls parses the real managed-form markup, so the JS
+// harness below starts with exactly the controls emitted by the template.
+func managedCheckboxControls(t *testing.T, rendered, elementName string) []managedBrowserControl {
+	t.Helper()
+	wrapper := managedElementAnchor(t, rendered, elementName)
 
 	var controls []managedBrowserControl
 	var collect func(*html.Node)
@@ -889,5 +902,219 @@ func TestСкрытаяСтраница_НиКнопкиВкладкиНиСод
 	}
 	if !strings.Contains(принята, `data-tab-content="0" style="display:block"`) {
 		t.Errorf("содержимое оставшейся вкладки должно быть раскрыто\n%s", принята)
+	}
+}
+
+// Кнопка «Открыть карточку» (🔍) у ссылочного поля — единственный контрол внутри
+// якоря, который серверная отрисовка под запретом намеренно оставляет РАБОЧИМ
+// (templates_managed.go, ветка ссылочного поля): посмотреть связанный объект —
+// не редактирование, и на нередактируемом поле переход к нему нужен чаще всего.
+// Клиентский пересчёт после события формы обязан приходить к тому же виду, иначе
+// первое же нажатие кнопки формы отбирает переход к данным до перезагрузки
+// страницы (#1210).
+
+// managedAnchorNode — элемент внутри якоря data-ob-el, как его отрисовал сервер.
+// Атрибуты сохраняются целиком: селектор из managed.js в стабе ниже проверяется
+// по-настоящему, а не сверкой со строкой.
+type managedAnchorNode struct {
+	Tag      string            `json:"tag"`
+	Attrs    map[string]string `json:"attrs"`
+	Disabled bool              `json:"disabled"`
+	ReadOnly bool              `json:"readOnly"`
+}
+
+func managedAnchorNodes(t *testing.T, rendered, elementName string) []managedAnchorNode {
+	t.Helper()
+	var nodes []managedAnchorNode
+	var collect func(*html.Node)
+	collect = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			attrs := make(map[string]string, len(n.Attr))
+			for _, a := range n.Attr {
+				attrs[a.Key] = a.Val
+			}
+			_, disabled := attrs["disabled"]
+			_, readOnly := attrs["readonly"]
+			nodes = append(nodes, managedAnchorNode{
+				Tag: n.Data, Attrs: attrs, Disabled: disabled, ReadOnly: readOnly})
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			collect(child)
+		}
+	}
+	anchor := managedElementAnchor(t, rendered, elementName)
+	for child := anchor.FirstChild; child != nil; child = child.NextSibling {
+		collect(child)
+	}
+	return nodes
+}
+
+func managedAnchorNodeBy(t *testing.T, nodes []managedAnchorNode, attr string) managedAnchorNode {
+	t.Helper()
+	for _, n := range nodes {
+		if _, ok := n.Attrs[attr]; ok {
+			return n
+		}
+	}
+	t.Fatalf("в разметке нет элемента с атрибутом %q: %#v", attr, nodes)
+	return managedAnchorNode{}
+}
+
+// applyManagedElementStatesToAnchor прогоняет настоящий applyElementStates из
+// managed.js над узлами якоря. querySelectorAll в стабе разбирает ПОЛУЧЕННЫЙ
+// селектор, а не сверяет его с ожидаемой строкой: иначе тест проверял бы стаб, а
+// не продакшен-код, и правка селектора проехала бы молча зелёной. Неизвестный
+// стабу синтаксис — исключение, то есть красный тест.
+func applyManagedElementStatesToAnchor(t *testing.T, nodes []managedAnchorNode, states *elementStates) []managedAnchorNode {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for managed element state integration test")
+	}
+	payload, err := json.Marshal(struct {
+		Nodes  []managedAnchorNode `json:"nodes"`
+		States *elementStates      `json:"states"`
+	}{Nodes: nodes, States: states})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const script = `
+const fs = require('node:fs');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+function extract(name) {
+  const start = source.indexOf('function ' + name);
+  if (start < 0) throw new Error('managed.js has no function ' + name);
+  let depth = 0;
+  for (let i = source.indexOf('{', start); i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}') {
+      depth--;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error('unterminated function ' + name);
+}
+// Разбор простого селектора: имя тега, [атрибут] и :not([атрибут]), через
+// запятую. Больше managed.js внутри якоря не использует; всё прочее — ошибка.
+function matchesCompound(node, selector) {
+  let rest = selector.trim();
+  if (!rest) throw new Error('пустой селектор');
+  let ok = true;
+  while (rest.length) {
+    let m;
+    if ((m = /^([a-zA-Z][\w-]*)/.exec(rest))) ok = ok && node.tagName === m[1].toUpperCase();
+    else if ((m = /^\[([\w-]+)\]/.exec(rest))) ok = ok && node.hasAttribute(m[1]);
+    else if ((m = /^:not\(\[([\w-]+)\]\)/.exec(rest))) ok = ok && !node.hasAttribute(m[1]);
+    else throw new Error('стаб DOM не разбирает селектор: ' + selector);
+    rest = rest.slice(m[0].length);
+  }
+  return ok;
+}
+const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
+const nodes = payload.nodes.map((n) => ({
+  tagName: n.tag.toUpperCase(),
+  type: n.attrs.type || '',
+  disabled: n.disabled,
+  readOnly: n.readOnly,
+  dataset: n.attrs['data-ob-checkbox-presence'] === '1' ? {obCheckboxPresence: '1'} : {},
+  attrs: n.attrs,
+  hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); },
+}));
+const anchor = {
+  tagName: 'DIV',
+  style: {},
+  querySelectorAll(selector) {
+    return nodes.filter((n) => selector.split(',').some((part) => matchesCompound(n, part)));
+  },
+};
+global.window = {CSS: null};
+global.document = {querySelector() { return anchor; }};
+const applyElementStates = new Function(
+  extract('applyElementStates') + '\nreturn applyElementStates;'
+)();
+applyElementStates(payload.states);
+process.stdout.write(JSON.stringify(nodes.map((n) => ({
+  tag: n.tagName.toLowerCase(),
+  attrs: n.attrs,
+  disabled: !!n.disabled,
+  readOnly: !!n.readOnly,
+}))));
+`
+	cmd := exec.CommandContext(t.Context(), node, "-e", script, "static/managed.js") //nolint:gosec // test-only executable resolved by exec.LookPath
+	cmd.Stdin = bytes.NewReader(payload)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("execute managed.js applyElementStates: %v\n%s", err, output)
+	}
+	var result []managedAnchorNode
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode managed.js result: %v; output=%s", err, output)
+	}
+	return result
+}
+
+func заявкаСоСсылкойНаКлиента() *metadata.Entity {
+	return &metadata.Entity{Name: "Заявка", Kind: metadata.KindDocument, Fields: []metadata.Field{
+		{Name: "Клиент", Type: metadata.FieldType("reference:Клиенты"), RefEntity: "Клиенты"},
+		{Name: "СтадияОформления", Type: metadata.FieldTypeString},
+	}}
+}
+
+func отрисоватьЗаявкуСКлиентом(t *testing.T, ent *metadata.Entity, стадия string) string {
+	t.Helper()
+	return отрисоватьСВариантами(t, ent, ent.Forms[0],
+		map[string]string{"Клиент": "cl-1", "СтадияОформления": стадия},
+		map[string]any{"Клиент": []map[string]any{{"id": "cl-1", "_label": "ООО Ромашка"}}})
+}
+
+func TestЗапретСобытием_ПереходККарточкеОстаётсяРабочим(t *testing.T) {
+	ent := заявкаСоСсылкойНаКлиента()
+	формаСУсловиями(ent, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеКлиент",
+		DataPath: "Объект.Клиент", ReadOnlyWhen: `СтадияОформления = "Принята"`,
+	})
+
+	// Отправная точка — черновик: условие ложно, сервер отрисовал поле
+	// редактируемым, обе кнопки рабочие.
+	черновик := managedAnchorNodes(t, отрисоватьЗаявкуСКлиентом(t, ent, "НаОформлении"), "ПолеКлиент")
+	подбор := managedAnchorNodeBy(t, черновик, "data-ob-ref-picker")
+	карточка := managedAnchorNodeBy(t, черновик, "data-ob-ref-current")
+	if подбор.Disabled || карточка.Disabled {
+		t.Fatalf("черновик: обе кнопки должны быть рабочими: подбор=%#v карточка=%#v", подбор, карточка)
+	}
+
+	// Событие формы перевело заявку в принятую стадию — сервер прислал запрет.
+	заперто := applyManagedElementStatesToAnchor(t, черновик,
+		&elementStates{ReadOnly: map[string]bool{"ПолеКлиент": true}})
+	if !managedAnchorNodeBy(t, заперто, "data-ref-entity").Disabled {
+		t.Errorf("нередактируемое поле-ссылка должно быть disabled: %#v", заперто)
+	}
+	if !managedAnchorNodeBy(t, заперто, "data-ob-ref-picker").Disabled {
+		t.Errorf("кнопка подбора под запретом должна быть disabled: %#v", заперто)
+	}
+	if кнопка := managedAnchorNodeBy(t, заперто, "data-ob-ref-current"); кнопка.Disabled {
+		t.Errorf("«Открыть карточку» под запретом обязана остаться рабочей — сервер рисует её без disabled: %#v", кнопка)
+	}
+
+	// Та же страница, отрисованная сервером при выполненном условии: клиент
+	// обязан приходить ровно к ней, иначе вид формы зависит от того, дошёл ли
+	// пользователь до кнопки или перезагрузил страницу.
+	серверный := managedAnchorNodes(t, отрисоватьЗаявкуСКлиентом(t, ent, "Принята"), "ПолеКлиент")
+	if кнопка := managedAnchorNodeBy(t, серверный, "data-ob-ref-current"); кнопка.Disabled {
+		t.Fatalf("серверная отрисовка под запретом не должна гасить «Открыть карточку»: %#v", кнопка)
+	}
+
+	// Обратный ход: условие перестало выполняться — подбор возвращается.
+	отперто := applyManagedElementStatesToAnchor(t, заперто,
+		&elementStates{ReadOnly: map[string]bool{"ПолеКлиент": false}})
+	if managedAnchorNodeBy(t, отперто, "data-ob-ref-picker").Disabled {
+		t.Errorf("снятие условия должно вернуть кнопку подбора: %#v", отперто)
+	}
+	if кнопка := managedAnchorNodeBy(t, отперто, "data-ob-ref-current"); кнопка.Disabled {
+		t.Errorf("«Открыть карточку» не должна остаться серой после снятия условия: %#v", кнопка)
+	}
+	if поле := managedAnchorNodeBy(t, отперто, "data-ref-entity"); поле.Disabled {
+		t.Errorf("снятие условия должно вернуть само поле: %#v", поле)
 	}
 }
