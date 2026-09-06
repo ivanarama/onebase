@@ -48,6 +48,9 @@ type EntityStore interface {
 	UpsertTablePartRows(ctx context.Context, entityName, tpName string, parentID uuid.UUID, rows []map[string]any, tp metadata.TablePart) error
 	// Delete удаляет строку сущности (предопределённые — ошибка).
 	Delete(ctx context.Context, entityName string, id uuid.UUID) error
+	// DeleteVersioned удаляет строку только при совпадении _version; при
+	// расхождении возвращает storage.ErrVersionConflict.
+	DeleteVersioned(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int64) error
 	// SetPosted выставляет признак проведения документа.
 	SetPosted(ctx context.Context, entityName string, id uuid.UUID, posted bool) error
 	// IsMarkedForDeletion сообщает, помечен ли объект на удаление.
