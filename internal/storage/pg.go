@@ -117,6 +117,7 @@ type PoolConfig struct {
 const (
 	defaultPoolMaxConns = 20
 	defaultPoolMinConns = 2
+	filesDirEnv         = "ONEBASE_FILES_DIR"
 )
 
 // Connect opens a PostgreSQL pool with OneBase's default pool sizing. Use it for
@@ -131,6 +132,10 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("storage: parse dsn: %w", err)
+	}
+	filesDir, err := defaultFilesDirForConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	applyPoolDefaults(cfg, dsn, pc)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -148,7 +153,6 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 	_, _ = pool.Exec(ctx, `DROP CAST IF EXISTS (uuid AS text)`)
 	_, _ = pool.Exec(ctx, `CREATE CAST (uuid AS text) WITH INOUT AS IMPLICIT`)
 
-	filesDir := defaultFilesDir(dsn)
 	return &DB{pool: pool, filesDir: filesDir, dialect: PgDialect{}}, nil
 }
 
@@ -204,14 +208,39 @@ func (db *DB) Ping(ctx context.Context) error {
 	}
 }
 
-func defaultFilesDir(dsn string) string {
+func defaultFilesDir(dsn string) (string, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return "", fmt.Errorf("storage: parse dsn for files directory: %w", err)
+	}
+	return defaultFilesDirForConfig(cfg)
+}
+
+func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
+	if configured := strings.TrimSpace(os.Getenv(filesDirEnv)); configured != "" {
+		if !filepath.IsAbs(configured) {
+			return "", fmt.Errorf("storage: %s must be an absolute path", filesDirEnv)
+		}
+		return filepath.Clean(configured), nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("storage: determine durable files directory: home directory is unavailable; set %s to an absolute persistent path", filesDirEnv)
+	}
+	info, err := os.Stat(home)
+	if err != nil {
+		return "", fmt.Errorf("storage: determine durable files directory: home %q is unavailable: %w; set %s to an absolute persistent path", home, err, filesDirEnv)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("storage: determine durable files directory: home %q is not a directory; set %s to an absolute persistent path", home, filesDirEnv)
+	}
+
 	dbName := "default"
-	if err == nil && cfg.ConnConfig.Database != "" {
+	if cfg != nil && cfg.ConnConfig != nil && cfg.ConnConfig.Database != "" {
 		dbName = cfg.ConnConfig.Database
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".onebase", "files", dbName)
+	return filepath.Join(home, ".onebase", "files", dbName), nil
 }
 
 func (db *DB) FilesDir() string { return db.filesDir }
