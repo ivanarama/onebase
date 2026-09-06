@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/dbtest"
 )
 
 func openRawSQLiteForProbeTest(t *testing.T, path string) *sql.DB {
@@ -27,7 +30,7 @@ func TestHasPendingRestoreSQLiteDoesNotCreateMissingDatabase(t *testing.T) {
 		t.Fatal("missing database unexpectedly has a restore marker")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("read-only probe created the database: %v", err)
+		t.Fatalf("startup probe created the database: %v", err)
 	}
 }
 
@@ -53,7 +56,7 @@ func TestHasPendingRestoreSQLiteFindsMarkerWithoutChangingJournalMode(t *testing
 		t.Fatal(err)
 	}
 	if !pending {
-		t.Fatal("read-only probe missed the durable restore marker")
+		t.Fatal("startup probe missed the durable restore marker")
 	}
 
 	readOnly, err := sql.Open("sqlite", sqliteFileURI(path, "mode=ro"))
@@ -95,7 +98,36 @@ func TestHasPendingRestoreSQLiteSeesCommittedWALMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !pending {
-		t.Fatal("read-only probe ignored a committed marker in the WAL")
+		t.Fatal("startup probe ignored a committed marker in the WAL")
+	}
+}
+
+func TestHasPendingRestoreSQLiteRecoversHotWALForFollowingReadOnlyGates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hot-wal.db")
+	dbtest.CreateSQLiteHotWALCrash(t, path)
+
+	pending, err := HasPendingRestoreSQLite(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending {
+		t.Fatal("hot WAL without a restore marker reported pending recovery")
+	}
+
+	// immutable=1 deliberately ignores WAL. Seeing the committed value proves
+	// that the startup probe checkpointed crash recovery into the main file,
+	// so the following read-only schema-revision gate no longer hits a hot WAL.
+	mainOnly, err := sql.Open("sqlite", sqliteFileURI(path, "mode=ro&immutable=1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mainOnly.Close() //nolint:errcheck // test cleanup
+	var got string
+	if err := mainOnly.QueryRowContext(t.Context(), `SELECT value FROM hot_wal_values`).Scan(&got); err != nil {
+		t.Fatalf("read recovered value from main database: %v", err)
+	}
+	if got != dbtest.SQLiteHotWALValue {
+		t.Fatalf("recovered value = %q, want %q", got, dbtest.SQLiteHotWALValue)
 	}
 }
 
@@ -110,5 +142,11 @@ func TestHasPendingRestoreSQLiteMalformedSettingsFailsClosed(t *testing.T) {
 	}
 	if pending, err := HasPendingRestoreSQLite(t.Context(), path); err == nil {
 		t.Fatalf("malformed settings probe = %v, nil; want fail-closed error", pending)
+	} else if message := err.Error(); !strings.Contains(message, "SQLite startup safety check did not complete") ||
+		!strings.Contains(message, "keep the database, -wal and -shm files together") ||
+		!strings.Contains(message, "do not delete -wal by hand") {
+		t.Fatalf("probe error does not explain the failed safety check: %v", err)
+	} else if strings.Contains(message, "SQLite startup recovery failed") {
+		t.Fatalf("schema error incorrectly claims that WAL recovery failed: %v", err)
 	}
 }
