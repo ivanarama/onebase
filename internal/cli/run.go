@@ -308,7 +308,7 @@ func probeServerRestoreMarker(ctx context.Context, dbType, sqlitePath, dsn strin
 func recoverServerRestoreIfPending(ctx context.Context, dbType string, sqlitePath *string, dsn, configSource, dir string, lease *dblock.Lease) (leaseExclusive bool, resultErr error) {
 	pending, err := probeServerRestoreMarker(ctx, dbType, *sqlitePath, dsn)
 	if err != nil {
-		return false, fmt.Errorf("inspect restore recovery marker read-only: %w", err)
+		return false, fmt.Errorf("inspect restore recovery marker before database open: %w", err)
 	}
 	if !pending {
 		return false, nil

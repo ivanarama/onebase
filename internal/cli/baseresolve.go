@@ -64,9 +64,11 @@ func openCLIStorage(ctx context.Context, dbType, sqlitePath, dsn string) (*stora
 	return openCLIStorageMode(ctx, dbType, sqlitePath, dsn, true)
 }
 
-// openCLIStorageReadOnly applies both read-only gates but does not publish a
+// openCLIStorageReadOnly applies both pre-open gates but does not publish a
 // newer minimum-reader revision. It is intentionally narrow: a backup must
 // remain usable with a read-only PostgreSQL role and performs no schema setup.
+// For an existing SQLite file the restore probe may perform SQLite's built-in
+// hot-WAL recovery before the independent read-only schema-revision gate.
 func openCLIStorageReadOnly(ctx context.Context, dbType, sqlitePath, dsn string) (*storage.DB, error) {
 	return openCLIStorageMode(ctx, dbType, sqlitePath, dsn, false)
 }
@@ -112,10 +114,10 @@ func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, pub
 			pending, err = backup.HasPendingRestorePostgres(ctx, dsn)
 		}
 		if err != nil {
-			return fmt.Errorf("inspect interrupted restore marker read-only: %w", err)
+			return fmt.Errorf("inspect restore marker before database open: %w", err)
 		}
 		if pending {
-			return fmt.Errorf("%w: interrupted restore marker exists", backup.ErrRestoreRecoveryRequired)
+			return fmt.Errorf("database has an interrupted restore: %w: interrupted restore marker exists", backup.ErrRestoreRecoveryRequired)
 		}
 		return nil
 	}
@@ -133,7 +135,7 @@ func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, pub
 	}
 
 	if err := checkRestore(); err != nil {
-		return nil, fmt.Errorf("database has an interrupted restore: %w", err)
+		return nil, err
 	}
 	state, err := probeRevision()
 	if err != nil {
@@ -162,7 +164,7 @@ func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, pub
 				return nil, fmt.Errorf("schema revision upgrade requires exclusive database access: %w", err)
 			}
 			if err := checkRestore(); err != nil {
-				return nil, fmt.Errorf("database has an interrupted restore: %w", err)
+				return nil, err
 			}
 			state, err = probeRevision()
 			if err != nil {
