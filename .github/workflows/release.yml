@@ -416,6 +416,15 @@ jobs:
       contents: write   # публикация релиза
     steps:
       - uses: actions/checkout@v4
+        with:
+          # releasecheck читает полный first-parent диапазон и предыдущий
+          # стабильный тег; shallow checkout теряет как раз начало диапазона.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
 
       - name: Resolve release body
         id: release_body
@@ -432,6 +441,7 @@ jobs:
           fi
           if [[ -f "$notes" ]]; then
             echo "path=$notes" >> "$GITHUB_OUTPUT"
+            echo "custom=true" >> "$GITHUB_OUTPUT"
           else
             cat > release-default.md <<'EOF'
           <!-- summary: Обновление OneBase с бинарными сборками для Windows, Linux и macOS. -->
@@ -465,7 +475,35 @@ jobs:
           - Для SQLite-режима дополнительных зависимостей нет
           EOF
             echo "path=release-default.md" >> "$GITHUB_OUTPUT"
+            # У дефолтного тела generate_release_notes ниже строит полный
+            # список сам; репозиторную проверку применяем только к своей заметке.
+            echo "custom=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Check release note completeness
+        if: steps.release_body.outputs.custom == 'true'
+        shell: bash
+        env:
+          NOTES_PATH: ${{ steps.release_body.outputs.path }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          stable_tags=$(git tag --merged "${RELEASE_TAG}^" --list 'v[0-9]*' --sort=-version:refname)
+          previous_tag=""
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              previous_tag=$tag
+              break
+            fi
+          done <<< "$stable_tags"
+          if [[ -z "$previous_tag" ]]; then
+            echo "::error::не найден предыдущий стабильный тег перед ${RELEASE_TAG}"
+            exit 1
+          fi
+          go run ./tools/releasecheck \
+            -from "$previous_tag" \
+            -to "$RELEASE_TAG" \
+            -notes "$NOTES_PATH"
 
       - uses: actions/download-artifact@v4
         with:
@@ -480,11 +518,6 @@ jobs:
       #
       # Без секрета шаг не падает, а пропускается: форк, у которого ключа нет,
       # обязан публиковать релизы как раньше.
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: '.go-version'
-          cache: true
-
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
