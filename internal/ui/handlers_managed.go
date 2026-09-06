@@ -83,6 +83,14 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
+		// Кнопка «Открыть карточку» (🔍) у заполненного ссылочного поля рисуется по
+		// умолчанию; форма может её выключить (ref_card_button: false). Признак
+		// кладём ОТРИЦАТЕЛЬНЫЙ: managed-шаблон рендерит и формы обработок
+		// (handlers_processors.go), где этого ключа в данных нет вовсе, — при
+		// положительном признаке кнопка бы там молча исчезла.
+		if managed.RefCardButton != nil && !*managed.RefCardButton {
+			data["HideRefCard"] = true
+		}
 		// Фикс A: команды формы, не размещённые вручную элементом kind: Кнопка,
 		// рисуются автоматической командной панелью (иначе объявленная в commands:
 		// команда в UI не видна — её кнопку рисует только kind: Кнопка). Fire-click
@@ -259,6 +267,22 @@ func unplacedCommands(form *metadata.FormModule) []*metadata.FormCommand {
 		}
 	}
 	return out
+}
+
+// managedCommandBarElement связывает фактическую автоматическую панель команд
+// из обвязки page-managed-form с декларативным элементом КоманднаяПанель.
+// Сам элемент в дереве намеренно не рисует вторую панель: кнопки уже собраны из
+// form.Commands выше дерева. Без этой связи readonly_when/hidden_when попадали
+// в карту состояний, но применить их было не к чему — у настоящего DOM панели
+// не было data-ob-el.
+func managedCommandBarElement(form *metadata.FormModule) *metadata.FormElement {
+	var found *metadata.FormElement
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if found == nil && visit.element != nil && visit.element.Kind == metadata.FormElementCommandBar {
+			found = visit.element
+		}
+	})
+	return found
 }
 
 // attrRefEntityName извлекает имя сущности-справочника/документа из типа реквизита
