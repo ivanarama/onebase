@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -149,7 +153,7 @@ func TestResolveListColumnsManagedListForm(t *testing.T) {
 				Name:     "Список",
 				DataPath: "Список",
 				Children: []*metadata.FormElement{
-					{Kind: metadata.FormElementColumn, Name: "КолПоказания", DataPath: "Список.ПоказанияНачала"},
+					{Kind: metadata.FormElementColumn, Name: "КолПоказания", DataPath: "Список.ПоказанияНачала", TitleMap: map[string]string{"ru": "Показание формы"}},
 					{Kind: metadata.FormElementColumn, Name: "КолНаименование", DataPath: "Список.Наименование"},
 				},
 			},
@@ -167,12 +171,63 @@ func TestResolveListColumnsManagedListForm(t *testing.T) {
 		Forms:    []*metadata.FormModule{form},
 	}
 
+	cols := resolveListColumns(ent)
 	var names []string
-	for _, field := range resolveListColumns(ent) {
+	for _, field := range cols {
 		names = append(names, field.Name)
 	}
 	if got, want := strings.Join(names, ","), "ПоказанияНачала,Наименование"; got != want {
 		t.Fatalf("колонки управляемой формы списка = %q, ожидалось %q", got, want)
+	}
+	if got := cols[0].DisplayName("ru"); got != "Показание формы" {
+		t.Fatalf("заголовок колонки управляемой формы списка = %q", got)
+	}
+}
+
+func TestPageList_ManagedListFormUsesElementColumnTitle(t *testing.T) {
+	form := &metadata.FormModule{
+		Name: "ФормаСписка", Kind: "list", LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{
+			Kind: metadata.FormElementTable, Name: "Список", DataPath: "Список",
+			Children: []*metadata.FormElement{{
+				Kind: metadata.FormElementColumn, Name: "КолУровень",
+				DataPath: "Список.Уровень", TitleMap: map[string]string{"ru": "ТУН"},
+			}},
+		}},
+	}
+	ent := &metadata.Entity{
+		Name: "Регион", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{
+			Name: "Уровень", Type: metadata.FieldTypeString, Title: "Заголовок реквизита",
+		}},
+		Forms: []*metadata.FormModule{form},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	if err := s.store.Upsert(ctx, ent.Name, uuid.New(), map[string]any{"Уровень": "ВН"}, ent); err != nil {
+		t.Fatal(err)
+	}
+
+	req := reqWithChi(http.MethodGet, "/ui/catalog/регион", nil, map[string]string{"entity": "регион"})
+	rec := httptest.NewRecorder()
+	s.list(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET списка: code = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	headerStart := strings.Index(body, "<table><thead><tr>")
+	if headerStart < 0 {
+		t.Fatalf("страница списка не содержит заголовок таблицы: %s", body)
+	}
+	headerEnd := strings.Index(body[headerStart:], "</thead>")
+	if headerEnd < 0 {
+		t.Fatalf("заголовок таблицы списка не закрыт: %s", body[headerStart:])
+	}
+	header := body[headerStart : headerStart+headerEnd]
+	if !strings.Contains(header, "ТУН") {
+		t.Fatalf("страница списка не использовала title элемента колонки: %s", header)
+	}
+	if strings.Contains(header, "Заголовок реквизита") {
+		t.Fatal("страница списка оставила заголовок реквизита старше title элемента")
 	}
 }
 
