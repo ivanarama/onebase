@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -631,6 +632,14 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		tok := p.cur
 		p.advance()
 		return &ast.StringLit{Tok: tok, Value: tok.Literal}, nil
+	case token.DATE:
+		tok := p.cur
+		p.advance()
+		value, err := parseDateLiteral(tok)
+		if err != nil {
+			return nil, err
+		}
+		return &ast.DateLit{Tok: tok, Value: value}, nil
 	case token.NUMBER:
 		tok := p.cur
 		p.advance()
@@ -705,6 +714,29 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 		return nil, fmt.Errorf("%s:%d:%d: unexpected %q in expression",
 			p.cur.File, p.cur.Line, p.cur.Col, p.cur.Literal)
 	}
+}
+
+func parseDateLiteral(tok token.Token) (time.Time, error) {
+	// В OneBase пустая дата представлена нулевым time.Time. Это сохраняет
+	// семантику 1С для наиболее частого литерала '00010101' и его полной формы.
+	if tok.Literal == "00010101" || tok.Literal == "00010101000000" {
+		return time.Time{}, nil
+	}
+	if strings.HasPrefix(tok.Literal, "0000") {
+		return time.Time{}, fmt.Errorf("%s:%d:%d: invalid date literal %q",
+			tok.File, tok.Line, tok.Col, "'"+tok.Literal+"'")
+	}
+
+	layout := "20060102"
+	if len(tok.Literal) == 14 {
+		layout = "20060102150405"
+	}
+	value, err := time.ParseInLocation(layout, tok.Literal, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s:%d:%d: invalid date literal %q: %w",
+			tok.File, tok.Line, tok.Col, "'"+tok.Literal+"'", err)
+	}
+	return value, nil
 }
 
 // parseArrayLiteral разбирает краткий литерал массива: [expr, expr, ...].

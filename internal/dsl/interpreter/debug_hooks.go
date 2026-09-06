@@ -69,6 +69,8 @@ func getExprLocation(expr ast.Expr) (string, int, int) {
 		return e.Tok.File, e.Tok.Line, e.Tok.Col
 	case *ast.StringLit:
 		return e.Tok.File, e.Tok.Line, e.Tok.Col
+	case *ast.DateLit:
+		return e.Tok.File, e.Tok.Line, e.Tok.Col
 	case *ast.NumberLit:
 		return e.Tok.File, e.Tok.Line, e.Tok.Col
 	case *ast.BoolLit:

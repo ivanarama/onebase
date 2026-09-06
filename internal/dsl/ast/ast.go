@@ -1,6 +1,10 @@
 package ast
 
-import "github.com/ivantit66/onebase/internal/dsl/token"
+import (
+	"time"
+
+	"github.com/ivantit66/onebase/internal/dsl/token"
+)
 
 type Node interface{ nodeType() string }
 type Stmt interface {
@@ -155,6 +159,14 @@ type StringLit struct {
 	Value string
 }
 
+// DateLit — стандартный литерал даты 1С: 'YYYYMMDD' или
+// 'YYYYMMDDhhmmss'. Отдельный узел не даёт одинарным кавычкам случайно стать
+// вторым синтаксисом строк.
+type DateLit struct {
+	Tok   token.Token
+	Value time.Time
+}
+
 type NumberLit struct {
 	Tok   token.Token
 	Value string
@@ -232,6 +244,7 @@ func (*MissingArg) nodeType() string     { return "MissingArg" }
 func (*MemberExpr) nodeType() string     { return "MemberExpr" }
 func (*Ident) nodeType() string          { return "Ident" }
 func (*StringLit) nodeType() string      { return "StringLit" }
+func (*DateLit) nodeType() string        { return "DateLit" }
 func (*NumberLit) nodeType() string      { return "NumberLit" }
 func (*BinaryExpr) nodeType() string     { return "BinaryExpr" }
 func (*NewExpr) nodeType() string        { return "NewExpr" }
@@ -261,6 +274,7 @@ func (*MissingArg) exprNode()  {}
 func (*MemberExpr) exprNode()  {}
 func (*Ident) exprNode()       {}
 func (*StringLit) exprNode()   {}
+func (*DateLit) exprNode()     {}
 func (*NumberLit) exprNode()   {}
 func (*BinaryExpr) exprNode()  {}
 func (*NewExpr) exprNode()     {}
