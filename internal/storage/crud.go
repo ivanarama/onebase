@@ -256,7 +256,11 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		col := metadata.ColumnName(f)
 		ph := d.Placeholder(argIdx)
 		argIdx++
-		val, err := canonicalNumberArg(f, fieldValueDialect(d, f, fields))
+		raw, err := fieldValueForWrite(ctx, d, f, fields)
+		if err != nil {
+			return fmt.Errorf("%s: %w", entityName, err)
+		}
+		val, err := canonicalNumberArg(f, raw)
 		if err != nil {
 			return err
 		}
@@ -1118,28 +1122,47 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 	d := db.dialect
 	table := metadata.TablePartTableName(entityName, tpName)
 
+	// Prepare every row before deleting the previous snapshot. In particular,
+	// an invalid reference in a later row must not turn a failed replacement
+	// into an empty table part when this low-level writer is used without an
+	// outer transaction.
+	type preparedTablePartRow struct {
+		sql  string
+		args []any
+	}
+	prepared := make([]preparedTablePartRow, 0, len(rows))
+	for i, row := range rows {
+		cols := []string{"id", "parent_id", "строка"}
+		placeholders := []string{d.Placeholder(1), d.Placeholder(2), d.Placeholder(3)}
+		args := []any{idArg(d, uuid.New()), idArg(d, parentID), i + 1}
+		for j, f := range tp.Fields {
+			raw, err := fieldValueForWrite(ctx, d, f, row)
+			if err != nil {
+				return fmt.Errorf("%s.%s[%d]: %w", entityName, tpName, i+1, err)
+			}
+			val, err := canonicalNumberArg(f, raw)
+			if err != nil {
+				return fmt.Errorf("%s.%s[%d]: %w", entityName, tpName, i+1, err)
+			}
+			cols = append(cols, metadata.ColumnName(f))
+			placeholders = append(placeholders, d.Placeholder(j+4))
+			args = append(args, val)
+		}
+		prepared = append(prepared, preparedTablePartRow{
+			sql: fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+				table, strings.Join(cols, ", "), strings.Join(placeholders, ", ")),
+			args: args,
+		})
+	}
+
 	if err := db.exec(ctx,
 		fmt.Sprintf("DELETE FROM %s WHERE parent_id = %s", table, d.Placeholder(1)),
 		idArg(d, parentID)); err != nil {
 		return fmt.Errorf("delete tablepart %s.%s: %w", entityName, tpName, err)
 	}
 
-	for i, row := range rows {
-		cols := []string{"id", "parent_id", "строка"}
-		placeholders := []string{d.Placeholder(1), d.Placeholder(2), d.Placeholder(3)}
-		args := []any{idArg(d, uuid.New()), idArg(d, parentID), i + 1}
-		for j, f := range tp.Fields {
-			val, err := canonicalNumberArg(f, fieldValueDialect(d, f, row))
-			if err != nil {
-				return err
-			}
-			cols = append(cols, metadata.ColumnName(f))
-			placeholders = append(placeholders, d.Placeholder(j+4))
-			args = append(args, val)
-		}
-		sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
-		if err := db.exec(ctx, sql, args...); err != nil {
+	for i, row := range prepared {
+		if err := db.exec(ctx, row.sql, row.args...); err != nil {
 			return fmt.Errorf("insert tablepart %s.%s row %d: %w", entityName, tpName, i+1, err)
 		}
 	}
@@ -1240,6 +1263,11 @@ func (db *DB) SetPosted(ctx context.Context, entityName string, id uuid.UUID, po
 // creating an import cycle between storage and interpreter packages.
 type uuidProvider interface{ GetRefUUID() string }
 
+// ErrReferenceTypeMismatch means that a non-empty value cannot be represented
+// by a reference column. It is typed so callers can distinguish bad application
+// data from a database or driver failure.
+var ErrReferenceTypeMismatch = errors.New("несоответствие типов")
+
 // fieldValueDialect extracts a field value and normalizes UUIDs:
 // PG accepts uuid.UUID directly; SQLite stores them as TEXT strings.
 // refValueAsPointer возвращает указатель на копию значения, если интерфейс
@@ -1257,11 +1285,15 @@ func refValueAsPointer(v any) (uuidProvider, bool) {
 	return p, ok
 }
 
-func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
+func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) (any, error) {
 	v, _ := canonicalFieldValue(fields, f.Name)
 	if f.RefEntity != "" {
-		if v == nil {
-			return nil
+		original := v
+		if isNilReferenceValue(v) {
+			return nil, nil
+		}
+		if id, ok := v.(uuid.UUID); ok {
+			return idArg(d, id), nil
 		}
 		// Ссылка могла прийти ЗНАЧЕНИЕМ, а не указателем: GetRefUUID объявлен на
 		// указателе, поэтому такая копия не проходила проверку ниже и уезжала в
@@ -1273,22 +1305,23 @@ func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
 		if rv, ok := v.(uuidProvider); ok {
 			s := rv.GetRefUUID()
 			if s == "" {
-				return nil
+				return nil, nil
 			}
 			if id, err := uuid.Parse(s); err == nil {
-				return idArg(d, id)
+				return idArg(d, id), nil
 			}
-			return nil
+			return nil, referenceTypeMismatch(f, original)
 		}
 		if s, ok := v.(string); ok {
 			if s == "" {
-				return nil
+				return nil, nil
 			}
 			if id, err := uuid.Parse(s); err == nil {
-				return idArg(d, id)
+				return idArg(d, id), nil
 			}
-			return nil
+			return nil, referenceTypeMismatch(f, original)
 		}
+		return nil, referenceTypeMismatch(f, original)
 	}
 	// Ссылка в НЕссылочной колонке (поле объявлено строкой, а DSL положил ссылку —
 	// например копированием реквизита между документами). Пишем представление, как
@@ -1308,10 +1341,55 @@ func fieldValueDialect(d Dialect, f metadata.Field, fields map[string]any) any {
 	// which is unreadable by modernc. Normalize to RFC3339 for reliable round-trip.
 	if f.Type == metadata.FieldTypeDate && d.Name() == "sqlite" {
 		if t, ok := v.(time.Time); ok {
-			return t.UTC().Format(time.RFC3339)
+			return t.UTC().Format(time.RFC3339), nil
 		}
 	}
-	return v
+	return v, nil
+}
+
+// fieldValueForWrite keeps exchange compatibility deliberately narrower than
+// the normal application path. Replicated data historically coerced malformed
+// references to NULL, because the remote node may run a different schema. A
+// local/DSL write must instead surface ErrReferenceTypeMismatch to its caller.
+func fieldValueForWrite(ctx context.Context, d Dialect, f metadata.Field, fields map[string]any) (any, error) {
+	value, err := fieldValueDialect(d, f, fields)
+	if err != nil && stageModeFromCtx(ctx).Source == StageSourceExchange {
+		return nil, nil
+	}
+	return value, err
+}
+
+func isNilReferenceValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+func referenceTypeMismatch(f metadata.Field, value any) error {
+	return fmt.Errorf("%w: для реквизита «%s» типа reference:%s передано значение типа «%s»",
+		ErrReferenceTypeMismatch, f.Name, f.RefEntity, referenceValueTypeName(value))
+}
+
+func referenceValueTypeName(v any) string {
+	switch v.(type) {
+	case string:
+		return "Строка"
+	case uuid.UUID:
+		return "UUID"
+	case uuidProvider:
+		return "Ссылка"
+	}
+	if _, ok := refValueAsPointer(v); ok {
+		return "Ссылка"
+	}
+	return fmt.Sprintf("%T", v)
 }
 
 // idArg encodes a UUID for the active backend: PG → uuid.UUID, SQLite → string.
