@@ -568,9 +568,15 @@ func (s *Server) serviceCacheUsable(svc *httpservice.Service, r *http.Request) b
 	}
 	// Даже auth: none может получить Cookie/Authorization, а DSL видит все
 	// заголовки запроса. Не даём такому клиенту наполнить общую запись своим
-	// персонализированным ответом. no-cache/no-store на запросе тоже требуют
-	// полного обхода локального кэша: механизм revalidation здесь отсутствует.
-	if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" ||
+	// персонализированным ответом. Cookie разбираем отдельно: это частая причина
+	// невидимого обхода кэша, поэтому один раз называем её оператору.
+	if r.Header.Get("Cookie") != "" {
+		s.warnServiceCacheCookieBypassOnce(svc)
+		return false
+	}
+	// no-cache/no-store на запросе тоже требуют полного обхода локального кэша:
+	// механизм revalidation здесь отсутствует.
+	if r.Header.Get("Authorization") != "" ||
 		r.Header.Get("Proxy-Authorization") != "" || cacheControlDisallowsStorage(r.Header) ||
 		strings.EqualFold(strings.TrimSpace(r.Header.Get("Pragma")), "no-cache") {
 		return false
@@ -587,6 +593,15 @@ func warnCacheIgnoredOnce(svc *httpservice.Service) {
 	oblog.Component("http").Warn(
 		"кэш ответов отключён: он допустим только при auth: none, иначе ответ одного пользователя достанется другому",
 		"сервис", svc.Name, "auth", svc.Auth)
+}
+
+func (s *Server) warnServiceCacheCookieBypassOnce(svc *httpservice.Service) {
+	if _, seen := s.svcCacheCookieWarned.LoadOrStore(svc.Name, true); seen {
+		return
+	}
+	oblog.Component("http").Warn(
+		"кэш ответов обойдён: запрос содержит Cookie; проверьте Path куки, если сервис не использует её для персонализации",
+		"сервис", svc.Name, "root_url", svc.RootURL)
 }
 
 // etagMatches сравнивает If-None-Match (возможно, список) с нашим ETag.

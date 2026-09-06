@@ -249,6 +249,13 @@ jobs:
           TZ: Asia/Kolkata
         run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
 
+      # Западная зона сдвигает полночь UTC на предыдущий день — этот класс
+      # ошибок не виден ни в UTC, ни при прогоне в восточной зоне (#1212).
+      - name: Unit tests (западная зона)
+        env:
+          TZ: America/New_York
+        run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
+
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -5
 
