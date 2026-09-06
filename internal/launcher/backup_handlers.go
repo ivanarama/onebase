@@ -306,7 +306,7 @@ func resetBasePrefixAfterRestore(ctx context.Context, b *Base) (string, error) {
 // Raw engine dumps cannot resolve a universal restore's external directory
 // journal, so they must never overwrite the database that contains its marker.
 func checkRawRestoreAllowed(ctx context.Context, b *Base) error {
-	if err := checkNoPendingRestoreReadOnly(ctx, b); err != nil {
+	if err := checkNoPendingRestoreBeforeOpen(ctx, b); err != nil {
 		return fmt.Errorf("raw database restore refused while universal recovery is pending: %w", err)
 	}
 	return nil
@@ -433,7 +433,7 @@ func (h *handler) acquireFullExportSnapshot(ctx context.Context, b *Base) (*full
 		releaseGates()
 		return nil, errors.Join(fmt.Errorf("заблокировать БД для полной выгрузки: %w", err), restartErr)
 	}
-	gateErr := checkNoPendingRestoreReadOnly(ctx, b)
+	gateErr := checkNoPendingRestoreBeforeOpen(ctx, b)
 	if gateErr == nil {
 		gateErr = publishBaseSchemaRevisionExclusive(ctx, b)
 	}

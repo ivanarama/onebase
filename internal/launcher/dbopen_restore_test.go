@@ -7,10 +7,32 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/backup"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
 const testRestoreIntentKey = "onebase.internal.restore.intent.v1"
+
+func TestOpenDBRecoversHotWALAfterUncleanShutdown(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "hot-wal.db")
+	dbtest.CreateSQLiteHotWALCrash(t, dbPath)
+	b := &Base{ID: "hot-wal-open", Name: "hot-wal-open", DBType: "sqlite", DBPath: dbPath}
+
+	db, err := OpenDB(ctx, b)
+	if err != nil {
+		t.Fatalf("OpenDB with hot WAL: %v", err)
+	}
+	defer db.Close()
+
+	var got string
+	if err := db.QueryRow(ctx, `SELECT value FROM hot_wal_values`).Scan(&got); err != nil {
+		t.Fatalf("read transaction recovered from hot WAL: %v", err)
+	}
+	if got != dbtest.SQLiteHotWALValue {
+		t.Fatalf("recovered value = %q, want %q", got, dbtest.SQLiteHotWALValue)
+	}
+}
 
 func TestOpenDBFailsClosedWithPendingRestore(t *testing.T) {
 	ctx := context.Background()

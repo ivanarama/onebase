@@ -308,14 +308,19 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 	// закрытого пайпа (`| head`) ему незачем.
 	say := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
 
-	found := 0
+	// В заголовке считаем заявки, а не находки: одна заявка может одновременно
+	// ждать ответа и лежать на hold без плана. Счётчики корзин ниже по-прежнему
+	// считают отдельные находки, потому что у них разные способы починки.
+	stuckIssues := make(map[int]struct{})
 	for _, b := range buckets {
-		found += len(b.findings)
+		for _, f := range b.findings {
+			stuckIssues[f.issue.Number] = struct{}{}
+		}
 	}
-	if found == 0 {
+	if len(stuckIssues) == 0 {
 		say("backlogsweep: хвост чист — среди %d открытых заявок застрявших нет\n", total)
 	} else {
-		say("backlogsweep: застрявших заявок — %d (из %d открытых)\n", found, total)
+		say("backlogsweep: застрявших заявок — %d (из %d открытых)\n", len(stuckIssues), total)
 		for _, b := range buckets {
 			if len(b.findings) == 0 {
 				continue

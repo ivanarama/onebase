@@ -102,6 +102,9 @@ type formYAMLDoc struct {
 		OriginalID             string            `yaml:"original_id"`
 		AutoSaveDataInSettings bool              `yaml:"auto_save_settings"`
 		VerticalScroll         string            `yaml:"vertical_scroll"`
+		// Указатель: отсутствие ключа (nil) значит «показывать», и от явного
+		// true его отличать не нужно, а от явного false — нужно.
+		RefCardButton *bool `yaml:"ref_card_button"`
 	} `yaml:"form"`
 	Attributes            []*metadata.FormAttribute       `yaml:"attributes"`
 	Commands              []*metadata.FormCommand         `yaml:"commands"`
@@ -151,6 +154,7 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		OriginalID:             doc.Form.OriginalID,
 		AutoSaveDataInSettings: doc.Form.AutoSaveDataInSettings,
 		VerticalScroll:         doc.Form.VerticalScroll,
+		RefCardButton:          doc.Form.RefCardButton,
 		Attributes:             doc.Attributes,
 		Commands:               doc.Commands,
 		AutoCommandBar:         doc.CommandBar,

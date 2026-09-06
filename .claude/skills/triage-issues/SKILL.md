@@ -68,8 +68,57 @@ stderr, вывода нет. Пустой вывод при этом легко 
 
 ## Процедура
 
-1. Синхронизация: `git fetch origin main`; если текущая ветка — `main`,
-   то `git merge --ff-only origin/main`. Иначе работай на том, что есть.
+1. **Изолированный снимок свежего `main` — до любого анализа.** Текущий
+   checkout считай недоверенным: он может отставать от `main`, содержать чужой
+   код или незакоммиченные изменения. Не обновляй, не переключай и не используй
+   его для чтения кода. Сначала зафиксируй immutable SHA только что полученного
+   `origin/main` и создай уникальный detached-worktree именно на нём:
+
+   ```powershell
+   git fetch origin main
+   if ($LASTEXITCODE -ne 0) { throw "git fetch origin main failed" }
+   $triageBase = (git rev-parse FETCH_HEAD).Trim()
+   if ($LASTEXITCODE -ne 0 -or $triageBase -notmatch '^[0-9a-f]{40}$') {
+     throw "cannot freeze fetched origin/main SHA"
+   }
+   $triageWorktree = [IO.Path]::GetFullPath((Join-Path (Get-Location) `
+     ("..\pp-triage-" + [guid]::NewGuid().ToString("N"))))
+   if (Test-Path -LiteralPath $triageWorktree) {
+     throw "triage worktree path already exists: $triageWorktree"
+   }
+   git worktree add --detach $triageWorktree $triageBase
+   if ($LASTEXITCODE -ne 0) { throw "detached triage worktree creation failed" }
+   $analysisHead = (git -C $triageWorktree rev-parse HEAD).Trim()
+   if ($LASTEXITCODE -ne 0) { throw "cannot read detached triage HEAD" }
+   $analysisDirty = @(git -C $triageWorktree status --porcelain=v1 --untracked-files=all)
+   if ($LASTEXITCODE -ne 0) { throw "cannot inspect detached triage worktree" }
+   if ($analysisHead -ne $triageBase -or $analysisDirty.Count -ne 0) {
+     throw "detached triage worktree does not match frozen origin/main"
+   }
+   ```
+
+   После сверки повторно полностью прочитай `CLAUDE.md` и
+   `.claude/skills/triage-issues/SKILL.md` через
+   `Get-Content -LiteralPath <path> -Encoding UTF8 -Raw` **из
+   `$triageWorktree`**; дальше действует эта свежая версия процедуры. Все
+   поиски по репозиторию, чтение кода, сборки и тесты выполняй только с рабочим
+   каталогом `$triageWorktree`. Текущий checkout, даже если он чист и указывает
+   на `main`, больше не является источником анализа.
+
+   Непосредственно перед **каждой GitHub-мутацией** снова получи
+   `git -C $triageWorktree rev-parse HEAD` и
+   `git -C $triageWorktree status --porcelain=v1 --untracked-files=all`:
+   обе команды обязаны завершиться с кодом 0, анализируемый HEAD — побайтно
+   равняться сохранённому `$triageBase`, а tracked/untracked изменения —
+   отсутствовать. Эта проверка идёт вместе с issue gate соответствующей фазы.
+   При сбое fetch, создании worktree,
+   несовпадении SHA или грязном analysis-worktree остановись без
+   comments/labels.
+
+   На любом выходе убери только зарегистрированный точный worktree командой
+   `git worktree remove $triageWorktree`; не удаляй каталог рекурсивно. Если
+   безопасная очистка не удалась, оставь путь в `ИТОГ` для человека. Уникальный
+   путь исключает захват или перезапись worktree другого запуска.
 
 2. Кандидаты получай прямым пагинированным REST, а не ограниченным первым
    экраном `gh issue list`. Repository Issues API возвращает также PR, поэтому
