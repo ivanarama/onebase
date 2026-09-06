@@ -12,6 +12,17 @@ type This interface {
 	Set(name string, v any)
 }
 
+// DynamicFieldAccessor is an explicit opt-in for Object["Field"] access.
+//
+// This alone is deliberately insufficient: many platform proxies implement
+// Get/Set only to support member dispatch, and some of their Set methods are
+// intentional no-ops. Implementations of this interface must also distinguish
+// a known field whose value is Undefined from an unknown field.
+type DynamicFieldAccessor interface {
+	GetDynamicField(name string) (value any, ok bool)
+	SetDynamicField(name string, value any) bool
+}
+
 // MethodCallable is implemented by objects that support obj.Method(args) calls.
 type MethodCallable interface {
 	CallMethod(method string, args []any) any
