@@ -34,6 +34,7 @@ type queryProxy struct {
 	db       QueryDB
 	reg      QueryRegistry
 	ctx      context.Context
+	ctxSrc   CtxSource
 	compiler QueryCompiler
 	guard    QueryGuard
 }
@@ -72,6 +73,31 @@ func NewQueryFactoryGuarded(ctx context.Context, db QueryDB, reg QueryRegistry, 
 			guard:    guard,
 		}
 	}
+}
+
+// NewQueryFactoryGuardedSource is the transaction-aware counterpart of
+// NewQueryFactoryGuarded. Objects Новый Запрос are created before a DSL
+// НачатьТранзакцию(), so retaining the context value from factory construction
+// would send Выполнить() through a second connection. A live CtxSource keeps
+// reads on the same transaction as catalog/document writes.
+func NewQueryFactoryGuardedSource(ctxSrc CtxSource, db QueryDB, reg QueryRegistry, compiler QueryCompiler, guard QueryGuard) func(args []any) any {
+	return func(args []any) any {
+		return &queryProxy{
+			params:   make(map[string]any),
+			db:       db,
+			reg:      reg,
+			ctxSrc:   ctxSrc,
+			compiler: compiler,
+			guard:    guard,
+		}
+	}
+}
+
+func (q *queryProxy) context() context.Context {
+	if q.ctxSrc != nil {
+		return q.ctxSrc.Ctx()
+	}
+	return q.ctx
 }
 
 // ─── This interface ───────────────────────────────────────────────────────────
@@ -140,10 +166,11 @@ func (q *queryProxy) execute() *Array {
 		panic(userError{Msg: "Запрос.Текст не задан"})
 	}
 	params := unwrapArrayParams(q.params)
+	ctx := q.context()
 	var res query.Result
 	var err error
 	if q.compiler != nil {
-		res, err = q.compiler(q.ctx, q.text, params)
+		res, err = q.compiler(ctx, q.text, params)
 	} else {
 		res, err = query.Compile(q.text, query.CompileOpts{
 			Params:      params,
@@ -157,12 +184,12 @@ func (q *queryProxy) execute() *Array {
 	if err != nil {
 		panic(userError{Msg: "Ошибка запроса: " + err.Error()})
 	}
-	rows, err := q.db.QueryAll(q.ctx, res.SQL, res.Args...)
+	rows, err := q.db.QueryAll(ctx, res.SQL, res.Args...)
 	if err != nil {
 		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL})
 	}
 	if q.guard != nil {
-		if err := q.guard(q.ctx, res, rows); err != nil {
+		if err := q.guard(ctx, res, rows); err != nil {
 			panic(userError{Msg: "Запрос: " + err.Error()})
 		}
 	}
