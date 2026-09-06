@@ -15,8 +15,13 @@ function settle() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+// Строка списка в новом контракте несёт идентификатор, а ссылку собирает
+// obRowUrl(). Здесь моделируем строку, пришедшую из JSON-подгрузки: у неё есть
+// собственная ссылка в dataset, и она имеет приоритет над сборкой из контейнера.
 function row(url) {
   return {
+    dataset: { obDetailUrl: url },
+    closest() { return null; },
     getAttribute(name) { return name === 'data-ob-detail-url' ? url : ''; }
   };
 }
@@ -45,6 +50,9 @@ function harness() {
     obDetailEl() { return panel; },
     listSel() { return selected; },
     obDetailRender() { renders++; },
+    // Слайс зовёт общий сборщик ссылок; здесь строка моделирует запись из
+    // JSON-подгрузки, у которой ссылка уже готова.
+    obRowUrl(row) { return row && row.dataset ? (row.dataset.obDetailUrl || '') : ''; },
     fetch(url, options) {
       let resolve;
       let reject;
