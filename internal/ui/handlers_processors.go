@@ -37,12 +37,14 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 	if mf := proc.ManagedForm(); mf != nil {
 		virtEntity := processorVirtualEntity(proc)
 		paramValues := map[string]string{}
+		tablePartRows := map[string][]map[string]any{}
 		for _, p := range proc.Params {
 			if p.Default != nil {
 				paramValues[p.Name] = fmt.Sprintf("%v", paramDefaultValue(p.Default, p.Type))
 			}
 		}
 		refOpts, _ := s.loadInitialRefOptions(r.Context(), virtEntity, paramValues)
+		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, tablePartRows)
 		enumOpts := s.loadEnumOptions(virtEntity, s.resolveLang(r))
 		for k, v := range processorEnumOptions(proc) {
 			enumOpts[k] = v
@@ -54,11 +56,11 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"Values":        paramValues,
 			"RefOptions":    refOpts,
 			"EnumOptions":   enumOpts,
-			"TPRefOptions":  map[string]map[string][]map[string]any{},
+			"TPRefOptions":  tpRefOpts,
 			"TPEnumLabels":  map[string]map[string]map[string]string{},
 			"TPEnumOrder":   map[string]map[string][]string{},
 			"TPRefMeta":     map[string]map[string]any{},
-			"TablePartRows": map[string][]map[string]any{},
+			"TablePartRows": tablePartRows,
 		}
 		s.setProcessorManagedContext(r, data, proc)
 		s.prepareManagedFormData(r.Context(), data, mf)
@@ -321,11 +323,13 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 // renderProcessorManagedResult renders processor results via managed form template.
 func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Request, proc *processorpkg.Processor, paramValues map[string]any, messages []string, runErr string) {
 	virtEntity := processorVirtualEntity(proc)
+	tablePartRows := map[string][]map[string]any{}
 	strValues := make(map[string]string, len(paramValues))
 	for k, v := range paramValues {
 		strValues[k] = fmt.Sprintf("%v", v)
 	}
 	refOpts, _ := s.loadInitialRefOptions(r.Context(), virtEntity, strValues)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, tablePartRows)
 	enumOpts := s.loadEnumOptions(virtEntity, s.resolveLang(r))
 	for k, v := range processorEnumOptions(proc) {
 		enumOpts[k] = v
@@ -337,11 +341,11 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"Values":        strValues,
 		"RefOptions":    refOpts,
 		"EnumOptions":   enumOpts,
-		"TPRefOptions":  map[string]map[string][]map[string]any{},
+		"TPRefOptions":  tpRefOpts,
 		"TPEnumLabels":  map[string]map[string]map[string]string{},
 		"TPEnumOrder":   map[string]map[string][]string{},
 		"TPRefMeta":     map[string]map[string]any{},
-		"TablePartRows": map[string][]map[string]any{},
+		"TablePartRows": tablePartRows,
 		"Messages":      messages,
 		"RunError":      runErr,
 		"Ran":           true,
