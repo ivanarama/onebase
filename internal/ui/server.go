@@ -472,6 +472,7 @@ func (s *Server) Mount(r chi.Router) {
 	// Admin: аутентификация — политики и провайдеры единого входа (план 84)
 	r.Get("/ui/admin/auth", s.adminAuth)
 	r.Post("/ui/admin/auth/policy", s.adminAuthPolicySave)
+	r.Post("/ui/admin/auth/password-policy", s.adminAuthPasswordPolicySave)
 	r.Get("/ui/admin/auth/providers/{id}", s.adminAuthProvider)
 	r.Post("/ui/admin/auth/providers/{id}", s.adminAuthProvider)
 	r.Post("/ui/admin/auth/providers/{id}/delete", s.adminAuthProviderDelete)

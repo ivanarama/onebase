@@ -320,7 +320,7 @@ func scanTime(v any) time.Time {
 }
 
 func (r *Repo) Create(ctx context.Context, login, password, fullName string, isAdmin bool) (*User, error) {
-	if err := r.passwordPolicy.validate(password); err != nil {
+	if err := r.EffectivePasswordPolicy(ctx).validate(password); err != nil {
 		return nil, err
 	}
 	d := r.db.Dialect()
@@ -748,7 +748,7 @@ func (r *Repo) SetDenyPasswdChange(ctx context.Context, userID string, deny bool
 
 // UpdatePassword sets a new bcrypt-hashed password for the given user ID.
 func (r *Repo) UpdatePassword(ctx context.Context, userID, newPassword string) error {
-	if err := r.passwordPolicy.validate(newPassword); err != nil {
+	if err := r.EffectivePasswordPolicy(ctx).validate(newPassword); err != nil {
 		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -800,9 +800,20 @@ func (r *Repo) KickOtherSessions(ctx context.Context, userID, currentToken strin
 	return err
 }
 
-// PasswordPolicy reports the policy captured when this repository was
-// created. Handlers use it only for UI hints; validation always happens in
-// Create and UpdatePassword.
-func (r *Repo) PasswordPolicy() PasswordPolicy {
-	return r.passwordPolicy
+// EffectivePasswordPolicy — политика паролей, действующая для этой базы:
+// умолчания процесса (переменные окружения, захваченные при создании Repo),
+// уточнённые политикой, сохранённой администратором в _settings.
+//
+// Читается на каждой проверке, а не кэшируется: смена политики в интерфейсе
+// обязана действовать сразу, иначе администратор снимает ограничение и не
+// понимает, почему пароль всё ещё отвергается. Обращений мало — установка
+// пароля и отрисовка подсказки в форме.
+func (r *Repo) EffectivePasswordPolicy(ctx context.Context) PasswordPolicy {
+	if r == nil {
+		return PasswordPolicy{
+			MinLength:       DefaultMinPasswordLength,
+			MinLengthSource: PasswordMinLengthSourceDefault,
+		}
+	}
+	return r.passwordPolicy.applyStored(r.AuthPolicy(ctx))
 }

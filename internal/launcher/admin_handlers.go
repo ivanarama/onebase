@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -842,6 +843,82 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	if db.GetExecEnabled(r.Context()) {
 		execChecked = "checked"
 	}
+	// Политика паролей — свойство базы (_settings), а не лаунчера. Сохранённое
+	// и действующее значения различаются намеренно: пустое поле оставляет базе
+	// наследование, а подсказка показывает, откуда пришёл текущий минимум.
+	repo := auth.NewRepo(db)
+	stored := repo.AuthPolicy(r.Context())
+	pwPolicy := repo.EffectivePasswordPolicy(r.Context())
+	lang := resolveLang(r)
+	jsText := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `'`, `\'`)
+		s = strings.ReplaceAll(s, "\r", `\r`)
+		return strings.ReplaceAll(s, "\n", `\n`)
+	}
+	storedMinLength := ""
+	if stored.PasswordMinLength != 0 {
+		storedMinLength = strconv.Itoa(stored.PasswordMinLength)
+	}
+	pwEmptyChecked, pwEmptyHint := "", ""
+	if stored.AllowEmptyPasswords {
+		pwEmptyChecked = "checked"
+	}
+	if pwPolicy.AllowEmpty && !stored.AllowEmptyPasswords {
+		pwEmptyHint = " " + escHTML(tr(lang, "Сейчас пустые пароли разрешены переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS: снятая галка их не запретит, уберите переменную у процесса базы.")) //nolint:gosec // G101: это подсказка администратору с именем переменной окружения, а не учётные данные
+	}
+	passwordSection := fmt.Sprintf(`<div style="font-size:13px;font-weight:600;margin:16px 0 8px">%s</div>
+	  <label style="font-size:12px;display:flex;align-items:center;gap:10px">
+	    %s:
+	    <input type="number" id="st-pwlen" min="1" max="%d" value="%s" placeholder="%d" style="width:90px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:3px;font-size:12px">
+	  </label>
+	  <div style="font-size:11px;color:#666;margin-top:6px">%s %s <strong><span id="st-pweffective">%d</span></strong> (<span id="st-pwsource">%s</span>). %s</div>
+	  <label style="font-size:12px;display:flex;align-items:center;gap:8px;margin-top:12px">
+	    <input type="checkbox" id="st-pwempty" %s>
+	    %s
+	  </label>
+	  <div style="font-size:11px;color:#666;margin-top:6px">%s%s</div>
+	  <button onclick="cfgSettingsSave()" style="margin-top:12px;background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:3px;cursor:pointer;font-size:12px">%s</button>
+	  <span id="st-msg" style="font-size:11px;margin-left:8px"></span>`,
+		escHTML(tr(lang, "Пароли")),
+		escHTML(tr(lang, "Минимальная длина пароля")), auth.MaxPasswordLength,
+		storedMinLength, pwPolicy.MinLength,
+		escHTML(fmt.Sprintf(tr(lang, "Минимум — от 1 до %d символов. Сам пароль — не более %d байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше."), auth.MaxPasswordLength, auth.MaxPasswordLength)),
+		escHTML(tr(lang, "Действующее значение:")), pwPolicy.MinLength,
+		escHTML(passwordMinLengthSourceText(lang, pwPolicy.MinLengthSource)),
+		escHTML(tr(lang, "Оставьте поле пустым, чтобы наследовать умолчание процесса и удалить сохранённое переопределение.")),
+		pwEmptyChecked, escHTML(tr(lang, "Разрешить пустые пароли")),
+		escHTML(tr(lang, "Учётная запись с пустым паролем защищена только логином. Режим стенда и киоска, не рабочей базы.")), pwEmptyHint,
+		escHTML(tr(lang, "Сохранить политику паролей")))
+	settingsScript := fmt.Sprintf(`<script>
+function cfgSettingsSave(){
+  var n=parseInt(document.getElementById('st-pagesize').value,10);
+  var c=document.getElementById('st-collapsenav').checked;
+  var net=document.getElementById('st-net').checked;
+  var exec=document.getElementById('st-exec').checked;
+  var fm=document.getElementById('form_open_mode').value;
+  var pwlen=document.getElementById('st-pwlen').value;
+  var pwempty=document.getElementById('st-pwempty').checked;
+  fetch('/bases/%s/configurator/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({list_page_size:n,collapsible_nav:c,network_enabled:net,exec_enabled:exec,form_open_mode:fm,password_min_length:pwlen,allow_empty_passwords:pwempty})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var m=document.getElementById('st-msg');
+      if(d.ok){
+        m.textContent='%s';m.style.color='#16a34a';
+        if(d.value){document.getElementById('st-pagesize').value=d.value;}
+        if(Object.prototype.hasOwnProperty.call(d,'password_min_length_stored')){
+          var pw=document.getElementById('st-pwlen');
+          pw.value=d.password_min_length_stored||'';
+          pw.placeholder=d.password_min_length_effective;
+          document.getElementById('st-pweffective').textContent=d.password_min_length_effective;
+          document.getElementById('st-pwsource').textContent=d.password_min_length_source_label;
+        }
+      }
+      else{m.textContent=(d.error||'%s');m.style.color='#c00';}
+    })
+    .catch(function(){var m=document.getElementById('st-msg');m.textContent='%s';m.style.color='#c00';});
+}
+</script>`, jsText(b.ID), jsText(tr(lang, "Сохранено")), jsText(tr(lang, "Ошибка")), jsText(tr(lang, "Ошибка сети")))
 	formMode := db.GetFormOpenMode(r.Context())
 	pagesSel, tabsSel := "", ""
 	if formMode == storage.FormModeTabs {
@@ -883,27 +960,11 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	    Разрешить выполнение команд ОС
 	  </label>
 	  <div style="font-size:11px;color:#666;margin-top:6px">Опасно: DSL-функция <code>ВыполнитьКоманду</code> запускает процессы на сервере (исполнение кода). Включайте только на доверенной/локальной базе. По умолчанию и после восстановления из бэкапа — выключено.</div>
-	  <button onclick="cfgSettingsSave()" style="margin-top:12px;background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:3px;cursor:pointer;font-size:12px">Сохранить</button>
-	  <span id="st-msg" style="font-size:11px;margin-left:8px"></span>
+	  %s
 	</div>
 </div>
-<script>
-function cfgSettingsSave(){
-  var n=parseInt(document.getElementById('st-pagesize').value,10);
-  var c=document.getElementById('st-collapsenav').checked;
-  var net=document.getElementById('st-net').checked;
-  var exec=document.getElementById('st-exec').checked;
-  var fm=document.getElementById('form_open_mode').value;
-  fetch('/bases/%s/configurator/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({list_page_size:n,collapsible_nav:c,network_enabled:net,exec_enabled:exec,form_open_mode:fm})})
-    .then(function(r){return r.json()})
-    .then(function(d){
-      var m=document.getElementById('st-msg');
-      if(d.ok){m.textContent='Сохранено';m.style.color='#16a34a';if(d.value){document.getElementById('st-pagesize').value=d.value;}}
-      else{m.textContent=(d.error||'Ошибка');m.style.color='#c00';}
-    })
-    .catch(function(){var m=document.getElementById('st-msg');m.textContent='Ошибка сети';m.style.color='#c00';});
-}
-</script>`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked, b.ID)
+%s`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked,
+		passwordSection, settingsScript)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writeBody(w, []byte(html))
 }
@@ -918,14 +979,25 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ListPageSize   int    `json:"list_page_size"`
-		CollapsibleNav *bool  `json:"collapsible_nav"`
-		NetworkEnabled *bool  `json:"network_enabled"`
-		ExecEnabled    *bool  `json:"exec_enabled"`
-		FormOpenMode   string `json:"form_open_mode"`
+		ListPageSize        int             `json:"list_page_size"`
+		CollapsibleNav      *bool           `json:"collapsible_nav"`
+		NetworkEnabled      *bool           `json:"network_enabled"`
+		ExecEnabled         *bool           `json:"exec_enabled"`
+		FormOpenMode        string          `json:"form_open_mode"`
+		PasswordMinLength   json.RawMessage `json:"password_min_length"`
+		AllowEmptyPasswords *bool           `json:"allow_empty_passwords"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	// Валидация всего запроса обязана закончиться до первой записи. RawMessage
+	// отличает отсутствующее поле старого клиента от явного JSON null. Новый
+	// клиент отправляет исходную строку (пустая снимает override), а null не
+	// считается сбросом и не должен разрешать частичное сохранение настроек.
+	passwordMinLength, err := parsePasswordMinLength(req.PasswordMinLength)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": passwordMinLengthInputError(resolveLang(r))})
 		return
 	}
 	db, err := getAuthDB(r.Context(), b)
@@ -961,7 +1033,112 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "value": db.GetListPageSize(r.Context())})
+	// Политика паролей живёт не в настройках лаунчера, а в политике
+	// аутентификации базы (_settings, план 84) — там же, где её правит
+	// Предприятие. Читаем и меняем только свои поля, чтобы не затереть
+	// требование второго фактора и sso_only.
+	if passwordMinLength.Present || req.AllowEmptyPasswords != nil {
+		if err := savePasswordPolicy(r, db, passwordMinLength, req.AllowEmptyPasswords); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errPasswordMinLengthRange) {
+				status = http.StatusBadRequest
+			}
+			message := err.Error()
+			if status == http.StatusBadRequest {
+				message = passwordMinLengthInputError(resolveLang(r))
+			}
+			writeJSON(w, status, map[string]any{"error": message})
+			return
+		}
+	}
+	repo := auth.NewRepo(db)
+	storedPolicy := repo.AuthPolicy(r.Context())
+	effectivePolicy := repo.EffectivePasswordPolicy(r.Context())
+	lang := resolveLang(r)
+	writeJSON(w, 200, map[string]any{
+		"ok":                               true,
+		"value":                            db.GetListPageSize(r.Context()),
+		"password_min_length_stored":       storedPolicy.PasswordMinLength,
+		"password_min_length_effective":    effectivePolicy.MinLength,
+		"password_min_length_source":       effectivePolicy.MinLengthSource,
+		"password_min_length_source_label": passwordMinLengthSourceText(lang, effectivePolicy.MinLengthSource),
+	})
+}
+
+// errPasswordMinLengthRange — длина вне допустимого диапазона. Отдельной
+// ошибкой, чтобы обработчик отличил ввод администратора от сбоя базы.
+var errPasswordMinLengthRange = errors.New("минимальная длина пароля вне допустимого диапазона")
+
+type passwordMinLengthUpdate struct {
+	Present bool
+	Value   int // 0 means remove the database override and inherit the process default.
+}
+
+// parsePasswordMinLength проверяет присутствующее JSON-поле до любых записей.
+// Отсутствие поля сохраняет совместимость со старыми клиентами экрана настроек;
+// пустая строка снимает override. Целая строка нужна браузерной форме, чтобы
+// дробь и экспонента дошли до сервера без потерь; null и иная JSON-форма —
+// ошибка ввода.
+func parsePasswordMinLength(raw json.RawMessage) (passwordMinLengthUpdate, error) {
+	if len(raw) == 0 {
+		return passwordMinLengthUpdate{}, nil
+	}
+	text := string(raw)
+	if raw[0] == '"' {
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return passwordMinLengthUpdate{}, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return passwordMinLengthUpdate{Present: true}, nil
+		}
+	}
+	for _, char := range text {
+		if char < '0' || char > '9' {
+			return passwordMinLengthUpdate{}, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+		}
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil || n < 1 || n > auth.MaxPasswordLength {
+		return passwordMinLengthUpdate{}, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+	}
+	return passwordMinLengthUpdate{Present: true, Value: n}, nil
+}
+
+// savePasswordPolicy обновляет в политике аутентификации базы только поля
+// паролей, оставляя остальные (второй фактор, sso_only) как есть.
+func savePasswordPolicy(r *http.Request, db *storage.DB, minLength passwordMinLengthUpdate, allowEmpty *bool) error {
+	repo := auth.NewRepo(db)
+	policy := repo.AuthPolicy(r.Context())
+	if minLength.Present {
+		if minLength.Value != 0 && (minLength.Value < 1 || minLength.Value > auth.MaxPasswordLength) {
+			return fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+		}
+		policy.PasswordMinLength = minLength.Value
+	}
+	if allowEmpty != nil {
+		policy.AllowEmptyPasswords = *allowEmpty
+	}
+	if err := repo.SaveAuthPolicy(r.Context(), policy); err != nil {
+		return err
+	}
+	logCfgSessionAudit(r, db, "password_policy_saved", "", "")
+	return nil
+}
+
+func passwordMinLengthInputError(lang string) string {
+	return fmt.Sprintf(tr(lang, "Минимальная длина пароля должна быть целым числом от 1 до %d или пустой для наследования"), auth.MaxPasswordLength)
+}
+
+func passwordMinLengthSourceText(lang string, source auth.PasswordMinLengthSource) string {
+	switch source {
+	case auth.PasswordMinLengthSourceDatabase:
+		return tr(lang, "настройка базы")
+	case auth.PasswordMinLengthSourceEnvironment:
+		return tr(lang, "переменная ONEBASE_MIN_PASSWORD_LENGTH")
+	default:
+		return tr(lang, "умолчание процесса")
+	}
 }
 
 func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
