@@ -400,6 +400,7 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 		"Filter":     filterFormValues(r, ir.Dimensions),
 		"RefOpts":    s.loadRefOpts(r.Context(), ir.Dimensions, filterFormValues(r, ir.Dimensions)),
 		"HasFilters": !flt.IsEmpty(),
+		"RequestURI": r.URL.RequestURI(),
 	})
 }
 
