@@ -1015,6 +1015,13 @@ func (s *Scheduler) updateRun(ctx context.Context, runID uuid.UUID, status, outp
 }
 
 func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob) (output string, runErr error) {
+	// Без Registry искать обработку негде: методы на нулевом приёмнике
+	// разыменовывают мьютекс и паникуют (#1202). Прогон должен получить
+	// честную ошибку, а не панику в журнале.
+	if s.reg == nil {
+		return "", fmt.Errorf("processor not found: %s", job.Processor)
+	}
+
 	proc := s.reg.GetProcessor(job.Processor)
 	if proc == nil {
 		return "", fmt.Errorf("processor not found: %s", job.Processor)
@@ -1126,6 +1133,29 @@ func resolveParamTemplates(params map[string]any) map[string]any {
 // as scheduled jobs.
 func ResolveParamTemplates(params map[string]any) map[string]any {
 	return resolveParamTemplatesAt(params, time.Now())
+}
+
+// ResolveParamTemplateText раскрывает подстановку в ОДИНОЧНОМ значении и отдаёт
+// результат строкой в том виде, в каком его понимают форма и query-строка:
+// дата — YYYY-MM-DD. Нужен там, где значение параметра хранится текстом
+// (умолчание параметра отчёта), а не в карте any: без него каждый вызывающий
+// заводил бы свою карту из одного ключа и своё форматирование даты.
+func ResolveParamTemplateText(raw string) string {
+	return resolveParamTemplateTextAt(raw, time.Now())
+}
+
+func resolveParamTemplateTextAt(raw string, now time.Time) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	switch v := resolveTemplate(raw, now).(type) {
+	case string:
+		return v
+	case time.Time:
+		return v.Format("2006-01-02")
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 func resolveParamTemplatesAt(params map[string]any, now time.Time) map[string]any {

@@ -31,7 +31,7 @@ func formsEditorScript(t *testing.T) string {
 func TestПанельСвойствТЧ_ПредлагаетВсеСобытияТабличнойЧасти(t *testing.T) {
 	script := formsEditorScript(t)
 	// Источник правды о том, какие события элемент реально отправляет, —
-	// browserEventAllowedForElement на сервере. Панель обязана предлагать их
+	// metadata.BrowserFormEventsFor на сервере. Панель обязана предлагать их
 	// все: событие, которого в ней нет, пишется руками и потому не пишется.
 	for _, event := range []string{
 		"ПриИзменении", "ПриИзмененииСтроки", "ПриДобавленииСтроки",

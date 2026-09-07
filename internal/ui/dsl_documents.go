@@ -120,6 +120,7 @@ func (s *Server) refManagerForSrc(entity *metadata.Entity, ctxSrc interpreter.Ct
 	switch entity.Kind {
 	case metadata.KindCatalog:
 		return interpreter.NewCatalogProxy(entity, s.store, ctxSrc).
+			WithEntityLookup(s.reg).
 			WithRowAccessChecker(s.dslRowAccessChecker()).
 			WithFieldSearchChecker(s.dslFieldSearchChecker()).
 			WithExchangeRegistrar(s.exchangeRegistrar()).
@@ -268,6 +269,26 @@ func (p *docProxy) CallMethod(method string, args []any) any {
 		}
 		if err := p.DeleteRef(ref.UUID); err != nil {
 			interpreter.RaiseUserError("Удалить(" + p.entity.Name + "): " + err.Error())
+		}
+		return nil
+	case "провести", "post":
+		// Прикладная процедура «Провести» в модуле менеджера СТАРШЕ встроенного
+		// метода: пока метода не было, одноимённая процедура была единственным
+		// способом провести документ по ссылке (#1168), и встроенный case
+		// перекрыл бы её молча — ровно та беда, которую заявка и чинит. break
+		// уводит на откат к модулю менеджера в конце функции.
+		if p.s.reg.GetManagerProc(p.entity.Name, method) != nil {
+			break
+		}
+		if len(args) == 0 {
+			interpreter.RaiseUserError("Провести(" + p.entity.Name + "): не передана ссылка")
+		}
+		ref, ok := args[0].(*interpreter.Ref)
+		if !ok {
+			interpreter.RaiseUserError(fmt.Sprintf("Провести(%s): ожидается ссылка, получено %T", p.entity.Name, args[0]))
+		}
+		if err := p.postRef(ref.UUID); err != nil {
+			interpreter.RaiseUserError("Провести(" + p.entity.Name + "): " + err.Error())
 		}
 		return nil
 	case "отменитьпроведение", "unpost":
@@ -463,6 +484,27 @@ func (p *docProxy) DeleteRef(uuidStr string) error {
 	return nil
 }
 
+// postRef проводит уже записанный документ по ссылке — с теми же наблюдаемыми
+// последствиями, что кнопка «Провести» в списке: грузит объект целиком (шапка +
+// ТЧ), проверяет построчное право post, запускает ОбработкаПроведения, пишет
+// движения, признак проведения и веб-хук document.post в одной транзакции.
+// Паритет зафиксирован тестом TestПроведение_ПаритетПутей.
+//
+// ОбработкаЗаписи при этом НЕ запускается: метод парный к ОтменитьПроведение и
+// меняет только состояние проведения уже записанного документа. Нужна запись
+// вместе с проведением — это объектный путь, Ссылка.ПолучитьОбъект().Провести().
+func (p *docProxy) postRef(uuidStr string) error {
+	obj, err := p.LoadObject(uuidStr)
+	if err != nil {
+		return err
+	}
+	w, ok := obj.(*docWriter)
+	if !ok {
+		return fmt.Errorf("неожиданный тип объекта документа: %T", obj)
+	}
+	return w.post()
+}
+
 // unpostRef отменяет проведение документа через entityservice.Unpost — тем же
 // путём, что UI-кнопка «Отменить проведение» и REST unpost: чистит движения,
 // снимает posted и запускает ОбработкаУдаленияПроведения (OnUnpost) в одной
@@ -558,6 +600,7 @@ type docWriter struct {
 	// assigned — реквизиты, присвоенные модулем в этой сессии: их чтение не
 	// маскируется, значение принадлежит текущей операции (план 88E).
 	assigned map[string]bool
+	resolver *dslRefAttrResolver
 }
 
 func (w *docWriter) ctx() context.Context {
@@ -567,20 +610,35 @@ func (w *docWriter) ctx() context.Context {
 	return context.Background()
 }
 
+func (w *docWriter) refResolver() *dslRefAttrResolver {
+	if w.resolver == nil && w.s != nil {
+		w.resolver = w.s.newDSLRefAttrResolver(w.ctx())
+		w.resolver.ctxSrc = w.ctxSrc
+		w.resolver.attachObject(w.entity, w.obj)
+	}
+	return w.resolver
+}
+
 // Get: имя табличной части → tpProxy, иначе значение поля шапки. Реквизит
 // прочитанного из БД документа отдаётся по полевой политике роли (план 88E) —
 // значение, присвоенное самим модулем, возвращается как есть.
 func (w *docWriter) Get(name string) any {
-	for _, tp := range w.entity.TableParts {
+	for i := range w.entity.TableParts {
+		tp := &w.entity.TableParts[i]
 		if strings.EqualFold(tp.Name, name) {
-			return &tpProxy{obj: w.obj, tpName: tp.Name}
+			return &tpProxy{obj: w.obj, tpName: tp.Name, tp: tp, resolver: w.refResolver()}
 		}
 	}
 	v := w.obj.Get(name)
-	if !w.loaded || w.assigned[strings.ToLower(strings.TrimSpace(name))] {
+	field := findObjectAttributeField(w.entity, name)
+	if field == nil {
 		return v
 	}
-	return w.s.maskDSLValue(w.ctx(), w.entity, name, v)
+	maskStored := w.loaded && !w.assigned[strings.ToLower(strings.TrimSpace(name))]
+	if maskStored && w.s.dslFieldMasked(w.ctx(), w.entity, field.Name) {
+		return w.s.maskDSLValue(w.ctx(), w.entity, field.Name, v)
+	}
+	return w.s.declaredEntityFieldValue(field, v, w.refResolver())
 }
 
 func (w *docWriter) Set(name string, v any) {
@@ -589,6 +647,21 @@ func (w *docWriter) Set(name string, v any) {
 	}
 	w.assigned[strings.ToLower(strings.TrimSpace(name))] = true
 	w.obj.Set(name, v)
+}
+
+func (w *docWriter) GetDynamicField(name string) (any, bool) {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return nil, false
+	}
+	return w.Get(name), true
+}
+
+func (w *docWriter) SetDynamicField(name string, value any) bool {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return false
+	}
+	w.Set(name, value)
+	return true
 }
 
 func (w *docWriter) CallMethod(method string, args []any) any {
@@ -681,8 +754,9 @@ func (w *docWriter) read() error {
 
 // fill реализует Документы.X.СоздатьДокумент().Заполнить(Источник): запускает
 // ОбработкаЗаполнения у приёмника, переносит результат в obj.Fields/TablePartRows.
-// Источник — *interpreter.Ref или *runtime.Object. Делегирует entityservice.Fill,
-// единая точка вызова OnFill вместе с UI-handler'ом.
+// Источник — *interpreter.Ref либо *runtime.Object напрямую или внутри адаптера
+// lifecycle-хука. Делегирует entityservice.Fill, единую точку вызова OnFill
+// вместе с UI-handler'ом.
 func (w *docWriter) fill(src any) error {
 	var srcType string
 	var srcID uuid.UUID
@@ -703,6 +777,13 @@ func (w *docWriter) fill(src any) error {
 		}
 		srcType = v.Type
 		srcID = v.ID
+	case interface{ runtimeObject() *runtime.Object }:
+		obj := v.runtimeObject()
+		if obj == nil {
+			return fmt.Errorf("объект-основание пустой")
+		}
+		srcType = obj.Type
+		srcID = obj.ID
 	default:
 		return fmt.Errorf("ожидается ссылка или объект, получено %T", src)
 	}
@@ -1083,8 +1164,10 @@ func (w *docWriter) displayName() string {
 // tpProxy — табличная часть документа (Док.Товары).
 // tpProxy — табличная часть записываемого объекта (документа или справочника).
 type tpProxy struct {
-	obj    *runtime.Object
-	tpName string
+	obj      *runtime.Object
+	tpName   string
+	tp       *metadata.TablePart
+	resolver *dslRefAttrResolver
 }
 
 func (t *tpProxy) Get(_ string) any    { return nil }
@@ -1095,6 +1178,15 @@ func (t *tpProxy) Set(_ string, _ any) {}
 // (Ссылка.ПолучитьОбъект / НайтиПоНомеру), нельзя было прочитать в DSL.
 func (t *tpProxy) IterateRows() []map[string]any {
 	return t.obj.TablePartRows[t.tpName]
+}
+
+func (t *tpProxy) IterateThis() []interpreter.This {
+	rows := t.IterateRows()
+	out := make([]interpreter.This, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, newRefAwareMapThis(row, t.tp, t.resolver))
+	}
+	return out
 }
 
 // KnownMethods реализует interpreter.MethodLister: опечатка в имени метода
@@ -1111,7 +1203,7 @@ func (t *tpProxy) CallMethod(method string, args []any) any {
 	case "добавить", "add":
 		row := map[string]any{}
 		t.obj.TablePartRows[t.tpName] = append(rows, row)
-		return &interpreter.MapThis{M: row}
+		return newRefAwareMapThis(row, t.tp, t.resolver)
 	case "очистить", "clear":
 		t.obj.TablePartRows[t.tpName] = nil
 	case "количество", "count":
@@ -1119,7 +1211,7 @@ func (t *tpProxy) CallMethod(method string, args []any) any {
 	case "получить", "get":
 		if len(args) > 0 {
 			if idx := runtime.RowIndexArg(args[0]); idx >= 0 && idx < len(rows) {
-				return &interpreter.MapThis{M: rows[idx]}
+				return newRefAwareMapThis(rows[idx], t.tp, t.resolver)
 			}
 		}
 	case "удалить", "delete":

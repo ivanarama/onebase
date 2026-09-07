@@ -12,6 +12,12 @@ type Param struct {
 	Label   string            `yaml:"label"`   // display label; falls back to Name
 	Labels  map[string]string `yaml:"labels"`  // per-language labels (lang code → translation)
 	Options []string          `yaml:"options"` // for type: select
+	// Default — значение параметра, когда пользователь его не задал. Понимает ту
+	// же грамматику подстановок, что параметры виджетов и регламентных заданий
+	// ({{today}}, {{now|-7d}} и т.п.). Раньше линтер ключ `default` принимал, а
+	// модель его не знала: отчёт с необязательной датой молча приходил пустым,
+	// потому что «Срок < NULL» не выбирает ничего.
+	Default string `yaml:"default"`
 }
 
 type Report struct {

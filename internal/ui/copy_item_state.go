@@ -211,7 +211,7 @@ func (s *Server) restoreManagedCopyState(
 
 	editable := managedFormEditableEntityFields(form, entity)
 	submitted := submittedFormKeys(r)
-	checkboxes := checkboxOmittedFields(form, entity)
+	checkboxes := checkboxOmittedFields(form, entity, submitted)
 	decisions := s.fieldDecisions(r.Context(), entity)
 	for _, field := range entity.Fields {
 		key := strings.ToLower(field.Name)

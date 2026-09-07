@@ -72,6 +72,16 @@ func TestNormalizeRegArg_Nil(t *testing.T) {
 	}
 }
 
+func TestNormalizeRegArg_EmptyReferenceIsNull(t *testing.T) {
+	d := SQLiteDialect{}
+	if got := normalizeRegArg(d, &fakeRef{}, true); got != nil {
+		t.Errorf("пустой Ref → %T(%v), ожидался nil", got, got)
+	}
+	if got := normalizeRegArg(d, "", true); got != nil {
+		t.Errorf("пустая строка ссылки → %T(%v), ожидался nil", got, got)
+	}
+}
+
 // UUID-строка в reference-поле должна пройти через idArg.
 func TestNormalizeRegArg_UUIDString_AsRef(t *testing.T) {
 	d := SQLiteDialect{}

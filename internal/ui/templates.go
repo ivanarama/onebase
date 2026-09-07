@@ -13,6 +13,7 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
@@ -195,6 +196,9 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
+		"effectiveFormElementRequired":   effectiveFormElementRequired,
+		"managedCommandBarElement":       managedCommandBarElement,
+		"nativeFormElementRequired":      nativeFormElementRequired,
 		"normalizedFormHotkey":           normalizedFormHotkey,
 		"str": func(v any) string {
 			if v == nil {
@@ -483,6 +487,52 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			handler, ok := el.Handlers[metadata.FormEventType(eventName)]
 			return ok && strings.TrimSpace(handler) != ""
 		},
+		// elReadOnly / elHidden — итоговое состояние элемента управляемой формы
+		// с учётом условий readonly_when/hidden_when по полям записи. Условия
+		// вычисляются на сервере при отрисовке (и заново после каждого события
+		// формы), а шаблон только читает результат по имени элемента.
+		"elReadOnly": func(ctx map[string]any, el *metadata.FormElement) bool {
+			if el == nil {
+				return false
+			}
+			if el.ReadOnly {
+				return true
+			}
+			set, _ := ctx["ElReadOnly"].(map[string]bool)
+			return set[el.Name]
+		},
+		"elHidden": func(ctx map[string]any, el *metadata.FormElement) bool {
+			if el == nil {
+				return false
+			}
+			set, _ := ctx["ElHidden"].(map[string]bool)
+			return set[el.Name]
+		},
+		// visibleFormPages — страницы набора СтраницыФормы, которые надо
+		// отрисовать. Отбор вынесен сюда, а не сделан внутри range, потому что
+		// заголовок вкладки и её содержимое связаны одним индексом
+		// (data-tab-idx ↔ data-tab-content), а активна всегда нулевая: пропуск
+		// внутри range разошёл бы нумерацию, а скрытая первая страница оставила
+		// бы форму вовсе без активной вкладки.
+		//
+		// Ветка СтраницыФормы обходит детей сама и шаблон managed-element для
+		// самой страницы не зовёт — значит и hidden_when для неё никто не
+		// спросит. Без этого условие на вкладке молча не работало: страница
+		// показывалась вместе с кнопкой и всем содержимым.
+		"visibleFormPages": func(ctx map[string]any, el *metadata.FormElement) []*metadata.FormElement {
+			if el == nil {
+				return nil
+			}
+			hidden, _ := ctx["ElHidden"].(map[string]bool)
+			var out []*metadata.FormElement
+			for _, page := range el.Children {
+				if page == nil || string(page.Kind) != "Страница" || hidden[page.Name] {
+					continue
+				}
+				out = append(out, page)
+			}
+			return out
+		},
 		// hasFormHandler — есть ли у формы (а не элемента) обработчик события.
 		// Используется в managed-шаблоне для авто-вызова ПриОткрытииФормы при
 		// загрузке страницы.
@@ -768,11 +818,25 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.HTML(b.String()) //nolint:gosec // G203: имена и значения пропущены через HTMLEscapeString
 		},
 		"reportParamQuery": func(params any, values map[string]any) string {
-			// Use reflection-free approach: just iterate over values map
 			parts := []string{}
-			for k, v := range values {
-				if v != nil && fmt.Sprintf("%v", v) != "" {
-					parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
+			if declared, ok := params.([]reportpkg.Param); ok {
+				// Ссылка выгрузки — снимок формы, поэтому в неё попадают ВСЕ
+				// объявленные параметры в порядке объявления, включая пустые.
+				// Пропустить пустой нельзя: «параметра в ссылке нет» означает
+				// «пользователь его не задавал», и выгрузка подставила бы туда
+				// значение по умолчанию — там, где на экране пусто.
+				for _, p := range declared {
+					val := ""
+					if v := values[p.Name]; v != nil {
+						val = fmt.Sprintf("%v", v)
+					}
+					parts = append(parts, url.QueryEscape(p.Name)+"="+url.QueryEscape(val))
+				}
+			} else {
+				for k, v := range values {
+					if v != nil && fmt.Sprintf("%v", v) != "" {
+						parts = append(parts, k+"="+url.QueryEscape(fmt.Sprintf("%v", v)))
+					}
 				}
 			}
 			if len(parts) == 0 {
@@ -1455,6 +1519,11 @@ const tplIndex = `
 .w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:8px}
 .w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
 .w-kpi-sub{font-size:12px;color:#94a3b8;margin-top:6px}
+/* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
+   как ссылка — подчёркивание только при наведении, чтобы карточка не выглядела
+   пестрее соседних. */
+a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
+a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
 .w-list th{padding:6px 8px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;text-align:left;background:transparent}
@@ -1519,7 +1588,13 @@ const tplIndex = `
 {{end}}
 
 {{define "widget-kpi-body"}}
-  {{if .KPI}}<div class="w-kpi-value">{{.KPI.Display}}</div>{{else}}<div class="w-empty">нет данных</div>{{end}}
+  {{/* Со ссылкой (link:) значение становится переходом к списку/отчёту:
+       счётчик «в карантине: 3» должен открывать эту очередь, а не заставлять
+       искать её руками. Без link — прежняя некликабельная карточка. */}}
+  {{if .KPI}}
+    {{if .Link}}<a class="w-kpi-value w-kpi-link" href="{{.Link}}">{{.KPI.Display}}</a>
+    {{else}}<div class="w-kpi-value">{{.KPI.Display}}</div>{{end}}
+  {{else}}<div class="w-empty">нет данных</div>{{end}}
 {{end}}
 
 {{define "widget-list-body"}}
@@ -1591,12 +1666,17 @@ const tplList = `
 </div>
 {{end}}
 
+{{define "list-refresh"}}
+<a class="btn btn-secondary btn-sm" data-ob-list-refresh href="{{.URL}}" title="{{t .Lang "Обновить"}}">🔄 {{t .Lang "Обновить"}}</a>
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <div class="view-switch">
       {{/* Переключение вида меняет только вид: поиск, отбор и сортировка
            остаются — их сбрасывает лишь явная очистка. */}}
@@ -2342,6 +2422,10 @@ const tplReport = `
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
     <div class="form-group" style="margin-bottom:0">
+      {{/* Снятый checkbox браузер не отправляет вовсе — маркер __has. говорит
+           серверу, что флажок на форме был, и снятую галку не заменят
+           значением по умолчанию. */}}
+      <input type="hidden" name="__has.{{$pname}}" value="1">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
         <span>{{$p.Label}}</span>
@@ -3027,7 +3111,10 @@ const tplInfoReg = `
 <main>
 <div class="row-top">
   <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
-  {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
+    {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
+  </div>
 </div>
 {{template "reg-filter-form" (dict "Fields" .InfoReg.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/inforeg/%s" (lower .InfoReg.Name)) "Lang" $.Lang)}}
 <div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
@@ -3169,6 +3256,7 @@ const tplJournal = `
 <div class="row-top">
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Всего:"}} {{.Total}}</span>
     {{/* listQuerySuffix, а не filterQuery: тут строка запроса начинается, а не
          продолжается — с «&» отбор уезжал в путь и ссылка давала 404. */}}
