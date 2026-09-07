@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -32,6 +34,7 @@ type queryProxy struct {
 	db       QueryDB
 	reg      QueryRegistry
 	ctx      context.Context
+	ctxSrc   CtxSource
 	compiler QueryCompiler
 	guard    QueryGuard
 }
@@ -70,6 +73,31 @@ func NewQueryFactoryGuarded(ctx context.Context, db QueryDB, reg QueryRegistry, 
 			guard:    guard,
 		}
 	}
+}
+
+// NewQueryFactoryGuardedSource is the transaction-aware counterpart of
+// NewQueryFactoryGuarded. Objects Новый Запрос are created before a DSL
+// НачатьТранзакцию(), so retaining the context value from factory construction
+// would send Выполнить() through a second connection. A live CtxSource keeps
+// reads on the same transaction as catalog/document writes.
+func NewQueryFactoryGuardedSource(ctxSrc CtxSource, db QueryDB, reg QueryRegistry, compiler QueryCompiler, guard QueryGuard) func(args []any) any {
+	return func(args []any) any {
+		return &queryProxy{
+			params:   make(map[string]any),
+			db:       db,
+			reg:      reg,
+			ctxSrc:   ctxSrc,
+			compiler: compiler,
+			guard:    guard,
+		}
+	}
+}
+
+func (q *queryProxy) context() context.Context {
+	if q.ctxSrc != nil {
+		return q.ctxSrc.Ctx()
+	}
+	return q.ctx
 }
 
 // ─── This interface ───────────────────────────────────────────────────────────
@@ -138,10 +166,11 @@ func (q *queryProxy) execute() *Array {
 		panic(userError{Msg: "Запрос.Текст не задан"})
 	}
 	params := unwrapArrayParams(q.params)
+	ctx := q.context()
 	var res query.Result
 	var err error
 	if q.compiler != nil {
-		res, err = q.compiler(q.ctx, q.text, params)
+		res, err = q.compiler(ctx, q.text, params)
 	} else {
 		res, err = query.Compile(q.text, query.CompileOpts{
 			Params:      params,
@@ -155,21 +184,80 @@ func (q *queryProxy) execute() *Array {
 	if err != nil {
 		panic(userError{Msg: "Ошибка запроса: " + err.Error()})
 	}
-	rows, err := q.db.QueryAll(q.ctx, res.SQL, res.Args...)
+	rows, err := q.db.QueryAll(ctx, res.SQL, res.Args...)
 	if err != nil {
 		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL})
 	}
 	if q.guard != nil {
-		if err := q.guard(q.ctx, res, rows); err != nil {
+		if err := q.guard(ctx, res, rows); err != nil {
 			panic(userError{Msg: "Запрос: " + err.Error()})
 		}
 	}
 	query.NormalizeColumns(&res, rows)
+	q.wrapRefColumns(res, rows)
 	arr := &Array{}
 	for _, row := range rows {
 		arr.items = append(arr.items, newQueryResultRow(row))
 	}
 	return arr
+}
+
+// wrapRefColumns оборачивает колонки-идентификаторы результата в *Ref, чтобы
+// ссылка из запроса была ссылкой, а не строкой UUID (#1150).
+//
+// До этого `ТипЗнч(Выборка.Ссылка)` отвечал «Строка», хотя руководство обещает
+// квалифицированное имя типа (`ДокументСсылка.Приход`), и написанный по нему
+// `Если ТипЗнч(Выборка.Ссылка) = Тип("ДокументСсылка.Приход")` молча не
+// срабатывал — без ошибки и без признака.
+//
+// Наименование ссылки остаётся UUID'ом — тем же значением, что колонка отдавала
+// раньше. Это сознательная плата за совместимость: `Строка(Выборка.Ссылка)`,
+// печать и сравнение со строкой продолжают видеть ровно то же, что видели до
+// правки, а вытащить представление по каждой ссылке значило бы запрос на строку.
+// Тот же приём уже применяет Документы.X.НайтиПоИдентификатору().
+//
+// Сравнение со строкой UUID при этом продолжает работать: оператор «=» сводит
+// значения через refKey, который у *Ref берёт UUID. Это часть контракта правки,
+// а не совпадение, — иначе конфигурации, сравнивающие колонку со строкой,
+// сломались бы молча.
+//
+// Вызывается ПОСЛЕ стража ПДн: он правит сырые строки результата и обязан видеть
+// значения в том виде, в каком их отдала БД.
+func (q *queryProxy) wrapRefColumns(res query.Result, rows []map[string]any) {
+	if len(res.RefColumns) == 0 || len(rows) == 0 || q.reg == nil {
+		return
+	}
+	entities := map[string]*metadata.Entity{}
+	for _, e := range q.reg.Entities() {
+		if e != nil {
+			entities[strings.ToLower(e.Name)] = e
+		}
+	}
+	for col, entName := range res.RefColumns {
+		ent := entities[strings.ToLower(entName)]
+		if ent == nil {
+			continue // сущности нет в реестре — оставляем значение как есть
+		}
+		for _, row := range rows {
+			s, ok := row[col].(string)
+			if !ok || !isRefUUIDValue(s) {
+				continue
+			}
+			row[col] = &Ref{UUID: s, Name: s, Type: ent.Name, Kind: ent.Kind}
+		}
+	}
+}
+
+// isRefUUIDValue — значение колонки действительно похоже на идентификатор
+// ссылки. Проверка нужна, потому что до обёртки строку успевает потрогать страж
+// ПДн: подменённое маской значение ссылкой не является, и делать из него *Ref
+// значило бы выдать маску за существующий объект.
+func isRefUUIDValue(s string) bool {
+	if s == "" {
+		return false
+	}
+	_, err := uuid.Parse(s)
+	return err == nil
 }
 
 func newQueryResultRow(row map[string]any) *Struct {

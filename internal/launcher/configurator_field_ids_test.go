@@ -3,6 +3,8 @@ package launcher
 import (
 	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // Редактор реквизитов пересобирает список полей из формы, поэтому id обязан
@@ -90,6 +92,53 @@ func TestEnsureFieldIDsKeepsDefault(t *testing.T) {
 	}
 	if got[2].Default != "" || got[3].Default != "" {
 		t.Errorf("дефолт появился там, где его не было: %+v", got[2:])
+	}
+}
+
+// Засев стандартного поля (#1161) — только запасной вариант: если такой
+// реквизит в файле есть со своим id, побеждает файл. Иначе фикс перевязывал бы
+// уже сложившееся соответствие поля колонке.
+func TestStandardFieldSeedYieldsToFile(t *testing.T) {
+	prev := []saveField{{ID: "f_own", Name: "Код", Type: "string"}}
+	next := []saveField{{Name: "Код", Type: "string"}}
+
+	seeded := withStandardFieldSeed(prev, metadata.StandardCodeField, metadata.StandardCodeFieldID)
+	if got := ensureFieldIDs(seeded, next); got[0].ID != "f_own" {
+		t.Fatalf("id из файла заменён засевом: %s", got[0].ID)
+	}
+
+	// А когда в файле такого реквизита нет — засев и срабатывает.
+	if got := ensureFieldIDs(withStandardFieldSeed(nil, metadata.StandardCodeField, metadata.StandardCodeFieldID), next); got[0].ID != metadata.StandardCodeFieldID {
+		t.Fatalf("id = %q, ожидался %q", got[0].ID, metadata.StandardCodeFieldID)
+	}
+}
+
+// Какое поле стандартное — решает вид объекта, а он берётся из пути к YAML, а
+// не из запроса: значение с формы решало бы, за какой колонкой закрепится
+// служебный id.
+func TestStandardFieldSeedByKind(t *testing.T) {
+	cases := []struct {
+		path      string
+		kind      metadata.Kind
+		numerator bool
+		wantName  string
+		wantID    string
+	}{
+		{path: "catalogs/ученики.yaml", kind: metadata.KindCatalog, numerator: true, wantName: metadata.StandardCodeField, wantID: metadata.StandardCodeFieldID},
+		{path: "/srv/proj/documents/приказ.yaml", kind: metadata.KindDocument, numerator: true, wantName: metadata.StandardNumberField, wantID: metadata.StandardNumberFieldID},
+		// Без нумерации стандартного поля нет вовсе.
+		{path: "catalogs/студенты.yaml", kind: metadata.KindCatalog, numerator: false},
+		// Не справочник и не документ — регистры сюда не ходят, но пусть молчит.
+		{path: "registers/продажи.yaml", kind: "", numerator: true},
+	}
+	for _, c := range cases {
+		if got := entityKindFromPath(c.path); got != c.kind {
+			t.Errorf("%s: вид = %q, ожидался %q", c.path, got, c.kind)
+		}
+		name, id := standardFieldSeed(entityKindFromPath(c.path), c.numerator)
+		if name != c.wantName || id != c.wantID {
+			t.Errorf("%s (numerator=%v): засев = %q/%q, ожидался %q/%q", c.path, c.numerator, name, id, c.wantName, c.wantID)
+		}
 	}
 }
 

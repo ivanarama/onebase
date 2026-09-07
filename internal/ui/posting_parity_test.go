@@ -259,7 +259,7 @@ func snapshot(t *testing.T, ctx context.Context, db *storage.DB, doc *metadata.E
 	}
 }
 
-func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
+func TestПроведение_ПаритетПутей(t *testing.T) {
 	ctx, db, s, doc, hub := newParityServer(t)
 	_, events, cancel := hub.Subscribe("u1", "ivan", nil)
 	defer cancel()
@@ -322,6 +322,20 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 	}
 	viaList := snapshot(t, ctx, db, doc, listID, listTotalsBefore, events)
 
+	// 4. DSL: Документы.X.Провести(Ссылка) — метод менеджера (#1168). Четвёртой
+	// копии проведения он не заводит: под ним тот же docWriter, но ветка
+	// «провести без предварительной записи» (postInContextAfterAccess с
+	// hasPrelude=false) до #1168 не имела боевого вызова вовсе — её держал
+	// только тест. Здесь она и получает доказательство эквивалентности.
+	mgrID := createDoc(t, ctx, s, doc, "МЕНЕДЖЕР")
+	drain()
+	mgrTotalsBefore := registerTotal(t, ctx, db)
+	mgrProxy := newDocsRoot(s, interpreter.NewTxState(ctx)).Get(doc.Name).(*docProxy)
+	mgrProxy.CallMethod("провести", []any{&interpreter.Ref{
+		UUID: mgrID.String(), Type: doc.Name, Kind: doc.Kind, Manager: mgrProxy,
+	}})
+	viaManager := snapshot(t, ctx, db, doc, mgrID, mgrTotalsBefore, events)
+
 	// Подготовка у всех трёх документов одинакова (версия 1), а проведение —
 	// следующая логическая запись. Поэтому каждый путь обязан дать версию 2.
 	// Прежний тест читал Version, но нигде её не проверял и пропустил версию 1
@@ -333,6 +347,7 @@ func TestПроведение_ПаритетТрёхПутей(t *testing.T) {
 		{"entityservice (форма/REST)", viaService},
 		{"DSL Провести()", viaDSL},
 		{"список postDocument", viaList},
+		{"DSL Документы.X.Провести(Ссылка)", viaManager},
 	}
 	base := paths[0]
 	for _, p := range paths[1:] {

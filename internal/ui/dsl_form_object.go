@@ -266,6 +266,21 @@ func (f *formObjectThis) Set(name string, v any) {
 	f.obj.Set(name, v)
 }
 
+func (f *formObjectThis) GetDynamicField(name string) (any, bool) {
+	if f == nil || f.obj == nil || f.entity == nil || findObjectAttributeField(f.entity, name) == nil {
+		return nil, false
+	}
+	return f.Get(name), true
+}
+
+func (f *formObjectThis) SetDynamicField(name string, value any) bool {
+	if f == nil || f.obj == nil || f.entity == nil || findObjectAttributeField(f.entity, name) == nil {
+		return false
+	}
+	f.Set(name, value)
+	return true
+}
+
 // formTpProxy — proxy табличной части для рантайма событий формы. В отличие
 // от tpProxy (см. dsl_documents.go), привязан напрямую к *runtime.Object, без
 // docWriter — потому что в обработчиках формы документ ещё не записан и нет
