@@ -292,3 +292,26 @@ func TestBelarusianAvailableFromMachineTier(t *testing.T) {
 		t.Errorf("T(be-by, Записать) = %q, want %q", got, "Запісаць")
 	}
 }
+
+// Каждый язык в переключателе обязан значиться родным названием — проверка по
+// классу, а не по списку кодов. Имя берётся из «__native__», а при его
+// отсутствии из langName, где перечисление поимённое и default возвращает сам
+// код: язык, добавленный без case, встал бы в переключатель голым «uz» вместо
+// «O'zbekcha». Сторож на это был написан под конкретный язык (be, см. выше) и
+// следующего такого языка не заметил бы — ровно то, о чём #1163.
+func TestAvailableLanguagesHaveNativeName(t *testing.T) {
+	b, err := Load(EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	avail := b.Available()
+	if len(avail) == 0 {
+		t.Fatal("Available() пуст — встроенные словари не загрузились")
+	}
+	for _, l := range avail {
+		if strings.TrimSpace(l.Native) == "" || l.Native == l.Code {
+			t.Errorf("язык %q попадёт в переключатель без родного названия (Native=%q): "+
+				"добавьте case %q в langName или ключ \"__native__\" в словарь", l.Code, l.Native, l.Code)
+		}
+	}
+}

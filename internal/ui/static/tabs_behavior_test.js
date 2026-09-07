@@ -164,13 +164,28 @@ function shell(storage, search = '') {
   vm.runInNewContext(source, context, {filename: 'rendered-tabs-runtime.js'});
 
   const strip = elements['ob-tabstrip'];
+  const frames = () => elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME');
   return {
     open(url, title, options) { return context.obOpenTab(url, title, options); },
     count() { return strip.children.length; },
     activeIndex() { return strip.children.findIndex(button => button.classList.contains('active')); },
     titles() { return strip.children.map(button => button.title); },
     click(index) { strip.children[index].dispatch('click'); },
-    close(index) { strip.children[index].children[2].dispatch('click'); }
+    close(index) { strip.children[index].children[2].dispatch('click'); },
+    duplicate(index) { strip.children[index].children[1].dispatch('click'); },
+    navigate(index, href) {
+      const frame = frames()[index];
+      frame.contentWindow.location = {href};
+      frame.dispatch('load');
+    },
+    denyLocation(index) {
+      const frame = frames()[index];
+      Object.defineProperty(frame.contentWindow, 'location', {
+        configurable: true,
+        get() { throw new Error('cross-origin location blocked'); }
+      });
+      frame.dispatch('load');
+    }
   };
 }
 
@@ -224,6 +239,47 @@ test('duplicate URLs keep separate stable IDs and restore the active copy', () =
   assert.deepEqual(app.titles(), ['first', 'second']);
   assert.deepEqual(savedTabs(storage).map(tab => tab.id), beforeTabs.map(tab => tab.id));
   assert.deepEqual(savedActive(storage), beforeActive);
+});
+
+test('same-origin iframe navigation refreshes persistence, restore and URL deduplication', () => {
+  const storage = new FakeStorage();
+  const createURL = '/ui/document/purchase/new?based_on=sale&based_on_id=42';
+  const listURL = '/ui/document/purchase?view=compact#selected';
+  let app = shell(storage);
+  app.open(createURL, 'Purchase');
+
+  app.navigate(0, 'http://127.0.0.1:8080' + listURL);
+  assert.equal(savedTabs(storage)[0].url, listURL);
+  assert.equal(savedActive(storage).url, listURL);
+
+  app = shell(storage);
+  assert.equal(app.count(), 1);
+  assert.equal(app.activeIndex(), 0);
+  assert.equal(savedTabs(storage)[0].url, listURL);
+
+  app.open(createURL, 'Purchase again');
+  assert.equal(app.count(), 2);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.url), [listURL, createURL]);
+});
+
+test('duplicate uses the refreshed URL and unsafe frame locations are ignored', () => {
+  const storage = new FakeStorage();
+  const createURL = '/ui/document/purchase/new';
+  const cardURL = '/ui/document/purchase/42';
+  const app = shell(storage);
+  app.open(createURL, 'Purchase');
+  app.navigate(0, 'http://127.0.0.1:8080' + cardURL);
+
+  app.duplicate(0);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.url), [cardURL, cardURL]);
+
+  const before = storage.getItem('obTabs');
+  app.navigate(0, 'https://example.invalid/ui/document/purchase/99');
+  assert.equal(storage.getItem('obTabs'), before);
+  app.navigate(0, 'http://127.0.0.1:8080/ui/login');
+  assert.equal(storage.getItem('obTabs'), before);
+  assert.doesNotThrow(() => app.denyLocation(0));
+  assert.equal(storage.getItem('obTabs'), before);
 });
 
 test('home view preserves the previous active tab across navigation', () => {

@@ -66,6 +66,7 @@ func CheckLintProject(dir string, proj *project.Project, roles []*auth.Role) []I
 	issues = append(issues, CheckLintDSL(dir, proj)...)
 	issues = append(issues, CheckLintRoles(dir, proj, roles)...)
 	issues = append(issues, CheckLintIndexes(proj)...)
+	issues = append(issues, CheckLintReports(proj)...)
 	return issues
 }
 
@@ -170,11 +171,16 @@ type formHotkeyRef struct {
 	line int
 }
 
-// formDeleteEvents — события удаления, объявляемые в форме. Обработчик формы
-// срабатывает только при удалении из открытой формы, а удаляют ещё из списка,
-// пачкой, из DSL и по REST. Запрет, написанный только в форме, обходится
-// сменой способа удаления — то есть не защищает. Настоящий гейт живёт в модуле
-// объекта (Процедура ПередУдалением), и предупреждение об этом говорит.
+// formDeleteEvents — события удаления, объявляемые в форме. Обработчик формы не
+// вызывается вовсе: удаление идёт единой точкой entityservice.Delete, и хуки она
+// берёт из модуля объекта (см. там же комментарий «не вызывались НИОТКУДА»).
+// Даже ожив форменный путь, мы закрыли бы один способ удаления из пяти —
+// остаются список, пачка, DSL и REST. Настоящий гейт живёт в модуле объекта
+// (Процедура ПередУдалением), и предупреждение об этом говорит.
+//
+// Про «не вызывается» по умолчанию, без --lint, говорит ещё и
+// CheckFormEventDispatch: события удаления попадают в невызываемые (#1153).
+// Здесь остаётся совет, куда перенести проверку, — он и есть ценность линта.
 var formDeleteEvents = map[string]string{
 	"ПередУдалением": "ПередУдалением",
 	"ПриУдалении":    "ПередУдалением",
@@ -208,7 +214,7 @@ func lintFormDeleteEvents(path, label string) []Issue {
 			Object:       label,
 			Kind:         "Управляемая форма",
 			Code:         "forms.delete-event-in-form",
-			Message:      fmt.Sprintf("событие %q объявлено в форме: оно сработает только при удалении из открытой формы, а из списка, пачкой, из DSL и по REST объект удалится без него", name),
+			Message:      fmt.Sprintf("событие %q объявлено в форме: обработчик формы не вызывается вовсе, а из списка, пачкой, из DSL и по REST объект удаляется своим путём — проверка не сработает нигде", name),
 			SuggestedFix: fmt.Sprintf("Перенесите проверку в модуль объекта: Процедура %s() в src/<объект>.os — она выполняется на всех путях удаления.", moduleEvent),
 		})
 	}
@@ -636,7 +642,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	commandBar := obj("id", "original_id", "name", "visible")
 	commandBar.keys["buttons"] = seq(button)
 
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
+	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
 		"title": freeMap(),
 	})
 	style := obj("color", "background", "bold", "italic")
@@ -645,7 +651,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"then":  style,
 	})
 
-	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
+	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
 		"form":                   formHeader,
 		"title":                  freeMap(),
 		"events":                 freeMap(),

@@ -96,6 +96,13 @@ type handler struct {
 	// incidents — последние ошибки самого лаунчера (план 116). Может быть nil:
 	// часть тестов собирает handler литералом.
 	incidents *incident.Store
+	// beforeLayoutCreate синхронизирует конкурентные тесты перед попыткой
+	// create-if-absent. В рабочем handler всегда nil.
+	beforeLayoutCreate func()
+	// createConfigFile позволяет handler-тесту держать одно SQLite-соединение:
+	// два независимых OpenDB конфликтуют на настройке PRAGMA раньше записи.
+	// В рабочем handler всегда nil, используется обычный OpenDB.
+	createConfigFile func(context.Context, *Base, string, []byte) error
 
 	// statusCache кэширует ДОРОГИЕ на рендер списка проверки — статус живости
 	// (усыновление через /health, до 1.5с) и данные app.yaml (открытие БД у
