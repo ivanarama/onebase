@@ -129,3 +129,44 @@ func TestRenderBytesEmptyTablePartLeavesBlankTemplateRow(t *testing.T) {
 	}()
 	assertCell(t, out, "Sheet1", "A1", "")
 }
+
+func TestRenderBytesRepeatKeepsRowFirstForEntityNamedReference(t *testing.T) {
+	f := excelize.NewFile()
+	if err := f.SetCellStr("Sheet1", "A1", "{{Строки.Контрагент.Наименование}}"); err != nil {
+		t.Fatal(err)
+	}
+	var input bytes.Buffer
+	if err := f.Write(&input); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RenderBytes(input.Bytes(), &printform.RenderContext{
+		EntityName: "Контрагент",
+		Document: map[string]any{
+			"Наименование": "Корневая запись",
+		},
+		TableParts: map[string][]map[string]any{
+			"Строки": {{"Контрагент": "row-ref"}},
+		},
+		Refs: map[string]map[string]any{
+			"row-ref": {"Наименование": "Ссылка из строки"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := excelize.OpenReader(bytes.NewReader(result))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := out.Close(); err != nil {
+			t.Errorf("Close XLSX: %v", err)
+		}
+	}()
+	assertCell(t, out, "Sheet1", "A1", "Ссылка из строки")
+}
