@@ -77,7 +77,7 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 
 	// Date formatting
 	if strings.Contains(fmtStr, "дф=") || strings.Contains(fmtStr, "df=") {
-		if t, ok := val.(time.Time); ok {
+		if t, ok := toTime(args, 0); ok {
 			pattern := extractFormatParam(fmtStr, "дф=")
 			if pattern == "" {
 				pattern = extractFormatParam(fmtStr, "df=")

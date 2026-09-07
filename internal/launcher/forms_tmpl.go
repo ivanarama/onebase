@@ -1176,7 +1176,7 @@ function addFormActionsSection(panel, f) {
 // applicableEvents — какие события показывать для элемента данного вида.
 function applicableEvents(kind) {
   switch (kind) {
-    case 'Кнопка': case 'КнопкаКП': return ['Нажатие'];
+    case 'Кнопка': return ['Нажатие'];
     case 'ПолеВвода': case 'Флажок': case 'ПолеДаты': case 'Переключатель':
     case 'ПолеСписка': return ['ПриИзменении'];
     // Табличная часть отправляет шесть событий (metadata.BrowserFormEventsFor

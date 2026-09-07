@@ -31,5 +31,13 @@ compare-and-merge он повторяет стабильный GraphQL snapshot,
 CI-гейты. Base-sync, carry, legacy re-ship, конфликт и recovery всегда уходят в
 полную процедуру.
 
+После успешного merge `pipelinectl` также распознаёт plan-PR с соседними
+строками `Plan-Issue: #N` и `Plan-Path: Plans/NNN-slug.md`. Он проверяет, что
+issue открыта и сохраняет `approved` + `plan-in-review`, публикует
+`pp:plan-ready`, добавляет `ready-fix`, затем снимает `plan-in-review` и
+`needs-decision`. Это завершение уже одобренного PLAN-handoff, а не новое
+решение за человека. Если post-merge handoff не завершился, сообщи настоящий
+блокер: влитый план не даёт права молча оставить issue вне FIX.
+
 Только `action=completed` означает полезную мутацию и допускает
 `ИТОГ: ГОТОВО`. Наблюдение или ожидание без изменений — `ИТОГ: ПУСТО`.
