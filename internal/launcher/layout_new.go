@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ivantit66/onebase/internal/configdb"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/sheet"
@@ -226,41 +224,9 @@ func (h *handler) configuratorNewLayout(w http.ResponseWriter, r *http.Request) 
 		relPath = "printforms/" + subdir + "/" + filename
 	}
 
-	if b.ConfigSource == "database" {
-		db, cerr := OpenDB(r.Context(), b)
-		if cerr != nil {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+cerr.Error())
-			return
-		}
-		defer db.Close()
-		repo := configdb.New(db)
-		// Отказ при существующем файле.
-		if _, ok, _ := repo.ReadFile(r.Context(), relPath); ok {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
-			return
-		}
-		if werr := repo.SaveFile(r.Context(), relPath, src); werr != nil {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
-			return
-		}
-	} else {
-		fullPath, jerr := configdb.SafeJoin(b.Path, relPath)
-		if jerr != nil {
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+jerr.Error())
-			return
-		}
-		if _, statErr := os.Stat(fullPath); statErr == nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Макет уже существует"))
-			return
-		}
-		if merr := os.MkdirAll(filepath.Dir(fullPath), fsmode.Dir); merr != nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+merr.Error())
-			return
-		}
-		if werr := os.WriteFile(fullPath, src, fsmode.File); werr != nil { //nolint:gosec // G703: fullPath построен configdb.SafeJoin — это и есть guard от traversal
-			h.layoutCreateError(w, r, b, lang, tr(lang, "Ошибка создания макета")+": "+werr.Error())
-			return
-		}
+	if werr := h.writeLayoutFile(r.Context(), b, relPath, src); werr != nil {
+		h.layoutCreateError(w, r, b, lang, layoutWriteMessage(lang, werr))
+		return
 	}
 
 	data := h.loadCfgData(r.Context(), b, "tree")

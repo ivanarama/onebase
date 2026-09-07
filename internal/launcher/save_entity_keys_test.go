@@ -127,14 +127,12 @@ func TestSaveEntityExempt_IsAlive(t *testing.T) {
 // сосчитана, а новый ключ не уехал в ту же дыру молча: добавили ключ в
 // rawField — либо добавьте его в saveField, либо впишите сюда, чем эта потеря
 // обоснована и куда заведена.
-var saveFieldKnownLoss = map[string]string{
-	"label": "устаревший синоним title (parseField подставляет его при пустом title). " +
-		"После сохранения из конфигуратора не остаётся ни label, ни title — подпись " +
-		"откатывается к имени реквизита. Потеря существует давно, этим PR не заведена.",
-	"required": "обязательность реквизита. Редактор реквизитов её не показывает и не " +
-		"присылает, поэтому сохранение объекта снимает required со всех полей. " +
-		"Потеря существует давно, этим PR не заведена.",
-}
+//
+// Сейчас список пуст: `label` и `required` были в нём последними, их закрыл
+// перенос в ensureFieldIDs (#1207). Пустой список — не повод удалить механизм:
+// он и сторож TestSaveField_CoversAllRawKeys ловят следующий ключ, который
+// добавят в rawField.
+var saveFieldKnownLoss = map[string]string{}
 
 // Полнота ключей ОДНОГО РЕКВИЗИТА. Сторож верхнего уровня
 // (TestSaveEntity_CoversAllRawKeys) сверяет только ключи rawEntity и видит
@@ -164,8 +162,8 @@ func TestSaveField_CoversAllRawKeys(t *testing.T) {
 		t.Fatalf("saveField не знает ключи rawField (%d): %s\n\n"+
 			"При сохранении объекта из конфигуратора они молча пропадут из YAML.\n"+
 			"Добавьте их в saveField (и перенос из прежнего состояния файла — в\n"+
-			"ensureFieldIDs, как сделано для id, default и pii) либо впишите в\n"+
-			"saveFieldKnownLoss с описанием потери.",
+			"carryFieldKeys, как сделано для id, title, label, required, default и\n"+
+			"pii) либо впишите в saveFieldKnownLoss с описанием потери.",
 			len(missing), strings.Join(missing, ", "))
 	}
 }

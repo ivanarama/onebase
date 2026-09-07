@@ -191,8 +191,8 @@ func TestPageList_HonorsEntityListForm(t *testing.T) {
 	html := renderPageList(t, map[string]any{
 		"Entity": ent,
 		"Rows": []map[string]any{{
-			"id": "1", "Наименование": "Счётчик 1", "ДатаНачала": "2026-07-01T00:00:00Z",
-			"ДатаОкончания": "2099-12-31T00:00:00Z", "ПоказанияНачала": "987654.321",
+			"id": "1", "Наименование": "Счётчик 1", "ДатаНачала": "2026-07-01T12:00:00Z",
+			"ДатаОкончания": "2099-12-31T12:00:00Z", "ПоказанияНачала": "987654.321",
 		}},
 		"Params": storage.ListParams{}, "RefFilterOptions": map[string]any{},
 		"Lang": "ru", "Total": 1, "Page": 1, "TotalPages": 1,
