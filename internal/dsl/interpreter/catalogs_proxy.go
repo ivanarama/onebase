@@ -697,6 +697,36 @@ func (w *CatalogRecordWriter) Set(name string, v any) {
 	w.fields[strings.ToLower(name)] = v
 }
 
+// GetDynamicField reads a declared requisit through Object["Field"]. The bool
+// separates an unset known requisit from an unknown name.
+func (w *CatalogRecordWriter) GetDynamicField(name string) (any, bool) {
+	if !w.hasDynamicField(name) {
+		return nil, false
+	}
+	return w.Get(name), true
+}
+
+// SetDynamicField writes a declared requisit through Object["Field"].
+func (w *CatalogRecordWriter) SetDynamicField(name string, value any) bool {
+	if !w.hasDynamicField(name) {
+		return false
+	}
+	w.Set(name, value)
+	return true
+}
+
+func (w *CatalogRecordWriter) hasDynamicField(name string) bool {
+	if w == nil || w.entity == nil {
+		return false
+	}
+	for _, field := range w.entity.Fields {
+		if strings.EqualFold(field.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // Fields — имена заполненных полей объекта. Позволяет использовать объект
 // как источник в ЗаполнитьЗначенияСвойств(Приёмник, Объект).
 func (w *CatalogRecordWriter) Fields() []string {
