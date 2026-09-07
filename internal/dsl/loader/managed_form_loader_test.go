@@ -541,3 +541,40 @@ elements:
 		t.Fatalf("явный data_path перезаписан: %+v", el)
 	}
 }
+
+// ref_card_button: false доезжает из YAML в FormModule. Ключ читается ОТДЕЛЬНОЙ
+// DTO загрузчика (не самой FormModule), поэтому поле, добавленное только в
+// метаданные, молча не работало бы: форма грузится, ключ игнорируется.
+func TestManagedFormLoader_ParseRefCardButton(t *testing.T) {
+	load := func(t *testing.T, header string) *metadata.FormModule {
+		t.Helper()
+		dir := t.TempDir()
+		yamlPath := filepath.Join(dir, "заявка.form.yaml")
+		doc := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заявка
+` + header + `elements:
+  - kind: ПолеВвода
+    name: ПолеКлиент
+    data_path: Объект.Клиент
+`
+		if err := os.WriteFile(yamlPath, []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		form, err := NewManagedFormLoader().LoadFormFile(yamlPath, "Заявка")
+		if err != nil {
+			t.Fatalf("LoadFormFile: %v", err)
+		}
+		return form
+	}
+
+	if got := load(t, ""); got.RefCardButton != nil {
+		t.Errorf("без ключа RefCardButton должен остаться nil (умолчание — показывать), получили %v", *got.RefCardButton)
+	}
+	got := load(t, "  ref_card_button: false\n")
+	if got.RefCardButton == nil || *got.RefCardButton {
+		t.Errorf("ref_card_button: false должен доехать как явное false, получили %v", got.RefCardButton)
+	}
+}

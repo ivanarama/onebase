@@ -641,7 +641,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	commandBar := obj("id", "original_id", "name", "visible")
 	commandBar.keys["buttons"] = seq(button)
 
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
+	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
 		"title": freeMap(),
 	})
 	style := obj("color", "background", "bold", "italic")
@@ -650,7 +650,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"then":  style,
 	})
 
-	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
+	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
 		"form":                   formHeader,
 		"title":                  freeMap(),
 		"events":                 freeMap(),

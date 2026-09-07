@@ -355,6 +355,45 @@ func TestImport_Errors(t *testing.T) {
 	}
 }
 
+func TestImport_SparseLastExcelRowStopsAtLimit(t *testing.T) {
+	f := excelize.NewFile()
+	defer func() { _ = f.Close() }()
+	sh := f.GetSheetName(0)
+	for cell, value := range map[string]string{
+		"A1":       "Начало",
+		"A500":     "Граница импорта",
+		"A1048576": "За границей импорта",
+	} {
+		if err := f.SetCellValue(sh, cell, value); err != nil {
+			t.Fatalf("подготовка sparse-бланка, %s: %v", cell, err)
+		}
+	}
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		t.Fatalf("подготовка sparse-бланка: %v", err)
+	}
+
+	res, err := ImportBytes(buf.Bytes(), Options{})
+	if err != nil {
+		t.Fatalf("ImportBytes: %v", err)
+	}
+	if !hasWarning(res, "Лист длиннее 500 строк") {
+		t.Errorf("нет предупреждения об обрезке строк: %v", res.Warnings)
+	}
+
+	var imported strings.Builder
+	for _, area := range res.Layout.Areas {
+		imported.WriteString(cellsText(area))
+	}
+	text := imported.String()
+	if !strings.Contains(text, "Граница импорта") {
+		t.Errorf("последняя разрешённая строка не импортирована: %q", text)
+	}
+	if strings.Contains(text, "За границей импорта") {
+		t.Errorf("sparse-ячейка из строки 1048576 не обрезана: %q", text)
+	}
+}
+
 func hasWarning(res *Result, substr string) bool {
 	for _, w := range res.Warnings {
 		if strings.Contains(w, substr) {
