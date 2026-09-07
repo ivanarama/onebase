@@ -18,14 +18,25 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 		t.Fatal(err)
 	}
 	os.Stdout = w
-	runErr := fn()
-	_ = w.Close()
-	os.Stdout = old
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil && runErr == nil {
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&buf, r)
+		copyDone <- err
+	}()
+
+	runErr := fn()
+	os.Stdout = old
+	closeErr := w.Close()
+	copyErr := <-copyDone
+	if copyErr != nil && runErr == nil {
+		runErr = copyErr
+	} else if closeErr != nil && runErr == nil {
+		runErr = closeErr
+	}
+	if err := r.Close(); err != nil && runErr == nil {
 		runErr = err
 	}
-	_ = r.Close()
 	return buf.String(), runErr
 }
 

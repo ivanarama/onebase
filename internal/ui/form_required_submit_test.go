@@ -134,6 +134,35 @@ func TestSubmit_ManagedRequired_MetadataFieldRemainsFinalStateInvariant(t *testi
 	}
 }
 
+func TestSubmit_ManagedRequired_MetadataFieldCanBeFilledByBeforeWriteHook(t *testing.T) {
+	server, entity := setupManagedEventsServer(t, `
+Процедура ПередЗаписьюФормы()
+	Объект.Наименование = "заполнено обработчиком";
+КонецПроцедуры
+`, map[metadata.FormEventType]string{
+		metadata.FormEventBeforeWrite: "ПередЗаписьюФормы",
+	}, []*metadata.FormElement{
+		fieldEl("ПолеНаименование", "Объект.Наименование"),
+	})
+	entity.Fields[0].Required = true
+
+	request := reqWithChi(http.MethodPost, "/ui/catalog/"+entity.Name+"/new",
+		url.Values{"Наименование": {""}}, map[string]string{"entity": entity.Name})
+	response := httptest.NewRecorder()
+	server.submit(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("hook-filled metadata-required field status=%d, want 303; body=%s", response.Code, response.Body.String())
+	}
+
+	rows, err := server.store.List(context.Background(), entity.Name, entity, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || fmt.Sprint(rows[0]["Наименование"]) != "заполнено обработчиком" {
+		t.Fatalf("before-write value did not satisfy final-state invariant: %#v", rows)
+	}
+}
+
 func TestSubmit_ManagedRequired_MetadataAutoNumberWaitsForGeneration(t *testing.T) {
 	entity := &metadata.Entity{
 		Name: "АвтонумеруемыйСправочник", Kind: metadata.KindCatalog,
