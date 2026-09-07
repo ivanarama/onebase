@@ -3,6 +3,7 @@ package loader
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -321,6 +322,74 @@ func TestManagedFormLoader_LoadEntityForms_NoDir(t *testing.T) {
 	}
 	if forms != nil {
 		t.Errorf("forms = %v, want nil", forms)
+	}
+}
+
+func TestManagedFormLoader_LoadEntityForms_MixedCaseDirPreservesPhysicalPath(t *testing.T) {
+	dir := t.TempDir()
+	entityDir := filepath.Join(dir, "forms", "КоНтРаГеНтЫ")
+	if err := os.MkdirAll(entityDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlPath := filepath.Join(entityDir, "объекта.form.yaml")
+	if err := os.WriteFile(yamlPath, []byte(sampleFormYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	osPath := filepath.Join(entityDir, "объекта.form.os")
+	if err := os.WriteFile(osPath, []byte(`
+Процедура ПриОткрытииФормы()
+КонецПроцедуры
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	forms, err := NewManagedFormLoader().LoadEntityForms(dir, "Контрагенты")
+	if err != nil {
+		t.Fatalf("LoadEntityForms: %v", err)
+	}
+	if len(forms) != 1 {
+		t.Fatalf("forms count = %d, want 1", len(forms))
+	}
+	program, ok := forms[0].ProgramAST.(*ast.Program)
+	if !ok || program == nil || len(program.Procedures) != 1 {
+		t.Fatalf("ProgramAST не содержит процедуру формы: %#v", forms[0].ProgramAST)
+	}
+	if got := filepath.Clean(program.Procedures[0].Name.File); got != filepath.Clean(osPath) {
+		t.Fatalf("source path = %q, want physical mixed-case path %q", got, osPath)
+	}
+}
+
+func TestManagedFormLoader_LoadEntityForms_RejectsCaseFoldCollision(t *testing.T) {
+	dir := t.TempDir()
+	formsDir := filepath.Join(dir, "forms")
+	for _, name := range []string{"Заказ", "зАКАЗ"} {
+		if err := os.MkdirAll(filepath.Join(formsDir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := os.ReadDir(formsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var matches int
+	for _, entry := range entries {
+		if entry.IsDir() && strings.EqualFold(entry.Name(), "Заказ") {
+			matches++
+		}
+	}
+	if matches < 2 {
+		t.Skip("filesystem does not support case-distinct directory names")
+	}
+
+	_, err = NewManagedFormLoader().LoadEntityForms(dir, "Заказ")
+	if err == nil {
+		t.Fatal("case-insensitive forms directory collision was accepted")
+	}
+	for _, name := range []string{"Заказ", "зАКАЗ"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("collision error does not name %q: %v", name, err)
+		}
 	}
 }
 
