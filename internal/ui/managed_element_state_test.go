@@ -913,19 +913,19 @@ func TestСкрытаяСтраница_НиКнопкиВкладкиНиСод
 // первое же нажатие кнопки формы отбирает переход к данным до перезагрузки
 // страницы (#1210).
 
-// managedAnchorNode — элемент внутри якоря data-ob-el, как его отрисовал сервер.
+// managedAnchorElementState — элемент внутри якоря data-ob-el, как его отрисовал сервер.
 // Атрибуты сохраняются целиком: селектор из managed.js в стабе ниже проверяется
 // по-настоящему, а не сверкой со строкой.
-type managedAnchorNode struct {
+type managedAnchorElementState struct {
 	Tag      string            `json:"tag"`
 	Attrs    map[string]string `json:"attrs"`
 	Disabled bool              `json:"disabled"`
 	ReadOnly bool              `json:"readOnly"`
 }
 
-func managedAnchorNodes(t *testing.T, rendered, elementName string) []managedAnchorNode {
+func managedAnchorNodes(t *testing.T, rendered, elementName string) []managedAnchorElementState {
 	t.Helper()
-	var nodes []managedAnchorNode
+	var nodes []managedAnchorElementState
 	var collect func(*html.Node)
 	collect = func(n *html.Node) {
 		if n.Type == html.ElementNode {
@@ -935,7 +935,7 @@ func managedAnchorNodes(t *testing.T, rendered, elementName string) []managedAnc
 			}
 			_, disabled := attrs["disabled"]
 			_, readOnly := attrs["readonly"]
-			nodes = append(nodes, managedAnchorNode{
+			nodes = append(nodes, managedAnchorElementState{
 				Tag: n.Data, Attrs: attrs, Disabled: disabled, ReadOnly: readOnly})
 		}
 		for child := n.FirstChild; child != nil; child = child.NextSibling {
@@ -949,7 +949,7 @@ func managedAnchorNodes(t *testing.T, rendered, elementName string) []managedAnc
 	return nodes
 }
 
-func managedAnchorNodeBy(t *testing.T, nodes []managedAnchorNode, attr string) managedAnchorNode {
+func managedAnchorNodeBy(t *testing.T, nodes []managedAnchorElementState, attr string) managedAnchorElementState {
 	t.Helper()
 	for _, n := range nodes {
 		if _, ok := n.Attrs[attr]; ok {
@@ -957,7 +957,7 @@ func managedAnchorNodeBy(t *testing.T, nodes []managedAnchorNode, attr string) m
 		}
 	}
 	t.Fatalf("в разметке нет элемента с атрибутом %q: %#v", attr, nodes)
-	return managedAnchorNode{}
+	return managedAnchorElementState{}
 }
 
 // applyManagedElementStatesToAnchor прогоняет настоящий applyElementStates из
@@ -965,15 +965,15 @@ func managedAnchorNodeBy(t *testing.T, nodes []managedAnchorNode, attr string) m
 // селектор, а не сверяет его с ожидаемой строкой: иначе тест проверял бы стаб, а
 // не продакшен-код, и правка селектора проехала бы молча зелёной. Неизвестный
 // стабу синтаксис — исключение, то есть красный тест.
-func applyManagedElementStatesToAnchor(t *testing.T, nodes []managedAnchorNode, states *elementStates) []managedAnchorNode {
+func applyManagedElementStatesToAnchor(t *testing.T, nodes []managedAnchorElementState, states *elementStates) []managedAnchorElementState {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is required for managed element state integration test")
 	}
 	payload, err := json.Marshal(struct {
-		Nodes  []managedAnchorNode `json:"nodes"`
-		States *elementStates      `json:"states"`
+		Nodes  []managedAnchorElementState `json:"nodes"`
+		States *elementStates              `json:"states"`
 	}{Nodes: nodes, States: states})
 	if err != nil {
 		t.Fatal(err)
@@ -1047,7 +1047,7 @@ process.stdout.write(JSON.stringify(nodes.map((n) => ({
 	if err != nil {
 		t.Fatalf("execute managed.js applyElementStates: %v\n%s", err, output)
 	}
-	var result []managedAnchorNode
+	var result []managedAnchorElementState
 	if err := json.Unmarshal(output, &result); err != nil {
 		t.Fatalf("decode managed.js result: %v; output=%s", err, output)
 	}
