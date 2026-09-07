@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
+	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -646,6 +647,15 @@ func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any,
 	params := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
 		raw := q.Get(p.Name)
+		if _, ok := q[p.Name]; !ok {
+			// Параметра в запросе нет — подставляем умолчание той же грамматикой
+			// подстановок, что и на экране. Иначе REST расходится с UI на том
+			// самом дефекте, ради которого умолчание и заводилось: отчёт с
+			// необязательной датой приходит пустым, потому что «Срок < NULL» не
+			// выбирает ничего. Явно переданное пустое значение — выбор клиента,
+			// его умолчание не перебивает.
+			raw = scheduler.ResolveParamTemplateText(p.Default)
+		}
 		if raw == "" {
 			if p.Type == "bool" {
 				params[p.Name] = false

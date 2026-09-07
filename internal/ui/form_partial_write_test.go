@@ -376,7 +376,7 @@ func TestCheckboxOmittedFields_Unit(t *testing.T) {
 		cb("Ф3", "Объект.Комментарий", false),    // не bool — игнор
 		cb("Ф4", "Объект.Товары.Активен", false), // путь ТЧ — не поле шапки
 	)
-	got := checkboxOmittedFields(form, ent)
+	got := checkboxOmittedFields(form, ent, nil)
 	if !got["активен"] {
 		t.Error("вложенный не-readonly Флажок не найден")
 	}

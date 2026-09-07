@@ -200,11 +200,18 @@ type FormElement struct {
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
 	ReadOnly        bool              `yaml:"readonly,omitempty"`       // только чтение
-	UseGrid         bool              `yaml:"use_grid,omitempty"`       // (устар.) SlickGrid теперь включён по умолчанию
-	NoGrid          bool              `yaml:"no_grid,omitempty"`        // отключить SlickGrid у ТЧ (вернуть простую таблицу)
-	AutoSum         bool              `yaml:"auto_sum,omitempty"`       // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
-	Hint            string            `yaml:"hint,omitempty"`           // всплывающая подсказка
-	Mask            string            `yaml:"mask,omitempty"`           // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
+	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
+	// языка, что `when` условного оформления): элемент становится нередактируемым
+	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет
+	// живёт в бизнес-логике: без них форма показывает поле активным, а отказ
+	// прилетает исключением уже при записи.
+	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
+	HiddenWhen   string `yaml:"hidden_when,omitempty"`
+	UseGrid      bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
+	NoGrid       bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
+	AutoSum      bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
+	Hint         string `yaml:"hint,omitempty"`     // всплывающая подсказка
+	Mask         string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
 	// InputMask — настоящая маска ввода: заполнители подставляются по мере
 	// набора, разделители ставятся сами (#763, п. 3). Отдельный ключ, потому что
 	// `mask` — это regexp, и переиспользовать его под шаблон значило бы сломать
@@ -443,6 +450,15 @@ type FormModule struct {
 	AutoCommandBar         *FormCommandBar   `yaml:"auto_command_bar,omitempty"` // авто-командная панель
 	AutoSaveDataInSettings bool              `yaml:"auto_save_data_in_settings,omitempty"`
 	VerticalScroll         string            `yaml:"vertical_scroll,omitempty"` // auto|never|always
+	// RefCardButton — показывать ли у ссылочного ПОЛЯ ФОРМЫ кнопку «Открыть
+	// карточку» (🔍). Ячейки табличных частей ключ не затрагивает: их рисует
+	// SlickGrid в браузере, и серверной разметки кнопок там нет.
+	// Указатель нужен, чтобы отличить явное false от отсутствующего ключа:
+	// nil и true семантически одинаковы и оба оставляют кнопку видимой. Плотная
+	// форма, повторяющая раскладку 1С, из-за этой кнопки у каждой заполненной ссылки
+	// становится втрое шире и перестаёт быть узнаваемой — там её выключают одним
+	// ключом на форму.
+	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`

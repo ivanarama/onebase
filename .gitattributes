@@ -27,6 +27,11 @@ internal/webassets/lucide/sprite.svg -text
 # нормализации EOL.
 internal/sheet/fonts/*.ttf binary
 
+# Скриншоты для README. Git и сам распознал бы PNG по нулевым байтам, но
+# `*.md text eol=lf` выше задан маской — пометка явная, чтобы autocrlf на
+# Windows (основная платформа продукта) не мог тронуть картинку.
+docs/images/*.png binary
+
 # Golden-фикстуры HTML табличного документа — хранятся и сверяются в LF
 # (рендер sheet.HTML даёт \n). Без -text Windows autocrlf конвертирует в CRLF
 # при checkout и бит-в-бит сравнение в тестах падает.

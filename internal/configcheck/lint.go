@@ -66,6 +66,7 @@ func CheckLintProject(dir string, proj *project.Project, roles []*auth.Role) []I
 	issues = append(issues, CheckLintDSL(dir, proj)...)
 	issues = append(issues, CheckLintRoles(dir, proj, roles)...)
 	issues = append(issues, CheckLintIndexes(proj)...)
+	issues = append(issues, CheckLintReports(proj)...)
 	return issues
 }
 
@@ -170,11 +171,16 @@ type formHotkeyRef struct {
 	line int
 }
 
-// formDeleteEvents — события удаления, объявляемые в форме. Обработчик формы
-// срабатывает только при удалении из открытой формы, а удаляют ещё из списка,
-// пачкой, из DSL и по REST. Запрет, написанный только в форме, обходится
-// сменой способа удаления — то есть не защищает. Настоящий гейт живёт в модуле
-// объекта (Процедура ПередУдалением), и предупреждение об этом говорит.
+// formDeleteEvents — события удаления, объявляемые в форме. Обработчик формы не
+// вызывается вовсе: удаление идёт единой точкой entityservice.Delete, и хуки она
+// берёт из модуля объекта (см. там же комментарий «не вызывались НИОТКУДА»).
+// Даже ожив форменный путь, мы закрыли бы один способ удаления из пяти —
+// остаются список, пачка, DSL и REST. Настоящий гейт живёт в модуле объекта
+// (Процедура ПередУдалением), и предупреждение об этом говорит.
+//
+// Про «не вызывается» по умолчанию, без --lint, говорит ещё и
+// CheckFormEventDispatch: события удаления попадают в невызываемые (#1153).
+// Здесь остаётся совет, куда перенести проверку, — он и есть ценность линта.
 var formDeleteEvents = map[string]string{
 	"ПередУдалением": "ПередУдалением",
 	"ПриУдалении":    "ПередУдалением",
@@ -208,7 +214,7 @@ func lintFormDeleteEvents(path, label string) []Issue {
 			Object:       label,
 			Kind:         "Управляемая форма",
 			Code:         "forms.delete-event-in-form",
-			Message:      fmt.Sprintf("событие %q объявлено в форме: оно сработает только при удалении из открытой формы, а из списка, пачкой, из DSL и по REST объект удалится без него", name),
+			Message:      fmt.Sprintf("событие %q объявлено в форме: обработчик формы не вызывается вовсе, а из списка, пачкой, из DSL и по REST объект удаляется своим путём — проверка не сработает нигде", name),
 			SuggestedFix: fmt.Sprintf("Перенесите проверку в модуль объекта: Процедура %s() в src/<объект>.os — она выполняется на всех путях удаления.", moduleEvent),
 		})
 	}
@@ -349,7 +355,7 @@ func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 	// который его честно читает, и DEVELOPER.md, где id описан как
 	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
 	// страховку от потери данных (#873, дефект Д11 из #668).
-	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create"}
+	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create", "pii"}
 	if allowRequired {
 		// Required is currently a write invariant for entity headers and table
 		// parts. Register recorders have a different persistence path and must
@@ -447,7 +453,7 @@ func constantsYAMLSchema() *yamlLintSchema {
 }
 
 func widgetYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope"), map[string]*yamlLintSchema{
+	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope", "link"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		"params": freeMap(),
 		"columns": seq(with(obj("field", "label", "format", "align"), map[string]*yamlLintSchema{
@@ -476,8 +482,10 @@ func reportYAMLSchema() *yamlLintSchema {
 		"titles": freeMap(),
 		// У отчёта «required» НЕТ намеренно: report.Param такого поля не знает,
 		// и разрешённый линтом ключ молча ничего бы не делал. Обязательность
-		// параметра пока только у обработок (processor.Param).
-		"params":      seq(with(obj("name", "type", "label", "options"), map[string]*yamlLintSchema{"labels": freeMap()})),
+		// параметра пока только у обработок (processor.Param). А вот «default»
+		// модель знает — параметр без значения получает умолчание, — поэтому
+		// ключ разрешён: иначе линт ругался бы на работающую возможность.
+		"params":      seq(with(obj("name", "type", "label", "options", "default"), map[string]*yamlLintSchema{"labels": freeMap()})),
 		"composition": composition,
 		"variants":    seq(with(obj("name"), map[string]*yamlLintSchema{"composition": composition})),
 	})
@@ -598,7 +606,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	for _, k := range []string{
 		"id", "name", "kind", "field", "table_part", "visible", "enabled", "required",
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
-		"halign", "valign", "readonly", "use_grid", "no_grid", "auto_sum", "hint", "mask",
+		"halign", "valign", "readonly", "readonly_when", "hidden_when", "use_grid", "no_grid", "auto_sum", "hint", "mask",
 		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
 		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
@@ -634,7 +642,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	commandBar := obj("id", "original_id", "name", "visible")
 	commandBar.keys["buttons"] = seq(button)
 
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
+	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
 		"title": freeMap(),
 	})
 	style := obj("color", "background", "bold", "italic")
@@ -643,7 +651,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"then":  style,
 	})
 
-	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
+	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
 		"form":                   formHeader,
 		"title":                  freeMap(),
 		"events":                 freeMap(),

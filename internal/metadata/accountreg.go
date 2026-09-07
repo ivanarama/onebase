@@ -39,24 +39,46 @@ func (ar *AccountRegister) DisplayName(lang string) string {
 	return ar.Name
 }
 
+// rawAccountRegField — ресурс или субконто бухрегистра в YAML. Отдельный набор
+// ключей, а не rawField: у полей бухрегистра нет ни id, ни required, ни default.
+type rawAccountRegField struct {
+	Name   string            `yaml:"name"`
+	Title  string            `yaml:"title"`
+	Titles map[string]string `yaml:"titles"`
+	Type   string            `yaml:"type"`
+	// PII читается не ради исполнения, а ради отказа: см.
+	// piiUnsupportedInAccountRegister. Без этого ключа признак не попал бы в
+	// разбор вовсе и был бы принят молча — ровно та тишина, против которой
+	// заведён сам признак (Field.PII).
+	PII bool `yaml:"pii"`
+}
+
 type rawAccountReg struct {
-	Name      string            `yaml:"name"`
-	Title     string            `yaml:"title"`
-	Titles    map[string]string `yaml:"titles"`
-	Accounts  string            `yaml:"accounts"`
-	Resources []struct {
-		Name   string            `yaml:"name"`
-		Title  string            `yaml:"title"`
-		Titles map[string]string `yaml:"titles"`
-		Type   string            `yaml:"type"`
-	} `yaml:"resources"`
-	Subconto []struct {
-		Name   string            `yaml:"name"`
-		Title  string            `yaml:"title"`
-		Titles map[string]string `yaml:"titles"`
-		Type   string            `yaml:"type"`
-	} `yaml:"subconto"`
-	Totals rawTotals `yaml:"totals"`
+	Name      string               `yaml:"name"`
+	Title     string               `yaml:"title"`
+	Titles    map[string]string    `yaml:"titles"`
+	Accounts  string               `yaml:"accounts"`
+	Resources []rawAccountRegField `yaml:"resources"`
+	Subconto  []rawAccountRegField `yaml:"subconto"`
+	Totals    rawTotals            `yaml:"totals"`
+}
+
+// piiUnsupportedInAccountRegister — отказ в признаке ПДн у поля бухрегистра.
+//
+// Умолчание fail-closed само по себе до бухрегистра дотянулось бы: предикатную
+// сущность (storage.AccountRegisterPredicateEntity) видит и FieldDecisions, и
+// путь запросов. Но списки самого регистра — проводки и остатки
+// (/ui/accountreg/*) — не маскируют полей вовсе, ни по умолчанию, ни по явному
+// правилу роли. Признак, закрывающий значение в отчёте и показывающий его же
+// на соседней странице, — не защита, а её видимость; принимать его молча
+// нельзя по той же причине, по которой отвергается pii у поля табличной части.
+//
+// Снять запрет можно, когда списки бухрегистра пройдут через маскирующую
+// границу, как это сделано для регистров накопления (#859) и сведений (#767).
+func piiUnsupportedInAccountRegister(reg, role, field string) error {
+	return fmt.Errorf("регистр бухгалтерии %s, %s %s: признак pii не поддерживается — "+
+		"списки проводок и остатков бухрегистра поля не маскируют, обещанной защиты не будет; снимите pii",
+		reg, role, field)
 }
 
 func LoadAccountRegisterFile(path string) (*AccountRegister, error) {
@@ -79,6 +101,9 @@ func LoadAccountRegisterFile(path string) (*AccountRegister, error) {
 		ar.Title = ar.Name
 	}
 	for _, r := range raw.Resources {
+		if r.PII {
+			return nil, piiUnsupportedInAccountRegister(raw.Name, "ресурс", r.Name)
+		}
 		ar.Resources = append(ar.Resources, parseField(rawField{
 			Name:   r.Name,
 			Title:  r.Title,
@@ -87,6 +112,9 @@ func LoadAccountRegisterFile(path string) (*AccountRegister, error) {
 		}))
 	}
 	for _, s := range raw.Subconto {
+		if s.PII {
+			return nil, piiUnsupportedInAccountRegister(raw.Name, "субконто", s.Name)
+		}
 		ar.Subconto = append(ar.Subconto, parseField(rawField{
 			Name:   s.Name,
 			Title:  s.Title,

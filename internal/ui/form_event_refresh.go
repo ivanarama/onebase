@@ -110,7 +110,7 @@ func (s *Server) refreshFieldsWrittenByHandler(
 	// взведённой, а applyValues на клиенте поставил бы её обратно в DOM —
 	// пользователь снимает галку, жмёт команду, галка молча возвращается.
 	// ReadOnly-флажок в этот набор не попадает и перечитывается как результат.
-	checkboxes := checkboxOmittedFields(form, entity)
+	checkboxes := checkboxOmittedFields(form, entity, submitted)
 	stale := func(f metadata.Field) bool {
 		if checkboxes[strings.ToLower(f.Name)] {
 			return false

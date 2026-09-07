@@ -20,6 +20,7 @@ import (
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/scheduler"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -59,10 +60,13 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 		s.runReport(w, r, rep, map[string]any{})
 		return
 	}
+	// Умолчания видны сразу при открытии отчёта: поле «На дату» заполнено, и его
+	// можно изменить до первого построения.
+	defaults := reportParamDefaults(rep.Params)
 	s.render(w, r, "page-report", map[string]any{
 		"Report":         rep,
-		"ParamValues":    map[string]any{},
-		"ReportParams":   s.buildReportParams(r.Context(), s.resolveLang(r), rep.Params, map[string]any{}),
+		"ParamValues":    defaults,
+		"ReportParams":   s.buildReportParams(r.Context(), s.resolveLang(r), rep.Params, defaults),
 		"ActiveVariant":  r.FormValue("__variant"),
 		"ReportPresets":  presets,
 		"ActivePresetID": activePresetID,
@@ -86,10 +90,65 @@ func (s *Server) reportRun(w http.ResponseWriter, r *http.Request) {
 	s.runReport(w, r, rep, reportParamValuesFromRequest(r, rep))
 }
 
+// reportParamDefault возвращает значение параметра по умолчанию с раскрытыми
+// подстановками ({{today}} и прочие) — той же грамматикой, что у виджетов и
+// регламентных заданий. Пусто, если умолчание не задано.
+func reportParamDefault(p reportpkg.Param) string {
+	return scheduler.ResolveParamTemplateText(p.Default)
+}
+
+// reportParamDefaults — значения параметров для ПЕРВОГО показа формы, пока
+// пользователь ничего не выбирал. Без них поле с умолчанием стоит пустым до
+// первого построения, и умолчание видно только в форме на странице результата —
+// то есть ровно там, где оно уже не нужно.
+func reportParamDefaults(params []reportpkg.Param) map[string]any {
+	values := make(map[string]any, len(params))
+	for _, p := range params {
+		val := reportParamDefault(p)
+		if val == "" {
+			continue
+		}
+		if p.Type == "bool" {
+			// Строка "false" в шаблоне истинна — флажок встал бы вопреки
+			// умолчанию, поэтому приводим к настоящему bool.
+			values[p.Name] = parseParamValue(val, "bool")
+			continue
+		}
+		values[p.Name] = val
+	}
+	return values
+}
+
+// reportParamPresenceKey — имя скрытого поля-спутника флажка на форме
+// параметров. См. reportParamRequestValue.
+func reportParamPresenceKey(name string) string { return "__has." + name }
+
+// reportParamRequestValue возвращает значение параметра из запроса и признак
+// того, что параметр в запросе БЫЛ. Признак важнее значения: пустая строка от
+// очищенного поля — это выбор пользователя, и умолчание её не перебивает;
+// отсутствие ключа означает «не задавал», и только там подставляется умолчание.
+//
+// У флажка отсутствия ключа недостаточно: снятый checkbox браузер не отправляет
+// вовсе, поэтому форма шлёт рядом с ним скрытый маркер `__has.<имя>`. Без
+// маркера «снял галку» неотличимо от «не задавал», и умолчание true возвращало
+// бы галку на место сразу после того, как её сняли.
+func reportParamRequestValue(r *http.Request, p reportpkg.Param) (string, bool) {
+	if val, ok := requestFormValue(r, p.Name); ok {
+		return val, true
+	}
+	if _, ok := requestFormValue(r, reportParamPresenceKey(p.Name)); ok {
+		return "", true
+	}
+	return "", false
+}
+
 func reportParamValuesFromRequest(r *http.Request, rep *reportpkg.Report) map[string]any {
 	paramValues := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
-		val := r.FormValue(p.Name)
+		val, ok := reportParamRequestValue(r, p)
+		if !ok {
+			val = reportParamDefault(p)
+		}
 		if val == "" {
 			paramValues[p.Name] = nil
 		} else {
@@ -561,8 +620,16 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	settings := s.reportSettingsForRequest(r, rep).Settings
 	comp := effectiveComposition(rep, settings)
 	paramValues := make(map[string]any, len(rep.Params))
+	// Ссылка выгрузки — снимок формы: reportParamQuery выкладывает в неё ВСЕ
+	// объявленные параметры, включая пустые. Поэтому здесь работает то же
+	// правило, что и на экране: умолчание подставляется, только если параметра в
+	// ссылке нет вовсе (прямой вызов /export/excel без параметров).
+	qs := r.URL.Query()
 	for _, p := range rep.Params {
-		val := r.URL.Query().Get(p.Name)
+		val := qs.Get(p.Name)
+		if _, ok := qs[p.Name]; !ok {
+			val = reportParamDefault(p)
+		}
 		if p.Type == "bool" {
 			paramValues[p.Name] = parseParamValue(val, "bool")
 			continue
