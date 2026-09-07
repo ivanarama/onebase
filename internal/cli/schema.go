@@ -107,6 +107,18 @@ var schemaAliases = map[string]string{
 }
 
 func allSchemas() map[string]map[string]any {
+	// Состав ключей обязан совпадать с metadata.rawField — это и есть перечень
+	// того, что движок читает у реквизита. Сторож полноты —
+	// TestSchemaField_CoversAllRawKeys: при additionalProperties:false ключ,
+	// забытый здесь, редактор подчёркивает как ошибку в корректном YAML.
+	//
+	// Объект переиспользуется для полей табличной части (tablePart.fields) и
+	// измерений/ресурсов регистров. Признак pii движок принимает не везде: в
+	// табличной части его отвергает metadata.Validate, у ресурсов и субконто
+	// регистра бухгалтерии — LoadAccountRegisterFile. Разводить отдельный
+	// объект ради одного ключа не стали: расхождение здесь в безопасную
+	// сторону — схема разрешает больше, чем движок, ложной ошибки в редакторе
+	// это не даёт, а отказ приходит из `onebase check`.
 	field := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -118,6 +130,18 @@ func allSchemas() map[string]map[string]any {
 			"titles":              stringMapSchema(),
 			"type":                stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
 			"allow_inline_create": map[string]any{"type": "boolean"},
+			"id":                  stringSchema("Устойчивый идентификатор реквизита: не меняется при переименовании, по нему миграция переименовывает колонку, а не заводит новую"),
+			"required":            boolSchema("Реквизит обязателен к заполнению; проверяется при записи"),
+			"pii":                 boolSchema("Реквизит содержит персональные данные: закрыт маской для роли, которая про него не сказала read: full"),
+			// default читается как исходный текст скаляра: metadata.defaultScalar
+			// принимает любой скаляр, потому что `сейчас`, `12` и `Истина` YAML
+			// разбирает строкой, числом и булевым. Сузить тип до строки значило
+			// бы подчёркивать `default: 12` на числовом реквизите — самое
+			// естественное написание.
+			"default": map[string]any{
+				"type":        []string{"string", "number", "boolean"},
+				"description": "Значение при создании нового объекта: литерал, сегодня|сейчас, текущийпользователь, единственный, константа.<Имя>",
+			},
 		},
 	}
 	tablePart := map[string]any{

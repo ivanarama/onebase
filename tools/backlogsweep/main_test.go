@@ -526,6 +526,9 @@ func TestReportPrintsAdviceWithFindings(t *testing.T) {
 	report(&buf, analyze(issues, testConfig()), 1, false)
 
 	out := buf.String()
+	if !strings.Contains(out, "застрявших заявок — 1 (из 1 открытых)") {
+		t.Fatalf("одна заявка в двух корзинах посчитана в заголовке дважды:\n%s", out)
+	}
 	for _, want := range []string{"#7", "внешняя заявка без ответа", "hold без ссылки на план", "автор ждёт"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в отчёте нет %q:\n%s", want, out)
