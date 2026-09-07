@@ -111,6 +111,27 @@ func discussionAnswerAction(state modeledDiscussionAnswerRecovery) string {
 	return "stop"
 }
 
+func modeledDiscussionQueue(recovery []modeledDiscussionAnswerRecovery, ordinary, limit int) []string {
+	selected := make([]string, 0, limit)
+	for _, state := range recovery {
+		action := discussionAnswerAction(state)
+		if action == "complete" || action == "human-unmark" {
+			continue
+		}
+		selected = append(selected, "recovery")
+		if len(selected) == limit {
+			return selected
+		}
+	}
+	for range ordinary {
+		selected = append(selected, "ordinary")
+		if len(selected) == limit {
+			return selected
+		}
+	}
+	return selected
+}
+
 func TestDiscussionsWatchDoesNotUndoHumanUnmark(t *testing.T) {
 	discussions := skill(t, "discussions-watch")
 	requireAllCompact(t, discussions,
@@ -122,6 +143,8 @@ func TestDiscussionsWatchDoesNotUndoHumanUnmark(t *testing.T) {
 		"answerChosenAt > intent.createdAt",
 		"discussion.updatedAt > intent.createdAt",
 		"**никогда не ставь отметку повторно**",
+		"Это терминальный результат recovery",
+		"исключи тред из recovery-очереди **до применения общего лимита**",
 	)
 
 	crashedBeforeMark := modeledDiscussionAnswerRecovery{
@@ -148,6 +171,15 @@ func TestDiscussionsWatchDoesNotUndoHumanUnmark(t *testing.T) {
 	humanUnmarked.isAnswered = false
 	if got := discussionAnswerAction(humanUnmarked); got != "human-unmark" {
 		t.Fatalf("post-mark human unmark action = %q, want no automatic re-mark", got)
+	}
+
+	got := modeledDiscussionQueue([]modeledDiscussionAnswerRecovery{
+		humanUnmarked,
+		humanUnmarked,
+		humanUnmarked,
+	}, 1, 3)
+	if len(got) != 1 || got[0] != "ordinary" {
+		t.Fatalf("queue with three human-unmark fences = %#v, want ordinary candidate", got)
 	}
 
 	humanUnmarked.done = true
