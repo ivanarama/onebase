@@ -10,6 +10,7 @@ const (
 
 	IDENT
 	STRING
+	DATE
 	NUMBER
 
 	PROCEDURE
@@ -179,6 +180,8 @@ func (t Type) String() string {
 		return "IDENT"
 	case STRING:
 		return "STRING"
+	case DATE:
+		return "DATE"
 	case NUMBER:
 		return "NUMBER"
 	case PROCEDURE:
