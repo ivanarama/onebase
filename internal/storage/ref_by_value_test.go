@@ -29,17 +29,29 @@ func TestFieldValueDialect_RefByValue(t *testing.T) {
 	val := refByValue{uuid: id.String(), name: "Ремонт бытовой техники"}
 
 	refField := metadata.Field{Name: "Направление", Type: metadata.FieldType("reference:Напр"), RefEntity: "Напр"}
-	if got := fieldValueDialect(d, refField, map[string]any{"Направление": val}); got != id.String() {
+	got, err := fieldValueDialect(d, refField, map[string]any{"Направление": val})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != id.String() {
 		t.Errorf("ссылочная колонка: %v (%T), ожидался uuid %s", got, got, id)
 	}
 
 	strField := metadata.Field{Name: "Направление", Type: metadata.FieldTypeString}
-	if got := fieldValueDialect(d, strField, map[string]any{"Направление": val}); got != "Ремонт бытовой техники" {
+	got, err = fieldValueDialect(d, strField, map[string]any{"Направление": val})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Ремонт бытовой техники" {
 		t.Errorf("строковая колонка: %v (%T), ожидалось представление", got, got)
 	}
 
 	// Указатель по-прежнему работает как раньше.
-	if got := fieldValueDialect(d, refField, map[string]any{"Направление": &val}); got != id.String() {
+	got, err = fieldValueDialect(d, refField, map[string]any{"Направление": &val})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != id.String() {
 		t.Errorf("указатель: %v (%T), ожидался uuid %s", got, got, id)
 	}
 }

@@ -4,6 +4,10 @@
   "base_branch": "main",
   "health_command": ["go", "run", "./tools/pipelinehealth", "-json"],
   "merge_method": "merge",
+  "priority": {
+    "default_level": "p2",
+    "aging_hours": 168
+  },
   "required_checks": [
     "build",
     "lint",

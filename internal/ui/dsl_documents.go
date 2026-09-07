@@ -632,6 +632,21 @@ func (w *docWriter) Set(name string, v any) {
 	w.obj.Set(name, v)
 }
 
+func (w *docWriter) GetDynamicField(name string) (any, bool) {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return nil, false
+	}
+	return w.Get(name), true
+}
+
+func (w *docWriter) SetDynamicField(name string, value any) bool {
+	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+		return false
+	}
+	w.Set(name, value)
+	return true
+}
+
 func (w *docWriter) CallMethod(method string, args []any) any {
 	switch strings.ToLower(method) {
 	case "записать", "write":
@@ -722,8 +737,9 @@ func (w *docWriter) read() error {
 
 // fill реализует Документы.X.СоздатьДокумент().Заполнить(Источник): запускает
 // ОбработкаЗаполнения у приёмника, переносит результат в obj.Fields/TablePartRows.
-// Источник — *interpreter.Ref или *runtime.Object. Делегирует entityservice.Fill,
-// единая точка вызова OnFill вместе с UI-handler'ом.
+// Источник — *interpreter.Ref либо *runtime.Object напрямую или внутри адаптера
+// lifecycle-хука. Делегирует entityservice.Fill, единую точку вызова OnFill
+// вместе с UI-handler'ом.
 func (w *docWriter) fill(src any) error {
 	var srcType string
 	var srcID uuid.UUID
@@ -744,6 +760,13 @@ func (w *docWriter) fill(src any) error {
 		}
 		srcType = v.Type
 		srcID = v.ID
+	case interface{ runtimeObject() *runtime.Object }:
+		obj := v.runtimeObject()
+		if obj == nil {
+			return fmt.Errorf("объект-основание пустой")
+		}
+		srcType = obj.Type
+		srcID = obj.ID
 	default:
 		return fmt.Errorf("ожидается ссылка или объект, получено %T", src)
 	}

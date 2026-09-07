@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/configcheck"
 	"github.com/ivantit66/onebase/internal/converter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -97,6 +98,43 @@ func TestConvertEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "conversion_report.txt")); err != nil {
 		t.Errorf("не создан conversion_report.txt: %v", err)
+	}
+}
+
+// Стандартный литерал даты 1С должен доехать через настоящий bulk-конвертер до
+// публичной проверки проекта. Тест намеренно не вызывает lexer/parser напрямую:
+// исходный дефект проявлялся только после Convert, когда .bsl становился
+// .module.os и пользователь запускал `onebase check`.
+func TestConvertDateLiteralPassesOnebaseCheck(t *testing.T) {
+	src := t.TempDir()
+	out := filepath.Join(t.TempDir(), "result")
+	moduleDir := filepath.Join(src, "CommonModules", "АдресныйКлассификаторСлужебный", "Ext")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	module := `Функция ПустаяДата() Экспорт
+  Возврат Дата('00010101');
+КонецФункции
+`
+	if err := os.WriteFile(filepath.Join(moduleDir, "Module.bsl"), []byte(module), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := converter.Convert(converter.Options{SourceDir: src, OutDir: out})
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if report.Modules != 1 {
+		t.Fatalf("converted modules = %d, want 1", report.Modules)
+	}
+	converted := readFile(t, filepath.Join(out, "src", "адресныйклассификаторслужебный.module.os"))
+	if !strings.Contains(converted, "Дата('00010101')") {
+		t.Fatalf("date literal did not survive conversion:\n%s", converted)
+	}
+
+	result := configcheck.RunFull(out)
+	if !result.OK {
+		t.Fatalf("converted project does not pass onebase check: %+v", result.Issues)
 	}
 }
 
