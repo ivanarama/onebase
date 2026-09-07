@@ -501,6 +501,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
 		},
+		// elPictureSize сохраняет особую семантику width/height картинки, но
+		// применяет к ним тот же диапазон 1…4000, что общий layout-контракт.
+		"elPictureSize": func(size int) int {
+			return metadata.NormalizeFormLayoutSize(size)
+		},
 		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
 		// ключу height, ширина и выравнивание — по общему контракту раскладки.
 		"tpGridCSS": func(el *metadata.FormElement, rows int) template.CSS {

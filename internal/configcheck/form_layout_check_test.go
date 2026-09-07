@@ -132,6 +132,48 @@ elements:
 	}
 }
 
+// Формы обработок проходят тем же production-путём RunFull, что формы
+// сущностей. Иначе раскладка в реально обслуживаемой форме молча обходит check.
+func TestRunFull_ProcessorFormLayoutWarnsThroughCheck(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "processors", "проверкаформы.yaml"), `name: ПроверкаФормы
+params:
+  - name: Состояние
+    type: string
+`)
+	mkFile(t, filepath.Join(dir, "forms", "проверкаформы", "основная.form.yaml"), `schema: onebase.form/v1
+form:
+  name: основная
+  kind: custom
+  entity: ПроверкаФормы
+elements:
+  - kind: ПолеВвода
+    name: ПолеСостояние
+    data_path: Состояние
+    halign: centre
+    width: -10
+`)
+
+	res := RunFull(dir)
+	var got []Issue
+	for _, w := range res.Warnings {
+		if strings.HasPrefix(w.Code, "form.layout-") {
+			got = append(got, w)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("предупреждений о раскладке формы обработки = %d, ожидалось 2: %+v", len(got), res.Warnings)
+	}
+	for _, w := range got {
+		if w.File != "forms/проверкаформы/основная.form.yaml" || w.Object != "ПроверкаФормы" {
+			t.Errorf("предупреждение неверно привязано к форме обработки: %+v", w)
+		}
+	}
+	if !res.OK {
+		t.Errorf("раскладка формы обработки не должна блокировать check: %+v", res.Issues)
+	}
+}
+
 // Вид без собственного блока (колонка, командная панель) раскладку применить не
 // может — и обязан об этом сказать, а не молчать так же, как молчал рантайм.
 func TestCheckFormLayout_KindWithoutBlockWarns(t *testing.T) {

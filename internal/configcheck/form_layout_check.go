@@ -23,22 +23,50 @@ import (
 // мусором в них уже написаны — валить им сборку задним числом значит наказать за
 // прежнее молчание движка.
 func CheckFormLayout(proj *project.Project) []Issue {
+	if proj == nil {
+		return nil
+	}
+
 	var warns []Issue
+	report := func(label, object string, form *metadata.FormModule) {
+		if form == nil {
+			return
+		}
+		walkFormElements(form.Elements, func(el *metadata.FormElement) {
+			for _, d := range layoutDiagnostics(el) {
+				warns = append(warns, Issue{
+					File:         label,
+					Object:       object,
+					Kind:         "Управляемая форма",
+					Code:         d.code,
+					Message:      fmt.Sprintf("реквизит %q: %s", formElementName(el), d.msg),
+					SuggestedFix: d.fix,
+				})
+			}
+		})
+	}
+
 	for _, ent := range proj.Entities {
+		if ent == nil {
+			continue
+		}
 		for _, form := range ent.Forms {
-			label := formFileLabel(ent, form)
-			walkFormElements(form.Elements, func(el *metadata.FormElement) {
-				for _, d := range layoutDiagnostics(el) {
-					warns = append(warns, Issue{
-						File:         label,
-						Object:       ent.Name,
-						Kind:         "Управляемая форма",
-						Code:         d.code,
-						Message:      fmt.Sprintf("реквизит %q: %s", formElementName(el), d.msg),
-						SuggestedFix: d.fix,
-					})
-				}
-			})
+			report(formFileLabel(ent, form), ent.Name, form)
+		}
+	}
+	for _, proc := range proj.Processors {
+		if proc == nil {
+			continue
+		}
+		for _, form := range proc.Forms {
+			if form == nil {
+				continue
+			}
+			name := form.Name
+			if name == "" {
+				name = "объекта"
+			}
+			report("forms/"+strings.ToLower(proc.Name)+"/"+name+".form.yaml", proc.Name, form)
 		}
 	}
 	return warns

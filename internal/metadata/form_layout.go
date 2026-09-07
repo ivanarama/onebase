@@ -189,6 +189,13 @@ func FormElementFillsHeight(el *FormElement) bool {
 // В обоих случаях рендер ведёт себя как при незаданном размере, а `onebase
 // check` называет причину (CheckFormLayout).
 func formLayoutSize(n int) int {
+	return NormalizeFormLayoutSize(n)
+}
+
+// NormalizeFormLayoutSize применяет общий допустимый диапазон размеров формы.
+// Публичный helper нужен рендерам с особой семантикой размера (ПолеКартинки):
+// смысл width/height у них свой, но мусор они обязаны отбрасывать одинаково.
+func NormalizeFormLayoutSize(n int) int {
 	if n <= 0 || n > FormLayoutMaxSize {
 		return 0
 	}

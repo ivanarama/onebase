@@ -301,6 +301,24 @@ func TestManagedLayout_PictureKeepsOwnSizeSemantics(t *testing.T) {
 	}
 }
 
+// Картинка сохраняет собственную семантику размеров, но не вправе обходить
+// общий потолок: check предупреждает, а production-рендер значение игнорирует.
+func TestManagedLayout_PictureRejectsOutOfRangeSize(t *testing.T) {
+	out := renderLayoutElement(t, &metadata.FormElement{
+		Kind:    metadata.FormElementPicture,
+		Name:    "Логотип",
+		Picture: "logo.png",
+		Width:   metadata.FormLayoutMaxSize + 1,
+		Height:  -10,
+	})
+	if !strings.Contains(out, "max-width:100px;max-height:100px") {
+		t.Errorf("мусорный размер картинки не отброшен общим нормализатором:\n%s", out)
+	}
+	if strings.Contains(out, "4001px") || strings.Contains(out, "-10px") {
+		t.Errorf("сырой размер картинки попал в HTML:\n%s", out)
+	}
+}
+
 // Табличная часть: height перебивает высоту сетки, посчитанную по числу строк.
 func TestManagedLayout_TablePartHeightOverridesRowGuess(t *testing.T) {
 	ent := &metadata.Entity{
