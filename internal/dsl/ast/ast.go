@@ -1,6 +1,10 @@
 package ast
 
-import "github.com/ivantit66/onebase/internal/dsl/token"
+import (
+	"time"
+
+	"github.com/ivantit66/onebase/internal/dsl/token"
+)
 
 type Node interface{ nodeType() string }
 type Stmt interface {
@@ -123,6 +127,26 @@ type CallExpr struct {
 	Args   []Expr
 }
 
+// MissingArg — пропущенный фактический аргумент: «Метод(А,,Б)», «Метод(А, , Б)»,
+// «Метод(А,)». В 1С это законная запись, и в выгрузках БСП она встречается
+// повсеместно, поэтому конвертация типовой конфигурации спотыкалась на первом же
+// таком вызове (issue #1160).
+//
+// Узел живёт ТОЛЬКО в CallExpr.Args / NewExpr.Args: его порождает parseArgs и
+// больше никто. Отдельный тип, а не подстановка литерала Неопределено, нужен,
+// чтобы на исполнении отличить «аргумент не передали» (берётся значение по
+// умолчанию параметра) от «передали Неопределено» (берётся Неопределено) —
+// ровно то различие, ради которого пропуск и пишут.
+//
+// Обходчики AST разбирают выражения type-switch'ем с безопасным default, так что
+// незнакомый узел они просто пропускают. Единственное место, где он значим, —
+// вычисление аргументов вызова в интерпретаторе.
+type MissingArg struct {
+	// Tok — токен на месте пропуска (запятая или закрывающая скобка): нужен
+	// только для позиции в диагностике.
+	Tok token.Token
+}
+
 type MemberExpr struct {
 	Object Expr
 	Field  token.Token
@@ -133,6 +157,14 @@ type Ident struct{ Tok token.Token }
 type StringLit struct {
 	Tok   token.Token
 	Value string
+}
+
+// DateLit — стандартный литерал даты 1С: 'YYYYMMDD' или
+// 'YYYYMMDDhhmmss'. Отдельный узел не даёт одинарным кавычкам случайно стать
+// вторым синтаксисом строк.
+type DateLit struct {
+	Tok   token.Token
+	Value time.Time
 }
 
 type NumberLit struct {
@@ -208,9 +240,11 @@ func (*NumericForStmt) nodeType() string { return "NumericForStmt" }
 func (*WhileStmt) nodeType() string      { return "WhileStmt" }
 func (*ReturnStmt) nodeType() string     { return "ReturnStmt" }
 func (*CallExpr) nodeType() string       { return "CallExpr" }
+func (*MissingArg) nodeType() string     { return "MissingArg" }
 func (*MemberExpr) nodeType() string     { return "MemberExpr" }
 func (*Ident) nodeType() string          { return "Ident" }
 func (*StringLit) nodeType() string      { return "StringLit" }
+func (*DateLit) nodeType() string        { return "DateLit" }
 func (*NumberLit) nodeType() string      { return "NumberLit" }
 func (*BinaryExpr) nodeType() string     { return "BinaryExpr" }
 func (*NewExpr) nodeType() string        { return "NewExpr" }
@@ -236,9 +270,11 @@ func (*BreakStmt) stmtNode()      {}
 func (*ContinueStmt) stmtNode()   {}
 
 func (*CallExpr) exprNode()    {}
+func (*MissingArg) exprNode()  {}
 func (*MemberExpr) exprNode()  {}
 func (*Ident) exprNode()       {}
 func (*StringLit) exprNode()   {}
+func (*DateLit) exprNode()     {}
 func (*NumberLit) exprNode()   {}
 func (*BinaryExpr) exprNode()  {}
 func (*NewExpr) exprNode()     {}

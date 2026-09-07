@@ -26,16 +26,19 @@ func resolveRefArg(d Dialect, v any) any {
 		}
 		return nil
 	case string:
-		if val != "" {
-			if id, err := uuid.Parse(val); err == nil {
-				return idArg(d, id)
-			}
+		if val == "" {
+			return nil
+		}
+		if id, err := uuid.Parse(val); err == nil {
+			return idArg(d, id)
 		}
 	case refUUIDGetter:
-		if uuidStr := val.GetRefUUID(); uuidStr != "" {
-			if id, err := uuid.Parse(uuidStr); err == nil {
-				return idArg(d, id)
-			}
+		uuidStr := val.GetRefUUID()
+		if uuidStr == "" {
+			return nil
+		}
+		if id, err := uuid.Parse(uuidStr); err == nil {
+			return idArg(d, id)
 		}
 	}
 	return v

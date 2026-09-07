@@ -24,14 +24,24 @@ type saveField struct {
 	// проставляет его сам и сохраняет при перезаписи файла: без него
 	// переименование реквизита отвязало бы данные от поля, а редактор,
 	// не знающий про ключ, стирал бы его при каждом сохранении.
-	ID     string            `yaml:"id,omitempty"`
-	Name   string            `yaml:"name"`
+	ID   string `yaml:"id,omitempty"`
+	Name string `yaml:"name"`
+	// Title / Label — подпись реквизита на базовом языке. Редактор реквизитов
+	// показывает только переводы (titles-block пропускает ru), поэтому оба
+	// ключа приходить с формы не могут и переносятся из прежнего состояния
+	// файла. Label — устаревший синоним title: parseField подставляет его при
+	// пустом title, и потеря обоих откатывала подпись к имени реквизита.
 	Title  string            `yaml:"title,omitempty"`
+	Label  string            `yaml:"label,omitempty"`
 	Titles map[string]string `yaml:"titles,omitempty"`
 	Type   string            `yaml:"type"`
 	// AllowInlineCreate — pointer-bool, чтобы omitempty отличал «явно false»
 	// от «не задано». nil → дефолт контекста (true в шапке, false в ТЧ).
 	AllowInlineCreate *bool `yaml:"allow_inline_create,omitempty"`
+	// Required — обязательность реквизита. Редактор её не показывает, поэтому
+	// ключ переносится из прежнего состояния файла: без переноса сохранение
+	// объекта снимало required со ВСЕХ его реквизитов разом.
+	Required bool `yaml:"required,omitempty"`
 	// Default — значение по умолчанию (план 153). Редактор реквизитов его не
 	// показывает, поэтому ключ переносится из прежнего состояния файла, как
 	// id: иначе правка любого реквизита молча стирала бы дефолты у всех.
