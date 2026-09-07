@@ -2801,7 +2801,9 @@ func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]meta
 		for _, reg := range opts.AccountRegs {
 			if strings.EqualFold(reg.Name, name) {
 				add(reg.Resources)
-				add(reg.Subconto)
+				for i, subconto := range reg.Subconto {
+					m[lowerFast(metadata.SubcontoColumn(i+1))] = subconto.Type
+				}
 				return m
 			}
 		}
