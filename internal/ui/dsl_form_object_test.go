@@ -239,6 +239,68 @@ func TestFormObjectThis_DirectValueWritesToRegister(t *testing.T) {
 	}
 }
 
+// Сквозная регрессия для типизированного пустого значения ссылки: чтение
+// незаполненного реквизита в posting-модуле возвращает *interpreter.Ref, но
+// граница storage обязана записать его как SQL NULL, а не передать драйверу
+// внутренний DSL-тип.
+func TestFormObjectThis_EmptyReferenceWritesNullToMovement(t *testing.T) {
+	contractors := &metadata.Entity{Name: "Контрагенты", Kind: metadata.KindCatalog}
+	doc := &metadata.Entity{
+		Name:    "Сделка",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+			{Name: "Контрагент", Type: "reference:Контрагенты", RefEntity: "Контрагенты"},
+		},
+	}
+	reg := &metadata.Register{
+		Name:       "СделкиПоКонтрагентам",
+		Dimensions: []metadata.Field{{Name: "Контрагент", Type: "reference:Контрагенты", RefEntity: "Контрагенты"}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{contractors, doc})
+	if err := s.store.MigrateRegisters(ctx, []*metadata.Register{reg}); err != nil {
+		t.Fatal(err)
+	}
+	posting := mustParse(t, `Процедура ОбработкаПроведения()
+	Дв = Движения.СделкиПоКонтрагентам.Добавить();
+	Дв.Контрагент = this.Контрагент;
+	Дв.Количество = 1;
+КонецПроцедуры`)
+	s.reg.Load(runtime.LoadOptions{
+		Entities:  []*metadata.Entity{contractors, doc},
+		Programs:  map[string]*ast.Program{doc.Name: posting},
+		Registers: []*metadata.Register{reg},
+	})
+
+	res, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
+		Entity: doc,
+		ID:     uuid.New(),
+		IsNew:  true,
+		Fields: map[string]any{"Номер": "СД-00001"},
+		Action: "post",
+	})
+	if err != nil {
+		t.Fatalf("проведение с пустой ссылкой вернуло техническую ошибку: %v", err)
+	}
+	if res.DSLError != "" {
+		t.Fatalf("проведение с пустой ссылкой вернуло DSL-ошибку: %s", res.DSLError)
+	}
+
+	rows, err := s.store.GetMovements(ctx, reg.Name, reg, storage.RegFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ожидалось одно движение, получено %d", len(rows))
+	}
+	contractor := rows[0]["Контрагент"]
+	if contractor != nil {
+		t.Fatalf("пустая ссылка записана как %T(%v), ожидался SQL NULL", contractor, contractor)
+	}
+}
+
 // formTpProxy.Добавить добавляет строку в obj.TablePartRows и возвращает
 // *interpreter.MapThis, в которую DSL присвоит .Количество и .Цена.
 func TestFormTpProxy_AddRowModifiesObject(t *testing.T) {
