@@ -316,7 +316,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// Сброс кэша ответов HTTP-сервисов (план 126) — зовётся из ПриЗаписи
 	// контентных справочников, иначе правка не видна до истечения TTL.
 	s.registerServiceCacheBuiltins(vars)
-	queryFactory := interpreter.NewQueryFactoryGuarded(txState.Ctx(), s.store, s.reg, s.compileDSLQueryWithRowAccess, s.dslQueryGuard)
+	queryFactory := interpreter.NewQueryFactoryGuardedSource(txState, s.store, s.reg, s.compileDSLQueryWithRowAccess, s.dslQueryGuard)
 	vars["__factory_Запрос"] = queryFactory
 	vars["__factory_Query"] = queryFactory
 
@@ -372,6 +372,33 @@ func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.Mov
 	return vars, txState
 }
 
+type entityHookThis struct {
+	*runtime.Object
+	entity *metadata.Entity
+}
+
+func (o *entityHookThis) GetDynamicField(name string) (any, bool) {
+	if o == nil || o.Object == nil || o.entity == nil || findObjectAttributeField(o.entity, name) == nil {
+		return nil, false
+	}
+	return o.Get(name), true
+}
+
+func (o *entityHookThis) SetDynamicField(name string, value any) bool {
+	if o == nil || o.Object == nil || o.entity == nil || findObjectAttributeField(o.entity, name) == nil {
+		return false
+	}
+	o.Set(name, value)
+	return true
+}
+
+func (o *entityHookThis) runtimeObject() *runtime.Object {
+	if o == nil {
+		return nil
+	}
+	return o.Object
+}
+
 // runEntityHook исполняет хук записи/проведения с тем же пределом, что и
 // entityservice.runHook (#962).
 //
@@ -388,10 +415,20 @@ func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.Mov
 // ненастроенном лимите поведение прежнее — нулевое значение означает «предел не
 // задан», и менять на нём поведение молча нельзя.
 func (s *Server) runEntityHook(ctx context.Context, proc *ast.ProcedureDecl, obj *runtime.Object, vars map[string]any) error {
-	if wall := interpreter.ClampWallClock(ctx, s.operationTimeout(opEntitySave)); wall > 0 {
-		return s.interp.RunSandboxed(proc, obj, interpreter.SandboxProfile{Context: ctx, MaxWallClock: wall}, nil, vars)
+	this := interpreter.This(obj)
+	if obj != nil {
+		entity := s.reg.GetEntity(obj.Type)
+		if entity != nil {
+			// runtime.Object deliberately does not retain the metadata graph. Hooks
+			// still need it to distinguish an unset declared requisit from an unknown
+			// name when this["Field"] is used, so opt in only at this execution edge.
+			this = &entityHookThis{Object: obj, entity: entity}
+		}
 	}
-	return s.interp.Run(proc, obj, vars)
+	if wall := interpreter.ClampWallClock(ctx, s.operationTimeout(opEntitySave)); wall > 0 {
+		return s.interp.RunSandboxed(proc, this, interpreter.SandboxProfile{Context: ctx, MaxWallClock: wall}, nil, vars)
+	}
+	return s.interp.Run(proc, this, vars)
 }
 
 func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *runtime.MovementsCollector) (string, []string) {

@@ -141,7 +141,8 @@ func managedListColumns(entity *metadata.Entity, form *metadata.FormModule) []me
 	if entity == nil || form == nil {
 		return nil
 	}
-	var names []string
+	var cols []metadata.Field
+	seen := make(map[string]bool)
 	var walk func([]*metadata.FormElement)
 	walk = func(elements []*metadata.FormElement) {
 		for _, element := range elements {
@@ -153,15 +154,20 @@ func managedListColumns(entity *metadata.Entity, form *metadata.FormModule) []me
 				if name == "" {
 					name = strings.TrimSpace(element.FieldName)
 				}
-				if name != "" {
-					names = append(names, name)
+				field := uiFieldByNameFold(entity, name)
+				if field != nil {
+					key := strings.ToLower(field.Name)
+					if !seen[key] {
+						seen[key] = true
+						cols = append(cols, managedColumnField(*field, element))
+					}
 				}
 			}
 			walk(element.Children)
 		}
 	}
 	walk(form.Elements)
-	return namedListColumns(entity, names)
+	return cols
 }
 
 func isManagedListColumnElement(kind metadata.FormElementType) bool {

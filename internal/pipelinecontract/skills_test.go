@@ -80,6 +80,56 @@ func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
 	}
 }
 
+func modeledTriageRepositoryGate(_ string, _ bool, frozenMain, analysisHead string, analysisDirty bool) bool {
+	return frozenMain != "" && analysisHead == frozenMain && !analysisDirty
+}
+
+func TestTriageUsesFrozenMainInsteadOfTheCurrentCheckout(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	requireAllCompact(t, triage,
+		"Текущий checkout считай недоверенным: он может отставать от `main`, содержать чужой код или незакоммиченные изменения",
+		"git fetch origin main",
+		"$triageBase = (git rev-parse FETCH_HEAD).Trim()",
+		"[guid]::NewGuid().ToString(\"N\")",
+		"git worktree add --detach $triageWorktree $triageBase",
+		"git -C $triageWorktree rev-parse HEAD",
+		"git -C $triageWorktree status --porcelain=v1 --untracked-files=all",
+		"обе команды обязаны завершиться с кодом 0",
+		"повторно полностью прочитай `CLAUDE.md` и `.claude/skills/triage-issues/SKILL.md`",
+		"Все поиски по репозиторию, чтение кода, сборки и тесты выполняй только с рабочим каталогом `$triageWorktree`",
+		"Непосредственно перед **каждой GitHub-мутацией**",
+		"остановись без comments/labels",
+		"git worktree remove $triageWorktree",
+		"не удаляй каталог рекурсивно",
+	)
+	rejectAll(t, triage,
+		"git merge --ff-only origin/main",
+		"Иначе работай на том, что есть",
+	)
+
+	const frozenMain = "fresh-main"
+	for _, tc := range []struct {
+		name         string
+		currentHead  string
+		currentDirty bool
+	}{
+		{name: "current branch is behind", currentHead: "old-main"},
+		{name: "current checkout contains foreign code", currentHead: "foreign-branch", currentDirty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !modeledTriageRepositoryGate(tc.currentHead, tc.currentDirty, frozenMain, frozenMain, false) {
+				t.Fatal("a verified detached worktree must make the current checkout irrelevant")
+			}
+		})
+	}
+	if modeledTriageRepositoryGate("fresh-main", false, frozenMain, "foreign-code", false) {
+		t.Fatal("TRIAGE must not mutate when the analyzed HEAD differs from frozen main")
+	}
+	if modeledTriageRepositoryGate("fresh-main", false, frozenMain, frozenMain, true) {
+		t.Fatal("TRIAGE must not mutate from a dirty analysis worktree")
+	}
+}
+
 func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
@@ -118,7 +168,7 @@ func TestReviewQueueUsesGH240CompatiblePaginatedREST(t *testing.T) {
 	rejectAll(t, review, "number,title,labels,isDraft,comments", "gh pr list --state open --limit 50")
 }
 
-func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testing.T) {
+func TestReviewQueueUsesTwoLaneExecutableAllowlist(t *testing.T) {
 	review := skill(t, "review-queue")
 	requireAllCompact(t, review,
 		"Исполняемый preflight — единственный источник списка кандидатов",
@@ -129,13 +179,26 @@ func TestReviewQueueTreatsPipelineHealthAsExclusiveExecutableAllowlist(t *testin
 		"C:\\Program Files\\Go\\bin\\go.exe",
 		"Go not found in PATH or the standard Windows location",
 		"& $goExe run ./tools/pipelinehealth -json",
-		"`review_candidates` — **исключительный allowlist этого запуска**",
-		"Если в `findings` есть `single_flight_barrier`, действуй fail-closed",
-		"не ревьюй обычные PR",
-		"**не переходи к обычной очереди**",
-		"первые два PR из `review_candidates`",
+		"`review_candidates` — **исключительный allowlist для выбора новой цели**",
+		"`single_flight_barrier` защищает только интеграционную полосу, а не всю очередь",
+		"обычное содержательное REVIEW не блокируется",
+		"Следующий интеграционный PR при этом брать нельзя",
+		"бери до двух элементов stage `review` из `review_candidates`",
 		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
-		"Расхождение означает стоп без подстановки следующего PR",
+		"Для обычного аудита он обязан входить в `content_review_candidates`",
+		"Изменились только чужие PR, приоритеты, `main` или интеграционная полоса",
+	)
+}
+
+func TestIntegrationReviewReusesContentProofAndChecksOnlyBaseSyncDelta(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Интеграционное REVIEW не повторяет содержательный аудит",
+		"Валидный исходный committed-proof уже доказывает содержимое `from`",
+		"Проверь только точную дельту перехода `from → to`",
+		"разрешение конфликтов",
+		"обязательные проверки CI",
+		"Если между доказанным `from` и `to` есть что-либо кроме валидного base-sync либо собственный код PR изменён, carry недействителен",
 	)
 }
 
@@ -215,7 +278,8 @@ func TestReviewDecisionTableCoversBehavioralScenarios(t *testing.T) {
 	review := skill(t, "review-queue")
 	cases := []string{
 		"есть `hold` | пропустить",
-		"есть `ship`, но нет валидного незавершённого `pp:base-sync-done` и нет legacy re-ship для текущего HEAD | пропустить",
+		"есть `ship`, текущий HEAD ещё ни разу не проходил REVIEW | обычное содержательное REVIEW; при успехе `ship` сохраняется и второй клик не нужен",
+		"есть `ship`, HEAD сменился после прежнего proof, но нет валидного carry/re-ship | пропустить как stale authorization",
 		"есть `ship`, текущий HEAD равен `to` валидной carry-цепочки и ещё не имеет committed-пары | единственное интеграционное REVIEW запуска; после committed-пары закончить весь этап",
 		"есть каноничный committed-маркер и `changes-requested` / `needs-decision`, более позднего override нет | пропустить",
 		"после committed-пары есть непоглощённый override при `changes-requested` / `needs-decision` | REVIEW продолжает",
@@ -249,7 +313,7 @@ func TestReviewBindsVerdictToCheckedHead(t *testing.T) {
 		"git fetch origin pull/<M>/head",
 		"<сохранённый SHA>",
 		"Непосредственно перед **каждым внешним изменением** заново прочитай `.head.sha`, `.state`, `.base.ref`, актуальные метки и **все** комментарии",
-		"`ship` запрещает изменение, кроме интеграционного REVIEW",
+		"`ship` не запрещает REVIEW того же HEAD",
 		"`hold` всегда запрещает изменение",
 		"<!-- pp:stale-review <проверенный SHA> -->",
 		"после постановки",
@@ -594,7 +658,7 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"сравнивай его строковое значение с REST id",
 		"`labels.pageInfo.hasNextPage == false`",
 		"**последний** ship-transition",
-		"его edge\n   расположен после edges всех трёх адресованных комментариев",
+		"его edge расположен после anchor текущего HEAD",
 		"Если ни одного ship-transition нет в epoch timeline",
 		"после сохранённого anchor нет ни одного нового\n   `PullRequestCommit`/`HeadRefForcePushedEvent`/`HeadRefDeletedEvent`/\n   `HeadRefRestoredEvent`/`BaseRefChangedEvent`/`BaseRefForcePushedEvent`/\n   `BaseRefDeletedEvent`",
 		"`H → X → H` текущий `headRefOid` снова равен проверенному SHA",
@@ -666,10 +730,10 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"обычная stale-ship передача",
 	)
 	requireAllCompact(t, review,
-		"До обычной очереди восстанови глобального single-flight-владельца",
+		"До выбора восстанови single-flight-владельца **интеграционной полосы**",
 		"Если владелец ещё ждёт интеграционное REVIEW, выбери только его: это единственный аудит запуска",
-		"Пока MERGE не вольёт владельца, нельзя заранее ревьюить следующий интеграционный PR",
-		"Наличие proof не освобождает барьер",
+		"Пока MERGE не вольёт владельца, нельзя заранее проверять следующий интеграционный PR",
+		"Содержательное REVIEW других PR в это время безопасно",
 		"Intent без done — незавершённая транзакция MERGE, её REVIEW не захватывает",
 		"commit `to` имеет ровно двух родителей в порядке `[from, base]`",
 		"outcome `reviewed` сохраняет `ship`",
@@ -727,7 +791,7 @@ func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
 		"Для protocol-recovery всегда начни новую исправленную цепочку с `previous=none`",
 	)
 	requireAllCompact(t, docs,
-		"malformed handoff не чинится притворным продолжением цепочки",
+		"действительно испорченной цепочки человек ставит `ship` после edge done",
 		"protocol-recovery reauthorization точного текущего HEAD",
 		"следующий base-sync начинает новую цепочку с `previous=none`",
 	)

@@ -87,7 +87,7 @@ func validateFormulaExprN(expr ast.Expr, nodes *int) error {
 		return fmt.Errorf("формула отчёта превышает предел сложности %d узлов", maxFormulaASTNodes)
 	}
 	switch v := expr.(type) {
-	case *ast.Ident, *ast.BoolLit:
+	case *ast.Ident, *ast.BoolLit, *ast.DateLit:
 		return nil
 	case *ast.StringLit:
 		if len(v.Value) > maxFormulaStringLiteral {
