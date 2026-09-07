@@ -47,6 +47,7 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 		Elements: []*metadata.FormElement{
 			{Kind: metadata.FormElementButton, Name: "КнопкаСправа", HorizontalAlign: "right"},
 			{Kind: metadata.FormElementButton, Name: "КнопкаЦентр", HorizontalAlign: "center"},
+			{Kind: metadata.FormElementPicture, Name: "КартинкаСправа", Picture: "layout-test.svg", Width: 40, Height: 40, HorizontalAlign: "right"},
 			{Kind: metadata.FormElementField, Name: "Ссылка", DataPath: "Объект.Контрагент", Height: 180},
 			{Kind: metadata.FormElementField, Name: "Путь", DataPath: "Объект.Файл", Type: "file", Height: 180},
 		},
@@ -70,12 +71,17 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
   const right = rightButton && rightButton.closest('.managed-btn-layout');
   const center = centerButton && centerButton.closest('.managed-btn-layout');
   const host = right && right.parentElement;
+  const picture = document.querySelector('[data-ob-el="КартинкаСправа"]');
+  const pictureBox = picture && picture.closest('.form-picture');
+  const pictureHost = pictureBox && pictureBox.parentElement;
   const ref = document.querySelector('select[name="Контрагент"]');
   const file = document.querySelector('input[name="Файл"]');
   const impossible = 1000000;
   const result = {
     rightGap: right && host ? Math.abs(host.getBoundingClientRect().right - right.getBoundingClientRect().right) : impossible,
     centerDelta: center && host ? Math.abs((host.getBoundingClientRect().left + host.getBoundingClientRect().right) / 2 - (center.getBoundingClientRect().left + center.getBoundingClientRect().right) / 2) : impossible,
+    pictureGap: pictureBox && pictureHost ? Math.abs(pictureHost.getBoundingClientRect().right - pictureBox.getBoundingClientRect().right) : impossible,
+    pictureRatio: pictureBox && pictureHost ? pictureBox.getBoundingClientRect().width / pictureHost.getBoundingClientRect().width : impossible,
     refHeight: ref ? ref.getBoundingClientRect().height : 0,
     refRatio: ref && ref.parentElement ? ref.getBoundingClientRect().height / ref.parentElement.getBoundingClientRect().height : 0,
     fileHeight: file ? file.getBoundingClientRect().height : 0,
@@ -94,7 +100,12 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 		t.Fatal("production-шаблон не содержит </body>")
 	}
 	page = page[:endBody] + measureScript + page[endBody:]
-	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	pageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/static/forms/layout-test.svg" {
+			w.Header().Set("Content-Type", "image/svg+xml")
+			_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="red"/></svg>`))
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(page))
 	}))
@@ -113,6 +124,11 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 		"--user-data-dir=" + profile,
 		"--dump-dom",
 		pageServer.URL,
+	}
+	if runtime.GOOS == "linux" {
+		// CI запускает Edge внутри контейнера без настроенного setuid-sandbox.
+		// Флаг ограничен тестовым headless-процессом без внешней навигации.
+		args = append([]string{"--no-sandbox"}, args...)
 	}
 	cmd := exec.CommandContext(t.Context(), browser, args...) //nolint:gosec // test-only browser is resolved from a closed allow-list below
 	var stderr bytes.Buffer
@@ -133,12 +149,14 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 		t.Fatalf("результат измерения не закрыт: %s", string(dumped[start:]))
 	}
 	var got struct {
-		RightGap    float64 `json:"rightGap"`
-		CenterDelta float64 `json:"centerDelta"`
-		RefHeight   float64 `json:"refHeight"`
-		RefRatio    float64 `json:"refRatio"`
-		FileHeight  float64 `json:"fileHeight"`
-		FileRatio   float64 `json:"fileRatio"`
+		RightGap     float64 `json:"rightGap"`
+		CenterDelta  float64 `json:"centerDelta"`
+		PictureGap   float64 `json:"pictureGap"`
+		PictureRatio float64 `json:"pictureRatio"`
+		RefHeight    float64 `json:"refHeight"`
+		RefRatio     float64 `json:"refRatio"`
+		FileHeight   float64 `json:"fileHeight"`
+		FileRatio    float64 `json:"fileRatio"`
 	}
 	if err := json.Unmarshal([]byte(html.UnescapeString(string(dumped[start:start+end]))), &got); err != nil {
 		t.Fatalf("разобрать измерение: %v: %s", err, string(dumped[start:start+end]))
@@ -148,6 +166,9 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 	}
 	if got.CenterDelta > 4 {
 		t.Errorf("halign:center не центрировал кнопку: delta=%.1fpx", got.CenterDelta)
+	}
+	if got.PictureGap > 8 || got.PictureRatio >= 0.5 {
+		t.Errorf("halign:right не выровнял картинку собственной ширины: gap=%.1fpx ratio=%.2f", got.PictureGap, got.PictureRatio)
 	}
 	if got.RefHeight < 100 || got.RefRatio < 0.8 {
 		t.Errorf("высота ссылки осталась у строки, но не у select: height=%.1fpx ratio=%.2f", got.RefHeight, got.RefRatio)

@@ -523,6 +523,10 @@ const tplManagedForm = `
    по приоритету перебивают это значение. */
 .managed-btn-layout{width:max-content;max-width:100%;margin:6px 4px 6px 0}
 .managed-btn-layout>.managed-btn{width:100%;height:100%;margin:0}
+/* Картинка, как и кнопка, выравнивается внешней обёрткой. Без собственной
+   ширины блочная обёртка занимает всю строку, и auto-margin визуально ничего
+   не меняет. */
+.form-picture{width:max-content;max-width:100%}
 /* Кнопка встаёт вровень с полем, а не с его меткой: метка занимает
    line-height 18px + margin-bottom 5px (см. label в общем стиле), а разницу
    высот кнопки (30px) и поля (39px) добираем до общей средней линии. */
