@@ -727,8 +727,10 @@ function obListConfig() {
   return obReadJSONScript('ob-list-config', { labels: {} }) || { labels: {} };
 }
 
-// Ссылки строк списка собираются из шаблонов, объявленных один раз на контейнер
-// (data-ob-row-*-tpl), а не повторяются в каждой строке: на списке из 100 строк
+// BEGIN onebase-row-url (executed directly by the Node regression test)
+// Ссылки строк списка собираются из опорных адресов, объявленных один раз на
+// контейнере (data-ob-row-base, -subsystem, -list-url, -copy-url, -can-copy,
+// -activity-enabled), а не повторяются в каждой строке: на списке из 100 строк
 // это экономит около 1,5 КБ на строку. Строки, приходящие из JSON при подгрузке,
 // по-прежнему могут нести готовые ссылки — они имеют приоритет.
 var OB_ROW_OWN = {
@@ -739,8 +741,8 @@ var OB_ROW_OWN = {
 // Ссылка действия строки собирается из опорных адресов контейнера и
 // идентификатора строки: раньше каждая строка несла десять готовых URL, и на
 // списке из 100 строк это давало больше половины веса страницы. Параметр
-// подставляется штатным URL API, а не заменой в строке, — иначе пользовательский
-// ввод, сохранённый в query списка, мог бы подменить слот.
+// добавляется штатным URLSearchParams, а не подстановкой в строку, — иначе
+// пользовательский ввод, сохранённый в query списка, мог бы подменить слот.
 function obRowParamURL(base, name, value) {
   // Через new URL() нельзя: он percent-кодирует кириллицу в пути, и адрес
   // перестаёт совпадать с тем, что отдаёт сервер. Трогаем только строку запроса.
@@ -794,6 +796,7 @@ function obRowKey(row) {
   if (!row) return '';
   return row.dataset.obId || row.getAttribute('data-open-url') || '';
 }
+// END onebase-row-url
 function obListLabel(key, fallback) {
   var labels = obListConfig().labels || {};
   return labels[key] || fallback;
@@ -889,7 +892,9 @@ function listSyncActionsBtn() {
 }
 
 // Возврат выделения после перерисовки списка: та же запись опознаётся по
-// data-open-url (в нём id, у всех трёх видов строк — таблица, плитка, дерево).
+// obRowKey() — то есть по data-ob-id, который несут все три вида строк
+// (таблица, плитка, дерево); строки из JSON-подгрузки откатываются на свой
+// data-open-url.
 // Записи не стало в выдаче — выделение снимается, а не остаётся на призраке.
 function listRestoreSel(key, root, options) {
   var next = null;
@@ -1617,7 +1622,8 @@ function listMenuItems(tr) {
     items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(obRowUrl(tr, 'open')); } });
   }
   // «Скопировать» (F9): открывает форму создания, заполненную значениями строки.
-  // Пустой data-copy-url = нет права записи, пункт не показываем.
+  // Право записи объявлено один раз на контейнере (data-ob-row-can-copy);
+  // без него obRowUrl вернёт пустую строку и пункт не показываем.
   if (obRowUrl(tr, 'copy')) {
     items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(obRowUrl(tr, 'copy')); } });
   }
