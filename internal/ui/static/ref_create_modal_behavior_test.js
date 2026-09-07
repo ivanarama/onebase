@@ -3,10 +3,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 const source = fs.readFileSync('static/ui.js', 'utf8');
+const managedSource = fs.readFileSync('static/managed.js', 'utf8');
 const start = source.indexOf('function openRefCreate(');
 const end = source.indexOf('// onebaseDevice', start);
 if (start < 0 || end < 0) throw new Error('ref-create modal slice not found');
 const modalSource = source.slice(start, end);
+const managedEscapeComment = managedSource.indexOf('// Esc — отмена незаконченного ввода');
+const managedEscapeStart = managedSource.indexOf("  document.addEventListener('keydown'", managedEscapeComment);
+const managedEscapeEnd = managedSource.indexOf('  }, true);', managedEscapeStart);
+if (managedEscapeComment < 0 || managedEscapeStart < 0 || managedEscapeEnd < 0) {
+  throw new Error('managed Escape handler slice not found');
+}
+const managedEscapeSource = managedSource.slice(managedEscapeStart, managedEscapeEnd + '  }, true);'.length);
 
 function eventTarget(base) {
   const listeners = Object.create(null);
@@ -15,7 +23,12 @@ function eventTarget(base) {
     removeEventListener(type, fn) {
       listeners[type] = (listeners[type] || []).filter((candidate) => candidate !== fn);
     },
-    dispatch(type, event) { (listeners[type] || []).slice().forEach((fn) => fn(event)); },
+    dispatch(type, event) {
+      for (const fn of (listeners[type] || []).slice()) {
+        fn(event);
+        if (event && event.propagationStopped) break;
+      }
+    },
     listenerCount(type) { return (listeners[type] || []).length; },
   });
 }
@@ -51,22 +64,31 @@ function walk(root, predicate) {
   return null;
 }
 
-function setup() {
+function setup(options) {
+  options = options || {};
   const body = element('body');
+  const parentCancel = {clicks: 0, click() { this.clicks++; }};
   const document = eventTarget({
     body,
     createElement: element,
     getElementById(id) { return walk(body, (candidate) => candidate.id === id); },
+    querySelector(selector) { return selector === 'a.btn-cancel' ? parentCancel : null; },
   });
   const window = eventTarget({confirm() { return true; }});
   global.document = document;
   global.window = window;
+  if (options.managedEscape) new Function(managedEscapeSource)();
   const api = new Function(modalSource + '\nreturn {openRefCreate};')();
-  return {document, window, openRefCreate: api.openRefCreate};
+  return {document, window, parentCancel, openRefCreate: api.openRefCreate};
 }
 
 function escapeEvent() {
-  return {key: 'Escape', keyCode: 27, preventDefault() {}, stopPropagation() {}};
+  return {
+    key: 'Escape',
+    keyCode: 27,
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() { this.propagationStopped = true; },
+  };
 }
 
 test('external Cancel and close button safely release the modal', () => {
@@ -104,6 +126,18 @@ test('Escape closes from both parent document and same-origin error iframe', () 
   iframe.dispatch('load', {});
   iframe.contentDocument.dispatch('keydown', escapeEvent());
   assert.equal(env.document.getElementById('_ref-create-modal'), null);
+});
+
+test('managed capture handler closes inline modal before the parent form', () => {
+  const env = setup({managedEscape: true});
+  const select = {options: [], value: '', appendChild() {}, dispatchEvent() {}};
+  env.openRefCreate(select, 'Город');
+
+  env.document.dispatch('keydown', escapeEvent());
+
+  assert.equal(env.document.getElementById('_ref-create-modal'), null);
+  assert.equal(env.parentCancel.clicks, 0, 'Escape closed the managed parent form');
+  assert.equal(env.window.listenerCount('message'), 0, 'managed Escape bypassed modal cleanup');
 });
 
 test('reopening cleans the previous modal before installing a new handler', () => {
