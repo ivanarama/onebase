@@ -222,6 +222,25 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;
+  // managedRefParts распознаёт только две wire-формы ссылки. Произвольный
+  // JSON-объект с похожим полем нельзя молча превращать в ссылку.
+  function managedRefParts(v){
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    const own = Object.prototype.hasOwnProperty;
+    let id, label;
+    if (own.call(v, 'UUID') && (own.call(v, 'Name') || own.call(v, 'Наименование'))) {
+      id = v.UUID;
+      label = own.call(v, 'Name') ? v.Name : (own.call(v, 'Наименование') ? v.Наименование : '');
+    } else if (own.call(v, 'id') && own.call(v, '_label')) {
+      id = v.id;
+      label = v._label;
+    } else {
+      return null;
+    }
+    if (id == null || (typeof id !== 'string' && typeof id !== 'number')) return null;
+    if (label == null || (typeof label !== 'string' && typeof label !== 'number')) label = '';
+    return {id: String(id), label: String(label)};
+  }
   // ensureRefOption добавляет в <select> недостающий <option> для значения,
   // присвоенного обработчиком.
   //
@@ -233,14 +252,14 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
   //
   // Подпись берём из refOptions ответа (сервер догрузил её той же дорогой, что
   // и выбранное значение при отрисовке, — с маской ПДн и проверкой доступа).
-  // Если её нет, ставим сам идентификатор: он некрасив, но значение сохраняется,
-  // а это важнее подписи.
-  function ensureRefOption(sel, val, rows){
+  // Если её нет, используем представление из объектной ссылки, затем сам
+  // идентификатор: сохранность значения важнее отсутствующей подписи.
+  function ensureRefOption(sel, val, rows, fallbackLabel){
     if (!val) return;
     for (let i = 0; i < sel.options.length; i++){
       if (String(sel.options[i].value) === String(val)) return;
     }
-    let label = val;
+    let label = (fallbackLabel != null && fallbackLabel !== '') ? fallbackLabel : val;
     if (rows) {
       for (let i = 0; i < rows.length; i++){
         if (rows[i] && String(rows[i].id) === String(val)) {
@@ -268,13 +287,22 @@ window.obManagedSetTablePartJSON = obManagedSetTablePartJSON;
       if (inp.type === 'checkbox') {
         inp.checked = v === true || v === 'true' || v === 1;
       } else {
-        var val = (v === null || v === undefined) ? '' : String(v);
+        var ref = managedRefParts(v);
+        var val;
+        if (ref) {
+          // У select видна подпись option, но value остаётся UUID и именно он
+          // отправляется обратно. Обычному текстовому полю нужна подпись; hidden
+          // хранит идентификатор и не должен подменять его именем.
+          val = (inp.tagName === 'SELECT' || inp.type === 'hidden') ? ref.id : (ref.label || ref.id);
+        } else {
+          val = (v === null || v === undefined) ? '' : String(v);
+        }
         // Сервер сериализует дату как «2026-08-04T00:00» (формат datetime-local).
         // Для <input type="date"> это невалидное значение: браузер молча очищает
         // поле — дата на форме пропадала после первого же события, а следующая
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
-        if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k]);
+        if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k], ref && ref.label);
         if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
           inp._obSetCodeValue(val);
         } else {
