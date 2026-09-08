@@ -12,6 +12,7 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // formObjectThis — обёртка над *runtime.Object, используемая как this/Объект
@@ -204,10 +205,15 @@ func (f *formObjectThis) Get(name string) any {
 	}
 	// Дальше — обычные поля (через Object.Get который ищет в Fields).
 	v := f.obj.Get(name)
-	if ref, ok := v.(*interpreter.Ref); ok && f.refResolver != nil {
-		if fd := entityField(f.entity, name); fd != nil && fd.RefEntity != "" {
-			return f.refResolver.bindRefToContext(ref, fd.RefEntity)
+	if fd := entityField(f.entity, name); fd != nil {
+		return declaredDSLValue(v, mustFieldDescriptor(fd), f.refResolver)
+	}
+	if attr := findScalarFormAttribute(f.form, name); attr != nil {
+		if desc, ok := formAttributeDescriptor(attr); ok {
+			return declaredDSLValue(v, desc, f.refResolver)
 		}
+	}
+	if ref, ok := v.(*interpreter.Ref); ok && f.refResolver != nil {
 		if f.entity != nil && (strings.EqualFold(name, "Ссылка") || strings.EqualFold(name, "Reference")) {
 			return f.refResolver.bindRefToContext(ref, f.entity.Name)
 		}
@@ -218,25 +224,12 @@ func (f *formObjectThis) Get(name string) any {
 			return f.refResolver.bindRefToContext(ref, refName)
 		}
 	}
-	// Дефолты по типу: пустой numeric → 0, иначе `Объект.Сумма + 100` в DSL
-	// даст concat-строку «<nil>100» (DSL `+` для nil-операнда склеивает
-	// строкой), потом форма попытается записать её в PostgreSQL numeric →
-	// ERROR 22P02 invalid input syntax for type numeric.
-	if v == nil && f.entity != nil {
-		for _, fd := range f.entity.Fields {
-			if !strings.EqualFold(fd.Name, name) {
-				continue
-			}
-			switch fd.Type {
-			case metadata.FieldTypeNumber:
-				return float64(0)
-			case metadata.FieldTypeBool:
-				return false
-			}
-			break
-		}
-	}
 	return v
+}
+
+func mustFieldDescriptor(field *metadata.Field) typedempty.Descriptor {
+	desc, _ := typedempty.FromField(field)
+	return desc
 }
 
 // formAttributeTablePart даёт ValueTable тот же metadata-aware row proxy, что
@@ -251,10 +244,8 @@ func formAttributeTablePart(attr *metadata.FormAttribute) *metadata.TablePart {
 		if column == nil {
 			continue
 		}
-		tp.Fields = append(tp.Fields, metadata.Field{
-			Name:      column.Name,
-			RefEntity: attrRefEntityName(column.TypeRef),
-		})
+		desc, _ := typedempty.FromFormType(column.TypeRef, column.Length, column.Precision)
+		tp.Fields = append(tp.Fields, desc.Field(column.Name))
 	}
 	return tp
 }
@@ -264,6 +255,21 @@ func (f *formObjectThis) Set(name string, v any) {
 		return
 	}
 	f.obj.Set(name, v)
+}
+
+func (f *formObjectThis) GetDynamicField(name string) (any, bool) {
+	if f == nil || f.obj == nil || f.entity == nil || findObjectAttributeField(f.entity, name) == nil {
+		return nil, false
+	}
+	return f.Get(name), true
+}
+
+func (f *formObjectThis) SetDynamicField(name string, value any) bool {
+	if f == nil || f.obj == nil || f.entity == nil || findObjectAttributeField(f.entity, name) == nil {
+		return false
+	}
+	f.Set(name, value)
+	return true
 }
 
 // formTpProxy — proxy табличной части для рантайма событий формы. В отличие

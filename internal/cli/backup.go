@@ -149,7 +149,7 @@ func runRestore(cmd *cobra.Command, args []string) error {
 		pending, err = backup.HasPendingRestorePostgres(cmd.Context(), restoreDB)
 	}
 	if err != nil {
-		return fmt.Errorf("raw restore: inspect recovery marker read-only: %w", err)
+		return fmt.Errorf("raw restore: inspect recovery marker before overwrite: %w", err)
 	}
 	if pending {
 		return fmt.Errorf("raw restore refused while universal recovery is pending: %w", backup.ErrRestoreRecoveryRequired)

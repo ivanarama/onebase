@@ -42,6 +42,11 @@ type managedTPColumnJSON struct {
 	Index int `json:"index"`
 }
 
+func refWriteAllowed(access any, entity string) bool {
+	writable, ok := access.(map[string]bool)
+	return ok && writable[entity]
+}
+
 // infoRegKeyValue serialises an information-register dimension for the hidden
 // delete form. Display formatting is not a primary-key format: SQLite booleans
 // arrive as 0/1 and dates as time.Time, while the delete parser requires a
@@ -174,6 +179,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		return key
 	}
 	return template.FuncMap{
+		"refWriteAllowed": refWriteAllowed,
 		"lower":           strings.ToLower,
 		"infoRegKeyValue": infoRegKeyValue,
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
@@ -197,6 +203,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
+		"managedCommandBarElement":       managedCommandBarElement,
 		"nativeFormElementRequired":      nativeFormElementRequired,
 		"normalizedFormHotkey":           normalizedFormHotkey,
 		"str": func(v any) string {
@@ -964,7 +971,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
-		"managedTPColumnsJSON": func(plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string) template.JS {
+		"managedTPColumnsJSON": func(plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string, refWriteAccess any) template.JS {
 			fields := make([]metadata.Field, 0, len(plan))
 			for _, column := range plan {
 				fields = append(fields, column.Field)
@@ -978,7 +985,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Name:        field.DisplayName(lang),
 					Type:        string(field.Type),
 					Ref:         field.RefEntity,
-					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true),
+					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true) && refWriteAllowed(refWriteAccess, field.RefEntity),
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
 					Index:       column.Index,
@@ -1665,12 +1672,17 @@ const tplList = `
 </div>
 {{end}}
 
+{{define "list-refresh"}}
+<a class="btn btn-secondary btn-sm" data-ob-list-refresh href="{{.URL}}" title="{{t .Lang "Обновить"}}">🔄 {{t .Lang "Обновить"}}</a>
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <div class="view-switch">
       {{/* Переключение вида меняет только вид: поиск, отбор и сортировка
            остаются — их сбрасывает лишь явная очистка. */}}
@@ -2149,7 +2161,7 @@ const tplForm = `
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
       {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
-      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (not $ro) (.InlineCreateEnabled false)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
+      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -2223,7 +2235,7 @@ const tplForm = `
         <td>
         {{if isRef (str .Type)}}
           <div style="display:flex;gap:4px;align-items:center">
-            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if .InlineCreateEnabled true}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
@@ -3105,7 +3117,10 @@ const tplInfoReg = `
 <main>
 <div class="row-top">
   <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
-  {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
+    {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
+  </div>
 </div>
 {{template "reg-filter-form" (dict "Fields" .InfoReg.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/inforeg/%s" (lower .InfoReg.Name)) "Lang" $.Lang)}}
 <div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
@@ -3247,6 +3262,7 @@ const tplJournal = `
 <div class="row-top">
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
+    {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Всего:"}} {{.Total}}</span>
     {{/* listQuerySuffix, а не filterQuery: тут строка запроса начинается, а не
          продолжается — с «&» отбор уезжал в путь и ссылка давала 404. */}}
