@@ -160,7 +160,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    построй тот же единый поток переходов владельца:
 
    ```
-     gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'
+     gh api repos/ivanarama/onebase/pulls/<M> \
+       --jq '{headRepository:.head.repo.full_name,headRefName:.head.ref,headSha:.head.sha,maintainerCanModify:.maintainer_can_modify,state,baseRefName:.base.ref}'
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
      --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api repos/ivanarama/onebase/issues/<M> --jq '[.labels[].name]'
