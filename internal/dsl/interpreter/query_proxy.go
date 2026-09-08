@@ -218,7 +218,7 @@ func (q *queryProxy) execute() *Array {
 	q.materializeTypedColumns(res, rows, guarded)
 	arr := &Array{}
 	for _, row := range rows {
-		arr.items = append(arr.items, newQueryResultRow(row))
+		arr.items = append(arr.items, newQueryResultRow(row, res.DSLColumnAliases))
 	}
 	return arr
 }
@@ -327,8 +327,16 @@ func isRefUUIDValue(s string) bool {
 	return err == nil
 }
 
-func newQueryResultRow(row map[string]any) *Struct {
+func newQueryResultRow(row map[string]any, aliases map[string]string) *Struct {
 	s := NewStructFromMap(row)
+	for alias, source := range aliases {
+		if _, exists := s.vals[strings.ToLower(alias)]; exists {
+			continue
+		}
+		if value, exists := s.vals[strings.ToLower(source)]; exists {
+			s.Set(alias, value)
+		}
+	}
 	id, hasID := s.vals["id"]
 	if !hasID {
 		return s

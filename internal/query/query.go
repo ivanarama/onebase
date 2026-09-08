@@ -83,6 +83,10 @@ type Result struct {
 	// of one declared source. It is consumed only by the DSL query boundary;
 	// generic query runners keep SQL NULL unchanged.
 	TypedColumns map[string]typedempty.Descriptor
+	// DSLColumnAliases maps the field name requested by a DSL projection to the
+	// actual key returned by the SQL driver when the compiler rewrites a system
+	// register field (Период -> period, ВидДвижения -> вид_движения).
+	DSLColumnAliases map[string]string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -4161,7 +4165,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	if err := tr.assertRowFiltersApplied(); err != nil {
 		return Result{}, err
 	}
-	typedColumns := typedProjectionColumns(projectionPlan, tokens, opts, tr.sourceCtx, tr.refCols)
+	typedColumns, dslColumnAliases := typedProjectionColumns(projectionPlan, tokens, opts, tr.sourceCtx, tr.refCols)
 	return Result{
 		SQL:              tr.build(),
 		Args:             tr.args,
@@ -4172,6 +4176,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		DateColumns:      typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
 		RefColumns:       refOutputColumns(projectionPlan, tr.refCols),
 		TypedColumns:     typedColumns,
+		DSLColumnAliases: dslColumnAliases,
 	}, nil
 }
 
@@ -4193,6 +4198,7 @@ func singleProjectionSource(p ProjectionPlan, sourceCtx sourceContext) bool {
 type typedProjectionSource struct {
 	fields     map[string]typedempty.Descriptor
 	qualifiers map[string]bool
+	system     map[string]bool
 	self       typedempty.Descriptor
 }
 
@@ -4205,15 +4211,16 @@ func typedProjectionColumns(
 	opts CompileOpts,
 	sourceCtx sourceContext,
 	refCols map[string]string,
-) map[string]typedempty.Descriptor {
+) (map[string]typedempty.Descriptor, map[string]string) {
 	if !singleProjectionSource(p, sourceCtx) {
-		return nil
+		return nil, nil
 	}
 	source, ok := projectionSource(tokens, opts, sourceCtx.scopes[0])
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string]typedempty.Descriptor)
+	aliases := make(map[string]string)
 	for _, col := range p.Columns {
 		if col.Star || col.Output == "" || len(col.Path) == 0 {
 			continue
@@ -4239,7 +4246,14 @@ func typedProjectionColumns(
 			// A bare reference requisit is rewritten to its presentation.
 			desc = typedempty.Descriptor{Type: metadata.FieldTypeString}
 		}
-		out[col.Output] = desc
+		output := col.Output
+		if col.Alias == "" && source.system[lowerFast(name)] {
+			if actual, system := systemColAlias(name); system && actual != output {
+				aliases[output] = actual
+				output = actual
+			}
+		}
+		out[output] = desc
 	}
 	for output, entity := range refCols {
 		out[output] = typedempty.Descriptor{
@@ -4248,15 +4262,19 @@ func typedProjectionColumns(
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return out
+	if len(aliases) == 0 {
+		aliases = nil
+	}
+	return out, aliases
 }
 
 func projectionSource(tokens []tok, opts CompileOpts, scope sourceScope) (typedProjectionSource, bool) {
 	source := typedProjectionSource{
 		fields:     map[string]typedempty.Descriptor{},
 		qualifiers: map[string]bool{},
+		system:     map[string]bool{},
 	}
 	for qualifier := range scope.qualifiers {
 		source.qualifiers[lowerFast(qualifier)] = true
@@ -4290,7 +4308,7 @@ func projectionSource(tokens []tok, opts CompileOpts, scope sourceScope) (typedP
 					addFields(reg.Dimensions)
 					addFields(reg.Resources)
 					addFields(reg.Attributes)
-					addRegisterSystemFields(source.fields, true, true)
+					addRegisterSystemFields(&source, true, true)
 					return source, true
 				}
 			}
@@ -4300,7 +4318,7 @@ func projectionSource(tokens []tok, opts CompileOpts, scope sourceScope) (typedP
 					addFields(reg.Dimensions)
 					addFields(reg.Resources)
 					if reg.Periodic {
-						addRegisterSystemFields(source.fields, true, false)
+						addRegisterSystemFields(&source, true, false)
 					}
 					return source, true
 				}
@@ -4310,7 +4328,7 @@ func projectionSource(tokens []tok, opts CompileOpts, scope sourceScope) (typedP
 				if reg != nil && strings.EqualFold(reg.Name, name) {
 					addFields(reg.Resources)
 					addFields(reg.Subconto)
-					addRegisterSystemFields(source.fields, true, false)
+					addRegisterSystemFields(&source, true, false)
 					return source, true
 				}
 			}
@@ -4331,16 +4349,20 @@ func projectionSource(tokens []tok, opts CompileOpts, scope sourceScope) (typedP
 	return typedProjectionSource{}, false
 }
 
-func addRegisterSystemFields(fields map[string]typedempty.Descriptor, period, movement bool) {
+func addRegisterSystemFields(source *typedProjectionSource, period, movement bool) {
 	if period {
 		desc := typedempty.Descriptor{Type: metadata.FieldTypeDate}
-		fields["period"] = desc
-		fields["период"] = desc
+		source.fields["period"] = desc
+		source.fields["период"] = desc
+		source.system["period"] = true
+		source.system["период"] = true
 	}
 	if movement {
 		desc := typedempty.Descriptor{Type: metadata.FieldTypeString}
-		fields["вид_движения"] = desc
-		fields["виддвижения"] = desc
+		source.fields["вид_движения"] = desc
+		source.fields["виддвижения"] = desc
+		source.system["вид_движения"] = true
+		source.system["виддвижения"] = true
 	}
 }
 

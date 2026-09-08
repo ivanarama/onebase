@@ -66,8 +66,10 @@ func TestTypedColumns_RegisterSystemFieldsAreExplicit(t *testing.T) {
 		query.CompileOpts{Registers: []*metadata.Register{reg}, Dialect: storage.SQLiteDialect{}},
 	)
 	require.NoError(t, err)
-	require.Equal(t, metadata.FieldTypeDate, res.TypedColumns["период"].Type)
-	require.Equal(t, metadata.FieldTypeString, res.TypedColumns["виддвижения"].Type)
+	require.Equal(t, metadata.FieldTypeDate, res.TypedColumns["period"].Type)
+	require.Equal(t, metadata.FieldTypeString, res.TypedColumns["вид_движения"].Type)
+	require.Equal(t, "period", res.DSLColumnAliases["период"])
+	require.Equal(t, "вид_движения", res.DSLColumnAliases["виддвижения"])
 
 	entity := &metadata.Entity{
 		Name: "Произвольное", Kind: metadata.KindCatalog,
