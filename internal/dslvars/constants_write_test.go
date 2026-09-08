@@ -183,18 +183,13 @@ func TestКонстанты_СсылочнаяСохраняетUUIDПослеП
 	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{warehouse}, Constants: consts})
 
 	const warehouseID = "2c4be4b8-a41f-44ec-9170-b91afbe0b048"
-	read := func(t *testing.T, assign bool) *interpreter.Ref {
+	read := func(t *testing.T, assign bool, assigned any) *interpreter.Ref {
 		t.Helper()
 		source := "Функция Тест()\nВозврат Константы.ОсновнойСклад;\nКонецФункции"
 		vars := Common{Ctx: ctx, Reg: reg, Store: db}.Build()
 		if assign {
 			source = "Функция Тест()\nКонстанты.ОсновнойСклад = Склад;\nВозврат Константы.ОсновнойСклад;\nКонецФункции"
-			vars["Склад"] = &interpreter.Ref{
-				UUID: warehouseID,
-				Name: "Главный склад",
-				Type: "Склады",
-				Kind: metadata.KindCatalog,
-			}
+			vars["Склад"] = assigned
 		}
 		prog, err := parser.New(lexer.New(source, "reference-const.os")).ParseProgram()
 		if err != nil {
@@ -211,7 +206,13 @@ func TestКонстанты_СсылочнаяСохраняетUUIDПослеП
 		return ref
 	}
 
-	if got := read(t, true); got.UUID != warehouseID {
+	warehouseRef := &interpreter.Ref{
+		UUID: warehouseID,
+		Name: "Главный склад",
+		Type: "Склады",
+		Kind: metadata.KindCatalog,
+	}
+	if got := read(t, true, warehouseRef); got.UUID != warehouseID {
 		t.Fatalf("сразу после присваивания UUID = %q, ожидали %q", got.UUID, warehouseID)
 	}
 	stored, err := db.GetConstant(ctx, "ОсновнойСклад")
@@ -221,8 +222,22 @@ func TestКонстанты_СсылочнаяСохраняетUUIDПослеП
 	if stored != warehouseID {
 		t.Fatalf("в базе сохранено %#v, ожидался UUID %q", stored, warehouseID)
 	}
-	if got := read(t, false); got.UUID != warehouseID {
+	if got := read(t, false, nil); got.UUID != warehouseID {
 		t.Fatalf("после нового Common.Build UUID = %q, ожидали %q", got.UUID, warehouseID)
+	}
+
+	if got := read(t, true, (*interpreter.Ref)(nil)); got.UUID != "" {
+		t.Fatalf("после присваивания typed nil UUID = %q, ожидали пустую ссылку", got.UUID)
+	}
+	stored, err = db.GetConstant(ctx, "ОсновнойСклад")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != "" {
+		t.Fatalf("для typed nil в базе сохранено %#v, ожидалась пустая UUID-строка", stored)
+	}
+	if got := read(t, false, nil); got.UUID != "" {
+		t.Fatalf("после нового Common.Build typed nil UUID = %q, ожидали пустую ссылку", got.UUID)
 	}
 }
 
