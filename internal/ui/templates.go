@@ -3200,7 +3200,11 @@ const tplInfoReg = `
       <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
     </div>
     {{else}}
+    {{if .Multiline}}
+    <textarea name="{{$dn}}" autocomplete="off" rows="8" style="width:100%">{{index $.Values $dn}}</textarea>
+    {{else}}
     <input type="text" name="{{$dn}}" value="{{index $.Values $dn}}">
+    {{end}}
     {{end}}
   </div>
   {{end}}

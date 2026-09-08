@@ -129,7 +129,7 @@ func allSchemas() map[string]map[string]any {
 			"label":               stringSchema("Алиас синонима"),
 			"titles":              stringMapSchema(),
 			"type":                stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
-					"multiline": map[string]any{"type": "boolean", "description": "Редактировать многострочным полем (только для строкового реквизита)"},
+			"multiline":           map[string]any{"type": "boolean", "description": "Редактировать многострочным полем (только для строкового реквизита)"},
 			"allow_inline_create": map[string]any{"type": "boolean"},
 			"id":                  stringSchema("Устойчивый идентификатор реквизита: не меняется при переименовании, по нему миграция переименовывает колонку, а не заводит новую"),
 			"required":            boolSchema("Реквизит обязателен к заполнению; проверяется при записи"),

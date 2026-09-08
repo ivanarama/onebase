@@ -397,6 +397,9 @@ func Load(dir string) (*Project, error) {
 	if err := metadata.Validate(p.Entities, p.Enums); err != nil {
 		return nil, err
 	}
+	if err := metadata.ValidateRegisterFields(p.Registers, p.InfoRegisters); err != nil {
+		return nil, err
+	}
 	if err := metadata.ValidateConstants(p.Constants, p.Entities, p.Enums); err != nil {
 		return nil, err
 	}

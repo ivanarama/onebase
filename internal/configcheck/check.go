@@ -164,14 +164,20 @@ func CheckDir(dir string) (issues, warnings []Issue) {
 			if err != nil {
 				return err
 			}
-			return metadata.ValidateIdentifiers(nil, []*metadata.Register{r}, nil, nil, nil, nil)
+			if err := metadata.ValidateIdentifiers(nil, []*metadata.Register{r}, nil, nil, nil, nil); err != nil {
+				return err
+			}
+			return metadata.ValidateRegisterFields([]*metadata.Register{r}, nil)
 		}},
 		{"inforegs", "Регистр сведений", func(p string) error {
 			ir, err := metadata.LoadInfoRegisterFile(p)
 			if err != nil {
 				return err
 			}
-			return metadata.ValidateIdentifiers(nil, nil, []*metadata.InfoRegister{ir}, nil, nil, nil)
+			if err := metadata.ValidateIdentifiers(nil, nil, []*metadata.InfoRegister{ir}, nil, nil, nil); err != nil {
+				return err
+			}
+			return metadata.ValidateRegisterFields(nil, []*metadata.InfoRegister{ir})
 		}},
 		{"enums", "Перечисление", func(p string) error {
 			en, err := metadata.LoadEnumFile(p)

@@ -55,6 +55,8 @@ func TestInfoRegFormRendersMultilineResourceAsTextarea(t *testing.T) {
 		Name: "ПримечанияПоНаправлениям",
 		Dimensions: []metadata.Field{
 			{Name: "Филиал", Type: metadata.FieldType("reference:Филиал"), RefEntity: "Филиал"},
+			{Name: "Условия", Type: metadata.FieldTypeString, Multiline: true},
+			{Name: "Код", Type: metadata.FieldTypeString},
 		},
 		Resources: []metadata.Field{
 			{Name: "Примечание", Type: metadata.FieldTypeString, Multiline: true},
@@ -63,7 +65,10 @@ func TestInfoRegFormRendersMultilineResourceAsTextarea(t *testing.T) {
 	}
 	data := map[string]any{
 		"InfoReg": ir,
-		"Values":  map[string]string{"Примечание": "По АВИТО не дальше 20 км от МКАД", "ИдЛегаси": ""},
+		"Values": map[string]string{
+			"Условия": "Только будни\nпосле 10:00", "Код": "MSK",
+			"Примечание": "По АВИТО не дальше 20 км от МКАД", "ИдЛегаси": "",
+		},
 		"RefOpts": map[string][]map[string]any{},
 		"User":    nil, "Lang": "ru",
 	}
@@ -75,8 +80,15 @@ func TestInfoRegFormRendersMultilineResourceAsTextarea(t *testing.T) {
 	if !strings.Contains(html, `<textarea name="Примечание"`) {
 		t.Error("многострочный ресурс регистра отрисован не как textarea")
 	}
+	if !strings.Contains(html, `<textarea name="Условия"`) ||
+		!strings.Contains(html, "Только будни\nпосле 10:00</textarea>") {
+		t.Error("многострочное строковое измерение регистра отрисовано не как textarea")
+	}
 	if !strings.Contains(html, "По АВИТО не дальше 20 км от МКАД</textarea>") {
 		t.Error("значение ресурса не попало в textarea")
+	}
+	if !strings.Contains(html, `<input type="text" name="Код"`) {
+		t.Error("обычное строковое измерение перестало быть однострочным вводом")
 	}
 	if !strings.Contains(html, `<input type="text" name="ИдЛегаси"`) {
 		t.Error("обычный ресурс перестал быть однострочным вводом")

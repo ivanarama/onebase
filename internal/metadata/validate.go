@@ -74,10 +74,8 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		// multiline — признак ПРЕДСТАВЛЕНИЯ строкового реквизита. На числе, дате,
 		// ссылке или перечислении он ничего не значит, и принять его молча — значит
 		// оставить в конфигурации строку, которая ничего не делает.
-		for _, f := range e.Fields {
-			if f.Multiline && f.Type != FieldTypeString {
-				return fmt.Errorf("entity %s: реквизит %s — multiline допустим только для строкового реквизита (сейчас %s)", e.Name, f.Name, f.Type)
-			}
+		if err := validateMultilineFields("entity "+e.Name+": реквизит", e.Fields); err != nil {
+			return err
 		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
@@ -132,6 +130,43 @@ func Validate(entities []*Entity, enums []*Enum) error {
 			if !entityNames[src] {
 				return fmt.Errorf("entity %s: based_on references unknown entity %s", e.Name, src)
 			}
+		}
+	}
+	return nil
+}
+
+// ValidateRegisterFields проверяет признаки представления, которые rawField
+// разрешает у полей регистров. Загрузчик читает один и тот же rawField для
+// измерений, ресурсов и реквизитов, поэтому проверка должна охватывать их все:
+// иначе onebase check молча принимал бы неработающий multiline на числе или
+// ссылке.
+func ValidateRegisterFields(registers []*Register, inforegs []*InfoRegister) error {
+	for _, r := range registers {
+		if err := validateMultilineFields("регистр "+r.Name+": измерение", r.Dimensions); err != nil {
+			return err
+		}
+		if err := validateMultilineFields("регистр "+r.Name+": ресурс", r.Resources); err != nil {
+			return err
+		}
+		if err := validateMultilineFields("регистр "+r.Name+": реквизит", r.Attributes); err != nil {
+			return err
+		}
+	}
+	for _, ir := range inforegs {
+		if err := validateMultilineFields("регистр сведений "+ir.Name+": измерение", ir.Dimensions); err != nil {
+			return err
+		}
+		if err := validateMultilineFields("регистр сведений "+ir.Name+": ресурс", ir.Resources); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMultilineFields(scope string, fields []Field) error {
+	for _, f := range fields {
+		if f.Multiline && f.Type != FieldTypeString {
+			return fmt.Errorf("%s %s — multiline допустим только для строкового реквизита (сейчас %s)", scope, f.Name, f.Type)
 		}
 	}
 	return nil
