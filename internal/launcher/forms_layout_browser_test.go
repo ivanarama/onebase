@@ -33,14 +33,22 @@ form:
 elements:
   - kind: ПолеКартинки
     name: КартинкаЦентр
+    picture: layout-test.svg
     width: 80
     height: 60
     halign: center
   - kind: ПолеКартинки
     name: КартинкаСправа
-    width: 64
+    picture: layout-test.svg
+    width: 16
     height: 48
     halign: right
+  - kind: ПолеКартинки
+    name: КартинкаРастянуть
+    picture: layout-test.svg
+    width: 80
+    height: 60
+    halign: stretch
 `
 	doc, err := formdoc.Load([]byte(sample))
 	if err != nil {
@@ -57,17 +65,18 @@ elements:
 	}
 	canvasPage := `<!doctype html><html><head><meta charset="utf-8">` + styles + `</head><body><div id="canvas-host">` + canvas + `</div></body></html>`
 	assertDesignerPictureGeometry(t, runDesignerLayoutBrowser(t, browser, canvasPage,
-		`[data-node-id="elements.0"]`, `[data-node-id="elements.1"]`, `.fc-pic`), "canvas")
+		`[data-node-id="elements.0"]`, `[data-node-id="elements.1"]`, `[data-node-id="elements.2"]`, `.fc-pic-image`), "canvas")
 
 	preview := renderManagedFormPreview(&metadata.FormModule{
 		EntityName: "Контрагент",
 		Elements: []*metadata.FormElement{
-			{Kind: metadata.FormElementPicture, Name: "КартинкаЦентр", Width: 80, Height: 60, HorizontalAlign: "center"},
-			{Kind: metadata.FormElementPicture, Name: "КартинкаСправа", Width: 64, Height: 48, HorizontalAlign: "right"},
+			{Kind: metadata.FormElementPicture, Name: "КартинкаЦентр", Picture: "layout-test.svg", Width: 80, Height: 60, HorizontalAlign: "center"},
+			{Kind: metadata.FormElementPicture, Name: "КартинкаСправа", Picture: "layout-test.svg", Width: 16, Height: 48, HorizontalAlign: "right"},
+			{Kind: metadata.FormElementPicture, Name: "КартинкаРастянуть", Picture: "layout-test.svg", Width: 80, Height: 60, HorizontalAlign: "stretch"},
 		},
 	}, nil)
 	assertDesignerPictureGeometry(t, runDesignerLayoutBrowser(t, browser, preview,
-		`[data-preview-picture="КартинкаЦентр"]`, `[data-preview-picture="КартинкаСправа"]`, `.form-picture-placeholder`), "preview")
+		`[data-preview-picture="КартинкаЦентр"]`, `[data-preview-picture="КартинкаСправа"]`, `[data-preview-picture="КартинкаРастянуть"]`, `.form-picture-image`), "preview")
 }
 
 type designerPictureGeometry struct {
@@ -77,6 +86,7 @@ type designerPictureGeometry struct {
 	CenterHeight float64 `json:"centerHeight"`
 	RightWidth   float64 `json:"rightWidth"`
 	RightHeight  float64 `json:"rightHeight"`
+	StretchRatio float64 `json:"stretchRatio"`
 }
 
 func assertDesignerPictureGeometry(t *testing.T, got designerPictureGeometry, view string) {
@@ -87,20 +97,28 @@ func assertDesignerPictureGeometry(t *testing.T, got designerPictureGeometry, vi
 	if got.RightGap > 3 {
 		t.Errorf("%s: картинка не у правого края: gap=%.1fpx", view, got.RightGap)
 	}
-	if got.CenterWidth < 79 || got.CenterWidth > 81 || got.CenterHeight < 59 || got.CenterHeight > 61 {
-		t.Errorf("%s: размер центрированной картинки %.1fx%.1f, ожидался 80x60", view, got.CenterWidth, got.CenterHeight)
+	// Asset имеет intrinsic 40x20. Ограничения 80x60 не должны растягивать его
+	// до прямоугольника настройки: runtime использует max-width/max-height.
+	if got.CenterWidth < 39 || got.CenterWidth > 41 || got.CenterHeight < 19 || got.CenterHeight > 21 {
+		t.Errorf("%s: intrinsic-картинка растянута вместо max-size: %.1fx%.1f, ожидался 40x20", view, got.CenterWidth, got.CenterHeight)
 	}
-	if got.RightWidth < 63 || got.RightWidth > 65 || got.RightHeight < 47 || got.RightHeight > 49 {
-		t.Errorf("%s: размер правой картинки %.1fx%.1f, ожидался 64x48", view, got.RightWidth, got.RightHeight)
+	// max-width:16 сжимает тот же asset пропорционально до 16x8; height:48 не
+	// превращает ограничение в принудительный размер и не ломает aspect ratio.
+	if got.RightWidth < 15 || got.RightWidth > 17 || got.RightHeight < 7 || got.RightHeight > 9 {
+		t.Errorf("%s: max-size картинки не сохранил пропорции: %.1fx%.1f, ожидался 16x8", view, got.RightWidth, got.RightHeight)
+	}
+	if got.StretchRatio < 0.95 || got.StretchRatio > 1.05 {
+		t.Errorf("%s: halign:stretch не растянул обёртку картинки: ratio=%.2f", view, got.StretchRatio)
 	}
 }
 
-func runDesignerLayoutBrowser(t *testing.T, browser, page, centerSelector, rightSelector, innerSelector string) designerPictureGeometry {
+func runDesignerLayoutBrowser(t *testing.T, browser, page, centerSelector, rightSelector, stretchSelector, innerSelector string) designerPictureGeometry {
 	t.Helper()
 	script := `<script>
-(() => {
+window.addEventListener('load', () => {
   const center = document.querySelector('` + centerSelector + `');
   const right = document.querySelector('` + rightSelector + `');
+  const stretch = document.querySelector('` + stretchSelector + `');
   const host = right && right.parentElement;
   const inner = (el) => el && el.querySelector('` + innerSelector + `');
   const box = (el) => el ? el.getBoundingClientRect() : {left:1000000,right:0,width:0,height:0};
@@ -118,20 +136,26 @@ func runDesignerLayoutBrowser(t *testing.T, browser, page, centerSelector, right
     centerWidth: centerInner.width,
     centerHeight: centerInner.height,
     rightWidth: rightInner.width,
-    rightHeight: rightInner.height
+    rightHeight: rightInner.height,
+    stretchRatio: stretch && host ? box(stretch).width / (contentRight - contentLeft) : 0
   };
   const out = document.createElement('pre');
   out.id = 'designer-layout-measure';
   out.textContent = JSON.stringify(result);
   document.body.appendChild(out);
-})();
+});
 </script>`
 	endBody := strings.LastIndex(page, "</body>")
 	if endBody < 0 {
 		t.Fatal("страница не содержит </body>")
 	}
 	page = page[:endBody] + script + page[endBody:]
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/static/forms/layout-test.svg" {
+			w.Header().Set("Content-Type", "image/svg+xml")
+			_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="red"/></svg>`))
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(page))
 	}))

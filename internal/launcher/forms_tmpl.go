@@ -288,6 +288,7 @@ const tplFormsEditor = `
 .fc-table .fc-tp{background:#fef9c3;color:#92400e;padding:6px 8px;border-radius:6px;font-size:12px}
 .fc-pic-wrap{width:max-content;max-width:100%;padding:0}
 .fc-pic{box-sizing:border-box;background:#eef2ff;color:#3730a3;border:1px dashed #c7d2fe;border-radius:6px;padding:10px;text-align:center;font-size:12px;overflow:hidden}
+.fc-pic-image{display:block}
 .fc-cols{display:flex;flex-wrap:wrap;gap:4px;padding:4px 2px 0}
 .fc-col{font-size:11px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:2px 7px;color:#475569}
 .fc-col.fc-selected{outline:2px solid #1a4a80;background:#eef4ff}
@@ -1609,6 +1610,7 @@ legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 .req{color:#dc2626}
 .hint{display:block;color:#94a3b8;font-size:11px;margin-top:3px}
 .form-picture-preview{width:max-content;max-width:100%}
+.form-picture-image{display:block}
 .form-picture-placeholder{box-sizing:border-box;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#eef2ff;border:1px dashed #c7d2fe;border-radius:6px;padding:8px;text-align:center}
 .deco{padding:6px 0;color:#475569;font-size:13px}
 .btn{padding:6px 12px;border:1px solid #d0d7e3;background:#f8fafc;border-radius:5px;cursor:pointer;margin-right:4px;font-size:12px}
@@ -1772,9 +1774,17 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 			styleAttr(layout), html.EscapeString(title))
 	case metadata.FormElementPicture:
 		// width/height у картинки — размер самой картинки (см. рантайм), поэтому
-		// shrink-to-fit обёртка получает выравнивание, а заглушка — размер.
-		fmt.Fprintf(buf, `<div class="hint form-picture-preview" data-preview-picture="%s"%s><div class="form-picture-placeholder"%s>[Картинка: %s]</div></div>`,
-			html.EscapeString(el.Name), alignStyleAttr(el), pictureSizeStyleAttr(el), html.EscapeString(el.Name))
+		// shrink-to-fit обёртка получает выравнивание, а настоящий img — те же
+		// max-width/max-height, что в runtime. Заглушка нужна только без asset.
+		fmt.Fprintf(buf, `<div class="hint form-picture-preview" data-preview-picture="%s"%s>`,
+			html.EscapeString(el.Name), alignStyleAttr(el))
+		if el.Picture != "" {
+			fmt.Fprintf(buf, `<img class="form-picture-image" src="/static/forms/%s" alt="%s"%s>`,
+				html.EscapeString(el.Picture), html.EscapeString(el.Name), pictureSizeStyleAttr(el))
+		} else {
+			fmt.Fprintf(buf, `<div class="form-picture-placeholder">[Картинка: %s]</div>`, html.EscapeString(el.Name))
+		}
+		buf.WriteString(`</div>`)
 	case metadata.FormElementTable, metadata.FormElementTablePart:
 		// Колонки, выбранные в конструкторе (дочерние kind:Колонка), рисуем
 		// реальной таблицей-каркасом с парой пустых строк.

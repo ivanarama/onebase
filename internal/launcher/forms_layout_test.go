@@ -100,7 +100,7 @@ func TestRenderManagedFormPreview_AppliesLayout(t *testing.T) {
 			{Kind: metadata.FormElementField, Name: "ПолеКомментарий", DataPath: "Объект.Комментарий", Height: 160},
 			{Kind: metadata.FormElementButton, Name: "Кнопка", Width: 150, HorizontalAlign: "right"},
 			{Kind: metadata.FormElementGroupBox, Name: "Группа", Width: 600},
-			{Kind: metadata.FormElementPicture, Name: "Логотип", Width: 64, Height: 64, HorizontalAlign: "center"},
+			{Kind: metadata.FormElementPicture, Name: "Логотип", Picture: "logo.svg", Width: 64, Height: 64, HorizontalAlign: "center"},
 			{Kind: metadata.FormElementPages, Name: "Страницы", Width: 500, Children: []*metadata.FormElement{
 				{Kind: metadata.FormElementPage, Name: "Основное", Width: 310},
 			}},
@@ -130,7 +130,7 @@ func TestRenderManagedFormPreview_AppliesLayout(t *testing.T) {
 	if !strings.Contains(out, `class="hint form-picture-preview" data-preview-picture="Логотип" style="margin-left:auto;margin-right:auto;"`) {
 		t.Errorf("выравнивание картинки в предпросмотре потеряно:\n%s", out)
 	}
-	if !strings.Contains(out, `class="form-picture-placeholder" style="width:64px;max-width:100%;height:64px;"`) {
+	if !strings.Contains(out, `class="form-picture-image" src="/static/forms/logo.svg" alt="Логотип" style="max-width:64px;max-height:64px;"`) {
 		t.Errorf("предпросмотр не применил размер к самой картинке:\n%s", out)
 	}
 	// Правило растяжки должно быть в самом документе предпросмотра — класс без

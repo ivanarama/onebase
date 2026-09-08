@@ -301,6 +301,23 @@ func TestManagedLayout_PictureKeepsOwnSizeSemantics(t *testing.T) {
 	}
 }
 
+func TestManagedLayout_PictureStretchUsesWrapper(t *testing.T) {
+	out := renderLayoutElement(t, &metadata.FormElement{
+		Kind:            metadata.FormElementPicture,
+		Name:            "Логотип",
+		Picture:         "logo.png",
+		Width:           64,
+		Height:          64,
+		HorizontalAlign: "stretch",
+	})
+	if !strings.Contains(out, `class="form-picture" style="width:100%;flex:1 1 100%;min-width:0;"`) {
+		t.Errorf("stretch не применён к обёртке картинки:\n%s", out)
+	}
+	if !strings.Contains(out, "max-width:64px;max-height:64px") {
+		t.Errorf("stretch обёртки изменил max-size семантику картинки:\n%s", out)
+	}
+}
+
 // Картинка сохраняет собственную семантику размеров, но не вправе обходить
 // общий потолок: check предупреждает, а production-рендер значение игнорирует.
 func TestManagedLayout_PictureRejectsOutOfRangeSize(t *testing.T) {

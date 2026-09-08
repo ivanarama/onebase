@@ -92,8 +92,10 @@ func FormElementLayoutCSS(el *FormElement) string {
 	return formLayoutCSS(el, true)
 }
 
-// FormElementAlignCSS — только выравнивание, без размеров. Для ПолеКартинки, где
-// width/height заняты размером самой картинки.
+// FormElementAlignCSS — только выравнивание, без объявленных размеров. Для
+// ПолеКартинки, где width/height заняты размером самой картинки. Stretch всё
+// равно задаёт ширину/flex внешней обёртки: это и есть его контракт
+// выравнивания, а не размер из width.
 func FormElementAlignCSS(el *FormElement) string {
 	if el == nil {
 		return ""
@@ -106,18 +108,18 @@ func formLayoutCSS(el *FormElement, withSize bool) string {
 	h, _ := NormalizeFormHAlign(el.HorizontalAlign)
 	v, _ := NormalizeFormVAlign(el.VerticalAlign)
 
-	if withSize {
-		// stretch старше явной ширины: «растянуть на контейнер» и «ровно N
-		// пикселей» — взаимоисключающие требования, и молча склеить их в
-		// width:100%;width:200px значило бы отдать выбор порядку объявлений.
+	// Stretch старше явной ширины: «растянуть на контейнер» и «ровно N
+	// пикселей» — взаимоисключающие требования, и молча склеить их в
+	// width:100%;width:200px значило бы отдать выбор порядку объявлений.
+	// Он нужен и align-only обёртке ПолеКартинки: без width/flex допустимый
+	// halign принимался, но оставлял картинку shrink-to-fit.
+	if h == "stretch" {
+		// В горизонтальной группе родитель задаёт дочерним блокам flex-basis и
+		// min-width. Полная flex-запись делает stretch отдельной строкой группы
+		// и одинаково работает в рантайме, preview и на холсте.
+		b.WriteString("width:100%;flex:1 1 100%;min-width:0;")
+	} else if withSize {
 		switch {
-		case h == "stretch":
-			// В горизонтальной группе родитель задаёт дочерним блокам
-			// flex-basis и min-width. Одного width:100% недостаточно: basis
-			// продолжает держать прежние 260px, а minimum не даёт сжаться на
-			// узком экране. Полная flex-запись делает stretch отдельной строкой
-			// группы и одинаково работает в рантайме, preview и на холсте.
-			b.WriteString("width:100%;flex:1 1 100%;min-width:0;")
 		case formLayoutSize(el.Width) > 0:
 			fmt.Fprintf(&b, "width:%dpx;max-width:100%%;", formLayoutSize(el.Width))
 			// flex-basis элемента в горизонтальной группе перебивает width
@@ -128,6 +130,8 @@ func formLayoutCSS(el *FormElement, withSize bool) string {
 			// переписывать явно заданную меньшую ширину.
 			b.WriteString("flex:0 0 auto;min-width:0;")
 		}
+	}
+	if withSize {
 		if hh := formLayoutSize(el.Height); hh > 0 {
 			fmt.Fprintf(&b, "height:%dpx;", hh)
 		}

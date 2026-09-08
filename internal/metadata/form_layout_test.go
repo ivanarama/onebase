@@ -111,6 +111,18 @@ func TestFormElementAlignCSS_DropsSize(t *testing.T) {
 	}
 }
 
+func TestFormElementAlignCSS_KeepsStretchContract(t *testing.T) {
+	css := FormElementAlignCSS(&FormElement{Kind: FormElementPicture, Width: 64, Height: 64, HorizontalAlign: "stretch"})
+	for _, want := range []string{"width:100%", "flex:1 1 100%", "min-width:0"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("align-only обёртка картинки потеряла stretch (%s): %q", want, css)
+		}
+	}
+	if strings.Contains(css, "64px") {
+		t.Errorf("размер самой картинки не должен попадать в стиль обёртки: %q", css)
+	}
+}
+
 func TestFormTablePartGridCSS(t *testing.T) {
 	// Умолчание по числу строк — как было до контракта раскладки.
 	if css := FormTablePartGridCSS(&FormElement{Kind: FormElementTablePart}, 3); !strings.Contains(css, "height:200px") || !strings.Contains(css, "width:100%") {

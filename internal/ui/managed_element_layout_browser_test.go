@@ -48,6 +48,7 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 			{Kind: metadata.FormElementButton, Name: "КнопкаСправа", HorizontalAlign: "right"},
 			{Kind: metadata.FormElementButton, Name: "КнопкаЦентр", HorizontalAlign: "center"},
 			{Kind: metadata.FormElementPicture, Name: "КартинкаСправа", Picture: "layout-test.svg", Width: 40, Height: 40, HorizontalAlign: "right"},
+			{Kind: metadata.FormElementPicture, Name: "КартинкаРастянуть", Picture: "layout-test.svg", Width: 40, Height: 40, HorizontalAlign: "stretch"},
 			{Kind: metadata.FormElementField, Name: "Ссылка", DataPath: "Объект.Контрагент", Height: 180},
 			{Kind: metadata.FormElementField, Name: "Путь", DataPath: "Объект.Файл", Type: "file", Height: 180},
 		},
@@ -74,6 +75,9 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
   const picture = document.querySelector('[data-ob-el="КартинкаСправа"]');
   const pictureBox = picture && picture.closest('.form-picture');
   const pictureHost = pictureBox && pictureBox.parentElement;
+  const stretchPicture = document.querySelector('[data-ob-el="КартинкаРастянуть"]');
+  const stretchBox = stretchPicture && stretchPicture.closest('.form-picture');
+  const stretchHost = stretchBox && stretchBox.parentElement;
   const ref = document.querySelector('select[name="Контрагент"]');
   const file = document.querySelector('input[name="Файл"]');
   const impossible = 1000000;
@@ -82,6 +86,7 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
     centerDelta: center && host ? Math.abs((host.getBoundingClientRect().left + host.getBoundingClientRect().right) / 2 - (center.getBoundingClientRect().left + center.getBoundingClientRect().right) / 2) : impossible,
     pictureGap: pictureBox && pictureHost ? Math.abs(pictureHost.getBoundingClientRect().right - pictureBox.getBoundingClientRect().right) : impossible,
     pictureRatio: pictureBox && pictureHost ? pictureBox.getBoundingClientRect().width / pictureHost.getBoundingClientRect().width : impossible,
+    stretchRatio: stretchBox && stretchHost ? stretchBox.getBoundingClientRect().width / stretchHost.getBoundingClientRect().width : 0,
     refHeight: ref ? ref.getBoundingClientRect().height : 0,
     refRatio: ref && ref.parentElement ? ref.getBoundingClientRect().height / ref.parentElement.getBoundingClientRect().height : 0,
     fileHeight: file ? file.getBoundingClientRect().height : 0,
@@ -153,6 +158,7 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 		CenterDelta  float64 `json:"centerDelta"`
 		PictureGap   float64 `json:"pictureGap"`
 		PictureRatio float64 `json:"pictureRatio"`
+		StretchRatio float64 `json:"stretchRatio"`
 		RefHeight    float64 `json:"refHeight"`
 		RefRatio     float64 `json:"refRatio"`
 		FileHeight   float64 `json:"fileHeight"`
@@ -169,6 +175,9 @@ func TestManagedLayout_BrowserPositionsAndFillsControls(t *testing.T) {
 	}
 	if got.PictureGap > 8 || got.PictureRatio >= 0.5 {
 		t.Errorf("halign:right не выровнял картинку собственной ширины: gap=%.1fpx ratio=%.2f", got.PictureGap, got.PictureRatio)
+	}
+	if got.StretchRatio < 0.95 || got.StretchRatio > 1.05 {
+		t.Errorf("halign:stretch не растянул обёртку картинки: ratio=%.2f", got.StretchRatio)
 	}
 	if got.RefHeight < 100 || got.RefRatio < 0.8 {
 		t.Errorf("высота ссылки осталась у строки, но не у select: height=%.1fpx ratio=%.2f", got.RefHeight, got.RefRatio)

@@ -3,7 +3,6 @@ package launcher
 import (
 	"fmt"
 	"html"
-	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -25,23 +24,24 @@ func alignStyleAttr(el *metadata.FormElement) string {
 	return styleAttr(metadata.FormElementAlignCSS(el))
 }
 
-// pictureSizeStyleAttr — размер визуального прямоугольника ПолеКартинки.
+// pictureSizeStyleAttr — ограничения настоящего изображения ПолеКартинки.
 // Внешняя обёртка остаётся shrink-to-fit и получает только выравнивание:
 // width/height у этого вида исторически относятся к самой картинке, а не к
-// блоку элемента. Preview и canvas рисуют заглушку вместо настоящего img, но
-// обязаны занимать те же заданные пиксели.
+// блоку элемента. Как и runtime, designer не растягивает маленький asset до
+// заданного размера, а применяет max-width/max-height с прежним default 100px.
 func pictureSizeStyleAttr(el *metadata.FormElement) string {
 	if el == nil {
 		return ""
 	}
-	var css strings.Builder
-	if width := metadata.NormalizeFormLayoutSize(el.Width); width > 0 {
-		fmt.Fprintf(&css, "width:%dpx;max-width:100%%;", width)
+	width := metadata.NormalizeFormLayoutSize(el.Width)
+	if width == 0 {
+		width = 100
 	}
-	if height := metadata.NormalizeFormLayoutSize(el.Height); height > 0 {
-		fmt.Fprintf(&css, "height:%dpx;", height)
+	height := metadata.NormalizeFormLayoutSize(el.Height)
+	if height == 0 {
+		height = 100
 	}
-	return styleAttr(css.String())
+	return styleAttr(fmt.Sprintf("max-width:%dpx;max-height:%dpx;", width, height))
 }
 
 func styleAttr(css string) string {
