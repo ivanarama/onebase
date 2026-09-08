@@ -166,7 +166,11 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 			continue
 		}
 		col := metadata.ColumnName(f)
-		val, err := canonicalNumberArg(f, fieldValueDialect(d, f, fields))
+		raw, err := fieldValueForWrite(ctx, d, f, fields)
+		if err != nil {
+			return fmt.Errorf("%s: %w", entityName, err)
+		}
+		val, err := canonicalNumberArg(f, raw)
 		if err != nil {
 			return err
 		}

@@ -111,6 +111,18 @@ func ParseBytes(data []byte) (*Processor, error) {
 	if err := yaml.Unmarshal(data, &proc); err != nil {
 		return nil, err
 	}
+	// Processor table parts are unmarshaled directly into metadata.Field,
+	// unlike entity fields which pass through metadata.parseField. Restore the
+	// derived reference target so managed-form renderers can load picker
+	// options for fields declared as type: reference:<entity> in processor YAML.
+	for i := range proc.TableParts {
+		for j := range proc.TableParts[i].Fields {
+			field := &proc.TableParts[i].Fields[j]
+			if metadata.IsReference(field.Type) {
+				field.RefEntity = metadata.RefName(field.Type)
+			}
+		}
+	}
 	return &proc, nil
 }
 

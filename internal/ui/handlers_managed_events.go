@@ -73,6 +73,9 @@ type formEventResponse struct {
 	// первой страницей справочника, и присвоенная обработчиком ссылка за её
 	// пределами иначе молча обнуляла бы поле (#615, см. eventRefOptions).
 	RefOptions map[string][]map[string]any `json:"refOptions,omitempty"`
+	// TPRefOptions — подписи ссылок из строк табличных частей. Значения строк
+	// остаются UUID, а клиент обновляет этот словарь до перерисовки SlickGrid.
+	TPRefOptions map[string]map[string][]map[string]any `json:"tpRefOptions,omitempty"`
 }
 
 // handleManagedFormEvent — единая точка обработки событий managed-форм.
@@ -473,6 +476,7 @@ type formEventState struct {
 	TableParts     map[string][]map[string]any
 	FormTables     map[string][]map[string]any
 	RefOptions     map[string][]map[string]any
+	TPRefOptions   map[string]map[string][]map[string]any
 	ConditionalCSS string
 	Messages       []string
 	ElementStates  *elementStates
@@ -486,6 +490,7 @@ func (st formEventState) response(ok bool) formEventResponse {
 		TableParts:     st.TableParts,
 		FormTables:     st.FormTables,
 		RefOptions:     st.RefOptions,
+		TPRefOptions:   st.TPRefOptions,
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
 		ElementStates:  st.ElementStates,
@@ -552,6 +557,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 	// «пересчёт на лету»: выбрал в строке другую ссылку, обработчик строки
 	// отработал — колонка приехала обновлённой.
 	s.applyVirtualTPColumns(ctx, entity, form, tableParts)
+	tpRefOptions, _ := s.loadInitialTPRefOptions(ctx, entity, tableParts)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
@@ -562,6 +568,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		TableParts:     tableParts,
 		FormTables:     formTablesFromRows(tableParts, form),
 		RefOptions:     s.eventRefOptions(ctx, form, entity, values),
+		TPRefOptions:   tpRefOptions,
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
 		// Условия readonly_when/hidden_when считаются здесь же, где известны

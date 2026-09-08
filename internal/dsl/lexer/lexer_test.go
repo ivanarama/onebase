@@ -123,3 +123,34 @@ func TestLexer_MultilineStringPipe(t *testing.T) {
 		t.Fatalf("want %q, got %q", want, tok.Literal)
 	}
 }
+
+func TestLexer_DateLiterals(t *testing.T) {
+	l := lexer.New("'00010101' '20260819153045'", "dates.os")
+	for i, want := range []string{"00010101", "20260819153045"} {
+		tok := l.NextToken()
+		if tok.Type != token.DATE || tok.Literal != want {
+			t.Fatalf("token[%d] = %v(%q), want DATE(%q)", i, tok.Type, tok.Literal, want)
+		}
+	}
+	if tok := l.NextToken(); tok.Type != token.EOF {
+		t.Fatalf("last token = %v(%q), want EOF", tok.Type, tok.Literal)
+	}
+}
+
+func TestLexer_InvalidDateLiteralSyntaxStaysIllegal(t *testing.T) {
+	for _, src := range []string{
+		"''",
+		"'202601'",
+		"'2026-01-01'",
+		"'20260101x'",
+		"'20260101",
+		"'20260101\nСледующаяСтрока",
+	} {
+		t.Run(src, func(t *testing.T) {
+			tok := lexer.New(src, "bad-date.os").NextToken()
+			if tok.Type != token.ILLEGAL {
+				t.Fatalf("first token = %v(%q), want ILLEGAL", tok.Type, tok.Literal)
+			}
+		})
+	}
+}

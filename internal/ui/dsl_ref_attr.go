@@ -98,7 +98,13 @@ func (r *dslRefAttrResolver) ResolveRefAttr(ref *interpreter.Ref, field string) 
 	}
 	// План 88E: разыменование чужой записи (this.Клиент.Телефон) — такой же путь
 	// чтения, как форма или REST, и обязано подчиняться полевой политике роли.
-	return r.s.maskDSLValue(r.ctx, entity, fd.Name, row[fd.Name]), true
+	if r.s.dslFieldMasked(r.liveCtx(), entity, fd.Name) {
+		return r.s.maskDSLValue(r.liveCtx(), entity, fd.Name, row[fd.Name]), true
+	}
+	if value := row[fd.Name]; value != nil {
+		return value, true
+	}
+	return r.s.declaredEntityFieldValue(fd, nil, r), true
 }
 
 func (r *dslRefAttrResolver) attachObject(entity *metadata.Entity, obj *runtime.Object) {
@@ -280,7 +286,22 @@ func newRefAwareMapThis(row map[string]any, tp *metadata.TablePart, resolver *ds
 	if tp == nil {
 		return &interpreter.MapThis{M: row}
 	}
-	return &refAwareMapThis{row: row, tp: tp, resolver: resolver}
+	aware := &refAwareMapThis{row: row, tp: tp, resolver: resolver}
+	return &interpreter.MapThis{
+		M: row,
+		Read: func(name string) (any, bool) {
+			fd := tablePartField(tp, name)
+			if fd == nil {
+				return nil, false
+			}
+			_, value, _ := lookupMapCI(row, name)
+			return aware.wrapValue(fd, value), true
+		},
+		Write: func(name string, value any) bool {
+			aware.Set(name, value)
+			return true
+		},
+	}
 }
 
 func (m *refAwareMapThis) Get(name string) any {
@@ -288,10 +309,11 @@ func (m *refAwareMapThis) Get(name string) any {
 		return nil
 	}
 	_, v, ok := lookupMapCI(m.row, name)
-	if !ok {
+	fd := tablePartField(m.tp, name)
+	if !ok && fd == nil {
 		return nil
 	}
-	return m.wrapValue(name, v)
+	return m.wrapValue(fd, v)
 }
 
 func (m *refAwareMapThis) Set(name string, v any) {
@@ -314,28 +336,11 @@ func (m *refAwareMapThis) Set(name string, v any) {
 	m.row[name] = v
 }
 
-func (m *refAwareMapThis) wrapValue(name string, v any) any {
-	fd := tablePartField(m.tp, name)
-	if fd == nil || fd.RefEntity == "" {
+func (m *refAwareMapThis) wrapValue(fd *metadata.Field, v any) any {
+	if fd == nil {
 		return v
 	}
-	if m.resolver == nil {
-		return v
-	}
-	if ref, ok := v.(*interpreter.Ref); ok {
-		return m.resolver.bindRefToContext(ref, fd.RefEntity)
-	}
-	idStr, _, ok := uuidFromValue(v)
-	if !ok {
-		return v
-	}
-	return m.resolver.attachRef(&interpreter.Ref{
-		UUID:    idStr,
-		Name:    idStr,
-		Type:    fd.RefEntity,
-		Kind:    refKind(m.resolver.s.reg.GetEntity(fd.RefEntity)),
-		Manager: m.resolver.s.refManagerFor(m.resolver.s.reg.GetEntity(fd.RefEntity), m.resolver.ctx),
-	}, fd.RefEntity)
+	return declaredDSLValue(v, mustFieldDescriptor(fd), m.resolver)
 }
 
 func tablePartField(tp *metadata.TablePart, name string) *metadata.Field {

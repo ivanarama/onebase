@@ -2597,6 +2597,97 @@ require(['vs/editor/editor.main'], function() {
     var parts = d.params.map(function(p,i){ return '${'+(i+1)+':'+p.name+'}'; });
     return d.display + '(' + parts.join(', ') + ')';
   }
+  function _lrNameMatches(d,name){
+    if (d.name && d.name.toLowerCase()===name) return true;
+    return !!(d.aliases && d.aliases.some(function(a){return a.toLowerCase()===name;}));
+  }
+  // Контекст слева от имени: прямой receiver (Массив.) и составные объекты
+  // (Страница.График., Движения.ИмяРегистра.). Неизвестное выражение перед
+  // точкой отмечается как receiver без типа — по нему нельзя выбирать первый
+  // одноимённый метод из справочника.
+  var _lrDynamicObjects={
+    'движения':true,
+    'справочники':true,
+    'документы':true,
+    'регистрынакопления':true
+  };
+  function _lrReceiverContext(text,data){
+    var present = /\.\s*$/.test(text);
+    if (!present) return {present:false,object:null};
+    var m = /([A-Za-zА-Яа-яЁё0-9_]+(?:\s*\.\s*[A-Za-zА-Яа-яЁё0-9_]+)*)\s*\.\s*$/.exec(text);
+    if (!m) return {present:true,object:null};
+    var chain = m[1].replace(/\s*\.\s*/g,'.').toLowerCase();
+    var found = null;
+    data.forEach(function(d){
+      if (d.kind!=='method' || !d.object) return;
+      var obj=d.object.toLowerCase();
+      var dynamic=!!_lrDynamicObjects[obj] && chain.indexOf(obj+'.')===0 && chain.indexOf('.',obj.length+1)<0;
+      if (chain===obj || dynamic){
+        if (!found || obj.length>found.length) found=obj;
+      }
+    });
+    return {present:true,object:found};
+  }
+  function _lrResolveDescriptor(data,name,receiver){
+    var matches=data.filter(function(d){return _lrNameMatches(d,name);});
+    if (receiver.present){
+      if (!receiver.object) return null;
+      matches=matches.filter(function(d){
+        return d.kind==='method' && d.object && d.object.toLowerCase()===receiver.object;
+      });
+    }else{
+      // Голое имя — глобальная функция/конструкция. Одноимённый метод без
+      // receiver не должен вытеснять её только из-за порядка langref.
+      matches=matches.filter(function(d){return d.kind!=='method';});
+    }
+    return matches.length===1 ? matches[0] : null;
+  }
+  function _lrScanCalls(text){
+    var stack=[];
+    var quoted=false;
+    for(var i=0;i<text.length;i++){
+      var ch=text[i];
+      if(quoted){
+        if(ch==='"' && text[i+1]==='"'){i++;continue;}
+        if(ch==='"')quoted=false;
+        continue;
+      }
+      if(ch==='"'){quoted=true;continue;}
+      if(ch==='(')stack.push(i);
+      else if(ch===')' && stack.length)stack.pop();
+    }
+    return stack.length ? stack[stack.length-1] : -1;
+  }
+  function _lrActiveParameter(args){
+    var depth=0,quoted=false,active=0;
+    for(var i=0;i<args.length;i++){
+      var ch=args[i];
+      if(quoted){
+        if(ch==='"' && args[i+1]==='"'){i++;continue;}
+        if(ch==='"')quoted=false;
+        continue;
+      }
+      if(ch==='"'){quoted=true;continue;}
+      if(ch==='(')depth++;
+      else if(ch===')' && depth>0)depth--;
+      else if(ch===',' && depth===0)active++;
+    }
+    return active;
+  }
+  function _lrCallContext(text,data){
+    var open=_lrScanCalls(text);
+    if(open<0)return null;
+    var end=open;
+    while(end>0 && /\s/.test(text[end-1]))end--;
+    var start=end;
+    while(start>0 && /[A-Za-zА-Яа-яЁё0-9_]/.test(text[start-1]))start--;
+    if(start===end)return null;
+    var name=text.slice(start,end).toLowerCase();
+    return {
+      descriptor:_lrResolveDescriptor(data,name,_lrReceiverContext(text.slice(0,start),data)),
+      activeParameter:_lrActiveParameter(text.slice(open+1))
+    };
+  }
   // Auto-completion (данные из langref, лениво)
   monaco.languages.registerCompletionItemProvider('onebase-dsl', {
     triggerCharacters: ['.'],
@@ -2606,12 +2697,10 @@ require(['vs/editor/editor.main'], function() {
       var word = model.getWordUntilPosition(position);
       var range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
       var line = model.getLineContent(position.lineNumber).substring(0, word.startColumn - 1);
-      var dot = /([A-Za-zА-Яа-яЁё0-9_]+)\.\s*$/.exec(line);
-      var obj = dot ? dot[1].toLowerCase() : null;
-      var objExists = obj && data.some(function(d){ return d.kind==='method' && d.object && d.object.toLowerCase()===obj; });
+      var receiver = _lrReceiverContext(line,data);
       var suggestions = [];
       data.forEach(function(d){
-        if (objExists && !(d.kind==='method' && d.object && d.object.toLowerCase()===obj)) return;
+        if (receiver.object && !(d.kind==='method' && d.object && d.object.toLowerCase()===receiver.object)) return;
         suggestions.push({
           label: d.display,
           kind: _lrKind(d.kind),
@@ -2633,12 +2722,9 @@ require(['vs/editor/editor.main'], function() {
       if (!word) return null;
       var w = word.word.toLowerCase();
       var data = window._langref || [];
-      var d = null;
-      for (var i=0;i<data.length;i++){
-        var x=data[i];
-        if (x.name && x.name.toLowerCase()===w){ d=x; break; }
-        if (x.aliases && x.aliases.some(function(a){return a.toLowerCase()===w;})){ d=x; break; }
-      }
+      var line=model.getLineContent(position.lineNumber);
+      var receiver=_lrReceiverContext(line.substring(0,word.startColumn-1),data);
+      var d=_lrResolveDescriptor(data,w,receiver);
       if (!d) return null;
       var md = '**' + (d.signature||d.display) + '**\n\n' + (d.doc||'');
       if (d.returns) md += '\n\n_Возвращает:_ ' + d.returns;
@@ -2652,22 +2738,16 @@ require(['vs/editor/editor.main'], function() {
     provideSignatureHelp: function(model, position) {
       loadLangref();
       var textBefore = model.getValueInRange({startLineNumber:1,startColumn:1,endLineNumber:position.lineNumber,endColumn:position.column});
-      var m = /([A-Za-zА-Яа-яЁё0-9_]+)\s*\(([^()]*)$/.exec(textBefore);
-      if (!m) return null;
-      var name = m[1].toLowerCase();
       var data = window._langref || [];
-      var d = null;
-      for (var i=0;i<data.length;i++){
-        var x=data[i];
-        if ((x.name && x.name.toLowerCase()===name) || (x.aliases && x.aliases.some(function(a){return a.toLowerCase()===name;}))){ d=x; break; }
-      }
+      var call=_lrCallContext(textBefore,data);
+      if(!call)return null;
+      var d=call.descriptor;
       if (!d || !d.params || !d.params.length) return null;
-      var active = (m[2].match(/,/g) || []).length;
       return { value: { signatures: [{
         label: d.signature || d.display,
         documentation: d.doc || '',
         parameters: d.params.map(function(p){ return { label: p.name, documentation: (p.type||'') + (p.doc ? ' — '+p.doc : '') }; })
-      }], activeSignature: 0, activeParameter: Math.min(active, d.params.length-1) }, dispose: function(){} };
+      }], activeSignature: 0, activeParameter: Math.min(call.activeParameter, d.params.length-1) }, dispose: function(){} };
     }
   });
   // Темы кода — общие с конструктором форм (/static/code-theme.js).
