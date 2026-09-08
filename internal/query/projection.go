@@ -238,17 +238,6 @@ func parseProjectionItem(item []tok) (ProjectionColumn, []string) {
 	return ProjectionColumn{Output: alias}, identifiersIn(item)
 }
 
-// simpleFieldRef распознаёт элемент вида `Поле` или `Квалификатор.Поле`
-// (в т.ч. разыменование ссылки `Клиент.Наименование`) и возвращает последний
-// идентификатор — логическое имя выбранного поля.
-func simpleFieldRef(item []tok) (string, bool) {
-	path, ok := simpleFieldPath(item)
-	if !ok {
-		return "", false
-	}
-	return path[len(path)-1], true
-}
-
 func simpleFieldPath(item []tok) ([]string, bool) {
 	if len(item) == 0 || len(item)%2 == 0 {
 		return nil, false

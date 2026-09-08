@@ -2,7 +2,6 @@ package query
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -4169,19 +4168,19 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		Sources:          tr.sources,
 		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
-		BoolColumns:      descriptorOutputColumns(typedColumns, metadata.FieldTypeBool),
-		DateColumns:      descriptorOutputColumns(typedColumns, metadata.FieldTypeDate),
-		RefColumns:       refOutputColumns(projectionPlan, tr.refCols, tr.sourceCtx),
+		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
+		DateColumns:      typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
+		RefColumns:       refOutputColumns(projectionPlan, tr.refCols),
 		TypedColumns:     typedColumns,
 	}, nil
 }
 
 // refOutputColumns отдаёт собранные транслятором колонки-ссылки, но только для
 // простой проекции: при ОБЪЕДИНИТЬ и подзапросах имя колонки результата может
-// прийти из другой ветки, и обещать по нему тип нельзя. То же ограничение, что у
-// boolOutputColumns/typedOutputColumns, — и по той же причине.
-func refOutputColumns(p ProjectionPlan, cols map[string]string, sourceCtx sourceContext) map[string]string {
-	if !singleProjectionSource(p, sourceCtx) || len(cols) == 0 {
+// прийти из другой ветки, и обещать по нему тип нельзя. Явный JOIN это не
+// запрещает: translator уже знает точный SQL-выход выбранной ссылки.
+func refOutputColumns(p ProjectionPlan, cols map[string]string) map[string]string {
+	if !p.Simple || len(cols) == 0 {
 		return nil
 	}
 	return cols
@@ -4343,17 +4342,6 @@ func addRegisterSystemFields(fields map[string]typedempty.Descriptor, period, mo
 		fields["вид_движения"] = desc
 		fields["виддвижения"] = desc
 	}
-}
-
-func descriptorOutputColumns(cols map[string]typedempty.Descriptor, want metadata.FieldType) []string {
-	var out []string
-	for name, desc := range cols {
-		if desc.Type == want {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны
