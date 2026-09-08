@@ -50,8 +50,10 @@ Issue #1368 (представления объектов в меню) и #1369 (
 
 ## Базовый YAML-контракт
 
-`contents` остаётся источником членства объектов в подсистеме. Новый `menu`
-задаёт только представление и может смешивать типы:
+`contents` остаётся источником членства объектов в подсистеме. Для глобальной
+«Главной» ту же роль выполняет существующий `home_page.nav`; его
+nil/пустая форма сохраняет особую legacy-семантику «все объекты глобального
+плоского меню». Новый `menu` задаёт только представление и может смешивать типы:
 
 ```yaml
 name: ОбразовательнаяДеятельность
@@ -140,12 +142,31 @@ resolver. Пользовательский YAML/JSON никогда не пос�
 каждого вхождения отдельный `id`; повтор в одном parent даёт предупреждение.
 
 `menu` разрешён в `subsystems/*.yaml` и для глобального контекста в
-`config/home_page.yaml`. Если `menu` отсутствует, действует legacy-генератор из
-`contents`. Если `menu` есть, члены `contents`, не упомянутые ни в одном item,
-автоматически попадают в стабильную системную секцию `other` («Другое»). Поэтому
-добавленный разработчиком объект не исчезает у пользователей с сохранёнными
-настройками. Намеренно убрать объект из навигации можно явной hide-операцией
-слоя или удалением его из `contents`; это не меняет доступ по прямому URL.
+`config/home_page.yaml`. В подсистеме, если `menu` отсутствует, действует
+legacy-генератор из `contents`. Если `menu` есть, члены `contents`, не
+упомянутые ни в одном item, автоматически попадают в стабильную системную
+секцию `other` («Другое»). Поэтому добавленный разработчиком объект не исчезает
+у пользователей с сохранёнными настройками. Намеренно убрать объект из
+навигации можно явной hide-операцией слоя или удалением его из `contents`; это
+не меняет доступ по прямому URL.
+
+Для глобального контекста действует отдельная точная матрица совместимости:
+
+| `home_page.nav` | `home_page.menu` | Допустимое множество и fallback |
+|---|---|---|
+| отсутствует или задан пустым | отсутствует | Точный текущий `buildFlatNav`: все читаемые catalog/document, обе проекции register, inforeg, report, processor и journal; `system:constants` — только при наличии констант. Порядок внутри технических групп остаётся алфавитным. |
+| непустой | отсутствует | Точный текущий `buildNavFromContents`: только перечисленные в `nav` объекты, включая pages; один register даёт movements и balances. Технические группы и их fallback не меняются. |
+| отсутствует или задан пустым | присутствует | Допустимое множество равно target-множеству текущего `buildFlatNav`; все допустимые, но не упомянутые в `menu` targets попадают в `cfg:other`. |
+| непустой | присутствует | Допустимое множество строится только из `nav`; все не упомянутые в `menu` члены `nav` попадают в `cfg:other`. Target вне `nav` — ошибка `check`. |
+
+Nil и явно пустой `nav` намеренно эквивалентны, как сейчас в
+`HomePage.Nav != nil && !HomePage.Nav.IsEmpty()`: пустой блок не означает
+«скрыть всё». `other` создаётся только для semantic `menu`; в чистом legacy
+fallback сохраняются существующие технические группы. `system:constants`
+разрешён только в глобальном контексте, только если в registry есть хотя бы
+одна константа и только при nil/пустом `nav`; в подсистеме и при непустом
+глобальном `nav` этот target отвергается. Admin/user delta никогда не меняет
+эту область допустимых targets.
 
 ## Нормализованная модель
 
@@ -345,6 +366,9 @@ admin chrome; эти ссылки нельзя скрыть самой дель�
   стабильные DOM IDs, keyboard и collapse state;
 - `internal/storage/settings.go` — collision-safe keys, JSON validation, CAS и
   delete для admin/user layers;
+- `internal/backup/universal.go` — безопасные navigation-prefix при export,
+  очистка прежних переносимых navigation keys и import для clone/disaster
+  restore;
 - новые handlers рядом с `internal/ui/admin.go` и регистрация маршрутов в
   `internal/ui/server.go` — страницы общей и персональной настройки;
 - `internal/launcher/configurator_types.go`,
@@ -377,12 +401,23 @@ admin chrome; эти ссылки нельзя скрыть самой дель�
 - Downgrade: удалить `menu` из YAML для возврата старого UI. Navigation keys в
   `_settings` можно оставить — старая версия их не читает — либо удалить через
   reset перед downgrade. `contents` остаётся полным fallback.
-- Backup/restore уже переносит `_settings`; восстановленная база сохраняет
-  общую и персональные настройки. Restore на конфигурацию с другим base hash
-  применяет только валидные ops и показывает stale diagnostics.
+- Универсальный `.obz` не переносит `_settings` целиком: сейчас export/import
+  допускает только `safeSettingKeys`, `exchange.this_node.*` и
+  `scheduled.enabled.*`. Срез D добавляет два точных безопасных семейства
+  `ui.navigation.admin.` и `ui.navigation.user.` в export, import и
+  `clearPortableSettings`; остальные `_settings`, включая секреты, по-прежнему
+  не попадают в архив.
+- Оба navigation-prefix переносятся одинаково в режимах clone и disaster
+  recovery: это раскладка интерфейса восстановленных данных и пользователей,
+  а не идентичность узла или секрет. Перед import оба режима удаляют прежние
+  navigation keys целевой базы и затем восстанавливают точный набор из архива;
+  отсутствие ключа в архиве не оставляет старый target override. После restore
+  на конфигурацию с другим `base_hash` resolver применяет только валидные ops и
+  показывает stale diagnostics.
 
 ## Последовательность небольших PR-срезов
 
+<!-- pp:plan-slice key=A next=B -->
 ### Срез A — контракт, legacy order и pure resolver
 
 Добавить YAML-модель, target grammar, `internal/navigation`, legacy projection,
@@ -395,8 +430,13 @@ unknown target, target вне contents, duplicate ID, depth > 3, неверны�
 view и arbitrary URL дают точные diagnostics. Pure resolver доказывает порядок
 YAML, section/group/items, `other`, duplicate occurrence с разными IDs и
 стабильный canonical hash. HTTP-тест legacy subsystem фиксирует порядок
-`contents` и прежний fallback без `menu`.
+`contents` и прежний fallback без `menu`. Отдельная table-driven матрица
+глобальной «Главной» покрывает nil/пустой/непустой `home_page.nav` с
+отсутствующим/присутствующим `menu`, состав `other`, обе register-проекции,
+pages из непустого `nav` и запрет `system:constants` вне разрешённого
+глобального контекста.
 
+<!-- pp:plan-slice key=B next=C -->
 ### Срез B — runtime semantic menu и RBAC
 
 Перевести `buildNavForSubsystem` и scoped global nav на общий resolver. Расширить
@@ -409,6 +449,7 @@ processor в одной папке; register views ведут на разные 
 HTML в title экранируется; прямой URL по-прежнему проверяется старым RBAC. Проект
 без `menu` даёт прежние labels/URLs и не требует настройки.
 
+<!-- pp:plan-slice key=C next=D -->
 ### Срез C — визуальный редактор конфигурации
 
 Добавить в конфигуратор отдельный semantic menu editor, palette из `contents`,
@@ -422,6 +463,7 @@ item попадает в `other`; malformed form body и превышение л
 JS behavior test покрывает pointer и keyboard reorder, focus и preview. Обычное
 сохранение старой subsystem form не удаляет новый `menu`.
 
+<!-- pp:plan-slice key=D next=E -->
 ### Срез D — versioned delta и CAS storage
 
 Добавить admin/user keys, JSON codec, minimal diff, deterministic merge, stale
@@ -432,7 +474,12 @@ context; stale revision → 409-equivalent domain error; config → admin → us
 precedence; admin hide необратим пользователем; new config node появляется;
 removed node становится stale; corrupt stored JSON откатывает ровно один слой;
 циклы/глубина/лимиты не записываются; параллельные writers не теряют update.
+Тесты универсального backup/restore создают admin и user navigation keys плюс
+небезопасный посторонний setting и проверяют оба режима: clone и disaster
+recovery переносят оба navigation-слоя byte-for-byte, удаляют отсутствующие в
+архиве старые navigation keys цели и не экспортируют посторонний setting.
 
+<!-- pp:plan-slice key=E next=F -->
 ### Срез E — общая настройка администратора
 
 Добавить фиксированную страницу «Настройка приложения → Навигация», admin-only
@@ -445,6 +492,7 @@ configuration; stale tab получает 409 без overwrite; audit содер
 context и revisions, но не JSON; повреждённый stored layer показывает warning и
 безопасный configuration preview.
 
+<!-- pp:plan-slice key=F next=done -->
 ### Срез F — персональная настройка и end-to-end
 
 Добавить фиксированную «Настроить меню», user handlers и личный reset. Сервер
