@@ -194,7 +194,7 @@ type FormElement struct {
 	DataPath        string            `yaml:"data_path,omitempty"`      // "Объект.Контрагент", "Список.Цена"
 	Picture         string            `yaml:"picture,omitempty"`        // "_resources/.../Picture.png" или "stdpic:Post"
 	ValuesPicture   string            `yaml:"values_picture,omitempty"` // палитра выбора (для PictureField/InputField)
-	Width           int               `yaml:"width,omitempty"`          // ширина в условных единицах
+	Width           int               `yaml:"width,omitempty"`          // ширина в пикселях
 	Height          int               `yaml:"height,omitempty"`         // высота
 	HorizontalAlign string            `yaml:"halign,omitempty"`         // left|center|right|stretch
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom

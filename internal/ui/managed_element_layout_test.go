@@ -112,6 +112,45 @@ func TestManagedLayout_FormHandlerAppliesNestedPageLayout(t *testing.T) {
 	}
 }
 
+// ValueTable из реквизита формы идёт отдельной веткой production-шаблона, а не
+// через метаданную табличную часть. Общий layout-контракт обязан применяться и
+// к её внешнему блоку целиком: заголовку, таблице и кнопкам.
+func TestManagedLayout_FormHandlerAppliesValueTableLayout(t *testing.T) {
+	el := &metadata.FormElement{
+		Kind:     metadata.FormElementTablePart,
+		Name:     "ЭлементПодбор",
+		DataPath: "Форма.Подбор",
+		Width:    640,
+		Height:   520,
+	}
+	ent := layoutTestEntity(el)
+	ent.Forms[0].Attributes = []*metadata.FormAttribute{{
+		Name:    "Подбор",
+		TypeRef: "ValueTable",
+		Columns: []*metadata.FormAttributeColumn{{Name: "Количество", TypeRef: "number"}},
+	}}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	req := httptest.NewRequest("GET", "/ui/catalog/клиент/new", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("entity", "клиент")
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	s.form(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("форма не открылась: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	want := `class="managed-vt-layout" data-ob-el="ЭлементПодбор" style="width:640px;max-width:100%;flex:0 0 auto;min-width:0;height:520px;"`
+	if !strings.Contains(body, want) {
+		t.Errorf("layout ValueTable не применён к внешнему блоку:\n%s", body)
+	}
+	if !strings.Contains(body, `data-vt="Подбор"`) {
+		t.Errorf("сама ValueTable пропала из карточки:\n%s", body)
+	}
+}
+
 // Обратная совместимость дороже удобства: форма без новых ключей обязана
 // рендериться ровно как раньше — без атрибута style на блоке поля.
 func TestManagedLayout_NoKeysNoStyle(t *testing.T) {
