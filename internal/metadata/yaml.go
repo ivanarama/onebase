@@ -23,6 +23,8 @@ type rawField struct {
 	// means «keep context default» (true в шапке, false в ТЧ).
 	AllowInlineCreate *bool `yaml:"allow_inline_create"`
 	Required          bool  `yaml:"required"`
+	// Multiline — редактировать многострочным полем (Field.Multiline).
+	Multiline bool `yaml:"multiline"`
 	// Default — значение по умолчанию при создании нового объекта (план 153).
 	// Читается строкой: и `сейчас`, и `12`, и `Истина` попадают сюда как есть,
 	// разбирает их metadata.ParseDefault.
@@ -637,7 +639,8 @@ func parseField(rf rawField) Field {
 		title = rf.Label
 	}
 	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
-		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII}
+		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII,
+		Multiline: rf.Multiline}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

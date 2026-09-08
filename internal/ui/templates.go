@@ -315,6 +315,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
 				func(key string) string { return translate(lang, key) })
 		},
+		// multilineRows — высота многострочного поля В СТРОКАХ (element.height, как
+		// «Высота» текстового поля в 1С). Без height — пять строк, как было зашито
+		// раньше. Потолок защищает вёрстку от опечатки вроде height: 500, которая
+		// растянула бы форму на несколько экранов.
+		"multilineRows": func(el *metadata.FormElement) int {
+			const defaultRows, maxRows = 5, 40
+			if el == nil || el.Height <= 0 {
+				return defaultRows
+			}
+			if el.Height > maxRows {
+				return maxRows
+			}
+			return el.Height
+		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
@@ -2213,6 +2227,11 @@ const tplForm = `
       </div>
       {{end}}
     </div>
+  {{else if .Multiline}}
+    {{/* Строковый реквизит с multiline: в нём абзац, а не значение (памятка,
+         инструкция, комментарий). Однострочный input показывает такой текст
+         одной строкой с перемоткой стрелками — ни прочитать, ни отредактировать. */}}
+    <textarea name="{{$fn}}" autocomplete="off" rows="8" style="width:100%" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>{{index $.Values $fn}}</textarea>
   {{else}}
     <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>
   {{end}}
@@ -3188,7 +3207,11 @@ const tplInfoReg = `
   {{range .InfoReg.Resources}}
   <div class="form-row">
     <label>{{.DisplayName $.Lang}}</label>
+    {{if .Multiline}}
+    <textarea name="{{.Name}}" autocomplete="off" rows="8" style="width:100%">{{index $.Values .Name}}</textarea>
+    {{else}}
     <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
+    {{end}}
   </div>
   {{end}}
   <div style="margin-top:20px;display:flex;gap:8px">

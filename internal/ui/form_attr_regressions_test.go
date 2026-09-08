@@ -238,3 +238,92 @@ func TestManagedFormRendersDeclaredScalarAttrWithoutWarning(t *testing.T) {
 		t.Error("необъявленный data_path потерял предупреждающую подсветку")
 	}
 }
+
+
+// Многострочный реквизит формы — textarea, а не однострочный ввод. До этого
+// multiline на реквизите формы молча игнорировался: показать нехранимый текст
+// (памятка из НСИ, инструкция, результат обработчика) можно было, только положив
+// его в поле объекта — то есть сохранив в базе то, что сохранять не нужно.
+// Высота берётся из height, в строках, как «Высота» текстового поля в 1С.
+func TestManagedFormRendersMultilineScalarAttrAsTextarea(t *testing.T) {
+	form := &metadata.FormModule{
+		Name: "ФормаОбъекта", Kind: "object", EntityName: "Обращение",
+		LayoutKind: metadata.FormLayoutManaged,
+		Attributes: []*metadata.FormAttribute{
+			{Name: "Памятка", TypeRef: "Строка"},
+			{Name: "Коротко", TypeRef: "Строка"},
+		},
+		Elements: []*metadata.FormElement{
+			{Kind: metadata.FormElementField, Name: "ПолеПамятка", DataPath: "Памятка",
+				Multiline: true, Height: 16, ReadOnly: true},
+			{Kind: metadata.FormElementField, Name: "ПолеКоротко", DataPath: "Коротко"},
+		},
+	}
+	entity := &metadata.Entity{
+		Name: "Обращение", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Номер", Type: metadata.FieldTypeString}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	html := renderMultilineForm(t, entity, form,
+		map[string]string{"Памятка": "НЕ ВЫПОЛНЯЕМ: промышленные машины", "Коротко": "строка"})
+	if !strings.Contains(html, `<textarea name="Памятка" autocomplete="off" rows="16"`) {
+		t.Error("многострочный реквизит формы отрисован не как textarea нужной высоты")
+	}
+	if !strings.Contains(html, "НЕ ВЫПОЛНЯЕМ: промышленные машины</textarea>") {
+		t.Error("значение многострочного реквизита формы не попало в textarea")
+	}
+	if !strings.Contains(html, "readonly") {
+		t.Error("readonly многострочного реквизита формы потерян")
+	}
+	if !strings.Contains(html, `<input type="text" autocomplete="off" name="Коротко"`) {
+		t.Error("однострочный реквизит формы перестал быть input")
+	}
+}
+
+// Высота многострочного поля СУЩНОСТИ тоже берётся из height; без height —
+// прежние пять строк, а нелепо большое значение упирается в потолок.
+func TestManagedFormMultilineRowsFromHeight(t *testing.T) {
+	for _, c := range []struct {
+		height int
+		want   string
+	}{{0, `rows="5"`}, {12, `rows="12"`}, {500, `rows="40"`}} {
+		form := &metadata.FormModule{
+			Name: "ФормаОбъекта", Kind: "object", EntityName: "Обращение",
+			LayoutKind: metadata.FormLayoutManaged,
+			Elements: []*metadata.FormElement{
+				{Kind: metadata.FormElementField, Name: "ПолеОписание", DataPath: "Объект.Описание",
+					Multiline: true, Height: c.height},
+			},
+		}
+		entity := &metadata.Entity{
+			Name: "Обращение", Kind: metadata.KindDocument,
+			Fields: []metadata.Field{{Name: "Описание", Type: metadata.FieldTypeString}},
+			Forms:  []*metadata.FormModule{form},
+		}
+		if got := renderMultilineForm(t, entity, form, map[string]string{"Описание": ""}); !strings.Contains(got, c.want) {
+			t.Errorf("height=%d: ожидалось %s", c.height, c.want)
+		}
+	}
+}
+
+func renderMultilineForm(t *testing.T, entity *metadata.Entity, form *metadata.FormModule, values map[string]string) string {
+	t.Helper()
+	data := map[string]any{
+		"Entity": entity, "Form": form, "IsNew": true,
+		"Values":        values,
+		"RefOptions":    map[string][]map[string]any{},
+		"EnumOptions":   map[string]any{},
+		"ChoiceOptions": loadChoiceOptions(form, "ru"),
+		"TPRefOptions":  map[string]any{},
+		"TPEnumLabels":  map[string]map[string]map[string]string{},
+		"TPEnumOrder":   map[string]map[string][]string{},
+		"TPRefMeta":     map[string]any{},
+		"TablePartRows": map[string][]map[string]any{},
+		"User":          nil, "Lang": "ru",
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
+		t.Fatalf("ExecuteTemplate: %v", err)
+	}
+	return buf.String()
+}

@@ -71,6 +71,14 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: presentation реквизит %s должен быть строковым (сейчас %s)", e.Name, name, f.Type)
 			}
 		}
+		// multiline — признак ПРЕДСТАВЛЕНИЯ строкового реквизита. На числе, дате,
+		// ссылке или перечислении он ничего не значит, и принять его молча — значит
+		// оставить в конфигурации строку, которая ничего не делает.
+		for _, f := range e.Fields {
+			if f.Multiline && f.Type != FieldTypeString {
+				return fmt.Errorf("entity %s: реквизит %s — multiline допустим только для строкового реквизита (сейчас %s)", e.Name, f.Name, f.Type)
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}
