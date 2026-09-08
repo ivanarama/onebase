@@ -57,7 +57,7 @@ func TestWriteCatalogMatchesLiveFormat(t *testing.T) {
 	obj.ID = uuid.MustParse("52bb35d6-457d-11e0-94a1-00241dd1a434")
 	obj.Set("Наименование", "слесарь-жестянщик")
 	obj.Set("Код", "000000188")
-	obj.Set("ДатаВвода", time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC))
+	obj.Set("ДатаВвода", time.Date(2010, 1, 1, 0, 0, 0, 0, time.Local))
 	obj.Set("ВведенаВШтатноеРасписание", true)
 	obj.Set("ПроцентНадбавки", "0")
 
@@ -85,10 +85,10 @@ func TestWriteDocumentWithTablePart(t *testing.T) {
 	obj := runtime.NewObject(ent.Name, ent.Kind)
 	obj.EnsureTableParts(ent)
 	obj.ID = uuid.MustParse("97b437cf-ee79-11e6-8144-00155d0a6606")
-	obj.Set("Дата", time.Date(2017, 1, 9, 8, 51, 18, 0, time.UTC))
+	obj.Set("Дата", time.Date(2017, 1, 9, 8, 51, 18, 0, time.Local))
 	obj.Set("Номер", "02 - П")
 	obj.TablePartRows["Начисления"] = []map[string]any{
-		{"Результат": "599.07", "ОтработаноДней": "3", "ДатаНачала": time.Date(2017, 5, 10, 0, 0, 0, 0, time.UTC)},
+		{"Результат": "599.07", "ОтработаноДней": "3", "ДатаНачала": time.Date(2017, 5, 10, 0, 0, 0, 0, time.Local)},
 		{"Результат": "0", "ОтработаноДней": "0"},
 	}
 
@@ -193,6 +193,40 @@ func TestReadRestoresObject(t *testing.T) {
 	}
 	if rows[0]["Результат"] != "599.07" {
 		t.Errorf("строка ТЧ: %v", rows[0])
+	}
+}
+
+// Формат XDTO не содержит зону: календарное время трактуется в локальной зоне,
+// а хранимый UTC-момент перед записью переводится в неё. Это особенно важно для
+// SQLite, где дата после чтения уже нормализована в UTC.
+func TestDatesUseLocalTimezone(t *testing.T) {
+	oldLocal := time.Local
+	time.Local = time.FixedZone("UTC+3", 3*60*60)
+	t.Cleanup(func() { time.Local = oldLocal })
+
+	ent := document()
+	obj := runtime.NewObject(ent.Name, ent.Kind)
+	obj.Set("Дата", time.Date(2017, 1, 9, 5, 51, 18, 0, time.UTC))
+
+	text, err := xdto.Write(ent, obj, xdto.Options{})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !strings.Contains(text, "<Date>2017-01-09T08:51:18</Date>") {
+		t.Fatalf("UTC-момент не переведён в локальное время:\n%s", text)
+	}
+
+	got, _, err := xdto.Read(text, func(string) *metadata.Entity { return ent })
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	date, ok := got.Get("Дата").(time.Time)
+	if !ok {
+		t.Fatalf("Дата имеет тип %T, ожидался time.Time", got.Get("Дата"))
+	}
+	_, offset := date.Zone()
+	if offset != 3*60*60 || date.Hour() != 8 || !date.Equal(time.Date(2017, 1, 9, 5, 51, 18, 0, time.UTC)) {
+		t.Fatalf("локальная дата разобрана неверно: %v", date)
 	}
 }
 

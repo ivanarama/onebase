@@ -87,10 +87,12 @@ func (s *XDTOSerializer) read(args []any) any {
 	if s.reg == nil {
 		panic(userError{Msg: "СериализаторXDTO.ПрочитатьXML: реестр конфигурации недоступен"})
 	}
-	obj, _, err := xdto.Read(text, s.reg.GetEntity)
+	obj, opts, err := xdto.Read(text, s.reg.GetEntity)
 	if err != nil {
 		panic(userError{Msg: err.Error()})
 	}
+	obj.Fields["deletion_mark"] = opts.DeletionMark
+	obj.Fields["posted"] = opts.Posted
 	return obj
 }
 

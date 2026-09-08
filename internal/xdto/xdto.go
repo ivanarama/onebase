@@ -74,15 +74,29 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 	var b strings.Builder
 	fmt.Fprintf(&b, "<%s xmlns=%q xmlns:xs=%q xmlns:xsi=%q>\n", root, NSData, NSXS, NSXSI)
 
-	writeElem(&b, 1, "Ref", refText(obj.ID.String()), "")
-	writeElem(&b, 1, "DeletionMark", boolText(opts.DeletionMark), "")
+	if err := writeElem(&b, 1, "Ref", refText(obj.ID.String()), ""); err != nil {
+		return "", fmt.Errorf("xdto: Ref: %w", err)
+	}
+	if err := writeElem(&b, 1, "DeletionMark", boolText(opts.DeletionMark), ""); err != nil {
+		return "", fmt.Errorf("xdto: DeletionMark: %w", err)
+	}
 	if ent.Kind == metadata.KindDocument {
-		writeElem(&b, 1, "Date", dateText(objValue(obj, ent, stdDate)), "")
-		writeElem(&b, 1, "Number", plainText(objValue(obj, ent, stdNumber)), "")
-		writeElem(&b, 1, "Posted", boolText(opts.Posted), "")
+		if err := writeElem(&b, 1, "Date", dateText(objValue(obj, ent, stdDate)), ""); err != nil {
+			return "", fmt.Errorf("xdto: Date: %w", err)
+		}
+		if err := writeElem(&b, 1, "Number", plainText(objValue(obj, ent, stdNumber)), ""); err != nil {
+			return "", fmt.Errorf("xdto: Number: %w", err)
+		}
+		if err := writeElem(&b, 1, "Posted", boolText(opts.Posted), ""); err != nil {
+			return "", fmt.Errorf("xdto: Posted: %w", err)
+		}
 	} else {
-		writeElem(&b, 1, "Description", plainText(objValue(obj, ent, stdDescription)), "")
-		writeElem(&b, 1, "Code", plainText(objValue(obj, ent, stdCode)), "")
+		if err := writeElem(&b, 1, "Description", plainText(objValue(obj, ent, stdDescription)), ""); err != nil {
+			return "", fmt.Errorf("xdto: Description: %w", err)
+		}
+		if err := writeElem(&b, 1, "Code", plainText(objValue(obj, ent, stdCode)), ""); err != nil {
+			return "", fmt.Errorf("xdto: Code: %w", err)
+		}
 	}
 
 	for i := range ent.Fields {
@@ -90,7 +104,9 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 		if standardName(ent.Kind, f.Name) != "" {
 			continue // уже выведен выше под своим английским именем
 		}
-		writeElem(&b, 1, f.Name, fieldText(f, obj.Get(f.Name)), "")
+		if err := writeElem(&b, 1, f.Name, fieldText(f, obj.Get(f.Name)), ""); err != nil {
+			return "", fmt.Errorf("xdto: %s: %w", f.Name, err)
+		}
 	}
 
 	for i := range ent.TableParts {
@@ -99,7 +115,9 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 			fmt.Fprintf(&b, "\t<%s>\n", tp.Name)
 			for j := range tp.Fields {
 				f := &tp.Fields[j]
-				writeElem(&b, 2, f.Name, fieldText(f, row[f.Name]), "")
+				if err := writeElem(&b, 2, f.Name, fieldText(f, row[f.Name]), ""); err != nil {
+					return "", fmt.Errorf("xdto: %s.%s: %w", tp.Name, f.Name, err)
+				}
 			}
 			fmt.Fprintf(&b, "\t</%s>\n", tp.Name)
 		}
@@ -372,19 +390,22 @@ func firstElement(dec *xml.Decoder) (xml.StartElement, error) {
 
 // writeElem пишет элемент с отступом. Пустое значение выводится
 // самозакрывающимся тегом — так же, как это делает 1С.
-func writeElem(b *strings.Builder, depth int, name, value, xsiType string) {
+func writeElem(b *strings.Builder, depth int, name, value, xsiType string) error {
 	b.WriteString(strings.Repeat("\t", depth))
 	if value == "" {
 		fmt.Fprintf(b, "<%s/>\n", name)
-		return
+		return nil
 	}
 	if xsiType != "" {
 		fmt.Fprintf(b, "<%s xsi:type=%q>", name, xsiType)
 	} else {
 		fmt.Fprintf(b, "<%s>", name)
 	}
-	xml.EscapeText(b, []byte(value)) //nolint:errcheck // strings.Builder не возвращает ошибок
+	if err := xml.EscapeText(b, []byte(value)); err != nil {
+		return err
+	}
 	fmt.Fprintf(b, "</%s>\n", name)
+	return nil
 }
 
 // fieldText приводит значение реквизита к тексту формата.
@@ -436,7 +457,7 @@ func dateText(v any) string {
 	if !ok || t.IsZero() {
 		return EmptyDate
 	}
-	return t.Format(dateLayout)
+	return t.In(time.Local).Format(dateLayout)
 }
 
 func asTime(v any) (time.Time, bool) {
@@ -448,10 +469,11 @@ func asTime(v any) (time.Time, bool) {
 			return *t, true
 		}
 	case string:
-		for _, layout := range []string{dateLayout, time.RFC3339} {
-			if parsed, err := time.Parse(layout, t); err == nil {
-				return parsed, true
-			}
+		if parsed, err := time.ParseInLocation(dateLayout, t, time.Local); err == nil {
+			return parsed, true
+		}
+		if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+			return parsed, true
 		}
 	}
 	return time.Time{}, false
