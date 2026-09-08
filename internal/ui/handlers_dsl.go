@@ -374,7 +374,26 @@ func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.Mov
 
 type entityHookThis struct {
 	*runtime.Object
-	entity *metadata.Entity
+	entity   *metadata.Entity
+	resolver *dslRefAttrResolver
+}
+
+func (o *entityHookThis) Get(name string) any {
+	if o == nil || o.Object == nil {
+		return nil
+	}
+	if o.entity != nil {
+		for i := range o.entity.TableParts {
+			tp := &o.entity.TableParts[i]
+			if strings.EqualFold(tp.Name, name) {
+				return &formTpProxy{obj: o.Object, tpName: tp.Name, tp: tp, refResolver: o.resolver}
+			}
+		}
+		if field := findObjectAttributeField(o.entity, name); field != nil {
+			return declaredDSLValue(o.Object.Get(name), mustFieldDescriptor(field), o.resolver)
+		}
+	}
+	return o.Object.Get(name)
 }
 
 func (o *entityHookThis) GetDynamicField(name string) (any, bool) {
@@ -422,7 +441,9 @@ func (s *Server) runEntityHook(ctx context.Context, proc *ast.ProcedureDecl, obj
 			// runtime.Object deliberately does not retain the metadata graph. Hooks
 			// still need it to distinguish an unset declared requisit from an unknown
 			// name when this["Field"] is used, so opt in only at this execution edge.
-			this = &entityHookThis{Object: obj, entity: entity}
+			resolver := s.newDSLRefAttrResolver(ctx)
+			resolver.attachObject(entity, obj)
+			this = &entityHookThis{Object: obj, entity: entity, resolver: resolver}
 		}
 	}
 	if wall := interpreter.ClampWallClock(ctx, s.operationTimeout(opEntitySave)); wall > 0 {
