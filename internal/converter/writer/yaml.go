@@ -23,12 +23,15 @@ type yamlTablePart struct {
 }
 
 type yamlCatalog struct {
-	Name         string          `yaml:"name"`
-	Title        string          `yaml:"title,omitempty"`
-	Hierarchical bool            `yaml:"hierarchical,omitempty"`
-	Numerator    *yamlNumerator  `yaml:"numerator,omitempty"`
-	Fields       []yamlField     `yaml:"fields"`
-	TableParts   []yamlTablePart `yaml:"tableparts,omitempty"`
+	Name         string `yaml:"name"`
+	Title        string `yaml:"title,omitempty"`
+	Hierarchical bool   `yaml:"hierarchical,omitempty"`
+	// Owner — подчинённый справочник (1С «Владелец»): подбор такого справочника
+	// сам отбирается по владельцу.
+	Owner      string          `yaml:"owner,omitempty"`
+	Numerator  *yamlNumerator  `yaml:"numerator,omitempty"`
+	Fields     []yamlField     `yaml:"fields"`
+	TableParts []yamlTablePart `yaml:"tableparts,omitempty"`
 }
 
 type yamlNumerator struct {
@@ -65,6 +68,7 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 			Name:         cat.Name,
 			Title:        synonymTitle(cat.Name, cat.Synonym),
 			Hierarchical: cat.Hierarchical,
+			Owner:        cat.Owner,
 			Numerator:    catalogNumeratorFrom(cat.Code),
 			Fields:       withStandardCatalogFields(convertFields(cat.Attributes, notes)),
 		}

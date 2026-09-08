@@ -136,6 +136,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 			PostCaption:        e.PostCaption,
 			PostAndCloseHidden: e.PostAndCloseHidden,
 			Hierarchical:       e.Hierarchical,
+			Owner:              e.Owner,
 			BasedOn:            append([]string(nil), e.BasedOn...),
 			Source:             sources[strings.ToLower(e.Name)],
 			PostingSource:      postingSources[strings.ToLower(e.Name)],

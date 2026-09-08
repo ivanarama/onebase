@@ -1116,6 +1116,7 @@ function renderProps() {
       addTextProp(panel, 'Проверка значения (регулярное выражение)', 'mask', info.mask || '');
       addCheckRaw(panel, 'Файловое поле', info.fileType, function (ch) { setProp('type', ch ? 'file' : ''); });
     }
+    addChoiceFilterEditor(panel, info);
   }
   if (info.kind === 'ГруппаФормы') {
     addSelectRaw(panel, 'Расположение реквизитов', info.orientation === 'horizontal' ? 'horizontal' : 'vertical', [
@@ -1273,6 +1274,60 @@ function addOptionsEditor(panel, info) {
   }
   redraw();
 }
+// ── Связи параметров выбора ─────────────────────────────────────────────────
+// Аналог одноимённой настройки 1С и настраивается так же — мышью, без кода:
+// «Договор выбирать только у указанного контрагента» — это строка
+// {Владелец ← Объект.Контрагент}. Подчинённому справочнику (owner: у справочника)
+// писать связь не нужно: отбор по владельцу платформа ставит сама. Связь нужна
+// там, где отбирают НЕ по владельцу или где ссылок на владельца в объекте
+// несколько и выбрать надо конкретную.
+//
+// Пишется по одному ключу (setProp choice_filter.<Реквизит>), а не пачкой:
+// правка одной строки не должна переписывать соседние.
+function addChoiceFilterEditor(panel, info) {
+  var hd = document.createElement('div'); hd.className = 'prop-row prop-section';
+  hd.textContent = 'Связи параметров выбора';
+  panel.appendChild(hd);
+  var note = document.createElement('div'); note.className = 'prop-hint';
+  note.textContent = 'Отбор подбора: реквизит выбираемого справочника ← значение с этой формы (Владелец ← Объект.Контрагент). Подчинённый справочник отбирается по владельцу сам.';
+  panel.appendChild(note);
+  var nodeAtEdit = _selected;
+  var rows = [];
+  var cf = info.choiceFilter || {};
+  Object.keys(cf).forEach(function (k) { rows.push({ key: k, value: cf[k], saved: k }); });
+  var listWrap = document.createElement('div'); panel.appendChild(listWrap);
+  function write(row) {
+    var key = (row.key || '').trim();
+    var val = (row.value || '').trim();
+    // Ключ переименовали — старую строку убираем, иначе в YAML останутся обе.
+    if (row.saved && row.saved !== key) {
+      editOp({ op: 'delProp', node: nodeAtEdit, key: 'choice_filter.' + row.saved }, true);
+      row.saved = '';
+    }
+    if (!key || !val) return;
+    setProp('choice_filter.' + key, val);
+    row.saved = key;
+  }
+  function redraw() {
+    listWrap.innerHTML = '';
+    rows.forEach(function (row, i) {
+      var r = document.createElement('div'); r.className = 'prop-row prop-opt';
+      var ki = document.createElement('input'); ki.type = 'text'; ki.placeholder = 'реквизит (Владелец)'; ki.value = row.key || '';
+      ki.addEventListener('change', function () { row.key = ki.value; write(row); });
+      var vi = document.createElement('input'); vi.type = 'text'; vi.placeholder = 'значение (Объект.Контрагент)'; vi.value = row.value || '';
+      vi.addEventListener('change', function () { row.value = vi.value; write(row); });
+      var rm = mkBtn('×', function () {
+        if (row.saved) editOp({ op: 'delProp', node: nodeAtEdit, key: 'choice_filter.' + row.saved }, true);
+        rows.splice(i, 1); redraw();
+      });
+      rm.className = 'btn btn-danger';
+      r.appendChild(ki); r.appendChild(vi); r.appendChild(rm); listWrap.appendChild(r);
+    });
+    listWrap.appendChild(mkBtn('+ связь', function () { rows.push({ key: '', value: '', saved: '' }); redraw(); }));
+  }
+  redraw();
+}
+
 // Кнопки порядка и удаления элемента (follow-up #164, слайсы B1/B2): «выше/ниже»
 // переставляют узел в соседний индекс того же родителя; «удалить» вырезает узел
 // (контейнер — вместе с детьми, с подтверждением).

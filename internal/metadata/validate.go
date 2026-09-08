@@ -33,8 +33,10 @@ func ValidateConstants(constants []*Constant, entities []*Entity, enums []*Enum)
 
 func Validate(entities []*Entity, enums []*Enum) error {
 	entityNames := make(map[string]bool, len(entities))
+	entityKinds := make(map[string]Kind, len(entities))
 	for _, e := range entities {
 		entityNames[e.Name] = true
+		entityKinds[e.Name] = e.Kind
 	}
 	enumNames := make(map[string]bool, len(enums))
 	for _, en := range enums {
@@ -69,6 +71,32 @@ func Validate(entities []*Entity, enums []*Enum) error {
 			}
 			if f.Type != FieldTypeString {
 				return fmt.Errorf("entity %s: presentation реквизит %s должен быть строковым (сейчас %s)", e.Name, name, f.Type)
+			}
+		}
+		// Подчинённый справочник: владелец обязан существовать, быть справочником
+		// и не быть самим собой. Опечатка иначе выглядела бы как «отбор в подборе
+		// не работает» — а это не отличить от «данные не заполнены».
+		if owner := strings.TrimSpace(e.Owner); owner != "" {
+			if e.Kind != KindCatalog {
+				return fmt.Errorf("entity %s: owner допустим только у справочника (сейчас %s)", e.Name, e.Kind)
+			}
+			if owner == e.Name {
+				return fmt.Errorf("entity %s: owner ссылается на сам справочник", e.Name)
+			}
+			if !entityNames[owner] {
+				return fmt.Errorf("entity %s: owner ссылается на несуществующую сущность %s", e.Name, owner)
+			}
+			// Владельцем бывает только справочник — как в 1С. Документ-владелец
+			// означал бы, что состав НСИ зависит от оперативных данных.
+			if entityKinds[owner] != KindCatalog {
+				return fmt.Errorf("entity %s: владельцем может быть только справочник, а %s — %s", e.Name, owner, entityKinds[owner])
+			}
+			f := findEntityFieldFold(e, StandardOwnerField)
+			if f == nil {
+				return fmt.Errorf("entity %s: owner объявлен, но реквизита %s нет", e.Name, StandardOwnerField)
+			}
+			if f.RefEntity != owner {
+				return fmt.Errorf("entity %s: реквизит %s ссылается на %s, а owner — на %s", e.Name, StandardOwnerField, f.RefEntity, owner)
 			}
 		}
 		if err := validateFieldIDs(e); err != nil {

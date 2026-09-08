@@ -104,6 +104,8 @@ type saveEntity struct {
 	Title              string            `yaml:"title,omitempty"`
 	Titles             map[string]string `yaml:"titles,omitempty"`
 	Hierarchical       bool              `yaml:"hierarchical,omitempty"`
+	// Owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
+	Owner              string            `yaml:"owner,omitempty"`
 	HierarchyKind      string            `yaml:"hierarchy_kind,omitempty"`
 	Posting            bool              `yaml:"posting,omitempty"`
 	PostCaption        string            `yaml:"post_caption,omitempty"`
@@ -394,6 +396,7 @@ type cfgEntity struct {
 	PostCaption        string // подпись кнопки проведения (пусто → «Провести»), issue #497
 	PostAndCloseHidden bool   // скрыть кнопку «Провести и закрыть»
 	Hierarchical       bool
+	Owner              string   // справочник-владелец (подчинённый справочник, 1С «Владелец»)
 	BasedOn            []string // источники для ввода на основании (Plan 38)
 	Receivers          []string // обратный список: куда вводится на основании текущего объекта
 	Fields             []cfgField

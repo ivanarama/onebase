@@ -956,10 +956,22 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = n
 	}
-	items, total, err := s.referenceOptionsPage(r.Context(), ent, r.URL.Query().Get("q"), limit, offset)
-	if err != nil {
-		s.serverError(w, r, err)
-		return
+	// Отбор подбора (подчинённый справочник и связи параметров выбора): «реквизит
+	// справочника → значение» приезжает параметром flt. У подчинённого справочника
+	// без владельца выдача ПУСТА — и это ответ, а не ошибка: сначала контрагент,
+	// потом договор.
+	base, allowed := refOptionsFilters(ent, r.URL.Query().Get("flt"), storage.ListParams{})
+	var items []map[string]any
+	var total int
+	var err error
+	if allowed {
+		items, total, err = s.referenceOptionsPageFiltered(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, base)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+	} else {
+		items = []map[string]any{}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{
