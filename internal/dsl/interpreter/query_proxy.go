@@ -42,10 +42,27 @@ type queryProxy struct {
 
 type QueryCompiler func(ctx context.Context, text string, params map[string]any) (query.Result, error)
 
+// GuardedColumns records fields changed by a host security guard for each row.
+// Later normalization must not reinterpret a masked nil/empty string as the
+// canonical empty value of the underlying metadata type.
+type GuardedColumns []map[string]struct{}
+
+func (g GuardedColumns) contains(row int, column string) bool {
+	if row < 0 || row >= len(g) {
+		return false
+	}
+	for guarded := range g[row] {
+		if strings.EqualFold(guarded, column) {
+			return true
+		}
+	}
+	return false
+}
+
 // QueryGuard проверяет и правит строки результата до того, как они попадут в
 // DSL: полевое маскирование ПДн (план 88E). Ошибка означает, что запрос читать
 // нельзя, — строки в модуль не отдаются.
-type QueryGuard func(ctx context.Context, res query.Result, rows []map[string]any) error
+type QueryGuard func(ctx context.Context, res query.Result, rows []map[string]any) (GuardedColumns, error)
 
 // NewQueryProxy создаёт фабрику для инъекции через extraVars.
 // Использование: extraVars["__factory_Запрос"] = interpreter.NewQueryFactory(ctx, db, reg)
@@ -189,14 +206,16 @@ func (q *queryProxy) execute() *Array {
 	if err != nil {
 		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL})
 	}
+	var guarded GuardedColumns
 	if q.guard != nil {
-		if err := q.guard(ctx, res, rows); err != nil {
+		guarded, err = q.guard(ctx, res, rows)
+		if err != nil {
 			panic(userError{Msg: "Запрос: " + err.Error()})
 		}
 	}
 	query.NormalizeColumns(&res, rows)
 	q.wrapRefColumns(res, rows)
-	q.materializeTypedColumns(res, rows)
+	q.materializeTypedColumns(res, rows, guarded)
 	arr := &Array{}
 	for _, row := range rows {
 		arr.items = append(arr.items, newQueryResultRow(row))
@@ -207,7 +226,7 @@ func (q *queryProxy) execute() *Array {
 // materializeTypedColumns is deliberately DSL-only and runs after the host
 // guard. Generic query.Run consumers keep SQL NULL unchanged, while modules see
 // the canonical empty value of a proven direct projection.
-func (q *queryProxy) materializeTypedColumns(res query.Result, rows []map[string]any) {
+func (q *queryProxy) materializeTypedColumns(res query.Result, rows []map[string]any, guarded GuardedColumns) {
 	if len(res.TypedColumns) == 0 || len(rows) == 0 {
 		return
 	}
@@ -219,8 +238,11 @@ func (q *queryProxy) materializeTypedColumns(res query.Result, rows []map[string
 			}
 		}
 	}
-	for _, row := range rows {
+	for rowIndex, row := range rows {
 		for column, desc := range res.TypedColumns {
+			if guarded.contains(rowIndex, column) {
+				continue
+			}
 			raw, exists := row[column]
 			if !exists {
 				// A hidden field is removed by the guard; do not recreate it as a
