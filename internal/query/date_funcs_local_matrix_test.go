@@ -1,8 +1,13 @@
 package query_test
 
 import (
+	"archive/zip"
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -20,15 +25,38 @@ import (
 // закрепляют зимнее/летнее смещение America/New_York. Тест идёт через публичные
 // Compile и Run и одним телом проверяет SQLite и PostgreSQL.
 func TestDateFunctionsUseApplicationLocalTime(t *testing.T) {
-	for _, zoneName := range []string{"Asia/Kolkata", "America/New_York"} {
-		zoneName := zoneName
-		t.Run(zoneName, func(t *testing.T) {
-			loc, err := time.LoadLocation(zoneName)
+	tests := []struct {
+		name      string
+		zoneName  string
+		localName string
+	}{
+		{name: "Asia/Kolkata", zoneName: "Asia/Kolkata"},
+		{name: "America/New_York", zoneName: "America/New_York"},
+		{name: "system Local without TZ", zoneName: "America/New_York", localName: "Local"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			loc, err := time.LoadLocation(tt.zoneName)
 			require.NoError(t, err, "загрузка часового пояса")
+			if tt.localName != "" {
+				loc = loadLocationNamed(t, tt.localName, tt.zoneName)
+			}
 
 			savedLocal := time.Local
 			time.Local = loc
 			t.Cleanup(func() { time.Local = savedLocal })
+			if tt.localName != "" {
+				savedTZ, hadTZ := os.LookupEnv("TZ")
+				require.NoError(t, os.Unsetenv("TZ"))
+				t.Cleanup(func() {
+					if hadTZ {
+						require.NoError(t, os.Setenv("TZ", savedTZ))
+					} else {
+						require.NoError(t, os.Unsetenv("TZ"))
+					}
+				})
+			}
 
 			dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 				ctx := context.Background()
@@ -43,8 +71,8 @@ func TestDateFunctionsUseApplicationLocalTime(t *testing.T) {
 				require.NoError(t, db.Migrate(ctx, []*metadata.Entity{ent}), "миграция")
 
 				moments := map[string]time.Time{
-					"Зима": localBoundaryMoment(loc, zoneName, 2026, time.January),
-					"Лето": localBoundaryMoment(loc, zoneName, 2026, time.July),
+					"Зима": localBoundaryMoment(loc, tt.zoneName, 2026, time.January),
+					"Лето": localBoundaryMoment(loc, tt.zoneName, 2026, time.July),
 				}
 				for name, moment := range moments {
 					require.NoError(t, db.Upsert(ctx, ent.Name, uuid.New(), map[string]any{
@@ -95,6 +123,29 @@ func TestDateFunctionsUseApplicationLocalTime(t *testing.T) {
 			})
 		})
 	}
+}
+
+func loadLocationNamed(t *testing.T, name, zoneName string) *time.Location {
+	t.Helper()
+	zones, err := zip.OpenReader(filepath.Join(runtime.GOROOT(), "lib", "time", "zoneinfo.zip"))
+	require.NoError(t, err, "открытие Go zoneinfo.zip")
+	defer zones.Close()
+	for _, file := range zones.File {
+		if file.Name != zoneName {
+			continue
+		}
+		reader, err := file.Open()
+		require.NoError(t, err, "открытие зоны %s", zoneName)
+		data, readErr := io.ReadAll(reader)
+		closeErr := reader.Close()
+		require.NoError(t, readErr, "чтение зоны %s", zoneName)
+		require.NoError(t, closeErr, "закрытие зоны %s", zoneName)
+		loc, err := time.LoadLocationFromTZData(name, data)
+		require.NoError(t, err, "загрузка зоны %s с именем %s", zoneName, name)
+		return loc
+	}
+	t.Fatalf("зона %s не найдена в Go zoneinfo.zip", zoneName)
+	return nil
 }
 
 func localBoundaryMoment(loc *time.Location, zoneName string, year int, month time.Month) time.Time {
