@@ -229,6 +229,11 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 				return conflict
 			}
 		}
+		// Совпадает с обычным Upsert: нарушение уникальности — понятная
+		// пользователю ошибка ввода, а не технический сбой versioned-записи.
+		if explained := ExplainUniqueViolation(err, entity, fields); errors.Is(explained, ErrCodeDuplicate) {
+			return explained
+		}
 		return fmt.Errorf("upsert versioned %s: %w", entityName, classifyConstraintErr(err))
 	}
 	if tag.RowsAffected != 1 {
