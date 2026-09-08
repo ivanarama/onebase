@@ -90,13 +90,13 @@ type rawEntity struct {
 	Numerator          *rawNumerator     `yaml:"numerator"`
 	// Presentation принимает и строку, и список: «одно поле» — частый случай,
 	// а список задаёт запасной вариант, если основной реквизит пуст.
-	Presentation  stringOrList    `yaml:"presentation"`
-	Predefined    []rawPredefined `yaml:"predefined"`
+	Presentation stringOrList    `yaml:"presentation"`
+	Predefined   []rawPredefined `yaml:"predefined"`
 	// Owner — справочник-владелец (1С: подчинённый справочник). См. Entity.Owner.
-	Owner         string          `yaml:"owner"`
-	Hierarchical  bool            `yaml:"hierarchical"`
-	HierarchyKind string          `yaml:"hierarchy_kind"`
-	ListForm      []string        `yaml:"list_form"`
+	Owner         string   `yaml:"owner"`
+	Hierarchical  bool     `yaml:"hierarchical"`
+	HierarchyKind string   `yaml:"hierarchy_kind"`
+	ListForm      []string `yaml:"list_form"`
 	// ItemForm принимает и строку, и запись {name: X, readonly: true} —
 	// см. rawItemFormField.
 	ItemForm      []rawItemFormField `yaml:"item_form"`

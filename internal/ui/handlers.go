@@ -169,14 +169,10 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	return rows, nil
 }
 
-func (s *Server) referenceOptionsPage(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int) ([]map[string]any, int, error) {
-	return s.referenceOptionsPageFiltered(ctx, refEntity, search, limit, offset, storage.ListParams{})
-}
-
-// referenceOptionsPageFiltered — та же страница подбора, но с готовым отбором:
-// подчинение справочника и связи параметров выбора приезжают из base.Filters, и
-// СЧЁТЧИК обязан считать по ним же — иначе «показано 50 из 1300» врало бы про
-// отобранный список.
+// referenceOptionsPageFiltered — страница строк для диалога подбора с готовым
+// отбором: подчинение справочника и связи параметров выбора приезжают из
+// base.Filters, и СЧЁТЧИК обязан считать по ним же — иначе «показано 50 из 1300»
+// врало бы про отобранный список. Без отбора (пустой base) — обычная страница.
 func (s *Server) referenceOptionsPageFiltered(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int, base storage.ListParams) ([]map[string]any, int, error) {
 	if refEntity == nil {
 		return nil, 0, nil

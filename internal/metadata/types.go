@@ -312,9 +312,9 @@ type Entity struct {
 	// группа выбирается из групп своего направления, а не из всех тринадцати
 	// сотен. Подчинение — свойство справочника, а не формы: отбор появляется сам
 	// везде, где выбирают этот справочник, и его нельзя забыть настроить.
-	Owner string
-	HierarchyKind      string            // "folders_and_items" (default) | "items_only"
-	ListForm           []string          // visible fields in list form (nil = all)
+	Owner         string
+	HierarchyKind string   // "folders_and_items" (default) | "items_only"
+	ListForm      []string // visible fields in list form (nil = all)
 	// ItemForm — состав формы элемента: какие реквизиты видны и в каком
 	// порядке (nil = все). Запись может быть помечена «только просмотр»
 	// (#1011): служебный реквизит, который пересобирает модуль при записи,

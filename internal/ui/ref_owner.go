@@ -67,15 +67,6 @@ func ownerHolderField(holder *metadata.Entity, ownerEntity string) (metadata.Fie
 	return found, true
 }
 
-// ownerValueFromValues — значение владельца из уже отрисованных значений формы.
-func ownerValueFromValues(holder *metadata.Entity, ownerEntity string, values map[string]string) string {
-	f, ok := ownerHolderField(holder, ownerEntity)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(values[f.Name])
-}
-
 // refFilterMap — отбор подбора для каждого поля формы: «имя поля» → JSON вида
 // {"Владелец":{"from":"Контрагент","value":"<uuid>"}}. Уезжает в разметку
 // атрибутом data-ref-filter, а дальше живёт на клиенте.
