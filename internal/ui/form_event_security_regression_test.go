@@ -204,7 +204,7 @@ func TestHandleManagedFormEventRejectsTablePartValueTableNameCollision(t *testin
 func TestHandleManagedFormEventUsesOnlyPOSTBrowserState(t *testing.T) {
 	srv, ent := setupManagedEventsServer(t, `
 Процедура Проверить()
-	Если Объект.Наименование = Неопределено Тогда
+	Если Объект.Наименование = "" Тогда
 		Сообщить("поле:нет");
 	Иначе
 		Сообщить("поле:" + Объект.Наименование);
